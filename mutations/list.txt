@@ -204,11 +204,13 @@
 @mutation the-write-pulse-opens-a-tick-late
 @check phase_gen
 @file rtl/cadr_phase_gen.sv
-@note -TPW30, measured from the end of the read phase.
+@note -TPW30, measured from the end of the read phase. The instant lives in
+@note a register of its own since 5646c91, so that the counter drives a
+@note comparator and nothing else; a tick out is a tick out either way.
 @old
-      if (phase_next == read_t + 6'(WP_ON_T)) n_tpwp <= 1'b0;
+      if (phase == wp_on_at) n_tpwp <= 1'b0;
 @new
-      if (phase_next == read_t + 6'(WP_ON_T) + 6'd1) n_tpwp <= 1'b0;
+      if (phase == wp_on_at + 6'd1) n_tpwp <= 1'b0;
 @end
 
 @mutation the-control-store-pulse-closes-late
@@ -241,21 +243,24 @@
 @note it should park. Inverted rather than deleted, because deleting the term
 @note leaves `hang` unread and lint would catch it instead of the check.
 @old
-  assign phase_next = wrap ? (hang ? cycle_t : 6'd0) : phase + 6'd1;
+  assign phase_next = wrap ? (hang ? park_at : 6'd0) : phase + 6'd1;
 @new
-  assign phase_next = wrap ? (hang ? 6'd0 : cycle_t) : phase + 6'd1;
+  assign phase_next = wrap ? (hang ? 6'd0 : park_at) : phase + 6'd1;
 @end
 
 @mutation the-parked-generator-never-wraps
 @check phase_gen
 @file rtl/cadr_phase_gen.sv
-@note `wrap` has two terms because the park value is cycle_t itself: without
-@note the second the generator that -HANG parked would count past the end of
-@note the cycle when -HANG lifted rather than starting a new one.
+@note `wrap` has two terms because the park is one tick past the last tick
+@note of the cycle: without the second, a generator that -HANG parked would
+@note count on past the end when -HANG lifted rather than starting a new
+@note cycle. Since 5646c91 the two are separate registers, `wrap_at` and
+@note `park_at`, which is a new way to get this wrong --- they can now drift
+@note apart, where `cycle_t - 1` and `cycle_t` could not.
 @old
-  assign wrap       = (phase == cycle_t - 6'd1) || (phase == cycle_t);
+  assign wrap       = (phase == wrap_at) || (phase == park_at);
 @new
-  assign wrap       = (phase == cycle_t - 6'd1);
+  assign wrap       = (phase == wrap_at);
 @end
 
 
@@ -1475,7 +1480,15 @@
 @note microcycle 535,791 and this check stops at 537,841, so its
 @note whole memory surface is about two thousand microcycles and
 @note five hundred bus cycles at the very end of the run. Both
-@note should start failing on their own when the I/O wall moves.
+@note should start failing on their own when the Unibus lands.
+@note
+@note Not when the band runs under composition, which was the first guess
+@note and is wrong: measured, the band hits the wall at the SAME microcycle
+@note as the boot PROM, 537,846, with the same 515 memory cycles, and the
+@note two traces are byte-identical for their first 537,849 rows. Both boot
+@note the same PROM, and the first Unibus cycle is DISK-RECALIBRATE reading
+@note the controller's status register BEFORE the disk answers, so a pack
+@note underneath changes nothing.
 @old
       .rdata       (rdata),
 @new
@@ -1512,4 +1525,28 @@
   assign hang = use_md && rd_in_progress && !wait_;
 @new
   assign hang = use_md && rd_in_progress;
+@end
+
+@mutation a-tap-lands-at-the-wrap
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note 5646c91 rewrote every tap from `phase_next == X` to `phase == X - 1`,
+@note and its comment says why that is safe: "`phase_next` is only not
+@note `phase + 1` at the wrap, and no tap lands there."
+@note
+@note That is a claim, not a measurement --- a sentence that makes the
+@note rework correct, sitting in a comment. Its precondition is that no tap
+@note lands at the wrap, so this puts one there: the control store's pulse
+@note ends at `RESTART_T` from the read end instead of `WPIRAM_OFF_T`, which
+@note is exactly `wrap_at`.
+@note
+@note WHAT IT PROVES AND WHAT IT DOES NOT. It proves the check notices a tap
+@note moved onto the wrap, so the precondition is not one the fabric could
+@note violate unseen. It does not prove the `- 1` transformation sound in
+@note general, which is an argument about the code rather than about any
+@note behaviour, and no mutation can reach it.
+@old
+        wpiram_off_at <= read_sel + 6'(WPIRAM_OFF_T) - 6'd1;
+@new
+        wpiram_off_at <= read_sel + 6'(RESTART_T) - 6'd1;
 @end
