@@ -71,7 +71,6 @@
 # the issue that holds the hole open.  They are reported every run, counted in
 # their own column, and do not fail it:
 #
-#   xbus-rq-dropped-at-the-acknowledgement               #2
 #   the-word-is-latched-on-a-write-as-well               #5, and it is a
 #       question rather than a defect: whether MD must hold across a write is
 #       about the processor, which is stage 4.
@@ -369,7 +368,6 @@
 @end
 
 @mutation xbus-rq-dropped-at-the-acknowledgement
-@hole #2
 @check busint_xbus
 @file rtl/cadr_busint_xbus.sv
 @note "-XBUS.ACK ... remains asserted until the -XBUS.RQ signal is removed by
@@ -1005,4 +1003,24 @@
 @old
             mem_error <= 1'b0;
 @new
+@end
+
+@mutation the-cycle-timer-wraps-under-a-long-request
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note `elapsed` gates -XBUS.RQ through SETUP_T. Ten bits of it wrap at 1,024
+@note ticks, and the request then falls for the sixteen it takes to count
+@note back up --- in the middle of a cycle, on a signal that is a level on
+@note the board and cannot fall there at all.
+@note
+@note This was a real bug, and this list is how it was found: writing the
+@note check for issue #2 made it fail on the good design nine times in
+@note 40,000 ticks, each exactly 1,024 ticks after a grant. Only a cycle
+@note nothing answers runs long enough to reach it --- the NXM timer ends
+@note one at about 935 ticks plus the oscillator's phase --- so no slave was
+@note ever listening when it happened, and every output agreed.
+@old
+          if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
+@new
+          elapsed <= elapsed + 10'd1;
 @end
