@@ -133,7 +133,29 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The two generators that check themselves.  Nothing downstream of these
+    # can catch a bad one: `cables` is the only authority on the port list,
+    # and `busint_xbus` writes the stimulus AND the expected outputs, so a
+    # trace agreeing with itself proves nothing.  What stands in for a check
+    # is the generator's own assertions, and the question these ask is
+    # whether those assertions are live.
+    #
+    # `kind: generator` means the check is `cargo run`: the generator
+    # refusing to write a trace is the mutation being caught.
+    "cables_gen": {
+        "kind": "generator",
+        "bin": "cables",
+        "sources": ["golden/src/cables.rs"],
+        "golden": None,
+    },
+    "busint_gen": {
+        "kind": "generator",
+        "bin": "busint_xbus",
+        "sources": ["golden/src/busint_xbus.rs"],
+        "golden": None,
+    },
 }
+
 
 # The three files golden/src/cables.rs writes.  `current` regenerates them and
 # fails if anything moved; this does the same to a copy.
@@ -288,13 +310,43 @@ def die(msg):
     sys.exit(2)
 
 
-def copy_tree(dest):
+def copy_tree(dest, with_golden=False):
     """A private rtl/ and tb/ to mutate.  Never the working tree."""
     if os.path.exists(dest):
         shutil.rmtree(dest)
     os.makedirs(dest)
     for d in ("rtl", "tb"):
         shutil.copytree(os.path.join(REPO, d), os.path.join(dest, d))
+    if with_golden:
+        # Without target/, which is a build directory and can be gigabytes.
+        shutil.copytree(os.path.join(REPO, "golden"),
+                        os.path.join(dest, "golden"),
+                        ignore=shutil.ignore_patterns("target"))
+
+
+def muir_beside(work):
+    """Put muir where a mutant copy's Cargo.toml will look for it.
+
+    golden/Cargo.toml says `muir = { path = "../../muir" }`, which from
+    <work>/<name>/golden resolves to <work>/muir.  So one link at the root of
+    the work directory serves every mutation --- and, because it is the same
+    resolved path for all of them, muir is built once and cached rather than
+    once per mutation.
+    """
+    manifest = os.path.join(REPO, "golden", "Cargo.toml")
+    with open(manifest) as f:
+        text = f.read()
+    match = re.search(r'muir\s*=\s*\{[^}]*path\s*=\s*"([^"]+)"', text)
+    if not match or match.group(1) != "../../muir":
+        die("golden/Cargo.toml's muir path is %r, not '../../muir'; the link "
+            "the generator mutations rely on no longer resolves"
+            % (match.group(1) if match else None))
+    real = os.path.abspath(os.path.join(REPO, "golden", "../../muir"))
+    if not os.path.isdir(real):
+        die("%s: muir is not beside this repository" % real)
+    link = os.path.join(work, "muir")
+    if not os.path.islink(link):
+        os.symlink(real, link)
 
 
 def apply(work, m, listing):
@@ -316,11 +368,35 @@ def apply(work, m, listing):
     return None
 
 
-def run(cmd, cwd):
+def run(cmd, cwd, env=None):
+    if env is not None:
+        merged = os.environ.copy()
+        merged.update(env)
+        env = merged
     p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT)
+                         stderr=subprocess.STDOUT, env=env)
     out = p.communicate()[0].decode("utf-8", "replace")
     return p.returncode, out
+
+
+def panic_message(out):
+    """What a generator said as it refused, not merely that it did.
+
+    A Rust panic is two lines: `thread 'main' panicked at src/cables.rs:189:9:`
+    and then the message.  The header alone is the same for every mutation of
+    one file, so a report built on it says nothing about which assertion
+    fired --- and two mutations tripping two different assertions would read
+    identically.
+    """
+    lines = out.split("\n")
+    for i, line in enumerate(lines):
+        if "panicked at" in line:
+            where = line.split("panicked at", 1)[1].strip().rstrip(":")
+            for after in lines[i + 1:]:
+                if after.strip():
+                    return "%s: %s" % (where, after.strip())
+            return where
+    return first_problem(out)
 
 
 def first_problem(out):
@@ -340,6 +416,8 @@ def first_problem(out):
 def build_and_run(args, work, check):
     """Verilate the check in `work` and run it.  Returns a verdict."""
     spec = CHECKS[check]
+    if spec.get("kind") == "generator":
+        return generator_check(args, work, spec)
     if check == "cables":
         return cables_check(args, work)
 
@@ -360,6 +438,38 @@ def build_and_run(args, work, check):
     if rc != 0:
         return CAUGHT, first_problem(out)
     return SURVIVED, out.strip().split("\n")[0]
+
+
+def generator_check(args, work, spec):
+    """Build the mutated generator and run it.  Refusing is being caught.
+
+    Build and run are separate so that a mutation rustc rejects is BROKEN
+    rather than caught --- the same distinction lint gives the fabric
+    mutations, and for the same reason: a check that never saw the mutation
+    has not caught it.
+
+    EACH MUTATION GETS ITS OWN TARGET DIRECTORY, and this is not tidiness.
+    Every mutant copy is a package called `golden` with a binary called
+    `cables`, so against a shared target directory they all uplift to one
+    `release/cables` and cargo will hand a later mutation the earlier one's
+    binary.  Measured: three different mutations of cables.rs all panicked
+    with the *same* message, which is one mutation's verdict reported three
+    times.  It is CLAUDE.md's stale-binary lesson exactly, in the mirror ---
+    there it made mutations look like survivors, here it makes them look
+    caught, and looking caught is worse because nothing is obviously wrong.
+    Isolation costs 13 s and 14 MB a mutation and removes the whole class.
+    """
+    manifest = os.path.join(work, "golden", "Cargo.toml")
+    env = {"CARGO_TARGET_DIR": os.path.join(work, "cargo-target")}
+    common = ["--quiet", "--manifest-path", manifest,
+              "--release", "--bin", spec["bin"]]
+    rc, out = run([args.cargo, "build"] + common, work, env)
+    if rc != 0:
+        return BROKEN, first_problem(out)
+    rc, out = run([args.cargo, "run"] + common, work, env)
+    if rc != 0:
+        return CAUGHT, panic_message(out)
+    return SURVIVED, "the generator wrote its output without complaint"
 
 
 def cables_check(args, work):
@@ -419,6 +529,11 @@ def check_makefile():
         return ["Makefile is not readable"]
     missing = []
     for check, spec in sorted(CHECKS.items()):
+        # A generator is run by a phony target --- `make cables` has no
+        # prerequisites to name and does not need them, being always out of
+        # date --- so there is nothing here for this to compare against.
+        if spec.get("kind") == "generator":
+            continue
         for src in spec["sources"]:
             if src not in text:
                 missing.append("%s: the Makefile does not mention %s"
@@ -456,8 +571,14 @@ def self_test(args):
     if not plain or not holed:
         die("--self-test wants at least one record with an @hole and one "
             "without; list.txt has %d and %d" % (len(holed), len(plain)))
-    # The cheapest check to build, so the cases cost two builds each.
-    cheap = min(plain, key=lambda m: len(CHECKS[m.check]["sources"]))
+    # The cheapest check to build, so the cases cost two builds each. A
+    # generator would do, but it costs a cargo build and its "not verilog at
+    # all" fixture would be a rustc error rather than a lint one, which is a
+    # less faithful stand-in for the case being covered.
+    fabric = [m for m in plain if CHECKS[m.check].get("kind") != "generator"]
+    if not fabric:
+        die("--self-test wants at least one mutation of the fabric")
+    cheap = min(fabric, key=lambda m: len(CHECKS[m.check]["sources"]))
 
     unappliable = record(cheap).replace(
         "@old\n", "@old\n  this line is not in the file\n", 1)
@@ -501,6 +622,39 @@ def self_test(args):
                                 want_text, rc))
             sys.stdout.write("".join("      | %s\n" % s
                                      for s in out.strip().split("\n")[-12:]))
+            bad += 1
+
+    # Two generator mutations must not report the same failure. They are
+    # separate packages all called `golden`, all building a binary of the
+    # same name, so against one target directory cargo hands the second
+    # mutation the first one's binary and both are reported caught --- on one
+    # mutation's evidence, twice. That happened, and nothing about the report
+    # looked wrong. `@hole` on both is what makes the runner print each
+    # detail: they come back as CLOSED, which is a failure and prints why.
+    gens = [m for m in mutations if CHECKS[m.check].get("kind") == "generator"]
+    if len(gens) >= 2:
+        body = []
+        for m in gens[:2]:
+            head, rest = record(m).split("\n", 1)
+            body.append(head + "\n@hole #99999\n" + rest)
+        path = os.path.join(root, "generators.txt")
+        with open(path, "w") as f:
+            f.write("# generated by --self-test\n\n" + "\n".join(body))
+        cmd = [sys.executable, os.path.abspath(__file__),
+               "--goldens", args.goldens,
+               "--work", os.path.join(root, "generators"),
+               "--list", path, "--jobs", "2",
+               "--verilator", args.verilator, "--cargo", args.cargo]
+        rc, out = run(cmd, REPO)
+        reasons = set(l.strip() for l in out.split("\n") if "assertion" in l)
+        ok = rc != 0 and "A HOLE THAT CLOSED" in out and len(reasons) >= 2
+        sys.stdout.write("  %-34s %s\n"
+                         % ("generators do not share a binary",
+                            "ok" if ok else "FAILED"))
+        if not ok:
+            sys.stdout.write("      %d distinct failures from %d mutations; "
+                             "want one each\n" % (len(reasons), len(gens[:2])))
+            sys.stdout.write("".join("      | %s\n" % r for r in sorted(reasons)))
             bad += 1
 
     # The case that got past review. Relative --goldens and --work, from a
@@ -606,7 +760,10 @@ def main():
     # mutation caught, so nothing runs until the unmutated copy is clean.
     sys.stdout.write("baseline, on an unmutated copy:\n")
     base = os.path.join(args.work, "baseline")
-    copy_tree(base)
+    generators = any(CHECKS[c].get("kind") == "generator" for c in wanted)
+    if generators:
+        muir_beside(args.work)
+    copy_tree(base, with_golden=generators)
     baseline_bad = False
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         futures = dict((pool.submit(build_and_run, args, base, c), c)
@@ -630,7 +787,7 @@ def main():
 
     def one(m):
         work = os.path.join(args.work, m.name)
-        copy_tree(work)
+        copy_tree(work, with_golden=CHECKS[m.check].get("kind") == "generator")
         problem = apply(work, m, args.list)
         if problem:
             m.verdict, m.detail = UNAPPLIED, problem
