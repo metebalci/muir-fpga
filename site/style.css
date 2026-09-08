@@ -270,7 +270,7 @@ figure.screen img {
   --st-done: #2da44e;
   --st-part: #d97706;
   --st-wip:  #4493f8;
-  --st-ext:  #b1bac4;
+  --st-ext:  #d0d7de;
 }
 .d-done, .d-part, .d-wip, .d-ext { fill-opacity: 0.18; stroke-width: 2; }
 .d-done { fill: var(--st-done); stroke: var(--st-done); }
