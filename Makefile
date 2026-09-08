@@ -22,7 +22,7 @@ VFLAGS := --cc --exe --build -Wall
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
-       $(BUILD)/memory_path.pass current
+       $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -51,6 +51,18 @@ $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus: rtl/cadr_busint_xbus.sv tb/cadr_busi
 
 $(BUILD)/busint_xbus.pass: $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
 	$(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
+	@touch $@
+
+# ------------------------------------------------------------- AXI adapter
+
+# No muir reference: nothing in MIT's drawings is an AXI master. Held to the
+# protocol, checked every tick, and to read-back.
+$(BUILD)/obj_axi_master/Vcadr_axi_master: rtl/cadr_axi_master.sv tb/cadr_axi_master_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_axi_master \
+	    --top-module cadr_axi_master rtl/cadr_axi_master.sv tb/cadr_axi_master_tb.cpp
+
+$(BUILD)/axi_master.pass: $(BUILD)/obj_axi_master/Vcadr_axi_master
+	$(BUILD)/obj_axi_master/Vcadr_axi_master
 	@touch $@
 
 # -------------------------------------------------------------- memory path

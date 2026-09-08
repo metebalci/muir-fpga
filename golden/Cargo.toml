@@ -3,7 +3,11 @@ name = "golden"
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
+authors = ["Mete Balci"]
 description = "Reference traces for muir-fpga, taken from muir itself."
+repository = "https://github.com/metebalci/muir-fpga"
+readme = "../README.md"
+publish = false
 
 [[bin]]
 name = "phase_gen"
