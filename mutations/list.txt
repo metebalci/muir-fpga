@@ -72,8 +72,6 @@
 # their own column, and do not fail it:
 #
 #   xbus-rq-dropped-at-the-acknowledgement               #2
-#   the-write-response-error-is-ignored                  #3
-#   the-answer-is-given-before-the-response-comes-back   #4
 #   the-word-is-latched-on-a-write-as-well               #5, and it is a
 #       question rather than a defect: whether MD must hold across a write is
 #       about the processor, which is stage 4.
@@ -745,13 +743,16 @@
 @end
 
 @mutation the-write-response-error-is-ignored
-@hole #3
 @check axi_master
 @file rtl/cadr_axi_master.sv
 @note OKAY is 00 and EXOKAY 01; SLVERR and DECERR have bit 1 set, and
 @note mem_error is what says one came back. Assigning zero rather than
 @note deleting the branch, so that bresp stays read and lint has nothing to
 @note say about it.
+@note
+@note This survived until the testbench drove an error at all: with bresp
+@note and rresp zero on every tick a master that ignored both was
+@note indistinguishable from one that did not. Issue #3.
 @old
             if (m_axi_bresp[1]) mem_error <= 1'b1;
 @new
@@ -858,12 +859,15 @@
 @end
 
 @mutation the-answer-is-given-before-the-response-comes-back
-@hole #4
 @check axi_master
 @file rtl/cadr_axi_master.sv
 @note mem_done is held once the word is done, and a write is not done until B
 @note has come back. Answering at WRESP lets the bridge go while the response
 @note channel is still outstanding.
+@note
+@note This survived until the testbench said when mem_done was allowed to
+@note rise. Breaking no AXI rule and returning the right words, it simply
+@note finished early --- 28,548 transactions against 25,918. Issue #4.
 @old
   assign mem_done = (state == DONE);
 @new
@@ -965,4 +969,40 @@
     1,
     2,
     3,
+@end
+
+@mutation the-read-response-error-is-ignored
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note The other half of what issue #3 left untested. A read carries its
+@note response on rresp, and a slave that cannot answer says so there.
+@old
+            if (m_axi_rresp[1]) mem_error <= 1'b1;
+@new
+            if (m_axi_rresp[1]) mem_error <= 1'b0;
+@end
+
+@mutation an-error-is-reported-when-there-was-none
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note The opposite failure to ignoring an error, and the one a check that
+@note only ever saw good responses could never distinguish: reporting a
+@note failure on every transaction that worked. Inverted rather than made
+@note unconditional, so bresp stays read.
+@old
+            if (m_axi_bresp[1]) mem_error <= 1'b1;
+@new
+            mem_error <= !m_axi_bresp[1];
+@end
+
+@mutation the-error-outlives-its-transaction
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note mem_error is cleared as each transaction is latched, so it belongs to
+@note the one being answered. Left standing it is sticky: one refused write
+@note and every read after it looks refused too, which is worse than not
+@note reporting the error at all.
+@old
+            mem_error <= 1'b0;
+@new
 @end
