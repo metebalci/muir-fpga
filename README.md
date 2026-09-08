@@ -1,0 +1,107 @@
+# muir-fpga
+
+The MIT CADR on an FPGA, at netlist level, at the speed the hardware ran.
+
+[muir](https://github.com/metebalci/muir) simulates the CADR down to its
+chips. Its `chip` engine runs the netlists themselves and runs them at about
+1/4,000 of real time. This is the same machine in fabric instead, where the
+netlist runs at the machine's own 145 ns microcycle.
+
+Separate from muir because the toolchain is: Vivado, Verilator and a Zynq
+build have nothing to do with muir's property of building and testing offline
+with no crate dependencies. muir stays the reference, and everything here is
+checked against it.
+
+## Target
+
+Digilent **Arty Z7-20**, `XC7Z020-1CLG400C`: 53,200 LUTs, 106,400 flip-flops,
+630 KB of block RAM, dual Cortex-A9 at 650 MHz, 512 MB of PS DDR3, gigabit
+Ethernet, microSD.
+
+The processor's own memories are 980 Kb --- the 16K x 48 control store, the
+scratchpads, the maps --- and the display's frame buffer is another 1,060 Kb.
+Main memory is not a netlist: 60 boards of 64K words is 66 Mb, and the Xbus
+carries 22 address bits, so 3,932,160 words is the ceiling with the top four
+slots taken by the display and the device registers. That lives in PS DDR3
+behind an Xbus bridge, and so does the frame buffer.
+
+## What is fabric and what is Linux
+
+The rule: **fabric holds anything with a clock edge the CADR can see; Linux
+holds anything with a protocol, a file, or a name in it.**
+
+| Fabric | Linux on the PS |
+|---|---|
+| The netlists --- gates, registers, RAMs | RFB: TCP, encoding, keysym mapping |
+| Xbus to DDR (main memory, frame buffer) | The pack as a file on microSD |
+| Trident bus timing, seek and rotation | Chaosnet routing and its services |
+| Chaosnet cable encode, decode, collision | The console |
+
+Main memory is the only seam that runs at machine speed, and it is the one
+with no software in it. Everything else is millisecond- or human-scale.
+
+Ports: `S_AXI_HP0` for the memory bridge, `M_AXI_GP0` and AXI4-Lite for the
+console and the buffers. Note the Zynq-7000 PS-PL interfaces are **AXI3**, not
+AXI4; the logic here is AXI4 and Vivado's converter bridges the two.
+
+## The plan
+
+Two implementations of the processor behind one port interface, as muir has
+three engines behind one trait. **The interface is `data/cables.txt` --- the
+92 wires on the five cables between the processor and the bus interface, pin
+for pin off MIT's wire lists.** Anything shaped to a Rust API instead would
+take the ported model and refuse the netlist.
+
+1. **The clock generator.** `clock.rs`, ported. **Done.**
+2. **The bus interface and the DDR bridge**, driven by a test master on the
+   92 cable wires --- the Xbus handshake, `-HANG`, the NXM timeout and the
+   AXI plumbing proved without a processor.
+3. **The processor**, ported from `rtl.rs` first, then the netlist behind the
+   same ports, each checked against the other and against muir.
+
+Alongside, a spike on one page of `CADR.netlist` --- `ALU0`, four `74S181`s,
+no state and no tri-state --- to settle how netlists become SystemVerilog
+before there are 50 cell models depending on the answer.
+
+## Checking
+
+Everything is held to muir. A reference trace comes out of muir's own model
+and carries the stimulus as well as the expected outputs, so the testbench and
+the model cannot drift apart.
+
+    make check
+
+Needs [Verilator](https://verilator.org) and a Rust toolchain, and muir
+checked out beside this repository. Nothing here vendors a copy of muir's
+netlists or part tables: they are the source of truth and a copy would go
+stale silently.
+
+| | Checked against | State |
+|---|---|---|
+| `rtl/cadr_phase_gen.sv` | `clock::Behavioural`, 12,000 ticks | passing |
+
+The check is mutation-tested: moving the normal tap by one tick, or the
+`TPTSE` window by five nanoseconds, fails it. It also requires coverage ---
+all seven read taps selected, and the generator held by both `-HANG` and
+`RESET` --- so it cannot pass while exercising nothing.
+
+## Where this differs from muir
+
+Deliberate divergences, each with a reason. There is one so far.
+
+**`-TPR60` under `RESET`.** `clock.rs` says "RESET holds the ring cleared: no
+transition until it lifts", and `next_at` answers `None` for as long as it is
+held. But `chip.rs`'s `apply_clock` still derives `-TPR60` from `phase_ns`,
+which is `time - cycle_start` with `cycle_start` left wherever the last cycle
+put it. Time runs while reset is held, so `phase_ns` sweeps through 60..100
+and the reference emits a read tap off a ring it has just called cleared ---
+40 ns of `-TPR60`, which OLORD1 turns into `SPEEDCLK` and which clocks the
+speed synchroniser at 1A01. Here the ring is cleared and `-TPR60` stays
+deasserted. The testbench does not compare it while `RESET` is high.
+
+## Layout
+
+    rtl/      SystemVerilog
+    tb/       Verilator testbenches
+    golden/   Rust, depends on muir by path; writes the reference traces
+    build/    generated, not committed
