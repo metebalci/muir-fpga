@@ -25,5 +25,13 @@ path = "src/busint_xbus.rs"
 name = "xbus_decode"
 path = "src/xbus_decode.rs"
 
+[[bin]]
+name = "rtl"
+path = "src/rtl.rs"
+
+[[bin]]
+name = "prom"
+path = "src/prom.rs"
+
 [dependencies]
 muir = { path = "../../muir" }
