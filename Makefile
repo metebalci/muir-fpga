@@ -18,7 +18,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
-.PHONY: check cables current clean
+.PHONY: check cables current mutants clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -156,6 +156,27 @@ current:
 	    rtl/cadr_cables_lint.sv \
 	    || { echo "generated files are stale: run 'make cables' and commit"; exit 1; }
 	@echo "ok: generated files are current"
+
+# ------------------------------------------------------------ the mutations
+#
+# The checks, checked. Every entry in mutations/list.txt is a bug one of the
+# checks has to catch --- the ones found the hard way among them, each of
+# which passed something before it was found.
+#
+# The runner copies rtl/ and tb/ per mutation and builds from the copy: the
+# working tree is never mutated. A mutation that fails to apply, or that lint
+# rejects, is a failure of the run and not a caught mutation --- two were once
+# reported as surviving when the build had failed and a stale binary ran. One
+# that survives is a hole in a check.
+#
+# Not part of `check`: it verilates the design once per mutation. The copies go
+# under BUILD, so `clean` takes them with it.
+MUTDIR ?= $(BUILD)/mutants
+
+mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
+         $(BUILD)/xbus_decode.golden | $(BUILD)
+	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
+	    --verilator '$(VERILATOR)' --cargo '$(CARGO)'
 
 $(BUILD):
 	@mkdir -p $(BUILD)
