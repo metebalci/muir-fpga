@@ -261,6 +261,23 @@ figure.screen img {
 .d-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .d-bus  { fill: none; stroke: currentColor; stroke-width: 4; }
 .d-plate { fill: var(--paper); }
+/* How far along each block is. This is the one place the page departs from
+   muir's 1-bit rule --- there tone comes from dither and emphasis from reverse
+   video, never from a hue --- because "how far along is this" is an axis of its
+   own, and the outline is already carrying fabric-or-PS. The stroke does the
+   work and the fill only tints, so each reads on either ground. */
+:root {
+  --st-done: #2da44e;
+  --st-part: #d97706;
+  --st-wip:  #4493f8;
+  --st-ext:  #b1bac4;
+}
+.d-done, .d-part, .d-wip, .d-ext { fill-opacity: 0.18; stroke-width: 2; }
+.d-done { fill: var(--st-done); stroke: var(--st-done); }
+.d-part { fill: var(--st-part); stroke: var(--st-part); }
+.d-wip  { fill: var(--st-wip);  stroke: var(--st-wip);  }
+.d-ext  { fill: var(--st-ext);  stroke: var(--st-ext);  }
+
 .d-t { font: 500 13px var(--sans); fill: currentColor; }
 .d-s { font: 400 11px var(--sans); fill: currentColor; }
 .d-m { font: 500 13px var(--mono); fill: currentColor; }
