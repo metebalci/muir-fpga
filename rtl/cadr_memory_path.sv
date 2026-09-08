@@ -64,6 +64,23 @@ module cadr_memory_path (
     // answers can say why rather than merely time out.
     output var logic        nxm,          // Xbus space with nothing in it
     output var logic        unibus,       // the Unibus, which is its own slice
+    output var logic        ub_msyn_o,    // -UB MSYN, brought out for a check
+    output var logic        ub_ssyn_o,
+    output var logic [2:0]  arb_stage,
+    output var logic [17:0] ub_addr_o,
+    output var logic [15:0] ub_rdata_o,
+
+    // The diagnostic register block, which lives on this board: its read side
+    // reaches into the processor, and its written bits are the console's.
+    output var logic [3:0]  spy_eadr,
+    input  var logic [15:0] spy_rdata,
+    output var logic        run,
+    output var logic        promdisable,
+    output var logic        errstop,
+    output var logic        stathenb,
+    output var logic [1:0]  mode_speed,
+    output var logic        prog_reset,
+    output var logic        prog_boot,
 
     // PS DDR3, behind the AXI adapter that is not written yet.
     output var logic        mem_req,
@@ -77,6 +94,12 @@ module cadr_memory_path (
   logic is_memory;
   logic dev_ack, memory_ack;
   logic [31:0] memory_rdata;
+  logic ub_msyn, ub_write, ub_ssyn;
+  assign ub_msyn_o = ub_msyn;
+  assign ub_ssyn_o = ub_ssyn;
+  assign ub_addr_o = ub_addr;
+  assign ub_rdata_o = ub_rdata;
+  logic [15:0] ub_rdata;
 
   cadr_xbus_decode decode (
       .phys  (phys),
@@ -99,7 +122,46 @@ module cadr_memory_path (
       .timed_out  (timed_out),
       .dev_rq     (dev_rq),
       .dev_write  (dev_write),
-      .dev_ack    (dev_ack)
+      .dev_ack    (dev_ack),
+      .unibus     (unibus),
+      .ub_msyn    (ub_msyn),
+      .ub_write   (ub_write),
+      .ub_ssyn    (ub_ssyn),
+      .arb_stage  (arb_stage)
+  );
+
+  // The Unibus address, as `busint::unibus_address` computes it: the pages
+  // above 0o37000 of the 22-bit physical space, shifted left one because the
+  // Unibus counts bytes.
+  logic [13:0] ub_page;
+  logic [17:0] ub_addr;
+  assign ub_page = phys[21:8] - 14'o37000;
+  assign ub_addr = {ub_page[8:0], phys[7:0], 1'b0};
+
+  // Above the register block there is nothing on this Unibus yet, so the top
+  // of the page number goes nowhere: only 0o766xxx is answered.
+  logic unused_page;
+  assign unused_page = &{1'b0, ub_page[13:9]};
+
+  cadr_spy_registers spy_registers (
+      .clk        (clk),
+      .rst        (rst),
+      .mclk       (mclk),
+      .ub_msyn    (ub_msyn),
+      .ub_write   (ub_write),
+      .ub_addr    (ub_addr),
+      .ub_wdata   (wdata[15:0]),
+      .ub_ssyn    (ub_ssyn),
+      .ub_rdata   (ub_rdata),
+      .spy_eadr   (spy_eadr),
+      .spy_rdata  (spy_rdata),
+      .run        (run),
+      .promdisable(promdisable),
+      .errstop    (errstop),
+      .stathenb   (stathenb),
+      .mode_speed (mode_speed),
+      .prog_reset (prog_reset),
+      .prog_boot  (prog_boot)
   );
 
   cadr_xbus_ddr main_memory (
@@ -123,7 +185,11 @@ module cadr_memory_path (
   // The acknowledgements, joined as the open-collector `-XBUS.ACK` joins
   // them, and the word from whichever slave answered.
   assign dev_ack = memory_ack || device_ack;
-  assign rdata   = device_ack ? device_rdata : memory_rdata;
+  // The word from whichever slave answered. A Unibus register is sixteen bits
+  // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.
+  assign rdata   = ub_ssyn      ? {16'hffff, ub_rdata}
+                 : device_ack   ? device_rdata
+                                : memory_rdata;
 
 endmodule
 

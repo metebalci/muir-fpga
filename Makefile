@@ -147,7 +147,7 @@ $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
 # real interface underneath.
 MACHINE := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv rtl/cadr_ddr_map.sv \
            rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv rtl/cadr_xbus_ddr.sv \
-           rtl/cadr_memory_path.sv rtl/cadr_machine.sv
+           rtl/cadr_spy_registers.sv rtl/cadr_memory_path.sv rtl/cadr_machine.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_machine \

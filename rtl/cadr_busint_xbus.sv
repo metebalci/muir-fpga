@@ -73,7 +73,15 @@ module cadr_busint_xbus (
     // The Xbus slave.
     output var logic dev_rq,       // -XBUS.RQ, as a positive level
     output var logic dev_write,
-    input  var logic dev_ack       // the slave has given or taken the word
+    input  var logic dev_ack,      // the slave has given or taken the word
+
+    // The Unibus. `unibus` is the decode's: this address is up there rather
+    // than on the Xbus, so the cycle arbitrates for the bus before it runs.
+    input  var logic unibus,
+    output var logic ub_msyn,      // -UB MSYN, as a positive level
+    output var logic ub_write,
+    input  var logic ub_ssyn,      // -UB SSYN: a slave has answered
+    output var logic [2:0] arb_stage
 );
 
   // "it is the responsibility of the bus master to assert good address, write,
@@ -93,9 +101,30 @@ module cadr_busint_xbus (
   // busint::TIMEOUT_NS, which is five whole periods.
   localparam int unsigned NXM_RISES = 6;
 
-  typedef enum logic [1:0] {
+  // --- the Unibus, busint::UNIBUS_* ---
+  //
+  // ARBITRATION IS FIVE STAGES AND ONLY BECAUSE THERE IS ONE MASTER.
+  // `Busint::mclk_edge`'s state machine looks large --- stage 7,
+  // `debug_holds_bbsy`, `LMUB MASTER` waiting behind somebody else --- and
+  // every one of those branches belongs to the *debug cable*, a second master
+  // on this Unibus.  This fabric has no debug cable, so what is left is a
+  // fixed sequence advancing one stage a master clock: 1, 2, 3 with a 200 ns
+  // `SACK` wait, 4, 5, and then the transfer.
+  //
+  // And it runs *once*.  `LMUB MASTER` is set at stage 3 and is only ever
+  // cleared by another master taking the bus, so from the second Unibus cycle
+  // on the machine is already the master and starts at stage 4.  Stages 1 to
+  // 3 happen once in the life of the machine.
+  localparam int unsigned UB_SELECT_T  = 200 / 5;   // -SACK to the grant
+  localparam int unsigned UB_ADDRESS_T = 100 / 5;   // the grant to -UB MSYN
+  localparam int unsigned UB_ACK_T     = 150 / 5;   // -UB SSYN to -LMACK
+  localparam int unsigned UB_STROBE_T  = 100 / 5;   // -UB SSYN to the MD strobe
+
+  typedef enum logic [2:0] {
     IDLE,       // no cycle; -MEMRQ is high
     REQUESTED,  // -MEMRQ is low and the priority logic has not sampled it yet
+    ARB,        // arbitrating for the Unibus
+    UB,         // the Unibus transfer is running
     GRANTED,    // the processor has the bus and the cycle is running
     ACKED       // -MEMACK is up and the word is on the bus
   } state_e;
@@ -111,6 +140,12 @@ module cadr_busint_xbus (
   logic [2:0] tmr_rises;  // rises of the gated output since then
 
   state_e     state;
+  logic [2:0] stage;
+  assign arb_stage = 3'(state);            // where the arbitration has got to
+  logic [8:0] arb_t;            // ticks since -SACK went out
+  logic       ub_master;        // LMUB MASTER: this machine has the Unibus
+  logic       ssyn_seen;
+  logic [9:0] ssyn_at;
   logic       write;            // WRCYC latched for the cycle being run
   logic [9:0] elapsed;          // ticks since the grant
   logic       answered;         // the slave has answered; the deskew is running
@@ -120,6 +155,16 @@ module cadr_busint_xbus (
   // cpu lifts -MEMRQ, which lifts -XBUS.RQ with it.
   assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T)) || state == ACKED;
   assign dev_write = write;
+
+  // The Unibus master's own strobe, UNIBUS_ADDRESS_NS after the grant.
+  assign ub_msyn  = (state == UB && elapsed >= 10'(UB_ADDRESS_T));
+  assign ub_write = write;
+
+  // "MSYN OUT drops at SSYN T100 and -LOADMD rises with it, so the word lands
+  // 50 ns *before* the acknowledgement, where an Xbus word lands with it."
+  logic ub_acked, ub_loadmd;
+  assign ub_acked  = ssyn_seen && (elapsed >= ssyn_at + 10'(UB_ACK_T));
+  assign ub_loadmd = ssyn_seen && (elapsed >= ssyn_at + 10'(UB_STROBE_T));
 
   // The slave is giving or taking the word this very tick.
   logic answering;
@@ -134,15 +179,16 @@ module cadr_busint_xbus (
 
   logic acked;
   assign acked = (state == ACKED)
-              || (state == GRANTED && ((write && answering) || deskewed));
+              || (state == GRANTED && ((write && answering) || deskewed))
+              || (state == UB && ub_acked);
 
-  assign n_memgrant = !(state == GRANTED || state == ACKED);
+  assign n_memgrant = !(state == GRANTED || state == UB || state == ACKED);
   assign n_memack   = !acked;
   // On the Xbus the word lands with the acknowledgement, which the deskew has
   // already accounted for, so -LOADMD and -MEMACK coincide. They do not on the
   // Unibus, where the word comes UNIBUS_STROBE_NS after -UB SSYN and so
   // *before* the acknowledgement, which is why this is a port of its own.
-  assign n_loadmd   = !acked;
+  assign n_loadmd   = !(acked || (state == UB && ub_loadmd));
   // The flag belongs to the cycle standing, as `Ack::timed_out` does: it goes
   // when the cpu lifts -MEMRQ and the cycle is over. What outlives the cycle is
   // the NXM bit in the bus error register at REQERR, which is not this slice.
@@ -163,6 +209,11 @@ module cadr_busint_xbus (
 
     if (rst) begin
       state       <= IDLE;
+      stage       <= 3'd0;
+      arb_t       <= 9'd0;
+      ub_master   <= 1'b0;
+      ssyn_seen   <= 1'b0;
+      ssyn_at     <= 10'd0;
       write       <= 1'b0;
       elapsed     <= 10'd0;
       answered    <= 1'b0;
@@ -175,7 +226,9 @@ module cadr_busint_xbus (
       // oscillator's first fall *strictly after* the grant, so a grant landing
       // on one misses it --- which falls out of the ordering here, the grant's
       // own clear of `tmr_fell` below coming after this.
-      if (state == GRANTED) begin
+      if (arb_t != 9'h1FF) arb_t <= arb_t + 9'd1;
+
+      if (state == GRANTED || state == UB) begin
         if (vco_toggle) begin
           if (!tmr_fell && vco) begin
             tmr_fell <= 1'b1;
@@ -201,13 +254,20 @@ module cadr_busint_xbus (
           if (!n_memrq) begin
             write <= wrcyc;
             if (mclk) begin
-              state       <= GRANTED;
               elapsed     <= 10'd0;
               answered    <= 1'b0;
               answered_at <= 10'd0;
+              ssyn_seen   <= 1'b0;
+              ssyn_at     <= 10'd0;
               tmr_fell    <= 1'b0;
               tmr_rises   <= 3'd0;
               nxm         <= 1'b0;
+              if (unibus) begin
+                state <= ARB;
+                stage <= ub_master ? 3'd4 : 3'd1;
+              end else begin
+                state <= GRANTED;
+              end
             end else begin
               state <= REQUESTED;
             end
@@ -219,13 +279,58 @@ module cadr_busint_xbus (
         // request made just after an edge waits a whole microcycle.
         REQUESTED: begin
           if (mclk) begin
-            state       <= GRANTED;
             elapsed     <= 10'd0;
             answered    <= 1'b0;
             answered_at <= 10'd0;
+            ssyn_seen   <= 1'b0;
+            ssyn_at     <= 10'd0;
             tmr_fell    <= 1'b0;
             tmr_rises   <= 3'd0;
             nxm         <= 1'b0;
+            if (unibus) begin
+              state <= ARB;
+              stage <= ub_master ? 3'd4 : 3'd1;
+            end else begin
+              state <= GRANTED;
+            end
+          end
+        end
+
+        // One stage a master clock, as `Busint::mclk_edge` advances them.
+        ARB: begin
+          if (mclk) begin
+            unique case (stage)
+              3'd1: stage <= 3'd2;
+              // The priority PROM grants, and -SACK goes out: the wait is
+              // UNIBUS_SELECT_NS from here, and stage 3 is where it is spent.
+              3'd2: begin
+                stage <= 3'd3;
+                arb_t <= 9'd0;
+              end
+              // "SACKD withdraws the grant" --- strictly after, so a master
+              // clock landing exactly on the wait does not take it.
+              3'd3: if (arb_t > 9'(UB_SELECT_T)) begin
+                stage     <= 3'd4;
+                ub_master <= 1'b1;
+              end
+              3'd4: stage <= 3'd5;
+              default: begin
+                state   <= UB;
+                elapsed <= 10'd0;
+              end
+            endcase
+          end
+        end
+
+        // -UB MSYN is out and a slave will answer with -UB SSYN, or nothing
+        // will and the timer above ends it.
+        UB: begin
+          if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
+          if (acked) begin
+            state <= ACKED;
+          end else if (ub_msyn && ub_ssyn && !ssyn_seen) begin
+            ssyn_seen <= 1'b1;
+            ssyn_at   <= elapsed;
           end
         end
 
