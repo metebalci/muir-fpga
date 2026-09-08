@@ -869,3 +869,100 @@
 @new
   assign mem_done = (state == DONE) || (state == WRESP);
 @end
+
+
+# ============================================ the generators, on themselves ===
+#
+# Everything above mutates the fabric and asks whether a check notices. These
+# two ask something else: whether the *generator's own assertions* are live.
+#
+# They are here because nothing downstream can stand in for them. `cables.rs`
+# is the only authority on the port list --- regenerate-and-diff catches any
+# edit to what it emits, but not an error in the emitting --- and
+# `busint_xbus.rs` writes the stimulus and the expected outputs both, so a
+# trace agreeing with itself proves nothing at all. In each the guard is an
+# assertion inside the generator, and `make mutants` is the only thing that
+# can ask whether it fires.
+#
+# The check for these is `cargo run`: the generator refusing to write is the
+# mutation being caught. Build and run are separate, so a mutation rustc
+# rejects is BROKEN and not caught.
+#
+# WHAT CANNOT BE MUTATED HERE, and it is worth saying rather than leaving as a
+# gap someone else notices. Deleting an assertion is undetectable by running
+# the program: an assertion that guards good input does nothing when the input
+# is good, so removing it changes no output. What can be tested is whether the
+# assertion catches a *wrong derivation* or a *wrong table*, which is what
+# these do. An assertion nothing below trips is one nothing here can vouch for.
+
+@mutation the-prose-table-disagrees-with-the-netlists
+@check cables_gen
+@file golden/src/cables.rs
+@note cable.rs's own table names nine signals and says which end drives each.
+@note cables.rs reproduces it and stops if the netlists disagree, because
+@note where the prose and the netlists part one of them is wrong. -MEMACK
+@note comes from the bus interface and the processor listens; saying the cpu
+@note drives it too is the disagreement that has to stop the run.
+@old
+        ("-MEMACK", false, true),
+@new
+        ("-MEMACK", true, true),
+@end
+
+@mutation a-totem-pole-output-is-not-counted-as-a-driver
+@check cables_gen
+@file golden/src/cables.rs
+@note The direction of every one of the 92 wires comes from `part::pinout`
+@note and `drive_of`: a wire with no driver on a side is one that side only
+@note listens to. Dropping the plain totem-pole case makes drivers into
+@note listeners wholesale --- the derivation wrong rather than the table ---
+@note and the nine-signal cross-check is what has to notice.
+@old
+                Some(Drive::Totem) => any = true,
+@new
+                Some(Drive::Totem) => {}
+@end
+
+@mutation a-pull-up-is-counted-as-a-driver
+@check cables_gen
+@file golden/src/cables.rs
+@note The other direction: "a pull-up is not a driver, and neither is a
+@note connector pin". Counting them makes listeners into drivers, which
+@note would turn inputs into the value-and-enable pair a bidirectional wire
+@note gets and quietly widen the port list.
+@old
+                Some(Drive::PullUp | Drive::Passive) | None => {}
+@new
+                Some(Drive::PullUp | Drive::Passive) | None => any = true,
+@end
+
+@mutation the-addresses-share-a-factor-with-the-write-period
+@check busint_gen
+@file golden/src/busint_xbus.rs
+@note CLAUDE.md's fifth lesson, and the one bug of the eight with no mutation
+@note of the fabric: addresses visited in rotation with a write every third
+@note cycle, and an address count sharing a factor with three puts writes on
+@note one residue and reads on the others. The integrity check then passes
+@note while testing nothing, with every timing comparison green. Dropping one
+@note of the sixteen leaves fifteen, and fifteen shares three.
+@old
+    0o777,
+@new
+@end
+
+@mutation the-addresses-share-a-factor-with-the-unanswered-period
+@check busint_gen
+@file golden/src/busint_xbus.rs
+@note The same trap on the other period: a cycle in five is left unanswered,
+@note so a count divisible by five puts the timeouts on one residue for ever.
+@note Twenty addresses would share five --- here four of the sixteen are
+@note duplicated to reach it, which keeps every address a real one.
+@old
+    MEMORY_WORDS - 2,
+@new
+    MEMORY_WORDS - 2,
+    0,
+    1,
+    2,
+    3,
+@end
