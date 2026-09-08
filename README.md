@@ -89,10 +89,10 @@ take the ported model and refuse the netlist.
 3. **The bus interface and the DDR bridge**, driven by a test master on the
    92 cable wires --- the Xbus handshake, `-HANG`, the NXM timeout and the
    AXI plumbing proved without a processor. The memory cycle and the NXM
-   timeout are **done**, and so is the address decode that says which of them
-   answers; the DDR bridge itself, `-HANG`, the Unibus path and its
-   arbitration, the interface's own registers and the debug cable are each
-   their own slice.
+   timeout are **done**, the address decode is **done**, and so is the bridge
+   in front of DDR and the path that puts the three together; the AXI adapter
+   behind it, `-HANG`, the Unibus path and its arbitration, the interface's own
+   registers and the debug cable are each their own slice.
 4. **The processor**, ported from `rtl.rs` first, then the netlist behind the
    same ports, each checked against the other and against muir.
 
@@ -141,6 +141,7 @@ stale silently.
 | `rtl/cadr_cables.svh` | both netlists through `part::pinout`, and `cable.rs`'s own table | passing |
 | `rtl/cadr_busint_xbus.sv` | `busint::Busint`, 40,000 ticks over 146 cycles | passing |
 | `rtl/cadr_xbus_decode.sv` | `busint::decode`, every address of the 22-bit space | passing |
+| `rtl/cadr_memory_path.sv` | the three together: muir for the timing, the stimulus for the data | passing |
 
 Every check is mutation-tested, and every check requires coverage, so none can
 pass while exercising nothing. Moving the clock's normal tap by one tick or the
@@ -158,6 +159,45 @@ how long it has been up. And the timeout oscillator at REQTIM 0A01 **free-runs
 from power-on**, the grant only opening its output, so restarting it at the
 grant --- which is the obvious way to write it --- gives the wrong instant on
 every cycle but the lucky ones. All three are caught by mutation.
+
+## The first piece with no reference
+
+Everything else here is a port, held to muir tick for tick. Nothing in MIT's
+drawings is a DDR controller, and `busint::MemoryBoard` models a board of 4116s
+refreshing itself, which is not what this is --- so `cadr_xbus_ddr.sv` is held
+to what has to be true of it instead: **a read returns the word an earlier
+write put at that address**, while the cycle around it still keeps muir's
+timing.
+
+The bridge is deliberately thin. It adds no ticks: `mem_req` follows
+`-XBUS.RQ` and `dev_ack` follows `mem_done`, neither with a register in the
+way, so the whole latency belongs to the AXI adapter behind it and shows up as
+the device's answer time. That is what keeps it comparable with a model whose
+device answers `device_ns` after `-XBUS.RQ` and not `device_ns` plus whatever
+the slave costs. Registering it later would not be wrong --- the interface
+waits for any slow slave --- but it would be a change to measure.
+
+Two things about the integrity half are worth writing down, because both were
+wrong first.
+
+**The shadow has to come from the stimulus, never from the DUT.** Keyed by the
+bridge's own `mem_addr` and filled from its own `mem_wdata`, it moves with the
+bug: a bridge that wrote the address instead of the data, or dropped an address
+bit, wrote consistent nonsense and every read agreed with it. Both pass only
+because the shadow is now keyed by the trace's `phys` and filled with the
+trace's `wdata`, and both are in the mutation list.
+
+**Reads and writes have to be able to meet.** The addresses are visited in
+rotation and a write happens every third cycle, so an address count sharing a
+factor with three means writes land only on one residue and reads on the
+others --- the integrity check then passes while testing nothing, with every
+timing comparison still green. The generator asserts the counts are coprime
+rather than trusting a comment.
+
+Known and untested: the bridge holds `mem_req` up until `mem_done`, and a
+mutation that leaves it up afterwards is not caught, because nothing in this
+model looks. It will matter to the AXI adapter, where a request left asserted
+would re-issue.
 
 ## Where this differs from muir
 
