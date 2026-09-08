@@ -22,9 +22,11 @@
 //! muir opens the image read-write and a written block goes into the file.
 //! A trace taken against a pack it is itself rewriting is not reproducible,
 //! and would edit vendored material besides.  So this is given a path to a
-//! copy that the Makefile decompresses out of the release archive --- the
-//! one `muir/tools/fetch-system-100.sh` checks the SHA-256 of --- and the
-//! starting state is the same every run.
+//! copy that the Makefile decompresses out of the release archive in this
+//! repository's own `vendor/`, whose SHA-256 the rule checks before using
+//! it, and the starting state is the same every run.  The archive is
+//! gitignored, so that check is the only thing that would notice it being
+//! replaced --- which is why it is there and not merely tidy.
 //!
 //! Attaching the pack read-only is *not* the answer and was measured: the
 //! drive's own read-only switch presents MIT's write fault, the band halts
@@ -102,9 +104,10 @@ fn main() {
         }
     }
 
-    // The path is required rather than defaulted. A default would be a path
-    // into muir's `vendor/run`, which is the working image the machine
-    // rewrites --- exactly the thing this must not open.
+    // The path is required rather than defaulted. Any default would be a
+    // path to somebody's working image --- muir's `vendor/run` is the
+    // obvious one --- and that is the file the machine rewrites, which is
+    // exactly what this must not open.
     let Some(pack) = pack else {
         fail("--pack <image> is required: a copy of the release pack, not the vendored one");
     };
@@ -112,8 +115,9 @@ fn main() {
     if !path.exists() {
         fail(&format!(
             "{pack}: no such pack.\n\
-             It is made by decompressing the release archive; `make` does that, and\n\
-             muir's tools/fetch-system-100.sh is what puts the archive there."
+             It is made by decompressing vendor/system-100-0/disk-sys-100-0.img.gz;\n\
+             `make` does that, and muir's tools/fetch-system-100.sh is what fetches\n\
+             the release the archive is copied from."
         ));
     }
 
