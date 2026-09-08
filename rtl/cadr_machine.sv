@@ -27,10 +27,13 @@
 //
 // WHAT IS STILL OUTSIDE.  The console's registers, which no fabric console
 // writes yet; the number of memory boards, which is the machine's
-// configuration; and the DDR itself, behind `mem_req`/`mem_done`.  The Unibus
-// is outside too, and not merely unbuilt: `cadr_busint_xbus.sv` is the Xbus
-// half, and 347 of the System band's 141,849 bus cycles arbitrate for a bus
-// that is not here.
+// configuration; the DDR itself, behind `mem_req`/`mem_done`; and every Xbus
+// slave that is not main memory, behind `dev_rq`/`device_ack`.  The last of
+// those is the wall this composition hits: the boot PROM reads the disk
+// controller's status register at microcycle 537,842 and there is no disk
+// controller.  The Unibus is outside too, and not merely unbuilt:
+// `cadr_busint_xbus.sv` is the Xbus half, and 347 of the System band's
+// 141,849 bus cycles arbitrate for a bus that is not here.
 
 `default_nettype none
 
@@ -79,9 +82,18 @@ module cadr_machine #(
 
     // --- what the bus interface reports, for a check to watch
     output var logic        wrcyc,        // WRCYC, so a check can see the direction
+
+    // --- the Xbus, for a slave that is not main memory
+    output var logic        device,       // the decode put this cycle outside memory
+    output var logic        dev_rq,       // -XBUS.RQ
+    output var logic        dev_write,
+    output var logic [21:0] phys,         // the address it is asking about
+    input  var logic        device_ack,   // -XBUS.ACK from that slave
+    input  var logic [31:0] device_rdata,
+    output var logic        nxm,          // Xbus space with nothing in it
+    output var logic        unibus,       // the Unibus, which is its own slice
     output var logic        memstart,     // MEMSTART, which also addresses the map
     output var logic        timed_out,
-    output var logic        device,
 
     // --- PS DDR3, behind the AXI adapter
     output var logic        mem_req,
@@ -95,7 +107,6 @@ module cadr_machine #(
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;
   logic        n_memrq, rdcyc;
-  logic [21:0] phys;
   logic [31:0] wdata, rdata;
   logic        n_memgrant, n_memack, n_loadmd;
 
@@ -160,6 +171,12 @@ module cadr_machine #(
       .timed_out  (timed_out),
       .boards     (boards),
       .device     (device),
+      .dev_rq     (dev_rq),
+      .dev_write  (dev_write),
+      .device_ack (device_ack),
+      .device_rdata(device_rdata),
+      .nxm        (nxm),
+      .unibus     (unibus),
       .mem_req    (mem_req),
       .mem_write  (mem_write),
       .mem_addr   (mem_addr),
