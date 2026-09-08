@@ -83,8 +83,8 @@ part tables.
 | `cadr_axi_master.sv` | the AXI protocol, every tick, and read-back |
 
 Every check is mutation-tested and every check requires coverage, so none can
-pass while exercising nothing. `CLAUDE.md` has what each is holding to, where
-the fabric parts from muir, and what went wrong getting here.
+pass while exercising nothing. Where the fabric parts from muir, and why, is
+recorded in the header of the module it applies to.
 
 ## Layout
 
