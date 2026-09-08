@@ -58,7 +58,8 @@ take the ported model and refuse the netlist.
 3. **The bus interface and the DDR bridge**, driven by a test master on the
    92 cable wires --- the Xbus handshake, `-HANG`, the NXM timeout and the
    AXI plumbing proved without a processor. The memory cycle and the NXM
-   timeout are **done**; the DDR bridge, `-HANG`, the Unibus path and its
+   timeout are **done**, and so is the address decode that says which of them
+   answers; the DDR bridge itself, `-HANG`, the Unibus path and its
    arbitration, the interface's own registers and the debug cable are each
    their own slice.
 4. **The processor**, ported from `rtl.rs` first, then the netlist behind the
@@ -68,6 +69,11 @@ Of the 92 wires, 15 are inputs, 29 outputs, and 48 --- `MEM<31:0>` and
 `SPY<15:0>` --- are driven from both ends. Fabric has no bus to fight over, so
 those are carried as a value and an enable out with the resolved wire back in,
 and the resolution is the cable's rather than either board's.
+
+The five cables are named by both ends, because the processor end alone is
+ambiguous: `1AJ1` is the CADR board's connector **and** the ICMEM board's.
+They are `1AJ1-J11` (20 wires), `1AJ1-J08` (12, the ICMEM board's),
+`1BJ1-J12` (20), `1CJ1-J09` (20) and `3AJ1-J07` (20).
 
 Names are mangled to legal identifiers, and this is where that was settled,
 because everything generated later inherits it: a leading `-` becomes `n_`,
@@ -87,6 +93,12 @@ the model cannot drift apart.
 
     make check
 
+The address decode is checked at **every** one of the 4,194,304 addresses the
+22-bit Xbus can carry, for four board counts --- 16.7 million evaluations in
+about half a second, so there is no reason to sample. The reference for it is
+written as runs of equal answer, eight per board count, which keeps the file
+readable against the constants it came from while the check stays exhaustive.
+
 Needs [Verilator](https://verilator.org) and a Rust toolchain, and muir
 checked out beside this repository. Nothing here vendors a copy of muir's
 netlists or part tables: they are the source of truth and a copy would go
@@ -97,6 +109,7 @@ stale silently.
 | `rtl/cadr_phase_gen.sv` | `clock::Behavioural`, 12,000 ticks | passing |
 | `rtl/cadr_cables.svh` | both netlists through `part::pinout`, and `cable.rs`'s own table | passing |
 | `rtl/cadr_busint_xbus.sv` | `busint::Busint`, 40,000 ticks over 146 cycles | passing |
+| `rtl/cadr_xbus_decode.sv` | `busint::decode`, every address of the 22-bit space | passing |
 
 Every check is mutation-tested, and every check requires coverage, so none can
 pass while exercising nothing. Moving the clock's normal tap by one tick or the
