@@ -196,6 +196,14 @@ current:
 # under BUILD, so `clean` takes them with it.
 MUTDIR ?= $(BUILD)/mutants
 
+# Mutate a commit, not the files on disk. Three sessions share this tree, and
+# a run that reads it reports on whatever it held at the time --- a baseline
+# that passed at one moment failing twenty-four microcycles in at the next,
+# with the results either side belonging to two different designs. To try
+# uncommitted work, call `mutations/run.py` directly and read its dirty-tree
+# warning.
+MUTREV ?= HEAD
+
 # The goldens every check needs, including the processor's two: the stage-4
 # mutations are of `cadr_microcycle.sv`, so a run from a clean build directory
 # needs the traces they are checked against. Without them the runner stops and
@@ -204,7 +212,7 @@ mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
-	    --verilator '$(VERILATOR)' --cargo '$(CARGO)'
+	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --rev $(MUTREV)
 
 # The runner's own guarantees, against lists written to fail: a mutation
 # that does not apply, one that lint rejects, a survivor with nothing
