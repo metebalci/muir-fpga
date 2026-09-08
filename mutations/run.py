@@ -133,6 +133,33 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The processor, twice over: the same module and the same testbench
+    # against two programs.  Route a mutation to the cheaper one unless the
+    # band is the only thing that reaches what it breaks --- the map, the
+    # dispatch memory's read, Q's shifter, the stack RAM, SINTR, -ILONG.
+    # The boot PROM is 600,000 microcycles and 84 MB; the band is 2,200,000
+    # and 297 MB, and takes about four times as long to run.
+    #
+    # `files` places what the module reads at elaboration: PROM_HEX defaults
+    # to a *relative* build/boot_prom.hex, and the runner builds each mutant
+    # with its own copy as the working directory, so the image has to be put
+    # where that path resolves.
+    "microcycle": {
+        "sources": ["rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv"],
+        "top": "cadr_microcycle",
+        "tb": "tb/cadr_microcycle_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "rtl.golden",
+        "files": [("boot_prom.hex", "build/boot_prom.hex")],
+    },
+    "microcycle_sys": {
+        "sources": ["rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv"],
+        "top": "cadr_microcycle",
+        "tb": "tb/cadr_microcycle_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "rtl_sys.golden",
+        "files": [("boot_prom.hex", "build/boot_prom.hex")],
+    },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
     # and `busint_xbus` writes the stimulus AND the expected outputs, so a
@@ -310,17 +337,37 @@ def die(msg):
     sys.exit(2)
 
 
-def copy_tree(dest, with_golden=False):
-    """A private rtl/ and tb/ to mutate.  Never the working tree."""
+def copy_tree(dest, with_golden=False, rev=None):
+    """A private rtl/ and tb/ to mutate.  Never the working tree.
+
+    With `rev`, the copy comes from that commit rather than from the files on
+    disk.  That is not a convenience: this repository is worked on by more
+    than one session at a time, and a run that reads the working tree reads
+    whatever the others have half-written.  It happened --- a baseline that
+    passed at one moment failed twenty-four microcycles in at the next,
+    because the module under it had been saved twice in between, and the
+    results either side of that were of two different designs.  A mutation
+    run against a moving tree is not wrong so much as meaningless.
+    """
     if os.path.exists(dest):
         shutil.rmtree(dest)
     os.makedirs(dest)
-    for d in ("rtl", "tb"):
-        shutil.copytree(os.path.join(REPO, d), os.path.join(dest, d))
-    if with_golden:
-        # Without target/, which is a build directory and can be gigabytes.
-        shutil.copytree(os.path.join(REPO, "golden"),
-                        os.path.join(dest, "golden"),
+    dirs = ["rtl", "tb"] + (["golden"] if with_golden else [])
+    if rev:
+        # `git archive` gives the committed content and nothing else, so an
+        # untracked or half-saved file cannot reach the copy.
+        tar = subprocess.Popen(["git", "-C", REPO, "archive", rev] + dirs,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        rc = subprocess.call(["tar", "-x", "-C", dest], stdin=tar.stdout)
+        tar.stdout.close()
+        err = tar.communicate()[1].decode("utf-8", "replace")
+        if tar.returncode != 0 or rc != 0:
+            die("git archive %s: %s" % (rev, err.strip() or "failed"))
+        if with_golden:
+            shutil.rmtree(os.path.join(dest, "golden", "target"), True)
+        return
+    for d in dirs:
+        shutil.copytree(os.path.join(REPO, d), os.path.join(dest, d),
                         ignore=shutil.ignore_patterns("target"))
 
 
@@ -420,6 +467,13 @@ def build_and_run(args, work, check):
         return generator_check(args, work, spec)
     if check == "cables":
         return cables_check(args, work)
+
+    for src, dest in spec.get("files", []):
+        where = os.path.join(work, dest)
+        if not os.path.exists(where):
+            if not os.path.isdir(os.path.dirname(where)):
+                os.makedirs(os.path.dirname(where))
+            shutil.copy(os.path.join(args.goldens, src), where)
 
     obj = os.path.join(work, "obj_" + check)
     cmd = [args.verilator, "--cc", "--exe", "--build", "-Wall"]
@@ -744,6 +798,9 @@ def main():
     # lint rejects, are loud --- can be demonstrated against a list written to
     # fail, rather than only asserted in a comment.
     ap.add_argument("--list", default=LIST, help="a list other than list.txt")
+    ap.add_argument("--rev", default=None,
+                    help="mutate this commit's sources rather than the files "
+                         "on disk; use it whenever anyone else may be editing")
     ap.add_argument("--self-test", action="store_true",
                     help="check the runner's own guarantees, not the fabric")
     args = ap.parse_args()
@@ -779,6 +836,18 @@ def main():
         if not mutations:
             die("--only %s matches nothing" % args.only)
 
+    if args.rev:
+        sys.stdout.write("sources: %s\n" % args.rev)
+    else:
+        dirty = subprocess.run(
+            ["git", "-C", REPO, "status", "--porcelain", "--", "rtl", "tb",
+             "golden"], stdout=subprocess.PIPE).stdout.decode("utf-8", "replace")
+        if dirty.strip():
+            sys.stdout.write(
+                "sources: the working tree, and it is not clean --- these "
+                "results are\n         of whatever it holds right now:\n%s"
+                % "".join("         %s\n" % l for l in dirty.strip().split("\n")))
+
     for warning in check_makefile():
         sys.stderr.write("mutations: warning: %s\n" % warning)
 
@@ -801,7 +870,7 @@ def main():
     generators = any(CHECKS[c].get("kind") == "generator" for c in wanted)
     if generators:
         muir_beside(args.work)
-    copy_tree(base, with_golden=generators)
+    copy_tree(base, with_golden=generators, rev=args.rev)
     baseline_bad = False
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         futures = dict((pool.submit(build_and_run, args, base, c), c)
@@ -825,7 +894,8 @@ def main():
 
     def one(m):
         work = os.path.join(args.work, m.name)
-        copy_tree(work, with_golden=CHECKS[m.check].get("kind") == "generator")
+        copy_tree(work, with_golden=CHECKS[m.check].get("kind") == "generator",
+                  rev=args.rev)
         problem = apply(work, m, args.list)
         if problem:
             m.verdict, m.detail = UNAPPLIED, problem
