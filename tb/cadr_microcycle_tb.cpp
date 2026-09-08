@@ -464,7 +464,7 @@ int main(int argc, char **argv) {
           const long slip = static_cast<long>(got) - static_cast<long>(want);
           if (arbitrated[k]) {
             ++arb_skipped;
-          } else if (r.v[kStall] && slip >= -kTickNs && slip <= kTickNs) {
+          } else if (r.v[kStall] && slip > -kTickNs && slip < kTickNs) {
             ++sub_tick;
             if (!any_slip || slip > worst_slip) worst_slip = slip;
             if (!any_slip || slip < best_slip) best_slip = slip;

@@ -87,6 +87,7 @@ module cadr_machine #(
     output var logic        ub_ssyn_o,
     output var logic [2:0]  arb_stage,
     output var logic        n_memrq_o,
+    output var logic        n_memack_o,
     output var logic [17:0] ub_addr_o,
     output var logic [15:0] ub_rdata_o,
     output var logic        n_loadmd_o,
@@ -215,6 +216,7 @@ module cadr_machine #(
   logic unused;
   assign n_loadmd_o = n_loadmd;
   assign n_memrq_o  = n_memrq;
+  assign n_memack_o = n_memack;
   assign rdcyc_o    = rdcyc;
   assign unused = &{1'b0, prog_reset, prog_boot};
 
