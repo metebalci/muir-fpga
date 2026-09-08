@@ -1445,11 +1445,30 @@
 @note wrong instant on every cycle, and nothing either half could notice
 @note alone.
 @note
-@note It survives, and the seam is not the reason: `.mclk (mclk &&
-@note 1'b0)`, which makes the interface never grant at all, IS
-@note caught. So a memory cycle does go through and the check does
-@note notice it stopping --- it is the INSTANT of the grant that
-@note goes unseen. Issue #9 has the two candidates.
+@note It survives, and MEASURING RATHER THAN REASONING has moved this
+@note twice. It is not that the seam is dead: `.mclk (mclk && 1'b0)`, so
+@note the interface never grants at all, IS caught. It is not that the
+@note memory surface is thin, which was the first diagnosis and is now
+@note disproved --- the check runs 600,000 microcycles and 17,466 bus
+@note cycles, thirty-four times what it saw when this was filed, and this
+@note still survives. And it is not a question of magnitude: `.mclk (mclk |
+@note 1'b1)`, granting the instant -MEMRQ is seen and never waiting for a
+@note boundary, survives too.
+@note
+@note That last one is EQUIVALENT and provably so, which is worth having
+@note written down: `mclk` and `n_memrq` are registered on the same clock
+@note edge in the processor, so -MEMRQ only ever changes at a boundary ---
+@note the tick where `mclk` is already high. The correct design therefore
+@note grants at the first opportunity there is, and a master clock held
+@note high offers no earlier one. It is not a mutation at all.
+@note
+@note What is left is the real difference and the real hole: inverted,
+@note `mclk` is LOW at the boundary, so the grant lands one tick late. The
+@note machine check does see memory timing --- a tick added to the bridge's
+@note answer IS caught --- but a tick added at the grant is absorbed, and
+@note I have not explained where. That is the property to state rather
+@note than a date: this closes when a memory cycle's length stops being
+@note insensitive to a single tick at its start.
 @old
       .mclk       (mclk),
       .n_memrq    (n_memrq),
@@ -1459,7 +1478,6 @@
 @end
 
 @mutation the-data-cable-back-from-memory-is-rotated
-@hole #9
 @check machine
 @file rtl/cadr_machine.sv
 @note MEM<31:0> comes back from the bus interface to the processor, and this
@@ -1475,20 +1493,16 @@
 @note word comes before the acknowledgement. Until that path exists there is
 @note no mutation of the crossing to write.
 @note
-@note It survives, and with the inverted master clock it says what
-@note #9 is really about: the boot PROM's first memory cycle is at
-@note microcycle 535,791 and this check stops at 537,841, so its
-@note whole memory surface is about two thousand microcycles and
-@note five hundred bus cycles at the very end of the run. Both
-@note should start failing on their own when the Unibus lands.
+@note IT SURVIVED ONCE AND DOES NOT NOW, and the record is kept for what
+@note that says. It was `@hole #9` while the composed check stopped at the
+@note wall, 537,845 microcycles and 515 bus cycles at the very end of the
+@note run --- too few reads for a rotated word to reach a compared column.
+@note With the machine writing its own mode register the check runs the
+@note whole boot PROM, 17,466 bus cycles, and this is caught.
 @note
-@note Not when the band runs under composition, which was the first guess
-@note and is wrong: measured, the band hits the wall at the SAME microcycle
-@note as the boot PROM, 537,846, with the same 515 memory cycles, and the
-@note two traces are byte-identical for their first 537,849 rows. Both boot
-@note the same PROM, and the first Unibus cycle is DISK-RECALIBRATE reading
-@note the controller's status register BEFORE the disk answers, so a pack
-@note underneath changes nothing.
+@note So the hole closed by the surface growing, with nothing changed here
+@note and nothing fixed: the prediction was that it would, and the run said
+@note so by itself, as CLOSED, naming the issue and the line to delete.
 @old
       .rdata       (rdata),
 @new
