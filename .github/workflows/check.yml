@@ -52,7 +52,11 @@ jobs:
 
       # Recorded because a check that disagrees between two machines is
       # usually a toolchain difference, and this is where to look first.
+      # Run from inside the checkout, or rustup reports the runner's default
+      # instead of the pin in rust-toolchain.toml --- which is the difference
+      # that would matter.
       - name: Versions
+        working-directory: muir-fpga
         run: |
           verilator --version
           rustc --version

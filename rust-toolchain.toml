@@ -1,0 +1,18 @@
+# Pinned to the same compiler muir pins, and for muir's reason: 1.98.0 and
+# 1.98.1 miscompile `chaos::board::Turn::tc` at `opt-level = 3` with
+# `codegen-units = 1`. golden builds muir itself --- it is the only dependency,
+# by path --- so the reference traces come out of that code and inherit the bug.
+# muir's own rust-toolchain.toml has the whole account, including which
+# nightlies bracket the change.
+#
+# **This file must track muir's. When muir moves to 1.99, move this with it.**
+#
+# At the repository root rather than in golden/, which is where it belongs by
+# rights: rustup resolves the toolchain from the working directory and its
+# ancestors, not from --manifest-path, and the Makefile runs
+# `cargo --manifest-path golden/Cargo.toml` from here. A file in golden/ would
+# be silently ignored by every `make check` and honoured only by someone who
+# happened to cd there first. From here it covers both.
+[toolchain]
+channel = "1.99.0-beta.4"
+components = ["clippy", "rustfmt"]
