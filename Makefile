@@ -20,7 +20,8 @@ VFLAGS := --cc --exe --build -Wall
 
 .PHONY: check cables current clean
 
-check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass current
+check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
+       $(BUILD)/xbus_decode.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -49,6 +50,21 @@ $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus: rtl/cadr_busint_xbus.sv tb/cadr_busi
 
 $(BUILD)/busint_xbus.pass: $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
 	$(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
+	@touch $@
+
+# ------------------------------------------------------------ address decode
+
+# Checked at every one of the 4,194,304 addresses the 22-bit Xbus can carry,
+# for each board count, so the reference is written as runs and expanded.
+$(BUILD)/xbus_decode.golden: golden/src/xbus_decode.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin xbus_decode > $@
+
+$(BUILD)/obj_xbus_decode/Vcadr_xbus_decode: rtl/cadr_xbus_decode.sv tb/cadr_xbus_decode_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_xbus_decode \
+	    --top-module cadr_xbus_decode rtl/cadr_xbus_decode.sv tb/cadr_xbus_decode_tb.cpp
+
+$(BUILD)/xbus_decode.pass: $(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/xbus_decode.golden
+	$(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/xbus_decode.golden
 	@touch $@
 
 # ------------------------------------------------------------------- cables

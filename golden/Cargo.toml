@@ -17,5 +17,9 @@ path = "src/cables.rs"
 name = "busint_xbus"
 path = "src/busint_xbus.rs"
 
+[[bin]]
+name = "xbus_decode"
+path = "src/xbus_decode.rs"
+
 [dependencies]
 muir = { path = "../../muir" }
