@@ -3,27 +3,34 @@
 #
 # muir-fpga: the CADR in fabric.
 #
-#   make check     regenerate the reference traces and check the RTL against them
-#   make clean     remove build/
+#   make check      everything below
+#   make cables     regenerate the processor's port list from muir
+#   make clean      remove build/
+#
+# Everything is checked against muir, which must be checked out beside this
+# repository. Nothing here vendors a copy of its netlists or part tables.
 
 VERILATOR ?= verilator
 CARGO     ?= cargo
 
 BUILD := build
+GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
-VFLAGS := --cc --exe --build -Wall -Wno-fatal \
+VFLAGS := --cc --exe --build -Wall \
           -Mdir $(BUILD)/obj_phase_gen \
           --top-module cadr_phase_gen
 
-.PHONY: check clean golden
+.PHONY: check cables current clean
 
-check: $(BUILD)/phase_gen.pass
+check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass current
+
+# ---------------------------------------------------------------- phase gen
 
 # The reference trace, out of muir's own clock::Behavioural. It carries the
 # stimulus as well as the expected outputs, so the testbench and the model
 # cannot drift apart.
 $(BUILD)/phase_gen.golden: golden/src/phase_gen.rs golden/Cargo.toml | $(BUILD)
-	$(CARGO) run --quiet --manifest-path golden/Cargo.toml --release --bin phase_gen > $@
+	$(GOLDEN) --release --bin phase_gen > $@
 
 $(BUILD)/obj_phase_gen/Vcadr_phase_gen: rtl/cadr_phase_gen.sv tb/cadr_phase_gen_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) rtl/cadr_phase_gen.sv tb/cadr_phase_gen_tb.cpp
@@ -32,7 +39,26 @@ $(BUILD)/phase_gen.pass: $(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_g
 	$(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
 	@touch $@
 
-golden: $(BUILD)/phase_gen.golden
+# ------------------------------------------------------------------- cables
+
+# The processor's port list. Generated, and committed, so that a checkout
+# builds without muir; `current` is what keeps the committed copy honest.
+cables:
+	$(GOLDEN) --bin cables
+
+$(BUILD)/cables.pass: rtl/cadr_cables.svh rtl/cadr_cables_lint.sv | $(BUILD)
+	$(VERILATOR) --lint-only -Wall --top-module cadr_cables_lint -Irtl \
+	    rtl/cadr_cables_lint.sv
+	@touch $@
+
+# The generated files have to be the ones the generator writes today. Same
+# discipline as cadr4 next door: regenerate, and fail if anything moved.
+current:
+	@$(GOLDEN) --bin cables
+	@git diff --quiet --exit-code HEAD -- rtl/cadr_cables.svh rtl/cadr_cables.map \
+	    rtl/cadr_cables_lint.sv \
+	    || { echo "generated files are stale: run 'make cables' and commit"; exit 1; }
+	@echo "ok: generated files are current"
 
 $(BUILD):
 	@mkdir -p $(BUILD)

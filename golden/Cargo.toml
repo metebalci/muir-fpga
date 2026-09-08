@@ -9,5 +9,9 @@ description = "Reference traces for muir-fpga, taken from muir itself."
 name = "phase_gen"
 path = "src/phase_gen.rs"
 
+[[bin]]
+name = "cables"
+path = "src/cables.rs"
+
 [dependencies]
 muir = { path = "../../muir" }
