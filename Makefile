@@ -112,7 +112,8 @@ $(BUILD)/xbus_decode.pass: $(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/x
 # boot PROM. Not a scripted stimulus: a real program, one line a microcycle.
 # The trace carries what the fabric cannot yet compute as well as what it must,
 # and the testbench prints which is which.
-$(BUILD)/rtl.golden: golden/src/rtl.rs golden/Cargo.toml | $(BUILD)
+$(BUILD)/rtl.golden: golden/src/rtl.rs golden/src/trace.rs \
+                    golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin rtl > $@
 
 # MIT's boot PROM as a $$readmemh image, read at elaboration. Generated, never
@@ -227,7 +228,8 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 SYS100_GZ  := vendor/system-100-0/disk-sys-100-0.img.gz
 SYS100_SHA := bab08874cc35ab129b40daf1602dbaf28e9fe818a81042148c3deb8d70a465a0
 
-$(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/Cargo.toml | $(BUILD)
+$(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/src/trace.rs \
+                        golden/Cargo.toml | $(BUILD)
 	@if [ ! -f $(SYS100_GZ) ]; then \
 	    echo "# skipped: the System 100 release is not here" > $@; \
 	    echo "rtl_sys: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
