@@ -641,10 +641,16 @@
 @note A cycle to an address with nothing at it reaches no slave and the
 @note interface's own timer ends it. A bridge that answered anyway would take
 @note the NXM timeout out of the machine altogether.
+@note
+@note Reads `nxm` where it once read `is_nxm`: the decode's `nxm`
+@note became a port of the path rather than a wire inside it when
+@note the Xbus was brought out, and the mutation went BROKEN
+@note rather than quietly passing --- which is the runner earning
+@note its keep on a record that had rotted under a peer's change.
 @old
       .sel      (is_memory),
 @new
-      .sel      (is_memory | is_nxm),
+      .sel      (is_memory | nxm),
 @end
 
 @mutation every-cycle-is-a-read-on-the-xbus
