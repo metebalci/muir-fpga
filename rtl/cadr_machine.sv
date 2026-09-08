@@ -78,6 +78,7 @@ module cadr_machine #(
     output var logic        clock_edge,
 
     // --- what the bus interface reports, for a check to watch
+    output var logic        wrcyc,        // WRCYC, so a check can see the direction
     output var logic        memstart,     // MEMSTART, which also addresses the map
     output var logic        timed_out,
     output var logic        device,
@@ -93,7 +94,7 @@ module cadr_machine #(
 
   // The cables, named at both ends as `cadr_cables.map` has them.
   logic        mclk;
-  logic        n_memrq, wrcyc, rdcyc;
+  logic        n_memrq, rdcyc;
   logic [21:0] phys;
   logic [31:0] wdata, rdata;
   logic        n_memgrant, n_memack, n_loadmd;
