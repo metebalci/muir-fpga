@@ -3,14 +3,18 @@
 The project page. Hand-written files, no build step and no generator, the same
 way [muir's `site/`](https://github.com/metebalci/muir/tree/main/site) is:
 
-    index.html    the architecture drawing, and nothing else
+    index.html    the architecture drawing and nothing else --- no
+                  heading, no caption, no prose. The drawing carries its
+                  own title inside it
     full-page.html
-                  a fuller draft kept for later: the same drawing with the
-                  target and its block-RAM budget, the fabric/Linux split,
-                  a second drawing of the Xbus address space, and where
-                  things stand. Deliberately not committed --- it is in
-                  .gitignore with a TEMPORARY marker --- and it is here to
-                  be drawn from rather than published as it stands
+                  a fuller draft kept for later: the same drawing with its
+                  caption, the target and its block-RAM budget, the
+                  fabric/Linux split, a second drawing of the Xbus address
+                  space, and where things stand. Deliberately not committed
+                  --- it is in .gitignore with a TEMPORARY marker --- and it
+                  is here to be drawn from rather than published as it
+                  stands. Anything explaining the drawing belongs here, not
+                  on index.html
     style.css     muir's stylesheet, with one change --- see below
     fonts/        Archivo and IBM Plex Mono, so a visitor does not have to
                   ask a third party for the page to be readable
