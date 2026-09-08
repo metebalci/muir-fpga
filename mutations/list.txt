@@ -1,0 +1,845 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list: bugs the checks have to catch.
+#
+# Every record below breaks the fabric in one specific way.  `make mutants`
+# applies each to a copy of rtl/ and tb/, rebuilds, and runs the check that is
+# supposed to notice.  A mutation the check catches is a check doing its job.
+# One that survives is a hole, and it stays in the list until the check is
+# fixed --- it is never quietly dropped.
+#
+# WHERE THE LIST CAME FROM.  CLAUDE.md's "What went wrong, and what caught it"
+# records eight bugs, every one of which passed something before it was found.
+# Those are the seed, because a check that would not catch a bug that was
+# really made is not a check.  In order, and by the name each has here:
+#
+#   -MEMACK on a write is combinational
+#       memack-registered-on-a-write
+#   a request standing at the master clock edge is granted at that edge
+#       grant-waits-for-a-later-edge
+#   the timeout oscillator free-runs from power-on
+#       timeout-oscillator-restarted-at-the-grant
+#   a shadow memory must come from the stimulus, never the DUT
+#       bridge-writes-the-address-instead-of-the-data
+#       bridge-drops-an-address-bit
+#   reads and writes must be able to meet
+#       NOT HERE.  That one is in the stimulus generator rather than in the
+#       fabric --- golden/src/busint_xbus.rs asserts the coprimality --- and a
+#       mutation of it needs golden/ copied and rebuilt per mutation.  Issue
+#       #6.  So the claim holds for seven of the eight, not eight.
+#   a slave that only records the address cannot see a duplicate handshake
+#       awvalid-held-up-after-awready
+#   a stimulus more polite than the real consumer tests less
+#       master-returns-to-idle-early
+#   mutation runners must not hide build failures
+#       NOT A MUTATION.  It is a property of the runner, and run.py holds it:
+#       nothing reuses a build directory, and a build that fails is reported
+#       as BROKEN and exits non-zero rather than counting as anything.
+#
+# The rest of the list is not a regression suite for those.  It walks the
+# constants, the boundaries and the handshakes of each check in turn, because
+# the question is whether the check covers its module, not whether it covers
+# eight remembered afternoons.
+#
+# LINT MUST NOT DO THE CATCHING.  Verilator runs -Wall with warnings fatal, so
+# a mutation that leaves a signal or even a *bit* of a signal unread fails to
+# build and the check never sees it.  That is why several records below are
+# written to keep every bit used --- the address mixed into the word rather
+# than replacing it, a constant moved rather than a term deleted.  Where the
+# obvious way to write a bug would be rejected by lint, the note says so.
+#
+# THE FORMAT.  Records are literal text, not patches: no line numbers and no
+# context, so a record rots only when the lines it actually names change.
+# `@old` must match its file exactly once or the run fails.  Every line
+# between `@old`, `@new` and `@end` is source, verbatim, including its
+# leading whitespace.
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @check     which of the six checks has to catch it
+#   @file      which file to mutate; the check must build it
+#   @note      prose, repeatable; printed when the mutation survives
+#   @old       the source to replace, exactly as it stands
+#   @new       what to put there; empty deletes
+#   @end
+#
+# `microcycle` is deliberately absent: stage 4 is being written and is not
+# frozen.  It gets mutations when a slice lands.
+#
+# WHAT SURVIVES TODAY, and why `make mutants` is red.  Four records below are
+# not caught by their check.  Each is a hole in a check rather than a bug in
+# the fabric, each is filed, and each stays here until its check is fixed ---
+# a survivor that is quietly dropped is a check that silently got weaker.
+#
+#   xbus-rq-dropped-at-the-acknowledgement               #2
+#   the-write-response-error-is-ignored                  #3
+#   the-answer-is-given-before-the-response-comes-back   #4
+#   the-word-is-latched-on-a-write-as-well               #5, and it is a
+#       question rather than a defect: whether MD must hold across a write is
+#       about the processor, which is stage 4.
+
+
+# ============================================================== phase gen ===
+#
+# Held to muir's clock::Behavioural tick for tick, so every instant the
+# generator names is a mutation: move one and the trace disagrees.
+
+@mutation tse-falls-late
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note TPTSE goes away at 5 ns and comes back at 25. Moving the fall to 10
+@note leaves the pulse the right shape and in the wrong place.
+@old
+  localparam int unsigned TSE_OFF_T  = 5 / TICK_NS;    //   5 ns
+@new
+  localparam int unsigned TSE_OFF_T  = 10 / TICK_NS;   //  10 ns
+@end
+
+@mutation tse-returns-late
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note The other end of the same pulse.
+@old
+  localparam int unsigned TSE_ON_T   = 25 / TICK_NS;   //  25 ns
+@new
+  localparam int unsigned TSE_ON_T   = 30 / TICK_NS;   //  30 ns
+@end
+
+@mutation tpr60-opens-early
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note -TPR60 is a window on the phase, 60 to 100 ns, and SPEEDCLK's source.
+@note Opening it at 55 is five nanoseconds of a signal that drives the front
+@note panel's clock.
+@old
+  localparam int unsigned TPR60_ON_T = 60 / TICK_NS;   //  60 ns
+@new
+  localparam int unsigned TPR60_ON_T = 55 / TICK_NS;   //  55 ns
+@end
+
+@mutation tpr60-closes-a-tick-late
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note The window is half-open in muir --- `(60..60+TPR_PULSE_NS)` --- so the
+@note tick at 100 ns is outside it. An inclusive compare is the off-by-one
+@note that a range written as two comparisons invites.
+@old
+  assign n_tpr60 = !(running && phase >= 6'(TPR60_ON_T) && phase < 6'(TPR60_OFF_T));
+@new
+  assign n_tpr60 = !(running && phase >= 6'(TPR60_ON_T) && phase <= 6'(TPR60_OFF_T));
+@end
+
+@mutation normal-speed-reads-the-fast-tap
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note The 74S151 at CLOCK1 1D08 selects the read phase on {SSPEED1, SSPEED0,
+@note -ILONG}. One wrong entry in that table is one wrong microcycle length,
+@note and the testbench's tap coverage exists for exactly this.
+@old
+      SPEED_NORMAL:     read_sel = ilong ? 6'd25 : 6'd17;  // 125 : 85 ns
+@new
+      SPEED_NORMAL:     read_sel = ilong ? 6'd23 : 6'd17;  // 115 : 85 ns
+@end
+
+@mutation extra-slow-stretches-with-ilong
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note At extra slow, 160 ns is already the longest tap the chain provides, so
+@note ILONG adds nothing. Making it stretch anyway is the reading of "ILONG
+@note adds forty nanoseconds" that forgets the exception.
+@old
+      SPEED_EXTRA_SLOW: read_sel = 6'd32;                  // 160 ns, both
+@new
+      SPEED_EXTRA_SLOW: read_sel = ilong ? 6'd40 : 6'd32;  // 200 : 160 ns
+@end
+
+@mutation the-read-phase-is-selected-at-the-start-of-the-cycle
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note The 74S151's output is read at 65 ns, not at the start of the cycle,
+@note and it only shows if speed or ILONG move between the two --- which the
+@note last segment of the trace does deliberately, "speed and ILONG changing
+@note inside a cycle". Moved as a constant rather than by replacing the
+@note compare with a literal, which would leave SELECT_T unused and let lint
+@note catch it instead of the check.
+@old
+  localparam int unsigned SELECT_T   = 65 / TICK_NS;   //  65 ns
+@new
+  localparam int unsigned SELECT_T   = 5 / TICK_NS;    //   5 ns
+@end
+
+@mutation the-write-pulse-opens-a-tick-late
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note -TPW30, measured from the end of the read phase.
+@old
+      if (phase_next == read_t + 6'(WP_ON_T)) n_tpwp <= 1'b0;
+@new
+      if (phase_next == read_t + 6'(WP_ON_T) + 6'd1) n_tpwp <= 1'b0;
+@end
+
+@mutation the-control-store-pulse-closes-late
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note -TPW45, the one that ends the write to the control store.
+@old
+  localparam int unsigned WPIRAM_OFF_T = 45 / TICK_NS; // -TPW45
+@new
+  localparam int unsigned WPIRAM_OFF_T = 50 / TICK_NS; // -TPW50
+@end
+
+@mutation the-write-pulse-outlives-the-boundary
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note muir clamps the pulse to the cycle boundary --- `WP_OFF_NS.min(RESTART)`
+@note --- because with no gate delays a pulse that outlived it would write at
+@note the next instruction's address. Dropping the clamp is the bug that
+@note comment is there to prevent.
+@old
+      if (wrap) n_tpwp <= 1'b1;
+@new
+@end
+
+@mutation hang-restarts-the-cycle-instead-of-parking-it
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note -HANG holds the next -TPR0 off and the generator parks at cycle_t.
+@note Written the other way round it parks when it should run and runs when
+@note it should park. Inverted rather than deleted, because deleting the term
+@note leaves `hang` unread and lint would catch it instead of the check.
+@old
+  assign phase_next = wrap ? (hang ? cycle_t : 6'd0) : phase + 6'd1;
+@new
+  assign phase_next = wrap ? (hang ? 6'd0 : cycle_t) : phase + 6'd1;
+@end
+
+@mutation the-parked-generator-never-wraps
+@check phase_gen
+@file rtl/cadr_phase_gen.sv
+@note `wrap` has two terms because the park value is cycle_t itself: without
+@note the second the generator that -HANG parked would count past the end of
+@note the cycle when -HANG lifted rather than starting a new one.
+@old
+  assign wrap       = (phase == cycle_t - 6'd1) || (phase == cycle_t);
+@new
+  assign wrap       = (phase == cycle_t - 6'd1);
+@end
+
+
+# ================================================================= cables ===
+#
+# Two targets hold this one, and it takes both. `cables.pass` is lint, which
+# catches a direction or a name; `current` regenerates from muir and catches
+# anything else, which is what CLAUDE.md means by "both netlists via
+# part::pinout". The runner does the same to its copy.
+#
+# These are mutations of a *generated* file, so regenerate-and-diff catches
+# them by construction. What that proves is that the committed copy cannot
+# drift from muir unnoticed --- worth holding, since a checkout builds from
+# the committed copy and not from the generator. The mutations with teeth are
+# in golden/src/cables.rs, which is the only authority on the port list; those
+# need golden/ rebuilt per mutation, and are issue #6 rather than records here.
+
+@mutation a-wire-the-interface-drives-is-made-an-output
+@check cables
+@file rtl/cadr_cables.svh
+@note -MEMACK comes from the bus interface: the processor listens. Making it
+@note an output is the direction error the whole generated header exists to
+@note prevent, and it is the one kind lint alone can catch.
+@old
+    input  var logic n_MEMACK,    // -MEMACK
+@new
+    output var logic n_MEMACK,    // -MEMACK
+@end
+
+@mutation a-bidirectional-wire-loses-its-enable
+@check cables
+@file rtl/cadr_cables.svh
+@note Of the 92 wires, 48 are driven from both ends and are carried as value
+@note plus enable out with the resolved wire back in, because fabric has no
+@note bus to fight over. A wire that lost its enable would be driven always.
+@old
+    output var logic MEM31_oe,
+@new
+@end
+
+@mutation a-signal-is-renamed
+@check cables
+@file rtl/cadr_cables.svh
+@note The mangling is settled and inherited by everything generated. A name
+@note that drifted from it would still elaborate on its own; what says it has
+@note drifted is that the generator writes something else.
+@old
+    output var logic n_MEMRQ,     // -MEMRQ
+@new
+    output var logic n_MEMREQ,    // -MEMRQ
+@end
+
+@mutation mits-name-for-a-wire-is-changed
+@check cables
+@file rtl/cadr_cables.svh
+@note The comment is MIT's own name, and cadr_cables.map is what ties every
+@note identifier back to it. Lint cannot see a comment; only regenerating
+@note can. This is the mutation that says `current` is load-bearing and not
+@note ceremony.
+@old
+    output var logic WRCYC,       // WRCYC
+@new
+    output var logic WRCYC,       // WRCYCLE
+@end
+
+
+# ============================================================ busint, Xbus ===
+#
+# Held to muir's busint::Busint tick for tick. Three of the four bugs CLAUDE.md
+# records against the bus interface are here; the fourth is in the bridge.
+
+@mutation memack-registered-on-a-write
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note XACK is made from XBUS ACK IN by the 74S64 at REQLM 0C11 --- a gate.
+@note Only a read goes through the 60 ns tap of the TD100 at 0C09. Registering
+@note both puts the acknowledgement a tick late on every write.
+@old
+              || (state == GRANTED && ((write && answering) || deskewed));
+@new
+              || (state == GRANTED && ((write && answered) || deskewed));
+@end
+
+@mutation grant-waits-for-a-later-edge
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note A request standing at the master clock edge is granted at that edge:
+@note the priority logic registers -MEMRQ and does not care how long it has
+@note been up. Making it always wait for the next edge costs a whole
+@note microcycle on any request that arrives on one.
+@old
+            write <= wrcyc;
+            if (mclk) begin
+              state       <= GRANTED;
+              elapsed     <= 10'd0;
+              answered    <= 1'b0;
+              answered_at <= 10'd0;
+              tmr_fell    <= 1'b0;
+              tmr_rises   <= 3'd0;
+              nxm         <= 1'b0;
+            end else begin
+              state <= REQUESTED;
+            end
+@new
+            write <= wrcyc;
+            state <= REQUESTED;
+@end
+
+@mutation timeout-oscillator-restarted-at-the-grant
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note The 74LS124 at REQTIM 0A01 has run since the power came up, and the
+@note grant only opens its output. Restarting it at the grant is the obvious
+@note way to write it and is wrong on every cycle but the lucky ones --- it
+@note only shows because the trace's grants land at varied phases.
+@old
+    if (rst) begin
+      vco_count <= 7'd0;
+      vco       <= 1'b1;
+@new
+    if (rst || (mclk && !n_memrq && state != GRANTED && state != ACKED)) begin
+      vco_count <= 7'd0;
+      vco       <= 1'b1;
+@end
+
+@mutation xbus-rq-dropped-at-the-acknowledgement
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note "-XBUS.ACK ... remains asserted until the -XBUS.RQ signal is removed by
+@note the master": the request stays out through the acknowledgement, and the
+@note slave holds its answer against it. A master that dropped it the moment
+@note the cycle was acknowledged would break every slave that obeys the
+@note specification.
+@old
+  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T)) || state == ACKED;
+@new
+  assign dev_rq    = (state == GRANTED && elapsed >= 10'(SETUP_T));
+@end
+
+@mutation the-setup-time-is-short
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note "it is the responsibility of the bus master to assert good address,
+@note write, and data lines 80 ns. prior to asserting -XBUS.RQ".
+@old
+  localparam int unsigned SETUP_T = 80 / 5;
+@new
+  localparam int unsigned SETUP_T = 75 / 5;
+@end
+
+@mutation the-read-deskew-is-long
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note The 60 ns tap of the TD100 at REQLM 0C09, which is what puts the word
+@note in MD.
+@old
+  localparam int unsigned DESKEW_T = 60 / 5;
+@new
+  localparam int unsigned DESKEW_T = 65 / 5;
+@end
+
+@mutation the-deskew-starts-a-tick-late
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note `elapsed` still holds the answering tick's value where this runs, which
+@note is the sort of thing that is one off as easily as not.
+@old
+            answered_at <= elapsed;
+@new
+            answered_at <= elapsed + 10'd1;
+@end
+
+@mutation the-timeout-oscillator-runs-fast
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note 850 ns, so 425 a half period --- chip::VCO_PERIOD.
+@old
+  localparam int unsigned VCO_HALF_T = 425 / 5;
+@new
+  localparam int unsigned VCO_HALF_T = 420 / 5;
+@end
+
+@mutation the-timeout-comes-a-period-early
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note NXM TIMEOUT is registered on the sixth rise of the gated output, which
+@note is the first rise plus busint::TIMEOUT_NS, five whole periods.
+@old
+  localparam int unsigned NXM_RISES = 6;
+@new
+  localparam int unsigned NXM_RISES = 5;
+@end
+
+@mutation the-timer-starts-on-a-rise-instead-of-a-fall
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note The gated output takes its first fall at the oscillator's first fall
+@note strictly after the grant, and the rises are counted from there.
+@note Waiting for a rise instead moves the whole count a half period on.
+@note
+@note Worth not re-deriving: the obvious way to write this mutation --- drop
+@note the edge test entirely, `if (!tmr_fell)` --- is EQUIVALENT and not a
+@note mutation at all. Setting tmr_fell on a rise takes the first branch, so
+@note that rise is not counted, and the next rise is a full period later:
+@note exactly where it lands if tmr_fell is set at the fall in between. It
+@note survives every check because there is nothing to catch.
+@old
+          if (!tmr_fell && vco) begin
+@new
+          if (!tmr_fell && !vco) begin
+@end
+
+@mutation the-timeout-flag-outlives-its-cycle
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note The flag belongs to the cycle standing, as `Ack::timed_out` does: it
+@note goes when the cpu lifts -MEMRQ. What outlives the cycle is the NXM bit
+@note in the bus error register at REQERR, which is not this slice.
+@old
+  assign timed_out  = (state == ACKED) && nxm;
+@new
+  assign timed_out  = nxm;
+@end
+
+@mutation no-loadmd-on-a-write
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note On the Xbus the word lands with the acknowledgement, so -LOADMD and
+@note -MEMACK coincide --- on a write as well, where MD is strobed with
+@note nothing new in it. Suppressing it on writes is the plausible-looking
+@note economy that the reference does not make.
+@old
+  assign n_loadmd   = !acked;
+@new
+  assign n_loadmd   = !(acked && !write);
+@end
+
+@mutation the-cycle-ends-without-waiting-for-the-cpu
+@check busint_xbus
+@file rtl/cadr_busint_xbus.sv
+@note -MEMACK stays low until the cpu lifts -MEMRQ, MFINISHD_NS after the
+@note acknowledgement. Leaving ACKED at once makes it one tick wide.
+@old
+          if (n_memrq) begin
+            state <= IDLE;
+          end
+@new
+          state <= IDLE;
+@end
+
+
+# ========================================================= address decode ===
+#
+# Checked at every one of the 4,194,304 addresses for each board count, and
+# checked as well that exactly one answer comes back --- which is the only
+# thing that can catch two regions overlapping, because the reference names
+# one answer per address and can never say "both".
+
+@mutation the-unibus-starts-a-page-late
+@check xbus_decode
+@file rtl/cadr_xbus_decode.sv
+@note The Unibus half: the diagnostic bus's sixteen registers and the I/O
+@note board with its Chaosnet interface.
+@old
+  assign unibus = page >= 14'o37000;
+@new
+  assign unibus = page >= 14'o37001;
+@end
+
+@mutation xbus-io-space-starts-a-page-late
+@check xbus_decode
+@file rtl/cadr_xbus_decode.sv
+@note The two slots below the Unibus. A page out either way moves the
+@note boundary between main memory and the devices.
+@old
+  assign xbus_io = !unibus && page >= 14'o36000;
+@new
+  assign xbus_io = !unibus && page >= 14'o36001;
+@end
+
+@mutation the-frame-buffer-is-at-the-wrong-slot
+@check xbus_decode
+@file rtl/cadr_xbus_decode.sv
+@note simpletv::BUFFER at 0o17000000 for BUFFER_WORDS: 3,932,160 is 120 times
+@note 32,768, which is why this is a comparison on a slice and not a pair of
+@note bounds.
+@old
+  assign tv_buffer  = phys[21:15] == 7'd120;      // 0o17000000, 32768 words
+@new
+  assign tv_buffer  = phys[21:15] == 7'd121;      // 0o17100000, 32768 words
+@end
+
+@mutation the-displays-registers-are-twice-as-wide
+@check xbus_decode
+@file rtl/cadr_xbus_decode.sv
+@note Eight control registers at simpletv::CONTROL, aligned to eight. Reading
+@note one bit fewer of the address makes it sixteen, and swallows four words
+@note that answer to nothing and one of the disk controller's.
+@old
+  assign tv_control = phys[21:3]  == 19'd507902;  // 0o17377760, 8 words
+@new
+  assign tv_control = phys[21:4]  == 18'd253951;  // 0o17377760, 16 words
+@end
+
+@mutation the-disk-registers-are-a-block-low
+@check xbus_decode
+@file rtl/cadr_xbus_decode.sv
+@note disk_controller::REGS at 0o17377774 for four. The four words between the
+@note display's registers and the disk's answer to nothing, and the reference
+@note says so too.
+@old
+  assign disk_regs  = phys[21:2]  == 20'd1015807; // 0o17377774, 4 words
+@new
+  assign disk_regs  = phys[21:2]  == 20'd1015806; // 0o17377770, 4 words
+@end
+
+@mutation one-memory-board-too-many
+@check xbus_decode
+@file rtl/cadr_xbus_decode.sv
+@note A board is 64K words and they start at zero, so the whole comparison is
+@note on the slot number and the bound is exclusive. Inclusive gives the
+@note machine a board that is not fitted.
+@old
+  assign memory = !unibus && !xbus_io && ({1'b0, phys[21:16]} < boards);
+@new
+  assign memory = !unibus && !xbus_io && ({1'b0, phys[21:16]} <= boards);
+@end
+
+@mutation the-page-is-taken-from-the-wrong-bits
+@check xbus_decode
+@file rtl/cadr_xbus_decode.sv
+@note `let page = (phys >> 8) & 0o37777`, and both boundaries come off it.
+@old
+  assign page = phys[21:8];
+@new
+  assign page = phys[20:7];
+@end
+
+@mutation the-unibus-is-also-nxm
+@check xbus_decode
+@file rtl/cadr_xbus_decode.sv
+@note Exactly one answer, always. Nothing in the reference can catch a decode
+@note that gives two, because the reference only ever names one --- which is
+@note why the testbench counts them itself. This is the mutation that check
+@note exists for.
+@old
+  assign nxm = !unibus && !memory && !device;
+@new
+  assign nxm = !memory && !device;
+@end
+
+
+# ============================================================ memory path ===
+#
+# Two checks at once: the timing still agrees with muir through the whole
+# path, and a read returns the word an earlier write put there. The second is
+# held to the stimulus and not to anything the DUT produced, which is what
+# these first two are here to prove.
+
+@mutation bridge-writes-the-address-instead-of-the-data
+@check memory_path
+@file rtl/cadr_xbus_ddr.sv
+@note The shadow memory was once keyed by the DUT's own mem_addr and filled
+@note from its own mem_wdata, so it moved with the bug and this passed. It is
+@note keyed by the trace's phys and filled with the trace's wdata now.
+@note Written as a ternary rather than as a plain swap because replacing
+@note `wdata` outright leaves it unread and lint would catch it instead of
+@note the check.
+@old
+  assign mem_wdata = wdata;
+@new
+  assign mem_wdata = dev_write ? {10'd0, phys} : wdata;
+@end
+
+@mutation bridge-drops-an-address-bit
+@check memory_path
+@file rtl/cadr_xbus_ddr.sv
+@note The other half of the same lesson: a bridge that dropped a bit wrote
+@note consistent nonsense, and a shadow keyed by the DUT's address agreed
+@note with it on every read. Written as a flip rather than a truncation so
+@note that every bit of `phys` stays used.
+@old
+  assign mem_addr  = main_byte_address(phys);
+@new
+  assign mem_addr  = main_byte_address(phys ^ 22'd1);
+@end
+
+@mutation bridge-answers-at-an-address-nothing-is-at
+@check memory_path
+@file rtl/cadr_memory_path.sv
+@note A cycle to an address with nothing at it reaches no slave and the
+@note interface's own timer ends it. A bridge that answered anyway would take
+@note the NXM timeout out of the machine altogether.
+@old
+      .sel      (is_memory),
+@new
+      .sel      (is_memory | is_nxm),
+@end
+
+@mutation every-cycle-is-a-read-on-the-xbus
+@check memory_path
+@file rtl/cadr_busint_xbus.sv
+@note WRCYC is latched for the cycle and goes out to the slave as the bus's
+@note write line. Held low, every cycle reaches the slave as a read.
+@note
+@note Declared against memory_path rather than busint_xbus, and deliberately:
+@note the interface's own check compares the four cpu-side outputs, and
+@note dev_write means nothing without a slave to take it. The slave is in the
+@note memory path, and that is the check that has to notice.
+@old
+  assign dev_write = write;
+@new
+  assign dev_write = 1'b0;
+@end
+
+@mutation the-bridge-adds-a-tick
+@check memory_path
+@file rtl/cadr_xbus_ddr.sv
+@note The bridge is deliberately thin: dev_ack follows mem_done with no
+@note register in the way, so the whole of the latency belongs to the memory
+@note behind it and shows up as the device's answer time. A register here is
+@note not a correctness bug on the board --- the interface simply waits --- but
+@note it is a change to measure, and this is what measures it.
+@old
+  assign dev_ack = asked && (done || mem_done);
+@new
+  assign dev_ack = asked && done;
+@end
+
+@mutation the-word-is-latched-on-a-write-as-well
+@check memory_path
+@file rtl/cadr_xbus_ddr.sv
+@note Read data is latched because the cpu takes it at -LOADMD and the word
+@note has to still be there. Latching on a write too puts whatever the memory
+@note left on the bus into MD.
+@old
+      if (!dev_write) rdata <= mem_rdata;
+@new
+      rdata <= mem_rdata;
+@end
+
+@mutation main-memory-is-a-word-wide
+@check memory_path
+@file rtl/cadr_ddr_map.sv
+@note A CADR word is 32 bits, so the byte address is the word address two
+@note places left. This map is shared with the Linux side --- a
+@note reserved-memory node, whatever loads a band --- so it is the one thing
+@note here that is expensive to get wrong.
+@old
+    return MAIN_BASE + (32'(phys) << 2);
+@new
+    return MAIN_BASE + (32'(phys) << 3);
+@end
+
+@mutation main-memory-is-reserved-somewhere-else
+@check memory_path
+@file rtl/cadr_ddr_map.sv
+@note The base of the reserved region, which both sides agree on.
+@old
+  localparam logic [31:0] MAIN_BASE  = 32'h1800_0000;
+@new
+  localparam logic [31:0] MAIN_BASE  = 32'h1900_0000;
+@end
+
+
+# =========================================================== AXI adapter ===
+#
+# No muir reference: nothing in MIT's drawings is an AXI master. So it is held
+# to AXI's own rules, checked every tick, and to the property that a read
+# returns the word a write put there.
+
+@mutation awvalid-held-up-after-awready
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note A master that holds awvalid up after awready issues a second write, and
+@note a slave that only records the address cannot tell. The testbench counts
+@note handshakes per transaction and requires exactly one on each channel
+@note because of this.
+@old
+  assign m_axi_awvalid = (state == WRITE) && !aw_sent;
+@new
+  assign m_axi_awvalid = (state == WRITE);
+@end
+
+@mutation master-returns-to-idle-early
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note The bridge holds mem_req up until it has taken the word, so the answer
+@note has to stand until it lets go. A testbench that dropped the request the
+@note instant mem_done appeared would never give the master the chance to
+@note re-issue, and this would pass.
+@old
+          if (!mem_req) state <= IDLE;
+@new
+          state <= IDLE;
+@end
+
+@mutation the-write-response-error-is-ignored
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note OKAY is 00 and EXOKAY 01; SLVERR and DECERR have bit 1 set, and
+@note mem_error is what says one came back. Assigning zero rather than
+@note deleting the branch, so that bresp stays read and lint has nothing to
+@note say about it.
+@old
+            if (m_axi_bresp[1]) mem_error <= 1'b1;
+@new
+            if (m_axi_bresp[1]) mem_error <= 1'b0;
+@end
+
+@mutation a-byte-lane-is-masked-off
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note A whole word, every time: the CADR has no byte writes on this path.
+@old
+  assign m_axi_wstrb = 4'b1111;
+@new
+  assign m_axi_wstrb = 4'b1110;
+@end
+
+@mutation the-beat-is-not-the-last
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note At a burst of one every beat is the last. A slave would wait forever
+@note for a beat that never comes.
+@old
+  assign m_axi_wlast = 1'b1;
+@new
+  assign m_axi_wlast = 1'b0;
+@end
+
+@mutation the-transfer-is-eight-bytes-wide
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note awsize and arsize are 2^2 = 4 bytes, one 32-bit word.
+@old
+  localparam logic [2:0] SIZE_WORD = 3'b010;  // 2^2 = 4 bytes
+@new
+  localparam logic [2:0] SIZE_WORD = 3'b011;  // 2^3 = 8 bytes
+@end
+
+@mutation the-burst-is-two-beats
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note awlen and arlen are zero: one beat. The CADR has no way to ask for the
+@note next word before it has this one, so bursts would buy nothing.
+@old
+  localparam logic [7:0] LEN_ONE   = 8'd0;
+@new
+  localparam logic [7:0] LEN_ONE   = 8'd1;
+@end
+
+@mutation the-read-address-is-a-word-on
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note Latched at IDLE and held for the whole transaction, because AXI wants
+@note the payload stable from valid until ready --- and unchanged, because
+@note the address is the bridge's.
+@old
+              m_axi_araddr <= mem_addr;
+@new
+              m_axi_araddr <= mem_addr + 32'd4;
+@end
+
+@mutation the-word-is-corrupted-on-the-way-out
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note Address and data carried through unchanged is half of what this check
+@note holds to. Written as a flip so that mem_wdata stays read.
+@old
+              m_axi_wdata  <= mem_wdata;
+@new
+              m_axi_wdata  <= mem_wdata ^ 32'd1;
+@end
+
+@mutation the-word-is-corrupted-on-the-way-back
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note The other direction, which is what the read-back property catches.
+@old
+            mem_rdata <= m_axi_rdata;
+@new
+            mem_rdata <= m_axi_rdata ^ 32'd1;
+@end
+
+@mutation reads-and-writes-are-the-wrong-way-round
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note mem_write says which. The coarsest possible bug, and worth having in
+@note the list precisely because a check that missed it would be worthless.
+@old
+            if (mem_write) begin
+@new
+            if (!mem_write) begin
+@end
+
+@mutation the-write-is-answered-before-the-data-is-taken
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note The two channels are independent and either can be taken first, so the
+@note transaction is done when both have been. Waiting only for AW leaves the
+@note word unsent.
+@old
+          if ((aw_sent || (m_axi_awvalid && m_axi_awready))
+              && (w_sent || (m_axi_wvalid && m_axi_wready))) begin
+@new
+          if (aw_sent || (m_axi_awvalid && m_axi_awready)) begin
+@end
+
+@mutation the-answer-is-given-before-the-response-comes-back
+@check axi_master
+@file rtl/cadr_axi_master.sv
+@note mem_done is held once the word is done, and a write is not done until B
+@note has come back. Answering at WRESP lets the bridge go while the response
+@note channel is still outstanding.
+@old
+  assign mem_done = (state == DONE);
+@new
+  assign mem_done = (state == DONE) || (state == WRESP);
+@end
