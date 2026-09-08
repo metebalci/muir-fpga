@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The CADR microcycle: the clock structure, the control store and the
-// instruction path, with the datapath still empty.
+// The CADR microcycle: the clock structure, the control store, the
+// instruction path and the scratchpads, with the ALU still to come.
 //
-// This is the first slice of `src/rtl.rs` from muir.  A microcycle is two
+// This is the first two slices of `src/rtl.rs` from muir.  A microcycle is two
 // phases and one register edge --- "`-CLK0` is `-TPCLK AND MACHRUN` at CLOCK2
 // 1D10 and `CLK1..CLK5` are `NOT(-CLK0)` through the 7428 buffers at 1D05,
 // 1C01 and 1C11, so every edge-triggered register on the board takes one edge
 // per microcycle, at the cycle boundary" --- and what rides on that edge here
-// is everything that needs no A bus, M bus or ALU to compute:
+// is everything that needs no ALU to compute:
 //
 //   page ICTL/PCTL   the control store, and the boot PROM over its bottom 1K
 //   page IREG        IR, with the OA registers substituting fields as it loads
@@ -18,31 +18,51 @@
 //   page OPCS        the eight-deep shift register of PCs
 //   page STAT        the statistics counter
 //   page OLORD1      MACHRUN, and the speed synchroniser at 1A01
+//   page ACTL/MCTL   the A and M memories, their latches and pass-arounds
+//   page PDLCTL      the PDL, its pointer and its index
+//   page SPC/SPCW    the stack, SPCPTR, RETA and the push pass-around
+//   page LC/LCC/FLAG the location counter and the byte-mode flags
 //
 // What the datapath will make once it exists comes in as ports, and each one
-// leaves again when its slice lands: `jcond` from the ALU, `ob` for the OA
-// substitution, `a` and `m` for IWR, `spc_target` off the stack, and the
-// dispatch memory's word.  `tb/cadr_microcycle_tb.cpp` drives them from
-// muir's own trace and counts them, so the hole each one leaves is on the
-// check's own output rather than in a comment.
+// leaves again when its slice lands: `jcond` from the ALU, `ob` for L and the
+// OA substitution, `m` for IWR, and the dispatch memory's word.
+// `tb/cadr_microcycle_tb.cpp` drives them from muir's own trace and counts
+// them, so the hole each one leaves is on the check's own output rather than
+// in a comment.
 //
-// THE CONTROL STORE IS SYNCHRONOUS, and that is the decision this slice was
-// meant to settle.  The 93425As and the control store on the board are
-// asynchronous: the address is up in the read phase and the word is there in
-// the same phase.  FPGA block RAM is not, so the read is issued at the
-// microcycle boundary with `NPC` as its address and completes one 200 MHz
-// tick later --- 5 ns into a microcycle that is 145 ns at normal speed and
-// 220 ns at the extra slow the boot PROM runs at.  The word is up for the
-// whole read phase either way, which is what the board's timing asks.  The
-// same reasoning is what will carry the scratchpads in the next slice.
+// TWO MEMORY DECISIONS, BOTH SETTLED WITH THE PHASE GENERATOR RATHER THAN AT
+// BRING-UP, because FPGA block RAM has no asynchronous read and every memory
+// on this board does.
+//
+// **The control store is read synchronously**, the read issued at the
+// microcycle boundary with `NPC` as its address and complete one 200 MHz tick
+// later --- 5 ns into a microcycle that is 145 ns at normal speed and 220 ns
+// at the extra slow the boot PROM runs at.
+//
+// **The scratchpads are read while CLK is high, and the 74S373s are what
+// holds the word.**  `rtl.rs`'s header is explicit: the 93425As have "no clock
+// pin, so what holds a word between phases is the 74S373 at ALATCH, MLATCH,
+// PLATCH or SPCLCH and not the memory.  Modelling the memory as a register
+// loaded early is the 74S373 drawn one state too soon."  A synchronous read
+// enabled by TPCLK *is* that latch --- it follows the memory through the read
+// phase and holds through the write phase --- and it settles the
+// read-during-write question for nothing, since the write pulses fire with
+// TPCLK low, after the latches have stopped following.
+//
+// Sizes, for what will have to fit: A memory 1024 x 32 and the PDL 1024 x 32
+// are a BRAM36 each at x32.  M memory 32 x 32 and the stack 32 x 21 are small
+// enough for distributed RAM, which is where the 93425As' asynchronous read
+// would have gone anyway.  One BRAM per original chip would not fit and is
+// not what this asks for.
+//
+// THE CONTROL STORE COMES UP ALL ONES where `Machine::new` comes up zero, and
+// deliberately; the comment at the array says why.
 //
 // WHAT IS NOT HERE, and belongs to a later slice or to the console:
 //
-//   - The scratchpads, the ALU and everything on the A and M buses.  `iwr`
-//     is `IR<15:0>` of the A bus with the M bus under it, so the control
-//     store write takes its word from the trace until they exist.
-//   - The stack.  `SPC` is read for a POPJ and written for a push; slice 2
-//     has it, and until then `spc_target` comes in.
+//   - The A and M buses, the ALU, the shifter and OB.  So `mmem_out`, the
+//     PDL's word and the stack's upper bits are built and go nowhere: they
+//     reach only the M bus, and the M bus is the next slice.
 //   - The dispatch memory.  Every DISPATCH in the boot PROM is a DISPWR ---
 //     a write of the memory, not a read of it --- so `dr`, `dp`, `dn` and
 //     `dpc` are unexercised, and the testbench asserts that rather than
@@ -54,7 +74,7 @@
 //     as OLORD1 1A09 and 1A10 hold them, so they come in as ports.
 //   - `-HANG` and `-WAIT`.  `hang` is passed to the generator and nothing
 //     here raises it; VCTL1 is slice 5, where `src/rtl.rs`'s `stall` is.
-
+//
 `default_nettype none
 
 module cadr_microcycle #(
@@ -78,10 +98,8 @@ module cadr_microcycle #(
 
     // --- what the datapath will make.  Each leaves with its own slice.
     input  var logic        jcond,        // the jump condition, off the ALU
-    input  var logic [31:0] ob,           // OB, for the OA substitution
-    input  var logic [31:0] a,            // the A bus, IWR<47:32>
+    input  var logic [31:0] ob,           // OB, what L takes at the edge
     input  var logic [31:0] m,            // the M bus, IWR<31:0>
-    input  var logic [13:0] spc_target,   // the stack's word, for a POPJ
     input  var logic [13:0] dpc,          // DPC<13:0>, the dispatch memory
     input  var logic        dr,           // DR<16>
     input  var logic        dp,           // DP<15>
@@ -93,6 +111,8 @@ module cadr_microcycle #(
     output var logic [13:0] opc,          // OPC<13:0>, eight microcycles back
     output var logic [31:0] st,           // ST<31:0>, the statistics counter
     output var logic [47:0] ir,
+    output var logic [31:0] a,            // the A bus, off ACTL's pass-around
+    output var logic [25:0] lc,           // LC<25:0>, the location counter
     output var logic        nop,
     output var logic        pcs1,
     output var logic        pcs0,
@@ -313,15 +333,41 @@ module cadr_microcycle #(
   logic halt;
   assign halt = funct[1];
 
-  // page ACTL/MCTL, only as far as the OA registers need it: an M
-  // destination in the middle group, IR<21:19> of 6 or 7.
-  logic dest, destm, mid_group;
+  // page ACTL/MCTL: the destination this instruction will hand on.  `DESTM`
+  // is what shortens an M destination to five bits, at the 25S09s on 3B28
+  // and 3B29.
+  logic dest, destm, low_group, mid_group;
+  logic destlc, destintctl;
+  logic destpdltop, destpdl_p, destpdl_x, destpdlx, destpdlp, destspc;
   logic destimod0, destimod1;
-  assign dest      = iralu || irbyte;
-  assign destm     = dest && !ir[25];
-  assign mid_group = destm && !ir[23] && ir[22];
-  assign destimod0 = mid_group && (ir[21:19] == 3'd6);
-  assign destimod1 = mid_group && (ir[21:19] == 3'd7);
+  assign dest       = iralu || irbyte;
+  assign destm      = dest && !ir[25];
+  assign low_group  = destm && !ir[23] && !ir[22];
+  assign mid_group  = destm && !ir[23] && ir[22];
+  assign destlc     = low_group && (ir[21:19] == 3'd1);
+  assign destintctl = low_group && (ir[21:19] == 3'd2);
+  assign destpdltop = mid_group && (ir[21:19] == 3'd0);
+  assign destpdl_p  = mid_group && (ir[21:19] == 3'd1);
+  assign destpdl_x  = mid_group && (ir[21:19] == 3'd2);
+  assign destpdlx   = mid_group && (ir[21:19] == 3'd3);
+  assign destpdlp   = mid_group && (ir[21:19] == 3'd4);
+  assign destspc    = mid_group && (ir[21:19] == 3'd5);
+  assign destimod0  = mid_group && (ir[21:19] == 3'd6);
+  assign destimod1  = mid_group && (ir[21:19] == 3'd7);
+
+  logic [9:0] wadr_in;
+  assign wadr_in = destm ? {5'd0, ir[18:14]} : ir[23:14];
+
+  // page SOURCE: the two functional-source groups, off the 74S138s that
+  // decode IR<28:26> under IR<31> and IR<29>.
+  logic group_a, group_b;
+  logic srcpdlpop, srcpdltop, srcspc, srcspcpop;
+  assign group_a   = ir[31] && !ir[29];
+  assign group_b   = ir[31] && ir[29];
+  assign srcspc    = group_a && (ir[28:26] == 3'd1);
+  assign srcpdlpop = group_a && (ir[28:26] == 3'd4);
+  assign srcpdltop = group_a && (ir[28:26] == 3'd5);
+  assign srcspcpop = group_b && (ir[28:26] == 3'd4);
 
   // page CONTRL, sequencing.  The dispatch memory's word is slice 4's.
   logic dfall, dispenb, ignpopj;
@@ -388,6 +434,153 @@ module cadr_microcycle #(
     if (destimod0) ir_next[25:0]  = iob[25:0];
   end
 
+  // ---------------------------------------------------- the scratchpads
+  //
+  // THE 74S373s ARE THE STATE, AND THEY ARE WHAT MAKES BLOCK RAM WORK HERE.
+  // `rtl.rs`'s header: the 93425As "are 93425As with no clock pin, so what
+  // holds a word between phases is the 74S373 at ALATCH, MLATCH, PLATCH or
+  // SPCLCH and not the memory.  Modelling the memory as a register loaded
+  // early is the 74S373 drawn one state too soon."  So the latch follows the
+  // memory *while CLK is high* and holds through the write phase --- and a
+  // synchronous read enabled by TPCLK is exactly that, with the read landing
+  // one 200 MHz tick into a read phase 160 ns long.  It also settles the
+  // read-during-write question for nothing: the write pulses fire with TPCLK
+  // low, when the latches have stopped following.
+  //
+  // Sizes, for what will have to fit: A memory 1024 x 32 and the PDL
+  // 1024 x 32 are a BRAM36 each at x32.  M memory 32 x 32 and the stack
+  // 32 x 21 are small enough to land in distributed RAM, which is where the
+  // 93425As' asynchronous read would have gone anyway; one BRAM per original
+  // chip would not fit and is not what this asks for.
+
+  logic [31:0] amem [0:1023];
+  logic [31:0] mmem [0:31];
+  logic [31:0] pdl  [0:1023];
+  logic [20:0] spcm [0:31];
+
+  logic [31:0] amem_q, mmem_q, pdl_q;
+  logic [20:0] spc_q;
+
+  // page L 3C26-3C29: the 74S374 that holds OB for the write pulse.  Its
+  // input is the datapath's and comes in until slice 3.
+  logic [31:0] l;
+
+  // page ACTL 3B26/3B28/3B29: the destination of the instruction *before*
+  // this one, which is the address the write pulse in this cycle will use.
+  logic [9:0] wadr;
+  logic       destd, destmd;
+
+  // The pass-arounds.  "A scratchpad write is one microcycle behind the
+  // instruction that computed it ... what hides that from the microcode is
+  // the pass-around: the comparators at ACTL 3B21/3B27 and MCTL 4B18 match
+  // the instruction's source address against the pending WADR and put L on
+  // the bus instead of the memory's output."  `-AMEMENB` is `NAND(-APASS,
+  // TSE3A)` at 3B16 and `APASSENB` is `AND(APASS1, APASS2, TSE4A)` at 4B11;
+  // the M comparator is the 93S46 at 4B18, which matches `DESTMD` as its
+  // sixth bit.
+  logic [9:0] aadr;
+  logic [4:0] madr;
+  logic       apass, mpass;
+  assign aadr  = ir[41:32];
+  assign madr  = ir[30:26];
+  assign apass = destd && (wadr == aadr);
+  assign mpass = destmd && (wadr[4:0] == madr);
+
+  assign a = apass ? l : amem_q;
+
+  // The M memory's output.  It reaches the M bus through the 74S257s at
+  // MLATCH under `MPASSM`, and the M bus is slice 3, so nothing here reads
+  // this yet.
+  logic [31:0] mmem_out;
+  assign mmem_out = mpass ? l : mmem_q;
+
+  // page PDLCTL: `PDLP` is `(CLK AND IR30) OR (-CLK AND -PWIDX)` off the
+  // 74S51 at 4D07, so the PDL is addressed by IR<30> in the read phase and by
+  // the pending write's own `PWIDX` in the write phase.
+  logic [9:0] pdl_ptr, pdl_idx;
+  logic [9:0] pdla_read, pdla_write;
+  logic       pwidx, pdlwrited, pdlwrite, pdlcnt;
+  assign pdla_read  = ir[30] ? pdl_ptr : pdl_idx;
+  assign pdla_write = pwidx  ? pdl_idx : pdl_ptr;
+  assign pdlwrite   = destpdltop || destpdl_x || destpdl_p;
+  assign pdlcnt     = (!nop && srcpdlpop) || destpdl_p;
+
+  // page SPC and SPCW.  The 82S21s at 4E21-4E23 read at the pointer; the
+  // 74S157s at SPCW 4E12-4E14 select on `DESTSPCD`, the *registered*
+  // DESTSPC, over L and the registered RETA, so the word is known before the
+  // ALU is and the pass-around closes no loop.  While a push is pending
+  // `SPCWPASS` at CONTRL 3D21 puts that word on the SPC bus in place of the
+  // RAM's --- and the SPC bus is the PC's next-address path, not M.
+  logic [4:0]  spcptr;
+  logic [13:0] reta;
+  logic        spushd, destspcd, spush, spop, spcnt;
+  logic [20:0] spcw, spcv;
+  assign spcw = destspcd ? l[20:0] : {7'd0, reta};
+  assign spcv = spushd ? spcw : spc_q;
+
+  assign spop  = ((srcspcpop && !nop) || popj) && !ignpopj
+              || (dispenb && dr && !dp)
+              || (jret && !ir[6] && jcond)
+              || (jretf && !jcond);
+  assign spush = destspc
+              || (jfalse && ir[8] && !jcond)
+              || (dispenb && dp && !dr)
+              || (irjump && !ir[6] && ir[8] && jcond);
+  assign spcnt = spush || spop;
+
+  // page LCC and LC.  `NEXT.INSTR` and the byte-mode flags decide whether the
+  // stack's word is munged on the way to the PC.
+  logic newlc, next_instrd, next_instr;
+  logic lc_byte_mode, int_enable, sequence_break;
+  logic lc0b, have_wrong_word, last_byte_in_word, needfetch, lcinc, newlc_in;
+  assign lc0b              = lc[0] && lc_byte_mode;
+  assign have_wrong_word   = newlc || destlc;
+  assign last_byte_in_word = !lc[1] && !lc0b;
+  assign needfetch         = have_wrong_word || last_byte_in_word;
+  assign lcinc             = next_instrd || (irdisp && ir[24]);
+  assign newlc_in          = have_wrong_word && !lcinc;
+  assign next_instr        = spop && !(srcspcpop && !nop) && spcv[14];
+
+  logic spcmung, spc1a;
+  logic [13:0] spc_target;
+  assign spcmung    = spcv[14] && !needfetch;
+  assign spc1a      = spcmung || spcv[1];
+  assign spc_target = {spcv[13:2], spc1a, spcv[0]};
+
+  // page SPCW 4F11-4F14: RETA's input mux takes WPC when N and IPC otherwise,
+  // and it is registered, so the address it carries belongs to the
+  // instruction whose push is pending.
+  logic [13:0] wpc, reta_in;
+  assign wpc     = (irdisp && ir[25]) ? lpc : pc;
+  assign reta_in = n ? wpc : ipc;
+
+  // The write pulses.  `-AWPA` at ACTL 3B30, `-MWPA` at MCTL 4B22, `-PWPA` at
+  // 4D20 and `-SWPA` at SPC 4E30 are all -WP gated by a *registered* enable,
+  // so everything stored here belongs to the previous instruction.  Taken on
+  // the pulse's leading edge, which is thirty nanoseconds into a write phase
+  // where the address and the word have been stable since the boundary.
+  logic n_tpwp_q, wp;
+  assign wp = !n_tpwp && n_tpwp_q;
+
+  always_ff @(posedge clk) begin
+    n_tpwp_q <= n_tpwp;
+    // The latches follow the memories while CLK is high, and hold.
+    if (tpclk) begin
+      amem_q <= amem[aadr];
+      mmem_q <= mmem[madr];
+      pdl_q  <= pdl[pdla_read];
+      spc_q  <= spcm[spcptr];
+    end
+    if (wp) begin
+      if (destd)     amem[wadr]       <= l;
+      if (destmd)    mmem[wadr[4:0]]  <= l;
+      if (pdlwrited) pdl[pdla_write]  <= l;
+      // "at the pointer the edge has already moved to": the 82S21s are
+      // addressed by SPCPTR<4:0> with no offset.
+      if (spushd)    spcm[spcptr]     <= spcw;
+    end
+  end
+
   // -------------------------------------------------------- the registers
 
   logic [13:0] opcs [0:7];
@@ -408,6 +601,24 @@ module cadr_microcycle #(
       ir           <= 48'd0;
       iwr          <= 48'd0;
       st           <= 32'd0;
+      l            <= 32'd0;
+      wadr         <= 10'd0;
+      destd        <= 1'b0;
+      destmd       <= 1'b0;
+      pwidx        <= 1'b0;
+      pdlwrited    <= 1'b0;
+      spushd       <= 1'b0;
+      destspcd     <= 1'b0;
+      reta         <= 14'd0;
+      spcptr       <= 5'd0;
+      pdl_ptr      <= 10'd0;
+      pdl_idx      <= 10'd0;
+      lc           <= 26'd0;
+      lc_byte_mode <= 1'b0;
+      int_enable   <= 1'b0;
+      sequence_break <= 1'b0;
+      newlc        <= 1'b0;
+      next_instrd  <= 1'b0;
       for (int unsigned k = 0; k < 8; k++) opcs[k] <= 14'd0;
     end else begin
       // The master clock, which runs whether or not the cpu's does.
@@ -438,6 +649,42 @@ module cadr_microcycle #(
         // console's -LDSTAT, which loads the counter from IWR, is not here.
         statstop <= (&st) && statbit;
         if (statbit) st <= st + 32'd1;
+
+        // page L, and page ACTL: the write this cycle's instruction has just
+        // computed, handed to the next one to store.
+        l      <= ob;
+        wadr   <= wadr_in;
+        destd  <= dest;
+        destmd <= destm;
+
+        // pages PDLCTL and CONTRL: what the write pulses will stand on.
+        pwidx     <= destpdl_x;
+        pdlwrited <= pdlwrite;
+        spushd    <= spush;
+        destspcd  <= destspc;
+        reta      <= reta_in;
+
+        // page SPC pointer
+        if (spcnt) spcptr <= spush ? spcptr + 5'd1 : spcptr - 5'd1;
+
+        // page PDLPTR
+        if (destpdlx) pdl_idx <= ob[9:0];
+        if (destpdlp) pdl_ptr <= ob[9:0];
+        else if (pdlcnt)
+          pdl_ptr <= (!nop && srcpdlpop) ? pdl_ptr - 10'd1 : pdl_ptr + 10'd1;
+
+        // page LC: the 74S169s count by one or two, byte mode deciding which.
+        if (destlc) lc <= ob[25:0];
+        else lc <= lc + 26'(lcinc) + 26'((lcinc && !lc_byte_mode));
+
+        // page LCC 3E12 and FLAG 3E08
+        newlc       <= newlc_in;
+        next_instrd <= next_instr;
+        if (destintctl) begin
+          lc_byte_mode   <= ob[29];
+          int_enable     <= ob[27];
+          sequence_break <= ob[26];
+        end
       end
     end
   end
@@ -445,14 +692,19 @@ module cadr_microcycle #(
   // What this slice does not read, named so that lint says so rather than
   // waving it through:
   //
-  //   n_tpclk, tptse, n_tpwp   the write phase's, for the scratchpads --- slice 2
+  //   n_tpclk, tptse           the read phase's tri-state enables --- slice 3
   //   n_tpr60                  SPEEDCLK, counted from the boundary instead
-  //   ob<31:26>                the OA registers substitute IR<25:0> and IR<47:26>
-  //   a<31:16>                 IWR takes A<15:0> and the whole of M
+  //   ob<31:30>, ob<28>        no destination reads them
   //   funct<0>, funct<3>       misc functions 0 and 3, neither of them -HALT
+  //   mmem_out, pdl_q          they reach only the M bus --- slice 3
+  //   spcv<20:15>              SPC<20:15> reaches only M and the parity check
+  //   srcspc, srcpdltop        likewise: they select on the M bus
+  //   int_enable, sequence_break   they reach only JCOND --- slice 3
   logic unused;
-  assign unused = &{1'b0, n_tpclk, tptse, n_tpwp, n_tpr60,
-                    ob[31:26], a[31:16], funct[0], funct[3]};
+  assign unused = &{1'b0, n_tpclk, tptse, n_tpr60,
+                    ob[31:30], ob[28], funct[0], funct[3],
+                    mmem_out, pdl_q, spcv[20:15], srcspc, srcpdltop,
+                    int_enable, sequence_break};
 
 endmodule
 
