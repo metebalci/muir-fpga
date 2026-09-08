@@ -822,8 +822,14 @@ def main():
     args.list = os.path.abspath(args.list)
 
     if args.jobs <= 0:
-        # `or 4`: cpu_count() answers None where it cannot tell.
-        args.jobs = os.cpu_count() or 4
+        # Half the cpus, not all of them, and the reason is memory rather
+        # than politeness about cpu: a job is a Verilator -O2 build of a
+        # 1,262-line module, and enough of them at once will have the kernel
+        # kill something. It has --- another session's task, on a machine
+        # with 14 GB and three of us building. Wall-clock barely moves,
+        # because the runs are not all builds. `or 4`: cpu_count() answers
+        # None where it cannot tell.
+        args.jobs = max(2, (os.cpu_count() or 4) // 2)
 
     if args.self_test:
         sys.stdout.write("the runner's own guarantees:\n")
