@@ -33,8 +33,24 @@
 // refreshing itself, and PS DDR3 answers in its own time and refreshes on its
 // own account.
 //
-// NOT HERE YET: the NXM timeout, the Unibus path and its arbitration, the
-// interface's own registers, and the debug cable.  Each is its own slice.
+// The NXM timeout is here too.  The 74LS124 at REQTIM 0A01 has run since
+// power-on and the grant only *opens* its output --- `INT BUSY` rises with the
+// grant --- so where the timeout falls depends on the oscillator's phase at
+// the grant and not on the grant alone.  The output takes its first fall at the
+// oscillator's first fall strictly after the grant (an enable landing exactly
+// on one misses it: the sheet's 30 ns says the part cannot pass an edge it has
+// not yet seen), and `NXM TIMEOUT` is registered on the sixth rise of the
+// output after that --- busint::nxm_timeout_at, which is the first rise plus
+// TIMEOUT_NS.
+//
+// One place this is closer to the board than the model is: `busint.rs` decides
+// at the grant whether a cycle will be answered or will time out, because it
+// can see which responder is at the address.  The board cannot; the timer runs
+// on every cycle and whichever comes first wins.  They agree wherever the model
+// is exercised, real devices answering far inside 4.25 us.
+//
+// NOT HERE YET: the Unibus path and its arbitration, the interface's own
+// registers, and the debug cable.  Each is its own slice.
 
 `default_nettype none
 
@@ -52,6 +68,7 @@ module cadr_busint_xbus (
     output var logic n_memgrant,   // -MEMGRANT, low when the processor has the bus
     output var logic n_memack,     // -MEMACK
     output var logic n_loadmd,     // -LOADMD, which strobes MD
+    output var logic timed_out,    // NXM TIMEOUT: nothing answered this cycle
 
     // The Xbus slave.
     output var logic dev_rq,       // -XBUS.RQ, as a positive level
@@ -68,12 +85,30 @@ module cadr_busint_xbus (
   // 0C09 for a read --- busint::XBUS_ACK_NS.
   localparam int unsigned DESKEW_T = 60 / 5;
 
+  // The request-timing oscillator at REQTIM 0A01: 850 ns, so 425 ns a half
+  // period --- chip::VCO_PERIOD. It free-runs from power-on, high first.
+  localparam int unsigned VCO_HALF_T = 425 / 5;
+
+  // `NXM TIMEOUT` on the sixth rise of the gated output: the first rise plus
+  // busint::TIMEOUT_NS, which is five whole periods.
+  localparam int unsigned NXM_RISES = 6;
+
   typedef enum logic [1:0] {
     IDLE,       // no cycle; -MEMRQ is high
     REQUESTED,  // -MEMRQ is low and the priority logic has not sampled it yet
     GRANTED,    // the processor has the bus and the cycle is running
     ACKED       // -MEMACK is up and the word is on the bus
   } state_e;
+
+  // The oscillator, free-running from reset and independent of any cycle.
+  logic [6:0] vco_count;
+  logic       vco;
+  logic       vco_toggle;
+  assign vco_toggle = (vco_count == 7'(VCO_HALF_T - 1));
+
+  logic       nxm;        // this cycle was ended by the timer, not a slave
+  logic       tmr_fell;   // the gated output has taken its first fall
+  logic [2:0] tmr_rises;  // rises of the gated output since then
 
   state_e     state;
   logic       write;            // WRCYC latched for the cycle being run
@@ -108,15 +143,52 @@ module cadr_busint_xbus (
   // Unibus, where the word comes UNIBUS_STROBE_NS after -UB SSYN and so
   // *before* the acknowledgement, which is why this is a port of its own.
   assign n_loadmd   = !acked;
+  // The flag belongs to the cycle standing, as `Ack::timed_out` does: it goes
+  // when the cpu lifts -MEMRQ and the cycle is over. What outlives the cycle is
+  // the NXM bit in the bus error register at REQERR, which is not this slice.
+  assign timed_out  = (state == ACKED) && nxm;
 
   always_ff @(posedge clk) begin
+    // The oscillator runs whatever the cycle is doing, and reset only sets its
+    // phase: on the board it has been running since the power came up.
+    if (rst) begin
+      vco_count <= 7'd0;
+      vco       <= 1'b1;
+    end else if (vco_toggle) begin
+      vco_count <= 7'd0;
+      vco       <= !vco;
+    end else begin
+      vco_count <= vco_count + 7'd1;
+    end
+
     if (rst) begin
       state       <= IDLE;
       write       <= 1'b0;
       elapsed     <= 10'd0;
       answered    <= 1'b0;
       answered_at <= 10'd0;
+      tmr_fell    <= 1'b0;
+      tmr_rises   <= 3'd0;
+      nxm         <= 1'b0;
     end else begin
+      // The gated output, while a cycle is granted. Its first fall is the
+      // oscillator's first fall *strictly after* the grant, so a grant landing
+      // on one misses it --- which falls out of the ordering here, the grant's
+      // own clear of `tmr_fell` below coming after this.
+      if (state == GRANTED) begin
+        if (vco_toggle) begin
+          if (!tmr_fell && vco) begin
+            tmr_fell <= 1'b1;
+          end else if (tmr_fell && !vco) begin
+            tmr_rises <= tmr_rises + 3'd1;
+            if (tmr_rises + 3'd1 == 3'(NXM_RISES)) begin
+              state <= ACKED;
+              nxm   <= 1'b1;
+            end
+          end
+        end
+      end
+
       unique case (state)
         // A request standing at the master clock edge is sampled at that
         // edge, however long it has been up: the priority logic registers
@@ -133,6 +205,9 @@ module cadr_busint_xbus (
               elapsed     <= 10'd0;
               answered    <= 1'b0;
               answered_at <= 10'd0;
+              tmr_fell    <= 1'b0;
+              tmr_rises   <= 3'd0;
+              nxm         <= 1'b0;
             end else begin
               state <= REQUESTED;
             end
@@ -148,6 +223,9 @@ module cadr_busint_xbus (
             elapsed     <= 10'd0;
             answered    <= 1'b0;
             answered_at <= 10'd0;
+            tmr_fell    <= 1'b0;
+            tmr_rises   <= 3'd0;
+            nxm         <= 1'b0;
           end
         end
 

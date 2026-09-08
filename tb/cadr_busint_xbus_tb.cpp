@@ -21,8 +21,8 @@ namespace {
 
 struct Row {
   long tick;
-  int n_memrq, wrcyc, device_ns, mclk;
-  int n_memgrant, n_memack, n_loadmd;
+  int n_memrq, wrcyc, device_ns, present, mclk;
+  int n_memgrant, n_memack, n_loadmd, timed_out;
 };
 
 int Fail(const Row &r, const char *what, int got, int want) {
@@ -68,17 +68,19 @@ int main(int argc, char **argv) {
   // answers at once and one that takes longer than a microcycle, and a
   // request that arrives on the master clock edge itself.
   long grants = 0, reads = 0, writes = 0, instant = 0, over_a_cycle = 0;
-  long rq_on_edge = 0;
+  long rq_on_edge = 0, timeouts = 0;
+  int timed_out_last = 0;
   int memgrant_last = 1;
 
   while (std::fgets(line, sizeof line, f)) {
     if (line[0] == '#' || line[0] == '\n') continue;
 
     Row r;
-    int n = std::sscanf(line, "%ld %d %d %d %d %d %d %d", &r.tick, &r.n_memrq,
-                        &r.wrcyc, &r.device_ns, &r.mclk, &r.n_memgrant,
-                        &r.n_memack, &r.n_loadmd);
-    if (n != 8) {
+    int n = std::sscanf(line, "%ld %d %d %d %d %d %d %d %d %d", &r.tick,
+                        &r.n_memrq, &r.wrcyc, &r.device_ns, &r.present,
+                        &r.mclk, &r.n_memgrant, &r.n_memack, &r.n_loadmd,
+                        &r.timed_out);
+    if (n != 10) {
       std::fprintf(stderr, "%s: cannot parse: %s", path, line);
       return 2;
     }
@@ -99,8 +101,10 @@ int main(int argc, char **argv) {
     if (!dut->dev_rq) rq_since = -1;
     rq_last = dut->dev_rq;
 
-    dut->dev_ack =
-        (rq_since >= 0) && ((r.tick - rq_since) * 5 >= r.device_ns);
+    // Nothing at the address never answers, and the timer is what ends the
+    // cycle. That is the stimulus, not something the interface is told.
+    dut->dev_ack = r.present && (rq_since >= 0) &&
+                   ((r.tick - rq_since) * 5 >= r.device_ns);
     dut->eval();
 
     if (dut->n_memgrant != r.n_memgrant)
@@ -109,6 +113,8 @@ int main(int argc, char **argv) {
       bad += Fail(r, "-MEMACK", dut->n_memack, r.n_memack);
     if (dut->n_loadmd != r.n_loadmd)
       bad += Fail(r, "-LOADMD", dut->n_loadmd, r.n_loadmd);
+    if (dut->timed_out != r.timed_out)
+      bad += Fail(r, "NXM TIMEOUT", dut->timed_out, r.timed_out);
 
     dut->clk = 0;
     dut->eval();
@@ -121,6 +127,8 @@ int main(int argc, char **argv) {
       if (r.mclk && !r.n_memrq) ++rq_on_edge;
     }
     memgrant_last = r.n_memgrant;
+    if (r.timed_out && !timed_out_last) ++timeouts;
+    timed_out_last = r.timed_out;
 
     ++checked;
     if (bad >= 20) {
@@ -151,7 +159,8 @@ int main(int argc, char **argv) {
               {"writes", writes},
               {"cycles answered at once", instant},
               {"cycles slower than a microcycle", over_a_cycle},
-              {"requests standing at the master clock edge", rq_on_edge}};
+              {"requests standing at the master clock edge", rq_on_edge},
+              {"cycles that timed out", timeouts}};
   for (const auto &w : want)
     if (w.n == 0) {
       std::fprintf(stderr, "FAIL: the trace has no %s\n", w.what);
@@ -162,7 +171,7 @@ int main(int argc, char **argv) {
   std::printf(
       "ok: %ld ticks agree with muir's busint::Busint\n"
       "    %ld cycles --- %ld reads, %ld writes, %ld answered at once, "
-      "%ld slower than a microcycle\n",
-      checked, grants, reads, writes, instant, over_a_cycle);
+      "%ld slower than a microcycle, %ld timed out\n",
+      checked, grants, reads, writes, instant, over_a_cycle, timeouts);
   return 0;
 }
