@@ -197,6 +197,20 @@ module cadr_microcycle #(
   logic mclk_edge;
   assign mclk_edge = boundary && started;
 
+  // MCLK7 across the cables, and **not registered**: it has to coincide with
+  // the edge the processor's own registers move on, not follow it.
+  //
+  // `-MEMRQ` is `MEMSTART AND VMAOK OR MBUSY`, and MEMSTART is registered at
+  // the edge *before* the cycle runs --- so on the board the priority logic,
+  // clocking MEMRQ on the same master clock, samples it still high at that
+  // edge and grants at the next one, which is the edge the cycle starts on.
+  // `Rtl::clock_edge` does the same by calling `Busint::request` only when
+  // MEMSTART is already up.  A registered MCLK arrives a tick late, sees
+  // -MEMRQ already low, and grants a whole microcycle early --- which put the
+  // mode register's write 220 ns early and set PROMDISABLE one microcycle
+  // before muir does, measured on the band at 1,410,034.
+  assign mclk = mclk_edge;
+
   // `boundary` is a level over the tick in which TPCLK rose, and every
   // `always_ff` below samples it as it stood *before* that tick's edge --- so
   // the registers move one tick after it, which is a buffer delay's worth of
@@ -1098,7 +1112,7 @@ module cadr_microcycle #(
   // not a rounding one can leave.  The delay line is 140 ns; two ticks of it
   // are spent here instead, and this is where that is written down.
   localparam int unsigned MFINISHD_T  = 30 / 5;
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
 
   logic       n_memack_q;
   logic [5:0] mfinish_t, rdfinish_t;
@@ -1205,7 +1219,6 @@ module cadr_microcycle #(
       md           <= 32'd0;
       phys_r       <= 22'd0;
       wdata        <= 32'd0;
-      mclk         <= 1'b0;
       n_loadmd_q   <= 1'b1;
       md_held      <= 32'd0;
       md_pending   <= 1'b0;
@@ -1229,9 +1242,7 @@ module cadr_microcycle #(
       // the cpu clock: a stall is what they are there to end.
       n_memack_q <= n_memack;
       n_loadmd_q <= n_loadmd;
-      // MCLK7 across the cables: the same boundary the registers move on, so
-      // that a request made at this edge is the one the priority logic sees.
-      mclk       <= mclk_edge;
+
       // "the high-going edge loads MD"
       if (loadmd_edge) begin
         md_held    <= rdata;
