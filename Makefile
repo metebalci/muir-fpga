@@ -21,7 +21,8 @@ VFLAGS := --cc --exe --build -Wall
 .PHONY: check cables current clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
-       $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass current
+       $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
+       $(BUILD)/memory_path.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -50,6 +51,22 @@ $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus: rtl/cadr_busint_xbus.sv tb/cadr_busi
 
 $(BUILD)/busint_xbus.pass: $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
 	$(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
+	@touch $@
+
+# -------------------------------------------------------------- memory path
+
+# The pieces running together: decode, bus interface and DDR bridge, from the
+# same trace. Checked two ways --- the timing still agrees with muir, and a read
+# returns the word an earlier write put there.
+MEMPATH := rtl/cadr_ddr_map.sv rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv \
+           rtl/cadr_xbus_ddr.sv rtl/cadr_memory_path.sv
+
+$(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Irtl -Mdir $(BUILD)/obj_memory_path \
+	    --top-module cadr_memory_path $(MEMPATH) tb/cadr_memory_path_tb.cpp
+
+$(BUILD)/memory_path.pass: $(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden
+	$(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden
 	@touch $@
 
 # ------------------------------------------------------------------ DDR map

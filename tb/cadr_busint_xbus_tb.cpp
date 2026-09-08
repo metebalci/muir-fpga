@@ -22,6 +22,8 @@ namespace {
 struct Row {
   long tick;
   int n_memrq, wrcyc, device_ns, present, mclk;
+  unsigned phys, wdata;
+  int boards;
   int n_memgrant, n_memack, n_loadmd, timed_out;
 };
 
@@ -76,11 +78,15 @@ int main(int argc, char **argv) {
     if (line[0] == '#' || line[0] == '\n') continue;
 
     Row r;
-    int n = std::sscanf(line, "%ld %d %d %d %d %d %d %d %d %d", &r.tick,
-                        &r.n_memrq, &r.wrcyc, &r.device_ns, &r.present,
-                        &r.mclk, &r.n_memgrant, &r.n_memack, &r.n_loadmd,
+    // The address, the word and the board count belong to the whole memory
+    // path, not to the interface, but they share one trace so that the
+    // stimulus has a single definition. Read past them here.
+    int n = std::sscanf(line, "%ld %d %d %d %d %u %u %d %d %d %d %d %d",
+                        &r.tick, &r.n_memrq, &r.wrcyc, &r.device_ns,
+                        &r.present, &r.phys, &r.wdata, &r.boards, &r.mclk,
+                        &r.n_memgrant, &r.n_memack, &r.n_loadmd,
                         &r.timed_out);
-    if (n != 10) {
+    if (n != 13) {
       std::fprintf(stderr, "%s: cannot parse: %s", path, line);
       return 2;
     }
