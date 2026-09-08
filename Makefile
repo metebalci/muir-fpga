@@ -21,7 +21,7 @@ VFLAGS := --cc --exe --build -Wall
 .PHONY: check cables current clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
-       $(BUILD)/xbus_decode.pass current
+       $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -50,6 +50,15 @@ $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus: rtl/cadr_busint_xbus.sv tb/cadr_busi
 
 $(BUILD)/busint_xbus.pass: $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
 	$(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
+	@touch $@
+
+# ------------------------------------------------------------------ DDR map
+
+# Constants only, and shared with the Linux side, so all lint can do is prove
+# they elaborate. What keeps them honest is that they are in one place.
+$(BUILD)/ddr_map.pass: rtl/cadr_ddr_map.sv rtl/cadr_xbus_decode.sv | $(BUILD)
+	$(VERILATOR) --lint-only -Wall --top-module cadr_xbus_decode \
+	    rtl/cadr_ddr_map.sv rtl/cadr_xbus_decode.sv
 	@touch $@
 
 # ------------------------------------------------------------ address decode
