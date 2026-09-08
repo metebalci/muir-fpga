@@ -3,3 +3,20 @@ target/
 golden/target/
 *.vcd
 *.fst
+
+# Claude Code's local state, and the project's working notes.
+#
+# CLAUDE.md exists in the working tree --- what each check holds to, where the
+# fabric parts from muir, and the mistakes worth not making twice --- and is
+# held back deliberately, not absent.
+# TEMPORARY: delete this line when it is ready to publish.
+CLAUDE.md
+.claude/
+
+# The fuller draft of the project page: the same drawing with the target and
+# its block-RAM budget, the fabric/Linux split, a second drawing of the Xbus
+# address space, and where things stand. Held back deliberately, not dead ---
+# TEMPORARY: delete this line when it is ready to publish. Note that once it
+# is committed the workflow puts it at /full-page.html, reachable whether or
+# not anything links to it.
+site/full-page.html
