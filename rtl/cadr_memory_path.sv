@@ -14,10 +14,21 @@
 //
 // A cycle to an address with nothing at it reaches no slave, nothing answers,
 // and the interface's own timer ends it --- which is the NXM timeout, and is
-// why the decode's `nxm` needs no wire of its own here.  Xbus I/O devices, the
-// display and the disk controller, will answer on the same `dev_ack` when they
-// exist; `device` is brought out so that the wiring is visible before there is
-// anything to wire.
+// why the decode's `nxm` needs no wire of its own here.
+//
+// **THE XBUS IS BROUGHT OUT, because main memory is one slave and not the
+// only one.**  On the board `-XBUS.RQ` goes to every slave, each decodes the
+// address for itself, and whichever owns it pulls `-XBUS.ACK`.  That is the
+// shape here: `dev_rq` and `dev_write` leave, `device_ack` and `device_rdata`
+// come back, and the acknowledgements are joined the way an open-collector
+// line joins them.  Main memory stays inside because it is the one slave the
+// fabric already has; the display and the disk controller will hang off these
+// when they exist, and `device` says the cycle is not memory's so a slave
+// need not repeat the whole decode.
+//
+// Until something is wired there, `device_ack` is low, nothing answers a
+// device cycle, and the interface's own timer ends it --- which is exactly
+// what a CADR with an empty backplane slot does.
 
 `default_nettype none
 
@@ -40,9 +51,19 @@ module cadr_memory_path (
     // How many 64K-word memory boards are fitted, 1 to 60.
     input  var logic [6:0]  boards,
 
-    // Where a device that is not main memory would answer. Nothing drives it
-    // yet; see the note above.
+    // The Xbus, as a slave that is not main memory sees it. `phys` and
+    // `wdata` above are the address and the word; `device` says the decode
+    // put this cycle outside main memory.
     output var logic        device,
+    output var logic        dev_rq,       // -XBUS.RQ
+    output var logic        dev_write,
+    input  var logic        device_ack,   // -XBUS.ACK, from that slave
+    input  var logic [31:0] device_rdata,
+
+    // What else the decode made of the address, so that a cycle nothing
+    // answers can say why rather than merely time out.
+    output var logic        nxm,          // Xbus space with nothing in it
+    output var logic        unibus,       // the Unibus, which is its own slice
 
     // PS DDR3, behind the AXI adapter that is not written yet.
     output var logic        mem_req,
@@ -53,16 +74,17 @@ module cadr_memory_path (
     input  var logic [31:0] mem_rdata
 );
 
-  logic is_memory, is_nxm, is_unibus;
-  logic dev_rq, dev_write, dev_ack;
+  logic is_memory;
+  logic dev_ack, memory_ack;
+  logic [31:0] memory_rdata;
 
   cadr_xbus_decode decode (
       .phys  (phys),
       .boards(boards),
       .memory(is_memory),
       .device(device),
-      .nxm   (is_nxm),
-      .unibus(is_unibus)
+      .nxm   (nxm),
+      .unibus(unibus)
   );
 
   cadr_busint_xbus busint (
@@ -88,8 +110,8 @@ module cadr_memory_path (
       .dev_write(dev_write),
       .phys     (phys),
       .wdata    (wdata),
-      .dev_ack  (dev_ack),
-      .rdata    (rdata),
+      .dev_ack  (memory_ack),
+      .rdata    (memory_rdata),
       .mem_req  (mem_req),
       .mem_write(mem_write),
       .mem_addr (mem_addr),
@@ -98,13 +120,10 @@ module cadr_memory_path (
       .mem_rdata(mem_rdata)
   );
 
-  // `nxm` and `unibus` say what the address was, and neither needs a wire in
-  // this path: a cycle nothing answers is ended by the interface's timer either
-  // way, and the Unibus is its own slice.
-  /* verilator lint_off UNUSEDSIGNAL */
-  logic unused;
-  assign unused = is_nxm | is_unibus;
-  /* verilator lint_on UNUSEDSIGNAL */
+  // The acknowledgements, joined as the open-collector `-XBUS.ACK` joins
+  // them, and the word from whichever slave answered.
+  assign dev_ack = memory_ack || device_ack;
+  assign rdata   = device_ack ? device_rdata : memory_rdata;
 
 endmodule
 
