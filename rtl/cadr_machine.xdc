@@ -3,34 +3,62 @@
 #
 # Timing constraints for the composed machine.
 #
-# Without these every timing report on this design is measuring a requirement
-# nobody intends. CLAUDE.md's own note says why: 200 MHz exists only to
-# resolve the 5 ns delay-line taps, and netlist logic settles *between*
-# phases, where the 75 ns fast read tap is the real constraint. Hold all 1,821
-# registers to the 5 ns tick and the report says WNS -17.265 ns --- the map
-# lookup rippling into the control store's address, 21.615 ns over 26 logic
-# levels, which is a path that has a phase to happen in.
+# 200 MHz exists only to resolve the 5 ns delay-line taps. Netlist logic
+# settles *between* phases, where the 75 ns fast read tap is the real
+# constraint. Hold all 1,821 registers to the tick and the routed report says
+# WNS -17.265 ns on the map lookup rippling into the control store's address,
+# 21.615 ns over 26 logic levels --- a path that has a phase to happen in.
+# That is the pessimistic version CLAUDE.md says not to spread, and it
+# distorts placement as well as the report: the placer spends itself on 6,637
+# impossible paths.
 #
-# Worse than a misleading report: it distorts placement. With everything held
-# to 5 ns the placer spends itself on 6,637 impossible datapath paths, and the
-# ring counter --- the one thing that genuinely must meet the tick --- routed to
-# -1.526 ns. With the constraints below the same logic makes +0.233 ns.
+# **But relaxing everything outside the generator is wrong**, and an earlier
+# version of this file did exactly that and reported all timing met. It is
+# not the module that decides; it is whether a register's input is stable
+# across the microcycle and its consumer reads it only at the end.
 #
-# Measured on an xc7z020clg400-1, synthesised, placed and routed out of
-# context: **all user specified timing constraints are met**, zero violated
-# paths, worst slack +0.110 ns. 2,764 LUTs of 53,200 and 28 block RAM tiles of
-# 140.
+#   - The scratchpad latches qualify. `amem[aadr]` is constant for the whole
+#     microcycle because `aadr` comes off IR, so the latch captures the same
+#     value every tick and only the last is read. `imem_q` and `prom_q` too.
+#   - A free-running counter does not: it is its own input, and a 15-tick
+#     multicycle says its increment may take 75 ns, at which point it does not
+#     count. `mfinish_t`, `rdfinish_t`, `elapsed`, `vco_count`, `arb_t`,
+#     `phase_t`.
+#   - An edge detector does not: it exists to spot a transition and is read
+#     the next tick. `n_memack_q`, `n_loadmd_q`, `n_tpwpiram_q`, `n_tpwp_q`,
+#     `tpclk_q`. Note these are named, not matched on `_q`, because the
+#     scratchpad latches share that suffix and must not be caught.
+#
+# Paths *into* the generator are already tick-rate and must stay so: they are
+# slow-to-fast, which `-from $slow -to $slow` does not match. `speed`
+# especially --- the synchroniser updates it at phase 12 and the 74S151 samples
+# it at phase 13, one tick.
 
 create_clock -name clk -period 5.000 [get_ports clk]
 
-# Everything but the ring counter advances once a microcycle. The datapath
-# registers change at phase boundaries, and the tightest instant any of them
-# is read at is the fast read tap, 15 ticks after the boundary --- so 15, not
-# 29, and not the 44 of an extra slow cycle. 1,787 of 1,821 registers are in
-# this set; the 34 that are not are the generator's own.
-#
-# Paths *from* the generator into the machine are deliberately not relaxed:
-# the taps are enables and are sampled every tick.
-set slow [filter [all_registers] {NAME !~ *u_phase_gen*}]
+set ticking [get_cells -hier -regexp \
+  {.*/(mfinish_t|rdfinish_t|elapsed|vco_count|arb_t|phase_t)_reg(\[[0-9]+\])?}]
+set edges [get_cells -hier -regexp \
+  {.*/(n_memack_q|n_loadmd_q|n_tpwpiram_q|n_tpwp_q|tpclk_q)_reg}]
+set fast [get_cells -hier -regexp {.*u_phase_gen.*}]
+set keep [concat $ticking $edges $fast]
+
+set slow {}
+foreach r [all_registers] { if {[lsearch -exact $keep $r] < 0} { lappend slow $r } }
+
+# 15 ticks, not 29: the tightest instant a datapath register is read at is the
+# fast read tap. 1,748 of 1,821 registers; the other 73 are tick-rate.
 set_multicycle_path -setup 15 -from $slow -to $slow
 set_multicycle_path -hold  14 -from $slow -to $slow
+
+# WHAT THIS CURRENTLY REPORTS, placed and routed on an xc7z020clg400-1:
+# timing is NOT met. Five paths violate, and they are one path fanned across
+# the counter's bits:
+#
+#     -3.957 ns   processor/memstart_reg_replica_1/C
+#              -> processor/rdfinish_t_reg[1]/R
+#              8.349 ns (logic 2.349, route 6.001)
+#
+# `memstart` reaching the synchronous reset of the -RDFINISH counter, 72% of
+# it routing. Everything else meets. Utilisation is not the problem: 2,764
+# LUTs of 53,200 and 28 block RAM tiles of 140.
