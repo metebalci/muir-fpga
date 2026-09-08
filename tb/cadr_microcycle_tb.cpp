@@ -154,6 +154,14 @@ bool ParseRow(const char *line, Row &r) {
   return true;
 }
 
+// DESTMDR: the instruction stores OB into MD itself, at the edge.
+bool RowDestmdr(const Row &r) {
+  const uint64_t cls = (r.v[kIr] >> 43) & 3;
+  const bool dest = !r.v[kNop] && (cls == 0 || cls == 3);
+  return dest && !((r.v[kIr] >> 25) & 1) && ((r.v[kIr] >> 23) & 1) &&
+         ((r.v[kIr] >> 22) & 1);
+}
+
 int Fail(const Row &r, const char *what, uint64_t got, uint64_t want) {
   std::fprintf(stderr,
                "microcycle %" PRIu64 " (PC %" PRIo64 "): %s is %" PRIx64
@@ -184,6 +192,7 @@ int main(int argc, char **argv) {
   // before their row, and once to drive the DUT.
   bool pack_trace = false;
   std::vector<uint64_t> ack_for;
+  std::vector<uint64_t> rdata_for;
   std::vector<bool> arbitrated;
   long unibus_cycles = 0;
   size_t total_rows = 0;
@@ -191,6 +200,9 @@ int main(int argc, char **argv) {
     char line[512];
     std::vector<uint64_t> bus_at;   // row indices that start a bus cycle
     std::vector<uint64_t> acks;     // and every row's ack column
+    std::vector<uint64_t> mds;      // every row's md column
+    std::vector<char> stalled_srcmd;
+
     while (std::fgets(line, sizeof line, f)) {
       if (line[0] == '#') {
         if (std::strstr(line, "rtl_sys.rs")) pack_trace = true;
@@ -204,6 +216,27 @@ int main(int argc, char **argv) {
         return 2;
       }
       acks.push_back(r.v[kAck]);
+      // What `-LOADMD` should put in MD if it strobes during this
+      // microcycle, taken from the trace and keyed by the row rather than
+      // queued.
+      //
+      // A QUEUE OF THE WORDS MD WAS SEEN TO TAKE DOES NOT WORK, and the way
+      // it fails is worth the comment: a read whose word equals what MD
+      // already holds moves nothing, so it is invisible as a change, and the
+      // queue then hands the *next* read a later cycle's word. Measured ---
+      // it goes wrong at microcycle 536,309 of the boot PROM, where the
+      // second read returns the zero MD already had.
+      //
+      // Keyed by row, the rule is the one `golden/src/trace.rs` already
+      // needed for the `md` column itself: a hang loads MD *before* its own
+      // microcycle's read phase, so that row's own column is the word; a
+      // -WAIT and an unstalled cycle load it at the edge, so the next row's
+      // is. A row that both reads MD and writes it needs no special case:
+      // `DESTMDR` lands at the edge and overwrites whatever the bus put
+      // there, in the fabric as in `Rtl::clock_edge`, so on an unstalled row
+      // the loaded word is discarded either way.
+      mds.push_back(r.v[kMd]);
+      stalled_srcmd.push_back(r.v[kStall] != 0);
       if (r.v[kBus]) bus_at.push_back(total_rows);
       ++total_rows;
     }
@@ -211,6 +244,11 @@ int main(int argc, char **argv) {
     // interface usually knows at the boundary; a cycle that has to arbitrate
     // for the Unibus first is granted, acknowledged and finished inside a
     // later microcycle's stall, so its answer appears on a later row.
+    rdata_for.assign(total_rows, 0);
+    for (size_t i = 0; i < total_rows; ++i) {
+      rdata_for[i] = stalled_srcmd[i] ? mds[i]
+                                      : (i + 1 < total_rows ? mds[i + 1] : mds[i]);
+    }
     ack_for.assign(total_rows, 0);
     arbitrated.assign(total_rows, false);
     for (uint64_t i : bus_at) {
@@ -252,6 +290,8 @@ int main(int argc, char **argv) {
   dut->rst = 1;
   dut->n_memack = 1;
   dut->n_memgrant = 1;
+  dut->n_loadmd = 1;
+  dut->rdata = 0;
   // Verilator records the previous value of a clock at eval time, so the
   // first eval has to happen with clk low or the first posedge is not one.
   dut->eval();
@@ -268,9 +308,9 @@ int main(int argc, char **argv) {
 
   // Present a row's stimulus: what the memory path would be driving over that
   // microcycle, and what the console would be holding.
-  auto drive = [&](const Row &r) {
-    dut->md = static_cast<uint32_t>(r.v[kMd]);
+  auto drive = [&](const Row &r, size_t row) {
     dut->sintr = static_cast<uint8_t>(r.v[kSintr]);
+    dut->rdata = static_cast<uint32_t>(rdata_for[row]);
     dut->srun = static_cast<uint8_t>(r.v[kSrun]);
     dut->promdisable = static_cast<uint8_t>(r.v[kPromdis]);
     dut->errstop = static_cast<uint8_t>(r.v[kErrstop]);
@@ -283,13 +323,14 @@ int main(int argc, char **argv) {
   // that the edge is compared against the read phase before it and not
   // against the values the edge has just produced.
   struct Sample {
-    uint64_t pc, ir, lpc, opc, st, a, m, alu, r, ob, q, dc, lc, vma, vmaok,
+    uint64_t pc, ir, lpc, opc, st, a, m, alu, r, ob, q, dc, lc, vma, md, vmaok,
         jcond, nop, pcs1, pcs0, iwrited;
   };
   auto take = [&]() {
     return Sample{dut->pc,  dut->ir,    dut->lpc, dut->opc,   dut->st,
                   dut->a,   dut->m,     dut->alu, dut->r,     dut->ob,
-                  dut->q,   dut->dc,    dut->lc,  dut->vma,   dut->vmaok,
+                  dut->q,   dut->dc,    dut->lc,  dut->vma,   dut->md,
+                  dut->vmaok,
                   dut->jcond, dut->nop, dut->pcs1, dut->pcs0, dut->iwrited};
   };
 
@@ -299,7 +340,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   uint64_t prev_ns = 0;
-  drive(cur);
+  drive(cur, 0);
   Sample prev = take();
 
   size_t k = 0;          // the microcycle now running
@@ -330,7 +371,28 @@ int main(int argc, char **argv) {
     // processor lifts -MEMRQ, which is what drops it. cadr_busint_xbus.sv is
     // the real thing and has its own check; this is its far end.
     dut->n_memgrant = bus_outstanding ? 0 : 1;
-    dut->n_memack = (bus_outstanding && t >= ack_at_tick) ? 0 : 1;
+    const bool acking = bus_outstanding && t >= ack_at_tick;
+    dut->n_memack = acking ? 0 : 1;
+    // "-LOADMD equals MEMACK and RDCYC": the interface puts it out on every
+    // acknowledgement and the processor's own RDCYC decides. So it is driven
+    // here exactly as -MEMACK is, direction and all, and a write that moved
+    // MD would show.
+    dut->n_loadmd = acking ? 0 : 1;
+    // POISON ON A WRITE.  -LOADMD is asserted on every acknowledgement and it
+    // is RDCYC on the processor's side that keeps a write from strobing MD.
+    // Handing back the word MD should hold makes that gate unobservable ---
+    // an extra load is then a no-op, and dropping the gate survives, measured
+    // --- so a write cycle gets the complement instead. Nothing should take
+    // it. Keyed off the DUT's own WRCYC, which is safe here in a way a shadow
+    // memory would not be: it chooses poison, never data, so a processor that
+    // had the direction wrong takes poison and says so.
+    if (dut->wrcyc)
+      dut->rdata = ~static_cast<uint32_t>(rdata_for[k < total_rows ? k : 0]);
+    // Only a read takes a word: -LOADMD is gated by RDCYC, so a write must
+    // not consume one. Using the DUT's own RDCYC to step the stimulus is safe
+    // where it would not normally be, because MD is compared every
+    // microcycle: a processor that got the direction wrong would take the
+    // wrong word and say so on the next SRCMD.
 
     dut->clk = 1;
     dut->eval();
@@ -361,6 +423,7 @@ int main(int argc, char **argv) {
       if (prev.jcond != r.v[kJcond])
         bad += Fail(r, "JCOND", prev.jcond, r.v[kJcond]);
       if (prev.vma != r.v[kVma]) bad += Fail(r, "VMA", prev.vma, r.v[kVma]);
+      if (prev.md != r.v[kMd]) bad += Fail(r, "MD", prev.md, r.v[kMd]);
       // The net is -VMAOK, `NAND(-PFR, -PFW)` at VCTL1 1D17: *low* when the
       // access is permitted, the opposite of the logical VMAOK the jump
       // conditions and MEMRQ take.
@@ -472,7 +535,7 @@ int main(int argc, char **argv) {
                        path, k, total_rows);
           return 1;
         }
-        drive(cur);
+        drive(cur, k);
       }
 
       if (bad >= 20) {
