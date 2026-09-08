@@ -33,5 +33,9 @@ path = "src/rtl.rs"
 name = "prom"
 path = "src/prom.rs"
 
+[[bin]]
+name = "rtl_sys"
+path = "src/rtl_sys.rs"
+
 [dependencies]
 muir = { path = "../../muir" }

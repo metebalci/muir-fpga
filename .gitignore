@@ -20,3 +20,15 @@ CLAUDE.md
 # is committed the workflow puts it at /full-page.html, reachable whether or
 # not anything links to it.
 site/full-page.html
+
+# Fetched material: the System releases the processor's second reference runs
+# on. Nothing here vendors MIT's packs any more than it vendors the netlists
+# or the microcode --- muir's tools/fetch-system-100.sh fetches one, checking
+# its SHA-256, and the Makefile checks the same sum again before using it.
+#
+# The archive lives here rather than being read out of muir's own vendor/,
+# because a drive writes its pack: muir's working image drifts under any run
+# that opens it, and a reference trace must not depend on a file the machine
+# mutates. Only the .gz is kept, and the Makefile decompresses a fresh copy
+# into build/ for each run.
+vendor/

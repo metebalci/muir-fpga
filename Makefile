@@ -188,6 +188,48 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --self-test
 
+# ------------------------------------------- the processor, on a System pack
+
+# A second reference for the processor, and an optional one: the same engine
+# and the same columns as rtl.golden, with a System 100 pack under it. It
+# reaches the dispatch memory's read, the map, the stack RAM and Q's shifter,
+# none of which the boot PROM does --- and it does not reach IR<46> or MACHRUN
+# down, which no observed program does. rtl.golden stays primary: a checkout
+# without the release still runs every check that matters.
+#
+# Skipped, and says so, when the release archive is not here. It is fetched
+# material and gitignored, as muir's own vendor/ is; CI does not have it and
+# is not meant to. muir's tools/fetch-system-100.sh is what fetches it.
+#
+# The archive is kept here rather than read out of muir's vendor/ because a
+# drive writes its pack: any working image drifts under a run that opens it,
+# and a reference trace taken against one would not be reproducible --- it
+# would be wrong in a way nothing reports.
+#
+# The sum is checked before the archive is used. The trace is reproducible
+# only if the starting state is exactly these bytes, and the archive sits
+# where git does not track it, so nothing else would notice it being replaced.
+#
+# The pack is decompressed for each run and removed after, so BUILD needs
+# 269 MB free while this runs and keeps only the 30 MB trace. `clean` takes
+# whichever is there.
+SYS100_GZ  := vendor/system-100-0/disk-sys-100-0.img.gz
+SYS100_SHA := bab08874cc35ab129b40daf1602dbaf28e9fe818a81042148c3deb8d70a465a0
+
+$(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/Cargo.toml | $(BUILD)
+	@if [ ! -f $(SYS100_GZ) ]; then \
+	    echo "# skipped: the System 100 release is not here" > $@; \
+	    echo "rtl_sys: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	else \
+	    set -e; \
+	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
+	        || { echo "rtl_sys: $(SYS100_GZ) is not the release this trace was measured against"; exit 1; }; \
+	    trap 'rm -f $(BUILD)/disk-sys-100-0.img $@.part' EXIT; \
+	    gunzip -c $(SYS100_GZ) > $(BUILD)/disk-sys-100-0.img; \
+	    $(GOLDEN) --release --bin rtl_sys -- --pack $(BUILD)/disk-sys-100-0.img > $@.part; \
+	    mv $@.part $@; \
+	fi
+
 $(BUILD):
 	@mkdir -p $(BUILD)
 
