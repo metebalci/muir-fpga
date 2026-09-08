@@ -4,10 +4,10 @@
 //! The processor's port list, generated from `data/cables.txt`.
 //!
 //! The five flat cables are the processor's real boundary --- 92 wires, pin
-//! for pin off MIT's wire lists --- so they are the module's ports. Both
-//! implementations of the processor, the one ported from `rtl.rs` and the one
-//! generated from `CADR.netlist`, plug into the same list, which is what
-//! makes them interchangeable rather than merely similar.
+//! for pin off MIT's wire lists --- so they are the module's ports. Shaping the
+//! boundary to `rtl.rs`'s Rust API instead would be muir's shape rather than
+//! the machine's, and would have to be unpicked by anything that ever wanted to
+//! be closer to the hardware.
 //!
 //! Direction is *derived*, not asserted: for each wire this asks the two
 //! netlists which parts sit on the net at each end and how each of their pins
