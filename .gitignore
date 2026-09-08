@@ -4,6 +4,11 @@ golden/target/
 *.vcd
 *.fst
 
+# The mutation runner is a script, not a package; its bytecode is not ours to
+# carry and would be committed the first time anyone ran it from the tree.
+__pycache__/
+*.pyc
+
 # Claude Code's local state, and the project's working notes.
 #
 # CLAUDE.md exists in the working tree --- what each check holds to, where the
