@@ -23,7 +23,7 @@ VFLAGS := --cc --exe --build -Wall
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
-       $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass current
+       $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass        $(BUILD)/machine.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -135,6 +135,28 @@ $(BUILD)/obj_microcycle/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_microcycle_tb.cp
 $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
                           $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl.golden
+	@touch $@
+
+# ------------------------------------------------------- the whole machine
+
+# The processor and the memory path joined by the cables. Both halves have
+# their own checks and pass them; this is the one that asks them to agree with
+# each other about a single cycle. MD is no longer a column of the trace: it
+# is the word the fabric's own bus interface strobes into it, at the instant
+# that interface says, and the stall timing has to come out right with the
+# real interface underneath.
+MACHINE := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv rtl/cadr_ddr_map.sv \
+           rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv rtl/cadr_xbus_ddr.sv \
+           rtl/cadr_memory_path.sv rtl/cadr_machine.sv
+
+$(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_machine \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_machine_tb.cpp)
+
+$(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
+                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_machine/Vcadr_machine $(BUILD)/rtl.golden
 	@touch $@
 
 # ------------------------------------------------------------------- cables
