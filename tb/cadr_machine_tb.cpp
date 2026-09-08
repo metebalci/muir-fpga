@@ -317,12 +317,6 @@ int main(int argc, char **argv) {
     dut->sintr = static_cast<uint8_t>(r.v[kSintr]);
     dut->mem_rdata = static_cast<uint32_t>(rdata_for[row]);
     dut->device_rdata = dut->mem_rdata;
-    dut->srun = static_cast<uint8_t>(r.v[kSrun]);
-    dut->promdisable = static_cast<uint8_t>(r.v[kPromdis]);
-    dut->errstop = static_cast<uint8_t>(r.v[kErrstop]);
-    dut->stathenb = static_cast<uint8_t>(r.v[kStathenb]);
-    dut->mode_speed =
-        static_cast<uint8_t>((r.v[kSpeed1] << 1) | (r.v[kSpeed0] & 1));
   };
 
   // What the DUT held over the microcycle now ending: sampled every tick, so
@@ -330,14 +324,15 @@ int main(int argc, char **argv) {
   // against the values the edge has just produced.
   struct Sample {
     uint64_t pc, ir, lpc, opc, st, a, m, alu, r, ob, q, dc, lc, vma, md, vmaok,
-        jcond, nop, pcs1, pcs0, iwrited;
+        jcond, nop, pcs1, pcs0, iwrited, promdis;
   };
   auto take = [&]() {
     return Sample{dut->pc,  dut->ir,    dut->lpc, dut->opc,   dut->st,
                   dut->a,   dut->m,     dut->alu, dut->r,     dut->ob,
                   dut->q,   dut->dc,    dut->lc,  dut->vma,   dut->md,
                   dut->vmaok,
-                  dut->jcond, dut->nop, dut->pcs1, dut->pcs0, dut->iwrited};
+                  dut->jcond, dut->nop, dut->pcs1, dut->pcs0, dut->iwrited,
+                  dut->promdisable};
   };
 
   Row cur;
@@ -362,7 +357,10 @@ int main(int argc, char **argv) {
   long sub_tick = 0, worst_slip = 0, best_slip = 0, arb_skipped = 0;
   bool any_slip = false;
   bool bus_outstanding = false, saw_mem_req = false, saw_device = false;
+  bool saw_ub = false;
+  long ub_cycles = 0;
   bool was_unibus = false, was_nxm = false;
+  uint32_t stuck_phys = 0;
   const char *stopped_because = "nothing on the bus answered it";
   long device_answers = 0;
   long ack_at_tick = 0;
@@ -392,7 +390,12 @@ int main(int argc, char **argv) {
     dut->device_ack = 0;
     if (dut->mem_req) saw_mem_req = true;
     if (dut->dev_rq && dut->device) saw_device = true;
-    if (bus_outstanding && dut->unibus) was_unibus = true;
+    if (dut->ub_msyn) saw_ub = true;
+
+    if (bus_outstanding && dut->unibus) {
+      was_unibus = true;
+      stuck_phys = dut->phys;
+    }
     if (bus_outstanding && dut->nxm) was_nxm = true;
     const long answer_tick =
         ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
@@ -457,6 +460,11 @@ int main(int argc, char **argv) {
         bad += Fail(r, "JCOND", prev.jcond, r.v[kJcond]);
       if (prev.vma != r.v[kVma]) bad += Fail(r, "VMA", prev.vma, r.v[kVma]);
       if (prev.md != r.v[kMd]) bad += Fail(r, "MD", prev.md, r.v[kMd]);
+      // The mode register is no longer handed to the machine: it is written
+      // over the Unibus by the machine itself, which is the whole point of
+      // the register block.
+      if (prev.promdis != r.v[kPromdis])
+        bad += Fail(r, "PROMDISABLE", prev.promdis, r.v[kPromdis]);
       // The net is -VMAOK, `NAND(-PFR, -PFW)` at VCTL1 1D17: *low* when the
       // access is permitted, the opposite of the logical VMAOK the jump
       // conditions and MEMRQ take.
@@ -507,7 +515,14 @@ int main(int argc, char **argv) {
       // An NXM is not unanswerable: nothing is meant to answer it, muir's
       // interface times it out and so does the fabric's. Only a cycle
       // addressed to a bus the fabric does not have stops the run.
-      if (bus_outstanding && !saw_mem_req && !saw_device && was_unibus) {
+      if (saw_ub) ++ub_cycles;
+      // Not before the cycle has had its time. A Unibus cycle arbitrates for
+      // five master clocks before -UB MSYN goes out, so a detector that gave
+      // up one microcycle after the request would call every one of them
+      // unanswerable --- which it did, and reported nought Unibus cycles
+      // while the arbitration was working.
+      if (bus_outstanding && t > ack_at_tick + 40 && !saw_mem_req &&
+          !saw_device && !saw_ub && was_unibus) {
         unanswerable = k;
         stopped_because = was_unibus  ? "it is addressed to the Unibus, and "
                                         "cadr_busint_xbus.sv is the Xbus half"
@@ -520,6 +535,7 @@ int main(int argc, char **argv) {
         bus_outstanding = true;
         saw_mem_req = false;
         saw_device = false;
+        saw_ub = false;
         // Rounded *up*: a memory board answers on its own refresh clock, so
         // muir's acknowledgement is not on the five-nanosecond grid, and the
         // fabric can only see it at a tick at or after it. Truncating instead
@@ -617,13 +633,14 @@ int main(int argc, char **argv) {
         "engine\n"
         "    %s, and it stops there rather than diverging: at that\n"
         "    microcycle the program touches something that is not main\n"
-        "    memory: %s.\n"
-        "    Up to there: %ld bus cycles through the fabric's own decode,\n"
+        "    memory at %o: %s.\n"
+        "    Up to there: %ld Unibus cycles, and %ld bus cycles through the\n"
+        "    fabric's own decode,\n"
         "    bus interface and DDR bridge; MD strobed by that interface and\n"
         "    compared every microcycle; every microcycle length the fabric's\n"
         "    own, stalls included.\n",
         unanswerable, pack_trace ? "on a System 100 band" : "on MIT's boot PROM",
-        stopped_because, cycles_run);
+        stuck_phys, stopped_because, ub_cycles, cycles_run);
     return 0;
   }
   if (k != total_rows) {

@@ -25,8 +25,7 @@
 // both do --- so a write leaves MD alone whatever the bridge has on `rdata`.
 // `cadr_microcycle.sv` says the same at the register.
 //
-// WHAT IS STILL OUTSIDE.  The console's registers, which no fabric console
-// writes yet; the number of memory boards, which is the machine's
+// WHAT IS STILL OUTSIDE.  The number of memory boards, which is the machine's
 // configuration; the DDR itself, behind `mem_req`/`mem_done`; and every Xbus
 // slave that is not main memory, behind `dev_rq`/`device_ack`.  The last of
 // those is the wall this composition hits: the boot PROM reads the disk
@@ -42,13 +41,6 @@ module cadr_machine #(
 ) (
     input  var logic        clk,          // 200 MHz, one tick = 5 ns
     input  var logic        rst,
-
-    // --- the console's registers: OLORD1 1A09 and 1A10
-    input  var logic        srun,
-    input  var logic        promdisable,
-    input  var logic        errstop,
-    input  var logic        stathenb,
-    input  var logic [1:0]  mode_speed,
 
     // --- SINTR, the interrupt off the cables
     input  var logic        sintr,
@@ -90,6 +82,15 @@ module cadr_machine #(
     output var logic [21:0] phys,         // the address it is asking about
     input  var logic        device_ack,   // -XBUS.ACK from that slave
     input  var logic [31:0] device_rdata,
+    output var logic        promdisable,  // PROMDISABLE, as the mode register holds it
+    output var logic        ub_msyn,      // -UB MSYN, so a check can see the Unibus run
+    output var logic        ub_ssyn_o,
+    output var logic [2:0]  arb_stage,
+    output var logic        n_memrq_o,
+    output var logic [17:0] ub_addr_o,
+    output var logic [15:0] ub_rdata_o,
+    output var logic        n_loadmd_o,
+    output var logic        rdcyc_o,
     output var logic        nxm,          // Xbus space with nothing in it
     output var logic        unibus,       // the Unibus, which is its own slice
     output var logic        memstart,     // MEMSTART, which also addresses the map
@@ -108,6 +109,12 @@ module cadr_machine #(
   logic        mclk;
   logic        n_memrq, rdcyc;
   logic [31:0] wdata, rdata;
+  // The console's registers, which now live on the bus interface where a
+  // console can write them, and reach the processor as signals.
+  logic [3:0]  spy_eadr;
+  logic [15:0] spy_rdata;
+  logic        run, errstop, stathenb, prog_reset, prog_boot;
+  logic [1:0]  mode_speed;
   logic        n_memgrant, n_memack, n_loadmd;
 
   cadr_microcycle #(
@@ -115,11 +122,13 @@ module cadr_machine #(
   ) processor (
       .clk         (clk),
       .rst         (rst),
-      .srun        (srun),
+      .run         (run),
       .promdisable (promdisable),
       .errstop     (errstop),
       .stathenb    (stathenb),
       .mode_speed  (mode_speed),
+      .spy_eadr    (spy_eadr),
+      .spy_rdata   (spy_rdata),
       .sintr       (sintr),
       .n_memack    (n_memack),
       .n_memgrant  (n_memgrant),
@@ -166,7 +175,6 @@ module cadr_machine #(
       .wdata      (wdata),
       .n_memgrant (n_memgrant),
       .n_memack   (n_memack),
-      .n_loadmd   (n_loadmd),
       .rdata      (rdata),
       .timed_out  (timed_out),
       .boards     (boards),
@@ -177,6 +185,21 @@ module cadr_machine #(
       .device_rdata(device_rdata),
       .nxm        (nxm),
       .unibus     (unibus),
+      .ub_msyn_o  (ub_msyn),
+      .ub_ssyn_o  (ub_ssyn_o),
+      .arb_stage  (arb_stage),
+      .ub_addr_o  (ub_addr_o),
+      .ub_rdata_o (ub_rdata_o),
+      .n_loadmd   (n_loadmd),
+      .spy_eadr   (spy_eadr),
+      .spy_rdata  (spy_rdata),
+      .run        (run),
+      .promdisable(promdisable),
+      .errstop    (errstop),
+      .stathenb   (stathenb),
+      .mode_speed (mode_speed),
+      .prog_reset (prog_reset),
+      .prog_boot  (prog_boot),
       .mem_req    (mem_req),
       .mem_write  (mem_write),
       .mem_addr   (mem_addr),
@@ -187,8 +210,13 @@ module cadr_machine #(
 
   // RDCYC leaves the processor for the check's sake: a write must not move
   // MD, and that is the thing this composition makes visible.
+  // -PROG.RESET and PROG.BOOT: the two pulses a mode-register write makes,
+  // which the processor does not act on yet. See the note at the top.
   logic unused;
-  assign unused = &{1'b0, rdcyc};
+  assign n_loadmd_o = n_loadmd;
+  assign n_memrq_o  = n_memrq;
+  assign rdcyc_o    = rdcyc;
+  assign unused = &{1'b0, prog_reset, prog_boot};
 
 endmodule
 
