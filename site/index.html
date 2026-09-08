@@ -14,12 +14,12 @@
     <h2>muir-fpga on the Arty Z7-20</h2>
     <figure class="fig dense">
       <div class="scroll">
-<svg viewBox="0 0 900 752" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the TV and the disk controller, and to the Unibus, carrying the I/O board. Two AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters, and a proposed M_AXI_GP0 with AXI4-Lite for the disk and Chaosnet buffers and the console. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly.">
+<svg viewBox="0 0 900 752" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the TV and the disk controller, and to the Unibus, carrying the I/O board. Two AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters, and M_AXI_GP0 with AXI4-Lite for the disk and Chaosnet buffers and the console. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly.">
           <text class="d-t" x="10" y="18">XC7Z020-1CLG400C &mdash; the machine and its host on one chip</text>
           <rect class="d-box" x="10" y="28" width="880" height="604"/>
 
           <text class="d-s" x="16" y="48">PL &mdash; fabric</text>
-          <text class="d-n" x="156" y="50">CADR &mdash; 985 parts, both boards</text>
+          <text class="d-s" x="156" y="50">the processor: two boards</text>
 
           <!-- the clock generator -->
           <rect class="d-box" x="40" y="62" width="112" height="128"/>
@@ -50,7 +50,7 @@
           <!-- the bus interface -->
           <rect class="d-box" x="596" y="62" width="254" height="128"/>
           <text class="d-t" x="723" y="92" text-anchor="middle">bus interface</text>
-          <text class="d-n" x="723" y="112" text-anchor="middle">BUSINT, 176 parts</text>
+          <text class="d-n" x="723" y="112" text-anchor="middle">BUSINT</text>
           <text class="d-s" x="723" y="138" text-anchor="middle">arbitration, the NXM timeout,</text>
           <text class="d-s" x="723" y="152" text-anchor="middle">the address decode, -HANG,</text>
           <text class="d-s" x="723" y="166" text-anchor="middle">its own registers, the debug cable</text>
@@ -60,7 +60,7 @@
           <line class="d-bus" x1="40" y1="238" x2="570" y2="238"/>
           <text class="d-s" x="40" y="228">Xbus, 32 bits, synchronous</text>
           <line class="d-bus" x1="620" y1="238" x2="876" y2="238"/>
-          <text class="d-s" x="876" y="228" text-anchor="end">Unibus, 16 bits, open collector &mdash; not this slice</text>
+          <text class="d-s" x="876" y="228" text-anchor="end">Unibus, 16 bits, open collector</text>
 
           <path class="d-line" d="M118,238 L118,274 M283,238 L283,274 M470,238 L470,274 M725,238 L725,274"/>
 
@@ -69,8 +69,7 @@
           <text class="d-t" x="118" y="300" text-anchor="middle">Xbus to DDR</text>
           <text class="d-s" x="118" y="320" text-anchor="middle">main memory and</text>
           <text class="d-s" x="118" y="334" text-anchor="middle">the display&rsquo;s buffer</text>
-          <text class="d-s" x="118" y="356" text-anchor="middle">an AXI4 master</text>
-          <text class="d-s" x="118" y="376" text-anchor="middle">not settled yet</text>
+          <text class="d-s" x="118" y="360" text-anchor="middle">an AXI4 master</text>
 
           <rect class="d-box" x="210" y="274" width="146" height="112"/>
           <text class="d-t" x="283" y="300" text-anchor="middle">TV</text>
@@ -109,7 +108,7 @@
           <text class="d-s" x="118" y="475" text-anchor="middle">PL masters, 64 bits</text>
           <rect class="d-fill" x="575" y="440" width="250" height="44"/>
           <text class="d-m" x="700" y="459" text-anchor="middle">M_AXI_GP0, AXI4-Lite</text>
-          <text class="d-s" x="700" y="475" text-anchor="middle">proposed, not built</text>
+          <text class="d-s" x="700" y="475" text-anchor="middle">PS masters, 32 bits</text>
 
           <!-- the PS -->
           <text class="d-s" x="16" y="502">PS &mdash; Linux</text>
@@ -154,7 +153,7 @@
           <text class="d-s" x="216" y="716">on the board, not in the chip</text>
         </svg>
       </div>
-      <figcaption><p>The proposed architecture. <strong>Solid is fabric; dashed is the PS side and the DRAM behind it</strong> &mdash; the dashed outline says &ldquo;not in fabric&rdquo;, not &ldquo;not built&rdquo;. Where a fabric block is a proposal rather than a decision the drawing says so on the block: the DDR bridge and the <code>M_AXI_GP0</code> path are both marked, and the Unibus and everything on it is labelled <em>not this slice</em>.</p><p>The boxes name the boards of the real machine, and the two part counts are MIT&rsquo;s count of what is on those boards. What goes into fabric is <strong>rtl level</strong> &mdash; the machine&rsquo;s own two-phase clock, every datapath signal on it, and everything that is a matter of <em>when</em>. It is checked against MIT&rsquo;s netlists rather than being them; whether a gate-level implementation ever follows is an open question and not a promise this drawing makes.</p></figcaption>
+      <figcaption><p>The proposed architecture. <strong>Solid is fabric; dashed is the PS side and the DRAM behind it.</strong> The outline says where a thing runs, not how far along it is: this is a design document and it moves.</p><p>The boxes name the boards of the real machine. What goes into fabric is <strong>rtl level</strong> &mdash; the machine&rsquo;s own two-phase clock, every datapath signal on it, and everything that is a matter of <em>when</em>. It is checked against MIT&rsquo;s netlists rather than being them; whether a gate-level implementation ever follows is an open question and not a promise this drawing makes.</p></figcaption>
     </figure>
   </div>
 </section>
