@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The CADR clock generator, as a synchronous phase generator.
@@ -20,10 +21,11 @@
 // KNOWN GAP, and it is in the reference rather than here: with `reset` held,
 // muir's `apply_clock` keeps deriving `-TPR60` from `phase_ns`, which is
 // `time - cycle_start` with `cycle_start` left where the last cycle put it.
-// Held long enough that phase_ns sweeps 60..100, the reference emits a
-// spurious `-TPR60`.  This module holds `phase` at zero under reset instead,
-// so the two agree on every tick except that one, and the vector script
-// asserts reset only before the first cycle.  See tb/cadr_phase_gen_tb.cpp.
+// Time runs on while reset is held, so `phase_ns` sweeps 60..100 and the
+// reference emits a spurious `-TPR60` --- even from power-on, where it lands
+// at ticks 11 to 18 of the trace.  This module holds `phase` at zero under
+// reset instead, so a cleared ring produces no tap, and the testbench does
+// not compare `-TPR60` while `RESET` is high.  See tb/cadr_phase_gen_tb.cpp.
 
 `default_nettype none
 

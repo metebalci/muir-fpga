@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 //! The reference trace for `rtl/cadr_phase_gen.sv`, taken from muir's own
@@ -36,12 +37,16 @@ struct Drive {
 /// A deterministic stimulus, so the trace is the same on every machine and
 /// the file can be regenerated and diffed.
 ///
-/// It is not random noise: each segment is meant to reach something.
-/// Reset first, because `apply_clock` derives `-TPR60` from a `phase_ns`
-/// whose `cycle_start` reset does not move, so a reset held mid-run makes the
-/// reference emit a spurious `-TPR60` --- a modelling artefact of the
-/// reference and not of the board. Held only before the first cycle, as here,
-/// `phase_ns` is zero and the two agree.
+/// It is not random noise: each segment is meant to reach something. Reset
+/// first, then each speed and each ILONG on its own, then `-HANG`, then
+/// everything moving at once.
+///
+/// Reset is held only before the first cycle, but that does not avoid the
+/// `-TPR60` artefact: `apply_clock` derives it from `phase_ns`, which is
+/// `time - cycle_start`, and reset moves neither `cycle_start` nor the clock.
+/// Time runs on, so even a reset held from power-on sweeps `phase_ns` through
+/// 60..100 and emits a read tap --- here at ticks 11 to 18. The testbench
+/// therefore does not compare `-TPR60` while `RESET` is high.
 fn drive(tick: u64) -> Drive {
     // A small LCG, so this file needs no dependency either.
     let mut s = tick.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);

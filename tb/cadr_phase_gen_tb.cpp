@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Drives rtl/cadr_phase_gen.sv from the reference trace and compares every
