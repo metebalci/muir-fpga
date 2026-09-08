@@ -38,6 +38,23 @@
 # A mutation that survives is a finding.  It is not tuned away and not dropped
 # from the list: it says a check is weaker than it looks, and the fix belongs
 # in the check.
+#
+# WHAT `@hole` IS FOR, and why it is not a way to hide one.  A check that is
+# known not to catch something, with an issue saying so, is a recorded
+# exception --- the same shape as CLAUDE.md's "Where the fabric parts from
+# muir", or the testbench not comparing -TPR60 while RESET is high.  What the
+# repository does not tolerate is an *unrecorded* one.
+#
+# The reason to have the field at all is that a target which is red by design
+# cannot report a fifth survivor: red for four known reasons looks exactly
+# like red for five, and a mutation runner that can no longer deliver a new
+# finding has stopped being a check and become a reminder.  So a survivor
+# carrying `@hole #3` is reported, counted in its own column, and tolerated.
+#
+# And the inverse, which is what keeps it honest: a mutation that is CAUGHT
+# while still carrying an `@hole` fails the run, naming the issue to close and
+# the line to delete.  Without that, suppressions outlive the holes they
+# describe and the list quietly becomes a lie.
 
 import argparse
 import concurrent.futures
@@ -125,15 +142,22 @@ GENERATED = [
     "rtl/cadr_cables_lint.sv",
 ]
 
-# What a mutation run can come to.  CAUGHT is the only good one.
+# What a mutation run comes to.  The first two are what a healthy run is made
+# of; the last four each fail it.
 CAUGHT = "caught"        # the check failed, as it should have
-SURVIVED = "survived"    # the check passed with the bug in: a hole
+HOLE = "hole"            # survived, and `@hole` says which issue holds it
+SURVIVED = "survived"    # survived with nothing recorded: a new finding
+CLOSED = "closed"        # caught, and still carrying an `@hole`
 BROKEN = "broken"        # the build failed; not a verdict on the check
 UNAPPLIED = "unapplied"  # the @old text was not there exactly once
 
+# The order they are counted and printed in.
+VERDICTS = [CAUGHT, HOLE, SURVIVED, CLOSED, BROKEN, UNAPPLIED]
+
 
 class Mutation(object):
-    def __init__(self, name, check, path, notes, old, new, line):
+    def __init__(self, name, check, path, notes, old, new, line,
+                 hole, hole_line):
         self.name = name
         self.check = check
         self.path = path
@@ -141,6 +165,8 @@ class Mutation(object):
         self.old = old
         self.new = new
         self.line = line          # where it is in list.txt, for error messages
+        self.hole = hole          # the issue holding it open, "#3", or None
+        self.hole_line = hole_line
         self.verdict = None
         self.detail = ""
         self.also = []            # for a survivor: other checks that missed it
@@ -183,7 +209,8 @@ def parse(path):
                 cur["new"] = "".join(s + "\n" for s in new)
                 mutations.append(
                     Mutation(cur["name"], cur["check"], cur["file"], notes,
-                             cur["old"], cur["new"], cur["line"]))
+                             cur["old"], cur["new"], cur["line"],
+                             cur["hole"], cur["hole_line"]))
                 cur, field = None, None
                 old, new, notes = [], [], []
                 continue
@@ -197,7 +224,8 @@ def parse(path):
             if cur is not None:
                 die("%s:%d: @mutation inside a record" % (path, n))
             cur = {"name": line[len("@mutation "):].strip(), "line": n,
-                   "check": None, "file": None}
+                   "check": None, "file": None, "hole": None,
+                   "hole_line": 0}
             old, new, notes = [], [], []
         elif cur is None:
             die("%s:%d: %s outside a record" % (path, n, line.split()[0]))
@@ -205,6 +233,16 @@ def parse(path):
             cur["check"] = line[len("@check "):].strip()
         elif line.startswith("@file "):
             cur["file"] = line[len("@file "):].strip()
+        elif line.startswith("@hole "):
+            # An issue number is the whole point: a hole nobody wrote down is
+            # not a recorded exception, it is a suppressed finding.
+            if cur["hole"]:
+                die("%s:%d: `%s` has two @hole lines" % (path, n, cur["name"]))
+            hole = line[len("@hole "):].strip()
+            if not (hole.startswith("#") and hole[1:].isdigit()):
+                die("%s:%d: `%s`: @hole wants an issue, as `@hole #3`, not `%s`"
+                    % (path, n, cur["name"], hole))
+            cur["hole"], cur["hole_line"] = hole, n
         elif line == "@note" or line.startswith("@note "):
             # A bare `@note` is a blank line between paragraphs.
             notes.append(line[len("@note"):].strip())
@@ -466,9 +504,19 @@ def main():
             m.verdict, m.detail = UNAPPLIED, problem
             return m
         m.verdict, m.detail = build_and_run(args, work, m.check)
+        # `@hole` says the check is known not to catch this and names the
+        # issue.  It turns a survivor into a recorded exception --- and a
+        # mutation that IS caught while still carrying one into a failure,
+        # because a hole that closed and was never noticed is how a recorded
+        # exception rots into a suppressed finding.
+        if m.hole:
+            if m.verdict == SURVIVED:
+                m.verdict = HOLE
+            elif m.verdict == CAUGHT:
+                m.verdict = CLOSED
         # A survivor is a finding, and the first question about it is whether
         # anything else would have caught it.  Only survivors pay for this.
-        if m.verdict == SURVIVED:
+        if m.verdict in (SURVIVED, HOLE):
             for other in sorted(CHECKS):
                 if other == m.check or m.path not in CHECKS[other]["sources"]:
                     continue
@@ -485,37 +533,77 @@ def main():
         done = 0
         for m in pool.map(one, mutations):
             done += 1
-            mark = {CAUGHT: ".", SURVIVED: "S",
-                    BROKEN: "B", UNAPPLIED: "U"}[m.verdict]
+            mark = {CAUGHT: ".", HOLE: "h", SURVIVED: "S",
+                    CLOSED: "C", BROKEN: "B", UNAPPLIED: "U"}[m.verdict]
             sys.stdout.write(mark)
             sys.stdout.flush()
         sys.stdout.write("\n\n")
 
-    return report(mutations)
+    return report(mutations, args.list)
 
 
-def report(mutations):
+def report(mutations, listing_path):
+    """The table, the known holes, and what failed.
+
+    The exit rule is three-way, and the third part is what keeps `@hole`
+    honest.  A survivor with no `@hole` fails: it is a new finding.  A
+    survivor with one is reported and tolerated: it is a recorded exception,
+    the same shape as the divergences from muir that CLAUDE.md writes down.
+    And a mutation that is *caught* while still carrying an `@hole` fails too,
+    because the hole has closed and the record has not caught up --- without
+    that, suppressions accumulate silently and the list ends up carrying
+    `@hole`s for holes that shut long ago.
+    """
     counts = {}
     for m in mutations:
-        row = counts.setdefault(m.check, {CAUGHT: 0, SURVIVED: 0,
-                                          BROKEN: 0, UNAPPLIED: 0})
+        row = counts.setdefault(m.check, dict((v, 0) for v in VERDICTS))
         row[m.verdict] += 1
 
-    sys.stdout.write("  %-14s %9s %7s %9s %7s %10s\n"
-                     % ("check", "mutations", "caught", "survived", "broken",
-                        "unapplied"))
-    total = {CAUGHT: 0, SURVIVED: 0, BROKEN: 0, UNAPPLIED: 0}
-    for check in sorted(counts):
-        row = counts[check]
-        n = sum(row.values())
-        sys.stdout.write("  %-14s %9d %7d %9d %7d %10d\n"
-                         % (check, n, row[CAUGHT], row[SURVIVED],
-                            row[BROKEN], row[UNAPPLIED]))
-        for k in total:
-            total[k] += row[k]
-    sys.stdout.write("  %-14s %9d %7d %9d %7d %10d\n"
-                     % ("total", sum(total.values()), total[CAUGHT],
-                        total[SURVIVED], total[BROKEN], total[UNAPPLIED]))
+    head = "  %-14s %9s %6s %5s %8s %6s %6s %9s\n"
+    body = "  %-14s %9d %6d %5d %8d %6d %6d %9d\n"
+    sys.stdout.write(head % ("check", "mutations", "caught", "holes",
+                             "survived", "closed", "broken", "unapplied"))
+    total = dict((v, 0) for v in VERDICTS)
+    for check in sorted(counts) + ["total"]:
+        if check == "total":
+            row = total
+        else:
+            row = counts[check]
+            for k in total:
+                total[k] += row[k]
+        sys.stdout.write(body % ((check, sum(row.values()))
+                                 + tuple(row[v] for v in VERDICTS)))
+
+    # Prominent, not a footnote: someone running this sees what is knowingly
+    # not caught without going looking for it.
+    holes = [m for m in mutations if m.verdict == HOLE]
+    # Sorted by issue rather than by where they fall in the list, so the
+    # summary line reads as a set of issues to go and look at.
+    issues = " ".join(sorted(set(m.hole for m in holes),
+                             key=lambda h: int(h[1:])))
+    if holes:
+        sys.stdout.write("\n  %d known hole%s, held open by %s\n"
+                         % (len(holes), "" if len(holes) == 1 else "s",
+                            issues))
+
+    def listing(group, heading, why):
+        if not group:
+            return
+        sys.stdout.write("\n%s\n  %s\n\n" % (heading, why))
+        for m in group:
+            sys.stdout.write("  %s  (%s, %s)\n" % (m.name, m.check, m.path))
+            for note in m.notes:
+                sys.stdout.write("      %s\n" % note)
+            sys.stdout.write("      %s\n" % m.detail)
+            if m.also:
+                sys.stdout.write("      not caught by %s either\n"
+                                 % ", ".join(m.also))
+
+    listing(holes, "KNOWN HOLES, each held open by an issue",
+            "The check does not catch these and it is written down. They stay\n"
+            "  in the list --- a survivor quietly dropped is a check that\n"
+            "  silently got weaker --- and they do not fail the run, so that a\n"
+            "  new one can still be seen.")
 
     for verdict, heading, why in (
         (UNAPPLIED, "DID NOT APPLY",
@@ -526,25 +614,34 @@ def report(mutations):
          "  to keep every signal used, or lint is doing the catching."),
         (SURVIVED, "SURVIVED",
          "A hole in a check: the design is wrong and the check says it is\n"
-         "  fine.  This belongs in the check, not in the list."),
+         "  fine.  This belongs in the check, not in the list.  If it cannot be\n"
+         "  fixed now, file it and record the issue with @hole."),
     ):
-        bad = [m for m in mutations if m.verdict == verdict]
-        if not bad:
-            continue
-        sys.stdout.write("\n%s\n  %s\n\n" % (heading, why))
-        for m in bad:
-            sys.stdout.write("  %s  (%s, %s)\n" % (m.name, m.check, m.path))
-            for note in m.notes:
-                sys.stdout.write("      %s\n" % note)
-            sys.stdout.write("      %s\n" % m.detail)
-            if m.also:
-                sys.stdout.write("      not caught by %s either\n"
-                                 % ", ".join(m.also))
+        listing([m for m in mutations if m.verdict == verdict], heading, why)
 
-    if total[CAUGHT] == sum(total.values()):
+    closed = [m for m in mutations if m.verdict == CLOSED]
+    if closed:
+        sys.stdout.write(
+            "\nA HOLE THAT CLOSED\n"
+            "  The check catches this now and the record still says it does\n"
+            "  not. Close the issue and delete the @hole line --- a suppression\n"
+            "  nobody removes is how this mechanism would rot into a lie.\n\n")
+        for m in closed:
+            sys.stdout.write("  %s  (%s, %s)\n" % (m.name, m.check, m.path))
+            sys.stdout.write("      close %s, and delete `@hole %s` at %s:%d\n"
+                             % (m.hole, m.hole, listing_path, m.hole_line))
+            sys.stdout.write("      %s\n" % m.detail)
+
+    failed = total[SURVIVED] + total[CLOSED] + total[BROKEN] + total[UNAPPLIED]
+    if failed:
+        return 1
+    if total[HOLE]:
+        sys.stdout.write("\nok: %d mutations caught, %d known hole%s (%s)\n"
+                         % (total[CAUGHT], total[HOLE],
+                            "" if total[HOLE] == 1 else "s", issues))
+    else:
         sys.stdout.write("\nok: every mutation was caught by its check\n")
-        return 0
-    return 1
+    return 0
 
 
 if __name__ == "__main__":
