@@ -1354,40 +1354,71 @@
 @note the boot PROM's 11,404 hangs ends late --- so if this survives, the
 @note shortfall was never load-bearing at all.
 @note
-@note The constant is three ticks short now, not two; the comment above it
-@note in the source still says two. See
-@note `the-read-finish-delay-is-what-its-comment-says`, which is the
-@note mutation aimed at that gap and which survives.
+@note The shortfall is derived now rather than fitted --- see
+@note `the-read-finish-delay-absorbs-a-tick-that-is-not-its-own` for the
+@note arithmetic and for where the third tick went.
 @old
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
 @new
   localparam int unsigned RD_FINISH_T = (140 / 5);
 @end
 
-@mutation the-read-finish-delay-is-what-its-comment-says
-@hole #10
+@mutation the-read-finish-delay-absorbs-a-tick-that-is-not-its-own
 @check microcycle
 @file rtl/cadr_microcycle.sv
-@note The constant is `(140 / 5) - 3`. The comment above it says
-@note "**-RDFINISH is two ticks short of its 140, and deliberately**", and
-@note explains the two: RD.IN.PROGRESS falls on the tick the countdown
-@note expires, the parked generator needs one more tick to see -HANG lift
-@note and another to raise TPCLK. Two ticks, with a mechanism for each.
+@note `RD_FINISH_T` is derived rather than fitted now: the countdown expires
+@note at tick X, RD.IN.PROGRESS is visible from X+1, the parked generator
+@note samples -HANG pre-edge at the posedge ending X+1 and raises TPCLK, so
+@note the boundary is at X+2 --- `memack + N + 2`, and wanting `memack + 28`
+@note gives N = 26. Two ticks short of 140, with an arithmetic reason.
 @note
-@note The third tick has no mechanism written against it. This mutation
-@note sets the constant to what its own comment says it should be, so that
-@note being caught means the comment is wrong about the value it justifies
-@note --- which is a different and more useful thing to learn than "one tick
-@note out is noticed".
+@note It was three for a while. The third tick was the standalone
+@note testbench's: muir's -MEMACK is off the 5 ns grid, so it is rounded up
+@note and measured from the edge marker a tick after the boundary --- never
+@note early, one or two ticks late, and the check prints the histogram. This
+@note restores that tick to the fabric, which is a constant absorbing an
+@note artefact of how a check measures. #10.
 @note
-@note It also lands exactly on the length check's tolerance, which exempts a
-@note slip of LESS than a tick on a stalled microcycle: 5 ns is not less
-@note than 5 ns, so the bound is tested at its boundary by the same record.
-@note If it were ever widened to two ticks this would survive.
+@note ON THE TIGHT SIDE, AND CHECK WHICH THAT IS BEFORE MOVING IT. The
+@note standalone exempts a slip of strictly LESS than a tick; the composed
+@note check exempts a WHOLE tick, because that is where the tick is created.
+@note So a one-tick record belongs here and would be absorbed there --- the
+@note opposite of where the reasoning pointed before the tick was traced to
+@note its source.
 @old
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
-@new
   localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+@new
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
+@end
+
+@mutation a-hang-ends-four-ticks-late-on-the-machine
+@check machine
+@file rtl/cadr_microcycle.sv
+@note The composed check's own edge, and it is not where its tolerance says.
+@note The tolerance exempts a slip of up to and including one whole tick,
+@note deliberately, because that is where the tick is created --- muir's
+@note -MEMACK is off the 5 ns grid, so the model rounds it up and measures
+@note from an edge marker a tick after the boundary.
+@note
+@note But the REFERENCE ITSELF CARRIES THAT BIAS: never early, and one or
+@note two ticks late, which the check prints as a histogram. So a fabric
+@note error in the same direction is partly cancelled by it. Measured by
+@note sweeping the shortfall:
+@note
+@note     two ticks    SURVIVED
+@note     four ticks   CAUGHT
+@note     eight        CAUGHT
+@note     sixteen      CAUGHT
+@note
+@note A one-tick tolerance against a reference that is itself one to two
+@note ticks late is an effective blindness of two, and neither half of that
+@note is wrong --- it is the product that is not written down anywhere. Four
+@note ticks is the smallest magnitude caught, so four is what the list
+@note carries.
+@old
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+@new
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 6;
 @end
 
 @mutation use-md-does-not-mind-a-nopped-cycle
