@@ -28,9 +28,18 @@ the Trident bus timing and the Chaosnet cable in fabric; RFB, the pack on
 microSD, Chaosnet routing and the console on the PS. Main memory is the only
 seam that runs at machine speed, and it is the one with no software in it.
 
-`S_AXI_HP0` for the memory bridge, `M_AXI_GP0` and AXI4-Lite for the console
-and the buffers. The Zynq-7000 PS-PL ports are **AXI3**, not AXI4; the logic
-here is AXI4 and Vivado's converter bridges the two.
+Three ports cross the boundary. `S_AXI_HP0` is the memory bridge's, and it is
+the one at machine speed. `S_AXI_HP1` is the disk's. A Trident turns 60 times a
+second with 17 blocks to the track --- 1,020 blocks a second of 256 words each
+--- so a streaming pack is 261,120 words a second, just over a megabyte.
+Bandwidth was never the point. The point is that on a port the PS masters those
+are 261,120 stalled CPU stores a second, against a 968 us deadline for each
+block. So fabric fetches the block out of DDR itself, off the block's address
+written by Linux, and no CPU is in the per-word path. Its own port rather than
+a share of `HP0`, so that disk traffic adds no arbitration to the memory path.
+`M_AXI_GP0` and AXI4-Lite carry what is left: the disk's registers, the
+Chaosnet buffers, the console. The Zynq-7000 PS-PL ports are **AXI3**, not
+AXI4; the logic here is AXI4 and Vivado's converter bridges the two.
 
 ## The processor's boundary
 
