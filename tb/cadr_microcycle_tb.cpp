@@ -57,6 +57,17 @@
 //     the pass-around covers.  It is right for synthesis, not for this trace.
 //   - The WADR/AADR comparator's top bit is never the one that differs, so a
 //     nine-bit compare survives a ten-bit one.
+//
+// AND THE TOLERANCE ON A STALLED MICROCYCLE IS A WHOLE TICK, NOT LESS.  The
+// -MEMACK driven here is this testbench's model of the interface, and the
+// interface is `rtl/cadr_busint_xbus.sv`, which puts it a tick from where the
+// ideal instant is.  With the processor's -RDFINISH set for the *real*
+// interface --- which is what `machine.pass` runs, the same processor with
+// `cadr_busint_xbus.sv` underneath --- a hang ends a tick from where this
+// model would put it.  Held to less than a tick, the two checks would want
+// different constants out of one module, which is the symptom of a constant
+// absorbing something that belongs elsewhere.  So the composed check sets the
+// constant and this one allows the tick, and both are reported.
 //   - OB's two shift selects are never taken: `OSEL` is only ever 0 (MO) or
 //     1 (ALU), so `ALU >> 1` and `ALU << 1` with Q<31> shifted in are built
 //     and unexercised.  Replacing `ALU >> 1` with `ALU` survives.
@@ -453,7 +464,7 @@ int main(int argc, char **argv) {
           const long slip = static_cast<long>(got) - static_cast<long>(want);
           if (arbitrated[k]) {
             ++arb_skipped;
-          } else if (r.v[kStall] && slip > -kTickNs && slip < kTickNs) {
+          } else if (r.v[kStall] && slip >= -kTickNs && slip <= kTickNs) {
             ++sub_tick;
             if (!any_slip || slip > worst_slip) worst_slip = slip;
             if (!any_slip || slip < best_slip) best_slip = slip;
