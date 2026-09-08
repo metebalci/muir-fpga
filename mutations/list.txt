@@ -1287,3 +1287,101 @@
 @new
         if (vma[25]) l2_map[adr1] <= vma[23:0] ^ 24'd1;
 @end
+
+@mutation the-read-finish-delay-is-charged-in-full
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note `-RDFINISH` is `-MFINISH` through the TD50 at VCTL1 1D23 and the TD250
+@note at 1D22 --- 140 ns on the tap ordering --- and the fabric charges two
+@note ticks fewer, deliberately: ending a hang costs it two ticks the board
+@note spends in gate propagation, one for the parked generator to see -HANG
+@note lift and one to raise TPCLK.
+@note
+@note A number chosen to make a check pass is exactly what a mutation list
+@note exists to interrogate. Charged in full, the claim is that every one of
+@note the boot PROM's 11,404 hangs ends 10 ns late --- so if this survives,
+@note the two ticks were never load-bearing and the comment is wrong.
+@old
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+@new
+  localparam int unsigned RD_FINISH_T = (140 / 5);
+@end
+
+@mutation a-hang-ends-one-tick-late
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note The same constant one tick out rather than two, and this one is aimed
+@note at the TESTBENCH rather than at the fabric: the length check exempts a
+@note slip of less than a tick on a stalled microcycle, because muir's clock
+@note is continuous and this one is a 5 ns grid. A tolerance's tightness is
+@note tested by a mutation just outside it, and one tick is exactly the
+@note boundary --- 5 ns is not less than 5 ns. If the bound were ever
+@note widened to two ticks this would survive, which is the whole point of
+@note having it in the list.
+@old
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+@new
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 1;
+@end
+
+@mutation use-md-does-not-mind-a-nopped-cycle
+@check microcycle_sys
+@file rtl/cadr_microcycle.sv
+@note `USE.MD` is `NOR(-SRCMD, NOPA)` at VCTL1 3F18: this instruction reads
+@note MD, and a nopped cycle reads nothing. Without the gate a nopped
+@note instruction whose source field happens to name MD stalls the machine
+@note for a word it will not use.
+@note
+@note On the band, measured: the boot PROM does not catch it and
+@note the band does. A nopped cycle naming MD as its source is
+@note not something the PROM's own program does.
+@old
+  assign use_md  = srcmd && !nop;
+@new
+  assign use_md  = srcmd;
+@end
+
+@mutation a-write-to-vma-is-taken-as-a-write-to-md
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note `DESTMDR` is the destination decode's bit 22: of the two memory
+@note destinations, VMA is bit 22 low and MD bit 22 high. Ignoring the bit
+@note makes every VMA write an MD write as well.
+@old
+  assign destmdr = destmem && ir[22];
+@new
+  assign destmdr = destmem;
+@end
+
+@mutation the-wait-term-that-never-fires-on-a-read
+@hole #1
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note One of the three terms of -WAIT at VCTL1 3F16, and one of the two that
+@note never fire on either program: the first term, `DESTMEM AND
+@note MBUSY.SYNC`, carries the whole stall path on everything observed. So
+@note this cannot be caught, and issue #1 is what holds that open --- it is
+@note the same finding as the dispatch read and the statistics counter, a
+@note piece of the machine no program reached.
+@note
+@note It stays in the list rather than being dropped: when a program does
+@note exercise it, this is what will say so, by starting to fail.
+@old
+              || (use_md && mbusy && n_memgrant)
+@new
+              || (use_md && mbusy && n_memgrant && 1'b0)
+@end
+
+@mutation the-wait-term-that-never-fires-on-a-fetch
+@hole #1
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note The other of the two: `LCINC AND NEEDFETCH AND MBUSY.SYNC`. Suppressed
+@note with a constant rather than deleted, so that every signal stays read
+@note and lint has nothing to say --- a term removed outright takes `lcinc`
+@note and `needfetch` out of use with it.
+@old
+              || (lcinc && needfetch && mbusy_sync);
+@new
+              || (lcinc && needfetch && mbusy_sync && 1'b0);
+@end
