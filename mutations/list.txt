@@ -1550,3 +1550,37 @@
 @new
         wpiram_off_at <= read_sel + 6'(RESTART_T) - 6'd1;
 @end
+
+@mutation the-word-is-corrupted-on-its-way-into-md
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note MD is an OUTPUT of the processor now, not a column the testbench
+@note drives, and it is loaded from the cables at -LOADMD. Nothing in this
+@note list was aimed at it after it crossed over.
+@note
+@note That gap is worth naming rather than just filling. `md` stopped being
+@note stimulus and became a thing to be checked; a9 found by hand that
+@note turning a driven input into an output does not stop the testbench
+@note driving it, and fixed the testbench. Nothing then proved the fixed
+@note check bites. The file has seventeen other mutations, so my own
+@note coverage warning --- which sees files and not signals --- called it
+@note covered. Five more ports are about to make the same crossing.
+@old
+        md_held    <= rdata;
+@new
+        md_held    <= rdata ^ 32'd1;
+@end
+
+@mutation md-does-not-land-when-the-machine-is-hung
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note The word is caught at -LOADMD and moved into MD at the next boundary
+@note --- or at a hang, because a hung machine has no boundary coming and
+@note the microcycle waiting on the word would never see it. Dropping the
+@note hang term is the deadlock the two-stage hold exists to avoid, and it
+@note is a claim of the same kind as -WAIT coming before -HANG.
+@old
+      end else if (md_pending && (mclk_edge || hang)) begin
+@new
+      end else if (md_pending && mclk_edge) begin
+@end
