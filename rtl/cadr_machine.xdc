@@ -36,18 +36,32 @@
 
 create_clock -name clk -period 5.000 [get_ports clk]
 
-set ticking [get_cells -hier -regexp \
-  {.*/(mfinish_t|rdfinish_t|elapsed|vco_count|arb_t|phase_t)_reg(\[[0-9]+\])?}]
-set edges [get_cells -hier -regexp \
-  {.*/(n_memack_q|n_loadmd_q|n_tpwpiram_q|n_tpwp_q|tpclk_q)_reg}]
-set fast [get_cells -hier -regexp {.*u_phase_gen.*}]
-set keep [concat $ticking $edges $fast]
-
-set slow {}
-foreach r [all_registers] { if {[lsearch -exact $keep $r] < 0} { lappend slow $r } }
+# One `filter` call, because an XDC is a restricted Tcl subset: `foreach` and
+# `concat` are rejected with a critical warning and the constraint then applies
+# to nothing at all. An earlier version of this file built the set with a loop,
+# which works when sourced as plain Tcl and silently does nothing when read as
+# an XDC --- the report then shows the unconstrained design and looks like a
+# real result.
+#
+# The five edge detectors are named individually rather than matched on `_q`,
+# because the scratchpad latches share that suffix --- `amem_q`, `mmem_q`,
+# `pdl_q`, `spc_q` --- and they are exactly the registers that should be
+# relaxed.
+set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
+                                  NAME !~ *mfinish_t_reg*    && \
+                                  NAME !~ *rdfinish_t_reg*   && \
+                                  NAME !~ *elapsed_reg*      && \
+                                  NAME !~ *vco_count_reg*    && \
+                                  NAME !~ *arb_t_reg*        && \
+                                  NAME !~ *phase_t_reg*      && \
+                                  NAME !~ *n_memack_q_reg*   && \
+                                  NAME !~ *n_loadmd_q_reg*   && \
+                                  NAME !~ *n_tpwpiram_q_reg* && \
+                                  NAME !~ *n_tpwp_q_reg*     && \
+                                  NAME !~ *tpclk_q_reg*}]
 
 # 15 ticks, not 29: the tightest instant a datapath register is read at is the
-# fast read tap. 1,748 of 1,821 registers; the other 73 are tick-rate.
+# fast read tap.
 set_multicycle_path -setup 15 -from $slow -to $slow
 set_multicycle_path -hold  14 -from $slow -to $slow
 
