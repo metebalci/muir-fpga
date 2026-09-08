@@ -1103,16 +1103,30 @@ module cadr_microcycle #(
   // on the tap ordering `src/part.rs` records.  `MBUSY` clears on `-MFINISHD`,
   // the 30 ns tap of the same TD50.  Two countdowns off the acknowledgement.
   //
-  // **-RDFINISH is two ticks short of its 140, and deliberately.**  Ending a
-  // hang costs this fabric two ticks that the board spends in gate
-  // propagation delay: RD.IN.PROGRESS falls on the tick the countdown
-  // expires, and the parked generator needs one more tick to see -HANG lift
-  // and another to raise TPCLK.  Charged in full, every hang ends 10 ns after
-  // muir ends it --- and there are 11,404 hangs in the boot PROM, so it is
-  // not a rounding one can leave.  The delay line is 140 ns; two ticks of it
-  // are spent here instead, and this is where that is written down.
+  // **-RDFINISH is two ticks short of its 140, and here is the derivation.**
+  // Ending a hang costs this fabric two ticks that the board spends in gate
+  // propagation delay, and they are countable:
+  //
+  //   tick X     the countdown reaches its end, so RD.IN.PROGRESS falls;
+  //              being a register, it is visible from X+1
+  //   tick X+1   the parked generator samples -HANG before this edge, sees it
+  //              lifted, and raises TPCLK
+  //   tick X+2   the boundary is observed
+  //
+  // So the boundary is at `memack + N + 2`, and the boundary is what muir
+  // puts at `memack + 140`. Hence N = 28 - 2. Charged in full, every hang
+  // ends 10 ns after muir ends it, and there are 11,404 of them in the boot
+  // PROM alone.
+  //
+  // It was briefly 28 - 3, which fitted the composed check and had no
+  // mechanism behind the third tick. The third tick was not the fabric's: it
+  // is `tb/cadr_machine_tb.cpp` placing -MEMACK, rounding muir's off-grid
+  // acknowledgement up to the tick and measuring from the edge marker. That
+  // check now prints where its -MEMACK lands against muir's on every run ---
+  // never early, and one or two ticks late --- and carries the tick itself
+  // rather than folding it in here.
   localparam int unsigned MFINISHD_T  = 30 / 5;
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
 
   logic       n_memack_q;
   logic [5:0] mfinish_t, rdfinish_t;
