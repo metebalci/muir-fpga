@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Publishes site/ to GitHub Pages.  Nothing is built: the directory is
+# uploaded as it stands, which is why site/ has a .nojekyll in it.
+#
+# One-time setup, already done: Settings -> Pages -> Build and deployment
+# -> Source: "GitHub Actions".
+#
+# Same shape as muir's own pages.yml, with the action majors moved up to
+# what is current; muir is still on checkout@v4 / configure-pages@v5 /
+# upload-pages-artifact@v3 / deploy-pages@v4.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and let a running one finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v5
