@@ -58,6 +58,7 @@
 #   @mutation  a kebab-case name; how a survivor is reported
 #   @check     which of the six checks has to catch it
 #   @file      which file to mutate; the check must build it
+#   @hole      optional: the issue holding a known hole open, as `@hole #3`
 #   @note      prose, repeatable; printed when the mutation survives
 #   @old       the source to replace, exactly as it stands
 #   @new       what to put there; empty deletes
@@ -66,10 +67,9 @@
 # `microcycle` is deliberately absent: stage 4 is being written and is not
 # frozen.  It gets mutations when a slice lands.
 #
-# WHAT SURVIVES TODAY, and why `make mutants` is red.  Four records below are
-# not caught by their check.  Each is a hole in a check rather than a bug in
-# the fabric, each is filed, and each stays here until its check is fixed ---
-# a survivor that is quietly dropped is a check that silently got weaker.
+# WHAT IS KNOWINGLY NOT CAUGHT.  Four records below carry `@hole`, which names
+# the issue that holds the hole open.  They are reported every run, counted in
+# their own column, and do not fail it:
 #
 #   xbus-rq-dropped-at-the-acknowledgement               #2
 #   the-write-response-error-is-ignored                  #3
@@ -77,6 +77,28 @@
 #   the-word-is-latched-on-a-write-as-well               #5, and it is a
 #       question rather than a defect: whether MD must hold across a write is
 #       about the processor, which is stage 4.
+#
+# `@hole` is not a way to make a survivor go away, and three things stop it
+# from becoming one.
+#
+# It takes an issue number, so a hole cannot be recorded without being
+# written down somewhere a person will see it.
+#
+# The record stays in the list, mutating exactly what it did before.  A
+# survivor that is quietly deleted is a check that silently got weaker, and
+# nothing afterwards would show it.
+#
+# And a mutation that is CAUGHT while still carrying an `@hole` fails the run
+# --- the hole has closed and the record has not caught up.  That is the
+# inverse check, and it is the part that keeps the field safe to have: without
+# it the list would accumulate `@hole`s for holes that shut long ago.
+#
+# The reason to have it at all is that a target red by design cannot report a
+# fifth survivor: red for four known reasons looks exactly like red for five.
+# A recorded exception with a reason is this repository's existing idiom ---
+# CLAUDE.md's "Where the fabric parts from muir", and the testbench not
+# comparing -TPR60 while RESET is high. An unrecorded one is what nothing here
+# tolerates.
 
 
 # ============================================================== phase gen ===
@@ -349,6 +371,7 @@
 @end
 
 @mutation xbus-rq-dropped-at-the-acknowledgement
+@hole #2
 @check busint_xbus
 @file rtl/cadr_busint_xbus.sv
 @note "-XBUS.ACK ... remains asserted until the -XBUS.RQ signal is removed by
@@ -653,6 +676,7 @@
 @end
 
 @mutation the-word-is-latched-on-a-write-as-well
+@hole #5
 @check memory_path
 @file rtl/cadr_xbus_ddr.sv
 @note Read data is latched because the cpu takes it at -LOADMD and the word
@@ -721,6 +745,7 @@
 @end
 
 @mutation the-write-response-error-is-ignored
+@hole #3
 @check axi_master
 @file rtl/cadr_axi_master.sv
 @note OKAY is 00 and EXOKAY 01; SLVERR and DECERR have bit 1 set, and
@@ -833,6 +858,7 @@
 @end
 
 @mutation the-answer-is-given-before-the-response-comes-back
+@hole #4
 @check axi_master
 @file rtl/cadr_axi_master.sv
 @note mem_done is held once the word is done, and a write is not done until B
