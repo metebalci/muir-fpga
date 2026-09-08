@@ -11,16 +11,38 @@
 // `Rtl::signals` is "recorded in the read phase, where the sources drive and
 // the ALU result is up but nothing has been written back".
 //
-// WHAT IS STIMULUS.  Slice 1 has no datapath, so six things come out of the
-// trace rather than out of the DUT: `jcond` off the ALU, `ob` for the OA
-// substitution into IR, `a` and `m` for the word a WRITE-I-MEM stores,
-// `spc_target` off the stack, and the console's registers.  Every one leaves
-// with a later slice.  They are counted and printed, so what this check is
-// still being told rather than checking is on its own output.
+// WHAT IS STIMULUS.  There is no ALU yet, so four things come out of the trace
+// rather than out of the DUT: `jcond` off the ALU, `ob` for L and the OA
+// substitution into IR, `m` for the word a WRITE-I-MEM stores, and the
+// console's registers.  Every one leaves with a later slice.  They are
+// counted and printed, so what this check is still being told rather than
+// checking is on its own output.
 //
-// WHAT IS CHECKED.  PC, IR, LPC, OPC, ST, and the four sequencing flags NOP,
-// PCS1, PCS0 and IWRITED --- which the DUT computes from IR and JCOND alone
-// --- and the length of every microcycle in 200 MHz ticks.
+// WHAT IS CHECKED.  PC, IR, LPC, OPC, ST, the A bus, LC, and the four
+// sequencing flags NOP, PCS1, PCS0 and IWRITED --- which the DUT computes
+// from IR and JCOND alone --- and the length of every microcycle in 200 MHz
+// ticks.  PC now goes through the fabric's own stack on a POPJ rather than
+// being handed the answer.
+//
+// WHAT THE CHECKED SIGNALS ARE WORTH, measured by mutation rather than
+// assumed.  The A bus is the strong one: 96,192 distinct values over the run,
+// and it catches a wrong write address, wrong write data, and the ACTL
+// pass-around inverted or removed.  RETA's mux, WPC and the stack's push
+// pass-around are each caught through PC on the 16,384 POPJs.  Against that:
+//
+//   - LC is **zero on every one of the 600,000 rows**.  The boot PROM never
+//     runs macrocode, so the location counter never moves and its check is
+//     vacuous.  Asserted below, so a trace that does move it re-opens this.
+//   - The stack's RAM and pointer are **never read**.  Every push here is
+//     popped by the very next microcycle, which takes SPCWPASS --- the word
+//     standing on the SPC bus --- and not the 82S21s' output.  Moving SPCPTR
+//     by two, or never writing the RAM at all, survives this check.
+//   - The ALATCH/MLATCH gating is not distinguished: making the latches
+//     transparent through the write phase survives, because the one overlap
+//     it could show --- a write to the address being read --- is exactly what
+//     the pass-around covers.  It is right for synthesis, not for this trace.
+//   - The WADR/AADR comparator's top bit is never the one that differs, so a
+//     nine-bit compare survives a ten-bit one.
 //
 // WHAT THIS PROGRAM DOES NOT EXERCISE, asserted here rather than assumed, so
 // that a trace which reaches further re-opens each claim: every DISPATCH in
@@ -43,6 +65,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <vector>
 
 #include "Vcadr_microcycle.h"
@@ -140,11 +163,7 @@ int main(int argc, char **argv) {
     const Row &r = rows[k];
     dut->jcond = static_cast<uint8_t>(r.v[kJcond]);
     dut->ob = static_cast<uint32_t>(r.v[kOb]);
-    dut->a = static_cast<uint32_t>(r.v[kA]);
     dut->m = static_cast<uint32_t>(r.v[kM]);
-    // The word a POPJ takes off the stack is where the machine goes next.
-    dut->spc_target =
-        static_cast<uint16_t>(k + 1 < rows.size() ? rows[k + 1].v[kPc] : 0);
     dut->srun = static_cast<uint8_t>(r.v[kSrun]);
     dut->promdisable = static_cast<uint8_t>(r.v[kPromdis]);
     dut->errstop = static_cast<uint8_t>(r.v[kErrstop]);
@@ -157,11 +176,11 @@ int main(int argc, char **argv) {
   // that the edge is compared against the read phase before it and not
   // against the values the edge has just produced.
   struct Sample {
-    uint64_t pc, ir, lpc, opc, st, nop, pcs1, pcs0, iwrited;
+    uint64_t pc, ir, lpc, opc, st, a, lc, nop, pcs1, pcs0, iwrited;
   };
   auto take = [&]() {
-    return Sample{dut->pc,  dut->ir,   dut->lpc,  dut->opc, dut->st,
-                  dut->nop, dut->pcs1, dut->pcs0, dut->iwrited};
+    return Sample{dut->pc, dut->ir,  dut->lpc,  dut->opc,  dut->st, dut->a,
+                  dut->lc, dut->nop, dut->pcs1, dut->pcs0, dut->iwrited};
   };
 
   drive(0);
@@ -175,6 +194,8 @@ int main(int argc, char **argv) {
   long lengths_checked = 0, dispatches = 0, disp_reads = 0, halts = 0;
   long iwrites = 0, popjs = 0, jumps = 0, prom_fetches = 0, ram_fetches = 0;
   long stat_counts = 0, stalls = 0, ram_executes = 0, other_speed = 0;
+  long lc_moved = 0;
+  std::set<uint64_t> a_values;
 
   // Long enough for every microcycle plus the reset and a margin: the
   // longest cycle the generator makes is 44 ticks at extra slow.
@@ -194,6 +215,8 @@ int main(int argc, char **argv) {
       if (prev.lpc != r.v[kLpc]) bad += Fail(r, "LPC", prev.lpc, r.v[kLpc]);
       if (prev.opc != r.v[kOpc]) bad += Fail(r, "OPC", prev.opc, r.v[kOpc]);
       if (prev.st != r.v[kSt]) bad += Fail(r, "ST", prev.st, r.v[kSt]);
+      if (prev.a != r.v[kA]) bad += Fail(r, "the A bus", prev.a, r.v[kA]);
+      if (prev.lc != r.v[kLc]) bad += Fail(r, "LC", prev.lc, r.v[kLc]);
       if (prev.nop != r.v[kNop]) bad += Fail(r, "NOP", prev.nop, r.v[kNop]);
       if (prev.pcs1 != r.v[kPcs1]) bad += Fail(r, "PCS1", prev.pcs1, r.v[kPcs1]);
       if (prev.pcs0 != r.v[kPcs0]) bad += Fail(r, "PCS0", prev.pcs0, r.v[kPcs0]);
@@ -213,6 +236,8 @@ int main(int argc, char **argv) {
         ++lengths_checked;
       }
       if (r.v[kStall]) ++stalls;
+      if (r.v[kLc]) ++lc_moved;
+      a_values.insert(r.v[kA]);
       // Extra slow is {SPEED1,SPEED0} = 00, where both taps of the 74S151 are
       // -TPR160 and ILONG changes nothing.  Asserted rather than assumed, so
       // that a trace which does change speed re-opens the claim below.
@@ -304,6 +329,13 @@ int main(int argc, char **argv) {
                  stat_counts);
     ++thin;
   }
+  if (lc_moved) {
+    std::fprintf(stderr,
+                 "FAIL: LC is nonzero on %ld microcycles; it is claimed "
+                 "constant zero, which is what makes its check vacuous\n",
+                 lc_moved);
+    ++thin;
+  }
   if (other_speed) {
     std::fprintf(stderr,
                  "FAIL: %ld microcycles run at other than extra slow; ILONG is "
@@ -337,19 +369,23 @@ int main(int argc, char **argv) {
 
   std::printf(
       "ok: %zu microcycles agree with muir's rtl engine on MIT's boot PROM\n"
-      "    PC, IR, LPC, OPC, ST and NOP/PCS1/PCS0/IWRITED every microcycle;\n"
+      "    PC, IR, LPC, OPC, ST, the A bus, LC and NOP/PCS1/PCS0/IWRITED\n"
+      "    every microcycle;\n"
       "    %ld microcycle lengths in 200 MHz ticks\n"
       "    reached: %ld POPJs, %ld jumps, %ld WRITE-I-MEMs, %ld dispatches\n"
       "             (all DISPWR), %ld PROM fetches, %ld control store fetches,\n"
       "             %ld microcycles the bus held off\n"
       "    driven from the trace, and going with their own slice: JCOND, OB,\n"
-      "             A and M for IWR, the stack's word, the console registers\n"
+      "             M for IWR, the console registers\n"
+      "    the A bus took %zu distinct values; LC took one, zero\n"
       "    not reached by this program, and so not checked: the dispatch\n"
       "             memory's read, MACHRUN down, the statistics counter,\n"
-      "             microcode run out of the control store, and -ILONG ---\n"
-      "             every cycle is extra slow, where both taps are -TPR160,\n"
-      "             so FLAG 3E07's -NOPA gate of it is unexercised\n",
+      "             microcode run out of the control store, LC, the stack's\n"
+      "             RAM and pointer (every push is popped through SPCWPASS),\n"
+      "             the M memory and the PDL (they reach only the M bus),\n"
+      "             and -ILONG --- every cycle is extra slow, where both taps\n"
+      "             are -TPR160, so FLAG 3E07's -NOPA gate of it is unchecked\n",
       k, lengths_checked, popjs, jumps, iwrites, dispatches, prom_fetches,
-      ram_fetches, stalls);
+      ram_fetches, stalls, a_values.size());
   return 0;
 }
