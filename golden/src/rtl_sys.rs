@@ -34,49 +34,61 @@
 //!
 //! **The shape of the run, measured.**  The machine leaves the boot PROM at
 //! microcycle 1,410,035 and has first touched everything reachable by
-//! 2,084,537.  So the interesting part is a *window* well after the boot,
-//! and not the boot: at one line a microcycle the whole thing would be 4 GB
-//! at thirty million and 14 GB at a hundred million, while 200,000
-//! microcycles taken from 3,000,000 is 27 MB --- a third of the boot PROM's
-//! own trace --- and holds, against that trace's whole 600,000:
+//! 2,084,537, so the trace runs from zero to 2,200,000 --- 297 MB, ten
+//! seconds to write.  A *window* into the middle would be a fifth of that
+//! and was tried first; it cannot be checked at all, because a fabric that
+//! boots from reset does not have the machine's state at microcycle three
+//! million and no column of the trace carries it.  Against `rtl.golden`'s
+//! whole 600,000:
 //!
-//!   MAP as the M bus source                1  ->    1,819
-//!   the stack RAM changed                  2  ->    9,958
-//!   Q shifted left / right             0 / 0  ->  2,310 / 128
-//!   the dispatch memory read               0  ->   30,768
-//!   PROMDISABLE set                        0  ->  all 200,000
-//!   -ILONG where it lengthens the cycle    0  ->   30,768
+//!   MAP as the M bus source                1  ->    1,125
+//!   the dispatch memory read               0  ->   14,323
+//!   Q shifted                              0  ->   26,765
+//!   PROMDISABLE set                        0  ->  789,965
+//!   -ILONG                                 0  ->   18,419
 //!
-//! Every one of them inside the first 1,200 microcycles of the window.  The
-//! boot is a second and a half, so it is run rather than checkpointed:
-//! `muir::checkpoint` would save that second and a half and cost a second
-//! artifact and a format to keep in step with.
+//! The testbench asserts every one of them, so a trace that stops reaching
+//! them stops earning its 297 MB.
 //!
 //! **What no trace reaches.**  `IR<46>`, the statistics counter, and
 //! `MACHRUN` down: neither occurs in a hundred million microcycles here or
 //! in six hundred thousand on the boot PROM.  Those are not a longer trace
 //! away and this does not close them.
 //!
-//! **The columns are `rtl.rs`'s, and the stall drain with them.**  Two
-//! programs write one format, which is a thing to keep an eye on: they are
-//! meant to be read by one testbench, so the header line below and the
-//! sampling of `LPC`, `MD` and `VMA` through a stall are copied from
-//! `rtl.rs` deliberately and must move with it.  Worth factoring out when
-//! the testbench that reads both is written.
+//! **The columns are `golden/src/trace.rs`'s**, and so is the sampling
+//! through a stall.  Two programs writing one format by hand is a thing that
+//! drifts, and had: this one took `ack` after the step where `rtl.rs` watched
+//! it through the stall, losing the bus cycle that arbitrates for the Unibus.
+//! One `row` now serves both.
 //!
 //! The first column is the *absolute* microcycle, so a line says where in
 //! the run it came from rather than where in the file.
 
-/// Five nanoseconds, the master clock's period: the step a stall is drained
-/// in, small enough to land on the grid every instant of it is a multiple of.
-const TICK_NS: u64 = 5;
+/// Microcycles run before anything is written.
+///
+/// **Zero, and it has to be.**  A window into the middle of a run is not
+/// checkable by a fabric that boots from reset: at microcycle three million
+/// the machine has a control store, four scratchpads, a stack, two levels of
+/// map and thirty registers full of state that no column of the trace
+/// carries, and the fabric starting cold agrees with none of it.  Measured:
+/// the check fails on PC and IR at the window's first row.
+///
+/// The alternative was to ship the window with the state it starts from ---
+/// seven memories and every register, as files and elaboration parameters ---
+/// which is a second format to keep in step with the RTL and a backdoor into
+/// the registers besides.  Running from zero costs 297 MB and ten seconds and
+/// needs neither.
+const SKIP: u64 = 0;
 
-/// Microcycles run before anything is written: the boot, which `rtl.golden`
-/// already covers and which reaches none of what this trace is for.
-const SKIP: u64 = 3_000_000;
+/// Microcycles written.
+///
+/// The machine leaves the boot PROM at 1,410,035 and has first touched
+/// everything reachable by 2,084,537, so this is that with room after it.
+/// From zero the trace is a superset of `rtl.golden`'s coverage rather than a
+/// disjoint window: it boots the PROM too.
+const CYCLES: u64 = 2_200_000;
 
-/// Microcycles written. See the table above for what fits in them.
-const CYCLES: u64 = 200_000;
+mod trace;
 
 use muir::disk_unit::{Geometry, Unit};
 use muir::engine::Engine;
@@ -142,87 +154,21 @@ fn main() {
         }
     }
 
-    println!(
-        "# cycle pc ir q a m alu r ob dc opc st lc \
-         wmapd destspcd iwrited imodd pdlwrited spushd nop n_vmaok jcond pcs1 pcs0 srun \
-         lpc md vma promdis errstop stathenb speed1 speed0 stall halted bus ack gnt ns"
-    );
-    println!(
-        "# generated by golden/src/rtl_sys.rs from muir's rtl engine on a System pack"
-    );
-    println!("# every value hexadecimal; stall, halted and ns in nanoseconds");
+    println!("{}", trace::COLUMNS);
+    println!("# generated by golden/src/rtl_sys.rs from muir's rtl engine on a System pack");
+    println!("{}", trace::RADIX);
     println!(
         "# {cycles} microcycles from {skip}; cycle is the absolute microcycle, not the line"
     );
     println!("# pack: {pack}");
 
-    let mut last_stalled = e.stalled_ns();
-    let mut last_halted = e.halted_ns();
-    let mut last_bus = e.bus_cycles();
-
-    let mut line = String::with_capacity(256);
+    let mut t = trace::Trace::new(&e);
     for n in 0..cycles {
         let cycle = skip + n;
-        // `LPC`, `MD` and `VMA` as the read phase of this microcycle sees
-        // them, which is after any stall and not before it. Copied from
-        // rtl.rs, whose comment says why: a stall is usually a wait for
-        // `MD`, `-LOADMD` strobes it while the clock is held off, and a
-        // sample taken before the stall is the word the cycle was waiting to
-        // be rid of.
-        let mut lpc = e.lpc();
-        let mut md = e.machine().md;
-        let mut vma = e.machine().vma;
-        let mut drained = 0u32;
-        loop {
-            let before = e.machine().cycles;
-            if let Err(h) = e.step_until(e.ns() + TICK_NS) {
-                fail(&format!("stopped at microcycle {cycle}: {h:?}"));
-            }
-            if e.machine().cycles != before {
-                break;
-            }
-            drained += 1;
-            assert!(
-                drained < 100_000,
-                "microcycle {cycle} never ran: the bus has not let go at PC {:o}",
-                e.pc()
-            );
-            lpc = e.lpc();
-            md = e.machine().md;
-            vma = e.machine().vma;
+        match t.row(&mut e, cycle) {
+            Ok(line) => println!("{line}"),
+            Err(h) => fail(&format!("stopped at microcycle {cycle}: {h:?}")),
         }
-
-        let stall = e.stalled_ns() - last_stalled;
-        last_stalled = e.stalled_ns();
-        let halted = e.halted_ns() - last_halted;
-        last_halted = e.halted_ns();
-        let bus = e.bus_cycles() - last_bus;
-        last_bus = e.bus_cycles();
-        let ack = e.busint().ack_at().unwrap_or(0);
-        let gnt = u8::from(e.busint().granted());
-
-        line.clear();
-        line.push_str(&format!("{cycle:x}"));
-        for (_, v) in e.signals() {
-            line.push_str(&format!(" {v:x}"));
-        }
-        for (_, v) in e.spy() {
-            line.push_str(&format!(" {v:x}"));
-        }
-        let mode = &e.machine().mode;
-        line.push_str(&format!(
-            " {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x} {stall:x} {halted:x} {bus:x} {ack:x} {gnt:x} {:x}",
-            lpc,
-            md,
-            vma,
-            mode.prom_disable as u8,
-            mode.errstop as u8,
-            mode.stathenb as u8,
-            mode.speed1 as u8,
-            mode.speed0 as u8,
-            e.ns()
-        ));
-        println!("{line}");
     }
 
     eprintln!(

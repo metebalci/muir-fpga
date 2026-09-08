@@ -105,21 +105,13 @@ module cadr_microcycle #(
     input  var logic        stathenb,     // STATHENB, bit 11
     input  var logic [1:0]  mode_speed,   // {SPEED1, SPEED0}, bits 4 and 3
 
-
     // --- what the memory path will make.  Each leaves with its own slice.
     input  var logic [31:0] md,           // MD, the memory data register
-    input  var logic [31:0] vma,          // VMA, the virtual memory address
-    input  var logic        vmaok,        // -VMAOK at VCTL1 1D17, logical sense
     input  var logic        n_memack,     // -MEMACK, off the cables
     input  var logic        n_memgrant,   // -MEMGRANT: "low when the processor
                                           //   has the bus.  Do not hang when
                                           //   this line is high!"
     input  var logic        sintr,        // SINTR, the interrupt off the cables
-    input  var logic [31:0] mf_map,       // what a SRCMAP puts on MF
-    input  var logic [13:0] dpc,          // DPC<13:0>, the dispatch memory
-    input  var logic        dr,           // DR<16>
-    input  var logic        dp,           // DP<15>
-    input  var logic        dn,           // DN<14>
 
     // --- the machine, as `Rtl::signals` and `Rtl::spy` name it
     output var logic [13:0] pc,
@@ -135,6 +127,8 @@ module cadr_microcycle #(
     output var logic [31:0] q,            // Q
     output var logic [9:0]  dc,           // the dispatch constant
     output var logic [25:0] lc,           // LC<25:0>, the location counter
+    output var logic [31:0] vma,          // VMA, the virtual memory address
+    output var logic        vmaok,        // VMAOK: the access is permitted
     output var logic        jcond,        // the jump condition
     output var logic        nop,
     output var logic        pcs1,
@@ -411,8 +405,50 @@ module cadr_microcycle #(
   assign srcpdltop = group_a && (ir[28:26] == 3'd5);
   assign srcspcpop = group_b && (ir[28:26] == 3'd4);
 
-  // page CONTRL, sequencing.  The dispatch memory's word is slice 4's.
-  logic dfall, dispenb, ignpopj;
+  // ------------------------------------------------- pages DRAM and DSPCTL
+  //
+  // The dispatch memory, asynchronous like the rest and small enough to stay
+  // that way: 2048 x 17 in distributed RAM.  It is read inside the read phase
+  // and its word decides where the microcycle goes, so a registered read
+  // would need the address before `R` has settled.
+  //
+  // Bit 0 of the address is the 74S64s at 2F24, 2F05 and 2F23:
+  //
+  //     -DADR0 = NAND-OR(VMO18 AND IR8, VMO19 AND IR9,
+  //                      -DMAPBENB AND DMASK0 AND R0, IR12)
+  //     -DMAPBENB = NOR(IR8, IR9)                    at 3F14
+  //
+  // so a dispatch that takes a map bit takes it *instead of* R0, not as well.
+  // ORing the two is the easy misreading of that NAND-OR.
+  logic [16:0] dmem [0:2047];
+
+  // Eight bits, not seven: IR<7:5> reaches 7 and `1 << 7` needs the room.
+  logic [7:0]  dmask;
+  logic        dmap, daddr0;
+  logic [10:0] dadr;
+  logic [16:0] dram_q;
+  logic        dr, dp, dn, dfall, dispwr;
+  logic [13:0] dpc;
+
+  assign dmask  = (8'd1 << ir[7:5]) - 8'd1;
+  assign dmap   = ir[8] || ir[9];
+  assign daddr0 = (ir[8] && vmo[18])
+               || (ir[9] && vmo[19])
+               || (!dmap && dmask[0] && r[0])
+               || ir[12];
+  assign dadr   = {ir[22:13], daddr0} | {4'd0, dmask[6:1] & r[6:1], 1'b0};
+  assign dram_q = dmem[dadr];
+  assign dr     = dram_q[16];
+  assign dp     = dram_q[15];
+  assign dn     = dram_q[14];
+  assign dpc    = dram_q[13:0];
+  // `-DWEA` is `NAND(WP2, DISPWR)` at DRAM 2F03, gated by the live signal and
+  // not by a registered one, so the address and the data are this
+  // instruction's.  Which is why there is no dispatch pass-around.
+  assign dispwr = irdisp && funct[2];
+
+  // page CONTRL, sequencing.
+  logic dispenb, ignpopj;
   logic jfalse, jret, jretf, iwrite, ipopj, popj, n;
   assign dfall   = dr && dp;
   assign dispenb = irdisp && !funct[2];
@@ -620,6 +656,15 @@ module cadr_microcycle #(
       // "at the pointer the edge has already moved to": the 82S21s are
       // addressed by SPCPTR<4:0> with no offset.
       if (spushd)    spcm[spcptr]     <= spcw;
+      // MAPWR0D is `WMAPD AND VMA26` and MAPWR1D is `WMAPD AND VMA25` at
+      // VCTL2 1C15, and both pulses are -WP1, so the two levels are written
+      // in the same write phase.  Address and data are the live ones:
+      // nothing latches them.
+      if (wmapd) begin
+        if (vma[26]) l1_map[adr0] <= vma[31:27];
+        if (vma[25]) l2_map[adr1] <= vma[23:0];
+      end
+      if (dispwr) dmem[dadr] <= a[16:0];
     end
   end
 
@@ -816,10 +861,13 @@ module cadr_microcycle #(
   end
 
   // page FLAG: the jump conditions, off the 74S151 at 3E01.
+  // `SINTR` is `INT` off the cables, registered by the 74S175 at LCC 3E12 on
+  // CLK3C; `SINT` is it under INT.ENABLE at 4D09.
+  logic sintr_d;
   logic aluneg, sint, pgf_or_int, pgf_or_int_or_sb;
   logic [2:0] conds;
   assign aluneg           = !aeqm && alu_f[32];
-  assign sint             = sintr && int_enable;
+  assign sint             = sintr_d && int_enable;
   assign pgf_or_int       = !vmaok || sint;
   assign pgf_or_int_or_sb = pgf_or_int || sequence_break;
   assign conds            = ir[5] ? ir[2:0] : 3'd0;
@@ -836,6 +884,75 @@ module cadr_microcycle #(
       default: jcond = 1'b1;
     endcase
   end
+
+  // -------------------------------------------------- pages VMEM0, VMEM1
+  //
+  // THERE IS NO MMU STATE.  Both levels are asynchronous rams with the
+  // first's output in the second's address, so a lookup is a ripple through
+  // two rams inside one cycle and not a cycle of its own: VMEM0 1C14 is
+  // addressed by MAPI13..23 and drives -VMAP4..0, which are VMEM1 1E04's
+  // address along with -MAPI8A..12A.
+  //
+  // Which is why these two are the memories that stay asynchronous.  The
+  // control store and the scratchpads went to block RAM behind a phase; a
+  // level of map behind a registered read would need the second level's
+  // address a tick before the first level can give it, and the ripple would
+  // become a state machine.  At 2048 x 5 and 1024 x 24 they are small enough
+  // for distributed RAM, which reads asynchronously as the 93425As do ---
+  // about 1,100 LUTs between them, and the ripple stays a ripple.
+  //
+  // `MAPI` is `VMA` while `MEMSTART` is up and `MD` otherwise, off the
+  // 74S258s at VMAS 1C20 and its fellows, whose select is -MEMSTART.
+
+  logic [4:0]  l1_map [0:2047];
+  logic [23:0] l2_map [0:1023];
+
+  logic [15:0] mapi;
+  logic [10:0] adr0;
+  logic [9:0]  adr1;
+  logic [4:0]  vmap;
+  logic [23:0] vmo;
+  assign mapi = memstart ? vma[23:8] : md[23:8];
+  assign adr0 = mapi[15:5];
+  assign vmap = l1_map[adr0];
+  assign adr1 = {vmap, mapi[4:0]};
+  assign vmo  = l2_map[adr1];
+
+  // page VMEMDR 1D14: a 74S373 transparent while MEMSTART, so on such a cycle
+  // it is already following the word the map is putting out.  -PFR and -PFW
+  // come from this and not from the live map output.
+  logic [23:0] lvmo, lvmo_eff;
+  assign lvmo_eff = memstart ? vmo : lvmo;
+
+  // pages VCTL1 and VCTL2, as the nets they name.  -PFR is -LVMO23 inverted
+  // with no WRCYC in it, and -PFW is a NAND, so these read the opposite way
+  // round to the names: -PFR is high when the read is *permitted*.
+  //
+  //     VCTL2 1D26  74S04A  -PFR   = NOT(-LVMO23)
+  //     VCTL1 1D17  74S00   -PFW   = NAND(-LVMO22, WRCYC)
+  //     VCTL1 1D17  74S00O  -VMAOK = NAND(-PFR, -PFW)
+  logic pfr, pfw;
+  assign pfr   = lvmo_eff[23];
+  assign pfw   = !(!lvmo_eff[22] && wrcyc);
+  assign vmaok = pfr && pfw;
+
+  // What a SRCMAP puts on MF.  "Bit 29 is **zero**, not one.  VMEMDR 1A01
+  // puts -PFW, -PFR, HI12 and -VMAP<4:0> onto MF<31:24> through a 74S240,
+  // which *inverts*, and a pull-up on the input of an inverting buffer is a
+  // hard zero on its output.  A one there would be right for a '241, which is
+  // what this is easy to mistake it for."
+  logic [31:0] mf_map;
+  assign mf_map = {!pfw, !pfr, 1'b0, vmap, vmo};
+
+  // page VMA: the register, and what it takes.  An instruction fetch puts the
+  // location counter's word address up instead of OB.
+  logic destvma, destmdr, vmaenb, wmap, wmapd;
+  logic [31:0] vmas;
+  assign destvma = destmem && !ir[22];
+  assign destmdr = destmem && ir[22];
+  assign wmap    = destmem && (ir[20:19] == 2'd3);
+  assign vmaenb  = destvma || ifetch;
+  assign vmas    = ifetch ? {8'd0, lc[25:2]} : ob;
 
   // ------------------------------------------------------------- VCTL1
   //
@@ -958,12 +1075,23 @@ module cadr_microcycle #(
       sequence_break <= 1'b0;
       newlc        <= 1'b0;
       next_instrd  <= 1'b0;
+      sintr_d      <= 1'b0;
       memstart     <= 1'b0;
       mbusy        <= 1'b0;
       mbusy_sync   <= 1'b0;
       rdcyc        <= 1'b0;
       wrcyc        <= 1'b0;
       rd_in_progress <= 1'b0;
+      vma          <= 32'd0;
+      wmapd        <= 1'b0;
+      // What the latch at VMEMDR comes up holding. `Chip::power_on` puts
+      // every register's outputs low, and the latch's are the active-low
+      // -LVMO23, -LVMO22 and -PMA21..8, so the positive word is the two
+      // permission bits and the page all ones. The board's own power-on
+      // state is undefined, so this is a convention shared with muir and not
+      // a fact about the hardware; `machine.rs` has the whole account under
+      // LVMO_AT_POWER_ON.
+      lvmo         <= {1'b1, 1'b1, 8'd0, 14'h3fff};
       n_memack_q   <= 1'b1;
       mfinish_t    <= 6'd0;
       rdfinish_t   <= 6'd0;
@@ -1054,6 +1182,7 @@ module cadr_microcycle #(
         // page LCC 3E12 and FLAG 3E08
         newlc       <= newlc_in;
         next_instrd <= next_instr;
+        sintr_d     <= sintr;
         if (destintctl) begin
           lc_byte_mode      <= ob[29];
           prog_unibus_reset <= ob[28];
@@ -1070,9 +1199,15 @@ module cadr_microcycle #(
           endcase
         end
 
+        // page VCTL2: the map write is delayed, gated by WMAPD.
+        wmapd <= wmap;
+        // page VMA
+        if (vmaenb) vma <= vmas;
+
         // page VCTL1: the memory cycle.  MEMPREPARE is the write phase's
         // level and MEMSTART its registered copy, so a cycle prepared here
         // runs over the next microcycle.
+        if (memstart) lvmo <= vmo;
         if (memstart && vmaok) begin
           mbusy      <= 1'b1;
           mfinish_t  <= 6'd0;
@@ -1110,9 +1245,17 @@ module cadr_microcycle #(
   //   funct<0>, funct<3>       misc functions 0 and 3, neither of them -HALT
   //   spcv<20:15>              the stack's word above the return address:
   //                            it reaches the parity check and nothing else
+  //   lvmo_eff<21:0>           -PMA21..8, the physical page: it leaves on the
+  //                            cables as the bus cycle's address, which is
+  //                            the bus interface's half and not this one's
+  //   dmask<7>                 the mask reaches DADR<6:1> and DADR<0>; its
+  //                            top bit is only there so 1 << 7 has the room
+  //   destmdr                  MD's own write.  MD is the last port: its
+  //                            other half is the word -LOADMD strobes off
+  //                            the bus, and that is the memory's to give
   logic unused;
   assign unused = &{1'b0, n_tpclk, tptse, n_tpr60, funct[0], funct[3],
-                    spcv[20:15]};
+                    spcv[20:15], lvmo_eff[21:0], destmdr, dmask[7]};
 
 endmodule
 
