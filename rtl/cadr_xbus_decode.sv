@@ -14,7 +14,7 @@
 // `boards` is how many 64K-word memory boards are fitted, muir's
 // `--main-memory-boards`, and it is the only thing here meant to change.
 // Growing main memory from two million words to the ceiling is this input and
-// no extra fabric, because main memory is not a netlist.  The ceiling is 60:
+// no extra fabric, main memory being in DDR rather than here.  The ceiling is 60:
 // the memory board's address switch has six bits, so the space is 64 slots of
 // 64K words, and the top four are taken by the display, the disk controller
 // and the Unibus.

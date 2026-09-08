@@ -1,11 +1,20 @@
 # muir-fpga
 
-The MIT CADR on an FPGA, at netlist level, at the speed the hardware ran.
+The MIT CADR on an FPGA, at **rtl level**, at the speed the hardware ran.
 
-[muir](https://github.com/metebalci/muir) simulates the CADR down to its
-chips. Its `chip` engine runs the netlists themselves and runs them at about
-1/4,000 of real time. This is the same machine in fabric instead, where the
-netlist runs at the machine's own 145 ns microcycle.
+[muir](https://github.com/metebalci/muir) simulates the CADR at three
+fidelities. `rtl` is the middle one: the machine's own two-phase clock, every
+datapath signal on it, and everything that is a matter of *when* --- bus waits
+and hangs, arbitration, timeouts. It is hand-written and checked against MIT's
+netlists rather than being them, and it runs at about half real time in
+software. This is that machine in fabric, at the CADR's own 145 ns microcycle.
+
+`rtl` is muir's word for this level and it is the word used throughout here.
+muir's netlists are read to **derive** things --- the port list's directions,
+the address decode's boundaries, every constant that came off a drawing --- but
+nothing in fabric is a netlist and nothing here claims to be. Whether a
+gate-level implementation ever follows is an open question and not a promise
+this repository makes.
 
 Separate from muir because the toolchain is: Vivado, Verilator and a Zynq
 build have nothing to do with muir's property of building and testing offline
@@ -20,9 +29,9 @@ Ethernet, microSD.
 
 The processor's own memories are 980 Kb --- the 16K x 48 control store, the
 scratchpads, the maps --- and the display's frame buffer is another 1,060 Kb.
-Main memory is not a netlist: 60 boards of 64K words is 66 Mb, and the Xbus
-carries 22 address bits, so 3,932,160 words is the ceiling with the top four
-slots taken by the display and the device registers. That lives in PS DDR3
+Main memory cannot live in fabric at all: 60 boards of 64K words is 66 Mb, and
+the Xbus carries 22 address bits, so 3,932,160 words is the ceiling with the
+top four slots taken by the display and the device registers. That lives in PS DDR3
 behind an Xbus bridge, and so does the frame buffer.
 
 ## Where the CADR's memory lives in DDR
@@ -63,7 +72,7 @@ holds anything with a protocol, a file, or a name in it.**
 
 | Fabric | Linux on the PS |
 |---|---|
-| The netlists --- gates, registers, RAMs | RFB: TCP, encoding, keysym mapping |
+| The boards: datapath, bus, device logic | RFB: TCP, encoding, keysym mapping |
 | Xbus to DDR (main memory, frame buffer) | The pack as a file on microSD |
 | Trident bus timing, seek and rotation | Chaosnet routing and its services |
 | Chaosnet cable encode, decode, collision | The console |
@@ -77,15 +86,16 @@ AXI4; the logic here is AXI4 and Vivado's converter bridges the two.
 
 ## The plan
 
-Two implementations of the processor behind one port interface, as muir has
-three engines behind one trait. **The interface is `data/cables.txt` --- the
-92 wires on the five cables between the processor and the bus interface, pin
-for pin off MIT's wire lists.** Anything shaped to a Rust API instead would
-take the ported model and refuse the netlist.
+Port muir's behavioural models, board by board, and keep the boundaries between
+them where the hardware's are. **The processor's boundary is
+`data/cables.txt` --- the 92 wires on the five cables between the processor and
+the bus interface, pin for pin off MIT's wire lists.** A boundary shaped to a
+Rust API instead would be muir's shape rather than the machine's, and would
+have to be unpicked by anything that ever wanted to be closer to the hardware.
 
 1. **The clock generator.** `clock.rs`, ported. **Done.**
 2. **The port list.** `cables.txt` as SystemVerilog, direction derived from
-   the two netlists rather than asserted. **Done.**
+   muir's netlists and pinouts rather than asserted. **Done.**
 3. **The bus interface and the DDR bridge**, driven by a test master on the
    92 cable wires --- the Xbus handshake, `-HANG`, the NXM timeout and the
    AXI plumbing proved without a processor. The memory cycle and the NXM
@@ -93,8 +103,9 @@ take the ported model and refuse the netlist.
    in front of DDR and the path that puts the three together; the AXI adapter
    behind it, `-HANG`, the Unibus path and its arbitration, the interface's own
    registers and the debug cable are each their own slice.
-4. **The processor**, ported from `rtl.rs` first, then the netlist behind the
-   same ports, each checked against the other and against muir.
+4. **The processor**, ported from `rtl.rs`, behind those 92 ports and checked
+   against muir as everything else here is. The largest single port in the
+   project at 2,721 lines, and the last.
 
 Of the 92 wires, 15 are inputs, 29 outputs, and 48 --- `MEM<31:0>` and
 `SPY<15:0>` --- are driven from both ends. Fabric has no bus to fight over, so
@@ -112,10 +123,6 @@ because everything generated later inherits it: a leading `-` becomes `n_`,
 collision is an error rather than a warning. `rtl/cadr_cables.map` holds every
 identifier against the name MIT wrote.
 
-Alongside, a spike on one page of `CADR.netlist` --- `ALU0`, four `74S181`s,
-no state and no tri-state --- to settle how netlists become SystemVerilog
-before there are 50 cell models depending on the answer.
-
 ## Checking
 
 Everything is held to muir. A reference trace comes out of muir's own model
@@ -132,13 +139,13 @@ readable against the constants it came from while the check stays exhaustive.
 
 Needs [Verilator](https://verilator.org) and a Rust toolchain, and muir
 checked out beside this repository. Nothing here vendors a copy of muir's
-netlists or part tables: they are the source of truth and a copy would go
-stale silently.
+netlists or part tables: they are the source of truth for every constant that
+came off a drawing, and a copy would go stale silently.
 
 | | Checked against | State |
 |---|---|---|
 | `rtl/cadr_phase_gen.sv` | `clock::Behavioural`, 12,000 ticks | passing |
-| `rtl/cadr_cables.svh` | both netlists through `part::pinout`, and `cable.rs`'s own table | passing |
+| `rtl/cadr_cables.svh` | muir's netlists through `part::pinout`, and `cable.rs`'s own table | passing |
 | `rtl/cadr_busint_xbus.sv` | `busint::Busint`, 40,000 ticks over 146 cycles | passing |
 | `rtl/cadr_xbus_decode.sv` | `busint::decode`, every address of the 22-bit space | passing |
 | `rtl/cadr_memory_path.sv` | the three together: muir for the timing, the stimulus for the data | passing |
@@ -228,6 +235,9 @@ speed synchroniser at 1A01. Here the ring is cleared and `-TPR60` stays
 deasserted. The testbench does not compare it while `RESET` is high.
 
 ## Layout
+
+`rtl/` is the usual name for HDL sources and it is also muir's name for this
+fidelity level. Here the two coincide: what is in `rtl/` is rtl level.
 
     rtl/      SystemVerilog
     tb/       Verilator testbenches
