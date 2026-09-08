@@ -28,18 +28,20 @@ the Trident bus timing and the Chaosnet cable in fabric; RFB, the pack on
 microSD, Chaosnet routing and the console on the PS. Main memory is the only
 seam that runs at machine speed, and it is the one with no software in it.
 
-Three ports cross the boundary. `S_AXI_HP0` is the memory bridge's, and it is
-the one at machine speed. `S_AXI_HP1` is the disk's. A Trident turns 60 times a
-second with 17 blocks to the track --- 1,020 blocks a second of 256 words each
---- so a streaming pack is 261,120 words a second, just over a megabyte.
-Bandwidth was never the point. The point is that on a port the PS masters those
-are 261,120 stalled CPU stores a second, against a 968 us deadline for each
-block. So fabric fetches the block out of DDR itself, off the block's address
-written by Linux, and no CPU is in the per-word path. Its own port rather than
-a share of `HP0`, so that disk traffic adds no arbitration to the memory path.
-`M_AXI_GP0` and AXI4-Lite carry what is left: the disk's registers, the
-Chaosnet buffers, the console. The Zynq-7000 PS-PL ports are **AXI3**, not
-AXI4; the logic here is AXI4 and Vivado's converter bridges the two.
+Four of the Zynq's nine ports cross the boundary. `S_AXI_HP0` is the memory
+bridge's, and it is the one at machine speed. `S_AXI_HP1` is the disk's. A
+Trident turns 60 times a second with 17 blocks to the track --- 1,020 blocks a
+second of 256 words each --- so a streaming pack is 261,120 words a second,
+just over a megabyte. Bandwidth was never the point. The point is that on a
+port the PS masters those are 261,120 stalled CPU stores a second, against a
+968 us deadline for each block. So fabric fetches the block out of DDR itself,
+off the block's address written by Linux, and no CPU is in the per-word path.
+Its own port rather than a share of `HP0`, so that disk traffic adds no
+arbitration to the memory path. `M_AXI_GP0` and AXI4-Lite carry what is left:
+the disk's registers, the Chaosnet buffers, the console. `M_AXI_GP1` carries
+the debug cable, which has a section of its own below. The Zynq-7000 PS-PL
+ports are **AXI3**, not AXI4; the logic here is AXI4 and Vivado's converter
+bridges the two.
 
 ## The processor's boundary
 
@@ -59,6 +61,55 @@ those are carried as a value and an enable out with the resolved wire back in.
 Net names are mangled to legal identifiers: a leading `-` becomes `n_`; `.`,
 space, `/` and `>` become `_`; a leading digit takes an `x`; a collision is an
 error. `rtl/cadr_cables.map` holds every identifier against the name MIT wrote.
+
+## The debug cable
+
+The other cable in the machine, and the one that makes two of them. A CADR
+debugs a CADR: the debugger's `DBGOUT` connector to the debuggee's `DBGIN`, the
+21 wires of `data/busint-connectors.txt`. Through them the debugger reaches
+four registers on the debuggee's Unibus --- `766100` cycle, `766104` status,
+`766110` modifier, `766114` address --- which are the strobes the 74S139 at
+DBGIN 0A15 makes of `DEBUG IN A<1:0>`.
+
+Four wires go out (`-DEBUG OUT REQ`, `DEBUG OUT A<1:0>`, `DEBUG OUT WR`), one
+comes back (`DEBUG IN ACK`), and `DBD<15:0>` goes both ways: one bus on each
+board with both connectors on it, its direction following `WR`. So 21 wires are
+20 signals out and 17 back, and they are carried the way the processor cables
+carry their 48 both-ends wires --- value and enable out, resolved wire back in.
+The enables are byte-wise, since `DBD` is driven by two octal Am8304s at DBGOUT
+0B21 and 0B22.
+
+What crosses is levels rather than pulses: the wires are held for the whole
+request, as the debugger's own Unibus cycle holds them. Two figures constrain
+anything that carries them. The data, the address bits and the write flag are
+on the cable **100 ns before** the request, because the request is `NAND(SELECT
+DEBUG, SELECT DEBUG DLYD)` at DBGOUT 0A11 --- so a carrier must sample every
+wire at one instant and replay it at one instant, or that ordering inverts. And
+the debug block's timeout is **11.05 us**, thirteen intervals of the 74LS124 at
+REQTIM 0A01 off the REQTIM PROM's second table, not the Xbus's 4.25 us.
+
+That budget is microseconds, so a carrier's delay need only be constant rather
+than small.
+
+**The debugger is muir, on the PS, over `M_AXI_GP1`.** It holds the cable's
+levels as registers and drives `DBGIN` as machine A's `DBGOUT` page would ---
+or as the PDP-11 once did --- with the phase generator held at a microcycle
+boundary while muir computes its side. Machine-time stays exact and only
+wall-clock stretches. muir already runs the lashup, so the debugger is software
+that works before the fabric it is pointed at does.
+
+A second board is the same cable on two Pmods, one clock and seven data each
+way: 22 bits out and 19 back, four beats and three, tens of nanoseconds against
+those 11.05 us.
+
+**The console is not this, and the difference is worth keeping.** It masters
+the machine's own Unibus over `M_AXI_GP0` to reach SPY --- a path no CADR had,
+where the debugger was another machine's `DBGOUT` page or a PDP-11 playing it.
+So the console exercises nothing of the machine, and that is exactly its use:
+it works when the debug block does not, which is when it is wanted. muir over
+`M_AXI_GP1` goes through the real debug block and so tests it. **A check may
+reach the machine through the debug cable and never through the console**, or
+it would be holding the fabric to a path the hardware never had.
 
 ## Memory in DDR
 
