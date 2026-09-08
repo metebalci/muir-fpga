@@ -339,9 +339,9 @@
 @note Only a read goes through the 60 ns tap of the TD100 at 0C09. Registering
 @note both puts the acknowledgement a tick late on every write.
 @old
-              || (state == GRANTED && ((write && answering) || deskewed));
+              || (state == GRANTED && ((write && answering) || deskewed))
 @new
-              || (state == GRANTED && ((write && answered) || deskewed));
+              || (state == GRANTED && ((write && answered) || deskewed))
 @end
 
 @mutation grant-waits-for-a-later-edge
@@ -351,16 +351,27 @@
 @note the priority logic registers -MEMRQ and does not care how long it has
 @note been up. Making it always wait for the next edge costs a whole
 @note microcycle on any request that arrives on one.
+@note
+@note The block grew the Unibus branch after this was written; what the
+@note mutation does is unchanged --- every request waits for a later edge,
+@note whichever bus it is for.
 @old
             write <= wrcyc;
             if (mclk) begin
-              state       <= GRANTED;
               elapsed     <= 10'd0;
               answered    <= 1'b0;
               answered_at <= 10'd0;
+              ssyn_seen   <= 1'b0;
+              ssyn_at     <= 10'd0;
               tmr_fell    <= 1'b0;
               tmr_rises   <= 3'd0;
               nxm         <= 1'b0;
+              if (unibus) begin
+                state <= ARB;
+                stage <= ub_master ? 3'd4 : 3'd1;
+              end else begin
+                state <= GRANTED;
+              end
             end else begin
               state <= REQUESTED;
             end
@@ -492,10 +503,15 @@
 @note -MEMACK coincide --- on a write as well, where MD is strobed with
 @note nothing new in it. Suppressing it on writes is the plausible-looking
 @note economy that the reference does not make.
+@note
+@note The Unibus term arrived after this was written, and proves the note
+@note above: -LOADMD and -MEMACK coincide on the Xbus and do not on the
+@note Unibus, where the word comes UNIBUS_STROBE_NS after -UB SSYN. The
+@note mutation still suppresses the strobe on a write, on the Xbus half.
 @old
-  assign n_loadmd   = !acked;
+  assign n_loadmd   = !(acked || (state == UB && ub_loadmd));
 @new
-  assign n_loadmd   = !(acked && !write);
+  assign n_loadmd   = !((acked && !write) || (state == UB && ub_loadmd));
 @end
 
 @mutation the-cycle-ends-without-waiting-for-the-cpu
@@ -1053,10 +1069,27 @@
 @note nothing answers runs long enough to reach it --- the NXM timer ends
 @note one at about 935 ticks plus the oscillator's phase --- so no slave was
 @note ever listening when it happened, and every output agreed.
+@note
+@note The anchor carries three lines it does not change, and has to. Since
+@note the arbitration landed, the Unibus state increments `elapsed` under
+@note the same guard and then tests `acked` and sets ACKED in exactly the
+@note same words --- four identical lines --- and only the `else if` after
+@note them differs. The increment alone matched twice and the run refused
+@note it, which is the exactly-once rule doing what it was chosen over
+@note `sed` to do: a mutation that silently applies to the wrong place is
+@note the same false finding as one that silently fails to apply, pointing
+@note the other way. Anchored on code rather than on the comment above it,
+@note so the prose can be rewritten without breaking this.
 @old
           if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
+          if (acked) begin
+            state <= ACKED;
+          end else if (answering && !answered) begin
 @new
           elapsed <= elapsed + 10'd1;
+          if (acked) begin
+            state <= ACKED;
+          end else if (answering && !answered) begin
 @end
 
 
@@ -1435,46 +1468,36 @@
       .phys       (phys),
 @end
 
-@mutation the-master-clock-reaches-the-interface-inverted
-@hole #9
+@mutation the-grant-comes-a-microcycle-early
 @check machine
-@file rtl/cadr_machine.sv
-@note MCLK7 is one edge per microcycle, at the boundary, and it is the only
-@note place the priority logic looks at -MEMRQ. Inverted, the interface
-@note samples everywhere except the boundary --- which is a grant at the
-@note wrong instant on every cycle, and nothing either half could notice
-@note alone.
+@file rtl/cadr_microcycle.sv
+@note MCLK7 has to coincide with the edge the processor's own registers move
+@note on, not follow it. `-MEMRQ` is `MEMSTART AND VMAOK OR MBUSY` and
+@note MEMSTART is registered at the edge *before* the cycle runs, so the
+@note priority logic samples -MEMRQ still high at that edge and grants at
+@note the next --- the edge the cycle starts on. Registered, MCLK arrives a
+@note tick late, sees -MEMRQ already low, and grants a whole microcycle
+@note early.
 @note
-@note It survives, and MEASURING RATHER THAN REASONING has moved this
-@note twice. It is not that the seam is dead: `.mclk (mclk && 1'b0)`, so
-@note the interface never grants at all, IS caught. It is not that the
-@note memory surface is thin, which was the first diagnosis and is now
-@note disproved --- the check runs 600,000 microcycles and 17,466 bus
-@note cycles, thirty-four times what it saw when this was filed, and this
-@note still survives. And it is not a question of magnitude: `.mclk (mclk |
-@note 1'b1)`, granting the instant -MEMRQ is seen and never waiting for a
-@note boundary, survives too.
+@note THE SIZE IS THE POINT, and it took three wrong answers to find it. A
+@note grant one tick late does NOT matter and is not a weak check: -MEMRQ is
+@note up for the whole preceding microcycle, so anything inside that window
+@note grants. A grant a microcycle out does matter, and only the Unibus can
+@note tell, because arbitration begins at the grant and has to know then
+@note which bus it is on. This was a real bug: it put the mode register's
+@note write 220 ns early and set PROMDISABLE one microcycle before muir
+@note does, measured on the band at 1,410,034.
 @note
-@note That last one is EQUIVALENT and provably so, which is worth having
-@note written down: `mclk` and `n_memrq` are registered on the same clock
-@note edge in the processor, so -MEMRQ only ever changes at a boundary ---
-@note the tick where `mclk` is already high. The correct design therefore
-@note grants at the first opportunity there is, and a master clock held
-@note high offers no earlier one. It is not a mutation at all.
-@note
-@note What is left is the real difference and the real hole: inverted,
-@note `mclk` is LOW at the boundary, so the grant lands one tick late. The
-@note machine check does see memory timing --- a tick added to the bridge's
-@note answer IS caught --- but a tick added at the grant is absorbed, and
-@note I have not explained where. That is the property to state rather
-@note than a date: this closes when a memory cycle's length stops being
-@note insensitive to a single tick at its start.
+@note So the mutation is `phase_next == X` sized wrong all over again: not
+@note whether the check sees a difference, but at what magnitude. Sweeping
+@note found a tick invisible and a microcycle caught, and the tick turned
+@note out to be correct behaviour rather than a hole.
 @old
-      .mclk       (mclk),
-      .n_memrq    (n_memrq),
+  assign mclk = mclk_edge;
 @new
-      .mclk       (!mclk),
-      .n_memrq    (n_memrq),
+  logic mclk_q;
+  always_ff @(posedge clk) mclk_q <= mclk_edge;
+  assign mclk = mclk_q;
 @end
 
 @mutation the-data-cable-back-from-memory-is-rotated
