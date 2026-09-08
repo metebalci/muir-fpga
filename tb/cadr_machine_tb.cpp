@@ -295,6 +295,8 @@ int main(int argc, char **argv) {
   dut->boards = 32;      // Machine::new: MAIN_WORDS >> 16
   dut->mem_done = 0;
   dut->mem_rdata = 0;
+  dut->device_ack = 0;
+  dut->device_rdata = 0;
   // Verilator records the previous value of a clock at eval time, so the
   // first eval has to happen with clk low or the first posedge is not one.
   dut->eval();
@@ -314,6 +316,7 @@ int main(int argc, char **argv) {
   auto drive = [&](const Row &r, size_t row) {
     dut->sintr = static_cast<uint8_t>(r.v[kSintr]);
     dut->mem_rdata = static_cast<uint32_t>(rdata_for[row]);
+    dut->device_rdata = dut->mem_rdata;
     dut->srun = static_cast<uint8_t>(r.v[kSrun]);
     dut->promdisable = static_cast<uint8_t>(r.v[kPromdis]);
     dut->errstop = static_cast<uint8_t>(r.v[kErrstop]);
@@ -358,7 +361,10 @@ int main(int argc, char **argv) {
   long q_shifts = 0, ilongs = 0, promdis_rows = 0;
   long sub_tick = 0, worst_slip = 0, best_slip = 0, arb_skipped = 0;
   bool any_slip = false;
-  bool bus_outstanding = false, saw_mem_req = false;
+  bool bus_outstanding = false, saw_mem_req = false, saw_device = false;
+  bool was_unibus = false, was_nxm = false;
+  const char *stopped_because = "nothing on the bus answered it";
+  long device_answers = 0;
   long ack_at_tick = 0;
   size_t unanswerable = 0;
   std::set<uint64_t> a_values, m_values, ob_values;
@@ -383,11 +389,28 @@ int main(int argc, char **argv) {
     // used for; taking it from the bridge's own `mem_write` times the answer
     // and never chooses the data.
     dut->mem_done = 0;
+    dut->device_ack = 0;
     if (dut->mem_req) saw_mem_req = true;
-    if (dut->mem_req && bus_outstanding) {
-      const long answer_tick =
-          ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
-      if (t >= answer_tick) dut->mem_done = 1;
+    if (dut->dev_rq && dut->device) saw_device = true;
+    if (bus_outstanding && dut->unibus) was_unibus = true;
+    if (bus_outstanding && dut->nxm) was_nxm = true;
+    const long answer_tick =
+        ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
+    if (dut->mem_req && bus_outstanding && t >= answer_tick) dut->mem_done = 1;
+    // EVERY OTHER XBUS SLAVE, WHICH THE FABRIC DOES NOT HAVE.  The display
+    // and the disk controller are not built; what answers here is the trace,
+    // at the instant muir's own responder answered. That is stimulus, not a
+    // model: nothing about which device it is, or what it would have done, is
+    // guessed --- only that muir's machine got this word at this time.
+    //
+    // The word is the same `rdata_for` the memory path is given, so a device
+    // read and a memory read are told apart by the fabric's decode and by
+    // nothing here.
+    const long dev_answer_tick =
+        ack_at_tick - (dut->dev_write ? 0 : kXbusAckNs / kTickNs);
+    if (dut->dev_rq && dut->device && bus_outstanding && t >= dev_answer_tick) {
+      dut->device_ack = 1;
+      ++device_answers;
     }
     // POISON ON A WRITE.  -LOADMD is asserted on every acknowledgement and it
     // is RDCYC on the processor's side that keeps a write from strobing MD.
@@ -397,8 +420,10 @@ int main(int argc, char **argv) {
     // it. Keyed off the DUT's own WRCYC, which is safe here in a way a shadow
     // memory would not be: it chooses poison, never data, so a processor that
     // had the direction wrong takes poison and says so.
-    if (dut->wrcyc)
+    if (dut->wrcyc) {
       dut->mem_rdata = ~static_cast<uint32_t>(rdata_for[k < total_rows ? k : 0]);
+      dut->device_rdata = dut->mem_rdata;
+    }
     // Only a read takes a word: -LOADMD is gated by RDCYC, so a write must
     // not consume one. Using the DUT's own RDCYC to step the stimulus is safe
     // where it would not normally be, because MD is compared every
@@ -408,7 +433,7 @@ int main(int argc, char **argv) {
     dut->clk = 1;
     dut->eval();
 
-    if (bus_outstanding && !dut->mem_req && t > ack_at_tick) {
+    if (bus_outstanding && !dut->mem_req && !dut->dev_rq && t > ack_at_tick) {
       bus_outstanding = false;
     }
 
@@ -479,13 +504,22 @@ int main(int argc, char **argv) {
       // wanted and nothing drives a reply. So the machine runs until the
       // program first touches something that is not memory, and stops there
       // rather than diverging.
-      if (bus_outstanding && !saw_mem_req) {
+      // An NXM is not unanswerable: nothing is meant to answer it, muir's
+      // interface times it out and so does the fabric's. Only a cycle
+      // addressed to a bus the fabric does not have stops the run.
+      if (bus_outstanding && !saw_mem_req && !saw_device && was_unibus) {
         unanswerable = k;
+        stopped_because = was_unibus  ? "it is addressed to the Unibus, and "
+                                        "cadr_busint_xbus.sv is the Xbus half"
+                          : was_nxm   ? "it is Xbus space with nothing in it, "
+                                        "which should have timed out"
+                                      : "nothing on the bus answered it";
         break;
       }
       if (r.v[kBus]) {
         bus_outstanding = true;
         saw_mem_req = false;
+        saw_device = false;
         // Rounded *up*: a memory board answers on its own refresh clock, so
         // muir's acknowledgement is not on the five-nanosecond grid, and the
         // fabric can only see it at a tick at or after it. Truncating instead
@@ -583,16 +617,13 @@ int main(int argc, char **argv) {
         "engine\n"
         "    %s, and it stops there rather than diverging: at that\n"
         "    microcycle the program touches something that is not main\n"
-        "    memory, and the fabric has no I/O device to answer it --- no\n"
-        "    disk controller, no I/O board, no Unibus. cadr_memory_path.sv\n"
-        "    has a `device` output saying one is wanted and nothing to\n"
-        "    drive a reply.\n"
+        "    memory: %s.\n"
         "    Up to there: %ld bus cycles through the fabric's own decode,\n"
         "    bus interface and DDR bridge; MD strobed by that interface and\n"
         "    compared every microcycle; every microcycle length the fabric's\n"
         "    own, stalls included.\n",
         unanswerable, pack_trace ? "on a System 100 band" : "on MIT's boot PROM",
-        cycles_run);
+        stopped_because, cycles_run);
     return 0;
   }
   if (k != total_rows) {
