@@ -202,10 +202,18 @@ li::marker { font-size: 0.92em; }
 figure.fig { margin: 34px 0 36px; }
 .scroll { overflow-x: auto; padding-bottom: 4px; }
 .fig svg { display: block; width: 100%; min-width: 660px; height: auto; }
-/* The architecture drawing carries far more label text than muir's figures do
-   and goes illegible well before 660px, where its 11px labels would render at
-   8. It scrolls sooner instead. */
-.fig.dense svg { min-width: 880px; }
+/* The architecture drawing carries far more label text than muir's figures do,
+   and it is the whole point of the page rather than an illustration beside the
+   prose. So it is let out of the reading column: a fifth wider than the band,
+   centred on the viewport, and scrolling inside its own box once the window is
+   narrower than that. At this width its 11px labels land at about 12px. */
+.fig.dense {
+  width: 1272px;
+  max-width: calc(100vw - 40px);
+  margin-left: 50%;
+  transform: translateX(-50%);
+}
+.fig.dense svg { min-width: 1272px; }
 /* A picture at its own size, wider than the band: the page scrolls to it
    rather than shrinking it, which is what a browser showing an image file
    does and what makes 1-bit text unreadable. */
