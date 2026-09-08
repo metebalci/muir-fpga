@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>muir-fpga — the MIT CADR on an Arty Z7-20</title>
+<meta name="description" content="The proposed architecture for running the MIT CADR Lisp Machine in fabric at rtl level on a Digilent Arty Z7-20: what is fabric, what is Linux on the PS, and where the two meet.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<section>
+  <div class="band">
+    <h2>muir-fpga on the Arty Z7-20</h2>
+    <figure class="fig dense">
+      <div class="scroll">
+<svg viewBox="0 0 900 752" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the TV and the disk controller, and to the Unibus, carrying the I/O board. Two AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters, and a proposed M_AXI_GP0 with AXI4-Lite for the disk and Chaosnet buffers and the console. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly.">
+          <text class="d-t" x="10" y="18">XC7Z020-1CLG400C &mdash; the machine and its host on one chip</text>
+          <rect class="d-box" x="10" y="28" width="880" height="604"/>
+
+          <text class="d-s" x="16" y="48">PL &mdash; fabric</text>
+          <text class="d-n" x="156" y="50">CADR &mdash; 985 parts, both boards</text>
+
+          <!-- the clock generator -->
+          <rect class="d-box" x="40" y="62" width="112" height="128"/>
+          <text class="d-t" x="96" y="100" text-anchor="middle">clock</text>
+          <text class="d-n" x="96" y="120" text-anchor="middle">CLOCK1, CLOCK2</text>
+          <text class="d-s" x="96" y="142" text-anchor="middle">200 MHz,</text>
+          <text class="d-s" x="96" y="156" text-anchor="middle">5 ns a tick</text>
+          <text class="d-s" x="96" y="176" text-anchor="middle">29 = 145 ns</text>
+
+          <!-- the processor: two boards -->
+          <rect class="d-box" x="152" y="62" width="224" height="56"/>
+          <text class="d-t" x="264" y="84" text-anchor="middle">ICMEM board</text>
+          <text class="d-s" x="264" y="104" text-anchor="middle">the control store: 16K &times; 48, 768 Kb</text>
+          <rect class="d-box" x="152" y="118" width="224" height="72"/>
+          <text class="d-t" x="264" y="142" text-anchor="middle">CADR board</text>
+          <text class="d-s" x="264" y="162" text-anchor="middle">datapath, sequencer,</text>
+          <text class="d-s" x="264" y="176" text-anchor="middle">scratchpads, maps</text>
+
+          <!-- the five cables -->
+          <line class="d-line" x1="376" y1="90" x2="596" y2="90"/>
+          <text class="d-s" x="486" y="82" text-anchor="middle">1AJ1-J08 &mdash; 12 wires</text>
+          <text class="d-s" x="486" y="108" text-anchor="middle">clock, SPY control, resets</text>
+          <line class="d-line" x1="376" y1="154" x2="596" y2="154"/>
+          <text class="d-s" x="486" y="146" text-anchor="middle">four cables &mdash; 80 wires</text>
+          <text class="d-n" x="486" y="170" text-anchor="middle">MEM&lt;31:0&gt;, SPY&lt;15:0&gt;</text>
+          <text class="d-s" x="486" y="184" text-anchor="middle">48 driven from both ends</text>
+
+          <!-- the bus interface -->
+          <rect class="d-box" x="596" y="62" width="254" height="128"/>
+          <text class="d-t" x="723" y="92" text-anchor="middle">bus interface</text>
+          <text class="d-n" x="723" y="112" text-anchor="middle">BUSINT, 176 parts</text>
+          <text class="d-s" x="723" y="138" text-anchor="middle">arbitration, the NXM timeout,</text>
+          <text class="d-s" x="723" y="152" text-anchor="middle">the address decode, -HANG,</text>
+          <text class="d-s" x="723" y="166" text-anchor="middle">its own registers, the debug cable</text>
+
+          <!-- the two buses -->
+          <path class="d-line" d="M723,190 L723,208 M270,208 L723,208 M270,208 L270,238 M660,208 L660,238"/>
+          <line class="d-bus" x1="40" y1="238" x2="570" y2="238"/>
+          <text class="d-s" x="40" y="228">Xbus, 32 bits, synchronous</text>
+          <line class="d-bus" x1="620" y1="238" x2="876" y2="238"/>
+          <text class="d-s" x="876" y="228" text-anchor="end">Unibus, 16 bits, open collector &mdash; not this slice</text>
+
+          <path class="d-line" d="M118,238 L118,274 M283,238 L283,274 M470,238 L470,274 M725,238 L725,274"/>
+
+          <!-- on the Xbus -->
+          <rect class="d-box" x="40" y="274" width="156" height="112"/>
+          <text class="d-t" x="118" y="300" text-anchor="middle">Xbus to DDR</text>
+          <text class="d-s" x="118" y="320" text-anchor="middle">main memory and</text>
+          <text class="d-s" x="118" y="334" text-anchor="middle">the display&rsquo;s buffer</text>
+          <text class="d-s" x="118" y="356" text-anchor="middle">an AXI4 master</text>
+          <text class="d-s" x="118" y="376" text-anchor="middle">not settled yet</text>
+
+          <rect class="d-box" x="210" y="274" width="146" height="112"/>
+          <text class="d-t" x="283" y="300" text-anchor="middle">TV</text>
+          <text class="d-s" x="283" y="320" text-anchor="middle">scan counters and</text>
+          <text class="d-s" x="283" y="334" text-anchor="middle">the mode register</text>
+          <text class="d-n" x="283" y="356" text-anchor="middle">SIMPLETV</text>
+          <text class="d-s" x="283" y="376" text-anchor="middle">the buffer is in DDR</text>
+
+          <rect class="d-box" x="370" y="274" width="200" height="112"/>
+          <text class="d-t" x="470" y="300" text-anchor="middle">disk controller</text>
+          <text class="d-s" x="470" y="320" text-anchor="middle">its own microcode; the Trident&rsquo;s</text>
+          <text class="d-s" x="470" y="334" text-anchor="middle">bus timing, seek and rotation</text>
+          <text class="d-n" x="470" y="356" text-anchor="middle">CADRDC</text>
+          <text class="d-s" x="470" y="376" text-anchor="middle">the pack itself is a file</text>
+
+          <!-- on the Unibus -->
+          <rect class="d-box" x="620" y="274" width="210" height="112"/>
+          <text class="d-t" x="725" y="300" text-anchor="middle">I/O board</text>
+          <text class="d-s" x="725" y="320" text-anchor="middle">keyboard, mouse, clocks, serial</text>
+          <text class="d-s" x="725" y="334" text-anchor="middle">Chaosnet: encode, decode, collision</text>
+          <text class="d-n" x="725" y="356" text-anchor="middle">CADRIO</text>
+          <text class="d-s" x="725" y="376" text-anchor="middle">the cable, not the protocol</text>
+
+          <!-- down to the AXI ports -->
+          <path class="d-line" d="M118,386 L118,440"/>
+          <text class="d-s" x="126" y="404">the only seam at machine speed</text>
+          <path class="d-line" d="M470,386 L470,418 M725,386 L725,418 M876,238 L876,418 M470,418 L876,418 M700,418 L700,440"/>
+          <text class="d-s" x="870" y="262" text-anchor="end">the console</text>
+          <text class="d-s" x="462" y="410" text-anchor="end">blocks</text>
+          <text class="d-s" x="732" y="410">packets, keys, mouse</text>
+
+          <!-- the PS-PL boundary, which the two ports cross -->
+          <path class="d-dash" d="M10,462 L38,462 M198,462 L575,462 M825,462 L890,462"/>
+          <rect class="d-fill" x="38" y="440" width="160" height="44"/>
+          <text class="d-m" x="118" y="459" text-anchor="middle">S_AXI_HP0</text>
+          <text class="d-s" x="118" y="475" text-anchor="middle">PL masters, 64 bits</text>
+          <rect class="d-fill" x="575" y="440" width="250" height="44"/>
+          <text class="d-m" x="700" y="459" text-anchor="middle">M_AXI_GP0, AXI4-Lite</text>
+          <text class="d-s" x="700" y="475" text-anchor="middle">proposed, not built</text>
+
+          <!-- the PS -->
+          <text class="d-s" x="16" y="502">PS &mdash; Linux</text>
+          <path class="d-line" d="M700,484 L700,498 M320,498 L806,498 M320,498 L320,514 M482,498 L482,514 M644,498 L644,514 M806,498 L806,514"/>
+
+          <rect class="d-dash" x="250" y="514" width="140" height="96"/>
+          <text class="d-t" x="320" y="538" text-anchor="middle">RFB server</text>
+          <text class="d-s" x="320" y="558" text-anchor="middle">TCP, encoding,</text>
+          <text class="d-s" x="320" y="572" text-anchor="middle">keysym mapping</text>
+          <text class="d-s" x="320" y="594" text-anchor="middle">to any VNC client</text>
+
+          <rect class="d-dash" x="412" y="514" width="140" height="96"/>
+          <text class="d-t" x="482" y="538" text-anchor="middle">the pack</text>
+          <text class="d-s" x="482" y="558" text-anchor="middle">the drive&rsquo;s blocks</text>
+          <text class="d-s" x="482" y="572" text-anchor="middle">as a file</text>
+          <text class="d-s" x="482" y="594" text-anchor="middle">on microSD</text>
+
+          <rect class="d-dash" x="574" y="514" width="140" height="96"/>
+          <text class="d-t" x="644" y="538" text-anchor="middle">Chaosnet</text>
+          <text class="d-s" x="644" y="558" text-anchor="middle">routing and</text>
+          <text class="d-s" x="644" y="572" text-anchor="middle">its services</text>
+          <text class="d-s" x="644" y="594" text-anchor="middle">over gigabit Ethernet</text>
+
+          <rect class="d-dash" x="736" y="514" width="140" height="96"/>
+          <text class="d-t" x="806" y="538" text-anchor="middle">the console</text>
+          <text class="d-s" x="806" y="558" text-anchor="middle">halt, step and inspect</text>
+          <text class="d-s" x="806" y="572" text-anchor="middle">over the SPY wires</text>
+          <text class="d-s" x="806" y="594" text-anchor="middle">a Unibus master</text>
+
+          <!-- main memory: straight past the software, out to the DRAM -->
+          <path class="d-line" d="M118,484 L118,650"/>
+          <text class="d-s" x="126" y="570">no software</text>
+          <text class="d-s" x="126" y="584">in this path</text>
+          <path class="d-line" d="M320,610 L320,690 L208,690"/>
+          <text class="d-s" x="328" y="686">reads the display&rsquo;s buffer</text>
+
+          <rect class="d-dash" x="28" y="650" width="180" height="84"/>
+          <text class="d-t" x="118" y="676" text-anchor="middle">512 MB DDR3</text>
+          <text class="d-s" x="118" y="696" text-anchor="middle">main memory: 8 MB at 32</text>
+          <text class="d-s" x="118" y="710" text-anchor="middle">boards, 15 MB at 60</text>
+          <text class="d-s" x="118" y="728" text-anchor="middle">and the display&rsquo;s buffer</text>
+          <text class="d-s" x="216" y="716">on the board, not in the chip</text>
+        </svg>
+      </div>
+      <figcaption><p>The proposed architecture. <strong>Solid is fabric; dashed is the PS side and the DRAM behind it</strong> &mdash; the dashed outline says &ldquo;not in fabric&rdquo;, not &ldquo;not built&rdquo;. Where a fabric block is a proposal rather than a decision the drawing says so on the block: the DDR bridge and the <code>M_AXI_GP0</code> path are both marked, and the Unibus and everything on it is labelled <em>not this slice</em>.</p><p>The boxes name the boards of the real machine, and the two part counts are MIT&rsquo;s count of what is on those boards. What goes into fabric is <strong>rtl level</strong> &mdash; the machine&rsquo;s own two-phase clock, every datapath signal on it, and everything that is a matter of <em>when</em>. It is checked against MIT&rsquo;s netlists rather than being them; whether a gate-level implementation ever follows is an open question and not a promise this drawing makes.</p></figcaption>
+    </figure>
+  </div>
+</section>
+
+</body>
+</html>

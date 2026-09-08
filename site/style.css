@@ -202,6 +202,10 @@ li::marker { font-size: 0.92em; }
 figure.fig { margin: 34px 0 36px; }
 .scroll { overflow-x: auto; padding-bottom: 4px; }
 .fig svg { display: block; width: 100%; min-width: 660px; height: auto; }
+/* The architecture drawing carries far more label text than muir's figures do
+   and goes illegible well before 660px, where its 11px labels would render at
+   8. It scrolls sooner instead. */
+.fig.dense svg { min-width: 880px; }
 /* A picture at its own size, wider than the band: the page scrolls to it
    rather than shrinking it, which is what a browser showing an image file
    does and what makes 1-bit text unreadable. */
