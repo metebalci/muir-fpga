@@ -13,15 +13,30 @@
   <div class="band">
     <figure class="fig dense">
       <div class="scroll">
-<svg viewBox="0 0 1150 870" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP1, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly.">
-          <text class="d-t" x="10" y="18">XC7Z020-1CLG400C &mdash; the machine and its host on one chip</text>
+<svg viewBox="0 0 1170 870" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP1, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly.">
+          <text class="d-t" x="10" y="18">muir-fpga on the Arty Z7-20</text>
+          <text class="d-s" x="196" y="18">XC7Z020-1CLG400C &mdash; the machine and its host on one chip</text>
+
+          <!-- How far along each block is. Nothing here says a block is
+               correct, only that its checks pass; what has no fill at all
+               has not been started. -->
+          <rect class="d-box d-done" x="560" y="8" width="13" height="13"/>
+          <text class="d-s" x="580" y="18">built and checked</text>
+          <rect class="d-box d-part" x="690" y="8" width="13" height="13"/>
+          <text class="d-s" x="710" y="18">partly built</text>
+          <rect class="d-box d-wip" x="785" y="8" width="13" height="13"/>
+          <text class="d-s" x="805" y="18">being written now</text>
+          <rect class="d-box d-ext" x="925" y="8" width="13" height="13"/>
+          <text class="d-s" x="945" y="18">outside the project</text>
+          <rect class="d-box" x="1068" y="8" width="13" height="13"/>
+          <text class="d-s" x="1088" y="18">not started</text>
           <rect class="d-box" x="10" y="28" width="1070" height="668.5"/>
 
           <text class="d-s" x="16" y="48">PL &mdash; fabric</text>
           <text class="d-s" x="156" y="50">the processor: two boards</text>
 
           <!-- the clock generator -->
-          <rect class="d-box" x="40" y="62" width="112" height="128"/>
+          <rect class="d-box d-done" x="40" y="62" width="112" height="128"/>
           <text class="d-t" x="96" y="100" text-anchor="middle">clock</text>
           <text class="d-n" x="96" y="120" text-anchor="middle">CLOCK1, CLOCK2</text>
           <text class="d-s" x="96" y="142" text-anchor="middle">200 MHz,</text>
@@ -29,10 +44,10 @@
           <text class="d-s" x="96" y="176" text-anchor="middle">29 = 145 ns</text>
 
           <!-- the processor: two boards -->
-          <rect class="d-box" x="152" y="62" width="224" height="56"/>
+          <rect class="d-box d-wip" x="152" y="62" width="224" height="56"/>
           <text class="d-t" x="264" y="84" text-anchor="middle">ICMEM board</text>
           <text class="d-s" x="264" y="104" text-anchor="middle">the control store: 16K &times; 48, 768 Kb</text>
-          <rect class="d-box" x="152" y="118" width="224" height="72"/>
+          <rect class="d-box d-wip" x="152" y="118" width="224" height="72"/>
           <text class="d-t" x="264" y="142" text-anchor="middle">CADR board</text>
           <text class="d-s" x="264" y="162" text-anchor="middle">datapath, sequencer,</text>
           <text class="d-s" x="264" y="176" text-anchor="middle">scratchpads, maps</text>
@@ -47,7 +62,7 @@
           <text class="d-s" x="486" y="184" text-anchor="middle">48 driven from both ends</text>
 
           <!-- the bus interface -->
-          <rect class="d-box" x="596" y="62" width="254" height="128"/>
+          <rect class="d-box d-part" x="596" y="62" width="254" height="128"/>
           <text class="d-t" x="723" y="92" text-anchor="middle">bus interface</text>
           <text class="d-n" x="723" y="112" text-anchor="middle">BUSINT</text>
           <text class="d-s" x="723" y="138" text-anchor="middle">arbitration, the NXM timeout,</text>
@@ -71,7 +86,7 @@
           <path class="d-line" d="M118,238 L118,274 M310,238 L310,274 M497,238 L497,274 M725,238 L725,274"/>
 
           <!-- on the Xbus -->
-          <rect class="d-box" x="40" y="274" width="156" height="112"/>
+          <rect class="d-box d-done" x="40" y="274" width="156" height="112"/>
           <text class="d-t" x="118" y="300" text-anchor="middle">Xbus to DDR</text>
           <text class="d-s" x="118" y="320" text-anchor="middle">main memory and</text>
           <text class="d-s" x="118" y="334" text-anchor="middle">the display&rsquo;s buffer</text>
@@ -137,7 +152,7 @@
           <text class="d-s" x="360" y="642" text-anchor="middle">the screen and the keys</text>
 
           <rect class="d-dash" x="614" y="562" width="140" height="96"/>
-          <text class="d-t" x="684" y="586" text-anchor="middle">the pack</text>
+          <text class="d-t" x="684" y="586" text-anchor="middle">disk pack</text>
           <text class="d-s" x="684" y="606" text-anchor="middle">the drive&rsquo;s blocks</text>
           <text class="d-s" x="684" y="620" text-anchor="middle">as a file</text>
           <text class="d-s" x="684" y="642" text-anchor="middle">staged into DDR</text>
@@ -154,7 +169,7 @@
           <text class="d-s" x="846" y="620" text-anchor="middle">over the SPY wires</text>
           <text class="d-s" x="846" y="642" text-anchor="middle">a Unibus master</text>
 
-          <rect class="d-dash" x="945" y="562" width="90" height="96"/>
+          <rect class="d-dash d-ext" x="945" y="562" width="90" height="96"/>
           <text class="d-t" x="990" y="586" text-anchor="middle">muir</text>
           <text class="d-s" x="990" y="606" text-anchor="middle">on the PS,</text>
           <text class="d-s" x="990" y="620" text-anchor="middle">running CC</text>
@@ -167,17 +182,17 @@
           <path class="d-line" d="M320,658 L320,728 M425,658 L425,728 M522,658 L522,728 M684,658 L684,728"/>
           <text class="d-s" x="36" y="836">the RFB server reads the display&rsquo;s buffer straight out of DDR</text>
 
-          <rect class="d-dash" x="28" y="728" width="332" height="84"/>
+          <rect class="d-dash d-ext" x="28" y="728" width="332" height="84"/>
           <text class="d-t" x="194" y="754" text-anchor="middle">512 MB DDR3</text>
           <text class="d-s" x="194" y="776" text-anchor="middle">main memory: 8 MB at 32 boards,</text>
           <text class="d-s" x="194" y="790" text-anchor="middle">15 MB at 60, the display&rsquo;s buffer,</text>
           <text class="d-s" x="194" y="804" text-anchor="middle">and the block the disk is fetching</text>
           <text class="d-s" x="700" y="716">on the board, not in the chip</text>
-          <rect class="d-dash" x="820" y="728" width="140" height="84"/>
+          <rect class="d-dash d-ext" x="820" y="728" width="140" height="84"/>
           <text class="d-t" x="890" y="754" text-anchor="middle">Pmod DBGOUT</text>
           <text class="d-s" x="890" y="776" text-anchor="middle">1 clock + 7 data,</text>
           <text class="d-s" x="890" y="790" text-anchor="middle">four beats</text>
-          <rect class="d-dash" x="990" y="728" width="140" height="84"/>
+          <rect class="d-dash d-ext" x="990" y="728" width="140" height="84"/>
           <text class="d-t" x="1060" y="754" text-anchor="middle">Pmod DBGIN</text>
           <text class="d-s" x="1060" y="776" text-anchor="middle">1 clock + 7 data,</text>
           <text class="d-s" x="1060" y="790" text-anchor="middle">three beats</text>
@@ -187,14 +202,14 @@
           <!-- The connectors on the board itself. The pack is a file on the
                card; the terminal is a VNC client and Chaosnet's other machines
                are elsewhere on the network, so both leave by the same socket. -->
-          <rect class="d-dash" x="390" y="728" width="210" height="84"/>
+          <rect class="d-dash d-ext" x="390" y="728" width="210" height="84"/>
           <text class="d-t" x="495" y="754" text-anchor="middle">gigabit Ethernet</text>
           <text class="d-s" x="495" y="778" text-anchor="middle">the terminal is a VNC client;</text>
           <text class="d-s" x="495" y="794" text-anchor="middle">Chaosnet reaches its other machines</text>
-          <rect class="d-dash" x="630" y="728" width="160" height="84"/>
+          <rect class="d-dash d-ext" x="630" y="728" width="160" height="84"/>
           <text class="d-t" x="710" y="754" text-anchor="middle">microSD</text>
-          <text class="d-s" x="710" y="778" text-anchor="middle">the pack lives here,</text>
-          <text class="d-s" x="710" y="794" text-anchor="middle">as a file</text>
+          <text class="d-s" x="710" y="778" text-anchor="middle">the disk pack lives</text>
+          <text class="d-s" x="710" y="794" text-anchor="middle">here, as a file</text>
         </svg>
       </div>
     </figure>
