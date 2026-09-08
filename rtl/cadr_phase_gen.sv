@@ -76,22 +76,41 @@ module cadr_phase_gen (
   localparam int unsigned RESTART_T = 60 / TICK_NS;    // -TPDONE, 60 ns
 
   logic [5:0] phase;       // ticks since -TPR0
-  logic [5:0] read_t;      // the chosen read phase, in ticks
   logic       running;     // a cycle has started; low while reset is held
 
-  // The cycle is `read_t + RESTART_T` ticks long, phases 0 .. cycle_t-1.
-  // `cycle_t` itself is the park value: where the generator sits when -HANG
-  // holds the next -TPR0 off.  muir does the same thing by leaving CycleStart
-  // pending and shifting it forward, which is why the write pulse still ends
-  // (WpOff is ahead of CycleStart in the queue at the same nanosecond) but
-  // TPCLK does not rise.
-  logic [5:0] cycle_t;
-  assign cycle_t = read_t + 6'(RESTART_T);
+  // THE TAPS ARE HELD AS INSTANTS, ONE TICK EARLY, AND COMPARED AGAINST THE
+  // COUNTER ITSELF.  This is the only tick-rate logic in the design --- the
+  // datapath has a whole microcycle and the scratchpads a whole phase --- so
+  // it is the one place worth arranging for the tool.
+  //
+  // Written the obvious way, each tap is `phase_next == read_t + offset`, and
+  // the path out of the counter is an increment, then an add, then a compare,
+  // then the register: measured out of context at 5 ns, that missed by
+  // 0.244 ns with seven failing endpoints, three quarters of it routing.
+  // Holding `read_t + offset - 1` in registers of their own leaves the
+  // counter driving a comparator and nothing else.  The subtraction of one is
+  // what removes the increment: `phase_next == X` is `phase == X-1` for every
+  // tap inside the cycle, since `phase_next` is only not `phase + 1` at the
+  // wrap, and no tap lands there.
+  //
+  // The instants change once a cycle, at SELECT, where the adds have a whole
+  // tick and are off the counter's path entirely.
+  logic [5:0] tpclk_off_at;    // -TPR<read>, ending the read phase
+  logic [5:0] wp_on_at;        // -TPW30
+  logic [5:0] wpiram_off_at;   // -TPW45
+  logic [5:0] wrap_at;         // the last tick of the cycle
+  logic [5:0] park_at;         // where -HANG holds the ring
 
+  // The cycle is `read_t + RESTART_T` ticks long, phases 0 .. cycle_t-1.
+  // `park_at` is that length: where the generator sits when -HANG holds the
+  // next -TPR0 off.  muir does the same thing by leaving CycleStart pending
+  // and shifting it forward, which is why the write pulse still ends (WpOff
+  // is ahead of CycleStart in the queue at the same nanosecond) but TPCLK
+  // does not rise.
   logic       wrap;
   logic [5:0] phase_next;
-  assign wrap       = (phase == cycle_t - 6'd1) || (phase == cycle_t);
-  assign phase_next = wrap ? (hang ? cycle_t : 6'd0) : phase + 6'd1;
+  assign wrap       = (phase == wrap_at) || (phase == park_at);
+  assign phase_next = wrap ? (hang ? park_at : 6'd0) : phase + 6'd1;
 
   // The tap the 74S151 selects, read at SELECT_T.
   logic [5:0] read_sel;
@@ -111,7 +130,12 @@ module cadr_phase_gen (
       // so the generator is held at -TPR0 until reset lifts.
       running    <= 1'b0;
       phase      <= 6'd0;
-      read_t     <= 6'd17;   // Normal, no ILONG; replaced at the first SELECT
+      // Normal, no ILONG; replaced at the first SELECT.
+      tpclk_off_at  <= 6'd17 - 6'd1;
+      wp_on_at      <= 6'd17 + 6'(WP_ON_T) - 6'd1;
+      wpiram_off_at <= 6'd17 + 6'(WPIRAM_OFF_T) - 6'd1;
+      wrap_at       <= 6'd17 + 6'(RESTART_T) - 6'd1;
+      park_at       <= 6'd17 + 6'(RESTART_T);
       tpclk      <= 1'b0;
       tptse      <= 1'b0;
       n_tpwp     <= 1'b1;
@@ -129,16 +153,22 @@ module cadr_phase_gen (
       if (wrap) n_tpwp <= 1'b1;
 
       if (phase_next == 6'd0) tpclk <= 1'b1;                    // CycleStart
-      if (phase_next == 6'(TSE_OFF_T)) tptse <= 1'b0;
-      if (phase_next == 6'(TSE_ON_T)) tptse <= 1'b1;
-      if (phase_next == 6'(SELECT_T)) read_t <= read_sel;
+      if (phase == 6'(TSE_OFF_T) - 6'd1) tptse <= 1'b0;
+      if (phase == 6'(TSE_ON_T) - 6'd1) tptse <= 1'b1;
+      if (phase == 6'(SELECT_T) - 6'd1) begin
+        tpclk_off_at  <= read_sel - 6'd1;
+        wp_on_at      <= read_sel + 6'(WP_ON_T) - 6'd1;
+        wpiram_off_at <= read_sel + 6'(WPIRAM_OFF_T) - 6'd1;
+        wrap_at       <= read_sel + 6'(RESTART_T) - 6'd1;
+        park_at       <= read_sel + 6'(RESTART_T);
+      end
 
-      if (phase_next == read_t) begin                           // ReadEnd
+      if (phase == tpclk_off_at) begin                          // ReadEnd
         tpclk      <= 1'b0;
         n_tpwpiram <= 1'b0;
       end
-      if (phase_next == read_t + 6'(WP_ON_T)) n_tpwp <= 1'b0;
-      if (phase_next == read_t + 6'(WPIRAM_OFF_T)) n_tpwpiram <= 1'b1;
+      if (phase == wp_on_at) n_tpwp <= 1'b0;
+      if (phase == wpiram_off_at) n_tpwpiram <= 1'b1;
     end
   end
 
