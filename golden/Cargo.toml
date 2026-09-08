@@ -1,0 +1,13 @@
+[package]
+name = "golden"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Reference traces for muir-fpga, taken from muir itself."
+
+[[bin]]
+name = "phase_gen"
+path = "src/phase_gen.rs"
+
+[dependencies]
+muir = { path = "../../muir" }
