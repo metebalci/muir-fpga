@@ -230,7 +230,16 @@ module cadr_busint_xbus (
         end
 
         GRANTED: begin
-          elapsed <= elapsed + 10'd1;
+          // Saturating, not wrapping. `elapsed` gates -XBUS.RQ through
+          // SETUP_T and the read deskew through `answered_at`, and both are
+          // "has this long passed" rather than "how long": once past, past.
+          // Wrapping made -XBUS.RQ fall for sixteen ticks in the middle of
+          // any cycle that reached 1,024 of them, which on the board is a
+          // level and cannot. Only a cycle nothing answers runs that long ---
+          // the NXM timer ends it at about 935 ticks plus the oscillator's
+          // phase --- so no slave was ever listening when it happened, which
+          // is why every output agreed and nothing caught it.
+          if (elapsed != 10'h3FF) elapsed <= elapsed + 10'd1;
           if (acked) begin
             state <= ACKED;
           end else if (answering && !answered) begin
