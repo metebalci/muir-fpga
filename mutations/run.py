@@ -541,6 +541,39 @@ def check_makefile():
     return missing
 
 
+def cannot_be_caught(check):
+    """A record for a mutation no check can catch, built from the source.
+
+    Two arms want a mutation that survives --- "a survivor with nothing
+    recorded", which must fail the run, and "a hole that is still open",
+    which must not.  Taking one from list.txt means taking whichever record
+    carries an `@hole`, and there is meant to come a day when none does.
+
+    A comment cannot change what the fabric does, so a comment-only change
+    survives by construction, whatever the list holds.  The line is found in
+    the source rather than written here, so this does not rot when the
+    comment does: any comment line that occurs exactly once will do.
+    """
+    path = CHECKS[check]["sources"][0]
+    with open(os.path.join(REPO, path)) as f:
+        lines = f.read().split("\n")
+    seen = {}
+    for line in lines:
+        seen[line] = seen.get(line, 0) + 1
+    for line in lines:
+        if line.strip().startswith("//") and seen[line] == 1:
+            return ("@mutation self-test-a-comment-changed\n"
+                    "@check %s\n"
+                    "@file %s\n"
+                    "@note Built by --self-test, not taken from the list: a\n"
+                    "@note comment cannot change what the fabric does, so this\n"
+                    "@note survives every check by construction and does not\n"
+                    "@note depend on the list still holding an open hole.\n"
+                    "@old\n%s\n@new\n%s  // and the self-test was here\n@end\n"
+                    % (check, path, line, line))
+    die("%s has no comment line of its own for --self-test to change" % path)
+
+
 def self_test(args):
     """The runner's own guarantees, run against lists written to fail.
 
@@ -551,11 +584,16 @@ def self_test(args):
     a directory that is not the repository root with relative paths, where the
     runner's own chdir made every relative path resolve against the copy.
 
-    The fixtures are derived from list.txt rather than written out here, so
+    Most fixtures are derived from list.txt rather than written out here, so
     they do not rot when a record moves.  What makes that sound is that a
     green run is the precondition: every record without an `@hole` is caught,
-    so putting an `@hole` on one must give CLOSED, and every record with one
-    survives, so taking it off must give SURVIVED.
+    so putting one on must give CLOSED.
+
+    The two arms that need a mutation which *survives* are built instead ---
+    see `cannot_be_caught`.  Deriving those from the list would mean
+    borrowing whichever record happens to carry an `@hole`, and the list is
+    meant to run out of those: every hole closed is a check fixed.  A fixture
+    that stops working when the project succeeds is the wrong fixture.
     """
     mutations = parse(args.list)
     with open(args.list) as f:
@@ -567,10 +605,8 @@ def self_test(args):
         return text[start:text.index("\n@end\n", start) + len("\n@end\n")]
 
     plain = [m for m in mutations if not m.hole]
-    holed = [m for m in mutations if m.hole]
-    if not plain or not holed:
-        die("--self-test wants at least one record with an @hole and one "
-            "without; list.txt has %d and %d" % (len(holed), len(plain)))
+    if not plain:
+        die("--self-test wants at least one record without an @hole")
     # The cheapest check to build, so the cases cost two builds each. A
     # generator would do, but it costs a cargo build and its "not verilog at
     # all" fixture would be a rustc error rather than a lint one, which is a
@@ -588,7 +624,9 @@ def self_test(args):
     # belongs to is outside every record, which the parser rightly refuses.
     head, rest = record(cheap).split("\n", 1)
     closed = head + "\n@hole #99999\n" + rest
-    survived = record(holed[0]).replace("@hole %s\n" % holed[0].hole, "")
+    # Built, not borrowed: independent of what the list happens to hold.
+    survived = cannot_be_caught(cheap.check)
+    still_open = survived.replace("@check ", "@hole #99999\n@check ", 1)
 
     root = os.path.join(args.work, "selftest")
     if os.path.exists(root):
@@ -600,7 +638,7 @@ def self_test(args):
         ("a mutation lint rejects", unbuildable, 1, "DID NOT BUILD"),
         ("a survivor with nothing recorded", survived, 1, "SURVIVED"),
         ("a hole that has closed", closed, 1, "A HOLE THAT CLOSED"),
-        ("a hole that is still open", record(holed[0]), 0, "known hole"),
+        ("a hole that is still open", still_open, 0, "known hole"),
     ]
 
     bad = 0
