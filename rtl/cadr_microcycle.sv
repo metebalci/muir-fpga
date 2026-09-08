@@ -99,11 +99,16 @@ module cadr_microcycle #(
 
     // --- the console's registers: OLORD1 1A09 and 1A10.  The fabric has no
     // --- console yet, so these are driven rather than written.
-    input  var logic        srun,         // SRUN, the registered RUN
+    input  var logic        run,          // RUN, before OLORD1 1A10 registers it
     input  var logic        promdisable,  // PROMDISABLE, mode register bit 14
     input  var logic        errstop,      // ERRSTOP, bit 6
     input  var logic        stathenb,     // STATHENB, bit 11
     input  var logic [1:0]  mode_speed,   // {SPEED1, SPEED0}, bits 4 and 3
+
+    // --- the diagnostic bus's read side: EADR<3:0> in, SPY<15:0> back.
+    // --- `Engine::spy_read` is this, and it is almost all processor state.
+    input  var logic [3:0]  spy_eadr,
+    output var logic [15:0] spy_rdata,
 
     // --- what the memory path will make.  Each leaves with its own slice.
     input  var logic        n_memack,     // -MEMACK, off the cables
@@ -203,6 +208,7 @@ module cadr_microcycle #(
   // there is no console; `-WAIT` is VCTL1's and slice 5 has it.
   logic errhalt, stathalt, machrun;
   logic halted, statstop;
+  logic srun;
   assign errhalt  = errstop && halted;
   assign stathalt = stathenb && statstop;
   assign machrun  = srun && !errhalt && !stathalt && !wait_;
@@ -613,6 +619,10 @@ module cadr_microcycle #(
 
   // page LCC and LC.  `NEXT.INSTR` and the byte-mode flags decide whether the
   // stack's word is munged on the way to the PC.
+  // `IMODD` at PDLCTL 4C11. Nothing in the datapath reads it: it suppresses
+  // the control-store parity check at 4E03 and the console reads it over the
+  // SPY bus, which is now something this fabric can do.
+  logic imodd, imod;
   logic newlc, next_instrd, next_instr;
   logic lc_byte_mode, int_enable, sequence_break;
   logic lc0b, have_wrong_word, last_byte_in_word, needfetch, lcinc, newlc_in;
@@ -623,6 +633,9 @@ module cadr_microcycle #(
   assign lcinc             = next_instrd || (irdisp && ir[24]);
   assign newlc_in          = have_wrong_word && !lcinc;
   assign next_instr        = spop && !(srcspcpop && !nop) && spcv[14];
+  // The 74S10 at PDLCTL 4D10: a WRITE-I-MEM raises it too. `IDEBUG` is the
+  // console's and there is none.
+  assign imod              = destimod0 || destimod1 || iwrited;
 
   logic spcmung, spc1a;
   logic [13:0] spc_target;
@@ -987,8 +1000,23 @@ module cadr_microcycle #(
   // "The bus interface holds the address and, on a write, the word, until the
   // cycle ends: `xspec.text.3` requires the master to keep them stable from
   // 80 ns before -XBUS.RQ until the -XBUS.ACK signal drops."  So they are
-  // captured at the edge -MEMRQ goes out on, not read again when the answer
-  // arrives.
+  // captured at the edge the cycle starts on, and held.
+  //
+  // **BUT THE ADDRESS IS LIVE WHILE MEMSTART IS UP, WHICH IS A MICROCYCLE
+  // EARLIER.**  That is what MEMSTART means: the map is addressed by VMA
+  // rather than MD and the latch at VMEMDR is transparent, so `-PMA21..8` and
+  // `-VMA7..0` are already on the cables during the microcycle *before* the
+  // cycle runs.  And that microcycle is when it matters: `-MEMRQ` is
+  // `MEMSTART AND VMAOK OR MBUSY`, so it falls a microcycle before the cycle
+  // starts, and the priority logic grants at the first master clock it sees
+  // it --- "a request standing at the master clock edge is granted at that
+  // edge".  A registered address would still be the *previous* cycle's at
+  // that grant.  The Xbus never noticed, because the bridge decodes
+  // continuously and only looks at `-XBUS.RQ`, 80 ns later; the Unibus
+  // noticed at once, because arbitration starts at the grant and has to know
+  // then which bus it is arbitrating for.
+  logic [21:0] phys_r;
+  assign phys = memstart ? {vmo[13:0], vma[7:0]} : phys_r;
 
   // page VMA: the register, and what it takes.  An instruction fetch puts the
   // location counter's word address up instead of OB.
@@ -1083,6 +1111,46 @@ module cadr_microcycle #(
   assign qs1 = ir[1] && iralu;
   assign qs0 = ir[0] && iralu;
 
+  // -------------------------------------------- the diagnostic read side
+  //
+  // `Engine::spy_read`: what the console sees on `SPY<15:0>` with `-DBREAD`
+  // low and `EADR<3:0>` selecting.  Fifteen of the sixteen are this
+  // processor's own state, which is why the register block on the bus
+  // interface asks rather than holding a copy.
+  //
+  // Register 3 has no read select --- Y3 of SPY0 1F01 is not connected --- so
+  // no buffer drives the bus and it reads as the open bus, all ones.
+  //
+  // The parity flags in FLAG-1 and the console's SSDONE are zero: no memory
+  // here has parity to get wrong, and there is no console to single-step.
+  logic [15:0] spy_flag1, spy_flag2;
+  assign spy_flag1 = {!wait_, 1'b1, 1'b1, promdisabled, !stathalt, halted,
+                      1'b0, srun, 8'd0};
+  assign spy_flag2 = 16'hc0c0
+                   | {2'b00, wmapd, destspcd, iwrited, imodd, pdlwrited, spushd,
+                      2'b00, 1'b0, nop, !vmaok, jcond, pcs1, pcs0};
+
+  always_comb begin
+    unique case (spy_eadr)
+      4'd0:  spy_rdata = ir[15:0];
+      4'd1:  spy_rdata = ir[31:16];
+      4'd2:  spy_rdata = ir[47:32];
+      4'd4:  spy_rdata = {2'b00, opc};
+      4'd5:  spy_rdata = {2'b00, pc};
+      4'd6:  spy_rdata = ob[15:0];
+      4'd7:  spy_rdata = ob[31:16];
+      4'd8:  spy_rdata = spy_flag1;
+      4'd9:  spy_rdata = spy_flag2;
+      4'd10: spy_rdata = m[15:0];
+      4'd11: spy_rdata = m[31:16];
+      4'd12: spy_rdata = a[15:0];
+      4'd13: spy_rdata = a[31:16];
+      4'd14: spy_rdata = st[15:0];
+      4'd15: spy_rdata = st[31:16];
+      default: spy_rdata = 16'hffff;   // register 3, the open bus
+    endcase
+  end
+
   // -------------------------------------------------------- the registers
 
   logic [13:0] opcs [0:7];
@@ -1094,6 +1162,9 @@ module cadr_microcycle #(
       // raises the trap; SRUN is the console's and comes in.
       trap         <= 1'b1;
       promdisabled <= 1'b0;
+      // `Engine::boot` raises SRUN with RUN rather than a master clock later,
+      // so the first microcycle runs. See the note in cadr_spy_registers.sv.
+      srun         <= 1'b1;
       inop         <= 1'b0;
       iwrited      <= 1'b0;
       halted       <= 1'b0;
@@ -1122,6 +1193,7 @@ module cadr_microcycle #(
       newlc        <= 1'b0;
       next_instrd  <= 1'b0;
       sintr_d      <= 1'b0;
+      imodd        <= 1'b0;
       memstart     <= 1'b0;
       mbusy        <= 1'b0;
       mbusy_sync   <= 1'b0;
@@ -1131,7 +1203,7 @@ module cadr_microcycle #(
       vma          <= 32'd0;
       wmapd        <= 1'b0;
       md           <= 32'd0;
-      phys         <= 22'd0;
+      phys_r       <= 22'd0;
       wdata        <= 32'd0;
       mclk         <= 1'b0;
       n_loadmd_q   <= 1'b1;
@@ -1191,6 +1263,8 @@ module cadr_microcycle #(
         // following MEMRQ through a WAIT --- which is what ends the wait.
         mbusy_sync <= (memstart && vmaok) || mbusy_next;
         promdisabled <= promdisable;
+        // OLORD1 1A10 takes RUN into SRUN on MCLK5A.
+        srun <= run;
         // The 74LS109 at OLORD2 1A18 drops the trap at the first edge whose
         // J, SRUN, was up.
         if (srun) trap <= 1'b0;
@@ -1248,6 +1322,7 @@ module cadr_microcycle #(
         newlc       <= newlc_in;
         next_instrd <= next_instr;
         sintr_d     <= sintr;
+        imodd       <= imod;
         if (destintctl) begin
           lc_byte_mode      <= ob[29];
           prog_unibus_reset <= ob[28];
@@ -1277,7 +1352,7 @@ module cadr_microcycle #(
         if (memstart && vmaok) begin
           mbusy      <= 1'b1;
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
-          phys       <= {vmo[13:0], vma[7:0]};
+          phys_r     <= {vmo[13:0], vma[7:0]};
           wdata      <= md;
           mfinish_t  <= 6'd0;
           // READ IN PROGRESS comes up on the same edge for a read, and has no

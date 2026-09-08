@@ -292,6 +292,9 @@ int main(int argc, char **argv) {
   dut->n_memgrant = 1;
   dut->n_loadmd = 1;
   dut->rdata = 0;
+  // The diagnostic bus is not driven here: the register block is the whole
+  // machine's, and this check is the processor alone. Register 0 reads IR.
+  dut->spy_eadr = 0;
   // Verilator records the previous value of a clock at eval time, so the
   // first eval has to happen with clk low or the first posedge is not one.
   dut->eval();
@@ -311,7 +314,7 @@ int main(int argc, char **argv) {
   auto drive = [&](const Row &r, size_t row) {
     dut->sintr = static_cast<uint8_t>(r.v[kSintr]);
     dut->rdata = static_cast<uint32_t>(rdata_for[row]);
-    dut->srun = static_cast<uint8_t>(r.v[kSrun]);
+    dut->run = static_cast<uint8_t>(r.v[kSrun]);
     dut->promdisable = static_cast<uint8_t>(r.v[kPromdis]);
     dut->errstop = static_cast<uint8_t>(r.v[kErrstop]);
     dut->stathenb = static_cast<uint8_t>(r.v[kStathenb]);
