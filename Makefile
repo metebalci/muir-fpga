@@ -34,7 +34,7 @@ $(BUILD)/phase_gen.golden: golden/src/phase_gen.rs golden/Cargo.toml | $(BUILD)
 
 $(BUILD)/obj_phase_gen/Vcadr_phase_gen: rtl/cadr_phase_gen.sv tb/cadr_phase_gen_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_phase_gen --top-module cadr_phase_gen \
-	    rtl/cadr_phase_gen.sv tb/cadr_phase_gen_tb.cpp
+	    rtl/cadr_phase_gen.sv $(abspath tb/cadr_phase_gen_tb.cpp)
 
 $(BUILD)/phase_gen.pass: $(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
 	$(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
@@ -47,7 +47,7 @@ $(BUILD)/busint_xbus.golden: golden/src/busint_xbus.rs golden/Cargo.toml | $(BUI
 
 $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus: rtl/cadr_busint_xbus.sv tb/cadr_busint_xbus_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_busint_xbus --top-module cadr_busint_xbus \
-	    rtl/cadr_busint_xbus.sv tb/cadr_busint_xbus_tb.cpp
+	    rtl/cadr_busint_xbus.sv $(abspath tb/cadr_busint_xbus_tb.cpp)
 
 $(BUILD)/busint_xbus.pass: $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
 	$(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
@@ -59,7 +59,7 @@ $(BUILD)/busint_xbus.pass: $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/b
 # protocol, checked every tick, and to read-back.
 $(BUILD)/obj_axi_master/Vcadr_axi_master: rtl/cadr_axi_master.sv tb/cadr_axi_master_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_axi_master \
-	    --top-module cadr_axi_master rtl/cadr_axi_master.sv tb/cadr_axi_master_tb.cpp
+	    --top-module cadr_axi_master rtl/cadr_axi_master.sv $(abspath tb/cadr_axi_master_tb.cpp)
 
 $(BUILD)/axi_master.pass: $(BUILD)/obj_axi_master/Vcadr_axi_master
 	$(BUILD)/obj_axi_master/Vcadr_axi_master
@@ -75,7 +75,7 @@ MEMPATH := rtl/cadr_ddr_map.sv rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv \
 
 $(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Irtl -Mdir $(BUILD)/obj_memory_path \
-	    --top-module cadr_memory_path $(MEMPATH) tb/cadr_memory_path_tb.cpp
+	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_memory_path_tb.cpp)
 
 $(BUILD)/memory_path.pass: $(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden
 	$(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden
@@ -99,7 +99,7 @@ $(BUILD)/xbus_decode.golden: golden/src/xbus_decode.rs golden/Cargo.toml | $(BUI
 
 $(BUILD)/obj_xbus_decode/Vcadr_xbus_decode: rtl/cadr_xbus_decode.sv tb/cadr_xbus_decode_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_xbus_decode \
-	    --top-module cadr_xbus_decode rtl/cadr_xbus_decode.sv tb/cadr_xbus_decode_tb.cpp
+	    --top-module cadr_xbus_decode rtl/cadr_xbus_decode.sv $(abspath tb/cadr_xbus_decode_tb.cpp)
 
 $(BUILD)/xbus_decode.pass: $(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/xbus_decode.golden
 	$(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/xbus_decode.golden
