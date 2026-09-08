@@ -1024,3 +1024,141 @@
 @new
           elapsed <= elapsed + 10'd1;
 @end
+
+
+# ========================================================== the processor ===
+#
+# Two checks, one module: `microcycle` runs MIT's boot PROM and
+# `microcycle_sys` a System 100 band. A mutation goes to the cheaper one
+# unless the band is the only thing that reaches what it breaks --- the map,
+# the dispatch memory's read, Q's shifter, the stack RAM, SINTR and -ILONG,
+# which the boot PROM never touches. 600,000 microcycles against 2,200,000,
+# and 84 MB against 297.
+#
+# NOT HERE YET: anything in the stall path, or touching `md`, `MBUSY` or
+# `-LOADMD`. The processor is being composed with the memory path --- `md`
+# stops being a trace column and comes from the real bus interface --- and
+# mutations written against a design about to move are work done twice. That
+# is where the tolerances live too: the sub-tick slip on stalled microcycles,
+# the Unibus arbitration exemption, and the USE.MD discrimination.
+
+@mutation the-a-memory-pass-around-is-inverted
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note A scratchpad write is one microcycle behind the instruction that
+@note computed it, and the pass-around is what hides that from the microcode:
+@note the comparators at ACTL 3B21/3B27 match the source address against the
+@note pending WADR and put L on the bus instead of the memory's output. Taken
+@note the wrong way round it reads the stale word exactly when it must not,
+@note and the fresh one only when the memory already had it.
+@old
+  assign a = apass ? l : amem_q;
+@new
+  assign a = apass ? amem_q : l;
+@end
+
+@mutation the-a-memory-pass-around-never-fires
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note The comparator inverted rather than the mux: the pass-around fires on
+@note every address but the one it is for. Inverted rather than deleted so
+@note that `aadr` stays read.
+@old
+  assign apass = destd && (wadr == aadr);
+@new
+  assign apass = destd && (wadr != aadr);
+@end
+
+@mutation the-m-memory-pass-around-ignores-what-the-write-was
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note The 93S46 at MCTL 4B18 matches five bits of the pending write address
+@note and `DESTMD` as its sixth. Without that sixth bit an A-only write
+@note passes its word around to an M source whose address happens to match
+@note the low five bits, and the microcode reads a word that was never
+@note written where it is reading.
+@note
+@note Worth not re-deriving: the *other* obvious mutation here --- comparing
+@note all ten bits, `wadr == {5'd0, madr}` --- is EQUIVALENT and not a
+@note mutation at all. `destmd` and `wadr` are registered at the same edge
+@note from the same instruction, and `wadr_in` is `{5'd0, ir[18:14]}`
+@note whenever `destm`, so `wadr[9:5]` is zero on every cycle `destmd` is
+@note set. It survives both processor checks because there is nothing to
+@note catch.
+@old
+  assign mpass = destmd && (wadr[4:0] == madr);
+@new
+  assign mpass = (wadr[4:0] == madr);
+@end
+
+@mutation the-dispatch-mask-is-a-bit-too-wide
+@check microcycle_sys
+@file rtl/cadr_microcycle.sv
+@note `IR<7:5>` is a length and the mask is `(1 << len) - 1`. Without the
+@note minus one every dispatch takes one more bit of R than it asked for.
+@note On the band, because the boot PROM writes the dispatch memory
+@note 2,048 times and reads it never: a wrong address there is a wrong
+@note place to write and no one ever looks. Confirmed --- it survives
+@note `microcycle` and is caught by `microcycle_sys`.
+@old
+  assign dmask  = (8'd1 << ir[7:5]) - 8'd1;
+@new
+  assign dmask  = (8'd1 << ir[7:5]);
+@end
+
+@mutation a-map-dispatch-is-recognised-by-the-wrong-gate
+@check microcycle_sys
+@file rtl/cadr_microcycle.sv
+@note `-DMAPBENB = NOR(IR8, IR9)` at DSPCTL 3F14, so a dispatch takes a map
+@note bit *instead of* R0 whenever either bit is set. Read as a NAND it takes
+@note the map bit only when both are, and R0 comes back in the rest of the
+@note time --- which is the "easy misreading" the source names, arrived at
+@note through the gate rather than through the OR.
+@note Same routing and the same reason: no dispatch is ever read out of
+@note the boot PROM's 2,048 writes. Survives `microcycle`, caught by
+@note `microcycle_sys`.
+@old
+  assign dmap   = ir[8] || ir[9];
+@new
+  assign dmap   = ir[8] && ir[9];
+@end
+
+@mutation the-second-map-level-is-read-at-the-wrong-entry
+@check microcycle_sys
+@file rtl/cadr_microcycle.sv
+@note Both levels are asynchronous and chained combinationally: a lookup is
+@note a ripple through two RAMs inside one cycle, the first level's five bits
+@note standing above the low five of `MAPI` to address the second. Read one
+@note entry off and every translation is plausible and wrong.
+@note
+@note WHY THE READ AND NOT `adr1` ITSELF, which is the mutation to reach for:
+@note `adr1` addresses the write as well as the read. Change it and the map
+@note is permuted consistently --- written to the wrong entry, read from the
+@note same wrong entry --- and since a rotation is a bijection the mapping
+@note from `MAPI` to `VMO` is untouched. It is a relabelling of the storage
+@note and nothing can see it. Measured before it was understood: the map
+@note word differs on 1,649,965 of 4,400,000 lookups and the permission bits
+@note on 1,204,657 of them, and the check still passed --- because the DUT
+@note was self-consistent, not because the check was blind. A memory's
+@note indexing can only be mutated by breaking its read differently from its
+@note write.
+@note
+@note The boot PROM reads the map once in 600,000 microcycles, so this is
+@note the band's to catch or nobody's.
+@old
+  assign vmo  = l2_map[adr1];
+@new
+  assign vmo  = l2_map[{adr1[8:0], adr1[9]}];
+@end
+
+@mutation the-first-map-level-is-read-at-the-wrong-entry
+@check microcycle_sys
+@file rtl/cadr_microcycle.sv
+@note The other half of the same chain, and the same reasoning about which
+@note signal to mutate: eleven bits of `MAPI` pick the level-1 entry, and
+@note `adr0` addresses that RAM's write too.
+@old
+  assign vmap = l1_map[adr0];
+@new
+  assign vmap = l1_map[{adr0[9:0], adr0[10]}];
+@end
