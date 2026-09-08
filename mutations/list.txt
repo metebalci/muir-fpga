@@ -71,6 +71,10 @@
 # the issue that holds the hole open.  They are reported every run, counted in
 # their own column, and do not fail it:
 #
+#   the-first-map-level-is-registered                   #8, and the map is
+#       NOT unexercised: corrupting what the level-2 RAM stores is caught.
+#       Only the staleness is invisible, and by how much is measured in the
+#       issue. Probably an equivalence, but not one I could prove.
 #   the-word-is-latched-on-a-write-as-well               #5, and it is a
 #       question rather than a defect: whether MD must hold across a write is
 #       about the processor, which is stage 4.
@@ -1161,4 +1165,90 @@
   assign vmap = l1_map[adr0];
 @new
   assign vmap = l1_map[{adr0[9:0], adr0[10]}];
+@end
+
+@mutation the-scratchpad-latches-follow-in-the-wrong-phase
+@check microcycle_sys
+@file rtl/cadr_microcycle.sv
+@note The third of the three things `rtl.rs`'s header calls easy to model one
+@note step out of place, and the one the other two mutations here do not
+@note reach. The 93425As have no clock pin: what holds a word between phases
+@note is the 74S373 at ALATCH, MLATCH, PLATCH or SPCLCH, which follows the
+@note memory while CLK is HIGH and holds through the write phase.
+@note "Modelling the memory as a register loaded early is the 74S373 drawn
+@note one state too soon." Following in the write phase instead is that
+@note drawing, exactly: every source reads the cycle before's word, and the
+@note write pulses now land while the latches are still following, which is
+@note the read-during-write question the real phasing settles for nothing.
+@note
+@note On the band, and measured rather than reasoned: the boot
+@note PROM does not catch this and the band does. Six hundred
+@note thousand microcycles of a program that loads the control
+@note store leave the scratchpads reading the same few words
+@note often enough that a phase's staleness does not show.
+@old
+    if (tpclk) begin
+      amem_q <= amem[aadr];
+      mmem_q <= mmem[madr];
+      pdl_q  <= pdl[pdla_read];
+      spc_q  <= spcm[spcptr];
+    end
+@new
+    if (!tpclk) begin
+      amem_q <= amem[aadr];
+      mmem_q <= mmem[madr];
+      pdl_q  <= pdl[pdla_read];
+      spc_q  <= spcm[spcptr];
+    end
+@end
+
+@mutation the-stacks-push-pass-around-is-inverted
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note The third pass-around, and the one that is not a comparator: while a
+@note push is pending, `SPCWPASS` at CONTRL 3D21 turns the 74S241s at
+@note 4E17/4E18 on and `-SPCPASS` turns the latch off, so the word about to
+@note be written stands on the SPC bus instead of the RAM's. Taken the wrong
+@note way round, a push reads the stack under the word it is pushing.
+@note
+@note This is also why the stack RAM is so nearly untestable on the boot
+@note PROM: every push is popped by the very next microcycle through this
+@note pass-around, so the RAM is written and never read. It is caught here
+@note because the pass-around itself is on the datapath.
+@old
+  assign spcv = spushd ? spcw : spc_q;
+@new
+  assign spcv = spushd ? spc_q : spcw;
+@end
+
+@mutation the-first-map-level-is-registered
+@hole #8
+@check microcycle_sys
+@file rtl/cadr_microcycle.sv
+@note "THERE IS NO MMU STATE." Both levels are asynchronous and chained
+@note combinationally --- VMEM0 1C14 drives `-VMAP4..0`, which are VMEM1
+@note 1E04's address --- so a lookup is a ripple through two RAMs inside one
+@note cycle. Registering the first level is the whole of that made wrong: it
+@note is the shape the control store and the scratchpads legitimately take,
+@note and the one place it cannot be taken, because the second level would
+@note need its address a tick before the first can give it.
+@old
+  assign vmap = l1_map[adr0];
+@new
+  logic [4:0] vmap_q;
+  always_ff @(posedge clk) vmap_q <= l1_map[adr0];
+  assign vmap = vmap_q;
+@end
+
+@mutation the-map-is-written-with-the-wrong-frame
+@check microcycle_sys
+@file rtl/cadr_microcycle.sv
+@note MAPWR1D is `WMAPD AND VMA25` at VCTL2 1C15 and the level-2 word is
+@note VMA<23:0> --- the frame the translation returns. Corrupting what is
+@note stored asks the plainest possible question about the map: is anything
+@note the check compares downstream of what the map holds?
+@old
+        if (vma[25]) l2_map[adr1] <= vma[23:0];
+@new
+        if (vma[25]) l2_map[adr1] <= vma[23:0] ^ 24'd1;
 @end
