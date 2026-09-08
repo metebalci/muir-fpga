@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# `make check` on every push and pull request.
+#
+# The one thing this has to get right is that muir sits BESIDE this
+# repository: golden/Cargo.toml says `muir = { path = "../../muir" }`, which
+# resolves to the parent of the checkout.  So both are checked out into named
+# directories rather than the default, and make runs inside muir-fpga.
+#
+# Nothing is vendored and nothing is fetched from crates.io --- muir has no
+# dependencies, and golden's only one is muir itself, by path.  What the job
+# installs is Verilator and nothing else.
+#
+# Deliberately no `paths` filter.  A filter here would skip the run on the
+# first push of a branch, and `make check` includes the `current` target that
+# holds the generated files honest, so it is worth running on anything.
+
+name: check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out muir-fpga
+        uses: actions/checkout@v7
+        with:
+          path: muir-fpga
+
+      - name: Check out muir beside it
+        uses: actions/checkout@v7
+        with:
+          repository: metebalci/muir
+          path: muir
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends verilator
+
+      # Recorded because a check that disagrees between two machines is
+      # usually a toolchain difference, and this is where to look first.
+      - name: Versions
+        run: |
+          verilator --version
+          rustc --version
+          cargo --version
+
+      - name: make check
+        working-directory: muir-fpga
+        run: make check
