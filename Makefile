@@ -18,7 +18,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
-.PHONY: check cables current mutants clean
+.PHONY: check cables current mutants mutants-selftest clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -177,6 +177,16 @@ mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)'
+
+# The runner's own guarantees, against lists written to fail: a mutation
+# that does not apply, one that lint rejects, a survivor with nothing
+# recorded, a hole that has closed, one that is still open, and a run from
+# another directory with relative paths --- which is how `make mutants`
+# itself is invoked, and where it was once wrong.
+mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
+                  $(BUILD)/xbus_decode.golden | $(BUILD)
+	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
+	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --self-test
 
 $(BUILD):
 	@mkdir -p $(BUILD)
