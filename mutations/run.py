@@ -160,6 +160,27 @@ CHECKS = {
         "golden": "rtl_sys.golden",
         "files": [("boot_prom.hex", "build/boot_prom.hex")],
     },
+    # The composed machine: the processor with the memory path under it,
+    # nothing driven nearer than mem_req/mem_done.  Its own module is pure
+    # wiring, which is what makes it the only check that can catch a cable
+    # crossed --- both halves are right on their own and the machine is not.
+    #
+    # `gprom` because this rule passes the PROM image as a parameter with an
+    # absolute path rather than leaning on the relative default, as the
+    # Makefile does.
+    "machine": {
+        "sources": [
+            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
+            "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
+            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
+            "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_machine_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "golden": "rtl.golden",
+        "gprom": True,
+    },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
     # and `busint_xbus` writes the stimulus AND the expected outputs, so a
@@ -478,6 +499,9 @@ def build_and_run(args, work, check):
     obj = os.path.join(work, "obj_" + check)
     cmd = [args.verilator, "--cc", "--exe", "--build", "-Wall"]
     cmd += spec["flags"]
+    if spec.get("gprom"):
+        cmd += ["-GPROM_HEX=\"%s\""
+                % os.path.join(args.goldens, "boot_prom.hex")]
     cmd += ["-Mdir", obj, "--top-module", spec["top"]]
     cmd += spec["sources"]
     cmd += [os.path.join(work, spec["tb"])]
@@ -582,6 +606,15 @@ def check_makefile():
     except IOError:
         return ["Makefile is not readable"]
     missing = []
+    # The direction that matters most, and the one nothing was watching: a
+    # check the Makefile runs that this runner has never heard of is a check
+    # with no mutations against it, and until it is named here there is
+    # nothing anywhere to say so. `machine` was that for a while.
+    known = set(CHECKS) | {"ddr_map"}   # ddr_map is lint over constants only
+    for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
+        if found not in known:
+            missing.append("the Makefile runs `%s` and nothing here mutates it"
+                           % found)
     for check, spec in sorted(CHECKS.items()):
         # A generator is run by a phony target --- `make cables` has no
         # prerequisites to name and does not need them, being always out of

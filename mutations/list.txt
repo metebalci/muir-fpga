@@ -1391,3 +1391,85 @@
 @new
               || (lcinc && needfetch && mbusy_sync && 1'b0);
 @end
+
+
+# ================================================== the machine, composed ===
+#
+# The processor with the memory path under it and nothing driven nearer than
+# `mem_req`/`mem_done`. `cadr_machine.sv` is pure wiring, which is exactly
+# what makes this check the only one that can catch a cable crossed: both
+# halves are right on their own and the machine is not. Neither `microcycle`
+# nor `memory_path` can see any of these, because each has the other half as
+# a testbench rather than as a design.
+#
+# It agrees for 537,841 microcycles but only about 500 bus cycles --- the boot
+# PROM computes for its first half million --- so composition is proved on
+# real cycles rather than on many of them. Aim accordingly.
+
+@mutation the-write-line-is-driven-by-the-read-cycle
+@check machine
+@file rtl/cadr_machine.sv
+@note WRCYC and RDCYC are separate cables and the bus interface takes WRCYC.
+@note Crossed here, every cycle reaches the memory path as the opposite of
+@note what the processor asked for. Both modules are unchanged and correct;
+@note only the wire between them is wrong, which is the one class of bug a
+@note composition exists to find.
+@old
+      .wrcyc      (wrcyc),
+      .phys       (phys),
+@new
+      .wrcyc      (rdcyc),
+      .phys       (phys),
+@end
+
+@mutation the-master-clock-reaches-the-interface-inverted
+@hole #9
+@check machine
+@file rtl/cadr_machine.sv
+@note MCLK7 is one edge per microcycle, at the boundary, and it is the only
+@note place the priority logic looks at -MEMRQ. Inverted, the interface
+@note samples everywhere except the boundary --- which is a grant at the
+@note wrong instant on every cycle, and nothing either half could notice
+@note alone.
+@note
+@note It survives, and the seam is not the reason: `.mclk (mclk &&
+@note 1'b0)`, which makes the interface never grant at all, IS
+@note caught. So a memory cycle does go through and the check does
+@note notice it stopping --- it is the INSTANT of the grant that
+@note goes unseen. Issue #9 has the two candidates.
+@old
+      .mclk       (mclk),
+      .n_memrq    (n_memrq),
+@new
+      .mclk       (!mclk),
+      .n_memrq    (n_memrq),
+@end
+
+@mutation the-data-cable-back-from-memory-is-rotated
+@hole #9
+@check machine
+@file rtl/cadr_machine.sv
+@note MEM<31:0> comes back from the bus interface to the processor, and this
+@note is the only check that has both ends of it: `microcycle` is given the
+@note word by its testbench and `memory_path` has no processor to give it to.
+@note Rotated by a bit, every word the machine reads is plausible and wrong.
+@note
+@note Worth not re-deriving: crossing `-MEMACK` and `-LOADMD` here, which is
+@note the wiring bug to reach for, is EQUIVALENT and provably so ---
+@note `cadr_busint_xbus.sv` has `assign n_memack = !acked;` and `assign
+@note n_loadmd = !acked;`, the same expression twice. They coincide on the
+@note Xbus by construction, and only the Unibus tells them apart, where the
+@note word comes before the acknowledgement. Until that path exists there is
+@note no mutation of the crossing to write.
+@note
+@note It survives, and with the inverted master clock it says what
+@note #9 is really about: the boot PROM's first memory cycle is at
+@note microcycle 535,791 and this check stops at 537,841, so its
+@note whole memory surface is about two thousand microcycles and
+@note five hundred bus cycles at the very end of the run. Both
+@note should start failing on their own when the I/O wall moves.
+@old
+      .rdata       (rdata),
+@new
+      .rdata       ({rdata[30:0], rdata[31]}),
+@end
