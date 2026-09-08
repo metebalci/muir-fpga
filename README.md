@@ -32,6 +32,25 @@ seam that runs at machine speed, and it is the one with no software in it.
 and the buffers. The Zynq-7000 PS-PL ports are **AXI3**, not AXI4; the logic
 here is AXI4 and Vivado's converter bridges the two.
 
+## The processor's boundary
+
+`data/cables.txt` in muir: the 92 wires on the five flat cables between the
+processor and the bus interface, pin for pin off MIT's wire lists. That is the
+machine's own boundary, so it is the module's ports.
+
+The cables are named by both ends, because the processor end alone is
+ambiguous --- `1AJ1` is the CADR board's connector **and** the ICMEM board's:
+`1AJ1-J11` (20 wires), `1AJ1-J08` (12, the ICMEM board's), `1BJ1-J12` (20),
+`1CJ1-J09` (20), `3AJ1-J07` (20).
+
+Of the 92, 15 are inputs, 29 outputs, and 48 --- exactly `MEM<31:0>` and
+`SPY<15:0>` --- are driven from both ends. Fabric has no bus to fight over, so
+those are carried as a value and an enable out with the resolved wire back in.
+
+Net names are mangled to legal identifiers: a leading `-` becomes `n_`; `.`,
+space, `/` and `>` become `_`; a leading digit takes an `x`; a collision is an
+error. `rtl/cadr_cables.map` holds every identifier against the name MIT wrote.
+
 ## Memory in DDR
 
 Shared with the Linux side, so it is settled early in `rtl/cadr_ddr_map.sv` and
@@ -46,45 +65,22 @@ board's 512 MB; Linux keeps 384.
 
 DDR was never the limit. The CADR's physical address is 22 bits --- a 14-bit
 page frame out of the map, `VMA<7:0>` the offset --- so 3,932,160 words is the
-ceiling. Its *virtual* address is 24 bits, which is what the 64 MB is room for.
+ceiling, with the top four of the 64 slots taken by the display, the disk
+controller and the Unibus. Its *virtual* address is 24 bits, which is what the
+64 MB is room for.
 
-## The plan
+The display's 8 MB is room for 1920 x 1080 at 32 bits a pixel. The CADR's own
+screen is 768 x 963 at one bit, so that room is for a display that is not the
+CADR's: the Linux side serves a 1080p canvas over RFB and composites the
+machine's screen into it.
 
-Port muir's behavioural models board by board, keeping the boundaries where the
-hardware's are. **The processor's boundary is `data/cables.txt`** --- the 92
-wires on the five cables, pin for pin off MIT's wire lists.
-
-1. **The clock generator**, `clock.rs`. Done.
-2. **The port list**, `cables.txt` as SystemVerilog. Done.
-3. **The bus interface and main memory**: the Xbus cycle, the NXM timeout, the
-   address decode, the DDR bridge and its AXI adapter. Done. `-HANG` needs
-   VCTL1, which needs the microinstruction, so it moves to 4.
-4. **The processor**, from `rtl.rs`: 2,721 lines, the largest port here and the
-   last. VCTL1 and `-HANG` come with it.
-
-Then the Unibus path, the interface's own registers, the debug cable, and the
-device boards.
-
-## Checking
-
-    make check
+## Building
 
 Needs [Verilator](https://verilator.org), a Rust toolchain, and muir checked
 out beside this repository. Nothing here vendors a copy of muir's netlists or
 part tables.
 
-| | Checked against |
-|---|---|
-| `cadr_phase_gen.sv` | `clock::Behavioural`, 12,000 ticks |
-| `cadr_cables.svh` | muir's netlists via `part::pinout`, and `cable.rs`'s table |
-| `cadr_busint_xbus.sv` | `busint::Busint`, 40,000 ticks over 146 cycles |
-| `cadr_xbus_decode.sv` | `busint::decode`, every address of the 22-bit space |
-| `cadr_memory_path.sv` | muir for the timing, the stimulus for the data |
-| `cadr_axi_master.sv` | the AXI protocol, every tick, and read-back |
-
-Every check is mutation-tested and every check requires coverage, so none can
-pass while exercising nothing. Where the fabric parts from muir, and why, is
-recorded in the header of the module it applies to.
+    make check
 
 ## Layout
 
