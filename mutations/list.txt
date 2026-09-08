@@ -1351,29 +1351,43 @@
 @note
 @note A number chosen to make a check pass is exactly what a mutation list
 @note exists to interrogate. Charged in full, the claim is that every one of
-@note the boot PROM's 11,404 hangs ends 10 ns late --- so if this survives,
-@note the two ticks were never load-bearing and the comment is wrong.
+@note the boot PROM's 11,404 hangs ends late --- so if this survives, the
+@note shortfall was never load-bearing at all.
+@note
+@note The constant is three ticks short now, not two; the comment above it
+@note in the source still says two. See
+@note `the-read-finish-delay-is-what-its-comment-says`, which is the
+@note mutation aimed at that gap and which survives.
 @old
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
 @new
   localparam int unsigned RD_FINISH_T = (140 / 5);
 @end
 
-@mutation a-hang-ends-one-tick-late
+@mutation the-read-finish-delay-is-what-its-comment-says
+@hole #10
 @check microcycle
 @file rtl/cadr_microcycle.sv
-@note The same constant one tick out rather than two, and this one is aimed
-@note at the TESTBENCH rather than at the fabric: the length check exempts a
-@note slip of less than a tick on a stalled microcycle, because muir's clock
-@note is continuous and this one is a 5 ns grid. A tolerance's tightness is
-@note tested by a mutation just outside it, and one tick is exactly the
-@note boundary --- 5 ns is not less than 5 ns. If the bound were ever
-@note widened to two ticks this would survive, which is the whole point of
-@note having it in the list.
+@note The constant is `(140 / 5) - 3`. The comment above it says
+@note "**-RDFINISH is two ticks short of its 140, and deliberately**", and
+@note explains the two: RD.IN.PROGRESS falls on the tick the countdown
+@note expires, the parked generator needs one more tick to see -HANG lift
+@note and another to raise TPCLK. Two ticks, with a mechanism for each.
+@note
+@note The third tick has no mechanism written against it. This mutation
+@note sets the constant to what its own comment says it should be, so that
+@note being caught means the comment is wrong about the value it justifies
+@note --- which is a different and more useful thing to learn than "one tick
+@note out is noticed".
+@note
+@note It also lands exactly on the length check's tolerance, which exempts a
+@note slip of LESS than a tick on a stalled microcycle: 5 ns is not less
+@note than 5 ns, so the bound is tested at its boundary by the same record.
+@note If it were ever widened to two ticks this would survive.
 @old
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
 @new
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 1;
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
 @end
 
 @mutation use-md-does-not-mind-a-nopped-cycle
@@ -1492,6 +1506,13 @@
 @note whether the check sees a difference, but at what magnitude. Sweeping
 @note found a tick invisible and a microcycle caught, and the tick turned
 @note out to be correct behaviour rather than a hole.
+@note
+@note THE SWEEP WAS TAKEN BEFORE ffd1c96 AND CANNOT BE REPRODUCED AFTER IT.
+@note With MCLK registered, inverting it moved the grant one tick; with MCLK
+@note combinational it moves it a microcycle, and the inverted mutation is
+@note caught. The reading that survives is the one about magnitudes --- a
+@note tick inside the window -MEMRQ is up for cannot matter, a microcycle
+@note can --- and not the particular mutation the sweep used to show it.
 @old
   assign mclk = mclk_edge;
 @new
