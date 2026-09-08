@@ -25,6 +25,37 @@ carries 22 address bits, so 3,932,160 words is the ceiling with the top four
 slots taken by the display and the device registers. That lives in PS DDR3
 behind an Xbus bridge, and so does the frame buffer.
 
+## Where the CADR's memory lives in DDR
+
+The one map in the project that is expensive to change, because it is shared
+with the Linux side --- a reserved-memory node, whatever loads a band, whatever
+reads the frame buffer. So it is settled early, in `rtl/cadr_ddr_map.sv`, and
+**reserved at the size the machine could one day want rather than the size it
+can reach**. Reserving costs nothing: this is a quarter of the board's 512 MB
+and Linux keeps 384 MB.
+
+| base | reserved | reachable today | |
+|---|---|---|---|
+| `0x1800_0000` | 64 MB, 16M words | **15 MB, 3,932,160 words** | main memory |
+| `0x1C00_0000` | 8 MB, 2M words | **128 KB, 32,768 words** | display |
+| `0x1C80_0000` | 56 MB | --- | spare |
+
+What limits main memory is not DDR and never was. The CADR's physical address
+is 22 bits: the level-2 map entry carries a 14-bit page frame and `VMA<7:0>` is
+the offset within the page, so `-PMA21..8` and `-VMA7..0` are all that cross
+the cables and all the Xbus carries. The machine's *virtual* address is 24 bits
+--- 16M words --- which is what the 64 MB is room for. Widening the physical
+side is not blocked by the map RAM, whose level-2 word is 24 bits with only 16
+used, but by wires and microcode: new lines out of VMEMDR, new cable wires, new
+`-XADDR`s, and microcode that writes the wider frame. That is a fork of the
+machine, a project of its own, and not a change to this map.
+
+The display's 8 MB is room for 1920 x 1080 at 32 bits a pixel. The CADR's own
+screen is 768 x 963 at one bit and 32bpp is not a size its window system could
+drive, so that room is for a display that is not the CADR's: **the Linux side
+serves a 1080p canvas over RFB and composites the machine's screen into it.**
+The CADR keeps addressing its 32,768 words either way.
+
 ## What is fabric and what is Linux
 
 The rule: **fabric holds anything with a clock edge the CADR can see; Linux
