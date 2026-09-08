@@ -75,9 +75,16 @@
 #       NOT unexercised: corrupting what the level-2 RAM stores is caught.
 #       Only the staleness is invisible, and by how much is measured in the
 #       issue. Probably an equivalence, but not one I could prove.
-#   the-word-is-latched-on-a-write-as-well               #5, and it is a
-#       question rather than a defect: whether MD must hold across a write is
-#       about the processor, which is stage 4.
+#
+# A CLOSED ISSUE MEANS THE RECORD NEEDS REVISITING, and nothing here can
+# tell you that. The inverse check fires when a hole *closes* --- the
+# mutation becomes caught and the run fails, naming the issue and the line.
+# It cannot fire when the ISSUE closes while the mutation still survives,
+# which is what happens when a survivor turns out to be an equivalence: the
+# question is answered, the `@hole` is now a suppression of nothing, and the
+# run stays green. It happened once, to #5. So when an issue named here is
+# closed, come back to its record: either the mutation is caught now, or it
+# never could be and belongs rewritten with the reasoning, as #5's is.
 #
 # `@hole` is not a way to make a survivor go away, and three things stop it
 # from becoming one.
@@ -675,17 +682,26 @@
   assign dev_ack = asked && done;
 @end
 
-@mutation the-word-is-latched-on-a-write-as-well
-@hole #5
+@mutation the-word-is-corrupted-on-its-way-to-md
 @check memory_path
 @file rtl/cadr_xbus_ddr.sv
 @note Read data is latched because the cpu takes it at -LOADMD and the word
-@note has to still be there. Latching on a write too puts whatever the memory
-@note left on the bus into MD.
+@note has to still be there. This is what says the word that arrives is the
+@note word that was stored.
+@note
+@note Worth not re-deriving: latching on a WRITE as well --- dropping the
+@note `!dev_write` guard --- is EQUIVALENT at this boundary, and it was
+@note filed as a hole (#5) before it was understood. -LOADMD is asserted by
+@note the interface on every acknowledgement whatever the direction, and the
+@note gate that stops a write strobing MD is the processor's, `if
+@note !self.wrcyc`, not the bridge's. So the bridge latching on a write
+@note changes nothing anything downstream can see. It is NOT the same as
+@note `rdcyc_gate_dropped` in the microcycle check, which drops the
+@note processor's own gate and is caught at microcycle 536,307.
 @old
       if (!dev_write) rdata <= mem_rdata;
 @new
-      rdata <= mem_rdata;
+      if (!dev_write) rdata <= mem_rdata ^ 32'd1;
 @end
 
 @mutation main-memory-is-a-word-wide
