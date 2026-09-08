@@ -57,7 +57,9 @@ take the ported model and refuse the netlist.
    the two netlists rather than asserted. **Done.**
 3. **The bus interface and the DDR bridge**, driven by a test master on the
    92 cable wires --- the Xbus handshake, `-HANG`, the NXM timeout and the
-   AXI plumbing proved without a processor.
+   AXI plumbing proved without a processor. The memory cycle itself is
+   **done**; the NXM timeout, the Unibus path and its arbitration, the
+   interface's own registers and the debug cable are each their own slice.
 4. **The processor**, ported from `rtl.rs` first, then the netlist behind the
    same ports, each checked against the other and against muir.
 
@@ -93,11 +95,21 @@ stale silently.
 |---|---|---|
 | `rtl/cadr_phase_gen.sv` | `clock::Behavioural`, 12,000 ticks | passing |
 | `rtl/cadr_cables.svh` | both netlists through `part::pinout`, and `cable.rs`'s own table | passing |
+| `rtl/cadr_busint_xbus.sv` | `busint::Busint`, 6,000 ticks over 72 cycles | passing |
 
-The check is mutation-tested: moving the normal tap by one tick, or the
-`TPTSE` window by five nanoseconds, fails it. It also requires coverage ---
-all seven read taps selected, and the generator held by both `-HANG` and
-`RESET` --- so it cannot pass while exercising nothing.
+Every check is mutation-tested, and every check requires coverage, so none can
+pass while exercising nothing. Moving the clock's normal tap by one tick or the
+`TPTSE` window by five nanoseconds fails the first; moving the Xbus setup or
+deskew by five nanoseconds, or acknowledging a read as promptly as a write,
+fails the third.
+
+Two things the Xbus check found, both in what was written here rather than in
+muir. `-MEMACK` on a **write** is combinational in the slave's answer --- XACK
+is made from XBUS ACK IN by the 74S64 at REQLM 0C11, a gate, and only a read
+goes through the 60 ns tap of the TD100 at 0C09 --- so registering it puts the
+acknowledgement a tick late. And a request **standing at the master clock
+edge** is granted at that edge: the priority logic registers `-MEMRQ` and does
+not care how long it has been up.
 
 ## Where this differs from muir
 

@@ -16,13 +16,11 @@ CARGO     ?= cargo
 BUILD := build
 GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
-VFLAGS := --cc --exe --build -Wall \
-          -Mdir $(BUILD)/obj_phase_gen \
-          --top-module cadr_phase_gen
+VFLAGS := --cc --exe --build -Wall
 
 .PHONY: check cables current clean
 
-check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass current
+check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -33,10 +31,24 @@ $(BUILD)/phase_gen.golden: golden/src/phase_gen.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin phase_gen > $@
 
 $(BUILD)/obj_phase_gen/Vcadr_phase_gen: rtl/cadr_phase_gen.sv tb/cadr_phase_gen_tb.cpp | $(BUILD)
-	$(VERILATOR) $(VFLAGS) rtl/cadr_phase_gen.sv tb/cadr_phase_gen_tb.cpp
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_phase_gen --top-module cadr_phase_gen \
+	    rtl/cadr_phase_gen.sv tb/cadr_phase_gen_tb.cpp
 
 $(BUILD)/phase_gen.pass: $(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
 	$(BUILD)/obj_phase_gen/Vcadr_phase_gen $(BUILD)/phase_gen.golden
+	@touch $@
+
+# ------------------------------------------------------------- busint, Xbus
+
+$(BUILD)/busint_xbus.golden: golden/src/busint_xbus.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin busint_xbus > $@
+
+$(BUILD)/obj_busint_xbus/Vcadr_busint_xbus: rtl/cadr_busint_xbus.sv tb/cadr_busint_xbus_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_busint_xbus --top-module cadr_busint_xbus \
+	    rtl/cadr_busint_xbus.sv tb/cadr_busint_xbus_tb.cpp
+
+$(BUILD)/busint_xbus.pass: $(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
+	$(BUILD)/obj_busint_xbus/Vcadr_busint_xbus $(BUILD)/busint_xbus.golden
 	@touch $@
 
 # ------------------------------------------------------------------- cables

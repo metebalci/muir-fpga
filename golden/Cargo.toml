@@ -13,5 +13,9 @@ path = "src/phase_gen.rs"
 name = "cables"
 path = "src/cables.rs"
 
+[[bin]]
+name = "busint_xbus"
+path = "src/busint_xbus.rs"
+
 [dependencies]
 muir = { path = "../../muir" }
