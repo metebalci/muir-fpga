@@ -23,7 +23,7 @@ VFLAGS := --cc --exe --build -Wall
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
-       $(BUILD)/microcycle.pass current
+       $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -211,8 +211,13 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 # where git does not track it, so nothing else would notice it being replaced.
 #
 # The pack is decompressed for each run and removed after, so BUILD needs
-# 269 MB free while this runs and keeps only the 30 MB trace. `clean` takes
+# 269 MB free while this runs and keeps the 297 MB trace. `clean` takes
 # whichever is there.
+#
+# The trace runs from microcycle zero, and that is not a choice: a window into
+# the middle of a run cannot be checked by a fabric that boots from reset,
+# which has none of the machine's state at the window's first row.
+# golden/src/rtl_sys.rs has the whole account.
 SYS100_GZ  := vendor/system-100-0/disk-sys-100-0.img.gz
 SYS100_SHA := bab08874cc35ab129b40daf1602dbaf28e9fe818a81042148c3deb8d70a465a0
 
@@ -229,6 +234,16 @@ $(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/Cargo.toml | $(BUILD)
 	    $(GOLDEN) --release --bin rtl_sys -- --pack $(BUILD)/disk-sys-100-0.img > $@.part; \
 	    mv $@.part $@; \
 	fi
+
+# The processor against the pack trace. Same testbench, same module: what
+# differs is the program, and it reaches the map, the dispatch memory, Q's
+# shifts and the control store, which the boot PROM never does. The testbench
+# reads which generator wrote the trace out of its header and asserts what
+# that trace is for.
+$(BUILD)/microcycle_sys.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
+                              $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl_sys.golden
+	@touch $@
 
 $(BUILD):
 	@mkdir -p $(BUILD)
