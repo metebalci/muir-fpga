@@ -22,7 +22,8 @@ VFLAGS := --cc --exe --build -Wall
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
-       $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass current
+       $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
+       $(BUILD)/microcycle.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -103,6 +104,36 @@ $(BUILD)/obj_xbus_decode/Vcadr_xbus_decode: rtl/cadr_xbus_decode.sv tb/cadr_xbus
 
 $(BUILD)/xbus_decode.pass: $(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/xbus_decode.golden
 	$(BUILD)/obj_xbus_decode/Vcadr_xbus_decode $(BUILD)/xbus_decode.golden
+	@touch $@
+
+# ------------------------------------------------------------- the microcycle
+
+# The processor, slice by slice, against muir's `rtl` engine running MIT's own
+# boot PROM. Not a scripted stimulus: a real program, one line a microcycle.
+# The trace carries what the fabric cannot yet compute as well as what it must,
+# and the testbench prints which is which.
+$(BUILD)/rtl.golden: golden/src/rtl.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin rtl > $@
+
+# MIT's boot PROM as a $$readmemh image, read at elaboration. Generated, never
+# committed: the microcode is muir's to carry, as the netlists are.
+$(BUILD)/boot_prom.hex: golden/src/prom.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin prom > $@
+
+MICROCYCLE := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv
+
+# The PROM image is named at verilation, absolute, rather than left to the
+# module's relative default: $$readmemh resolves against the working directory,
+# so a model built with the default runs only from the repository root with the
+# default BUILD, and elaborates a control store of x's anywhere else.
+$(BUILD)/obj_microcycle/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_microcycle_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_microcycle \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_microcycle_tb.cpp)
+
+$(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
+                          $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl.golden
 	@touch $@
 
 # ------------------------------------------------------------------- cables
