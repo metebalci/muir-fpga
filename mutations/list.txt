@@ -81,6 +81,14 @@
 # closed, come back to its record: either the mutation is caught now, or it
 # never could be and belongs rewritten with the reasoning, as #5's is.
 #
+# NOT EVERY `@hole` IS A DEBT. Some are predictions. #9's two records are
+# not defects waiting to be fixed --- they survive because the composed
+# check's memory surface is about five hundred bus cycles at the very end of
+# the boot PROM, and they should begin failing ON THEIR OWN when the band
+# runs under composition and that wall moves. The inverse check will then say
+# so by name, which is better than a comment saying "revisit when X" because
+# the run enforces the revisit rather than trusting someone to remember.
+#
 # `@hole` is not a way to make a survivor go away, and three things stop it
 # from becoming one.
 #
@@ -1472,4 +1480,36 @@
       .rdata       (rdata),
 @new
       .rdata       ({rdata[30:0], rdata[31]}),
+@end
+
+@mutation the-mbusy-tap-is-charged-at-the-full-delay
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note The other of the two countdowns off the acknowledgement, and the one
+@note that had no mutation against it while `-RDFINISH` did. `MBUSY` clears
+@note on `-MFINISHD`, the 30 ns tap of the TD50 at VCTL1 1D23 --- a number
+@note read off the part, where RD_FINISH_T is a number chosen. Both deserve
+@note interrogating and only one was.
+@old
+  localparam int unsigned MFINISHD_T  = 30 / 5;
+@new
+  localparam int unsigned MFINISHD_T  = 50 / 5;
+@end
+
+@mutation a-hang-may-be-taken-while-a-wait-is-up
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note "A WAIT comes first, and this is not a tidiness: parking the generator
+@note stops the master clock, and the master clock is what MBUSY.SYNC follows
+@note MEMRQ on --- so a park taken while -WAIT is up would hold the cpu clock
+@note for ever with nothing left to end it."
+@note
+@note That is a claim about the fabric hanging permanently, written in the
+@note source and until now unbacked. If it is right this cannot merely
+@note disagree with muir; it should fail to make progress at all, and the
+@note testbench's own "never ran" assertion is what would say so.
+@old
+  assign hang = use_md && rd_in_progress && !wait_;
+@new
+  assign hang = use_md && rd_in_progress;
 @end

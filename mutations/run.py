@@ -490,10 +490,12 @@ def build_and_run(args, work, check):
         return cables_check(args, work)
 
     for src, dest in spec.get("files", []):
+        # `exist_ok`, because the two processor checks place the same image
+        # and the baseline runs them at once: two threads reaching the same
+        # missing directory is a race, and it lost one.
         where = os.path.join(work, dest)
+        os.makedirs(os.path.dirname(where), exist_ok=True)
         if not os.path.exists(where):
-            if not os.path.isdir(os.path.dirname(where)):
-                os.makedirs(os.path.dirname(where))
             shutil.copy(os.path.join(args.goldens, src), where)
 
     obj = os.path.join(work, "obj_" + check)
@@ -589,6 +591,26 @@ def cables_check(args, work):
                            os.path.join(mutated, base), shallow=False):
             return CAUGHT, "`current`: %s is not what the generator writes" % base
     return SURVIVED, "lint passes and the generator writes it unchanged"
+
+
+def check_coverage(mutations):
+    """Sources a check builds that no mutation ever touches.
+
+    The inverse of the `@file` validation, which catches a mutation naming a
+    file its check does not build.  This catches the other direction --- a
+    file the check builds that nothing is aimed at --- and that direction is
+    the one that hides, because nothing about it is ever wrong: the run is
+    green, the count is right, and a whole module is untested.
+    """
+    # The lint harness is generated, tied off and has no behaviour; what
+    # carries the port list is the header it includes, which is mutated.
+    exempt = {"rtl/cadr_cables_lint.sv"}
+    touched = set(m.path for m in mutations)
+    builds = set()
+    for spec in CHECKS.values():
+        builds |= set(spec["sources"])
+    return ["%s is built by a check and no mutation touches it" % src
+            for src in sorted(builds - touched - exempt)]
 
 
 def check_makefile():
@@ -869,6 +891,10 @@ def main():
         return self_test(args)
 
     mutations = parse(args.list)
+    # Kept before `--only` narrows it: coverage is a property of the list,
+    # and warning that a file has no mutation because this run asked for a
+    # different check would be noise on every filtered run.
+    everything = list(mutations)
     if args.only:
         mutations = [m for m in mutations
                      if args.only in m.name or args.only in m.check]
@@ -887,7 +913,7 @@ def main():
                 "results are\n         of whatever it holds right now:\n%s"
                 % "".join("         %s\n" % l for l in dirty.strip().split("\n")))
 
-    for warning in check_makefile():
+    for warning in check_makefile() + check_coverage(everything):
         sys.stderr.write("mutations: warning: %s\n" % warning)
 
     # Only the checks that have mutations against them, so `--only` does not
