@@ -173,8 +173,13 @@ current:
 # under BUILD, so `clean` takes them with it.
 MUTDIR ?= $(BUILD)/mutants
 
+# The goldens every check needs, including the processor's two: the stage-4
+# mutations are of `cadr_microcycle.sv`, so a run from a clean build directory
+# needs the traces they are checked against. Without them the runner stops and
+# says which trace is missing, which is how this was found.
 mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
-         $(BUILD)/xbus_decode.golden | $(BUILD)
+         $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
+         $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)'
 
@@ -184,7 +189,8 @@ mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 # another directory with relative paths --- which is how `make mutants`
 # itself is invoked, and where it was once wrong.
 mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
-                  $(BUILD)/xbus_decode.golden | $(BUILD)
+                  $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
+                  $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --self-test
 
