@@ -11,10 +11,13 @@
 // `Rtl::signals` is "recorded in the read phase, where the sources drive and
 // the ALU result is up but nothing has been written back".
 //
-// WHAT IS STIMULUS.  There is no memory path yet, so what comes out of the
-// trace rather than out of the DUT is `md` and `vma`, `vmaok` off the map's
+// WHAT IS STIMULUS.  There is no map yet, so what comes out of the trace
+// rather than out of the DUT is `md` and `vma`, `vmaok` off the map's
 // permission bits, `sintr` from the cables, the word a SRCMAP puts on MF, the
-// dispatch memory's word, and the console's registers.  Every one leaves with
+// dispatch memory's word, and the console's registers.  The bus interface is
+// here too, as its far end: this testbench answers -MEMRQ with -MEMGRANT and
+// -MEMACK at the instants muir's own interface answered them.
+// `rtl/cadr_busint_xbus.sv` is the real thing and has a check of its own.  Every one leaves with
 // a later slice.  They are counted and printed, so what this check is still
 // being told rather than checking is on its own output.
 //
@@ -28,6 +31,12 @@
 // Q, DC, LC, JCOND, and the four sequencing flags NOP, PCS1, PCS0 and
 // IWRITED --- plus the length of every microcycle in 200 MHz ticks.  PC goes
 // through the fabric's own stack on a POPJ.
+//
+// **The stall is no longer subtracted.**  VCTL1 decides -WAIT and -HANG for
+// itself now, so the whole interval between one microcycle boundary and the
+// next is the fabric's own answer: 6,912 waits and 11,404 hangs over the run,
+// 2,198,700 ns of held clock, and every one of them has to land where muir
+// lands it.  That is the strongest single column in this check.
 //
 // WHAT THE CHECKED SIGNALS ARE WORTH, measured by mutation rather than
 // assumed.  The A bus is the strong one: 96,192 distinct values over the run,
@@ -58,6 +67,19 @@
 //     open-collector chain's width is not pinned down here either.
 //   - Jump condition 5, `PAGE.FAULT OR INTERRUPT`, is never selected, and
 //     condition 2 is selected once.
+//   - Two of -WAIT's three terms never fire.  `USE.MD AND MBUSY AND
+//     -MEMGRANT` --- MIT's "do not hang when this line is high", the gate
+//     that keeps a hang from being taken before the grant --- is zero over
+//     the run, and so is `LCINC AND NEEDFETCH AND MBUSY.SYNC`.  Dropping
+//     either survives.  The first term carries the whole stall path here.
+//   - **RDCYC and WRCYC being taken from the wrong instruction survives**,
+//     and `src/rtl.rs` says in advance that it would: "taking it from the
+//     instruction standing one microcycle later is the trap: that instruction
+//     is the page-fault check MIT puts after every store, so MEMWR reads
+//     false and every write cycle is performed as a read.  Nothing catches it
+//     early --- the only thing the boot PROM writes before the disk is page
+//     0, which it fills with the zeros already there."  Measured here from
+//     the other side, and it holds.
 //
 // Against that, the ALU array is genuinely exercised: 21 of its 32
 // function-and-mode combinations are reached, the sign-extending ninth slice
@@ -65,6 +87,10 @@
 // caught if reversed, the mask is caught if its two ends are swapped or if
 // MSKL loses IR<9:5>, and swapping one entry of either half of the 74S181
 // function table is caught within a few thousand microcycles.
+//
+// The stall path itself is caught where it is exercised: dropping -WAIT's
+// first term, letting -HANG be taken before -WAIT, or clearing MBUSY one tick
+// late are each caught at the boot PROM's first stalled microcycle.
 //
 // And the one-state-early trap on page DSPCTL is caught: the 25S07s take
 // IR<41:32> of the DISPATCH *itself*, the word standing before the edge, and
@@ -108,7 +134,7 @@ enum Col {
   kWmapd, kDestspcd, kIwrited, kImodd, kPdlwrited, kSpushd, kNop, kNVmaok,
   kJcond, kPcs1, kPcs0, kSrun,
   kLpc, kMd, kVma, kPromdis, kErrstop, kStathenb, kSpeed1, kSpeed0,
-  kStall, kHalted, kBus, kNs,
+  kStall, kHalted, kBus, kAck, kGnt, kNs,
   kColumns
 };
 
@@ -171,10 +197,25 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  // For each microcycle that starts a bus cycle, when -MEMACK is due. The
+  // interface usually knows at the boundary; the one cycle here that has to
+  // arbitrate for the Unibus first is granted, acknowledged and finished
+  // inside a later microcycle's stall, so its answer appears on a later row.
+  std::vector<uint64_t> ack_for(rows.size(), 0);
+  long unibus_cycles = 0;
+  for (size_t i = 0; i < rows.size(); ++i) {
+    if (!rows[i].v[kBus]) continue;
+    size_t j = i;
+    while (j < rows.size() && rows[j].v[kAck] == 0) ++j;
+    if (j != i) ++unibus_cycles;
+    ack_for[i] = (j < rows.size()) ? rows[j].v[kAck] : 0;
+  }
+
   auto *dut = new Vcadr_microcycle;
   dut->clk = 0;
   dut->rst = 1;
-  dut->hang = 0;
+  dut->n_memack = 1;
+  dut->n_memgrant = 1;
   dut->dr = 0;
   dut->dp = 0;
   dut->dn = 0;
@@ -229,7 +270,9 @@ int main(int argc, char **argv) {
   long lengths_checked = 0, dispatches = 0, disp_reads = 0, halts = 0;
   long iwrites = 0, popjs = 0, jumps = 0, prom_fetches = 0, ram_fetches = 0;
   long stat_counts = 0, stalls = 0, ram_executes = 0, other_speed = 0;
-  long lc_moved = 0, map_sources = 0;
+  long lc_moved = 0, map_sources = 0, cycles_run = 0;
+  bool bus_outstanding = false;
+  long ack_at_tick = 0;
   std::set<uint64_t> a_values, m_values, ob_values;
 
   // Long enough for every microcycle plus the reset and a margin: the
@@ -239,8 +282,22 @@ int main(int argc, char **argv) {
   for (long t = 0; t < kMaxTicks && k < rows.size(); ++t) {
     if (t == 4) dut->rst = 0;
 
+    // The bus interface, as far as VCTL1 can see it: -MEMGRANT low while a
+    // cycle is outstanding, -MEMACK low from the interface's answer until the
+    // processor lifts -MEMRQ, which is what drops it. cadr_busint_xbus.sv is
+    // the real thing and has its own check; this is its far end.
+    dut->n_memgrant = bus_outstanding ? 0 : 1;
+    dut->n_memack = (bus_outstanding && t >= ack_at_tick) ? 0 : 1;
+
     dut->clk = 1;
     dut->eval();
+
+    // "MEMRQ drops when MEMACK rises, which causes MEMACK to drop."
+    if (bus_outstanding && dut->n_memack == 0 && dut->n_memrq) {
+      bus_outstanding = false;
+      dut->n_memack = 1;
+      dut->n_memgrant = 1;
+    }
 
     if (dut->clock_edge) {
       const Row &r = rows[k];
@@ -273,12 +330,26 @@ int main(int argc, char **argv) {
       // arithmetic rather than a driven input.
       if (last_edge >= 0) {
         const uint64_t before = (k == 0) ? 0 : rows[k - 1].v[kNs];
-        const uint64_t want = r.v[kNs] - before - r.v[kStall];
+        // The stall is no longer subtracted: VCTL1 decides it now, so the
+        // whole interval between boundaries is the fabric's own answer.
+        const uint64_t want = r.v[kNs] - before;
         const uint64_t got = static_cast<uint64_t>(t - last_edge) * kTickNs;
         if (got != want) bad += Fail(r, "the microcycle in ns", got, want);
         ++lengths_checked;
       }
       if (r.v[kStall]) ++stalls;
+      // The bus cycle this edge started, and when the interface will answer.
+      if (r.v[kBus]) {
+        bus_outstanding = true;
+        // Rounded *up*: a memory board answers on its own refresh clock, so
+        // muir's acknowledgement is not on the five-nanosecond grid, and the
+        // fabric can only see it at a tick at or after it. Truncating instead
+        // ends a wait one 220 ns cycle early wherever the acknowledgement
+        // falls within a tick of a master clock edge.
+        ack_at_tick =
+            t + static_cast<long>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);
+        ++cycles_run;
+      }
       if (r.v[kLc]) ++lc_moved;
       a_values.insert(r.v[kA]);
       m_values.insert(r.v[kM]);
@@ -434,7 +505,8 @@ int main(int argc, char **argv) {
       "             microcode run out of the control store, LC, the stack's\n"
       "             RAM and pointer (every push is popped through SPCWPASS),\n"
       "             OB's two shift selects, Q's shift paths (it is loaded five\n"
-      "             times and never shifted), jump condition 5,\n"
+      "             times and never shifted), jump condition 5, two of\n"
+      "             -WAIT's three terms, RDCYC/WRCYC taken a cycle late,\n"
       "             and -ILONG --- every cycle is extra slow, where both taps\n"
       "             are -TPR160, so FLAG 3E07's -NOPA gate of it is unchecked\n",
       k, lengths_checked, popjs, jumps, iwrites, dispatches, prom_fetches,

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The CADR microcycle: the clock structure, the control store, the
-// instruction path, the scratchpads and the datapath.
+// instruction path, the scratchpads, the datapath and the memory cycle's
+// control.
 //
-// This is the first three slices of `src/rtl.rs` from muir.  A microcycle is two
+// This is `src/rtl.rs` from muir bar the map and the registers that feed it.  A microcycle is two
 // phases and one register edge --- "`-CLK0` is `-TPCLK AND MACHRUN` at CLOCK2
 // 1D10 and `CLK1..CLK5` are `NOT(-CLK0)` through the 7428 buffers at 1D05,
 // 1C01 and 1C11, so every edge-triggered register on the board takes one edge
@@ -28,6 +29,7 @@
 //   page ALUC4/ALU   the nine 74S181s as one 33-bit array
 //   page MO/OB       the merge and the output select
 //   page Q, DSPCTL   Q and the dispatch constant
+//   page VCTL1       MEMSTART, MBUSY, RDCYC, READ IN PROGRESS, -WAIT, -HANG
 //
 // What the memory path will make once it exists comes in as ports, and each
 // one leaves with the slice that builds it: `md` and `vma`, `vmaok` off the
@@ -66,10 +68,13 @@
 //
 // WHAT IS NOT HERE, and belongs to a later slice or to the console:
 //
-//   - The memory path: MD, VMA, MEMSTART, the two map levels and the bus
-//     interface behind them.  A SRCMAP is reached once in 600,000
+//   - MD, VMA and the two map levels.  A SRCMAP is reached once in 600,000
 //     microcycles, which is not a check of a map under any amount of
-//     cleverness, so no map machinery is built on it: its word comes in.
+//     cleverness, so no map machinery is built on it: its word comes in, as
+//     do MD, VMA and -VMAOK.
+//   - The bus interface, which is `rtl/cadr_busint_xbus.sv` and has a check
+//     of its own.  What is here is the processor's half of the cables:
+//     -MEMRQ and WRCYC out, -MEMACK and -MEMGRANT in.
 //   - The dispatch memory.  Every DISPATCH in the boot PROM is a DISPWR ---
 //     a write of the memory, not a read of it --- so `dr`, `dp`, `dn` and
 //     `dpc` are unexercised, and the testbench asserts that rather than
@@ -100,13 +105,15 @@ module cadr_microcycle #(
     input  var logic        stathenb,     // STATHENB, bit 11
     input  var logic [1:0]  mode_speed,   // {SPEED1, SPEED0}, bits 4 and 3
 
-    // --- -HANG, from VCTL1.  Slice 5.
-    input  var logic        hang,
 
     // --- what the memory path will make.  Each leaves with its own slice.
     input  var logic [31:0] md,           // MD, the memory data register
     input  var logic [31:0] vma,          // VMA, the virtual memory address
     input  var logic        vmaok,        // -VMAOK at VCTL1 1D17, logical sense
+    input  var logic        n_memack,     // -MEMACK, off the cables
+    input  var logic        n_memgrant,   // -MEMGRANT: "low when the processor
+                                          //   has the bus.  Do not hang when
+                                          //   this line is high!"
     input  var logic        sintr,        // SINTR, the interrupt off the cables
     input  var logic [31:0] mf_map,       // what a SRCMAP puts on MF
     input  var logic [13:0] dpc,          // DPC<13:0>, the dispatch memory
@@ -133,6 +140,14 @@ module cadr_microcycle #(
     output var logic        pcs1,
     output var logic        pcs0,
     output var logic        iwrited,
+
+    // --- one tick per microcycle, at the boundary: the edge every register
+    // --- above takes.  What stands before it is that microcycle's.
+    // --- the cables to the bus interface
+    output var logic        n_memrq,      // -MEMRQ, a level while a cycle is wanted
+    output var logic        memstart,     // MEMSTART, which also addresses the map
+    output var logic        rdcyc,
+    output var logic        wrcyc,
 
     // --- one tick per microcycle, at the boundary: the edge every register
     // --- above takes.  What stands before it is that microcycle's.
@@ -191,7 +206,7 @@ module cadr_microcycle #(
   logic halted, statstop;
   assign errhalt  = errstop && halted;
   assign stathalt = stathenb && statstop;
-  assign machrun  = srun && !errhalt && !stathalt;
+  assign machrun  = srun && !errhalt && !stathalt && !wait_;
 
   logic cpu_edge;
   assign cpu_edge = mclk_edge && machrun;
@@ -370,6 +385,17 @@ module cadr_microcycle #(
   assign destspc    = mid_group && (ir[21:19] == 3'd5);
   assign destimod0  = mid_group && (ir[21:19] == 3'd6);
   assign destimod1  = mid_group && (ir[21:19] == 3'd7);
+
+  // page VCTL1/VCTL2: which kind of memory cycle, off IR<20:19> under DESTMEM.
+  logic destmem, memwr, memrd, ifetch, memop, use_md;
+  assign destmem = destm && ir[23];
+  assign memwr   = destmem && (ir[20:19] == 2'd2);
+  assign memrd   = destmem && (ir[20:19] == 2'd1);
+  assign ifetch  = needfetch && lcinc;
+  assign memop   = memrd || memwr || ifetch;
+  // `USE.MD` is `NOR(-SRCMD, NOPA)` at VCTL1 3F18: this instruction reads MD
+  // and is not nopped.  It is half of -HANG.
+  assign use_md  = srcmd && !nop;
 
   logic [9:0] wadr_in;
   assign wadr_in = destm ? {5'd0, ir[18:14]} : ir[23:14];
@@ -811,6 +837,84 @@ module cadr_microcycle #(
     endcase
   end
 
+  // ------------------------------------------------------------- VCTL1
+  //
+  // The memory cycle as MIT specify it: MEMPREPARE to MEMSTART to -MEMRQ,
+  // MBUSY waiting on -MEMACK from the bus interface, and -WAIT and -HANG
+  // holding the clock generator off meanwhile.  A stall costs time and not a
+  // microcycle.
+  //
+  //     3F16  74S64  -WAIT = NOR((DESTMEM AND MBUSY.SYNC),
+  //                              (USE.MD AND MBUSY AND -MEMGRANT),
+  //                              (LCINC AND NEEDFETCH AND MBUSY.SYNC))
+  //     3F17  74S10  -HANG = NAND(RD.IN.PROGRESS, USE.MD, -CLK3G)
+  //
+  // WAIT stops the cpu clock and lets the master clock run, which is what lets
+  // the bus interface start the cycle being waited for; HANG stops both, which
+  // is why it must not happen before -MEMGRANT --- MIT's own warning, and the
+  // second WAIT term is the gate that enforces it.
+  //
+  // In this fabric -WAIT is a term of MACHRUN, as the 9S42 at OLORD1 1A15 has
+  // it, and -HANG goes to the generator's own input.  `src/rtl.rs` factors
+  // both out into `Rtl::stall` instead, because its engine advances a
+  // microcycle at a time; the two arrive at the same nanoseconds.
+
+  logic mbusy, mbusy_sync, rd_in_progress;
+  logic wait_, hang;
+
+  // `MEMRQ` off the 9S42 at 1E25 is `MEMSTART AND VMAOK OR MBUSY`.
+  logic memrq;
+  assign memrq   = (memstart && vmaok) || mbusy;
+  assign n_memrq = !memrq;
+
+  // What MBUSY will hold after this tick, which is what MBUSY.SYNC has to
+  // register.  `-MFINISHD` clearing MBUSY in the very tick MCLK1A samples it
+  // is not a rare case: it is where a whole 220 ns wait cycle turns on, and
+  // measured, it is the difference on the disk loop's every third stall.
+  // `Rtl::master_clock_cycle` runs `after_memack` before it takes MBUSY.SYNC,
+  // so the clear is seen; a register sampling MBUSY as it stood would wait a
+  // cycle too long.
+  logic mbusy_next;
+  always_comb begin
+    mbusy_next = mbusy;
+    if (mfinish_clearing) mbusy_next = 1'b0;
+    if (cpu_edge && memstart && vmaok) mbusy_next = 1'b1;
+  end
+
+  assign wait_ = (destmem && mbusy_sync)
+              || (use_md && mbusy && n_memgrant)
+              || (lcinc && needfetch && mbusy_sync);
+  // A WAIT comes first, and this is not a tidiness: parking the generator
+  // stops the master clock, and the master clock is what MBUSY.SYNC follows
+  // MEMRQ on --- so a park taken while -WAIT is up would hold the cpu clock
+  // for ever with nothing left to end it.  `Rtl::stall` answers `Wait` before
+  // `Hang` for the same reason and is the reference here.  The board's own
+  // answer is the `-CLK3G` term on the 74S10 at 3F17, which gates -HANG to
+  // part of the cycle; muir leaves that term out and so does this.
+  assign hang = use_md && rd_in_progress && !wait_;
+
+  // "Cleared by MEMACK delayed by about 150 ns" --- `-RDFINISH` is `-MFINISH`
+  // through the TD50 at VCTL1 1D23 and then the TD250 at 1D22, which is 140 ns
+  // on the tap ordering `src/part.rs` records.  `MBUSY` clears on `-MFINISHD`,
+  // the 30 ns tap of the same TD50.  Two countdowns off the acknowledgement.
+  //
+  // **-RDFINISH is two ticks short of its 140, and deliberately.**  Ending a
+  // hang costs this fabric two ticks that the board spends in gate
+  // propagation delay: RD.IN.PROGRESS falls on the tick the countdown
+  // expires, and the parked generator needs one more tick to see -HANG lift
+  // and another to raise TPCLK.  Charged in full, every hang ends 10 ns after
+  // muir ends it --- and there are 11,404 hangs in the boot PROM, so it is
+  // not a rounding one can leave.  The delay line is 140 ns; two ticks of it
+  // are spent here instead, and this is where that is written down.
+  localparam int unsigned MFINISHD_T  = 30 / 5;
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+
+  logic       n_memack_q;
+  logic [5:0] mfinish_t, rdfinish_t;
+  logic       memack_edge, mfinish_clearing;
+  assign memack_edge      = !n_memack && n_memack_q;
+  assign mfinish_clearing = (mfinish_t == 6'd1) && !memack_edge;
+
   // page Q 2A05-2A11: the 74S194s shift under `QS1`/`QS0`.
   logic qs1, qs0;
   assign qs1 = ir[1] && iralu;
@@ -854,13 +958,45 @@ module cadr_microcycle #(
       sequence_break <= 1'b0;
       newlc        <= 1'b0;
       next_instrd  <= 1'b0;
+      memstart     <= 1'b0;
+      mbusy        <= 1'b0;
+      mbusy_sync   <= 1'b0;
+      rdcyc        <= 1'b0;
+      wrcyc        <= 1'b0;
+      rd_in_progress <= 1'b0;
+      n_memack_q   <= 1'b1;
+      mfinish_t    <= 6'd0;
+      rdfinish_t   <= 6'd0;
       prog_unibus_reset <= 1'b0;
       q            <= 32'd0;
       dc           <= 10'd0;
       for (int unsigned k = 0; k < 8; k++) opcs[k] <= 14'd0;
     end else begin
+      // The acknowledgement's two delays, which run on their own and not on
+      // the cpu clock: a stall is what they are there to end.
+      n_memack_q <= n_memack;
+      if (memack_edge) begin
+        mfinish_t  <= 6'(MFINISHD_T);
+        rdfinish_t <= 6'(RD_FINISH_T);
+      end else begin
+        if (mfinish_t != 6'd0) begin
+          mfinish_t <= mfinish_t - 6'd1;
+          if (mfinish_clearing) mbusy <= 1'b0;
+        end
+        if (rdfinish_t != 6'd0) begin
+          rdfinish_t <= rdfinish_t - 6'd1;
+          if (rdfinish_t == 6'd1) rd_in_progress <= 1'b0;
+        end
+      end
+
       // The master clock, which runs whether or not the cpu's does.
       if (mclk_edge) begin
+        // `MBUSY.SYNC` is `MEMRQ` registered on MCLK1A, the second flip flop
+        // of the 74S175 at VCTL1 1E20.  "Since you must wait during the first
+        // half of a clock cycle, the busy condition (MEMRQ) must be
+        // synchronized."  It is on the *master* clock, so it goes on
+        // following MEMRQ through a WAIT --- which is what ends the wait.
+        mbusy_sync <= (memstart && vmaok) || mbusy_next;
         promdisabled <= promdisable;
         // The 74LS109 at OLORD2 1A18 drops the trap at the first edge whose
         // J, SRUN, was up.
@@ -933,6 +1069,28 @@ module cadr_microcycle #(
             default: q <= alu_f[31:0];
           endcase
         end
+
+        // page VCTL1: the memory cycle.  MEMPREPARE is the write phase's
+        // level and MEMSTART its registered copy, so a cycle prepared here
+        // runs over the next microcycle.
+        if (memstart && vmaok) begin
+          mbusy      <= 1'b1;
+          mfinish_t  <= 6'd0;
+          // READ IN PROGRESS comes up on the same edge for a read, and has no
+          // falling time until -MEMACK gives it one.
+          if (rdcyc) begin
+            rd_in_progress <= 1'b1;
+            rdfinish_t     <= 6'd0;
+          end
+        end
+        // WRCYC and RDCYC are one flip flop, the 74S175 at 1C23 on CLK2A:
+        // load or hold, so the direction is the *starting* instruction's and
+        // it stands until the next cycle starts.
+        if (memop) begin
+          wrcyc <= memwr;
+          rdcyc <= !memwr;
+        end
+        memstart <= memop;
 
         // page DSPCTL 3C14/3C15: the 25S07s are enabled by -IRDISP and
         // clocked by CLK3E, so they take IR<41:32> of the DISPATCH itself ---
