@@ -1000,7 +1000,11 @@ def report(mutations, listing_path):
             "The check does not catch these and it is written down. They stay\n"
             "  in the list --- a survivor quietly dropped is a check that\n"
             "  silently got weaker --- and they do not fail the run, so that a\n"
-            "  new one can still be seen.")
+            "  new one can still be seen.\n"
+            "\n"
+            "  If one of these issues has been CLOSED, come back to its record:\n"
+            "  nothing here can see that, and a hole whose question was answered\n"
+            "  leaves an @hole suppressing nothing.")
 
     for verdict, heading, why in (
         (UNAPPLIED, "DID NOT APPLY",
