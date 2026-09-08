@@ -53,11 +53,24 @@ for pin off MIT's wire lists.** Anything shaped to a Rust API instead would
 take the ported model and refuse the netlist.
 
 1. **The clock generator.** `clock.rs`, ported. **Done.**
-2. **The bus interface and the DDR bridge**, driven by a test master on the
+2. **The port list.** `cables.txt` as SystemVerilog, direction derived from
+   the two netlists rather than asserted. **Done.**
+3. **The bus interface and the DDR bridge**, driven by a test master on the
    92 cable wires --- the Xbus handshake, `-HANG`, the NXM timeout and the
    AXI plumbing proved without a processor.
-3. **The processor**, ported from `rtl.rs` first, then the netlist behind the
+4. **The processor**, ported from `rtl.rs` first, then the netlist behind the
    same ports, each checked against the other and against muir.
+
+Of the 92 wires, 15 are inputs, 29 outputs, and 48 --- `MEM<31:0>` and
+`SPY<15:0>` --- are driven from both ends. Fabric has no bus to fight over, so
+those are carried as a value and an enable out with the resolved wire back in,
+and the resolution is the cable's rather than either board's.
+
+Names are mangled to legal identifiers, and this is where that was settled,
+because everything generated later inherits it: a leading `-` becomes `n_`,
+`.` and space and `/` and `>` become `_`, a leading digit takes an `x`, and a
+collision is an error rather than a warning. `rtl/cadr_cables.map` holds every
+identifier against the name MIT wrote.
 
 Alongside, a spike on one page of `CADR.netlist` --- `ALU0`, four `74S181`s,
 no state and no tri-state --- to settle how netlists become SystemVerilog
@@ -79,6 +92,7 @@ stale silently.
 | | Checked against | State |
 |---|---|---|
 | `rtl/cadr_phase_gen.sv` | `clock::Behavioural`, 12,000 ticks | passing |
+| `rtl/cadr_cables.svh` | both netlists through `part::pinout`, and `cable.rs`'s own table | passing |
 
 The check is mutation-tested: moving the normal tap by one tick, or the
 `TPTSE` window by five nanoseconds, fails it. It also requires coverage ---
