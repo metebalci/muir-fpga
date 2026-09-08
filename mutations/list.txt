@@ -71,11 +71,6 @@
 # the issue that holds the hole open.  They are reported every run, counted in
 # their own column, and do not fail it:
 #
-#   the-first-map-level-is-registered                   #8, and the map is
-#       NOT unexercised: corrupting what the level-2 RAM stores is caught.
-#       Only the staleness is invisible, and by how much is measured in the
-#       issue. Probably an equivalence, but not one I could prove.
-#
 # A CLOSED ISSUE MEANS THE RECORD NEEDS REVISITING, and nothing here can
 # tell you that. The inverse check fires when a hole *closes* --- the
 # mutation becomes caught and the run fails, naming the issue and the line.
@@ -1237,23 +1232,47 @@
   assign spcv = spushd ? spc_q : spcw;
 @end
 
-@mutation the-first-map-level-is-registered
-@hole #8
+@mutation the-first-map-level-is-read-a-microcycle-stale
 @check microcycle_sys
 @file rtl/cadr_microcycle.sv
 @note "THERE IS NO MMU STATE." Both levels are asynchronous and chained
 @note combinationally --- VMEM0 1C14 drives `-VMAP4..0`, which are VMEM1
 @note 1E04's address --- so a lookup is a ripple through two RAMs inside one
-@note cycle. Registering the first level is the whole of that made wrong: it
-@note is the shape the control store and the scratchpads legitimately take,
-@note and the one place it cannot be taken, because the second level would
-@note need its address a tick before the first can give it.
+@note cycle. Delaying the first level by twenty-eight ticks is a microcycle
+@note of staleness: the lookup belongs to the cycle before the one using it.
+@note
+@note WHY TWENTY-EIGHT AND NOT ONE, which is the mutation to reach for.
+@note Registering the read --- one tick --- is EQUIVALENT, and so is any
+@note delay below a microcycle. `MAPI` is `VMA<23:8>` or `MD<23:8>`, both
+@note microcycle registers, so the level-1 address is constant for the whole
+@note microcycle; a synchronous read of a constant address gives the same
+@note word at every sampling point more than a tick after it settles, and
+@note the read phase is 29 ticks at normal speed and 44 at extra slow.
+@note
+@note Found by sweeping the delay rather than asking whether one delay is
+@note caught: 1, 4 and 16 ticks survive; 28 is caught on PCS0 at microcycle
+@note 2,084,731 and 44 on JCOND at 1,062,763. So the check is blind only
+@note *below one microcycle*, which is precisely where staleness is not real.
+@note An equivalent mutant that must be explained forever is worth less than
+@note a live one testing the same property, so the smallest magnitude that
+@note is caught is what the list carries.
+@note
+@note WHAT THIS DOES NOT SAY, and it matters at bring-up: it does not say
+@note the fabric may not register the map. Functionally it may --- that is
+@note what the equivalence means. The lookup is combinational because
+@note 2048 x 5 and 1024 x 24 fit in distributed RAM, which reads
+@note asynchronously and costs nothing. If fit ever forced the map into
+@note block RAM, THIS CHECK WOULD NOT OBJECT. That has to be decided from
+@note the timing, not from here.
 @old
   assign vmap = l1_map[adr0];
 @new
-  logic [4:0] vmap_q;
-  always_ff @(posedge clk) vmap_q <= l1_map[adr0];
-  assign vmap = vmap_q;
+  logic [4:0] vmap_d [0:27];
+  always_ff @(posedge clk) begin
+    vmap_d[0] <= l1_map[adr0];
+    for (int d = 1; d < 28; d++) vmap_d[d] <= vmap_d[d-1];
+  end
+  assign vmap = vmap_d[27];
 @end
 
 @mutation the-map-is-written-with-the-wrong-frame
