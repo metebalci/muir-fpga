@@ -11,18 +11,23 @@
 // `Rtl::signals` is "recorded in the read phase, where the sources drive and
 // the ALU result is up but nothing has been written back".
 //
-// WHAT IS STIMULUS.  There is no ALU yet, so four things come out of the trace
-// rather than out of the DUT: `jcond` off the ALU, `ob` for L and the OA
-// substitution into IR, `m` for the word a WRITE-I-MEM stores, and the
-// console's registers.  Every one leaves with a later slice.  They are
-// counted and printed, so what this check is still being told rather than
-// checking is on its own output.
+// WHAT IS STIMULUS.  There is no memory path yet, so what comes out of the
+// trace rather than out of the DUT is `md` and `vma`, `vmaok` off the map's
+// permission bits, `sintr` from the cables, the word a SRCMAP puts on MF, the
+// dispatch memory's word, and the console's registers.  Every one leaves with
+// a later slice.  They are counted and printed, so what this check is still
+// being told rather than checking is on its own output.
 //
-// WHAT IS CHECKED.  PC, IR, LPC, OPC, ST, the A bus, LC, and the four
-// sequencing flags NOP, PCS1, PCS0 and IWRITED --- which the DUT computes
-// from IR and JCOND alone --- and the length of every microcycle in 200 MHz
-// ticks.  PC now goes through the fabric's own stack on a POPJ rather than
-// being handed the answer.
+// `mf_map` is the one that is frankly circular: a SRCMAP is reached **once**
+// in 600,000 microcycles and its word is taken from the trace's own M column,
+// so on that single row M checks nothing.  One row is not a check of a map
+// under any amount of cleverness, and the map is a later slice; the count is
+// printed so the circularity is visible rather than buried.
+//
+// WHAT IS CHECKED.  PC, IR, LPC, OPC, ST, the A and M buses, the ALU, R, OB,
+// Q, DC, LC, JCOND, and the four sequencing flags NOP, PCS1, PCS0 and
+// IWRITED --- plus the length of every microcycle in 200 MHz ticks.  PC goes
+// through the fabric's own stack on a POPJ.
 //
 // WHAT THE CHECKED SIGNALS ARE WORTH, measured by mutation rather than
 // assumed.  The A bus is the strong one: 96,192 distinct values over the run,
@@ -43,6 +48,27 @@
 //     the pass-around covers.  It is right for synthesis, not for this trace.
 //   - The WADR/AADR comparator's top bit is never the one that differs, so a
 //     nine-bit compare survives a ten-bit one.
+//   - OB's two shift selects are never taken: `OSEL` is only ever 0 (MO) or
+//     1 (ALU), so `ALU >> 1` and `ALU << 1` with Q<31> shifted in are built
+//     and unexercised.  Replacing `ALU >> 1` with `ALU` survives.
+//   - Q is loaded five times and **never shifted**: `QS<1:0>` is 0 on 599,995
+//     microcycles and 3 on the other five, so the 74S194s' shift paths and
+//     every multiply and divide step with them are unexercised.
+//   - AEQM widened from the low 32 slices to all 33 survives, so the
+//     open-collector chain's width is not pinned down here either.
+//   - Jump condition 5, `PAGE.FAULT OR INTERRUPT`, is never selected, and
+//     condition 2 is selected once.
+//
+// Against that, the ALU array is genuinely exercised: 21 of its 32
+// function-and-mode combinations are reached, the sign-extending ninth slice
+// is caught if removed (JCOND goes wrong at microcycle 5,202), the rotate is
+// caught if reversed, the mask is caught if its two ends are swapped or if
+// MSKL loses IR<9:5>, and swapping one entry of either half of the 74S181
+// function table is caught within a few thousand microcycles.
+//
+// And the one-state-early trap on page DSPCTL is caught: the 25S07s take
+// IR<41:32> of the DISPATCH *itself*, the word standing before the edge, and
+// reading the newly loaded IR there instead is caught at microcycle 525,527.
 //
 // WHAT THIS PROGRAM DOES NOT EXERCISE, asserted here rather than assumed, so
 // that a trace which reaches further re-opens each claim: every DISPATCH in
@@ -81,7 +107,7 @@ enum Col {
   kCycle, kPc, kIr, kQ, kA, kM, kAlu, kR, kOb, kDc, kOpc, kSt, kLc,
   kWmapd, kDestspcd, kIwrited, kImodd, kPdlwrited, kSpushd, kNop, kNVmaok,
   kJcond, kPcs1, kPcs0, kSrun,
-  kLpc, kPromdis, kErrstop, kStathenb, kSpeed1, kSpeed0,
+  kLpc, kMd, kVma, kPromdis, kErrstop, kStathenb, kSpeed1, kSpeed0,
   kStall, kHalted, kBus, kNs,
   kColumns
 };
@@ -161,9 +187,15 @@ int main(int argc, char **argv) {
   // microcycle, and what the console would be holding.
   auto drive = [&](size_t k) {
     const Row &r = rows[k];
-    dut->jcond = static_cast<uint8_t>(r.v[kJcond]);
-    dut->ob = static_cast<uint32_t>(r.v[kOb]);
-    dut->m = static_cast<uint32_t>(r.v[kM]);
+    dut->md = static_cast<uint32_t>(r.v[kMd]);
+    dut->vma = static_cast<uint32_t>(r.v[kVma]);
+    // The net is -VMAOK, low when the access is permitted; the jump
+    // conditions and MEMRQ take the logical sense, which is this.
+    dut->vmaok = static_cast<uint8_t>(!r.v[kNVmaok]);
+    dut->sintr = 0;
+    // A SRCMAP is reached once in the whole run, and the map is a later
+    // slice; its word comes off the trace and is counted below.
+    dut->mf_map = static_cast<uint32_t>(r.v[kM]);
     dut->srun = static_cast<uint8_t>(r.v[kSrun]);
     dut->promdisable = static_cast<uint8_t>(r.v[kPromdis]);
     dut->errstop = static_cast<uint8_t>(r.v[kErrstop]);
@@ -176,11 +208,14 @@ int main(int argc, char **argv) {
   // that the edge is compared against the read phase before it and not
   // against the values the edge has just produced.
   struct Sample {
-    uint64_t pc, ir, lpc, opc, st, a, lc, nop, pcs1, pcs0, iwrited;
+    uint64_t pc, ir, lpc, opc, st, a, m, alu, r, ob, q, dc, lc, jcond, nop,
+        pcs1, pcs0, iwrited;
   };
   auto take = [&]() {
-    return Sample{dut->pc, dut->ir,  dut->lpc,  dut->opc,  dut->st, dut->a,
-                  dut->lc, dut->nop, dut->pcs1, dut->pcs0, dut->iwrited};
+    return Sample{dut->pc, dut->ir, dut->lpc,   dut->opc,  dut->st,
+                  dut->a,  dut->m,  dut->alu,   dut->r,    dut->ob,
+                  dut->q,  dut->dc, dut->lc,    dut->jcond, dut->nop,
+                  dut->pcs1, dut->pcs0, dut->iwrited};
   };
 
   drive(0);
@@ -194,8 +229,8 @@ int main(int argc, char **argv) {
   long lengths_checked = 0, dispatches = 0, disp_reads = 0, halts = 0;
   long iwrites = 0, popjs = 0, jumps = 0, prom_fetches = 0, ram_fetches = 0;
   long stat_counts = 0, stalls = 0, ram_executes = 0, other_speed = 0;
-  long lc_moved = 0;
-  std::set<uint64_t> a_values;
+  long lc_moved = 0, map_sources = 0;
+  std::set<uint64_t> a_values, m_values, ob_values;
 
   // Long enough for every microcycle plus the reset and a margin: the
   // longest cycle the generator makes is 44 ticks at extra slow.
@@ -217,6 +252,14 @@ int main(int argc, char **argv) {
       if (prev.st != r.v[kSt]) bad += Fail(r, "ST", prev.st, r.v[kSt]);
       if (prev.a != r.v[kA]) bad += Fail(r, "the A bus", prev.a, r.v[kA]);
       if (prev.lc != r.v[kLc]) bad += Fail(r, "LC", prev.lc, r.v[kLc]);
+      if (prev.m != r.v[kM]) bad += Fail(r, "the M bus", prev.m, r.v[kM]);
+      if (prev.alu != r.v[kAlu]) bad += Fail(r, "the ALU", prev.alu, r.v[kAlu]);
+      if (prev.r != r.v[kR]) bad += Fail(r, "R", prev.r, r.v[kR]);
+      if (prev.ob != r.v[kOb]) bad += Fail(r, "OB", prev.ob, r.v[kOb]);
+      if (prev.q != r.v[kQ]) bad += Fail(r, "Q", prev.q, r.v[kQ]);
+      if (prev.dc != r.v[kDc]) bad += Fail(r, "DC", prev.dc, r.v[kDc]);
+      if (prev.jcond != r.v[kJcond])
+        bad += Fail(r, "JCOND", prev.jcond, r.v[kJcond]);
       if (prev.nop != r.v[kNop]) bad += Fail(r, "NOP", prev.nop, r.v[kNop]);
       if (prev.pcs1 != r.v[kPcs1]) bad += Fail(r, "PCS1", prev.pcs1, r.v[kPcs1]);
       if (prev.pcs0 != r.v[kPcs0]) bad += Fail(r, "PCS0", prev.pcs0, r.v[kPcs0]);
@@ -238,6 +281,12 @@ int main(int argc, char **argv) {
       if (r.v[kStall]) ++stalls;
       if (r.v[kLc]) ++lc_moved;
       a_values.insert(r.v[kA]);
+      m_values.insert(r.v[kM]);
+      ob_values.insert(r.v[kOb]);
+      // SRCMAP is group B source 1, and its word is handed to the DUT.
+      if (r.v[kNop] == 0 && ((r.v[kIr] >> 31) & 1) && ((r.v[kIr] >> 29) & 1) &&
+          (((r.v[kIr] >> 26) & 7) == 1))
+        ++map_sources;
       // Extra slow is {SPEED1,SPEED0} = 00, where both taps of the 74S151 are
       // -TPR160 and ILONG changes nothing.  Asserted rather than assumed, so
       // that a trace which does change speed re-opens the claim below.
@@ -369,23 +418,27 @@ int main(int argc, char **argv) {
 
   std::printf(
       "ok: %zu microcycles agree with muir's rtl engine on MIT's boot PROM\n"
-      "    PC, IR, LPC, OPC, ST, the A bus, LC and NOP/PCS1/PCS0/IWRITED\n"
-      "    every microcycle;\n"
+      "    PC, IR, LPC, OPC, ST, LC, the A and M buses, the ALU, R, OB, Q,\n"
+      "    DC, JCOND and NOP/PCS1/PCS0/IWRITED every microcycle;\n"
       "    %ld microcycle lengths in 200 MHz ticks\n"
       "    reached: %ld POPJs, %ld jumps, %ld WRITE-I-MEMs, %ld dispatches\n"
       "             (all DISPWR), %ld PROM fetches, %ld control store fetches,\n"
       "             %ld microcycles the bus held off\n"
-      "    driven from the trace, and going with their own slice: JCOND, OB,\n"
-      "             M for IWR, the console registers\n"
-      "    the A bus took %zu distinct values; LC took one, zero\n"
+      "    driven from the trace, and going with their own slice: MD, VMA,\n"
+      "             -VMAOK, SINTR, the SRCMAP word, the dispatch memory's\n"
+      "             word, the console registers\n"
+      "    the A bus took %zu distinct values, the M bus %zu, OB %zu;\n"
+      "             LC took one, zero, and MF came from the trace on %ld row\n"
       "    not reached by this program, and so not checked: the dispatch\n"
       "             memory's read, MACHRUN down, the statistics counter,\n"
       "             microcode run out of the control store, LC, the stack's\n"
       "             RAM and pointer (every push is popped through SPCWPASS),\n"
-      "             the M memory and the PDL (they reach only the M bus),\n"
+      "             OB's two shift selects, Q's shift paths (it is loaded five\n"
+      "             times and never shifted), jump condition 5,\n"
       "             and -ILONG --- every cycle is extra slow, where both taps\n"
       "             are -TPR160, so FLAG 3E07's -NOPA gate of it is unchecked\n",
       k, lengths_checked, popjs, jumps, iwrites, dispatches, prom_fetches,
-      ram_fetches, stalls, a_values.size());
+      ram_fetches, stalls, a_values.size(), m_values.size(), ob_values.size(),
+      map_sources);
   return 0;
 }

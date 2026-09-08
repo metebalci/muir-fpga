@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The CADR microcycle: the clock structure, the control store, the
-// instruction path and the scratchpads, with the ALU still to come.
+// instruction path, the scratchpads and the datapath.
 //
-// This is the first two slices of `src/rtl.rs` from muir.  A microcycle is two
+// This is the first three slices of `src/rtl.rs` from muir.  A microcycle is two
 // phases and one register edge --- "`-CLK0` is `-TPCLK AND MACHRUN` at CLOCK2
 // 1D10 and `CLK1..CLK5` are `NOT(-CLK0)` through the 7428 buffers at 1D05,
 // 1C01 and 1C11, so every edge-triggered register on the board takes one edge
 // per microcycle, at the cycle boundary" --- and what rides on that edge here
-// is everything that needs no ALU to compute:
+// is everything but the memory path:
 //
 //   page ICTL/PCTL   the control store, and the boot PROM over its bottom 1K
 //   page IREG        IR, with the OA registers substituting fields as it loads
@@ -22,13 +22,19 @@
 //   page PDLCTL      the PDL, its pointer and its index
 //   page SPC/SPCW    the stack, SPCPTR, RETA and the push pass-around
 //   page LC/LCC/FLAG the location counter and the byte-mode flags
+//   page MF          the functional sources, and the M bus over them
+//   page SMCTL       the shift and mask amounts, byte mode included
+//   page SHIFT/MSKG  the 32-bit rotate and the mask
+//   page ALUC4/ALU   the nine 74S181s as one 33-bit array
+//   page MO/OB       the merge and the output select
+//   page Q, DSPCTL   Q and the dispatch constant
 //
-// What the datapath will make once it exists comes in as ports, and each one
-// leaves again when its slice lands: `jcond` from the ALU, `ob` for L and the
-// OA substitution, `m` for IWR, and the dispatch memory's word.
-// `tb/cadr_microcycle_tb.cpp` drives them from muir's own trace and counts
-// them, so the hole each one leaves is on the check's own output rather than
-// in a comment.
+// What the memory path will make once it exists comes in as ports, and each
+// one leaves with the slice that builds it: `md` and `vma`, `vmaok` off the
+// map's permission bits, `sintr` from the cables, the word a SRCMAP puts on
+// MF, and the dispatch memory's.  `tb/cadr_microcycle_tb.cpp` drives them
+// from muir's own trace and counts them, so the hole each one leaves is on
+// the check's own output rather than in a comment.
 //
 // TWO MEMORY DECISIONS, BOTH SETTLED WITH THE PHASE GENERATOR RATHER THAN AT
 // BRING-UP, because FPGA block RAM has no asynchronous read and every memory
@@ -60,9 +66,10 @@
 //
 // WHAT IS NOT HERE, and belongs to a later slice or to the console:
 //
-//   - The A and M buses, the ALU, the shifter and OB.  So `mmem_out`, the
-//     PDL's word and the stack's upper bits are built and go nowhere: they
-//     reach only the M bus, and the M bus is the next slice.
+//   - The memory path: MD, VMA, MEMSTART, the two map levels and the bus
+//     interface behind them.  A SRCMAP is reached once in 600,000
+//     microcycles, which is not a check of a map under any amount of
+//     cleverness, so no map machinery is built on it: its word comes in.
 //   - The dispatch memory.  Every DISPATCH in the boot PROM is a DISPWR ---
 //     a write of the memory, not a read of it --- so `dr`, `dp`, `dn` and
 //     `dpc` are unexercised, and the testbench asserts that rather than
@@ -96,10 +103,12 @@ module cadr_microcycle #(
     // --- -HANG, from VCTL1.  Slice 5.
     input  var logic        hang,
 
-    // --- what the datapath will make.  Each leaves with its own slice.
-    input  var logic        jcond,        // the jump condition, off the ALU
-    input  var logic [31:0] ob,           // OB, what L takes at the edge
-    input  var logic [31:0] m,            // the M bus, IWR<31:0>
+    // --- what the memory path will make.  Each leaves with its own slice.
+    input  var logic [31:0] md,           // MD, the memory data register
+    input  var logic [31:0] vma,          // VMA, the virtual memory address
+    input  var logic        vmaok,        // -VMAOK at VCTL1 1D17, logical sense
+    input  var logic        sintr,        // SINTR, the interrupt off the cables
+    input  var logic [31:0] mf_map,       // what a SRCMAP puts on MF
     input  var logic [13:0] dpc,          // DPC<13:0>, the dispatch memory
     input  var logic        dr,           // DR<16>
     input  var logic        dp,           // DP<15>
@@ -112,7 +121,14 @@ module cadr_microcycle #(
     output var logic [31:0] st,           // ST<31:0>, the statistics counter
     output var logic [47:0] ir,
     output var logic [31:0] a,            // the A bus, off ACTL's pass-around
+    output var logic [31:0] m,            // the M bus
+    output var logic [31:0] alu,          // ALU<31:0> of the 33-bit array
+    output var logic [31:0] r,            // R, the shifter's output
+    output var logic [31:0] ob,           // OB, what the write pulses store
+    output var logic [31:0] q,            // Q
+    output var logic [9:0]  dc,           // the dispatch constant
     output var logic [25:0] lc,           // LC<25:0>, the location counter
+    output var logic        jcond,        // the jump condition
     output var logic        nop,
     output var logic        pcs1,
     output var logic        pcs0,
@@ -581,6 +597,225 @@ module cadr_microcycle #(
     end
   end
 
+  // ---------------------------------------------------------- the datapath
+
+  // page MF: the functional sources, off the two 74S138s that decode
+  // IR<28:26> under IR<31> and IR<29>.
+  logic prog_unibus_reset;
+  logic srcdc, srcpdlptr, srcpdlidx, srcopc, srcq, srcvma, srcmap, srcmd, srclc;
+  assign srcdc     = group_a && (ir[28:26] == 3'd0);
+  assign srcpdlptr = group_a && (ir[28:26] == 3'd2);
+  assign srcpdlidx = group_a && (ir[28:26] == 3'd3);
+  assign srcopc    = group_a && (ir[28:26] == 3'd6);
+  assign srcq      = group_a && (ir[28:26] == 3'd7);
+  assign srcvma    = group_b && (ir[28:26] == 3'd0);
+  assign srcmap    = group_b && (ir[28:26] == 3'd1);
+  assign srcmd     = group_b && (ir[28:26] == 3'd2);
+  assign srclc     = group_b && (ir[28:26] == 3'd3);
+
+  logic [31:0] mf;
+  always_comb begin
+    if (srclc) begin
+      // Bit 30 is not driven.  `LC<25:1>` with the byte-mode bit under it.
+      mf = {needfetch, 1'b0, lc_byte_mode, prog_unibus_reset,
+            int_enable, sequence_break, lc[25:1], lc0b};
+    end else if (srcopc) begin
+      mf = {18'd0, opc};
+    end else if (srcdc) begin
+      mf = {22'd0, dc};
+    end else if (srcpdlptr) begin
+      mf = {22'd0, pdl_ptr};
+    end else if (srcpdlidx) begin
+      mf = {22'd0, pdl_idx};
+    end else if (srcq) begin
+      mf = q;
+    end else if (srcmd) begin
+      mf = md;
+    end else if (srcvma) begin
+      mf = vma;
+    end else if (srcmap) begin
+      mf = mf_map;
+    end else begin
+      // "Functional sources 0o15, 0o16 and 0o17: the 74S138 that decodes
+      // IR<28:26> ... has those three outputs unconnected, so nothing on page
+      // MF drives the bus, and an undriven TTL bus reads high."
+      mf = {32{1'b1}};
+    end
+  end
+
+  // pages ALATCH and MLATCH: which driver has the M bus.
+  logic mpassm, spcenb, pdlenb, mfenb;
+  assign mpassm = !ir[31];
+  assign spcenb = srcspc || srcspcpop;
+  assign pdlenb = srcpdlpop || srcpdltop;
+  assign mfenb  = !mpassm && !(spcenb || pdlenb);
+
+  always_comb begin
+    if (mpassm)      m = mmem_out;
+    else if (pdlenb) m = pdl_q;
+    // `SPCPTR<4:0>` on M<28:24> through the 74S241 at 4B10, with the RAM's
+    // own `SPCO` under it --- not the push pass-around, which is on the SPC
+    // bus and goes to the next-address path instead.
+    else if (spcenb) m = {3'd0, spcptr, 6'd0, spc_q[17:0]};
+    else if (mfenb)  m = mf;
+    else             m = 32'd0;
+  end
+
+  // page SMCTL: the shift and mask amounts, with the LC byte-mode tweak.
+  logic lc_modifies_mrot, inst_in_left_half, inst_in_2nd_or_4th_quarter;
+  logic sh4, sh3, mr, sr;
+  logic [4:0] mskr, shift, mskl;
+  assign lc_modifies_mrot = ir[10] && ir[11];
+  assign inst_in_left_half = !((lc[1] ^ lc0b) || !lc_modifies_mrot);
+  assign sh4 = !(inst_in_left_half ^ !ir[4]);
+  assign inst_in_2nd_or_4th_quarter = !(lc[0] || !lc_modifies_mrot) && lc_byte_mode;
+  assign sh3 = !(!ir[3] ^ inst_in_2nd_or_4th_quarter);
+  assign mr  = !irbyte || ir[13];
+  assign sr  = !irbyte || ir[12];
+  assign mskr  = mr ? {sh4, sh3, ir[2:0]} : 5'd0;
+  assign shift = sr ? {sh4, sh3, ir[2:0]} : 5'd0;
+  assign mskl  = mskr + ir[9:5];
+
+  // pages SHIFT0-1: a 32-bit rotate left.  A shift of zero leaves the second
+  // term a 32-place shift of a 32-bit word, which is zero.
+  assign r = (m << shift) | (m >> (6'd32 - {1'b0, shift}));
+
+  // page MSKG4
+  logic [31:0] msk;
+  assign msk = ({32{1'b1}} >> (5'd31 - mskl)) & ({32{1'b1}} << mskr);
+
+  // pages ALUC4, ALU0-1.  "The CADR ALU is nine 74S181s and three 74S182s:
+  // eight slices covering alu<31:0>, plus a ninth fed with m[31] and a[31]
+  // again, which sign-extends both operands to 33 bits.  That is why the JUMP
+  // comparisons are signed."  The whole array at once, off the datasheet's
+  // active-high function table.
+  logic specalu, mul, div, divpos, divsub, divadd, mulnop, aluadd, alusub;
+  assign specalu = ir[8] && iralu;
+  assign mul     = specalu && (ir[4:3] == 2'b00);
+  assign div     = specalu && (ir[4:3] == 2'b01);
+  assign divpos  = q[0] || ir[6];
+  assign divsub  = div && divpos;
+  assign divadd  = div && (ir[5] || !divpos);
+  assign mulnop  = mul && !q[0];
+  assign aluadd  = (divadd && !a[31]) || (divsub && a[31]) || mul;
+  assign alusub  = mulnop || (divsub && !a[31]) || (divadd && a[31]) || irjump;
+
+  logic [3:0] aluf;
+  logic       alumode, cin;
+  always_comb begin
+    unique case ({alusub, aluadd})
+      2'b00:   begin aluf = {ir[3], ir[4], !ir[6], !ir[5]}; alumode = !ir[7]; cin = ir[2];  end
+      2'b01:   begin aluf = 4'b1001; alumode = 1'b0; cin = 1'b0;    end
+      2'b10:   begin aluf = 4'b0110; alumode = 1'b0; cin = !irjump; end
+      default: begin aluf = 4'b1111; alumode = 1'b1; cin = 1'b1;    end
+    endcase
+  end
+
+  logic [32:0] alu_x, alu_y, alu_f, alu_p, alu_q;
+  logic        aeqm;
+  assign alu_x = {m[31], m};   // the ninth slice sign-extends both operands
+  assign alu_y = {a[31], a};
+
+  always_comb begin
+    alu_p = 33'd0;
+    alu_q = 33'd0;
+    if (alumode) begin
+      // Logic, M = H.
+      unique case (aluf)
+        4'h0: alu_p = ~alu_x;
+        4'h1: alu_p = ~(alu_x | alu_y);
+        4'h2: alu_p = ~alu_x & alu_y;
+        4'h3: alu_p = 33'd0;
+        4'h4: alu_p = ~(alu_x & alu_y);
+        4'h5: alu_p = ~alu_y;
+        4'h6: alu_p = alu_x ^ alu_y;
+        4'h7: alu_p = alu_x & ~alu_y;
+        4'h8: alu_p = ~alu_x | alu_y;
+        4'h9: alu_p = ~(alu_x ^ alu_y);
+        4'ha: alu_p = alu_y;
+        4'hb: alu_p = alu_x & alu_y;
+        4'hc: alu_p = {33{1'b1}};
+        4'hd: alu_p = alu_x | ~alu_y;
+        4'he: alu_p = alu_x | alu_y;
+        4'hf: alu_p = alu_x;
+        default: ;
+      endcase
+    end else begin
+      // Arithmetic, M = L.  Every function is `p + q + Cn` for some p, q
+      // drawn from A and B; see the datasheet table.
+      unique case (aluf)
+        4'h0: begin alu_p = alu_x;             alu_q = 33'd0;              end
+        4'h1: begin alu_p = alu_x | alu_y;     alu_q = 33'd0;              end
+        4'h2: begin alu_p = alu_x | ~alu_y;    alu_q = 33'd0;              end
+        4'h3: begin alu_p = {33{1'b1}};        alu_q = 33'd0;              end
+        4'h4: begin alu_p = alu_x;             alu_q = alu_x & ~alu_y;     end
+        4'h5: begin alu_p = alu_x | alu_y;     alu_q = alu_x & ~alu_y;     end
+        4'h6: begin alu_p = alu_x;             alu_q = ~alu_y;             end
+        4'h7: begin alu_p = alu_x & ~alu_y;    alu_q = {33{1'b1}};         end
+        4'h8: begin alu_p = alu_x;             alu_q = alu_x & alu_y;      end
+        4'h9: begin alu_p = alu_x;             alu_q = alu_y;              end
+        4'ha: begin alu_p = alu_x | ~alu_y;    alu_q = alu_x & alu_y;      end
+        4'hb: begin alu_p = alu_x & alu_y;     alu_q = {33{1'b1}};         end
+        4'hc: begin alu_p = alu_x;             alu_q = alu_x;              end
+        4'hd: begin alu_p = alu_x | alu_y;     alu_q = alu_x;              end
+        4'he: begin alu_p = alu_x | ~alu_y;    alu_q = alu_x;              end
+        4'hf: begin alu_p = alu_x;             alu_q = {33{1'b1}};         end
+        default: ;
+      endcase
+    end
+  end
+
+  assign alu_f = alumode ? alu_p : (alu_p + alu_q + {32'd0, cin});
+  assign alu   = alu_f[31:0];
+
+  // "Each slice pulls AEB low unless its four result bits are all ones; the
+  // eight slices are wired together open-collector.  In subtract mode that is
+  // exactly A = B."
+  assign aeqm = &alu_f[31:0];
+
+  // page MO, and the output select on page OB.
+  logic [31:0] mo;
+  logic [1:0]  osel;
+  assign mo   = (msk & r) | (~msk & a);
+  assign osel = {ir[13] && iralu, ir[12] && iralu};
+
+  always_comb begin
+    unique case (osel)
+      2'b00: ob = mo;
+      2'b01: ob = alu_f[31:0];
+      2'b10: ob = alu_f[32:1];
+      // `(ALU << 1)` with `Q<31>` shifted in at the bottom.
+      default: ob = {alu_f[30:0], q[31]};
+    endcase
+  end
+
+  // page FLAG: the jump conditions, off the 74S151 at 3E01.
+  logic aluneg, sint, pgf_or_int, pgf_or_int_or_sb;
+  logic [2:0] conds;
+  assign aluneg           = !aeqm && alu_f[32];
+  assign sint             = sintr && int_enable;
+  assign pgf_or_int       = !vmaok || sint;
+  assign pgf_or_int_or_sb = pgf_or_int || sequence_break;
+  assign conds            = ir[5] ? ir[2:0] : 3'd0;
+
+  always_comb begin
+    unique case (conds)
+      3'd0: jcond = r[0];
+      3'd1: jcond = aluneg;
+      3'd2: jcond = alu_f[32];
+      3'd3: jcond = aeqm;
+      3'd4: jcond = !vmaok;
+      3'd5: jcond = pgf_or_int;
+      3'd6: jcond = pgf_or_int_or_sb;
+      default: jcond = 1'b1;
+    endcase
+  end
+
+  // page Q 2A05-2A11: the 74S194s shift under `QS1`/`QS0`.
+  logic qs1, qs0;
+  assign qs1 = ir[1] && iralu;
+  assign qs0 = ir[0] && iralu;
+
   // -------------------------------------------------------- the registers
 
   logic [13:0] opcs [0:7];
@@ -619,6 +854,9 @@ module cadr_microcycle #(
       sequence_break <= 1'b0;
       newlc        <= 1'b0;
       next_instrd  <= 1'b0;
+      prog_unibus_reset <= 1'b0;
+      q            <= 32'd0;
+      dc           <= 10'd0;
       for (int unsigned k = 0; k < 8; k++) opcs[k] <= 14'd0;
     end else begin
       // The master clock, which runs whether or not the cpu's does.
@@ -681,10 +919,26 @@ module cadr_microcycle #(
         newlc       <= newlc_in;
         next_instrd <= next_instr;
         if (destintctl) begin
-          lc_byte_mode   <= ob[29];
-          int_enable     <= ob[27];
-          sequence_break <= ob[26];
+          lc_byte_mode      <= ob[29];
+          prog_unibus_reset <= ob[28];
+          int_enable        <= ob[27];
+          sequence_break    <= ob[26];
         end
+
+        // page Q 2A05-2A11
+        if (qs1 || qs0) begin
+          unique case ({qs1, qs0})
+            2'b01:   q <= {q[30:0], !alu_f[31]};
+            2'b10:   q <= {alu_f[0], q[31:1]};
+            default: q <= alu_f[31:0];
+          endcase
+        end
+
+        // page DSPCTL 3C14/3C15: the 25S07s are enabled by -IRDISP and
+        // clocked by CLK3E, so they take IR<41:32> of the DISPATCH itself ---
+        // the word standing before this edge, not the one it loads.  Reading
+        // the new IR here is a cycle early.
+        if (irdisp) dc <= ir[41:32];
       end
     end
   end
@@ -692,19 +946,15 @@ module cadr_microcycle #(
   // What this slice does not read, named so that lint says so rather than
   // waving it through:
   //
-  //   n_tpclk, tptse           the read phase's tri-state enables --- slice 3
+  //   n_tpclk, tptse           the tri-state enables, -TSE1..4 --- nothing in
+  //                            the fabric tri-states, so the drivers are muxes
   //   n_tpr60                  SPEEDCLK, counted from the boundary instead
-  //   ob<31:30>, ob<28>        no destination reads them
   //   funct<0>, funct<3>       misc functions 0 and 3, neither of them -HALT
-  //   mmem_out, pdl_q          they reach only the M bus --- slice 3
-  //   spcv<20:15>              SPC<20:15> reaches only M and the parity check
-  //   srcspc, srcpdltop        likewise: they select on the M bus
-  //   int_enable, sequence_break   they reach only JCOND --- slice 3
+  //   spcv<20:15>              the stack's word above the return address:
+  //                            it reaches the parity check and nothing else
   logic unused;
-  assign unused = &{1'b0, n_tpclk, tptse, n_tpr60,
-                    ob[31:30], ob[28], funct[0], funct[3],
-                    mmem_out, pdl_q, spcv[20:15], srcspc, srcpdltop,
-                    int_enable, sequence_break};
+  assign unused = &{1'b0, n_tpclk, tptse, n_tpr60, funct[0], funct[3],
+                    spcv[20:15]};
 
 endmodule
 
