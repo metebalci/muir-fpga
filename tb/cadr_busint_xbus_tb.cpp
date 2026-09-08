@@ -9,6 +9,11 @@
 // column says how long it takes, and this counts the ticks from -XBUS.RQ and
 // answers. That is what the DUT is being checked against --- a bus interface
 // that runs a cycle for whatever is on the bus.
+//
+// The slave also holds the interface to the bus's own rule about the request,
+// which the trace cannot: muir has no -XBUS.RQ to compare against, so the
+// only thing that can say the request was held through the acknowledgement is
+// the slave that was waiting on it. Found by mutation, issue #2.
 
 #include <cstdio>
 #include <cstdlib>
@@ -70,7 +75,8 @@ int main(int argc, char **argv) {
   // answers at once and one that takes longer than a microcycle, and a
   // request that arrives on the master clock edge itself.
   long grants = 0, reads = 0, writes = 0, instant = 0, over_a_cycle = 0;
-  long rq_on_edge = 0, timeouts = 0;
+  long rq_on_edge = 0, timeouts = 0, ack_with_rq = 0;
+  int memack_last = 1;
   int timed_out_last = 0;
   int memgrant_last = 1;
 
@@ -99,6 +105,10 @@ int main(int argc, char **argv) {
     dut->clk = 1;
     dut->eval();
 
+    // Last tick's -XBUS.RQ, kept before `rq_last` moves on: the rule below
+    // is about the tick it falls.
+    const int rq_before = rq_last;
+
     // The slave is combinational, as an Xbus slave is: it sees -XBUS.RQ and
     // answers device_ns later, in the same tick if device_ns is zero. So its
     // answer is worked out after the edge has settled dev_rq, and fed back in
@@ -121,6 +131,29 @@ int main(int argc, char **argv) {
       bad += Fail(r, "-LOADMD", dut->n_loadmd, r.n_loadmd);
     if (dut->timed_out != r.timed_out)
       bad += Fail(r, "NXM TIMEOUT", dut->timed_out, r.timed_out);
+
+    // "-XBUS.ACK ... remains asserted until the -XBUS.RQ signal is removed
+    // by the master" --- so the master holds the request out through the
+    // acknowledgement, and lets go only when the cpu lifts -MEMRQ. A slave
+    // that obeys the specification holds its answer against the request, and
+    // one whose request was withdrawn under it would be left driving the bus
+    // at a master that had gone.
+    //
+    // Nothing above sees this: -MEMGRANT, -MEMACK, -LOADMD and NXM TIMEOUT
+    // are all made from the state alone, and dropping the request the moment
+    // the cycle was acknowledged moved none of them --- through this path or
+    // through the whole memory path either. Issue #2.
+    if (rq_before && !dut->dev_rq && !r.n_memrq)
+      bad += Fail(r, "-XBUS.RQ, withdrawn while the cpu still wants the cycle",
+                  0, 1);
+    // And the coverage that says the rule is not vacuous: the acknowledgement
+    // has to arrive with the request still out, on some cycle.
+    if (!r.n_memack && memack_last) {
+      if (dut->dev_rq) ++ack_with_rq;
+      else
+        bad += Fail(r, "-XBUS.RQ at the acknowledgement", 0, 1);
+    }
+    memack_last = r.n_memack;
 
     dut->clk = 0;
     dut->eval();
@@ -166,7 +199,8 @@ int main(int argc, char **argv) {
               {"cycles answered at once", instant},
               {"cycles slower than a microcycle", over_a_cycle},
               {"requests standing at the master clock edge", rq_on_edge},
-              {"cycles that timed out", timeouts}};
+              {"cycles that timed out", timeouts},
+              {"cycles acknowledged with -XBUS.RQ still out", ack_with_rq}};
   for (const auto &w : want)
     if (w.n == 0) {
       std::fprintf(stderr, "FAIL: the trace has no %s\n", w.what);
@@ -177,7 +211,9 @@ int main(int argc, char **argv) {
   std::printf(
       "ok: %ld ticks agree with muir's busint::Busint\n"
       "    %ld cycles --- %ld reads, %ld writes, %ld answered at once, "
-      "%ld slower than a microcycle, %ld timed out\n",
-      checked, grants, reads, writes, instant, over_a_cycle, timeouts);
+      "%ld slower than a microcycle, %ld timed out\n"
+      "    %ld acknowledged with -XBUS.RQ still out\n",
+      checked, grants, reads, writes, instant, over_a_cycle, timeouts,
+      ack_with_rq);
   return 0;
 }
