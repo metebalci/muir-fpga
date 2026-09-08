@@ -106,11 +106,12 @@ module cadr_microcycle #(
     input  var logic [1:0]  mode_speed,   // {SPEED1, SPEED0}, bits 4 and 3
 
     // --- what the memory path will make.  Each leaves with its own slice.
-    input  var logic [31:0] md,           // MD, the memory data register
     input  var logic        n_memack,     // -MEMACK, off the cables
     input  var logic        n_memgrant,   // -MEMGRANT: "low when the processor
                                           //   has the bus.  Do not hang when
                                           //   this line is high!"
+    input  var logic        n_loadmd,     // -LOADMD, which strobes MD
+    input  var logic [31:0] rdata,        // MEM<31:0> into the cpu
     input  var logic        sintr,        // SINTR, the interrupt off the cables
 
     // --- the machine, as `Rtl::signals` and `Rtl::spy` name it
@@ -138,6 +139,10 @@ module cadr_microcycle #(
     // --- one tick per microcycle, at the boundary: the edge every register
     // --- above takes.  What stands before it is that microcycle's.
     // --- the cables to the bus interface
+    output var logic [31:0] md,           // MD, the memory data register
+    output var logic [21:0] phys,         // -PMA21..8 and -VMA7..0
+    output var logic [31:0] wdata,        // MEM<31:0> out of the cpu
+    output var logic        mclk,         // MCLK7, the microcycle boundary
     output var logic        n_memrq,      // -MEMRQ, a level while a cycle is wanted
     output var logic        memstart,     // MEMSTART, which also addresses the map
     output var logic        rdcyc,
@@ -944,6 +949,47 @@ module cadr_microcycle #(
   logic [31:0] mf_map;
   assign mf_map = {!pfw, !pfr, 1'b0, vmap, vmo};
 
+  // page MD 2A20-2B14, and the address the cables carry.
+  //
+  // MD is clocked two ways and only two: `MDSEL AND -CLK2C` at VCTL2 1D27,
+  // which is this instruction's own store, and `-LOADMD` from the bus.
+  //
+  // **`-LOADMD` IS GATED BY RDCYC HERE, NOT AT THE INTERFACE.**  MIT's own
+  // words, as `src/rtl.rs` quotes them: "-LOADMD equals MEMACK **and RDCYC**
+  // ... Loads MD from MEM, asynchronous with clock ... the high-going edge
+  // loads MD.  It takes care of deskewing the data."  The interface puts
+  // -LOADMD out on every acknowledgement, read or write --- `Busint` sets
+  // `loadmd: ack` without looking at the direction, and so does
+  // `cadr_busint_xbus.sv` --- and it is `Rtl::bus_cycle`'s `if !self.wrcyc`
+  // that keeps a write from strobing MD.  So the RDCYC term belongs on this
+  // side of the cables, and a write leaves MD alone whatever the bridge has
+  // on `rdata`.
+  logic n_loadmd_q, loadmd_edge, md_pending;
+  logic [31:0] md_held;
+  assign loadmd_edge = !n_loadmd && n_loadmd_q && rdcyc;
+
+  // **THE WORD IS HELD UNTIL THE MACHINE NEXT LOOKS.**  `-LOADMD` is
+  // asynchronous --- "Loads MD from MEM, asynchronous with clock" --- and it
+  // arrives in the middle of a microcycle, but `Rtl::after_memack` applies it
+  // only where the engine looks: at the microcycle boundary, at each master
+  // clock through a `-WAIT`, and at the end of a `-HANG`'s stretch.  A fabric
+  // that moved MD the instant the strobe came would change it under a read
+  // phase that has already settled, and the microcycle reading MD would see
+  // the *next* word.  Measured at microcycle 1,422,502 of the System band,
+  // where the acknowledgement lands inside the cycle and muir's MD does not
+  // move until the one after it.
+  //
+  // So: latched at the strobe, committed at the boundary --- or straight
+  // away while -HANG has the generator parked, since there is no boundary
+  // then and the stretch exists precisely so the word is in MD for the read
+  // phase.
+
+  // "The bus interface holds the address and, on a write, the word, until the
+  // cycle ends: `xspec.text.3` requires the master to keep them stable from
+  // 80 ns before -XBUS.RQ until the -XBUS.ACK signal drops."  So they are
+  // captured at the edge -MEMRQ goes out on, not read again when the answer
+  // arrives.
+
   // page VMA: the register, and what it takes.  An instruction fetch puts the
   // location counter's word address up instead of OB.
   logic destvma, destmdr, vmaenb, wmap, wmapd;
@@ -1084,6 +1130,13 @@ module cadr_microcycle #(
       rd_in_progress <= 1'b0;
       vma          <= 32'd0;
       wmapd        <= 1'b0;
+      md           <= 32'd0;
+      phys         <= 22'd0;
+      wdata        <= 32'd0;
+      mclk         <= 1'b0;
+      n_loadmd_q   <= 1'b1;
+      md_held      <= 32'd0;
+      md_pending   <= 1'b0;
       // What the latch at VMEMDR comes up holding. `Chip::power_on` puts
       // every register's outputs low, and the latch's are the active-low
       // -LVMO23, -LVMO22 and -PMA21..8, so the positive word is the two
@@ -1103,6 +1156,18 @@ module cadr_microcycle #(
       // The acknowledgement's two delays, which run on their own and not on
       // the cpu clock: a stall is what they are there to end.
       n_memack_q <= n_memack;
+      n_loadmd_q <= n_loadmd;
+      // MCLK7 across the cables: the same boundary the registers move on, so
+      // that a request made at this edge is the one the priority logic sees.
+      mclk       <= mclk_edge;
+      // "the high-going edge loads MD"
+      if (loadmd_edge) begin
+        md_held    <= rdata;
+        md_pending <= 1'b1;
+      end else if (md_pending && (mclk_edge || hang)) begin
+        md         <= md_held;
+        md_pending <= 1'b0;
+      end
       if (memack_edge) begin
         mfinish_t  <= 6'(MFINISHD_T);
         rdfinish_t <= 6'(RD_FINISH_T);
@@ -1207,9 +1272,13 @@ module cadr_microcycle #(
         // page VCTL1: the memory cycle.  MEMPREPARE is the write phase's
         // level and MEMSTART its registered copy, so a cycle prepared here
         // runs over the next microcycle.
+        if (destmdr) md <= ob;
         if (memstart) lvmo <= vmo;
         if (memstart && vmaok) begin
           mbusy      <= 1'b1;
+          // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
+          phys       <= {vmo[13:0], vma[7:0]};
+          wdata      <= md;
           mfinish_t  <= 6'd0;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
           // falling time until -MEMACK gives it one.
