@@ -90,3 +90,65 @@ so `dialout` membership is not needed. If that is too permissive, join
 
 `ftdi_sio` claims both interfaces and creates both nodes. That is expected:
 libusb detaches it from the JTAG interface once it has write permission.
+
+## Programming a bitstream
+
+    open_hw_manager
+    connect_hw_server -url <board-machine>:3121
+    current_hw_target [lindex [get_hw_targets] 0]
+    open_hw_target
+    current_hw_device [lindex [get_hw_devices xc7z020_1] 0]
+    set_property PROGRAM.FILE build/bitstream/cadr_arty.bit [current_hw_device]
+    program_hw_devices [current_hw_device]
+
+`vivado/program.tcl` does this and checks the answer. **What says it worked is
+the DONE bit**, not the absence of an error: `program_hw_devices` can complete
+against a device that did not take the configuration.
+
+    refresh_hw_device [current_hw_device]
+    get_property REGISTER.IR.BIT5_DONE [current_hw_device]
+
+## A bitstream does not start the PS
+
+**This is the one that will waste an afternoon.** Programming the PL over JTAG
+configures the fabric and nothing else. The Zynq's processor system --- its
+PLLs, `FCLK_CLK0`, the DDR controller, every `S_AXI_HP` port --- stays in reset
+until `ps7_init` has run, which normally happens in the FSBL from a boot image
+and does not happen at all when a `.bit` is downloaded on its own.
+
+So a design whose fabric clock comes from `FCLK_CLK0` is *dead* on a
+JTAG-programmed board, and a design that reads DDR gets no answer. Neither
+looks like a missing initialisation: the first looks like a bitstream that did
+not load and the second like a broken memory path.
+
+Two consequences, both deliberate in `rtl/cadr_arty.sv`:
+
+- **The fabric clock comes from an MMCM off the board's 125 MHz pin, not from
+  the PS.** It runs the moment the bitstream loads. A bring-up where nothing
+  moves until a second thing works has two unknowns in it.
+- **Anything needing DDR is a program-then-`ps7_init` test**, not a
+  program-and-look one. From XSDB: `connect`, `targets -set -filter {name =~
+  "APU*"}`, `source ps7_init.tcl`, `ps7_init`, `ps7_post_config`.
+
+## What the LEDs say
+
+    LD0   the fabric is clocked           free-running, about 3 Hz at 200 MHz
+    LD1   microcycles are retiring        dark while the machine is stalled
+    LD2   a cycle reached the NXM timer
+    LD3   the datapath is moving
+
+**LD0 is the one to look at first and that is why it is first.** It answers
+"is this running at all", and every other light is meaningless until it says
+yes. Without it, "not programmed", "the MMCM never locked" and "the machine
+stalled" are three different problems that all look like a dark board.
+
+Read them in order:
+
+    LD0 dark                  not programmed, or the MMCM never locked
+    LD0 blinking, LD1 dark    clocked, but not retiring microcycles
+    LD0 and LD1 blinking      the machine is running
+
+**With no memory behind `mem_*`** --- which is every build before the PS block
+lands --- the expected reading is **LD0 blinking and LD1 dark**: the boot PROM
+computes for 535,791 microcycles, reaches its first main-memory cycle, and
+stalls there for ever. LD1 dark is the correct answer there, not a fault.
