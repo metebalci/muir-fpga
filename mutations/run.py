@@ -213,6 +213,30 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The machine behind real memory, which is what `DDR=1` puts on the part.
+    # Same module list as `machine` and a different question: `machine` asks
+    # whether the fabric agrees with muir, and this asks what it does where
+    # muir cannot follow it --- past microcycle 537,900, where muir's modelled
+    # disk controller answers the boot PROM's polls and the board's does not
+    # exist.  Its reference is the boot PROM's own page-0 parity loop with a
+    # poison in it and a modelled DDR3 that answers at a delay of its own.
+    #
+    # No `golden`: there is no trace to hand it.  The testbench runs the
+    # machine twice from reset, 200 ms of machine time each way, and takes
+    # about fifteen seconds --- the slowest check here that is not a trace.
+    "ddr_boot": {
+        "sources": [
+            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
+            "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
+            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
+            "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_ddr_boot_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "golden": None,
+        "gprom": True,
+    },
     # The probe the board will be read through. `tb/cadr_probe_harness.sv`
     # wires it to `cadr_machine` exactly as `rtl/cadr_arty.sv` does and the
     # testbench shifts all 1,024 samples out through the probe's own JTAG shift

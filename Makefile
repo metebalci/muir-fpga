@@ -26,7 +26,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
-       $(BUILD)/machine.pass $(BUILD)/arty.pass $(BUILD)/probe.pass \
+       $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
+       $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass current
 
 # ---------------------------------------------------------------- phase gen
@@ -218,6 +219,25 @@ $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_machine/Vcadr_machine $(BUILD)/rtl.golden
+	@touch $@
+
+# ------------------------------------------------- the machine behind memory
+
+# The machine with a modelled DDR3 behind `mem_*`, which is what `DDR=1` puts
+# on the part. The one check here that muir cannot back past microcycle
+# 537,900 --- muir has a modelled disk controller and the board has none --- so
+# its reference is the boot PROM's own page-0 parity loop, poisoned from
+# outside, and what the machine may NOT do with what it reads.
+#
+# It runs the machine twice, 200 ms of machine time each way, and takes about
+# twenty seconds.
+$(BUILD)/obj_ddr_boot/Vcadr_machine: $(MACHINE) tb/cadr_ddr_boot_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_ddr_boot \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_ddr_boot_tb.cpp)
+
+$(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_ddr_boot/Vcadr_machine
 	@touch $@
 
 # ------------------------------------------------- the machine with no memory

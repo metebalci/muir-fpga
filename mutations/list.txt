@@ -2105,6 +2105,141 @@
 @end
 
 
+# ================================================== the machine, behind DDR ===
+#
+# `build/ddr_boot.pass` runs the same eight modules as the composed check
+# against a different question.  `machine` asks whether the fabric agrees with
+# muir; this asks what it does where muir cannot follow.  muir has a modelled
+# disk controller that answers the boot PROM's status polls and the board has
+# `device_ack` tied low and none at all, so past about microcycle 537,900 the
+# two machines part company by design.  What stands in for a reference is the
+# boot PROM's own PAGE-0-PARITY-FIX --- 512 bus cycles, a read and a write of
+# each of physical 0..377, the write carrying the word the read returned ---
+# poisoned from outside, injectively in the address, against a modelled DDR3
+# that answers at a delay that varies per transaction.
+#
+# WHAT THIS CHECK CAN AND CANNOT SEE ABOUT A WRITE, said here once so that
+# nobody files the gap twice.  The parity loop is an IDENTITY copy: every
+# write carries the word already at that address.  So a bridge that wrote the
+# wrong word is caught only when the wrong word is DISTINGUISHABLE from the
+# right one --- the address mixed in, the halves swapped --- and a bridge that
+# wrote the word it had just READ is not caught at all, because in this
+# program they are the same word.  That is an equivalence on this program, not
+# a hole, and it is the control store's all-zero pass one bus along.  A
+# configuration that once broke it existed: with an unanswered read handing MD
+# the bridge's stale word, a poison with bit 0 set in word 255 made the PROM
+# write a CCW to physical 777.  **That behaviour was decided against** --- an
+# unanswered read gives MD zero --- and configuration B of the testbench is
+# now what asserts it never happens.  The witness went with it; the write path
+# stands on step two of the board plan, which proved it on silicon.
+
+@mutation the-bridge-holds-the-word-past-its-cycle
+@check ddr_boot
+@file rtl/cadr_xbus_ddr.sv
+@note THE BUG THIS CHECK WAS BUILT AROUND, restored.  `rdata` is the slave's
+@note driver onto MEM<31:0>; held across cycles it hands MD a word on every
+@note cycle nothing answered, because `cadr_memory_path.sv` falls through to
+@note `memory_rdata` and -LOADMD is asserted on the NXM timer's
+@note acknowledgement too.  On the DDR board that word is the last word of
+@note page 0 and bit 0 of it is what the boot PROM reads as a ready disk
+@note controller, so what happened to be in main memory decided where the
+@note machine went.
+@note
+@note Caught by configuration B and by nothing weaker, measured rather than
+@note assumed: aimed in turn at `machine`, `memory_path` and `probe`, it
+@note SURVIVES all three.  None of them ever leaves a word in this register
+@note and then runs a cycle nothing answers --- `machine` answers all 16,951
+@note device cycles from the trace, and `memory_path`'s stimulus never does
+@note either.  The line that
+@note fires first is "B: 513 DDR transactions, wanting 512", and the run also
+@note reports the machine ending at PC 40, one word of the window not its
+@note poison, and configuration B running 537,978 microcycles against A's
+@note 592,681.
+@old
+      done  <= 1'b0;
+      rdata <= 32'd0;
+    end else if (mem_done && !done) begin
+@new
+      done  <= 1'b0;
+    end else if (mem_done && !done) begin
+@end
+
+@mutation the-read-address-is-rotated
+@check ddr_boot
+@file rtl/cadr_xbus_ddr.sv
+@note AT THE READ ONLY, and that is the whole of the record.  `mem_addr`
+@note addresses this slave's write as well as its read, so a bijection
+@note applied to both relabels the storage consistently --- written to the
+@note wrong entry, read from the same wrong entry --- and nothing downstream
+@note can tell.  CLAUDE.md records that as the second class of equivalent
+@note mutant found in this project, one step from being filed as a hole
+@note against a check doing its job.  Here the memory is the testbench's and
+@note the address sequence is known from `promh.text` before the machine
+@note runs, so the read alone is what has to move.
+@note
+@note Written as a rotation rather than a truncation so that every bit of
+@note `phys` stays used and lint does not do the catching.
+@old
+  assign mem_addr  = main_byte_address(phys);
+@new
+  assign mem_addr  = main_byte_address(dev_write ? phys : {phys[20:0], phys[21]});
+@end
+
+@mutation the-write-never-reaches-the-memory
+@check ddr_boot
+@file rtl/cadr_xbus_ddr.sv
+@note A write that never leaves the bridge.  `dev_write` stays read, through
+@note `mem_write`, so lint has nothing to say about it.
+@note
+@note The cycle then ends on the NXM timer instead of on an answer, which is
+@note what makes this visible at all: the WORD written cannot be checked
+@note against an identity copy, but the transaction can be counted, and 256
+@note of them stop happening.
+@old
+  assign mem_req   = asked && !done;
+@new
+  assign mem_req   = asked && !done && !dev_write;
+@end
+
+@mutation the-write-carries-the-address-mixed-into-the-word
+@check ddr_boot
+@file rtl/cadr_xbus_ddr.sv
+@note The shadow-memory lesson at the far end of the path: a bridge writing
+@note the address instead of the data.  Mixed in with an XOR rather than
+@note replacing the word, so that `wdata` stays read at every bit --- lint
+@note catches a signal nobody reads, and the catching belongs to the check.
+@note
+@note An identity copy is what makes this visible without a shadow memory at
+@note all: the word written back must equal the word read, and the testbench
+@note holds both.
+@old
+  assign mem_wdata = wdata;
+@new
+  assign mem_wdata = wdata ^ main_byte_address(phys);
+@end
+
+@mutation the-word-arrives-with-its-halves-swapped
+@check ddr_boot
+@file rtl/cadr_xbus_ddr.sv
+@note The read data lane crossed.  Every bit of `mem_rdata` stays used, which
+@note is the only way to write it: dropping half would leave the other half
+@note unread and lint would reject the mutant before the check saw it.
+@note
+@note WHAT CATCHES IT IS THE IDENTITY, and by a route worth writing down.
+@note The harness records what the MODEL returned, not what the bridge
+@note latched, so the read is compared against its poison and agrees; what
+@note disagrees is the write-back, which carries the swapped word.  Measured:
+@note every one of the 256 fails on "word N was read as X and written back as
+@note Y, so the copy is not the identity", and none on the read.  A harness
+@note that had taken the read from the DUT would have swapped both ends and
+@note seen nothing --- the shadow-memory lesson one move along.
+@old
+      if (!dev_write) rdata <= mem_rdata;
+@new
+      if (!dev_write) rdata <= {mem_rdata[15:0], mem_rdata[31:16]};
+@end
+
+
 # ======================================================== the top level ===
 #
 # `rtl/cadr_arty.sv` is the only file here that cannot be simulated ---
