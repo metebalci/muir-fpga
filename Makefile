@@ -24,7 +24,7 @@ VFLAGS := --cc --exe --build -Wall
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
-       $(BUILD)/axi_widen.pass \
+       $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/machine.pass $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass current
@@ -91,6 +91,40 @@ $(BUILD)/obj_axi_widen/Vcadr_axi_widen: rtl/cadr_axi_widen.sv tb/cadr_axi_widen_
 
 $(BUILD)/axi_widen.pass: $(BUILD)/obj_axi_widen/Vcadr_axi_widen
 	$(BUILD)/obj_axi_widen/Vcadr_axi_widen
+	@touch $@
+
+# ------------------------------------------------------------- the witness
+
+# `rtl/cadr_prove.sv` is what goes on the board ahead of the machine, in the
+# two steps that decide whether the memory port works at all: one where the
+# fabric writes a word and a debugger reads it, and one where a debugger
+# writes and the fabric reads. Its other half on the board is an observer
+# OUTSIDE the design, which is the whole reason those steps are worth doing;
+# here that observer is a 64-bit AXI3 slave with a model memory the DUT
+# reaches only through the port.
+#
+# THE HARNESS AND NOT THE MODULE, because the question is not whether a state
+# machine sequences but whether a word ends up at an address, and there are
+# three modules between the two. `tb/cadr_prove_harness.sv` wires the adapter
+# and the widening underneath exactly as `rtl/cadr_arty.sv`'s `g_ddr` does.
+# It is in `tb/` for the reason `tb/cadr_arty_stubs.sv` gives: both Vivado
+# scripts read `[glob rtl/*.sv]`.
+#
+# No muir reference, as there is none for the adapter or the widening. Held to
+# the property --- the word lands at the address it was asked for and nowhere
+# else, the beat's neighbour is untouched, a wrong word does not read as a
+# match --- and to the 80 ns the bus specification puts on a master, which is
+# what `rtl/cadr_ddr.xdc` relaxes the adapter's address registers on.
+PROVE_SRC := rtl/cadr_prove.sv rtl/cadr_axi_master.sv rtl/cadr_axi_widen.sv \
+             tb/cadr_prove_harness.sv
+
+$(BUILD)/obj_prove/Vcadr_prove_harness: $(PROVE_SRC) tb/cadr_prove_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Irtl -Mdir $(BUILD)/obj_prove \
+	    --top-module cadr_prove_harness $(PROVE_SRC) \
+	    $(abspath tb/cadr_prove_tb.cpp)
+
+$(BUILD)/prove.pass: $(BUILD)/obj_prove/Vcadr_prove_harness
+	$(BUILD)/obj_prove/Vcadr_prove_harness
 	@touch $@
 
 # -------------------------------------------------------------- memory path
@@ -228,24 +262,48 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 # without Vivado, and what it holds is that all 620 PS7 pins are connected:
 # a pin the generator did not write is a PINMISSING against
 # `tb/cadr_ps7_stub.sv`, which carries the same 620 off the same parse.
+#
+# FIVE TIMES NOW, and `$(MACHINE)` COMES FIRST IN EVERY ONE. The top level
+# takes the witness's address from `cadr_ddr_map::main_byte_address`, and a
+# package has to be parsed before the file that reads it --- so the machine's
+# sources, which carry the package, precede `rtl/cadr_arty.sv` on every
+# command line. `mutations/run.py`'s `arty_check` already ordered them that
+# way; this is the two descriptions coming back into agreement.
+#
+# The two new boards are the ones `rtl/cadr_prove.sv` builds: the fabric
+# writing a word, and the fabric reading one back on a button. They are a
+# branch only those builds reach, and `PROVE=2`'s is the only one that
+# elaborates the button synchroniser at all.
 $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
                     rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-                    rtl/cadr_axi_widen.sv \
+                    rtl/cadr_axi_widen.sv rtl/cadr_prove.sv \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv rtl/cadr_arty.sv $(MACHINE)
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) rtl/cadr_arty.sv
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv rtl/cadr_arty.sv \
-	    rtl/cadr_probe.sv $(MACHINE)
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) \
+	    rtl/cadr_arty.sv rtl/cadr_probe.sv
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GDDR=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
-	    rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-	    rtl/cadr_axi_widen.sv $(MACHINE)
+	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
+	    rtl/cadr_axi_widen.sv
+	$(VERILATOR) --lint-only -Wall -Irtl \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GPROVE=1 \
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
+	    rtl/cadr_axi_widen.sv rtl/cadr_prove.sv
+	$(VERILATOR) --lint-only -Wall -Irtl \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GPROVE=2 \
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
+	    rtl/cadr_axi_widen.sv rtl/cadr_prove.sv
 	@touch $@
 
 # --------------------------------------------------------------- the probe
