@@ -145,7 +145,24 @@ module cadr_busint_xbus (
   logic [8:0] arb_t;            // ticks since -SACK went out
   logic       ub_master;        // LMUB MASTER: this machine has the Unibus
   logic       ssyn_seen;
-  logic [9:0] ssyn_at;
+  // **THE TWO UNIBUS INSTANTS ARE HELD, NOT ADDED TO A CAPTURED TIME.**  This
+  // used to be `ssyn_at`, the value of `elapsed` when -UB SSYN came back, with
+  // the two deadlines made as `elapsed >= ssyn_at + UB_*_T` where they are
+  // read.  That put a ten-bit adder in front of the comparator on the path
+  // that ends at `-MEMACK`, which leaves this module, crosses to the
+  // processor and lands on `mfinish_t` and `rdfinish_t` --- counters, so
+  // genuinely tick-rate and rightly outside the multicycle exception.  On the
+  // board flow, where 200 MHz comes through an MMCM and carries its
+  // uncertainty, that cost 198 ps:
+  //
+  //     busint/ssyn_at_reg[3]/C -> processor/mfinish_t_reg[3]/D
+  //
+  // Adding once, at the tick SSYN arrives, and comparing against the sum is
+  // the same arithmetic with the adder moved off the path --- the move
+  // `cadr_phase_gen.sv` makes for its taps, and for the same reason.  Nothing
+  // else read `ssyn_at`, so it is gone rather than kept alongside.
+  logic [9:0] ub_ack_at;      // when -LMACK is due
+  logic [9:0] ub_md_at;       // when the MD strobe is due
   logic       write;            // WRCYC latched for the cycle being run
   logic [9:0] elapsed;          // ticks since the grant
   logic       answered;         // the slave has answered; the deskew is running
@@ -163,8 +180,8 @@ module cadr_busint_xbus (
   // "MSYN OUT drops at SSYN T100 and -LOADMD rises with it, so the word lands
   // 50 ns *before* the acknowledgement, where an Xbus word lands with it."
   logic ub_acked, ub_loadmd;
-  assign ub_acked  = ssyn_seen && (elapsed >= ssyn_at + 10'(UB_ACK_T));
-  assign ub_loadmd = ssyn_seen && (elapsed >= ssyn_at + 10'(UB_STROBE_T));
+  assign ub_acked  = ssyn_seen && (elapsed >= ub_ack_at);
+  assign ub_loadmd = ssyn_seen && (elapsed >= ub_md_at);
 
   // The slave is giving or taking the word this very tick.
   logic answering;
@@ -213,7 +230,8 @@ module cadr_busint_xbus (
       arb_t       <= 9'd0;
       ub_master   <= 1'b0;
       ssyn_seen   <= 1'b0;
-      ssyn_at     <= 10'd0;
+      ub_ack_at   <= 10'd0;
+      ub_md_at    <= 10'd0;
       write       <= 1'b0;
       elapsed     <= 10'd0;
       answered    <= 1'b0;
@@ -258,7 +276,8 @@ module cadr_busint_xbus (
               answered    <= 1'b0;
               answered_at <= 10'd0;
               ssyn_seen   <= 1'b0;
-              ssyn_at     <= 10'd0;
+              ub_ack_at   <= 10'd0;
+              ub_md_at    <= 10'd0;
               tmr_fell    <= 1'b0;
               tmr_rises   <= 3'd0;
               nxm         <= 1'b0;
@@ -283,7 +302,8 @@ module cadr_busint_xbus (
             answered    <= 1'b0;
             answered_at <= 10'd0;
             ssyn_seen   <= 1'b0;
-            ssyn_at     <= 10'd0;
+            ub_ack_at   <= 10'd0;
+            ub_md_at    <= 10'd0;
             tmr_fell    <= 1'b0;
             tmr_rises   <= 3'd0;
             nxm         <= 1'b0;
@@ -329,8 +349,12 @@ module cadr_busint_xbus (
           if (acked) begin
             state <= ACKED;
           end else if (ub_msyn && ub_ssyn && !ssyn_seen) begin
-            ssyn_seen <= 1'b1;
-            ssyn_at   <= elapsed;
+            ssyn_seen   <= 1'b1;
+            // The sums are made here, where they have a whole tick and are
+            // off the comparator's path. `elapsed` saturates rather than
+            // wraps, so these cannot run away behind it.
+            ub_ack_at   <= elapsed + 10'(UB_ACK_T);
+            ub_md_at    <= elapsed + 10'(UB_STROBE_T);
           end
         end
 

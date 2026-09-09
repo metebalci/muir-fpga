@@ -101,14 +101,65 @@ module cadr_memory_path (
   assign ub_rdata_o = ub_rdata;
   logic [15:0] ub_rdata;
 
+  // **THE DECODE IS TAKEN ONCE AND HELD, and the reason is timing rather than
+  // function.**  `phys` is the far end of the map: `vma` is registered at the
+  // microcycle boundary and the lookup is a ripple through two asynchronous
+  // RAMs, so the address arrives late in the microcycle it belongs to and is
+  // then constant for the whole of it.  Left combinational, the decode
+  // carries that ripple onward into `cadr_xbus_ddr`'s `sel`, out of its
+  // `dev_ack`, through `cadr_busint_xbus` and into `-MEMACK` and `-LOADMD`
+  // --- which land on `n_memack_q` and `n_loadmd_q`, the two edge detectors
+  // that genuinely run at tick rate and so are the two the multicycle
+  // exception must not cover.  The tool then asks a map lookup to happen in
+  // five nanoseconds: `vma_reg[13]/C -> n_loadmd_q_reg/D` at -6.542 ns.
+  //
+  // Registering it once cuts the family at its source.  What reaches the edge
+  // detectors afterwards starts at `is_memory` and is a gate or two; what
+  // reaches `is_memory` starts at `vma` and ends here, between two registers
+  // that both move at the microcycle and are both in the XDC's `slow` set.
+  // Nothing waits a tick for it that was not already waiting a microcycle:
+  // `unibus` is read at the grant, which `cadr_busint_xbus` takes only when
+  // `mclk` is up, and `sel` matters only once `dev_rq` is out, which is after
+  // that grant.
+  //
+  // The decode itself stays combinational and stays exhaustively checked
+  // against `busint::decode`.  This is a register on its outputs, not a
+  // change to what it decides.
+  logic is_memory_c, device_c, nxm_c, unibus_c;
+
   cadr_xbus_decode decode (
       .phys  (phys),
       .boards(boards),
-      .memory(is_memory),
-      .device(device),
-      .nxm   (nxm),
-      .unibus(unibus)
+      .memory(is_memory_c),
+      .device(device_c),
+      .nxm   (nxm_c),
+      .unibus(unibus_c)
   );
+
+  // The same holding, for the Unibus address: it is `phys` with a subtraction
+  // on it and it reaches `elapsed` in the register block, which is a counter
+  // and so is excluded from the exception for the same reason the edge
+  // detectors are.
+  logic [13:0] ub_page;
+  logic [17:0] ub_addr, ub_addr_c;
+  assign ub_page   = phys[21:8] - 14'o37000;
+  assign ub_addr_c = {ub_page[8:0], phys[7:0], 1'b0};
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      is_memory <= 1'b0;
+      device    <= 1'b0;
+      nxm       <= 1'b0;
+      unibus    <= 1'b0;
+      ub_addr   <= 18'd0;
+    end else begin
+      is_memory <= is_memory_c;
+      device    <= device_c;
+      nxm       <= nxm_c;
+      unibus    <= unibus_c;
+      ub_addr   <= ub_addr_c;
+    end
+  end
 
   cadr_busint_xbus busint (
       .clk        (clk),
@@ -130,13 +181,9 @@ module cadr_memory_path (
       .arb_stage  (arb_stage)
   );
 
-  // The Unibus address, as `busint::unibus_address` computes it: the pages
-  // above 0o37000 of the 22-bit physical space, shifted left one because the
-  // Unibus counts bytes.
-  logic [13:0] ub_page;
-  logic [17:0] ub_addr;
-  assign ub_page = phys[21:8] - 14'o37000;
-  assign ub_addr = {ub_page[8:0], phys[7:0], 1'b0};
+  // `ub_addr` is `busint::unibus_address`: the pages above 0o37000 of the
+  // 22-bit physical space, shifted left one because the Unibus counts bytes.
+  // It is computed and held above, with the decode.
 
   // Above the register block there is nothing on this Unibus yet, so the top
   // of the page number goes nowhere: only 0o766xxx is answered.

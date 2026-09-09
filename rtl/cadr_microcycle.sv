@@ -1069,9 +1069,41 @@ module cadr_microcycle #(
   logic mbusy, mbusy_sync, rd_in_progress;
   logic wait_, hang;
 
+  // **`MEMSTART AND VMAOK` IS HELD, and only for the two countdowns.**
+  // `VMAOK` is the far end of the map --- `-PFR` and `-PFW` come off `LVMO`,
+  // which is following `vmo` while `MEMSTART` is up --- so the term is a
+  // ripple through two asynchronous RAMs.  Where it lands on a register that
+  // moves at the microcycle that is a path with a microcycle to happen in,
+  // and the XDC's exception covers it.  Where it lands on `mfinish_t` and
+  // `rdfinish_t` it does not: those are counters, they are their own input,
+  // and the exception must not cover them --- so the tool asks the map for
+  // five nanoseconds and gets 8.349 on `memstart -> rdfinish_t/R`.
+  //
+  // A tick of holding costs nothing here.  `MEMSTART` is registered at the
+  // boundary before the cycle it starts and `vmo` settles early in that
+  // cycle, so the term is constant for the rest of it and this copy is the
+  // same value by the time `cpu_edge` reads it, twenty-odd ticks later.  It
+  // is used for `MEMRQ` as well, and not for `MBUSY`.
+  //
+  // **WHY `MEMRQ` IS SAFE TO HOLD AND `MBUSY` IS NOT.**  The interface reads
+  // `-MEMRQ` at one instant and one only --- `IDLE`'s `if (mclk)`, "the bus
+  // interface only looks at it towards the end of the cycle" --- and the
+  // request has been up since the map settled early in that same microcycle.
+  // `cadr_busint_xbus.sv`'s own note says the two never meet: -MEMRQ "starts
+  // in the middle of a cycle" and is looked at "towards the end".  A tick of
+  // holding cannot reach across that.  `MBUSY` is the opposite case: it is
+  // cleared by `-MFINISHD` in the very tick MCLK1A samples it, which is where
+  // a whole 220 ns wait cycle turns on, so it stays live and is a register
+  // already.
+  //
+  // This is what leaves `vma` reaching `busint`'s `elapsed` --- its enable is
+  // `!n_memrq` --- which was the last of the family, at -3.711 ns.
+  logic memgo, memgo_q;
+  assign memgo = memstart && vmaok;
+
   // `MEMRQ` off the 9S42 at 1E25 is `MEMSTART AND VMAOK OR MBUSY`.
   logic memrq;
-  assign memrq   = (memstart && vmaok) || mbusy;
+  assign memrq   = memgo_q || mbusy;
   assign n_memrq = !memrq;
   assign mbusy_o = mbusy;
   assign mbusy_sync_o = mbusy_sync;
@@ -1087,7 +1119,7 @@ module cadr_microcycle #(
   always_comb begin
     mbusy_next = mbusy;
     if (mfinish_clearing) mbusy_next = 1'b0;
-    if (cpu_edge && memstart && vmaok) mbusy_next = 1'b1;
+    if (cpu_edge && memgo) mbusy_next = 1'b1;
   end
 
   assign wait_ = (destmem && mbusy_sync)
@@ -1122,26 +1154,43 @@ module cadr_microcycle #(
   // ends 10 ns after muir ends it, and there are 11,404 of them in the boot
   // PROM alone.
   //
-  // **AND THE THIRD TICK BELOW IS NOT THE FABRIC'S. IT IS A TESTBENCH'S, AND
-  // IT IS HERE ON PURPOSE.**  `tb/cadr_machine_tb.cpp` places -MEMACK by
-  // rounding muir's off-grid acknowledgement up to the tick and measuring
-  // from the edge marker, which stands a tick after the boundary --- measured,
-  // and that check prints the error on every run. So the composed machine
-  // sees an acknowledgement a tick late, and 28 - 3 makes it exact.
+  // **THE DERIVATION ABOVE PREDICTS 28 - 2. THE MEASUREMENT SAYS 28 - 3, AND
+  // NOBODY KNOWS WHY.**  This comment used to explain the third tick, and the
+  // explanation was wrong.  It said the tick belonged to
+  // `tb/cadr_machine_tb.cpp`, which placed -MEMACK a tick late; correct the
+  // placement, it said, and 28 - 2 would come out exact.
   //
-  // The right number is 28 - 2 and the right fix is to place -MEMACK exactly,
-  // which needs **issue #11** first: with the placement corrected every hang
-  // is exact and a *wait* breaks, at microcycle 536,321, where muir's MBUSY
-  // clear lands 3 ns after a master clock and the fabric's lands on it. A
-  // wait ends at a master clock and notices only what straddles a boundary; a
-  // hang ends at the tap and notices every tick.
+  // Both halves have now been measured and both are false.  The placement
+  // *was* a tick late --- the testbench worked the slave's answer out before
+  // the clock edge rather than after it, so every acknowledgement the
+  // interface makes combinationally, which is every write, arrived a tick
+  // behind: 17 ticks from the grant against muir's 16, on all 5,650 writes,
+  // while reads were already exact at 28.  Fixing it collapses the reported
+  // error to sub-tick.  But 28 - 2 is five nanoseconds long on all 11,301
+  // reads of the boot PROM **whether or not the placement is corrected**, and
+  // 28 - 3 is exact both ways.  So the constant was never compensating for
+  // the testbench, and the derivation is short by a tick for some reason not
+  // yet found.
   //
-  // The alternative was 28 - 2 with a tolerance in the composed check, and
-  // that was tried and reverted: a one-tick tolerance there admitted exactly
-  // the -5 ns on which `the-grant-comes-a-microcycle-early` was caught, and
-  // blinded the check to a grant a whole microcycle early. **A known wrong
-  // number with its reason attached is better than an exact number with a
-  // tolerance hiding the difference** --- and better than both is #11.
+  // What the corrected placement does expose is 58 microcycles, each exactly
+  // one 220 ns wait long --- a *wait* breaking where every hang stays exact,
+  // which is the shape #11 has always had: a wait ends at a master clock and
+  // notices only what straddles a boundary, a hang ends at the tap and
+  // notices every tick.  The obvious predicate for them --- exempt a
+  // microcycle whose bus cycle muir answered off the five-nanosecond grid,
+  // named from the reference and never from the size of the disagreement ---
+  // covers about a third, so it is a fudge and is not here.  The testbench
+  // fix is not committed either, because on its own it turns the composed
+  // check red.
+  //
+  // The other alternative was 28 - 2 with a tolerance in the composed check,
+  // and that was tried and reverted: a one-tick tolerance there admitted
+  // exactly the -5 ns on which `the-grant-comes-a-microcycle-early` was
+  // caught, and blinded the check to a grant a whole microcycle early.
+  //
+  // **So this number is right and we do not know why**, which is a worse
+  // comment to write and a better one to read than the confident wrong story
+  // it replaces.  Left as measured, with #11 holding the question.
   localparam int unsigned MFINISHD_T  = 30 / 5;
   localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
 
@@ -1264,6 +1313,7 @@ module cadr_microcycle #(
       n_memack_q   <= 1'b1;
       mfinish_t    <= 6'd0;
       rdfinish_t   <= 6'd0;
+      memgo_q      <= 1'b0;
       prog_unibus_reset <= 1'b0;
       q            <= 32'd0;
       dc           <= 10'd0;
@@ -1282,6 +1332,7 @@ module cadr_microcycle #(
         md         <= md_held;
         md_pending <= 1'b0;
       end
+      memgo_q <= memgo;
       if (memack_edge) begin
         mfinish_t  <= 6'(MFINISHD_T);
         rdfinish_t <= 6'(RD_FINISH_T);
@@ -1391,18 +1442,21 @@ module cadr_microcycle #(
         // runs over the next microcycle.
         if (destmdr) md <= ob;
         if (memstart) lvmo <= vmo;
-        if (memstart && vmaok) begin
+        if (memgo) begin
           mbusy      <= 1'b1;
           // `self.lvmo` has just taken `vmo`, so the page is this cycle's.
           phys_r     <= {vmo[13:0], vma[7:0]};
           wdata      <= md;
-          mfinish_t  <= 6'd0;
           // READ IN PROGRESS comes up on the same edge for a read, and has no
           // falling time until -MEMACK gives it one.
-          if (rdcyc) begin
-            rd_in_progress <= 1'b1;
-            rdfinish_t     <= 6'd0;
-          end
+          if (rdcyc) rd_in_progress <= 1'b1;
+        end
+        // The two countdowns, off the held copy rather than off the map. See
+        // the note at `memgo_q`: the same decision, one tick older, and the
+        // only difference the tool sees is where the path starts.
+        if (memgo_q) begin
+          mfinish_t <= 6'd0;
+          if (rdcyc) rdfinish_t <= 6'd0;
         end
         // WRCYC and RDCYC are one flip flop, the 74S175 at 1C23 on CLK2A:
         // load or hold, so the direction is the *starting* instruction's and
