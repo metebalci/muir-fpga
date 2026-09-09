@@ -176,7 +176,8 @@ module cadr_arty #(
   //
   // `DDR` puts the Zynq processing system behind the machine's memory port:
   // `cadr_axi_master.sv` turning a request into a transaction, the generated
-  // `cadr_ps7.sv` carrying it to `S_AXI_HP0`, and the widening between them.
+  // `cadr_ps7.sv` carrying it to `S_AXI_HP0`, and `cadr_axi_widen.sv` between
+  // them.
   // **This is the piece with no muir reference at all** --- nothing in MIT's
   // drawings is an AXI master --- so what holds it is the protocol, the
   // read-back, and eventually the board.
@@ -198,15 +199,14 @@ module cadr_arty #(
   // booted it, and nothing in this slice needs FCLK.
   //
   // ONE WORD A TRANSACTION, IN A FULL-WIDTH BEAT. `cadr_axi_master` speaks 32
-  // bits; `S_AXI_HP0` is used at its native 64, which is what keeps
-  // `ps7_init` something we use rather than something we own --- at 64 bits
-  // any correct Arty Z7-20 `ps7_init` works unmodified. So the beat is the
-  // port's full width, `AWSIZE` 8 bytes, with the byte strobes choosing which
-  // half of it the word belongs in and a lane select on the way back.
-  // **A narrow transfer --- `AWSIZE` of 4 bytes on a 64-bit port --- is legal
-  // AXI and is not used here.** Whether the AFI port and the memory
-  // controller handle one as well was sidestepped rather than answered, and a
-  // full-width beat with strobes needs no answer to it.
+  // bits and `S_AXI_HP0` is used at its native 64; the beat is the port's
+  // full width, with the byte strobes choosing which half of it the word
+  // belongs in and a lane select on the way back. That conversion is
+  // `rtl/cadr_axi_widen.sv` and its header is the argument for all of it ---
+  // including why it is a module: this file cannot be simulated, so anything
+  // written here is held by lint and the fitter and nothing else, and a lane
+  // selected from the wrong channel is neither a lint error nor a fitter
+  // one.
   if (DDR != 0) begin : g_ddr
 
     // The port's reset, out of the PS at whatever moment software runs
@@ -233,6 +233,9 @@ module cadr_arty #(
     logic        mem_error;
 
     // The port's side, 64 bits wide.
+    logic [31:0] hp0_awaddr, hp0_araddr;
+    logic [3:0]  hp0_awlen, hp0_arlen;
+    logic [1:0]  hp0_awsize, hp0_arsize;
     logic [63:0] hp0_wdata, hp0_rdata;
     logic [7:0]  hp0_wstrb;
 
@@ -254,30 +257,38 @@ module cadr_arty #(
         .m_axi_rvalid(rvalid), .m_axi_rready(rready)
     );
 
-    // The widening. The address is the beat's, so the low three bits go; the
-    // word's own bit 2 says which half of the beat it is, and it is taken
-    // from the adapter's registered address rather than from `mem_addr`,
-    // because that is the address the transaction is actually at.
-    assign hp0_wdata = {wdata, wdata};
-    assign hp0_wstrb = awaddr[2] ? {wstrb, 4'b0000} : {4'b0000, wstrb};
-    assign rdata     = araddr[2] ? hp0_rdata[63:32] : hp0_rdata[31:0];
+    // The widening: `rtl/cadr_axi_widen.sv`, and it is a module rather than
+    // the six assignments it used to be here because this file cannot be
+    // simulated and a module can. Its header has the whole of the conversion;
+    // what belongs here is only that the payload goes through it and every
+    // handshake does not.
+    cadr_axi_widen u_widen (
+        .s_awaddr(awaddr), .s_awlen(awlen), .s_awsize(awsize),
+        .s_wdata(wdata), .s_wstrb(wstrb),
+        .s_araddr(araddr), .s_arlen(arlen), .s_arsize(arsize),
+        .s_rdata(rdata),
+        .m_awaddr(hp0_awaddr), .m_awlen(hp0_awlen), .m_awsize(hp0_awsize),
+        .m_wdata(hp0_wdata), .m_wstrb(hp0_wstrb),
+        .m_araddr(hp0_araddr), .m_arlen(hp0_arlen), .m_arsize(hp0_arsize),
+        .m_rdata(hp0_rdata)
+    );
 
     cadr_ps7 u_ps7 (
         .hp0_aclk(clk),
         .hp0_aresetn(hp0_aresetn),
-        .hp0_awaddr({awaddr[31:3], 3'b000}),
+        .hp0_awaddr(hp0_awaddr),
         // AXI3 at the port: four bits of length, two of size. One beat, and
         // the beat is the port's whole width.
-        .hp0_awlen(awlen[3:0]),
-        .hp0_awsize(2'b11),
+        .hp0_awlen(hp0_awlen),
+        .hp0_awsize(hp0_awsize),
         .hp0_awburst(awburst),
         .hp0_awvalid(awvalid), .hp0_awready(awready),
         .hp0_wdata(hp0_wdata), .hp0_wstrb(hp0_wstrb),
         .hp0_wlast(wlast), .hp0_wvalid(wvalid), .hp0_wready(wready),
         .hp0_bresp(bresp), .hp0_bvalid(bvalid), .hp0_bready(bready),
-        .hp0_araddr({araddr[31:3], 3'b000}),
-        .hp0_arlen(arlen[3:0]),
-        .hp0_arsize(2'b11),
+        .hp0_araddr(hp0_araddr),
+        .hp0_arlen(hp0_arlen),
+        .hp0_arsize(hp0_arsize),
         .hp0_arburst(arburst),
         .hp0_arvalid(arvalid), .hp0_arready(arready),
         .hp0_rdata(hp0_rdata), .hp0_rresp(rresp), .hp0_rlast(rlast),
@@ -292,21 +303,6 @@ module cadr_arty #(
       else if (mem_error) error_seen <= 1'b1;
     end
     assign ddr_error = error_seen;
-
-    // WHAT THE ADAPTER SAYS THAT THE PORT DOES NOT TAKE. `awsize` and
-    // `arsize` say four bytes, which is the word and not the beat: the beat
-    // is eight and the strobes above are what make that the same thing. The
-    // top nibble of `awlen` and `arlen` is AXI4's; AXI3 carries four bits and
-    // both are zero anyway, one beat being one beat in either. And the bottom
-    // two bits of either address are a word address shifted twice into a base
-    // that is 256 MB aligned, so they are zero and the beat address drops
-    // them along with bit 2, which the strobes and the lane select carry
-    // instead.
-    /* verilator lint_off UNUSEDSIGNAL */
-    logic unused_ddr;
-    assign unused_ddr = ^{awsize, arsize, awlen[7:4], arlen[7:4],
-                          awaddr[1:0], araddr[1:0]};
-    /* verilator lint_on UNUSEDSIGNAL */
 
   end else begin : g_nomem
 

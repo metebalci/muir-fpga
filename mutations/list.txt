@@ -1068,6 +1068,152 @@
 @end
 
 
+# ============================================================ the widening ===
+#
+# `rtl/cadr_axi_widen.sv`: the machine's 32-bit word in `S_AXI_HP0`'s 64-bit
+# beat.  Six assignments, and until they were pulled out into a module they
+# lived in `rtl/cadr_arty.sv`'s `g_ddr`, where nothing could reach them --- the
+# top level has an `MMCME2_BASE` and a `PS7` in it and Verilator has neither,
+# so lint and the fitter were the whole of the evidence.  Every mutation below
+# builds, lints, fits and programs; none of them is anything but a machine that
+# reads back the wrong word.
+#
+# WHAT THE CHECK IS.  `tb/cadr_axi_widen_tb.cpp` applies the DUT's own `m_wdata`
+# and `m_wstrb` into a model beat the *stimulus* chose the index of, and
+# compares the whole beat --- both halves --- against a shadow the stimulus
+# filled.  The memory is poisoned rather than zeroed, so a wrong lane always has
+# a wrong answer to return, and the two channels are driven independently, so a
+# lane selected from the wrong one of them shows.  The one thing that structure
+# cannot catch is an address bug --- a model keyed by the DUT's address moves
+# with it --- so the beat address is compared directly against what the
+# stimulus address should have produced, over addresses whose every bit above
+# the beat boundary takes both values.
+
+@mutation the-read-lane-is-taken-from-the-wrong-half
+@check axi_widen
+@file rtl/cadr_axi_widen.sv
+@note The lane select inverted: a read of the low word gives the high one and
+@note the other way about. Both halves stay read, so lint has nothing to say
+@note about it, and on the board it is a machine whose every other main-memory
+@note read is a different word.
+@note
+@note This is the mutation the poison exists for. Against a model memory of
+@note zeros the first read of any beat returns zero whichever half it takes,
+@note and it is only the second that could disagree.
+@old
+  assign s_rdata = s_araddr[2] ? m_rdata[63:32] : m_rdata[31:0];
+@new
+  assign s_rdata = s_araddr[2] ? m_rdata[31:0] : m_rdata[63:32];
+@end
+
+@mutation the-read-lane-is-selected-by-the-write-address
+@check axi_widen
+@file rtl/cadr_axi_widen.sv
+@note Each direction has to take its own address: the strobes are placed by
+@note `s_awaddr` and the lane is selected by `s_araddr`, because those are the
+@note addresses the two transactions are at. `cadr_axi_master` holds each
+@note until the next transaction of that kind replaces it, so on a read
+@note `awaddr` is some earlier write's address and agrees with `araddr` about
+@note bit 2 half the time. A testbench that drove one address into both
+@note channels would never see this.
+@note
+@note Written as an XOR rather than as a substitution: replacing `s_araddr[2]`
+@note outright leaves it unread everywhere --- the beat address takes 31:3 ---
+@note and Verilator would reject the mutation instead of the check catching it.
+@old
+  assign s_rdata = s_araddr[2] ? m_rdata[63:32] : m_rdata[31:0];
+@new
+  assign s_rdata = (s_araddr[2] ^ s_awaddr[2]) ? m_rdata[63:32] : m_rdata[31:0];
+@end
+
+@mutation the-write-reaches-both-halves-of-the-beat
+@check axi_widen
+@file rtl/cadr_axi_widen.sv
+@note The strobes are the whole of what keeps a write out of the half it is
+@note not addressed to: the word is offered in both halves of the beat, so a
+@note strobe pattern that opens both writes the neighbouring word as well.
+@note Silent on the board --- every read of the addressed word is right, and
+@note the word beside it is quietly destroyed.
+@note
+@note One arm only, so `s_awaddr[2]` stays read. The check catches it twice
+@note over, once as a strobe pattern and once as the beat the write left
+@note behind, and both messages are printed.
+@old
+  assign m_wstrb = s_awaddr[2] ? {s_wstrb, 4'b0000} : {4'b0000, s_wstrb};
+@new
+  assign m_wstrb = s_awaddr[2] ? {s_wstrb, s_wstrb} : {4'b0000, s_wstrb};
+@end
+
+@mutation the-half-selecting-bit-leaks-into-the-beat-address
+@check axi_widen
+@file rtl/cadr_axi_widen.sv
+@note The beat address is the word's with the low three bits cleared. Clearing
+@note two of them leaves bit 2 in it, so the port is asked for a beat at a
+@note four-byte boundary --- which on a 64-bit AXI3 port with `AWSIZE` of eight
+@note is an unaligned transfer, and the strobes below have already accounted
+@note for that bit. The word would land four bytes on.
+@note
+@note The only mutation here that the read-back property cannot catch, and the
+@note reason the testbench compares the address directly: a model memory keyed
+@note by the address the DUT presented would write consistent nonsense at the
+@note wrong beat and read it back from the same wrong beat. CLAUDE.md's shadow
+@note memory lesson, in the one place in this module where it applies.
+@old
+  assign m_awaddr = {s_awaddr[31:3], 3'b000};
+@new
+  assign m_awaddr = {s_awaddr[31:2], 2'b00};
+@end
+
+@mutation the-word-is-offered-in-only-one-half-of-the-beat
+@check axi_widen
+@file rtl/cadr_axi_widen.sv
+@note The word goes into both halves of the beat and the strobes choose which
+@note copy lands. Offering it only in the low half makes every write to an odd
+@note word write zero, and only that: the strobes are still right, so the
+@note transaction is legal AXI and the port takes it without complaint.
+@old
+  assign m_wdata = {s_wdata, s_wdata};
+@new
+  assign m_wdata = {32'd0, s_wdata};
+@end
+
+@mutation the-beat-says-it-is-a-word-wide
+@check axi_widen
+@file rtl/cadr_axi_widen.sv
+@note `AWSIZE` and `ARSIZE` are the beat's and not the word's: eight bytes,
+@note which is what makes a full-width beat with four strobes the way a
+@note 32-bit word crosses a 64-bit port. Saying four bytes while driving
+@note strobes in the upper half is a narrow transfer whose strobes are outside
+@note the transfer, which is not legal AXI at all --- and which the adapter's
+@note own `s_awsize` says, so this is exactly the mistake of deriving the
+@note beat's size from the word's.
+@old
+  localparam logic [1:0] SIZE_BEAT = 2'b11;
+@new
+  localparam logic [1:0] SIZE_BEAT = 2'b10;
+@end
+
+@mutation the-burst-length-the-port-takes-is-the-wrong-nibble
+@check axi_widen
+@file rtl/cadr_axi_widen.sv
+@note AXI4 carries eight bits of burst length and AXI3 four, so the narrowing
+@note is a truncation. Rotating the nibble rather than taking another one,
+@note because `s_arlen[7:4]` is already accounted for in the unused fold and
+@note taking it here would leave `s_arlen[3:0]` unread --- lint would reject
+@note the mutation and the check would never see it.
+@note
+@note Both lengths are zero on every transaction the adapter makes, so this
+@note breaks nothing on the board today. What it says is whether the check
+@note holds the truncation over the whole range or only over the value the
+@note design happens to use, which is the difference between a check and a
+@note coincidence.
+@old
+  assign m_arlen = s_arlen[3:0];
+@new
+  assign m_arlen = {s_arlen[2:0], s_arlen[3]};
+@end
+
+
 # ============================================ the generators, on themselves ===
 #
 # Everything above mutates the fabric and asks whether a check notices. These
@@ -2007,6 +2153,38 @@
       .dev_write(dev_write), .dev_wdata(dev_wdata),
 @new
       .dev_write(dev_write),
+@end
+
+@mutation the-beat-that-came-back-is-the-one-that-went-out
+@check arty
+@file rtl/cadr_arty.sv
+@note The `DDR` arm is a branch only one build reaches. Until this record the
+@note runner linted the default board alone, where `g_ddr` is not elaborated,
+@note and nothing in this list was aimed at anything inside it --- so the
+@note wiring between `cadr_axi_master`, `cadr_axi_widen` and `cadr_ps7` had no
+@note check of any kind. It lints all three configurations now, the same three
+@note `build/arty.pass` runs.
+@note
+@note The bug is the read path crossed onto the write path: what the widening
+@note is handed as the beat that came back is the beat that went out, so every
+@note main-memory read returns the last word written rather than the word at
+@note the address. A machine that boots and reads back garbage.
+@note
+@note MEASURED, AND IT IS THE WHOLE ARGUMENT FOR THE THREE PASSES. The default
+@note lint says nothing at all about this: `hp0_rdata` is unread only in a
+@note branch that configuration does not elaborate, so it exits 0. So does the
+@note probe board's. Only the `DDR=1` pass reports it, as UNUSEDSIGNAL on the
+@note declaration, and that is the one the runner did not run.
+@note
+@note And what lint still cannot see is worth writing down beside it: a
+@note crossing that leaves every signal read --- `.m_awaddr(hp0_araddr)` with
+@note `.m_araddr(hp0_awaddr)` --- draws no warning from anything. This check
+@note holds that the widening is wired to something; `axi_widen`'s own
+@note testbench is what holds the conversion itself.
+@old
+        .m_rdata(hp0_rdata)
+@new
+        .m_rdata(hp0_wdata)
 @end
 
 # --------------------------------------------------- the probe, three of them
