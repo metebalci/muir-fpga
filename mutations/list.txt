@@ -352,9 +352,11 @@
 @note been up. Making it always wait for the next edge costs a whole
 @note microcycle on any request that arrives on one.
 @note
-@note The block grew the Unibus branch after this was written; what the
-@note mutation does is unchanged --- every request waits for a later edge,
-@note whichever bus it is for.
+@note The block grew the Unibus branch after this was written, and then the
+@note two held Unibus instants in place of `ssyn_at`; what the mutation does
+@note is unchanged --- every request waits for a later edge, whichever bus it
+@note is for. The anchor has to follow the block, which is the loud kind of
+@note rot and the reason `@old` is a literal.
 @old
             write <= wrcyc;
             if (mclk) begin
@@ -362,7 +364,8 @@
               answered    <= 1'b0;
               answered_at <= 10'd0;
               ssyn_seen   <= 1'b0;
-              ssyn_at     <= 10'd0;
+              ub_ack_at   <= 10'd0;
+              ub_md_at    <= 10'd0;
               tmr_fell    <= 1'b0;
               tmr_rises   <= 3'd0;
               nxm         <= 1'b0;
@@ -1354,16 +1357,17 @@
 @note the boot PROM's 11,404 hangs ends late --- so if this survives, the
 @note shortfall was never load-bearing at all.
 @note
-@note The shortfall is derived now rather than fitted --- see
-@note `the-read-finish-delay-drops-the-tick-the-testbench-needs` for the
-@note arithmetic and for what the third tick is.
+@note The shortfall is derived for two of its three ticks and measured for
+@note the third --- see `the-read-finish-delay-is-a-tick-longer`, which also
+@note records that the explanation this list used to give for that third
+@note tick has been disproved.
 @old
   localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
 @new
   localparam int unsigned RD_FINISH_T = (140 / 5);
 @end
 
-@mutation the-read-finish-delay-drops-the-tick-the-testbench-needs
+@mutation the-read-finish-delay-is-a-tick-longer
 @check machine
 @file rtl/cadr_microcycle.sv
 @note The boundary is `memack + N + 2`: the countdown expires at tick X,
@@ -1371,25 +1375,25 @@
 @note pre-edge at the posedge ending X+1 and raises TPCLK. Wanting `memack +
 @note 28` gives N = 26, which is two ticks short of 140.
 @note
-@note The constant is THREE short, and the third is the standalone
-@note testbench's: its -MEMACK is placed from the edge marker, a tick after
-@note the boundary. Placing it from the boundary instead centres the
-@note acknowledgement histogram on zero --- roughly uniform across -4 to +5,
-@note which is grid rounding and nothing else --- against -5 and -10 with
-@note 17,000 cycles between them for the edge-marker placement.
+@note The constant is THREE short and the derivation accounts for two. This
+@note record used to be named for the third --- it claimed the tick belonged
+@note to a testbench placing -MEMACK a tick late, and that correcting the
+@note placement would make `- 2` exact. **That has been measured and it is
+@note false.** The placement really was a tick late, on every write, and
+@note correcting it collapses the acknowledgement error to sub-tick; `- 2` is
+@note still five nanoseconds long on all 11,301 reads either way, and `- 3`
+@note is exact either way. The name went with the story.
 @note
-@note So this mutation removes the tick the measurement needs, and it was
-@note tried for real: `- 2` with the tolerance widened to a whole tick was
-@note committed and reverted, because the tolerance then absorbed a
-@note microcycle-early grant as well.
+@note What the record still holds is what it always tested: this constant is
+@note load-bearing to a tick on the composed check, and the check says so on
+@note 11,301 microcycles. Why 28 - 3 rather than the derived 28 - 2 is open,
+@note and is issue #11.
 @note
 @note ON THE COMPOSED CHECK, AND MEASURED RATHER THAN ASSUMED. `- 2` makes
 @note the STANDALONE exact --- its 11,301 sub-tick slips go to zero --- so it
-@note survives there and says nothing. It is the composed check that then
-@note leans on its tolerance for those 11,301, and the composed one has the
-@note real bus interface under it rather than a model of one. That is why
-@note the constant is chosen for the machine and the standalone carries the
-@note tolerance, and this record has to be on the check that pays.
+@note survives there and says nothing. It is the composed check that pays,
+@note because it has the real bus interface under it rather than a model of
+@note one, and a record has to sit on the check that pays.
 @old
   localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
 @new
@@ -1399,17 +1403,18 @@
 @mutation a-hang-ends-a-tick-late-on-the-machine
 @check machine
 @file rtl/cadr_microcycle.sv
-@note The composed check's own edge, and it has moved back. It exempted a
-@note WHOLE tick for one commit, which is what let a microcycle-early grant
-@note pass as a five-nanosecond length slip; with -MEMACK placed from the
-@note boundary the check is exact again and the exemption is strictly under
-@note a tick, so one tick is the edge and one tick is what this carries.
+@note The composed check's own edge, and it has moved back twice. It
+@note exempted a WHOLE tick for one commit, which is what let a
+@note microcycle-early grant pass as a five-nanosecond length slip; the
+@note exemption then went back under a tick, and now there is none at all ---
+@note the check requires every length exact and guards that count at zero.
+@note So one tick is comfortably outside it, which is what this carries.
 @note
 @note Kept as a record of its own rather than left to the standalone's,
 @note because the two checks measure against different references --- the
 @note standalone's -MEMACK is its own model, the composed one's comes from
-@note the real bus interface --- and a tolerance is only tested at the edge
-@note of the check that has it.
+@note the real bus interface --- and an edge is only tested on the check that
+@note has it.
 @old
   localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
 @new
@@ -1667,4 +1672,131 @@
       end else if (md_pending && (mclk_edge || hang)) begin
 @new
       end else if (md_pending && mclk_edge) begin
+@end
+
+@mutation the-address-the-decode-sees-is-a-microcycle-old
+@check machine
+@file rtl/cadr_microcycle.sv
+@note `phys` is the live map output while MEMSTART is up and the registered
+@note copy afterwards, and the live half is not a convenience. The grant is
+@note taken at the edge that *ends* the MEMSTART microcycle, and the decode
+@note the interface reads there --- Unibus or not --- has to be this cycle's
+@note address. `phys_r` does not hold it until that same edge, so a decode
+@note taken from `phys_r` alone is a microcycle behind at exactly the instant
+@note it is read, and the Unibus cycle never enters ARB.
+@note
+@note That was a real bug and nothing in this list was aimed at it. It
+@note matters more now than it did: `cadr_memory_path.sv` holds the decode in
+@note a register, and a register on a signal is an invitation to move its
+@note source back one more step.
+@old
+  assign phys = memstart ? {vmo[13:0], vma[7:0]} : phys_r;
+@new
+  assign phys = phys_r;
+@end
+
+@mutation the-held-decode-is-a-microcycle-late
+@check machine
+@file rtl/cadr_memory_path.sv
+@note The decode is held for timing and the holding is a tick, which is
+@note invisible because the address is constant for the microcycle it belongs
+@note to. A microcycle is not invisible: the grant reads `unibus` at the edge
+@note that ends the MEMSTART cycle, and `sel` is what tells main memory the
+@note cycle is its. Clocking the register at the boundary instead of every
+@note tick captures the address one microcycle after the cycle that used it.
+@old
+    end else begin
+      is_memory <= is_memory_c;
+@new
+    end else if (mclk) begin
+      is_memory <= is_memory_c;
+@end
+
+@mutation the-request-is-held-a-microcycle-rather-than-a-tick
+@check machine
+@file rtl/cadr_microcycle.sv
+@note `MEMSTART AND VMAOK` is held for a tick so the map stops reaching the
+@note bus interface's own counter, and the argument that a tick is safe is
+@note that the interface reads -MEMRQ once, at the end of the microcycle,
+@note and the request has been up since the map settled early in it. The
+@note argument does not extend to a microcycle: sampling the term at the
+@note boundary catches it before MEMSTART rises, so the request stands a
+@note whole cycle late and so does the grant.
+@note
+@note This is the counterpart of `the-held-decode-is-a-microcycle-late`. Both
+@note say the same thing about the same move --- a register put in for timing
+@note is safe at one tick and wrong at one microcycle --- and both are here
+@note because the difference between those two is invisible in the diff.
+@old
+      memgo_q <= memgo;
+@new
+      if (mclk_edge) memgo_q <= memgo;
+@end
+
+@mutation the-unibus-acknowledgement-and-the-md-strobe-change-places
+@hole #13
+@check machine
+@file rtl/cadr_busint_xbus.sv
+@note The two Unibus deadlines are held as instants rather than added to a
+@note captured SSYN time, so that the adder is off the path that ends on the
+@note processor's read-finish counters. Holding an instant is only the same
+@note arithmetic if the sum is still made: dropping it acknowledges the
+@note cycle where the MD strobe belongs and strobes MD where the
+@note acknowledgement belongs, fifty nanoseconds apart the wrong way --- which
+@note is exactly the distinction the comment above them draws: "the word
+@note lands 50 ns *before* the acknowledgement, where an Xbus word lands
+@note with it". Written as an exchange rather than as dropping a sum,
+@note because dropping one leaves its parameter unread and lint rejects the
+@note mutation before the check ever sees it --- twice, on the way to this.
+@note
+@note WHY IT SURVIVES, which is #13 and is not the same thing as the
+@note `-XBUS.RQ` wrap. That was a signal no reference had a column for, and
+@note the fix was to give a testbench somewhere to look. This is **a path
+@note nothing enters**: `tb/cadr_busint_xbus_tb.cpp` never drives `unibus`,
+@note so the whole ARB/UB branch is untested by construction rather than by
+@note oversight, and no column would help. MIT's boot PROM makes exactly one
+@note Unibus cycle and the composed check exempts arbitrated cycles from the
+@note length comparison --- so the one cycle that exists is the one cycle
+@note exempted. The band makes 347 and is not run composed.
+@note
+@note The record stays and stays red until that testbench drives `unibus`
+@note and exercises arbitration. It is not an equivalence: exchanging the two
+@note instants puts -LOADMD after -MEMACK instead of before, which is
+@note observable wherever a Unibus read's word is used. Nothing here uses
+@note one.
+@old
+            ub_ack_at   <= elapsed + 10'(UB_ACK_T);
+            ub_md_at    <= elapsed + 10'(UB_STROBE_T);
+@new
+            ub_ack_at   <= elapsed + 10'(UB_STROBE_T);
+            ub_md_at    <= elapsed + 10'(UB_ACK_T);
+@end
+
+@mutation the-word-at-the-xbus-seam-is-rotated
+@check machine
+@file rtl/cadr_machine.sv
+@note `cadr_machine.sv` used to bring out `dev_rq`, `dev_write` and `phys`
+@note and not the word, so a slave hung on this seam could be written to and
+@note never see what --- and the failure would have appeared in the slave.
+@note The port is new and this is what says it carries something.
+@note
+@note It is not covered by MD being compared every microcycle: `wdata` is a
+@note register of its own, loaded from MD at the edge that starts the cycle,
+@note so MD can be right on every one of 600,000 microcycles while the word
+@note at the seam is wrong.
+@note
+@note IT IS A COMPLEMENT AND NOT A ROTATION, AND THAT IS THE INTERESTING
+@note PART. All 5,650 device writes the boot PROM makes carry the same word
+@note and that word is zero, so a rotation --- the obvious mutation, and the
+@note one written first --- survives: a bijection on the bits of zero is
+@note zero. It is an equivalence on this trace rather than in general, which
+@note is the control store's all-zero pass again in a new place. The
+@note complement makes a nonzero word out of a zero one and is caught. The
+@note distinct-word count is on the check's own output, and the check says so
+@note when it rises above one, because that is when the rotation becomes
+@note live and this note becomes wrong.
+@old
+  assign dev_wdata  = wdata;
+@new
+  assign dev_wdata  = ~wdata;
 @end
