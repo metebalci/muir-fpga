@@ -267,16 +267,28 @@ figure.screen img {
    own, and the outline is already carrying fabric-or-PS. The stroke does the
    work and the fill only tints, so each reads on either ground. */
 :root {
-  --st-done: #2da44e;
-  --st-part: #d97706;
-  --st-wip:  #4493f8;
-  --st-ext:  #d0d7de;
+  --st-done:  #2da44e;   /* verified: a check holds it against muir */
+  --st-built: #0aa2c0;   /* built: it exists and compiles, nothing checks it */
+  --st-part:  #d97706;   /* partly built: some of it verified, some not there */
+  --st-wip:   #4493f8;   /* being built now: somebody is in those files today */
+  --st-ext:   #d0d7de;   /* outside the project */
 }
-.d-done, .d-part, .d-wip, .d-ext { fill-opacity: 0.18; stroke-width: 2; }
-.d-done { fill: var(--st-done); stroke: var(--st-done); }
+.d-done, .d-built, .d-part, .d-wip, .d-ext { fill-opacity: 0.18; stroke-width: 2; }
+.d-done  { fill: var(--st-done);  stroke: var(--st-done);  }
+.d-built { fill: var(--st-built); stroke: var(--st-built); }
 .d-part { fill: var(--st-part); stroke: var(--st-part); }
 .d-wip  { fill: var(--st-wip);  stroke: var(--st-wip);  }
 .d-ext  { fill: var(--st-ext);  stroke: var(--st-ext);  }
+/* A status colour on a connection, not a block: the wash a status class
+   carries would fill the shape an open path implies, so lines force it off
+   and keep only the stroke. */
+.d-line.d-done, .d-line.d-built, .d-line.d-part,
+.d-line.d-wip,  .d-line.d-ext { fill: none; }
+/* The legend's own swatches, solid.  A block carries its colour at 0.18 so
+   the label inside it stays readable; a 13px swatch with nothing in it is
+   too faint to tell one colour from another, which is the one place the
+   colour itself is the whole content. */
+.d-key { fill-opacity: 1; }
 
 .d-t { font: 500 13px var(--sans); fill: currentColor; }
 .d-s { font: 400 11px var(--sans); fill: currentColor; }
