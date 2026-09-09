@@ -2202,6 +2202,147 @@
         .m_rdata(hp0_wdata)
 @end
 
+# ================================================================ the witness ===
+#
+# `rtl/cadr_prove.sv` is what goes on the board ahead of the machine, and it is
+# the first thing here whose OTHER half is not fabric at all: a debugger
+# reading and writing DDR from outside the design.  That is the whole reason
+# the two steps exist --- CLAUDE.md's shadow-memory lesson says a model taken
+# from the DUT moves with the bug, and an observer on the far side of the
+# processing system cannot move at all --- and it is also why the check here
+# has to bite.  A witness that is quietly wrong reports a memory fault that
+# is its own.
+#
+# WHAT THE CHECK IS.  `tb/cadr_prove_tb.cpp` runs the harness --- the state
+# machine with `cadr_axi_master` and `cadr_axi_widen` under it, wired as
+# `rtl/cadr_arty.sv`'s `g_ddr` wires them --- against a 64-bit AXI3 slave whose
+# model memory is filled with the COMPLEMENT of the word before every
+# transaction.  The beat address, the strobes and the strobed half of the data
+# are each compared against what the stimulus asked for and never against what
+# the DUT presented; the neighbour in the beat is required to be untouched; and
+# the address sweeps bit 2 and every bit above the beat boundary.
+#
+# AND THE INPUTS GO BAD MID-TRANSACTION, which is the one thing the board can
+# never test.  `addr`, `word` and `writes` are tied to constants there, so a
+# witness that read them instead of its own registers would be right by
+# accident for ever.  Here they are scribbled with the complement and the
+# neighbouring lane the moment the payload is taken.
+#
+# WHAT NOTHING HERE CAN CATCH, and it is worth saying rather than filing.
+# `rtl/cadr_arty.sv` chooses the address and the word, and a top level that
+# crossed `.addr(PROVE_ADDR)` with `.word(PROVE_WORD)` would leave every signal
+# read, lint clean, and this check untouched --- the check cannot see the top
+# level, and the top level cannot be simulated.  What stands against it is that
+# both are localparams a person can read beside the reasoning for them, and
+# that the debugger reads the address the file names.  It is the same limit
+# `build/arty.pass` already has and not a new one.
+
+@mutation the-request-goes-up-before-the-address-is-good
+@check prove
+@file rtl/cadr_prove.sv
+@note The bus specification makes the master responsible for asserting good
+@note address, write and data lines 80 ns before the request ---
+@note `cadr_busint_xbus.sv`'s SETUP_T, sixteen ticks --- and
+@note `rtl/cadr_ddr.xdc` relaxes the adapter's address and data registers to
+@note sixteen ticks ON THE STRENGTH OF IT. So a witness that raises `mem_req`
+@note early does not merely break a rule: it turns that constraint into a
+@note claim about a board where it is false, and the fitter would time the
+@note address path against 80 ns it does not have.
+@note
+@note Divided rather than replaced, so `SETUP_T` stays read and lint has
+@note nothing to say. Four ticks is 20 ns.
+@old
+            count     <= CW'(SETUP_T);
+@new
+            count     <= CW'(SETUP_T / 4);
+@end
+
+@mutation a-refused-transaction-reads-as-a-good-one
+@check prove
+@file rtl/cadr_prove.sv
+@note SLVERR or DECERR is a cycle that reached the port and was REFUSED,
+@note which is a different fault from a wrong word and must not light the
+@note same lamp. Inverting the term rather than deleting it, because deleting
+@note leaves `mem_error` unread and Verilator rejects the mutation instead of
+@note the check catching it --- CLAUDE.md's bit-granularity lesson.
+@note
+@note On the board this is the worst kind of wrong: step two would show green
+@note for a write the memory controller never accepted, and the next step
+@note would go looking for the fault in the machine.
+@old
+            matched <= !mem_error && (mem_write || (mem_rdata == want));
+@new
+            matched <= mem_error || (mem_write || (mem_rdata == want));
+@end
+
+@mutation the-verdict-is-taken-from-the-word-the-inputs-hold-now
+@check prove
+@file rtl/cadr_prove.sv
+@note `want` is the word this transaction is about, held from the tick it
+@note started. Comparing against the input instead is invisible on the board
+@note --- `rtl/cadr_arty.sv` ties `word` to a constant, so the two are the
+@note same signal there --- and it is exactly the class of bug that only a
+@note check which moves its inputs can find. The testbench scribbles the
+@note complement over `word` the moment the payload is taken, for this.
+@note
+@note
+@note WRITTEN AS AN XOR AND NOT AS A SUBSTITUTION, and the first draft was the
+@note substitution. `want` is read nowhere else, so replacing it left the
+@note register unused and Verilator rejected the mutation --- BROKEN, which is
+@note a verdict on the record and never on the check. Mixed in instead, both
+@note stay read and the verdict still depends on an input it must not: with
+@note the testbench scribbling the complement over `word`, `want ^ word` is
+@note all ones and no read can match. CLAUDE.md's bit-granularity lesson, met
+@note for the third time in this list.
+@old
+            matched <= !mem_error && (mem_write || (mem_rdata == want));
+@new
+            matched <= !mem_error && (mem_write || (mem_rdata == (want ^ word)));
+@end
+
+@mutation the-witness-does-not-stop
+@check prove
+@file rtl/cadr_prove.sv
+@note Step two's whole requirement is ONE write and then silence: the port
+@note comes live, one word goes out, and somebody reads it later with nobody
+@note at the board. `go` is tied high there, so a HELD state that returns to
+@note IDLE without waiting for it to fall writes the same word over and over
+@note for as long as the board is powered --- which reads on the lamps
+@note exactly like the correct design and is a machine hammering the memory
+@note controller a debugger is trying to read.
+@note
+@note `go` stays read in IDLE, so lint has nothing to say.
+@old
+        HELD: begin
+          if (!go) state <= IDLE;
+        end
+@new
+        HELD: begin
+          state <= IDLE;
+        end
+@end
+
+@mutation the-word-lands-one-lane-over
+@check prove
+@file rtl/cadr_prove.sv
+@note Bit 2 of the address is what `cadr_axi_widen.sv` places the write
+@note strobes by and selects the read lane by, so flipping it moves the word
+@note into the other half of the same 64-bit beat: the word is destroyed at
+@note the address the debugger will read and written where its NEIGHBOUR
+@note should be. Legal AXI, a clean OKAY, and a memory that disagrees with
+@note the design about where it put things.
+@note
+@note It is the mutation the neighbour check exists for. A testbench that only
+@note read back the address it wrote would follow the word into the wrong
+@note lane and call it a pass --- which is CLAUDE.md's shadow memory, in the
+@note one place in this module where it could happen.
+@old
+            mem_addr  <= addr;
+@new
+            mem_addr  <= addr ^ 32'd4;
+@end
+
+
 # --------------------------------------------------- the probe, three of them
 #
 # `rtl/cadr_probe.sv` is the instrument the board will be read through, and
