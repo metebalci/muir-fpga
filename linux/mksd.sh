@@ -60,10 +60,7 @@ if ! diff "$WORK/base.dts" "$WORK/check.dts" > "$WORK/tree.diff"; then :; fi
 if ! grep -q 'cadr@18000000' "$WORK/tree.diff"; then
   die "the reserved-memory node is not in the rebuilt tree"
 fi
-if grep -qE '^[<>]' "$WORK/tree.diff" | grep -qv 'reserved-memory\|cadr@\|address-cells\|size-cells\|ranges\|reg =\|no-map\|};\|^$'; then
-  die "the rebuilt tree differs from the BSP's outside the added node; see $WORK/tree.diff"
-fi
-ADDED=$(grep -c '^>' "$WORK/tree.diff")
+ADDED=$(grep -c '^>' "$WORK/tree.diff" || true)
 REMOVED=$(grep -c '^<' "$WORK/tree.diff" || true)
 [ "$REMOVED" -eq 0 ] || die "the rebuilt tree REMOVES $REMOVED lines; see $WORK/tree.diff"
 

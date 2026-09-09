@@ -199,6 +199,12 @@ something claims a sub-region by phandle, and not before.
 `mksd.sh` sums the BSP before use, for the same reason the band's archive is
 summed. The BSP itself is gitignored and belongs in `vendor/`.
 
+**`mksd.sh` has never been run end to end**, because `dtc` is not installed on
+the laptop. Its `dtc` steps were run by hand on muirhost and are what produced
+the numbers below, but the script as a script is unexercised, and by this
+project's own rule that is not yet a claim. Run it first, against the recorded
+sha256, before trusting anything it stages.
+
 **The device tree is built by appending, never by editing in place.** `dtc`
 merges two root definitions, so the fragment stays a fragment and the BSP's
 tree is untouched. `-p 0x1000` reproduces the BSP's own padding --- both trees
