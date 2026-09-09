@@ -120,10 +120,11 @@ set ddr [expr {[info exists ::env(DDR)] ? $::env(DDR) : 0}]
 # `rtl/cadr_prove.sv` in the design, driving the machine's own memory port ---
 # the same adapter, the same widening, the same PS7 --- with one word at one
 # address. `PROVE=1` writes it as soon as `SAXIHP0ARESETN` says the port is
-# live and stops; `PROVE=2` reads it back on BTN1 and lights LD4 green if it
-# is what was wanted. The observer for both is a debugger reading DDR from
-# outside the design, which is the whole point: the design cannot mark its own
-# work.
+# live and stops; `PROVE=2` reads it back as soon as the port comes live and
+# writes what it read, raw, to a second address for the debugger to compare
+# --- no button, and the lamp is not the observer. The observer for both is a
+# debugger reading DDR from outside the design, which is the whole point: the
+# design cannot mark its own work.
 #
 # A `PROVE` BOARD IS A `DDR` BOARD, and `rtl/cadr_arty.sv` makes it one --- its
 # `PORT` localparam is set by either generic --- so `PROVE=1` alone is a

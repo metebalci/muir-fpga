@@ -271,9 +271,9 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 # way; this is the two descriptions coming back into agreement.
 #
 # The two new boards are the ones `rtl/cadr_prove.sv` builds: the fabric
-# writing a word, and the fabric reading one back on a button. They are a
-# branch only those builds reach, and `PROVE=2`'s is the only one that
-# elaborates the button synchroniser at all.
+# writing a word, and the fabric reading one back and writing it out again at
+# a second address. They are a branch only those builds reach, and nothing
+# else elaborates `cadr_prove.sv` at all.
 $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
                     rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
                     rtl/cadr_axi_widen.sv rtl/cadr_prove.sv \
