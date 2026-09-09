@@ -91,6 +91,49 @@ module BUFG (
   assign O = I;
 endmodule
 
+// The third primitive, and the one `rtl/cadr_arty.sv` only instantiates when
+// `PROBE_DEPTH` is set. Same rule as the two above: this models nothing.
+// The JTAG side is dead here --- SEL low, DRCK low --- which is exactly what
+// a board with nobody scanning it looks like, and it is all lint needs. What
+// the readout logic actually does is checked by `tb/cadr_probe_tb.cpp`,
+// which drives `cadr_probe`'s JTAG ports directly rather than through a
+// primitive: that is why the primitive is in the top level and the shift
+// register is not.
+//
+// The port list is Xilinx's, restricted to the pins `cadr_arty.sv` names, and
+// `JTAG_CHAIN` is the one parameter it overrides.
+module BSCANE2 #(
+    parameter int JTAG_CHAIN = 1
+) (
+    output var logic CAPTURE,
+    output var logic DRCK,
+    output var logic RESET,
+    output var logic RUNTEST,
+    output var logic SEL,
+    output var logic SHIFT,
+    output var logic TCK,
+    output var logic TDI,
+    output var logic TMS,
+    output var logic UPDATE,
+    input  var logic TDO
+);
+  assign CAPTURE = 1'b0;
+  assign DRCK    = 1'b0;
+  assign RESET   = 1'b0;
+  assign RUNTEST = 1'b0;
+  assign SEL     = 1'b0;
+  assign SHIFT   = 1'b0;
+  assign TCK     = 1'b0;
+  assign TDI     = 1'b0;
+  assign TMS     = 1'b0;
+  assign UPDATE  = 1'b0;
+
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic unused_bscan;
+  assign unused_bscan = &{1'b0, TDO, JTAG_CHAIN != 0};
+  /* verilator lint_on UNUSEDSIGNAL */
+endmodule
+
 /* verilator lint_on DECLFILENAME */
 
 `default_nettype wire

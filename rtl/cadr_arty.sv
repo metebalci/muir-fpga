@@ -41,8 +41,18 @@
 
 `default_nettype none
 
+// AND ONE THING IT DOES NOT DO BY DEFAULT.  `PROBE_DEPTH` is zero here, so
+// the design this file describes is the machine and nothing else --- the same
+// LUTs, the same registers, the same 28 block RAM tiles `vivado/bitstream.tcl`
+// measures.  Setting it instantiates `cadr_probe.sv`, which records one
+// sample a microcycle and hands it back over JTAG; `vivado/probe.tcl` builds
+// that bitstream and reads it.  Off by default because an instrument in every
+// bitstream is an instrument nobody measures the cost of, and because the two
+// questions --- does the machine fit, and what does watching it cost --- are
+// worth keeping apart.
 module cadr_arty #(
-    parameter string PROM_HEX = "build/boot_prom.hex"
+    parameter string PROM_HEX = "build/boot_prom.hex",
+    parameter int unsigned PROBE_DEPTH = 0
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -142,6 +152,60 @@ module cadr_arty #(
       .timed_out(timed_out), .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata)
   );
+
+  // ------------------------------------------------------------ the probe
+  //
+  // One sample a microcycle of the columns `build/rtl.golden` carries, held
+  // in block RAM and shifted out over JTAG, so that what the *board* computes
+  // can be diffed against what muir computes. `rtl/cadr_probe.sv` is the
+  // whole of it and its header says why it is not an ILA.
+  //
+  // **THE COLUMN LIST AND THE BIT LAYOUT ARE THAT FILE'S**, one port a
+  // column, so that this file does not hold a second copy of them to drift.
+  // What is here is the two things only a top level can say: which net is
+  // which column, and that `-VMAOK` is the trace's polarity where
+  // `cadr_machine` brings out the logical one the jump conditions take.
+  if (PROBE_DEPTH > 0) begin : g_probe
+    // The JTAG scan chain the readout uses.  USER1 --- IR 0x02 on a 7-series
+    // part --- which `vivado/probe.tcl` selects by name and by code.
+    //
+    // RESET, RUNTEST, TCK, TMS and UPDATE are left empty because nothing here
+    // reads them: the pointer moves on CAPTURE, so UPDATE is not needed, and
+    // that is the point of moving it there. See `cadr_probe.sv`.
+    logic bscan_drck, bscan_sel, bscan_shift, bscan_capture, bscan_tdi;
+    logic bscan_tdo;
+    /* verilator lint_off PINCONNECTEMPTY */
+    BSCANE2 #(
+        .JTAG_CHAIN(1)
+    ) u_bscan (
+        .CAPTURE(bscan_capture),
+        .DRCK   (bscan_drck),
+        .SEL    (bscan_sel),
+        .SHIFT  (bscan_shift),
+        .TDI    (bscan_tdi),
+        .TDO    (bscan_tdo),
+        .RESET(), .RUNTEST(), .TCK(), .TMS(), .UPDATE()
+    );
+    /* verilator lint_on PINCONNECTEMPTY */
+
+    cadr_probe #(
+        .DEPTH(PROBE_DEPTH)
+    ) u_probe (
+        .clk(clk), .rst(rst),
+        // ONE SAMPLE A MICROCYCLE, on the machine's own boundary. A
+        // free-running probe at 200 MHz would mostly record a machine
+        // standing still and would line up with no row of anything.
+        .qualify(clock_edge),
+        .pc(pc), .ir(ir), .q(q), .a(a), .m(m), .alu(alu), .r(r), .ob(ob),
+        .dc(dc), .opc(opc), .st(st), .lc(lc),
+        .iwrited(iwrited), .nop(nop), .n_vmaok(!vmaok), .jcond(jcond),
+        .pcs1(pcs1), .pcs0(pcs0),
+        .lpc(lpc), .md(md), .vma(vma), .promdis(promdisable),
+        .jtag_drck(bscan_drck), .jtag_sel(bscan_sel),
+        .jtag_shift(bscan_shift), .jtag_capture(bscan_capture),
+        .jtag_tdi(bscan_tdi), .jtag_tdo(bscan_tdo)
+    );
+  end
 
   // ------------------------------------------------------------- the LEDs
   //

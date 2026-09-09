@@ -7,14 +7,15 @@
 #
 # Everything in this repository agrees with muir in simulation.  Nothing has
 # ever compared what the *board* computes against what the model computes,
-# because the board's observable surface is six LEDs.  An in-fabric capture
-# core records the datapath one sample per microcycle from microcycle zero and
-# reads it out over JTAG; this turns that readout into a verdict.
+# because the board's observable surface is six LEDs.  An in-fabric probe
+# --- `rtl/cadr_probe.sv` --- records the datapath one sample per microcycle
+# from microcycle zero and reads it out over JTAG; this turns that readout
+# into a verdict.
 #
-#     tools/ila_check.py --capture ila.csv --golden build/rtl.golden
+#     tools/probe_check.py --capture capture.csv --golden build/rtl.golden
 #
 # WHAT IT COMPARES.  Only the columns the capture itself carries.  The subset
-# is the capture core's to choose, so the column list is taken from the
+# is the probe's to choose, so the column list is taken from the
 # capture's own header and every name in it must exist in the trace --- a name
 # that does not is an error and not a column quietly skipped.
 #
@@ -29,7 +30,8 @@
 #
 #   1. the capture's own `cycle` column, if it carries one, must count
 #      0, 1, 2, ... with no gap and no repeat --- the direct proof, and the
-#      reason to spend one probe on a microcycle counter;
+#      reason the probe spends 32 bits of every sample on a microcycle
+#      counter;
 #   2. the export's TRIGGER column, if present, must be set on sample 0 and
 #      on no other sample, and a declared trigger position must be zero;
 #   3. the content itself, compared at offset zero and nowhere else.
@@ -42,7 +44,7 @@
 #
 # THE CAPTURE FILE.  What Vivado's hardware manager writes with
 #
-#     write_hw_ila_data -csv_file ila.csv [current_hw_ila_data]
+#     write_hw_ila_data -csv_file capture.csv [current_hw_ila_data]
 #
 # is accepted as it comes.  Concretely, the reader takes:
 #
@@ -52,12 +54,12 @@
 #   * a header line, found as the first line that names at least one column of
 #     the reference trace.  Comma-separated, or whitespace-separated with a
 #     leading `#` (the trace's own form).
-#   * probe names decorated the way Vivado decorates them:
+#   * column names decorated the way Vivado decorates them:
 #     `slot_0 : u_ila_0 : pc[13:0]` is the column `pc`.  A `[hi:lo]` or `[n]`
 #     width suffix is stripped, everything up to the last `:` is dropped, and
 #     MIT's own names are mangled the way `rtl/cadr_cables.map` mangles them:
 #     a leading `-` becomes `n_`, and `.`, space, `/` and `>` become `_`.  So
-#     a probe named `-VMAOK` is the trace's `n_vmaok`.
+#     a column named `-VMAOK` is the trace's `n_vmaok`.
 #   * the housekeeping columns `Sample in Buffer`, `Sample in Window` and
 #     `TRIGGER`, which are used and not compared.
 #   * one row per sample, in sample order, oldest first.
@@ -68,8 +70,8 @@
 # capture exported UNSIGNED and read as hex disagrees quietly rather than
 # loudly.  `--radix` overrides both.
 #
-# A SHORT CAPTURE IS NOT A FAILURE.  An ILA holds thousands of samples and the
-# trace holds 600,000 microcycles, so the capture will always be a prefix.
+# A SHORT CAPTURE IS NOT A FAILURE.  The probe holds thousands of samples and
+# the trace holds 600,000 microcycles, so a capture will always be a prefix.
 # What is compared is the length of the capture, and the fraction of the run
 # that reaches is printed rather than left to be assumed.  A capture that is
 # *ragged* --- a row with the wrong number of fields, or fewer rows than its
@@ -121,7 +123,7 @@ _WIDTH = re.compile(r"\[\s*\d+\s*(:\s*\d+\s*)?\]$")
 
 
 def normalise(name):
-    """A probe name as the reference trace spells it, or '' for a blank field.
+    """A column name as the reference trace spells it, or '' for a blank field.
 
     Strips Vivado's decoration and applies the repository's own mangling, so
     `slot_0 : u_ila_0 : -VMAOK[0:0]` and `n_vmaok` are the same column.
@@ -157,8 +159,8 @@ def parse_value(text, radix, where):
     try:
         return int(t, radix)
     except ValueError:
-        # X and U are the interesting ones: a capture core that reads out
-        # undriven bits says so here rather than comparing as zero.
+        # X and U are the interesting ones: a probe that reads out undriven
+        # bits says so here rather than comparing as zero.
         raise Bad("%s: %r is not a %s number; if the capture was exported "
                   "with another radix, say so with --radix"
                   % (where, text.strip(), RADIX_WORD.get(radix, radix)))
@@ -254,7 +256,8 @@ def read_capture(path, golden_names, radix_override=None, renames=None):
             cap.meta[m.group(1).strip().lower()] = m.group(2).strip()
     if header_at is None:
         raise Bad("%s: no header line names any column of the reference "
-                  "trace; is this a Vivado ILA CSV export?" % path)
+                  "trace; is this a capture, as `vivado/probe.tcl` or a "
+                  "Vivado ILA export writes one?" % path)
 
     cap.header_line = header_at + 1
     raw, comma = _split(lines[header_at])
@@ -532,7 +535,7 @@ def diagnose(cap, compared, golden_rows, n_cap, err, window=8):
                  format(here, ","), format(pairs_here * len(compared), ",")))
     if bad == 0:
         err.write("    the capture appears to begin at microcycle %d rather "
-                  "than 0; fix the capture core's arming, do not shift the "
+                  "than 0; fix the probe's arming, do not shift the "
                   "comparison\n" % d)
 
 
@@ -561,7 +564,7 @@ def synth(path, golden_names, golden_rows, cols, n, start=0, radix="HEX",
 
     # Decorated the way the hardware manager decorates them, and one of them
     # spelled MIT's way, so the mangling is exercised rather than assumed.
-    def probe(name, k):
+    def decorated(name, k):
         shown = "-VMAOK" if name == "n_vmaok" else name
         return "slot_0 : u_ila_0 : %s[%d:0]" % (shown, k)
 
@@ -577,9 +580,9 @@ def synth(path, golden_names, golden_rows, cols, n, start=0, radix="HEX",
     if damage:
         body = damage(body)
     names = ["Sample in Buffer", "Sample in Window", "TRIGGER"]
-    names += [probe(c, 31) for c in cols]
+    names += [decorated(c, 31) for c in cols]
     if extra:
-        names += [probe(c, 7) for c in extra]
+        names += [decorated(c, 7) for c in extra]
     with open(path, "w") as f:
         f.write(VIVADO_HEAD % (radix, declared if declared is not None else n,
                                declared if declared is not None else n))
@@ -607,7 +610,7 @@ def self_test(golden_path, out):
 
     def wrap(fn):
         def build(d):
-            p = os.path.join(d, "ila.csv")
+            p = os.path.join(d, "capture.csv")
             fn(p)
             return p
         return build
@@ -757,17 +760,17 @@ def run(argv, out=None, err=None):
     out = out or sys.stdout
     err = err or sys.stderr
     p = argparse.ArgumentParser(
-        prog="tools/ila_check.py", add_help=True,
+        prog="tools/probe_check.py", add_help=True,
         description="Compare a capture taken off the board against muir's "
                     "reference trace, column by column.")
-    p.add_argument("--capture", help="the ILA export to check")
+    p.add_argument("--capture", help="the capture to check")
     p.add_argument("--golden", default="build/rtl.golden",
                    help="the reference trace (default build/rtl.golden)")
     p.add_argument("--radix", choices=sorted(set(RADIX_NAMES)),
                    help="read the capture's values in this radix, overriding "
                         "any the export declares")
     p.add_argument("--rename", action="append", default=[],
-                   metavar="PROBE=COLUMN",
+                   metavar="NAME=COLUMN",
                    help="a capture column that is a trace column under "
                         "another name; repeatable")
     p.add_argument("--examples", type=int, default=5, metavar="N",
@@ -782,13 +785,13 @@ def run(argv, out=None, err=None):
             return self_test(a.golden, out)
         if not a.capture:
             p.print_usage(err)
-            err.write("tools/ila_check.py: --capture is required "
+            err.write("tools/probe_check.py: --capture is required "
                       "(or --self-test)\n")
             return 2
         renames = {}
         for r in a.rename:
             if "=" not in r:
-                err.write("--rename wants PROBE=COLUMN, not %r\n" % r)
+                err.write("--rename wants NAME=COLUMN, not %r\n" % r)
                 return 2
             k, v = r.split("=", 1)
             renames[normalise(k)] = normalise(v)
