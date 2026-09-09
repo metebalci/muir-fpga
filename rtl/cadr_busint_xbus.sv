@@ -161,6 +161,10 @@ module cadr_busint_xbus (
   // the same arithmetic with the adder moved off the path --- the move
   // `cadr_phase_gen.sv` makes for its taps, and for the same reason.  Nothing
   // else read `ssyn_at`, so it is gone rather than kept alongside.
+  //
+  // **AND THEY ARE HELD ONE TICK EARLY**, which is the rest of that move and
+  // arrived later: the comparisons that read them are registers now, not
+  // gates on the acknowledgement's path.  See the note at `ub_ack_due`.
   logic [9:0] ub_ack_at;      // when -LMACK is due
   logic [9:0] ub_md_at;       // when the MD strobe is due
   logic       write;            // WRCYC latched for the cycle being run
@@ -179,9 +183,25 @@ module cadr_busint_xbus (
 
   // "MSYN OUT drops at SSYN T100 and -LOADMD rises with it, so the word lands
   // 50 ns *before* the acknowledgement, where an Xbus word lands with it."
+  //
+  // Registers, compared one tick early, for the reason the read deskew below
+  // is one: `ub_loadmd` is -LOADMD on a Unibus cycle and lands on the same two
+  // clock enables in the processor.  With the deskew held and nothing else
+  // changed it was the whole of what was left --- all 35 violated endpoints of
+  // the DDR board, at -0.184 ns, every one of them
+  //
+  //     busint/elapsed_reg[2]_replica/C -> processor/md_reg[*]/CE
+  //     4.777 ns over LUT5, CARRY4, CARRY4 and two more LUTs
+  //
+  // The two instants are held one tick early to pay for it, which is the same
+  // subtraction `cadr_phase_gen.sv` makes on its taps and for the same reason:
+  // `elapsed >= X` at tick t is `elapsed >= X - 1` at t-1.  The `state == UB`
+  // term keeps the last cycle's comparison from standing through the first
+  // tick of the next, the register lagging its input by one.
   logic ub_acked, ub_loadmd;
-  assign ub_acked  = ssyn_seen && (elapsed >= ub_ack_at);
-  assign ub_loadmd = ssyn_seen && (elapsed >= ub_md_at);
+  logic ub_ack_due, ub_md_due;
+  assign ub_ack_due = ssyn_seen && (state == UB) && (elapsed >= ub_ack_at);
+  assign ub_md_due  = ssyn_seen && (state == UB) && (elapsed >= ub_md_at);
 
   // The slave is giving or taking the word this very tick.
   logic answering;
@@ -191,8 +211,41 @@ module cadr_busint_xbus (
   // write, and through the 60 ns tap of the TD100 at 0C09 for a read. So the
   // write path is a gate and is combinational in `dev_ack`, and only the read
   // path waits. Registering the write path would put -MEMACK a tick late.
-  logic deskewed;
-  assign deskewed = answered && (elapsed >= answered_at + 10'(DESKEW_T));
+  //
+  // **THE READ PATH'S OWN TAP IS A REGISTER, COMPARED ONE TICK EARLY**, which
+  // is what `cadr_phase_gen.sv` does for its taps and is here for the same
+  // reason.  Written as a comparison read straight into `acked`, the ten-bit
+  // magnitude compare against `answered_at + DESKEW_T` stands between the
+  // counter and -MEMACK/-LOADMD; those cross to the processor and land on
+  // `md`'s and `md_held`'s clock enables, which were sixty of the eighty-six
+  // failing endpoints of the DDR board at b5542c5:
+  //
+  //     -0.263 ns   busint/elapsed_reg[5]/C -> processor/md_reg[23]/CE
+  //              4.943 ns (logic 2.006, route 2.937), LUT6 + CARRY4 + CARRY4
+  //              and three more LUT6
+  //
+  // `elapsed >= X` at tick t is `elapsed >= X - 1` at tick t-1, because
+  // `elapsed` counts by one and the deskew never lands on its saturation ---
+  // so registering the earlier comparison puts the same value on the same
+  // tick with the carry chain off the acknowledgement's path entirely.  This
+  // is the second of the two remedies `rtl/cadr_machine.xdc` sets out: the
+  // signal is read every tick, so it is not a candidate for holding, and what
+  // is left is to make the path shorter.
+  //
+  // The `state == GRANTED` term does at this end what `answered` used to do at
+  // the far one.  A register lags its input by a tick, and `answered` is
+  // cleared at the grant, so without it the last cycle's deskew would stand
+  // through the first tick of the next cycle and acknowledge it.
+  //
+  // **AND IT IS NAMED IN `rtl/cadr_machine.xdc`**, unlike the two holdings
+  // that file describes.  Those are stable across a microcycle and read at the
+  // end of one, so they fall in `slow` by its own test.  This is an
+  // acknowledgement, read every tick; left unnamed it would take the fifteen
+  // tick exception written for the datapath, and the one path this change
+  // exists to shorten would stop being timed at all.
+  logic deskewed, deskew_due;
+  assign deskew_due = answered && (state == GRANTED)
+                   && (elapsed >= answered_at + 10'(DESKEW_T) - 10'd1);
 
   logic acked;
   assign acked = (state == ACKED)
@@ -236,6 +289,9 @@ module cadr_busint_xbus (
       elapsed     <= 10'd0;
       answered    <= 1'b0;
       answered_at <= 10'd0;
+      deskewed    <= 1'b0;
+      ub_acked    <= 1'b0;
+      ub_loadmd   <= 1'b0;
       tmr_fell    <= 1'b0;
       tmr_rises   <= 3'd0;
       nxm         <= 1'b0;
@@ -245,6 +301,12 @@ module cadr_busint_xbus (
       // on one misses it --- which falls out of the ordering here, the grant's
       // own clear of `tmr_fell` below coming after this.
       if (arb_t != 9'h1FF) arb_t <= arb_t + 9'd1;
+
+      // The three taps, each one tick after its own comparison. See the notes
+      // at `ub_ack_due` and at `deskew_due`.
+      deskewed  <= deskew_due;
+      ub_acked  <= ub_ack_due;
+      ub_loadmd <= ub_md_due;
 
       if (state == GRANTED || state == UB) begin
         if (vco_toggle) begin
@@ -353,8 +415,8 @@ module cadr_busint_xbus (
             // The sums are made here, where they have a whole tick and are
             // off the comparator's path. `elapsed` saturates rather than
             // wraps, so these cannot run away behind it.
-            ub_ack_at   <= elapsed + 10'(UB_ACK_T);
-            ub_md_at    <= elapsed + 10'(UB_STROBE_T);
+            ub_ack_at   <= elapsed + 10'(UB_ACK_T) - 10'd1;
+            ub_md_at    <= elapsed + 10'(UB_STROBE_T) - 10'd1;
           end
         end
 
