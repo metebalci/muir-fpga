@@ -149,6 +149,31 @@ Read them in order:
     LD0 and LD1 blinking      the machine is running
 
 **With no memory behind `mem_*`** --- which is every build before the PS block
-lands --- the expected reading is **LD0 blinking and LD1 dark**: the boot PROM
-computes for 535,791 microcycles, reaches its first main-memory cycle, and
-stalls there for ever. LD1 dark is the correct answer there, not a fault.
+lands --- the expected reading is **LD0 blinking, LD1 blinking very slowly,
+LD2 lit or dim, LD3 lit**.
+
+An earlier version of this table said LD1 would be *dark*, on the reasoning
+that with nothing answering `mem_*` the machine reaches its first main-memory
+cycle and stalls there for ever. **That is wrong, and the board said so
+first.** Nothing answering does not mean the cycle never ends: the NXM timer
+in `cadr_busint_xbus.sv` expires at about 4.25 us and the cycle completes as a
+non-existent-memory reference. The machine keeps going. It is a real part of
+the design doing its job, and it turns "no memory" from a stall into a
+slowdown.
+
+Simulated afterwards to put numbers on it --- `cadr_machine` with `mem_done`
+tied low, which is the step-1 bitstream exactly:
+
+    first mem_req            microcycle 536,303
+    NXM timeouts             30,590 in 300 ms
+    after the first cycle    1.49 us a microcycle, against 0.22 normal
+    LD1 (beat[23])           toggles every 12.5 s
+
+So LD1's period is about twenty-five seconds, which is what "blinking very
+slowly" looks like, and LD2 is lit or dim rather than blinking --- the
+timeouts come at about 168 kHz and the eye integrates them.
+
+**The general point is worth more than the correction.** The prediction was
+that no memory means no progress; the fabric's answer is that no memory means
+*slow* progress. That is the first behaviour anyone here observed on silicon
+that was predicted wrongly, and it was predicted wrongly in this file.
