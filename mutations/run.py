@@ -145,6 +145,26 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The witness that goes on the board ahead of the machine, and the path
+    # it drives.  `sources` is the state machine alone, because that is what
+    # these mutations are aimed at; the adapter and the widening are in
+    # `extra` beside the harness, having checks of their own --- `extra` means
+    # here exactly what it means for `arty`, everything the check builds that
+    # nothing is aimed at.
+    #
+    # `tb/cadr_prove_harness.sv` is the wiring, not the thing checked, and it
+    # is in `tb/` because both Vivado scripts read `[glob rtl/*.sv]`.
+    "prove": {
+        "sources": ["rtl/cadr_prove.sv"],
+        "extra": ["rtl/cadr_axi_master.sv", "rtl/cadr_axi_widen.sv",
+                  "tb/cadr_prove_harness.sv"],
+        "top": "cadr_prove_harness",
+        "tb": "tb/cadr_prove_tb.cpp",
+        "flags": ["-Irtl"],
+        # No muir reference, so no trace: the testbench is the stimulus and
+        # the AXI3 slave underneath it is the observer.
+        "golden": None,
+    },
     # The processor, twice over: the same module and the same testbench
     # against two programs.  Route a mutation to the cheaper one unless the
     # band is the only thing that reaches what it breaks --- the map, the
@@ -610,6 +630,11 @@ def build_and_run(args, work, check):
                 % os.path.join(args.goldens, "boot_prom.hex")]
     cmd += ["-Mdir", obj, "--top-module", spec["top"]]
     cmd += spec["sources"]
+    # Everything the check builds that no mutation is aimed at: a wiring
+    # harness, or a module with a check of its own.  `arty` has used the key
+    # for that since it arrived; this is the same meaning in the one place
+    # that builds rather than lints.
+    cmd += spec.get("extra", [])
     cmd += [os.path.join(work, spec["tb"])]
     rc, out = run(cmd, work)
     if rc != 0:
@@ -650,7 +675,7 @@ def tcl_check(args, work, spec):
 def arty_check(args, work):
     """The top level, linted. Lint failing is the mutation being caught.
 
-    THREE TIMES, BECAUSE THERE ARE THREE BOARDS, exactly as `build/arty.pass`
+    FIVE TIMES, BECAUSE THERE ARE FIVE BOARDS, exactly as `build/arty.pass`
     runs it. `PROBE_DEPTH` and `DDR` are both zero by default and the generate
     blocks that instantiate `cadr_probe.sv`, `cadr_ps7.sv`, `cadr_axi_master.sv`
     and `cadr_axi_widen.sv` are then not elaborated at all, so a lint of the
@@ -679,6 +704,15 @@ def arty_check(args, work):
         (["-GDDR=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
           "rtl/cadr_axi_widen.sv"]),
+        # And the two the witness builds, which are branches only they reach:
+        # `PROVE=2` is the only one that elaborates the button synchroniser at
+        # all, and neither elaborates the machine's own drive of the port.
+        (["-GPROVE=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
+         ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
+          "rtl/cadr_axi_widen.sv", "rtl/cadr_prove.sv"]),
+        (["-GPROVE=2"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
+         ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
+          "rtl/cadr_axi_widen.sv", "rtl/cadr_prove.sv"]),
     ]
     ran = 0
     for generics, stubs, extra_sources in boards:
@@ -692,7 +726,7 @@ def arty_check(args, work):
             return CAUGHT, first_problem(out)
         ran += 1
     if ran == 0:
-        return BROKEN, "none of the three board configurations could be linted"
+        return BROKEN, "none of the board configurations could be linted"
     return SURVIVED, "lint passes on %d board configuration%s" % (
         ran, "" if ran == 1 else "s")
 
@@ -820,7 +854,7 @@ def check_makefile():
         # date --- so there is nothing here for this to compare against.
         if spec.get("kind") == "generator":
             continue
-        for src in spec["sources"]:
+        for src in spec["sources"] + spec.get("extra", []):
             if src not in text:
                 missing.append("%s: the Makefile does not mention %s"
                                % (check, src))

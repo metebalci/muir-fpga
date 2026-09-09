@@ -112,6 +112,32 @@ set probe_depth [expr {[info exists ::env(PROBE_DEPTH)] ? $::env(PROBE_DEPTH) : 
 # second copy to go stale.
 set ddr [expr {[info exists ::env(DDR)] ? $::env(DDR) : 0}]
 
+# AND A THIRD, WHICH BUILDS THE BOARD THAT ANSWERS WHETHER ANY OF IT WORKS.
+#
+#     PROVE=1 OUTDIR=build/prove-write vivado -mode batch -source vivado/bitstream.tcl
+#     PROVE=2 OUTDIR=build/prove-read  vivado -mode batch -source vivado/bitstream.tcl
+#
+# `rtl/cadr_prove.sv` in the design, driving the machine's own memory port ---
+# the same adapter, the same widening, the same PS7 --- with one word at one
+# address. `PROVE=1` writes it as soon as `SAXIHP0ARESETN` says the port is
+# live and stops; `PROVE=2` reads it back on BTN1 and lights LD4 green if it
+# is what was wanted. The observer for both is a debugger reading DDR from
+# outside the design, which is the whole point: the design cannot mark its own
+# work.
+#
+# A `PROVE` BOARD IS A `DDR` BOARD, and `rtl/cadr_arty.sv` makes it one --- its
+# `PORT` localparam is set by either generic --- so `PROVE=1` alone is a
+# complete instruction and everything below that asks "is the processing
+# system in this design" has to ask about both.
+set prove [expr {[info exists ::env(PROVE)] ? $::env(PROVE) : 0}]
+if {$prove != 0 && $prove != 1 && $prove != 2} {
+    puts "BIT: FAILED --- PROVE=$prove is not a board. 1 writes a word, 2 reads"
+    puts "BIT: one back, 0 is the machine. See rtl/cadr_prove.sv."
+    exit 1
+}
+# Everything below asks this rather than `$ddr`.
+set port [expr {($ddr > 0 || $prove > 0) ? 1 : 0}]
+
 set prom build/boot_prom.hex
 if {![file exists $prom]} {
     puts "BIT: $prom is missing; run `make $prom` first"
@@ -122,15 +148,22 @@ read_verilog -sv [glob rtl/*.sv]
 synth_design -top cadr_arty -part $part \
     -generic PROM_HEX=[file normalize $prom] \
     -generic PROBE_DEPTH=$probe_depth \
-    -generic DDR=$ddr
+    -generic DDR=$ddr \
+    -generic PROVE=$prove
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilisation and timing prose below describes."
 }
-if {$ddr > 0} {
-    puts "BIT: DDR=1 --- this board has the processing system behind the"
-    puts "BIT: memory port, so it is neither the design the utilisation prose"
-    puts "BIT: below describes nor the one the timing prose does."
+if {$port > 0} {
+    puts "BIT: the processing system is behind the memory port, so this board"
+    puts "BIT: is neither the design the utilisation prose below describes nor"
+    puts "BIT: the one the timing prose does."
+}
+if {$prove > 0} {
+    puts "BIT: PROVE=$prove --- rtl/cadr_prove.sv drives that port and the"
+    puts "BIT: machine does not. The machine is still in the design and still"
+    puts "BIT: stalls on its own memory exactly as the default board does;"
+    puts "BIT: what this bitstream is for is [expr {$prove == 1 ? {one write a debugger reads back} : {one read a debugger set up}}]."
 }
 
 # The board's pins and clock, then the machine's timing exceptions.
@@ -157,7 +190,7 @@ if {$probe_depth > 0} { read_xdc rtl/cadr_probe.xdc }
 # And the same rule for the memory port's own deadline: every object
 # `rtl/cadr_ddr.xdc` names is inside `g_ddr`, so reading it against the
 # default board would be four critical warnings about absent objects.
-if {$ddr > 0} { read_xdc rtl/cadr_ddr.xdc }
+if {$port > 0} { read_xdc rtl/cadr_ddr.xdc }
 
 # ...and then ask the design whether that worked, rather than trusting it.
 source vivado/constraints_check.tcl
@@ -176,7 +209,7 @@ source vivado/constraints_check.tcl
 # and the held error bit sit beside it in `g_ddr` and are not exempt.
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
-if {$ddr > 0}         { lappend inside g_ddr.u_axi }
+if {$port > 0}        { lappend inside g_ddr.u_axi }
 assert_constraints_scoped $inside 5.0
 
 # --- 1. did the constraints apply?
@@ -229,7 +262,7 @@ assert_multicycle_applied 5.0 15
 # and the exception is real, legal and connected to nothing. Asserting it
 # there would fail on a healthy design; not asserting it here would leave the
 # 80 ns claim exactly as unchecked as it was before it existed.
-if {$ddr > 0} { assert_multicycle_applied 5.0 16 }
+if {$port > 0} { assert_multicycle_applied 5.0 16 }
 
 opt_design
 place_design
