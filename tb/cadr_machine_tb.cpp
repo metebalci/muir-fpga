@@ -359,6 +359,8 @@ int main(int argc, char **argv) {
   bool any_slip = false;
   bool bus_outstanding = false, saw_mem_req = false, saw_device = false;
   bool acked_armed = false;
+  int prev_n_memgrant = 1;
+  long grants_checked = 0;
   uint64_t ack_for_cur = 0;
   std::map<long, long> ack_error;
   bool saw_ub = false;
@@ -395,6 +397,15 @@ int main(int argc, char **argv) {
     if (dut->mem_req) saw_mem_req = true;
     if (dut->dev_rq && dut->device) saw_device = true;
     if (dut->ub_msyn) saw_ub = true;
+    // THE GRANT INSTANT, CHECKED DIRECTLY.  A grant a whole microcycle early
+    // shows up in a microcycle's *length* as five nanoseconds --- the
+    // magnitude of a bug and the magnitude of its symptom are not the same
+    // thing --- so a length tolerance sized to this testbench's own tick can
+    // blind the check to an error two orders larger. It did: the mutant
+    // `the-grant-comes-a-microcycle-early` was caught on one row at -5 ns and
+    // survived the moment the tolerance admitted -5. So the instant is
+    // compared to muir's rather than inferred from what it does.
+
     // WHERE THE FABRIC'S OWN -MEMACK LANDS, against muir's. Measured rather
     // than fitted: a constant chosen to make two checks agree is a constant
     // hiding a difference, and this says whether there is one and how big.
@@ -503,17 +514,7 @@ int main(int argc, char **argv) {
           const long slip = static_cast<long>(got) - static_cast<long>(want);
           if (arbitrated[k]) {
             ++arb_skipped;
-          } else if (r.v[kStall] && slip >= -kTickNs && slip <= kTickNs) {
-            // A WHOLE TICK, AND THIS IS WHERE IT IS CREATED. -MEMACK here is
-            // placed by the model below: muir's acknowledgement is off the
-            // 5 ns grid --- a memory board answers on its own refresh clock
-            // --- so it is rounded up, and it is measured from the edge
-            // marker, which stands a tick after the boundary. The histogram
-            // this check prints is the evidence: never early, and one or two
-            // ticks late. A hang ends at the tap and so notices every tick of
-            // that; a wait ends at a master clock and notices only what
-            // straddles a boundary. The processor's -RDFINISH is its derived
-            // value and does not absorb this.
+          } else if (r.v[kStall] && slip > -kTickNs && slip < kTickNs) {
             ++sub_tick;
             if (!any_slip || slip > worst_slip) worst_slip = slip;
             if (!any_slip || slip < best_slip) best_slip = slip;
@@ -553,7 +554,18 @@ int main(int argc, char **argv) {
                                       : "nothing on the bus answered it";
         break;
       }
+      // muir grants at the edge the cycle starts on --- `Rtl::clock_edge`
+      // calls `Busint::request` and `Busint::mclk_edge` there --- so the
+      // fabric's -MEMGRANT must fall at this edge and not at an earlier one.
       if (r.v[kBus]) {
+        if (!prev_n_memgrant) {
+          std::fprintf(stderr,
+                       "microcycle %" PRIu64 ": -MEMGRANT was already out "
+                       "before the edge this cycle starts on\n",
+                       r.v[kCycle]);
+          ++bad;
+        }
+        ++grants_checked;
         bus_outstanding = true;
         acked_armed = ack_for[k] != 0;
         ack_for_cur = ack_for[k];
@@ -642,7 +654,12 @@ int main(int argc, char **argv) {
     dut->clk = 0;
     dut->eval();
     prev = take();
+    prev_n_memgrant = dut->n_memgrant_o;
   }
+
+  std::printf("    -MEMACK against muir, in nanoseconds (muir minus fabric):\n");
+  for (const auto &e : ack_error)
+    std::printf("             %+5ld ns  %ld cycles\n", e.first, e.second);
 
   dut->final();
   delete dut;
@@ -782,7 +799,8 @@ int main(int argc, char **argv) {
       "             which %ld read the memory, %ld PROM fetches, %ld control\n"
       "             store fetches, %ld microcycles the bus held off, %ld map\n"
       "             reads, %ld Q shifts, %ld ILONG instructions\n"
-      "    the A bus took %zu distinct values, the M bus %zu, OB %zu\n"
+      "    the A bus took %zu distinct values, the M bus %zu, OB %zu;\n"
+      "    %ld grants compared against the edge muir grants on\n"
       "    driven from the trace, and going with the memory path: MD, the\n"
       "             word -LOADMD strobes into it; SINTR off the cables; the\n"
       "             console's registers\n",
@@ -790,11 +808,7 @@ int main(int argc, char **argv) {
       lengths_checked, sub_tick, best_slip, worst_slip, arb_skipped,
       unibus_cycles, cycles_run, popjs, jumps, iwrites, dispatches, disp_reads,
       prom_fetches, ram_fetches, stalls, map_sources, q_shifts, ilongs,
-      a_values.size(), m_values.size(), ob_values.size());
-
-  std::printf("    -MEMACK against muir, in nanoseconds (muir minus fabric):\n");
-  for (const auto &e : ack_error)
-    std::printf("             %+5ld ns  %ld cycles\n", e.first, e.second);
+      a_values.size(), m_values.size(), ob_values.size(), grants_checked);
 
   // What this program did not reach, printed from the counts rather than
   // asserted from memory, so the list cannot outlive its reasons.
