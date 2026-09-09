@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# U-Boot's preboot loads this from the card's FAT partition and imports it,
+# then runs uenvcmd.  That is the whole reason the device tree can be a loose,
+# hand-edited file: nothing here needs the FIT image repacked.
+#
+# fdt_high is not a nicety.  With it unset, boot_relocate_fdt() allocates the
+# device tree from the TOP of RAM --- which is the region cadr-reserved.dtsi
+# reserves --- so the loader would place the tree inside the memory the tree
+# says belongs to the CADR.  ~0 means "leave the blob where it was loaded",
+# and 0x0f000000 is where that is.  initrd_high for the same reason.
+#
+# Load addresses are chosen to stay clear of 0x1800_0000 upwards:
+#   system.dtb  0x0f00_0000 +   26 KB
+#   zImage      0x1000_0000 + 47.4 MB, ending about 0x12d4_0000
+#
+# Deleting or renaming this file returns the card to the stock boot, which is
+# the control the reservation is measured against.
+
+fdt_high=0xffffffff
+initrd_high=0xffffffff
+uenvcmd=mmcinfo && fatload mmc 0 0x0f000000 system.dtb && fatload mmc 0 0x10000000 zImage && bootz 0x10000000 - 0x0f000000
