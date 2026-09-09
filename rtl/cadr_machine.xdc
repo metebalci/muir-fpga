@@ -8,6 +8,9 @@
 # constraint. Hold all 1,821 registers to the tick and the routed report says
 # WNS -17.265 ns on the map lookup rippling into the control store's address,
 # 21.615 ns over 26 logic levels --- a path that has a phase to happen in.
+# (That register count is of the design as it then was. At 712909e the machine
+# is 769 registers placed and routed out of context, and the experiment has
+# not been repeated at that size.)
 # That is the pessimistic version CLAUDE.md says not to spread, and it
 # distorts placement as well as the report: the placer spends itself on 6,637
 # impossible paths.
@@ -73,17 +76,17 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
 set_multicycle_path -setup 15 -from $slow -to $slow
 set_multicycle_path -hold  14 -from $slow -to $slow
 
-# WHAT THIS CURRENTLY REPORTS, placed and routed on an xc7z020clg400-1:
-# timing is NOT met. Five paths violate, and they are one path fanned across
-# the counter's bits:
+# WHAT THIS REPORTED BEFORE THE TWO HOLDINGS BELOW, placed and routed on an
+# xc7z020clg400-1: timing NOT met, five paths violating, and they were one
+# path fanned across the counter's bits:
 #
 #     -3.957 ns   processor/memstart_reg_replica_1/C
 #              -> processor/rdfinish_t_reg[1]/R
 #              8.349 ns (logic 2.349, route 6.001)
 #
 # `memstart` reaching the synchronous reset of the -RDFINISH counter, 72% of
-# it routing. Everything else meets. Utilisation is not the problem: 2,764
-# LUTs of 53,200 and 28 block RAM tiles of 140.
+# it routing. Everything else met. Utilisation was not the problem then and is
+# not now: 2,795 LUTs of 53,200 and 28 block RAM tiles of 140 at 712909e.
 #
 # A later report named a second endpoint of the same family:
 #
@@ -135,7 +138,35 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 # not the other. Pattern-matching the family would have got the fifth one
 # wrong.
 #
-# NOT YET MEASURED. `make check` is green on all nine, which says the holdings
-# changed no behaviour; what they were for is a slack figure, and this has not
-# been placed and routed since. The numbers above are the last report and are
-# left as the last report.
+# MEASURED AT 712909e, and the holdings did what they were for. Placed and
+# routed out of context by `vivado/fit.tcl`: WNS -0.484 ns, 94 failing
+# endpoints of 13,444, hold met at +0.061 ns. On the board through
+# `vivado/bitstream.tcl`, where this file is read scoped: WNS -0.129 ns, 16
+# failing endpoints of 14,135, hold met at +0.079 ns.
+#
+# NEITHER ENDPOINT NAMED ABOVE IS ANYWHERE NEAR THE TOP NOW. `n_loadmd_q_reg`
+# and `memstart` between them appear not once in the ten worst paths of either
+# flow --- the reports are `report_timing_summary -max_paths 10`, so that is
+# what "no longer near the top" is measured against and not more. What is
+# worst out of context is a third member of the same family, and it is the one
+# this file's policy predicts:
+#
+#     -0.484 ns   processor/ir_reg[26]/C
+#              -> processor/mfinish_t_reg[1]/R
+#              4.971 ns (logic 1.076, route 3.895), 5 logic levels
+#
+# A datapath register into a tick-rate counter's reset: slow-to-fast, so the
+# `-from $slow -to $slow` multicycle does not match it and must not, and it
+# has one tick to arrive in. It is within half a nanosecond of doing so, and
+# on the board the same family is worst at -0.384 ns from `ir_reg[25]` at
+# b1bcc34 --- where at 712909e the board's worst was somewhere else entirely,
+# the phase generator's write pulse into the dispatch memory's LUTRAM write
+# enables, 3 logic levels and 80% route delay. Two revisions, two worst nets:
+# the family is stable and the net is placement, so a net quoted from a timing
+# report belongs with the commit it was measured at.
+#
+# The 10,972 paths this file relaxes to 75.000 ns out of context, and the
+# 10,929 it relaxes on the board --- 10,956 there once routed --- are what
+# `vivado/constraints_check.tcl` asserts on: a count of zero at that
+# requirement is the `foreach` bug back again, and both flows now stop on it
+# before they place anything.
