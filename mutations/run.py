@@ -704,9 +704,9 @@ def arty_check(args, work):
         (["-GDDR=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
           "rtl/cadr_axi_widen.sv"]),
-        # And the two the witness builds, which are branches only they reach:
-        # `PROVE=2` is the only one that elaborates the button synchroniser at
-        # all, and neither elaborates the machine's own drive of the port.
+        # And the two the witness builds, which are branches only they
+        # reach: nothing else elaborates `cadr_prove.sv` at all, and neither
+        # of them elaborates the machine's own drive of the port.
         (["-GPROVE=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
           "rtl/cadr_axi_widen.sv", "rtl/cadr_prove.sv"]),

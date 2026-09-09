@@ -27,8 +27,11 @@
 // machine is still in the design and still stalls on its own memory port
 // exactly as the default board does; what changes is that `rtl/cadr_prove.sv`
 // drives that port instead, with one word and one address, and somebody
-// outside the design says whether the word arrived.  That module's header is
-// the whole argument for the two steps and for their order.
+// outside the design says whether the word arrived.  `PROVE=1` writes a word
+// for a debugger to read; `PROVE=2` reads one a debugger wrote and WRITES IT
+// BACK to a second address, so the comparing is done outside the design there
+// too.  Neither needs anybody at the board.  That module's header is the
+// whole argument for the two steps and for their order.
 //
 // TWO THINGS THIS FILE HAS TO GET RIGHT THAT ARE NOT OBVIOUS.
 //
@@ -74,7 +77,8 @@ module cadr_arty #(
     parameter string PROM_HEX = "build/boot_prom.hex",
     parameter int unsigned PROBE_DEPTH = 0,
     parameter int unsigned DDR = 0,
-    // 0 the machine, 1 the fabric writes a word, 2 the fabric reads one back.
+    // 0 the machine, 1 the fabric writes a word, 2 the fabric reads one back
+    // and writes what it read to a second address.
     // See the note above the memory below: a `PROVE` board is a `DDR` board
     // by construction, because proving the port needs the port.
     parameter int unsigned PROVE = 0
@@ -218,8 +222,39 @@ module cadr_arty #(
   // bug": against a neighbourhood of zeros, a word that half-landed reads as
   // plausible. `docs/board.md` will carry the procedure; the numbers live
   // here, once.
+  //
+  //   the second     `main_byte_address(22'o12345706)`, 0x18A7_2F18. A
+  //   address        `PROVE=2` board reads `PROVE_ADDR` and writes WHAT CAME
+  //                  BACK here, so that the debugger and not the fabric does
+  //                  the comparing. Chosen the same way as the first, and for
+  //                  four reasons:
+  //
+  //                  **A DIFFERENT BEAT.** Its beat is 0x18A7_2F18 and the
+  //                  read's is 0x18A7_2EE0, seven beats apart, so the
+  //                  write-back cannot touch the word it just read --- and
+  //                  the read's beat is checked to be unchanged afterwards,
+  //                  which is what says so.
+  //
+  //                  **BIT 2 CLEAR, WHERE THE READ'S IS SET.** The read
+  //                  takes the HIGH half of its beat and the write-back
+  //                  opens the LOW half of its own, so a widening stuck on
+  //                  one half is caught in one direction or the other: stuck
+  //                  low, the read brings back filler; stuck high, the word
+  //                  lands on this address's neighbour instead.
+  //
+  //                  **INSIDE THE POISONED BLOCK, WITH ITS OWN NEIGHBOUR IN
+  //                  IT TOO.** 0x18A7_2F1C is the other half of this beat
+  //                  and carries the filler like everything else, so a
+  //                  strobe pattern that opened both halves of the
+  //                  write-back destroys a word the debugger prints.
+  //
+  //                  **NOT THE BASE, AND NOT THE READ'S ADDRESS SHIFTED.**
+  //                  It differs from `PROVE_ADDR` in bits 2 through 8, so a
+  //                  dropped or doubled bit among the low nine moves the
+  //                  write-back somewhere the block still shows.
   localparam logic [31:0] PROVE_ADDR = cadr_ddr_map::main_byte_address(22'o12345671);
   localparam logic [31:0] PROVE_WORD = 32'h8A5C_36E1;
+  localparam logic [31:0] PROVE_ECHO = cadr_ddr_map::main_byte_address(22'o12345706);
 
   cadr_machine #(
       .PROM_HEX(PROM_HEX)
@@ -345,24 +380,22 @@ module cadr_arty #(
     end else begin : g_prove
 
       // A LEVEL, AND WHAT HOLDS IT UP DECIDES WHETHER ANYBODY HAS TO BE
-      // HERE. `cadr_prove` runs one transaction per rise of `go` and needs
-      // it to fall before another, so a `go` tied high is exactly one
-      // transaction at the moment the port comes live --- which is step
-      // two's whole requirement: it must happen with nobody at the board,
-      // because the board is on the end of a JTAG cable and the port comes
-      // live whenever software says so.
+      // HERE. `cadr_prove` runs one sequence per rise of `go` and needs it
+      // to fall before another, so a `go` tied high is exactly one sequence
+      // at the moment the port comes live --- which is both steps' whole
+      // requirement: it must happen with nobody at the board, because the
+      // board is on the end of a JTAG cable and the port comes live whenever
+      // software says so.
+      //
+      // AND THE NEXT ONE IS A RESET AND NOT A FINGER. `SAXIHP0ARESETN`
+      // follows `LVL_SHFTR_EN` at 0xF8000900 --- measured at 700b98a --- so
+      // writing that register 0x0 then 0xF drops `axi_rst` and raises it,
+      // the witness returns to IDLE and runs the whole sequence again. Step
+      // three's first draft tied this to BTN1 and answered on LD4, which
+      // needed somebody in the room for both halves; the write-back to
+      // `PROVE_ECHO` and this re-arm are what took the person out.
       logic prove_go;
-      if (PROVE == 2) begin : g_button
-        // Step three is started by hand, because the pattern it checks was
-        // put in DDR by hand. BTN1 --- BTN0 is the reset. Asynchronous to
-        // this clock, so synchronised in like every other pin here; bounce
-        // costs at worst another read, and a read is idempotent.
-        logic [2:0] btn_sync;
-        always_ff @(posedge clk) btn_sync <= {btn_sync[1:0], btn[1]};
-        assign prove_go = btn_sync[2];
-      end else begin : g_free
-        assign prove_go = 1'b1;
-      end
+      assign prove_go = 1'b1;
 
       logic prove_has_run, prove_matched;
 
@@ -371,6 +404,8 @@ module cadr_arty #(
           // because this is the file that chose them.
           .addr  (PROVE_ADDR),
           .word  (PROVE_WORD),
+          // Where a read puts what came back. A write board never reads it.
+          .echo_addr(PROVE_ECHO),
           .writes(PROVE == 1),
           .clk(clk),
           // Held while the port is dead, so nothing goes out before
@@ -393,13 +428,22 @@ module cadr_arty #(
       assign mem_done  = 1'b0;
       assign mem_rdata = 32'd0;
 
-      // LD4 IS THE VERDICT HERE. Red until something has completed, and it
-      // BLINKS while the port is still dead, because "nobody has run
-      // ps7_post_config" and "the port swallowed the transaction" are two
-      // different faults and a steady red would be both of them. Green is
-      // the transaction that completed and was right; blue is one that
-      // completed and was wrong --- a word that came back different, or a
-      // SLVERR or DECERR. Nothing else can light it.
+      // LD4 IS A LAMP HERE AND NO LONGER THE OBSERVER. Red until something
+      // has completed, and it BLINKS while the port is still dead, because
+      // "nobody has run ps7_post_config" and "the port swallowed the
+      // transaction" are two different faults and a steady red would be
+      // both of them. Green is the sequence that completed and was right;
+      // blue is one that completed and was wrong --- a word that came back
+      // different, or a SLVERR or DECERR on either transaction. Nothing
+      // else can light it.
+      //
+      // WHAT SAYS WHETHER THE READ IS RIGHT IS `PROVE_ECHO` AND NOT THIS.
+      // `matched` compares what came back against a constant this fabric
+      // holds, so a witness that read the wrong lane and one that held the
+      // wrong constant agree with each other and both light green. The
+      // write-back puts the word itself where a debugger can read it, and
+      // that is what `vivado/prove_read.tcl` asserts. This lamp costs
+      // nothing and is for whoever happens to be at the board.
       assign lamp4 = {!prove_has_run && (port_rst_sync[2] || tick[24]),
                       prove_has_run &&  prove_matched,
                       prove_has_run && !prove_matched};
@@ -692,10 +736,10 @@ module cadr_arty #(
   assign led[2] = nxm_count[16]; // NXM timeouts, blinking at their rate
   assign led[3] = witness;       // the datapath is not optimised away
 
-  // btn[3:1] are pins the board has and this design does not use --- except
-  // BTN1 on a `PROVE=2` board, where it starts the read, and a signal read
-  // twice is not a signal read wrongly. Reading them here keeps the ports
-  // legal on every other board without inventing behaviour for them.
+  // btn[3:1] are pins the board has and this design does not use. BTN1 was
+  // a `PROVE=2` board's start button until the witness learned to write back
+  // what it read; nothing presses anything now, and the pins are read here
+  // only to keep them legal without inventing behaviour for them.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
   assign unused = &{1'b0, btn[3:1]};
