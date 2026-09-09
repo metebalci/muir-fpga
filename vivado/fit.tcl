@@ -6,11 +6,15 @@
 #     make build/boot_prom.hex
 #     vivado -mode batch -source vivado/fit.tcl
 #
-# Run from the repository root. Out of context: there is no top level with
-# real pins yet, because almost nothing here is board I/O --- the outside world
-# is DDR3 and the PS, which arrive through the Zynq PS block rather than
-# through package pins. When there is one, the board's own XDC goes with it;
-# Digilent publishes it at github.com/Digilent/digilent-xdc.
+# Run from the repository root. Out of context, and still out of context now
+# that a top level with real pins exists: `rtl/cadr_arty.sv` and
+# `vivado/bitstream.tcl` ask whether the design builds for a board, and this
+# asks what the machine costs on its own --- no output fold, no MMCM, no
+# package pins. The two give different answers and are meant to: at 712909e
+# this reports -0.484 ns with 94 failing endpoints of 13,444, where the board
+# flow reports -0.129 ns with 16 of 14,135, and the worst path is not even the
+# same one. Almost nothing here is board I/O anyway; the outside world is DDR3
+# and the PS, which arrive through the Zynq PS block rather than through pins.
 #
 # Nothing in `make check` runs this. The checks prove the fabric agrees with
 # muir, and a checkout without Vivado should not try to synthesise anything.
@@ -40,6 +44,35 @@ synth_design -top cadr_machine -part $part -mode out_of_context \
 create_clock -name clk -period 5.000 [get_ports clk]
 
 read_xdc rtl/cadr_machine.xdc
+
+# ...and then ask the design whether that worked, rather than trusting it.
+#
+# THIS SCRIPT IS THE ONE WHOSE NUMBERS GET QUOTED as what the machine costs,
+# and until now it was the one flow with nothing between `read_xdc` and a
+# slack figure. `vivado/bitstream.tcl` has counted its exceptions since it was
+# written; this had the blind spot the `foreach` bug lived in --- an XDC that
+# reads cleanly, applies to nothing, and reports a plausible worse number
+# --- -16.405 ns unconstrained, where the constrained design is -0.484 at
+# 712909e. (The constrained figure recorded beside that -16.405 at the time is
+# -6.602 in `bitstream.tcl` and -6.542 in CLAUDE.md; they are two reports of
+# two revisions and both predate the timing holdings, so neither is quoted
+# here as the pair.)
+#
+# The count of exception objects is the weaker test, and that is why the
+# assertion is not one: `report_exceptions` lists a `set_multicycle_path`
+# whose `-from`/`-to` matched nothing exactly as it lists one that reached
+# 10,972 paths --- the statement was read either way, so the exception exists
+# either way. What separates them is the SETUP REQUIREMENT the paths ask for:
+# 75.000 ns where the multicycle arrived, 5.000 ns everywhere it did not. A
+# design where nothing asks for 75 ns is the unconstrained design, whatever
+# the exceptions report says.
+source vivado/constraints_check.tcl
+assert_multicycle_applied 5.0 15
+# And the other half of the same policy: nothing outside the machine may take
+# the relaxation. Out of context the machine IS the top, so this can only pass
+# --- which is the point of running it here. If it ever fails, a top level has
+# appeared in a flow that is not supposed to have one.
+assert_constraints_scoped "" 5.0
 
 opt_design
 place_design
