@@ -53,10 +53,25 @@ read_verilog -sv [glob rtl/*.sv]
 synth_design -top cadr_arty -part $part \
     -generic PROM_HEX=[file normalize $prom]
 
-# The board's pins and clock, then the machine's timing exceptions. Order
-# matters only in that the clock has to exist before anything references it.
+# The board's pins and clock, then the machine's timing exceptions.
+#
+# THE MACHINE'S FILE IS READ SCOPED, and that is not tidiness. Unscoped, its
+# `$slow` set is `all_registers` minus a name list, and on a board `all_
+# registers` includes the top level's own --- measured, 26 of them: the reset
+# synchroniser and the free-running heartbeat, each taking a fifteen-tick
+# multicycle written for a datapath. `-ref cadr_machine` makes
+# `all_registers` mean the machine's, which is what the file's prose has
+# always said it meant.
+#
+# Both queries in that file honour the scope; it was checked rather than
+# assumed. Scoped, `rst_sync` and `beat` come back 0 and 0; unscoped, 2 and
+# 24.
 read_xdc rtl/cadr_arty.xdc
-read_xdc rtl/cadr_machine.xdc
+read_xdc -ref cadr_machine rtl/cadr_machine.xdc
+
+# ...and then ask the design whether that worked, rather than trusting it.
+source vivado/constraints_check.tcl
+assert_constraints_scoped u_machine 5.0
 
 # --- 1. did the constraints apply?
 #

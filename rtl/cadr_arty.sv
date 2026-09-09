@@ -145,7 +145,8 @@ module cadr_arty #(
                    vma, md, phys, ub_addr, ub_rdata, arb_stage,
                    mem_addr, mem_wdata,
                    vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge,
-                   wrcyc, device, dev_rq, dev_write, ub_msyn, ub_ssyn,
+                   wrcyc, device, dev_rq, dev_write, promdisable,
+                   ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, mbusy, mbusy_sync,
                    mem_req, mem_write};
@@ -161,8 +162,26 @@ module cadr_arty #(
     else if (clock_edge) beat <= beat + 24'd1;
   end
 
-  assign led[0] = beat[23];      // microcycles are retiring
-  assign led[1] = promdisable;   // the PROM has turned itself off
+  // AND A HEARTBEAT THAT DOES NOT DEPEND ON THE MACHINE. Without it a dark
+  // board means "not programmed", "the MMCM never locked" or "the machine
+  // stalled", and those are three different problems that look the same. This
+  // counts the master clock and nothing else, so it blinks whenever the
+  // fabric is clocked at all --- about three times a second at 200 MHz --- and
+  // it is deliberately not reset by `rst`, because `rst` is held while the
+  // MMCM is unlocked and a heartbeat that stopped during reset would lose the
+  // one case it exists to distinguish.
+  logic [25:0] tick;
+  always_ff @(posedge clk) tick <= tick + 26'd1;
+
+  // LD0 is the heartbeat and the other three are status. The heartbeat gets
+  // the first LED because it is the one to look at first: it answers "is this
+  // thing running at all", and every other light is meaningless until it says
+  // yes. A dark LD0 means the board is not programmed or the MMCM never
+  // locked; a blinking LD0 with the rest dark means the fabric is clocked and
+  // the machine is not retiring microcycles, which is a different fault
+  // entirely.
+  assign led[0] = tick[25];      // the fabric is clocked          --- heartbeat
+  assign led[1] = beat[23];      // microcycles are retiring
   assign led[2] = timed_out;     // a cycle reached the NXM timer
   assign led[3] = witness;       // the datapath is not optimised away
 
