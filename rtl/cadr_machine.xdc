@@ -76,6 +76,37 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
 set_multicycle_path -setup 15 -from $slow -to $slow
 set_multicycle_path -hold  14 -from $slow -to $slow
 
+# THE MEMORY PORT'S OWN DEADLINE IS NOT HERE, AND IT CANNOT BE.
+#
+# `mem_addr`, `mem_wdata` and `mem_write` leave this module for whatever is
+# behind the memory port, and the bus specification --- quoted in
+# `rtl/cadr_xbus_ddr.sv` --- makes the master responsible for asserting them
+# 80 ns before the request.  That is sixteen ticks, and it is a timing
+# exception waiting to be written.  It is written in `rtl/cadr_ddr.xdc`
+# instead, for a reason worth recording rather than rediscovering:
+#
+# **THIS FILE IS READ SCOPED, `read_xdc -ref cadr_machine`, and the registers
+# that receive those three signals are outside the module.**  A scoped file
+# cannot name them.  Nor can it name the ports they leave by: `set_multicycle
+# _path -through [get_ports {mem_addr[*] ...}]` was tried and Vivado 2026.1
+# answered
+#
+#     CRITICAL WARNING: [Vivado 12-4739] set_multicycle_path:No valid
+#     object(s) found for '-through [get_ports -quiet {...}]'
+#
+# twice, and `report_exceptions` then counted two exceptions where there
+# should have been four.  Measured on the board flow at 1d3a9bc plus this
+# work.  It is the `foreach` failure again in a new costume --- a constraint
+# that reads cleanly and reaches nothing --- and the only thing that caught it
+# was the critical warning being read.
+#
+# Nor do the hierarchical pins survive to be named from outside: on the board
+# netlist `get_pins u_machine/mem_addr[*]` and `u_machine/mem_wdata[*]` are
+# both empty, the buses having been dissolved by synthesis --- 32 bits of
+# address arrive as 23 registers, the rest of the byte address being constant.
+# `u_machine/mem_write` does survive, alone.  So the exception has to name the
+# far side, which is the top level's business and not this file's.
+
 # WHAT THIS REPORTED BEFORE THE TWO HOLDINGS BELOW, placed and routed on an
 # xc7z020clg400-1: timing NOT met, five paths violating, and they were one
 # path fanned across the counter's bits:

@@ -97,6 +97,21 @@ file mkdir $outdir
 # `rtl/cadr_machine.xdc`'s header is about.
 set probe_depth [expr {[info exists ::env(PROBE_DEPTH)] ? $::env(PROBE_DEPTH) : 0}]
 
+# AND A SECOND SWITCH, ON THE SAME ARGUMENT.
+#
+#     DDR=1 OUTDIR=build/ddr vivado -mode batch -source vivado/bitstream.tcl
+#
+# puts the Zynq processing system and DDR3 behind the machine's memory port:
+# `rtl/cadr_ps7.sv`, `rtl/cadr_axi_master.sv`, and the widening between the
+# machine's 32-bit word and `S_AXI_HP0`'s 64-bit one. Zero, the default, ties
+# `mem_done` low exactly as this flow has always tied it, so every number
+# printed below still describes the design it has always described.
+#
+# It is a switch and not a second script for the reason the probe's is: the
+# three checks below are policy, and a flow that repeated them would be a
+# second copy to go stale.
+set ddr [expr {[info exists ::env(DDR)] ? $::env(DDR) : 0}]
+
 set prom build/boot_prom.hex
 if {![file exists $prom]} {
     puts "BIT: $prom is missing; run `make $prom` first"
@@ -106,10 +121,16 @@ if {![file exists $prom]} {
 read_verilog -sv [glob rtl/*.sv]
 synth_design -top cadr_arty -part $part \
     -generic PROM_HEX=[file normalize $prom] \
-    -generic PROBE_DEPTH=$probe_depth
+    -generic PROBE_DEPTH=$probe_depth \
+    -generic DDR=$ddr
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilisation and timing prose below describes."
+}
+if {$ddr > 0} {
+    puts "BIT: DDR=1 --- this board has the processing system behind the"
+    puts "BIT: memory port, so it is neither the design the utilisation prose"
+    puts "BIT: below describes nor the one the timing prose does."
 }
 
 # The board's pins and clock, then the machine's timing exceptions.
@@ -133,6 +154,10 @@ read_xdc rtl/cadr_arty.xdc
 read_xdc -ref cadr_machine rtl/cadr_machine.xdc
 # Only when the BSCANE2 it names is in the design. See the switch above.
 if {$probe_depth > 0} { read_xdc rtl/cadr_probe.xdc }
+# And the same rule for the memory port's own deadline: every object
+# `rtl/cadr_ddr.xdc` names is inside `g_ddr`, so reading it against the
+# default board would be four critical warnings about absent objects.
+if {$ddr > 0} { read_xdc rtl/cadr_ddr.xdc }
 
 # ...and then ask the design whether that worked, rather than trusting it.
 source vivado/constraints_check.tcl
@@ -140,11 +165,19 @@ source vivado/constraints_check.tcl
 # this is the machine on a board; two when the probe is in it, because
 # `rtl/cadr_probe.xdc` relaxes the register that holds the machine's
 # combinational outputs and says at length why. Nothing else, either way.
-if {$probe_depth > 0} {
-    assert_constraints_scoped {u_machine g_probe.u_probe} 5.0
-} else {
-    assert_constraints_scoped u_machine 5.0
-}
+#
+# A THIRD ENTRY WITH `DDR=1`, and it is the memory's own contract rather than
+# a convenience. `rtl/cadr_machine.xdc` gives `mem_addr`, `mem_wdata` and
+# `mem_write` sixteen ticks --- the 80 ns the bus specification makes the
+# master responsible for --- and what receives them is `cadr_axi_master`'s
+# address and data registers, which are outside `u_machine` by construction.
+# So the adapter joins the list, and what the invariant still says is that
+# nothing ELSE outside the machine is relaxed: the port's reset synchroniser
+# and the held error bit sit beside it in `g_ddr` and are not exempt.
+set inside u_machine
+if {$probe_depth > 0} { lappend inside g_probe.u_probe }
+if {$ddr > 0}         { lappend inside g_ddr.u_axi }
+assert_constraints_scoped $inside 5.0
 
 # --- 1. did the constraints apply?
 #
@@ -191,6 +224,12 @@ if {$clocks < 2} {
 # is the setup requirement the paths ask for. The count still earns its place:
 # it is the half that says a setup exception has a hold exception beside it.
 assert_multicycle_applied 5.0 15
+# And the memory port's own deadline, which has a destination only on this
+# board: with `DDR` off, `mem_addr` reaches nothing but a false-pathed fold
+# and the exception is real, legal and connected to nothing. Asserting it
+# there would fail on a healthy design; not asserting it here would leave the
+# 80 ns claim exactly as unchecked as it was before it existed.
+if {$ddr > 0} { assert_multicycle_applied 5.0 16 }
 
 opt_design
 place_design
