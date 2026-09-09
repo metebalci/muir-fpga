@@ -181,6 +181,27 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The top level, and the only check that is lint alone: Verilator has no
+    # `MMCME2_BASE`, so `cadr_arty` cannot be simulated. What lint holds is
+    # the port list and the `witness` fold --- an output left off the
+    # instantiation is a PINMISSING, one left out of the fold is an
+    # UNUSEDSIGNAL. `extra` rather than `sources` for everything below the top
+    # level, because `check_coverage` asks that every source a check builds has
+    # a mutation aimed at it and only cadr_arty.sv does.
+    "arty": {
+        "kind": "lint",
+        "sources": ["rtl/cadr_arty.sv"],
+        "extra": ["tb/cadr_arty_stubs.sv",
+                  "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
+                  "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
+                  "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
+                  "rtl/cadr_spy_registers.sv", "rtl/cadr_memory_path.sv",
+                  "rtl/cadr_machine.sv"],
+        "top": "cadr_arty",
+        "tb": None,
+        "flags": [],
+        "golden": None,
+    },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
     # and `busint_xbus` writes the stimulus AND the expected outputs, so a
@@ -489,6 +510,8 @@ def build_and_run(args, work, check):
         return generator_check(args, work, spec)
     if check == "cables":
         return cables_check(args, work)
+    if check == "arty":
+        return arty_check(args, work)
 
     for src, dest in spec.get("files", []):
         # `exist_ok`, because the two processor checks place the same image
@@ -519,6 +542,19 @@ def build_and_run(args, work, check):
     if rc != 0:
         return CAUGHT, first_problem(out)
     return SURVIVED, out.strip().split("\n")[0]
+
+
+def arty_check(args, work):
+    """The top level, linted. Lint failing is the mutation being caught."""
+    spec = CHECKS["arty"]
+    cmd = [args.verilator, "--lint-only", "-Wall", "-Irtl",
+           "-GPROM_HEX=\"%s\"" % os.path.join(args.goldens, "boot_prom.hex"),
+           "--top-module", spec["top"]]
+    cmd += spec["extra"] + spec["sources"]
+    rc, out = run(cmd, work)
+    if rc != 0:
+        return CAUGHT, first_problem(out)
+    return SURVIVED, "lint passes"
 
 
 def generator_check(args, work, spec):
