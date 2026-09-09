@@ -1926,3 +1926,69 @@
 @new
   assign dev_wdata  = ~wdata;
 @end
+
+
+# ======================================================== the top level ===
+#
+# `rtl/cadr_arty.sv` is the only file here that cannot be simulated ---
+# Verilator has no `MMCME2_BASE` --- so `build/arty.pass` is lint alone,
+# against the stubs in `tb/cadr_arty_stubs.sv`. What lint can hold is
+# nevertheless the file's whole specification, which its own comment states:
+# `witness` folds every output of `cadr_machine` "so none of them is dead",
+# because a top level that left the datapath unconnected would synthesise to
+# almost nothing and still write a perfectly good bitstream of an empty part.
+# Forty-nine outputs, forty-nine connected, forty-nine folded.
+#
+# WHAT THIS CHECK CANNOT SEE, MEASURED AT d454d1c AND NOT FILED AS A HOLE.
+# Only a signal the fold is the *sole* reader of can be dropped visibly:
+# then it is unread and `-Wall` gives UNUSEDSIGNAL. Four of the forty-nine
+# are read somewhere else as well --- `clock_edge` counts microcycles into
+# `beat`, `promdisable` colours LD4, `timed_out` feeds `nxm_count`,
+# `n_memack` clocks `bus_nxm` --- and dropping any one of those four from the
+# fold was measured to leave lint entirely clean. Four mutations, four rc=0,
+# no warning of any kind. So the rule "every output" is enforced by this
+# check for forty-five of the forty-nine and by nothing at all for the other
+# four; on the board they would still reach a pin through their LED, which is
+# why the omission does not delete them and also why nothing complains. It is
+# a real limit and it is written here rather than filed, because a record with
+# an `@hole` needs an issue and inventing one to hold a limit that was never
+# a defect is the suppression this list exists to prevent.
+
+@mutation an-output-is-folded-twice-and-another-not-at-all
+@check arty
+@file rtl/cadr_arty.sv
+@note The fold is forty-nine identifiers written by hand in one expression,
+@note and the failure a list like that has is not a deleted line, it is a
+@note name repeated where the next one belongs. `pc` for `lpc` costs two of
+@note them at once: `lpc` stops being folded, and `pc` XOR `pc` is zero, so
+@note `pc` stops contributing too. Synthesis would then be free to delete
+@note whatever computes either.
+@note
+@note Caught because `lpc` has no other reader: UNUSEDSIGNAL at the
+@note declaration, which is the only shape of this bug lint can see. The
+@note section note above says which four outputs are outside that.
+@old
+      witness <= ^{pc, lpc, opc, st, ir, a, m, alu, r, ob, q, dc, lc,
+@new
+      witness <= ^{pc, pc, opc, st, ir, a, m, alu, r, ob, q, dc, lc,
+@end
+
+@mutation the-word-at-the-xbus-seam-reaches-no-pin
+@check arty
+@file rtl/cadr_arty.sv
+@note The bug d454d1c found, put back. `dev_wdata` is MEM<31:0> on its way to
+@note an Xbus slave; no slave exists, so nothing in the top level reads it and
+@note it was connected to nothing at all --- the one output of `cadr_machine`
+@note that reached neither the instantiation nor the fold. Left that way,
+@note synthesis deletes the register the word comes out of and the seam the
+@note disk controller will hang on is a pin count and not a path.
+@note
+@note Two warnings rather than one, and they are the two halves of the claim:
+@note PINMISSING says the port list is incomplete, UNDRIVEN says the fold is
+@note reading something the machine no longer supplies. The fold is what
+@note turns the first into the second, which is the argument for having it.
+@old
+      .dev_write(dev_write), .dev_wdata(dev_wdata),
+@new
+      .dev_write(dev_write),
+@end
