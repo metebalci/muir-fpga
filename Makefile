@@ -18,13 +18,13 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
-.PHONY: check cables current mutants mutants-selftest ila-selftest clean
+.PHONY: check cables current mutants mutants-selftest probe-selftest clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
-       $(BUILD)/machine.pass $(BUILD)/arty.pass current
+       $(BUILD)/machine.pass $(BUILD)/arty.pass $(BUILD)/probe.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -190,31 +190,70 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 # `[glob rtl/*.sv]`, so a stub `MMCME2_BASE` in `rtl/` would replace the real
 # primitive in synthesis and hand the board a wire where its clock generator
 # belongs. `tb/cadr_arty_stubs.sv` says the same at greater length.
-$(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv tb/cadr_arty_stubs.sv | $(BUILD)
+#
+# TWICE, BECAUSE THERE ARE TWO BOARDS. `PROBE_DEPTH` is zero by default and
+# the generate block that instantiates `rtl/cadr_probe.sv` is then not
+# elaborated at all --- so a lint of the default says nothing whatever about
+# the configuration `vivado/probe.tcl` builds and programs. A branch only one
+# build reaches is a branch only one build checks.
+$(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
+                    tb/cadr_arty_stubs.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv rtl/cadr_arty.sv $(MACHINE)
+	$(VERILATOR) --lint-only -Wall -Irtl \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GPROBE_DEPTH=1024 \
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv rtl/cadr_arty.sv \
+	    rtl/cadr_probe.sv $(MACHINE)
+	@touch $@
+
+# --------------------------------------------------------------- the probe
+
+# `rtl/cadr_probe.sv` is what will be read off the board. It is checked the
+# way everything else here is checked --- against muir's own trace --- and not
+# merely instantiated: `tb/cadr_probe_harness.sv` wires it to `cadr_machine`
+# exactly as `rtl/cadr_arty.sv` does, and the testbench shifts all 1,024
+# samples out through the probe's own JTAG shift register and compares every
+# column against `build/rtl.golden`. The window needs no stimulus: the boot
+# PROM's first memory cycle is at microcycle 535,791.
+#
+# The harness is in `tb/` for the reason `tb/cadr_arty_stubs.sv` gives: both
+# Vivado scripts read `[glob rtl/*.sv]`.
+PROBE_SRC := $(MACHINE) rtl/cadr_probe.sv tb/cadr_probe_harness.sv
+
+$(BUILD)/obj_probe/Vcadr_probe_harness: $(PROBE_SRC) tb/cadr_probe_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_probe \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_probe_harness $(PROBE_SRC) \
+	    $(abspath tb/cadr_probe_tb.cpp)
+
+$(BUILD)/probe.pass: $(BUILD)/obj_probe/Vcadr_probe_harness \
+                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_probe/Vcadr_probe_harness $(BUILD)/rtl.golden
 	@touch $@
 
 # ------------------------------------------- the hardware capture, checked
-
-# `tools/ila_check.py` compares a capture read off the board against the same
-# reference trace every other check uses. It is the only thing that will ever
-# be able to say the *board* computes what muir computes --- six LEDs cannot
-# --- so a bug in it would not be caught by anything downstream. Its self-test
-# makes fifteen captures out of `rtl.golden` and requires the right verdict on
-# each: agreement at two lengths and two radixes, and a NAMED failure on a
-# wrong cell, a wrong column, an offset of one with and without a cycle column
-# to say so, a truncated readout, a ragged row, an unknown column, an empty
-# capture, and a trigger that does not mark sample zero.
+#
+# The probe is the instrument; a capture is what it produces, and this is what
+# reads one. `tools/probe_check.py` compares a capture read off the board
+# against the same reference trace every other check uses. It is the only
+# thing that will ever be able to say the *board* computes what muir computes
+# --- six LEDs cannot --- so a bug in it would not be caught by anything
+# downstream. Its self-test makes fifteen captures out of `rtl.golden` and
+# requires the right verdict on each: agreement at two lengths and two
+# radixes, and a NAMED failure on a wrong cell, a wrong column, an offset of
+# one with and without a cycle column to say so, a truncated readout, a ragged
+# row, an unknown column, an empty capture, and a trigger that does not mark
+# sample zero.
 #
 # Phony, and not in `check`, on `mutants-selftest`'s precedent: it tests a
 # tool rather than the fabric, and a `.pass` would make `check_makefile`
 # report a check that nothing mutates. It should join `check` the day a
 # mutation record is aimed at it. Three seconds, and it needs only the trace.
-.PHONY: ila-selftest
-ila-selftest: $(BUILD)/rtl.golden
-	python3 tools/ila_check.py --self-test
+.PHONY: probe-selftest
+probe-selftest: $(BUILD)/rtl.golden
+	python3 tools/probe_check.py --self-test
 
 # ------------------------------------------------------------------- cables
 

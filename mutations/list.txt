@@ -1992,3 +1992,86 @@
 @new
       .dev_write(dev_write),
 @end
+
+# --------------------------------------------------- the probe, three of them
+#
+# `rtl/cadr_probe.sv` is the instrument the board will be read through, and
+# it is the one piece of fabric here whose other verification --- a run on
+# silicon --- has not happened. So the check on it has to bite, and these say
+# whether it does. The check is `tb/cadr_probe_tb.cpp`: the machine runs from
+# reset, 1,024 samples are shifted out through the probe's own JTAG shift
+# register, and every column of every one of them is compared against
+# `build/rtl.golden`.
+#
+# WHAT IS NOT HERE, and why. The mutation that matters most --- dropping the
+# tick of holding, so the sample is the microcycle *after* the one it claims
+# --- cannot be written as a record. Removing the hold leaves `data` unread
+# and Verilator rejects it, which is the bit-granularity lesson in CLAUDE.md
+# again: lint catches the mutation instead of the check. It was measured by
+# hand instead, by deleting the register and its assignment together, and it
+# fails at microcycle 3 on `pc`, `ir`, `nop` and `lpc` --- 21 mismatches in
+# 110 comparisons. The two below reach the same property from the sides lint
+# will allow.
+
+@mutation the-sample-carries-the-next-microcycles-number
+@check probe
+@file rtl/cadr_probe.sv
+@note `cycle` is the trace's first column and the only direct proof that the
+@note window begins at microcycle zero: the comparison tool checks it counts
+@note 0, 1, 2 with no gap and no repeat, and reports a capture without one as
+@note resting on content alone. Storing the post-increment value puts every
+@note sample under the number of the microcycle after it --- a whole-capture
+@note offset of one, which is exactly what a dropped sample or a late arm
+@note would look like, so a check blind to this is blind to those too.
+@note
+@note `cycle` stays read and stays written, so lint has nothing to say and
+@note the check has to be the thing that catches it.
+@old
+        mem[wr_addr] <= {1'b1, cycle, data_q};
+@new
+        mem[wr_addr] <= {1'b1, cycle + 32'd1, data_q};
+@end
+
+@mutation the-readout-is-rotated-by-a-bit
+@check probe
+@file rtl/cadr_probe.sv
+@note The half of this core that no simulation of the machine reaches and no
+@note board has yet run: the JTAG shift register. Loading it a bit out of
+@note place moves every field of every sample by one, which is not obviously
+@note wrong to look at --- a 454-bit word of mostly zeros still looks like a
+@note 454-bit word of mostly zeros --- and is wrong in every column.
+@note
+@note This is the mutation that says the testbench's model of a TAP is doing
+@note work. Without the shift-out being part of the check, a core could store
+@note the right samples and hand back nothing anybody could read, and every
+@note check in the repository would still be green.
+@note
+@note A ROTATION AND NOT A SHIFT, and the reason is the bit-granularity
+@note lesson: `sr <= {sr[SAMPLE-2:0], jtag_tdi}`, the obvious way to write
+@note "shifts the wrong way", leaves `sr[453]` with no reader and Verilator
+@note rejects it --- lint catches the mutation instead of the check. Rotating
+@note the loaded word keeps every bit of `mem_q` used and leaves the catching
+@note where it belongs.
+@old
+        sr      <= mem_q;
+@new
+        sr      <= {mem_q[0], mem_q[SAMPLE-1:1]};
+@end
+
+@mutation the-read-pointer-moves-on-every-bit
+@check probe
+@file rtl/cadr_probe.sv
+@note The pointer advances on the CAPTURE edge, once a scan, deliberately:
+@note that way a scan cut short or shifted with the wrong length still moves
+@note it exactly once and the reader stays in step. Advancing it on each
+@note shifted bit instead walks it 454 entries a sample, which the buffer's
+@note wrap turns into a plausible-looking readout of the wrong rows rather
+@note than into an error.
+@old
+      end else if (jtag_shift) begin
+        sr <= {jtag_tdi, sr[SAMPLE-1:1]};
+@new
+      end else if (jtag_shift) begin
+        rd_addr <= rd_addr + ADDR'(1);
+        sr <= {jtag_tdi, sr[SAMPLE-1:1]};
+@end

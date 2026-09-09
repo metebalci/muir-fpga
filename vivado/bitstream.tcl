@@ -78,6 +78,25 @@ set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z020clg400-
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/bitstream"}]
 file mkdir $outdir
 
+# AND ONE SWITCH, WHICH BUILDS A DIFFERENT BOARD.
+#
+#     PROBE_DEPTH=1024 OUTDIR=build/probe vivado -mode batch -source vivado/bitstream.tcl
+#
+# puts `rtl/cadr_probe.sv` in the design: one sample a microcycle of the
+# columns `build/rtl.golden` carries, in block RAM, shifted out over JTAG by
+# `vivado/probe.tcl`. Zero, the default, is the machine and nothing else ---
+# the same LUTs, the same registers, the same 28 block RAM tiles --- so every
+# number this script has ever printed still describes the design it described.
+#
+# **THE SWITCH IS HERE RATHER THAN IN A FLOW OF ITS OWN** because the three
+# checks below are policy and not convenience: a second script that placed and
+# routed a bitstream would have to repeat them, and a repeated check is a check
+# that goes stale on one side. What the instrumented build needs beyond them is
+# one constraint file, read only when the cell it names exists --- a
+# `create_clock` on an absent object is the "No valid object(s) found" warning
+# `rtl/cadr_machine.xdc`'s header is about.
+set probe_depth [expr {[info exists ::env(PROBE_DEPTH)] ? $::env(PROBE_DEPTH) : 0}]
+
 set prom build/boot_prom.hex
 if {![file exists $prom]} {
     puts "BIT: $prom is missing; run `make $prom` first"
@@ -86,7 +105,12 @@ if {![file exists $prom]} {
 
 read_verilog -sv [glob rtl/*.sv]
 synth_design -top cadr_arty -part $part \
-    -generic PROM_HEX=[file normalize $prom]
+    -generic PROM_HEX=[file normalize $prom] \
+    -generic PROBE_DEPTH=$probe_depth
+if {$probe_depth > 0} {
+    puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
+    puts "BIT: not the one the utilisation and timing prose below describes."
+}
 
 # The board's pins and clock, then the machine's timing exceptions.
 #
@@ -107,10 +131,20 @@ synth_design -top cadr_arty -part $part \
 # care how many there are.
 read_xdc rtl/cadr_arty.xdc
 read_xdc -ref cadr_machine rtl/cadr_machine.xdc
+# Only when the BSCANE2 it names is in the design. See the switch above.
+if {$probe_depth > 0} { read_xdc rtl/cadr_probe.xdc }
 
 # ...and then ask the design whether that worked, rather than trusting it.
 source vivado/constraints_check.tcl
-assert_constraints_scoped u_machine 5.0
+# The list of places the microcycle exception is allowed to live. One when
+# this is the machine on a board; two when the probe is in it, because
+# `rtl/cadr_probe.xdc` relaxes the register that holds the machine's
+# combinational outputs and says at length why. Nothing else, either way.
+if {$probe_depth > 0} {
+    assert_constraints_scoped {u_machine g_probe.u_probe} 5.0
+} else {
+    assert_constraints_scoped u_machine 5.0
+}
 
 # --- 1. did the constraints apply?
 #
