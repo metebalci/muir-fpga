@@ -200,6 +200,29 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The OTHER half of the probe, and the only check here of something that
+    # is not fabric at all.  `vivado/probe.tcl` reads the capture off the board
+    # over JTAG; `tb/cadr_probe_jtag_tb.tcl` runs it against a shift-chain
+    # model in `tb/cadr_jtag_chain.tcl`, on seven chains, with no board and no
+    # Vivado.
+    #
+    # `kind: tcl` means the check is `tclsh <tb>`: the harness exiting non-zero
+    # is the mutation being caught.  There is no build step and so no BROKEN
+    # verdict --- Tcl compiles nothing, and a mutation that is not valid Tcl
+    # fails at the line that runs it, which the harness reports as the case
+    # failing.  That is the one way this differs from every other check here,
+    # and it is why `--self-test` skips this kind when it wants a check that
+    # can be made not to build.
+    #
+    # `sources` is the script, because the script is what the mutations are
+    # aimed at.  The model and the harness are the check, not the thing
+    # checked, and mutating them would be mutating a testbench.
+    "probe_jtag": {
+        "kind": "tcl",
+        "sources": ["vivado/probe.tcl"],
+        "tb": "tb/cadr_probe_jtag_tb.tcl",
+        "golden": None,
+    },
     # The top level, and the only check that is lint alone: Verilator has no
     # `MMCME2_BASE`, so `cadr_arty` cannot be simulated. What lint holds is
     # the port list and the `witness` fold --- an output left off the
@@ -414,11 +437,28 @@ def copy_tree(dest, with_golden=False, rev=None):
     if os.path.exists(dest):
         shutil.rmtree(dest)
     os.makedirs(dest)
-    dirs = ["rtl", "tb"] + (["golden"] if with_golden else [])
+    # `vivado` as well as `rtl` and `tb`: `vivado/probe.tcl` is the source the
+    # probe_jtag mutations are aimed at, and the working tree is no more
+    # mutable for a Tcl script than for a module.
+    dirs = ["rtl", "tb", "vivado"] + (["golden"] if with_golden else [])
     if rev:
+        # A directory that did not exist at `rev` is not an error, and this is
+        # not hypothetical: `--since` names EARLIER revisions on purpose, and
+        # `vivado/` only arrives at dd6f659 --- 71 commits into a history of
+        # 103. `git archive` refuses a pathspec that matches nothing, so
+        # passing all three unconditionally would kill every `--since` run
+        # against anything older than that, for every record in the list, with
+        # a message about a pathspec rather than about the revision.
+        present = [d for d in dirs
+                   if subprocess.call(
+                       ["git", "-C", REPO, "cat-file", "-e", "%s:%s" % (rev, d)],
+                       stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL) == 0]
+        if not present:
+            die("%s: none of %s is there" % (rev, ", ".join(dirs)))
         # `git archive` gives the committed content and nothing else, so an
         # untracked or half-saved file cannot reach the copy.
-        tar = subprocess.Popen(["git", "-C", REPO, "archive", rev] + dirs,
+        tar = subprocess.Popen(["git", "-C", REPO, "archive", rev] + present,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         rc = subprocess.call(["tar", "-x", "-C", dest], stdin=tar.stdout)
         tar.stdout.close()
@@ -466,6 +506,14 @@ def apply(work, m, listing):
     caught, and it is fatal rather than skipped.
     """
     path = os.path.join(work, m.path)
+    # The file may simply not be there --- `--since` runs a record against an
+    # earlier revision, and a mutation of a file added after it has nothing to
+    # apply to. Reported the same way as an anchor that does not match, which
+    # `before()` reads as "not caught there", rather than raised out of a
+    # worker thread and taking the run with it.
+    if not os.path.exists(path):
+        return ("%s:%d: `%s` has no %s to mutate there"
+                % (listing, m.line, m.name, m.path))
     with open(path) as f:
         src = f.read()
     n = src.count(m.old)
@@ -527,6 +575,8 @@ def build_and_run(args, work, check):
     spec = CHECKS[check]
     if spec.get("kind") == "generator":
         return generator_check(args, work, spec)
+    if spec.get("kind") == "tcl":
+        return tcl_check(args, work, spec)
     if check == "cables":
         return cables_check(args, work)
     if check == "arty":
@@ -561,6 +611,29 @@ def build_and_run(args, work, check):
     if rc != 0:
         return CAUGHT, first_problem(out)
     return SURVIVED, out.strip().split("\n")[0]
+
+
+def tcl_check(args, work, spec):
+    """Run a Tcl harness in the mutant copy.  Exiting non-zero is caught.
+
+    No build step, unlike everything else here: Tcl is read as it runs, so a
+    mutation that is not valid Tcl shows up as the harness reporting the case
+    that hit the bad line rather than as BROKEN.  That is a real difference
+    from the fabric checks --- there, lint doing the catching is a failure of
+    the mutation --- and it is written down rather than smoothed over.
+
+    The harness resolves the script under test from its own directory, so
+    running it out of the copy tests the copy's `vivado/probe.tcl` and the
+    working tree's is never read.
+    """
+    cmd = [args.tclsh, os.path.join(work, spec["tb"])]
+    rc, out = run(cmd, work)
+    if rc != 0:
+        return CAUGHT, first_problem(out)
+    for line in out.split("\n"):
+        if line.startswith("ok:"):
+            return SURVIVED, line.strip()
+    return SURVIVED, out.strip().split("\n")[-1]
 
 
 def arty_check(args, work):
@@ -772,11 +845,14 @@ def self_test(args):
     plain = [m for m in mutations if not m.hole]
     if not plain:
         die("--self-test wants at least one record without an @hole")
-    # The cheapest check to build, so the cases cost two builds each. A
-    # generator would do, but it costs a cargo build and its "not verilog at
-    # all" fixture would be a rustc error rather than a lint one, which is a
-    # less faithful stand-in for the case being covered.
-    fabric = [m for m in plain if CHECKS[m.check].get("kind") != "generator"]
+    # The cheapest check to build, so the cases cost two builds each --- and
+    # one that VERILATES, so that "a mutation lint rejects" has a build to
+    # reject it. A generator would cost a cargo build and its "not verilog at
+    # all" fixture would be a rustc error rather than a lint one, a less
+    # faithful stand-in for the case being covered; `kind: tcl` has no build at
+    # all, so that arm would have nothing to test. Both are excluded here.
+    fabric = [m for m in plain
+              if CHECKS[m.check].get("kind") not in ("generator", "tcl")]
     if not fabric:
         die("--self-test wants at least one mutation of the fabric")
     cheap = min(fabric, key=lambda m: len(CHECKS[m.check]["sources"]))
@@ -815,7 +891,8 @@ def self_test(args):
                "--goldens", args.goldens,
                "--work", os.path.join(root, "case%d" % i),
                "--list", path, "--jobs", "2",
-               "--verilator", args.verilator, "--cargo", args.cargo]
+               "--verilator", args.verilator, "--cargo", args.cargo,
+               "--tclsh", args.tclsh]
         rc, out = run(cmd, REPO)
         ok = (rc != 0) == (want_rc != 0) and want_text in out
         sys.stdout.write("  %-34s %s\n" % (what, "ok" if ok else "FAILED"))
@@ -847,7 +924,8 @@ def self_test(args):
                "--goldens", args.goldens,
                "--work", os.path.join(root, "generators"),
                "--list", path, "--jobs", "2",
-               "--verilator", args.verilator, "--cargo", args.cargo]
+               "--verilator", args.verilator, "--cargo", args.cargo,
+               "--tclsh", args.tclsh]
         rc, out = run(cmd, REPO)
         reasons = set(l.strip() for l in out.split("\n") if "assertion" in l)
         ok = rc != 0 and "A HOLE THAT CLOSED" in out and len(reasons) >= 2
@@ -881,7 +959,8 @@ def self_test(args):
                    "--work", os.path.join(root, "since"),
                    "--list", path, "--jobs", "2",
                    "--rev", here_rev, "--since", here_rev,
-                   "--verilator", args.verilator, "--cargo", args.cargo]
+                   "--verilator", args.verilator, "--cargo", args.cargo,
+                   "--tclsh", args.tclsh]
             rc, out = run(cmd, REPO)
             ok = "A CHECK THAT GOT WEAKER" not in out and "not caught there" in out
             sys.stdout.write("  %-34s %s\n"
@@ -906,7 +985,8 @@ def self_test(args):
            "--goldens", ".", "--work", "work",
            "--list", os.path.relpath(args.list, here),
            "--only", cheap.name, "--jobs", "2",
-           "--verilator", args.verilator, "--cargo", args.cargo]
+           "--verilator", args.verilator, "--cargo", args.cargo,
+           "--tclsh", args.tclsh]
     rc, out = run(cmd, here)
     ok = rc == 0 and "ok: every mutation was caught" in out
     sys.stdout.write("  %-34s %s\n"
@@ -932,6 +1012,7 @@ def main():
                     help="where the per-mutation copies go")
     ap.add_argument("--verilator", default="verilator")
     ap.add_argument("--cargo", default="cargo")
+    ap.add_argument("--tclsh", default="tclsh")
     ap.add_argument("--jobs", type=int, default=0,
                     help="parallel mutations (default: one per cpu)")
     ap.add_argument("--only", default=None,
@@ -998,7 +1079,8 @@ def main():
     else:
         dirty = subprocess.run(
             ["git", "-C", REPO, "status", "--porcelain", "--", "rtl", "tb",
-             "golden"], stdout=subprocess.PIPE).stdout.decode("utf-8", "replace")
+             "vivado", "golden"],
+            stdout=subprocess.PIPE).stdout.decode("utf-8", "replace")
         if dirty.strip():
             sys.stdout.write(
                 "sources: the working tree, and it is not clean --- these "
