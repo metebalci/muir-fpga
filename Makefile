@@ -19,7 +19,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
-.PHONY: check cables ps7 current mutants mutants-selftest probe-selftest clean
+.PHONY: check cables ps7 ps7-init current mutants mutants-selftest probe-selftest clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -401,6 +401,23 @@ cables:
 ps7:
 	python3 vivado/gen_ps7.py
 
+# -------------------------------------------------------- the PS7 routine
+
+# What `ps7_init` writes, as an ordered list of register operations.
+# Generated, and committed, for the same reason the cables and the PS7
+# wrapper are: a checkout without Vivado still carries the claim, and
+# `current` is what keeps the committed copy honest --- it skips where
+# Vivado is not installed, and CI has none.
+#
+# Programming a `.bit` over JTAG does not start the PS, so without this
+# routine the memory controller, the three PLLs and the pin multiplexing
+# stay unconfigured and DDR does not answer. The configuration it is
+# generated from is Digilent's and is board-specific;
+# vivado/ps7_config.tcl says exactly where it came from, and
+# vivado/ps7_ops.py what it was measured against.
+ps7-init:
+	python3 vivado/ps7_ops.py
+
 $(BUILD)/cables.pass: rtl/cadr_cables.svh rtl/cadr_cables_lint.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall --top-module cadr_cables_lint -Irtl \
 	    rtl/cadr_cables_lint.sv
@@ -415,6 +432,7 @@ current:
 	    || { echo "generated files are stale: run 'make cables' and commit"; exit 1; }
 	@echo "ok: generated files are current"
 	@python3 vivado/gen_ps7.py --check
+	@python3 vivado/ps7_ops.py --check
 
 # ------------------------------------------------------------ the mutations
 #
