@@ -82,7 +82,11 @@
           <text class="d-t" x="984" y="118" text-anchor="middle">debug cable adapter</text>
           <text class="d-s" x="984" y="138" text-anchor="middle">21 wires onto 8 Pmod pins</text>
           <text class="d-s" x="984" y="152" text-anchor="middle">and a register block on GP1</text>
-          <path class="d-line" d="M850,128 L896,128 M1072,128 L1115,128 L1115,712 M890,712 L1115,712 M890,712 L890,728 M1060,712 L1060,728 M990,160 L990,464 M990,508 L990,562"/>
+          <!-- two cables, two lines: DBGOUT to JA and DBGIN to JB leave the
+               adapter separately and never share a segment -->
+          <path class="d-line" d="M850,128 L896,128 M990,160 L990,464 M990,508 L990,562"/>
+          <path class="d-line" d="M1072,120 L1096,120 L1096,706 L890,706 L890,728"/>
+          <path class="d-line" d="M1072,136 L1115,136 L1115,712 L1060,712 L1060,728"/>
           <text class="d-s" x="982" y="300" text-anchor="end">debug cable</text>
 
           <!-- the two buses -->
