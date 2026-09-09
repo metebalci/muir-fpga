@@ -13,7 +13,7 @@
   <div class="band">
     <figure class="fig dense">
       <div class="scroll">
-<svg viewBox="0 0 1170 960" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP1, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly. Below the board's own parts, six status lights: LD0 says the fabric is clocked and LD1 that microcycles are retiring — between them, whether the machine is running — with four more for bring-up. How far along each block is, which the drawing otherwise says in colour: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today from the boot PROM, with no memory behind it; the bus interface is partly built, wanting only the debug cable; the disk controller is being written now; the TV and the I/O board are not started. Beside the lights, the fit as measured at commit 712909e: 5.41% of the LUTs, 20.00% of the block RAM, no DSP, and minus 0.129 ns on 16 of 14,135 endpoints, so the bitstream exists and 200 MHz is not closed.">
+<svg viewBox="0 0 1170 960" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP1, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly. Below the board's own parts, six status lights: LD0 says the fabric is clocked and LD1 that microcycles are retiring — between them, whether the machine is running — with four more for bring-up. How far along each block is, which the drawing otherwise says in colour: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today from the boot PROM, with no memory behind it; the bus interface is partly built, wanting only the debug cable; the disk controller is being written now; the TV and the I/O board are not started. Beside the lights, the fit as measured at commit 7bb2213: 5.36% of the LUTs, 20.00% of the block RAM, no DSP, and minus 0.054 ns on a single endpoint of 14,058, so the bitstream exists and 200 MHz is not closed.">
           <text class="d-t" x="10" y="18">muir-fpga on the Arty Z7-20</text>
           <text class="d-s" x="196" y="18">XC7Z020-1CLG400C</text>
 
@@ -227,14 +227,16 @@
           <text class="d-s" x="590" y="934" text-anchor="middle">four more for bring-up: timeouts, datapath, boot, bus</text>
 
           <!-- The one whole-design number the drawing carries, and the commit
-               it was measured at, because `rtl/cadr_arty.sv` has changed since
-               and these are not today's figures.  It is a fit, not a verdict:
-               a bitstream existing and the machine being right on silicon are
-               different questions, and the block colours above answer neither
-               of them. -->
-          <text class="d-t" x="820" y="882">the fit, at 712909e</text>
-          <text class="d-s" x="820" y="902">5.41% of the LUTs, 20.00% of the block RAM, 0 DSP</text>
-          <text class="d-s" x="820" y="916">-0.129 ns on 16 of 14,135 endpoints, so</text>
+               it was measured at, because the board flow's answer moves with
+               `rtl/cadr_arty.sv`: the same machine read -0.129 ns at `712909e`
+               and -0.384 at `b1bcc34` on a change to the output fold alone.
+               These are the figures of the commit named, place-and-routed.
+               It is a fit, not a verdict: a bitstream existing and the machine
+               being right on silicon are different questions, and the block
+               colours above answer neither of them. -->
+          <text class="d-t" x="820" y="882">the fit, at 7bb2213</text>
+          <text class="d-s" x="820" y="902">5.36% of the LUTs, 20.00% of the block RAM, 0 DSP</text>
+          <text class="d-s" x="820" y="916">-0.054 ns on one endpoint of 14,058, so</text>
           <text class="d-s" x="820" y="930">200 MHz is not closed &mdash; and the bitstream exists</text>
         </svg>
       </div>
