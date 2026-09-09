@@ -37,3 +37,14 @@ site/full-page.html
 # mutates. Only the .gz is kept, and the Makefile decompresses a fresh copy
 # into build/ for each run.
 vendor/
+
+# Vivado's droppings, from any run launched in the repository root. `.Xil/` is
+# its scratch directory; `NA/` is where the processing-system generation puts
+# `ps7_summary.html` when nothing names a project directory; the two text files
+# are timing-report side products. None is an input to anything and none is
+# generated on purpose. Build outputs proper go under build/, which is ignored
+# above.
+.Xil/
+NA/
+clockInfo.txt
+tight_setup_hold_pins.txt
