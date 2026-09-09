@@ -2251,10 +2251,39 @@
 @note
 @note Divided rather than replaced, so `SETUP_T` stays read and lint has
 @note nothing to say. Four ticks is 20 ns.
+@note
+@note THE COUNTDOWN IS LOADED IN TWO PLACES SINCE THE WRITE-BACK ARRIVED ---
+@note once for the first transaction and once for the second --- so the line
+@note above it is carried here to say which. The other one is the record
+@note below. A record that named neither would match twice and the runner
+@note would say so, which is the good kind of rot.
 @old
-            count     <= CW'(SETUP_T);
+            read_agreed <= 1'b1;
+            count       <= CW'(SETUP_T);
 @new
-            count     <= CW'(SETUP_T / 4);
+            read_agreed <= 1'b1;
+            count       <= CW'(SETUP_T / 4);
+@end
+
+@mutation the-write-back-does-not-wait-the-eighty-nanoseconds
+@check prove
+@file rtl/cadr_prove.sv
+@note The second half of the record above. The write-back is a transaction of
+@note its own and owes the bus the same sixteen ticks the first one did; the
+@note easy mistake is to treat it as a continuation and send it straight out,
+@note which is what this does. `rtl/cadr_ddr.xdc` would then be relaxing the
+@note adapter's address registers for a payload that had not settled --- and
+@note on a `PROVE=2` board the write-back is the ONLY transaction whose word
+@note is not a constant the fitter can propagate, so it is the one that
+@note actually needs the sixteen ticks.
+@old
+              echo_due    <= 1'b0;
+              // The write-back is a transaction of its own and owes the bus
+              // the same 80 ns the first one did.
+              count       <= CW'(SETUP_T);
+@new
+              echo_due    <= 1'b0;
+              count       <= CW'(SETUP_T / 4);
 @end
 
 @mutation a-refused-transaction-reads-as-a-good-one
@@ -2268,23 +2297,25 @@
 @note
 @note On the board this is the worst kind of wrong: step two would show green
 @note for a write the memory controller never accepted, and the next step
-@note would go looking for the fault in the machine.
+@note would go looking for the fault in the machine. Written at the sequence's
+@note last completion, which is the write on a write board and the write-back
+@note on a read board; the read's own refusal arrives here through
+@note `read_agreed` and the record below holds that half.
 @old
-            matched <= !mem_error && (mem_write || (mem_rdata == want));
+              matched <= read_agreed && !mem_error;
 @new
-            matched <= mem_error || (mem_write || (mem_rdata == want));
+              matched <= read_agreed || !mem_error;
 @end
 
 @mutation the-verdict-is-taken-from-the-word-the-inputs-hold-now
 @check prove
 @file rtl/cadr_prove.sv
-@note `want` is the word this transaction is about, held from the tick it
+@note `want` is the word this sequence is about, held from the tick it
 @note started. Comparing against the input instead is invisible on the board
 @note --- `rtl/cadr_arty.sv` ties `word` to a constant, so the two are the
 @note same signal there --- and it is exactly the class of bug that only a
 @note check which moves its inputs can find. The testbench scribbles the
 @note complement over `word` the moment the payload is taken, for this.
-@note
 @note
 @note WRITTEN AS AN XOR AND NOT AS A SUBSTITUTION, and the first draft was the
 @note substitution. `want` is read nowhere else, so replacing it left the
@@ -2294,22 +2325,28 @@
 @note the testbench scribbling the complement over `word`, `want ^ word` is
 @note all ones and no read can match. CLAUDE.md's bit-granularity lesson, met
 @note for the third time in this list.
+@note
+@note It moved from `matched` to `read_agreed` when the write-back arrived,
+@note because the read is no longer the last thing that happens in a sequence
+@note and the read's opinion of the word is recorded where the read finishes.
 @old
-            matched <= !mem_error && (mem_write || (mem_rdata == want));
+              read_agreed <= !mem_error && (mem_rdata == want);
 @new
-            matched <= !mem_error && (mem_write || (mem_rdata == (want ^ word)));
+              read_agreed <= !mem_error && (mem_rdata == (want ^ word));
 @end
 
 @mutation the-witness-does-not-stop
 @check prove
 @file rtl/cadr_prove.sv
-@note Step two's whole requirement is ONE write and then silence: the port
-@note comes live, one word goes out, and somebody reads it later with nobody
-@note at the board. `go` is tied high there, so a HELD state that returns to
-@note IDLE without waiting for it to fall writes the same word over and over
-@note for as long as the board is powered --- which reads on the lamps
-@note exactly like the correct design and is a machine hammering the memory
-@note controller a debugger is trying to read.
+@note Both steps' whole requirement is ONE sequence and then silence: the port
+@note comes live, the transactions go out, and somebody reads the result later
+@note with nobody at the board. `go` is tied high there, so a HELD state that
+@note returns to IDLE without waiting for it to fall runs the sequence over
+@note and over for as long as the board is powered --- which reads on the
+@note lamps exactly like the correct design and is a machine hammering the
+@note memory controller a debugger is trying to read. On a `PROVE=2` board it
+@note is worse than noise: the write-back would keep landing while the
+@note debugger read it, so a value read out could be from any run.
 @note
 @note `go` stays read in IDLE, so lint has nothing to say.
 @old
@@ -2337,9 +2374,75 @@
 @note lane and call it a pass --- which is CLAUDE.md's shadow memory, in the
 @note one place in this module where it could happen.
 @old
-            mem_addr  <= addr;
+            mem_addr    <= addr;
 @new
-            mem_addr  <= addr ^ 32'd4;
+            mem_addr    <= addr ^ 32'd4;
+@end
+
+@mutation the-write-back-carries-the-constant-and-not-the-word-that-came-back
+@check prove
+@file rtl/cadr_prove.sv
+@note THE POINT OF STEP THREE IS THAT THE FABRIC DOES NOT DO THE COMPARING.
+@note A witness that writes out its own `want` instead of what the memory
+@note returned reports the answer it was built with, whatever the port said
+@note --- and on the board that is indistinguishable from a working read: the
+@note debugger finds the word it wanted at the second address in all three
+@note cases, including the two that were meant to come back wrong. It is the
+@note lamp's own failure mode with the lamp taken away, which is why the
+@note write-back carries the word RAW.
+@note
+@note `mem_rdata` stays read in the line above, so lint has nothing to say.
+@note Caught by the wrong-word case and by the wrong-half case, which are the
+@note two the board session runs first for the same reason.
+@old
+              mem_wdata   <= mem_rdata;
+@new
+              mem_wdata   <= want;
+@end
+
+@mutation the-write-back-lands-in-the-beat-it-just-read
+@check prove
+@file rtl/cadr_prove.sv
+@note The second address must not share a 64-bit beat with the first, or the
+@note write-back overwrites the thing it read --- and then a second run of the
+@note same case reads what the first run wrote, which is a witness marking its
+@note own homework by a longer route. `rtl/cadr_arty.sv` puts them seven beats
+@note apart and says so; this puts them in the same one.
+@note
+@note Written as an XOR and not as the splice it is. The plain
+@note `{mem_addr[31:3], echo[2:0]}` says exactly what this means and leaves
+@note `echo[31:3]` unread, which Verilator rejects --- CLAUDE.md's
+@note bit-granularity lesson for the fourth time in this list, and the fourth
+@note time it has cost a draft. The XOR is the same value with every bit of
+@note `echo` still read: the high bits cancel and the low three come through.
+@note
+@note Caught two ways --- the write-back's `awaddr` is not the second
+@note address's beat, and the beat the read came out of no longer holds what
+@note the stimulus seeded.
+@old
+              mem_addr    <= echo;
+@new
+              mem_addr    <= echo ^ {mem_addr[31:3] ^ echo[31:3], 3'b000};
+@end
+
+@mutation a-write-board-owes-one-transaction-and-a-read-board-two
+@check prove
+@file rtl/cadr_prove.sv
+@note `echo_due` is the whole of the difference between the two steps: a read
+@note owes a write-back and a write does not. Setting it unconditionally gives
+@note a `PROVE=1` board a second transaction it was never meant to have ---
+@note one that writes whatever `mem_rdata` happens to hold, which after a
+@note write is zero, into the second address. Step two's board would then
+@note write two words, and the one nobody expected lands in DDR the debugger
+@note is about to read.
+@note
+@note `writes` stays read two lines above, so lint has nothing to say. Caught
+@note on the handshake counts --- a write board owes exactly one AW --- and on
+@note the second address's beat, which a write board must leave alone.
+@old
+            echo_due    <= !writes;
+@new
+            echo_due    <= 1'b1;
 @end
 
 

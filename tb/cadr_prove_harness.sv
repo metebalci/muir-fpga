@@ -4,11 +4,13 @@
 // `cadr_prove` with the path it actually drives underneath it.
 //
 // The witness is three modules on the board --- the state machine, the AXI
-// adapter, the widening --- and the question step two asks is not whether the
-// state machine sequences correctly but whether a word ends up at an address.
-// That question has three modules in it, so the check has three modules in
-// it: this wires them exactly as `rtl/cadr_arty.sv`'s `g_ddr` does and brings
-// out the 64-bit AXI3 port `cadr_ps7.sv` would be on the far end of.
+// adapter, the widening --- and the question the two steps ask is not whether
+// the state machine sequences correctly but whether a word ends up at an
+// address, and whether the word that comes back off one address goes out
+// again unaltered at another.  Those questions have three modules in them, so
+// the check has three modules in it: this wires them exactly as
+// `rtl/cadr_arty.sv`'s `g_ddr` does and brings out the 64-bit AXI3 port
+// `cadr_ps7.sv` would be on the far end of.
 //
 // IT IS IN `tb/` FOR THE REASON `tb/cadr_arty_stubs.sv` GIVES.  Both Vivado
 // scripts read `[glob rtl/*.sv]`, so a wiring harness in `rtl/` would join
@@ -38,6 +40,8 @@ module cadr_prove_harness #(
     // address the check can sweep.
     input  var logic [31:0] addr,
     input  var logic [31:0] word,
+    // Where a read writes back what came back.  See `rtl/cadr_prove.sv`.
+    input  var logic [31:0] echo_addr,
     input  var logic        writes,
 
     // The verdict.
@@ -87,7 +91,7 @@ module cadr_prove_harness #(
       .SETUP_T(SETUP_T)
   ) u_prove (
       .clk(clk), .rst(rst), .go(go),
-      .addr(addr), .word(word), .writes(writes),
+      .addr(addr), .word(word), .echo_addr(echo_addr), .writes(writes),
       .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata),
       .mem_done(mem_done), .mem_rdata(mem_rdata), .mem_error(mem_error),
