@@ -31,6 +31,16 @@
 #     the next tick. `n_memack_q`, `n_loadmd_q`, `n_tpwpiram_q`, `n_tpwp_q`,
 #     `tpclk_q`. Note these are named, not matched on `_q`, because the
 #     scratchpad latches share that suffix and must not be caught.
+#   - Nor does an acknowledgement. `deskewed`, `ub_acked` and `ub_loadmd` are
+#     the bus interface's three taps --- the 60 ns tap of the TD100 at REQLM
+#     0C09, and the Unibus's 150 and 100 ns instants --- written as registers
+#     rather than as comparisons against `elapsed`; the long notes in
+#     `rtl/cadr_busint_xbus.sv` say why. They are what -MEMACK and -LOADMD are
+#     made of, so they are read every tick and are named here for that reason.
+#     They are the only registers in the design that had to be named rather
+#     than falling into `slow` on their own, and the reason is worth keeping:
+#     a comparison moved into a register is invisible to this file's own test,
+#     which asks what a register's consumers do and not what it replaced.
 #
 # Paths *into* the generator are already tick-rate and must stay so: they are
 # slow-to-fast, which `-from $slow -to $slow` does not match. `speed`
@@ -69,6 +79,9 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *n_loadmd_q_reg*   && \
                                   NAME !~ *n_tpwpiram_q_reg* && \
                                   NAME !~ *n_tpwp_q_reg*     && \
+                                  NAME !~ *deskewed_reg*     && \
+                                  NAME !~ *ub_acked_reg*     && \
+                                  NAME !~ *ub_loadmd_reg*    && \
                                   NAME !~ *tpclk_q_reg*}]
 
 # 15 ticks, not 29: the tightest instant a datapath register is read at is the
@@ -168,6 +181,89 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 # opposite sides of that line, which is why `cadr_microcycle.sv` holds one and
 # not the other. Pattern-matching the family would have got the fifth one
 # wrong.
+#
+# THE RULE APPLIED AGAIN, WITH THE MEMORY SWITCHED ON, and it sent the two
+# arcs different ways for the third and fourth time. `DDR=1` puts the
+# processing system behind the memory port, which is the first build that
+# times `mem_addr` and `mem_wdata` at all --- `rtl/cadr_ddr.xdc` has that
+# story. At a840c85 that board reported WNS -0.446 ns on 86 endpoints, where
+# the same commit with the memory off reported -0.054 on one. Every one of the
+# 86 was inside the machine and none in the new logic, and they were two arcs
+# rather than eighty-six:
+#
+#     61  md_reg/CE, md_held_reg/CE, md_pending_reg/D  <- busint/elapsed_reg/C
+#     13  mfinish_t_reg/CE and /D, rdfinish_t_reg/D    <- busint/answered_at_reg/C
+#     12  mfinish_t_reg/R, rdfinish_t_reg/R            <- processor/ir_reg/C
+#      1  u_phase_gen/tpclk_reg/D                      <- processor/ir_reg/C
+#
+# The first two rows are one thing seen from both ends: the read deskew
+# written as `elapsed >= answered_at + DESKEW_T`, a ten-bit magnitude compare
+# standing between the interface's counter and -MEMACK/-LOADMD, which cross to
+# the processor and land on MD's clock enables and on the two countdowns. The
+# last two are the -WAIT decode: `ir` through DESTM, DESTLC and NEEDFETCH into
+# MACHRUN, and MACHRUN into a countdown's reset.
+#
+#   - The deskew is read every tick. It *is* the acknowledgement, so holding
+#     it is wrong at any depth and the path is shortened instead: the
+#     comparison is made one tick early and registered, which is the move
+#     `cadr_phase_gen.sv` makes for its own taps. `elapsed >= X` at tick t is
+#     `elapsed >= X - 1` at t-1, so the value arrives on the same tick with
+#     the carry chain off the acknowledgement's path. The Unibus's two
+#     instants took the same treatment once the deskew stopped being worst,
+#     which is the rest of the move begun when `ssyn_at` became `ub_ack_at`.
+#   - MACHRUN is read at one instant and one only --- `cpu_edge` is
+#     `mclk_edge && machrun`, one tick a microcycle --- and the IR-derived
+#     half of each -WAIT term has been settled since the boundary before. So
+#     `DESTMEM`, `USE.MD` and `LCINC AND NEEDFETCH` are held, as `destmem_q`,
+#     `use_md_q` and `ifetch_q`. The other half of each term is `MBUSY.SYNC`,
+#     `MBUSY` and `-MEMGRANT`, which move within the microcycle and are left
+#     alone: -MFINISHD clearing MBUSY in the very tick MCLK1A samples it is
+#     where a 220 ns wait cycle turns on, and a tick of holding there would
+#     lose a boundary and cost a microcycle.
+#
+# Same rule, same file, opposite answers, and the three taps are the reason
+# this file now names registers that are not edge detectors.
+#
+# AND THAT WAS ASKED OF THE DESIGN RATHER THAN ASSUMED, synthesised out of
+# context with this file read: every path out of `deskewed`, `ub_acked` and
+# `ub_loadmd` asks for 5.000 ns, so the naming took; 181 of the first 200 out
+# of `destmem_q`, `use_md_q` and `ifetch_q` ask for 75.000 and the other 19 for
+# 5.000, which is those three landing in `slow` and their arcs into the
+# countdowns and the edge detectors staying at one tick. A register named here
+# by mistake and one that should have been and was not look identical in a
+# slack figure; they do not look identical to `get_property REQUIREMENT`.
+#
+# MEASURED AT a840c85 PLUS THIS WORK, board flow, both configurations:
+#
+#                            DDR=1                    DDR=0
+#     worst negative slack   -0.446 -> -0.012 ns      -0.054 -> +0.077 ns
+#     failing endpoints      86 of 14787 -> 6         1 of 14058 -> 0
+#     total negative slack   -12.534 -> -0.074 ns     -0.054 -> 0
+#     hold                   +0.040 -> +0.041 ns      +0.084 -> +0.097 ns
+#     LUTs                   2136 -> 2177             2072 -> 2005
+#     registers              954 -> 957               748 -> 752
+#     block RAM tiles        29, unchanged            29, unchanged
+#
+# **THE BOARD WITH THE MEMORY OFF NOW MEETS TIMING**, and its worst path has
+# moved to the phase generator's TPCLK into the control store's write address,
+# a family this file has never had to argue about. The board with the memory
+# on does not, by twelve picoseconds on six endpoints --- which is inside the
+# quarter of a nanosecond CLAUDE.md calls placement noise, so it is reported
+# as a number and not as closure.
+#
+# AND WHAT IS LEFT CANNOT TAKE EITHER REMEDY, which is worth writing down
+# before somebody tries. All six are
+#
+#     -0.012 ns   busint/elapsed_reg[6]/C -> processor/md_reg[*]/CE
+#              4.128 ns over five LUTs, no carry chain
+#
+# and the arc is `elapsed >= SETUP_T` making -XBUS.RQ, the bridge answering it
+# combinationally, and `write && answering` making -MEMACK on a write. That
+# last gate is the 74S64 at REQLM 0C11 and it is a gate on purpose:
+# `cadr_busint_xbus.sv` says so and `memack-registered-on-a-write` is the
+# mutation that holds it, because registering it puts the acknowledgement a
+# tick late on every write. Holding is refused by the rule and registering is
+# refused by the machine.
 #
 # MEASURED AT 712909e, and the holdings did what they were for. Placed and
 # routed out of context by `vivado/fit.tcl`: WNS -0.484 ns, 94 failing
