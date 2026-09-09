@@ -12,6 +12,7 @@
 
 VERILATOR ?= verilator
 CARGO     ?= cargo
+TCLSH     ?= tclsh
 
 BUILD := build
 GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
@@ -24,7 +25,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
-       $(BUILD)/machine.pass $(BUILD)/arty.pass $(BUILD)/probe.pass current
+       $(BUILD)/machine.pass $(BUILD)/arty.pass $(BUILD)/probe.pass \
+       $(BUILD)/probe_jtag.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -233,6 +235,33 @@ $(BUILD)/probe.pass: $(BUILD)/obj_probe/Vcadr_probe_harness \
 	$(BUILD)/obj_probe/Vcadr_probe_harness $(BUILD)/rtl.golden
 	@touch $@
 
+# ------------------------------------------------- the probe's other half
+#
+# `vivado/probe.tcl` is the script that reads the capture off the board over
+# JTAG, and until this rule it was the one program here that nothing could
+# run: it needs a board, and it shipped with a one-character bug --- TDI
+# driven with zeros where the chain terminates itself only on ones --- that
+# made every readout fail. Nothing could have caught it, because nothing
+# could exercise it.
+#
+# `tb/cadr_jtag_chain.tcl` is a shift-chain model of the two devices a Zynq
+# presents, and `tb/cadr_probe_jtag_tb.tcl` runs the script against seven
+# chains and asserts, for each, the LINE it must print --- not merely its exit
+# code, because "fails on the check that names it, not on a sample of zeros"
+# is a claim `vivado/probe.tcl`'s own header makes and an exit code cannot
+# tell the two apart.
+#
+# IN `check`, and it earns the place: it is a check of a script the repository
+# ships and will depend on, it needs neither Vivado nor a board nor a
+# bitstream, and it costs 80 ms. What it does NOT check is written at length
+# in `tb/cadr_jtag_chain.tcl`'s header --- there is no TAP state machine here,
+# no DRCK and no silicon, so a green run says the script reads a chain
+# correctly and says nothing whatever about the readout being verified.
+$(BUILD)/probe_jtag.pass: vivado/probe.tcl tb/cadr_jtag_chain.tcl \
+                          tb/cadr_probe_jtag_tb.tcl | $(BUILD)
+	OUTDIR=$(BUILD)/probe_jtag $(TCLSH) tb/cadr_probe_jtag_tb.tcl
+	@touch $@
+
 # ------------------------------------------- the hardware capture, checked
 #
 # The probe is the instrument; a capture is what it produces, and this is what
@@ -308,7 +337,8 @@ mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
-	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --rev $(MUTREV)
+	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
+	    --rev $(MUTREV)
 
 # The runner's own guarantees, against lists written to fail: a mutation
 # that does not apply, one that lint rejects, a survivor with nothing
@@ -319,7 +349,8 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
                   $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
                   $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
-	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --self-test
+	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
+	    --self-test
 
 # ------------------------------------------- the processor, on a System pack
 

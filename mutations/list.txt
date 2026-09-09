@@ -2075,3 +2075,157 @@
         rd_addr <= rd_addr + ADDR'(1);
         sr <= {jtag_tdi, sr[SAMPLE-1:1]};
 @end
+
+# -------------------------------------- the probe's reader, four of them
+#
+# `vivado/probe.tcl` is the other half of the probe: the thing that reads the
+# capture off the board over JTAG and writes what `tools/probe_check.py`
+# diffs against muir. Everything above this line is fabric; these four are
+# not, and they are here because a script nobody can run is the sharpest
+# version of the problem this list exists for.
+#
+# IT SHIPPED WITH A ONE-CHARACTER BUG AND NOTHING COULD HAVE CAUGHT IT. The
+# IDCODE scan drove TDI with zeros, so running off the end of the chain
+# returned more zeros --- indistinguishable from bypass bits --- and 192 bits
+# of padding were counted as 192 devices. The IR scans that followed were 778
+# bits where the chain wants 10, an over-long IR scan keeps only its LAST
+# bits, and those were the all-ones BYPASS padding: USER1 was never selected
+# in anything and every sample read back as a bypass bit. It survived because
+# exercising it took a board.
+#
+# The check is `tb/cadr_probe_jtag_tb.tcl` against `tb/cadr_jtag_chain.tcl`:
+# seven chains, `tclsh`, no Vivado and no board, 80 ms. It asserts for each
+# case the LINE the script must print and not merely its exit code --- which
+# is what makes `the-instruction-register-is-measured-and-ignored` catchable
+# at all. A name rather than a position: the list grows and `the third of
+# these` would quietly come to mean something else.
+#
+# WHAT THE CHECK CANNOT SEE is in `tb/cadr_jtag_chain.tcl`'s header and is
+# the thing to read before trusting a green run: it is a shift chain, not a
+# TAP state machine and not silicon, so a DRCK edge, `BSCANE2`'s real
+# behaviour and every property of `rtl/cadr_probe.sv` are outside it. Those
+# belong to the `probe` mutations above.
+#
+# THE REASONING BELOW WAS TRUE AT ace4131, which is where `vivado/probe.tcl`
+# reached its present shape and where the chain was measured on silicon: both
+# IDCODEs exact, the part at the TDO end, IR total 10, first bit out least
+# significant, DONE high. CLAUDE.md's rule is that `@old`/`@new` rots loudly
+# and prose rots silently, so the commit is named rather than the reasoning
+# left to read as true for ever.
+#
+# ONE THING IS NOT HERE. Restoring the IR-padding sweep the fix deleted is
+# the obvious extra record and is not written: the sweep would find a
+# working padding on every chain the model presents that has one, and pass.
+# What the sweep really cost was the ability to say WHICH padding was right
+# --- and that is what `the-instruction-register-is-measured-and-ignored`
+# below tests directly, from the side the check can see.
+
+@mutation the-idcode-scan-drives-tdi-with-zeros
+@check probe_jtag
+@file vivado/probe.tcl
+@note THE BUG THAT SHIPPED, restored exactly. What terminates the chain is
+@note TDI coming back out behind the last device, so the scan is
+@note self-terminating only if TDI is driven with something that is neither a
+@note legal IDCODE nor a bypass bit. All ones is both. All zeros is neither:
+@note a zero reads as a bypass device, and 192 of them read as 192 devices.
+@note
+@note Caught on five of the seven cases, which is itself the point --- the
+@note failure is not subtle once anything at all can run the script. `good`,
+@note `reversed` and `threedev` stop at "bit 64 of the IDCODE scan is a
+@note bypass bit"; `msb-first` and `irlen` reach their own checks by a
+@note different route and so fail on the wrong line, which the harness reads
+@note as a failure for the right reason.
+@note
+@note `tdi-zero` and `stranger` are unmoved, and that is correct: `tdi-zero`
+@note is the case that makes the board behave this way whatever the script
+@note drove, so it fails identically either way.
+@old
+set idraw [scan_dr_hw_jtag $scan_len -tdi [string repeat f [expr {$scan_len / 4}]]]
+@new
+set idraw [scan_dr_hw_jtag $scan_len -tdi [string repeat 0 [expr {$scan_len / 4}]]]
+@end
+
+@mutation the-chain-is-read-from-the-wrong-end
+@check probe_jtag
+@file vivado/probe.tcl
+@note `chain` is ordered from the TDO end, so the devices between ours and
+@note TDO put their bypass bits IN FRONT of the sample in a DR scan and those
+@note behind it put theirs after. Swap the two counts and the returned scan
+@note is unpacked from the wrong offset --- the bit order of what comes back,
+@note read backwards.
+@note
+@note It is worth having as a separate record from the one above because it
+@note is the arithmetic no simulation of the fabric can reach: the probe core
+@note never sees a chain, and `tb/cadr_probe_tb.cpp` shifts its samples out
+@note with nothing either side of them. This is the only check anywhere that
+@note holds the "N from the TDO end" line to anything.
+@note
+@note Caught on `good`, `reversed` and `threedev`, each at "the first sample
+@note reads back valid=0" --- the sample is real and is extracted one bit out,
+@note so the valid bit read is a neighbour's bypass bit. The four failing
+@note cases never reach a sample and are unaffected, which is right: they are
+@note about the chain and this is about what is done with it.
+@old
+set after  $mine
+set before [expr {[llength $chain] - $mine - 1}]
+@new
+set after  [expr {[llength $chain] - $mine - 1}]
+set before $mine
+@end
+
+@mutation the-instruction-register-is-measured-and-ignored
+@check probe_jtag
+@file vivado/probe.tcl
+@note THE SWEEP'S SIN, WRITTEN AS ONE LINE. ace4131 replaced a search over IR
+@note paddings with a single scan that MEASURES the chain's instruction
+@note register length, the device order and Vivado's bit order at once, before
+@note anything depends on any of them. This takes that scan, prints it, and
+@note stops acting on it --- which is precisely what the sweep amounted to:
+@note the measurement made, and nothing refused on it.
+@note
+@note IT DOES NOT MAKE A BAD CHAIN PASS. That is why it is here. With the
+@note guard vacuous, `irlen` --- a part whose instruction register is five
+@note bits where the BSDL says six --- goes on to select USER1 at offsets
+@note that fit no device, reads 455 bits of nothing, and dies at "the chain
+@note and the instruction register are the ones the BSDLs document and USER1
+@note is selected, and the first sample still reads back valid=0", having
+@note printed "captures 221, wanting 041" two lines earlier and done nothing
+@note about it. The exit code is 1 either way.
+@note
+@note So a harness that checked exit codes would call this caught and be
+@note wrong, and one that checked nothing but `good` would call it a
+@note survivor. It is caught because every case names the line it must fail
+@note on, holding the script to its own header's claim that "a board that is
+@note not that chain fails on the check that names it, not on a sample of
+@note zeros". That sentence is the check.
+@old
+if {($ircap & $cap_mask) != $cap_expect} {
+@new
+if {0 && ($ircap & $cap_mask) != $cap_expect} {
+@end
+
+@mutation the-done-bit-is-read-from-a-fixed-offset
+@check probe_jtag
+@file vivado/probe.tcl
+@note DONE comes back for free on the way past --- bit 5 of the PL TAP's own
+@note instruction-register capture, "1 when DONE is released" per its BSDL ---
+@note and it is the only reading of DONE anywhere that comes from the TAP
+@note rather than from what the programmer claimed. Its offset is
+@note `our_ir_lsb + 5`, and `our_ir_lsb` is where the part's field begins,
+@note which is 0 with the part at the TDO end and 4 with the DAP in front of
+@note it.
+@note
+@note Drop the base and the read is right on the chain the board has and
+@note wrong on any other: it takes a bit out of the neighbouring device's
+@note capture field, which is a perfectly plausible 0 or 1 and changes no
+@note exit code. Caught by `reversed` alone, and by nothing else, because
+@note `reversed` is the only case with a device in front of the part --- which
+@note is exactly why that case exists.
+@note
+@note Reasoning true at ace4131, where the DAP-before-part order was
+@note confirmed on silicon and the BSDL's DESIGN_WARNING was read.
+@old
+ [bits $ircap [expr {$our_ir_lsb + 5}] 1]"
+@new
+ [bits $ircap 5 1]"
+@end
