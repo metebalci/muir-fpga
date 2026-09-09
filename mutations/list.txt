@@ -545,6 +545,22 @@
 @file rtl/cadr_busint_xbus.sv
 @note "it is the responsibility of the bus master to assert good address,
 @note write, and data lines 80 ns. prior to asserting -XBUS.RQ".
+@note
+@note AND IT NOW HOLDS A TIMING EXCEPTION HONEST AS WELL, which is worth
+@note saying because nothing about the record shows it. `rtl/cadr_machine.xdc`
+@note gives `mem_addr`, `mem_wdata` and `mem_write` sixteen ticks to reach the
+@note AXI adapter's registers --- on the strength of the same sentence quoted
+@note above, and nothing else. An exemption too wide tests nothing and looks
+@note exactly like one that is right, and the only way to test its tightness
+@note is a mutation of the DESIGN just outside the bound: a constraint cannot
+@note be mutated from here, and trying would ask a two-level question.
+@note Fifteen ticks where the exception claims sixteen is exactly one tick
+@note outside it, which is what this already was.
+@note
+@note So this record did not change when the exception arrived --- the
+@note exception arrived beside this note, in one commit --- and that is the
+@note point: the check that catches a fabric that stopped honouring the 80 ns
+@note is the same check that would catch a constraint claiming it wrongly.
 @old
   localparam int unsigned SETUP_T = 80 / 5;
 @new

@@ -19,7 +19,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
-.PHONY: check cables current mutants mutants-selftest probe-selftest clean
+.PHONY: check cables ps7 current mutants mutants-selftest probe-selftest clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -193,13 +193,20 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 # primitive in synthesis and hand the board a wire where its clock generator
 # belongs. `tb/cadr_arty_stubs.sv` says the same at greater length.
 #
-# TWICE, BECAUSE THERE ARE TWO BOARDS. `PROBE_DEPTH` is zero by default and
-# the generate block that instantiates `rtl/cadr_probe.sv` is then not
-# elaborated at all --- so a lint of the default says nothing whatever about
-# the configuration `vivado/probe.tcl` builds and programs. A branch only one
-# build reaches is a branch only one build checks.
+# THREE TIMES, BECAUSE THERE ARE THREE BOARDS. `PROBE_DEPTH` and `DDR` are
+# both zero by default and the generate blocks that instantiate
+# `rtl/cadr_probe.sv`, `rtl/cadr_ps7.sv` and `rtl/cadr_axi_master.sv` are then
+# not elaborated at all --- so a lint of the default says nothing whatever
+# about the configurations `vivado/probe.tcl` and `DDR=1` build and program.
+# A branch only one build reaches is a branch only one build checks.
+#
+# The `DDR` pass is the only thing anywhere that elaborates `cadr_ps7.sv`
+# without Vivado, and what it holds is that all 620 PS7 pins are connected:
+# a pin the generator did not write is a PINMISSING against
+# `tb/cadr_ps7_stub.sv`, which carries the same 620 off the same parse.
 $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
-                    tb/cadr_arty_stubs.sv | $(BUILD)
+                    rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
+                    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv rtl/cadr_arty.sv $(MACHINE)
@@ -208,6 +215,11 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
 	    -GPROBE_DEPTH=1024 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv rtl/cadr_arty.sv \
 	    rtl/cadr_probe.sv $(MACHINE)
+	$(VERILATOR) --lint-only -Wall -Irtl \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GDDR=1 \
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv $(MACHINE)
 	@touch $@
 
 # --------------------------------------------------------------- the probe
@@ -291,6 +303,20 @@ probe-selftest: $(BUILD)/rtl.golden
 cables:
 	$(GOLDEN) --bin cables
 
+# ---------------------------------------------------------------------- PS7
+
+# The Zynq processing system's wrapper and its lint stub, off Xilinx's own
+# PS7.v. Generated, and committed, for the same reason the cables are: a
+# checkout builds without the tool. `current` is what keeps the committed copy
+# honest, and it skips where Vivado is not installed --- CI has none.
+#
+# Generated because an unconnected PS7 *input* produces no warning of any
+# kind: 620 pins, and the ~300 the fabric does not use are silent if a
+# hand-written instantiation forgets them. vivado/gen_ps7.py has the
+# measurement.
+ps7:
+	python3 vivado/gen_ps7.py
+
 $(BUILD)/cables.pass: rtl/cadr_cables.svh rtl/cadr_cables_lint.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall --top-module cadr_cables_lint -Irtl \
 	    rtl/cadr_cables_lint.sv
@@ -304,6 +330,7 @@ current:
 	    rtl/cadr_cables_lint.sv \
 	    || { echo "generated files are stale: run 'make cables' and commit"; exit 1; }
 	@echo "ok: generated files are current"
+	@python3 vivado/gen_ps7.py --check
 
 # ------------------------------------------------------------ the mutations
 #
