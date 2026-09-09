@@ -32,14 +32,32 @@
 # it: one DR scan a sample, USER1 selected, the pointer advancing on each
 # CAPTURE.
 #
-# WHAT IT DOES NOT ASSUME.  The chain.  A Zynq presents the ARM debug access
-# port as well as the part, so an IR scan has to place USER1 in one device and
-# BYPASS in the other, and a DR scan comes back with the other device's bypass
-# bit in front of the sample. Both are discovered rather than assumed: the
-# chain is read out of the IDCODE scan a TAP reset leaves behind, and the IR
-# padding is *tried* against a sample whose first bits are known --- a set
-# valid bit and a cycle of zero --- and reported. A guess that fails here
-# fails loudly on the first sample instead of quietly on all of them.
+# THE CHAIN, AND WHERE ITS NUMBERS COME FROM.  A Zynq presents the ARM debug
+# access port as well as the part, so an IR scan has to place USER1 in one
+# device and BYPASS in the other, and a DR scan comes back with the other
+# device's bypass bit behind the sample. None of that is guessed and none of
+# it is swept: **Vivado ships the BSDL for both devices and they are the
+# authority.**
+#
+#   <Vivado>/data/parts/xilinx/zynq/public/bsdl/xc7z020_clg400.bsd
+#   <Vivado>/data/parts/xilinx/zynq/public/bsdl/zynq7000_arm_dap.bsd
+#
+# IDCODE_REGISTER 0x23727093 and 0x4ba00477, INSTRUCTION_LENGTH 6 and 4,
+# USER1 000010, BYPASS all ones, INSTRUCTION_CAPTURE XXXX01 and XX01 --- and
+# the PL TAP's own DESIGN_WARNING that "the ARM DAP must be inserted before
+# the Zynq device in the JTAG scan chain", which puts the part at the TDO
+# end. Each of those is asserted below and each is checked against the board
+# before a sample is read: the IDCODE scan says the chain is those two
+# devices in that order, and the instruction register's own capture pattern
+# says it is the ten bits they add up to. A board that is not that chain
+# fails on the check that names it, not on a sample of zeros.
+#
+# **A SEARCH OVER IR LENGTHS IS A GUESS DRESSED AS ROBUSTNESS.**  This script
+# used to try 3 to 12 bits of padding until a sample came back valid. When
+# every one of them failed it could say only that --- not which had been
+# right, which is the thing worth knowing, and not that the padding was never
+# what was wrong. CLAUDE.md's first inherited rule is read, do not guess, and
+# a sweep is the same guess made seven times.
 #
 # WHAT IT HAS NOT BEEN RUN AGAINST.  A board. Everything above this line is
 # checked in simulation by `tb/cadr_probe_tb.cpp`, which shifts all 1,024
@@ -101,124 +119,7 @@ proc bits {value lsb width} {
     return [expr {($value >> $lsb) & ((1 << $width) - 1)}]
 }
 
-# ------------------------------------------------------------- the hardware
-
-open_hw_manager
-connect_hw_server -url $url
-puts "PROBE: connected to $url"
-
-set targets [get_hw_targets -quiet]
-if {[llength $targets] == 0} {
-    puts "PROBE: FAILED --- the server connected and offered no targets."
-    puts "PROBE: That is the udev rules, not the network. docs/board.md has them."
-    exit 1
-}
-current_hw_target [lindex $targets 0]
-
-# The chain as the hardware manager sees it, for the report. It is not what
-# the scan below relies on --- that discovers its own --- but a disagreement
-# between the two is worth seeing.
-open_hw_target
-set seen {}
-foreach d [get_hw_devices] {
-    lappend seen "$d (part [get_property -quiet PART $d])"
-}
-puts "PROBE: the hardware manager sees: [join $seen {, }]"
-close_hw_target
-
-# ------------------------------------------------------------- the raw chain
-#
-# In JTAG mode Vivado stops knowing about devices and shifts what it is told
-# through the whole chain, which is what talking to a BSCANE2 requires.
-open_hw_target -jtag_mode 1
-
-# A TAP reset leaves every device with IDCODE in its data register, or, for a
-# device that has no IDCODE register, a single bypass bit reading zero. So a
-# long DR scan reads the chain out: a 1 begins a 32-bit IDCODE, a 0 is one
-# bypass bit. The order is from the TDO end back towards TDI, which is also
-# the order the IR word wants its fields in.
-run_state_hw_jtag RESET
-set scan_len 256
-set idraw [scan_dr_hw_jtag $scan_len -tdi [string repeat 0 [expr {$scan_len / 4}]]]
-# A hex string with its prefix is an integer literal, and Tcl carries it at
-# arbitrary precision. `expr {0x$idraw}` is not the same thing and is a
-# syntax error: inside braces there is no substitution before parsing.
-set idval 0x$idraw
-
-set chain {}          ;# list of {kind idcode} from the TDO end
-set i 0
-while {$i < $scan_len} {
-    if {[bits $idval $i 1]} {
-        if {$i + 32 > $scan_len} { break }
-        set code [bits $idval $i 32]
-        # An all-ones word is the end of the chain: nothing is driving TDO.
-        if {$code == 0xffffffff} { break }
-        lappend chain [list idcode $code]
-        incr i 32
-    } else {
-        lappend chain [list bypass 0]
-        incr i 1
-    }
-}
-if {[llength $chain] == 0} {
-    puts "PROBE: FAILED --- the IDCODE scan found no devices. The cable is"
-    puts "PROBE: there and the chain is not, which is a board that is not"
-    puts "PROBE: powered or a target that belongs to something else."
-    exit 1
-}
-
-# Which of them is ours.
-set part_idcode 0x23727093
-set mine -1
-set pos 0
-foreach entry $chain {
-    if {[lindex $entry 0] eq "idcode"
-        && ([lindex $entry 1] & 0x0fffffff) == ($part_idcode & 0x0fffffff)} {
-        set mine $pos
-    }
-    incr pos
-}
-if {$mine < 0} {
-    set names {}
-    foreach entry $chain { lappend names [format %s/%08x [lindex $entry 0] [lindex $entry 1]] }
-    puts "PROBE: FAILED --- no xc7z020 in the chain: [join $names {, }]"
-    exit 1
-}
-# Devices between ours and TDO. Each contributes one bypass bit in front of
-# the sample in every DR scan.
-set after $mine
-set before [expr {[llength $chain] - $mine - 1}]
-puts "PROBE: [llength $chain] devices; ours is $mine from the TDO end,\
- so a DR scan carries $after bit(s) in front of the sample and $before behind"
-
-# ------------------------------------------------------------ the IR padding
-#
-# USER1 is 0x02 on a 7-series part and BYPASS is all ones on every JTAG device
-# ever made. What is not known here is how many bits of BYPASS the other
-# devices want --- the ARM debug access port is four on a Zynq-7000 and this
-# does not take that on trust. It tries, and the sample says which try was
-# right: a real sample has its valid bit set and the first one read has a
-# cycle of zero.
-set our_ir_len 6
-set user1 0x02
-
-proc ir_word {chain mine our_ir_len user1 other_len} {
-    # LSB first is the TDO end, which is the order `chain` is already in.
-    set word 0
-    set at 0
-    set pos 0
-    foreach entry $chain {
-        if {$pos == $mine} {
-            set word [expr {$word | ($user1 << $at)}]
-            incr at $our_ir_len
-        } else {
-            set word [expr {$word | (((1 << $other_len) - 1) << $at)}]
-            incr at $other_len
-        }
-        incr pos
-    }
-    return [list $word $at]
-}
+# ------------------------------------------------------------------ helpers
 
 proc hexof {value nbits} {
     set digits [expr {($nbits + 3) / 4}]
@@ -229,6 +130,245 @@ proc hexof {value nbits} {
     return [format %0${digits}llx $value]
 }
 
+# EVERY EXIT PATH CLOSES THE MANAGER. One thing at a time may hold this
+# board's JTAG, so a run that dies with a target open makes the next run's
+# failure somebody else's puzzle.
+proc probe_fail {args} {
+    foreach line $args { puts $line }
+    catch {close_hw_target}
+    catch {close_hw_manager}
+    exit 1
+}
+
+# ------------------------------------------------------ the documented chain
+#
+# Keyed on IDCODE with the version nibble masked off, because that nibble is
+# silicon revision and this does not care which. Everything in the value is
+# quoted from the BSDL named in the header: the instruction register length,
+# and the two bits of its capture pattern that IEEE 1149.1 fixes at 01 in
+# every device that conforms to it.
+#
+#                                       name                irlen cap-mask cap
+set device_spec [dict create \
+    03727093 {xc7z020                       6      0x03 0x01} \
+    0ba00477 {zynq7000_arm_dap              4      0x03 0x01} ]
+
+# The part, and USER1 within it. `xc7z020` is the only device here the probe
+# lives in; everything else in the chain gets BYPASS.
+set part_idcode 0x23727093
+set user1       0x02
+
+# ------------------------------------------------------------- the hardware
+
+open_hw_manager
+connect_hw_server -url $url
+puts "PROBE: connected to $url"
+
+set targets [get_hw_targets -quiet]
+if {[llength $targets] == 0} {
+    probe_fail \
+        "PROBE: FAILED --- the server connected and offered no targets." \
+        "PROBE: That is the udev rules, not the network. docs/board.md has them."
+}
+current_hw_target [lindex $targets 0]
+
+# THE HARDWARE MANAGER IS THE AUTHORITY ON HOW MANY DEVICES THERE ARE. The raw
+# scan below is the authority on where they sit and how wide their registers
+# are, and it cannot count them on its own --- see the next section for what
+# happened when it was asked to. The two are checked against each other.
+open_hw_target
+set seen {}
+set ndevices 0
+foreach d [get_hw_devices] {
+    lappend seen "$d (part [get_property -quiet PART $d])"
+    incr ndevices
+}
+puts "PROBE: the hardware manager sees $ndevices device(s): [join $seen {, }]"
+close_hw_target
+
+# ------------------------------------------------------------- the raw chain
+#
+# In JTAG mode Vivado stops knowing about devices and shifts what it is told
+# through the whole chain, which is what talking to a BSCANE2 requires.
+#
+# A TAP reset leaves every device with IDCODE in its data register, or, for a
+# device that has no IDCODE register, a single bypass bit reading zero. So a
+# long DR scan reads the chain out: a 1 begins a 32-bit IDCODE, a 0 is one
+# bypass bit. The order is from the TDO end back towards TDI, which is also
+# the order the IR word wants its fields in.
+#
+# **TDI IS DRIVEN WITH ONES, AND THAT IS THE WHOLE OF WHAT WAS WRONG HERE.**
+# What ends the chain is TDI coming back out behind the last device, so the
+# scan is self-terminating only if TDI is driven with something that is
+# neither an IDCODE nor a bypass bit. All ones is both: 0xffffffff is not a
+# legal IDCODE, and a run of ones cannot be read as bypass devices.
+#
+# DRIVEN WITH ZEROS IT COUNTS ITS OWN PADDING AS DEVICES. That is what this
+# script did on its first run against a board: 256 bits, two real IDCODEs at
+# the front and 192 zeros behind them, read as 2 + 192 = 194 devices. The
+# count in front of the part came out right by luck --- the part is at the
+# TDO end, so nothing precedes it --- and the count behind came out 193 where
+# the chain wants 1. The DR scans were then 647 bits where 455 is right,
+# which a shift chain tolerates and which would have worked; the IR scan was
+# **778 bits where the chain wants 10**, and an over-long IR scan keeps only
+# its last bits, which here were the all-ones BYPASS padding. So USER1 was
+# never selected in anything, every sample read back as a bypass bit, and the
+# script reported that no IR padding from 3 to 12 bits had worked. The
+# padding was never what was wrong.
+open_hw_target -jtag_mode 1
+
+run_state_hw_jtag RESET
+set scan_len 256
+set idraw [scan_dr_hw_jtag $scan_len -tdi [string repeat f [expr {$scan_len / 4}]]]
+puts "PROBE: IDCODE scan, $scan_len bits, TDI all ones: $idraw"
+# A hex string with its prefix is an integer literal, and Tcl carries it at
+# arbitrary precision. `expr {0x$idraw}` is not the same thing and is a
+# syntax error: inside braces there is no substitution before parsing.
+set idval 0x$idraw
+
+set chain {}          ;# {code name irlen cap_mask cap_value} from the TDO end
+set i 0
+set terminated 0
+while {$i < $scan_len} {
+    if {![bits $idval $i 1]} {
+        # A bypass bit. Neither device documented above has one after a TAP
+        # reset --- both carry IDCODE --- so this is not our chain.
+        probe_fail \
+            "PROBE: FAILED --- bit $i of the IDCODE scan is a bypass bit, so a" \
+            "PROBE: device in this chain has no IDCODE register. Both devices" \
+            "PROBE: on a Zynq-7000 have one. Scan: $idraw"
+    }
+    if {$i + 32 > $scan_len} {
+        probe_fail \
+            "PROBE: FAILED --- an IDCODE begins at bit $i and runs off the end" \
+            "PROBE: of a $scan_len-bit scan. Raise scan_len. Scan: $idraw"
+    }
+    set code [bits $idval $i 32]
+    if {$code == 0xffffffff} { set terminated 1; break }
+    set key [format %08x [expr {$code & 0x0fffffff}]]
+    if {![dict exists $device_spec $key]} {
+        probe_fail \
+            "PROBE: FAILED --- IDCODE [format 0x%08x $code] at bit $i is not a" \
+            "PROBE: device this script has a BSDL for. Its instruction register" \
+            "PROBE: length is therefore unknown and no padding can be computed." \
+            "PROBE: Scan: $idraw"
+    }
+    lappend chain [concat [list $code] [dict get $device_spec $key]]
+    incr i 32
+}
+if {!$terminated} {
+    probe_fail \
+        "PROBE: FAILED --- the $scan_len-bit IDCODE scan never reached its" \
+        "PROBE: all-ones tail, so the chain is longer than the scan and what" \
+        "PROBE: was parsed is a prefix of it. Raise scan_len. Scan: $idraw"
+}
+
+set names {}
+foreach entry $chain {
+    lappend names [format "%s/0x%08x" [lindex $entry 1] [lindex $entry 0]]
+}
+puts "PROBE: the scan reads, from the TDO end: [join $names {, }]"
+
+# THE TWO COUNTS MUST AGREE. If they do not, one of them is inventing devices
+# and the padding below would be computed from whichever it was.
+if {[llength $chain] != $ndevices} {
+    probe_fail \
+        "PROBE: FAILED --- the IDCODE scan found [llength $chain] device(s) and the" \
+        "PROBE: hardware manager found $ndevices. Scan: $idraw"
+}
+
+# Which of them is ours.
+set mine -1
+set pos 0
+foreach entry $chain {
+    if {([lindex $entry 0] & 0x0fffffff) == ($part_idcode & 0x0fffffff)} {
+        if {$mine >= 0} {
+            probe_fail \
+                "PROBE: FAILED --- two xc7z020s in the chain, at $mine and $pos." \
+                "PROBE: The probe is in one of them and this cannot say which."
+        }
+        set mine $pos
+    }
+    incr pos
+}
+if {$mine < 0} {
+    probe_fail "PROBE: FAILED --- no xc7z020 in the chain: [join $names {, }]"
+}
+
+# Devices between ours and TDO, each contributing one bypass bit in front of
+# the sample in every DR scan, and those behind it contributing one each
+# after. `chain` is ordered from the TDO end, so this is a count of positions.
+set after  $mine
+set before [expr {[llength $chain] - $mine - 1}]
+puts "PROBE: ours is $mine from the TDO end, so a DR scan carries $after bypass\
+ bit(s) in front of the sample and $before behind"
+
+# ------------------------------------------------------------ the instruction
+#
+# THE LENGTHS ARE DOCUMENTED AND ASSERTED, NOT SWEPT --- 6 bits for the PL TAP
+# and 4 for the ARM DAP, from the BSDL files named in the header.
+#
+# WHAT IS MEASURED IS THE TOTAL. On entry to Capture-IR every conforming
+# device loads a fixed pattern whose bottom two bits IEEE 1149.1 requires to
+# be 01, so an IR scan of exactly the right length reads back a 01 at the
+# bottom of each device's field and nowhere else. That single scan is a direct
+# measurement of three things this script would otherwise assume: the chain's
+# instruction register length, the order of the devices in it, and Vivado's
+# bit order in a returned scan value. It is taken before anything depends on
+# any of them, and it is taken with BYPASS shifted in, which is the one
+# instruction both devices are documented as safe to hold.
+set ir_total   0
+set cap_mask   0
+set cap_expect 0
+set our_ir_lsb 0
+set pos 0
+foreach entry $chain {
+    lassign $entry code name irlen cmask cval
+    if {$pos == $mine} { set our_ir_lsb $ir_total }
+    set cap_mask   [expr {$cap_mask   | ($cmask << $ir_total)}]
+    set cap_expect [expr {$cap_expect | ($cval  << $ir_total)}]
+    incr ir_total $irlen
+    incr pos
+}
+
+run_state_hw_jtag RESET
+set ircap 0x[scan_ir_hw_jtag $ir_total -tdi [hexof [expr {(1 << $ir_total) - 1}] $ir_total]]
+puts "PROBE: the $ir_total-bit instruction register captures\
+ [hexof $ircap $ir_total], wanting [hexof $cap_expect $ir_total] under mask\
+ [hexof $cap_mask $ir_total]"
+if {($ircap & $cap_mask) != $cap_expect} {
+    probe_fail \
+        "PROBE: FAILED --- the instruction register does not capture 01 at the" \
+        "PROBE: bottom of each device's field. Either the chain is not the" \
+        "PROBE: $ir_total bits the BSDLs say it is, or Vivado returns a scan" \
+        "PROBE: most significant bit first and every offset here is reversed." \
+        "PROBE: Nothing below this line would mean anything, so it stops here."
+}
+# Bit 5 of the PL TAP's capture is DONE --- "1 when DONE is released", says
+# the BSDL. Free evidence, on the way past, that the part is configured.
+puts "PROBE: the part's IR capture reads DONE =\
+ [bits $ircap [expr {$our_ir_lsb + 5}] 1]"
+
+# USER1 in ours, BYPASS in the rest. LSB first is the TDO end, which is the
+# order `chain` is already in.
+set word 0
+set at   0
+set pos  0
+foreach entry $chain {
+    lassign $entry code name irlen cmask cval
+    if {$pos == $mine} {
+        set word [expr {$word | ($user1 << $at)}]
+    } else {
+        set word [expr {$word | (((1 << $irlen) - 1) << $at)}]
+    }
+    incr at $irlen
+    incr pos
+}
+scan_ir_hw_jtag $ir_total -tdi [hexof $word $ir_total]
+puts "PROBE: USER1 selected: IR = [hexof $word $ir_total]"
+
+# ------------------------------------------------------------- one sample
+#
 # One DR scan: the whole chain's registers, of which ours is the middle.
 proc read_sample {after before sample_width} {
     set total [expr {$sample_width + $after + $before}]
@@ -237,53 +377,34 @@ proc read_sample {after before sample_width} {
     return [expr {($v >> $after) & ((1 << $sample_width) - 1)}]
 }
 
-set other_len 0
-set chosen -1
-if {[llength $chain] == 1} {
-    set chosen 0
-} else {
-    foreach try {4 5 6 8 3 10 12} {
-        run_state_hw_jtag RESET
-        lassign [ir_word $chain $mine $our_ir_len $user1 $try] word irlen
-        scan_ir_hw_jtag $irlen -tdi [hexof $word $irlen]
-        set s [read_sample $after $before $sample_width]
-        # Valid, and a cycle inside the buffer --- not `cycle == 0`. A trial
-        # that selects USER1 in our device while mis-padding another one has
-        # already advanced the read pointer, so insisting on zero here would
-        # make the first wrong guess poison every guess after it. Where in the
-        # buffer the reading starts does not matter: the rotation below puts
-        # cycle zero first.
-        if {[bits $s $valid_bit 1] == 1 && [bits $s $cycle_lsb 32] < $depth} {
-            set chosen $try
-            break
-        }
-    }
-    if {$chosen < 0} {
-        puts "PROBE: FAILED --- no IR padding of 3 to 12 bits for the other"
-        puts "PROBE: device(s) produced a sample with its valid bit set and a"
-        puts "PROBE: cycle inside the buffer. Either the bitstream in the part"
-        puts "PROBE: has no probe in it --- PROBE_DEPTH was zero --- or"
-        puts "PROBE: the machine has not run a microcycle, or the chain is not"
-        puts "PROBE: the two devices docs/board.md describes."
-        exit 1
-    }
-    puts "PROBE: the other device(s) take $chosen bits of BYPASS; a sample"
-    puts "PROBE: reads back valid, at a cycle inside the buffer"
+# THE FIRST SAMPLE IS THE CHECK ON EVERYTHING ABOVE. Valid, and a cycle inside
+# the buffer --- not `cycle == 0`: where in the buffer the reading starts does
+# not matter, because the rotation below puts cycle zero first.
+set s [read_sample $after $before $sample_width]
+if {[bits $s $valid_bit 1] != 1 || [bits $s $cycle_lsb 32] >= $depth} {
+    probe_fail \
+        "PROBE: FAILED --- the chain and the instruction register are the ones" \
+        "PROBE: the BSDLs document and USER1 is selected, and the first sample" \
+        "PROBE: still reads back valid=[bits $s $valid_bit 1]" \
+        "PROBE: cycle=[bits $s $cycle_lsb 32], which is not a sample." \
+        "PROBE: raw = [hexof $s $sample_width]" \
+        "PROBE: With the chain proved, the suspects are, in order: the" \
+        "PROBE: bitstream in the part has no probe in it --- PROBE_DEPTH was" \
+        "PROBE: zero; the machine has retired no microcycle; the shift" \
+        "PROBE: register in rtl/cadr_probe.sv clocks the wrong edge of DRCK." \
+        "PROBE: None of those is fixable here: this script is the reader."
 }
-
-# Re-select, so that the run below starts from a known pointer: the trial
-# above consumed samples.
-run_state_hw_jtag RESET
-lassign [ir_word $chain $mine $our_ir_len $user1 $chosen] word irlen
-if {$irlen > 0} { scan_ir_hw_jtag $irlen -tdi [hexof $word $irlen] }
+puts "PROBE: the first sample reads valid, at cycle [bits $s $cycle_lsb 32]"
 
 # ------------------------------------------------------------- the readout
 #
 # DEPTH scans return the whole buffer and leave the pointer where they found
 # it, so where in the buffer the reading starts does not matter: each sample
-# carries its own cycle and the rotation is undone below.
-set samples {}
-for {set j 0} {$j < $depth} {incr j} {
+# carries its own cycle and the rotation is undone below. The sample already
+# read above is one of them and is kept, so the run is DEPTH scans in total
+# and the pointer ends where it began.
+set samples [list $s]
+for {set j 1} {$j < $depth} {incr j} {
     lappend samples [read_sample $after $before $sample_width]
 }
 
@@ -295,11 +416,11 @@ for {set j 0} {$j < $depth} {incr j} {
     if {[bits $s $valid_bit 1] && [bits $s $cycle_lsb 32] == 0} { set start $j }
 }
 if {$start < 0} {
-    puts "PROBE: FAILED --- no sample in the buffer carries cycle zero."
-    puts "PROBE: The capture is not a window that begins at reset, which is"
-    puts "PROBE: the one thing it is for. A machine reset while this was"
-    puts "PROBE: reading would do it; so would a readout of the wrong core."
-    exit 1
+    probe_fail \
+        "PROBE: FAILED --- no sample in the buffer carries cycle zero." \
+        "PROBE: The capture is not a window that begins at reset, which is" \
+        "PROBE: the one thing it is for. A machine reset while this was" \
+        "PROBE: reading would do it; so would a readout of the wrong core."
 }
 if {$start != 0} {
     puts "PROBE: the read pointer stood $start samples into the buffer;\
@@ -327,8 +448,7 @@ if {[llength $rows] != $depth} {
     puts "PROBE: only the run is exported."
 }
 if {[llength $rows] == 0} {
-    puts "PROBE: FAILED --- nothing to export"
-    exit 1
+    probe_fail "PROBE: FAILED --- nothing to export"
 }
 
 close_hw_target
