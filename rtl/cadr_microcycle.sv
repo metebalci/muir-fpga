@@ -148,6 +148,8 @@ module cadr_microcycle #(
     output var logic [21:0] phys,         // -PMA21..8 and -VMA7..0
     output var logic [31:0] wdata,        // MEM<31:0> out of the cpu
     output var logic        mclk,         // MCLK7, the microcycle boundary
+    output var logic        mbusy_o,
+    output var logic        mbusy_sync_o,
     output var logic        n_memrq,      // -MEMRQ, a level while a cycle is wanted
     output var logic        memstart,     // MEMSTART, which also addresses the map
     output var logic        rdcyc,
@@ -1071,6 +1073,8 @@ module cadr_microcycle #(
   logic memrq;
   assign memrq   = (memstart && vmaok) || mbusy;
   assign n_memrq = !memrq;
+  assign mbusy_o = mbusy;
+  assign mbusy_sync_o = mbusy_sync;
 
   // What MBUSY will hold after this tick, which is what MBUSY.SYNC has to
   // register.  `-MFINISHD` clearing MBUSY in the very tick MCLK1A samples it
@@ -1118,15 +1122,28 @@ module cadr_microcycle #(
   // ends 10 ns after muir ends it, and there are 11,404 of them in the boot
   // PROM alone.
   //
-  // It was briefly 28 - 3, which fitted the composed check and had no
-  // mechanism behind the third tick. The third tick was not the fabric's: it
-  // is `tb/cadr_machine_tb.cpp` placing -MEMACK, rounding muir's off-grid
-  // acknowledgement up to the tick and measuring from the edge marker. That
-  // check now prints where its -MEMACK lands against muir's on every run ---
-  // never early, and one or two ticks late --- and carries the tick itself
-  // rather than folding it in here.
+  // **AND THE THIRD TICK BELOW IS NOT THE FABRIC'S. IT IS A TESTBENCH'S, AND
+  // IT IS HERE ON PURPOSE.**  `tb/cadr_machine_tb.cpp` places -MEMACK by
+  // rounding muir's off-grid acknowledgement up to the tick and measuring
+  // from the edge marker, which stands a tick after the boundary --- measured,
+  // and that check prints the error on every run. So the composed machine
+  // sees an acknowledgement a tick late, and 28 - 3 makes it exact.
+  //
+  // The right number is 28 - 2 and the right fix is to place -MEMACK exactly,
+  // which needs **issue #11** first: with the placement corrected every hang
+  // is exact and a *wait* breaks, at microcycle 536,321, where muir's MBUSY
+  // clear lands 3 ns after a master clock and the fabric's lands on it. A
+  // wait ends at a master clock and notices only what straddles a boundary; a
+  // hang ends at the tap and notices every tick.
+  //
+  // The alternative was 28 - 2 with a tolerance in the composed check, and
+  // that was tried and reverted: a one-tick tolerance there admitted exactly
+  // the -5 ns on which `the-grant-comes-a-microcycle-early` was caught, and
+  // blinded the check to a grant a whole microcycle early. **A known wrong
+  // number with its reason attached is better than an exact number with a
+  // tolerance hiding the difference** --- and better than both is #11.
   localparam int unsigned MFINISHD_T  = 30 / 5;
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
 
   logic       n_memack_q;
   logic [5:0] mfinish_t, rdfinish_t;

@@ -88,6 +88,9 @@ module cadr_machine #(
     output var logic [2:0]  arb_stage,
     output var logic        n_memrq_o,
     output var logic        n_memack_o,
+    output var logic        n_memgrant_o,
+    output var logic        mbusy_o,
+    output var logic        mbusy_sync_o,
     output var logic [17:0] ub_addr_o,
     output var logic [15:0] ub_rdata_o,
     output var logic        n_loadmd_o,
@@ -160,6 +163,8 @@ module cadr_machine #(
       .wdata       (wdata),
       .mclk        (mclk),
       .n_memrq     (n_memrq),
+      .mbusy_o     (mbusy_o),
+      .mbusy_sync_o(mbusy_sync_o),
       .memstart    (memstart),
       .rdcyc       (rdcyc),
       .wrcyc       (wrcyc),
@@ -217,6 +222,7 @@ module cadr_machine #(
   assign n_loadmd_o = n_loadmd;
   assign n_memrq_o  = n_memrq;
   assign n_memack_o = n_memack;
+  assign n_memgrant_o = n_memgrant;
   assign rdcyc_o    = rdcyc;
   assign unused = &{1'b0, prog_reset, prog_boot};
 
