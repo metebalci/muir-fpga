@@ -225,10 +225,13 @@ believable, and a device tree is no different.
   version 1.6.1, which is what built the tree described above. Locally,
   `device-tree-compiler` and `u-boot-tools` are both in the Ubuntu archive and
   neither was installed --- that is a decision for whoever picks this up.
-- **The microSD card is not blank.** `/dev/sda`, 29.7 GB over USB, carrying
-  Raspberry Pi OS: `sda1` 512 MB vfat labelled `bootfs`, `sda2` 29.2 GB ext4
-  labelled `rootfs`. It was inspected read-only and **nothing was written to
-  it**. It must not be overwritten without knowing whose it is.
+- **The microSD card is free to use.** `/dev/sda`, 29.7 GB over USB. It came
+  carrying Raspberry Pi OS --- `sda1` 512 MB vfat labelled `bootfs`, `sda2`
+  29.2 GB ext4 labelled `rootfs` --- which was inspected read-only, and Mete
+  has since confirmed it can be reformatted. **Check the device node before
+  writing anything**: it is `/dev/sda` on this laptop today, and `mksd.sh`
+  takes a device argument, which is exactly the shape of thing that destroys
+  the wrong disk. `lsblk -o NAME,SIZE,TRAN,LABEL` and look for `usb`.
 - **The boot-mode jumper has to be set to SD**, and **its designator is
   deliberately not asserted here.** Digilent's site returns 403 to automated
   fetches, so it could not be read from a primary source, and it should be read
