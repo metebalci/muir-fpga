@@ -134,13 +134,29 @@ report_utilization                     -file $outdir/utilisation.rpt
 report_timing_summary -max_paths 10    -file $outdir/timing.rpt
 report_clocks                          -file $outdir/clocks.rpt
 
-set wns [get_property SLACK [get_timing_paths -max_paths 1 -delay_type max]]
-puts "BIT: worst slack [format %.3f $wns] ns"
-if {$wns < 0} {
-    puts "BIT: TIMING IS NOT MET --- the bitstream below is of a design that"
-    puts "BIT: does not close. It proves the flow, not the machine."
+# Guarded, because `get_timing_paths` returns an empty list when there is
+# nothing to report --- and nothing to report is what SUCCESS looks like. The
+# unguarded `format` below threw on a met design in `fit.tcl`, which exited 1
+# and printed nothing, so success read exactly like failure.
+#
+# It is the sharpest of a family: a diagnostic gets less testing than the
+# thing it diagnoses, and this one lives in **the path that only exists once
+# the thing works**. A project that has been failing at something has never
+# run its own success case. This branch had never executed here either --- the
+# design has not met 200 MHz until now --- so it is being fixed on the
+# strength of what happened next door rather than after it happens twice.
+set paths [get_timing_paths -quiet -max_paths 1 -delay_type max]
+if {[llength $paths]} {
+    set wns [get_property SLACK [lindex $paths 0]]
+    puts "BIT: worst slack [format %.3f $wns] ns"
+    if {$wns < 0} {
+        puts "BIT: TIMING IS NOT MET --- the bitstream below is of a design that"
+        puts "BIT: does not close. It proves the flow, not the machine."
+    } else {
+        puts "BIT: timing is met"
+    }
 } else {
-    puts "BIT: timing is met"
+    puts "BIT: no timing path reported --- timing is met"
 }
 
 # --- 3. and is it a bitstream?

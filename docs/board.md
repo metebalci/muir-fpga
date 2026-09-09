@@ -133,9 +133,41 @@ Two consequences, both deliberate in `rtl/cadr_arty.sv`:
 ## What the LEDs say
 
     LD0   the fabric is clocked           free-running, about 3 Hz at 200 MHz
-    LD1   microcycles are retiring        dark while the machine is stalled
-    LD2   a cycle reached the NXM timer
-    LD3   the datapath is moving
+    LD1   microcycles are retiring        beat[19], ~0.6 Hz with no memory
+    LD2   NXM timeouts, at their rate     nxm_count[16], not the flag itself
+    LD3   the datapath is moving          witness, a ~700-bit fold
+    LD4   where the boot has got to       red not running, blue PROM, green PROMDISABLE
+    LD5   was the last cycle answered     red the timer ended it, green a slave did
+
+**LD0 and LD1 are the two that earn their place.** Between them they say
+whether the fabric is clocked and whether the machine is executing, which is
+the whole of "is it working" and is readable across a room. The other four are
+bring-up instruments and will change as the machine grows.
+
+**LD2 shows a rate, not a flag.** `timed_out` is a level that stands only while
+an unanswered cycle is up --- a sliver at the end of each 4.25 us timeout ---
+which integrates to a light too faint to read; the board showed exactly that.
+Counting its rising edges and lighting a bit of the count makes the rate
+visible, and **dark means timeouts have stopped**, which is what a working
+memory looks like.
+
+**There are two signals called `nxm` and they mean opposite kinds of thing.**
+The decode's says the *address* is Xbus space with nothing built there; the bus
+interface's own register, carried out as `timed_out`, says *this cycle* ended
+on the timer rather than on a slave. LD5 was first wired to the decode's and
+came up **green on a board with no memory** --- because the boot PROM's traffic
+is 16,951 cycles to the disk registers at `0o17377774`, which are in the
+decode's map and therefore not empty space. They are simply unanswered.
+
+It latches `timed_out` now, which is the question anyone actually wants: red
+means the timer ended the cycle, green means something replied. The signal was
+there all along; the LED was reading the wrong one.
+
+**And the same conflation explains LD2's rate.** It counts `timed_out` edges,
+so on a board where nothing answers the disk polls it counts **16,951 in a
+boot-PROM run, not 2** --- the 2 being cycles whose *address* was empty space,
+a different question. LD2 blinking steadily is the machine faithfully polling a
+controller that is not built, at the rate the census predicts.
 
 **LD0 is the one to look at first and that is why it is first.** It answers
 "is this running at all", and every other light is meaningless until it says
@@ -147,6 +179,12 @@ Read them in order:
     LD0 dark                  not programmed, or the MMCM never locked
     LD0 blinking, LD1 dark    clocked, but not retiring microcycles
     LD0 and LD1 blinking      the machine is running
+
+Observed on the board, no memory, boot PROM only: **LD0 blinking, LD1 blinking
+slowly, LD2 blinking, LD3 faint, LD4 blue, LD5 red.** LD3 faint is correct
+--- `witness` only toggles when the datapath changes, and the machine spends
+almost all its time parked in timeouts, so a faint LD3 is a machine that is
+mostly waiting.
 
 **With no memory behind `mem_*`** --- which is every build before the PS block
 lands --- the expected reading is **LD0 blinking, LD1 blinking very slowly,

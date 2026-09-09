@@ -46,7 +46,10 @@ module cadr_arty #(
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
-    output var logic [3:0] led
+    output var logic [3:0] led,
+    // The two tricolour LEDs. Driven high to light, one pin a colour.
+    output var logic       led4_r, led4_g, led4_b,
+    output var logic       led5_r, led5_g, led5_b
 );
 
   // ------------------------------------------------------------ the clock
@@ -154,8 +157,10 @@ module cadr_arty #(
   end
 
   // A microcycle is 145 ns at normal speed and the boot PROM runs at extra
-  // slow, 220 ns, so this divides to something an eye can see: bit 23 of a
-  // count of microcycles is about one and a half seconds.
+  // slow, 220 ns. Bit 23 of a count of them is 1.85 s a half-period --- a
+  // 3.7 s cycle, which reads as a light that is on or off rather than one
+  // that blinks. Bit 19 is 524,288 microcycles, 115 ms, about 4 Hz: fast
+  // enough to be obviously alive and slow enough to count.
   logic [23:0] beat;
   always_ff @(posedge clk) begin
     if (rst) beat <= 24'd0;
@@ -180,9 +185,74 @@ module cadr_arty #(
   // locked; a blinking LD0 with the rest dark means the fabric is clocked and
   // the machine is not retiring microcycles, which is a different fault
   // entirely.
+  // LD2 counts NXM timeouts rather than showing the flag. `timed_out` is a
+  // level that stands only while an unanswered cycle is up --- a sliver at the
+  // end of each 4.25 us timeout --- so at the measured 168 kHz it integrates
+  // to a light too faint to read, which is what the board showed. Counting the
+  // rising edges and lighting a bit of the count turns it into a rate: bit 16
+  // is 65,536 timeouts, about 0.39 s a half-period at that rate.
+  //
+  // The rate is the point. Faster means cycles are timing out more often;
+  // **dark means they have stopped**, which is what a working memory looks
+  // like and is the signal step 2 is waiting for.
+  logic timed_out_q;
+  logic [16:0] nxm_count;
+  always_ff @(posedge clk) begin
+    timed_out_q <= timed_out;
+    if (rst) nxm_count <= 17'd0;
+    else if (timed_out && !timed_out_q) nxm_count <= nxm_count + 17'd1;
+  end
+
+  // ------------------------------------------------- the tricolour LEDs
+  //
+  // LD4 is where the machine is in its own boot, and it starts red because
+  // "nothing has happened yet" must not look like "running".
+  //
+  //   red    the fabric is not running --- reset held or the MMCM unlocked
+  //   blue   running out of the boot PROM, which is where it is today
+  //   green  PROMDISABLE is set: running microcode out of the control store
+  //
+  // Blue is the honest colour for now. The boot PROM clears the control store
+  // and never sets PROMDISABLE --- issue #1 lists it as unreached --- because
+  // the microcode comes off a disk pack and there is no disk. So green is the
+  // day a pack is readable, and this light will not change before then.
+  assign led4_r = !mmcm_locked || rst;
+  assign led4_b = mmcm_locked && !rst && !promdisable;
+  assign led4_g = mmcm_locked && !rst &&  promdisable;
+
+  // LD5 is the bus, latched on each acknowledgement: red if that cycle was a
+  // non-existent-memory reference, green if something answered it. It starts
+  // red because before the first cycle nothing has answered, which is the
+  // same distinction LD4 makes.
+  //
+  // `timed_out` and not the decode's `nxm`: there are two signals of that name
+  // and they mean opposite kinds of thing. The decode's says the *address* is
+  // Xbus space with nothing built there; the interface's register, which
+  // `timed_out` carries out, says *this cycle* ended on the timer rather than
+  // on a slave. Latching the decode's showed green on a board with no memory,
+  // because the disk registers at 0o17377774 are in the decode's map and so
+  // are not empty space --- they are simply unanswered.
+  //
+  // Today it is red and stays red: every cycle is the boot PROM polling a
+  // disk controller that is not there. **It goes green the first time a real
+  // slave answers**, which is what step 2 is for --- so this is the light to
+  // watch when the PS block and DDR3 land.
+  logic memack_q, bus_nxm;
+  always_ff @(posedge clk) begin
+    memack_q <= !n_memack;
+    if (rst) begin
+      bus_nxm <= 1'b1;                       // nothing has answered yet
+    end else if (!n_memack && !memack_q) begin
+      bus_nxm <= timed_out;                  // latch the outcome at the ack
+    end
+  end
+  assign led5_r =  bus_nxm;
+  assign led5_g = !bus_nxm;
+  assign led5_b = 1'b0;
+
   assign led[0] = tick[25];      // the fabric is clocked          --- heartbeat
-  assign led[1] = beat[23];      // microcycles are retiring
-  assign led[2] = timed_out;     // a cycle reached the NXM timer
+  assign led[1] = beat[19];      // microcycles are retiring, ~4 Hz
+  assign led[2] = nxm_count[16]; // NXM timeouts, blinking at their rate
   assign led[3] = witness;       // the datapath is not optimised away
 
   // btn[3:1] are pins the board has and this design does not use. Reading
