@@ -464,7 +464,14 @@ int main(int argc, char **argv) {
           const long slip = static_cast<long>(got) - static_cast<long>(want);
           if (arbitrated[k]) {
             ++arb_skipped;
-          } else if (r.v[kStall] && slip > -kTickNs && slip < kTickNs) {
+          } else if (r.v[kStall] && slip >= -kTickNs && slip <= kTickNs) {
+            // A WHOLE TICK, AND IT IS THIS TESTBENCH'S OWN. -MEMACK here is
+            // placed by the model below rather than made by
+            // `cadr_busint_xbus.sv`, and the processor's -RDFINISH is set for
+            // the composed check, whose model is a tick the other way. The
+            // count is *guarded* below: a tolerance nothing tests against is
+            // how a design drifts a tick late on every stalled microcycle and
+            // passes in silence.
             ++sub_tick;
             if (!any_slip || slip > worst_slip) worst_slip = slip;
             if (!any_slip || slip < best_slip) best_slip = slip;
@@ -601,6 +608,22 @@ int main(int argc, char **argv) {
                  "FAIL: %ld microcycles carry IR<46>; the statistics counter "
                  "is claimed unexercised\n",
                  stat_counts);
+    ++thin;
+  }
+  // The tolerance above is allowed to cover the tick this testbench's own
+  // -MEMACK placement creates, and not a tick the fabric has grown. Set at
+  // what the run legitimately needs, so a drift shows as a failure rather
+  // than as a larger number on a line that says "ok".
+  // Measured as a share of the stalled microcycles it is there to cover:
+  // 11,301 of 17,466 on the boot PROM. A fabric drifting a tick late on
+  // *every* stall would take it to all of them, and that is the thing this
+  // must not pass in silence.
+  if (sub_tick * 4 > stalls * 3) {
+    std::fprintf(stderr,
+                 "FAIL: %ld of %ld stalled microcycles were within a tick "
+                 "rather than exact; the tolerance covers this testbench's "
+                 "own -MEMACK placement, not a fabric drifting late\n",
+                 sub_tick, stalls);
     ++thin;
   }
   if (lc_moved && !pack_trace) {
