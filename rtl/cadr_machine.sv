@@ -80,6 +80,16 @@ module cadr_machine #(
     output var logic        dev_rq,       // -XBUS.RQ
     output var logic        dev_write,
     output var logic [21:0] phys,         // the address it is asking about
+    // **THE WORD, WHICH THIS BOUNDARY USED TO DROP.**  `cadr_memory_path.sv`
+    // has it and its own comment calls `phys` and `wdata` "the address and
+    // the word"; the machine brought out the address and not the word, so a
+    // slave hung on this seam could be written to and never see what.  No
+    // slave exists yet, which is why it cost nothing and why it is worth
+    // fixing now: the failure would appear in the slave and the cause would
+    // be here.  Same class as `md` staying driveable after it became an
+    // output --- a port that exists on one side of a boundary and not the
+    // other.
+    output var logic [31:0] dev_wdata,    // MEM<31:0> out of the cpu
     input  var logic        device_ack,   // -XBUS.ACK from that slave
     input  var logic [31:0] device_rdata,
     output var logic        promdisable,  // PROMDISABLE, as the mode register holds it
@@ -224,6 +234,7 @@ module cadr_machine #(
   assign n_memack_o = n_memack;
   assign n_memgrant_o = n_memgrant;
   assign rdcyc_o    = rdcyc;
+  assign dev_wdata  = wdata;
   assign unused = &{1'b0, prog_reset, prog_boot};
 
 endmodule

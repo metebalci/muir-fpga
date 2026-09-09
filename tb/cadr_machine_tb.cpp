@@ -112,6 +112,7 @@
 // reads back exactly like one that did.  rtl/cadr_microcycle.sv says so at
 // the array.
 
+#include <algorithm>
 #include <cerrno>
 #include <cinttypes>
 #include <cstdio>
@@ -198,6 +199,7 @@ int main(int argc, char **argv) {
   bool pack_trace = false;
   std::vector<uint64_t> ack_for;
   std::vector<uint64_t> rdata_for;
+  std::vector<uint64_t> md_at_row;
   std::vector<bool> arbitrated;
   long unibus_cycles = 0;
   size_t total_rows = 0;
@@ -249,6 +251,7 @@ int main(int argc, char **argv) {
     // interface usually knows at the boundary; a cycle that has to arbitrate
     // for the Unibus first is granted, acknowledged and finished inside a
     // later microcycle's stall, so its answer appears on a later row.
+    md_at_row = mds;
     rdata_for.assign(total_rows, 0);
     for (size_t i = 0; i < total_rows; ++i) {
       rdata_for[i] = stalled_srcmd[i] ? mds[i]
@@ -369,6 +372,17 @@ int main(int argc, char **argv) {
   uint32_t stuck_phys = 0;
   const char *stopped_because = "nothing on the bus answered it";
   long device_answers = 0;
+  // WHICH SLAVE EACH CYCLE WENT TO, counted at the grant. Not a diagnostic:
+  // this program's traffic turned out to be 16,951 device cycles against 512
+  // to main memory --- the boot PROM polls the disk controller's status
+  // register, which the decode places in Xbus I/O space --- and every one of
+  // those 16,951 is answered from the trace rather than by the fabric's own
+  // bridge. A check whose bus timing is 97% the testbench's own placement
+  // should say so on its output, and should fail rather than shrink quietly
+  // if the 512 ever become none.
+  long mem_cycles = 0, device_cycles = 0;
+  long dev_writes_checked = 0;
+  std::map<uint32_t,long> dev_words;
   long ack_at_tick = 0;
   size_t unanswerable = 0;
   std::set<uint64_t> a_values, m_values, ob_values;
@@ -409,6 +423,32 @@ int main(int argc, char **argv) {
     // WHERE THE FABRIC'S OWN -MEMACK LANDS, against muir's. Measured rather
     // than fitted: a constant chosen to make two checks agree is a constant
     // hiding a difference, and this says whether there is one and how big.
+    //
+    // **READ THE NUMBERS IT PRINTS WITH THIS IN MIND: IT OBSERVES ONE TICK
+    // EARLY.**  It samples `n_memack` here, near the top of the tick, before
+    // the slave's answer has been driven and eval'd, so an acknowledgement
+    // the interface makes combinationally reads back a tick after it
+    // happened.  Measured, and the size of it: the printed histogram says -5
+    // on every read and -10 on every write, while the same acknowledgements
+    // observed after the answer is fed back in are **28 ticks from the grant
+    // on all 11,301 reads --- exactly muir's 28 --- and 17 on all 5,650
+    // writes against muir's 16.**  So of the two ticks this reports, one is
+    // real and one is the instrument.  The real one is the write's, and it is
+    // the signature of CLAUDE.md's fourth entry: the slave's answer is worked
+    // out before the clock edge rather than after it, so every
+    // acknowledgement made by a gate arrives late.
+    //
+    // Moving both --- the answer to after the edge, and this observation to
+    // after the second eval --- collapses the histogram to sub-tick, and was
+    // tried: `tb/cadr_busint_xbus_tb.cpp` already does it that way and says
+    // why.  It is not here because on its own it turns this check red on 58
+    // microcycles, each exactly one 220 ns wait long, which nobody has
+    // characterised.  See the `RD_FINISH_T` comment in
+    // `rtl/cadr_microcycle.sv` and issue #11.
+    //
+    // Anyone re-deriving these numbers should move the observation first and
+    // measure again.  Two published readings of this histogram were wrong
+    // because that was not done.
     if (acked_armed && !dut->n_memack_o) {
       acked_armed = false;
       const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
@@ -567,6 +607,32 @@ int main(int argc, char **argv) {
         }
         ++grants_checked;
         bus_outstanding = true;
+        // THE WORD AT THE XBUS SEAM.  `dev_wdata` is a register of its
+        // own --- `wdata <= md` at the edge that starts the cycle --- so MD
+        // being compared every microcycle says nothing about it, and a slave
+        // hung here would be the first thing to notice it was wrong. The
+        // reference is the trace's own MD column for the row that started
+        // the cycle, which is muir's and not the DUT's.
+        //
+        // **AND ON THIS PROGRAM IT SAYS ONLY THAT THE WORD IS ZERO.**  All
+        // 5,650 device writes the boot PROM makes carry the same word, and
+        // that word is zero --- the count is on this check's own output for
+        // that reason.  So any bijection on the bits is invisible here: a
+        // rotation of `dev_wdata` survives, measured, and is an equivalence
+        // *on this trace* rather than in general.  Same shape as the control
+        // store's all-zero pass, and the same answer: what catches a wiring
+        // fault here is a mutation that makes a nonzero word out of a zero
+        // one, and what would catch a bijection is a trace that writes
+        // something else.
+        if (dut->device && dut->wrcyc) {
+          ++dev_writes_checked;
+          dev_words[dut->dev_wdata]++;
+          if (dut->dev_wdata != md_at_row[k])
+            bad += Fail(r, "the word at the Xbus seam", dut->dev_wdata,
+                        md_at_row[k]);
+        }
+        if (dut->device) ++device_cycles;
+        else if (!dut->nxm && !dut->unibus) ++mem_cycles;
         acked_armed = ack_for[k] != 0;
         ack_for_cur = ack_for[k];
         saw_mem_req = false;
@@ -735,6 +801,52 @@ int main(int argc, char **argv) {
                  unibus_cycles, cycles_run);
     ++thin;
   }
+  // THE TOLERANCE THIS CHECK NEEDS IS NONE.  The standalone testbench's
+  // -MEMACK placement is a testbench's; here the bus interface is the
+  // fabric's own and every length comes out exact, so the count below is
+  // zero and the guard is set at zero.  It is the guard that was missing
+  // when the same count went from 0 to 11,301 in one commit without a line
+  // of output changing except the number --- which is what #12 was.
+  //
+  // NOT IN mutations/list.txt, and the reason is worth stating.  A record
+  // there is one edit to one file, and this guard needs two to be exercised:
+  // the fabric drifting a tick *and* the tolerance widened to admit it.  The
+  // fabric drifting alone fails on the length outright, and the tolerance
+  // widened alone changes nothing, because muir's boundaries here are all on
+  // the five-nanosecond grid and no slip is ever sub-tick.  Verified by hand
+  // instead, with RD_FINISH_T at 28-2 and the band below widened to two
+  // ticks: 11,301 of 599,999, the number from #12, and a FAIL rather than an
+  // ok line carrying it.
+  if (sub_tick) {
+    std::fprintf(stderr,
+                 "FAIL: %ld of %ld microcycle lengths were within a tick "
+                 "rather than exact; the composed machine has its own bus "
+                 "interface and owes exactness, not a tolerance\n",
+                 sub_tick, lengths_checked);
+    ++thin;
+  }
+  if (dev_words.size() > 1) {
+    std::fprintf(stderr,
+                 "NOTE: the Xbus seam carried %zu distinct words; the check on "
+                 "it is no longer vacuous and the rotation mutation should be "
+                 "live again\n",
+                 dev_words.size());
+  }
+  if (dev_writes_checked == 0) {
+    std::fprintf(stderr,
+                 "FAIL: no device write put a word on the Xbus seam, so "
+                 "`dev_wdata` is claimed correct by a check that never "
+                 "looked at it\n");
+    ++thin;
+  }
+  if (mem_cycles == 0) {
+    std::fprintf(stderr,
+                 "FAIL: none of %ld bus cycles reached main memory; every one "
+                 "was answered from the trace and the DDR bridge was never "
+                 "asked for a word\n",
+                 cycles_run);
+    ++thin;
+  }
   if (other_speed && !pack_trace) {
     std::fprintf(stderr,
                  "FAIL: %ld microcycles run at other than extra slow; ILONG is "
@@ -795,6 +907,9 @@ int main(int argc, char **argv) {
       "    %ld microcycle lengths in 200 MHz ticks, %ld of them within a tick\n"
       "    rather than exact (slip %+ld to %+ld ns), %ld exempt for the Unibus\n"
       "    arbitration of %ld of %ld bus cycles\n"
+      "    of those bus cycles %ld reached main memory and %ld an Xbus device\n"
+      "    answered from the trace; %ld device writes put a word on the seam,\n"
+      "    %zu distinct among them\n"
       "    reached: %ld POPJs, %ld jumps, %ld WRITE-I-MEMs, %ld dispatches of\n"
       "             which %ld read the memory, %ld PROM fetches, %ld control\n"
       "             store fetches, %ld microcycles the bus held off, %ld map\n"
@@ -806,7 +921,9 @@ int main(int argc, char **argv) {
       "             console's registers\n",
       k, pack_trace ? "on a System 100 band" : "on MIT's boot PROM",
       lengths_checked, sub_tick, best_slip, worst_slip, arb_skipped,
-      unibus_cycles, cycles_run, popjs, jumps, iwrites, dispatches, disp_reads,
+      unibus_cycles, cycles_run, mem_cycles, device_cycles,
+      dev_writes_checked, dev_words.size(),
+      popjs, jumps, iwrites, dispatches, disp_reads,
       prom_fetches, ram_fetches, stalls, map_sources, q_shifts, ilongs,
       a_values.size(), m_values.size(), ob_values.size(), grants_checked);
 
