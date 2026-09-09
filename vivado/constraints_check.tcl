@@ -31,18 +31,32 @@
 # Registers whose setup requirement is longer than one clock period, among
 # those NOT inside `$inside`. Empty is the healthy answer.
 #
-# `$inside` is the instance path of the machine, or the empty string when the
-# machine is the top and there is nothing outside it to find.
+# `$inside` is a LIST of instance paths that may carry the relaxation --- the
+# machine, and whatever else has been given it deliberately --- or the empty
+# list when the machine is the top and there is nothing outside it to find.
+# One path is still one path; a list of one behaves exactly as it always did.
+#
+# IT BECAME A LIST WHEN THE PROBE ARRIVED, and the alternative would have
+# been worse. `rtl/cadr_probe.sv` holds the machine's *combinational*
+# outputs --- the A and M buses, the ALU, the sequencing flags --- for a tick,
+# and those settle inside a microcycle and not inside a 5 ns tick: the first
+# instrumented board came out at -13.156 ns on 2,400 endpoints because of it.
+# So `rtl/cadr_probe.xdc` relaxes that one register, on the same argument
+# the machine makes for its own, and the invariant here is unchanged: nothing
+# *else* may take it. The other way to make this pass would have been to
+# widen the check, and a check widened to admit one thing stops catching the
+# reset synchroniser it was written for.
 proc relaxed_outside {inside period} {
-    if {$inside eq ""} {
+    if {[llength $inside] == 0} {
         set outside [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]
         # Out of context the machine is the top, so nothing is outside it and
         # this can only be empty. Checking anyway is the point: if it ever
         # stops being empty, a top level has appeared that nobody expected.
         set outside [filter $outside {NAME !~ *}]
     } else {
-        set outside [get_cells -quiet -hier \
-            -filter "PRIMITIVE_GROUP == FLOP_LATCH && NAME !~ ${inside}/*"]
+        set want "PRIMITIVE_GROUP == FLOP_LATCH"
+        foreach path $inside { append want " && NAME !~ ${path}/*" }
+        set outside [get_cells -quiet -hier -filter $want]
     }
     if {[llength $outside] == 0} { return {} }
 
@@ -64,10 +78,14 @@ proc relaxed_outside {inside period} {
 proc assert_constraints_scoped {inside period} {
     set caught [relaxed_outside $inside $period]
     if {[llength $caught] == 0} {
-        puts "XDC: no register outside the machine is relaxed"
+        if {[llength $inside] <= 1} {
+            puts "XDC: no register outside the machine is relaxed"
+        } else {
+            puts "XDC: no register outside [join $inside {, }] is relaxed"
+        }
         return
     }
-    puts "XDC: FAILED --- [llength $caught] register(s) outside the machine"
+    puts "XDC: FAILED --- [llength $caught] register(s) outside [join $inside {, }]"
     puts "XDC: are taking a microcycle exception that was written for the"
     puts "XDC: machine's datapath. A reset synchroniser or a free-running"
     puts "XDC: counter given 75 ns to settle is the one thing that file's own"

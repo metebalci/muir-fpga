@@ -181,6 +181,25 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The probe the board will be read through. `tb/cadr_probe_harness.sv`
+    # wires it to `cadr_machine` exactly as `rtl/cadr_arty.sv` does and the
+    # testbench shifts all 1,024 samples out through the probe's own JTAG shift
+    # register, so what these mutations are aimed at is an instrument whose
+    # only other verification is a board nobody has run it on yet.
+    "probe": {
+        "sources": [
+            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
+            "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
+            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
+            "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+            "rtl/cadr_probe.sv", "tb/cadr_probe_harness.sv",
+        ],
+        "top": "cadr_probe_harness",
+        "tb": "tb/cadr_probe_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "golden": "rtl.golden",
+        "gprom": True,
+    },
     # The top level, and the only check that is lint alone: Verilator has no
     # `MMCME2_BASE`, so `cadr_arty` cannot be simulated. What lint holds is
     # the port list and the `witness` fold --- an output left off the
