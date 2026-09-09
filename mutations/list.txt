@@ -2240,6 +2240,234 @@
 @end
 
 
+# ================================================ the memory port's tally ===
+#
+# `rtl/cadr_mem_count.sv` is the board's only POSITIVE witness that the
+# machine's memory cycles were answered, and everything below is aimed at it.
+# The boot PROM's whole main-memory traffic is an identity copy of page 0, so
+# page 0 reading back unchanged afterwards says the same thing whether the
+# port answered or was never brought up; no lamp separates them either ---
+# measured, LD2 reads the same with DDR and without, because the 16,951 disk
+# polls time out either way. So step four of the board plan is read by four
+# numbers on EMIO GPIO and by nothing else, which makes an unchecked
+# instrument the worst kind of thing to have here: it will be read once and
+# believed.
+#
+# `tb/cadr_mem_count_tb.cpp` runs the machine three times over the same
+# adapter and widening the board has, and what each configuration is for
+# decides which record below is caught by which:
+#
+#   LIVE   the port answers.  256 reads and 256 writes asked for, and 256 and
+#          256 answered.  Anything that MIS-counts a handshake shows here.
+#   DEAD   `hp0_aresetn` held low, which is a board before anybody has run
+#          `ps7_post_config`.  The same 256 and 256 asked for, and NOTHING
+#          answered.  Anything that counts the fabric's own intentions shows
+#          here and only here.
+#   HALF   the port takes a write and never answers it.  One read answered
+#          and no writes --- the only reading in which the two directions
+#          give different numbers, and so the only one that can see them
+#          crossed.
+#
+# WHY THE THIRD CONFIGURATION EXISTS, since it is not a board anybody expects
+# to meet: the boot PROM does exactly as many reads as writes, so a tally with
+# its two directions crossed reads 256 and 256 in LIVE and 0 and 0 in DEAD and
+# is invisible to both. `the-two-directions-of-the-tally-are-crossed` below is
+# that mutation and HALF is what catches it. The configuration was written
+# because the mutation survived, which is the order these things should
+# happen in.
+#
+# WHAT CANNOT BE WRITTEN AS A RECORD HERE, so that nobody files a hole for it.
+#
+#   **A COUNTER OF `awvalid` INSTEAD OF `bvalid`.** The module is given the B
+#   and R channels and nothing else of the port, so there is no request-side
+#   port signal in it to count. That is the design and not an omission: the
+#   two records that OR the machine's own request into an `answered` counter
+#   are the same bug in the only form this module can express, and DEAD
+#   catches them.
+#
+#   **DROPPING ONE TERM OF A HANDSHAKE** --- `bready` alone, `rready` alone,
+#   `rlast` alone --- for two separate reasons, and it is worth keeping them
+#   apart. Written the obvious way, by deleting the term, all three leave the
+#   port unread and **Verilator does the catching**: `%Error: ... 'bready'
+#   ... UNUSEDSIGNAL`, and the check never sees the mutation. Written so that
+#   the signal stays read but is ignored --- `(bvalid && bready) || (bvalid
+#   && !bready)` --- all three are EQUIVALENCES, measured: every number in
+#   all three configurations is identical to a correct run's. That is not a
+#   hole either. `cadr_axi_master` holds `bready` up from the tick it enters
+#   WRESP, which is at least a tick before this slave can raise `bvalid`, so
+#   `bvalid` is never asserted without `bready` beside it; the same argument
+#   holds for `rready`; and at a burst of one every beat is the last, so
+#   `rlast` never parts company with `rvalid`. The mutation that BITES is
+#   dropping the slave's `valid` and counting the master's wait, which is
+#   what the two `while-the-master-is-still-waiting` records below do.
+#
+#   **REMOVING THE SATURATION.** Nothing in this program reaches 32,767 of
+#   anything, so a counter that wrapped would be identical here. The
+#   saturation is for a machine that runs microcode, where a wrapped counter
+#   reading a small number would be a false negative of exactly the kind this
+#   module exists to rule out, and CLAUDE.md's `-XBUS.RQ` entry is the same
+#   fact.
+#
+# AND THE PACKING IS MUTATED TOO, because it moved into this module from
+# `rtl/cadr_arty.sv` for the reason the widening did: a field placed one bit
+# over in a file nothing can simulate is a number that still looks like a
+# measurement. The two records that reach it are the marker bits and the two
+# halves changing places.
+
+@mutation the-request-is-counted-as-a-write-answered
+@check mem_count
+@file rtl/cadr_mem_count.sv
+@note THE FALSE WITNESS, which is the whole reason this module counts what it
+@note counts. A tally that takes the fabric's own request as evidence that
+@note the processing system answered reads 256 on a board whose port was
+@note never brought up, and step four would be reported as passed.
+@note
+@note Written as an OR rather than as a replacement so that `bvalid` and
+@note `bready` stay read: replacing the term outright leaves both unused and
+@note Verilator does the catching, which is CLAUDE.md's rule about lint at
+@note bit granularity. It is the same bug either way --- an event the fabric
+@note generates by itself increments a counter of what came back.
+@note
+@note DEAD is what catches it, at "the tally counted 256 writes answered on a
+@note port that answers nothing"; LIVE catches it too, at 512 for 256.
+@old
+      if (bvalid && bready && !(&answered_writes)) begin
+@new
+      if (((bvalid && bready) || (started && req_write))
+          && !(&answered_writes)) begin
+@end
+
+@mutation the-request-is-counted-as-a-read-answered
+@check mem_count
+@file rtl/cadr_mem_count.sv
+@note The read channel's half of the record above. The two counters are
+@note separate code and a check that caught one and not the other would be
+@note reported as green.
+@old
+      if (rvalid && rready && rlast && !(&answered_reads)) begin
+@new
+      if (((rvalid && rready && rlast) || (started && !req_write))
+          && !(&answered_reads)) begin
+@end
+
+@mutation the-write-is-counted-while-the-master-is-still-waiting
+@check mem_count
+@file rtl/cadr_mem_count.sv
+@note The handshake reduced to the master's own half of it. `bready` is a
+@note level --- `cadr_axi_master` holds it up for the whole of WRESP --- so
+@note this counts ticks of waiting rather than answers, and the number goes
+@note up with the memory's latency rather than with its traffic.
+@note
+@note This is the "drops a term of the handshake" mutation in the only form
+@note that is not an equivalence; the section header above says why dropping
+@note `bready` alone is one.
+@old
+      if (bvalid && bready && !(&answered_writes)) begin
+@new
+      if ((bready || bvalid) && !(&answered_writes)) begin
+@end
+
+@mutation the-read-is-counted-while-the-master-is-still-waiting
+@check mem_count
+@file rtl/cadr_mem_count.sv
+@note The read channel's half of the record above: `rready` is
+@note `state == RDATA`, a level, and counting it counts the wait.
+@old
+      if (rvalid && rready && rlast && !(&answered_reads)) begin
+@new
+      if ((rready || (rvalid && rlast)) && !(&answered_reads)) begin
+@end
+
+@mutation the-request-is-counted-every-tick-it-stands
+@check mem_count
+@file rtl/cadr_mem_count.sv
+@note `mem_req` IS A LEVEL, held up until the word is done or the interface
+@note has timed the cycle out, so what makes `asked_*` a count of
+@note transactions is the edge and nothing else. Inverted rather than
+@note deleted so that both `req` and `req_q` stay read.
+@note
+@note A cycle that times out stands for about 850 ticks, so this does not
+@note merely inflate the number --- it saturates both counters, and a
+@note saturated tally is the one reading that cannot be told from a real one
+@note by its shape alone. That is the argument for asserting the number and
+@note not merely that it is non-zero.
+@old
+  assign started = req && !req_q;
+@new
+  assign started = req && req_q;
+@end
+
+@mutation the-marker-bits-say-nothing
+@check mem_count
+@file rtl/cadr_mem_count.sv
+@note THE BIT PATTERN THAT SAYS WHO WROTE THE WORD, inverted. Measured on the
+@note board: with the level shifters on and nothing in the fabric driving the
+@note EMIO pins --- a DDR=0 bitstream --- the processing system reads both
+@note registers as 0xFFFFFFFF, which is exactly what four saturated counters
+@note read. `(w & 0x80008000) == 0x00008000` is what separates them, and with
+@note the two constants swapped an all-ones reading satisfies it and a real
+@note one does not.
+@note
+@note Swapped rather than deleted because the field widths have to stay 64
+@note bits: a constant removed is a width error and the build does the
+@note catching.
+@old
+  assign gpio = {1'b0, asked_writes,    1'b1, asked_reads,
+                 1'b0, answered_writes, 1'b1, answered_reads};
+@new
+  assign gpio = {1'b1, asked_writes,    1'b0, asked_reads,
+                 1'b1, answered_writes, 1'b0, answered_reads};
+@end
+
+@mutation the-two-halves-of-the-tally-change-places
+@check mem_count
+@file rtl/cadr_mem_count.sv
+@note THE PACKING, and the reason it is in this module rather than in
+@note `rtl/cadr_arty.sv` where it was written: a field placed in the wrong
+@note register is a number that still looks like a measurement, and the top
+@note level cannot be simulated. With the halves swapped, `DATA_2_RO` carries
+@note what was asked for and `DATA_3_RO` what was answered --- and on a board
+@note whose port is dead that reads as 256 answered and nothing asked, which
+@note is the false witness by another route.
+@old
+  assign gpio = {1'b0, asked_writes,    1'b1, asked_reads,
+                 1'b0, answered_writes, 1'b1, answered_reads};
+@new
+  assign gpio = {1'b0, answered_writes, 1'b1, answered_reads,
+                 1'b0, asked_writes,    1'b1, asked_reads};
+@end
+
+@mutation the-two-directions-of-the-tally-are-crossed
+@check mem_count
+@file rtl/cadr_mem_count.sv
+@note THE RECORD THE THIRD CONFIGURATION EXISTS FOR. The boot PROM reads
+@note page 0 and writes it straight back, 256 of each, so a tally with its
+@note two `answered` counters swapped reads 256 and 256 in LIVE and 0 and 0
+@note in DEAD --- byte for byte what a correct one reads. Measured: with the
+@note two swapped, LIVE prints 256 and 256 and DEAD prints 0 and 0, and only
+@note HALF disagrees. HALF was written because of it.
+@note
+@note On a port that takes a write and never answers it the machine gets one
+@note read and stops: a correct tally reads one read answered and no writes,
+@note and this one reads the reverse. That is the only reading here in which
+@note the two directions differ at all.
+@old
+      if (rvalid && rready && rlast && !(&answered_reads)) begin
+        answered_reads <= answered_reads + 1;
+      end
+      if (bvalid && bready && !(&answered_writes)) begin
+        answered_writes <= answered_writes + 1;
+      end
+@new
+      if (bvalid && bready && !(&answered_reads)) begin
+        answered_reads <= answered_reads + 1;
+      end
+      if (rvalid && rready && rlast && !(&answered_writes)) begin
+        answered_writes <= answered_writes + 1;
+      end
+@end
+
+
 # ======================================================== the top level ===
 #
 # `rtl/cadr_arty.sv` is the only file here that cannot be simulated ---
