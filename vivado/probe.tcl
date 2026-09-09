@@ -271,6 +271,13 @@ puts "PROBE: the scan reads, from the TDO end: [join $names {, }]"
 
 # THE TWO COUNTS MUST AGREE. If they do not, one of them is inventing devices
 # and the padding below would be computed from whichever it was.
+#
+# AND THIS IS ALSO THE BIT-ORDER DETECTOR, which was not why it was written.
+# Measured at `4e4fccb` against `tb/cadr_jtag_chain.tcl`: a scan returned most
+# significant bit first puts the all-ones tail at the bottom, so the parser
+# terminates immediately and reports zero devices, and it dies here. The IR
+# capture below names a reversed scan as one of its suspects and will never
+# see one --- every reversal is caught at this line, four checks earlier.
 if {[llength $chain] != $ndevices} {
     probe_fail \
         "PROBE: FAILED --- the IDCODE scan found [llength $chain] device(s) and the" \
@@ -339,9 +346,10 @@ puts "PROBE: the $ir_total-bit instruction register captures\
 if {($ircap & $cap_mask) != $cap_expect} {
     probe_fail \
         "PROBE: FAILED --- the instruction register does not capture 01 at the" \
-        "PROBE: bottom of each device's field. Either the chain is not the" \
-        "PROBE: $ir_total bits the BSDLs say it is, or Vivado returns a scan" \
-        "PROBE: most significant bit first and every offset here is reversed." \
+        "PROBE: bottom of each device's field, so the chain is not the" \
+        "PROBE: $ir_total bits the BSDLs say it is. A reversed bit order would" \
+        "PROBE: have died at the device-count check above and cannot reach" \
+        "PROBE: here --- measured, at 4e4fccb, so do not go looking for one." \
         "PROBE: Nothing below this line would mean anything, so it stops here."
 }
 # Bit 5 of the PL TAP's capture is DONE --- "1 when DONE is released", says
