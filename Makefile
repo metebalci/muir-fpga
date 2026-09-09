@@ -24,6 +24,7 @@ VFLAGS := --cc --exe --build -Wall
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
+       $(BUILD)/axi_widen.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/machine.pass $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass current
@@ -67,6 +68,29 @@ $(BUILD)/obj_axi_master/Vcadr_axi_master: rtl/cadr_axi_master.sv tb/cadr_axi_mas
 
 $(BUILD)/axi_master.pass: $(BUILD)/obj_axi_master/Vcadr_axi_master
 	$(BUILD)/obj_axi_master/Vcadr_axi_master
+	@touch $@
+
+# ---------------------------------------------------------- the widening
+
+# The 32-bit word in the port's 64-bit beat: `rtl/cadr_axi_widen.sv`. It lived
+# in `rtl/cadr_arty.sv` as six assignments, where nothing could reach it ---
+# Verilator has neither `MMCME2_BASE` nor `PS7`, so the top level is held by
+# lint and the fitter and by nothing else, and a lane select taken from the
+# wrong channel is neither a lint error nor a fitter one. It is a module so
+# that this rule can exist.
+#
+# No muir reference, as there is none for the adapter. Held to the property:
+# a word lands in the half of the beat its address selects and in no other,
+# and a read of that address gives it back. The model memory is keyed by the
+# stimulus and never by the DUT --- `tb/cadr_axi_widen_tb.cpp`'s header says
+# why at length --- and it is poisoned rather than zeroed, so that a wrong
+# lane always has a wrong answer to return.
+$(BUILD)/obj_axi_widen/Vcadr_axi_widen: rtl/cadr_axi_widen.sv tb/cadr_axi_widen_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_axi_widen \
+	    --top-module cadr_axi_widen rtl/cadr_axi_widen.sv $(abspath tb/cadr_axi_widen_tb.cpp)
+
+$(BUILD)/axi_widen.pass: $(BUILD)/obj_axi_widen/Vcadr_axi_widen
+	$(BUILD)/obj_axi_widen/Vcadr_axi_widen
 	@touch $@
 
 # -------------------------------------------------------------- memory path
@@ -206,6 +230,7 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 # `tb/cadr_ps7_stub.sv`, which carries the same 620 off the same parse.
 $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
                     rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
+                    rtl/cadr_axi_widen.sv \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -219,7 +244,8 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GDDR=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
-	    rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv $(MACHINE)
+	    rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
+	    rtl/cadr_axi_widen.sv $(MACHINE)
 	@touch $@
 
 # --------------------------------------------------------------- the probe
