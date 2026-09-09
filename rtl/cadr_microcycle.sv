@@ -1122,9 +1122,40 @@ module cadr_microcycle #(
     if (cpu_edge && memgo) mbusy_next = 1'b1;
   end
 
-  assign wait_ = (destmem && mbusy_sync)
-              || (use_md && mbusy && n_memgrant)
-              || (lcinc && needfetch && mbusy_sync);
+  // **THE IR-DERIVED HALF OF EACH -WAIT TERM IS HELD**, and the other half is
+  // not.  Each term is one thing the instruction wants AND one thing the bus
+  // is doing: `DESTMEM`, `USE.MD` and `LCINC AND NEEDFETCH` are functions of
+  // `ir` and `lc` alone, so they are settled at the boundary before the
+  // microcycle they belong to and constant for the whole of it; `MBUSY.SYNC`,
+  // `MBUSY` and `-MEMGRANT` move within it and cannot be held --- `-MFINISHD`
+  // clearing MBUSY in the very tick MCLK1A samples it is where a whole 220 ns
+  // wait cycle turns on, and a tick of holding there would lose a boundary
+  // and cost a microcycle.
+  //
+  // -WAIT is a term of MACHRUN and MACHRUN is read at one instant only:
+  // `cpu_edge` is `mclk_edge && machrun`, and `mclk_edge` is one tick a
+  // microcycle.  A held copy is the same value there, because what it holds
+  // last changed at the boundary before.  What it buys is the path, and the
+  // path was the DDR board's worst at b5542c5:
+  //
+  //     -0.446 ns   processor/ir_reg[25]_replica/C
+  //              -> processor/rdfinish_t_reg[5]/R
+  //              4.838 ns (logic 1.200, route 3.638), 6 logic levels
+  //
+  // --- `ir` through `DESTM`, `DESTLC`, `NEEDFETCH` and -WAIT into MACHRUN,
+  // and MACHRUN into the reset of a countdown that counts every tick and so
+  // is rightly outside the microcycle exception.  Twenty-four of the
+  // eighty-six failing endpoints were that arc.  Three of the six levels are
+  // the decode, and holding it leaves the counter's reset three gates from a
+  // register instead of six.
+  //
+  // These three are stable across the microcycle and read at the end of one,
+  // so they are in `rtl/cadr_machine.xdc`'s `slow` set by its own test and
+  // need no naming there.
+  logic destmem_q, use_md_q, ifetch_q;
+  assign wait_ = (destmem_q && mbusy_sync)
+              || (use_md_q && mbusy && n_memgrant)
+              || (ifetch_q && mbusy_sync);
   // A WAIT comes first, and this is not a tidiness: parking the generator
   // stops the master clock, and the master clock is what MBUSY.SYNC follows
   // MEMRQ on --- so a park taken while -WAIT is up would hold the cpu clock
@@ -1300,6 +1331,9 @@ module cadr_microcycle #(
       phys_r       <= 22'd0;
       wdata        <= 32'd0;
       n_loadmd_q   <= 1'b1;
+      destmem_q    <= 1'b0;
+      use_md_q     <= 1'b0;
+      ifetch_q     <= 1'b0;
       md_held      <= 32'd0;
       md_pending   <= 1'b0;
       // What the latch at VMEMDR comes up holding. `Chip::power_on` puts
@@ -1323,6 +1357,11 @@ module cadr_microcycle #(
       // the cpu clock: a stall is what they are there to end.
       n_memack_q <= n_memack;
       n_loadmd_q <= n_loadmd;
+
+      // The IR-derived half of each -WAIT term, held. See the note there.
+      destmem_q  <= destmem;
+      use_md_q   <= use_md;
+      ifetch_q   <= ifetch;
 
       // "the high-going edge loads MD"
       if (loadmd_edge) begin

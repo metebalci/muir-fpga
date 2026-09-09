@@ -1751,10 +1751,15 @@
 @note
 @note It stays in the list rather than being dropped: when a program does
 @note exercise it, this is what will say so, by starting to fail.
+@note
+@note The anchor follows the line: the IR-derived half of each term is now
+@note held a tick, so `use_md` here reads `use_md_q`. What the mutation does
+@note is unchanged --- the term is suppressed with a constant, in the one
+@note expression MACHRUN and -HANG both read.
 @old
-              || (use_md && mbusy && n_memgrant)
+              || (use_md_q && mbusy && n_memgrant)
 @new
-              || (use_md && mbusy && n_memgrant && 1'b0)
+              || (use_md_q && mbusy && n_memgrant && 1'b0)
 @end
 
 @mutation the-wait-term-that-never-fires-on-a-fetch
@@ -1763,12 +1768,17 @@
 @file rtl/cadr_microcycle.sv
 @note The other of the two: `LCINC AND NEEDFETCH AND MBUSY.SYNC`. Suppressed
 @note with a constant rather than deleted, so that every signal stays read
-@note and lint has nothing to say --- a term removed outright takes `lcinc`
-@note and `needfetch` out of use with it.
+@note and lint has nothing to say --- a term removed outright would take
+@note `ifetch_q` out of use with it.
+@note
+@note The anchor follows the line twice over. `LCINC AND NEEDFETCH` is what
+@note `ifetch` already means --- `assign ifetch = needfetch && lcinc` --- and
+@note the term is now written with that name and held a tick, so the line
+@note reads `ifetch_q && mbusy_sync`. What the mutation does is unchanged.
 @old
-              || (lcinc && needfetch && mbusy_sync);
+              || (ifetch_q && mbusy_sync);
 @new
-              || (lcinc && needfetch && mbusy_sync && 1'b0);
+              || (ifetch_q && mbusy_sync && 1'b0);
 @end
 
 
@@ -2052,12 +2062,17 @@
 @note instants puts -LOADMD after -MEMACK instead of before, which is
 @note observable wherever a Unibus read's word is used. Nothing here uses
 @note one.
+@note
+@note The anchor follows the line: both instants are held one tick early now,
+@note because the comparisons that read them are registers rather than gates
+@note on the acknowledgement's path. Exchanging them is unchanged by that ---
+@note the `- 1` is on both.
 @old
-            ub_ack_at   <= elapsed + 10'(UB_ACK_T);
-            ub_md_at    <= elapsed + 10'(UB_STROBE_T);
+            ub_ack_at   <= elapsed + 10'(UB_ACK_T) - 10'd1;
+            ub_md_at    <= elapsed + 10'(UB_STROBE_T) - 10'd1;
 @new
-            ub_ack_at   <= elapsed + 10'(UB_STROBE_T);
-            ub_md_at    <= elapsed + 10'(UB_ACK_T);
+            ub_ack_at   <= elapsed + 10'(UB_STROBE_T) - 10'd1;
+            ub_md_at    <= elapsed + 10'(UB_ACK_T) - 10'd1;
 @end
 
 @mutation the-word-at-the-xbus-seam-is-rotated
