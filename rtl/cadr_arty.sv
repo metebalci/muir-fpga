@@ -58,6 +58,11 @@ module cadr_arty #(
   // -1 part: 125 x 8 is 1000, comfortably inside, and 1000 / 5 is the tick.
   logic clk_fb, clk_200_raw, clk, mmcm_locked;
 
+  // The eleven clock outputs this design does not take are left empty on
+  // purpose --- that is how the primitive is written and what Xilinx's own
+  // templates do --- so the style warning about it is turned off here rather
+  // than answered with eleven wires nothing reads.
+  /* verilator lint_off PINCONNECTEMPTY */
   MMCME2_BASE #(
       .CLKIN1_PERIOD  (8.000),   // 125 MHz
       .DIVCLK_DIVIDE  (1),
@@ -75,6 +80,7 @@ module cadr_arty #(
       .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
       .CLKFBOUTB()
   );
+  /* verilator lint_on PINCONNECTEMPTY */
 
   BUFG u_bufg (.I(clk_200_raw), .O(clk));
 
@@ -97,6 +103,10 @@ module cadr_arty #(
   logic [15:0] ub_rdata;
   logic [2:0]  arb_stage;
   logic [31:0] mem_addr, mem_wdata;
+  // MEM<31:0> on its way to an Xbus slave. No slave exists, so nothing
+  // reads it --- but it is an output of `cadr_machine` and the fold below
+  // is what keeps it from being deleted along with whatever computes it.
+  logic [31:0] dev_wdata;
   logic vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge, wrcyc;
   logic device, dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn;
   logic n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc, nxm, unibus;
@@ -121,7 +131,8 @@ module cadr_arty #(
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
       .pcs0(pcs0), .iwrited(iwrited), .clock_edge(clock_edge),
       .wrcyc(wrcyc), .device(device), .dev_rq(dev_rq),
-      .dev_write(dev_write), .phys(phys), .promdisable(promdisable),
+      .dev_write(dev_write), .dev_wdata(dev_wdata),
+      .phys(phys), .promdisable(promdisable),
       .ub_msyn(ub_msyn), .ub_ssyn_o(ub_ssyn), .arb_stage(arb_stage),
       .n_memrq_o(n_memrq), .n_memack_o(n_memack),
       .n_memgrant_o(n_memgrant), .mbusy_o(mbusy), .mbusy_sync_o(mbusy_sync),
@@ -139,6 +150,14 @@ module cadr_arty #(
   // registered so the fold is not a combinational path across the design.
   // It is not meant to be readable --- it is a load, and what it shows is
   // that the datapath is moving at all.
+  //
+  // **All forty-nine of them, including the ones something else already
+  // reads** --- `clock_edge`, `promdisable`, `timed_out`, `n_memack` drive
+  // LEDs as well and are still here, because the rule the comment states is
+  // the whole specification and a fold with exceptions in it is not a rule
+  // anybody can check. What checks it is `make build/arty.pass`: an output
+  // left off the instantiation is a Verilator PINMISSING, which is how
+  // `dev_wdata` was found missing from both.
   logic witness;
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -146,12 +165,12 @@ module cadr_arty #(
     end else begin
       witness <= ^{pc, lpc, opc, st, ir, a, m, alu, r, ob, q, dc, lc,
                    vma, md, phys, ub_addr, ub_rdata, arb_stage,
-                   mem_addr, mem_wdata,
+                   mem_addr, mem_wdata, dev_wdata,
                    vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge,
                    wrcyc, device, dev_rq, dev_write, promdisable,
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
-                   nxm, unibus, memstart, mbusy, mbusy_sync,
+                   nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
                    mem_req, mem_write};
     end
   end
