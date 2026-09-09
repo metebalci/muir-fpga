@@ -133,6 +133,18 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The 32-bit word in the port's 64-bit beat.  It was six assignments
+    # inside `rtl/cadr_arty.sv`'s `g_ddr`, where nothing could reach it: that
+    # file cannot be simulated, so lint and the fitter were the whole of the
+    # evidence for it.  A module has a check; a generate block in a top level
+    # that Verilator cannot elaborate does not.
+    "axi_widen": {
+        "sources": ["rtl/cadr_axi_widen.sv"],
+        "top": "cadr_axi_widen",
+        "tb": "tb/cadr_axi_widen_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
     # The processor, twice over: the same module and the same testbench
     # against two programs.  Route a mutation to the cheaper one unless the
     # band is the only thing that reaches what it breaks --- the map, the
@@ -233,8 +245,7 @@ CHECKS = {
     "arty": {
         "kind": "lint",
         "sources": ["rtl/cadr_arty.sv"],
-        "extra": ["tb/cadr_arty_stubs.sv",
-                  "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
+        "extra": ["rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
                   "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
                   "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
                   "rtl/cadr_spy_registers.sv", "rtl/cadr_memory_path.sv",
@@ -637,16 +648,53 @@ def tcl_check(args, work, spec):
 
 
 def arty_check(args, work):
-    """The top level, linted. Lint failing is the mutation being caught."""
+    """The top level, linted. Lint failing is the mutation being caught.
+
+    THREE TIMES, BECAUSE THERE ARE THREE BOARDS, exactly as `build/arty.pass`
+    runs it. `PROBE_DEPTH` and `DDR` are both zero by default and the generate
+    blocks that instantiate `cadr_probe.sv`, `cadr_ps7.sv`, `cadr_axi_master.sv`
+    and `cadr_axi_widen.sv` are then not elaborated at all, so a lint of the
+    default says nothing whatever about the two configurations the board is
+    actually built in. A branch only one build reaches is a branch only one
+    build checks --- and until the widening was pulled out into a module, that
+    branch was where it lived.
+
+    A CONFIGURATION WHOSE FILES ARE NOT IN THE COPY IS SKIPPED, and that is not
+    tidiness either. `--since` names EARLIER revisions on purpose, and
+    `rtl/cadr_ps7.sv` arrives at b5542c5; a pass that verilated it
+    unconditionally would report BROKEN for every arty record against anything
+    older, which is the `git archive` pathspec lesson in a second place.
+    """
     spec = CHECKS["arty"]
-    cmd = [args.verilator, "--lint-only", "-Wall", "-Irtl",
-           "-GPROM_HEX=\"%s\"" % os.path.join(args.goldens, "boot_prom.hex"),
-           "--top-module", spec["top"]]
-    cmd += spec["extra"] + spec["sources"]
-    rc, out = run(cmd, work)
-    if rc != 0:
-        return CAUGHT, first_problem(out)
-    return SURVIVED, "lint passes"
+    prom = "-GPROM_HEX=\"%s\"" % os.path.join(args.goldens, "boot_prom.hex")
+    base = [args.verilator, "--lint-only", "-Wall", "-Irtl", prom,
+            "--top-module", spec["top"]]
+    boards = [
+        # The default board: the machine and nothing else.
+        ([], ["tb/cadr_arty_stubs.sv"], []),
+        # The instrumented one.
+        (["-GPROBE_DEPTH=1024"], ["tb/cadr_arty_stubs.sv"],
+         ["rtl/cadr_probe.sv"]),
+        # And the one with the processing system behind the memory port.
+        (["-GDDR=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
+         ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
+          "rtl/cadr_axi_widen.sv"]),
+    ]
+    ran = 0
+    for generics, stubs, extra_sources in boards:
+        files = stubs + extra_sources
+        if not all(os.path.exists(os.path.join(work, f)) for f in files):
+            continue
+        cmd = base + generics + stubs + spec["extra"] + spec["sources"]
+        cmd += extra_sources
+        rc, out = run(cmd, work)
+        if rc != 0:
+            return CAUGHT, first_problem(out)
+        ran += 1
+    if ran == 0:
+        return BROKEN, "none of the three board configurations could be linted"
+    return SURVIVED, "lint passes on %d board configuration%s" % (
+        ran, "" if ran == 1 else "s")
 
 
 def generator_check(args, work, spec):
