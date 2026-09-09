@@ -18,7 +18,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
-.PHONY: check cables current mutants mutants-selftest clean
+.PHONY: check cables current mutants mutants-selftest ila-selftest clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -195,6 +195,26 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv tb/cadr_arty_stubs.sv | $(BUILD)
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv rtl/cadr_arty.sv $(MACHINE)
 	@touch $@
+
+# ------------------------------------------- the hardware capture, checked
+
+# `tools/ila_check.py` compares a capture read off the board against the same
+# reference trace every other check uses. It is the only thing that will ever
+# be able to say the *board* computes what muir computes --- six LEDs cannot
+# --- so a bug in it would not be caught by anything downstream. Its self-test
+# makes fifteen captures out of `rtl.golden` and requires the right verdict on
+# each: agreement at two lengths and two radixes, and a NAMED failure on a
+# wrong cell, a wrong column, an offset of one with and without a cycle column
+# to say so, a truncated readout, a ragged row, an unknown column, an empty
+# capture, and a trigger that does not mark sample zero.
+#
+# Phony, and not in `check`, on `mutants-selftest`'s precedent: it tests a
+# tool rather than the fabric, and a `.pass` would make `check_makefile`
+# report a check that nothing mutates. It should join `check` the day a
+# mutation record is aimed at it. Three seconds, and it needs only the trace.
+.PHONY: ila-selftest
+ila-selftest: $(BUILD)/rtl.golden
+	python3 tools/ila_check.py --self-test
 
 # ------------------------------------------------------------------- cables
 
