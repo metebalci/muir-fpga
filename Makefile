@@ -23,7 +23,8 @@ VFLAGS := --cc --exe --build -Wall
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
-       $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass        $(BUILD)/machine.pass current
+       $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
+       $(BUILD)/machine.pass $(BUILD)/arty.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -157,6 +158,42 @@ $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_machine/Vcadr_machine $(BUILD)/rtl.golden
+	@touch $@
+
+# ------------------------------------------------- the machine with no memory
+
+# Not a check: it asserts nothing and cannot fail. `tb/cadr_nomem_tb.cpp` runs
+# the exact configuration `rtl/cadr_arty.sv` puts on the board --- `mem_done`
+# tied low, `mem_rdata` zero --- and prints what it measures. Every number in
+# `docs/board.md`'s no-memory paragraph comes from it, and it dies with that
+# paragraph.
+#
+# Phony deliberately. A `.pass` file would make `check_makefile` report a check
+# that nothing mutates.
+.PHONY: nomem
+nomem: $(BUILD)/obj_nomem/Vcadr_machine $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_nomem/Vcadr_machine
+
+$(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_nomem \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_nomem_tb.cpp)
+
+# ------------------------------------------------------------- the top level
+
+# `rtl/cadr_arty.sv` is the only file with no check of any kind. It cannot be
+# simulated --- Verilator has no `MMCME2_BASE` --- but it can be linted, and
+# lint is what says the port list matches, that nothing is undriven, and that
+# the `witness` fold really names every output of `cadr_machine`.
+#
+# The stubs are in `tb/` and must stay there: both vivado scripts read
+# `[glob rtl/*.sv]`, so a stub `MMCME2_BASE` in `rtl/` would replace the real
+# primitive in synthesis and hand the board a wire where its clock generator
+# belongs. `tb/cadr_arty_stubs.sv` says the same at greater length.
+$(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv tb/cadr_arty_stubs.sv | $(BUILD)
+	$(VERILATOR) --lint-only -Wall -Irtl \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv rtl/cadr_arty.sv $(MACHINE)
 	@touch $@
 
 # ------------------------------------------------------------------- cables
