@@ -72,7 +72,7 @@
           <text class="d-s" x="723" y="166" text-anchor="middle">its own registers, the debug cable</text>
 
           <!-- The debug cable, DBGOUT/DBGIN. It leaves the bus interface two ways:
-               up through the chip's pins to a pair of Pmods for a second board,
+               up through the chip's pins to the two Pmod connectors, JA carrying DBGOUT and JB carrying DBGIN, for a second board,
                and across to M_AXI_GP1 for muir running on this board's own PS.
                Neither path touches the other PS software. -->
           <path class="d-line" d="M850,160 L1115,160 L1115,712 M890,712 L1115,712 M890,712 L890,728 M1060,712 L1060,728 M990,160 L990,464 M990,508 L990,562"/>
@@ -208,11 +208,11 @@
           <text class="d-s" x="194" y="806" text-anchor="middle">&mdash; and 384 MB left to Linux</text>
           <text class="d-s" x="700" y="716">on the board, not in the chip</text>
           <rect class="d-dash d-ext" x="820" y="728" width="140" height="84"/>
-          <text class="d-t" x="890" y="754" text-anchor="middle">Pmod DBGOUT</text>
+          <text class="d-t" x="890" y="754" text-anchor="middle">Pmod JA &mdash; DBGOUT</text>
           <text class="d-s" x="890" y="776" text-anchor="middle">1 clock + 7 data,</text>
           <text class="d-s" x="890" y="790" text-anchor="middle">four beats</text>
           <rect class="d-dash d-ext" x="990" y="728" width="140" height="84"/>
-          <text class="d-t" x="1060" y="754" text-anchor="middle">Pmod DBGIN</text>
+          <text class="d-t" x="1060" y="754" text-anchor="middle">Pmod JB &mdash; DBGIN</text>
           <text class="d-s" x="1060" y="776" text-anchor="middle">1 clock + 7 data,</text>
           <text class="d-s" x="1060" y="790" text-anchor="middle">three beats</text>
           <text class="d-s" x="820" y="836">21 wires: 4 out, 1 back, 16 both ways;</text>
