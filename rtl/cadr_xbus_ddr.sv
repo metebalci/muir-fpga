@@ -23,7 +23,10 @@
 // specification is what makes safe: "it is the responsibility of the bus master
 // to assert good address, write, and data lines 80 ns. prior to asserting
 // -XBUS.RQ".  Read data is latched, because the cpu takes it at `-LOADMD` and
-// the word has to still be there.
+// the word has to still be there --- and it is cleared when the cycle ends,
+// because a slave drives MEM<31:0> only while it is answering and an
+// unanswered read gives MD zero.  The note at the register says why that
+// matters more than it sounds like it does.
 //
 // NOT HERE YET: the AXI adapter itself.  `mem_*` is a plain request/response
 // port, and what turns it into AXI4 --- which Vivado's converter then turns
@@ -80,7 +83,36 @@ module cadr_xbus_ddr
       rdata <= 32'd0;
     end else if (!asked) begin
       // The cycle is over; the next one starts fresh.
-      done <= 1'b0;
+      //
+      // **AND THE WORD GOES WITH IT.**  `rdata` is this slave's driver onto
+      // MEM<31:0>, and a slave drives the data lines only while it is
+      // selected and answering; the register is a stand-in for that driver
+      // and not a place to keep a word.  Held across cycles it was one:
+      // `cadr_memory_path.sv` falls through to `memory_rdata` when nothing
+      // acknowledges, and -LOADMD is asserted on every acknowledgement
+      // including the NXM timer's, so every cycle nothing answered strobed MD
+      // with whatever this slave last returned.  On the DDR board that is the
+      // last word of page 0, and bit 0 of it is what the boot PROM's
+      // JUMP-IF-BIT-CLEAR reads as a ready disk controller --- so what
+      // happened to be in main memory decided where the machine went.
+      // **An unanswered read gives MD zero**, and this is where that is made
+      // true: there is always a gap with `asked` low between two bus cycles,
+      // because a cycle ends by the master lifting -XBUS.RQ, so the word is
+      // gone before the next cycle can be acknowledged.
+      //
+      // It cannot take the word away from a cycle that DID get an answer.
+      // -XBUS.ACK "remains asserted until the -XBUS.RQ signal is removed by
+      // the master", so `dev_rq` stands through the whole of `acked` --- it
+      // is a term of `dev_rq` in the ACKED state --- and -LOADMD is `acked`.
+      // MD has taken the word before `asked` can fall.
+      //
+      // The alternative was to gate `memory_rdata` in `cadr_memory_path.sv`
+      // on whether the cycle was answered.  That puts bus resolution in the
+      // path rather than in the slave, needs a signal that does not exist
+      // yet, and leaves the bridge still holding a word it has no business
+      // holding for anything else that ever reads it.
+      done  <= 1'b0;
+      rdata <= 32'd0;
     end else if (mem_done && !done) begin
       done <= 1'b1;
       // Held for the cpu, which takes the word at -LOADMD.
