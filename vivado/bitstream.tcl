@@ -19,25 +19,60 @@
 #      the file read cleanly, applied to nothing, and the timing report showed
 #      the unconstrained design at -16.405 ns instead of -6.602. A file whose
 #      failure mode is a plausible worse number. So the exceptions are counted
-#      after reading, and a run with none stops.
+#      after reading, and a run with none stops --- and then, because a
+#      counted exception can still have reached no path, the paths themselves
+#      are asked what setup requirement they carry.
 #
 #   2. THAT THE MACHINE IS STILL THERE. `cadr_machine` brings its whole
 #      datapath out for the testbenches, and a top level that left those
 #      unconnected would synthesise to nearly nothing and write a perfectly
 #      good bitstream of an empty part. `cadr_arty.sv` folds every output into
-#      one register to prevent it; this checks that it worked, against what
-#      the machine is known to cost placed and routed out of context --- 2,764
-#      LUTs and 28 block RAM tiles.
+#      one register to prevent it; this checks that it worked, against what the
+#      machine is known to cost --- 2,795 Slice LUTs and 28 block RAM tiles
+#      placed and routed out of context at 712909e, which the check sees as
+#      2,101 LUT cells and 29 BMEM cells for the reason given at the check.
 #
 #   3. THAT THE BITSTREAM IS A BITSTREAM. `write_bitstream` reporting success
 #      and leaving a file too small to be one is the same class of thing.
 #
-# Timing is expected to fail today. `md` reaches the tick-rate counters
-# through both map levels and the decode, about 11.6 ns of logic arriving
-# somewhere that has 5 ns, and that is a real finding rather than an artefact
-# of this script. The bitstream is written anyway and the failure reported: a
-# bitstream that fails timing is not a working machine, but it is a working
-# flow, and the two unknowns are worth separating rather than compounding.
+# TIMING STILL FAILS, BUT NOT WHERE THIS USED TO SAY IT DID. What stood here
+# named `md` reaching the tick-rate counters through both map levels and the
+# decode, about 11.6 ns of logic arriving somewhere that has 5 ns. That figure
+# predates the two holdings in `cadr_memory_path.sv` and `cadr_microcycle.sv`,
+# and it was arithmetic rather than a routed report. The first board run to
+# measure it, at 712909e, found something else:
+#
+#     -0.129 ns  u_machine/processor/u_phase_gen/n_tpwp_reg/C
+#             -> u_machine/processor/dmem_reg_1536_1791_7_7/RAMS64E_A/WE
+#             4.186 ns data path (logic 0.828, route 3.358), 3 logic levels
+#
+# The phase generator's write pulse arriving at the dispatch memory's LUTRAM
+# write enables. All 16 failing endpoints of 14,135 are that one net fanned
+# across the LUTRAM slices, 80% of the delay is routing, and hold is met at
+# +0.079 ns. Out of context the same design is -0.484 ns, 94 failing endpoints
+# of 13,444.
+#
+# AND THE ENDPOINT IS NOT STABLE ACROSS REVISIONS, which is worth writing down
+# because the paragraph it replaced was wrong in exactly that way. Run again
+# on the tree at b1bcc34 --- two commits later, both of them in the top level
+# --- this flow gives -0.384 ns, 10 failing endpoints of 14,054, and the worst
+# path is not that net at all:
+#
+#     -0.384 ns  u_machine/processor/ir_reg[25]/C
+#             -> u_machine/processor/mfinish_t_reg[2]/R
+#
+# which is the family the out-of-context run has at the top, a datapath
+# register reaching a tick-rate counter's reset. Two commits apart, two
+# different worst nets, both in the 0.1 to 0.4 ns band. **The family is the
+# finding; the net is the placement.** Quote a net from here only with the
+# commit beside it.
+#
+# So what is left is fanout and placement rather than depth of logic, and `md`
+# through the map is not the finding any more.
+#
+# The bitstream is written anyway and the failure reported: a bitstream that
+# fails timing is not a working machine, but it is a working flow, and the two
+# unknowns are worth separating rather than compounding.
 
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z020clg400-1"}]
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/bitstream"}]
@@ -57,15 +92,19 @@ synth_design -top cadr_arty -part $part \
 #
 # THE MACHINE'S FILE IS READ SCOPED, and that is not tidiness. Unscoped, its
 # `$slow` set is `all_registers` minus a name list, and on a board `all_
-# registers` includes the top level's own --- measured, 26 of them: the reset
-# synchroniser and the free-running heartbeat, each taking a fifteen-tick
-# multicycle written for a datapath. `-ref cadr_machine` makes
+# registers` includes the top level's own --- 26 of them when this was written,
+# the reset synchroniser and the free-running heartbeat, each taking a
+# fifteen-tick multicycle written for a datapath. `-ref cadr_machine` makes
 # `all_registers` mean the machine's, which is what the file's prose has
 # always said it meant.
 #
-# Both queries in that file honour the scope; it was checked rather than
-# assumed. Scoped, `rst_sync` and `beat` come back 0 and 0; unscoped, 2 and
-# 24.
+# THE COUNT IS NOT THE CHECK, and it has already moved: `cadr_arty.sv` at
+# b1bcc34 declares 55 registers of its own --- `rst_sync` is 4 bits now and
+# not 2, plus `beat` 24, `tick` 26 and `witness` 1 --- so a run that matched
+# on 26 would be matching on nothing in particular. What holds the property is
+# `assert_constraints_scoped` below, which asks the design whether any
+# register outside `u_machine` carries a relaxed requirement, and does not
+# care how many there are.
 read_xdc rtl/cadr_arty.xdc
 read_xdc -ref cadr_machine rtl/cadr_machine.xdc
 
@@ -83,7 +122,9 @@ assert_constraints_scoped u_machine 5.0
 # AND IT IS COUNTED ON `cycles=`, NOT ON THE WORD "multicycle", WHICH THE
 # REPORT NEVER WRITES. The first version of this check looked for that word,
 # found none, and stopped a run whose constraints had applied perfectly ---
-# positions 4 and 5 of the report, `cycles=15` setup and `cycles=14` hold. A
+# `cycles=15` setup and `cycles=14` hold, at positions 4 and 5 of the report
+# when that was written and 5 and 6 at b1bcc34, `witness_reg`'s false path
+# having joined the list in between. Position is not the thing to match on. A
 # guard that cries wolf is worse than no guard, and this one was written
 # against a report format nobody had read. The same mistake as the `foreach`
 # it exists to catch, one level up.
@@ -108,6 +149,15 @@ if {$clocks < 2} {
     exit 1
 }
 
+# AND THE COUNT ABOVE IS THE WEAKER TEST OF THE TWO, which is why this follows
+# it rather than replacing it. `report_exceptions` lists a `set_multicycle_path`
+# whose object queries matched nothing exactly as it lists one that reached
+# 10,929 paths --- the statement was read either way, so the exception exists
+# either way, and the `foreach` bug would pass the count. What separates them
+# is the setup requirement the paths ask for. The count still earns its place:
+# it is the half that says a setup exception has a hold exception beside it.
+assert_multicycle_applied 5.0 15
+
 opt_design
 place_design
 phys_opt_design
@@ -118,13 +168,30 @@ set luts  [llength [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == LUT}]]
 set brams [llength [get_cells -quiet -hier -filter {PRIMITIVE_TYPE =~ BMEM.*.*}]]
 set ffs   [llength [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]]
 puts "BIT: $luts LUTs, $ffs registers, $brams block RAMs"
-# Out of context the machine is 2,764 LUTs and 28 block RAM tiles. A top level
-# adds a little and optimisation across pins may remove a little; an order of
-# magnitude below that is not this design.
+# THESE THREE ARE CELL COUNTS AND NOT THE UTILISATION REPORT'S, and the two do
+# not agree by construction --- so the floors below must be read against these
+# and not against the figures anybody quotes. Measured on the board's routed
+# design at 712909e: `PRIMITIVE_GROUP == LUT` is 2,101 cells where
+# `report_utilization` says 2,876 Slice LUTs, because the report counts sites
+# (1,755 as logic, two LUT5 cells often sharing one) and adds the 1,121 sites
+# holding distributed RAM, which are not in the LUT group at all --- they are
+# `PRIMITIVE_GROUP == DMEM`, 1,411 cells of it. Block RAM goes the other way:
+# 29 BMEM cells against 28 tiles, a tile holding two RAMB18s. The registers are
+# the one pair that match, 773 either way. Out of context the report says 2,795
+# Slice LUTs, 769 registers, 28 tiles.
+#
+# At b1bcc34 this line printed `2088 LUTs, 746 registers, 29 block RAMs`
+# against 2,871 Slice LUTs and 746 registers in the report, so both counts
+# move a percent or two with the top level and neither is a constant.
+#
+# The floors are an order of magnitude under all of that on purpose. What this
+# has to tell apart is the machine from an empty part, not one revision from
+# the next, and a floor that tracked the design would be edited every time it
+# moved.
 if {$luts < 1500 || $brams < 20} {
     puts "BIT: FAILED --- that is not the whole machine."
-    puts "BIT: Placed and routed out of context it is 2,764 LUTs and 28 block"
-    puts "BIT: RAMs. Something upstream has optimised the datapath away, which"
+    puts "BIT: Routed on the board it is 2,101 LUT cells and 29 BMEM cells."
+    puts "BIT: Something upstream has optimised the datapath away, which"
     puts "BIT: happens when the top level does not use what cadr_machine brings"
     puts "BIT: out. A bitstream of an empty part is the failure to look for."
     exit 1
