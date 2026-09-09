@@ -649,9 +649,13 @@ module cadr_arty #(
   // rising edges and lighting a bit of the count turns it into a rate: bit 16
   // is 65,536 timeouts, about 0.39 s a half-period at that rate.
   //
-  // The rate is the point. Faster means cycles are timing out more often;
-  // **dark means they have stopped**, which is what a working memory looks
-  // like and is the signal step 2 is waiting for.
+  // The rate is the point. Faster means cycles are timing out more often.
+  // An earlier version of this comment said dark would mean memory is
+  // working. Measured, it does not: memory answers only the boot PROM's 512
+  // page-0 cycles, once, and the 16,951 disk-controller polls time out
+  // regardless, so this lamp reads the same with DDR and without. See
+  // docs/board.md. The memory path is checked by the debugger reading DDR
+  // from outside, not by any lamp here.
   logic timed_out_q;
   logic [16:0] nxm_count;
   always_ff @(posedge clk) begin

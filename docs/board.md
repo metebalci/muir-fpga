@@ -148,8 +148,22 @@ bring-up instruments and will change as the machine grows.
 an unanswered cycle is up --- a sliver at the end of each 4.25 us timeout ---
 which integrates to a light too faint to read; the board showed exactly that.
 Counting its rising edges and lighting a bit of the count makes the rate
-visible, and **dark means timeouts have stopped**, which is what a working
-memory looks like.
+visible.
+
+**And memory will not change it.** An earlier version of this paragraph said
+"dark means timeouts have stopped, which is what a working memory looks like".
+That was a prediction, and measured against a DDR model it is wrong: the boot
+PROM's only main-memory traffic is 512 cycles, an identity copy of page 0, and
+the other 16,951 bus cycles are polls of a disk controller that DDR cannot
+answer. Memory removes exactly 512 timeouts, once, in 380 us at 118 ms after
+reset, and after that every cycle the machine makes is one of the polls. LD2's
+rate is **identical** with and without memory --- 0.78 s a period, about
+168 kHz --- and LD5 is green for those 380 us and red for ever after. The one
+lamp-visible consequence of the memory path working is a halt: if bit 0 of the
+last word of page 0 is set, the PROM believes the disk is ready, writes one
+word and stops at `ERROR-DISK-ERROR`, and LD1 and LD3 go dark while LD0 keeps
+blinking. The lamps are not how memory is checked; the debugger reading DDR
+from outside is.
 
 **There are two signals called `nxm` and they mean opposite kinds of thing.**
 The decode's says the *address* is Xbus space with nothing built there; the bus
