@@ -9,12 +9,18 @@
 // with real package pins --- which is a different question from whether it is
 // correct, and one nothing in this repository has ever asked.
 //
-// **This is not a working CADR and is not meant to be.**  There is no memory
-// behind it: `mem_done` is tied low, so the first cycle the boot PROM runs to
-// main memory --- microcycle 535,791 of 600,000 --- never completes, and the
-// machine stalls there for ever.  What it can show is that the fabric runs:
-// the clock generator ticking, microcycles retiring, the PROM executing.  DDR
-// behind `mem_*` is the next slice.
+// **BY DEFAULT THIS IS NOT A WORKING CADR AND IS NOT MEANT TO BE.**  With
+// `DDR` zero there is no memory behind it: `mem_done` is tied low, so the
+// first cycle the boot PROM runs to main memory --- microcycle 535,791 of
+// 600,000 --- never completes, and the machine stalls there for ever.  What
+// it can show is that the fabric runs: the clock generator ticking,
+// microcycles retiring, the PROM executing.
+//
+// `DDR` set puts the Zynq processing system and its DDR3 behind `mem_*`.  It
+// is off for the same reason `PROBE_DEPTH` is, and the note beside that
+// parameter is the whole argument: the design this file describes by default
+// is the machine and nothing else, so what the machine costs and what the
+// memory costs stay two questions.
 //
 // TWO THINGS THIS FILE HAS TO GET RIGHT THAT ARE NOT OBVIOUS.
 //
@@ -50,9 +56,16 @@
 // bitstream is an instrument nobody measures the cost of, and because the two
 // questions --- does the machine fit, and what does watching it cost --- are
 // worth keeping apart.
+//
+// AND THE SAME FOR `DDR`, which is zero here, so nothing below instantiates
+// `cadr_ps7.sv` or `cadr_axi_master.sv` and `mem_done` is tied low exactly as
+// it has always been tied.  Setting it puts the processing system and DDR3
+// behind the machine's memory port --- the piece with no muir reference of
+// any kind --- and `vivado/bitstream.tcl` builds that board with `DDR=1`.
 module cadr_arty #(
     parameter string PROM_HEX = "build/boot_prom.hex",
-    parameter int unsigned PROBE_DEPTH = 0
+    parameter int unsigned PROBE_DEPTH = 0,
+    parameter int unsigned DDR = 0
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -122,6 +135,13 @@ module cadr_arty #(
   logic n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc, nxm, unibus;
   logic memstart, timed_out, mbusy, mbusy_sync;
   logic mem_req, mem_write;
+  // The answer, from whatever is behind the memory port. Driven in one of the
+  // two arms of the `DDR` generate below and nowhere else.
+  logic mem_done;
+  logic [31:0] mem_rdata;
+  // A write or read that came back SLVERR or DECERR, held. Zero when there is
+  // no memory, so LD5's blue is dark on the board this file builds by default.
+  logic ddr_error;
 
   cadr_machine #(
       .PROM_HEX(PROM_HEX)
@@ -133,9 +153,8 @@ module cadr_arty #(
       // 32 boards of 64K words, which is muir's own default and what every
       // trace in this repository was taken with.
       .boards(7'd32),
-      // NO MEMORY. See the note at the top: the machine stalls at the boot
-      // PROM's first main-memory cycle and stays there.
-      .mem_done(1'b0), .mem_rdata(32'd0),
+      // The memory, or the absence of one: see the `DDR` generate below.
+      .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
       .md(md), .vmaok(vmaok), .jcond(jcond), .nop(nop), .pcs1(pcs1),
@@ -152,6 +171,155 @@ module cadr_arty #(
       .timed_out(timed_out), .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata)
   );
+
+  // ----------------------------------------------------------- the memory
+  //
+  // `DDR` puts the Zynq processing system behind the machine's memory port:
+  // `cadr_axi_master.sv` turning a request into a transaction, the generated
+  // `cadr_ps7.sv` carrying it to `S_AXI_HP0`, and the widening between them.
+  // **This is the piece with no muir reference at all** --- nothing in MIT's
+  // drawings is an AXI master --- so what holds it is the protocol, the
+  // read-back, and eventually the board.
+  //
+  // THE PORT IS DEAD UNTIL SOFTWARE SAYS OTHERWISE, and that is what lets
+  // this work with nobody at the board. `ps7_post_config` writes
+  // `LVL_SHFTR_EN` and clears `FPGA_RST_CTRL`; until it has, the PS-PL level
+  // shifters are off and `S_AXI_HP0` answers nothing at all. `hp0_aresetn` is
+  // the PS7 output that says the port is live, and the adapter is held in
+  // reset by it --- so before Linux is up the machine hangs on its first
+  // memory cycle, which is exactly what it does with `DDR` off, and after
+  // Linux is up it does not. Nobody has to arm anything.
+  //
+  // THE FABRIC CLOCK STAYS ON THE PIN. `hp0_aclk` is a PS7 *input* and takes
+  // the MMCM's 200 MHz: the fabric clocks the port rather than the other way
+  // round. Driving the fabric from `FCLK_CLK0` is the obvious move now that
+  // the PS is in the design and it is wrong --- programming a `.bit` over
+  // JTAG does not start the PS, so the board would be dark until somebody
+  // booted it, and nothing in this slice needs FCLK.
+  //
+  // ONE WORD A TRANSACTION, IN A FULL-WIDTH BEAT. `cadr_axi_master` speaks 32
+  // bits; `S_AXI_HP0` is used at its native 64, which is what keeps
+  // `ps7_init` something we use rather than something we own --- at 64 bits
+  // any correct Arty Z7-20 `ps7_init` works unmodified. So the beat is the
+  // port's full width, `AWSIZE` 8 bytes, with the byte strobes choosing which
+  // half of it the word belongs in and a lane select on the way back.
+  // **A narrow transfer --- `AWSIZE` of 4 bytes on a 64-bit port --- is legal
+  // AXI and is not used here.** Whether the AFI port and the memory
+  // controller handle one as well was sidestepped rather than answered, and a
+  // full-width beat with strobes needs no answer to it.
+  if (DDR != 0) begin : g_ddr
+
+    // The port's reset, out of the PS at whatever moment software runs
+    // post-config, and asynchronous to this clock by construction --- so it
+    // is synchronised in, the same way `mmcm_locked` is.
+    logic       hp0_aresetn;
+    logic [2:0] port_rst_sync;
+    always_ff @(posedge clk) begin
+      port_rst_sync <= {port_rst_sync[1:0], hp0_aresetn};
+    end
+
+    logic axi_rst;
+    assign axi_rst = rst || !port_rst_sync[2];
+
+    // The adapter's AXI4 side, 32 bits wide.
+    logic [31:0] awaddr, araddr, wdata;
+    logic [7:0]  awlen, arlen;
+    logic [2:0]  awsize, arsize;
+    logic [1:0]  awburst, arburst, bresp, rresp;
+    logic [3:0]  wstrb;
+    logic        awvalid, awready, wvalid, wready, wlast;
+    logic        bvalid, bready, arvalid, arready, rvalid, rready, rlast;
+    logic [31:0] rdata;
+    logic        mem_error;
+
+    // The port's side, 64 bits wide.
+    logic [63:0] hp0_wdata, hp0_rdata;
+    logic [7:0]  hp0_wstrb;
+
+    cadr_axi_master u_axi (
+        .clk(clk), .rst(axi_rst),
+        .mem_req(mem_req), .mem_write(mem_write),
+        .mem_addr(mem_addr), .mem_wdata(mem_wdata),
+        .mem_done(mem_done), .mem_rdata(mem_rdata), .mem_error(mem_error),
+        .m_axi_awaddr(awaddr), .m_axi_awlen(awlen), .m_axi_awsize(awsize),
+        .m_axi_awburst(awburst), .m_axi_awvalid(awvalid),
+        .m_axi_awready(awready),
+        .m_axi_wdata(wdata), .m_axi_wstrb(wstrb), .m_axi_wlast(wlast),
+        .m_axi_wvalid(wvalid), .m_axi_wready(wready),
+        .m_axi_bresp(bresp), .m_axi_bvalid(bvalid), .m_axi_bready(bready),
+        .m_axi_araddr(araddr), .m_axi_arlen(arlen), .m_axi_arsize(arsize),
+        .m_axi_arburst(arburst), .m_axi_arvalid(arvalid),
+        .m_axi_arready(arready),
+        .m_axi_rdata(rdata), .m_axi_rresp(rresp), .m_axi_rlast(rlast),
+        .m_axi_rvalid(rvalid), .m_axi_rready(rready)
+    );
+
+    // The widening. The address is the beat's, so the low three bits go; the
+    // word's own bit 2 says which half of the beat it is, and it is taken
+    // from the adapter's registered address rather than from `mem_addr`,
+    // because that is the address the transaction is actually at.
+    assign hp0_wdata = {wdata, wdata};
+    assign hp0_wstrb = awaddr[2] ? {wstrb, 4'b0000} : {4'b0000, wstrb};
+    assign rdata     = araddr[2] ? hp0_rdata[63:32] : hp0_rdata[31:0];
+
+    cadr_ps7 u_ps7 (
+        .hp0_aclk(clk),
+        .hp0_aresetn(hp0_aresetn),
+        .hp0_awaddr({awaddr[31:3], 3'b000}),
+        // AXI3 at the port: four bits of length, two of size. One beat, and
+        // the beat is the port's whole width.
+        .hp0_awlen(awlen[3:0]),
+        .hp0_awsize(2'b11),
+        .hp0_awburst(awburst),
+        .hp0_awvalid(awvalid), .hp0_awready(awready),
+        .hp0_wdata(hp0_wdata), .hp0_wstrb(hp0_wstrb),
+        .hp0_wlast(wlast), .hp0_wvalid(wvalid), .hp0_wready(wready),
+        .hp0_bresp(bresp), .hp0_bvalid(bvalid), .hp0_bready(bready),
+        .hp0_araddr({araddr[31:3], 3'b000}),
+        .hp0_arlen(arlen[3:0]),
+        .hp0_arsize(2'b11),
+        .hp0_arburst(arburst),
+        .hp0_arvalid(arvalid), .hp0_arready(arready),
+        .hp0_rdata(hp0_rdata), .hp0_rresp(rresp), .hp0_rlast(rlast),
+        .hp0_rvalid(rvalid), .hp0_rready(rready)
+    );
+
+    // Held once it has ever happened: an error is a fault to find, not a
+    // state to watch flicker past.
+    logic error_seen;
+    always_ff @(posedge clk) begin
+      if (rst) error_seen <= 1'b0;
+      else if (mem_error) error_seen <= 1'b1;
+    end
+    assign ddr_error = error_seen;
+
+    // WHAT THE ADAPTER SAYS THAT THE PORT DOES NOT TAKE. `awsize` and
+    // `arsize` say four bytes, which is the word and not the beat: the beat
+    // is eight and the strobes above are what make that the same thing. The
+    // top nibble of `awlen` and `arlen` is AXI4's; AXI3 carries four bits and
+    // both are zero anyway, one beat being one beat in either. And the bottom
+    // two bits of either address are a word address shifted twice into a base
+    // that is 256 MB aligned, so they are zero and the beat address drops
+    // them along with bit 2, which the strobes and the lane select carry
+    // instead.
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_ddr;
+    assign unused_ddr = ^{awsize, arsize, awlen[7:4], arlen[7:4],
+                          awaddr[1:0], araddr[1:0]};
+    /* verilator lint_on UNUSEDSIGNAL */
+
+  end else begin : g_nomem
+
+    // NO MEMORY, which is what this top level has always been. The machine
+    // stalls at the boot PROM's first main-memory cycle and stays there, and
+    // `mem_req`, `mem_write`, `mem_addr` and `mem_wdata` reach nothing but
+    // the `witness` fold below --- which is the only thing keeping them, and
+    // whatever computes them, out of the bin.
+    assign mem_done  = 1'b0;
+    assign mem_rdata = 32'd0;
+    assign ddr_error = 1'b0;
+
+  end
 
   // ------------------------------------------------------------ the probe
   //
@@ -331,7 +499,12 @@ module cadr_arty #(
   end
   assign led5_r =  bus_nxm;
   assign led5_g = !bus_nxm;
-  assign led5_b = 1'b0;
+  // Blue is the AXI answer, held once it has ever been an error: SLVERR or
+  // DECERR from `S_AXI_HP0` is a cycle that reached the port and was refused,
+  // which is a different fault from a cycle nothing answered and must not
+  // look like one. Constant zero when `DDR` is off, so this is dark on the
+  // board this file builds by default and the light means what it says.
+  assign led5_b = ddr_error;
 
   assign led[0] = tick[25];      // the fabric is clocked          --- heartbeat
   assign led[1] = beat[19];      // microcycles are retiring, ~4 Hz
