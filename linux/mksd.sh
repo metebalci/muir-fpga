@@ -46,8 +46,11 @@ SRC=$WORK/$IMG
 # The device tree, with the reservation appended.  dtc merges the two root
 # definitions, so the fragment stays a fragment and the BSP's tree is never
 # edited in place.  -p 0x1000 reproduces the BSP's own padding: both trees
-# carry exactly 4096 bytes of slack after the string table, which is where
-# U-Boot puts its fixups.
+# carry exactly 4096 bytes of slack after the string table.  That is fidelity
+# to the BSP and not a functional requirement --- U-Boot's own fixup room is
+# CONFIG_SYS_FDT_PAD, which boot_relocate_fdt adds by declaring a larger
+# totalsize and writing PAST the blob, not into the slack inside it.  See
+# docs/linux.md.
 "$DTC" -I dtb -O dts -o "$WORK/base.dts" "$SRC/system.dtb" 2>/dev/null
 cat "$WORK/base.dts" "$FRAG" > "$WORK/merged.dts"
 "$DTC" -I dts -O dtb -p 0x1000 -o "$WORK/system-cadr.dtb" "$WORK/merged.dts" 2>/dev/null
@@ -60,8 +63,24 @@ if ! diff "$WORK/base.dts" "$WORK/check.dts" > "$WORK/tree.diff"; then :; fi
 if ! grep -q 'cadr@18000000' "$WORK/tree.diff"; then
   die "the reserved-memory node is not in the rebuilt tree"
 fi
-ADDED=$(grep -c '^>' "$WORK/tree.diff" || true)
-REMOVED=$(grep -c '^<' "$WORK/tree.diff" || true)
+# `grep -c` has two failure modes and they need different answers.  With no
+# match it prints 0 and exits 1, which `|| true` is enough for.  With a missing
+# or unreadable file it prints NOTHING and exits 2 --- and an empty string
+# reaching `[ "$REMOVED" -eq 0 ]` is a shell error about an illegal number, not
+# the message this check exists to print.  An exit code cannot tell those two
+# apart, so the value is checked before the numeric test can see it, and a
+# non-number dies here saying so rather than four lines later saying something
+# else.
+countlines() {
+  n=$(grep -c "$1" "$2" 2>/dev/null || true)
+  case $n in
+    '' | *[!0-9]*) die "cannot count '$1' in $2 --- grep gave \"$n\"" ;;
+  esac
+  echo "$n"
+}
+
+ADDED=$(countlines '^>' "$WORK/tree.diff")
+REMOVED=$(countlines '^<' "$WORK/tree.diff")
 [ "$REMOVED" -eq 0 ] || die "the rebuilt tree REMOVES $REMOVED lines; see $WORK/tree.diff"
 
 rm -rf "$OUT"
