@@ -42,3 +42,24 @@ set_property -dict { PACKAGE_PIN L19 IOSTANDARD LVCMOS33 } [get_ports { btn[3] }
 ## Nothing samples an LED and nothing meets setup against a fingertip.
 set_false_path -to   [get_ports { led[*] }]
 set_false_path -from [get_ports { btn[*] }]
+
+## `witness` has no timing requirement, and saying so is not a convenience.
+##
+## It is a reduction of every one of `cadr_machine`'s outputs into one bit,
+## and it exists to stop synthesis deleting the machine --- see the note in
+## `cadr_arty.sv`. Its VALUE is meaningless: garbage in it lights an LED
+## exactly as well as truth does, and nothing anywhere reads it. So there is
+## no instant by which it must be correct, which is what a false path says.
+##
+## It is not a multicycle. A multicycle would claim the value is right if
+## given longer, and it is not right at any length. And it is not left to the
+## machine's own exception either: a seven-hundred-input tree riding a
+## microcycle relaxation spends placement effort on a load-bearing nothing,
+## and would become the worst path in the design the moment that relaxation
+## is scoped to the machine --- which is what makes this worth writing down
+## now rather than when it appears at the top of a timing report.
+##
+## Here rather than in `cadr_machine.xdc` because the cell does not exist out
+## of context, and a constraint naming an absent object is the "no valid
+## object" warning that file has already been through once.
+set_false_path -to [get_cells -quiet witness_reg]
