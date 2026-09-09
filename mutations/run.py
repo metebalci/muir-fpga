@@ -237,6 +237,35 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # The memory port's tally, which is the board's only positive witness that
+    # the machine's memory cycles were ANSWERED.  The boot PROM's traffic is an
+    # identity copy, so page 0 reading back unchanged says the same thing
+    # whether the port answered or was never brought up, and no lamp tells them
+    # apart either --- so these four numbers are what step four is read by, and
+    # an instrument nothing checks is worse than no instrument.
+    #
+    # `sources` is the counter alone: the machine, the bridge, the adapter and
+    # the widening are in `extra`, having checks of their own, and
+    # `tb/cadr_mem_count_harness.sv` is the wiring rather than the thing
+    # checked.  The testbench runs two configurations --- the port answering
+    # and the port held in reset --- and the second is what a mutation that
+    # counted the fabric's own intentions falls over.
+    "mem_count": {
+        "sources": ["rtl/cadr_mem_count.sv"],
+        "extra": [
+            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
+            "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
+            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
+            "rtl/cadr_spy_registers.sv", "rtl/cadr_memory_path.sv",
+            "rtl/cadr_machine.sv", "rtl/cadr_axi_master.sv",
+            "rtl/cadr_axi_widen.sv", "tb/cadr_mem_count_harness.sv",
+        ],
+        "top": "cadr_mem_count_harness",
+        "tb": "tb/cadr_mem_count_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "golden": None,
+        "gprom": True,
+    },
     # The probe the board will be read through. `tb/cadr_probe_harness.sv`
     # wires it to `cadr_machine` exactly as `rtl/cadr_arty.sv` does and the
     # testbench shifts all 1,024 samples out through the probe's own JTAG shift
@@ -727,16 +756,18 @@ def arty_check(args, work):
         # And the one with the processing system behind the memory port.
         (["-GDDR=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
-          "rtl/cadr_axi_widen.sv"]),
+          "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv"]),
         # And the two the witness builds, which are branches only they
         # reach: nothing else elaborates `cadr_prove.sv` at all, and neither
         # of them elaborates the machine's own drive of the port.
         (["-GPROVE=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
-          "rtl/cadr_axi_widen.sv", "rtl/cadr_prove.sv"]),
+          "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
+          "rtl/cadr_prove.sv"]),
         (["-GPROVE=2"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
-          "rtl/cadr_axi_widen.sv", "rtl/cadr_prove.sv"]),
+          "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
+          "rtl/cadr_prove.sv"]),
     ]
     ran = 0
     for generics, stubs, extra_sources in boards:

@@ -78,6 +78,20 @@ EXPOSED = [
     "SAXIHP0ARVALID", "SAXIHP0ARREADY",
     "SAXIHP0RDATA", "SAXIHP0RRESP", "SAXIHP0RLAST", "SAXIHP0RVALID",
     "SAXIHP0RREADY",
+    # `EMIOGPIOI` is the fabric's sixty-four bits into the processing
+    # system's GPIO, and it is how `rtl/cadr_mem_count.sv`'s tally is read.
+    # A debugger reads it at `DATA_2_RO` 0xE000A068 (EMIO 31:0) and
+    # `DATA_3_RO` 0xE000A06C (EMIO 63:32), which report the pin whatever the
+    # direction registers say; `DIRM` comes up input, and `ps7_init` already
+    # turns the GPIO clock on --- bit 22 of the 0x01DC044D it writes to
+    # APER_CLK_CTRL at 0xF800012C.  So nothing has to be configured for the
+    # tally to be readable, which is what makes it a witness that needs
+    # nobody at the board.
+    #
+    # NO AXI SLAVE AND NO `M_AXI_GP0` for the same reason: this is four
+    # counters, and a port and its address decode would be a second design to
+    # be wrong about.  The other 63 EMIO peripherals stay tied off below.
+    "EMIOGPIOI",
 ]
 
 # Inputs that are not exposed but must not be zero by default, each with the
@@ -147,15 +161,26 @@ def die(msg):
     sys.exit(1)
 
 
+# The prefix a pin's block is known by here, and what the wrapper calls it.
+# Longest first, because a prefix that is another's prefix would otherwise
+# depend on the order this list happens to be written in.
+PREFIXES = [
+    ("SAXIHP0", "hp0_"),
+    ("EMIOGPIO", "gpio_"),
+]
+
+
 def port_name(pin):
     """The wrapper's own name for a PS7 pin, by rule and not by table.
 
     `SAXIHP0` becomes `hp0_` and the rest is lowered, so `SAXIHP0AWADDR` is
-    `hp0_awaddr`.  A rule rather than a mapping because a mapping is a second
-    description of the same thing and the two drift.
+    `hp0_awaddr` and `EMIOGPIOI` is `gpio_i`.  A rule rather than a mapping
+    because a mapping is a second description of the same thing and the two
+    drift.
     """
-    if pin.startswith("SAXIHP0"):
-        return "hp0_" + pin[len("SAXIHP0"):].lower()
+    for prefix, short in sorted(PREFIXES, key=lambda p: -len(p[0])):
+        if pin.startswith(prefix):
+            return short + pin[len(prefix):].lower()
     return pin.lower()
 
 
