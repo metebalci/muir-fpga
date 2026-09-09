@@ -27,6 +27,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
+       $(BUILD)/mem_count.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass current
 
@@ -240,6 +241,42 @@ $(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.h
 	$(BUILD)/obj_ddr_boot/Vcadr_machine
 	@touch $@
 
+# ------------------------------------------------- the memory port's tally
+
+# `rtl/cadr_mem_count.sv` is the board's only positive witness that the
+# machine's memory cycles were answered, and an instrument nothing checks is
+# worse than no instrument --- it will be read on a board, once, and believed.
+# The boot PROM's memory traffic is an identity copy, so page 0 reading back
+# unchanged says the same thing whether the port answered or was never brought
+# up, and no lamp tells the two apart either.
+#
+# THE HARNESS AND NOT THE MODULE, because the claim is not that a counter
+# counts: it is that the number a debugger reads says what happened, and that
+# has the machine, the bridge, the adapter and the widening in it.
+# `tb/cadr_mem_count_harness.sv` wires them as `rtl/cadr_arty.sv`'s `g_ddr`
+# does and brings out the 64-bit AXI3 port.
+#
+# TWO CONFIGURATIONS, and the second is the one the instrument exists for: the
+# port held in reset, where the machine asks for exactly as much as it always
+# does and NOTHING answers. A counter of the fabric's own intentions reads the
+# same in both.
+#
+# It runs the machine twice, 200 ms of machine time each way.
+MEM_COUNT_SRC := $(MACHINE) rtl/cadr_axi_master.sv rtl/cadr_axi_widen.sv \
+                 rtl/cadr_mem_count.sv tb/cadr_mem_count_harness.sv
+
+$(BUILD)/obj_mem_count/Vcadr_mem_count_harness: $(MEM_COUNT_SRC) \
+                                                tb/cadr_mem_count_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_mem_count \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_mem_count_harness $(MEM_COUNT_SRC) \
+	    $(abspath tb/cadr_mem_count_tb.cpp)
+
+$(BUILD)/mem_count.pass: $(BUILD)/obj_mem_count/Vcadr_mem_count_harness \
+                         $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_mem_count/Vcadr_mem_count_harness
+	@touch $@
+
 # ------------------------------------------------- the machine with no memory
 
 # Not a check: it asserts nothing and cannot fail. `tb/cadr_nomem_tb.cpp` runs
@@ -296,7 +333,8 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 # else elaborates `cadr_prove.sv` at all.
 $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
                     rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-                    rtl/cadr_axi_widen.sv rtl/cadr_prove.sv \
+                    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv \
+                    rtl/cadr_prove.sv \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -311,19 +349,19 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
 	    -GDDR=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-	    rtl/cadr_axi_widen.sv
+	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-	    rtl/cadr_axi_widen.sv rtl/cadr_prove.sv
+	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_prove.sv
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=2 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-	    rtl/cadr_axi_widen.sv rtl/cadr_prove.sv
+	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_prove.sv
 	@touch $@
 
 # --------------------------------------------------------------- the probe

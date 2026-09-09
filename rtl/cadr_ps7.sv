@@ -50,7 +50,8 @@ module cadr_ps7 (
     output var logic [1:0]   hp0_rresp,
     output var logic         hp0_rlast,
     output var logic         hp0_rvalid,
-    input  var logic         hp0_rready
+    input  var logic         hp0_rready,
+    input  var logic [63:0]  gpio_i
 );
 
   // PINCONNECTEMPTY is turned off rather than answered with wires nothing
@@ -86,6 +87,7 @@ module cadr_ps7 (
       .SAXIHP0RLAST(hp0_rlast),
       .SAXIHP0RVALID(hp0_rvalid),
       .SAXIHP0RREADY(hp0_rready),
+      .EMIOGPIOI(gpio_i),
 
       // --- inputs tied to a stated value
       // as AWCACHE
@@ -135,7 +137,6 @@ module cadr_ps7 (
       .EMIOENET1GMIIRXER(1'b0),
       .EMIOENET1GMIITXCLK(1'b0),
       .EMIOENET1MDIOI(1'b0),
-      .EMIOGPIOI(64'b0),
       .EMIOI2C0SCLI(1'b0),
       .EMIOI2C0SDAI(1'b0),
       .EMIOI2C1SCLI(1'b0),

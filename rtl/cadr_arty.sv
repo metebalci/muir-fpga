@@ -484,8 +484,54 @@ module cadr_arty #(
         .m_rdata(hp0_rdata)
     );
 
+    // ------------------------------------------------ the port's own tally
+    //
+    // WHAT THE MACHINE ASKED FOR AND WHAT THE PROCESSING SYSTEM ANSWERED,
+    // carried out of the design on EMIO GPIO so a debugger can read it with
+    // nobody at the board.  `rtl/cadr_mem_count.sv`'s header is the whole
+    // argument; what belongs here is only where the numbers go.
+    //
+    // **THE BOOT PROM LEAVES NO OTHER TRACE.**  Its only main-memory traffic
+    // is an identity copy of page 0, so page 0 reading back unchanged says
+    // the path did no harm and cannot tell a machine that ran from one whose
+    // port was dead --- which times out all 512 cycles and leaves page 0
+    // exactly as unchanged.  Nor can any lamp: measured, LD2 reads the same
+    // with DDR and without, because the 16,951 disk polls time out either
+    // way.  This is the positive witness, and it is four counters because
+    // the processing system ships nothing that can see `S_AXI_HP0` traffic
+    // --- the DDR controller has no performance monitors, and Xilinx's own
+    // performance tooling puts a counter IP in the fabric for this reason.
+    //
+    // WHERE THE DEBUGGER READS IT.  `DATA_2_RO` at 0xE000A068 carries EMIO
+    // 31:0 and `DATA_3_RO` at 0xE000A06C carries EMIO 63:32; both report the
+    // pin whatever the direction registers say, `DIRM` comes up input, and
+    // `ps7_init` has already turned the GPIO clock on --- bit 22 of the
+    // 0x01DC044D it writes to APER_CLK_CTRL. So nothing has to be configured
+    // for the tally to be readable, which is what makes it a witness that
+    // needs nobody at the board.
+    //
+    // **THE LAYOUT IS THE MODULE'S AND NOT THIS FILE'S**, marker bits and
+    // all. It used to be four counters packed here, which put a bit offset
+    // in the one file nothing can simulate; its header has the table and
+    // `tb/cadr_mem_count_tb.cpp` reads the same sixty-four bits back.
+    //
+    // AND IT IS CLEARED BY `rst` AND NOT BY `axi_rst`.  A tally the port's
+    // reset cleared would erase itself the moment anybody wrote LVL_SHFTR_EN,
+    // and would read "nothing was asked" on a dead port --- which is the one
+    // reading that has to mean something else.
+    logic [63:0] gpio_i;
+
+    cadr_mem_count u_count (
+        .clk(clk), .rst(rst),
+        .req(port_req), .req_write(port_write),
+        .bvalid(bvalid), .bready(bready),
+        .rvalid(rvalid), .rready(rready), .rlast(rlast),
+        .gpio(gpio_i)
+    );
+
     cadr_ps7 u_ps7 (
         .hp0_aclk(clk),
+        .gpio_i(gpio_i),
         .hp0_aresetn(hp0_aresetn),
         .hp0_awaddr(hp0_awaddr),
         // AXI3 at the port: four bits of length, two of size. One beat, and
