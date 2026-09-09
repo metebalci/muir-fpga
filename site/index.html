@@ -13,7 +13,7 @@
   <div class="band">
     <figure class="fig dense">
       <div class="scroll">
-<svg viewBox="0 0 1170 870" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP1, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly.">
+<svg viewBox="0 0 1170 960" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP1, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer, which the RFB server reads directly. Below the board's own parts, six status lights: LD0 says the fabric is clocked and LD1 that microcycles are retiring — between them, whether the machine is running — with four more for bring-up. How far along each block is, which the drawing otherwise says in colour: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today; the bus interface is partly built, wanting only the debug cable; the disk controller is being written now; the TV and the I/O board are not started.">
           <text class="d-t" x="10" y="18">muir-fpga on the Arty Z7-20</text>
           <text class="d-s" x="196" y="18">XC7Z020-1CLG400C</text>
 
@@ -90,19 +90,19 @@
           <text class="d-s" x="118" y="334" text-anchor="middle">the display&rsquo;s buffer</text>
           <text class="d-s" x="118" y="360" text-anchor="middle">an AXI4 master</text>
 
-          <rect class="d-box" x="210" y="274" width="200" height="112"/>
-          <text class="d-t" x="497" y="300" text-anchor="middle">TV</text>
-          <text class="d-s" x="497" y="320" text-anchor="middle">scan counters and</text>
-          <text class="d-s" x="497" y="334" text-anchor="middle">the mode register</text>
-          <text class="d-n" x="497" y="356" text-anchor="middle">SIMPLETV</text>
-          <text class="d-s" x="497" y="376" text-anchor="middle">the buffer is in DDR</text>
-
-          <rect class="d-box" x="424" y="274" width="146" height="112"/>
+          <rect class="d-box d-wip" x="210" y="274" width="200" height="112"/>
           <text class="d-t" x="310" y="300" text-anchor="middle">disk controller</text>
           <text class="d-s" x="310" y="320" text-anchor="middle">its own microcode; the Trident&rsquo;s</text>
           <text class="d-s" x="310" y="334" text-anchor="middle">bus timing, seek and rotation</text>
           <text class="d-n" x="310" y="356" text-anchor="middle">CADRDC</text>
           <text class="d-s" x="310" y="376" text-anchor="middle">an AXI4 master</text>
+
+          <rect class="d-box" x="424" y="274" width="146" height="112"/>
+          <text class="d-t" x="497" y="300" text-anchor="middle">TV</text>
+          <text class="d-s" x="497" y="320" text-anchor="middle">scan counters and</text>
+          <text class="d-s" x="497" y="334" text-anchor="middle">the mode register</text>
+          <text class="d-n" x="497" y="356" text-anchor="middle">SIMPLETV</text>
+          <text class="d-s" x="497" y="376" text-anchor="middle">the buffer is in DDR</text>
 
           <!-- on the Unibus -->
           <rect class="d-box" x="620" y="274" width="210" height="112"/>
@@ -208,6 +208,23 @@
           <text class="d-t" x="710" y="754" text-anchor="middle">microSD</text>
           <text class="d-s" x="710" y="778" text-anchor="middle">the disk pack lives</text>
           <text class="d-s" x="710" y="794" text-anchor="middle">here, as a file</text>
+
+          <!-- A second rank of the same band, because the row above it is full.
+               Everything higher up is architecture and says nothing about
+               whether any of it has ever run; these six lamps are the board's
+               own answer to that, and they are here because there is a board
+               now.  Only the first two are worth naming: the other four are
+               bring-up instruments and board.md says they will change as the
+               machine grows, so naming them here would only give the drawing
+               something new to be wrong about. -->
+          <text class="d-s" x="36" y="882">the two halves are one design now, and it</text>
+          <text class="d-s" x="36" y="896">runs on the board: the boot PROM executes,</text>
+          <text class="d-s" x="36" y="910">polling a disk controller that is not there</text>
+          <rect class="d-dash d-ext" x="390" y="856" width="400" height="84"/>
+          <text class="d-t" x="590" y="882" text-anchor="middle">six status lights</text>
+          <text class="d-s" x="590" y="906" text-anchor="middle">LD0 the fabric is clocked, LD1 microcycles retiring</text>
+          <text class="d-s" x="590" y="920" text-anchor="middle">&mdash; between them, whether it is running, across a room</text>
+          <text class="d-s" x="590" y="934" text-anchor="middle">four more for bring-up: timeouts, datapath, boot, bus</text>
         </svg>
       </div>
     </figure>
