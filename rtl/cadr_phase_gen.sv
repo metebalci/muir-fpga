@@ -39,6 +39,37 @@ module cadr_phase_gen (
     output var logic       tpclk,      // TPCLK          CLOCK2 1C07 pin 3
     output var logic       n_tpclk,    // -TPCLK         CLOCK2 1C06 pin 12
     output var logic       tptse,      // TPTSE          CLOCK2 1C06 pin 6
+    // MAX_FANOUT, AND IT IS THE ONLY THING THIS FILE CAN DO ABOUT A PROBLEM
+    // THAT LIVES DOWNSTREAM OF IT.  -TPWP leaves here on one flop and ends at
+    // the dispatch memory's write enables --- 136 RAM256X1S primitives, whose
+    // bank decode is two LUT levels past this register and inside
+    // `cadr_microcycle.sv`.  Placed and routed on the board at 8a5d8dc the
+    // arc `n_tpwp_reg/C -> dmem_reg_*/RAMS64E_*/WE` is 3 logic levels, 0.828
+    // ns of logic and 3.132 ns of route.
+    //
+    // Three is not tuning.  Synthesis gives the net nine loads, so anything
+    // from 9 upwards binds on nothing: 16 and 64 both leave one flop with a
+    // fanout of nine and differ from no attribute at all only by two LUTs of
+    // placement noise --- board WNS -0.133 either way against -0.384 with
+    // none, and out of context -0.595 against -0.484, which is the same
+    // no-op moving the number in the opposite direction.  A value that binds
+    // replicates: 3 gives three flops of four, four and three loads, and
+    // phys_opt then merges the bank decode into one LUT5, so the arc loses a
+    // logic level as well.  Measured at 8a5d8dc, board flow, one sample each:
+    //
+    //     attribute   copies   this arc   WNS      failing   registers
+    //     none        1        +0.136     -0.384   10        746
+    //     16 or 64    1        -0.028     -0.133   29        746
+    //     5           2        +0.503     -0.193   22        747
+    //     3           3        +0.557     -0.054    1        748
+    //     2           4        -0.002     -0.118   14        749
+    //
+    // Out of context the same three: -0.484 with none, -0.197 with this,
+    // 94 failing endpoints against 48.  The WNS of neither flow is on this
+    // arc --- it is `ir`/`answered_at` into the countdowns' resets, which is
+    // the processor's business and not this file's --- so what is claimed
+    // here is the arc, which is the column that moves with the mechanism.
+    (* max_fanout = 3 *)
     output var logic       n_tpwp,     // write pulse    CLOCK2 1C06 pin 8
     output var logic       n_tpwpiram, // control store  CLOCK2 1C13 pin 8
     output var logic       n_tpr60     // -TPR60, SPEEDCLK's source
