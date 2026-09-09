@@ -30,7 +30,7 @@
 //     first mem_req      tick 23,597,357, microcycle 536,303
 //     NXM timeouts       13,783 in the 82 ms after it, which is 168 kHz
 //     after that cycle   1.50 us per microcycle, against 0.22 normal
-//     beat[23]           toggles every 12.6 s
+//     beat[19]           toggles every 0.79 s
 //
 // `docs/board.md` quotes 30,590 timeouts in 300 ms, from a longer run. The
 // rate is the figure to compare: the count depends on where the run stops,
@@ -95,8 +95,8 @@ int main(int argc, char **argv) {
     double ns_after = (TICKS - first_memreq) * 5.0;
     printf("after the first memory cycle: %.0f microcycles in %.3f ms\n", after, ns_after/1e6);
     printf("  = %.2f us per microcycle (normal is 0.22)\n", ns_after / after / 1000.0);
-    printf("  beat[23] toggles every 8388608 microcycles = %.1f s\n",
-           8388608.0 * (ns_after / after) / 1e9);
+    printf("  beat[19] toggles every 524288 microcycles = %.2f s\n",
+           524288.0 * (ns_after / after) / 1e9);
   }
   dut->final(); delete dut; return 0;
 }
