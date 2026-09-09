@@ -56,7 +56,7 @@
 # leading whitespace.
 #
 #   @mutation  a kebab-case name; how a survivor is reported
-#   @check     which of the six checks has to catch it
+#   @check     which check has to catch it; `run.py`'s CHECKS is the list
 #   @file      which file to mutate; the check must build it
 #   @hole      optional: the issue holding a known hole open, as `@hole #3`
 #   @note      prose, repeatable; printed when the mutation survives
@@ -64,12 +64,17 @@
 #   @new       what to put there; empty deletes
 #   @end
 #
-# `microcycle` is deliberately absent: stage 4 is being written and is not
-# frozen.  It gets mutations when a slice lands.
+# A slice gets mutations when it lands, and not before.  `microcycle` was
+# deliberately absent while stage 4 was being written, on the grounds that a
+# record against a file still moving rots before it is read; it has records
+# now because the slices landed.  The same will be true of whatever comes
+# after it.
 #
-# WHAT IS KNOWINGLY NOT CAUGHT.  Four records below carry `@hole`, which names
+# WHAT IS KNOWINGLY NOT CAUGHT.  Some records below carry `@hole`, which names
 # the issue that holds the hole open.  They are reported every run, counted in
-# their own column, and do not fail it:
+# their own column, and do not fail it.  How many there are is the run's answer
+# and is deliberately not written here: a count in prose is a thing that goes
+# stale the first time somebody closes one.
 #
 # A CLOSED ISSUE MEANS THE RECORD NEEDS REVISITING, and nothing here can
 # tell you that. The inverse check fires when a hole *closes* --- the
@@ -81,13 +86,19 @@
 # closed, come back to its record: either the mutation is caught now, or it
 # never could be and belongs rewritten with the reasoning, as #5's is.
 #
-# NOT EVERY `@hole` IS A DEBT. Some are predictions. #9's two records are
-# not defects waiting to be fixed --- they survive because the composed
-# check's memory surface is about five hundred bus cycles at the very end of
-# the boot PROM, and they should begin failing ON THEIR OWN when the band
-# runs under composition and that wall moves. The inverse check will then say
-# so by name, which is better than a comment saying "revisit when X" because
-# the run enforces the revisit rather than trusting someone to remember.
+# NOT EVERY `@hole` IS A DEBT. Some are predictions, and one of them has
+# already come true. #9's two records were held open by the composed check
+# stopping at a wall --- about five hundred bus cycles at the very end of the
+# boot PROM, too few reads for the mutation to reach a compared column --- and
+# the note said they should begin failing ON THEIR OWN when that wall moved.
+# It moved; the run reported CLOSED, named the issue and the line, and the
+# records are live now with nothing changed in them. That is the argument for
+# the inverse check in one paragraph: a comment saying "revisit when X" trusts
+# somebody to remember, and this enforced the revisit instead.
+#
+# #1's two records are the same kind of prediction and are still open: two of
+# the three terms of -WAIT that no observed program fires. They are not
+# defects, and the day a program exercises the stall path they will say so.
 #
 # `@hole` is not a way to make a survivor go away, and three things stop it
 # from becoming one.
@@ -110,6 +121,121 @@
 # CLAUDE.md's "Where the fabric parts from muir", and the testbench not
 # comparing -TPR60 while RESET is high. An unrecorded one is what nothing here
 # tolerates.
+
+#
+# ------------------------------------------------------------------------
+# HOW A RECORD GOES STALE, AND IN WHICH DIRECTION
+#
+# The literal text rots LOUDLY and the reasoning rots SILENTLY.  That
+# asymmetry is the whole of what to watch.  Four directions, three noisy:
+#
+#   THE `@old` STOPS MATCHING.  The file moved under the record --- a rename,
+#   a reindent, a line that grew a comment.  UNAPPLIED, and the run fails
+#   naming the record and the file.
+#
+#   THE `@old` MATCHES TWICE.  A line was duplicated, and a record that could
+#   mutate either one tests whichever the parser reached first.  Exactly once
+#   or the run fails; that rule exists for this.
+#
+#   THE `@new` NAMES SOMETHING THAT HAS GONE.  The mutant does not build:
+#   BROKEN, which is never a verdict on the check and always one on the
+#   record.
+#
+#   AND THE SILENT ONE --- A WHOLE CHECK, OR A WHOLE FILE, WITH NOTHING AIMED
+#   AT IT.  Nothing about this is ever wrong.  The run is green, every count
+#   is right, and a module is untested.  Two guards exist because nothing else
+#   would ever say so: `check_coverage` names a file a check builds that no
+#   record touches, and `check_makefile` reads the Makefile in BOTH
+#   directions --- "the Makefile runs a check this runner has never heard of"
+#   being the direction that hides.  `machine` was exactly that for a while.
+#
+# The `@note`s are prose and nothing checks them.  When a note names a number,
+# a microcycle, a file or an issue, that is the part of the record most likely
+# to be false, and it fails no run when it is.  #5's `@hole` outlived the
+# issue that justified it and every run stayed green.
+#
+# ------------------------------------------------------------------------
+# WHEN A MUTATION SURVIVES: SIX THAT COULD NOT HAVE DONE ANYTHING ELSE
+#
+# A survivor is a finding, never something to tune away.  But the first
+# question is not "which check is weak".  Six records here document mutations
+# nothing can catch, and every one has the same shape: THE MUTATION PRESERVED
+# AN INVARIANT THE CHECK DEPENDS ON.  Not a gap in the check --- something
+# upstream holding still, which makes the change unobservable.
+#
+#   the timer's edge test, dropped      a rise not counted puts the next rise
+#                                       a full period on: the same instant
+#                                       the fall in between would give
+#   the bridge latching on a write      the gate that stops a write strobing
+#     (filed as hole #5 first)          MD is the processor's, not the
+#                                       bridge's
+#   the scratchpad compare, all ten     `wadr[9:5]` is zero on every cycle
+#     bits instead of five              `destmd` is set
+#   registering the map's first level   its address is a microcycle register,
+#                                       so it is constant for the cycle
+#   crossing -MEMACK and -LOADMD        `cadr_busint_xbus.sv` assigns the same
+#                                       expression to both
+#   rotating the device write word      all 5,650 device writes the boot PROM
+#                                       makes carry zero, and a bijection on
+#                                       zero is zero
+#
+# So when something survives, ask WHAT IS CONSTANT HERE THAT I DID NOT NOTICE.
+# And notice which kind of constant it is: three of the six are constants of
+# the WORKLOAD and not of the design --- the all-zero device word, the boot
+# PROM's traffic, an address that only holds still because both its sources
+# are microcycle registers.  Those stop being true the day the workload
+# changes, so the device-word record's check counts distinct words and says so
+# when the count rises above one.  The note goes wrong on its own and the run
+# announces it, rather than waiting for somebody to remember.
+#
+# SWEEP THE MAGNITUDE; DO NOT ASK A YES/NO QUESTION.  Delaying the map by one
+# tick survives, and so do 4 and 16; 28 is caught on PCS0 at microcycle
+# 2,084,731 and 44 on JCOND at 1,062,763.  The answer worth having was not
+# "caught" but WHERE THE EDGE IS --- the check is blind only below one
+# microcycle, which is exactly where the staleness is not real.  A yes/no
+# question would have recorded an equivalence and stopped there.
+#
+# Hence the rule: REPLACE AN EQUIVALENT MUTANT WITH THE SMALLEST MAGNITUDE
+# THAT IS CAUGHT.  An equivalent mutant must be explained forever and tests
+# nothing; a live one testing the same property costs the same line.
+#
+# ------------------------------------------------------------------------
+# A CHECK THAT GOT WEAKER, AND `--since`
+#
+# A survivor and a regression look identical: nothing caught it, and the list
+# either says why or does not.  `mutations/run.py --since <rev>` re-runs
+# everything NOT CAUGHT NOW against that revision, archived, and reports which
+# were caught there --- so "this used to be caught" is something the run
+# states rather than something a person happens to notice.
+#
+# IT COVERS `@hole` RECORDS AS WELL AS SURVIVORS, and that is the point rather
+# than an extra.  A recorded exception is exactly where a regression hides:
+# the run is green, the record says "known", and nothing asks whether it was
+# always known.  The one regression found this way, #12, was carried by a
+# mutation that happened to have no `@hole` on it.  That was luck.  With one,
+# the run would have stayed green and been confident about it.
+#
+# ------------------------------------------------------------------------
+# THE PATH THAT ONLY EXISTS ONCE THE THING WORKS
+#
+# Not about mutations.  It is here because this is where the next person reads
+# about checking things, and it is the sharpest lesson this project has had.
+#
+# A DIAGNOSTIC GETS LESS TESTING THAN THE THING IT DIAGNOSES, and its SUCCESS
+# branch gets none at all while the thing is failing.  `vivado/fit.tcl` and
+# `vivado/bitstream.tcl` both did `get_property SLACK [get_timing_paths ...]`
+# unguarded.  That call returns an empty list when there is nothing to report,
+# and nothing to report is what meeting timing looks like --- so the first
+# design to close timing would have thrown, exited non-zero and printed
+# nothing.  Success reading exactly like failure, on the run that proved it
+# worked.
+#
+# One was found by running it.  The other was found by GREPPING FOR THE SAME
+# EXPRESSION IN ITS SIBLING, thirty seconds after fixing the first, and it was
+# fixed before the run that would have hit it arrived.  When a project has
+# been failing at something for a long time, none of its success paths has
+# ever executed.  So when you fix a bug in a diagnostic, look for the same
+# shape next door instead of waiting for it to happen twice.
 
 
 # ============================================================== phase gen ===
