@@ -13,7 +13,8 @@ the disk pack on microSD, blocks fed to the disk controller, and an RFB server
 reading the display out of DDR. **None of that exists.** This is the ground
 under the first step of it --- Linux booting at all, with a device tree the
 fabric can live alongside --- written before the board could be tried, because
-the session doing it was cut short. **Nothing here has run on hardware.**
+the session doing it was cut short. **It has run on hardware now --- see the
+next section --- and three of the conclusions below did not survive the board.**
 
 Everything below was read out of a binary, a source tree or a config file, or
 measured on this machine by running `mksd.sh` and by walking the images it
@@ -22,6 +23,55 @@ names what was read and the revision it was read at, because the numbers rot
 loudly and the reasoning rots silently. The U-Boot source cited throughout is
 u-boot-xlnx commit `a2911a99e4` --- not a guess at a version, but the commit
 whose build path is compiled into this `u-boot.elf`.
+
+## What the board said, 10 September
+
+The first boot corrected this file in three places, each measured on the
+console with the board reset over JTAG between attempts (`docs/boot.md` has
+the procedure; `linux/uEnv.net` carries the reasoning next to the command).
+
+1. **The loose `zImage` in the BSP is not the kernel in `image.ub`.** It is
+   build `#2` (`Tue Mar 27 23:13:26`) where the FIT's `kernel@0` is build `#1`
+   (`23:12:30`), and build #2 dies silently after `Memory policy: Data cache
+   writealloc` under Digilent's own tree as well as ours. Everything below
+   that says "a loose `zImage`" was reasoning about a file nobody had booted.
+   The boot uses the FIT's kernel and ramdisk under a raw tree:
+   `bootm <fit>:kernel@0 <fit>:ramdisk@0 <fdt>`.
+
+2. **Loading a zImage at `0x10000000` makes the kernel forget the memory
+   below it** --- `OF: fdt:Ignoring memory range 0x0 - 0x10000000` --- so the
+   first card left Linux 128 MB between the kernel and the reservation and it
+   died unpacking its root filesystem. The FIT's kernel loads at `0x8000` and
+   the problem does not arise.
+
+3. **`no-map` kills this 4.9 kernel** when the region is inside the memory
+   the kernel owns: silence after `Memory policy`, three times out of three.
+   The same node without `no-map` boots and reserves the region
+   (`189172K reserved`) but leaves it in the cached linear map, which is the
+   hazard the section below was written to avoid. **What works is `mem=384M`
+   on the command line**: `/proc/iomem` then says System RAM ends at
+   `0x17ffffff`, the node is kept and is harmless and true, and
+   `/proc/device-tree/reserved-memory/cadr@18000000` reads `18000000
+   08000000`. Shrinking the tree's `memory` node does nothing, because U-Boot
+   rewrites it from its own DRAM size on every boot --- measured: the tree
+   said 384 MB and the kernel saw 512.
+
+   And `cma=32M` with it: the kernel's default 128 MB pool out of 384 left
+   too little ordinary memory to unpack the 42 MB root filesystem ---
+   `rootfs image is not initramfs (write error)`, then `VFS: Unable to mount
+   root fs`. With 32 MB: `Memory: 303564K/393216K available`, a login shell,
+   `MemTotal: 380320 kB`.
+
+4. **The card carries one line now**, fetching `uEnv.net` from muirhost and
+   running the command in it, so the two corrections above cost one card
+   write between them and the next will cost none. `fdt_high` and
+   `initrd_high` are no longer set anywhere: the `bootm` path relocates both
+   below 128 MB as the stock boot does, and the FIT-in-place hazard the
+   section below describes cannot arise when the tree is not the FIT's.
+
+The control boot was run as well --- server stopped, board reset --- and
+reaches a login with `Memory: 335116K/524288K`. The two boots differ in
+whether muirhost answered, which is what the fallback was designed for.
 
 ## The premise that is wrong
 
