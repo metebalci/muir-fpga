@@ -62,16 +62,26 @@ the procedure; `linux/uEnv.net` carries the reasoning next to the command).
    root fs`. With 32 MB: `Memory: 303564K/393216K available`, a login shell,
    `MemTotal: 380320 kB`.
 
-4. **The card carries one line now**, fetching `uEnv.net` from the build host and
+4. **The card carries one line now**, fetching `uEnv.net` from the TFTP server and
    running the command in it, so the two corrections above cost one card
    write between them and the next will cost none. `fdt_high` and
    `initrd_high` are no longer set anywhere: the `bootm` path relocates both
    below 128 MB as the stock boot does, and the FIT-in-place hazard the
    section below describes cannot arise when the tree is not the FIT's.
 
-The control boot was run as well --- server stopped, board reset --- and
-reaches a login with `Memory: 335116K/524288K`. The two boots differ in
-whether the build host answered, which is what the fallback was designed for.
+5. **The fallback is gone.** Digilent's stock boot was run once for comparison
+   --- server stopped, board reset --- and reaches a login with `Memory:
+   335116K/524288K`. Then Mete decided the board must never boot it: a Linux
+   with 512 MB owns the CADR's memory. The card's line ends in `|| reset`,
+   so a failed fetch reboots the board to try again, and a silent server
+   makes this U-Boot's TFTP retry without returning; the sections below that
+   call the fallback "the control" describe the first card and are kept as
+   the record of why the network loop was built the way it was.
+
+6. **No private addresses in this repository.** It is public; the TFTP
+   server's address lives in `linux/local.conf`, which is gitignored, and
+   `mksd.sh` fills it into `uEnv.txt` from `linux/uEnv.txt.in`. Machines are
+   named by their role here --- the build host, the laptop, the TFTP server.
 
 ## The premise that is wrong
 
@@ -317,7 +327,7 @@ nobody checked.
 **3. The PS talking to the fabric.** Held until the PS block lands; there is no
 AXI path today.
 
-## The network loop, and why the fallback is the control
+## The network loop, and why the fallback was the control (first card; superseded above)
 
 **The card is written once and everything after it arrives over Ethernet.**
 U-Boot fetches `system.dtb` and `zImage` from the build host by TFTP; the bitstream
@@ -353,9 +363,9 @@ the fallback runs with them set --- which means a corrupt `zImage` on the
 server, and a console session either way.
 
 **What has to exist on the build host.** Two things. `tftpd-hpa` is installed and
-serving `/srv/tftp` on `:69` with `--secure` (Mete installed it, 10 Sep); the
-directory is owned by `$USER` so the files can be refreshed without root.
-`system.dtb` and `zImage` are in it, copied from `build/sd/reserved/`, and
+serving `/srv/tftp` on `:69` with `--secure` (installed 10 Sep); the
+directory is owned by the ordinary user so the files can be refreshed without root.
+`system.dtb` and `zImage` were in it, copied from `build/sd/reserved/`, and
 fetched back over TFTP from this host with `curl` at the same 1,468-byte
 block size `uEnv.txt` asks for: both byte-identical to the staged copies,
 the 47.4 MB kernel in 1.4 s on the loopback. What that measures is the server
@@ -367,14 +377,14 @@ and the files, not the board's link; the board's fetch time is still unmeasured.
 - **A served directory** holding `system.dtb` and `zImage`, 95 MB copied out of
   `build/sd/reserved/`.
 
-`serverip` is `192.0.2.1`, which Mete says the router fixes. `ipaddr` is
+`serverip` is the TFTP server's address, from `linux/local.conf`, which the router fixes. `ipaddr` is
 deliberately absent: preboot ends in an unconditional `dhcp` whatever the card
 says, there is a DHCP server on this LAN, and `CONFIG_BOOTP_SERVERIP` means a
 DHCP reply cannot overwrite `serverip`.
 
 **Two unknowns, and they are the reason not to write a card before asking.**
 
-- **The build host is a virtual machine.** One virtio disk, a QEMU tablet on the USB
+- **the build host is a virtual machine.** One virtio disk, a QEMU tablet on the USB
   bus, no card reader and no board. Whether the Arty can reach it at all
   depends on that VM being bridged rather than NAT'd, which cannot be
   established from inside the guest. Settle it before the card is written.
@@ -454,8 +464,8 @@ believable, and a device tree is no different.
 
 ## Physical, and one known unknown
 
-- **The board is on the laptop, Vivado is on the build host, and the card is written
-  on the laptop.** The build host is a virtual machine: one 256 GB virtio disk, a
+- **Vivado is on the build host, and the card is written on the laptop.** The
+  build host is a virtual machine: one 256 GB virtio disk, a
   QEMU tablet on the USB bus, no card reader and nothing removable. So
   `build/sd/` is staged here and copied there --- 95 MB for `reserved/` alone
   --- and every `dd`, `sfdisk` and `mount` below happens on the laptop.

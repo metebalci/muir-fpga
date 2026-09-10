@@ -317,10 +317,10 @@
     <!-- How the board boots. A sequence: the card and the TFTP server on the outside,
          the processing system in the middle changing hands from the boot ROM
          to the FSBL to U-Boot to Linux. Times are from the console log of the
-         first unattended boot with the final card, 10 September 2026. -->
+         first unattended boot with the one-line card, 10 September 2026. -->
     <figure class="fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 600" role="img" aria-label="How the board boots, as a sequence. Four lifelines: the microSD card, the processing system, the DHCP server, and the TFTP server. A reset, from the SRST button or over JTAG, starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: Digilent's first-stage loader, Digilent's bitstream and U-Boot. The loader runs ps7_init and brings up DDR, loads the bitstream into the fabric, and hands to U-Boot. U-Boot reads uEnv.txt from the card, gets its address from the DHCP server in under four seconds, fetches uEnv.net, the boot command, from the TFTP server, then system.dtb, the device tree, then reads image.ub from the card, the kernel and root filesystem, 47.7 MB in four seconds, and boots the kernel with mem=384M and cma=32M. Linux asks the DHCP server again, gets the same address, and reaches a login about two and a half minutes after the reset, with 384 MB and the CADR's 128 MB kept from it. If the fetch of uEnv.net fails, U-Boot falls through to image.ub with Digilent's own device tree and 512 MB: the control boot.">
+        <svg viewBox="0 0 1170 600" role="img" aria-label="How the board boots, as a sequence. Four lifelines: the microSD card, the processing system, the DHCP server, and the TFTP server. A reset, from the SRST button or over JTAG, starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: Digilent's first-stage loader, Digilent's bitstream and U-Boot. The loader runs ps7_init and brings up DDR, loads the bitstream into the fabric, and hands to U-Boot. U-Boot reads uEnv.txt from the card, gets its address from the DHCP server in under four seconds, fetches uEnv.net, the boot command, from the TFTP server, then system.dtb, the device tree, then reads image.ub from the card, the kernel and root filesystem, 47.7 MB in four seconds, and boots the kernel with mem=384M and cma=32M. Linux asks the DHCP server again, gets the same address, and reaches a login about two and a half minutes after the reset, with 384 MB and the CADR's 128 MB kept from it. If the fetch of uEnv.net fails, the board resets and tries again; Digilent's own image and tree are never booted.">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -388,7 +388,7 @@
           <text class="d-s" x="478" y="562">384 MB &mdash; 0x18000000 and up is the CADR's</text>
 
           <!-- the control -->
-          <text class="d-s" x="740" y="364" text-anchor="middle" fill-opacity="0.62">no answer to uEnv.net &rarr; image.ub with Digilent's tree, 512 MB: the control boot</text>
+          <text class="d-s" x="740" y="364" text-anchor="middle" fill-opacity="0.62">no uEnv.net &rarr; reset and try again; the stock image is never booted</text>
 
           <!-- time, at the left -->
           <text class="d-n" x="10" y="74" fill-opacity="0.62">0 s</text>
