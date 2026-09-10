@@ -20,7 +20,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 VFLAGS := --cc --exe --build -Wall
 
 .PHONY: check cables ps7 ps7-init current mutants mutants-selftest probe-selftest \
-        disk-golden disk-boot-golden clean
+        disk-golden disk-boot-golden muir-pin clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -34,7 +34,31 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
        $(BUILD)/console.pass \
-       current
+       muir-pin current
+
+# ----------------------------------------------------------------- muir's pin
+
+# `muir.commit` names the commit of muir every reference trace in `golden/`
+# was generated against, and this says whether the muir beside us is it.  It
+# WARNS rather than fails: a trace is generated from the muir on disk, so a
+# mismatch means the traces in `build/` may be of a different reference, and
+# saying so is the useful part --- failing would stop somebody who is
+# deliberately mid-bump.  `MUIR=..` if muir is somewhere else.
+MUIR ?= ..
+muir-pin:
+	@pin=$$(grep -v '^#' muir.commit | tr -d '[:space:]'); \
+	 have=$$(git -C $(MUIR)/muir rev-parse HEAD 2>/dev/null); \
+	 if [ -z "$$have" ]; then \
+	   echo "muir-pin: no git repository at $(MUIR)/muir; the pin says $$pin"; \
+	 elif [ "$$have" != "$$pin" ]; then \
+	   echo "muir-pin: WARNING --- muir is at $$have"; \
+	   echo "muir-pin:           the pin says   $$pin"; \
+	   echo "muir-pin: the traces in $(BUILD) are of whichever muir made them."; \
+	   echo "muir-pin: to move the pin: write the SHA into muir.commit, rm -f $(BUILD)/*.golden,"; \
+	   echo "muir-pin: make check, and commit the pin with every trace that changed."; \
+	 else \
+	   echo "muir-pin: muir is at the pinned $$pin"; \
+	 fi
 
 # ---------------------------------------------------------------- phase gen
 
