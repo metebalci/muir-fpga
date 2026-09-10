@@ -29,6 +29,33 @@
 // Until something is wired there, `device_ack` is low, nothing answers a
 // device cycle, and the interface's own timer ends it --- which is exactly
 // what a CADR with an empty backplane slot does.
+//
+// **AND THERE ARE TWO MASTERS NOW.**  The disk controller's channel moves a
+// block into main memory a word at a time, and `Controller::write` reaches
+// `main` directly with no bus and no time --- so there is no muir reference
+// for the arbitration, only a property, and it is a hard one:
+//
+//   **THE PROCESSOR'S NXM TIMER IS 4,250 ns FROM THE GATED OSCILLATOR'S
+//   FIRST RISE AND A BLOCK IS 256 WORDS.**  A channel that took the bus for a
+//   block would turn a legitimate memory reference into an NXM.  So the
+//   arbiter is PER WORD and the processor wins: the channel may begin a word
+//   only while `-XBUS.RQ` is down, and a processor cycle waits at most one
+//   memory access --- twenty to a hundred and thirty nanoseconds on the
+//   modelled DDR --- for a word already in flight.  That, and not throughput,
+//   is what `tb/cadr_memory_path_tb.cpp`'s second configuration holds.
+//
+// **THE CHANNEL REACHES MAIN MEMORY AND NOTHING ELSE**, which is why the
+// mux is in front of the bridge and `dev_rq` to the other slaves is held down
+// while the channel has the bus.  A CCW names a page and muir's rule for one
+// that is not main memory is `STATUS<20>`, NXM --- `page + BLOCK_WORDS >
+// main.len()` --- so a channel cycle that the decode does not call main
+// memory is answered here as nothing at all, and no slave on the seam is ever
+// asked about it.
+//
+// The address and data mux sits IN FRONT OF THE DECODE and its register, so
+// the -6.5 ns family the held decode was written to cut off is untouched: the
+// channel's address goes through a decode of its own into a register, and
+// what reaches the bridge's `sel` is a mux on two registered bits.
 
 `default_nettype none
 
@@ -59,6 +86,17 @@ module cadr_memory_path (
     output var logic        dev_write,
     input  var logic        device_ack,   // -XBUS.ACK, from that slave
     input  var logic [31:0] device_rdata,
+
+    // The disk controller's memory channel, the second master on this bus.
+    // One word a cycle, the request standing until `ch_done`; `ch_nxm` says
+    // main memory does not answer for that address.
+    input  var logic        ch_req,
+    input  var logic        ch_write,
+    input  var logic [21:0] ch_addr,
+    input  var logic [31:0] ch_wdata,
+    output var logic        ch_done,
+    output var logic        ch_nxm,
+    output var logic [31:0] ch_rdata,
 
     // What else the decode made of the address, so that a cycle nothing
     // answers can say why rather than merely time out.
@@ -93,6 +131,8 @@ module cadr_memory_path (
 
   logic is_memory;
   logic dev_ack, memory_ack;
+  // The processor's own -XBUS.RQ, before the arbiter puts it on the bus.
+  logic cpu_rq, cpu_write;
   logic [31:0] memory_rdata;
   logic ub_msyn, ub_write, ub_ssyn;
   assign ub_msyn_o = ub_msyn;
@@ -136,6 +176,87 @@ module cadr_memory_path (
       .unibus(unibus_c)
   );
 
+  // --- the second master, and the arbiter ---------------------------------
+  //
+  // The channel's address gets a decode of its own rather than sharing the
+  // processor's.  One decode with the address muxed in front of it would put
+  // the channel's answer into `device`, `nxm` and `unibus` --- and `unibus`
+  // is what `cadr_busint_xbus` arbitrates on, so a page that happened to
+  // decode there would reach into the processor's next cycle.  Two instances
+  // of a module checked exhaustively against `busint::decode` over all
+  // 4,194,304 addresses cost eleven LUTs and cannot do that.
+  logic ch_memory_c, ch_memory;
+  logic ch_device_c, ch_nxm_c, ch_unibus_c;
+
+  cadr_xbus_decode ch_decode (
+      .phys  (ch_addr),
+      .boards(boards),
+      .memory(ch_memory_c),
+      .device(ch_device_c),
+      .nxm   (ch_nxm_c),
+      .unibus(ch_unibus_c)
+  );
+
+  // **THE CHANNEL MAY BEGIN A WORD ONLY WHILE THE PROCESSOR IS NOT ASKING**,
+  // and it gives the bus back at the end of every one.  `ch_own` is a
+  // register, so it comes up a tick after `ch_req` --- which is the tick
+  // `ch_memory` needs to settle, the channel's decode being registered like
+  // the processor's.  `sel` and the request change at the same edge, so
+  // neither master ever sees the other's address under its own request.
+  //
+  // **AND THE BUS IS LEFT IDLE FOR A TICK AT EVERY CHANGE OF OWNER.**  That
+  // is not tidiness: `cadr_xbus_ddr.sv` keeps a `done` flop and an `rdata`
+  // register for the cycle it is answering, and clears them when nothing is
+  // asking.  Handing the bus straight from one master to the other with the
+  // request never falling leaves both standing --- so the processor's read
+  // inherits the channel's finished cycle, is acknowledged in no time and
+  // takes the word that slave last had, which for a channel WRITE is nothing
+  // at all.  Measured: without this tick, the first read of the arbiter's own
+  // scenario comes back zero where the same read with the channel idle brings
+  // back its word.  It is the same fact as the bridge holding a word past its
+  // cycle, met from the other side.
+  logic ch_own, ch_own_d, ch_ack_q, changing;
+  assign changing = ch_own ^ ch_own_d;
+
+  logic [21:0] bus_phys;
+  logic [31:0] bus_wdata;
+  logic        bus_write, bus_rq, bus_sel;
+  assign bus_phys  = ch_own ? ch_addr  : phys;
+  assign bus_wdata = ch_own ? ch_wdata : wdata;
+  assign bus_write = ch_own ? ch_write : cpu_write;
+  assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : cpu_rq);
+  assign bus_sel   = ch_own ? ch_memory : is_memory;
+
+  // The channel's answer comes a tick after main memory's, because the
+  // bridge's `rdata` is a register: `dev_ack` is a gate on `mem_done` and the
+  // word is only there at the edge after it.  The processor gets the same
+  // word through `cadr_busint_xbus`'s own 60 ns tap of the TD100 at 0C09;
+  // this is the channel's equivalent, and it costs a tick a word.
+  assign ch_done  = ch_own && ch_ack_q;
+  assign ch_nxm   = ch_own && !ch_memory;
+  assign ch_rdata = memory_rdata;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      ch_own     <= 1'b0;
+      ch_own_d   <= 1'b0;
+      ch_ack_q   <= 1'b0;
+      ch_memory  <= 1'b0;
+    end else begin
+      ch_memory <= ch_memory_c;
+      ch_own_d  <= ch_own;
+      ch_ack_q  <= ch_own && !changing && (memory_ack || !ch_memory);
+      if (!ch_own) ch_own <= ch_req && !cpu_rq;
+      else if (ch_done) ch_own <= 1'b0;
+    end
+  end
+
+  // The channel's decode says only whether main memory answers for the
+  // address; a channel cycle never reaches a slave, so the other three
+  // outputs are read here and nowhere else.
+  logic unused_ch_decode;
+  assign unused_ch_decode = ^{ch_device_c, ch_nxm_c, ch_unibus_c};
+
   // The same holding, for the Unibus address: it is `phys` with a subtraction
   // on it and it reaches `elapsed` in the register block, which is a counter
   // and so is excluded from the exception for the same reason the edge
@@ -171,8 +292,8 @@ module cadr_memory_path (
       .n_memack   (n_memack),
       .n_loadmd   (n_loadmd),
       .timed_out  (timed_out),
-      .dev_rq     (dev_rq),
-      .dev_write  (dev_write),
+      .dev_rq     (cpu_rq),
+      .dev_write  (cpu_write),
       .dev_ack    (dev_ack),
       .unibus     (unibus),
       .ub_msyn    (ub_msyn),
@@ -214,11 +335,11 @@ module cadr_memory_path (
   cadr_xbus_ddr main_memory (
       .clk      (clk),
       .rst      (rst),
-      .sel      (is_memory),
-      .dev_rq   (dev_rq),
-      .dev_write(dev_write),
-      .phys     (phys),
-      .wdata    (wdata),
+      .sel      (bus_sel),
+      .dev_rq   (bus_rq),
+      .dev_write(bus_write),
+      .phys     (bus_phys),
+      .wdata    (bus_wdata),
       .dev_ack  (memory_ack),
       .rdata    (memory_rdata),
       .mem_req  (mem_req),
@@ -229,9 +350,16 @@ module cadr_memory_path (
       .mem_rdata(mem_rdata)
   );
 
+  // What the other slaves see: the processor's cycle and never the channel's.
+  // See the note at the top --- the channel reaches main memory alone.
+  assign dev_rq    = ch_own ? 1'b0 : cpu_rq;
+  assign dev_write = cpu_write;
+
   // The acknowledgements, joined as the open-collector `-XBUS.ACK` joins
-  // them, and the word from whichever slave answered.
-  assign dev_ack = memory_ack || device_ack;
+  // them, and the word from whichever slave answered.  Nothing answers the
+  // processor while the channel has the bus: its cycle simply waits, which is
+  // what the per-word arbitration bounds.
+  assign dev_ack = !ch_own && (memory_ack || device_ack);
   // The word from whichever slave answered. A Unibus register is sixteen bits
   // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.
   assign rdata   = ub_ssyn      ? {16'hffff, ub_rdata}

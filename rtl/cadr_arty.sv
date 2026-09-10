@@ -274,6 +274,14 @@ module cadr_arty #(
       // fit here counts the register face and the decode and not the
       // spindle, the seek arithmetic or the eight attention counters.
       .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0),
+      // AND NO PACK IN DDR EITHER, which is the other half of the same seam:
+      // `S_AXI_HP2` is what will write the block store, and it is off in
+      // `ps7_config.tcl` and tied off in the generated wrapper. Tied off
+      // here, the store, the command list's walk, the two checkwords and the
+      // channel's bus master all constant-fold, so the fit here counts none
+      // of them.
+      .store_we(1'b0), .store_slot(5'd0), .store_addr(9'd0),
+      .store_wdata(32'd0),
       // 32 boards of 64K words, which is muir's own default and what every
       // trace in this repository was taken with.
       .boards(7'd32),

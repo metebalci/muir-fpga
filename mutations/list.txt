@@ -3526,3 +3526,179 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
   localparam logic [19:0] INDEX_PULSE_NS  = 20'd3_995;
 @end
+
+# --- the channel: the block store, the walk, the checkwords and the master ---
+#
+# `build/disk.golden` is the only thing that reaches any of this.  MIT's boot
+# PROM writes no command at all and a System 100 band reaches six of sixteen
+# codes and sets no error bit, so `machine` and `probe` see the register face
+# and nothing behind it; every record below is aimed at `disk` for that reason,
+# except the arbiter's, which is aimed at `memory_path` because the arbiter is
+# in `rtl/cadr_memory_path.sv` and has no trace at all.
+
+@mutation disk-header-compare-without-its-mask
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note The header compare is masked to `0x0fff_ffff`, and the mask is not a
+@note convenience: on DCHDCM the 25LS2521 at C22 has `RSH<7:0>` on its A
+@note inputs and `HDCM<7:0>` on its B, `HDCM` comes off four 74LS153 muxes
+@note selected by `UPC<1:0>`, and the four data inputs are `RSH`, `BLOCK`,
+@note `HEAD` and `CYL` in that order --- so at select 0 the expected byte IS
+@note the read byte and nothing can miscompare.  The header's top byte carries
+@note the next-block address code and has no counterpart in the disk address
+@note register.
+@note
+@note The trace lays a sector at 0/0/2 whose header differs in `<31:28>` alone
+@note and reads it back: masked, the block transfers; unmasked, it is a header
+@note compare error and the transfer stops with nothing moved.  Written as a
+@note wider compare rather than as a narrower one so that every bit of the
+@note header stays read and lint has nothing to say.
+@old
+          if (s_header[ch_slot][27:0] != hdr_want) begin
+@new
+          if (s_header[ch_slot] != {4'd0, hdr_want}) begin
+@end
+
+@mutation disk-data-checkword-misses-the-last-word
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note The data checkword is the code run over all 256 words of the block and
+@note then over the checkword itself, and a field that checks leaves the
+@note register at zero.  Over 255 words it does not, so every block a Read
+@note touches becomes an ECC error --- and `Ecc::trap` then runs on a syndrome
+@note that means nothing, which is the other half of what this catches: the
+@note trace has one block whose burst is five bits wide and locatable and one
+@note twenty wide and not, and register 3 says where the first one is.
+@note
+@note A checkword computed over the wrong words is the shape CLAUDE.md's
+@note control-store entry warns about read the other way round: a block that
+@note was never checked reads back exactly like one that was, unless the
+@note checkword is over exactly the bytes the board writes it over.
+@old
+              if (ch_i == 9'(BLOCK_WORDS-1)) begin
+                blk_w    <= s_dck[ch_slot];
+                ch_state <= C_DCK;
+              end else begin
+@new
+              if (ch_i == 9'(BLOCK_WORDS-2)) begin
+                blk_w    <= s_dck[ch_slot];
+                ch_state <= C_DCK;
+              end else begin
+@end
+
+@mutation disk-command-list-carries-out-of-sixteen-bits
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "Only bits <15:0> of the CLP can count; if you attempt to carry into the
+@note high 8 bits you will wrap around."  `DCCLP` is four 74LS569s at 0D21,
+@note 0D22, 0D23 and 0D25 counting `XBAO<15:0>` with the last carry going
+@note nowhere, and the 74LS374 at 0D26 holding `XBAO<21:16>` as `-LOAD CLP`
+@note latched it.  So the walk's addition is sixteen bits wide and the six
+@note above it stand.
+@note
+@note `golden/src/disk.rs` puts a second command list at `0x2_FFFE` for
+@note exactly this: three CCWs from there are `0x2FFFE`, `0x2FFFF` and
+@note `0x20000`, and a full-width addition makes the third `0x30000` --- a
+@note word of memory the program never wrote, so the page it names is wrong
+@note and the transfer moves the wrong words to the wrong place.
+@old
+  assign clp_now = {clp[31:16], clp[15:0] + ch_n};
+@new
+  assign clp_now = clp + {16'd0, ch_n};
+@end
+
+@mutation disk-block-store-read-one-word-along
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note **MUTATED AT THE READ AND NOT AT THE ADDRESS**, which is the lesson the
+@note map's two records were rewritten for: an address expression shared by a
+@note memory's read and its write is a bijection on the storage and mutating
+@note it relabels the storage consistently, which is a no-op by construction.
+@note Here the seam fills the store and the channel reads it, so the two
+@note addressings are already independent --- but the channel also WRITES the
+@note store on a Write, and `chb_a` serves both.  So this rotates the read
+@note alone, by one word, and leaves the write where it was.
+@note
+@note What it breaks: every word a Read moves is its neighbour, the data
+@note checkword is computed over the block rotated, and the `PAGE` rows are
+@note compared against main memory word for word.  The trace's pack is a
+@note function of both the block and the offset within it precisely so that a
+@note word from the wrong offset is a wrong word.
+@old
+  assign chb_a  = 13'(ch_slot) * 13'(BLOCK_WORDS)
+                + 13'(ch_read ? ch_ra[7:0] : ch_i[7:0]);
+@new
+  assign chb_a  = 13'(ch_slot) * 13'(BLOCK_WORDS)
+                + 13'(ch_read ? {ch_ra[7:1], ~ch_ra[0]} : ch_i[7:0]);
+@end
+
+@mutation disk-the-walk-stops-one-ccw-early
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "<0> More flag" is what says the command list goes on, and `DCCCW`
+@note clocks `XBI0` into the LAST CCW flag at every fetch.  Honoured only on
+@note the first fetch, a three-page transfer moves one page and stops.
+@note
+@note It is caught three ways over, which is worth saying because it is what
+@note makes the walk checkable at all: register 1 reads the last word of the
+@note wrong page, register 2 reads the block the heads stopped on rather than
+@note the last one transferred, and the `PAGE` rows for the pages that did not
+@note move still hold the poison the program filled them with.  A destination
+@note filled with zeros would have hidden the third.
+@old
+              ch_more  <= ch_rdata[0];
+@new
+              ch_more  <= ch_rdata[0] && (ch_n == 16'd0);
+@end
+
+@mutation arbiter-gives-the-bus-back-every-second-word
+@check memory_path
+@file rtl/cadr_memory_path.sv
+@note **THE PROCESSOR'S NXM TIMER IS 4,250 ns AND A BLOCK IS 256 WORDS.**  The
+@note arbiter yields after every word and the processor wins, because a
+@note channel that kept the bus for a block would turn a legitimate memory
+@note reference into an NXM.  This yields after every SECOND word, which is
+@note the smallest step away from that rule there is.
+@note
+@note **A CHECK THAT ONLY ASKED WHETHER THE CYCLE TIMED OUT COULD NOT SEE
+@note IT**: two words is about sixty nanoseconds against four and a quarter
+@note microseconds, and the block still lands whole and at the right
+@note addresses.  What sees it is the second configuration of
+@note `tb/cadr_memory_path_tb.cpp`, which runs the same scripted processor
+@note cycles twice --- once with the channel idle and once with it streaming
+@note --- and requires that no cycle grew by more than one memory access.
+@note That bound is the measured worst and not a round number.
+@old
+      if (!ch_own) ch_own <= ch_req && !cpu_rq;
+      else if (ch_done) ch_own <= 1'b0;
+@new
+      if (!ch_own) ch_own <= ch_req && !cpu_rq;
+      else if (ch_done && ch_addr[0]) ch_own <= 1'b0;
+@end
+
+@mutation disk-block-store-read-from-the-wrong-slot
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note The other half of the store's addressing, and a different kind of thing
+@note from the record above: that one mis-addresses the DATA WITHIN a slot,
+@note and this takes the wrong ANSWER FROM THE TAG.  The store is a window on
+@note a pack of 263,245 blocks and what says which of its twenty-four slots
+@note holds the block under the heads is twenty-four comparators against the
+@note address; one slot along is a real block that is the wrong one.
+@note
+@note **AND IT IS NOT A BIJECTION ON THE STORAGE**, which the two map records
+@note were rewritten because of: the store is filled through the SEAM, by
+@note tag, and that path is untouched, so a walk reading one slot along reads
+@note a block that was put somewhere else.
+@note
+@note It fails on a different line from the record above, and that is the
+@note point of having both: this is caught at the HEADER COMPARE, before a
+@note word has moved, because the header is indexed by the same slot number
+@note the data is.  Two mutations of one memory's addressing that report the
+@note same failure would be the stale-artefact trap CLAUDE.md records, so
+@note they are written to report different ones.
+@old
+          if (s_header[ch_slot][27:0] != hdr_want) begin
+@new
+          if (s_header[ch_slot ^ 5'd1][27:0] != hdr_want) begin
+@end
