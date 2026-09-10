@@ -122,9 +122,16 @@ see. CLAUDE.md points the same way: the netlists are read for provenance, and
 **The drive carries three words a block beyond its data**: the header word, the
 header checkword and the data checkword. So `STATUS<18>` header compare,
 `<17>` header ECC and `<16>` a data checkword that does not check can all fire.
-What is given up is `<15>`, ECC soft, and with it the ECC register's burst
-location, `Ecc::trap` not being in fabric. 1.2% of the store, and additive
-later.
+This paragraph once gave up `<15>`, ECC soft, and with it the ECC register's
+burst location, on the grounds that `Ecc::trap` was not going into fabric ---
+without a cost attached. The cost was then measured: one 32-bit LFSR and a
+16-bit step counter, 34,753 spin shifts and at most 8,193 scan shifts, 214.7 us
+worst case at one shift a tick, under a quarter of a block's own 968 us on the
+pack. So the decision was re-taken and **`Ecc::trap` is in fabric**: `<15>` and
+the ECC register are live and compared on every face after a START, and the
+trace plants a burst at bit 1000 and reads pattern `0x19` at position 1001
+back out of register 3. The two bad blocks in the trace cost 37,061 and 44,250
+ticks of trapping.
 
 The alternative --- data only --- was rejected on the measurement above: those
 four bits would be dead in the fabric *and* never exercised by the reference
