@@ -118,7 +118,8 @@ module cadr_mem_count_harness #(
       .sintr(1'b0),
       // No drive on the disk's cable: this harness is the boot PROM, which
       // polls the status register and never writes a command.
-      .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0), .device_ack(1'b0), .device_rdata(32'd0),
+      .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0),
+      .store_we(1'b0), .store_slot(5'd0), .store_addr(9'd0), .store_wdata(32'd0), .device_ack(1'b0), .device_rdata(32'd0),
       .boards(7'd32),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),

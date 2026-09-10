@@ -12,6 +12,19 @@
 // put at that address. There is no reference for this half --- nothing in MIT's
 // drawings is a DDR controller --- so what it is held to is the property.
 //
+// AND THE ARBITER, in a configuration of its own. The disk controller's
+// channel is the second master on this bus and `Controller::write` reaches
+// `main` directly, so there is no muir reference for it at all --- it is
+// `cadr_axi_master.sv`'s situation. What holds it is a property with a number
+// in it: **the processor's NXM timer is 4,250 ns from the gated oscillator's
+// first rise and a block is 256 words**, so the arbiter yields the bus after
+// every word and the processor wins. Configuration B runs the same scripted
+// processor cycles twice, once with the channel idle and once with it
+// streaming a whole block, and requires that no cycle grew by more than ONE
+// memory access. A block held to the end of the block is caught by the growth
+// and not by the timeout, which is what makes the check bite where a
+// timeout-only one would not: two words is 60 ns against 4,250.
+//
 // THE BUS RULE, against the property alone, and it is the half muir has no
 // column for: **an unanswered read gives MD zero.** A slave drives MEM<31:0>
 // only while it is selected and answering, so a cycle nothing answered leaves
@@ -51,6 +64,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <vector>
 
 #include "Vcadr_memory_path.h"
 #include "verilated.h"
@@ -90,6 +104,298 @@ int Fail(const Row &r, const char *what, long got, long want) {
 
 }  // namespace
 
+
+// ---------------------------------------------------------------- the arbiter
+//
+// CONFIGURATION B: the same scripted processor cycles twice, once with the
+// disk controller's channel idle and once with it streaming a block, and the
+// question is by how much the second run's cycles grew.
+//
+// **THE NUMBER THIS HOLDS TO IS THE NXM TIMER'S.** 4,250 ns from the gated
+// oscillator's first rise, and a block is 256 words: a channel that kept the
+// bus for a block would turn a legitimate memory reference into an NXM. So
+// the arbiter yields after every word, and a processor cycle waits for at
+// most one memory access. That bound is what is asserted, and it is much
+// tighter than "the cycle did not time out" --- two words held is 2 x 30 ns
+// against 4,250, which a timeout could never see.
+//
+// The processor side is scripted rather than replayed, because the trace is
+// indexed by tick and a cycle that waits for the bus no longer lands where its
+// row does. Nothing here is compared against muir; what is compared is one run
+// of this fabric against another run of the same fabric.
+//
+// The model memory is keyed by what the TESTBENCH asked for and never by what
+// the DUT put on the port, which is CLAUDE.md's rule and the reason the
+// integrity half of configuration A was once wrong.
+namespace {
+
+// The modelled DDR's latency, in ticks, and the microcycle the master clock
+// is pulsed at.
+constexpr int kMemLatency = 6;
+constexpr int kMicrocycle = 29;
+// A block, and where it goes: a page well away from the addresses the
+// processor's own cycles use, so that a word landing in the wrong place is
+// visible in both directions.
+constexpr unsigned kBlockPage = 0x00040000u;
+constexpr int kBlockWords = 256;
+
+// A word of the block, injective in the offset: a channel that wrote the
+// address, or dropped a bit of the offset, cannot write the right word.
+uint32_t BlockWord(int i) {
+  return 0xC0DE0000u ^ (0x9E3779B9u * (uint32_t)(i + 1));
+}
+// And a word for the processor's own cycles, from a different family.
+uint32_t CpuWord(unsigned a) { return 0x5A5A0000u ^ (0x85EBCA6Bu * (a + 3u)); }
+
+struct Arb {
+  std::vector<long> cycle;      // grant to -MEMACK, in ticks, per processor cycle
+  long timeouts = 0;
+  long words = 0;               // channel words that completed
+  long collisions = 0;          // processor cycles that overlapped a channel word
+  bool ok = true;
+};
+
+// One run. `stream` says whether the channel is asking for the bus.
+Arb RunOnce(bool stream, std::map<unsigned, unsigned> &ddr) {
+  Arb out;
+  auto *dut = new Vcadr_memory_path;
+  long tick = 0;
+  int memrq = 1, wrcyc = 0;
+  unsigned phys = 0, wdata = 0;
+  long req_since = -1;
+  int req_last = 0;
+  // The channel's own state: one word at a time, the request standing until
+  // `ch_done`, exactly as `rtl/cadr_disk_controller.sv` drives it.
+  int word = 0;
+  std::vector<int> landed(kBlockWords, 0);
+  long words_this_cycle = 0;
+
+  dut->clk = 0;
+  dut->rst = 1;
+  dut->mclk = 0;
+  dut->n_memrq = 1;
+  dut->wrcyc = 0;
+  dut->phys = 0;
+  dut->wdata = 0;
+  dut->boards = 32;
+  dut->device_ack = 0;
+  dut->device_rdata = 0;
+  dut->spy_rdata = 0;
+  dut->mem_done = 0;
+  dut->mem_rdata = 0;
+  dut->ch_req = 0;
+  dut->ch_write = 0;
+  dut->ch_addr = 0;
+  dut->ch_wdata = 0;
+  dut->eval();
+
+  auto step = [&]() {
+    dut->rst = (tick < 4);
+    // MCLK7, one edge a microcycle at the boundary.
+    dut->mclk = (tick % kMicrocycle) == 0;
+    dut->n_memrq = memrq;
+    dut->wrcyc = wrcyc;
+    dut->phys = phys;
+    dut->wdata = wdata;
+    // The channel asks for the next word until it is answered.
+    if (stream && word < kBlockWords) {
+      dut->ch_req = 1;
+      dut->ch_write = 1;
+      dut->ch_addr = kBlockPage + (unsigned)word;
+      dut->ch_wdata = BlockWord(word);
+    } else {
+      dut->ch_req = 0;
+    }
+    dut->clk = 1;
+    dut->eval();
+    // DDR answers a fixed number of ticks after the bridge asked.
+    if (dut->mem_req && !req_last) req_since = tick;
+    if (!dut->mem_req) req_since = -1;
+    req_last = dut->mem_req;
+    const int done = (req_since >= 0) && (tick - req_since >= kMemLatency);
+    dut->mem_done = done;
+    if (done && !dut->mem_write) {
+      auto it = ddr.find(dut->mem_addr);
+      dut->mem_rdata = (it == ddr.end()) ? 0u : it->second;
+    }
+    dut->eval();
+    if (done && dut->mem_write) {
+      ddr[dut->mem_addr] = dut->mem_wdata;
+      if (getenv("ARB_DEBUG"))
+        std::fprintf(stderr, "  t=%ld ddr[%08x]=%08x\n", tick,
+                     (unsigned)dut->mem_addr, (unsigned)dut->mem_wdata);
+    }
+    // The channel's word, taken when the path says the cycle is over.
+    if (dut->ch_req && dut->ch_done) {
+      if (dut->ch_nxm) out.ok = false;
+      if (word < kBlockWords) landed[word]++;
+      ++word;
+      ++out.words;
+      ++words_this_cycle;
+    }
+    dut->clk = 0;
+    dut->eval();
+    ++tick;
+  };
+
+  for (int k = 0; k < 8; ++k) step();
+
+  // Thirty-two processor cycles, alternating a write and a read of the same
+  // address so that the read has a word to bring back.
+  for (int c = 0; c < 32 && out.ok; ++c) {
+    // A write and then a read of the same address, so that the read has a
+    // word to bring back and a bridge that lost it is caught here too.
+    const unsigned a = 0x100u + (unsigned)(c / 2) * 7u;
+    const bool write = (c % 2) == 0;
+    memrq = 0;
+    wrcyc = write;
+    phys = a;
+    wdata = CpuWord(a);
+    words_this_cycle = 0;
+    long grant = -1, ack = -1;
+    for (long k = 0; k < 4000; ++k) {
+      step();
+      if (!dut->n_memgrant && grant < 0) grant = tick;
+      if (dut->timed_out) ++out.timeouts;
+      if (grant >= 0 && !dut->n_memack) { ack = tick; break; }
+    }
+    if (grant < 0 || ack < 0) {
+      std::fprintf(stderr,
+                   "FAIL: the arbiter's cycle %d was never %s\n", c,
+                   grant < 0 ? "granted" : "acknowledged");
+      out.ok = false;
+      break;
+    }
+    if (!write && dut->rdata != CpuWord(a)) {
+      std::fprintf(stderr,
+                   "FAIL: the arbiter's read of %x gave %08x, wanted %08x\n", a,
+                   (unsigned)dut->rdata, CpuWord(a));
+      out.ok = false;
+    }
+    if (getenv("ARB_DEBUG"))
+      std::fprintf(stderr, "%s cycle %d a=%x wr=%d grant=%ld ack=%ld rdata=%08x words=%ld\n",
+                   stream ? "busy" : "idle", c, a, (int)write, grant, ack,
+                   (unsigned)dut->rdata, words_this_cycle);
+    out.cycle.push_back(ack - grant);
+    if (words_this_cycle) ++out.collisions;
+    memrq = 1;
+    for (int k = 0; k < 8; ++k) step();
+  }
+
+  // And the rest of the block, if the processor finished first.
+  for (long k = 0; stream && word < kBlockWords && k < 200000; ++k) step();
+  if (stream) {
+    for (int i = 0; i < kBlockWords; ++i)
+      if (landed[i] != 1) {
+        std::fprintf(stderr,
+                     "FAIL: the channel's word %d was answered %d times\n", i,
+                     landed[i]);
+        out.ok = false;
+        break;
+      }
+  }
+  dut->final();
+  delete dut;
+  return out;
+}
+
+int RunArbiter() {
+  std::map<unsigned, unsigned> quiet_ddr, busy_ddr;
+  Arb quiet = RunOnce(false, quiet_ddr);
+  Arb busy = RunOnce(true, busy_ddr);
+  if (!quiet.ok || !busy.ok) return 1;
+  if (quiet.cycle.size() != busy.cycle.size() || quiet.cycle.empty()) {
+    std::fprintf(stderr, "FAIL: the arbiter's two runs made %zu and %zu "
+                         "processor cycles\n",
+                 quiet.cycle.size(), busy.cycle.size());
+    return 1;
+  }
+  if (busy.words != kBlockWords) {
+    std::fprintf(stderr,
+                 "FAIL: the channel moved %ld words of a %d-word block\n",
+                 busy.words, kBlockWords);
+    return 1;
+  }
+  if (quiet.words != 0) {
+    std::fprintf(stderr, "FAIL: the idle channel moved %ld words\n",
+                 quiet.words);
+    return 1;
+  }
+  if (busy.timeouts || quiet.timeouts) {
+    std::fprintf(stderr,
+                 "FAIL: %ld processor cycles timed out with the channel idle "
+                 "and %ld with it streaming: a memory reference the arbiter "
+                 "delayed became an NXM\n",
+                 quiet.timeouts, busy.timeouts);
+    return 1;
+  }
+  // **ONE MEMORY ACCESS AND NOT TWO.** A word already in flight when the
+  // processor asks has to finish; a second word must not start. So the bound
+  // is the modelled memory's own latency and the four ticks the handover
+  // costs: the tick the bus is left idle as the channel TAKES it, the
+  // channel's acknowledgement register, the tick the arbiter takes to give the
+  // bus back, and the tick the bus is left idle again as it does. The worst
+  // case is the processor asking on the very tick the channel takes the bus.
+  //
+  // **IT IS THE MEASURED WORST AND NOT A ROUND NUMBER**, so a tick more fails:
+  // 10 with `kMemLatency` at 6. A channel that kept the bus for two words costs
+  // twice that and is caught by the growth, where a check that only asked
+  // whether the cycle timed out could never see it --- two words is 60 ns
+  // against 4,250.
+  const long bound = kMemLatency + 4;
+  long worst = 0;
+  for (size_t i = 0; i < quiet.cycle.size(); ++i) {
+    const long grew = busy.cycle[i] - quiet.cycle[i];
+    if (grew > worst) worst = grew;
+    if (grew > bound) {
+      std::fprintf(stderr,
+                   "FAIL: processor cycle %zu is %ld ticks long with the "
+                   "channel streaming and %ld with it idle, %ld more than the "
+                   "%ld one memory access may cost it\n",
+                   i, busy.cycle[i], quiet.cycle[i], grew, bound);
+      return 1;
+    }
+  }
+  // And a run where the channel never once got in the processor's way would
+  // pass the bound while testing nothing.
+  if (busy.collisions == 0) {
+    std::fprintf(stderr,
+                 "FAIL: not one of the arbiter's processor cycles overlapped a "
+                 "channel word, so the bound above tested nothing\n");
+    return 1;
+  }
+  // The block has to have landed where it was addressed, and nothing else
+  // with it: the processor's own words are from a different family and a
+  // different page.
+  for (int i = 0; i < kBlockWords; ++i) {
+    const unsigned byte_addr = 0x1800'0000u + ((kBlockPage + (unsigned)i) << 2);
+    auto it = busy_ddr.find(byte_addr);
+    if (it == busy_ddr.end() || it->second != BlockWord(i)) {
+      std::fprintf(stderr,
+                   "FAIL: the channel's word %d is %08x at %08x, wanted %08x\n",
+                   i, it == busy_ddr.end() ? 0u : it->second, byte_addr,
+                   BlockWord(i));
+      return 1;
+    }
+  }
+  if (quiet_ddr.size() + kBlockWords != busy_ddr.size()) {
+    std::fprintf(stderr,
+                 "FAIL: the streaming run left %zu words in memory and the "
+                 "idle one %zu: a block is %d\n",
+                 busy_ddr.size(), quiet_ddr.size(), kBlockWords);
+    return 1;
+  }
+  std::printf(
+      "    and the arbiter: %zu processor cycles run twice, %ld of them with a "
+      "channel word in flight; the worst grew %ld ticks against a bound of %ld, "
+      "one memory access. The channel's %ld words all landed, once each, at the "
+      "addresses it named.\n",
+      busy.cycle.size(), busy.collisions, worst, bound, busy.words);
+  return 0;
+}
+
+}  // namespace
+
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
 
@@ -119,6 +425,13 @@ int main(int argc, char **argv) {
   dut->spy_rdata = 0;
   dut->mem_done = 0;
   dut->mem_rdata = 0;
+  // The second master is quiet for the whole of configuration A: this half of
+  // the check is held to muir tick for tick, and a channel word would move
+  // -MEMACK. What the arbiter does is configuration B's question.
+  dut->ch_req = 0;
+  dut->ch_write = 0;
+  dut->ch_addr = 0;
+  dut->ch_wdata = 0;
   dut->eval();
 
   // What DDR holds, keyed by byte address as real DDR is.
@@ -293,6 +606,9 @@ int main(int argc, char **argv) {
                  reads_nonzero, unanswered_reads, unanswered_writes,
                  ddr.size());
   if (thin) return 1;
+
+  const int arb = RunArbiter();
+  if (arb) return arb;
 
   std::printf(
       "ok: %ld ticks agree with muir's busint::Busint through the whole path\n"
