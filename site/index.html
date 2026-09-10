@@ -54,7 +54,7 @@
           <text class="d-m" x="-70" y="483" text-anchor="middle">S_AXI_HP3</text>
           <text class="d-s" x="-70" y="499" text-anchor="middle">PL masters, 64 bits, AXI3</text>
           <path class="d-line" d="M-70,508 L-70,610 L-22,610"/>
-          <rect class="d-dash d-ext" x="-283" y="288" width="100" height="84"/>
+          <rect class="d-box d-ext" x="-283" y="288" width="100" height="84"/>
           <text class="d-t" x="-233" y="314" text-anchor="middle">HDMI out</text>
           <text class="d-s" x="-233" y="336" text-anchor="middle">the display,</text>
           <text class="d-s" x="-233" y="350" text-anchor="middle">from the fabric</text>
@@ -280,7 +280,7 @@
           <path class="d-line" d="M118,508 L118,580"/>
           <path class="d-line" d="M240,508 L240,526 L170,526 L170,580"/>
           <rect class="d-plate" x="-22" y="580" width="218" height="60"/>
-          <rect class="d-dash d-ext" x="-22" y="580" width="218" height="60"/>
+          <rect class="d-box d-ext" x="-22" y="580" width="218" height="60"/>
           <text class="d-t" x="87" y="604" text-anchor="middle">DDR controller</text>
           <text class="d-s" x="87" y="624" text-anchor="middle">four ports, arbitrated in hardware</text>
           <!-- the A9s reach memory through the controller like everything else;
@@ -289,18 +289,18 @@
           <path class="d-line" d="M87,640 L87,712"/>
           <path class="d-line" d="M305,658 L305,712 M452,658 L452,712 M599,658 L599,712 M746,658 L746,712"/>
 
-          <rect class="d-dash d-ext" x="-79" y="712" width="332" height="84"/>
+          <rect class="d-box d-ext" x="-79" y="712" width="332" height="84"/>
           <text class="d-t" x="87" y="738" text-anchor="middle">512 MB DDR3</text>
           <text class="d-s" x="87" y="762" text-anchor="middle">64 MB reserved for main memory,</text>
           <text class="d-s" x="87" y="776" text-anchor="middle">8 MB for the display, 56 MB spare</text>
           <text class="d-s" x="87" y="790" text-anchor="middle">&mdash; and 384 MB left to Linux</text>
-          <rect class="d-dash d-ext" x="1305" y="78" width="150" height="84"/>
+          <rect class="d-box d-ext" x="1305" y="78" width="150" height="84"/>
           <text class="d-t" x="1380" y="104" text-anchor="middle">Pmod JA &mdash; DBGOUT</text>
           <text class="d-s" x="1380" y="130" text-anchor="middle">1 clock + 7 data</text>
           <!-- The two lamps that earn their place, docs/board.md's words: between
                them they say whether the fabric is clocked and whether the
                machine is executing. Four more are bring-up instruments. -->
-          <rect class="d-dash d-ext" x="1305" y="336" width="150" height="152"/>
+          <rect class="d-box d-ext" x="1305" y="336" width="150" height="152"/>
           <circle cx="1319" cy="356" r="8" fill="none" stroke="#2da44e" stroke-width="1" stroke-opacity="0.5"/>
           <circle class="d-lamp-slow" cx="1319" cy="356" r="4.5" fill="#2da44e" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
           <text class="d-s" x="1333" y="360">LD0 &mdash; fabric clock</text>
@@ -316,14 +316,14 @@
           <circle cx="1319" cy="466" r="4.5" fill="#2da44e" fill-opacity="0.45" stroke="currentColor" stroke-width="1"/>
           <text class="d-s" x="1333" y="470">LD5 &mdash; MACHRUN</text>
           <path class="d-line" d="M1290,412 L1305,412"/>
-          <rect class="d-dash d-ext" x="1305" y="200" width="150" height="84"/>
+          <rect class="d-box d-ext" x="1305" y="200" width="150" height="84"/>
           <text class="d-t" x="1380" y="226" text-anchor="middle">Pmod JB &mdash; DBGIN</text>
           <text class="d-s" x="1380" y="252" text-anchor="middle">1 clock + 7 data</text>
 
           <!-- What a person at the board uses: the keyboard and mouse on the
                processing system's USB host, the display over HDMI straight from
                the fabric's TV block. Neither is started. -->
-          <rect class="d-dash d-ext" x="970" y="712" width="140" height="84"/>
+          <rect class="d-box d-ext" x="970" y="712" width="140" height="84"/>
           <text class="d-t" x="1040" y="738" text-anchor="middle">USB host</text>
           <text class="d-s" x="1040" y="760" text-anchor="middle">keyboard and mouse,</text>
           <text class="d-s" x="1040" y="774" text-anchor="middle">on the board&rsquo;s USB host port</text>
@@ -333,11 +333,11 @@
           <!-- The connectors on the board itself. The pack is a file on the
                card; the terminal is a VNC client and Chaosnet's other machines
                are elsewhere on the network, so both leave by the same socket. -->
-          <rect class="d-dash d-ext" x="268" y="712" width="370" height="84"/>
+          <rect class="d-box d-ext" x="268" y="712" width="370" height="84"/>
           <text class="d-t" x="453" y="738" text-anchor="middle">gigabit Ethernet</text>
           <text class="d-s" x="453" y="762" text-anchor="middle">the terminal is a VNC client; Chaosnet reaches</text>
           <text class="d-s" x="453" y="778" text-anchor="middle">other machines; the serial line is a TCP socket</text>
-          <rect class="d-dash d-ext" x="666" y="712" width="160" height="84"/>
+          <rect class="d-box d-ext" x="666" y="712" width="160" height="84"/>
           <text class="d-t" x="746" y="738" text-anchor="middle">microSD</text>
           <text class="d-s" x="746" y="758" text-anchor="middle">U-Boot, the CADR&rsquo;s bitstream,</text>
           <text class="d-s" x="746" y="772" text-anchor="middle">Linux and its root filesystem,</text>
