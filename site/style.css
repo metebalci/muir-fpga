@@ -267,8 +267,8 @@ figure.screen img {
    own, and the outline is already carrying fabric-or-PS. The stroke does the
    work and the fill only tints, so each reads on either ground. */
 :root {
-  --st-done:  #2da44e;   /* verified: a check holds it against muir */
-  --st-built: #0aa2c0;   /* built: it exists and compiles, nothing checks it */
+  --st-done:  #2da44e;   /* on the board: silicon has shown it */
+  --st-built: #0aa2c0;   /* checked in simulation, not yet run on the board */
   --st-part:  #d97706;   /* partly built: some of it verified, some not there */
   --st-wip:   #4493f8;   /* being built now: somebody is in those files today */
   --st-ext:   #d0d7de;   /* outside the project */
