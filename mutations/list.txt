@@ -776,10 +776,88 @@
 
 # ============================================================ memory path ===
 #
-# Two checks at once: the timing still agrees with muir through the whole
-# path, and a read returns the word an earlier write put there. The second is
-# held to the stimulus and not to anything the DUT produced, which is what
-# these first two are here to prove.
+# Three checks at once: the timing still agrees with muir through the whole
+# path, a read returns the word an earlier write put there, and a cycle
+# nothing answered leaves MEM<31:0> at zero. The last two are held to the
+# stimulus and not to anything the DUT produced, which is what
+# `bridge-writes-the-address-instead-of-the-data` and
+# `bridge-drops-an-address-bit` are here to prove.
+#
+# THE THIRD ARRIVED FROM ANOTHER CHECK. `the-bridge-holds-the-word-past-its-
+# cycle` was a `ddr_boot` record until the full mutation run at `3743cf7`
+# found it surviving: the property it holds was being exercised by the boot
+# PROM's unanswered disk polls, and those stopped being unanswered at
+# `70169fb`. It is here because this check's stimulus carries 29 cycles that
+# nothing answers whatever any program does, and the testbench now fails if it
+# ever stops carrying them.
+#
+# AND THE OTHER THING THAT SECTION SAYS `ddr_boot` CANNOT SEE, THIS CHECK CAN.
+# The boot PROM's parity loop is an identity copy, so a bridge that wrote the
+# word it had just READ is invisible there --- in that program the two words
+# are the same. Here the word on the memory port is compared against the
+# STIMULUS at the instant of the write and not through a read-back, so any
+# wrong word is wrong whatever it is equal to. Measured at `3743cf7` with a
+# two-hunk bridge that keeps its read word across cycles and writes it back:
+# `ddr_boot` PASSES it outright --- 512 transactions, A and B differing only in
+# word 255's bit 0, PC 544 still running --- and `memory_path` fails on the
+# first write of the run,
+#
+#   tick 173: the word on the memory port is 936072919, reference says
+#   1714741574
+#
+# 936072919 being the poison at physical 1, which the previous cycle read. It
+# is not a record because it takes two hunks and a record takes one; the
+# evidence is the measurement.
+
+@mutation the-bridge-holds-the-word-past-its-cycle
+@check memory_path
+@file rtl/cadr_xbus_ddr.sv
+@note METE'S DECISION, HELD: an unanswered read gives MD zero.  `rdata` is
+@note the slave's driver onto MEM<31:0>; held across cycles it hands MD a word
+@note on every cycle nothing answered, because `cadr_memory_path.sv` falls
+@note through to `memory_rdata` and -LOADMD is asserted on the NXM timer's
+@note acknowledgement too.  On the DDR board that word is the last word of
+@note page 0 and bit 0 of it is what the boot PROM reads as a ready disk
+@note controller, so what happened to be in main memory decided where the
+@note machine went.
+@note
+@note **THIS RECORD IS WHY `--since` EXISTS, met live.**  It was aimed at
+@note `ddr_boot` and caught by configuration B from `05d28fa`; at `70169fb`
+@note the disk controller's registers began answering the boot PROM's 16,951
+@note polls, which were the unanswered cycles the mutation needed, and it
+@note SURVIVED from there.  `make mutants` was red at HEAD for three commits
+@note while every `make check` was green, and nothing but the full run could
+@note see it: the property was held by which program happened to be running.
+@note A check aimed at a program's incidental behaviour has a shelf life.
+@note
+@note IT IS AIMED AT THE STIMULUS NOW.  `tb/cadr_memory_path_tb.cpp` asserts
+@note the rule directly --- at the acknowledgement of every cycle nothing
+@note answered, MEM<31:0> must read zero --- on the 20 unanswered reads and 9
+@note unanswered writes `build/busint_xbus.golden` already carries, and the
+@note testbench fails the run if the stimulus ever stops carrying them.  The
+@note line that fires first is
+@note
+@note   tick 1360: MEM<31:0> on a cycle nothing answered is 1803043649,
+@note   reference says 0
+@note
+@note and the run stops at its bound of 20 of them.  1803043649 is the model's
+@note poison at physical 3, which is the last address the trace read before
+@note that cycle --- the word the bridge should have let go of when its own
+@note cycle ended.
+@note
+@note MEASURED WHERE IT IS NOT CAUGHT, so that nobody re-aims it hopefully:
+@note it survives `machine`, `probe` and, since `70169fb`, `ddr_boot`.  None
+@note of those leaves a word in this register and then runs a cycle nothing
+@note answers whose data anything looks at.  Measured at `05d28fa` for
+@note `machine` and `probe`, and at `3743cf7` for `ddr_boot`.
+@old
+      done  <= 1'b0;
+      rdata <= 32'd0;
+    end else if (mem_done && !done) begin
+@new
+      done  <= 1'b0;
+    end else if (mem_done && !done) begin
+@end
 
 @mutation bridge-writes-the-address-instead-of-the-data
 @check memory_path
@@ -2334,37 +2412,18 @@
 # unanswered read gives MD zero --- and configuration B of the testbench is
 # now what asserts it never happens.  The witness went with it; the write path
 # stands on step two of the board plan, which proved it on silicon.
-
-@mutation the-bridge-holds-the-word-past-its-cycle
-@check ddr_boot
-@file rtl/cadr_xbus_ddr.sv
-@note THE BUG THIS CHECK WAS BUILT AROUND, restored.  `rdata` is the slave's
-@note driver onto MEM<31:0>; held across cycles it hands MD a word on every
-@note cycle nothing answered, because `cadr_memory_path.sv` falls through to
-@note `memory_rdata` and -LOADMD is asserted on the NXM timer's
-@note acknowledgement too.  On the DDR board that word is the last word of
-@note page 0 and bit 0 of it is what the boot PROM reads as a ready disk
-@note controller, so what happened to be in main memory decided where the
-@note machine went.
-@note
-@note Caught by configuration B and by nothing weaker, measured rather than
-@note assumed: aimed in turn at `machine`, `memory_path` and `probe`, it
-@note SURVIVES all three.  None of them ever leaves a word in this register
-@note and then runs a cycle nothing answers --- `machine` answers all 16,951
-@note device cycles from the trace, and `memory_path`'s stimulus never does
-@note either.  The line that
-@note fires first is "B: 513 DDR transactions, wanting 512", and the run also
-@note reports the machine ending at PC 40, one word of the window not its
-@note poison, and configuration B running 537,978 microcycles against A's
-@note 592,681.
-@old
-      done  <= 1'b0;
-      rdata <= 32'd0;
-    end else if (mem_done && !done) begin
-@new
-      done  <= 1'b0;
-    end else if (mem_done && !done) begin
-@end
+#
+# AND THE RECORD THAT HELD THAT DECISION IS NO LONGER HERE.  `the-bridge-
+# holds-the-word-past-its-cycle` was aimed at this check and caught by
+# configuration B from `05d28fa`; at `70169fb` `rtl/cadr_disk_controller.sv`
+# began answering the boot PROM's 16,951 polls, which were the unanswered
+# cycles it needed, and it survived from there.  It is a `memory_path` record
+# now, where the stimulus carries unanswered cycles by construction rather
+# than by what a program happens to do.  What configuration B asserts is
+# unchanged and worth keeping --- page 0's contents must not steer the machine
+# --- but it is no longer the thing holding the rule, and it can no longer BE
+# that thing: the two unanswered cycles left on this program go to empty Xbus
+# space and the PROM ignores what they return.
 
 @mutation the-read-address-is-rotated
 @check ddr_boot
