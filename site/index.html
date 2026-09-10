@@ -13,7 +13,7 @@
   <div class="band">
     <figure class="fig dense wide">
       <div class="scroll">
-<svg viewBox="0 0 1820 870" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Five AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. Beside the bus interface, a debug cable adapter, not started, puts the cable's 21 wires onto 8 Pmod pins in beats and presents the same registers on M_AXI_GP1; the two Pmod connectors are drawn at the board's right side. The TV block's display goes to a display output block at the fabric's left, not started, which scans the display's buffer out of DDR over a fifth port, S_AXI_HP3, and drives the HDMI connector on the board; the processing system's USB host controller, driven by Linux, carries a keyboard and mouse. Neither is started. On the Linux side: the RFB server, Chaosnet routing over gigabit Ethernet, the pack as a file on the microSD card, the console, and USB input, which carries the keyboard and mouse onto the I/O board; none started. Below the ports is the processing system: an outline for Linux on the Arm cores, partly built: it boots from the card beside the running CADR with the CADR's 128 MB kept from it, and holds the programs that will run under it, none of them started; beside it the boot loader, U-Boot, partly built: the card file, the network loop and the fabric load are ours and run on the board, the loader binary is still Digilent's, and beside it a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm cores from the Linux group beside it, and one line out of the chip to the DRAM. The microSD card holds everything the board needs: U-Boot with its first stage, the CADR's bitstream, Linux with its root filesystem, and the disk pack as a file. A line under the drawing says how this project's own board is run for development: over TFTP, the card holding only the loader. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. How far along each block is, which the drawing otherwise says in colour --- green only for what the board itself has shown, turquoise for what is checked here and has not run on the board: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today from the boot PROM, with no memory behind it, and its first 1,024 microcycles have been read back over JTAG and agree with muir column by column, which is 0.17 per cent of the run and reaches no memory cycle; the bus interface is partly built, wanting only the debug cable; the disk controller is checked in simulation and has not run on the board: its registers, its drive, its channel, Read All and Write All are checked against muir over a scripted trace, and its pack side --- the block fetched over S_AXI_HP2 from the block's address Linux writes over M_AXI_GP0 --- against a modelled memory; the TV and the I/O board are not started. The memory path over S_AXI_HP0, drawn from the bridge through the port to the DDR3, is verified: every piece of it has a check, and the machine has run its boot PROM out of real DDR3 on the board with a witness outside its logic counting every cycle. Under the fabric's label, two figures: 6.2 per cent of the LUTs and 26.4 per cent of the block RAM. ">
+<svg viewBox="0 0 1820 830" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Five AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. Beside the bus interface, a debug cable adapter, not started, puts the cable's 21 wires onto 8 Pmod pins in beats and presents the same registers on M_AXI_GP1; the two Pmod connectors are drawn at the board's right side. The TV block's display goes to a display output block at the fabric's left, not started, which scans the display's buffer out of DDR over a fifth port, S_AXI_HP3, and drives the HDMI connector on the board; the processing system's USB host controller, driven by Linux, carries a keyboard and mouse. Neither is started. On the Linux side: the RFB server, Chaosnet routing over gigabit Ethernet, the pack as a file on the microSD card, the console, and USB input, which carries the keyboard and mouse onto the I/O board; none started. Below the ports is the processing system: an outline for Linux on the Arm cores, partly built: it boots from the card beside the running CADR with the CADR's 128 MB kept from it, and holds the programs that will run under it, none of them started; beside it the boot loader, U-Boot, partly built: the card file, the network loop and the fabric load are ours and run on the board, the loader binary is still Digilent's, and beside it a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm cores from the Linux group beside it, and one line out of the chip to the DRAM. The microSD card holds everything the board needs: U-Boot with its first stage, the CADR's bitstream, Linux with its root filesystem, and the disk pack as a file. The two sequence drawings below say how the board boots, on its own from the card and, for development, from a TFTP server. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. How far along each block is, which the drawing otherwise says in colour --- green only for what the board itself has shown, turquoise for what is checked here and has not run on the board: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today from the boot PROM, with no memory behind it, and its first 1,024 microcycles have been read back over JTAG and agree with muir column by column, which is 0.17 per cent of the run and reaches no memory cycle; the bus interface is partly built, wanting only the debug cable; the disk controller is checked in simulation and has not run on the board: its registers, its drive, its channel, Read All and Write All are checked against muir over a scripted trace, and its pack side --- the block fetched over S_AXI_HP2 from the block's address Linux writes over M_AXI_GP0 --- against a modelled memory; the TV and the I/O board are not started. The memory path over S_AXI_HP0, drawn from the bridge through the port to the DDR3, is verified: every piece of it has a check, and the machine has run its boot PROM out of real DDR3 on the board with a witness outside its logic counting every cycle. Under the fabric's label, two figures: 6.2 per cent of the LUTs and 26.4 per cent of the block RAM. ">
           <text class="d-t" x="10" y="18">muir-fpga on the Arty Z7-20</text>
           <text class="d-s" x="196" y="18">XC7Z020-1CLG400C</text>
 
@@ -300,29 +300,83 @@
           <text class="d-s" x="635" y="788" text-anchor="middle">Linux and its root filesystem,</text>
           <text class="d-s" x="635" y="802" text-anchor="middle">and the disk pack as a file</text>
 
-          <!-- The one line about how this project's own board is run, which the
-               drawing above deliberately does not show. -->
-          <text class="d-s" x="-164" y="850" fill-opacity="0.62">For development: the microSD card here holds only U-Boot and the one-line boot file, which names a TFTP server; the CADR&rsquo;s bitstream, Linux, its root filesystem and the boot command come from that server, so the microSD card is never rewritten.</text>
           </g>
         </svg>
       </div>
     </figure>
 
-    <!-- How the board boots. A sequence: the card and the TFTP server on the outside,
-         the processing system in the middle changing hands from the boot ROM
-         to the FSBL to U-Boot to Linux. Times are from the console log of the
-         first unattended boot with the one-line card, 10 September 2026. -->
     <figure class="fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 600" role="img" aria-label="How the board boots, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server, and the fabric. A reset, from the SRST button or over JTAG, starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: Digilent's first-stage loader, Digilent's bitstream and U-Boot. The loader runs ps7_init and brings up DDR, configures the fabric with Digilent's design, and hands to U-Boot. U-Boot reads uEnv.txt from the card, gets its address from the DHCP server in under four seconds, fetches uEnv.net, the boot command, from the TFTP server, then cadr.bit, the CADR's bitstream, which it loads into the fabric in place of Digilent's --- from that moment the CADR is running, out of DDR3 --- then system.dtb, the device tree with Digilent's fabric peripherals removed, then reads image.ub from the card, the kernel and root filesystem, 47.7 MB in four seconds, and boots the kernel with mem=384M and cma=32M. Linux asks the DHCP server again, gets the same address, and reaches a login about two and a half minutes after the reset, with 384 MB and the CADR's 128 MB kept from it, the CADR having run since the fabric was configured. If the fetch of uEnv.net fails, the board resets and tries again; Digilent's own image and tree are never booted.">
+        <svg viewBox="0 0 1170 520" role="img" aria-label="How the board boots on its own, as a sequence. Three lifelines: the microSD card, the processing system, and the fabric. A reset starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: U-Boot's own first stage, which runs the start-up routine, brings up DDR3 and loads U-Boot proper, also from the card. U-Boot reads uEnv.txt if the card has one; with no server named it loads cadr.bit from the card into the fabric, from which moment the CADR runs out of DDR3, then the device tree, the kernel and the root filesystem image from the card, and boots Linux beside the CADR with the CADR's 128 MB reserved. Linux reaches a login on the serial console; a keyboard on the USB port and a display on HDMI are the machine's own. The card boot has not yet run on the board.">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
             </marker>
           </defs>
           <text class="d-t" x="10" y="18">how the board boots</text>
-          <text class="d-s" x="160" y="18">one reset, nobody at the board</text>
+          <text class="d-s" x="170" y="18">from the microSD card alone; no network needed</text>
+          <!-- lifelines -->
+          <rect class="d-box d-ext" x="60" y="34" width="120" height="30"/>
+          <text class="d-t" x="120" y="54" text-anchor="middle">microSD card</text>
+          <rect class="d-box" x="480" y="34" width="150" height="30"/>
+          <text class="d-t" x="555" y="54" text-anchor="middle">processing system</text>
+          <rect class="d-box" x="950" y="34" width="120" height="30"/>
+          <text class="d-t" x="1010" y="54" text-anchor="middle">fabric</text>
+          <path class="d-dash" d="M120,64 L120,500 M1010,64 L1010,258"/>
+          <!-- the PS, changing hands -->
+          <rect class="d-fill" x="540" y="64" width="30" height="50"/>
+          <text class="d-s" x="578" y="84">boot ROM</text>
+          <text class="d-s" x="578" y="100">boot-mode jumper: SD</text>
+          <rect class="d-fill" x="540" y="114" width="30" height="60"/>
+          <text class="d-s" x="578" y="136">U-Boot&rsquo;s first stage (SPL)</text>
+          <text class="d-s" x="578" y="152">ps7_init, DDR3 up</text>
+          <rect class="d-fill" x="540" y="174" width="30" height="200"/>
+          <text class="d-s" x="578" y="196">U-Boot</text>
+          <rect class="d-fill" x="540" y="374" width="30" height="126"/>
+          <text class="d-s" x="578" y="396">Linux</text>
 
+          <!-- the fabric, configured once -->
+          <rect class="d-fill d-done" x="995" y="258" width="30" height="242"/>
+          <text class="d-s" x="1010" y="380" text-anchor="middle" transform="rotate(-90 1010 380)">the CADR, running out of DDR3</text>
+
+          <line class="d-line" x1="300" y1="78" x2="540" y2="78" marker-end="url(#arr)"/>
+          <text class="d-s" x="420" y="74" text-anchor="middle">reset</text>
+
+          <line class="d-line" x1="120" y1="104" x2="540" y2="104" marker-end="url(#arr)"/>
+          <text class="d-s" x="330" y="100" text-anchor="middle">BOOT.BIN &mdash; U-Boot&rsquo;s first stage</text>
+          <line class="d-line" x1="120" y1="166" x2="540" y2="166" marker-end="url(#arr)"/>
+          <text class="d-s" x="330" y="162" text-anchor="middle">u-boot.img &mdash; U-Boot proper</text>
+          <line class="d-line" x1="120" y1="214" x2="540" y2="214" marker-end="url(#arr)"/>
+          <text class="d-s" x="330" y="210" text-anchor="middle">uEnv.txt, if there is one &mdash; names no server</text>
+          <line class="d-line" x1="120" y1="242" x2="540" y2="242" marker-end="url(#arr)"/>
+          <text class="d-s" x="330" y="238" text-anchor="middle">cadr.bit &mdash; the CADR</text>
+          <line class="d-line" x1="570" y1="258" x2="995" y2="258" marker-end="url(#arr)"/>
+          <text class="d-s" x="782" y="254" text-anchor="middle">fpga loadb: the bitstream into the fabric</text>
+          <line class="d-line" x1="120" y1="290" x2="540" y2="290" marker-end="url(#arr)"/>
+          <text class="d-s" x="330" y="286" text-anchor="middle">the device tree &mdash; the CADR&rsquo;s 128 MB reserved</text>
+          <line class="d-line" x1="120" y1="318" x2="540" y2="318" marker-end="url(#arr)"/>
+          <text class="d-s" x="330" y="314" text-anchor="middle">zImage &mdash; the kernel</text>
+          <line class="d-line" x1="120" y1="346" x2="540" y2="346" marker-end="url(#arr)"/>
+          <text class="d-s" x="330" y="342" text-anchor="middle">the root filesystem image</text>
+          <text class="d-n" x="578" y="366">bootz</text>
+
+          <text class="d-s" x="578" y="440">login on the serial console</text>
+          <text class="d-s" x="578" y="456">384 MB &mdash; 0x18000000 and up is the CADR&rsquo;s</text>
+          <text class="d-s" x="578" y="484" fill-opacity="0.62">on failure: a message, ten seconds, another try &mdash; nothing else is ever booted</text>
+        </svg>
+      </div>
+    </figure>
+
+    <figure class="fig dense">
+      <div class="scroll">
+        <svg viewBox="0 0 1170 560" role="img" aria-label="How the board boots for development, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server, and the fabric. The reset and the two U-Boot stages come from the card as in the normal boot. U-Boot reads uEnv.txt from the card, which names a TFTP server, so it asks the DHCP server for its address, fetches uEnv.net, the boot command, from the TFTP server, then cadr.bit, which it loads into the fabric, from which moment the CADR runs, then the device tree, the kernel and the root filesystem image, and boots Linux beside the CADR. From the reset to the login prompt took fifteen seconds, measured on 10 September 2026. On any failure the loader waits ten seconds and tries again; nothing else is ever booted.">
+          <defs>
+            <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <text class="d-t" x="10" y="18">how the board boots for development</text>
+          <text class="d-s" x="250" y="18">the microSD card holds the loader; the rest comes from a TFTP server</text>
           <!-- lifelines -->
           <rect class="d-box d-ext" x="40" y="34" width="120" height="30"/>
           <text class="d-t" x="100" y="54" text-anchor="middle">microSD card</text>
@@ -334,73 +388,62 @@
           <text class="d-t" x="870" y="54" text-anchor="middle">TFTP server</text>
           <rect class="d-box" x="1030" y="34" width="120" height="30"/>
           <text class="d-t" x="1090" y="54" text-anchor="middle">fabric</text>
-          <path class="d-dash" d="M100,64 L100,560 M650,64 L650,560 M870,64 L870,560 M1090,64 L1090,184"/>
-
+          <path class="d-dash" d="M100,64 L100,540 M650,64 L650,540 M870,64 L870,540 M1090,64 L1090,318"/>
           <!-- the PS, changing hands -->
-          <rect class="d-fill" x="375" y="64" width="30" height="60"/>
-          <text class="d-s" x="413" y="88">boot ROM</text>
-          <text class="d-s" x="413" y="104">boot-mode jumper: SD</text>
-          <rect class="d-fill" x="375" y="124" width="30" height="76"/>
-          <text class="d-s" x="413" y="148">FSBL</text>
-          <text class="d-s" x="413" y="164">ps7_init, DDR3 up</text>
-          <rect class="d-fill" x="375" y="200" width="30" height="236"/>
-          <text class="d-s" x="413" y="224">U-Boot</text>
-          <rect class="d-fill" x="375" y="436" width="30" height="124"/>
-          <text class="d-s" x="413" y="460">Linux 4.9, Digilent's build</text>
+          <rect class="d-fill" x="375" y="64" width="30" height="50"/>
+          <text class="d-s" x="413" y="84">boot ROM</text>
+          <text class="d-s" x="413" y="100">boot-mode jumper: SD</text>
+          <rect class="d-fill" x="375" y="114" width="30" height="60"/>
+          <text class="d-s" x="413" y="136">U-Boot&rsquo;s first stage (SPL)</text>
+          <text class="d-s" x="413" y="152">ps7_init, DDR3 up</text>
+          <rect class="d-fill" x="375" y="174" width="30" height="240"/>
+          <text class="d-s" x="413" y="196">U-Boot</text>
+          <rect class="d-fill" x="375" y="414" width="30" height="126"/>
+          <text class="d-s" x="413" y="436">Linux</text>
 
-          <!-- the fabric, configured twice -->
-          <rect class="d-fill d-ext" x="1075" y="184" width="30" height="162"/>
-          <text class="d-s" x="1090" y="270" text-anchor="middle" transform="rotate(-90 1090 270)">Digilent's design</text>
-          <rect class="d-fill d-done" x="1075" y="346" width="30" height="214"/>
-          <text class="d-s" x="1090" y="470" text-anchor="middle" transform="rotate(-90 1090 470)">the CADR, running out of DDR3</text>
+          <rect class="d-fill d-done" x="1075" y="318" width="30" height="222"/>
+          <text class="d-s" x="1090" y="430" text-anchor="middle" transform="rotate(-90 1090 430)">the CADR, running out of DDR3</text>
 
-          <!-- the reset -->
-          <line class="d-line" x1="170" y1="80" x2="375" y2="80" marker-end="url(#arr)"/>
-          <text class="d-s" x="272" y="76" text-anchor="middle">SRST, or rst -srst over JTAG</text>
+          <line class="d-line" x1="200" y1="78" x2="375" y2="78" marker-end="url(#arr2)"/>
+          <text class="d-s" x="287" y="74" text-anchor="middle">reset, or rst -srst over JTAG</text>
 
-          <!-- messages -->
-          <line class="d-line" x1="100" y1="110" x2="375" y2="110" marker-end="url(#arr)"/>
-          <text class="d-s" x="237" y="106" text-anchor="middle">BOOT.BIN &mdash; FSBL, bitstream, U-Boot</text>
+          <line class="d-line" x1="100" y1="104" x2="375" y2="104" marker-end="url(#arr2)"/>
+          <text class="d-s" x="237" y="100" text-anchor="middle">BOOT.BIN &mdash; U-Boot&rsquo;s first stage</text>
+          <line class="d-line" x1="100" y1="166" x2="375" y2="166" marker-end="url(#arr2)"/>
+          <text class="d-s" x="237" y="162" text-anchor="middle">u-boot.img &mdash; U-Boot proper</text>
+          <line class="d-line" x1="100" y1="214" x2="375" y2="214" marker-end="url(#arr2)"/>
+          <text class="d-s" x="237" y="210" text-anchor="middle">uEnv.txt &mdash; names the TFTP server</text>
 
-          <line class="d-line" x1="405" y1="184" x2="1075" y2="184" marker-end="url(#arr)"/>
-          <text class="d-s" x="740" y="180" text-anchor="middle">Digilent's bitstream, out of BOOT.BIN</text>
+          <line class="d-line" x1="405" y1="242" x2="650" y2="242" marker-end="url(#arr2)"/>
+          <text class="d-s" x="527" y="238" text-anchor="middle">DHCP discover</text>
+          <line class="d-line" x1="650" y1="264" x2="405" y2="264" marker-end="url(#arr2)"/>
+          <text class="d-s" x="527" y="260" text-anchor="middle">&lt;IP&gt;</text>
 
-          <line class="d-line" x1="100" y1="240" x2="375" y2="240" marker-end="url(#arr)"/>
-          <text class="d-s" x="237" y="236" text-anchor="middle">uEnv.txt &mdash; one line: where to ask</text>
+          <line class="d-line" x1="405" y1="292" x2="870" y2="292" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="288" text-anchor="middle">TFTP uEnv.net &mdash; the boot command</text>
+          <line class="d-line" x1="405" y1="318" x2="1075" y2="318" marker-end="url(#arr2)"/>
+          <text class="d-s" x="740" y="314" text-anchor="middle">TFTP cadr.bit &mdash; fpga loadb: the CADR into the fabric</text>
+          <line class="d-line" x1="405" y1="346" x2="870" y2="346" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="342" text-anchor="middle">TFTP the device tree</text>
+          <line class="d-line" x1="405" y1="372" x2="870" y2="372" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="368" text-anchor="middle">TFTP zImage &mdash; the kernel</text>
+          <line class="d-line" x1="405" y1="398" x2="870" y2="398" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="394" text-anchor="middle">TFTP the root filesystem image</text>
+          <text class="d-n" x="413" y="410" text-anchor="start" fill-opacity="0">.</text>
 
-          <line class="d-line" x1="405" y1="268" x2="650" y2="268" marker-end="url(#arr)"/>
-          <text class="d-s" x="527" y="264" text-anchor="middle">DHCP discover</text>
-          <line class="d-line" x1="650" y1="290" x2="405" y2="290" marker-end="url(#arr)"/>
-          <text class="d-s" x="527" y="286" text-anchor="middle">&lt;IP&gt;</text>
+          <line class="d-line" x1="405" y1="470" x2="650" y2="470" marker-end="url(#arr2)"/>
+          <text class="d-s" x="527" y="466" text-anchor="middle">DHCP, again</text>
+          <line class="d-line" x1="650" y1="492" x2="405" y2="492" marker-end="url(#arr2)"/>
+          <text class="d-s" x="527" y="488" text-anchor="middle">&lt;IP&gt;</text>
 
-          <line class="d-line" x1="405" y1="318" x2="870" y2="318" marker-end="url(#arr)"/>
-          <text class="d-s" x="637" y="314" text-anchor="middle">TFTP uEnv.net &mdash; the boot command, 3,385 bytes</text>
-          <line class="d-line" x1="405" y1="346" x2="1075" y2="346" marker-end="url(#arr)"/>
-          <text class="d-s" x="740" y="342" text-anchor="middle">TFTP cadr.bit, 4,045,764 bytes &mdash; fpga loadb: the CADR replaces Digilent's design</text>
-          <line class="d-line" x1="405" y1="374" x2="870" y2="374" marker-end="url(#arr)"/>
-          <text class="d-s" x="637" y="370" text-anchor="middle">TFTP system.dtb &mdash; the device tree, 10,472 bytes</text>
+          <text class="d-s" x="413" y="520">login, 15 s after the reset</text>
+          <text class="d-s" x="413" y="536">384 MB &mdash; 0x18000000 and up is the CADR&rsquo;s</text>
 
-          <line class="d-line" x1="100" y1="404" x2="375" y2="404" marker-end="url(#arr)"/>
-          <text class="d-s" x="237" y="400" text-anchor="middle">image.ub &mdash; kernel and root filesystem, 47.7 MB, 4 s</text>
-
-          <text class="d-n" x="413" y="428">bootm &hellip; mem=384M cma=32M</text>
-
-          <line class="d-line" x1="405" y1="484" x2="650" y2="484" marker-end="url(#arr)"/>
-          <text class="d-s" x="527" y="480" text-anchor="middle">DHCP, again</text>
-          <line class="d-line" x1="650" y1="506" x2="405" y2="506" marker-end="url(#arr)"/>
-          <text class="d-s" x="527" y="502" text-anchor="middle">&lt;IP&gt;</text>
-
-          <text class="d-s" x="413" y="546">login, 2&frac12; min after the reset</text>
-          <text class="d-s" x="413" y="562">384 MB &mdash; 0x18000000 and up is the CADR's</text>
-
-          <text class="d-s" x="637" y="392" text-anchor="middle" fill-opacity="0.62">no uEnv.net &rarr; reset and try again; the stock image is never booted</text>
-
-          <!-- time, at the left -->
-          <text class="d-n" x="10" y="84" fill-opacity="0.62">0 s</text>
-          <text class="d-n" x="10" y="244" fill-opacity="0.62">7 s</text>
-          <text class="d-n" x="10" y="294" fill-opacity="0.62">11 s</text>
-          <text class="d-n" x="10" y="408" fill-opacity="0.62">17 s</text>
-          <text class="d-n" x="10" y="550" fill-opacity="0.62">150 s</text>
+          <text class="d-n" x="10" y="82" fill-opacity="0.62">0 s</text>
+          <text class="d-n" x="10" y="218" fill-opacity="0.62">3 s</text>
+          <text class="d-n" x="10" y="268" fill-opacity="0.62">8 s</text>
+          <text class="d-n" x="10" y="402" fill-opacity="0.62">9 s</text>
+          <text class="d-n" x="10" y="524" fill-opacity="0.62">15 s</text>
         </svg>
       </div>
     </figure>
