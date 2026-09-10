@@ -1,0 +1,66 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Tell the USB PHY to drive VBUS, so that a keyboard or a mouse on the host
+# port gets power.
+#
+# MEASURED ON THE BOARD, 10 September, kernel 6.19.14: with the root hub up
+# and a keyboard plugged in, nothing enumerated; the PHY's ULPI OTG Control
+# register read 0x27; writing DrvVbus and DrvVbusExternal into it through the
+# controller's ULPI viewport made it 0x67, and within a second the keyboard
+# was `usb 1-1: new low-speed USB device number 2 using ci_hdrc`.  On this
+# board the connector's power switch is driven by the PHY (Digilent's own
+# tree told their PHY driver `drv-vbus`), and mainline has nothing that sets
+# those bits for a ULPI PHY under the ChipIdea controller: the core never
+# writes OTG Control (drivers/usb/chipidea/ --- only i.MX's usbmisc does), the
+# nop PHY's set_vbus is a regulator this board has none of, and the ULPI-bus
+# PHY drivers in tree are Qualcomm's and TI's.  Mete has USB input at the very
+# end of the project, so this is the smallest correct fix and stops here: the
+# same write the board was given by hand, done once at boot, after the root
+# hub exists (0.86 s after power-on; init starts later, but the wait costs
+# nothing).  Should it ever move into the kernel, a ULPI-bus driver for this
+# PHY setting OTG Control at probe is the shape.
+#
+# THE REGISTER.  The viewport is at 0xE0002170: the controller's operational
+# registers start at 0x140 (capability base 0x100 + CAPLENGTH 0x40) and
+# OP_ULPI_VIEWPORT is 0x30 past them (drivers/usb/chipidea/core.c); Digilent's
+# tree calls the same address `view-port = <0x0170>`.  Its layout, from
+# drivers/usb/chipidea/ulpi.c: bit 30 RUN, bit 29 WRITE, bits 23:16 the ULPI
+# register, bits 15:8 data read back, bits 7:0 data to write.  ULPI register
+# 0x0A is OTG Control and 0x0B its "set" alias; DrvVbus is bit 5 and
+# DrvVbusExternal bit 6 (include/linux/ulpi/regs.h).  0x60 sets both, as the
+# board was given; which one the switch listens to was not separated.
+
+VIEWPORT=0xE0002170
+RUN=0x40000000
+WRITE=0x20000000
+
+case "$1" in
+start)
+	n=0
+	while [ ! -d /sys/bus/usb/devices/usb1 ]; do
+		n=$((n + 1))
+		if [ $n -gt 50 ]; then
+			echo "usbvbus: no USB root hub after 5 s; VBUS left alone"
+			exit 1
+		fi
+		sleep 0.1
+	done
+	# Set OTG Control's DrvVbus | DrvVbusExternal through the viewport.
+	devmem $VIEWPORT 32 $(( RUN | WRITE | (0x0B << 16) | 0x60 ))
+	# Read OTG Control back: start a read of 0x0A, then take bits 15:8
+	# once RUN has cleared (a few hundred nanoseconds; one read later is
+	# ample).
+	devmem $VIEWPORT 32 $(( RUN | (0x0A << 16) ))
+	v=$(devmem $VIEWPORT)
+	printf 'usbvbus: OTG Control 0x%02x (DrvVbus set for the host port)\n' $(( (v >> 8) & 0xff ))
+	;;
+stop)
+	;;
+*)
+	echo "usage: $0 {start|stop}"
+	exit 1
+	;;
+esac
+exit 0
