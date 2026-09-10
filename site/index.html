@@ -320,7 +320,7 @@
          first unattended boot with the final card, 10 September 2026. -->
     <figure class="fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 600" role="img" aria-label="How the board boots, as a sequence. Four lifelines: the microSD card, the processing system, the DHCP server, and muirhost. A reset, from the SRST button or over JTAG, starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: Digilent's first-stage loader, Digilent's bitstream and U-Boot. The loader runs ps7_init and brings up DDR, loads the bitstream into the fabric, and hands to U-Boot. U-Boot reads uEnv.txt from the card, gets 192.168.80.31 from the DHCP server in under four seconds, fetches uEnv.net, the boot command, from muirhost by TFTP, then system.dtb, the device tree, then reads image.ub from the card, the kernel and root filesystem, 47.7 MB in four seconds, and boots the kernel with mem=384M and cma=32M. Linux asks the DHCP server again, gets the same address, and reaches a login about two and a half minutes after the reset, with 384 MB and the CADR's 128 MB kept from it. If the fetch of uEnv.net fails, U-Boot falls through to image.ub with Digilent's own device tree and 512 MB: the control boot.">
+        <svg viewBox="0 0 1170 600" role="img" aria-label="How the board boots, as a sequence. Four lifelines: the microSD card, the processing system, the DHCP server, and muirhost. A reset, from the SRST button or over JTAG, starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: Digilent's first-stage loader, Digilent's bitstream and U-Boot. The loader runs ps7_init and brings up DDR, loads the bitstream into the fabric, and hands to U-Boot. U-Boot reads uEnv.txt from the card, gets its address from the DHCP server in under four seconds, fetches uEnv.net, the boot command, from muirhost by TFTP, then system.dtb, the device tree, then reads image.ub from the card, the kernel and root filesystem, 47.7 MB in four seconds, and boots the kernel with mem=384M and cma=32M. Linux asks the DHCP server again, gets the same address, and reaches a login about two and a half minutes after the reset, with 384 MB and the CADR's 128 MB kept from it. If the fetch of uEnv.net fails, U-Boot falls through to image.ub with Digilent's own device tree and 512 MB: the control boot.">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -367,7 +367,7 @@
           <line class="d-line" x1="470" y1="268" x2="760" y2="268" marker-end="url(#arr)"/>
           <text class="d-s" x="615" y="264" text-anchor="middle">DHCP discover</text>
           <line class="d-line" x1="760" y1="290" x2="470" y2="290" marker-end="url(#arr)"/>
-          <text class="d-s" x="615" y="286" text-anchor="middle">192.168.80.31, reserved for the board</text>
+          <text class="d-s" x="615" y="286" text-anchor="middle">&lt;IP&gt;, reserved for the board</text>
 
           <line class="d-line" x1="470" y1="318" x2="1010" y2="318" marker-end="url(#arr)"/>
           <text class="d-s" x="740" y="314" text-anchor="middle">TFTP uEnv.net &mdash; the boot command, 2,506 bytes</text>
@@ -382,7 +382,7 @@
           <line class="d-line" x1="470" y1="484" x2="760" y2="484" marker-end="url(#arr)"/>
           <text class="d-s" x="615" y="480" text-anchor="middle">DHCP, again</text>
           <line class="d-line" x1="760" y1="506" x2="470" y2="506" marker-end="url(#arr)"/>
-          <text class="d-s" x="615" y="502" text-anchor="middle">192.168.80.31</text>
+          <text class="d-s" x="615" y="502" text-anchor="middle">&lt;IP&gt;, the same</text>
 
           <text class="d-s" x="478" y="546">login, 2&frac12; min after the reset</text>
           <text class="d-s" x="478" y="562">384 MB &mdash; 0x18000000 and up is the CADR's</text>
