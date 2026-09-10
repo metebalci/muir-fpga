@@ -369,7 +369,7 @@
 
     <figure class="fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 560" role="img" aria-label="How the board boots for development, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server, and the fabric. The reset and the two U-Boot stages come from the card as in the normal boot. U-Boot reads uEnv.txt from the card, which names a TFTP server, so it asks the DHCP server for its address, fetches uEnv.net, the boot command, from the TFTP server, then cadr.bit, which it loads into the fabric, from which moment the CADR runs, then the device tree, the kernel and the root filesystem image, and boots Linux beside the CADR. From the reset to the login prompt took fifteen seconds, measured on 10 September 2026. On any failure the loader tries again every ten seconds.">
+        <svg viewBox="0 0 1170 580" role="img" aria-label="How the board boots for development, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server, and the fabric. The reset and the two U-Boot stages come from the card as in the normal boot. U-Boot reads uEnv.txt from the card, which names a TFTP server, so it asks the DHCP server for its address, receives uEnv.net, the boot command, from the TFTP server, then cadr.bit, which it loads into the fabric, from which moment the CADR runs, then the device tree, the kernel and the root filesystem image, and boots Linux beside the CADR. From the reset to the login prompt took fifteen seconds, measured on 10 September 2026. On any failure the loader tries again every ten seconds.">
           <defs>
             <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -388,7 +388,7 @@
           <text class="d-t" x="870" y="54" text-anchor="middle">TFTP server</text>
           <rect class="d-box" x="1030" y="34" width="120" height="30"/>
           <text class="d-t" x="1090" y="54" text-anchor="middle">fabric</text>
-          <path class="d-dash" d="M100,64 L100,540 M650,64 L650,540 M870,64 L870,540 M1090,64 L1090,318"/>
+          <path class="d-dash" d="M100,64 L100,540 M650,64 L650,540 M870,64 L870,560 M1090,64 L1090,340"/>
           <!-- the PS, changing hands -->
           <rect class="d-fill" x="375" y="64" width="30" height="50"/>
           <text class="d-s" x="413" y="84">boot ROM</text>
@@ -396,13 +396,13 @@
           <rect class="d-fill" x="375" y="114" width="30" height="60"/>
           <text class="d-s" x="413" y="136">U-Boot&rsquo;s first stage (SPL)</text>
           <text class="d-s" x="413" y="152">ps7_init, DDR3 up</text>
-          <rect class="d-fill" x="375" y="174" width="30" height="240"/>
+          <rect class="d-fill" x="375" y="174" width="30" height="260"/>
           <text class="d-s" x="413" y="196">U-Boot</text>
-          <rect class="d-fill" x="375" y="414" width="30" height="126"/>
-          <text class="d-s" x="413" y="436">Linux</text>
+          <rect class="d-fill" x="375" y="434" width="30" height="126"/>
+          <text class="d-s" x="413" y="456">Linux</text>
 
-          <rect class="d-fill d-done" x="1075" y="318" width="30" height="222"/>
-          <text class="d-s" x="1090" y="430" text-anchor="middle" transform="rotate(-90 1090 430)">the CADR, running out of DDR3</text>
+          <rect class="d-fill d-done" x="1075" y="340" width="30" height="220"/>
+          <text class="d-s" x="1090" y="450" text-anchor="middle" transform="rotate(-90 1090 450)">the CADR, running out of DDR3</text>
 
           <line class="d-line" x1="200" y1="78" x2="375" y2="78" marker-end="url(#arr2)"/>
           <text class="d-s" x="287" y="74" text-anchor="middle">reset, or rst -srst over JTAG</text>
@@ -419,30 +419,32 @@
           <line class="d-line" x1="650" y1="264" x2="405" y2="264" marker-end="url(#arr2)"/>
           <text class="d-s" x="527" y="260" text-anchor="middle">&lt;IP&gt;</text>
 
-          <line class="d-line" x1="405" y1="292" x2="870" y2="292" marker-end="url(#arr2)"/>
-          <text class="d-s" x="637" y="288" text-anchor="middle">TFTP uEnv.net &mdash; the boot command</text>
-          <line class="d-line" x1="405" y1="318" x2="1075" y2="318" marker-end="url(#arr2)"/>
-          <text class="d-s" x="740" y="314" text-anchor="middle">TFTP cadr.bit &mdash; fpga loadb: the CADR into the fabric</text>
-          <line class="d-line" x1="405" y1="346" x2="870" y2="346" marker-end="url(#arr2)"/>
-          <text class="d-s" x="637" y="342" text-anchor="middle">TFTP the device tree</text>
-          <line class="d-line" x1="405" y1="372" x2="870" y2="372" marker-end="url(#arr2)"/>
-          <text class="d-s" x="637" y="368" text-anchor="middle">TFTP zImage &mdash; the kernel</text>
-          <line class="d-line" x1="405" y1="398" x2="870" y2="398" marker-end="url(#arr2)"/>
-          <text class="d-s" x="637" y="394" text-anchor="middle">TFTP the root filesystem image</text>
+          <line class="d-line" x1="870" y1="292" x2="405" y2="292" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="288" text-anchor="middle">TFTP: uEnv.net &mdash; the boot command</text>
+          <line class="d-line" x1="870" y1="318" x2="405" y2="318" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="314" text-anchor="middle">TFTP: cadr.bit &mdash; the CADR&rsquo;s bitstream</text>
+          <line class="d-line" x1="405" y1="340" x2="1075" y2="340" marker-end="url(#arr2)"/>
+          <text class="d-s" x="740" y="336" text-anchor="middle">fpga loadb: the CADR into the fabric</text>
+          <line class="d-line" x1="870" y1="366" x2="405" y2="366" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="362" text-anchor="middle">TFTP: the device tree</text>
+          <line class="d-line" x1="870" y1="392" x2="405" y2="392" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="388" text-anchor="middle">TFTP: zImage &mdash; the kernel</text>
+          <line class="d-line" x1="870" y1="418" x2="405" y2="418" marker-end="url(#arr2)"/>
+          <text class="d-s" x="637" y="414" text-anchor="middle">TFTP: the root filesystem image</text>
 
-          <line class="d-line" x1="405" y1="470" x2="650" y2="470" marker-end="url(#arr2)"/>
-          <text class="d-s" x="527" y="466" text-anchor="middle">DHCP, again</text>
-          <line class="d-line" x1="650" y1="492" x2="405" y2="492" marker-end="url(#arr2)"/>
-          <text class="d-s" x="527" y="488" text-anchor="middle">&lt;IP&gt;</text>
+          <line class="d-line" x1="405" y1="490" x2="650" y2="490" marker-end="url(#arr2)"/>
+          <text class="d-s" x="527" y="486" text-anchor="middle">DHCP, again</text>
+          <line class="d-line" x1="650" y1="512" x2="405" y2="512" marker-end="url(#arr2)"/>
+          <text class="d-s" x="527" y="508" text-anchor="middle">&lt;IP&gt;</text>
 
-          <text class="d-s" x="413" y="520">login, 15 s after the reset</text>
-          <text class="d-s" x="413" y="536">384 MB &mdash; 0x18000000 and up is the CADR&rsquo;s</text>
+          <text class="d-s" x="413" y="540">login, 15 s after the reset</text>
+          <text class="d-s" x="413" y="556">384 MB &mdash; 0x18000000 and up is the CADR&rsquo;s</text>
 
           <text class="d-n" x="10" y="82" fill-opacity="0.62">0 s</text>
           <text class="d-n" x="10" y="218" fill-opacity="0.62">3 s</text>
           <text class="d-n" x="10" y="268" fill-opacity="0.62">8 s</text>
-          <text class="d-n" x="10" y="402" fill-opacity="0.62">9 s</text>
-          <text class="d-n" x="10" y="524" fill-opacity="0.62">15 s</text>
+          <text class="d-n" x="10" y="422" fill-opacity="0.62">9 s</text>
+          <text class="d-n" x="10" y="544" fill-opacity="0.62">15 s</text>
         </svg>
       </div>
     </figure>
