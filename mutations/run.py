@@ -379,6 +379,18 @@ CHECKS = {
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": None,
     },
+    # The default slave on `M_AXI_GP0`, held to the one property it has: every
+    # transaction on the port completes.  A read nothing answers hangs both
+    # Arm cores --- measured on the board --- so the board that brings GP0 out
+    # without the pack side answers with this; `arty` holds that it is wired,
+    # and this holds that it answers.
+    "gp0_default": {
+        "sources": ["rtl/cadr_gp0_default.sv"],
+        "top": "cadr_gp0_default",
+        "tb": "tb/cadr_gp0_default_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
     # and `busint_xbus` writes the stimulus AND the expected outputs, so a
@@ -814,14 +826,16 @@ def arty_check(args, work):
         # And the two the witness builds, which are branches only they
         # reach: nothing else elaborates `cadr_prove.sv` at all, and neither
         # of them elaborates the machine's own drive of the port.
+        # A proving board brings GP0 out without the pack side, and answers
+        # every address on it with the default slave.
         (["-GPROVE=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
           "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
-          "rtl/cadr_prove.sv"]),
+          "rtl/cadr_prove.sv", "rtl/cadr_gp0_default.sv"]),
         (["-GPROVE=2"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
           "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
-          "rtl/cadr_prove.sv"]),
+          "rtl/cadr_prove.sv", "rtl/cadr_gp0_default.sv"]),
     ]
     ran = 0
     for generics, stubs, extra_sources in boards:

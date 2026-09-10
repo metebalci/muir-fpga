@@ -255,12 +255,12 @@ a miss nor half old and half new. Held by `tb/cadr_disk_pack_tb.cpp`, which
 STARTs a Read as a fetch begins and asks for a fetch in the middle of a
 42,946-shift `Ecc::trap`.
 
-**Fetching on demand is deliberately not built.** With the store a window
-Linux fills, a block the walk asks for and was not given stops the transfer,
-as it always did; the pack side reads `store_miss` back so a driver can see
-it. Making the walk wait for Linux instead would put the wait inside a
-transfer whose time the trace compares, and has no reference. It is the
-next thing the disk needs and the first thing a driver will ask for.
+**~~Fetching on demand is deliberately not built.~~ Built, at the request
+path's slice: see "The request path, built" below.** What stood here was
+the decision the Linux program's author then found wanting --- a block the
+walk asked for and was not given stopped the transfer, and nothing on GP0
+said which block. The wait does sit inside a transfer whose time the trace
+compares, and the trace never sees one, for the reason given there.
 
 **The register store is held one tick, and the timers it loads are loaded
 one tick short.** Found by the first fit with the drive present: the decision
@@ -400,9 +400,11 @@ the wrong header, the checkword table ignored, an unaligned fetch address,
 the poison test off by one --- are each caught on the property they break.
 The scratch goes under `~/.cache/muir-fpga-pack-feeder`.
 
-**What the register face does not carry, and what the feeder therefore
-does today.** Nothing on `M_AXI_GP0` says **which block the CADR asked
-for**. The controller's walk looks a slot up by tag and, missing, stops
+**~~What the register face does not carry~~, and what the feeder therefore
+did at `388d03b`.** Written before the request path; the face carries all
+three things now (REQ, DIRTY and `IRQ_F2P`, below), and the paragraph
+stands as the record of why. Nothing on `M_AXI_GP0` said **which block the
+CADR asked for**. The controller's walk looks a slot up by tag and, missing, stops
 the transfer and raises `store_miss` --- one sticky bit, read back in CTL
 (`cadr_disk_pack.sv`, the status word; `cadr_disk_controller.sv` at
 `store_miss`, whose own comment says "fetching on demand ... is not
@@ -452,3 +454,170 @@ answers on GP0 (the wrong bitstream); `no pack side ... register 7 reads
 0x...` means something does and it is not this face. `pack.img` is the name
 the card image already reserves; `PACK=<file> linux/mksd-buildroot.sh` puts
 one there.
+
+## The request path, built
+
+Written at the slice after the feeder, which found the face wanting: the
+store is a cache Linux keeps, and the controller now says what it lacks.
+`rtl/cadr_disk_controller.sv` (the request register, the wait, the
+prefetch, the events) and `rtl/cadr_disk_pack.sv` (the registers Linux
+reads and the interrupt) have the reasoning at each line; this is the
+register map as built, what the checks hold, and what the Linux program
+has to change.
+
+**The register map**, sixteen words at `0x4000_0000` on `M_AXI_GP0`, in
+`rtl/cadr_disk_pack.sv`'s header (lines 87--147 at this slice) and its
+read mux (`r_word`):
+
+    0  ADDR    the block's address in DDR; bits 6:0 zero                   (unchanged)
+    1  TAG     {unit<2:0>, cylinder<11:0>, head<7:0>, block<7:0>}, bits 30:0
+               --- the unit is NEW; bit 31 reads zero and is ignored
+    2  SLOT    which of the 24 slots                                        (unchanged)
+    3  CTL     written: bit 0 fetch, bit 1 write back, bit 2 take away,
+                        exactly one of the three; bit 3 DENY the request
+                        REQ holds --- NEW, independent of bits 2:0, never
+                        refused
+               read:    bit 0 busy, 1 done, 2 error, 3 refused,
+                        4 ch_active, 5 store_miss (now: a denied request or
+                        a track command's absent sector), 6 WAITING --- NEW,
+                        the walk is stopped for want of REQ's block
+    4  DRIVE   bits 7:0 present, 15:8 read-only, 16 timed                    (unchanged)
+    5  REQ     NEW, read only: bit 31 valid, bits 30:0 the disk address the
+               controller lacks in TAG's layout, so REQ & 0x7fffffff is the
+               TAG to write.  Valid falls when a slot's tag becomes that
+               address (any slot), on a deny, and when the channel stops
+    6  DIRTY   NEW, read only: bit s up when a transfer has written slot s
+               since Linux last fetched into it, wrote it back or took it
+               away
+    7  IDENT   "PACK"                                                        (unchanged)
+    8  REF     NEW: bit s up when the walk has taken slot s for a block since
+               the bit was last cleared or the slot last fetched into.
+               Written: a 1 clears the bit, a 0 leaves it
+    9  IRQ     NEW: bit 0 a request was posted, bit 1 a slot became dirty,
+               bit 2 a move finished (busy fell).  Written: a 1 clears the
+               bit.  `IRQ_F2P` bit 0 is the OR of these under IRQEN
+   10  IRQEN   NEW: the mask, bits 2:0, read and written; zero at reset
+
+Every other word in the sixteen reads zero and ignores writes; every
+address outside them is answered SLVERR, as before.
+
+**The refusal changed shape.** `refused` with `ch_active` used to mean "the
+channel is walking, ask again"; it now means "the channel is walking **on
+the slot you named**, and is not waiting" (`bad_ch_q` in
+`cadr_disk_pack.sv`). A move on any other slot is taken during a walk,
+which is what lets a prefetch land while the current block moves; and
+while the walk waits (`CTL` bit 6) every slot may be moved, including the
+one `ch_slot` still names. The controller's half of the interlock is a
+second look at its slot before a data word moves (`slot_ok_q` at
+`C_HDRCK`): a move that began on the slot in the tick before the walk chose
+it is over before the walk touches it, and the walk looks the block up
+again.
+
+**The protocol, as a program runs it.** Enable `IRQEN` (or poll). On the
+interrupt, read `IRQ`; for bit 0 read `REQ`, and if valid choose a slot ---
+never one with `REF` set unless every slot has it (clear the bits you pass:
+second chance), never the slot the walk is on (`ch_active` up and `waiting`
+down: the refusal tells you), writing a dirty one back first --- then
+`ADDR`, `TAG = REQ & 0x7fffffff`, `SLOT`, `CTL = fetch`, and the wait ends
+by itself when the tag lands; or `CTL = deny` if the block is not on the
+pack, and the CADR sees the transfer stop as it did before. For bit 1 read
+`DIRTY` and write the slots back at leisure (a slot written twice raises the
+event once). Clear `IRQ` by writing the bits back. `REQ` valid and
+`waiting` are readable without the interrupt.
+
+**What the trace holds.** `disk.pass` fills every block before the START
+that needs it --- a Linux of no latency --- and asserts that REQ is never
+valid and the interrupt never up on any tick of the run: measured against
+`build/disk.golden` with a Python model of the request path first
+(`~/.cache/muir-fpga-reqpath/reqmodel.py` at the slice, thrown away), 19
+transfers, 33 lookups and 15 prefetch lookups, all hits, so the trace could
+be exact by construction. Every residue is what it was: block counter
+exempt on 136 rows and compared on 81, 29 rows one way round, 15 shared
+groups, 43 STARTs off their instant, 1 turn; `machine.pass` byte-identical.
+The prefetch state costs four ticks a chained block --- 48 more ticks of
+walking over the run's 19 transfers, on the fabric's side of a comparison
+made at quiescence.
+
+**What the property run holds** (`disk_pack.pass`). A Read of a block the
+store lacks on a drive whose time is charged, with Linux 4,000,000 ticks
+behind the START --- longer than any access time on the heads' cylinder,
+3,527,024 ticks at most: sampled 80 times during the wait, BUSY up,
+not-active and the interrupt request down, `waiting` up, REQ the block, the
+page still poison, nothing dirty, no miss; then the block fetched, the
+transfer complete, the page compared, not-active at once (the access time
+long past), and the transfer ending **2,589 ticks after REQ fell against an
+unstalled walk of 2,595** --- derived as `walk - 4 - lat` (the stalled walk
+made its command-list fetch before the wait; `lat` is the testbench's
+channel latency, 2 there) and allowed 4. The slot the walk stood on for the
+four million ticks is written back afterwards and compared. A Write that
+waits dirties nothing until its block has arrived, and what is written
+back is the page. The next block of a chained list is asked for while the
+first block's page is still poison. Two units with one cylinder, head and
+block are two blocks. DIRTY, REF and the three events are read back
+exactly. A denial ends a wait with `store_miss` and the page untouched.
+Every address on GP0 is answered.
+
+**The interrupt.** `IRQ_F2P` bit 0, brought out of `rtl/cadr_ps7.sv` by
+`vivado/gen_ps7.py` (the other nineteen tied low in `rtl/cadr_arty.sv`).
+Digilent's configuration already has `PCW_USE_FABRIC_INTERRUPT 1`,
+`PCW_IRQ_F2P_INTR 1` and `PCW_IRQ_F2P_MODE DIRECT` (`vivado/ps7_config.tcl`
+lines 253--254, 628), so `ps7_init` does not change: `make current` compares
+the routine and says so. Bit 0 of `IRQ_F2P` is shared peripheral interrupt
+61 on the GIC (UG585 Table 7-4), which a device tree names `<0 29 4>`.
+
+**GP0 is answered on every board that has it.** A read nothing answers on
+GP0 does not fault the Arm; it hangs both cores at one PC each (measured on
+the board, the feeder reading IDENT on a bitstream without the pack side).
+So: with `DDR=1` the pack side completes every transaction --- the sixteen
+words, SLVERR outside them, anywhere in the port's gigabyte; the two
+proving boards (`PROVE=1`, `PROVE=2`), which bring GP0 out without the pack
+side, carry `rtl/cadr_gp0_default.sv`, which completes every read with
+OKAY and `0x4E4F4E45` ("NONE") and every write with OKAY, dropped, so that
+the feeder's own IDENT check says "not this face" instead of freezing the
+processor; `gp0_default.pass` holds that it answers, the arty lint that it
+is wired. **The default board (`DDR=0`) has no `PS7` in it and cannot
+answer**: a program that touches `0x4000_0000` on that bitstream hangs the
+processor whatever the fabric does. The one guard a program has before its
+first GP0 read is the EMIO tally at `0xE000A068`/`6C`, which reads all ones
+on that board and carries its marker bits on the others. A SLVERR on a
+Cortex-A9 *write* is a posted write's error and arrives as an imprecise
+abort the kernel cannot attribute; the pack side's out-of-window SLVERR is
+the decision recorded above and stands, but a program should not write
+outside the sixteen words.
+
+**What the Linux program (`linux/buildroot/package/cadr-tools/src`) must
+change**, for its author --- nothing there is edited by this slice:
+
+1. `pack_side.h`: `ps_tag(c, h, b)` gains the unit in bits 30:28
+   (`(unit & 7) << 28 | ...`); a tag for unit 0 is unchanged, so every
+   existing call is right for unit 0 and wrong for any other.
+2. `pack_side.h`: new registers `PS_REQ = 5`, `PS_DIRTY = 6`, `PS_REF = 8`,
+   `PS_IRQ = 9`, `PS_IRQEN = 10`; new bits `PS_CTL_DENY = 1 << 3`,
+   `PS_ST_WAITING = 1 << 6`, `PS_REQ_VALID = 1u << 31`; the IRQ bits
+   `PS_IRQ_REQ`, `PS_IRQ_DIRTY`, `PS_IRQ_DONE` (bits 0, 1, 2).
+3. `pack_side.c`, `ps_request`: the retry on `PS_ST_REFUSED | PS_ST_CH_ACTIVE`
+   still works, but the refusal now means the slot named is the walk's
+   own; the fix is to choose another slot rather than to wait, and a
+   refusal while `PS_ST_WAITING` is up cannot come from the channel at all.
+   `PS_ST_STORE_MISS` no longer means "the store lacked a block": it means
+   a denial (or a track command's absent sector).
+4. The feeder: serve on demand. Read `REQ` on the interrupt (or by polling
+   `REQ` valid / `CTL` waiting); the disk address is bits 30:0 and the
+   `lba` is `pack_file`'s from cylinder, head and block; unit is bits
+   30:28 and selects the pack (one pack today: deny anything on another
+   unit). Fetch into a slot chosen by second chance over `REF`, writing a
+   dirty slot back first; or `CTL = PS_CTL_DENY` when the block is off the
+   pack. Stop leaving the drive absent: `ps_drive(present = 1 << unit,
+   ...)` once the pack is open and the request path is being served.
+5. Write-backs: read `DIRTY` on the dirty event and write those slots back;
+   a slot must be written back before it is fetched into or taken away, or
+   the CADR's write is lost. The write-back and take-away paths are
+   unchanged.
+6. Optional: `IRQEN = 7` and a driver on GIC interrupt 61 (device tree
+   `interrupts = <0 29 4>`) instead of polling; polling `REQ`, `DIRTY` and
+   `CTL` works with `IRQEN = 0`.
+7. `feeder_test.c`'s model of the face: the tag width and the new
+   registers, the refusal per slot, `store_miss` on denial only.
+8. Before the first GP0 access, check the EMIO tally's marker bits (a
+   bitstream with the PS7 in it) --- a `DDR=0` bitstream hangs the processor
+   on the first read and nothing in software can catch it afterwards.

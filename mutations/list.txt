@@ -4082,34 +4082,73 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note write-back out of it would move words under the walk.  Refusing only
 @note when the pack side is itself busy leaves the walk unprotected.  The
 @note property check STARTs a Read of a block whose data checkword fails ---
-@note `Ecc::trap`'s 42,946 shifts of walking --- and asks for a fetch in the
-@note middle: caught at "refused, a request while the channel walks".
+@note `Ecc::trap`'s 42,946 shifts of walking --- and asks for a fetch into
+@note the walk's own slot in the middle: caught at "refused, a request on
+@note the walk's own slot".  (The interlock became per slot at the request
+@note path's slice; the record's question is unchanged.)
 @old
-  assign bad_ch    = ch_active_q;
+    bad_ch_q    <= ch_active_q && !ch_waiting_q && (r_slot == ch_slot_q);
 @new
-  assign bad_ch    = ch_active_q && busy;
+    bad_ch_q    <= ch_active_q && !ch_waiting_q && (r_slot == ch_slot_q) && busy;
 @end
 
-@mutation disk-walks-while-the-pack-side-moves
+@mutation pack-refuses-every-slot-during-a-walk
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note The interlock is per slot: a move on the slot the walk is on is
+@note refused and a move on any other is taken, because a cache that can
+@note only be filled while the CADR is idle is not a cache and a prefetch
+@note that cannot land during the walk buys nothing.  Compared the wrong way
+@note round --- refusing every slot but the walk's --- the fetch into the
+@note walk's own slot is TAKEN, which is the hazard, and the one beside it
+@note refused.  The property check asks for the fetch beside the walk first,
+@note so this is caught at "refused, a request on another slot during a
+@note walk", where `pack-honours-no-interlock` --- which refuses nothing
+@note while the pack side is idle --- is caught on the walk's own slot.
+@old
+    bad_ch_q    <= ch_active_q && !ch_waiting_q && (r_slot == ch_slot_q);
+@new
+    bad_ch_q    <= ch_active_q && !ch_waiting_q && (r_slot != ch_slot_q);
+@end
+
+@mutation pack-refuses-during-a-wait
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note While the walk waits for a block it is on no slot, whatever `ch_slot`
+@note still names --- the slot of the block it last moved --- and a move on
+@note that slot must be taken: a Linux that chose it for the block the walk
+@note is waiting for would otherwise be refused for ever, the walk waiting
+@note on Linux and Linux on the walk.  The property check fills the block a
+@note waiting Write wants into exactly that slot.  Caught at "a fetch was
+@note refused" in "a Write that waits writes nothing early" and, the fill
+@note never having happened, the walk at the cap.
+@old
+    bad_ch_q    <= ch_active_q && !ch_waiting_q && (r_slot == ch_slot_q);
+@new
+    bad_ch_q    <= ch_active_q && (r_slot == ch_slot_q);
+@end
+
+@mutation disk-walks-onto-a-slot-a-move-is-on
 @check disk_pack
 @file rtl/cadr_disk_controller.sv
-@note The interlock is mutual.  The pack side refuses a request while the
-@note channel is walking, and reads `ch_active` through a register, which is
-@note a tick behind; the controller announces a START two ticks ahead and,
-@note for the tick that still leaves, defers its first command-list fetch
-@note while `store_busy` says a block is moving through the seam.  Deferring
-@note only from the second CCW on leaves the first fetch, and so the walk's
-@note first slot lookup, running under a fill --- the slot has been taken
-@note away and its tag is not yet in, so the walk misses where it should
-@note have waited --- and, having missed, ends some hundreds of ticks before
-@note the fill does.  Caught at "the walk ended before the fill it met", the
-@note first of the three lines that case checks; "a walk that met a fill
-@note missed instead of waiting" is the second.  Written with `store_busy`
-@note still read, so lint has nothing to say.
+@note The interlock is mutual and per slot.  The pack side refuses a move on
+@note the slot the walk is on and reads that slot through a register, a tick
+@note behind; so a move that began on a slot in the tick before the walk
+@note chose it was accepted, and the controller's half is to ask, before a
+@note data word moves, whether its slot is still valid and no move is on it
+@note (`slot_ok_q`), and look the block up again if not.  Compared the wrong
+@note way round --- a move on any OTHER slot sends the walk back, a move on
+@note its own does not --- a Write STARTed as a write-back of its own slot
+@note begins writes the slot under the write-back, and the record written
+@note back is half the old block and half the new page.  Caught at "a word
+@note of the record written back under a Write that met it".  `store_busy`
+@note and `store_busy_slot` stay read, so lint has nothing to say.  (This
+@note replaces `disk-walks-while-the-pack-side-moves`, whose deferral of the
+@note first command-list fetch the per-slot interlock made unnecessary.)
 @old
-          if (!ch_req_r && !store_busy) begin
+    slot_ok_q   <= s_valid[ch_slot] && !(store_busy && (store_busy_slot == ch_slot));
 @new
-          if (!ch_req_r && (!store_busy || ch_n == 16'd0)) begin
+    slot_ok_q   <= s_valid[ch_slot] && !(store_busy && (store_busy_slot != ch_slot));
 @end
 
 @mutation pack-ignores-a-refused-read-burst
@@ -4183,7 +4222,385 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note lint pass: the same shape as `the-word-at-the-xbus-seam-reaches-no-pin`,
 @note one seam along.
 @old
-                   mem_req, mem_write, store_miss, ch_active};
+                   mem_req, mem_write, store_miss, ch_active,
 @new
-                   mem_req, mem_write, store_miss};
+                   mem_req, mem_write, store_miss,
+@end
+
+@mutation the-request-path-reaches-no-pin
+@check arty
+@file rtl/cadr_arty.sv
+@note The request path's seven outputs left the machine with the pack side's
+@note slice, and on the default board the `witness` fold is the only thing
+@note that reads them.  The two pulses left out of the fold are outputs of
+@note `cadr_machine` nothing reads: UNUSEDSIGNAL on the first lint pass, the
+@note shape of the record above.  One pulse dropped, so that the fold still
+@note parses: a build failure is not lint doing the catching either.
+@old
+                   ch_wrote, ch_hit};
+@new
+                   ch_wrote};
+@end
+
+@mutation the-interrupt-reaches-no-pin
+@check arty
+@file rtl/cadr_arty.sv
+@note `IRQ_F2P` is the one pin the pack side's interrupt has, and the PS7's
+@note twenty lines are an input the wrapper names because an unconnected
+@note PS7 input produces no warning of any kind.  Tied low here, the pack
+@note side's `irq` is a wire nothing reads inside `g_pack`: UNUSEDSIGNAL on
+@note the `DDR=1` lint pass, the only pass that elaborates it.
+@old
+        .irqf2p({19'b0, pack_irq})
+@new
+        .irqf2p(20'b0)
+@end
+
+@mutation the-proving-board-answers-nothing-on-gp0
+@check arty
+@file rtl/cadr_arty.sv
+@note A read nothing answers on `M_AXI_GP0` hangs both Arm cores, measured
+@note on the board with the pack feeder reading the register face on a
+@note bitstream without the pack side.  The two proving boards bring GP0 out
+@note without the pack side and answer it with `rtl/cadr_gp0_default.sv`;
+@note that module's own check holds that it answers, and what lint can hold
+@note is that it is wired: its read-address valid left unconnected is a
+@note PINMISSING on the `PROVE=1` pass, the first that elaborates it.
+@old
+          .s_arlen(gp0_arlen), .s_arid(gp0_arid), .s_arvalid(gp0_arvalid),
+@new
+          .s_arlen(gp0_arlen), .s_arid(gp0_arid),
+@end
+
+# ----------------------------------------------------------------------------
+# THE REQUEST PATH.  Twenty-four slots against 263,245 blocks cannot be
+# pre-filled, so the walk that lacks a block posts its disk address, raises
+# an interrupt and WAITS, and Linux fills a slot or denies it.  What follows
+# holds each half of that: that the walk waits rather than missing, that it
+# asks for the right block and stops asking when it arrives, that no status
+# word lies while it waits, that it resumes within a stated number of ticks
+# of the tag landing, that nothing moves while it waits, that the next block
+# is asked for before the current one moves, that the unit is part of the
+# tag, that the bookkeeping Linux reads is right, and that the interrupt
+# follows its mask.  Every record is caught on its own line, named in its
+# note.  The trace check holds the other half of the same design: with every
+# block fetched before the START that needs it, no request is ever posted,
+# and `disk-prefetch-asks-for-a-block-it-has` is the record that shows the
+# trace sees that.
+
+@mutation disk-misses-instead-of-waiting
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note The wait: a walk whose block the store lacks stands in `C_LOOK` until
+@note a tag says the block has arrived.  Taking the miss on the first tick
+@note instead --- the behaviour the store had before the request path --- is
+@note today's bug: the transfer stops, the page stays poison, and Linux is
+@note never asked.  Caught at "a walk that met a fill missed instead of
+@note waiting", the first walk in the run whose block is not yet there.
+@old
+          end else if (store_deny) begin
+@new
+          end else if (store_deny || !waiting) begin
+@end
+
+@mutation disk-asks-for-the-wrong-block
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note REQ is the disk address the walk lacks, in the tag's own layout, and
+@note Linux fetches exactly that.  One block along, Linux is sent for the
+@note wrong block, and the tag that arrives never matches the request, so it
+@note stands.  Caught at "REQ still valid after the fill answered it" in "a
+@note walk that meets a fill", before any read of REQ compares the address
+@note itself ("REQ during the wait" would, one phase later).
+@old
+      req_tag   <= want_tag_q;
+@new
+      req_tag   <= want_tag_q ^ 31'd1;
+@end
+
+@mutation disk-request-never-clears
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note REQ falls when a slot's tag becomes the block asked for, so that Linux
+@note reading it after a fill sees nothing owed.  Cleared only on a denial,
+@note a served request stands for ever and the next interrupt is a lie.
+@note Written so that every term stays read.  Caught at "REQ still valid
+@note after the fill answered it".
+@old
+      if (store_deny || (tag_write_q && tag_match_q)) req_valid <= 1'b0;
+@new
+      if (store_deny && (tag_write_q || tag_match_q)) req_valid <= 1'b0;
+@end
+
+@mutation disk-not-active-while-waiting
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note "0 means the controller is busy, 1 means it is ready to accept a
+@note command", and a walk standing for its block is busy: a driver polling
+@note `<0>` during the wait must see it down, or it starts the next transfer
+@note into one that has not finished.  Reporting not-active during the wait
+@note is caught at "not-active during the wait for a block", the first
+@note status read the property check makes while a walk waits.
+@old
+  assign not_active = busy_zero_q && !ch_busy;
+@new
+  assign not_active = busy_zero_q && (!ch_busy || waiting);
+@end
+
+@mutation disk-resumes-late-from-a-wait
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note The stall is bounded: after the tag lands the walk resumes within the
+@note lookup's three ticks and ends `4 + lat` ticks sooner than a fresh walk
+@note would, having made its command-list fetch before the wait; the check
+@note allows four ticks over the unstalled walk.  Resuming twelve ticks
+@note late --- `ch_i`, which `C_LOOK` otherwise zeroes, counting them ---
+@note is caught at "ticks from the tag landing to the transfer's end".
+@note **THE MAGNITUDE WAS SWEPT**: a resumption N ticks late makes the tail
+@note `walk_ref - 4 - lat + N`, so it survives while N is at most 8 + lat;
+@note eight late survived (measured, lat 2), twelve is caught, and twelve is
+@note the record because a live mutant at the smallest caught magnitude is
+@note worth more than a larger one.  The check is blind to a resumption late
+@note by up to ten ticks, which is the allowance plus the two walks' own
+@note variation and is said here rather than hidden.
+@old
+          if (slot_hit) begin
+            waiting  <= 1'b0;
+            ch_slot  <= slot_of;
+            ch_state <= C_HDRC;
+          end else if (store_deny) begin
+@new
+          if (slot_hit && (!waiting || ch_i == 9'd11)) begin
+            waiting  <= 1'b0;
+            ch_slot  <= slot_of;
+            ch_state <= C_HDRC;
+          end else if (slot_hit) begin
+            ch_i <= ch_i + 9'd1;
+          end else if (store_deny) begin
+@end
+
+@mutation disk-writes-the-store-while-waiting
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note Nothing moves while the walk waits.  A walk that writes the store
+@note during its wait --- here word zero of the slot it last stood on, with
+@note whatever `blk_w` holds --- leaves a block on the pack side wrong for
+@note Linux to write back.  The property check writes back the slot the walk
+@note stood on for four million ticks and compares it: caught at "a word of
+@note the slot the walk stood on during the stall".
+@old
+  assign chb_we = ((ch_state == C_MOVE) && !ch_read && (ch_ph == 3'd2))
+                || ps_wr;
+@new
+  assign chb_we = ((ch_state == C_MOVE) && !ch_read && (ch_ph == 3'd2))
+                || ps_wr || waiting;
+@end
+
+@mutation disk-prefetch-not-posted
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note The next block is asked for as the current one begins to move, so
+@note that Linux has the current block's 256 bus cycles to answer.  With the
+@note prefetch state never entered the next block is asked for only when
+@note the walk reaches it and misses: a request still, but late.  Caught at
+@note "the first block had begun to move when the next was asked for".
+@old
+            ch_state <= (ch_more && !nb_off_pack) ? C_PF
+@new
+            ch_state <= (ch_more && nb_off_pack) ? C_PF
+@end
+
+@mutation disk-prefetch-asks-for-a-block-it-has
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note The trace's half of the request path: every block a transfer needs is
+@note fetched before the START that needs it, so no request is ever posted
+@note and every row stays where it was.  A prefetch that asks for the next
+@note block when the store HOLDS it posts on twelve of the trace's chained
+@note blocks, and the trace testbench, which counts REQ valid on every tick,
+@note says so: "the request path spoke during the trace".  Aimed at the
+@note trace because that is the check whose claim it is.
+@old
+               || ((ch_state == C_PF) && (pf_n == 2'd3) && !slot_hit
+@new
+               || ((ch_state == C_PF) && (pf_n == 2'd3) && slot_hit
+@end
+
+@mutation disk-forgets-the-unit-in-the-tag
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note "Many bits in these registers refer to the 'selected unit'", and the
+@note unit is in the tag so that one cylinder, head and block on two drives
+@note are two blocks.  Matching the other twenty-eight bits alone, either
+@note drive's slot answers for both and a Read from one unit gets the
+@note other's block.  Caught in "two units" at "a Read from unit 1: page c4
+@note word 0" or "unit 0", whichever slot the encoder prefers.
+@old
+      hit_q[k] <= s_valid[k] && (s_tag[k] == want_tag_q);
+@new
+      hit_q[k] <= s_valid[k] && ((s_tag[k] == want_tag_q) || (s_tag[k][27:0] == want_tag_q[27:0]));
+@end
+
+@mutation pack-deny-not-honoured
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note A denial ends the wait the other way: Linux cannot serve the block, and
+@note the walk takes the miss it used to take at once, so that a CADR
+@note asking for a block that is not on the pack does not wait for ever.
+@note Ignored, the walk in "a request denied" waits to the cap: caught at
+@note "[a request denied]: the channel was still walking at the cap".
+@old
+          end else if (store_deny) begin
+            waiting    <= 1'b0;
+@new
+          end else if (store_deny && slot_hit) begin
+            waiting    <= 1'b0;
+@end
+
+@mutation pack-dirty-not-set-by-a-write
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note DIRTY is what tells Linux a slot's block is on the pack only once it is
+@note written back.  Never set, a Write's page is lost the moment Linux
+@note takes the slot for another block.  Caught at "DIRTY after the Write
+@note that waited", the first Write whose slot is read back through DIRTY.
+@old
+      if (ch_wrote) begin
+        if (!dirty[ch_slot]) irq_q[1] <= 1'b1;
+@new
+      if (ch_wrote && ch_hit) begin
+        if (!dirty[ch_slot]) irq_q[1] <= 1'b1;
+@end
+
+@mutation pack-dirty-not-cleared-by-a-move
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note A fetch into a slot, a write-back of it or a take-away leaves nothing
+@note in it that Linux does not hold, so the bit clears at the go.  Left
+@note standing, Linux writes back for ever.  Caught at "DIRTY after the
+@note write-back".
+@old
+        dirty[r_slot] <= 1'b0;
+@new
+        dirty[r_slot] <= dirty[r_slot];
+@end
+
+@mutation pack-ref-not-set-by-a-hit
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note REF is what a replacement rule needs and cannot see from outside: the
+@note walk taking a slot for a block makes no bus cycle Linux can watch.
+@note Never set, second chance evicts the block the CADR reads every time.
+@note Caught at "REF after one Read".
+@old
+      if (ch_hit) ref_bits[ch_slot] <= 1'b1;
+@new
+      if (ch_hit && ch_wrote) ref_bits[ch_slot] <= 1'b1;
+@end
+
+@mutation pack-request-event-not-raised
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note IRQ's bit 0 is the posting of a request, and it is what wakes a program
+@note that does not poll.  Raised only on a denial --- never --- caught at
+@note "IRQ's request bit during the wait".
+@old
+      if (req_post) irq_q[0] <= 1'b1;
+@new
+      if (req_post && deny) irq_q[0] <= 1'b1;
+@end
+
+@mutation pack-interrupt-ignores-the-mask
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note `IRQ_F2P` is the OR of the events under IRQEN, which comes up zero so
+@note that a program which has not asked for the interrupt does not get
+@note one.  Ored with the mask instead of masked by it, the line is up with
+@note the mask clear: caught at "the interrupt line was up with IRQEN zero".
+@old
+      irq_r <= |(irq_q & irqen);
+@new
+      irq_r <= |(irq_q | irqen);
+@end
+
+@mutation pack-answers-only-its-window
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note Every address on GP0 is answered, in the window or out of it: a read
+@note nothing answers hangs both Arm cores, measured on the board.  A slave
+@note that takes a read address only inside its sixteen words leaves a read
+@note anywhere else without ARREADY for ever.  Caught at "a register read
+@note did not complete", the master's own guard, on the first read past the
+@note window.
+@old
+  assign s_arready = (rst_r == R_ADDR);
+@new
+  assign s_arready = (rst_r == R_ADDR) && (s_araddr[31:6] == REG_BASE[31:6]);
+@end
+
+# ----------------------------------------------------------------------------
+# THE DEFAULT SLAVE ON GP0, `rtl/cadr_gp0_default.sv`.  One property: every
+# transaction completes, with the response the module says it gives.  Five
+# ways not to.
+
+@mutation gp0-default-takes-no-read-address
+@check gp0_default
+@file rtl/cadr_gp0_default.sv
+@note ARREADY only while a read is already in flight is ARREADY never, which
+@note is the board's frozen cores.  Caught at "a transaction did not
+@note complete: the read's last beat".
+@old
+  assign s_arready = (rst_r == R_ADDR);
+@new
+  assign s_arready = (rst_r == R_DATA);
+@end
+
+@mutation gp0-default-never-answers-a-write
+@check gp0_default
+@file rtl/cadr_gp0_default.sv
+@note A write's response comes after its last beat.  Waiting for a beat that
+@note is NOT the last, a one-beat write --- every register write Linux makes
+@note --- is never answered.  Caught at "a transaction did not complete: the
+@note write's response".
+@old
+        W_DATA: if (s_wvalid && s_wlast) wst <= W_RESP;
+@new
+        W_DATA: if (s_wvalid && !s_wlast) wst <= W_RESP;
+@end
+
+@mutation gp0-default-rlast-a-beat-early
+@check gp0_default
+@file rtl/cadr_gp0_default.sv
+@note RLAST on the last beat and on no other; a master that sees it early
+@note stops taking beats and the slave stands with one owed.  Caught at
+@note "RLAST on a beat that is not the last".
+@old
+  assign s_rlast   = (r_left == 4'd0);
+@new
+  assign s_rlast   = (r_left == 4'd1);
+@end
+
+@mutation gp0-default-answers-with-the-reads-id
+@check gp0_default
+@file rtl/cadr_gp0_default.sv
+@note The write response carries the write address's ID; the interconnect
+@note matches responses to requests by it, and a write and a read in flight
+@note together have different ones.  The read's ID mixed in rather than
+@note substituted, so that both stay read and lint has nothing to say.
+@note Caught at "BID".
+@old
+  assign s_bid     = w_id;
+@new
+  assign s_bid     = w_id ^ r_id;
+@end
+
+@mutation gp0-default-answers-the-wrong-word
+@check gp0_default
+@file rtl/cadr_gp0_default.sv
+@note The word is the one thing a program can read to learn it is not on the
+@note pack side's face: "NONE" and not "PACK".  Caught at "RDATA".
+@old
+  assign s_rdata   = WORD;
+@new
+  assign s_rdata   = ~WORD;
 @end

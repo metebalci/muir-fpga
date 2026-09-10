@@ -250,12 +250,16 @@ module cadr_disk_controller #(
     //
     // `store_addr` names one of the 260 places in a slot: 0..255 the block,
     // 256 the header, 257 its checkword, 258 the data's, and 259 the TAG ---
-    // `{4'd0, cylinder<11:0>, head<7:0>, block<7:0>}`, whose write is also
-    // what makes the slot valid.  **A tag written with bit 31 set takes the
-    // slot's block away instead**: the slot is invalid until its tag is
-    // written again, and the tag it had stands unread.  `cadr_disk_pack.sv`
-    // does that first and writes the tag last, so that a walk reaching the
-    // slot during the ~300 ticks of a fill misses it rather than reading a
+    // `{1'b0, unit<2:0>, cylinder<11:0>, head<7:0>, block<7:0>}`, the disk
+    // address register's own layout, whose write is also what makes the slot
+    // valid.  **The unit is part of the tag**: "Many bits in these registers
+    // refer to the 'selected unit'", and a store holding blocks of two drives
+    // under one disk address would hand one drive's block to the other.
+    // **A tag written with bit 31 set takes the slot's block away instead**:
+    // the slot is invalid until its tag is written again, and the tag it had
+    // stands unread.  `cadr_disk_pack.sv` does that first and writes the tag
+    // last, so that a walk reaching the slot during the ~300 ticks of a fill
+    // finds it absent --- and WAITS for it, below --- rather than reading a
     // block half old and half new.
     //
     // `store_rdata` is TWO ticks behind `store_addr`: the block RAM's own
@@ -271,19 +275,83 @@ module cadr_disk_controller #(
     input  var logic [8:0]  store_addr,
     input  var logic [31:0] store_wdata,
     output var logic [31:0] store_rdata,
-    // **A BLOCK THE WALK ASKED FOR AND THE STORE DOES NOT HOLD.**  The
-    // store is a window on the pack that Linux fills, and a block it was not
-    // given is a block the walk cannot have: the transfer stops where it
-    // stands and this stays up until the next reset, so that it is never
-    // silent.  `cadr_disk_pack.sv` reads it back to Linux in its status word;
-    // `tb/cadr_disk_tb.cpp` requires it low at every tick of the trace, and
-    // `tb/cadr_disk_pack_tb.cpp` requires it up when a slot has been taken
-    // away.  A walk that meets a FILL in progress waits for it (`store_busy`)
-    // and then finds the block, so that is not a miss.  **Fetching on demand
-    // --- the walk waiting for Linux to fill a slot it did not ask for yet,
-    // rather than stopping --- is not built**: it has no reference, and the
-    // wait would sit inside a transfer whose time the trace compares.
+    // **A BLOCK THE WALK ASKED FOR, THE STORE DID NOT HOLD, AND LINUX WOULD
+    // NOT GIVE IT.**  The store is a cache on the pack that Linux fills, and
+    // a block the walk lacks is ASKED FOR (the request path below) and waited
+    // for; this is the end of the wait that is not the block arriving ---
+    // `store_deny`, Linux saying it cannot serve the block --- and the two
+    // track commands, which do not wait (see `C_TLOOK`).  The transfer stops
+    // where it stands and this stays up until the next reset, so that it is
+    // never silent.  `cadr_disk_pack.sv` reads it back to Linux in its
+    // status word; `tb/cadr_disk_tb.cpp` requires it low at every tick of the
+    // trace, and `tb/cadr_disk_pack_tb.cpp` requires it up after a denial.
     output var logic        store_miss,
+
+    // --- THE REQUEST PATH: the block the walk lacks, asked for -----------
+    //
+    // Twenty-four slots against 263,245 blocks cannot be pre-filled, so the
+    // walk that reaches `C_LOOK` and finds no slot with its block POSTS the
+    // block's disk address here --- `{unit<2:0>, cylinder<11:0>, head<7:0>,
+    // block<7:0>}`, the tag's own layout --- and WAITS, in `C_LOOK`, until a
+    // slot's tag says the block has arrived, then goes on exactly as if it
+    // had been there.  `req_valid` stands from the post until the store
+    // gains a slot whose tag is `req_tag` (any slot: Linux chooses which), or
+    // until `store_deny`, or until the channel is stopped.  `req_post` is
+    // one tick at every post, so that a request re-posted --- the block the
+    // walk needs replacing a prefetch that still stood --- is announced
+    // again.  `ch_waiting` is the wait itself: up while the walk stands in
+    // `C_LOOK` for want of the block, and what tells the pack side that the
+    // channel is active but touching no slot.
+    //
+    // **PREFETCH: THE NEXT BLOCK IS ASKED FOR AS THE CURRENT ONE BEGINS TO
+    // MOVE.**  A chained command list names its next block by the format's
+    // own rule --- "0 following block on same track, 1 block 0 on next
+    // track, 2 block 0 on head 0 of next cylinder" --- so it is known at
+    // `C_HDRCK`, and `C_PF` looks it up then and posts it if it is absent
+    // and nothing else is asked for.  Linux then has the current block's
+    // 256 bus cycles, and at a START the drive's own seek and rotational
+    // wait, to answer before the walk reaches the block; the wait is rarely
+    // seen.  One request stands at a time --- the block the walk needs now
+    // replaces a prefetch --- because a queue would be a second thing to be
+    // wrong about and the walk cannot use a block before the one in front
+    // of it.
+    //
+    // **THE WAIT SITS INSIDE A TRANSFER WHOSE TIME THE TRACE COMPARES, AND
+    // THAT IS WHY THE TRACE NEVER SEES ONE.**  `elapsed` counts the wait
+    // like every other tick of the walk and it comes off the access time,
+    // so with the drive's time charged an answer inside the seek and the
+    // rotational wait moves nothing; `tb/cadr_disk_tb.cpp` fills every
+    // block before the START that needs it (a Linux of no latency), asserts
+    // that no request is ever posted, and every row stays where it was.
+    // The wait itself is held to a property by `tb/cadr_disk_pack_tb.cpp`,
+    // with a Linux slower than the access time: BUSY stays up and not-active
+    // down throughout, nothing moves before the block arrives, and the
+    // transfer ends a bounded number of ticks after the tag lands.
+    output var logic        req_valid,
+    output var logic [30:0] req_tag,
+    output var logic        req_post,
+    output var logic        ch_waiting,
+    // Linux cannot serve the request: the walk takes the miss above.  A
+    // pulse, from a CTL write on the pack side.
+    input  var logic        store_deny,
+
+    // --- what a transfer did to the store, for the cache Linux keeps ------
+    //
+    // `ch_slot_o` is the slot the walk is on, and the slot the two pulses
+    // name.  `ch_wrote` is one tick after a transfer has finished writing a
+    // slot --- a Write's fresh data checkword at `C_WEND`, a Write All's
+    // sector laid by the parser --- which is what makes a slot DIRTY: the
+    // pack holds the block only once Linux has written the slot back.
+    // `ch_hit` is one tick after the walk took a slot for a block it wanted,
+    // which is what a replacement rule needs to know and cannot see from
+    // outside: a hit makes no bus cycle Linux can watch.  `cadr_disk_pack.sv`
+    // keeps both as per-slot bits Linux reads.  The pack side also refuses a
+    // move on `ch_slot_o` while the channel is active and not waiting, and
+    // takes a move on any other slot: the store is a cache, and a cache a
+    // program can only fill while the CADR is idle is not one.
+    output var logic [4:0]  ch_slot_o,
+    output var logic        ch_wrote,
+    output var logic        ch_hit,
 
     // --- the memory channel, a MASTER on the Xbus -------------------------
     //
@@ -315,18 +383,23 @@ module cadr_disk_controller #(
     // status register: a thing outside cannot make a bus cycle to find out
     // whether it is allowed to make a bus cycle.
     output var logic        ch_active,
-    // **AND THE OTHER HALF OF THE INTERLOCK.**  While the pack side is moving
-    // a block through the seam --- filling a slot or writing one back --- a
-    // walk must not touch the store, so a transfer STARTed then defers its
-    // first command-list fetch until the move is over.  The time waited is
-    // the walk's own and comes off the access time like the rest of it.
-    // Mutual, because either side alone leaves a tick in which the other
-    // may begin: the pack side's copy of `ch_active` is a register and so a
-    // tick behind, which is why `ch_active` is announced two ticks ahead of
-    // the walk below, and this is what covers the tick the announcement
-    // cannot.  Nothing in either trace ever overlaps the two, so this is held
-    // by `tb/cadr_disk_pack_tb.cpp`'s property and not by muir.
-    input  var logic        store_busy
+    // **AND THE OTHER HALF OF THE INTERLOCK, WHICH IS PER SLOT.**  While the
+    // pack side is moving a block through the seam --- filling a slot or
+    // writing one back --- a walk must not touch THAT slot.  The pack side
+    // refuses a move on the slot the walk is on; what this side covers is
+    // the tick in which the two choose the same slot at once, since each
+    // reads the other through a register: after `C_LOOK` has chosen a slot
+    // and the header has been checked, `C_HDRCK` asks once more whether the
+    // slot is still valid and no move is on it (`slot_ok_q`), and looks the
+    // block up again if not.  A move that began on the slot before the walk
+    // chose it is over before the walk touches a data word; a move that
+    // began after cannot, because the pack side's copy of `ch_slot_o` is
+    // current by then.  The time waited is the walk's own and comes off the
+    // access time like the rest of it.  Nothing in either trace ever
+    // overlaps the two, so this is held by `tb/cadr_disk_pack_tb.cpp`'s
+    // property and not by muir.
+    input  var logic        store_busy,
+    input  var logic [4:0]  store_busy_slot
 );
 
   // `disk_controller::REGS`, 0o17377774, four words.  MIT: "These are
@@ -493,7 +566,7 @@ module cadr_disk_controller #(
   logic [31:0] s_header [SLOTS];
   logic [31:0] s_hck    [SLOTS];
   logic [31:0] s_dck    [SLOTS];
-  logic [27:0] s_tag    [SLOTS];
+  logic [30:0] s_tag    [SLOTS];   // {unit, cylinder, head, block}
   logic [SLOTS-1:0] s_valid;
 
   // The one word of a slot the channel writes as well: a Write leaves a fresh
@@ -515,7 +588,7 @@ module cadr_disk_controller #(
       2'd0: seam_meta = s_header[store_slot];
       2'd1: seam_meta = s_hck[store_slot];
       2'd2: seam_meta = s_dck[store_slot];
-      default: seam_meta = {4'd0, s_tag[store_slot]};
+      default: seam_meta = {1'b0, s_tag[store_slot]};
     endcase
   end
 
@@ -554,7 +627,7 @@ module cadr_disk_controller #(
           if (store_wdata[31]) begin
             s_valid[store_slot] <= 1'b0;
           end else begin
-            s_tag[store_slot]   <= store_wdata[27:0];
+            s_tag[store_slot]   <= store_wdata[30:0];
             s_valid[store_slot] <= 1'b1;
           end
         end
@@ -1152,7 +1225,10 @@ module cadr_disk_controller #(
     C_ACCFIN,
     // The track: the slot the first sector comes out of, then a page at a
     // time in either direction.
-    C_TLOOK, C_TRD, C_TWR
+    C_TLOOK, C_TRD, C_TWR,
+    // The prefetch: the NEXT block looked up as this one begins to move,
+    // and asked for if the store lacks it.  See `req_valid` at the ports.
+    C_PF
   } ch_state_e;
 
   ch_state_e   ch_state;
@@ -1390,7 +1466,7 @@ module cadr_disk_controller #(
   // Which slot holds the block under the heads.  Twenty-four comparators, as
   // a board with a window on a pack has: the tag is the address and there is
   // no arithmetic between them.
-  logic [27:0] want_tag, want_tag_q;
+  logic [30:0] want_tag, want_tag_q;
   logic [7:0]  want_blk;
   logic        slot_hit_c, slot_hit;
   logic [4:0]  slot_of_c, slot_of;
@@ -1419,7 +1495,15 @@ module cadr_disk_controller #(
   // the three ticks and says so.
   assign want_blk = (ch_state == C_TRD) ? trk_b_next
                   : (ch_track ? trk_b : u_blk[ch_unit]);
-  assign want_tag = {u_cyl[ch_unit], u_head[ch_unit], want_blk};
+  // **THE UNIT IS IN THE KEY**, as it is in the tag: two drives may hold a
+  // block at one cylinder, head and block, and the store may hold both.
+  // **AND IN `C_PF` THE KEY IS THE NEXT BLOCK**: the prefetch borrows the one
+  // lookup for four ticks while the block just checked begins to move.  The
+  // key's other reader, `hdr_want`, is consumed at `C_HDRC`, which is over
+  // by then; and the key is the heads' block again three ticks before
+  // anything reads the answer, `C_LOOK` being a page's walk away.
+  assign want_tag = (ch_state == C_PF) ? {ch_unit, nb_c, nb_h, nb_b}
+                  : {ch_unit, u_cyl[ch_unit], u_head[ch_unit], want_blk};
   // Three, in fact: the key, the twenty-four compares, the encoder.  The
   // middle stage was eight levels and -1.3 ns on its own.
   logic [SLOTS-1:0] hit_q;
@@ -1448,7 +1532,77 @@ module cadr_disk_controller #(
   // The registered key: `C_HDRC` is a walk state, where the key is the
   // heads' position and has stood since before `C_LOOK`.
   logic [27:0] hdr_want;
-  assign hdr_want = want_tag_q;
+  assign hdr_want = want_tag_q[27:0];
+
+  // --- the request path, and what the walk did to the store -----------------
+  //
+  // `waiting` is the walk standing in `C_LOOK` for want of its block; the
+  // request is posted on the first tick of the wait and at `C_PF` for the
+  // next block, and stands until a slot's tag says the block arrived, Linux
+  // denies it, or the channel is stopped.  **The tag write that clears it is
+  // compared a tick late, in registers**: the pack side's `store_wdata` is a
+  // register and so is `req_tag`, and a thirty-one-bit equality into the
+  // request's own enable would otherwise be the cone `bad_ch` was.  The
+  // walk's own lookup lags the tag by two ticks anyway, so nothing sees the
+  // difference.  A post and a clear in one tick: the post wins, the clear
+  // being for the tag the request held before.
+  logic        waiting;
+  logic        post_c;               // a request is posted at this edge
+  logic        tag_write_q, tag_match_q;
+  logic [1:0]  pf_n;                 // the prefetch's four ticks
+  // The slot `C_LOOK` chose, asked about again before a data word moves:
+  // still valid, and no move of the pack side's on it.  See `store_busy`.
+  logic        slot_ok_q;
+  // The pulses out, one tick after the fact so that `ch_slot` names the slot.
+  logic        ch_hit_q;
+  logic        slot_taken_c;
+  // The channel stopped --- `-XBUS INIT` or a `0o16` in the command register
+  // --- as one register, a tick behind: `cmd_reset` is the command store's
+  // decode, and straight into the request register's reset pin it was
+  // `st_which_reg -> req_tag_reg/R` at -0.008 ns on the DDR=1 board.  A
+  // request cleared a tick after the channel stops is cleared before anyone
+  // can read it: Linux is tens of ticks away and the walk is gone.
+  logic        req_clear_q;
+  assign ch_waiting = waiting;
+  assign ch_slot_o  = ch_slot;
+  assign ch_hit     = ch_hit_q;
+  // A Write's fresh checkword and a Write All's laid sector: both registered
+  // pulses already, both on `ch_slot`.
+  assign ch_wrote   = ch_dck_we || trk_meta_we;
+  always_ff @(posedge clk) begin
+    tag_write_q <= store_we && (store_addr == 9'd259) && !store_wdata[31];
+    tag_match_q <= (store_wdata[30:0] == req_tag);
+    slot_ok_q   <= s_valid[ch_slot] && !(store_busy && (store_busy_slot == ch_slot));
+    ch_hit_q    <= slot_taken_c;
+    req_clear_q <= xbus_init || cmd_reset;
+    if (rst_q || req_clear_q) begin
+      req_valid <= 1'b0;
+      req_post  <= 1'b0;
+      req_tag   <= 31'd0;
+    end else if (post_c) begin
+      req_valid <= 1'b1;
+      req_post  <= 1'b1;
+      req_tag   <= want_tag_q;
+    end else begin
+      req_post  <= 1'b0;
+      if (store_deny || (tag_write_q && tag_match_q)) req_valid <= 1'b0;
+    end
+  end
+  // The two posts: the first tick of a wait, and a prefetch of a block the
+  // store lacks when nothing else stands asked for.  `slot_hit` in `C_PF` is
+  // the next block's, the key having been muxed to it at `pf_n` zero.
+  assign post_c = ((ch_state == C_LOOK) && !slot_hit && !store_deny && !waiting)
+               || ((ch_state == C_PF) && (pf_n == 2'd3) && !slot_hit
+                   && !nb_off_pack && !req_valid);
+  // Every place the walk takes a slot for a block: the block walk's lookup,
+  // the track's first sector, each further sector a Read All crosses into,
+  // and the sector a Write All's parser lays.
+  assign slot_taken_c = ((ch_state == C_LOOK) && slot_hit)
+                     || ((ch_state == C_TLOOK) && (ch_ph == 3'd3) && ch_read && slot_hit)
+                     || (trk_step && slot_hit)
+                     || ((ch_state == C_TWR) && (ch_ph >= 3'd2) && trk_lay
+                         && (ps_st == P_SYNC2) && !ps_bitv
+                         && (ps_ones >= 7'(F_ONES)) && ps_fits && slot_hit);
 
   // **THE SLOT'S THREE WORDS, READ INTO REGISTERS.**  `s_header`, `s_hck`
   // and `s_dck` are distributed RAM twenty-four deep, and read by `ch_slot`
@@ -1513,6 +1667,15 @@ module cadr_disk_controller #(
       end
     end
   end
+  // **AND WHETHER `C_NEXT` MOVES THE HEADS AT ALL IS ONE REGISTER**: the
+  // list goes on, it is not a track, and the next block is on the pack.
+  // Three registers settled a page's walk before `C_NEXT` reads them once,
+  // held as one so that the clock enable of the heads' position --- eight
+  // units of twenty-eight bits --- is a state decode and one bit and not a
+  // state decode and four.  `ch_state_reg -> u_cyl_reg/CE` was the worst
+  // path of the DDR=1 board at the request path's slice, -0.189 ns over four
+  // logic levels, four fifths of it routing.
+  logic nb_move_q;
   always_ff @(posedge clk) begin
     hd_cyl_q    <= u_cyl[ch_unit];
     hd_head_q   <= u_head[ch_unit];
@@ -1521,6 +1684,7 @@ module cadr_disk_controller #(
     nb_h        <= nb_h_c;
     nb_b        <= nb_b_c;
     nb_off_pack <= (nb_c_c >= 12'(CYLINDERS));
+    nb_move_q   <= ch_more && !ch_track && !nb_off_pack;
   end
 
   // The held decode.  One process, because it is this slave's own state.
@@ -1652,6 +1816,8 @@ module cadr_disk_controller #(
       ch_dck_slot <= 5'd0;
       ch_dck_val  <= 32'd0;
       store_miss  <= 1'b0;
+      waiting     <= 1'b0;
+      pf_n        <= 2'd0;
       // Ten, not zero: five for the reset held a tick here (see `rst_q`),
       // five for the read word held a tick on the way out (`READ_HOLD_NS`).
       spin        <= 24'd10;
@@ -1828,10 +1994,9 @@ module cadr_disk_controller #(
         // muir's own structure: `ccw_cycle` is set before the fetch and
         // cleared after one that worked.
         C_CCW: begin
-          // Deferred while the pack side is moving a block: see `store_busy`
-          // at the ports.  `elapsed` goes on counting, so the wait comes off
-          // the access time.
-          if (!ch_req_r && !store_busy) begin
+          // Not deferred while the pack side moves a block: the interlock is
+          // per slot now, and `C_HDRCK` asks about the slot this walk chose.
+          if (!ch_req_r) begin
             ch_req_r   <= 1'b1;
             ch_write_r <= 1'b0;
             ch_addr_r  <= clp_now[21:0];
@@ -1864,16 +2029,28 @@ module cadr_disk_controller #(
             end
           end
         end
+        // **THE WAIT.**  The block the heads are on is looked up every
+        // tick; absent, it is asked for (`post_c`, on this state's first
+        // tick) and the walk stands here until a tag says it has arrived
+        // --- the lookup sees the tag two ticks after the store takes it ---
+        // or until Linux denies it, which is the miss the store used to
+        // take at once.  `elapsed` counts every tick of it.  BUSY stays up
+        // and not-active down because `ch_state` is not idle, which is the
+        // one thing a driver polling `<0>` during the wait must see.
         C_LOOK: begin
           ch_i  <= 9'd0;
           ch_ra <= 9'd0;
           ch_ph <= 3'd0;
-          if (!slot_hit) begin
+          if (slot_hit) begin
+            waiting  <= 1'b0;
+            ch_slot  <= slot_of;
+            ch_state <= C_HDRC;
+          end else if (store_deny) begin
+            waiting    <= 1'b0;
             store_miss <= 1'b1;
             ch_state   <= C_ACCMUL;
           end else begin
-            ch_slot  <= slot_of;
-            ch_state <= C_HDRC;
+            waiting <= 1'b1;
           end
         end
         // One tick for `hdr_q` to take the slot `C_LOOK` chose, one for
@@ -1909,6 +2086,14 @@ module cadr_disk_controller #(
         C_HDRCK: begin
           if (ch_ph == 3'd0) begin
             ch_ph <= 3'd1;
+          end else if (!slot_ok_q) begin
+            // The slot was taken away, or a move of the pack side's began
+            // on it, between `C_LOOK` choosing it and now: look again.  A
+            // move that began before the choice is what this catches; one
+            // that began after was refused.  Asked before the checkword,
+            // because a slot being replaced has nothing worth an error.
+            ch_ph    <= 3'd0;
+            ch_state <= C_LOOK;
           end else if (!hck_eq_q) begin
             e_hdrecc <= 1'b1;
             ch_ph    <= 3'd0;
@@ -1918,6 +2103,22 @@ module cadr_disk_controller #(
             ch_i     <= 9'd0;
             ch_ra    <= 9'd0;
             ch_ph    <= 3'd0;
+            pf_n     <= 2'd0;
+            // The next block is asked for before this one moves, if the
+            // list goes on to one the pack has.
+            ch_state <= (ch_more && !nb_off_pack) ? C_PF
+                      : (ch_read ? C_DATA : C_MOVE);
+          end
+        end
+        // Four ticks: the key is the next block from the first, `want_tag_q`
+        // takes it on the second, `hit_q` on the third, `slot_hit` on the
+        // fourth, when `post_c` asks for it if it is absent.  The block's
+        // own move then begins with `ch_i`, `ch_ra`, `ch_ph` and `ecc_r`
+        // as `C_HDRCK` left them.
+        C_PF: begin
+          if (pf_n != 2'd3) begin
+            pf_n <= pf_n + 2'd1;
+          end else begin
             ch_state <= ch_read ? C_DATA : C_MOVE;
           end
         end
@@ -2143,11 +2344,15 @@ module cadr_disk_controller #(
             e_hdrecc            <= 1'b1;
             ch_state            <= C_ACCMUL;
           end else begin
+            // The heads move below, under `nb_move_q`, which is this branch's
+            // condition as one register.
+            ch_n            <= ch_n + 16'd1;
+            ch_state        <= C_CCW;
+          end
+          if (nb_move_q) begin
             u_cyl[ch_unit]  <= nb_c;
             u_head[ch_unit] <= nb_h;
             u_blk[ch_unit]  <= nb_b;
-            ch_n            <= ch_n + 16'd1;
-            ch_state        <= C_CCW;
           end
         end
         // The slot the track's first sector comes out of, and the only one
@@ -2491,6 +2696,7 @@ module cadr_disk_controller #(
               hanging  <= 1'b0;
               ch_state <= C_IDLE;
               ch_req_r <= 1'b0;
+              waiting  <= 1'b0;
             end
           end
           2'd1: clp <= st_wdata;
@@ -2715,9 +2921,11 @@ module cadr_disk_controller #(
         e_hdrecc  <= 1'b0;
         e_ecchard <= 1'b0;
         e_eccsoft <= 1'b0;
-        // `RESET` stops the channel: DCCHAN 0E16, DCBUSY 0C26.
+        // `RESET` stops the channel: DCCHAN 0E16, DCBUSY 0C26.  A wait
+        // stopped is not a wait; the request register clears with it.
         ch_state  <= C_IDLE;
         ch_req_r  <= 1'b0;
+        waiting   <= 1'b0;
       end
     end
   end

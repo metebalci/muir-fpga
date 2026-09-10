@@ -121,7 +121,10 @@ module cadr_mem_count_harness #(
       .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0),
       .store_we(1'b0), .store_slot(5'd0), .store_addr(9'd0), .store_wdata(32'd0),
       .store_rdata(store_rdata), .store_miss(store_miss), .ch_active(ch_active),
-      .store_busy(1'b0),
+      .store_busy(1'b0), .store_busy_slot(5'd0), .store_deny(1'b0),
+      .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
+      .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
+      .ch_hit(ch_hit),
       .device_ack(1'b0), .device_rdata(32'd0),
       .boards(7'd32),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
@@ -205,10 +208,15 @@ module cadr_mem_count_harness #(
   // `cadr_machine` brings out for the pack side and nothing here drives.
   logic [31:0] store_rdata;
   logic        store_miss, ch_active;
+  logic        req_valid, req_post, ch_waiting, ch_wrote, ch_hit;
+  logic [30:0] req_tag;
+  logic [4:0]  ch_slot;
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
   assign unused = &{1'b0, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
                     store_rdata, store_miss, ch_active,
+                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
+                    ch_wrote, ch_hit,
                     md, phys, ub_addr, ub_rdata, arb_stage, dev_wdata,
                     vmaok, jcond, nop, pcs1, pcs0, iwrited, wrcyc, device,
                     dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn,

@@ -168,6 +168,14 @@ module cadr_arty #(
   logic [8:0]  store_addr;
   logic [31:0] store_wdata, store_rdata;
   logic        store_miss, ch_active, store_busy;
+  // The request path and the cache's bookkeeping, likewise: the block the
+  // walk lacks and its posting, the wait, Linux's denial, the slot the walk
+  // is on and what it did to it.  `rtl/cadr_disk_controller.sv` says what
+  // each is; here they cross from the machine to the pack side, or are tied
+  // off and folded with the rest of the machine's outputs.
+  logic [4:0]  store_busy_slot, ch_slot;
+  logic [30:0] req_tag;
+  logic        req_valid, req_post, ch_waiting, ch_wrote, ch_hit, store_deny;
   // A write or read that came back SLVERR or DECERR, held. Zero when there is
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
@@ -295,6 +303,10 @@ module cadr_arty #(
       .store_we(store_we), .store_slot(store_slot), .store_addr(store_addr),
       .store_wdata(store_wdata), .store_rdata(store_rdata),
       .store_miss(store_miss), .ch_active(ch_active), .store_busy(store_busy),
+      .store_busy_slot(store_busy_slot), .store_deny(store_deny),
+      .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
+      .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
+      .ch_hit(ch_hit),
       // 32 boards of 64K words, which is muir's own default and what every
       // trace in this repository was taken with.
       .boards(7'd32),
@@ -618,6 +630,9 @@ module cadr_arty #(
     logic        gp0_bvalid, gp0_bready, gp0_arvalid, gp0_arready;
     logic        gp0_rlast, gp0_rvalid, gp0_rready;
     logic [1:0]  gp0_bresp, gp0_rresp;
+    // The disk's interrupt into the processing system, `IRQ_F2P` bit 0:
+    // the pack side's, or nothing on a board without one.
+    logic        pack_irq;
 
     if (DDR != 0) begin : g_pack
 
@@ -660,13 +675,23 @@ module cadr_arty #(
           .store_addr(store_addr), .store_wdata(store_wdata),
           .store_rdata(store_rdata), .store_miss(store_miss),
           .ch_active(ch_active), .moving(store_busy),
+          .moving_slot(store_busy_slot),
+          .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
+          .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
+          .ch_hit(ch_hit), .deny(store_deny), .irq(pack_irq),
           .drive_present(drive_present), .drive_read_only(drive_read_only),
           .drive_timed(drive_timed)
       );
 
     end else begin : g_nopack
 
-      // A `PROVE` board: no drive, no pack, and the PS7's disk pins quiet.
+      // A `PROVE` board: no drive, no pack, the PS7's HP2 pins quiet ---
+      // **AND GP0 ANSWERED ALL THE SAME.**  A read nothing answers on GP0
+      // hangs both Arm cores at one PC each, measured on the board when the
+      // pack feeder read the register face on a bitstream without the pack
+      // side; so every board that brings the port out answers every address
+      // on it.  `rtl/cadr_gp0_default.sv` answers "NONE" to every read and
+      // OKAY to every write, and its own check holds that it answers.
       assign drive_present = 8'd0;
       assign drive_read_only = 8'd0;
       assign drive_timed = 1'b0;
@@ -675,6 +700,9 @@ module cadr_arty #(
       assign store_addr = 9'd0;
       assign store_wdata = 32'd0;
       assign store_busy = 1'b0;
+      assign store_busy_slot = 5'd0;
+      assign store_deny = 1'b0;
+      assign pack_irq = 1'b0;
       assign hp2_awaddr = 32'd0;
       assign hp2_awlen = 4'd0;
       assign hp2_awsize = 2'd0;
@@ -691,28 +719,38 @@ module cadr_arty #(
       assign hp2_arburst = 2'd0;
       assign hp2_arvalid = 1'b0;
       assign hp2_rready = 1'b0;
-      assign gp0_awready = 1'b0;
-      assign gp0_wready = 1'b0;
-      assign gp0_bresp = 2'd0;
-      assign gp0_bid = 12'd0;
-      assign gp0_bvalid = 1'b0;
-      assign gp0_arready = 1'b0;
-      assign gp0_rdata = 32'd0;
-      assign gp0_rresp = 2'd0;
-      assign gp0_rid = 12'd0;
-      assign gp0_rlast = 1'b0;
-      assign gp0_rvalid = 1'b0;
+
+      // Reset as the pack side is: by the port's own reset, synchronised,
+      // so that the slave answers from the moment the PS says the port is
+      // live.
+      logic [2:0] gp0_rst_sync;
+      logic gp0_rst;
+      always_ff @(posedge clk) begin
+        gp0_rst_sync <= {gp0_rst_sync[1:0], gp0_aresetn};
+        gp0_rst      <= rst || !gp0_rst_sync[2];
+      end
+
+      cadr_gp0_default u_gp0_default (
+          .clk(clk), .rst(gp0_rst),
+          .s_awvalid(gp0_awvalid), .s_awid(gp0_awid), .s_awready(gp0_awready),
+          .s_wlast(gp0_wlast), .s_wvalid(gp0_wvalid), .s_wready(gp0_wready),
+          .s_bresp(gp0_bresp), .s_bid(gp0_bid), .s_bvalid(gp0_bvalid),
+          .s_bready(gp0_bready),
+          .s_arlen(gp0_arlen), .s_arid(gp0_arid), .s_arvalid(gp0_arvalid),
+          .s_arready(gp0_arready),
+          .s_rdata(gp0_rdata), .s_rresp(gp0_rresp), .s_rid(gp0_rid),
+          .s_rlast(gp0_rlast), .s_rvalid(gp0_rvalid), .s_rready(gp0_rready)
+      );
+
       // Read here, so that a board without the pack side leaves nothing of
-      // the PS7's disk pins unread.
+      // the PS7's disk pins unread: the address, length, data and strobes
+      // of GP0, which the default slave answers without looking at.
       logic unused_pack;
-      assign unused_pack = ^{hp2_aresetn, gp0_aresetn, hp2_awready,
+      assign unused_pack = ^{hp2_aresetn, hp2_awready,
                              hp2_wready, hp2_bresp, hp2_bvalid, hp2_arready,
                              hp2_rdata, hp2_rresp, hp2_rlast, hp2_rvalid,
-                             gp0_awaddr, gp0_awlen, gp0_awid, gp0_awvalid,
-                             gp0_wdata, gp0_wstrb, gp0_wlast, gp0_wvalid,
-                             gp0_bready, gp0_araddr, gp0_arlen, gp0_arid,
-                             gp0_arvalid, gp0_rready, store_rdata,
-                             store_miss, ch_active};
+                             gp0_awaddr, gp0_awlen, gp0_wdata, gp0_wstrb,
+                             gp0_araddr, store_rdata, store_miss, ch_active};
 
     end
 
@@ -760,7 +798,9 @@ module cadr_arty #(
         .gp0_araddr(gp0_araddr), .gp0_arlen(gp0_arlen), .gp0_arid(gp0_arid),
         .gp0_arvalid(gp0_arvalid), .gp0_arready(gp0_arready),
         .gp0_rdata(gp0_rdata), .gp0_rresp(gp0_rresp), .gp0_rid(gp0_rid),
-        .gp0_rlast(gp0_rlast), .gp0_rvalid(gp0_rvalid), .gp0_rready(gp0_rready)
+        .gp0_rlast(gp0_rlast), .gp0_rvalid(gp0_rvalid), .gp0_rready(gp0_rready),
+        // The disk's interrupt on bit 0, the other nineteen lines low.
+        .irqf2p({19'b0, pack_irq})
     );
 
     // Held once it has ever happened: an error is a fault to find, not a
@@ -791,6 +831,8 @@ module cadr_arty #(
     assign store_addr = 9'd0;
     assign store_wdata = 32'd0;
     assign store_busy = 1'b0;
+    assign store_busy_slot = 5'd0;
+    assign store_deny = 1'b0;
 
   end
 
@@ -856,7 +898,7 @@ module cadr_arty #(
   // It is not meant to be readable --- it is a load, and what it shows is
   // that the datapath is moving at all.
   //
-  // **All fifty-two of them, including the ones something else already
+  // **All fifty-nine of them, including the ones something else already
   // reads** --- `clock_edge`, `promdisable`, `timed_out`, `n_memack` drive
   // LEDs as well and are still here, because the rule the comment states is
   // the whole specification and a fold with exceptions in it is not a rule
@@ -876,7 +918,9 @@ module cadr_arty #(
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
-                   mem_req, mem_write, store_miss, ch_active};
+                   mem_req, mem_write, store_miss, ch_active,
+                   req_valid, req_tag, req_post, ch_waiting, ch_slot,
+                   ch_wrote, ch_hit};
     end
   end
 

@@ -551,6 +551,16 @@ int main(int argc, char **argv) {
   long ch_serial = 0;
   long ch_reads = 0, ch_writes = 0, ch_nxms = 0;
   int miss_seen = 0;
+  // **THE REQUEST PATH MUST STAY SILENT FOR THE WHOLE TRACE.**  Every block
+  // a transfer needs is fetched by a `BLK` row before the START that needs
+  // it --- a Linux of no latency, which is what keeps every row on its
+  // instant --- so the walk never lacks a block, the prefetch never finds
+  // one absent, and `req_valid` and the interrupt are low at every tick.  A
+  // request here would be a block the trace did not pre-fill or a lookup
+  // that missed a block it holds, and either is a finding.  Counted on the
+  // ticks rather than the rises so that a request that came and went inside
+  // a fill is not missed.
+  long req_seen = 0, irq_seen = 0;
 
   unsigned sampled = 0;
   auto run_tick = [&](bool sample) {
@@ -592,6 +602,8 @@ int main(int argc, char **argv) {
       }
     }
     if (dut->store_miss) ++miss_seen;
+    if (dut->req_valid) ++req_seen;
+    if (dut->irq) ++irq_seen;
 
     if (d_rst) hp2.reset(dut); else hp2.drive(dut);
     dut->eval();
@@ -690,6 +702,11 @@ int main(int argc, char **argv) {
   // register write, one fetch, one write-back.  The scratch slot is then
   // taken away so that no walk can find it.
   {
+    // The interrupt enabled for a request's posting alone, so that `irq`
+    // low is the same claim as `req_valid` low made through the pack side
+    // and the PS7's pin: the other two events --- a slot going dirty, a
+    // move finishing --- the trace's own moves raise on purpose.
+    reg_write(R_IRQEN, IRQ_REQ);
     const long t0 = tick;
     reg_write(R_DRIVE, 0);
     T_REG = tick - t0;
@@ -1151,7 +1168,10 @@ int main(int argc, char **argv) {
         // the fabric is told to write the slot back to the row's address ---
         // a fresh one, poisoned --- and the record there must be these words.
         case 'B': {
-          const unsigned tag = ((unsigned)r.cyl << 16) |
+          // The tag carries the unit --- the drive the trace attached ---
+          // as the disk address register does in `<30:28>`.
+          const unsigned tag = ((unsigned)(attached_unit < 0 ? 0 : attached_unit) << 28) |
+                               ((unsigned)r.cyl << 16) |
                                ((unsigned)r.head << 8) | (unsigned)r.blk;
           if (r.cyl == 0 && r.head == 0 && r.blk < 17) trk_slot[r.blk] = r.slot;
           if (r.expected) {
@@ -1563,6 +1583,14 @@ int main(int argc, char **argv) {
                  miss_seen);
     return 1;
   }
+  if (req_seen || irq_seen) {
+    std::fprintf(stderr,
+                 "FAIL: the request path spoke during the trace, where every "
+                 "block was fetched before the START that needed it: REQ "
+                 "valid on %ld ticks, the interrupt up on %ld\n",
+                 req_seen, irq_seen);
+    return 1;
+  }
 
   // ---- what the trace has to have reached -------------------------------
   //
@@ -1643,6 +1671,9 @@ int main(int argc, char **argv) {
       "      written back over it and compared, %ld blocks a transfer needed\n"
       "      each resident when it ran\n"
       "    %ld ticks spent walking\n"
+      "    the request path silent: no block asked for and no interrupt\n"
+      "      raised on any of the run's ticks, every block having been\n"
+      "      fetched before the START that needed it\n"
       "  the pack side, at fixed delays: %ld AXI bursts, %ld read beats, %ld\n"
       "    write beats, %ld register writes and %ld reads; a fetch %ld ticks,\n"
       "    a write-back %ld, a register write %ld\n"

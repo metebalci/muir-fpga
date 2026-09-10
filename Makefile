@@ -31,6 +31,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/mem_count.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
+       $(BUILD)/gp0_default.pass \
        current
 
 # ---------------------------------------------------------------- phase gen
@@ -346,6 +347,7 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
                     rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
                     rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv \
                     rtl/cadr_prove.sv rtl/cadr_disk_pack.sv \
+                    rtl/cadr_gp0_default.sv \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -366,13 +368,15 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
 	    -GPROVE=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_prove.sv
+	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_prove.sv \
+	    rtl/cadr_gp0_default.sv
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=2 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_prove.sv
+	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_prove.sv \
+	    rtl/cadr_gp0_default.sv
 	@touch $@
 
 # --------------------------------------------------------------- the probe
@@ -676,6 +680,26 @@ $(BUILD)/obj_disk_pack/Vcadr_disk_harness: $(DISK_SRC) tb/cadr_disk_pack_tb.cpp 
 
 $(BUILD)/disk_pack.pass: $(BUILD)/obj_disk_pack/Vcadr_disk_harness
 	$(BUILD)/obj_disk_pack/Vcadr_disk_harness
+	@touch $@
+
+# ------------------------------------------------- the default slave on GP0
+
+# `rtl/cadr_gp0_default.sv` answers every address on `M_AXI_GP0` for a board
+# that brings the port out without the pack side --- the two proving boards.
+# A read nothing answers on GP0 hangs both Arm cores, measured on the board,
+# so the property is that every transaction completes: `tb/cadr_gp0_default
+# _tb.cpp` drives writes and reads of varying length, ID and spacing at
+# addresses across the port's window and counts every handshake.  The arty
+# lint holds that the module is wired where GP0 is; this holds that it
+# answers.
+$(BUILD)/obj_gp0_default/Vcadr_gp0_default: rtl/cadr_gp0_default.sv \
+                                            tb/cadr_gp0_default_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_gp0_default \
+	    --top-module cadr_gp0_default \
+	    rtl/cadr_gp0_default.sv $(abspath tb/cadr_gp0_default_tb.cpp)
+
+$(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
+	$(BUILD)/obj_gp0_default/Vcadr_gp0_default
 	@touch $@
 
 $(BUILD):
