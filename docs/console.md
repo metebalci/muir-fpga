@@ -269,7 +269,7 @@ re-opens it, and said on the check's own output.
 
 ## The mutations
 
-Six records in `mutations/list.txt`, all caught, each on its own line ---
+Seven records in `mutations/list.txt`, all caught, each on its own line ---
 measured by applying each by hand and reading the first line of stderr, not
 inferred from an exit code:
 
@@ -288,6 +288,8 @@ inferred from an exit code:
         0x1000
     console-says-a-lost-cycle-was-answered
         STAT's answered bit after a lost cycle is 0xc, the reference says 0x8
+    console-read-back-is-not-held-to-the-boundary
+        the read-back's lag in microcycles is 0x0, the reference says 0x1
 
 ## The processing system
 
@@ -367,12 +369,13 @@ rule anybody can check".
 What the patch does, file by file:
 
 **`rtl/cadr_memory_path.sv`** --- eight new ports (`con_req`, `con_gnt`,
-`con_msyn`, `con_write`, `con_addr`, `con_wdata`, `con_ssyn`, `con_rdata`);
-the arbiter, four `assign`s of a mux, and `-UB SSYN` routed back to whoever
-asked; and the `cadr_spy_registers` instance's four Unibus inputs and its
-`ub_ssyn` moved onto the muxed `sr_*` wires. Nothing else in the file changes,
-and with `con_req` low the arbiter folds to a constant and the mux to the
-processor's own half --- which is what `build/machine.pass` compares.
+`con_msyn`, `con_write`, `con_addr`, `con_wdata`, `con_ssyn`, `con_rdata`),
+and an instance of `rtl/cadr_console_bus.sv` between them and the register
+block: the arbiter began as four `assign`s inline here and is a module of its
+own now, for the reason the timing section below gives. Nothing else in the
+file changes, and with `con_req` low the arbiter folds to a constant and the
+mux to the processor's own half --- which is what `build/machine.pass`
+compares, byte for byte before and after.
 
 **`rtl/cadr_machine.sv`** --- the same eight ports, passed straight through to
 the `memory` instance.
@@ -424,6 +427,155 @@ tick, and it is a check that could be written the day the hunks land.
 
 Whoever lands them should also fix the write-strobe aliasing above at the same
 time, since it is the same register block and one line.
+
+## The timing, and the -12.837 ns
+
+**The console's first bitstream missed 200 MHz by two and a half ticks**, and
+the way it did is worth more than the fix. At `37711fe`, `DDR=1`, board flow:
+
+    Slack (VIOLATED) : -12.837 ns
+    Source:            u_machine/processor/md_reg[15]/C
+    Destination:       g_ddr.u_console/eng_rdata_reg[1]/D
+    Requirement:       5.000 ns
+    Data Path Delay:   17.703 ns (logic 5.301, route 12.403)
+    Logic Levels:      24 (LUT3=1 LUT5=1 LUT6=10 MUXF7=6 MUXF8=4 RAMS64E=2)
+
+on **5,698 failing endpoints of 27,144**, total negative slack -8,309 ns,
+where the commit before the console read -0.148 ns on the same board. It was
+never fitted before it landed; that is how it got in.
+
+**The path is `Engine::spy_read` itself.** MD into the M bus's source mux and
+then into the sixteen-way diagnostic mux --- the whole of what a console read
+selects among. Twenty-four levels is what that costs, and **nothing at the far
+end can shorten it**: any register that samples the mux inherits the same
+cone, so pipelining after it, deskewing it, or capturing it later all leave
+the arc exactly where it was. Three of those were tried on paper before the
+fourth was seen.
+
+**What was wrong was the deadline, not the depth.** `rtl/cadr_machine.xdc`
+already relaxes `-from $slow -to $slow` to fifteen ticks, and `md_reg` is in
+`slow`; the console's register was not, **because that file is read
+`read_xdc -ref cadr_machine` and the console is a level above it**, in
+`cadr_arty.sv` beside the PS7. It is the same wall `mem_addr` met --- a scoped
+file cannot name what is outside its scope, and that is why `rtl/cadr_ddr.xdc`
+exists at all. So the arc was slow-to-fast, which the exception does not match
+and must not.
+
+**The remedy is a register in the right module, and no new exception at all.**
+`rtl/cadr_console_bus.sv` is the arbiter, the mux and the read-back register,
+instantiated by `cadr_memory_path.sv` --- inside `cadr_machine`, where the
+register falls into `slow` with no naming. `report_exceptions` on the fitted
+board lists **the same seven exceptions as before**; nothing was added to be
+defended.
+
+**And it earns the set on the file's own test rather than by being in the
+right module**, which is the distinction that file's prose insists on. The
+test is "is a register's input stable across the microcycle, and does its
+consumer read it only at the end". So `con_rdata` is loaded **at the
+microcycle boundary and nowhere else** --- `mclk` is its whole clock enable
+--- and is therefore launched at one boundary and captured at the next, with
+29 ticks to settle at normal speed and 44 at extra slow against the 15 the
+exception asks for. Loaded every tick it would be a register holding whatever
+a relaxed path had reached, which is the too-wide exemption in its purest
+form.
+
+**The price is stated, and it is measured rather than asserted: the console
+reads the machine as of the last microcycle boundary.** One microcycle, and
+the check measures the number --- 48 reads of `PC` **with the machine
+running**, of which 47 were taken where the two candidate rows carry
+different PCs and so are evidence at all. A halted read cannot resolve this,
+the machine having stopped moving, which is why the sweep exists and why it
+is not made where the rest of the check reads.
+
+**A sample where the candidate rows read alike is not evidence, and taking
+one as evidence is how this measurement first went wrong.** The search
+returns the smallest matching lag, so a PC that did not move between two rows
+reads as a lag of nothing whatever the design does: twenty of twenty-one
+samples said one and the first said nothing, which is the check reporting the
+boot PROM's program rather than the fabric. Only discriminating samples are
+counted now, and there is a floor on how many.
+
+`console-read-back-is-not-held-to-the-boundary` is the record that holds the
+property the set membership rests on --- `mclk || !mclk`, so that `mclk` stays
+read and lint does not catch it instead of the check --- and it is caught at
+"the read-back's lag in microcycles is 0x0, the reference says 0x1".
+
+**Why it is right that the console reads a boundary and not a tick**, three
+ways: it is muir's own semantics, `Engine::spy_read` being called between
+steps and `Rtl::signals` "recorded in the read phase"; it is exact on a
+halted machine, which is how a console is used, `MCLK` running whether or not
+`MACHRUN` does; and on a running machine the board is worse, the 74LS244s
+driving `SPY<15:0>` asynchronously and MIT's own note being that "read and
+write at the same address are uncorrelated".
+
+**The request side is registered here too, and for the same reason as the
+answer.** `sr_addr` is `EADR<3:0>`, which is that same mux's *select*, so
+`eng_eadr` in the console reaching `con_rdata`'s D would have been a second
+long path with one tick to run in --- fast-to-slow, which the exception does
+not match. Held inside the machine, both ends are `cadr_machine` registers and
+it has the microcycle. It costs the console one tick at the start of a cycle
+it holds for fifty-two.
+
+**And re-running every record aimed at every file this fix touched found one
+that had already rotted.** `the-request-path-reaches-no-pin` anchors on the
+last line of `cadr_arty.sv`'s `witness` fold, and the attachment appended the
+console's three outputs to exactly that line; the record went UNAPPLIED ---
+`@old` matching zero times, which stops the run rather than passing quietly.
+It is the anchor rotting loudly, the case that file's format is designed for,
+and it is the reason a slice re-runs the records aimed at a file and not only
+its own. Fixed, and the record says why it moved. After it: `arty` 7 of 7,
+`memory_path` 10 of 10, `tv` 20 of 20, `console` 7 of 7, all caught.
+
+**The numbers, fitted in isolated trees at `3198d8b` plus this slice**, board
+flow, `vivado/bitstream.tcl`, both configurations, zero critical warnings and
+zero errors:
+
+                            before (37711fe)      after
+    DDR=1  worst slack      -12.837 ns            -0.159 ns
+           failing          5,698 of 27,144       27 of 27,125
+           total negative   -8,309.396 ns         -1.175 ns
+           hold             +0.031 ns             +0.052 ns
+    DDR=0  worst slack      not measured          +0.036 ns, MET
+           failing                                0 of 16,031
+           hold                                   +0.082 ns
+
+**The console appears nowhere in the fitted report.** `grep -c console` on
+`timing.rpt` is 0; all ten worst paths are the disk controller's, from
+`trap_step_reg[9]` into `ecc_r_reg[*]/CE` at 4.724 ns over five levels, which
+is the same family the commit before the console reported at -0.148 ns. The
+board is back where it was, eleven picoseconds apart --- inside the quarter of
+a nanosecond CLAUDE.md calls placement noise, and reported as a number rather
+than as closure. The memory-off board **meets timing**.
+
+Utilisation, `DDR=1`: 7,318 LUTs (13.76%), 5,080 registers, 37 block RAM
+tiles, 4 DSPs. `DDR=0`: 3,712 LUTs, 1,567 registers. These are not comparable
+with the 6,887/5,060/38 quoted at `37711fe` --- three commits landed between,
+one of them the display --- so they are the shape of this tree and not a
+delta.
+
+**AND THE NAMING WAS ASKED OF THE DESIGN RATHER THAN ASSUMED**, which is what
+that file's own prose demands and what a slack figure cannot tell you:
+synthesised with the scoped XDC read, every one of 400 paths into
+`con_rdata_reg[*]/D` asks for **75.000 ns**, worst `vma_reg[14]/C` over 24
+logic levels with **57.148 ns of slack**. The register really is in the set.
+
+**And the question caught this slice's own prose being wrong.** A relaxed
+register's clock enable is relaxed with it --- CLAUDE.md's `elapsed -> md/CE`
+--- so the enable was asked about too. What was written first, in the XDC and
+in the module, was that the enable is not relaxed at all, since `mclk` is made
+from `tpclk` and `tpclk_q` and both are excluded from `slow`. The design says:
+
+     5.000 ns   u_machine/processor/u_phase_gen/tpclk_reg   x64
+     5.000 ns   u_machine/processor/tpclk_q_reg             x64
+    75.000 ns   u_machine/processor/started_reg             x64
+
+Right about the half that decides --- the two that make the edge stay at one
+tick, and a boundary arriving a microcycle late would put the capture anywhere
+--- and wrong about the whole. `started` goes high at the first boundary out
+of reset and never changes again, so it is the one register in the design for
+which a fifteen-tick relaxation cannot mean anything. Both comments say the
+measured thing now. **The reasoning read as true and was not, and only
+`get_property REQUIREMENT` told the difference.**
 
 ## What Linux does
 

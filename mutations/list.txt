@@ -4246,10 +4246,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `cadr_machine` nothing reads: UNUSEDSIGNAL on the first lint pass, the
 @note shape of the record above.  One pulse dropped, so that the fold still
 @note parses: a build failure is not lint doing the catching either.
+@note
+@note **The anchor moved when the console joined the fold** and this record
+@note went UNAPPLIED, which is the `@old` rotting loudly rather than quietly
+@note --- the good case, and the reason a slice that touches a file re-runs
+@note every record aimed at it and not only its own.  Caught by `--only arty`
+@note after `rtl/cadr_console_bus.sv` landed; the three console outputs are
+@note in the anchor now for the same reason `ch_hit` was.
 @old
-                   ch_wrote, ch_hit};
+                   ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata};
 @new
-                   ch_wrote};
+                   ch_wrote, con_gnt, con_ssyn, con_rdata};
 @end
 
 @mutation the-interrupt-reaches-no-pin
@@ -5153,4 +5160,30 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
           acc_lat_r <= acc_ge ? acc_d1 : (acc_d1 + 29'(REVOLUTION_NS));
 @new
           acc_lat_r <= acc_ge ? (acc_d1 + 29'(REVOLUTION_NS)) : acc_d1;
+@end
+
+@mutation console-read-back-is-not-held-to-the-boundary
+@check console
+@file rtl/cadr_console_bus.sv
+@note **THE ONE THAT HOLDS THE EXEMPTION.**  `con_rdata` is inside
+@note `cadr_machine` so that `cadr_machine.xdc`'s fifteen-tick multicycle
+@note reaches it, and it earns that on the file's own test only because it is
+@note loaded AT THE MICROCYCLE BOUNDARY and nowhere else: launched at one
+@note boundary and captured at the next, the sixteen-way diagnostic mux has
+@note twenty-nine ticks at normal speed and forty-four at extra slow to settle
+@note in.  Loaded every tick instead, it is a register holding whatever a
+@note relaxed path had reached by then --- the too-wide exemption in its
+@note purest form, and the version of this module that read -12.837 ns had the
+@note register outside the machine for want of exactly this.
+@note
+@note `mclk || !mclk` rather than deleting the condition, so that `mclk` stays
+@note read and lint does not catch this instead of the check.  Caught at "the
+@note read-back's lag in microcycles is 0x0, the reference says 0x1", by the
+@note sweep that reads PC with the machine RUNNING --- a halted read cannot
+@note resolve it, the machine having stopped moving, which is why the sweep
+@note exists.
+@old
+      if (mclk) con_rdata <= sr_rdata;
+@new
+      if (mclk || !mclk) con_rdata <= sr_rdata;
 @end

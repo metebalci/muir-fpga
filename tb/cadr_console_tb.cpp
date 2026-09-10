@@ -343,6 +343,24 @@ int main(int argc, char **argv) {
   dut->sintr = static_cast<uint8_t>(cur.v[kSintr]);
   Sample prev = take();
 
+  // **THE READ-BACK'S LAG, MEASURED AND NOT ASSERTED.**
+  // `rtl/cadr_console_bus.sv` captures the diagnostic mux's answer at the
+  // microcycle boundary and nowhere else, so that the sixteen-way mux has a
+  // microcycle to settle instead of a tick --- which is what turned -12.837 ns
+  // on 5,698 endpoints back into a met board.  The price is that the console
+  // reads the machine as of the last boundary, and the price has to be a
+  // number: these read `PC` while the machine RUNS and ask which row the
+  // answer belongs to.  A halted read cannot resolve this at all, the machine
+  // having stopped moving, which is exactly the "an exemption too wide tests
+  // nothing" trap --- so the sweep is made where it bites.
+  size_t pc_ring[8] = {0};
+  bool   sample_pending = false;
+  size_t sample_row = 0;
+  size_t sample_ring[8] = {0};
+  long   lag_samples = 0, lag_moving = 0;
+  long   lag_seen = -1;
+  size_t next_lag_row = 0;
+
   size_t k = 0;
   long last_edge = -1;
   uint64_t prev_ns = 0;
@@ -458,6 +476,7 @@ int main(int argc, char **argv) {
         }
         ++lengths_checked;
       }
+      pc_ring[k & 7] = static_cast<size_t>(r.v[kPc] & 0x3fffu);
       last_edge = tick;
       prev_ns = r.v[kNs];
       if (r.v[kBus]) {
@@ -479,6 +498,16 @@ int main(int argc, char **argv) {
         dut->rdata = static_cast<uint32_t>(rdata_for[k]);
         dut->sintr = static_cast<uint8_t>(cur.v[kSintr]);
       }
+    }
+
+    // The instant the register block answered this console cycle: what the
+    // console takes is `con_rdata` as it stands here, and `con_rdata` was
+    // loaded at the last microcycle boundary before it.
+    if (sample_pending && dut->con_ssyn_o) {
+      sample_pending = false;
+      sample_row = k;
+      for (int i = 0; i < 8; ++i) sample_ring[i] = pc_ring[i];
+      sample_ring[k & 7] = static_cast<size_t>(cur.v[kPc] & 0x3fffu);
     }
 
     // -- the AXI state, advanced from the handshakes sampled before the edge
@@ -651,6 +680,52 @@ int main(int argc, char **argv) {
     Tick();
     const bool quiet = !bus_outstanding && cur.v[kBus] == 0 && cur.v[kStall] == 0 &&
                        !arbitrated[k < total_rows ? k : 0];
+    // ---- the lag sweep, with the machine RUNNING and nothing halted.
+    if (!no_halts && lag_samples < 48 && k >= next_lag_row && quiet && bad < 20) {
+      next_lag_row = k + 4001;
+      sample_pending = true;
+      sample_row = 0;
+      const uint32_t w = SpyRead(5);
+      if (w >> 16) Fail("a lag probe's read was not answered", w >> 16, 0);
+      if (sample_pending) {
+        Fail("a lag probe never saw the acknowledgement", 1, 0);
+        sample_pending = false;
+      } else {
+        const size_t got = w & 0x3fffu;
+        ++lag_samples;
+        // **A SAMPLE WHERE THE CANDIDATE ROWS READ ALIKE IS NOT EVIDENCE**,
+        // and taking it as evidence is how this measurement first went
+        // wrong: the search returns the SMALLEST matching lag, so a PC that
+        // did not move between two rows reads as a lag of nothing whatever
+        // the design does.  Twenty of twenty-one samples said one and the
+        // first said nothing, which is the check reporting the boot PROM's
+        // program rather than the fabric.  So only a sample whose two
+        // candidates differ is counted, and there is a floor on how many.
+        const bool discriminating =
+            sample_row >= 2 &&
+            sample_ring[sample_row & 7] != sample_ring[(sample_row - 1) & 7];
+        if (!discriminating) continue;
+        ++lag_moving;
+        // Which row does the answer belong to?  The search runs over the
+        // last eight and the result has to be the same every time.
+        int lag = -1;
+        for (int L = 0; L < 8 && lag < 0; ++L)
+          if (sample_row >= static_cast<size_t>(L) &&
+              sample_ring[(sample_row - L) & 7] == got)
+            lag = L;
+        if (lag < 0) {
+          std::fprintf(stderr,
+                       "microcycle %zu: the console read PC %zo, which is no "
+                       "row of the last eight\n", sample_row, got);
+          ++bad;
+        } else if (lag_seen < 0) {
+          lag_seen = lag;
+        } else if (lag != lag_seen) {
+          Fail("the read-back's lag in microcycles", lag, lag_seen);
+        }
+      }
+      continue;
+    }
     if (no_halts) continue;
     // The hunt, which is a halt, one register and a start.
     if (next_target >= sizeof targets / sizeof *targets ||
@@ -958,6 +1033,25 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "FAIL: %ld register reads over %ld halts\n", regs_compared, visits);
     ++thin;
   }
+  // The lag is a number the module states, and the check has to be able to
+  // tell it from the next one along.  `lag_moving` is how many of the samples
+  // were taken where the two candidate rows carry different PCs --- on the
+  // others a lag of one and a lag of nothing read alike, and the sample says
+  // nothing.
+  if (lag_seen != 1) {
+    std::fprintf(stderr,
+                 "FAIL: the console's read-back is %ld microcycles behind the "
+                 "machine; `rtl/cadr_console_bus.sv` says one, being loaded at "
+                 "the microcycle boundary and nowhere else\n", lag_seen);
+    ++thin;
+  }
+  if (lag_moving < 8) {
+    std::fprintf(stderr,
+                 "FAIL: only %ld of %ld lag samples were taken where the two "
+                 "candidate rows differ, so the measurement is nearly vacuous\n",
+                 lag_moving, lag_samples);
+    ++thin;
+  }
   if (distinct_pc < 8) {
     std::fprintf(stderr,
                  "FAIL: the console stopped the machine at %ld distinct PCs; a "
@@ -1011,6 +1105,14 @@ int main(int argc, char **argv) {
       "      pulses seen; the arbiter kept the processor's own cycle whole\n"
       "      over %ld ticks of contention; a grant held off for ever still\n"
       "      completed the read and said it was lost\n"
+      "    the read-back is %ld microcycle behind the machine, MEASURED on %ld\n"
+      "      reads of PC with the machine RUNNING, of which %ld were taken\n"
+      "      where the two candidate rows carry different PCs and so are\n"
+      "      evidence at all --- the others say nothing and are not counted.\n"
+      "      `cadr_console_bus.sv` loads the diagnostic mux's answer at the\n"
+      "      microcycle boundary and nowhere else, which is what gives that\n"
+      "      sixteen-way mux a microcycle to settle instead of a tick; a halted\n"
+      "      read is exact, MCLK running whether or not MACHRUN does\n"
       "    NOT TESTED IN VALUE: the high halves of CYCLES and TICKS, which are\n"
       "      zero over a 600,000-microcycle reference; the burst reads both\n"
       "      halves so the latch's shape is exercised and its value is not\n"
@@ -1022,7 +1124,8 @@ int main(int argc, char **argv) {
       visits, total_rows, distinct_pc, lengths_checked, arb_skipped, sub_tick,
       resume_skipped, regs_compared, regs_hunted, flag2_wmapd, flag2_destspcd,
       flag2_imodd, flag2_pdlwrited, flag2_spushd, flag2_iwrited, axi_reads, axi_writes,
-      axi_beats, axi_stalls, unmapped_seen, kUnmapped, cpu_waited, step_moved,
+      axi_beats, axi_stalls, unmapped_seen, kUnmapped, cpu_waited,
+      lag_seen, lag_samples, lag_moving, step_moved,
       visits, alias_landed);
   return 0;
 }

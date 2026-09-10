@@ -171,41 +171,46 @@ module cadr_memory_path (
   // THE DIAGNOSTIC BUS HAS TWO MASTERS
   // ------------------------------------------------------------------------
   //
-  // **THE GRANT IS TAKEN ONLY WITH THE PROCESSOR'S OWN STROBE DOWN, AND HELD
-  // UNTIL THE CONSOLE LETS GO.**  Taken any other way it would truncate a
-  // Unibus cycle already counting on `elapsed` inside `cadr_spy_registers`:
-  // that module starts its count at the strobe and clears it when the strobe
-  // falls, so a strobe masked in the middle is a cycle that never answers,
-  // and the processor's own NXM timer is what would find it 4,250 ns later.
-  //
-  // The other way round is bounded and safe.  While the console has the bus a
-  // processor strobe is masked, so the processor's cycle simply starts late;
-  // the console holds the bus for `DIAGNOSTIC_NS` plus the drop, which is
-  // 260 ns, or 52 ticks, against that same 4,250 ns timer.  Sixteen to one,
-  // and it is the argument the channel's per-word arbiter above is held to,
-  // one bus along.
-  //
-  // `-UB SSYN` goes back to whoever asked and to nobody else: a slave
-  // answering a master that is not there is what a shared bus must not do.
-  logic        con_own;
+  // `rtl/cadr_console_bus.sv` is the arbiter, the mux and the console's
+  // read-back register, and its header carries the whole argument.  **It is a
+  // module of its own for two reasons, and the second is the one that
+  // matters.**  The first is that `tb/cadr_console_harness.sv` needs the same
+  // arbiter and a second copy of it here would be two descriptions of one
+  // thing.  The second is timing: the console is a level ABOVE this machine,
+  // in `rtl/cadr_arty.sv` beside the PS7, and `rtl/cadr_machine.xdc` is read
+  // `read_xdc -ref cadr_machine` and cannot name a register up there.  With
+  // the read-back captured in the console, the board flow asked the sixteen-
+  // way diagnostic mux to settle in one tick and read **-12.837 ns on 5,698
+  // endpoints**; captured here it falls into that file's `slow` set on the
+  // file's own test and has the microcycle.
   logic        sr_msyn, sr_write, sr_ssyn;
   logic [17:0] sr_addr;
   logic [15:0] sr_wdata;
 
-  always_ff @(posedge clk) begin
-    if (rst) con_own <= 1'b0;
-    else if (con_own) con_own <= con_req;
-    else con_own <= con_req && !ub_msyn;
-  end
-
-  assign con_gnt   = con_own;
-  assign sr_msyn   = con_own ? con_msyn  : ub_msyn;
-  assign sr_write  = con_own ? con_write : ub_write;
-  assign sr_addr   = con_own ? con_addr  : ub_addr;
-  assign sr_wdata  = con_own ? con_wdata : wdata[15:0];
-  assign ub_ssyn   = con_own ? 1'b0 : sr_ssyn;
-  assign con_ssyn  = con_own ? sr_ssyn : 1'b0;
-  assign con_rdata = ub_rdata;
+  cadr_console_bus console_bus (
+      .clk       (clk),
+      .rst       (rst),
+      .mclk      (mclk),
+      .cpu_msyn  (ub_msyn),
+      .cpu_write (ub_write),
+      .cpu_addr  (ub_addr),
+      .cpu_wdata (wdata[15:0]),
+      .cpu_ssyn  (ub_ssyn),
+      .con_req   (con_req),
+      .con_gnt   (con_gnt),
+      .con_msyn  (con_msyn),
+      .con_write (con_write),
+      .con_addr  (con_addr),
+      .con_wdata (con_wdata),
+      .con_ssyn  (con_ssyn),
+      .con_rdata (con_rdata),
+      .sr_msyn   (sr_msyn),
+      .sr_write  (sr_write),
+      .sr_addr   (sr_addr),
+      .sr_wdata  (sr_wdata),
+      .sr_ssyn   (sr_ssyn),
+      .sr_rdata  (ub_rdata)
+  );
 
   // **THE DECODE IS TAKEN ONCE AND HELD, and the reason is timing rather than
   // function.**  `phys` is the far end of the map: `vma` is registered at the

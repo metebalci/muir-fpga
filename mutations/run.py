@@ -117,7 +117,7 @@ CHECKS = {
             "rtl/cadr_busint_xbus.sv",
             "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_tv.sv",
-            "rtl/cadr_memory_path.sv",
+            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
         ],
         "top": "cadr_memory_path",
         "tb": "tb/cadr_memory_path_tb.cpp",
@@ -140,7 +140,7 @@ CHECKS = {
             "rtl/cadr_busint_xbus.sv",
             "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_tv.sv",
-            "rtl/cadr_memory_path.sv",
+            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
         ],
         "top": "cadr_memory_path",
         "tb": "tb/cadr_tv_tb.cpp",
@@ -228,7 +228,7 @@ CHECKS = {
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
-            "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_machine_tb.cpp",
@@ -253,7 +253,7 @@ CHECKS = {
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
-            "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_ddr_boot_tb.cpp",
@@ -281,7 +281,7 @@ CHECKS = {
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_spy_registers.sv", "rtl/cadr_disk_controller.sv",
-            "rtl/cadr_tv.sv", "rtl/cadr_memory_path.sv",
+            "rtl/cadr_tv.sv", "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
             "rtl/cadr_machine.sv", "rtl/cadr_axi_master.sv",
             "rtl/cadr_axi_widen.sv", "tb/cadr_mem_count_harness.sv",
         ],
@@ -302,7 +302,7 @@ CHECKS = {
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
-            "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
             "rtl/cadr_probe.sv", "tb/cadr_probe_harness.sv",
         ],
         "top": "cadr_probe_harness",
@@ -348,7 +348,7 @@ CHECKS = {
                   "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
                   "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
                   "rtl/cadr_spy_registers.sv", "rtl/cadr_disk_controller.sv",
-                  "rtl/cadr_tv.sv", "rtl/cadr_memory_path.sv",
+                  "rtl/cadr_tv.sv", "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
                   "rtl/cadr_machine.sv"],
         "top": "cadr_arty",
         "tb": None,
@@ -414,14 +414,15 @@ CHECKS = {
         "golden": None,
     },
     # The console: the sixteen diagnostic registers on `M_AXI_GP1`, held to
-    # `Engine::spy_read` over MIT's boot PROM.  The harness is the attachment
-    # `docs/console.md` carries --- the console, `cadr_spy_registers.sv` and
-    # the real processor, with the arbiter and the mux that
-    # `rtl/cadr_memory_path.sv` will have --- so a mutation of the module is
-    # caught by what the console reads back at a microcycle the reference
-    # names, and by the AXI3 protocol on the face.
+    # `Engine::spy_read` over MIT's boot PROM.  The harness is the console,
+    # `cadr_spy_registers.sv` and the REAL processor, with the arbiter that
+    # `rtl/cadr_memory_path.sv` instantiates --- the same module, not a copy
+    # of it --- so a mutation of either is caught by what the console reads
+    # back at a microcycle the reference names, by the AXI3 protocol on the
+    # face, or by the sweep that measures the read-back's lag with the machine
+    # running.
     "console": {
-        "sources": ["rtl/cadr_console.sv"],
+        "sources": ["rtl/cadr_console.sv", "rtl/cadr_console_bus.sv"],
         "extra": [
             "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
             "rtl/cadr_spy_registers.sv", "tb/cadr_console_harness.sv",
