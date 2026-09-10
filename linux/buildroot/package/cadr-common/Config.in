@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_CADR_COMMON
+	bool "cadr-common"
+	help
+	  What every program on the processing system does before it
+	  touches the fabric: the /dev/mem mapping, the EMIO tally's
+	  marker-bit guard, and one prefixed log line at a time.  A
+	  static library and its headers in the staging tree; no files
+	  on the target.
+
+	  Selected by the programs that use it (cadr-disk-pack,
+	  cadr-console) rather than chosen on its own.

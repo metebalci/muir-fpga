@@ -413,6 +413,25 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The console: the sixteen diagnostic registers on `M_AXI_GP1`, held to
+    # `Engine::spy_read` over MIT's boot PROM.  The harness is the attachment
+    # `docs/console.md` carries --- the console, `cadr_spy_registers.sv` and
+    # the real processor, with the arbiter and the mux that
+    # `rtl/cadr_memory_path.sv` will have --- so a mutation of the module is
+    # caught by what the console reads back at a microcycle the reference
+    # names, and by the AXI3 protocol on the face.
+    "console": {
+        "sources": ["rtl/cadr_console.sv"],
+        "extra": [
+            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
+            "rtl/cadr_spy_registers.sv", "tb/cadr_console_harness.sv",
+        ],
+        "top": "cadr_console_harness",
+        "tb": "tb/cadr_console_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "golden": "rtl.golden",
+        "gprom": True,
+    },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
     # and `busint_xbus` writes the stimulus AND the expected outputs, so a

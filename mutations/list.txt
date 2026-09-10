@@ -4929,3 +4929,109 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
                  : (tv_drives && dev_write) ? tv_rdata
 @end
+
+# ----------------------------------------------------------------------------
+# THE CONSOLE, `rtl/cadr_console.sv`.  The sixteen diagnostic registers on
+# `M_AXI_GP1`: `Engine::spy_read` and `Machine::spy_write` reached from the
+# processing system, with `cadr_spy_registers.sv` untouched between them.  Six
+# ways to be wrong, each caught on its own line of `build/console.pass`'s
+# failure output --- a register read off by one, a write that does not land,
+# IDENT wrong, an address that does not answer, a bound that is not one, and a
+# status bit that lies.
+
+@mutation console-reads-the-register-after-the-one-asked
+@check console
+@file rtl/cadr_console.sv
+@note `EADR<3:0>` is which of the sixteen, and the reference has a column for
+@note every one of them.  Asking for the register beside the one the program
+@note named gives IR<31:16> where IR<15:0> was wanted and PC where OPC was.
+@note Written as an XOR so that every bit of the index stays used: an addition
+@note that drops a bit is caught by lint instead of by the check, which is the
+@note bit-granularity lesson.  Caught at microcycle 3 on "diagnostic register
+@note 2, IR<47:32>, reads ffff, the reference says 0000" --- register 2
+@note answered from register 3, which is the open bus and reads all ones.
+@old
+            eng_eadr  <= eng_w_req ? w_eadr_q : r_idx[3:0];
+@new
+            eng_eadr  <= eng_w_req ? w_eadr_q : (r_idx[3:0] ^ 4'd1);
+@end
+
+@mutation console-write-goes-out-as-a-read
+@check console
+@file rtl/cadr_console.sv
+@note A halt is a write of zero to the clock control register --- CC's first
+@note act on a debuggee, muir/tests/lashup.rs:152.  A cycle that goes out as a
+@note read strobes nothing, `RUN` stays up and the machine never stops, which
+@note is a console that answers every read and does nothing.  Caught at "a
+@note halted machine ran a microcycle".
+@old
+            eng_write <= eng_w_req;
+@new
+            eng_write <= 1'b0;
+@end
+
+@mutation console-ident-is-not-cons
+@check console
+@file rtl/cadr_console.sv
+@note IDENT is the first read a program makes and the only thing that tells
+@note this face from a bus of zeros, a bus of ones, or the proving boards'
+@note `rtl/cadr_gp0_default.sv` answering "NONE".  Its complement is what an
+@note unmapped address reads, so this makes register 0 indistinguishable from
+@note register 6.  Caught at "IDENT is 0xbcb0b1ac, the reference says
+@note 0x434f4e53".
+@old
+        4'd0:    r_word = IDENT;
+@new
+        4'd0:    r_word = ~IDENT;
+@end
+
+@mutation console-does-not-answer-an-address-it-does-not-map
+@check console
+@file rtl/cadr_console.sv
+@note **THE ONE THAT MATTERS ON THE BOARD.**  A read nothing answers on a GP
+@note port does not fault the Arm; it hangs both cores at one PC each,
+@note measured.  A slave that takes the address and then never offers a beat
+@note for it leaves the program that touched it never returning, and the whole
+@note of GP1 outside these thirty-two words is such an address.  Caught at "an
+@note AXI transaction did not complete inside the engine's own bound", which
+@note is the only way a testbench can report a freeze.  `r_in` stays read, so
+@note lint does not catch this instead of the check.
+@old
+          rst_r <= (r_in && r_idx[4]) ? R_CYCLE : R_PREP;
+@new
+          rst_r <= (r_in && r_idx[4]) ? R_CYCLE : (r_in ? R_PREP : R_START);
+@end
+
+@mutation console-bound-is-not-a-bound
+@check console
+@file rtl/cadr_console.sv
+@note The engine gives up `LOST_T` ticks after the request and answers the
+@note read saying so, because an AXI transaction that waits on the diagnostic
+@note bus for ever is the frozen cores again one level in.  A longer bound
+@note still terminates --- **so a check that only asked whether the read came
+@note back would call this caught, on no evidence** --- but takes 8,000 ticks
+@note where the module's own header promises 4,096, and a bound nobody can
+@note predict is not a bound.  This is `RD_FINISH_T` one file along: the check
+@note asserts the number, and is caught at "a lost read took longer than the
+@note bound".
+@old
+    parameter int unsigned LOST_T   = 4096
+@new
+    parameter int unsigned LOST_T   = 8000
+@end
+
+@mutation console-says-a-lost-cycle-was-answered
+@check console
+@file rtl/cadr_console.sv
+@note STAT's `answered` bit is the last cycle's and `lost` is sticky since
+@note reset; a face that reports every cycle answered leaves a program unable
+@note to tell a register it read from one the machine never gave it.  The word
+@note itself carries bit 16 for the same fact, so this is the status bit and
+@note not the data --- and the check reads STAT after a lost cycle AND after a
+@note good one, which is what tells the per-cycle bit from the sticky one.
+@note Caught at "STAT's answered bit after a lost cycle".
+@old
+          answered <= !eng_lost;
+@new
+          answered <= 1'b1;
+@end

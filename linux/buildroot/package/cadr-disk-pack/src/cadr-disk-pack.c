@@ -100,50 +100,30 @@
 //                      [--no-guard] [--selftest] [--once]
 
 #include <errno.h>
-#include <fcntl.h>
+#include <fcntl.h>		// the --irq UIO device; /dev/mem is cadr_open_mem's
 #include <getopt.h>
 #include <poll.h>
 #include <signal.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+
+// The transport below the fabric --- /dev/mem, the EMIO tally guard and the
+// logging --- is `cadr-common`'s, shared with cadr-console since 10 Sep.
+#include <cadr/cadr_log.h>
+#include <cadr/cadr_mem.h>
 
 #include "pack_feeder.h"
 #include "pack_file.h"
 #include "pack_side.h"
 
-// The EMIO tally, the guard before any GP0 access.
-#define GPIO_BASE     0xE000A000u
-#define GPIO_DATA2_RO 0x68u
-#define GPIO_DATA3_RO 0x6Cu
-#define TALLY_MASK    0x80008000u
-#define TALLY_MARK    0x00008000u
-// The proving boards' default slave.
-#define IDENT_NONE    0x4E4F4E45u
-
-static FILE *logf;
 static volatile sig_atomic_t stopping;
 static void on_stop(int sig)
 {
 	(void)sig;
 	stopping = 1;
-}
-
-static void say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void say(const char *fmt, ...)
-{
-	va_list ap;
-	va_start(ap, fmt);
-	fputs("cadr-disk-pack: ", logf);
-	vfprintf(logf, fmt, ap);
-	fputc('\n', logf);
-	va_end(ap);
-	fflush(logf);
 }
 
 // ---- the face over /dev/mem -------------------------------------------
@@ -172,37 +152,6 @@ static void mmio_pause(struct pack_side *ps)
 	usleep(20);
 }
 
-static void *map(int fd, uint32_t phys, size_t bytes, const char *what)
-{
-	void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)phys);
-	if (p == MAP_FAILED) {
-		say("mapping %s at 0x%08x: %s", what, phys, strerror(errno));
-		return NULL;
-	}
-	return p;
-}
-
-// The guard: the tally's marker bits, read before anything on GP0.
-static int guard(int mem)
-{
-	volatile uint32_t *gpio = map(mem, GPIO_BASE, 4096, "the GPIO block");
-	if (!gpio)
-		return -1;
-	const uint32_t w2 = gpio[GPIO_DATA2_RO / 4], w3 = gpio[GPIO_DATA3_RO / 4];
-	munmap((void *)gpio, 4096);
-	if ((w2 & TALLY_MASK) == TALLY_MARK && (w3 & TALLY_MASK) == TALLY_MARK) {
-		say("the EMIO tally reads 0x%08x 0x%08x: a fabric with the processing system in it; M_AXI_GP0 may be read", w2, w3);
-		return 0;
-	}
-	if (w2 == 0 && w3 == 0)
-		say("the EMIO tally reads zero twice: either the GPIO block's clock is gated (APER_CLK_CTRL bit 22) or there is no instrument; "
-		    "not touching M_AXI_GP0, which would hang the processor on a bitstream without the processing system");
-	else
-		say("the EMIO tally reads 0x%08x 0x%08x, not the marker bits of a bitstream with the processing system in it; "
-		    "not touching M_AXI_GP0, which would hang the processor (--no-guard overrides)", w2, w3);
-	return -1;
-}
-
 static int probe_face(struct pack_side *ps, uint32_t regs_phys)
 {
 	uint32_t ident;
@@ -210,7 +159,7 @@ static int probe_face(struct pack_side *ps, uint32_t regs_phys)
 		say("the pack side answers at 0x%08x (IDENT \"PACK\"); status 0x%02x", regs_phys, ps->read(ps, PS_CTL));
 		return 0;
 	}
-	if (ident == IDENT_NONE)
+	if (ident == CADR_IDENT_NONE)
 		say("no pack side at 0x%08x: register 7 reads \"NONE\", the proving boards' default slave; a board with M_AXI_GP0 and no disk", regs_phys);
 	else
 		say("no pack side at 0x%08x: register 7 reads 0x%08x, wanting 0x%08x (\"PACK\"); "
@@ -317,33 +266,31 @@ int main(int argc, char **argv)
 		fprintf(stderr, "cadr-disk-pack: --unit %u: a unit is 0 to 7\n", unit);
 		return 2;
 	}
-	logf = stdout;
+	FILE *dest = stdout;
 	if (log_path) {
-		logf = fopen(log_path, "a");
-		if (!logf) {
+		dest = fopen(log_path, "a");
+		if (!dest) {
 			fprintf(stderr, "cadr-disk-pack: %s: %s\n", log_path, strerror(errno));
 			return 2;
 		}
 	}
-	setvbuf(logf, NULL, _IOLBF, 0);
+	cadr_log_init("cadr-disk-pack: ", dest);
 
 	// The mappings.  O_SYNC gives an uncached mapping of all of them: the
 	// registers must be, and the records the fabric reads and writes must
 	// not sit in a cache the HP port cannot see.
-	int mem = open("/dev/mem", O_RDWR | O_SYNC);
-	if (mem < 0) {
-		say("/dev/mem: %s", strerror(errno));
+	int mem = cadr_open_mem();
+	if (mem < 0)
 		return 1;
-	}
 	// 1. The guard, before anything on GP0.
-	if (!no_guard && guard(mem) < 0)
+	if (!no_guard && cadr_guard(mem, "M_AXI_GP0") < 0)
 		return 1;
 	struct mmio m;
 	m.poll_us = poll_us;
-	m.regs = map(mem, regs_phys, 4096, "the pack side's registers");
+	m.regs = cadr_map(mem, regs_phys, 4096, "the pack side's registers");
 	if (!m.regs)
 		return 1;
-	volatile uint32_t *spare = map(mem, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES, "the spare part of the CADR's region");
+	volatile uint32_t *spare = cadr_map(mem, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES, "the spare part of the CADR's region");
 	if (!spare)
 		return 1;
 
@@ -382,7 +329,7 @@ int main(int argc, char **argv)
 	say("headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are");
 
 	struct feeder f;
-	if (feeder_init(&f, &pk, &ps, spare, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES, logf) < 0) {
+	if (feeder_init(&f, &pk, &ps, spare, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES, cadr_log_file()) < 0) {
 		say("the mapped region does not cover the records");
 		return 1;
 	}

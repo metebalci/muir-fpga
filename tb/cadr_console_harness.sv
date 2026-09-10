@@ -1,0 +1,305 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The console, the register block and the processor, wired as the attachment
+// wires them --- **and this file IS the attachment, proved before it lands.**
+//
+// `rtl/cadr_console.sv` is a second master on the diagnostic bus and the CADR
+// is the first.  Joining them means a mux at `cadr_spy_registers`'s Unibus
+// port and an arbiter in front of it, and both belong in
+// `rtl/cadr_memory_path.sv`, which this slice does not own --- another
+// session is in that file.  So the mux and the arbiter are written here, the
+// check holds them, and `docs/console.md` carries them as a patch for
+// whoever owns `cadr_memory_path.sv`, `cadr_machine.sv` and `cadr_arty.sv` to
+// apply.  The lines below and the lines in the patch are the same lines.
+//
+// **THE PROCESSOR IS THE REAL ONE.**  `cadr_microcycle` is instantiated here
+// with MIT's boot PROM in its control store, driven from the same trace and
+// the same stimulus `tb/cadr_microcycle_tb.cpp` drives it from --- so what
+// the console reads back is the machine's own state at a microcycle the
+// reference names, and not a model's.  `run`, `promdisable`, `errstop`,
+// `stathenb` and the speed bits are NOT stimulus here as they are there:
+// they come out of `cadr_spy_registers`, which is what the console writes.
+// **That is the point of the check**: the halt is the console's, through the
+// register block, and the machine that stops is the one muir's trace
+// describes.
+//
+// WHAT THIS HARNESS ADDS THAT THE ATTACHMENT DOES NOT HAVE.  Two stimulus
+// ports with no counterpart in the fabric, both there to make a property
+// checkable:
+//
+//   `cpu_msyn` and its three companions are a Unibus master standing where
+//   `cadr_busint_xbus` stands --- the CADR's own cycle to `0o766012`, which
+//   the boot PROM makes.  The arbiter has to keep the two apart and this is
+//   the only way to ask it to.  In the fabric these come from the bus
+//   interface and are not ports at all.
+//
+//   `gnt_inhibit` holds the grant off for ever, which nothing in the fabric
+//   can do.  It is how `LOST_T` is exercised: a bound nothing exercises is
+//   not a bound, and the Arm hangs at one PC if an AXI read never completes.
+
+`default_nettype none
+
+module cadr_console_harness #(
+    parameter string PROM_HEX = "build/boot_prom.hex"
+) (
+    input  var logic        clk,
+    input  var logic        rst,
+
+    // --- the processor's stimulus, as `tb/cadr_microcycle_tb.cpp` drives it
+    input  var logic        n_memack,
+    input  var logic        n_memgrant,
+    input  var logic        n_loadmd,
+    input  var logic [31:0] rdata,
+    input  var logic        sintr,
+
+    // --- the processor, as `Rtl::signals` and `Rtl::spy` name it
+    output var logic [13:0] pc,
+    output var logic [13:0] lpc,
+    output var logic [13:0] opc,
+    output var logic [31:0] st,
+    output var logic [47:0] ir,
+    output var logic [31:0] a,
+    output var logic [31:0] m,
+    output var logic [31:0] alu,
+    output var logic [31:0] r,
+    output var logic [31:0] ob,
+    output var logic [31:0] q,
+    output var logic [9:0]  dc,
+    output var logic [25:0] lc,
+    output var logic [31:0] vma,
+    output var logic [31:0] md,
+    output var logic        vmaok,
+    output var logic        jcond,
+    output var logic        nop,
+    output var logic        pcs1,
+    output var logic        pcs0,
+    output var logic        iwrited,
+    output var logic        clock_edge,
+    output var logic        n_memrq,
+    output var logic        wrcyc,
+
+    // --- `M_AXI_GP1`, brought out for the testbench's own master
+    input  var logic [31:0] s_awaddr,
+    input  var logic [3:0]  s_awlen,
+    input  var logic [11:0] s_awid,
+    input  var logic        s_awvalid,
+    output var logic        s_awready,
+    input  var logic [31:0] s_wdata,
+    input  var logic [3:0]  s_wstrb,
+    input  var logic        s_wlast,
+    input  var logic        s_wvalid,
+    output var logic        s_wready,
+    output var logic [1:0]  s_bresp,
+    output var logic [11:0] s_bid,
+    output var logic        s_bvalid,
+    input  var logic        s_bready,
+    input  var logic [31:0] s_araddr,
+    input  var logic [3:0]  s_arlen,
+    input  var logic [11:0] s_arid,
+    input  var logic        s_arvalid,
+    output var logic        s_arready,
+    output var logic [31:0] s_rdata,
+    output var logic [1:0]  s_rresp,
+    output var logic [11:0] s_rid,
+    output var logic        s_rlast,
+    output var logic        s_rvalid,
+    input  var logic        s_rready,
+
+    // --- the CADR's own Unibus master, which the fabric has and this does
+    // --- not: stimulus, so that the arbiter can be asked to keep them apart
+    input  var logic        cpu_msyn,
+    input  var logic        cpu_write,
+    input  var logic [17:0] cpu_addr,
+    input  var logic [15:0] cpu_wdata,
+    output var logic        cpu_ssyn,
+    output var logic [15:0] cpu_rdata,
+
+    // --- the grant held off for ever, to exercise the engine's own bound
+    input  var logic        gnt_inhibit,
+
+    // --- what a check watches
+    output var logic        con_req,
+    output var logic        con_gnt,
+    output var logic        run_o,
+    output var logic        promdisable_o,
+    output var logic        errstop_o,
+    output var logic        stathenb_o,
+    output var logic [1:0]  mode_speed_o,
+    output var logic        prog_reset_o,
+    output var logic        prog_boot_o
+);
+
+  logic [3:0]  spy_eadr;
+  logic [15:0] spy_rdata;
+  logic        mclk;
+
+  // The console's half of the diagnostic bus.
+  logic        con_msyn, con_write, con_ssyn;
+  logic [17:0] con_addr;
+  logic [15:0] con_wdata, con_rdata;
+
+  // What reaches the register block, and what comes back.
+  logic        sr_msyn, sr_write, sr_ssyn;
+  logic [17:0] sr_addr;
+  logic [15:0] sr_wdata, sr_rdata;
+
+  // ------------------------------------------------------------------------
+  // THE ARBITER AND THE MUX --- the attachment, in the words the patch uses
+  // ------------------------------------------------------------------------
+  //
+  // **THE GRANT IS TAKEN ONLY WITH THE PROCESSOR'S OWN STROBE DOWN, AND HELD
+  // UNTIL THE CONSOLE LETS GO.**  Taken any other way it would truncate a
+  // Unibus cycle already counting on `elapsed` inside the register block ---
+  // the block starts its count at the strobe and clears it when the strobe
+  // falls, so a strobe masked in the middle is a cycle that never answers and
+  // the processor's own NXM timer is what would find it, 4,250 ns later.
+  //
+  // The other way round is bounded and safe: while the console has the bus a
+  // processor strobe is masked, so its cycle simply starts late.  The console
+  // holds the bus for `DIAGNOSTIC_NS` plus the drop --- 260 ns, 52 ticks ---
+  // against that same 4,250 ns timer, so a Unibus cycle waiting behind the
+  // console cannot become an NXM.  Sixteen to one, and it is the same
+  // argument `cadr_memory_path.sv`'s per-word channel arbiter is held to.
+  logic con_own;
+  always_ff @(posedge clk) begin
+    if (rst) con_own <= 1'b0;
+    else if (con_own) con_own <= con_req;
+    else con_own <= con_req && !cpu_msyn;
+  end
+  assign con_gnt = con_own && !gnt_inhibit;
+
+  assign sr_msyn  = con_own ? con_msyn  : cpu_msyn;
+  assign sr_write = con_own ? con_write : cpu_write;
+  assign sr_addr  = con_own ? con_addr  : cpu_addr;
+  assign sr_wdata = con_own ? con_wdata : cpu_wdata;
+  // `-UB SSYN` goes back to whoever asked and to nobody else.  A slave
+  // answering a master that is not there is what a shared bus must not do.
+  assign con_ssyn  = con_own ? sr_ssyn : 1'b0;
+  assign cpu_ssyn  = con_own ? 1'b0    : sr_ssyn;
+  assign con_rdata = sr_rdata;
+  assign cpu_rdata = sr_rdata;
+
+  cadr_console console (
+      .clk        (clk),
+      .rst        (rst),
+      .s_awaddr   (s_awaddr),
+      .s_awlen    (s_awlen),
+      .s_awid     (s_awid),
+      .s_awvalid  (s_awvalid),
+      .s_awready  (s_awready),
+      .s_wdata    (s_wdata),
+      .s_wstrb    (s_wstrb),
+      .s_wlast    (s_wlast),
+      .s_wvalid   (s_wvalid),
+      .s_wready   (s_wready),
+      .s_bresp    (s_bresp),
+      .s_bid      (s_bid),
+      .s_bvalid   (s_bvalid),
+      .s_bready   (s_bready),
+      .s_araddr   (s_araddr),
+      .s_arlen    (s_arlen),
+      .s_arid     (s_arid),
+      .s_arvalid  (s_arvalid),
+      .s_arready  (s_arready),
+      .s_rdata    (s_rdata),
+      .s_rresp    (s_rresp),
+      .s_rid      (s_rid),
+      .s_rlast    (s_rlast),
+      .s_rvalid   (s_rvalid),
+      .s_rready   (s_rready),
+      .dbg_req    (con_req),
+      .dbg_gnt    (con_gnt),
+      .ub_msyn    (con_msyn),
+      .ub_write   (con_write),
+      .ub_addr    (con_addr),
+      .ub_wdata   (con_wdata),
+      .ub_ssyn    (con_ssyn),
+      .ub_rdata   (con_rdata),
+      .clock_edge (clock_edge)
+  );
+
+  cadr_spy_registers spy_registers (
+      .clk        (clk),
+      .rst        (rst),
+      .mclk       (mclk),
+      .ub_msyn    (sr_msyn),
+      .ub_write   (sr_write),
+      .ub_addr    (sr_addr),
+      .ub_wdata   (sr_wdata),
+      .ub_ssyn    (sr_ssyn),
+      .ub_rdata   (sr_rdata),
+      .spy_eadr   (spy_eadr),
+      .spy_rdata  (spy_rdata),
+      .run        (run_o),
+      .promdisable(promdisable_o),
+      .errstop    (errstop_o),
+      .stathenb   (stathenb_o),
+      .mode_speed (mode_speed_o),
+      .prog_reset (prog_reset_o),
+      .prog_boot  (prog_boot_o)
+  );
+
+  cadr_microcycle #(
+      .PROM_HEX(PROM_HEX)
+  ) processor (
+      .clk         (clk),
+      .rst         (rst),
+      .run         (run_o),
+      .promdisable (promdisable_o),
+      .errstop     (errstop_o),
+      .stathenb    (stathenb_o),
+      .mode_speed  (mode_speed_o),
+      .spy_eadr    (spy_eadr),
+      .spy_rdata   (spy_rdata),
+      .n_memack    (n_memack),
+      .n_memgrant  (n_memgrant),
+      .n_loadmd    (n_loadmd),
+      .rdata       (rdata),
+      .sintr       (sintr),
+      .pc          (pc),
+      .lpc         (lpc),
+      .opc         (opc),
+      .st          (st),
+      .ir          (ir),
+      .a           (a),
+      .m           (m),
+      .alu         (alu),
+      .r           (r),
+      .ob          (ob),
+      .q           (q),
+      .dc          (dc),
+      .lc          (lc),
+      .vma         (vma),
+      .vmaok       (vmaok),
+      .jcond       (jcond),
+      .nop         (nop),
+      .pcs1        (pcs1),
+      .pcs0        (pcs0),
+      .iwrited     (iwrited),
+      .md          (md),
+      .phys        (phys_u),
+      .wdata       (wdata_u),
+      .mclk        (mclk),
+      .n_memrq     (n_memrq),
+      .mbusy_o     (mbusy_u),
+      .mbusy_sync_o(mbusy_sync_u),
+      .memstart    (memstart_u),
+      .rdcyc       (rdcyc_u),
+      .wrcyc       (wrcyc),
+      .clock_edge  (clock_edge)
+  );
+
+  // The processor's memory-path half is not here: this harness is the
+  // console, the register block and the machine, and `build/machine.pass` is
+  // where the bus interface meets the processor.  Folded so that nothing
+  // goes unread.
+  logic [21:0] phys_u;
+  logic [31:0] wdata_u;
+  logic        mbusy_u, mbusy_sync_u, memstart_u, rdcyc_u;
+  logic        unused;
+  assign unused = ^{phys_u, wdata_u, mbusy_u, mbusy_sync_u, memstart_u, rdcyc_u};
+
+endmodule
+
+`default_nettype wire
