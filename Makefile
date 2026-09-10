@@ -19,7 +19,8 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
-.PHONY: check cables ps7 ps7-init current mutants mutants-selftest probe-selftest clean
+.PHONY: check cables ps7 ps7-init current mutants mutants-selftest probe-selftest \
+        disk-golden clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -29,7 +30,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
        $(BUILD)/mem_count.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
-       $(BUILD)/probe_jtag.pass current
+       $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -529,6 +530,7 @@ MUTREV ?= HEAD
 # says which trace is missing, which is how this was found.
 mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
+         $(BUILD)/disk.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
@@ -541,6 +543,7 @@ mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 # itself is invoked, and where it was once wrong.
 mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
                   $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
+                  $(BUILD)/disk.golden \
                   $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
@@ -602,6 +605,42 @@ $(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/src/trace.rs \
 $(BUILD)/microcycle_sys.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
                               $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl_sys.golden
+	@touch $@
+
+# --------------------------------------------------- the disk, with a drive
+
+# The reference trace for the disk controller once it has a drive and a pack:
+# `golden/src/disk.rs` drives `disk_controller::Controller` register by
+# register, as `busint_xbus.rs` drives `busint::Busint`.
+#
+# It needs no `vendor/`: the pack is blank and the program formats what it
+# reads, so this runs in CI where `rtl_sys.golden` skips.  The generator also
+# asserts as it runs --- that time never runs backwards and every instant it
+# samples at is a multiple of five nanoseconds, that no read of a register
+# changed the pack, and that the five status bits `Controller` cannot reach
+# are exactly `<4> <12> <19> <21> <23>` --- so a muir that moves under any of
+# those says so on the push that moves it.
+.PHONY: disk-golden
+disk-golden: $(BUILD)/disk.golden
+
+$(BUILD)/disk.golden: golden/src/disk.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin disk > $@
+
+# The drive and the register face against that trace.  **THIS IS THE SLOWEST
+# CHECK HERE AND THE REASON IS A CONSTANT THAT MUST NOT BE SHORTENED**: the
+# trace holds one hang run out to `TIMEOUT_NS`, 2.56 s, which is 512,000,000
+# ticks of this fabric's clock, and the fabric has to count every one of them.
+# A check that cannot tell that constant from a wrong one is `RD_FINISH_T`
+# again.  With the pre-roll that puts the spindle in phase it is about 552
+# million ticks and takes a minute or so.
+$(BUILD)/obj_disk/Vcadr_disk_controller: rtl/cadr_disk_controller.sv \
+                                         tb/cadr_disk_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_disk \
+	    --top-module cadr_disk_controller \
+	    rtl/cadr_disk_controller.sv $(abspath tb/cadr_disk_tb.cpp)
+
+$(BUILD)/disk.pass: $(BUILD)/obj_disk/Vcadr_disk_controller $(BUILD)/disk.golden
+	$(BUILD)/obj_disk/Vcadr_disk_controller $(BUILD)/disk.golden
 	@touch $@
 
 $(BUILD):

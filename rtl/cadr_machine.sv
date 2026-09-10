@@ -49,6 +49,24 @@ module cadr_machine #(
     // --- SINTR, the interrupt off the cables
     input  var logic        sintr,
 
+    // --- THE DISK'S DRIVE SEAM, eight unit slots of it.
+    //
+    // A drive is a thing on a cable and not a property of the controller, so
+    // presence and the read-only switch are per unit and `Controller::timed`
+    // --- whether the drive's own time is charged at all --- comes with them.
+    // `tb/cadr_disk_tb.cpp` attaches one where the reference trace's `ATTACH`
+    // row says; `rtl/cadr_arty.sv` ties all three off and says what will
+    // drive them. **A design with one drive always present is wrong**: with
+    // the presence a constant, `<1>` any-attention stops being over all eight
+    // and the status reads `1` the moment a program stores another unit
+    // number, which MIT's boot PROM does 5,650 times.
+    //
+    // Nothing on this side of the seam fetches a block yet: `S_AXI_HP2` and
+    // the block store are the channel's slice.
+    input  var logic [7:0]  drive_present,
+    input  var logic [7:0]  drive_read_only,
+    input  var logic        drive_timed,
+
     // --- how many 64K-word memory boards are fitted, 1 to 60
     input  var logic [6:0]  boards,
 
@@ -269,6 +287,14 @@ module cadr_machine #(
   cadr_disk_controller disk (
       .clk      (clk),
       .rst      (rst),
+      // `-XBUS INIT` on the backplane. The power-on reset is the one thing
+      // that asserts it here --- there is no console to pull it --- and `rst`
+      // is the harder of the two: it clears the disk address counters and the
+      // command list pointer, which `-XINIT` leaves standing.
+      .xbus_init(rst),
+      .drive_present  (drive_present),
+      .drive_read_only(drive_read_only),
+      .drive_timed    (drive_timed),
       .sel      (device),
       .dev_rq   (dev_rq),
       .dev_write(dev_write),
