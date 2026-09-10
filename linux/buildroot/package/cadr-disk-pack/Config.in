@@ -5,8 +5,9 @@ config BR2_PACKAGE_CADR_DISK_PACK
 	select BR2_PACKAGE_CADR_COMMON
 	help
 	  The disk pack program: the program on the processing system that serves
-	  the CADR's disk from the pack file on the card, with the init
-	  script that mounts the card and starts it.  One package per
+	  the CADR's disks from the drive bay --- disk-pack-0.img to
+	  disk-pack-7.img on the card's second partition --- with the init
+	  script that mounts the card's two partitions and starts it.  One package per
 	  program, decided 10 Sep: the console, the RFB server, the Chaosnet
 	  bridge and USB input each get their own beside this one, and what
 	  they share goes into a cadr-common package when the second arrives.

@@ -18,6 +18,56 @@
 // pack.  `feeder_test.c` checks the alignment and the region of every
 // address the feeder chooses.
 //
+// THE DRIVE BAY.  `pack_bay.h` holds the eight names and the eight open
+// packs; this file holds the rules about *when* the bay may change and what
+// has to happen first.  `feeder_bay_scan` is one look at the eight names and
+// is called on an interval (250 ms by default) rather than on every poll,
+// because a stat of eight names four thousand times a second buys nothing a
+// quarter of a second does not.  Four things can have happened to a name:
+//
+//   IT APPEARED     ---  the unit comes present, its write-protect switch is
+//                        the file's read-only mark, and its attention is
+//                        raised, as a drive's is when it comes ready
+//   IT WENT AWAY    ---  everything the machine has written and this program
+//                        has not yet put back is FLUSHED FIRST, every slot of
+//                        that unit is taken away, the unit goes absent and
+//                        its attention is raised
+//   ITS MARK MOVED  ---  the write-protect switch flips.  Going read-only
+//                        flushes first, because a block written while the
+//                        pack was writable belongs on the pack and not in a
+//                        store about to be told it may not write
+//   IT WAS REPLACED ---  a different file under the same name, or the same
+//                        file at a different size: the pack that was there
+//                        went away and the one that is there arrived, in
+//                        that order, in one pass
+//
+// **NONE OF IT HAPPENS IN THE MIDDLE OF A TRANSFER.**  A scan that finds the
+// channel walking (CTL's `ch_active`) changes nothing and says so, and the
+// caller tries again on its next poll --- 250 us, and a transfer is a block
+// or a chain of them, so the wait is under a millisecond.  A real drive will
+// not let you open the door with the heads loaded.
+//
+// **RENAMING A PACK IS SAFE AND DELETING ONE IS NOT, AND THE DIFFERENCE IS
+// THE LINK COUNT.**  A renamed file is still a file: the descriptor this
+// program holds followed it, so the flush lands in the file under its new
+// name and nothing is lost.  A deleted file is nameless: the flush would go
+// into clusters the kernel frees at the last close, so this program does not
+// pretend --- it says which unit and exactly how many blocks were lost, and
+// names them.  `pack_alive` is the test and renaming is the gesture to
+// document.
+//
+// **AND A PACK WRITTEN OVER WHERE IT LIES IS A THIRD CASE, NOT THE
+// SECOND.**  `scp` onto a name already in use truncates the file and refills
+// it, so the link count says the file is alive --- and it is --- but its
+// contents are becoming somebody else's pack, and the old pack's words would
+// corrupt the new one.  So flushing is refused there on purpose and the
+// blocks are called lost, which is the one place `pack_alive` is not the
+// question being asked.
+//
+// The attention this file raises is written into DRIVE's bits 24:17.
+// **The fabric does not act on that field yet**; `pack_side.h` says which
+// two lines of RTL it wants and nothing else here depends on it.
+//
 // THE RULE IS LINUX'S (`rtl/cadr_disk_pack.sv`, "the request path"), and it
 // is second chance over the twenty-four slots: a hand goes round; a slot
 // whose REF bit is up is passed and the bit cleared, the first slot whose
@@ -40,6 +90,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "pack_bay.h"
 #include "pack_file.h"
 #include "pack_side.h"
 
@@ -56,17 +107,31 @@
 #define FEEDER_NAMED_REQUESTS 3
 #define FEEDER_NAMED_DENIALS  16
 
+// How many blocks of one loss are named on the console before they are only
+// counted.
+#define FEEDER_NAMED_LOSSES 16
+// How many passes a removal's flush may take before the rest is called
+// stuck.  The channel is idle when this runs, so a refusal is the walk's
+// last beat and one more pass clears it.
+#define FEEDER_FLUSH_PASSES 8
+
 struct feeder {
-	struct pack *pack;
+	struct bay *bay;
 	struct pack_side *ps;
 	// The mapped spare, `mem[0]` at physical `mem_phys`.
 	volatile uint32_t *mem;
 	uint32_t mem_phys;
 	size_t mem_bytes;
-	// Which block each slot holds, or -1.
+	// Which block each slot holds, or -1, and on which unit's pack.  **THE
+	// UNIT IS PART OF IT**: eight drives can be in the bay and a store
+	// holding two drives' blocks under one disk address would put one
+	// drive's block on the other's pack.
 	int32_t slot_lba[PS_SLOTS];
-	// The unit the pack is on; a request on any other is denied.
-	unsigned unit;
+	int8_t slot_unit[PS_SLOTS];
+	// Whether the drive's own seek and rotational times are charged
+	// (`Controller::timed`).  A property of the run, not of a file, so it
+	// stays an option and is written into DRIVE with every seam change.
+	int timed;
 	// Second chance's hand: the slot looked at next.
 	unsigned hand;
 	FILE *log;
@@ -74,6 +139,19 @@ struct feeder {
 	unsigned long polls, requests, served, denied, written_back, takes;
 	unsigned long refused_walk, deferred_dirty, nothing_moved, pad_written, failures;
 	unsigned long lost_at_start;
+	// The drive bay's tally.
+	unsigned long scans, scans_deferred, appeared, went_away, protects, unprotects;
+	unsigned long replaced, flushed, lost_blocks, lost_events, bay_failures;
+	unsigned worst_scan_deferral, scan_deferrals_in_a_row;
+	// The seam as it was last written, so a scan that changed nothing
+	// writes nothing.
+	uint8_t drive_present, drive_read_only;
+	int bay_missing_said;
+	// A file in the bay that could not be opened is said ONCE and not four
+	// times a second: which file was refused, per unit, so that the same
+	// one is only counted afterwards and a different one is said afresh.
+	ino_t refused_ino[BAY_UNITS];
+	off_t refused_size[BAY_UNITS];
 	// The last failure, for the summary line: a count that names nothing
 	// is not a report.
 	char last_failure[256];
@@ -94,7 +172,7 @@ struct feeder {
 	unsigned repeat_serves;
 };
 
-int feeder_init(struct feeder *f, struct pack *p, struct pack_side *ps,
+int feeder_init(struct feeder *f, struct bay *bay, struct pack_side *ps,
 		volatile uint32_t *mem, uint32_t mem_phys, size_t mem_bytes, FILE *log);
 
 uint32_t feeder_fetch_addr(unsigned slot);
@@ -116,9 +194,23 @@ int feeder_writeback(struct feeder *f, unsigned slot, char *err, size_t errlen);
 int feeder_take(struct feeder *f, unsigned slot, char *err, size_t errlen);
 
 // The cache begins: every slot taken away (a dirty one reported lost), the
-// drive on `unit` made present with its read-only switch and whether its
-// time is charged.  0, or -1 with `err`.
-int feeder_start(struct feeder *f, unsigned unit, int read_only, int timed, char *err, size_t errlen);
+// seam written empty, and then one scan of the bay, which brings up whatever
+// packs are already in it.  `timed` is remembered and written with every
+// seam change afterwards.  0, or -1 with `err`.
+int feeder_start(struct feeder *f, int timed, char *err, size_t errlen);
+
+// One look at the eight names, and whatever it implies.  Returns 0 when it
+// ran, 1 when it changed nothing because the channel was walking (call again
+// on the next poll), or -1 with `err` on a failure it could not get past.
+int feeder_bay_scan(struct feeder *f, char *err, size_t errlen);
+
+// Every dirty slot of one unit written back, in up to `passes` passes: what
+// a pack leaving the bay costs before its descriptor is closed.  `wrote`
+// takes the number that landed.  Returns the number still dirty.
+unsigned feeder_flush_unit(struct feeder *f, unsigned unit, unsigned passes,
+			   unsigned long *wrote, char *err, size_t errlen);
+// Every slot holding a block of one unit taken away.  Returns how many.
+unsigned feeder_take_unit(struct feeder *f, unsigned unit, char *err, size_t errlen);
 
 // One pass over the face: IRQ read and cleared, REQ answered --- served or
 // denied --- and every DIRTY slot written back that the walk is not on.

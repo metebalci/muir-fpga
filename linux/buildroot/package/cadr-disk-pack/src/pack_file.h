@@ -30,6 +30,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 // "Each disk block contains one Lisp Machine page worth of data, i.e. 256.
 // words or 1024. bytes."
@@ -59,6 +60,14 @@ struct pack {
 	int writable;
 	struct pack_geometry g;
 	uint32_t blocks;
+	// WHICH FILE THIS DESCRIPTOR IS ON, remembered at the open.  The drive
+	// bay watches eight names and a name is not a file: a pack renamed away
+	// keeps this descriptor and this identity, a pack replaced under its own
+	// name has a new one, and the two are told apart by comparing these
+	// three with what the name says now (`pack_bay.h`).
+	dev_t dev;
+	ino_t ino;
+	off_t size;
 	// `headers`: sectors whose header is not the format's own.
 	struct pack_header_entry *headers;
 	size_t n_headers, cap_headers;
@@ -71,6 +80,31 @@ struct pack {
 // with `err` saying why.
 int pack_open(struct pack *p, const char *path, int writable, char *err, size_t errlen);
 void pack_close(struct pack *p);
+
+// How many bytes a pack of this geometry is, and the geometry a file of
+// that many bytes carries --- 0 with `g` filled, or -1 for a size neither
+// type has.  **THIS IS WHAT TELLS A PACK FROM A FILE THAT IS NOT ONE**, and
+// the drive bay leans on it twice: a name whose size is neither is not a
+// drive, so a pack still being copied in --- every intermediate size is
+// wrong --- is simply not there yet, and becomes a drive at the instant its
+// last byte lands.
+uint64_t pack_size_of(const struct pack_geometry *g);
+int pack_geometry_of_size(uint64_t bytes, struct pack_geometry *g);
+
+// IS THE FILE THIS DESCRIPTOR IS ON STILL ON THE FILESYSTEM?  A pack
+// RENAMED away is: the name moved, the descriptor followed it, and a write
+// through it lands in the file under its new name.  A pack DELETED is not:
+// its link count is zero, the kernel frees its clusters at the last close,
+// and a write through the descriptor goes nowhere.  That difference is the
+// whole reason renaming is the safe way to take a pack out and deleting one
+// loses whatever the machine had written and not yet given back.
+int pack_alive(const struct pack *p);
+
+// The same file, opened again with a different writability: what a change
+// to the read-only mark in the filesystem asks for.  The two tables are the
+// run's and stay across it, because it is the same pack.  Returns 0, or -1
+// with `err` and the old descriptor still in place.
+int pack_reopen(struct pack *p, const char *path, int writable, char *err, size_t errlen);
 
 // A block number from the start of the pack, or -1 off it.
 int pack_lba(const struct pack_geometry *g, uint32_t c, uint32_t h, uint32_t b, uint32_t *lba);

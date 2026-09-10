@@ -1,0 +1,243 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for cadr-disk-pack: bugs `feeder_test.c` has to catch.
+#
+# `mutate.py` applies each record to a copy of this package's sources, builds
+# the check against it, and runs it.  A mutation the check FAILS on is a check
+# doing its job; one the check passes is reported as SURVIVED and the run is
+# red.  A record whose `@old` no longer matches its file exactly once, or that
+# does not compile, or that names a file the check does not build, is BROKEN
+# and also fails the run --- CLAUDE.md records two fabric mutations reported
+# as surviving that had never been built.
+#
+# THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
+# can read this one:
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @file      which of this package's sources to mutate
+#   @why       what the check is supposed to notice, printed when it does not
+#   @note      prose, repeatable; printed with @why on a survivor
+#   @old       the source to replace, exactly as it stands
+#   @new       what to put there; empty deletes
+#   @end
+#
+# WHERE THE LIST CAME FROM.  One record for each decision the drive bay makes
+# that a reader would otherwise have to take on trust: what makes a file a
+# pack, what the write-protect switch is read from, when a change may be
+# applied, what has to happen before a drive leaves, which drive a block goes
+# back to, what a name means, whether a loss is said, and whether the
+# attention is a pulse.  **The rename and the delete are two records, not
+# one**, because they are the two halves of the one distinction this whole
+# slice turns on: a renamed file is still a file and the flush lands in it, a
+# deleted one is not and the blocks are gone.  A check that could not tell
+# them apart would pass a program that pretended.
+
+@mutation bay-a-file-of-any-size-is-a-pack
+@file pack_bay.c
+@why a file of 4,096 bytes in the bay is not a drive, and a pack still being copied in is that file
+@note This is the rule that makes copying a pack in over the network work
+@note with no flag and no signal: every intermediate size is the wrong size,
+@note so the drive appears at the instant the last byte lands.  Mutated, the
+@note short file is taken for a T-300 and opened, `pack_open` refuses it on
+@note its size, and a failure in the bay is a failure.
+@old
+	if (pack_geometry_of_size((uint64_t)st.st_size, &l->g) < 0)
+		return;
+	l->is_pack = 1;
+@new
+	if (pack_geometry_of_size((uint64_t)st.st_size, &l->g) < 0)
+		l->g = PACK_T300;
+	l->is_pack = 1;
+@end
+
+@mutation bay-the-read-only-mark-is-not-the-write-protect-switch
+@file pack_bay.c
+@why `chmod -w` on a pack is the drive's write-protect switch, and nothing else says so
+@note FAT carries a read-only attribute per file; Windows sets it from a
+@note file's properties and Linux from `chmod -w`, and `vfat` shows it by
+@note clearing the write bits.  Read from an open instead, it would always
+@note read false, because root's open for writing succeeds whatever the mode.
+@old
+	l->read_only = (st.st_mode & 0222) == 0;
+@new
+	l->read_only = 0;
+@end
+
+@mutation bay-changes-a-drive-in-the-middle-of-a-transfer
+@file pack_feeder.c
+@why a real drive will not let you open the door with the heads loaded, and neither may this
+@note The channel is walking for one unit at a time and this program cannot
+@note see which, so it waits for the whole channel.  The wait is under a
+@note millisecond, because the caller comes back on its next poll and not on
+@note its next scan.
+@old
+	if (ps_status(f->ps) & PS_ST_CH_ACTIVE) {
+@new
+	if (0 && (ps_status(f->ps) & PS_ST_CH_ACTIVE)) {
+@end
+
+@mutation bay-lets-a-pack-leave-without-flushing-it
+@file pack_feeder.c
+@why renaming a pack out must put what the machine wrote into the file under its new name
+@note The descriptor followed the rename, so the flush lands in the renamed
+@note file and nothing is lost.  Without it the block is taken away DIRTY,
+@note which is the CADR's write thrown away, and the renamed file does not
+@note carry the words the machine wrote.
+@old
+	if (alive)
+		feeder_flush_unit(f, unit, FEEDER_FLUSH_PASSES, &wrote, err, errlen);
+@new
+	if (alive && 0)
+		feeder_flush_unit(f, unit, FEEDER_FLUSH_PASSES, &wrote, err, errlen);
+@end
+
+@mutation bay-flushes-into-a-pack-that-was-deleted
+@file pack_file.c
+@why a deleted file has no name for a flush to land in, and the blocks are lost rather than written
+@note `vfat`'s unlink calls `clear_nlink`, as every local filesystem's does,
+@note so the link count is what tells a renamed pack from a deleted one while
+@note the descriptor is still open.  Mutated, a delete looks like a rename:
+@note the writes go into clusters the kernel frees at the last close, the
+@note program reports them flushed, and the loss is pretended away.
+@old
+	return st.st_nlink > 0;
+@new
+	return st.st_nlink >= 0;
+@end
+
+@mutation bay-loses-blocks-quietly
+@file pack_feeder.c
+@why a loss that is counted and not said is a loss nobody finds out about
+@note An exit code cannot tell two failures apart and a count that names
+@note nothing is not a report (CLAUDE.md, twice).  The check reads the
+@note console back and requires the unit, the count and the block number, and
+@note the sentence that says renaming is the gesture that would have kept
+@note them.
+@old
+		say(f, "unit %u: LOST %u block(s) THE MACHINE HAD WRITTEN and this program had not yet put on the pack: %s. "
+		       "The blocks: %s. RENAME a pack to take it out --- a renamed file keeps its blocks, because this "
+		       "program's descriptor follows it and the flush lands there; a deleted one cannot.",
+		    unit, lost, why, blocks);
+@new
+		(void)blocks;
+@end
+
+@mutation bay-leaves-the-slots-of-a-pack-that-went-away
+@file pack_feeder.c
+@why a block of a pack that is no longer in the bay is a block the walk would be served out of a drive that is not there
+@note The store is a cache of the packs in the bay, so a pack leaving takes
+@note its slots with it whether they were dirty or clean.  Left behind, the
+@note walk hits them and the machine reads a pack that has been taken out ---
+@note and if the name is used again for a different pack, it reads the old
+@note one's words out of the new one's drive.
+@old
+	feeder_take_unit(f, unit, err, errlen);
+	bay_close(f->bay, unit);
+@new
+	bay_close(f->bay, unit);
+@end
+
+@mutation bay-the-name-names-the-wrong-unit
+@file pack_bay.c
+@why the eight names ARE the rule: disk-pack-N.img is unit N's pack and no other's
+@note There is no option naming a pack and none naming a unit, so if the name
+@note does not decide the unit nothing does.  Off by one, the trace's pack
+@note never comes present at all, because nothing is at the name it looks in.
+@old
+	snprintf(name, sizeof name, BAY_NAME_FMT, unit & 7u);
+@new
+	snprintf(name, sizeof name, BAY_NAME_FMT, (unit + 1u) & 7u);
+@end
+
+@mutation bay-a-slot-forgets-which-drive-its-block-came-from
+@file pack_feeder.c
+@why eight drives means a block goes back to the pack it came off, and the unit is the only thing that says which
+@note "A store holding blocks of two drives under one disk address would hand
+@note one drive's block to the other" (`rtl/cadr_disk_controller.sv`), and the
+@note same is true of the write-back: two packs share every block number, so
+@note the unit is half the address.
+@old
+	f->slot_lba[slot] = (int32_t)lba;
+	f->slot_unit[slot] = (int8_t)unit;
+@new
+	f->slot_lba[slot] = (int32_t)lba;
+	f->slot_unit[slot] = 0;
+@end
+
+@mutation bay-flushes-after-the-write-protect-switch-instead-of-before
+@file pack_feeder.c
+@why a block written while the pack was writable belongs on the pack, and a store told it may not write would never put it there
+@note The direction is the whole of it: going read-only has to flush, and
+@note coming out of read-only has nothing to flush.  Reversed, the block the
+@note machine wrote is stranded in a slot whose pack refuses it, for as long
+@note as the mark stays set.
+@old
+				if (l.read_only) {
+					feeder_flush_unit(f, u, FEEDER_FLUSH_PASSES, &wrote, err, errlen);
+					f->flushed += wrote;
+				}
+@new
+				if (!l.read_only) {
+					feeder_flush_unit(f, u, FEEDER_FLUSH_PASSES, &wrote, err, errlen);
+					f->flushed += wrote;
+				}
+@end
+
+@mutation bay-reopens-nothing-when-the-mark-moves
+@file pack_bay.c
+@why the write-protect switch has to reach the pack, not only the register
+@note The descriptor was opened read-write and stays read-write; only
+@note `pack_reopen` makes `pack_writeback` refuse.  Mutated, DRIVE says
+@note write-protected and the pack takes writes anyway, which is the worst of
+@note the two --- the machine is told it may not write and the file changes
+@note under it.
+@old
+	if (pack_reopen(&d->pack, path, writable, err, errlen) < 0)
+		return -1;
+	d->read_only = !writable;
+@new
+	d->read_only = !writable;
+@end
+
+@mutation bay-does-not-raise-the-attention-when-a-pack-is-loaded
+@file pack_feeder.c
+@why a drive raises an attention when it comes ready, and a pack landing in the bay is that
+@note The field is bits 24:17 of DRIVE.  **The fabric does not act on it
+@note yet** --- `pack_side.h` says which two lines of RTL it wants --- so what
+@note this record holds is that the program writes it, on the unit that
+@note changed and no other.
+@old
+	const struct pack *pk = bay_pack(f->bay, unit);
+	*attention |= (uint8_t)(1u << unit);
+@new
+	const struct pack *pk = bay_pack(f->bay, unit);
+@end
+
+@mutation bay-leaves-the-attention-field-standing
+@file pack_side.c
+@why an attention is a pulse, and a bit left standing in a register is not one
+@note The word is written twice, once with the field and once without, so the
+@note field is a pulse whether or not the fabric clears it for itself.  Left
+@note standing, a drive that came ready once would read as coming ready for
+@note ever once the field is wired.
+@old
+	ps->write(ps, PS_DRIVE, seam);
+@new
+	if (!attention)
+		ps->write(ps, PS_DRIVE, seam);
+@end
+
+@mutation bay-flushes-into-a-pack-being-written-over-where-it-lies
+@file pack_feeder.c
+@why a file being overwritten in place is alive and is not the pack whose words are in the store
+@note This is the one place where `pack_alive` is not the question: the link
+@note count says the file is there, and it is, but its contents are becoming
+@note somebody else's pack.  Writing the old pack's blocks into it would put
+@note one pack's words inside another and the machine would read them back as
+@note its own.  So the blocks are called lost, loudly, and not written.
+@old
+				bay_remove(f, u, !overwritten, why, &attention, err, errlen);
+@new
+				bay_remove(f, u, 1, why, &attention, err, errlen);
+@end
