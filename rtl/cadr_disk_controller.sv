@@ -124,14 +124,33 @@
 // candidate equivalent mutant and is recorded in `mutations/list.txt` as
 // such**, so that nobody files it as a hole.
 //
-// **`-XBUS.INTR` IS COMPUTED AND NOT BROUGHT OUT**, deliberately.  `<3>` is
-// the level the board asserts on the backplane, and the machine takes it as
-// `sintr`, which is still a stimulus port of `cadr_machine` fed from the
-// trace.  Wiring one to the other wants the band: `sintr` is the disk's done
-// interrupt on 17,185 of the band's 2,200,000 rows and on none of the boot
-// PROM's, because the enable lives in a command register that program never
-// writes.  A port that exists on one side of a boundary and not the other is
-// what `dev_wdata` was, so this is written down rather than left.
+// **`-XBUS.INTR` IS BROUGHT OUT, AND THE BOARD IS WHY.**  `<3>` is the level
+// this slave asserts on the backplane; it used to be computed here and go
+// nowhere, while `cadr_machine`'s `sintr` was a stimulus port fed from the
+// trace and `rtl/cadr_arty.sv` tied it to zero.  **Measured on the board on
+// 2026-09-10**: the machine boots, loads its microcode off the pack, restores
+// the whole band --- 42,967 blocks served, 21,340 written back, no denials,
+// over a billion microcycles --- and then spins for ever in `AWAIT-DISK` at
+// microcode `0o25221`, three instructions whose middle one is a conditional
+// call on PG-FAULT-OR-INTERRUPT.  At `0o25222` JCOND read 0 with -VMAOK
+// permitted, so `sint` was 0; `A-DISK-BUSY` read `0xffff` one instruction
+// earlier and is cleared in exactly one place, `DISK-COMPLETION-OK`, reached
+// only from the Xbus interrupt handler.  The disk had finished and could not
+// say so.  The cold boot polls --- `DISK-RECALIBRATE-WAIT`'s own comment says
+// it must NOT check for interrupts --- which is why the whole band restored
+// before this bit mattered.
+//
+// So the port above is the line, `cadr_machine.sv` ORs it with the display's
+// where the 74S64 at UBINTC 0E04 does, and `sintr` has stopped being a
+// stimulus port anywhere.  What holds it is not the band: `microcycle_sys`
+// runs `cadr_microcycle` alone, where the disk is outside the module and
+// `sintr` is properly a port, so the band's 17,185 rows check the
+// PROCESSOR's end of the wire and can never check this one.  What holds this
+// end is `build/disk.pass`, row for row against `Controller::interrupt()`
+// --- the trace enables the done interrupt at row 260 and the attention
+// interrupt at row 264, raises the level on nine rows and leaves it down on
+// 369, and reaches an ACTIVE controller with the done enable set at rows 320
+// and 321 --- and `build/machine.pass`, which holds the join.
 //
 // THE ANSWER IS COMBINATIONAL, AND THAT IS A MEASUREMENT.  muir's controller
 // takes 0 ns of its own --- `IDEAL_DEVICE_NS = 0` --- so a read acknowledges
@@ -236,6 +255,18 @@ module cadr_disk_controller #(
     output var logic        dev_ack,    // -XBUS.ACK
     output var logic [31:0] rdata,      // MEM<31:0> to the cpu
     output var logic        drives,     // this slave is driving MEM<31:0>
+
+    // **-XBUS.INTR, THE LINE ITSELF.**  `STATUS<3>` says what this level is;
+    // this is the level, on the backplane, where `cadr_machine.sv` ORs it
+    // with the display's and `cadr_microcycle.sv` registers the pair at the
+    // 74S175 at LCC 3E12.  A program that has to be told the transfer
+    // finished cannot poll for it --- `AWAIT-DISK` at microcode `0o25221` is
+    // three instructions and the middle one is a conditional call on
+    // PG-FAULT-OR-INTERRUPT --- so a controller that computes the level and
+    // does not put it on the bus is a machine that restores its whole band
+    // and then spins for ever.  Measured on the board on 2026-09-10; the
+    // header note above has the account.
+    output var logic        intr,
 
     // --- the block store's seam ------------------------------------------
     //
@@ -1010,6 +1041,15 @@ module cadr_disk_controller #(
   // any-attention beside it.
   logic interrupt;
   assign interrupt = not_active && (cmd[11] || (cmd[10] && any_attention));
+  // **AND IT LEAVES THE MODULE**, which `STATUS<3>` below does not do: a
+  // status bit is a word a program has to ask for, and the level on
+  // -XBUS.INTR is what tells a program to ask.  The two are one expression
+  // and one wire on purpose --- MIT's own "interrupt request" bit is the
+  // line read back --- so nothing here may compute the port a second time.
+  // `tb/cadr_disk_tb.cpp` compares this PORT against
+  // `disk_controller::Controller::interrupt()` on every row of the reference
+  // trace, which is what says the wire and the bit have not come apart.
+  assign intr = interrupt;
 
   // The word itself.  Written by name rather than as a 32-bit concatenation,
   // because the table at the top of this file is the specification and a

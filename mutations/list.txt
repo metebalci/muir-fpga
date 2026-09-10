@@ -4255,10 +4255,21 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note every record aimed at it and not only its own.  Caught by `--only arty`
 @note after `rtl/cadr_console_bus.sv` landed; the three console outputs are
 @note in the anchor now for the same reason `ch_hit` was.
+@note
+@note **AND IT MOVED AGAIN**, when `sintr_o` joined the fold with the
+@note interrupt slice: UNAPPLIED a second time, caught the same way, by
+@note `--only arty` on a slice that touched this file.  Twice is a pattern
+@note rather than an accident --- this record's anchor is the LAST line of a
+@note list every new output of `cadr_machine` is appended to --- and the
+@note pattern is the argument for the rule, not against it: an `@old` that
+@note rots stops the run and says which line, where prose would have gone on
+@note reading as true.
 @old
-                   ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata};
+                   ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
+                   sintr};
 @new
-                   ch_wrote, con_gnt, con_ssyn, con_rdata};
+                   ch_wrote, con_gnt, con_ssyn, con_rdata,
+                   sintr};
 @end
 
 @mutation the-interrupt-reaches-no-pin
@@ -5299,4 +5310,198 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign clp_now = {clp[31:16], clp[15:0] + ch_n};
 @new
   assign clp_now = {clp[31:16], clp[15:0] - ch_n};
+@end
+
+
+# ============================================== -XBUS.INTR, and its one gate ===
+#
+# The disk controller computes `interrupt()` and now DRIVES it, and
+# `rtl/cadr_machine.sv` ORs it with the display's where UBINTC 0E04 does.
+# Until 2026-09-10 the level was computed and kept: `STATUS<3>` reported it,
+# `cadr_machine`'s `sintr` was a stimulus port fed from the trace and
+# `rtl/cadr_arty.sv` tied it to zero.  What that cost was measured on the
+# board that night --- the machine boots, loads its microcode off the pack,
+# restores the whole band, and then spins for ever in `AWAIT-DISK` at
+# microcode `0o25221`, because `A-DISK-BUSY` is cleared in exactly one place,
+# `DISK-COMPLETION-OK`, reached only from the Xbus interrupt handler.
+#
+# WHERE EACH HALF IS HELD.  `disk` holds `Controller::interrupt()` and the
+# port that carries it: `tb/cadr_disk_tb.cpp` compares -XBUS.INTR at the PORT
+# against the trace's own `intr` column on every row, and the trace enables
+# the done interrupt at row 260, the attention interrupt at row 264, raises
+# the level on nine rows and reaches an ACTIVE controller with the done
+# enable set at rows 320 and 321.  `machine` holds THE WIRE END TO END: the
+# column is `Machine::xbus_interrupt()`, muir's own OR, and `sintr_o` is the
+# fabric's, compared on all 600,000 microcycles of MIT's boot PROM.
+#
+# **THE COLUMN IS ZERO ON EVERY ONE OF THOSE ROWS, AND THAT IS WHY THE
+# MACHINE-LEVEL RECORDS INVERT AN OPERAND RATHER THAN DROP IT.**  The boot
+# PROM writes no command register and enables no display, so neither request
+# is ever up at the machine's boundary --- while `not_active`, the interrupt's
+# other term, is true throughout: 11,301 status polls all answer `0x2321`,
+# `<0>` set.  So a fabric that ignored the enable, or that read either operand
+# of the gate the wrong way round, raises the line and fails on the first row,
+# and each of the two inversions below says that its own operand reaches the
+# processor.
+#
+# WHAT NO CHECK HERE REACHES, MEASURED AND NOT FILED AS A HOLE.  Two things,
+# and they fail differently.
+#
+# `disk_intr || tv_intr` with either operand DROPPED **does not build**: the
+# dropped operand is read nowhere else in this module, so Verilator says
+# `Signal is not used: 'tv_intr'` (or `'disk_intr'`) and the check never sees
+# it.  Measured, both ways round.  That is the list's own rule about lint
+# doing the catching, met here, and it is why the two records below invert an
+# operand instead --- an inversion keeps every signal used and IS caught.
+#
+# `disk_intr && tv_intr`, the OR made an AND, **builds and SURVIVES**:
+# `machine`, and `ddr_boot` and `probe` on the way past.  Both requests are
+# down on every row of both reference programs, so `0 || 0` and `0 && 0` are
+# the same zero --- and on the board it is the bug this slice exists to
+# remove, one gate along, the disk unable to interrupt unless the display
+# interrupts in the same tick.  Measured at this slice; not in the list,
+# because a survivor is not a record and a record with an `@hole` needs an
+# issue, and inventing one to hold a limit that was never a defect is the
+# suppression this list exists to prevent.
+#
+# WHAT WOULD CLOSE IT is a machine-level reference whose program enables an
+# interrupt.  **The band is not that reference**, and it is worth being exact
+# about why: `rtl_sys.golden` has `sintr` up on 17,185 of its 2,200,000 rows
+# and those really are the disk's done interrupt --- but `microcycle_sys` runs
+# `cadr_microcycle` ALONE, where the disk is outside the module and `sintr` is
+# properly a port with the trace driving it, so those rows check the
+# PROCESSOR's end of the wire and can never reach this one.  A composed band
+# check --- `cadr_machine` on `rtl_sys.golden` --- would need the pack side, a
+# Linux serving blocks on demand, and something over a billion ticks; and
+# muir's channel reaches main memory in no bus cycles at all where the
+# fabric's takes the bus for 256 words a block, so the `ns` and `stall`
+# columns would drift by the ten ticks `memory_path`'s configuration B
+# measured and the rows could not be compared as they stand.  It is a slice,
+# not a line.
+
+@mutation disk-interrupt-never-leaves-the-module
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note THE BOARD'S OWN BUG OF 2026-09-10, put back.  The expression stays and
+@note `STATUS<3>` goes on reporting it; what stops is the LEVEL on the
+@note backplane.  A machine wired this way restores a whole System band off
+@note its pack and then spins for ever in `AWAIT-DISK`, which is precisely
+@note the failure that cannot be seen from any status read --- the program
+@note that is waiting is waiting to be interrupted and never reads one.
+@note
+@note This is why the port is compared and not only the bit: the two are one
+@note expression, and a check that only ever looked at the word a program
+@note asks for would call this correct.  Caught at row 260, where the trace
+@note writes the done-interrupt enable and muir's `interrupt()` goes up ---
+@note "-XBUS.INTR at the port is 00000000, muir says 00000001".
+@old
+  assign intr = interrupt;
+@new
+  assign intr = 1'b0;
+@end
+
+@mutation disk-interrupts-while-it-is-still-active
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "Done Interrupt Enable.  Enables NOT-ACTIVE (bit 0 of the status
+@note register) to cause an interrupt": the interrupt is the END of a
+@note transfer and not the enable bit on its own.  Without the term the
+@note controller interrupts the moment the enable is written and goes on
+@note doing it through the whole of every command.
+@note
+@note `not_active` is `STATUS<0>` as well, so it stays read and lint has
+@note nothing to say.  Caught at row 320 --- the START of `0o17` with
+@note `1 << 11` in the command register, hung on a drive that is not there,
+@note the one face the trace reads while a command is running with the done
+@note enable set --- as `interrupt() is 00000001, muir says 00000000`.
+@note Measured; the level is exempted one way round on that row, the status
+@note face is not, and between them the row is checked.
+@old
+  assign interrupt = not_active && (cmd[11] || (cmd[10] && any_attention));
+@new
+  assign interrupt = (cmd[11] || (cmd[10] && any_attention));
+@end
+
+@mutation disk-attention-interrupt-reads-the-attention-the-wrong-way
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "Attention Interrupt Enable", the other half of `interrupt()`: a
+@note seek that has arrived on any of the eight units raises `<1>`, and with
+@note `<10>` of the command register set that is an interrupt.  Read the
+@note other way round the controller interrupts when NOTHING has arrived and
+@note goes quiet when something has.
+@note
+@note The term is inverted rather than deleted because `cmd[10]` and
+@note `any_attention` are read nowhere else in this expression's absence ---
+@note `any_attention` is `STATUS<1>` but `cmd[10]` is here alone, and a
+@note deleted term leaves it unread and Verilator fails the build instead of
+@note the check.  Caught at row 264, where the attention enable is written
+@note with no attention standing, before the rows at 269 where one is:
+@note `-XBUS.INTR at the port is 00000001, muir says 00000000`.  Measured.
+@old
+  assign interrupt = not_active && (cmd[11] || (cmd[10] && any_attention));
+@new
+  assign interrupt = not_active && (cmd[11] || (cmd[10] && !any_attention));
+@end
+
+@mutation disk-done-interrupt-enable-read-the-wrong-way
+@check machine
+@file rtl/cadr_disk_controller.sv
+@note THE WHOLE WIRE, END TO END, and that is why this one is aimed at the
+@note composed machine rather than at `disk`, which also catches it.  The
+@note boot PROM never writes the command register, so `<11>` is zero on all
+@note 600,000 microcycles while the controller answers 11,301 polls with
+@note `0x2321` --- not-active true throughout.  Read the enable the wrong way
+@note round and the disk asks for an interrupt on every one of those rows: it
+@note leaves `cadr_disk_controller`, crosses the OR in `cadr_machine`,
+@note reaches the 74S175 at LCC 3E12 and lands in the column
+@note `tb/cadr_machine_tb.cpp` compares against
+@note `Machine::xbus_interrupt()`.
+@note
+@note So this is the record that says the zero that check compares against is
+@note a LIVE zero.  Caught on microcycle 0, `-XBUS.INTR is 1, reference says
+@note 0`.  Measured.
+@old
+  assign interrupt = not_active && (cmd[11] || (cmd[10] && any_attention));
+@new
+  assign interrupt = not_active && (!cmd[11] || (cmd[10] && any_attention));
+@end
+
+@mutation the-disk-half-of-the-interrupt-gate-inverted
+@check machine
+@file rtl/cadr_machine.sv
+@note `LM INT` is `UB INT OR XBUS INTR IN` at UBINTC 0E04, and the Xbus line
+@note is the display's vertical interrupt ORed with the disk's request.  This
+@note reads the disk's half the wrong way round, which on this program --- no
+@note command register ever written, so no request --- holds the line UP for
+@note all 600,000 microcycles.
+@note
+@note An operand INVERTED and not dropped, deliberately: dropped, the mutant
+@note does not build at all, the dropped signal being read nowhere else in
+@note this module and Verilator saying so --- and made an AND rather than an
+@note OR it builds and survives, neither request being raised by either
+@note reference program.  The section note above carries both measurements.
+@note What this holds is that the disk's operand is read at all and that what
+@note it says reaches the processor --- the thing the board found missing on
+@note 2026-09-10.  Caught on microcycle 0, `-XBUS.INTR is 1, reference says
+@note 0`.  Measured.
+@old
+  assign sintr_o = disk_intr || tv_intr;
+@new
+  assign sintr_o = !disk_intr || tv_intr;
+@end
+
+@mutation the-display-half-of-the-interrupt-gate-inverted
+@check machine
+@file rtl/cadr_machine.sv
+@note The same gate from the other side.  `build/tv.pass` holds the display's
+@note interrupt itself to the tick, inside `cadr_memory_path`; what it cannot
+@note see is whether the level gets from there to the processor, because that
+@note wire is one level up.  This is the record for that half, and it is
+@note inverted for the same reason as the one above.  Caught on microcycle 0,
+@note `-XBUS.INTR is 1, reference says 0`.  Measured.
+@old
+  assign sintr_o = disk_intr || tv_intr;
+@new
+  assign sintr_o = disk_intr || !tv_intr;
 @end

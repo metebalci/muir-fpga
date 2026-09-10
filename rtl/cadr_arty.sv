@@ -168,6 +168,11 @@ module cadr_arty #(
   logic [8:0]  store_addr;
   logic [31:0] store_wdata, store_rdata;
   logic        store_miss, ch_active, store_busy;
+  // -XBUS.INTR, the display's vertical interrupt ORed with the disk's
+  // request inside `cadr_machine`.  Nothing on this board reads it but the
+  // fold: it is the machine's own line to its own processor, and what it is
+  // doing out here is being kept alive, like every other output.
+  logic        sintr;
   // The request path and the cache's bookkeeping, likewise: the block the
   // walk lacks and its posting, the wait, Linux's denial, the slot the walk
   // is on and what it did to it.  `rtl/cadr_disk_controller.sv` says what
@@ -288,9 +293,17 @@ module cadr_arty #(
       .PROM_HEX(PROM_HEX)
   ) u_machine (
       .clk(clk), .rst(rst),
-      // Nothing raises an interrupt and nothing answers a device cycle: the
-      // Xbus devices are their own slices and none of them exists.
-      .sintr(1'b0), .device_ack(1'b0), .device_rdata(32'd0),
+      // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO
+      // HERE.**  The display and the disk controller are both inside
+      // `cadr_machine` and their two requests are ORed there; what comes out
+      // is the level, folded below like every other output.  The tie-off was
+      // the bug the board found on 2026-09-10: the band restored and the
+      // machine spun for ever in `AWAIT-DISK`, because the one thing that
+      // clears `A-DISK-BUSY` is the Xbus interrupt handler and no interrupt
+      // could reach the processor through this line.  Nothing answers a
+      // device cycle from outside still: the Xbus slaves that are not the
+      // disk are their own slices and none of them exists.
+      .sintr_o(sintr), .device_ack(1'b0), .device_rdata(32'd0),
       // THE DRIVE, AND THE PACK. With `DDR` off there is no drive on the
       // disk's cable, which is what `build/machine.pass` compares against:
       // with `drive_present` at zero the status register answers `0x2321`
@@ -1003,7 +1016,8 @@ module cadr_arty #(
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
                    mem_req, mem_write, store_miss, ch_active,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
-                   ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata};
+                   ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
+                   sintr};
     end
   end
 
