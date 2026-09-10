@@ -21,8 +21,9 @@ pinned Buildroot, so that the board is reproducible from the repository and
 a machine move. **It has booted the board** over the network path on 10
 September --- U-Boot's first stage, U-Boot, the CADR into the fabric, Linux
 6.19 with the reservation honoured by the tree alone, a login 15 s after the
-reset --- and the card path, which is how anyone else's board boots, has not
-yet run here; its section below says so where it matters.
+reset --- and the card path, which is how anyone else's board boots, ran the
+same day from U-Boot's prompt: the four files read off the card in under a
+second, Linux up with the reservation, the CADR's counters at 256 and 256.
 
 ## What it is
 
