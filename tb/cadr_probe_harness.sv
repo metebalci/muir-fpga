@@ -87,6 +87,10 @@ module cadr_probe_harness #(
       .PROM_HEX(PROM_HEX)
   ) u_machine (
       .clk(clk), .rst(rst),
+      // `device_ack` low is not "no disk controller": the disk's four
+      // registers are inside `cadr_machine` and answer for themselves. This
+      // port is for a slave that is still outside --- the display, the I/O
+      // board --- and there is none.
       .sintr(1'b0), .device_ack(1'b0), .device_rdata(32'd0),
       .boards(7'd32),
       .mem_done(1'b0), .mem_rdata(32'd0),
