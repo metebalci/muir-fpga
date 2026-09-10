@@ -553,11 +553,32 @@ module cadr_arty #(
     // reading that has to mean something else.
     logic [63:0] gpio_i;
 
+    // The request a tick behind, for the counter alone: `mem_req` is the bus
+    // interface's tick counter through the bridge's gate, and into the
+    // tally's enables across the board it was -1.4 ns.  The tally counts
+    // rises, so a copy one tick late counts the same rises one tick late,
+    // and a debugger reads it two hundred milliseconds on.
+    // The PS7's handshakes the same: its outputs leave the hard block late
+    // in the tick, and the tally counts a handshake --- valid and ready
+    // together --- so both halves of each are copied on the same edge and
+    // the count is the same count.
+    logic count_req, count_write;
+    logic count_bvalid, count_bready, count_rvalid, count_rready, count_rlast;
+    always_ff @(posedge clk) begin
+      count_req    <= port_req;
+      count_write  <= port_write;
+      count_bvalid <= bvalid;
+      count_bready <= bready;
+      count_rvalid <= rvalid;
+      count_rready <= rready;
+      count_rlast  <= rlast;
+    end
+
     cadr_mem_count u_count (
         .clk(clk), .rst(rst),
-        .req(port_req), .req_write(port_write),
-        .bvalid(bvalid), .bready(bready),
-        .rvalid(rvalid), .rready(rready), .rlast(rlast),
+        .req(count_req), .req_write(count_write),
+        .bvalid(count_bvalid), .bready(count_bready),
+        .rvalid(count_rvalid), .rready(count_rready), .rlast(count_rlast),
         .gpio(gpio_i)
     );
 
@@ -601,11 +622,16 @@ module cadr_arty #(
     if (DDR != 0) begin : g_pack
 
       logic [2:0] pack_rst_sync;
+      // A register, not a gate: the pack side has some three hundred
+      // registers to reset, and made as `rst || !pack_rst_sync[2]` the
+      // machine's synchroniser was on every one of their reset pins across
+      // the distance between the two.  One tick later on a reset the PS
+      // releases at a moment of software's choosing, which nothing counts.
+      logic pack_rst;
       always_ff @(posedge clk) begin
         pack_rst_sync <= {pack_rst_sync[1:0], hp2_aresetn && gp0_aresetn};
+        pack_rst      <= rst || !pack_rst_sync[2];
       end
-      logic pack_rst;
-      assign pack_rst = rst || !pack_rst_sync[2];
 
       cadr_disk_pack u_pack (
           .clk(clk), .rst(pack_rst),
