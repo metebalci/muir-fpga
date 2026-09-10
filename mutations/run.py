@@ -888,7 +888,7 @@ def arty_check(args, work):
         (["-GDDR=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
           "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
-          "rtl/cadr_disk_pack.sv"]),
+          "rtl/cadr_disk_pack.sv", "rtl/cadr_console.sv"]),
         # And the two the witness builds, which are branches only they
         # reach: nothing else elaborates `cadr_prove.sv` at all, and neither
         # of them elaborates the machine's own drive of the port.
@@ -897,11 +897,13 @@ def arty_check(args, work):
         (["-GPROVE=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
           "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
-          "rtl/cadr_prove.sv", "rtl/cadr_gp0_default.sv"]),
+          "rtl/cadr_prove.sv", "rtl/cadr_gp0_default.sv",
+          "rtl/cadr_console.sv"]),
         (["-GPROVE=2"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
           "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
-          "rtl/cadr_prove.sv", "rtl/cadr_gp0_default.sv"]),
+          "rtl/cadr_prove.sv", "rtl/cadr_gp0_default.sv",
+          "rtl/cadr_console.sv"]),
     ]
     ran = 0
     for generics, stubs, extra_sources in boards:
