@@ -181,6 +181,8 @@ Arb RunOnce(bool stream, std::map<unsigned, unsigned> &ddr) {
   dut->device_ack = 0;
   dut->device_rdata = 0;
   dut->spy_rdata = 0;
+  // -XBUS INIT never comes: the display's flag is the power-on reset's.
+  dut->xbus_init = 0;
   dut->mem_done = 0;
   dut->mem_rdata = 0;
   dut->ch_req = 0;
@@ -423,6 +425,8 @@ int main(int argc, char **argv) {
   dut->device_ack = 0;
   dut->device_rdata = 0;
   dut->spy_rdata = 0;
+  // -XBUS INIT never comes: the display's flag is the power-on reset's.
+  dut->xbus_init = 0;
   dut->mem_done = 0;
   dut->mem_rdata = 0;
   // The second master is quiet for the whole of configuration A: this half of

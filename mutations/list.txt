@@ -868,10 +868,12 @@
 @note Written as a ternary rather than as a plain swap because replacing
 @note `wdata` outright leaves it unread and lint would catch it instead of
 @note the check.
+@note
+@note Re-aimed when the display landed: the bridge took a second base for the frame-buffer window and the line moved; what is mutated is unchanged.
 @old
-  assign mem_wdata = wdata;
+  assign mem_wdata    = wdata;
 @new
-  assign mem_wdata = dev_write ? {10'd0, phys} : wdata;
+  assign mem_wdata    = dev_write ? {10'd0, phys} : wdata;
 @end
 
 @mutation bridge-drops-an-address-bit
@@ -881,10 +883,12 @@
 @note consistent nonsense, and a shadow keyed by the DUT's address agreed
 @note with it on every read. Written as a flip rather than a truncation so
 @note that every bit of `phys` stays used.
+@note
+@note Re-aimed when the display landed: the bridge took a second base for the frame-buffer window and the line moved; what is mutated is unchanged.
 @old
-  assign mem_addr  = main_byte_address(phys);
+  assign main_addr    = main_byte_address(phys);
 @new
-  assign mem_addr  = main_byte_address(phys ^ 22'd1);
+  assign main_addr    = main_byte_address(phys ^ 22'd1);
 @end
 
 @mutation bridge-answers-at-an-address-nothing-is-at
@@ -907,10 +911,12 @@
 @note in between. The mutation is the same: the processor's own cycles to
 @note empty space reach the bridge. The channel's arm is left alone so
 @note the check sees exactly the property the record names.
+@note
+@note Re-aimed a third time when the display landed: the bridge's select gained the frame-buffer window, `tv_fb`, held in `rtl/cadr_tv.sv` as `is_memory` is held here.
 @old
-  assign bus_sel   = ch_own ? ch_memory : is_memory;
+  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb);
 @new
-  assign bus_sel   = ch_own ? ch_memory : (is_memory | nxm);
+  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb || nxm);
 @end
 
 @mutation every-cycle-is-a-read-on-the-xbus
@@ -2462,10 +2468,12 @@
 @note
 @note Written as a rotation rather than a truncation so that every bit of
 @note `phys` stays used and lint does not do the catching.
+@note
+@note Re-aimed when the display landed: the bridge took a second base for the frame-buffer window and the line moved; what is mutated is unchanged.
 @old
-  assign mem_addr  = main_byte_address(phys);
+  assign main_addr    = main_byte_address(phys);
 @new
-  assign mem_addr  = main_byte_address(dev_write ? phys : {phys[20:0], phys[21]});
+  assign main_addr    = main_byte_address(dev_write ? phys : {phys[20:0], phys[21]});
 @end
 
 @mutation the-write-never-reaches-the-memory
@@ -2495,10 +2503,12 @@
 @note An identity copy is what makes this visible without a shadow memory at
 @note all: the word written back must equal the word read, and the testbench
 @note holds both.
+@note
+@note Re-aimed when the display landed: the bridge took a second base for the frame-buffer window and the line moved; what is mutated is unchanged.
 @old
-  assign mem_wdata = wdata;
+  assign mem_wdata    = wdata;
 @new
-  assign mem_wdata = wdata ^ main_byte_address(phys);
+  assign mem_wdata    = wdata ^ main_byte_address(phys);
 @end
 
 @mutation the-word-arrives-with-its-halves-swapped
@@ -4603,4 +4613,319 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign s_rdata   = WORD;
 @new
   assign s_rdata   = ~WORD;
+@end
+
+# ---------------------------------------------------------------- the display
+#
+# `rtl/cadr_tv.sv` against `build/tv.golden`, through `cadr_memory_path`.  The
+# five the slice was asked for --- the frame a tick off, the enable ignored,
+# the window's base a word off, a bit lane of the bitmap swapped, the
+# acknowledgement a tick late --- and the rest of the register face, the
+# flag's three sources and their order, the sync RAM, the window's two edges
+# and the joins in the path.  Every one is caught on a line of its own.
+
+@mutation tv-frame-a-tick-long
+@check tv
+@file rtl/cadr_tv.sv
+@note `simpletv::FRAME_NS` is 15,456,000 ns, 3,091,200 ticks: 966 lines of
+@note 16.000 us, measured on the netlist board.  One tick more and the second
+@note frame's preset --- the first the trace watches with the enable up ---
+@note lands a tick late on -XBUS.INTR, which the testbench compares at every
+@note tick.  The frame counter is what makes `-TVMA CLR` here, and a period
+@note off by a tick drifts a tick a frame: caught on the first.
+@old
+  localparam logic [21:0] FRAME_T = 22'd3_091_200;
+@new
+  localparam logic [21:0] FRAME_T = 22'd3_091_201;
+@end
+
+@mutation tv-frame-a-tick-short
+@check tv
+@file rtl/cadr_tv.sv
+@note The other side of the same tick.
+@old
+  localparam logic [21:0] FRAME_T = 22'd3_091_200;
+@new
+  localparam logic [21:0] FRAME_T = 22'd3_091_199;
+@end
+
+@mutation tv-interrupt-enable-ignored
+@check tv
+@file rtl/cadr_tv.sv
+@note `SEND INTR` is the flag ANDed with `MODE INTR ENB` at the 74S08 at
+@note NXBCTL 0D10.  Without the AND the flag alone is on -XBUS.INTR, and the
+@note trace's first frame --- the preset with the enable OFF, which the
+@note program put there for exactly this --- shows it.  `mode[3]` stays read
+@note through the register's read-back, so lint is not what catches this.
+@old
+  assign intr = mode[3] && flag;
+@new
+  assign intr = flag;
+@end
+
+@mutation tv-window-base-a-word-off
+@check tv
+@file rtl/cadr_ddr_map.sv
+@note The frame buffer is DDR at `DISPLAY_BASE`, and the debugger, the display
+@note output block and the RFB server will all read it there.  A base one
+@note word over puts every bit of the screen a word along --- consistently,
+@note so a check that read back through the DUT would agree with it.  The
+@note testbench asserts the byte address on the memory port against the
+@note stimulus's own address on every frame-buffer cycle, and reads back from
+@note a model keyed the same way.
+@old
+    return DISPLAY_BASE + (32'(offset) << 2);
+@new
+    return DISPLAY_BASE + 32'd4 + (32'(offset) << 2);
+@end
+
+@mutation tv-bitmap-lane-swapped
+@check tv
+@file rtl/cadr_xbus_ddr.sv
+@note One bit a pixel, so two bit lanes crossed on the way into DDR is two
+@note columns of the screen crossed in every word.  Crossed only for the
+@note window, so main memory's own records are untouched, and caught at the
+@note port on the first frame-buffer write: the word must be the stimulus's.
+@old
+  assign mem_wdata    = wdata;
+@new
+  assign mem_wdata    = display ? {wdata[31:2], wdata[0], wdata[1]} : wdata;
+@end
+
+@mutation tv-acknowledgement-a-tick-late
+@check tv
+@file rtl/cadr_tv.sv
+@note muir's TV takes 0 ns of its own, so a write acknowledges at -XBUS.RQ
+@note and a read at the deskew tap 60 ns on; `cadr_busint_xbus.sv` supplies
+@note both.  A slave that answered the tick after the request puts -MEMACK
+@note and -LOADMD a tick late on every cycle it answers.  The held match
+@note alone cannot be made late --- it is up long before the request --- so
+@note this delays the request's arrival at the slave, which is where a
+@note register between `dev_rq` and `dev_ack` would sit.
+@old
+  assign dev_ack = ctl;
+@new
+  logic rq_late;
+  always_ff @(posedge clk) rq_late <= dev_rq;
+  assign dev_ack = ctl && rq_late;
+@end
+
+@mutation tv-flag-not-preset-while-the-interrupt-is-enabled
+@check tv
+@file rtl/cadr_tv.sv
+@note `-TVMA CLR` presets the flag every frame whatever the mode register
+@note holds; a preset gated on the enable being OFF never raises the
+@note interrupt from a frame, only from a write.  Written as a gate rather
+@note than a deletion so that `frame_start` stays read.  Caught at frame 2,
+@note the first the trace expects the boundary to raise -XBUS.INTR.
+@old
+      else if (frame_start)                flag <= 1'b1;
+@new
+      else if (frame_start && !mode[3])    flag <= 1'b1;
+@end
+
+@mutation tv-write-cannot-clear-the-flag
+@check tv
+@file rtl/cadr_tv.sv
+@note The 74LS74 at NXBCTL 0E14 is clocked by `-LOAD MODE` with `XDI 4` as
+@note its data, so a write of the register with bit 4 clear CLEARS the flag
+@note --- which is how INTRX0 takes the interrupt.  A flop that could only
+@note be set by a write leaves -XBUS.INTR up after the program's first
+@note clear, the write of 0o17 before the first frame.
+@old
+      else if (store_now && which == 3'd0) flag <= wdata[4];
+@new
+      else if (store_now && which == 3'd0) flag <= flag | wdata[4];
+@end
+
+@mutation tv-preset-beats-the-write
+@check tv
+@file rtl/cadr_tv.sv
+@note The order at one edge.  A write landing on the tick a frame begins
+@note keeps the written bit: muir's `written_at` is that instant and
+@note `vert_flag` asks for a frame STRICTLY since.  Swapping the two
+@note branches is invisible on every tick but that one, and reaching it
+@note needs the grant edge, the setup and the landing tick to sum to a
+@note frame boundary, which first happens at frame 25 --- the reason the
+@note trace is twenty-five frames long.  Caught there and nowhere earlier,
+@note so this record is the yardstick for the trace's length.
+@old
+      else if (store_now && which == 3'd0) flag <= wdata[4];
+      else if (frame_start)                flag <= 1'b1;
+@new
+      else if (frame_start)                flag <= 1'b1;
+      else if (store_now && which == 3'd0) flag <= wdata[4];
+@end
+
+@mutation tv-init-does-not-clear-the-flag
+@check tv
+@file rtl/cadr_tv.sv
+@note `-XBUS INIT` reaches one flop on this board, the flag's, at pin 13 of
+@note the 74LS74.  Gated on the enable being off it clears nothing the
+@note trace can see: the init at frame 9 comes with the interrupt up and
+@note must take it down.
+@old
+      if (xbus_init)                       flag <= 1'b0;
+@new
+      if (xbus_init && !mode[3])           flag <= 1'b0;
+@end
+
+@mutation tv-init-clears-the-mode-register
+@check tv
+@file rtl/cadr_tv.sv
+@note And one flop only.  The 25LS2519 clears on `-POWER RESET`, which the
+@note backplane's `-XBUS POWER RESET` carries and nothing the microcode
+@note does raises; `lmtv.order`'s "cleared by Xbus reset" is about the sync
+@note enable, and the drawing puts that on the power reset too.  A mode
+@note register cleared by -XBUS INIT reads back 0 after the init at frame 9
+@note where the trace says 0o14 --- and would leave a booted machine with
+@note its interrupt off and its screen inverted after every bus reset.
+@old
+      if (!asked)         taken <= 1'b0;
+@new
+      if (xbus_init)      mode  <= 4'd0;
+      if (!asked)         taken <= 1'b0;
+@end
+
+@mutation tv-clock-mode-bits-crossed
+@check tv
+@file rtl/cadr_tv.sv
+@note The four data pins of the 2519 are `XDI 3..0` straight; two of them
+@note crossed makes `CLOCK MODE 0` and `1` each other's.  The window system
+@note read-modify-writes this register, so what is written has to read back:
+@note the program's first write, 0o5, reads back 0o6.
+@old
+          3'd0:    mode    <= wdata[3:0];
+@new
+          3'd0:    mode    <= {wdata[3:2], wdata[0], wdata[1]};
+@end
+
+@mutation tv-sync-ram-reads-back-without-the-enable
+@check tv
+@file rtl/cadr_tv.sv
+@note The 2147s' chip select is `SYNC PROM ENB` and the 74S472's its
+@note complement, so with the enable clear a read of register 1 is the
+@note PROM's word --- zero here, its program not being loaded on this path
+@note --- and never the RAM's.  Read regardless, with the enable shown in
+@note bit 8 so that it stays read, the program's first read of register 1
+@note gives the byte it just wrote where muir gives zero.
+@old
+      3'd1:    word = sync_on ? {24'd0, sync_q} : 32'd0;
+@new
+      3'd1:    word = {23'd0, sync_on, sync_q};
+@end
+
+@mutation tv-sync-ram-read-from-the-wrong-half
+@check tv
+@file rtl/cadr_tv.sv
+@note The pointer's top bit inverted on the READ alone.  Not on both: a
+@note bijection on an address that indexes the write as well as the read
+@note relabels the storage consistently and is an equivalence, which
+@note CLAUDE.md records having filed as nearly a hole once.  Broken one way
+@note only, the byte written at 0xFFF reads back as the one at 0x7FF.
+@old
+    sync_q <= sync_ram[pointer];
+@new
+    sync_q <= sync_ram[pointer ^ 12'h800];
+@end
+
+@mutation tv-answers-its-neighbours
+@check tv
+@file rtl/cadr_tv.sv
+@note The 74S138 at NXBCTL 0F13 decodes eight words and the four above them
+@note answer to nothing: `lmtv.order` runs the registers `173777x0` to
+@note `x7`, and `busint::decode` says the four between the display's and
+@note the disk's are NXM.  A match a page wider acknowledges the dead words
+@note the trace reads and writes, where the reference has the NXM timer end
+@note them 4.25 us on.  Written as a second match rather than a shorter
+@note compare so that every address bit stays read.
+@note
+@note **AND THE SECOND MATCH IS OUTSIDE `sel`, BY MEASUREMENT.**  Written
+@note first as `sel && (... || ...)`, this SURVIVED: `sel` is the decode's
+@note `device`, which is exhaustively checked to be false at the four dead
+@note words, so a wider match gated by it can only ever reach the disk's
+@note four registers --- the one other thing in `device` --- and this DUT
+@note has no disk to disagree with.  The decode masks the bug on the NXM
+@note side by construction, which is worth knowing: it means a slave on
+@note this seam that honours `sel` cannot answer an empty address however
+@note wide its own match.  What it CAN do is ignore `sel`, which is what a
+@note board on the real backplane does --- there is no `device` wire there
+@note --- and `cadr_machine.sv` says nothing can enforce the discipline for
+@note a slave it cannot see.  So the mutation is that slave.
+@old
+  assign ctl_c   = sel && (phys[21:3] == CONTROL_PAGE);
+@new
+  assign ctl_c   = (sel && phys[21:3] == CONTROL_PAGE) || phys[21:3] == CONTROL_PAGE + 19'd1;
+@end
+
+@mutation tv-window-half-size
+@check tv
+@file rtl/cadr_tv.sv
+@note `MAIN-SCREEN-BUFFER-LENGTH` is `0o100000` words and the window is
+@note aligned to it, so the match is on the top seven address bits.  Eight
+@note bits, and the upper 16,384 words of the screen --- lines 512 to 962
+@note --- answer to nothing: the trace's write at offset 0x4000 times out.
+@old
+  assign fb_c    = sel && (phys[21:15] == BUFFER_SLOT);
+@new
+  assign fb_c    = sel && (phys[21:14] == {BUFFER_SLOT, 1'b0});
+@end
+
+@mutation tv-store-repeats-while-the-request-stands
+@check tv
+@file rtl/cadr_tv.sv
+@note ONCE PER BUS CYCLE: -XBUS.RQ stands for six ticks after a write is
+@note acknowledged and the word is taken at the first.  Every store here is
+@note idempotent, so a store repeated on each of those ticks is invisible
+@note --- except to the flag, whose preset a repeated store overrides.  The
+@note trace's frame 6 lands a write one tick before the boundary and expects
+@note the preset to set the flag on it; with the store still landing that
+@note tick, it does not.  One line of 77 million, and the record that says
+@note the `taken` latch is doing something.
+@old
+      else if (store_now) taken <= 1'b1;
+@new
+      else if (store_now) taken <= 1'b0;
+@end
+
+@mutation tv-frame-buffer-reads-from-the-main-base
+@check tv
+@file rtl/cadr_xbus_ddr.sv
+@note The window's base on writes alone: a read of the frame buffer then
+@note fetches main memory's word at the same offset, and a screen written
+@note there could never be read back by the machine.  Caught at the port on
+@note the first frame-buffer read, whose byte address is asserted against
+@note the stimulus's before the model answers it.
+@old
+  assign mem_addr     = display ? display_addr : main_addr;
+@new
+  assign mem_addr     = (display && dev_write) ? display_addr : main_addr;
+@end
+
+@mutation tv-window-select-dropped-in-the-path
+@check tv
+@file rtl/cadr_memory_path.sv
+@note `bus_display` is what tells the bridge which base; made from the
+@note channel's ownership the wrong way round it is never up, and every
+@note frame-buffer cycle lands in main memory's region --- at the right
+@note offset, so a shadow keyed by the DUT would have agreed.  Caught at the
+@note port on the first frame-buffer write.
+@old
+  assign bus_display = !ch_own && tv_fb;
+@new
+  assign bus_display = ch_own && tv_fb;
+@end
+
+@mutation tv-register-word-not-selected-in-the-path
+@check tv
+@file rtl/cadr_memory_path.sv
+@note The word from whichever slave answered.  With the display's word
+@note never selected, a read of the mode register gives what main memory's
+@note bridge holds, which is zero: caught on the program's first read-back,
+@note 0o5.  `tv_drives` is `ctl && !dev_write`, so ANDing `dev_write` in is
+@note a select that can never be true while every signal stays read.
+@old
+                 : tv_drives    ? tv_rdata
+@new
+                 : (tv_drives && dev_write) ? tv_rdata
 @end
