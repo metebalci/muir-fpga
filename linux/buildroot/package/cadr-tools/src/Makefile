@@ -7,8 +7,9 @@
 # DESTDIR for install, and `all` makes the programs that go on the board.
 #
 # The host build, `make check`: the pack feeder's core linked against a model
-# of the register face and run over the reference trace on the build host
-# --- no board, no fabric, nothing but a C compiler and build/disk.golden
+# of the register face, with a scripted disk controller behind it posting
+# the requests the reference trace's transfers would and more, on the build
+# host --- no board, no fabric, nothing but a C compiler and build/disk.golden
 # (`make disk-golden` at the repository root writes it).  Scratch goes under
 # ~/.cache, never /tmp, which is a RAM disk on the build host.
 

@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The pack feeder's core: a block from the pack into a slot of the store,
-// and a slot the CADR wrote back into the pack, through the record in DDR.
+// The pack feeder's core: the store as a cache Linux keeps.  A block the
+// controller asks for goes from the pack into a slot of the store, a slot
+// the CADR wrote goes back onto the pack, both through the record in DDR.
 //
 // WHERE THE RECORDS GO.  `rtl/cadr_ddr_map.sv` reserves 128 MB at
 // 0x1800_0000 for the machine: 64 MB main memory, 8 MB display, and 56 MB
@@ -16,6 +17,22 @@
 // record still all poison afterwards is reported and not committed to the
 // pack.  `feeder_test.c` checks the alignment and the region of every
 // address the feeder chooses.
+//
+// THE RULE IS LINUX'S (`rtl/cadr_disk_pack.sv`, "the request path"), and it
+// is second chance over the twenty-four slots: a hand goes round; a slot
+// whose REF bit is up is passed and the bit cleared, the first slot whose
+// bit is down is taken --- written back first if it is DIRTY --- and never
+// the slot the walk is on, which the face tells this program by refusing
+// the move on it.  A request for a block off the pack, or on a unit this
+// program has no pack for, is DENIED and the walk takes its miss.  DIRTY
+// slots are written back at leisure on the dirty event, and always before
+// they are fetched into or taken away, or the CADR's write is lost.
+//
+// WHAT THE STORE HELD BEFORE THIS PROGRAM STARTED IS UNKNOWN TO IT: the
+// tags are in the fabric and not readable over GP0.  So `feeder_start`
+// takes every slot away, and a slot that was DIRTY then is reported as
+// lost --- its block cannot be named.  On a board the store is empty at
+// configuration and the feeder starts once, so this is a restart's cost.
 
 #ifndef PACK_FEEDER_H
 #define PACK_FEEDER_H
@@ -34,6 +51,11 @@
 // What the feeder maps of the spare: both areas for all 24 slots.
 #define FEEDER_MAP_BYTES    0x20000u
 
+// How many requests are named on the console one by one before they are
+// only counted, and how many distinct denied blocks are named.
+#define FEEDER_NAMED_REQUESTS 3
+#define FEEDER_NAMED_DENIALS  16
+
 struct feeder {
 	struct pack *pack;
 	struct pack_side *ps;
@@ -43,9 +65,25 @@ struct feeder {
 	size_t mem_bytes;
 	// Which block each slot holds, or -1.
 	int32_t slot_lba[PS_SLOTS];
+	// The unit the pack is on; a request on any other is denied.
+	unsigned unit;
+	// Second chance's hand: the slot looked at next.
+	unsigned hand;
 	FILE *log;
 	// The tally.
-	unsigned long served, written_back, takes, nothing_moved, pad_written, failures;
+	unsigned long polls, requests, served, denied, written_back, takes;
+	unsigned long refused_walk, deferred_dirty, nothing_moved, pad_written, failures;
+	unsigned long lost_at_start;
+	// What has been named on the console.
+	unsigned long named_requests;
+	uint32_t named_denials[FEEDER_NAMED_DENIALS];
+	unsigned n_named_denials;
+	// The request last answered, so a REQ still standing for it --- the
+	// tag lands a few ticks after the move's done --- is not answered
+	// twice.
+	uint32_t last_answered;
+	int have_last;
+	unsigned repeat_serves;
 };
 
 int feeder_init(struct feeder *f, struct pack *p, struct pack_side *ps,
@@ -57,14 +95,31 @@ uint32_t feeder_wb_addr(unsigned slot);
 // address and the word, never zero and never all ones.
 uint32_t feeder_poison(uint32_t addr, unsigned i);
 
-// Block c/h/b of the pack into `slot`: its record placed at the slot's
-// fetch address and fetched by the fabric.  0, or -1 with `err`.
-int feeder_serve(struct feeder *f, uint32_t c, uint32_t h, uint32_t b, unsigned slot,
+// Block c/h/b of the pack, on `unit`, into `slot`: its record placed at the
+// slot's fetch address and fetched by the fabric.  0; PS_WALK_SLOT if the
+// slot is the walk's; -1 with `err`.
+int feeder_serve(struct feeder *f, unsigned unit, uint32_t c, uint32_t h, uint32_t b, unsigned slot,
 		 char *err, size_t errlen);
 // The slot's 259 words written back by the fabric into the slot's
-// write-back address, checked to have moved, and put on the pack.
+// write-back address, checked to have moved, and put on the pack.  0;
+// PS_WALK_SLOT; -1 with `err`.
 int feeder_writeback(struct feeder *f, unsigned slot, char *err, size_t errlen);
-// The slot's block taken away.
+// The slot's block taken away.  0; PS_WALK_SLOT; -1 with `err`.
 int feeder_take(struct feeder *f, unsigned slot, char *err, size_t errlen);
+
+// The cache begins: every slot taken away (a dirty one reported lost), the
+// drive on `unit` made present with its read-only switch and whether its
+// time is charged.  0, or -1 with `err`.
+int feeder_start(struct feeder *f, unsigned unit, int read_only, int timed, char *err, size_t errlen);
+
+// One pass over the face: IRQ read and cleared, REQ answered --- served or
+// denied --- and every DIRTY slot written back that the walk is not on.
+// Returns how many moves and denials it made, or -1 with `err` on a failure
+// it could not get past (the pass is otherwise complete).
+int feeder_poll(struct feeder *f, char *err, size_t errlen);
+
+// Every dirty slot written back, for a stop: as many passes as it takes,
+// up to `passes`.  Returns the number still dirty.
+unsigned feeder_flush(struct feeder *f, unsigned passes, char *err, size_t errlen);
 
 #endif
