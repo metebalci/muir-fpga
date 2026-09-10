@@ -899,10 +899,18 @@
 @note the Xbus was brought out, and the mutation went BROKEN
 @note rather than quietly passing --- which is the runner earning
 @note its keep on a record that had rotted under a peer's change.
+@note
+@note Re-aimed a second time after 69a2246, where the channel slice put
+@note the arbiter's mux in front of the bridge's `sel`: the anchor
+@note `.sel (is_memory)` matched 0 times from then until 07be46b and the
+@note record did not apply --- no run had asked for memory_path's records
+@note in between. The mutation is the same: the processor's own cycles to
+@note empty space reach the bridge. The channel's arm is left alone so
+@note the check sees exactly the property the record names.
 @old
-      .sel      (is_memory),
+  assign bus_sel   = ch_own ? ch_memory : is_memory;
 @new
-      .sel      (is_memory | nxm),
+  assign bus_sel   = ch_own ? ch_memory : (is_memory | nxm);
 @end
 
 @mutation every-cycle-is-a-read-on-the-xbus
