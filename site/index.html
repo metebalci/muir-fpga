@@ -13,7 +13,7 @@
   <div class="band">
     <figure class="fig dense">
       <div class="scroll">
-<svg viewBox="0 0 1170 1076" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. Beside the bus interface, a debug cable adapter, not started, puts the cable's 21 wires onto 8 Pmod pins in beats and presents the same registers on M_AXI_GP1. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. Below the ports is the processing system: the boot loader, U-Boot with its first stage, today Digilent's and so outside the project; an outline for Linux on the Arm cores, partly built: it boots from the card beside the running CADR with the CADR's 128 MB kept from it, and holds the programs that will run under it, none of them started, and beside it a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm cores from the Linux group beside it, and one line out of the chip to the DRAM. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. Below the board's own parts, six status lights: LD0 says the fabric is clocked and LD1 that microcycles are retiring — between them, whether the machine is running — with four more for bring-up. How far along each block is, which the drawing otherwise says in colour --- green only for what the board itself has shown, turquoise for what is checked here and has not run on the board: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today from the boot PROM, with no memory behind it, and its first 1,024 microcycles have been read back over JTAG and agree with muir column by column, which is 0.17 per cent of the run and reaches no memory cycle; the bus interface is partly built, wanting only the debug cable; the disk controller is checked in simulation and has not run on the board: its registers, its drive, its channel, Read All and Write All are checked against muir over a scripted trace, and its pack side --- the block fetched over S_AXI_HP2 from the block's address Linux writes over M_AXI_GP0 --- against a modelled memory; the TV and the I/O board are not started. The memory path over S_AXI_HP0, drawn from the bridge through the port to the DDR3, is verified: every piece of it has a check, and the machine has run its boot PROM out of real DDR3 on the board with a witness outside its logic counting every cycle. Below the drawing, two bars: 6.20 per cent of the LUTs, 3,299 of 53,200, and 26.43 per cent of the block RAM, 37 tiles of 140. ">
+<svg viewBox="0 0 1170 1076" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. Beside the bus interface, a debug cable adapter, not started, puts the cable's 21 wires onto 8 Pmod pins in beats and presents the same registers on M_AXI_GP1. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. Below the ports is the processing system: an outline for Linux on the Arm cores, partly built: it boots from the card beside the running CADR with the CADR's 128 MB kept from it, and holds the programs that will run under it, none of them started; beside it the boot loader, U-Boot, partly built: the card file, the network loop and the fabric load are ours and run on the board, the loader binary is still Digilent's, and beside it a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm cores from the Linux group beside it, and one line out of the chip to the DRAM. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. Below the board's own parts, six status lights: LD0 says the fabric is clocked and LD1 that microcycles are retiring — between them, whether the machine is running — with four more for bring-up. How far along each block is, which the drawing otherwise says in colour --- green only for what the board itself has shown, turquoise for what is checked here and has not run on the board: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today from the boot PROM, with no memory behind it, and its first 1,024 microcycles have been read back over JTAG and agree with muir column by column, which is 0.17 per cent of the run and reaches no memory cycle; the bus interface is partly built, wanting only the debug cable; the disk controller is checked in simulation and has not run on the board: its registers, its drive, its channel, Read All and Write All are checked against muir over a scripted trace, and its pack side --- the block fetched over S_AXI_HP2 from the block's address Linux writes over M_AXI_GP0 --- against a modelled memory; the TV and the I/O board are not started. The memory path over S_AXI_HP0, drawn from the bridge through the port to the DDR3, is verified: every piece of it has a check, and the machine has run its boot PROM out of real DDR3 on the board with a witness outside its logic counting every cycle. Below the drawing, two bars: 6.20 per cent of the LUTs, 3,299 of 53,200, and 26.43 per cent of the block RAM, 37 tiles of 140. ">
           <text class="d-t" x="10" y="18">muir-fpga on the Arty Z7-20</text>
           <text class="d-s" x="196" y="18">XC7Z020-1CLG400C</text>
 
@@ -84,7 +84,7 @@
           <text class="d-s" x="978" y="152" text-anchor="middle">and a register block on GP1</text>
           <!-- two cables, two lines: DBGOUT to JA and DBGIN to JB leave the
                adapter separately and never share a segment -->
-          <path class="d-line" d="M850,120 L884,120 M850,136 L884,136 M990,160 L990,464 M990,508 L990,562"/>
+          <path class="d-line" d="M850,120 L884,120 M850,136 L884,136 M990,160 L990,464 M990,508 L990,533.2 L930,533.2 L930,562"/>
           <path class="d-line" d="M1072,120 L1096,120 L1096,706 L890,706 L890,728"/>
           <path class="d-line" d="M1072,136 L1115,136 L1115,712 L1060,712 L1060,728"/>
           <text class="d-s" x="982" y="300" text-anchor="end">debug cable</text>
@@ -160,10 +160,17 @@
           <!-- Everything inside this outline is a program on the A9s.  The
                controller to its left is not: it is the processing system's
                own silicon, which is why it stands outside the outline. -->
-          <rect class="d-dash d-part" x="280" y="542" width="766" height="128"/>
+          <rect class="d-dash d-part" x="280" y="542" width="700" height="128"/>
           <text class="d-s" x="290" y="556">Linux</text>
-          <path class="d-line" d="M765,508 L765,533.2 M360,533.2 L846,533.2 M360,533.2 L360,562 M522,533.2 L522,562 M684,533.2 L684,562 M846,533.2 L846,562"/>
+          <path class="d-line" d="M765,508 L765,533.2 M360,533.2 L810,533.2 M360,533.2 L360,562 M510,533.2 L510,562 M660,533.2 L660,562 M810,533.2 L810,562"/>
 
+          <!-- The boot loader, beside Linux: today Digilent's U-Boot out of their
+               BOOT.BIN, but the card file, the network loop and the fabric load
+               are ours and run on the board --- partly built; green the day the
+               loader we build boots the board. -->
+          <rect class="d-plate" x="992" y="542" width="54" height="128"/>
+          <rect class="d-dash d-part" x="992" y="542" width="54" height="128"/>
+          <text class="d-t" x="1019" y="606" text-anchor="middle" transform="rotate(-90 1019 606)">U-Boot</text>
           <rect class="d-plate" x="290" y="562" width="140" height="96"/>
           <rect class="d-dash" x="290" y="562" width="140" height="96"/>
           <text class="d-t" x="360" y="586" text-anchor="middle">RFB server</text>
@@ -171,33 +178,33 @@
           <text class="d-s" x="360" y="620" text-anchor="middle">keysym mapping</text>
           <text class="d-s" x="360" y="642" text-anchor="middle">the screen and the keys</text>
 
-          <rect class="d-plate" x="614" y="562" width="140" height="96"/>
-          <rect class="d-dash" x="614" y="562" width="140" height="96"/>
-          <text class="d-t" x="684" y="586" text-anchor="middle">disk pack</text>
-          <text class="d-s" x="684" y="606" text-anchor="middle">the drive&rsquo;s blocks</text>
-          <text class="d-s" x="684" y="620" text-anchor="middle">as a file</text>
-          <text class="d-s" x="684" y="642" text-anchor="middle">staged into DDR</text>
+          <rect class="d-plate" x="590" y="562" width="140" height="96"/>
+          <rect class="d-dash" x="590" y="562" width="140" height="96"/>
+          <text class="d-t" x="660" y="586" text-anchor="middle">disk pack</text>
+          <text class="d-s" x="660" y="606" text-anchor="middle">the drive&rsquo;s blocks</text>
+          <text class="d-s" x="660" y="620" text-anchor="middle">as a file</text>
+          <text class="d-s" x="660" y="642" text-anchor="middle">staged into DDR</text>
 
-          <rect class="d-plate" x="452" y="562" width="140" height="96"/>
-          <rect class="d-dash" x="452" y="562" width="140" height="96"/>
-          <text class="d-t" x="522" y="586" text-anchor="middle">Chaosnet</text>
-          <text class="d-s" x="522" y="606" text-anchor="middle">routing and</text>
-          <text class="d-s" x="522" y="620" text-anchor="middle">its services</text>
-          <text class="d-s" x="522" y="642" text-anchor="middle">for the other machines</text>
+          <rect class="d-plate" x="440" y="562" width="140" height="96"/>
+          <rect class="d-dash" x="440" y="562" width="140" height="96"/>
+          <text class="d-t" x="510" y="586" text-anchor="middle">Chaosnet</text>
+          <text class="d-s" x="510" y="606" text-anchor="middle">routing and</text>
+          <text class="d-s" x="510" y="620" text-anchor="middle">its services</text>
+          <text class="d-s" x="510" y="642" text-anchor="middle">for the other machines</text>
 
-          <rect class="d-plate" x="776" y="562" width="140" height="96"/>
-          <rect class="d-dash" x="776" y="562" width="140" height="96"/>
-          <text class="d-t" x="846" y="586" text-anchor="middle">the console</text>
-          <text class="d-s" x="846" y="606" text-anchor="middle">halt, step and inspect</text>
-          <text class="d-s" x="846" y="620" text-anchor="middle">over the SPY wires</text>
-          <text class="d-s" x="846" y="642" text-anchor="middle">a Unibus master</text>
+          <rect class="d-plate" x="740" y="562" width="140" height="96"/>
+          <rect class="d-dash" x="740" y="562" width="140" height="96"/>
+          <text class="d-t" x="810" y="586" text-anchor="middle">the console</text>
+          <text class="d-s" x="810" y="606" text-anchor="middle">halt, step and inspect</text>
+          <text class="d-s" x="810" y="620" text-anchor="middle">over the SPY wires</text>
+          <text class="d-s" x="810" y="642" text-anchor="middle">a Unibus master</text>
 
-          <rect class="d-plate" x="945" y="562" width="90" height="96"/>
-          <rect class="d-dash d-ext" x="945" y="562" width="90" height="96"/>
-          <text class="d-t" x="990" y="586" text-anchor="middle">muir</text>
-          <text class="d-s" x="990" y="606" text-anchor="middle">on the PS,</text>
-          <text class="d-s" x="990" y="620" text-anchor="middle">running CC</text>
-          <text class="d-s" x="990" y="642" text-anchor="middle">the debugger</text>
+          <rect class="d-plate" x="890" y="562" width="80" height="96"/>
+          <rect class="d-dash d-ext" x="890" y="562" width="80" height="96"/>
+          <text class="d-t" x="930" y="586" text-anchor="middle">muir</text>
+          <text class="d-s" x="930" y="606" text-anchor="middle">on the PS,</text>
+          <text class="d-s" x="930" y="620" text-anchor="middle">running CC</text>
+          <text class="d-s" x="930" y="642" text-anchor="middle">the debugger</text>
 
           <!-- main memory: through the PS's own memory controller, which is
                Xilinx silicon and not ours, out to the DRAM.  The controller is
@@ -207,12 +214,6 @@
           <path class="d-line d-done" d="M118,508 L118,580"/>
           <path class="d-line" d="M240,508 L240,580"/>
           <rect class="d-plate" x="38" y="580" width="218" height="60"/>
-          <!-- The boot loader: today Digilent's, out of their BOOT.BIN, so grey;
-               the Buildroot one is U-Boot with its own SPL as the first stage,
-               and goes green the day it boots the board. -->
-          <rect class="d-plate" x="38" y="546" width="218" height="28"/>
-          <rect class="d-dash d-ext" x="38" y="546" width="218" height="28"/>
-          <text class="d-t" x="147" y="565" text-anchor="middle">U-Boot &mdash; the boot loader</text>
           <rect class="d-dash d-ext" x="38" y="580" width="218" height="60"/>
           <text class="d-t" x="147" y="604" text-anchor="middle">DDR controller</text>
           <text class="d-s" x="147" y="624" text-anchor="middle">four ports, arbitrated in hardware</text>
@@ -220,7 +221,7 @@
                the line from the Linux outline is that port -->
           <path class="d-line" d="M256,610 L280,610"/>
           <path class="d-line d-done" d="M147,640 L147,728"/>
-          <path class="d-line" d="M425,658 L425,728 M522,658 L522,728 M684,658 L684,728"/>
+          <path class="d-line" d="M425,658 L425,728 M510,658 L510,728 M660,658 L660,728"/>
 
           <rect class="d-dash d-ext" x="28" y="728" width="332" height="84"/>
           <text class="d-t" x="194" y="754" text-anchor="middle">512 MB DDR3</text>
