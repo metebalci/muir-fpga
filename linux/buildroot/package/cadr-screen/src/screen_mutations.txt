@@ -1,0 +1,212 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for cadr-screen: bugs `screen_test.c` has to catch.
+#
+# `mutate.py` applies each record to a copy of this package's sources, builds
+# the check against it, and runs it.  A mutation the check FAILS on is a check
+# doing its job; one the check passes is reported as SURVIVED and the run is
+# red.  A record whose `@old` no longer matches its file exactly once, or that
+# does not compile, is BROKEN and also fails the run --- CLAUDE.md records two
+# fabric mutations reported as surviving that had never been built.
+#
+# THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
+# can read this one:
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @file      which of this package's sources to mutate
+#   @why       what the check is supposed to notice, printed when it does not
+#   @note      prose, repeatable; printed with @why on a survivor
+#   @old       the source to replace, exactly as it stands
+#   @new       what to put there; empty deletes
+#   @end
+#
+# WHERE THE LIST CAME FROM.  The five the slice was asked for --- the bit
+# order reversed within a word, the line stride off by one word, black and
+# white swapped, an update rectangle off by one, and a frame served from a
+# stale copy --- and then one for each decision this program makes that a
+# reader would otherwise have to take on trust: the two encodings and which is
+# chosen, the byte order a viewer asked for, the rows a diff calls changed,
+# the whole-screen interval, and the two ways a viewer is refused.
+#
+# **THE BIT ORDER AND THE STRIDE ARE WRITTEN TWICE AND BOTH ARE MUTATED.**
+# `screen_geom.h`'s `screen_lit` is the rule, and `screen_server.c`'s
+# `row_byte` is the same rule again as a byte at a time, which is what a
+# whole-width Raw rectangle actually goes through --- muir has the same pair
+# (`Frame::shows_white` beside `Pixels::put_row`) and holds them to each other
+# in `tests/terminal.rs`.  Mutating one and not the other is what says the
+# check reaches both: the Raw pass of the anchors catches `row_byte` and the
+# RRE pass catches `screen_lit`, because RRE asks the rule per pixel and Raw
+# asks the table per byte.  A check that ran only one encoding would let half
+# of this list through.
+
+@mutation bit-order-reversed-within-a-word
+@file screen_geom.h
+@why the anchors: word 0 bit 0 is the top-left pixel, and reversed it is pixel 31
+@note This is the classic failure of a program like this one --- a picture
+@note served mirrored --- and it is invisible to any check that builds its
+@note screen with the same rule it reads it with.  The anchors are literal
+@note coordinates worked out by hand from muir src/simpletv.rs:255.
+@old
+	return (int)((words[bit / 32u] >> (bit % 32u)) & 1u);
+@new
+	return (int)((words[bit / 32u] >> (31u - bit % 32u)) & 1u);
+@end
+
+@mutation line-stride-a-word-short-in-the-pixel-rule
+@file screen_geom.h
+@why the anchors under RRE: word 24 bit 0 is the first pixel of line 1, and at 23 words a line it is not
+@note RRE asks the rule for every pixel, so this is the pass that reaches it;
+@note a whole-width Raw rectangle goes through `row_byte` instead.
+@old
+	const unsigned bit = y * SCREEN_WORDS_PER_LINE * 32u + x;
+@new
+	const unsigned bit = y * (SCREEN_WORDS_PER_LINE - 1u) * 32u + x;
+@end
+
+@mutation line-stride-a-word-short-in-the-encoder
+@file screen_server.c
+@why the anchors under Raw: the byte table is what a whole-width rectangle goes through, and it walks the wrong row
+@old
+	uint32_t word = f->words[y * f->words_per_line + k / 4];
+@new
+	uint32_t word = f->words[y * (f->words_per_line - 1) + k / 4];
+@end
+
+@mutation black-and-white-swapped
+@file screen_geom.h
+@why the anchors: with MODE BOW clear a lit bit shows WHITE, and swapped the whole screen comes back inverted
+@note muir src/simpletv.rs:268.  The anchors run in both directions of BOW,
+@note so a program that had simply lost the BOW term would also be caught.
+@old
+	return screen_lit(words, x, y) != (bow != 0);
+@new
+	return screen_lit(words, x, y) == (bow != 0);
+@end
+
+@mutation the-update-rectangle-starts-a-row-late
+@file screen_server.c
+@why the anchors, whose top-left pixel is on the row that is dropped, and the incremental check, whose rectangles are held to the runs of changed rows
+@note Reported by whichever runs first, which is the anchors: every
+@note rectangle loses its first row, a whole screen included.  The record
+@note below is the off-by-one that ONLY an incremental update can show.
+@old
+		const unsigned top = runs[k].row > ay ? runs[k].row : ay;
+@new
+		const unsigned top = runs[k].row + 1 > ay ? runs[k].row + 1 : ay;
+@end
+
+@mutation the-frame-is-read-once-and-then-held
+@file screen_frame.c
+@why the incremental check: the screen is changed in the WINDOW between the two updates, so a program serving its first copy sends the old screen
+@note The copy is what makes one pass's diff and one pass's pixels come from
+@note one screen; keeping it for ever is the way that goes wrong.
+@old
+	for (unsigned i = 0; i < SCREEN_VISIBLE_WORDS; ++i)
+		f->words[i] = window[i];
+	++f->reads;
+@new
+	if (f->reads == 0)
+		for (unsigned i = 0; i < SCREEN_VISIBLE_WORDS; ++i)
+			f->words[i] = window[i];
+	++f->reads;
+@end
+
+@mutation the-diff-sends-the-rows-that-did-not-change
+@file screen_server.c
+@why the incremental check: the rectangles are held to the runs of changed rows, computed a second time in the check
+@old
+		if (memcmp(f->words + at, was + at, f->words_per_line * sizeof(uint32_t)) == 0)
+@new
+		if (memcmp(f->words + at, was + at, f->words_per_line * sizeof(uint32_t)) != 0)
+@end
+
+@mutation an-rre-subrectangle-is-placed-absolutely
+@file screen_server.c
+@why RFC 6143 section 7.7.2 places a subrectangle relative to its rectangle, and the check's viewer refuses one that leaves it
+@note Invisible while every rectangle starts at row 0, which is why the
+@note incremental checks matter here as well as for the diff.
+@old
+			head[n + 2] = (uint8_t)((y - ry) >> 8);
+			head[n + 3] = (uint8_t)(y - ry);
+@new
+			head[n + 2] = (uint8_t)(y >> 8);
+			head[n + 3] = (uint8_t)y;
+@end
+
+@mutation the-encoding-is-guessed-rather-than-measured
+@file screen_server.c
+@why the dither, where RRE is one subrectangle a pixel and Raw is the smaller: the check asks which encoding the rectangle went in
+@note RRE is a win of fifty times on a real CADR screen and a loss of three
+@note times on a dither.  Taking it always is a decision that looks right
+@note until somebody draws a grey.
+@old
+			use_rre = rre_bytes < raw_bytes;
+@new
+			use_rre = 1;
+@end
+
+@mutation a-viewers-encoding-list-is-read-backwards
+@file screen_server.c
+@why the viewer that offers only encodings this server has not got: it must be answered in Raw, which section 7.7.1 obliges every viewer to take
+@old
+					if (m.encodings[k] == RFB_ENCODING_RRE)
+@new
+					if (m.encodings[k] != RFB_ENCODING_RRE)
+@end
+
+@mutation the-byte-order-a-viewer-asked-for-is-ignored
+@file screen_rfb.c
+@why the whole screen in 32 bits a pixel big-endian: the check's viewer works the two pixel patterns out for itself and refuses a pixel that is neither
+@old
+		out[k] = f->big_endian ? b[4 - n + k] : b[3 - k];
+@new
+		out[k] = b[3 - k];
+@end
+
+@mutation the-whole-screen-interval-is-inverted
+@file screen_server.c
+@why the interval check: a second whole screen inside one frame must not be answered, and one a frame later must be
+@note A viewer asking for the whole screen at every poll is not a fault ---
+@note nothing in RFC 6143 obliges it to ask incrementally --- and this is the
+@note bound that stops it costing 739,584 pixels a poll.
+@old
+	if (whole && v->have_full_at && now_ns - v->full_at_ns < SCREEN_FULL_UPDATE_NS)
+@new
+	if (whole && v->have_full_at && now_ns - v->full_at_ns > SCREEN_FULL_UPDATE_NS)
+@end
+
+@mutation a-security-type-that-is-not-offered-is-taken
+@file screen_server.c
+@why the handshake check: a 3.8 viewer picking type 2 must get a SecurityResult of 1 with a reason and then be dropped
+@old
+			if (chose != 1) {
+@new
+			if (chose != 1 && chose != 2) {
+@end
+
+@mutation an-all-ones-screen-is-not-called-blank
+@file screen_frame.c
+@why the blank check: an unwritten word of this board's DDR reads zero in some places and all ones in others, so both have to be named
+@note CLAUDE.md, measured on the first bring-up: uninitialised DDR reads as
+@note alternating bands of zeros and ones.  A program that only knew about
+@note zeros would serve a white screen and say nothing.
+@old
+	if (first == 0xFFFFFFFFu)
+@new
+	if (first == 0xFFFFFFFEu)
+@end
+
+@mutation adjacent-changed-rows-are-not-joined
+@file screen_server.c
+@why the incremental check: the rectangles are held to the runs of changed rows, and a run of nine rows arriving as nine rectangles is nine where one was due
+@note **THE PIXELS COME OUT RIGHT**, so nothing that only compares the screen
+@note can see this: it is the one off-by-one here that needs the check to
+@note compare the RECTANGLES against a second expression of the diff.  It
+@note costs eight bytes a row of header and, at 32 bits a pixel with RRE, can
+@note cost more than the pixels.
+@old
+		if (n && runs[n - 1].row + runs[n - 1].len == row) {
+@new
+		if (n && runs[n - 1].row + runs[n - 1].len == row + 1) {
+@end
