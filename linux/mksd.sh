@@ -40,7 +40,7 @@ WORK=$(mktemp -d "${TMPDIR:-$HOME/.cache}/mksd.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
 IMG=Arty-Z7-20/pre-built/linux/images
-tar xzf "$BSP" -C "$WORK" "$IMG/BOOT.BIN" "$IMG/image.ub" "$IMG/zImage" "$IMG/system.dtb"
+tar xzf "$BSP" -C "$WORK" "$IMG/BOOT.BIN" "$IMG/image.ub" "$IMG/system.dtb"
 SRC=$WORK/$IMG
 
 # The device tree, with the reservation appended.  dtc merges the two root
@@ -90,13 +90,19 @@ mkdir -p "$OUT/stock" "$OUT/reserved"
 # its default_bootcmd and boots image.ub with the BSP's own device tree.
 cp "$SRC/BOOT.BIN" "$SRC/image.ub" "$OUT/stock/"
 
-# Reserved: the same, plus a loose kernel and our tree, plus the uEnv.txt that
-# makes U-Boot take them.
-cp "$SRC/BOOT.BIN" "$SRC/image.ub" "$SRC/zImage" "$OUT/reserved/"
-cp "$WORK/system-cadr.dtb" "$OUT/reserved/system.dtb"
+# Reserved: the same card plus the one-line uEnv.txt that asks muirhost for
+# the rest.  The rest --- our tree and the boot command --- goes in server/,
+# which is what /srv/tftp holds.  The BSP's loose zImage is not staged: it is
+# a different build from the kernel inside image.ub and dies under any tree
+# (measured 10 Sep); netcmd boots the FIT's own kernel and ramdisk.
+cp "$SRC/BOOT.BIN" "$SRC/image.ub" "$OUT/reserved/"
 cp linux/uEnv.txt "$OUT/reserved/uEnv.txt"
+mkdir -p "$OUT/server"
+cp "$WORK/system-cadr.dtb" "$OUT/server/system.dtb"
+cp linux/uEnv.net "$OUT/server/uEnv.net"
 
 echo "staged $OUT"
 printf '  stock/    %s\n' "$(cd "$OUT/stock" && ls | tr '\n' ' ')"
 printf '  reserved/ %s\n' "$(cd "$OUT/reserved" && ls | tr '\n' ' ')"
+printf '  server/   %s\n' "$(cd "$OUT/server" && ls | tr '\n' ' ')"
 printf '  tree diff: %s lines added, %s removed\n' "$ADDED" "$REMOVED"
