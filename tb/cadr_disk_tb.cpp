@@ -28,28 +28,29 @@
 // vendor put on the pack, and each of those words is a function of both the
 // block and the offset for the same reason.
 //
-// **WHAT IS EXEMPT, AND IT IS BOUNDED AND COUNTED ON THE OUTPUT BELOW.** One
-// thing, and it is the track: `0o02` Read All and `0o13` Write All go round
-// the whole track as BYTES rather than as blocks, which wants the sector
-// format serialised bit by bit and the parser that reads one back. The
-// controller does their seek, their disk address and their `track_ns`, so
-// their status word and register 2 are compared in full; what is not is
+// **NOTHING A COMMAND DOES IS EXEMPT ANY MORE.** `0o02` Read All and `0o13`
+// Write All go round the whole track as BYTES rather than as blocks, and the
+// serialiser and the parser that do that are in the module now: the three
+// `PAGE` rows a Read All moved and the two `BLK write` rows a Write All laid
+// down are COMPARED, where they were taken as stimulus, and so is register 1
+// after one. The channel's eight status bits, the last memory address, the
+// ECC register, the disk address after a walk and the drive's own flags are
+// all compared on every row. What is left is the two things that cannot move
+// --- the block counter on a row that did not land on its own instant, and a
+// row checked one way round because a counter was still running --- and both
+// are counted on the output below.
 //
-//   register 1, the last memory address
-//       the walk writes it and this walk does not run. Exempt from a Read All
-//       or Write All until the fabric and the reference are next observed to
-//       agree, which the next ordinary transfer does.
-//   the `PAGE` rows a Read All moved, and the `BLK write` rows a Write All
-//   laid down
-//       taken as STIMULUS instead: the pages are applied to the model memory
-//       and the blocks loaded into the store, so that the ordinary Read which
-//       follows finds on the pack exactly what muir's Write All left there ---
-//       including the sector that claims to be block 9 of cylinder 3, which
-//       is what makes the header compare checkable at all.
-//
-// Nothing else is exempt. The channel's eight status bits, the last memory
-// address, the ECC register, the disk address after a walk and the drive's own
-// flags are all compared on every row.
+// **AND THE TWO HALVES ARE HELD TO EACH OTHER AS WELL AS TO muir**, which
+// the trace alone cannot do: it reads three pages of a track and lays two
+// sectors of one, and the track is seventeen. So after the last row the run
+// goes on and does what the trace cannot afford --- Read All of a whole
+// track into twenty pages, checked byte for byte against `disk_unit::format`
+// written out here from the store's own words, and then Write All of exactly
+// those pages back, which must leave all seventeen blocks as they were. A
+// serialiser and a parser that were wrong in inverse ways would survive the
+// round trip; the trace's five rows are what stops that, and the round trip
+// is what reaches the fourteen sectors and the 17,088 bytes the trace never
+// looks at.
 //
 // HOW THE ROWS ARE PLACED ON THE 5 ns GRID, WHICH IS THE ONE THING THE TRACE
 // CANNOT SAY. muir's controller takes no time of its own, so the generator
@@ -137,11 +138,14 @@ const long SLACK = 8192;
 const long K = RESET_TICKS + REVOLUTION_NS;
 
 // How long a walk may go on asking for words before the run calls it stuck.
-// The largest one here is a block whose data checkword fails: 1,028 shifts to
-// find that out, then `Ecc::trap`'s 42,946, then 256 bus cycles --- so this is
-// four times the worst the trace can produce, and hitting it is a failure and
-// not a timeout to be waited through.
-const long WALK_CAP = 1 << 18;
+// The longest is no longer a block but a TRACK: the property check after the
+// trace writes a whole one, 5,120 words off the bus and thirty-two bits of
+// each through the parser a bit at a time, about 184,000 ticks. (The trace's
+// own worst is a block whose data checkword fails --- 1,028 shifts to find
+// that out, then `Ecc::trap`'s 42,946, then 256 bus cycles.) This is five
+// times the worst either can produce, and hitting it is a failure and not a
+// timeout to be waited through.
+const long WALK_CAP = 1 << 20;
 // A few ticks after every START alike, so that the ones that start no walk
 // still cost what the dry pass gave them.
 const int WALK_QUIET = 4;
@@ -633,13 +637,13 @@ int main(int argc, char **argv) {
   // ---- what the run counts ----------------------------------------------
   long checked_read = 0, checked_status = 0, checked_da = 0, checked_lma = 0;
   long checked_ecc = 0, checked_intr = 0, faces = 0;
-  long ex_lma = 0, ex_counter = 0, checked_counter = 0;
+  long ex_counter = 0, checked_counter = 0;
   long ex_charged = 0;
   long dm_starts = 0, track_starts = 0, starts = 0, unanchored_starts = 0;
   long groups = 0, shared_groups = 0;
   long full_timeouts = 0, hangs = 0;
-  long blk_loaded = 0, blk_compared = 0, blk_stimulus = 0;
-  long pages_compared = 0, pages_stimulus = 0, page_words = 0;
+  long blk_loaded = 0, blk_compared = 0;
+  long pages_compared = 0, page_words = 0;
   unsigned counters_seen = 0;   // a bit a block-counter value
   unsigned codes_seen = 0;      // a bit a command code
   unsigned chan_bits_seen = 0;  // a bit a channel status bit ever compared
@@ -647,7 +651,10 @@ int main(int argc, char **argv) {
   long seek_errors = 0, faults = 0, read_onlys = 0;
   int bad = 0;
 
-  bool lma_dirty = false, track_stimulus = false;
+  // Where each block of the track under the head sits in the store, taken
+  // from the `BLK` rows as they load it: the property check after the trace
+  // reads all seventeen back through the seam.
+  std::vector<int> trk_slot(17, -1);
   // **A COUNTDOWN THAT MAY STILL BE RUNNING**, which is what decides whether a
   // row off its own instant may be checked both ways.  It used to be
   // `drive_timed` at the moment of the row, and that was a proxy that stopped
@@ -725,12 +732,8 @@ int main(int argc, char **argv) {
     ++checked_da;
     if (da != r.da) fail(r, "the disk address", da, r.da);
 
-    if (lma_dirty && lma == r.lma) lma_dirty = false;
-    if (lma_dirty) ++ex_lma;
-    else {
-      ++checked_lma;
-      if (lma != r.lma) fail(r, "the last memory address", lma, r.lma);
-    }
+    ++checked_lma;
+    if (lma != r.lma) fail(r, "the last memory address", lma, r.lma);
     ++checked_ecc;
     if (ecc != r.ecc) fail(r, "the ECC register", ecc, r.ecc);
     ++checked_intr;
@@ -755,6 +758,46 @@ int main(int argc, char **argv) {
   // What the dry pass does NOT cost is a walk: how long the channel takes is
   // the fabric's business, it happens after the START it belongs to, and the
   // group after it is placed by the turn-of-the-spindle rule instead.
+  // **A START HAS TO LAND ON ITS OWN TICK ONLY WHERE THE TRACE CAN TELL ONE
+  // TICK FROM ANOTHER ABOUT IT**, and that is a property of the trace and not
+  // of the command. The generator's way of asking a tick-resolution question
+  // is a pair of instants FIVE NANOSECONDS apart --- `grid_before(t)` and
+  // `grid_at(t)`, the countdown having to reach zero between them --- so a
+  // START is anchoring exactly when such a pair follows it before the next
+  // START. The two seeks are asked that way, and so is the 2.56 s timeout;
+  // a transfer's access time is asked a SECTOR_NS at a time, 193,690 ticks,
+  // and a group placed to make its START exact is 50 ticks long.
+  //
+  // **THIS IS WHAT WENT WRONG AT 69a2246 AND IT IS A CHECK GETTING WEAKER,
+  // NOT A HOLE.** `loads_timer` gained the transfer codes when the channel
+  // began charging `access_ns`, so the group at 2,658,399,985 --- sixteen
+  // rows ending in a timed Read --- became anchored on its LAST row, and the
+  // backward relaxation below then pulled the lone `grid_before` sample at
+  // 2,658,399,980 fifty-three ticks off its own instant. That sample is the
+  // one and only place the trace can see `SEEK_SETTLE_NS` to a tick:
+  // `disk-seek-settle-a-tick-short` was caught at 3743cf7 on exactly that
+  // row and survived at 69a2246. Measured, by reverting each of the channel
+  // slice's four candidate changes in turn: only `loads_timer`'s new cases
+  // move it. With the rule below the START gives instead --- it lands as
+  // many ticks late as the group is long, and the trace's next question
+  // about it is 968,448 ns away --- and the sample keeps its instant.
+  std::vector<char> fine(rows.size(), 0);
+  {
+    auto is_start = [&](size_t k) {
+      return rows[k].kind == 'C' && rows[k].wr && rows[k].reg == 3;
+    };
+    for (size_t k = 0; k < rows.size(); ++k) {
+      if (!is_start(k)) continue;
+      long prev = -1;
+      for (size_t e = k + 1; e < rows.size(); ++e) {
+        if (is_start(e)) break;
+        if (rows[e].now == prev) continue;
+        if (prev >= 0 && rows[e].now - prev == 5) { fine[k] = 1; break; }
+        prev = rows[e].now;
+      }
+    }
+  }
+
   std::vector<size_t> gfirst, glast;
   std::vector<long> gspan, ganchor, gorigin;
   {
@@ -783,9 +826,9 @@ int main(int argc, char **argv) {
             if (r.reg == 0) dry_cmd = r.wdata;
             if (r.reg == 3) {
               unsigned u = (dry_ref_da >> 28) & 7u;
-              if (loads_timer(dry_cmd, (dry_present >> u) & 1u,
-                              (dry_cmd >> 9) & 1u, dry_timed != 0,
-                              ((dry_ro >> u) & 1u) != 0))
+              if (fine[k] && loads_timer(dry_cmd, (dry_present >> u) & 1u,
+                                         (dry_cmd >> 9) & 1u, dry_timed != 0,
+                                         ((dry_ro >> u) & 1u) != 0))
                 anchor = settle;
               off += WALK_QUIET;
               for (int q = 0; q < 4; ++q) dry_read(q);
@@ -816,9 +859,10 @@ int main(int argc, char **argv) {
         // ATTACH, RO, TIMED, LAY, MEMPAGE, MEMW and PAGE cost no ticks: they
         // are levels on the drive's cable, or memory the program filled.
       }
-      // **THE GROUP IS ANCHORED ON THE LAST START THAT LOADS A TIMER**, and on
-      // its first row when it has none. A group of one row then always lands
-      // on its own instant, which is what the block-counter sweep and every
+      // **THE GROUP IS ANCHORED ON THE LAST START THAT LOADS A TIMER THE
+      // TRACE GOES ON TO ASK ABOUT A TICK AT A TIME**, and on its first row
+      // when it has none. A group of one row then always lands on its own
+      // instant, which is what the block-counter sweep and every
       // grid_before/grid_at pair are made of.
       if (anchor < 0) anchor = (first_settle < 0) ? 0 : first_settle;
       gfirst.push_back(a);
@@ -898,20 +942,14 @@ int main(int argc, char **argv) {
           break;
         // A page the transfer put into main memory.
         case 'P':
-          if (track_stimulus) {
-            ++pages_stimulus;
-            for (int w = 0; w < 256; ++w)
-              mem[(size_t)r.page + w] = bulk[r.words + w];
-          } else {
-            ++pages_compared;
-            for (int w = 0; w < 256; ++w) {
-              ++page_words;
-              if (mem[(size_t)r.page + w] != bulk[r.words + w]) {
-                fail(r, "a word of a page the transfer moved",
-                     mem[(size_t)r.page + w], bulk[r.words + w]);
-                std::fprintf(stderr, "  page %x word %d\n", r.page, w);
-                break;
-              }
+          ++pages_compared;
+          for (int w = 0; w < 256; ++w) {
+            ++page_words;
+            if (mem[(size_t)r.page + w] != bulk[r.words + w]) {
+              fail(r, "a word of a page the transfer moved",
+                   mem[(size_t)r.page + w], bulk[r.words + w]);
+              std::fprintf(stderr, "  page %x word %d\n", r.page, w);
+              break;
             }
           }
           break;
@@ -921,7 +959,8 @@ int main(int argc, char **argv) {
         case 'B': {
           const unsigned tag = ((unsigned)r.cyl << 16) |
                                ((unsigned)r.head << 8) | (unsigned)r.blk;
-          if (r.expected && !track_stimulus) {
+          if (r.cyl == 0 && r.head == 0 && r.blk < 17) trk_slot[r.blk] = r.slot;
+          if (r.expected) {
             ++blk_compared;
             unsigned got = store_read(r.slot, ST_HEADER);
             if (got != r.page) fail(r, "the block's header", got, r.page);
@@ -938,7 +977,7 @@ int main(int argc, char **argv) {
               }
             }
           } else {
-            if (r.expected) ++blk_stimulus; else ++blk_loaded;
+            ++blk_loaded;
             for (int w = 0; w < 256; ++w)
               store_write(r.slot, w, bulk[r.words + w]);
             store_write(r.slot, ST_HEADER, r.page);
@@ -990,12 +1029,9 @@ int main(int argc, char **argv) {
               if (loads_timer(lastcmd, present, (lastcmd >> 9) & 1u,
                               d_timed != 0, ro))
                 timed_dirty = true;
-              track_stimulus = false;
               if (present && !((code == 011u || code == 013u) && ro)) {
                 if (track_code(code)) {
                   ++track_starts;
-                  track_stimulus = true;
-                  lma_dirty = true;
                 } else if (code == 000u || code == 010u || code == 011u) {
                   ++dm_starts;
                 }
@@ -1011,7 +1047,6 @@ int main(int argc, char **argv) {
           } else {
             unsigned v = do_read(r.reg);
             long v_tick = tick - 1;
-            bool skip = false;
             unsigned mask = 0xFFFFFFFFu;
             if (r.reg == 0) {
               ++checked_status;
@@ -1027,15 +1062,9 @@ int main(int argc, char **argv) {
               unsigned bc = v >> 24;
               if (bc < 32) { if (v_tick == r.now / 5 + K + turns) counters_seen |= 1u << bc; }
               else fail(r, "the block counter, which cannot exceed 17", bc, 17);
-            } else if (r.reg == 1) {
-              if (lma_dirty && v == r.rdata) lma_dirty = false;
-              skip = lma_dirty;
-              if (skip) ++ex_lma;
             }
-            if (!skip) {
-              ++checked_read;
-              if ((v ^ r.rdata) & mask) fail(r, "the read-back", v, r.rdata);
-            }
+            ++checked_read;
+            if ((v ^ r.rdata) & mask) fail(r, "the read-back", v, r.rdata);
             last_ref_status = r.status;
           }
           ref_da = r.da;
@@ -1048,6 +1077,268 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "stopping after %d mismatches\n", bad);
         break;
       }
+    }
+  }
+
+  // =======================================================================
+  // THE TRACK, HELD TO ITSELF
+  // =======================================================================
+  //
+  // A property check with no reference trace behind it, in the shape
+  // `cadr_memory_path.sv`'s arbiter check has: what is asserted is a
+  // property --- the serialiser and the parser are inverses over a whole
+  // track --- and the numbers come from the STORE, which the trace's `BLK`
+  // rows filled and nothing in the DUT ever wrote.
+  //
+  // **WHY IT IS NEEDED AND WHAT IT DOES NOT DO.** The trace reads three
+  // pages of a Read All and lays two sectors of a Write All, which is 3,072
+  // bytes of a 20,160-byte track; those five rows are what anchor each half
+  // to muir. This reaches the other 17,088 --- the fifteenth to seventeenth
+  // sectors, the 372-byte leftover the index closes, and the wrap back to
+  // the start --- and it holds the two halves to EACH OTHER. Neither can
+  // stand alone: a round trip cannot see a serialiser and a parser wrong in
+  // inverse ways, and the trace cannot see anything past byte 3,072.
+  long sc_bytes = 0, sc_wrap = 0, sc_slots = 0, sc_stops = 0;
+  if (!bad && !stuck) {
+    // Twenty pages: a track is 5,040 words and this is 5,120, so the last
+    // eighty words are the stream coming back round --- "the track is read
+    // round and round --- the command does not advance the head".
+    const unsigned SC_PAGES = 20;
+    const unsigned SC_BASE  = 0x100000u;   // 256-aligned, and inside the 22
+    const unsigned SC_CLP   = 0x110000u;   //   bits a CCW carries
+    const unsigned SC_B2    = 0x120000u;
+    const unsigned SC_CLP2  = 0x111000u;
+    const long SECTOR = 1164, TRACK = 20160, BPT = 17;
+
+    for (int b = 0; b < 17; ++b)
+      if (trk_slot[b] < 0) {
+        std::fprintf(stderr,
+                     "FAIL: the trace never loaded block %d of cylinder 0 "
+                     "head 0, so the track cannot be checked\n", b);
+        return 1;
+      }
+    if (SC_BASE + SC_PAGES * 256u > (unsigned)h_memory ||
+        SC_B2 + 1024u > (unsigned)h_memory) {
+      std::fprintf(stderr, "FAIL: the property check wants more memory than "
+                           "the trace's %ld words\n", h_memory);
+      return 1;
+    }
+
+    // The drive is on unit 0, its pack writable, and its time NOT charged:
+    // a track is a whole revolution and this check is about bytes.
+    d_present |= 1u;
+    d_ro      = 0;
+    d_timed   = 0;
+
+    auto ccws = [&](unsigned clp, unsigned page0, int n) {
+      for (int k = 0; k < n; ++k)
+        mem[clp + (unsigned)k] =
+            ((page0 + (unsigned)k * 256u) & 0x003fff00u) |
+            ((k + 1 < n) ? 1u : 0u);
+    };
+    auto command = [&](unsigned code, unsigned clp, unsigned da) {
+      do_write(0, code);
+      do_write(1, clp);
+      do_write(2, da);
+      do_write(3, 0);
+      settle_walk();
+    };
+    auto tbyte = [&](unsigned base, long at) -> unsigned {
+      return (mem[base + (unsigned)(at >> 2)] >> (8 * (at & 3))) & 0xffu;
+    };
+    auto poke_byte = [&](unsigned base, long at, unsigned v) {
+      unsigned &w = mem[base + (unsigned)(at >> 2)];
+      const int sh = 8 * (int)(at & 3);
+      w = (w & ~(0xffu << sh)) | ((v & 0xffu) << sh);
+    };
+    auto say = [&](const char *what, unsigned got, unsigned want) {
+      std::fprintf(stderr, "the track, held to itself: %s is %08x, "
+                           "wanting %08x\n", what, got, want);
+      ++bad;
+    };
+    // Every error bit the channel can raise, and not-active with it.
+    auto quiet = [&](const char *what) {
+      unsigned st = do_read(0);
+      if ((st & CHAN) || !(st & 1u))
+        say(what, st & (CHAN | 1u), 1u);
+    };
+
+    // ---- the seventeen blocks as the trace left them ---------------------
+    std::vector<std::vector<unsigned>> orig(17, std::vector<unsigned>(259));
+    auto snap = [&](int b, std::vector<unsigned> &into) {
+      for (int w = 0; w < 256; ++w) into[w] = store_read(trk_slot[b], w);
+      into[256] = store_read(trk_slot[b], ST_HEADER);
+      into[257] = store_read(trk_slot[b], ST_HCK);
+      into[258] = store_read(trk_slot[b], ST_DCK);
+    };
+    for (int b = 0; b < 17; ++b) snap(b, orig[b]);
+
+    // What `sector_image_laid` puts at byte `p` of the sector holding block
+    // `b`, written out here from muir's `disk_unit::format` so that the RTL
+    // and this are two independent expressions of one table. The trace's
+    // three `PAGE` rows are what say this one agrees with muir.
+    auto want_byte = [&](long at) -> unsigned {
+      if (at >= BPT * SECTOR) return 0xffu;          // the leftover
+      const long b = at / SECTOR, p = at % SECTOR;
+      const std::vector<unsigned> &o = orig[b];
+      if (p < 61) return 0xffu;
+      if (p == 61) return 0177u;                     // SYNC
+      if (p < 66) return (o[256] >> (8 * (p - 62))) & 0xffu;
+      if (p < 70) return (o[257] >> (8 * (p - 66))) & 0xffu;
+      if (p < 90) return 0xffu;                      // VFO RELOCK
+      if (p == 90) return 0177u;                     // SYNC
+      if (p == 91) return 0377u;                     // PAD
+      if (p < 1116) return (o[(p - 92) / 4] >> (8 * ((p - 92) % 4))) & 0xffu;
+      if (p < 1120) return (o[258] >> (8 * (p - 1116))) & 0xffu;
+      return 0xffu;                                  // POSTAMBLE
+    };
+
+    // ---- Read All, a whole track and eighty words of the next -----------
+    for (unsigned w = 0; w < SC_PAGES * 256u; ++w)
+      mem[SC_BASE + w] = 0xA5A50000u ^ (w * 0x9E3779B1u);
+    ccws(SC_CLP, SC_BASE, (int)SC_PAGES);
+    command(002u, SC_CLP, 0u);
+    quiet("the status after a Read All of a whole track");
+    {
+      unsigned got = do_read(1), w = SC_BASE + (SC_PAGES - 1) * 256u + 255u;
+      if (got != w) say("the last memory address after a Read All", got, w);
+    }
+    for (long at = 0; at < TRACK; ++at) {
+      ++sc_bytes;
+      unsigned got = tbyte(SC_BASE, at), w = want_byte(at);
+      if (got != w) {
+        std::fprintf(stderr,
+                     "the track, held to itself: byte %ld of the track "
+                     "(sector %ld byte %ld) is %02x, wanting %02x\n",
+                     at, at / SECTOR, at % SECTOR, got, w);
+        ++bad;
+        break;
+      }
+    }
+    // "a list longer than a track comes back to where it started"
+    for (long at = TRACK; at < (long)SC_PAGES * 1024 && !bad; ++at) {
+      ++sc_wrap;
+      unsigned got = tbyte(SC_BASE, at), w = tbyte(SC_BASE, at - TRACK);
+      if (got != w) {
+        std::fprintf(stderr,
+                     "the track, held to itself: byte %ld, past the end of "
+                     "the track, is %02x where byte %ld is %02x\n",
+                     at, got, at - TRACK, w);
+        ++bad;
+      }
+    }
+
+    // ---- Write All of exactly those bytes back --------------------------
+    //
+    // **WITH A DECOY IN THE FIRST SECTOR'S PREAMBLE.** `after_sync` wants a
+    // zero after at least SIXTY-FOUR ones, and on a well-formed sector the
+    // count cannot matter: the sector opens with 488 ones and the first zero
+    // in it is the sync's, so a parser taking the first zero after ANY run
+    // finds the same place. So the preamble is given four runs that are too
+    // short --- eight ones then a zero, sixteen, thirty-two, forty-eight ---
+    // and a parser that accepts after fewer than forty-nine takes its header
+    // out of the preamble. Ones enough for the real sync are still there:
+    // 380 before it and seven in it.
+    //
+    // **FORTY-NINE AND NOT SIXTY-FOUR IS THE HONEST FIGURE**, and it is a
+    // real equivalence rather than a gap in the decoy: on a sector this
+    // format lays down, any threshold between 49 and 488 finds the same
+    // zero, so no stimulus made of well-formed sectors can tell 64 from 63.
+    // What can be told is a threshold low enough to fire inside a run this
+    // format leaves, and that is what is tested.
+    {
+      unsigned char dec[14];
+      for (int i = 0; i < 14; ++i) dec[i] = 0xff;
+      const int zeros[4] = {8, 25, 58, 107};
+      for (int z = 0; z < 4; ++z)
+        dec[zeros[z] / 8] = (unsigned char)(dec[zeros[z] / 8] &
+                                            ~(1u << (zeros[z] % 8)));
+      for (int i = 0; i < 14; ++i) poke_byte(SC_BASE, i, dec[i]);
+    }
+    command(013u, SC_CLP, 0u);
+    quiet("the status after a Write All of a whole track");
+    {
+      unsigned got = do_read(1), w = SC_BASE + (SC_PAGES - 1) * 256u + 255u;
+      if (got != w) say("the last memory address after a Write All", got, w);
+    }
+    std::vector<unsigned> now(259);
+    auto same = [&](int b, const std::vector<unsigned> &w, const char *why) {
+      snap(b, now);
+      ++sc_slots;
+      for (int k = 0; k < 259 && !bad; ++k)
+        if (now[k] != w[k]) {
+          std::fprintf(stderr,
+                       "the track, held to itself: %s --- block %d %s is "
+                       "%08x, wanting %08x\n", why, b,
+                       k < 256 ? "word" : (k == 256 ? "header"
+                                        : (k == 257 ? "header checkword"
+                                                    : "data checkword")),
+                       now[k], w[k]);
+          if (k < 256) std::fprintf(stderr, "  word %d\n", k);
+          ++bad;
+        }
+    };
+    for (int b = 0; b < 17 && !bad; ++b)
+      same(b, orig[b], "the round trip changed the pack");
+
+    // ---- a chunk that will not parse stops the track and not the walk ----
+    //
+    // `lay_down_track` breaks out of its loop where `parse_sector` answers
+    // `None`, and `write_all_bytes` has already walked the WHOLE list by
+    // then --- so the sectors before the bad one are laid, the ones after it
+    // are not, and register 1 still holds the last word of the last page.
+    // Two shapes of `None`, because they leave the parser in different
+    // places. The first is a chunk with no zero after ones at all, which
+    // `after_sync` walks to the end of and gives up on.
+    //
+    // The second is `take_bits` answering `None` --- the data's sync so late
+    // that the data and its checkword do not fit in what is left of the
+    // chunk --- and it is the one branch that has to decide BEFORE a word
+    // goes into the store, because everything after it writes. So it is
+    // asked ON THE BOUNDARY and one bit either side of it: a sync at bit
+    // 1,080 leaves exactly 8,232 bits and must be laid, and one at 1,081
+    // leaves 8,231 and must lay nothing. **The magnitude is swept because
+    // the boundary is where a fence-post is**, and the pair costs one chunk
+    // more than either alone.
+    auto chunk_from = [&](unsigned dst, int dc, unsigned src, int sc) {
+      for (int w = 0; w < 291; ++w)
+        mem[dst + (unsigned)(dc * 291 + w)] = mem[src + (unsigned)(sc * 291 + w)];
+    };
+    // The chunk that is all ones but for a sync's zero at 495 and a second
+    // at `z`: the header and its checkword are then taken from bits 496 to
+    // 559, all ones, and the data from `z + 9` --- so what a parse of it
+    // lays is a block of nothing but ones, header, checkwords and all.
+    auto ones_chunk = [&](int dc, int z) {
+      for (int w = 0; w < 291; ++w) mem[SC_B2 + (unsigned)(dc * 291 + w)] = 0xFFFFFFFFu;
+      mem[SC_B2 + (unsigned)(dc * 291 + 495 / 32)] &= ~(1u << (495 % 32));
+      mem[SC_B2 + (unsigned)(dc * 291 + z / 32)]   &= ~(1u << (z % 32));
+    };
+    std::vector<unsigned> all_ones(259, 0xFFFFFFFFu);
+    for (int pass = 0; pass < 2 && !bad; ++pass) {
+      for (unsigned w = 0; w < 1024u; ++w) mem[SC_B2 + w] = 0xFFFFFFFFu;
+      if (pass == 0) {
+        chunk_from(SC_B2, 0, SC_BASE, 5);              // block 5's sector
+        for (int w = 0; w < 291; ++w) mem[SC_B2 + 291u + (unsigned)w] = 0u;
+      } else {
+        ones_chunk(0, 1079);   // the data's sync at 1,080: 8,232 bits left
+        ones_chunk(1, 1080);   // at 1,081: 8,231, and `take_bits` says no
+      }
+      chunk_from(SC_B2, 2, SC_BASE, 3);
+      ccws(SC_CLP2, SC_B2, 4);
+      command(013u, SC_CLP2, 0u);
+      ++sc_stops;
+      quiet("the status after a Write All whose second sector will not parse");
+      {
+        unsigned got = do_read(1), w = SC_B2 + 3u * 256u + 255u;
+        if (got != w)
+          say("the last memory address after a track that stopped laying",
+              got, w);
+      }
+      // Block 0 took the first chunk; blocks 1 and 2, and everything after
+      // them, are as the round trip left them.
+      same(0, pass == 0 ? orig[5] : all_ones, "the first sector was not laid");
+      for (int b = 1; b < 17 && !bad; ++b)
+        same(b, orig[b], "the track went on after a chunk that will not parse");
     }
   }
 
@@ -1091,6 +1382,11 @@ int main(int argc, char **argv) {
   want("blocks loaded into the store", blk_loaded);
   want("blocks a transfer wrote and the store was compared on", blk_compared);
   want("pages compared word for word", pages_compared);
+  want("tracks read out and compared byte for byte", sc_bytes);
+  want("bytes of a track read past its end", sc_wrap);
+  want("blocks compared after the round trip", sc_slots);
+  want("tracks stopped by a chunk that will not parse", sc_stops);
+  want("Read Alls and Write Alls", track_starts);
   want("words the channel read out of main memory", ch_reads);
   want("words the channel wrote into main memory", ch_writes);
   want("channel cycles main memory did not answer", ch_nxms);
@@ -1137,11 +1433,16 @@ int main(int argc, char **argv) {
       "    %ld pages compared word for word (%ld words), %ld blocks loaded\n"
       "      into the store, %ld blocks a transfer wrote compared against it\n"
       "    %ld ticks spent walking\n"
+      "  the track, held to itself as well as to muir:\n"
+      "    %ld bytes of a whole track serialised out of the store and\n"
+      "      compared against disk_unit::format one byte at a time, %ld more\n"
+      "      read past its end and found to be the start of it again\n"
+      "    %ld blocks read back through the seam after the parser put the\n"
+      "      same bytes back on the pack, with a preamble decoy in the first\n"
+      "      sector that a parser accepting after fewer than 49 ones takes\n"
+      "    %ld tracks stopped by a chunk that will not parse, the walk\n"
+      "      finishing anyway\n"
       "  exempt, and this is the whole of it:\n"
-      "    register 1, the last memory address, %ld rows after a Read All or\n"
-      "      a Write All, until it and the reference next agree\n"
-      "    %ld pages and %ld blocks a Read All or a Write All moved, taken as\n"
-      "      stimulus: the track is bytes and not blocks, and is not built\n"
       "    <31:24> the block counter, %ld rows that did not land on their own\n"
       "      instant; compared on %ld that did\n"
       "    <0> <1> <2> <3> not-active and the attentions, %ld rows checked one\n"
@@ -1155,7 +1456,7 @@ int main(int argc, char **argv) {
       hangs, full_timeouts, chan_bits_seen,
       ch_reads, ch_writes, ch_nxms,
       pages_compared, page_words, blk_loaded, blk_compared, walk_ticks,
-      ex_lma, pages_stimulus, blk_stimulus,
+      sc_bytes, sc_wrap, sc_slots, sc_stops,
       ex_counter, checked_counter, ex_charged,
       shared_groups, unanchored_starts, realignments);
   return 0;
