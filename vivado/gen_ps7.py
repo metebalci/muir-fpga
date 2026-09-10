@@ -49,9 +49,10 @@ SPDX = ("// SPDX-FileCopyrightText: 2026 Mete Balci\n"
         "// SPDX-License-Identifier: AGPL-3.0-or-later")
 
 # The pins the fabric brings out, and the whole of them.  Everything else is
-# tied or left open below.  Three ports cross the boundary: `S_AXI_HP0` for
+# tied or left open below.  Four ports cross the boundary: `S_AXI_HP0` for
 # the machine's main memory, `S_AXI_HP2` for the disk's pack, `M_AXI_GP0` for
-# the disk's registers --- and the EMIO GPIO the memory tally is read on.
+# the disk's registers, `M_AXI_GP1` for the console's --- and the EMIO GPIO
+# the memory tally is read on.
 #
 # `S_AXI_HP0` at its NATIVE 64 BITS, which is not an arbitrary choice: diffed
 # at 1d3a9bc, HP0 disabled against HP0 enabled at 64 bits gives a
@@ -127,6 +128,35 @@ EXPOSED = [
     "MAXIGP0ARREADY",
     "MAXIGP0RDATA", "MAXIGP0RRESP", "MAXIGP0RID", "MAXIGP0RLAST",
     "MAXIGP0RVALID", "MAXIGP0RREADY",
+    # `M_AXI_GP1`, the console's, and the same set of wires for the same
+    # reason: `rtl/cadr_console.sv` is the slave on it, presenting the
+    # machine's sixteen diagnostic registers so that a program in Linux can
+    # halt the machine, read its state and start it again.  A second GP port
+    # rather than a share of GP0's window because the console then answers
+    # the WHOLE of its port --- a read nothing answers on a GP port hangs
+    # both Arm cores at one PC each, measured on the board --- and sharing
+    # GP0 would mean a decode in front of `rtl/cadr_disk_pack.sv`'s face,
+    # which answers all of GP0 today.  `0x8000_0000` to `0xBFFF_FFFF` is
+    # GP1's window: Vivado says so itself in
+    # `$XILINX_VIVADO/data/ip/xilinx/processing_system7_v5_5/bd/bd.tcl` at
+    # lines 125 and 135, which is where the number comes from rather than
+    # from memory.
+    #
+    # **AND IT CANNOT BE BROUGHT OUT ALONE.**  A PS7 pin in this list that
+    # the top level does not connect is a Verilator PINMISSING, and
+    # `build/arty.pass` lints five boards: exposing GP1 without wiring it
+    # drew 27 warnings and stopped the check.  This list and
+    # `rtl/cadr_arty.sv` are one change.
+    "MAXIGP1ACLK", "MAXIGP1ARESETN",
+    "MAXIGP1AWADDR", "MAXIGP1AWLEN", "MAXIGP1AWID", "MAXIGP1AWVALID",
+    "MAXIGP1AWREADY",
+    "MAXIGP1WDATA", "MAXIGP1WSTRB", "MAXIGP1WLAST", "MAXIGP1WVALID",
+    "MAXIGP1WREADY",
+    "MAXIGP1BRESP", "MAXIGP1BID", "MAXIGP1BVALID", "MAXIGP1BREADY",
+    "MAXIGP1ARADDR", "MAXIGP1ARLEN", "MAXIGP1ARID", "MAXIGP1ARVALID",
+    "MAXIGP1ARREADY",
+    "MAXIGP1RDATA", "MAXIGP1RRESP", "MAXIGP1RID", "MAXIGP1RLAST",
+    "MAXIGP1RVALID", "MAXIGP1RREADY",
     # `IRQ_F2P`, the fabric's twenty interrupt lines into the processing
     # system: bit 0 is the disk's, `rtl/cadr_disk_pack.sv`'s `irq` --- a
     # block the CADR asked for that the store lacks, a slot a transfer wrote,
@@ -227,6 +257,7 @@ PREFIXES = [
     ("SAXIHP0", "hp0_"),
     ("SAXIHP2", "hp2_"),
     ("MAXIGP0", "gp0_"),
+    ("MAXIGP1", "gp1_"),
     ("EMIOGPIO", "gpio_"),
 ]
 

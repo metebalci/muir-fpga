@@ -377,7 +377,7 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
                     rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
                     rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv \
                     rtl/cadr_prove.sv rtl/cadr_disk_pack.sv \
-                    rtl/cadr_gp0_default.sv \
+                    rtl/cadr_gp0_default.sv rtl/cadr_console.sv \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -392,21 +392,22 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
 	    -GDDR=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_disk_pack.sv
+	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_disk_pack.sv \
+	    rtl/cadr_console.sv
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
 	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_prove.sv \
-	    rtl/cadr_gp0_default.sv
+	    rtl/cadr_gp0_default.sv rtl/cadr_console.sv
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=2 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
 	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_prove.sv \
-	    rtl/cadr_gp0_default.sv
+	    rtl/cadr_gp0_default.sv rtl/cadr_console.sv
 	@touch $@
 
 # --------------------------------------------------------------- the probe

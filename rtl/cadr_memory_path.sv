@@ -116,6 +116,24 @@ module cadr_memory_path (
     output var logic [17:0] ub_addr_o,
     output var logic [15:0] ub_rdata_o,
 
+    // --- THE CONSOLE, the second master on the diagnostic bus.
+    //
+    // `0o766000` is Unibus space and the CADR reaches it itself --- the boot
+    // PROM writes the mode register there --- so the register block has two
+    // masters and something must keep them apart.  `rtl/cadr_console.sv` is
+    // the other, an AXI slave on `M_AXI_GP1` in the top level, and it asks
+    // here.  The arbiter and the mux are below, at the register block's
+    // instance; `docs/console.md` and `tb/cadr_console_harness.sv` carry the
+    // same lines.
+    input  var logic        con_req,      // the console wants the bus
+    output var logic        con_gnt,      // and has it
+    input  var logic        con_msyn,     // -UB MSYN, the console's strobe
+    input  var logic        con_write,
+    input  var logic [17:0] con_addr,
+    input  var logic [15:0] con_wdata,    // SPY<15:0> out
+    output var logic        con_ssyn,     // -UB SSYN, to whoever asked
+    output var logic [15:0] con_rdata,    // SPY<15:0> back
+
     // The diagnostic register block, which lives on this board: its read side
     // reaches into the processor, and its written bits are the console's.
     output var logic [3:0]  spy_eadr,
@@ -148,6 +166,46 @@ module cadr_memory_path (
   assign ub_addr_o = ub_addr;
   assign ub_rdata_o = ub_rdata;
   logic [15:0] ub_rdata;
+
+  // ------------------------------------------------------------------------
+  // THE DIAGNOSTIC BUS HAS TWO MASTERS
+  // ------------------------------------------------------------------------
+  //
+  // **THE GRANT IS TAKEN ONLY WITH THE PROCESSOR'S OWN STROBE DOWN, AND HELD
+  // UNTIL THE CONSOLE LETS GO.**  Taken any other way it would truncate a
+  // Unibus cycle already counting on `elapsed` inside `cadr_spy_registers`:
+  // that module starts its count at the strobe and clears it when the strobe
+  // falls, so a strobe masked in the middle is a cycle that never answers,
+  // and the processor's own NXM timer is what would find it 4,250 ns later.
+  //
+  // The other way round is bounded and safe.  While the console has the bus a
+  // processor strobe is masked, so the processor's cycle simply starts late;
+  // the console holds the bus for `DIAGNOSTIC_NS` plus the drop, which is
+  // 260 ns, or 52 ticks, against that same 4,250 ns timer.  Sixteen to one,
+  // and it is the argument the channel's per-word arbiter above is held to,
+  // one bus along.
+  //
+  // `-UB SSYN` goes back to whoever asked and to nobody else: a slave
+  // answering a master that is not there is what a shared bus must not do.
+  logic        con_own;
+  logic        sr_msyn, sr_write, sr_ssyn;
+  logic [17:0] sr_addr;
+  logic [15:0] sr_wdata;
+
+  always_ff @(posedge clk) begin
+    if (rst) con_own <= 1'b0;
+    else if (con_own) con_own <= con_req;
+    else con_own <= con_req && !ub_msyn;
+  end
+
+  assign con_gnt   = con_own;
+  assign sr_msyn   = con_own ? con_msyn  : ub_msyn;
+  assign sr_write  = con_own ? con_write : ub_write;
+  assign sr_addr   = con_own ? con_addr  : ub_addr;
+  assign sr_wdata  = con_own ? con_wdata : wdata[15:0];
+  assign ub_ssyn   = con_own ? 1'b0 : sr_ssyn;
+  assign con_ssyn  = con_own ? sr_ssyn : 1'b0;
+  assign con_rdata = ub_rdata;
 
   // **THE DECODE IS TAKEN ONCE AND HELD, and the reason is timing rather than
   // function.**  `phys` is the far end of the map: `vma` is registered at the
@@ -327,11 +385,11 @@ module cadr_memory_path (
       .clk        (clk),
       .rst        (rst),
       .mclk       (mclk),
-      .ub_msyn    (ub_msyn),
-      .ub_write   (ub_write),
-      .ub_addr    (ub_addr),
-      .ub_wdata   (wdata[15:0]),
-      .ub_ssyn    (ub_ssyn),
+      .ub_msyn    (sr_msyn),
+      .ub_write   (sr_write),
+      .ub_addr    (sr_addr),
+      .ub_wdata   (sr_wdata),
+      .ub_ssyn    (sr_ssyn),
       .ub_rdata   (ub_rdata),
       .spy_eadr   (spy_eadr),
       .spy_rdata  (spy_rdata),

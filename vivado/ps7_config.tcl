@@ -4,12 +4,12 @@
 # The Arty Z7-20's processing system, as Digilent configures it.
 #
 # This file is Digilent's 556 `CONFIG.PCW_*` properties, verbatim, and then
-# THREE OF OURS merged over them at the bottom --- `S_AXI_HP2` on at 64 bits,
-# for the disk's pack.  Sourced by vivado/gen_ps7_init.tcl, which applies them
-# to a bare `processing_system7` and keeps the `ps7_init` routine the IP flow
-# writes --- the routine that brings up the memory controller, the PLLs and
-# the pin multiplexing, without which DDR does not answer and `S_AXI_HP0` is
-# dead.
+# FOUR OF OURS merged over them at the bottom --- `S_AXI_HP2` on at 64 bits,
+# for the disk's pack, and `M_AXI_GP1` on, for the console.  Sourced by
+# vivado/gen_ps7_init.tcl, which applies them to a bare `processing_system7`
+# and keeps the `ps7_init` routine the IP flow writes --- the routine that
+# brings up the memory controller, the PLLs and the pin multiplexing, without
+# which DDR does not answer and `S_AXI_HP0` is dead.
 #
 # WHY DIGILENT'S AND NOT OURS.  Nothing in the routine depends on our fabric:
 # measured under Vivado 2026.1, `PCW_USE_S_AXI_HP0` off against on at 64 bits
@@ -55,10 +55,21 @@
 # Table 5-11) and the disk's traffic is to stay off the machine's.  It is
 # merged over Digilent's list rather than edited into it so that the sha256
 # above still holds of the block as written, and so that what we changed is
-# three lines anyone can read.  `M_AXI_GP0`, which the pack side's registers
-# sit on, Digilent already has on.  Whether these three change the routine is
-# not assumed: `make current` regenerates it and compares the operations, and
-# the commit that added them reports the diff --- at 64 bits, none.
+# four lines anyone can read.  `M_AXI_GP0`, which the pack side's registers
+# sit on, Digilent already has on.
+#
+# The fourth is `PCW_USE_M_AXI_GP1`, and it is the console's:
+# `rtl/cadr_console.sv` is the slave on that port, presenting the machine's
+# sixteen diagnostic registers so that a program in Linux can halt the
+# machine, read its state and start it again.  A second `M_AXI_GP` has nothing
+# to configure --- a GP port is 32 bits and there is no width to choose, and
+# Digilent already gives GP1 the same four read and write threads and the same
+# `EN_MODIFIABLE_TXN` GP0 has, in the verbatim block above.
+#
+# Whether these four change the routine is not assumed: `make current`
+# regenerates it and compares the operations, and the commit that added them
+# reports the diff --- for HP2 at 64 bits, none, and for GP1, none, measured
+# op for op across all three silicon revisions.
 #
 # WHAT IT IS CHECKED AGAINST.  The routine generated from this file agrees, op
 # for op across all three silicon revisions, with the one in Digilent's
@@ -650,4 +661,5 @@ set ps7_config [dict merge $ps7_config [list \
     CONFIG.PCW_USE_S_AXI_HP2 {1} \
     CONFIG.PCW_S_AXI_HP2_DATA_WIDTH {64} \
     CONFIG.PCW_S_AXI_HP2_ID_WIDTH {6} \
+    CONFIG.PCW_USE_M_AXI_GP1 {1} \
 ]]
