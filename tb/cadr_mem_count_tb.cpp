@@ -520,8 +520,10 @@ void CheckRun(const Run &r, Mode mode) {
           "reset", name);
   }
 
-  // THE MACHINE IS STILL RUNNING either way. It polls a disk controller that
-  // is not there and will do so for ever; what it must not do is halt.
+  // THE MACHINE IS STILL RUNNING either way. It waits on a drive that is not
+  // there --- `rtl/cadr_disk_controller.sv` answers the polls and its status
+  // says not on line --- and will do so for ever; what it must not do is
+  // halt.
   Check(kTicks - r.last_edge_tick < 2000,
         "%s: the last clock edge was at tick %ld of %ld, %ld ticks back, so "
         "the machine is not running at the end", name, r.last_edge_tick,
