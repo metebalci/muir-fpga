@@ -178,18 +178,21 @@ and 15 put the landing one tick either side. `-XBUS INIT` is not tied to
 the master clock and is put on a boundary and a tick either side of one
 directly. Init over everything, because the 74LS74's clear is a pin.
 
-**`-XBUS.INTR` is half in the fabric.** The display's `SEND INTR` leaves
-`cadr_memory_path` as `tv_intr` and `cadr_machine.sv` ORs it into the
-processor's `sintr`, one gate before the 74S175 at LCC 3E12; the disk's
-request is computed in `cadr_disk_controller.sv` and, by that module's own
-recorded decision, not brought out. `sintr` on `cadr_machine` is therefore
-what a board *outside* the fabric puts on the line --- the trace's column
-in `tb/cadr_machine_tb.cpp` --- and the join is checkable only as far as
-"the display never interrupts a program that never enables it", since
-neither reference program does. `build/tv.pass` holds the interrupt
-itself to the tick at the module's output; the gate between it and the
-processor is a claim nothing exercises, and this paragraph is where that
-is written down.
+**`-XBUS.INTR` is whole in the fabric, since `f8c6d25`.** The display's
+`SEND INTR` leaves `cadr_memory_path` as `tv_intr`, the disk's request
+leaves `cadr_disk_controller` as `intr`, and `cadr_machine.sv` ORs the two
+into the processor as muir does in one expression, one gate before the
+74S175 at LCC 3E12. **`sintr` is an output of `cadr_machine` now and not
+an input** --- renamed `sintr_o` deliberately, so that a testbench line
+left driving it fails to compile rather than silently working. What was
+written here before, that the disk's half was computed and kept inside the
+controller and that a board outside the fabric supplied the line, was true
+until the board spun for ever in `AWAIT-DISK` waiting for an interrupt
+that had nowhere to go. The disk's half is exercised by `disk.pass` on all
+380 rows and by `machine.pass` over 600,000 microcycles; **the display's
+half is still a claim nothing exercises**, since neither reference program
+enables the display's interrupt, and this paragraph is where that is
+written down.
 
 **The vertical spacing has no register.** Register 3's bits 6--0 are the
 74LS273's spacing for a sync generator this board does not have; muir
@@ -238,8 +241,9 @@ bridge's other base is in the same trace.
 
 **What it cannot hold to.** The frame buffer's timing on the board, where
 DDR answers in its own time --- main memory's parting, inherited. The gate
-between `tv_intr` and the processor's `sintr`, for want of a program that
-enables the interrupt. And what the boot PROM and the band would show:
+between `tv_intr` and the processor's `sintr_o`, for want of a program
+that enables the DISPLAY's interrupt --- the disk's half of the same gate
+is held by `disk.pass` and `machine.pass` since `f8c6d25`. And what the boot PROM and the band would show:
 `build/machine.pass` is unchanged, the PROM never addressing the display;
 `microcycle_sys` drives the processor alone from its trace and is
 unaffected by the band's run-light writes.
@@ -364,7 +368,9 @@ new clause did exactly what its comment says.
   what `SETUP-CPT` writes, and that is all `lmtv.order` asks of a program
   on this board; the PROM's program is not loaded either, so a read of
   register 1 with the enable clear is zero, as in muir.
-- **The disk's interrupt joined `-XBUS.INTR` at `f8c6d25`**, after the board spun for ever in `AWAIT-DISK` waiting for it; what follows described the state before that, and the machine's
-  `sintr` port still carries what is outside; see the decision above.
+- **The disk's interrupt joined `-XBUS.INTR` at `f8c6d25`**, after the board
+  spun for ever in `AWAIT-DISK` waiting for it, and the machine's `sintr`
+  became an output rather than something a board outside the fabric
+  supplies; see the paragraph above.
 - **The I/O board**, which is the other slave on the seam and the Unibus's
   business.
