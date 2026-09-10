@@ -3,9 +3,11 @@
 The project page. Hand-written files, no build step and no generator, the same
 way [muir's `site/`](https://github.com/metebalci/muir/tree/main/site) is:
 
-    index.html    the architecture drawing, and under it the boot
-                  sequence --- no heading, no caption, no prose. Each
-                  drawing carries its own title inside it
+    index.html    the architecture drawing, and under it two boot
+                  sequences, the board on its own from the card and
+                  the development boot from a TFTP server --- no
+                  heading, no caption, no prose. Each drawing carries
+                  its own title inside it
     full-page.html
                   a fuller draft kept for later: the same drawing with its
                   caption, the target and its block-RAM budget, the
