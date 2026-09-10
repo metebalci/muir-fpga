@@ -102,15 +102,15 @@
           <!-- The adapter is what MIT's board did not need: 21 parallel wires
                become 8 Pmod pins in beats, and the same registers appear on
                M_AXI_GP1 for muir on this board's own PS.  Not started. -->
-          <rect class="d-box" x="884" y="96" width="188" height="64"/>
-          <text class="d-t" x="978" y="118" text-anchor="middle">debug cable adapter</text>
-          <text class="d-s" x="978" y="138" text-anchor="middle">DBGOUT and DBGIN, 8 pins each</text>
-          <text class="d-s" x="978" y="152" text-anchor="middle">and a register block on GP1</text>
+          <rect class="d-box" x="1068" y="96" width="188" height="64"/>
+          <text class="d-t" x="1162" y="118" text-anchor="middle">debug cable adapter</text>
+          <text class="d-s" x="1162" y="138" text-anchor="middle">DBGOUT and DBGIN, 8 pins each</text>
+          <text class="d-s" x="1162" y="152" text-anchor="middle">and a register block on GP1</text>
           <!-- two cables, two lines: DBGOUT to JA and DBGIN to JB leave the
                adapter separately and never share a segment -->
-          <path class="d-line" d="M850,120 L884,120 M850,136 L884,136 M990,160 L990,464 M990,508 L990,526 L1162,526 L1162,562"/>
-          <path class="d-line" d="M1072,120 L1440,120"/>
-          <path class="d-line" d="M1072,136 L1180,136 L1180,242 L1440,242"/>
+          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,464 M1162,508 L1162,562"/>
+          <path class="d-line" d="M1256,120 L1440,120"/>
+          <path class="d-line" d="M1256,136 L1300,136 L1300,242 L1440,242"/>
           <text class="d-s" x="982" y="300" text-anchor="end">debug cable</text>
 
           <!-- the two buses -->
@@ -164,7 +164,7 @@
           <text class="d-s" x="732" y="420.7">packets, keys, mouse</text>
 
           <!-- the PS-PL boundary, which the three ports cross -->
-          <path class="d-dash" d="M-170,486 L-150,486 M10,486 L38,486 M198,486 L230,486 M390,486 L640,486 M890,486 L920,486 M1060,486 L1410,486"/>
+          <path class="d-dash" d="M-170,486 L-150,486 M10,486 L38,486 M198,486 L230,486 M390,486 L640,486 M890,486 L1092,486 M1232,486 L1410,486"/>
           <rect class="d-plate" x="38" y="464" width="160" height="44"/>
           <rect class="d-box d-done" x="38" y="464" width="160" height="44"/>
           <text class="d-m" x="118" y="483" text-anchor="middle">S_AXI_HP0</text>
@@ -175,9 +175,9 @@
           <rect class="d-box d-done" x="640" y="464" width="250" height="44"/>
           <text class="d-m" x="765" y="483" text-anchor="middle">M_AXI_GP0</text>
           <text class="d-s" x="765" y="499" text-anchor="middle">PS masters, 32 bits, AXI3</text>
-          <rect class="d-fill" x="920" y="464" width="140" height="44"/>
-          <text class="d-m" x="990" y="483" text-anchor="middle">M_AXI_GP1</text>
-          <text class="d-s" x="990" y="499" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+          <rect class="d-fill" x="1092" y="464" width="140" height="44"/>
+          <text class="d-m" x="1162" y="483" text-anchor="middle">M_AXI_GP1</text>
+          <text class="d-s" x="1162" y="499" text-anchor="middle">PS masters, 32 bits, AXI3</text>
 
           <!-- the PS -->
           <text class="d-s" x="-164" y="540.4">PS &mdash; Arm</text>
@@ -204,54 +204,54 @@
           <text class="d-s" x="1283" y="634" text-anchor="middle">the PS&rsquo;s own,</text>
           <text class="d-s" x="1283" y="648" text-anchor="middle">driven by Linux</text>
           <path class="d-line" d="M1220,606 L1232,606"/>
-          <rect class="d-plate" x="290" y="562" width="130" height="96"/>
-          <rect class="d-dash" x="290" y="562" width="130" height="96"/>
-          <text class="d-t" x="355" y="586" text-anchor="middle">RFB server</text>
-          <text class="d-s" x="355" y="606" text-anchor="middle">TCP, encoding,</text>
-          <text class="d-s" x="355" y="620" text-anchor="middle">keysym mapping</text>
-          <text class="d-s" x="355" y="642" text-anchor="middle">the screen and the keys</text>
+          <rect class="d-plate" x="240" y="562" width="130" height="96"/>
+          <rect class="d-dash" x="240" y="562" width="130" height="96"/>
+          <text class="d-t" x="305" y="586" text-anchor="middle">RFB server</text>
+          <text class="d-s" x="305" y="606" text-anchor="middle">TCP, encoding,</text>
+          <text class="d-s" x="305" y="620" text-anchor="middle">keysym mapping</text>
+          <text class="d-s" x="305" y="642" text-anchor="middle">the screen and the keys</text>
 
-          <rect class="d-plate" x="570" y="562" width="130" height="96"/>
-          <rect class="d-dash d-done" x="570" y="562" width="130" height="96"/>
-          <text class="d-t" x="635" y="586" text-anchor="middle">disk pack</text>
-          <text class="d-s" x="635" y="606" text-anchor="middle">the drive&rsquo;s blocks</text>
-          <text class="d-s" x="635" y="620" text-anchor="middle">as a file</text>
-          <text class="d-s" x="635" y="642" text-anchor="middle">staged into DDR</text>
+          <rect class="d-plate" x="387" y="562" width="130" height="96"/>
+          <rect class="d-dash" x="387" y="562" width="130" height="96"/>
+          <text class="d-t" x="452" y="586" text-anchor="middle">Chaosnet</text>
+          <text class="d-s" x="452" y="606" text-anchor="middle">routing and</text>
+          <text class="d-s" x="452" y="620" text-anchor="middle">its services</text>
+          <text class="d-s" x="452" y="642" text-anchor="middle">for the other machines</text>
 
-          <rect class="d-plate" x="430" y="562" width="130" height="96"/>
-          <rect class="d-dash" x="430" y="562" width="130" height="96"/>
-          <text class="d-t" x="495" y="586" text-anchor="middle">Chaosnet</text>
-          <text class="d-s" x="495" y="606" text-anchor="middle">routing and</text>
-          <text class="d-s" x="495" y="620" text-anchor="middle">its services</text>
-          <text class="d-s" x="495" y="642" text-anchor="middle">for the other machines</text>
+          <rect class="d-plate" x="534" y="562" width="130" height="96"/>
+          <rect class="d-dash" x="534" y="562" width="130" height="96"/>
+          <text class="d-t" x="599" y="586" text-anchor="middle">serial port</text>
+          <text class="d-s" x="599" y="606" text-anchor="middle">the CADR&rsquo;s serial line</text>
+          <text class="d-s" x="599" y="620" text-anchor="middle">on a TCP socket,</text>
+          <text class="d-s" x="599" y="642" text-anchor="middle">as muir offers it</text>
 
-          <rect class="d-plate" x="710" y="562" width="130" height="96"/>
-          <rect class="d-dash" x="710" y="562" width="130" height="96"/>
-          <text class="d-t" x="775" y="586" text-anchor="middle">the console</text>
-          <text class="d-s" x="775" y="606" text-anchor="middle">halt, step and inspect</text>
-          <text class="d-s" x="775" y="620" text-anchor="middle">over the SPY wires</text>
-          <text class="d-s" x="775" y="642" text-anchor="middle">a Unibus master</text>
+          <rect class="d-plate" x="681" y="562" width="130" height="96"/>
+          <rect class="d-dash d-done" x="681" y="562" width="130" height="96"/>
+          <text class="d-t" x="746" y="586" text-anchor="middle">disk pack</text>
+          <text class="d-s" x="746" y="606" text-anchor="middle">the drive&rsquo;s blocks</text>
+          <text class="d-s" x="746" y="620" text-anchor="middle">as a file</text>
+          <text class="d-s" x="746" y="642" text-anchor="middle">staged into DDR</text>
 
-          <rect class="d-plate" x="850" y="562" width="130" height="96"/>
-          <rect class="d-dash" x="850" y="562" width="130" height="96"/>
-          <text class="d-t" x="915" y="586" text-anchor="middle">serial port</text>
-          <text class="d-s" x="915" y="606" text-anchor="middle">the CADR&rsquo;s serial line</text>
-          <text class="d-s" x="915" y="620" text-anchor="middle">on a TCP socket,</text>
-          <text class="d-s" x="915" y="642" text-anchor="middle">as muir offers it</text>
+          <rect class="d-plate" x="828" y="562" width="130" height="96"/>
+          <rect class="d-dash" x="828" y="562" width="130" height="96"/>
+          <text class="d-t" x="893" y="586" text-anchor="middle">the console</text>
+          <text class="d-s" x="893" y="606" text-anchor="middle">halt, step and inspect</text>
+          <text class="d-s" x="893" y="620" text-anchor="middle">over the SPY wires</text>
+          <text class="d-s" x="893" y="642" text-anchor="middle">a Unibus master</text>
 
-          <rect class="d-plate" x="990" y="562" width="130" height="96"/>
-          <rect class="d-dash" x="990" y="562" width="130" height="96"/>
-          <text class="d-t" x="1055" y="586" text-anchor="middle">USB input</text>
-          <text class="d-s" x="1055" y="606" text-anchor="middle">the keyboard and mouse,</text>
-          <text class="d-s" x="1055" y="620" text-anchor="middle">onto the I/O board</text>
-          <text class="d-s" x="1055" y="642" text-anchor="middle">over M_AXI_GP0</text>
+          <rect class="d-plate" x="975" y="562" width="130" height="96"/>
+          <rect class="d-dash" x="975" y="562" width="130" height="96"/>
+          <text class="d-t" x="1040" y="586" text-anchor="middle">USB input</text>
+          <text class="d-s" x="1040" y="606" text-anchor="middle">the keyboard and mouse,</text>
+          <text class="d-s" x="1040" y="620" text-anchor="middle">onto the I/O board</text>
+          <text class="d-s" x="1040" y="642" text-anchor="middle">over M_AXI_GP0</text>
 
-          <rect class="d-plate" x="1130" y="562" width="80" height="96"/>
-          <rect class="d-dash d-ext" x="1130" y="562" width="80" height="96"/>
-          <text class="d-t" x="1170" y="586" text-anchor="middle">muir</text>
-          <text class="d-s" x="1170" y="606" text-anchor="middle">on the PS,</text>
-          <text class="d-s" x="1170" y="620" text-anchor="middle">running CC</text>
-          <text class="d-s" x="1170" y="642" text-anchor="middle">the debugger</text>
+          <rect class="d-plate" x="1122" y="562" width="80" height="96"/>
+          <rect class="d-dash d-ext" x="1122" y="562" width="80" height="96"/>
+          <text class="d-t" x="1162" y="586" text-anchor="middle">muir</text>
+          <text class="d-s" x="1162" y="606" text-anchor="middle">on the PS,</text>
+          <text class="d-s" x="1162" y="620" text-anchor="middle">running CC</text>
+          <text class="d-s" x="1162" y="642" text-anchor="middle">the debugger</text>
 
           <!-- main memory: through the PS's own memory controller, which is
                Xilinx silicon and not ours, out to the DRAM.  The controller is
@@ -268,7 +268,7 @@
                the line from the Linux outline is that port -->
           <path class="d-line" d="M196,610 L220,610"/>
           <path class="d-line" d="M87,640 L87,728"/>
-          <path class="d-line" d="M305,658 L305,728 M452,658 L452,728 M599,658 L599,728"/>
+          <path class="d-line" d="M305,658 L305,728 M452,658 L452,728 M599,658 L599,728 M746,658 L746,728"/>
 
           <rect class="d-dash d-ext" x="-79" y="728" width="332" height="84"/>
           <text class="d-t" x="87" y="754" text-anchor="middle">512 MB DDR3</text>
@@ -297,15 +297,15 @@
           <!-- The connectors on the board itself. The pack is a file on the
                card; the terminal is a VNC client and Chaosnet's other machines
                are elsewhere on the network, so both leave by the same socket. -->
-          <rect class="d-dash d-ext" x="278" y="728" width="200" height="84"/>
-          <text class="d-t" x="378" y="754" text-anchor="middle">gigabit Ethernet</text>
-          <text class="d-s" x="378" y="778" text-anchor="middle">the terminal is a VNC client;</text>
-          <text class="d-s" x="378" y="794" text-anchor="middle">Chaosnet reaches other machines</text>
-          <rect class="d-dash d-ext" x="519" y="728" width="160" height="84"/>
-          <text class="d-t" x="599" y="754" text-anchor="middle">microSD</text>
-          <text class="d-s" x="599" y="774" text-anchor="middle">U-Boot, the CADR&rsquo;s bitstream,</text>
-          <text class="d-s" x="599" y="788" text-anchor="middle">Linux and its root filesystem,</text>
-          <text class="d-s" x="599" y="802" text-anchor="middle">and the disk pack as a file</text>
+          <rect class="d-dash d-ext" x="268" y="728" width="370" height="84"/>
+          <text class="d-t" x="453" y="754" text-anchor="middle">gigabit Ethernet</text>
+          <text class="d-s" x="453" y="778" text-anchor="middle">the terminal is a VNC client; Chaosnet reaches</text>
+          <text class="d-s" x="453" y="794" text-anchor="middle">other machines; the serial line is a TCP socket</text>
+          <rect class="d-dash d-ext" x="666" y="728" width="160" height="84"/>
+          <text class="d-t" x="746" y="754" text-anchor="middle">microSD</text>
+          <text class="d-s" x="746" y="774" text-anchor="middle">U-Boot, the CADR&rsquo;s bitstream,</text>
+          <text class="d-s" x="746" y="788" text-anchor="middle">Linux and its root filesystem,</text>
+          <text class="d-s" x="746" y="802" text-anchor="middle">and the disk pack as a file</text>
 
           </g>
         </svg>
