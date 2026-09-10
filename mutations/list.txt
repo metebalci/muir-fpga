@@ -2177,9 +2177,9 @@
 @note check can still see: the module's whole answer on this trace is that
 @note one word, so a bit of it is the finest grain there is.
 @old
-  assign status = 32'h0000_0320                             // <9> <8> <5>
+                          : 32'h0000_0320)                     // <9> <8> <5>
 @new
-  assign status = 32'h0000_02a0                             // <9> <7> <5>
+                          : 32'h0000_02a0)                     // <9> <7> <5>
 @end
 
 @mutation disk-lossage-reads-cmd2-the-wrong-way
@@ -2194,17 +2194,19 @@
 @note term is constant on this trace --- the boot PROM never writes a command
 @note --- and inverting it is what moves the answer to 0x0321.
 @old
-  assign lossage = !cmd[2];
+  assign disk_lossage     = cmd[2] ? 1'b0
 @new
-  assign lossage = cmd[2];
+  assign disk_lossage     = !cmd[2] ? 1'b0
 @end
 
 @mutation disk-says-it-is-busy
 @check machine
 @file rtl/cadr_disk_controller.sv
 @note `<0>` not active: "0 means the controller is busy, 1 means it is ready
-@note to accept a command." Nothing here takes time --- no transfer starts,
-@note `done_at` never moves --- so the controller is never busy.
+@note to accept a command." `not_active()` is `now >= done_at`, which in
+@note fabric is the busy counter at zero. The boot PROM starts nothing that
+@note takes time, so the counter is zero throughout and inverting the test
+@note makes the controller permanently busy.
 @note
 @note This is the bit the boot PROM BRANCHES on, and it is what the whole
 @note slice buys: with it clear the machine waits for not-active and never
@@ -2218,9 +2220,9 @@
 @note rows the same way, MD reading zero instead of 0x2320, which is what
 @note the board did before this module existed.
 @old
-  assign not_active = 1'b1;
+  assign not_active = (busy_ns == 32'd0);
 @new
-  assign not_active = 1'b0;
+  assign not_active = (busy_ns != 32'd0);
 @end
 
 @mutation disk-decodes-one-word-low
@@ -3244,4 +3246,224 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
  [bits $ircap [expr {$our_ir_lsb + 5}] 1]"
 @new
  [bits $ircap 5 1]"
+@end
+
+
+# ================================ the disk controller, with a drive on it ===
+#
+# `rtl/cadr_disk_controller.sv` again, and the other half of it.  The section
+# above is what MIT's boot PROM can see --- one constant and a decode --- and
+# these are what only a drive can: the eight unit slots, the spindle's block
+# counter, the seek and its attention, the hang timer, and the two resets.
+# The check is `build/disk.pass` against `golden/src/disk.rs`'s program, which
+# reaches all sixteen command codes and every reachable status bit where the
+# band reaches six codes and no error bit at all.
+#
+# **A MUTATION AIMED HERE COSTS A MINUTE**, because the trace holds one hang
+# run out to `TIMEOUT_NS` and the fabric counts all 512,000,000 ticks of it.
+# That is the price of a check that can tell that constant from a wrong one.
+#
+# **TWO EQUIVALENCES, BOTH MEASURED, SO THAT NOBODY FILES THEM AS HOLES.**
+#
+# muir's `reset_errors` clears the timeout flop only when the controller is
+# NOT ACTIVE; the board clears it unconditionally on `-RESET ERR` and lets the
+# running timer set it again at expiry.  This module takes the board's, and
+# `if (not_active) timeout <= 1'b0;` in its place SURVIVES `disk`, `machine`,
+# `ddr_boot` and `probe` --- measured, not reasoned.  It cannot be told apart:
+# muir gates both `<11>` and the transfer lossage with not-active anyway, and
+# the board's flop is not set until the timer has run out, which IS not-active.
+# CLAUDE.md named it as a candidate before this slice was written.
+#
+# And `-RESET ERR` clearing BUSY as well as the error flops also survives, for
+# a reason about the PROGRAM rather than about the structure: every store into
+# the command register that the trace makes while the sequencer is hung
+# carries code 0o16, which stops the channel and clears BUSY on purpose.  So
+# the trace never asks whether a store that is NOT a reset leaves a hang
+# running.  It is the control-store-writes-all-zeros shape once more --- the
+# stimulus does not reach the distinction --- and the live record aimed at the
+# same line is `disk-reset-err-reaches-the-drive`, which asks the other half
+# of the question and is caught.
+#
+# WHAT THIS CHECK DELIBERATELY DOES NOT COVER, so that nobody files a hole
+# against it: everything a transfer leaves behind.  This slice has no channel,
+# so the last memory address, the ECC register, the eight channel status bits
+# and the heads' position after a command list are exempt on the rows a
+# data-moving command touches --- bounded and counted on the check's own
+# output, which says how many rows each cost.  Records for those arrive with
+# the channel.
+
+@mutation disk-selects-the-unit-from-the-wrong-bits
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "Many bits in these registers refer to the 'selected unit', which is
+@note that disk unit whose number is currently in bits <30:28> of the
+@note disk-address register."  One bit down and the drive on unit 0 is found
+@note by an address that names unit 0 and by three others that do not, and
+@note lost by the one that does.
+@note
+@note **THIS IS THE MUTATION THE MODEL-FIRST METHOD FOUND BEFORE THE FABRIC
+@note EXISTED.**  A Python model with one `present` flag rather than eight
+@note slots read `1` where muir reads `0x2321` the moment the program stored
+@note another unit number, and the program does that in its first bus cycle
+@note --- unit 7, which has no drive and never will.
+@old
+  assign sel_unit  = da[30:28];
+@new
+  assign sel_unit  = da[29:27];
+@end
+
+@mutation disk-block-counter-off-by-a-region
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "The count steps to `k` as region `k`'s pulse ends and holds the region
+@note before it through the pulse."  Stepping at the region's START instead
+@note leaves the counter one region ahead for the width of every pulse ---
+@note 4,000 ns at the index and 1,240 elsewhere, out of regions of 968,448.
+@note
+@note So it is invisible except on the eighteen trailing edges, which is
+@note exactly what the trace samples either side of: `grid_before(ends)` and
+@note `grid_at(ends)` are one 5 ns tick apart and the testbench places each
+@note on its own instant.  `DCHECK-BLOCK-COUNTER` reads the counter for half
+@note a second and wants every value 0 to 17 and no other.
+@old
+    else block_counter = {3'd0, region - 5'd1};
+@new
+    else block_counter = {3'd0, region};
+@end
+
+@mutation disk-timeout-a-tick-short
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note `TIMEOUT_NS` is 2.56 s: the 74LS124 at DCTMOT 0B04 section 1 at 20 ms,
+@note divided by 128 by the 74393 at 0C03.  That is 512,000,000 ticks of this
+@note fabric's clock, and five nanoseconds off it is one tick.
+@note
+@note **THIS IS THE MUTATION THAT SAYS THE CHECK CAN SEE THE CONSTANT AT
+@note ALL**, which is the `RD_FINISH_T` lesson: a correct derivation with a
+@note blind check still drifts.  The trace reads the status register at
+@note `hung_at + TIMEOUT_NS - 5` and again at `hung_at + TIMEOUT_NS`, and the
+@note whole reason `build/disk.pass` takes a minute is that the fabric has to
+@note count every tick between the hang and those two rows.  It is also the
+@note reason the testbench anchors a group of rows on its last START rather
+@note than on its first row: the hang is the twenty-seventh bus cycle at
+@note instant zero, and a group placed forward from that instant starts the
+@note timer 26 ticks late.
+@old
+  localparam logic [31:0] TIMEOUT_NS = 32'd2_560_000_000;
+@new
+  localparam logic [31:0] TIMEOUT_NS = 32'd2_559_999_995;
+@end
+
+@mutation disk-init-clears-the-disk-address
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note `-XINIT` clears the command register --- the 74LS175 at DCCMD 0C21 and
+@note the 74LS273 at 0C10, pin 1 of each --- and stops the channel.  "The
+@note disk address counters (the 74LS193s at DCDA 0A17-0A21), the command
+@note list pointer (DCCLP) and the CCW latches (DCCCW) have no pin on it and
+@note stand."
+@note
+@note The trace exercises exactly that: an `-XBUS INIT` after an error, then
+@note a read of register 2 which must still hold what the program put there,
+@note and then a transfer started with NO store into register 1 that walks
+@note the command list it was given before.
+@old
+      if (xbus_init) begin
+        cmd     <= 32'd0;
+@new
+      if (xbus_init) begin
+        cmd     <= 32'd0;
+        da      <= 32'd0;
+@end
+
+@mutation disk-attention-moved-to-the-multiple-unit-bit
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note `<2>` is the SELECTED unit's attention and `<4>` is "multiple units
+@note selected", which `Controller` never sets and nothing in this fabric
+@note can.  Moving the bit therefore loses the attention and lights a bit
+@note that should be dead, and both halves of that are visible: a seek raises
+@note an attention when the heads arrive, and an at-ease takes it away.
+@note
+@note A status bit moved is the finest grain this module has, which is the
+@note same argument `disk-not-on-cylinder-at-bit-7` makes one check along ---
+@note there against the no-drive constant, here against a bit only a drive
+@note can raise.
+@old
+                            | (attention           ? 32'h0000_0004 : 32'd0))  // <2>
+@new
+                            | (attention           ? 32'h0000_0010 : 32'd0))  // <4>
+@end
+
+@mutation disk-reset-err-reaches-the-drive
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note `-RESET ERR` is `-LOAD CMD` OR `-XINIT` (74LS08 at DCCMD 0D14) and it
+@note clears the EIGHT TRANSFER ERROR FLOPS.  The drive's own flags are not
+@note among them: a fault goes away on a fault clear and a seek error only on
+@note a recalibrate, and both of those act at the START and not at the store
+@note into the command register.
+@note
+@note The trace asks the question in three rows: a write to a read-only pack
+@note raises the fault, the fault-clear COMMAND is stored, the status is read
+@note --- and the fault is still there --- and only then does the START take
+@note it away.
+@note
+@note THE OTHER HALF OF THE SAME LINE IS AN EQUIVALENCE AND THE SECTION
+@note HEADER SAYS SO: clearing BUSY here as well survives, because every
+@note command store the trace makes while the sequencer is hung is code 0o16,
+@note which clears BUSY on purpose.  This is the live mutation that tests the
+@note same property, which is the rule CLAUDE.md sets --- replace an
+@note equivalent mutant with the smallest magnitude that is caught.
+@old
+          2'd0: begin
+            cmd     <= wdata;
+            timeout <= 1'b0;
+@new
+          2'd0: begin
+            cmd     <= wdata;
+            timeout <= 1'b0;
+            u_fault <= 8'd0;
+            u_seek_err <= 8'd0;
+@end
+
+@mutation disk-seek-settle-a-tick-short
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note `seek_ns(n)` is `SEEK_SETTLE_NS + n * SEEK_NS_PER_CYLINDER`, and the
+@note settle is Century Data's own figure.  Five nanoseconds off it is one
+@note tick of this clock out of 1,212,055.
+@note
+@note It is caught because the trace walks up to the arrival rather than
+@note repeating muir's arithmetic: it reads the status at
+@note `grid_before(began + ns)` and again at `grid_at(began + ns)`, one tick
+@note apart, and the fabric's down-counter has to reach zero between them.
+@note Neither of the two seeks it does that for is a multiple of five ---
+@note 6,000,000 ns and 6,060,271 --- and the counter counts NANOSECONDS by
+@note five a tick for exactly that reason, so no divider decides where the
+@note boundary falls.
+@old
+  localparam logic [27:0] SEEK_SETTLE_NS       = 28'd5_939_729;
+@new
+  localparam logic [27:0] SEEK_SETTLE_NS       = 28'd5_939_724;
+@end
+
+@mutation disk-index-pulse-a-tick-narrow
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note The index pulse is 4,000 ns and a sector pulse 1,240, and the block
+@note counter "holds the region before through the pulse".  So the pulse's
+@note WIDTH is where the counter steps, and one tick off it moves that edge
+@note by 5 ns out of a region of 968,448 --- 0.0005% of the revolution.
+@note
+@note The trace samples either side of all eighteen trailing edges, which is
+@note the only way this is visible at all, and the testbench places each of
+@note those rows on an instant of its own so that the spindle is where muir
+@note says it is to the tick.  Everything else about the block counter ---
+@note the wrap by subtraction, the region threshold --- is checked by the
+@note third sample of each region, well inside it.
+@old
+  localparam logic [19:0] INDEX_PULSE_NS  = 20'd4_000;
+@new
+  localparam logic [19:0] INDEX_PULSE_NS  = 20'd3_995;
 @end
