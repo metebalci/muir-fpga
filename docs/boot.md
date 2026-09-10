@@ -23,7 +23,10 @@ September --- U-Boot's first stage, U-Boot, the CADR into the fabric, Linux
 6.19 with the reservation honoured by the tree alone, a login 15 s after the
 reset --- and the card path, which is how anyone else's board boots, ran the
 same day from U-Boot's prompt: the four files read off the card in under a
-second, Linux up with the reservation, the CADR's counters at 256 and 256.
+second, Linux up with the reservation, the CADR's counters at 256 and 256;
+and again that afternoon with the disk in the fabric and the pack on the
+card, the drive coming present and the machine loading its microcode from
+it --- a board with this card and no network is the whole machine.
 
 ## What it is
 
