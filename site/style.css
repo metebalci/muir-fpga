@@ -273,7 +273,7 @@ figure.screen img {
   --st-wip:   #8250df;   /* being built now: somebody is in those files today --- violet, since blue sat too near the turquoise */
   --st-ext:   #d0d7de;   /* outside the project */
 }
-.d-done, .d-built, .d-part, .d-wip, .d-ext { fill-opacity: 0.32; stroke-width: 2; }
+.d-done, .d-built, .d-part, .d-wip, .d-ext { fill-opacity: 0.45; stroke-width: 2; }
 .d-done  { fill: var(--st-done);  stroke: var(--st-done);  }
 .d-built { fill: var(--st-built); stroke: var(--st-built); }
 .d-part { fill: var(--st-part); stroke: var(--st-part); }
