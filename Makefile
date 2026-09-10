@@ -20,7 +20,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 VFLAGS := --cc --exe --build -Wall
 
 .PHONY: check cables ps7 ps7-init current mutants mutants-selftest probe-selftest \
-        disk-golden disk-boot-golden muir-pin clean
+        disk-golden disk-boot-golden iob-golden muir-pin clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -203,6 +203,39 @@ $(BUILD)/obj_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_tv_tb.cpp | $(BUILD)
 $(BUILD)/tv.pass: $(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden
 	$(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden
 	@touch $@
+
+# --------------------------------------------------------------- the I/O board
+
+# The I/O board --- MIT's own name for the card, the keyboard, the mouse, the
+# two clocks and their status register on the Unibus --- against muir's own
+# `ioboard::IoBoard`.  `golden/src/iob.rs` is a scripted program, because
+# neither reference program asks anything of the card: measured, MIT's boot
+# PROM never addresses it at all in 600,000 microcycles, and a System 100
+# band reaches three of its registers in 271 bus cycles of 141,849 --- one
+# read of the status register, 135 reads of each half of the microsecond
+# counter, and one write of the keyboard's interrupt enable.
+#
+# THE REFERENCE ONLY, FOR NOW.  Slice one of the card is the trace and a
+# throwaway Python model checked against it; there is no SystemVerilog and
+# nothing here compares anything, which is why this target is not in `check`
+# and is named without a suffix.  `docs/io-board.md` says what the next slice
+# builds and what seam it hangs on.
+#
+# The trace is 81 million ticks --- 404 ms of the card's own time, which is
+# what it takes for the microsecond counter to carry into its high half twice
+# and for fourteen boundaries of the sixty-cycle clock to be read on
+# alternating sides --- and the generator takes about a second.  It asserts as
+# it runs: time never runs backwards, every instant is a multiple of five
+# nanoseconds, every register the decoder names is reached, all two hundred
+# phases of `-UB MSYN` inside the card's microsecond are used, the mouse's
+# counters wrap both ways and take over two hundred values each, the scan
+# codes cover all twenty-four bits and no two are alike, and each of the three
+# reachable interrupt vectors is asked for.
+.PHONY: iob-golden
+iob-golden: $(BUILD)/iob.golden
+
+$(BUILD)/iob.golden: golden/src/iob.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin iob > $@
 
 # ------------------------------------------------------------------ DDR map
 
