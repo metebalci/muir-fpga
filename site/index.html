@@ -378,7 +378,7 @@
 
     <figure class="fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 580" role="img" aria-label="How the board boots for development, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server, and the fabric. The reset and the two U-Boot stages come from the card as in the normal boot. U-Boot reads uEnv.txt from the card, which names a TFTP server, so it asks the DHCP server for its address, receives uEnv.net, the boot command, from the TFTP server, then cadr.bit, which it loads into the fabric, from which moment the CADR runs, then the device tree, the kernel and the root filesystem image, and boots Linux beside the CADR. From the reset to the login prompt took fifteen seconds, measured on 10 September 2026. On any failure the loader tries again every ten seconds.">
+        <svg viewBox="0 0 1170 580" role="img" aria-label="How the board boots for development, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server, and the fabric. The reset and the two U-Boot stages come from the card as in the normal boot. U-Boot reads uEnv.txt from the card, which names a TFTP server, so it asks the DHCP server for its address, receives uEnv.net, the boot command, from the TFTP server, then cadr.bit, which it loads into the fabric, from which moment the CADR runs, then the device tree, the kernel and the root filesystem image, and boots Linux beside the CADR. From the reset to the login prompt took sixteen seconds, measured on 10 September 2026. On any failure the loader tries again every ten seconds.">
           <defs>
             <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -446,14 +446,14 @@
           <line class="d-line" x1="650" y1="512" x2="405" y2="512" marker-end="url(#arr2)"/>
           <text class="d-s" x="527" y="508" text-anchor="middle">&lt;IP&gt;</text>
 
-          <text class="d-s" x="413" y="540">login, 15 s after the reset</text>
+          <text class="d-s" x="413" y="540">login, 16 s after the reset</text>
           <text class="d-s" x="413" y="556">384 MB &mdash; 0x18000000 and up is the CADR&rsquo;s</text>
 
           <text class="d-n" x="10" y="82" fill-opacity="0.62">0 s</text>
-          <text class="d-n" x="10" y="218" fill-opacity="0.62">3 s</text>
-          <text class="d-n" x="10" y="268" fill-opacity="0.62">8 s</text>
-          <text class="d-n" x="10" y="422" fill-opacity="0.62">9 s</text>
-          <text class="d-n" x="10" y="544" fill-opacity="0.62">15 s</text>
+          <text class="d-n" x="10" y="218" fill-opacity="0.62">2 s</text>
+          <text class="d-n" x="10" y="268" fill-opacity="0.62">9 s</text>
+          <text class="d-n" x="10" y="422" fill-opacity="0.62">10 s</text>
+          <text class="d-n" x="10" y="544" fill-opacity="0.62">16 s</text>
         </svg>
       </div>
     </figure>
