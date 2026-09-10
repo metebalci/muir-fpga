@@ -63,8 +63,16 @@ BR2_PACKAGE_EVTEST=y
 # host connector; the script says why the kernel does not.
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/rootfs-overlay"
 BR2_PACKAGE_CADR_CONSOLE=y
-BR2_PACKAGE_CADR_DISK_PACK=y
+BR2_PACKAGE_CADR_DISK_PACKS=y
 BR2_PACKAGE_CADR_TERMINAL=y
+# Buildroot builds output/target/ up and never removes what a package stopped
+# installing, so a renamed package leaves its old program and its old init
+# script in the image beside the new ones.  That happened once and two disk
+# pack programs ran on the board writing blocks back to the same pack.  This
+# script asserts that the image holds only the programs the packages install,
+# during target-finalize and so BEFORE the root filesystem is written; its
+# header says why it is an assertion and not a clean target directory.
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/post-build.sh"
 BR2_TARGET_ROOTFS_CPIO=y
 BR2_TARGET_ROOTFS_CPIO_GZIP=y
 BR2_TARGET_ROOTFS_CPIO_UIMAGE=y

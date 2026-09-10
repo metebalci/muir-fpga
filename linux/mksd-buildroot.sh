@@ -76,7 +76,7 @@ done
 
 # The drive bay, resolved before anything is written: which file goes on
 # which unit, and whether they fit.  A pack is only a pack at exactly a
-# T-300's or a T-80's size (linux/buildroot/package/cadr-disk-pack/src/
+# T-300's or a T-80's size (linux/buildroot/package/cadr-disk-packs/src/
 # pack_bay.h), so a file of any other size is refused HERE rather than being
 # staged and silently not being a drive on the board.
 T300=269562880

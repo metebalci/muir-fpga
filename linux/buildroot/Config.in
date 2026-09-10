@@ -2,5 +2,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-common/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-console/Config.in"
-source "$BR2_EXTERNAL_CADR_PATH/package/cadr-disk-pack/Config.in"
+source "$BR2_EXTERNAL_CADR_PATH/package/cadr-disk-packs/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-terminal/Config.in"

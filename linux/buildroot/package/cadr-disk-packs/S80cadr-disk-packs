@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # The disk pack program at boot: the card's two partitions mounted, and
-# cadr-disk-pack serving the CADR's disks from the drive bay at /mnt/packs.
+# cadr-disk-packs serving the CADR's disks from the drive bay at /mnt/packs.
 #
 # **THE CARD IS WRITTEN ONCE AND NEVER LEAVES THE BOARD.**  That is what the
 # second partition is for: the first holds the loader and the boot files and
@@ -49,28 +49,28 @@ BOOT_DEV=/dev/mmcblk0p1
 PACKS_DEV=/dev/mmcblk0p2
 BOOT=/mnt/card
 PACKS=/mnt/packs
-PIDFILE=/var/run/cadr-disk-pack.pid
+PIDFILE=/var/run/cadr-disk-packs.pid
 
 start() {
 	mkdir -p "$BOOT" "$PACKS"
 	if mountpoint -q "$BOOT" 2>/dev/null || mount -t vfat -o ro "$BOOT_DEV" "$BOOT" 2>/dev/null; then
-		echo "cadr-disk-pack: the boot partition is at $BOOT, read-only"
+		echo "cadr-disk-packs: the boot partition is at $BOOT, read-only"
 	else
-		echo "cadr-disk-pack: no boot partition at $BOOT_DEV"
+		echo "cadr-disk-packs: no boot partition at $BOOT_DEV"
 	fi
 	if mountpoint -q "$PACKS" 2>/dev/null || mount -t vfat -o rw "$PACKS_DEV" "$PACKS" 2>/dev/null; then
-		echo "cadr-disk-pack: the drive bay is at $PACKS"
+		echo "cadr-disk-packs: the drive bay is at $PACKS"
 	else
-		echo "cadr-disk-pack: no pack partition at $PACKS_DEV; the bay will be empty"
+		echo "cadr-disk-packs: no pack partition at $PACKS_DEV; the bay will be empty"
 	fi
-	printf "Starting cadr-disk-pack: "
+	printf "Starting cadr-disk-packs: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-disk-pack -- --packs "$PACKS" --log /dev/console
+		--exec /usr/bin/cadr-disk-packs -- --packs "$PACKS" --log /dev/console
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 
 stop() {
-	printf "Stopping cadr-disk-pack: "
+	printf "Stopping cadr-disk-packs: "
 	start-stop-daemon -K -q -p "$PIDFILE"
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 	sync

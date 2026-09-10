@@ -46,7 +46,7 @@ thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
 took 25 minutes of wall clock on 16 cores, and `make buildroot` after a
 change minutes. **Buildroot does not watch our files**: after editing
 anything under `linux/buildroot/` run `make buildroot-rebuild`, which
-reconfigures U-Boot, the kernel and `cadr-disk-pack` and finishes the image.
+reconfigures U-Boot, the kernel and `cadr-disk-packs` and finishes the image.
 
 `linux/buildroot/` is the Buildroot external tree; `make buildroot` builds
 the whole thing from the tarball (several gigabytes under
@@ -64,7 +64,29 @@ for what it holds; the ones worth knowing exist:
     board/arty-z7-20/linux/linux.config        the kernel: what the board has and nothing more
     board/arty-z7-20/uEnv.txt.in, uEnv.net     the card's optional file and the served boot command
     board/arty-z7-20/genimage.cfg              the card as one image, sdcard.img
-    package/cadr-disk-pack/                        where our own programs go; one placeholder today
+    board/arty-z7-20/post-build.sh             the image holds only the programs the packages install
+    package/                                   our own programs, one package each
+
+**The image holds only the programs the packages install, and the build fails
+if it does not.** Buildroot builds `output/target/` up and never removes what
+a package stopped installing, so renaming a package leaves its old program and
+its old init script in the image beside the new ones. That happened once: the
+rename from `cadr-pack-feeder` to `cadr-disk-pack` left
+`usr/bin/cadr-pack-feeder` and `etc/init.d/S80cadr-pack-feeder` behind, and
+every boot after it started TWO disk pack programs, each mapping the same
+registers, each serving blocks and each writing blocks back to the same pack
+file. The pack did not survive it and a day went into blaming the disk
+channel. `board/arty-z7-20/post-build.sh` is the guard: Buildroot runs it from
+`BR2_ROOTFS_POST_BUILD_SCRIPT` during `target-finalize`, so it runs on every
+`make buildroot` and every `make buildroot-rebuild`, and it runs BEFORE the
+root filesystem image is written --- an image with a ghost in it is never
+produced. It costs one `find` over the target. When it fires it names the
+files and prints the `rm` that clears them; **the remedy is to delete them,
+not to weaken the check.** Its header says why an assertion rather than a
+clean target directory (a clean target is a 25-minute rebuild, and a guard
+that is skipped is not a guard) and why Buildroot's own
+`packages-file-list.txt` cannot be the oracle (it still names packages
+deleted a day earlier).
 
 **The start-up routine is the same one, proved rather than assumed.** U-Boot's
 SPL runs `ps7_init()` and `ps7_post_config()` from a `ps7_init_gpl.c`, as
@@ -215,7 +237,7 @@ in the name is the unit the machine selects with `DA<30:28>`. A pack is a
 file in muir's format and is a pack only at exactly a T-300's 269,562,880
 bytes or a T-80's 70,937,600 --- which is also what makes a pack still being
 copied in not yet a drive: every intermediate size is the wrong size.
-`cadr-disk-pack` looks at the bay every 250 ms while the machine runs, so
+`cadr-disk-packs` looks at the bay every 250 ms while the machine runs, so
 none of the three gestures below needs a reboot, a signal, or the card out of
 the board. **None of them is applied in the middle of a transfer** either:
 a look that finds the channel walking changes nothing and is retried a
@@ -250,7 +272,7 @@ is nameless, and a flush would go into clusters the kernel frees at the last
 close --- so the program does not pretend: it says which unit and exactly how
 many blocks were lost, and names them.
 
-    cadr-disk-pack: unit 0: LOST 3 block(s) THE MACHINE HAD WRITTEN and this program
+    cadr-disk-packs: unit 0: LOST 3 block(s) THE MACHINE HAD WRITTEN and this program
       had not yet put on the pack: the name is gone.  The blocks: 2304 2305 2306.
       RENAME a pack to take it out --- a renamed file keeps its blocks, because this
       program's descriptor follows it and the flush lands there; a deleted one cannot.
