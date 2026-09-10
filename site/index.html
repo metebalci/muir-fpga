@@ -114,8 +114,10 @@
           <path class="d-line" d="M1256,120 L1440,120"/>
           <path class="d-line" d="M1256,136 L1300,136 L1300,242 L1440,242"/>
 
-          <!-- the two buses -->
-          <path class="d-line" d="M723,190 L723,208 M270,208 L723,208 M270,208 L270,238 M660,208 L660,238"/>
+          <!-- The two buses are separate: the interface reaches each by its own
+               line, and the two never share a segment. -->
+          <path class="d-line" d="M700,190 L700,200 L270,200 L270,238"/>
+          <path class="d-line" d="M746,190 L746,214 L660,214 L660,238"/>
           <line class="d-bus" x1="40" y1="238" x2="570" y2="238"/>
           <text class="d-s" x="40" y="228">Xbus, 32 bits, synchronous</text>
           <line class="d-bus" x1="620" y1="238" x2="906" y2="238"/>
