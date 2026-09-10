@@ -51,8 +51,19 @@ module cadr_machine #(
     input  var logic        clk,          // 200 MHz, one tick = 5 ns
     input  var logic        rst,
 
-    // --- SINTR, the interrupt off the cables
-    input  var logic        sintr,
+    // --- -XBUS.INTR, WHICH IS NOT A PORT ANY MORE AND USED TO BE.
+    //
+    // It was `input sintr`, driven from the trace in `tb/cadr_machine_tb.cpp`
+    // and tied to `1'b0` in `rtl/cadr_arty.sv`, because the two things that
+    // put a level on the line --- the display's vertical interrupt and the
+    // disk's request --- were computed inside this module and neither was
+    // wired to it.  Both are inside now and the join is below, so the only
+    // thing left of the port is an OBSERVATION output: `sintr_o` is the
+    // level, for a check to compare and for the top level to fold.  The day
+    // the I/O board or the Unibus arrives it brings an interrupt in, and
+    // that is an input with something driving it rather than a stimulus port
+    // nothing does.
+    output var logic        sintr_o,
 
     // --- THE DISK'S DRIVE SEAM, eight unit slots of it.
     //
@@ -225,20 +236,45 @@ module cadr_machine #(
   logic [1:0]  mode_speed;
   logic        n_memgrant, n_memack, n_loadmd;
 
-  // **`-XBUS.INTR` IS HALF IN THE FABRIC.**  `LM INT` is `UB INT OR XBUS
-  // INTR IN` at UBINTC 0E04, and the Xbus line is the display's vertical
-  // interrupt ORed with the disk's request.  The display's is made in
-  // `cadr_memory_path.sv`'s `cadr_tv` and joined here; the disk's is
-  // computed in `cadr_disk_controller.sv` and, by that module's own
-  // decision, not brought out.  So `sintr` is what a board OUTSIDE the
-  // fabric puts on the line --- the trace's column in `tb/cadr_machine_tb.cpp`
-  // --- and the join is one gate before the 74S175 at LCC 3E12, which
-  // `cadr_microcycle.sv` registers at the microcycle edge.  Nothing the
-  // two reference programs run raises it: neither enables the display's
-  // interrupt, so `build/machine.pass` holds this gate only as far as
-  // "the display never interrupts a program that never asks", and
-  // `build/tv.pass` holds the interrupt itself to the tick.
+  // **`-XBUS.INTR` IS WHOLLY IN THE FABRIC NOW.**  `LM INT` is `UB INT OR
+  // XBUS INTR IN` at UBINTC 0E04, and the Xbus line is the display's
+  // vertical interrupt ORed with the disk's request.  The display's is made
+  // in `cadr_memory_path.sv`'s `cadr_tv`; the disk's is
+  // `cadr_disk_controller.sv`'s `intr`, which that module used to compute
+  // and keep.  The join is one gate before the 74S175 at LCC 3E12, which
+  // `cadr_microcycle.sv` registers at the microcycle edge, and it is here
+  // because that is where the backplane puts it.
+  //
+  // **THE BOARD IS WHY.**  On 2026-09-10 the machine restored a whole System
+  // band off its pack and then spun for ever in `AWAIT-DISK` at microcode
+  // `0o25221`: `A-DISK-BUSY` is cleared in one place, `DISK-COMPLETION-OK`,
+  // reached only from the Xbus interrupt handler, and JCOND at `0o25222`
+  // read 0 with -VMAOK permitted --- `sint` was 0 and the interrupt was not
+  // arriving.  The disk had finished and the wire did not exist.
+  //
+  // WHAT HOLDS EACH HALF.  `build/disk.pass` holds the disk's `intr` row for
+  // row against `Controller::interrupt()`; `build/tv.pass` holds the
+  // display's to the tick; `build/machine.pass` holds THE JOIN, comparing
+  // `sintr_o` against `rtl.golden`'s own `sintr` column --- muir's
+  // `Machine::xbus_interrupt()`, the same OR --- on all 600,000 microcycles.
+  // **That column is zero throughout and the zero is a live one**: the boot
+  // PROM never writes the disk's command register and never enables the
+  // display, so both enables are off, while the controller answers 11,301
+  // status reads with `0x2321`, `<0>` set --- not-active true on every one of
+  // them.  The interrupt's own term is therefore true all the way through and
+  // only the enable holds the level down, which is what makes a fabric that
+  // ignored the enable, or inverted either half of this gate, fail here.
+  // **What no check reaches is the gate made an AND**, `disk_intr &&
+  // tv_intr`: with neither request ever raised by either reference program,
+  // `0 || 0` and `0 && 0` are the same zero, and it survives `machine`,
+  // `ddr_boot` and `probe` alike --- measured.  Dropping an operand outright
+  // does not even build, the dropped signal being read nowhere else here.
+  // The section note in `mutations/list.txt` carries both measurements and
+  // what would close them, which is a machine-level reference whose program
+  // enables an interrupt and is not the band.
   logic tv_intr;
+  logic disk_intr;
+  assign sintr_o = disk_intr || tv_intr;
 
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
@@ -252,7 +288,7 @@ module cadr_machine #(
       .mode_speed  (mode_speed),
       .spy_eadr    (spy_eadr),
       .spy_rdata   (spy_rdata),
-      .sintr       (sintr || tv_intr),
+      .sintr       (sintr_o),
       .n_memack    (n_memack),
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
@@ -409,6 +445,7 @@ module cadr_machine #(
       .dev_ack  (disk_ack),
       .rdata    (disk_rdata),
       .drives   (disk_drives),
+      .intr     (disk_intr),
       .store_we   (store_we),
       .store_slot (store_slot),
       .store_addr (store_addr),

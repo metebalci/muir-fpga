@@ -933,3 +933,139 @@ distinguishes "the block was denied and the transfer stopped" from "the
 transfer finished". Whether it should is Mete's to decide --- the board has no
 such condition, the store being this fabric's own invention --- but a driver
 that denies a block silently truncates a transfer, and the CADR runs on.
+
+## The interrupt, and the night the band restored and stopped
+
+Written on 2026-09-10, after the board booted, loaded its microcode off the
+pack, and **restored the whole band** --- 42,967 blocks served, 21,340 written
+back, no denials, over a billion microcycles retired --- and then spun for
+ever in three instructions.
+
+### What the machine was doing
+
+    AWAIT-DISK
+    25221  (POPJ-EQUAL A-DISK-BUSY M-ZERO)
+    25222  (CHECK-PAGE-READ)        ; conditional call on PG-FAULT-OR-INTERRUPT
+    25223  (JUMP AWAIT-DISK)        ; its N bit NOPs 25224, which is why PC
+    25224  DISK-COMPLETION          ; shows four addresses for three instructions
+
+`A-DISK-BUSY` is cleared in exactly one place, `DISK-COMPLETION-OK`, which is
+reached only from the Xbus interrupt handler. Read off the console, halting
+and starting the machine: at `0o25222` **JCOND reads 0** with `-VMAOK`
+permitted, and the jump condition there is `!vmaok || sint` --- so `sint` was
+0 and no interrupt was arriving; one instruction earlier the A bus read
+`0xffff`, `A-DISK-BUSY` still `-1`. The disk had finished its transfer and
+had no way to say so.
+
+The cold boot never noticed because it does not use the interrupt:
+`DISK-RECALIBRATE-WAIT`'s own comment says it must **not** check for one, and
+it polls. That is why the entire band restored before this bit mattered. The
+running system's page-fault path waits on the interrupt instead.
+
+### What was wrong
+
+`rtl/cadr_disk_controller.sv` had computed the level all along ---
+`not_active && (cmd[11] || (cmd[10] && any_attention))`, the done enable or an
+attention with the attention enable, `Controller::interrupt()` exactly --- and
+reported it in `STATUS<3>`. It was **not a port**. `cadr_machine`'s `sintr`
+was still a stimulus input fed from the trace, and `rtl/cadr_arty.sv` tied it
+to `1'b0`. Nothing joined the two: the `dev_wdata` shape, a signal that
+exists on one side of a boundary and not the other, and the module's own
+header had said so in as many words rather than fixing it.
+
+A status bit is a word a program has to ask for. The level is what tells it to
+ask. They are one expression and they are now one wire.
+
+### What is built
+
+`cadr_disk_controller` brings the level out as `intr`.
+`rtl/cadr_machine.sv` ORs it with the display's `tv_intr` --- `LM INT` is
+`UB INT OR XBUS INTR IN` at UBINTC 0E04, and the join belongs one gate before
+the 74S175 at LCC 3E12, which `cadr_microcycle.sv` registers at the microcycle
+edge --- and brings the result out as `sintr_o`, for a check to compare and
+for the top level to fold. `sintr` has stopped being an input of `cadr_machine`
+anywhere: the tie-off in `rtl/cadr_arty.sv` is gone, and so is every line in
+`tb/` that drove it. Deleted and not left unused, which is CLAUDE.md's `md`
+trap word for word --- Verilator lets a testbench write an output, so a drive
+line that stayed would have gone on supplying the right answer with every
+check green.
+
+### What holds it
+
+**`build/disk.pass`, the level itself.** `tb/cadr_disk_tb.cpp` compares
+-XBUS.INTR **at the port** against `disk.golden`'s own `intr` column ---
+`Controller::interrupt()` --- on all 380 of the trace's rows rather than only
+on the 49 faces, under the same one-way rule the four counter bits get when a
+row does not land on its own instant (38 of them). The trace enables the done
+interrupt at row 260, the attention interrupt at row 264, raises the level on
+nine rows, and reaches an **active** controller with the done enable set at
+row 320. The check fails if the level never rises at all, because a port
+compared only against zero would pass a port tied low --- which is the bug
+this section is about. Measured, the three records aimed here are caught at
+row 260 (`-XBUS.INTR at the port is 00000000, muir says 00000001`), row 264
+(the same line the other way round) and row 320 (`interrupt() is 00000001,
+muir says 00000000`).
+
+**`build/machine.pass`, the wire end to end.** `rtl.golden`'s `sintr` column
+is `Machine::xbus_interrupt()`, muir's own OR of the disk's request and the
+display's, and it is compared against `sintr_o` on all 600,000 microcycles of
+MIT's boot PROM. It used to be *driven* there and is *compared* now.
+
+**The zero it compares against is a live zero.** The column is 0 on every row,
+because the boot PROM writes no command register and enables no display --- but
+`not_active`, the interrupt's other term, is true throughout: 11,301 status
+polls all answer `0x2321`, `<0>` set, and MD holds that word on 33,908 rows.
+So a fabric that ignored the enable raises the line and fails on the first
+microcycle, and `disk-done-interrupt-enable-read-the-wrong-way` is the record
+that says so. `tb/cadr_machine_tb.cpp` fails the run if MD never holds that
+word, so a controller that stopped answering could not make the comparison
+vacuous in silence.
+
+### What is not held, and it is not the band
+
+Five records cover the expression and the wire:
+`disk-interrupt-never-leaves-the-module` (the board's own bug, put back),
+`disk-interrupts-while-it-is-still-active`,
+`disk-attention-interrupt-reads-the-attention-the-wrong-way`,
+`disk-done-interrupt-enable-read-the-wrong-way`, and the two halves of the
+gate, `the-disk-half-of-the-interrupt-gate-inverted` and
+`the-display-half-of-the-interrupt-gate-inverted`.
+
+The two gate records **invert** an operand rather than dropping it, and that
+is a measurement and not a preference. Dropped, the mutant does not build:
+the dropped operand is read nowhere else in `cadr_machine`, so Verilator
+reports `Signal is not used: 'tv_intr'` (or `'disk_intr'`) and lint does the
+catching, which the mutation list forbids. Made an **AND** instead ---
+`disk_intr && tv_intr`, every signal still read --- it builds and **survives**
+`machine`, and `ddr_boot` and `probe` on the way past, because with neither
+request ever raised by either reference program `0 || 0` and `0 && 0` are the
+same zero. On the board that mutant is this section's own bug one gate along:
+the disk unable to interrupt unless the display interrupts in the same tick.
+It is recorded in `mutations/list.txt`'s section note rather than filed as a
+hole; a record with an `@hole` needs an issue, and inventing one to hold a
+limit that was never a defect is the suppression that list exists to prevent.
+
+**The band cannot close it, and that is worth being exact about.**
+`rtl_sys.golden` has `sintr` up on 17,185 of its 2,200,000 rows and CLAUDE.md
+records that on the band it is the disk's done interrupt and nothing else's.
+But `build/microcycle_sys.pass` runs `cadr_microcycle` **alone**, where the
+disk is outside the module and `sintr` is properly a port with the trace
+driving it --- so those 17,185 rows check the *processor's* end of the wire,
+which is real and which this slice leaves exactly as it was. They cannot reach
+this end. What would is a composed band check, `cadr_machine` on
+`rtl_sys.golden`, and it is a slice rather than a line: it needs the pack side,
+a Linux serving blocks on demand, and something over a billion ticks --- and
+muir's channel reaches main memory in no bus cycles at all where the fabric's
+takes the bus for 256 words a block, so the `ns` and `stall` columns would
+drift by the ten ticks `memory_path`'s configuration B measured and the rows
+could not be compared as they stand. Whoever builds it owns that arithmetic
+first.
+
+### What the board should do differently
+
+The machine should leave `AWAIT-DISK`. `A-DISK-BUSY` should go to zero at
+`DISK-COMPLETION-OK` within a microcycle or two of the transfer ending, and
+the PC should move off the three addresses `0o25221`--`0o25224`. A console
+read of the disk's status register at `0o17377774` should show `<3>` set only
+while the level is up --- which is the same bit as before; what has changed is
+that it now also reaches the processor.

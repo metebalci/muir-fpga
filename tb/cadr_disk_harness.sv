@@ -68,6 +68,13 @@ module cadr_disk_harness #(
     output var logic [30:0] req_tag,
     output var logic        ch_waiting,
     output var logic        irq,
+    // **-XBUS.INTR, THE CONTROLLER'S OWN**, and not `irq` above --- that one
+    // is the pack side's line to Linux over GP0.  This is the level this
+    // slave puts on the backplane, which `cadr_machine.sv` ORs with the
+    // display's; `tb/cadr_disk_tb.cpp` compares it against
+    // `Controller::interrupt()` on every row of the reference trace, so that
+    // the wire is held and not merely the status bit that reports it.
+    output var logic        disk_intr,
 
     // --- M_AXI_GP0: the PS is the master, 32 bits -------------------------
     input  var logic [31:0] gp0_awaddr,
@@ -143,6 +150,7 @@ module cadr_disk_harness #(
       .drive_timed(drive_timed),
       .sel(sel), .dev_rq(dev_rq), .dev_write(dev_write), .phys(phys),
       .wdata(wdata), .dev_ack(dev_ack), .rdata(rdata), .drives(drives),
+      .intr(disk_intr),
       .store_we(store_we), .store_slot(store_slot), .store_addr(store_addr),
       .store_wdata(store_wdata), .store_rdata(store_rdata),
       .store_miss(store_miss),

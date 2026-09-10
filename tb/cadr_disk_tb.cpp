@@ -563,6 +563,9 @@ int main(int argc, char **argv) {
   long req_seen = 0, irq_seen = 0;
 
   unsigned sampled = 0;
+  // -XBUS.INTR sampled at the same instant as `rdata`, so that the level and
+  // the status word a row compares are the same tick's.
+  unsigned sampled_intr = 0;
   auto run_tick = [&](bool sample) {
     dut->rst = d_rst;
     dut->xbus_init = d_init;
@@ -573,7 +576,7 @@ int main(int argc, char **argv) {
     dut->wdata = d_wdata;
     dut->clk = 0;
     dut->eval();
-    if (sample) sampled = dut->rdata;
+    if (sample) { sampled = dut->rdata; sampled_intr = dut->disk_intr; }
 
     // The channel, answered after the request has stood a tick or three.
     dut->ch_done = 0;
@@ -827,6 +830,13 @@ int main(int argc, char **argv) {
   // ---- what the run counts ----------------------------------------------
   long checked_read = 0, checked_status = 0, checked_da = 0, checked_lma = 0;
   long checked_ecc = 0, checked_intr = 0, faces = 0;
+  // -XBUS.INTR at the PORT, which is a different claim from `<3>` in the
+  // status word: the bit is a word a program has to ask for, the port is the
+  // level on the backplane, and the board found out on 2026-09-10 what it
+  // costs to compute the first and not drive the second.  Compared on EVERY
+  // row rather than only on the 49 faces, since `Controller::interrupt()` is
+  // a column of every one of them.
+  long checked_port = 0, ex_port = 0, port_raised = 0;
   long ex_counter = 0, checked_counter = 0;
   long ex_charged = 0;
   long dm_starts = 0, track_starts = 0, starts = 0, unanchored_starts = 0;
@@ -887,6 +897,32 @@ int main(int argc, char **argv) {
       fail(r, early ? "not-active or an attention, ahead of muir's instant"
                     : "not-active or an attention, behind muir's instant",
            st & TIME_BITS, r.status & TIME_BITS);
+  };
+
+  // **THE LEVEL ON -XBUS.INTR, AGAINST muir, AT THE ROW'S OWN TICK.**  The
+  // same exemption as `time_ok` above and for the same reason: `interrupt()`
+  // is `not_active && (done enable || (attention enable && any attention))`,
+  // so it is one of the four bits a running counter decides and a row the
+  // fabric reaches early or late is checked ONE WAY ROUND --- early, the
+  // fabric may still be busy where muir has finished, so it may read 0 where
+  // muir reads 1 and may NOT read 1 where muir reads 0.
+  auto check_port = [&](const Row &r, unsigned port, long at_tick) {
+    ++checked_port;
+    if (port) ++port_raised;
+    const long own = r.now / 5 + K + turns;
+    if (at_tick == own || !timed_dirty) {
+      if (port != (unsigned)r.intr)
+        fail(r, "-XBUS.INTR at the port", port, (unsigned)r.intr);
+      return;
+    }
+    ++ex_port;
+    const bool early = at_tick < own;
+    const unsigned wrong = early ? (port & ~(unsigned)r.intr)
+                                 : ((unsigned)r.intr & ~port);
+    if (wrong)
+      fail(r, early ? "-XBUS.INTR at the port, ahead of muir's instant"
+                    : "-XBUS.INTR at the port, behind muir's instant",
+           port, (unsigned)r.intr);
   };
 
   // The comparison of one whole face against one row.
@@ -1211,9 +1247,14 @@ int main(int argc, char **argv) {
           lastcmd = 0;
           unsigned st = do_read(0);
           long st_tick = tick - 1;
+          unsigned port = sampled_intr;
           unsigned lma = do_read(1);
           unsigned da = do_read(2), ecc = do_read(3);
           ++faces;
+          // Before `compare_face`, which may clear `timed_dirty` on this very
+          // row: the level is exempted by the same rule as the status word or
+          // by none, and the two must be asked the same question.
+          check_port(r, port, st_tick);
           compare_face(r, st, st_tick, da, lma, ecc);
           ref_da = r.da;
           break;
@@ -1221,6 +1262,12 @@ int main(int argc, char **argv) {
         case 'C':
           if (r.wr) {
             do_write(r.reg, r.wdata);
+            // A write row's own columns are the face AFTER the store, and the
+            // four ticks of `do_write` are past the controller's two-tick
+            // hold, so the level here is the one the row names. A START ---
+            // register 3 --- is compared with its face below instead, after
+            // the walk has settled.
+            if (r.reg != 3) check_port(r, dut->disk_intr, tick - 1);
             if (r.reg == 0) {
               lastcmd = r.wdata;
               codes_seen |= 1u << (r.wdata & 017u);
@@ -1260,14 +1307,17 @@ int main(int argc, char **argv) {
               settle_walk();
               unsigned st = do_read(0);
               long st_tick = tick - 1;
+              unsigned port = sampled_intr;
               unsigned lma = do_read(1);
               unsigned da = do_read(2), ecc = do_read(3);
               ++faces;
+              check_port(r, port, st_tick);
               compare_face(r, st, st_tick, da, lma, ecc);
             }
           } else {
             unsigned v = do_read(r.reg);
             long v_tick = tick - 1;
+            check_port(r, sampled_intr, v_tick);
             unsigned mask = 0xFFFFFFFFu;
             if (r.reg == 0) {
               ++checked_status;
@@ -1626,6 +1676,12 @@ int main(int argc, char **argv) {
   want("words the channel read out of main memory", ch_reads);
   want("words the channel wrote into main memory", ch_writes);
   want("channel cycles main memory did not answer", ch_nxms);
+  // **A LEVEL THAT NEVER RISES IS A LEVEL NOTHING TESTS.**  The trace enables
+  // the done interrupt at row 260 and the attention interrupt at row 264, and
+  // -XBUS.INTR is up on nine of its rows; a run that compared the port only
+  // against zero would pass a controller with the port tied low --- which is
+  // the board's own bug of 2026-09-10 and the thing this port exists to stop.
+  want("rows with -XBUS.INTR up at the port", port_raised);
   if (codes_seen != 0xFFFFu) {
     std::fprintf(stderr,
                  "FAIL: the trace stores only %d of the 16 command codes\n",
@@ -1656,7 +1712,10 @@ int main(int argc, char **argv) {
       "    over %zu rows and %ld ticks\n"
       "    %ld read-backs, %ld faces after a START or an INIT\n"
       "    %ld status words compared, %ld disk addresses, %ld last memory\n"
-      "      addresses, %ld ECC registers, %ld interrupts\n"
+      "      addresses, %ld ECC registers, %ld interrupts in the status word\n"
+      "    %ld rows compared -XBUS.INTR at the PORT against\n"
+      "      Controller::interrupt(), up on %ld of them; %ld checked one way\n"
+      "      round for the same reason the four counter bits are\n"
       "    %ld STARTs, of which %ld walked a command list and %ld went round\n"
       "      a track\n"
       "    %ld hangs, %ld of the trace's rows saw the 2.56 s timer run out\n"
@@ -1696,7 +1755,9 @@ int main(int argc, char **argv) {
       "    land on their own instant, %ld turns of the spindle idled through\n"
       "    to let a walk finish\n",
       rows.size(), tick, checked_read, faces, checked_status, checked_da,
-      checked_lma, checked_ecc, checked_intr, starts, dm_starts, track_starts,
+      checked_lma, checked_ecc, checked_intr,
+      checked_port, port_raised, ex_port,
+      starts, dm_starts, track_starts,
       hangs, full_timeouts, chan_bits_seen,
       ch_reads, ch_writes, ch_nxms,
       pages_compared, page_words, blk_loaded, blk_compared, blocks_needed,

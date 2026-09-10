@@ -13,7 +13,7 @@
 //
 // WHAT IS STIMULUS.  There is no map yet, so what comes out of the trace
 // rather than out of the DUT is `md` and `vma`, `vmaok` off the map's
-// permission bits, `sintr` from the cables, the word a SRCMAP puts on MF, the
+// permission bits, the word a SRCMAP puts on MF, the
 // dispatch memory's word, and the console's registers.  The bus interface is
 // here too, as its far end: this testbench answers -MEMRQ with -MEMGRANT and
 // -MEMACK at the instants muir's own interface answered them.
@@ -28,6 +28,13 @@
 // `md` on 11,301 of those rows is the fabric's own status word and the trace
 // is the reference for it rather than the source of it.  That is what a slice
 // landing looks like from this side: a drive line deleted, not commented out.
+//
+// **AND SO HAS `sintr`.**  -XBUS.INTR is made inside `cadr_machine` now ---
+// the disk controller's request ORed with the display's vertical interrupt,
+// one gate before the 74S175 at LCC 3E12 --- and comes back out as
+// `sintr_o`.  The trace's `sintr` column is `Machine::xbus_interrupt()`, the
+// same OR, and it is COMPARED here rather than driven.  Same slice, same
+// shape: the line that drove it is deleted.
 //
 // `mf_map` is the one that is frankly circular: a SRCMAP is reached **once**
 // in 600,000 microcycles and its word is taken from the trace's own M column,
@@ -339,7 +346,15 @@ int main(int argc, char **argv) {
   // went green with MD unchecked.  What goes on the seam instead is the
   // complement.
   auto drive = [&](const Row &r, size_t row) {
-    dut->sintr = static_cast<uint8_t>(r.v[kSintr]);
+    // **`sintr` WAS DRIVEN HERE AND THE LINE IS GONE.**  -XBUS.INTR is the
+    // machine's own now: `cadr_disk_controller.sv` puts the disk's request on
+    // it, `cadr_tv.sv` the display's vertical interrupt, and `cadr_machine.sv`
+    // ORs the two where the backplane does.  The column is COMPARED below
+    // instead, against `sintr_o`.  Deleted rather than left unused, which is
+    // CLAUDE.md's `md` trap word for word: Verilator lets a testbench write an
+    // output, so a drive line that stayed would have gone on supplying the
+    // right answer and the join would have been unchecked with every check
+    // green.
     dut->mem_rdata = static_cast<uint32_t>(rdata_for[row]);
     // **POISON ON THE SEAM, ALWAYS, AND NEVER DATA.**  `device_rdata` is what
     // `cadr_machine.sv` puts on MEM<31:0> when no slave inside it is driving
@@ -359,7 +374,7 @@ int main(int argc, char **argv) {
   // against the values the edge has just produced.
   struct Sample {
     uint64_t pc, ir, lpc, opc, st, a, m, alu, r, ob, q, dc, lc, vma, md, vmaok,
-        jcond, nop, pcs1, pcs0, iwrited, promdis;
+        jcond, nop, pcs1, pcs0, iwrited, promdis, sintr;
   };
   auto take = [&]() {
     return Sample{dut->pc,  dut->ir,    dut->lpc, dut->opc,   dut->st,
@@ -367,7 +382,7 @@ int main(int argc, char **argv) {
                   dut->q,   dut->dc,    dut->lc,  dut->vma,   dut->md,
                   dut->vmaok,
                   dut->jcond, dut->nop, dut->pcs1, dut->pcs0, dut->iwrited,
-                  dut->promdisable};
+                  dut->promdisable, dut->sintr_o};
   };
 
   Row cur;
@@ -420,6 +435,10 @@ int main(int argc, char **argv) {
   // placement is the 512, through `mem_done`.  The check should fail rather
   // than shrink quietly if either count ever goes to none.
   long mem_cycles = 0, device_cycles = 0;
+  // -XBUS.INTR: how many microcycles it was compared on, how many it was up
+  // on, and how many rows held the disk's status word in MD --- the guard
+  // that says the zero above is a live zero and not a dead controller.
+  long sintr_checked = 0, sintr_raised = 0, status_rows = 0;
   long dev_writes_checked = 0;
   std::map<uint32_t,long> dev_words;
   long ack_at_tick = 0;
@@ -598,6 +617,27 @@ int main(int argc, char **argv) {
       if (prev.pcs0 != r.v[kPcs0]) bad += Fail(r, "PCS0", prev.pcs0, r.v[kPcs0]);
       if (prev.iwrited != r.v[kIwrited])
         bad += Fail(r, "IWRITED", prev.iwrited, r.v[kIwrited]);
+      // **-XBUS.INTR, WHICH USED TO BE STIMULUS.**  muir samples `SINTR`
+      // after the step --- `Machine::xbus_interrupt()`, the disk's request
+      // ORed with the display's, as the 74S175 at LCC 3E12 registers it on
+      // CLK3C --- so the reference is the value at the end of the microcycle,
+      // which is what `prev` holds.  The fabric makes the same OR out of its
+      // own two slaves and `sintr_o` is the line.
+      //
+      // **THE COLUMN IS ZERO ON ALL 600,000 ROWS AND THE ZERO IS A LIVE
+      // ONE.**  The boot PROM never writes the disk's command register and
+      // never enables the display, so both enables are off --- but the
+      // controller answers 11,301 status reads with `0x2321`, `<0>` set, so
+      // NOT-ACTIVE, the interrupt's other term, is true throughout.  A fabric
+      // that ignored the enable, or that inverted either half of the gate,
+      // raises the line here and fails on the first row.  The count below
+      // says how many rows carried a live not-active, so that a run where the
+      // controller stopped answering could not pass this quietly.
+      if (prev.sintr != r.v[kSintr])
+        bad += Fail(r, "-XBUS.INTR", prev.sintr, r.v[kSintr]);
+      ++sintr_checked;
+      if (prev.sintr) ++sintr_raised;
+      if (r.v[kMd] == 0x2321u) ++status_rows;
 
       // The microcycle's own length.  muir charges the stall before the
       // cycle and the cycle after it, so what the generator owes is the
@@ -923,6 +963,24 @@ int main(int argc, char **argv) {
                  cycles_run);
     ++thin;
   }
+  // **THE ZERO -XBUS.INTR IS COMPARED AGAINST MUST BE A LIVE ZERO.**  This
+  // program raises no interrupt --- it enables neither the disk's nor the
+  // display's --- so the comparison above is against zero on every row, and
+  // CLAUDE.md's rule is that a check which only ever compares against zero
+  // passes a wire stuck at zero.  What makes it a real comparison is that the
+  // interrupt's OTHER term is true throughout: `not_active` is `STATUS<0>`
+  // and the 11,301 polls all come back `0x2321`, which has it set.  So a
+  // fabric that ignored the enable would raise the line and fail.  If MD
+  // never holds that word the guarantee is gone and this says so rather than
+  // passing on a controller that has stopped answering.
+  if (status_rows == 0) {
+    std::fprintf(stderr,
+                 "FAIL: MD never held the disk's 0x2321, so nothing says the "
+                 "controller was not-active while -XBUS.INTR was compared "
+                 "against zero on %ld microcycles\n",
+                 sintr_checked);
+    ++thin;
+  }
   if (mem_cycles == 0) {
     std::fprintf(stderr,
                  "FAIL: none of %ld bus cycles reached main memory; every one "
@@ -1001,9 +1059,12 @@ int main(int argc, char **argv) {
       "             reads, %ld Q shifts, %ld ILONG instructions\n"
       "    the A bus took %zu distinct values, the M bus %zu, OB %zu;\n"
       "    %ld grants compared against the edge muir grants on\n"
+      "    -XBUS.INTR compared on %ld microcycles and up on %ld of them, the\n"
+      "      display's vertical interrupt ORed with the disk's request inside\n"
+      "      the machine; %ld rows held the disk's 0x2321 in MD, <0> set, so\n"
+      "      not-active was true and the zero compared is the enable's\n"
       "    driven from the trace, and going with the memory path: MD, the\n"
-      "             word -LOADMD strobes into it; SINTR off the cables; the\n"
-      "             console's registers\n",
+      "             word -LOADMD strobes into it; the console's registers\n",
       k, pack_trace ? "on a System 100 band" : "on MIT's boot PROM",
       lengths_checked, sub_tick, best_slip, worst_slip, arb_skipped,
       unibus_cycles, cycles_run, mem_cycles, device_cycles,
@@ -1011,7 +1072,8 @@ int main(int argc, char **argv) {
       dev_writes_checked, dev_words.size(),
       popjs, jumps, iwrites, dispatches, disp_reads,
       prom_fetches, ram_fetches, stalls, map_sources, q_shifts, ilongs,
-      a_values.size(), m_values.size(), ob_values.size(), grants_checked);
+      a_values.size(), m_values.size(), ob_values.size(), grants_checked,
+      sintr_checked, sintr_raised, status_rows);
 
   // What this program did not reach, printed from the counts rather than
   // asserted from memory, so the list cannot outlive its reasons.
