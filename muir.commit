@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# THE COMMIT OF muir THIS ONE IS HELD TO.
+#
+# Every reference trace in `golden/` is muir's own behaviour written down, so
+# a commit here means nothing without the commit of muir it was generated
+# against: the same generator over a different muir is a different reference,
+# and a check that passes against one may fail against the other for reasons
+# that have nothing to do with the fabric.  CLAUDE.md carried this as a rule
+# about when to pull --- "at slice boundaries, never mid-slice" --- which is
+# discipline where it should be a fact in a file.
+#
+# `make muir-pin` says whether the muir beside this repository is this commit,
+# and `make check` runs it and warns.  CI checks this commit out rather than
+# muir's main branch, so the pair is tested and not whatever main happens to
+# be that morning.
+#
+# TO MOVE IT: pull muir, write the new SHA here, `rm -f build/*.golden`,
+# `make check`, and commit the pin and any trace that changed TOGETHER, with
+# what moved in the message.  A trace that changes under a muir bump is the
+# most interesting thing that can happen here and must not arrive silently in
+# somebody else's commit.
+dad7249d79acdbf4bca6b61f4ade4c4a17f4d244

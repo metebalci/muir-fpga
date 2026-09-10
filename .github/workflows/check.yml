@@ -39,10 +39,19 @@ jobs:
         with:
           path: muir-fpga
 
+      # muir at the commit `muir.commit` names, not whatever main happens to
+      # be that morning: every reference trace in golden/ is muir's own
+      # behaviour written down, so the pair is what is under test. Read here
+      # rather than hard-coded so that moving the pin is one edit.
+      - name: Read muir's pin
+        id: muir
+        run: echo "sha=$(grep -v '^#' muir-fpga/muir.commit | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
       - name: Check out muir beside it
         uses: actions/checkout@v7
         with:
           repository: metebalci/muir
+          ref: ${{ steps.muir.outputs.sha }}
           path: muir
 
       - name: Install Verilator
