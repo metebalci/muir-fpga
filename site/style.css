@@ -94,7 +94,10 @@ body {
 .prose { max-width: var(--measure); }
 
 section { padding: 56px 0 60px; border-top: 1px solid var(--ink); }
-section:first-of-type { border-top: 0; }
+section:first-of-type { border-top: 0; padding-top: 14px; }
+/* The drawing is the page, so it starts near the top: 14px of section and 8px
+   of figure margin where the prose pages have 56 and 34. */
+section:first-of-type > .band > figure.fig:first-child { margin-top: 8px; }
 
 /* ------------------------------------------------------------ typography */
 
