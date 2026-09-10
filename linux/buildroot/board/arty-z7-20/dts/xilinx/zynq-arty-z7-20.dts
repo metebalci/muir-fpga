@@ -132,8 +132,25 @@
 	status = "okay";
 };
 
+/*
+ * `phys`, NOT the `usb-phy` every mainline Zynq tree still carries, and the
+ * reason was measured on this board (10 September, kernel 6.19.14): with
+ * `usb-phy` the controller never came up --- ci_hdrc.0 unbound, nothing in
+ * dmesg.  drivers/usb/phy/phy-generic.c registers at subsys_initcall and
+ * drivers/gpio/gpio-zynq.c at device_initcall, so the PHY's first probe asks
+ * for its reset line before gpio0 has a driver and defers; the ChipIdea core
+ * (drivers/usb/chipidea/core.c, ci_hdrc_probe) then probes synchronously at
+ * device_initcall and looks for a PHY three ways.  Only the `phys` phandle
+ * answers -EPROBE_DEFER for a PHY that is not registered yet
+ * (phy.c, __of_usb_find_phy); the "any USB2 PHY" fallback that `usb-phy`
+ * leaves it with answers -ENODEV, and the probe ends in -ENXIO with no
+ * message and no retry.  The binding says the same in its own words
+ * (chipidea,usb2-common.yaml: usb-phy "deprecated: true. Use phys instead").
+ * No `phy-names`: with CONFIG_GENERIC_PHY on, a name would make the generic
+ * lookup wait for a provider this nop PHY is not.
+ */
 &usb0 {
 	status = "okay";
 	dr_mode = "host";
-	usb-phy = <&usb_phy0>;
+	phys = <&usb_phy0>;
 };
