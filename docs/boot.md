@@ -86,6 +86,16 @@ The console decides which boot happened, in its first seconds:
                       and U-Boot's banner again ten seconds later; never
                       `reading image.ub` before a `uEnv.net` was fetched
 
+Linux takes the address the DHCP server gives it and starts Dropbear, so the
+board can be reached by SSH as `root` with Digilent's default password `root`
+(PetaLinux 2017.4; verified 10 September). That Dropbear offers only an RSA
+host key, which current clients refuse by default:
+
+    ssh -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedAlgorithms=+ssh-rsa root@<IP>
+
+The root filesystem is in RAM, so anything changed there is gone at the next
+reset --- keys and passwords included.
+
 Then, at the prompt, four things say the reservation is real and the CADR ran:
 
     cat /proc/device-tree/model                       Zynq Arty Z7 Development Board
