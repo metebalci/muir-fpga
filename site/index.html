@@ -49,7 +49,7 @@
           <rect class="d-fill" x="-150" y="464" width="160" height="44"/>
           <text class="d-m" x="-70" y="483" text-anchor="middle">S_AXI_HP3</text>
           <text class="d-s" x="-70" y="499" text-anchor="middle">PL masters, 64 bits, AXI3</text>
-          <path class="d-line" d="M-70,508 L-70,610 L38,610"/>
+          <path class="d-line" d="M-70,508 L-70,610 L-22,610"/>
           <rect class="d-dash d-ext" x="-330" y="288" width="130" height="84"/>
           <text class="d-t" x="-265" y="314" text-anchor="middle">HDMI</text>
           <text class="d-s" x="-265" y="336" text-anchor="middle">the display,</text>
@@ -108,7 +108,7 @@
           <text class="d-s" x="978" y="152" text-anchor="middle">and a register block on GP1</text>
           <!-- two cables, two lines: DBGOUT to JA and DBGIN to JB leave the
                adapter separately and never share a segment -->
-          <path class="d-line" d="M850,120 L884,120 M850,136 L884,136 M990,160 L990,464 M990,508 L990,526 L1170,526 L1170,562"/>
+          <path class="d-line" d="M850,120 L884,120 M850,136 L884,136 M990,160 L990,464 M990,508 L990,526 L1162,526 L1162,562"/>
           <path class="d-line" d="M1072,120 L1440,120"/>
           <path class="d-line" d="M1072,136 L1180,136 L1180,242 L1440,242"/>
           <text class="d-s" x="982" y="300" text-anchor="end">debug cable</text>
@@ -184,9 +184,9 @@
           <!-- Everything inside this outline is a program on the A9s.  The
                controller to its left is not: it is the processing system's
                own silicon, which is why it stands outside the outline. -->
-          <rect class="d-dash d-part" x="280" y="542" width="940" height="128"/>
-          <text class="d-s" x="290" y="556">Linux</text>
-          <path class="d-line" d="M765,508 L765,533.2 M355,533.2 L1055,533.2 M355,533.2 L355,562 M495,533.2 L495,562 M635,533.2 L635,562 M775,533.2 L775,562 M915,533.2 L915,562 M1055,533.2 L1055,562"/>
+          <rect class="d-dash d-part" x="220" y="542" width="1000" height="128"/>
+          <text class="d-s" x="230" y="556">Linux</text>
+          <path class="d-line" d="M765,508 L765,533.2 M305,533.2 L1040,533.2 M305,533.2 L305,562 M452,533.2 L452,562 M599,533.2 L599,562 M746,533.2 L746,562 M893,533.2 L893,562 M1040,533.2 L1040,562"/>
 
           <!-- The boot loader, beside Linux: today Digilent's U-Boot out of their
                BOOT.BIN, but the card file, the network loop and the fabric load
@@ -259,22 +259,22 @@
                one set of chips: four ports on its inside face, arbitrated in
                hardware, and one DRAM behind it. -->
           <path class="d-line" d="M118,508 L118,580"/>
-          <path class="d-line" d="M240,508 L240,580"/>
-          <rect class="d-plate" x="38" y="580" width="218" height="60"/>
-          <rect class="d-dash d-ext" x="38" y="580" width="218" height="60"/>
-          <text class="d-t" x="147" y="604" text-anchor="middle">DDR controller</text>
-          <text class="d-s" x="147" y="624" text-anchor="middle">four ports, arbitrated in hardware</text>
+          <path class="d-line" d="M240,508 L240,548 L170,548 L170,580"/>
+          <rect class="d-plate" x="-22" y="580" width="218" height="60"/>
+          <rect class="d-dash d-ext" x="-22" y="580" width="218" height="60"/>
+          <text class="d-t" x="87" y="604" text-anchor="middle">DDR controller</text>
+          <text class="d-s" x="87" y="624" text-anchor="middle">four ports, arbitrated in hardware</text>
           <!-- the A9s reach memory through the controller like everything else;
                the line from the Linux outline is that port -->
-          <path class="d-line" d="M256,610 L280,610"/>
-          <path class="d-line" d="M147,640 L147,728"/>
-          <path class="d-line" d="M355,658 L355,728 M495,658 L495,728 M635,658 L635,728"/>
+          <path class="d-line" d="M196,610 L220,610"/>
+          <path class="d-line" d="M87,640 L87,728"/>
+          <path class="d-line" d="M305,658 L305,728 M452,658 L452,728 M599,658 L599,728"/>
 
-          <rect class="d-dash d-ext" x="-19" y="728" width="332" height="84"/>
-          <text class="d-t" x="147" y="754" text-anchor="middle">512 MB DDR3</text>
-          <text class="d-s" x="147" y="778" text-anchor="middle">64 MB reserved for main memory,</text>
-          <text class="d-s" x="147" y="792" text-anchor="middle">8 MB for the display, 56 MB spare</text>
-          <text class="d-s" x="147" y="806" text-anchor="middle">&mdash; and 384 MB left to Linux</text>
+          <rect class="d-dash d-ext" x="-79" y="728" width="332" height="84"/>
+          <text class="d-t" x="87" y="754" text-anchor="middle">512 MB DDR3</text>
+          <text class="d-s" x="87" y="778" text-anchor="middle">64 MB reserved for main memory,</text>
+          <text class="d-s" x="87" y="792" text-anchor="middle">8 MB for the display, 56 MB spare</text>
+          <text class="d-s" x="87" y="806" text-anchor="middle">&mdash; and 384 MB left to Linux</text>
           <rect class="d-dash d-ext" x="1440" y="78" width="150" height="84"/>
           <text class="d-t" x="1515" y="104" text-anchor="middle">Pmod JA &mdash; DBGOUT</text>
           <text class="d-s" x="1515" y="126" text-anchor="middle">1 clock + 7 data,</text>
@@ -297,15 +297,15 @@
           <!-- The connectors on the board itself. The pack is a file on the
                card; the terminal is a VNC client and Chaosnet's other machines
                are elsewhere on the network, so both leave by the same socket. -->
-          <rect class="d-dash d-ext" x="325" y="728" width="200" height="84"/>
-          <text class="d-t" x="425" y="754" text-anchor="middle">gigabit Ethernet</text>
-          <text class="d-s" x="425" y="778" text-anchor="middle">the terminal is a VNC client;</text>
-          <text class="d-s" x="425" y="794" text-anchor="middle">Chaosnet reaches other machines</text>
-          <rect class="d-dash d-ext" x="555" y="728" width="160" height="84"/>
-          <text class="d-t" x="635" y="754" text-anchor="middle">microSD</text>
-          <text class="d-s" x="635" y="774" text-anchor="middle">U-Boot, the CADR&rsquo;s bitstream,</text>
-          <text class="d-s" x="635" y="788" text-anchor="middle">Linux and its root filesystem,</text>
-          <text class="d-s" x="635" y="802" text-anchor="middle">and the disk pack as a file</text>
+          <rect class="d-dash d-ext" x="278" y="728" width="200" height="84"/>
+          <text class="d-t" x="378" y="754" text-anchor="middle">gigabit Ethernet</text>
+          <text class="d-s" x="378" y="778" text-anchor="middle">the terminal is a VNC client;</text>
+          <text class="d-s" x="378" y="794" text-anchor="middle">Chaosnet reaches other machines</text>
+          <rect class="d-dash d-ext" x="519" y="728" width="160" height="84"/>
+          <text class="d-t" x="599" y="754" text-anchor="middle">microSD</text>
+          <text class="d-s" x="599" y="774" text-anchor="middle">U-Boot, the CADR&rsquo;s bitstream,</text>
+          <text class="d-s" x="599" y="788" text-anchor="middle">Linux and its root filesystem,</text>
+          <text class="d-s" x="599" y="802" text-anchor="middle">and the disk pack as a file</text>
 
           </g>
         </svg>
