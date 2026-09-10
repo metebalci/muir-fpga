@@ -41,6 +41,10 @@ path = "src/rtl_sys.rs"
 name = "disk"
 path = "src/disk.rs"
 
+[[bin]]
+name = "disk_boot"
+path = "src/disk_boot.rs"
+
 [dependencies]
 muir = { path = "../../muir" }
 

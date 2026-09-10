@@ -384,6 +384,33 @@ CHECKS = {
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": "disk.golden",
     },
+    # THE CHANNEL OVER A REAL PACK, and the hole the two above left between
+    # them.  `disk` walks lists of three CCWs but every block is in the store
+    # before the START that needs it, and `disk_pack` fills the store on
+    # demand but every list in it is one CCW long bar a single chained pair
+    # whose first block is resident.  So neither could see a channel that
+    # honours the first CCW of a list and not the rest --- which is what the
+    # board did on 2026-09-10, halting the cold boot at microcode PC `0o5163`.
+    # This runs the cold boot's own first two command lists, three CCWs and
+    # nine, taken from muir's `rtl` engine on MIT's boot PROM, and compares
+    # every word of every page against `Controller::transfer` over the real
+    # System 100 pack.
+    #
+    # IT NEEDS `vendor/`, and says "skipped" and passes without it, as
+    # `microcycle_sys` does.  A record aimed here on a machine with no
+    # release would be reported caught by a check that never ran, so
+    # anything aimed here needs a second record aimed at `disk` or
+    # `disk_pack` if it is to mean anything in CI --- which is why the two
+    # CCW-walk records below carry `@check disk_boot` and the notes say what
+    # else sees them.
+    "disk_boot": {
+        "sources": ["rtl/cadr_disk_controller.sv", "rtl/cadr_disk_pack.sv"],
+        "extra": ["tb/cadr_disk_harness.sv"],
+        "top": "cadr_disk_harness",
+        "tb": "tb/cadr_disk_boot_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "disk_boot.golden",
+    },
     # The pack side held to the property: a record fetched over `S_AXI_HP2`
     # is what the CADR's own transfer then moves into main memory, a block the
     # CADR wrote is the record written back, exactly one handshake per

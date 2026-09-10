@@ -744,3 +744,192 @@ change**, for its author --- nothing there is edited by this slice:
 8. Before the first GP0 access, check the EMIO tally's marker bits (a
    bitstream with the PS7 in it) --- a `DDR=0` bitstream hangs the processor
    on the first read and nothing in software can catch it afterwards.
+
+## The CCW walk, and the day the board halted on it
+
+Written on 2026-09-10, after the board booted, loaded its microcode off the
+pack, ran, and stopped itself at microcode PC `0o5163` on
+`ILLOP-IF-PAGE-FAULT`.
+
+### What the cold boot asks the channel to do
+
+`sys/ucadr/uc-cold-disk.lisp` at `DISK-RESTORE-1` reads the label with three
+one-page reads and then makes **one** call with `(M-2) 3`, "Core pages 0, 1
+and 2", `(M-B) 0` and `(M-C) COPY-BUFFER-CCW-ORIGIN`. `START-DISK-N-PAGES`
+in `uc-disk.lisp` builds the list from that: `MD` starts at
+`page << 8 | 1`, `BUILD-CCW-LIST-1` clears bit 0 on the last word only, and
+each word goes to `A-DISK-CLP + k` with `MD` advanced by `PAGE-SIZE`. So the
+first thing the cold boot does after the label is a command list of **three
+CCWs into three consecutive physical pages**, and every disk transfer before
+it --- the PROM's own microcode load and the three label reads --- is a list
+of one.
+
+Taken from muir rather than transcribed: `golden/src/disk_boot.rs` runs the
+`rtl` engine on MIT's boot PROM with the pack attached and takes the command,
+the disk address and the pages from the first START that moves more than one
+page. It is **microcycle 1,423,405**, disk address `0x01191101` --- unit 0,
+cylinder 281, head 17, block 1 --- into pages 0, 1 and 2, with the list at
+`0o40000` reading `1, 101, 200`. The next one, at microcycle 1,423,665, is
+nine CCWs into pages 7 to 15 from block 4. The generator asserts the list is
+where `COLD-DISK-READ` puts it rather than assuming it.
+
+### What the walk is, as built
+
+`rtl/cadr_disk_controller.sv`, and it is `Controller::command_list` state for
+state:
+
+    C_CCW    fetch the word at `clp_now` --- `{clp[31:16], clp[15:0] + ch_n}`,
+             "only bits <15:0> of the CLP can count" --- and take `ch_page`
+             from `<21:8>` and `ch_more` from `<0>`
+    C_LOOK   look the block under the heads up in the store; miss, and POST
+             it and wait
+    C_HDRC   the header compare, under the mask
+    C_HDRE   the header's four bytes through the code
+    C_HDRCK  the header checkword, and then, if the list goes on and the next
+             block is on the pack, `C_PF` --- the prefetch, which asks for the
+             NEXT block before this one moves
+    C_DATA   the data field and `C_DCK` its checkword, through the code
+    C_ECCQ   the checkword's verdict, and `C_TSPIN`/`C_TSCAN` for the trap
+    C_MOVE   the page, a word a bus cycle
+    C_NEXT   `lma` to the page's last word, `ch_moved` up, and then one of
+             three things: no More flag, stop; a track command, fetch the
+             next CCW with the heads standing; otherwise advance the heads by
+             `next_block` and fetch the next CCW --- or, if that steps off the
+             pack, `STATUS<17>` and stop
+
+The three paths back to `C_CCW` are muir's three, and `ch_n` counts once on
+each of the two that go on.
+
+### What `disk_boot` holds to
+
+`golden/src/disk_boot.rs` and `tb/cadr_disk_boot_tb.cpp`. **A new generator
+rather than an extension of `golden/src/disk.rs`**, and the reason is that the
+two references answer different questions: `disk.rs` is a *timed* trace on the
+5 ns grid against a blank pack the program formats itself, with every block
+already in the store before the START that needs it --- "a Linux of no
+latency", which is what keeps its rows on their instants, and what its own
+testbench asserts by requiring the request path silent at every tick. Putting
+a real pack and an on-demand store into it would contradict that invariant and
+would make CI depend on `vendor/`. This one is untimed, and about data.
+
+Eleven transfers, 52 CCWs, the longest list sixteen; 43 pages and 11,008 words
+compared word for word against what `Controller::transfer` put in muir's own
+main memory; 46 blocks of the real System 100 pack placed in a modelled DDR
+and fetched over `S_AXI_HP2` on demand, three written back and compared. The
+cold boot's own two lists are the first two; the rest are a list of one (the
+control --- what the board did get right), lists that walk off the end of a
+track and off the end of a cylinder, a list of sixteen, a list whose CLP
+carries out of `<15:0>`, a read-compare that agrees and one that differs, and
+a Write of three pages with the read back into three others.
+
+Everything that could come from the DUT comes from somewhere else instead.
+The destination pages are poisoned by the trace with a function of the page
+**and** the offset before every read, so a page nothing wrote cannot read back
+like one that was written --- which matters here more than anywhere, the
+board's own symptom having been a page of zeros. The record the feeder serves
+is the trace's `BLK` row and never the DUT's; a tag no row named is denied
+rather than invented; and the read after the Write is served from a fresh row
+taken from muir's pack rather than from the fabric's own write-back, so the
+two halves cannot agree on a shared mistake.
+
+The store comes up **empty**, so every block has to be asked for: 46 requests,
+46 served, and the check fails if it saw fewer than 40 of either. The feeder
+is second chance over the twenty-four slots with the walk's slot passed over,
+which is `pack_feeder.c`'s rule, and it answers a varying number of ticks
+late. The processor polls the status register every 300 ticks throughout each
+walk, as `DISK-RECALIBRATE-WAIT` does, and `<0>` is required down at every one
+of the 421 polls.
+
+### The hole this closed, stated plainly
+
+Three checks touch the channel and none of them could see a walk that honours
+the first CCW of a list and not the rest:
+
+* `disk` walks lists of three CCWs, but pre-fills every block: the request
+  path is required silent at every tick of that trace, so nothing there has
+  ever asked Linux for a block mid-walk;
+* `disk_pack` fills the store on demand, but every command list in it is one
+  CCW long bar a single chained pair whose first block is already resident;
+* `machine` is MIT's boot PROM: 512 identity memory cycles and no channel
+  traffic at all, and the 2,200,000-microcycle band runs against
+  `Vcadr_microcycle`, where `rdata`, `-MEMACK` and `-LOADMD` are stimulus out
+  of muir, so nothing that *produces* `rdata` had ever been run against that
+  program.
+
+`ccw-walk-stops-after-four-pages` is the record that measures how much of it
+is left. Aimed at `disk_pack` it SURVIVES, and so it does at `ddr_boot`,
+`machine` and `probe`; aimed at `disk` it is CAUGHT, but not by any command
+list in `disk.golden` --- the longest of those moves three pages --- and
+instead by `tb/cadr_disk_tb.cpp`'s own track section, which builds a list
+long enough for a whole track's 20,160 bytes and fails at "the last memory
+address after a Read All is 001003ff, wanting 001013ff". That was measured
+after the note in `mutations/list.txt` had already claimed the opposite, and
+the note now says so: the trace's lists are short, the testbench's are not,
+and quoting the trace at this question gives the wrong answer.
+
+### The board's failure is not in `rtl/`
+
+Measured on 2026-09-10, three ways, none of which reproduces it:
+
+1. `disk_boot` passes at HEAD --- the controller with `rtl/cadr_disk_pack.sv`
+   under it over a modelled `S_AXI_HP2`, walking the cold boot's own lists
+   over the real pack, with the feeder delayed by anything from a tick to
+   50,000 and the processor polling as often as every 40 ticks.
+2. `cadr_machine` with a modelled DDR behind `mem_*` and a feeder driving the
+   block-store seam directly, run from reset through MIT's boot PROM and the
+   microcode off the pack: physical `0o400` first goes non-zero at microcycle
+   1,441,677 and **physical words 0 to 1023 come out byte-identical to muir**
+   at the same point. The machine goes on past it, to PC `0o25333` at four
+   million microcycles, where the board halted at `0o5163`.
+3. The same again with `rtl/cadr_disk_pack.sv` under the machine over a
+   modelled `S_AXI_HP2` and a feeder on `M_AXI_GP0` --- which is
+   `rtl/cadr_arty.sv`'s `g_ddr` short of the PS7 --- also byte-identical to
+   muir over 0 to 1023, with `store_miss` low, nothing denied and no protocol
+   error on the port.
+
+The board's dump differs from muir in 352 of those 1,024 words. So whatever
+put the hole there is **outside `rtl/`**: the disk pack program in
+`linux/buildroot/package/cadr-disk-pack/`, where the pack is in DDR, or the
+bitstream the board was carrying. Two things about the fabric are worth
+having written down before anyone looks there, because they shape what the
+symptom can mean:
+
+* **A store miss raises no error bit the CADR can read.** `C_LOOK` takes
+  `store_deny`, sets `store_miss` --- which goes to Linux and to nothing else
+  --- and stops the transfer through `C_ACCMUL` with a clean status. So a
+  denied block looks to the microcode exactly like a transfer that finished:
+  `DISK-COMPLETION-GET-STATUS` sees no error, `COLD-DISK-READ` returns, and
+  the machine runs on with pages nothing wrote. That is precisely the board's
+  shape, and it is the first thing to check on the board's own console: a
+  denial is named there once per block by `pack_feeder.c`.
+* The other clean end is `ch_more` read as zero. Both leave one page moved,
+  no error bit, and the disk address at the block the walk stopped on ---
+  which is what `RES` compares in `disk_boot`, and what a board capture of
+  registers 0, 1 and 2 after the halt would separate: a walk that stopped for
+  want of a block leaves the disk address at the block it could not get, and
+  one that read the More flag as zero leaves it at the first.
+
+### Two things `disk_boot` measured on the way, neither of them the board's bug
+
+**`ch_moved` is eight bits and MIT's own software asks for 512 pages.**
+`uc-cold-disk.lisp` assigns `COPY-BUFFER-CCW-BLOCK-LENGTH 1000` --- 512
+decimal --- and says so in its own words: "The two pages starting at
+COPY-BUFFER-CCW-PAGE-ORIGIN are used for disk CCWs, allowing transfer of up
+to 512. pages (128k words) at a time." `rtl/cadr_disk_controller.sv` counts
+the pages a walk has moved in `logic [7:0] ch_moved`, so a list of more than
+255 wraps it, where muir's `command_list` returns a `u32` into
+`access_ns(from, to, block, n)`. **It costs nothing as the board runs**: the
+only reader is `acc_mv`, the sector-times the drive is charged for the
+transfer, and `C_ACCFIN` forces `busy_ns` to zero unless `drive_timed` is
+set, which the board's feeder does not set. It is a divergence from muir all
+the same, it is reachable by real software rather than by a test, and it is
+recorded here rather than fixed because fixing it widens an operand of the
+access-time DSP and wants a fit of its own. `disk_boot`'s longest list is
+sixteen and does not reach it.
+
+**A store miss is invisible to the CADR**, which is stated above and is worth
+repeating as a property rather than as a clue: nothing the microcode can read
+distinguishes "the block was denied and the transfer stopped" from "the
+transfer finished". Whether it should is Mete's to decide --- the board has no
+such condition, the store being this fabric's own invention --- but a driver
+that denies a block silently truncates a transfer, and the CADR runs on.
