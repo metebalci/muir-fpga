@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Main memory: an Xbus slave in front of PS DDR3.
+// Main memory: an Xbus slave in front of PS DDR3 --- and the display's frame
+// buffer, which is the same slave at a second base.
 //
 // The first module here with no reference behind it.  Everything else is a
 // port of muir, held to it tick for tick; there is nothing in MIT's drawings
@@ -42,6 +43,11 @@ module cadr_xbus_ddr
 
     // The Xbus slave side.
     input  var logic        sel,        // the decode says this address is ours
+    // ...and which of the two regions it is in: the display's frame-buffer
+    // window, answered at `DISPLAY_BASE`, or main memory.  Held, as `sel`
+    // is; `rtl/cadr_tv.sv` decodes the window and says why the bridge
+    // answers it rather than a second master.
+    input  var logic        display,
     input  var logic        dev_rq,     // -XBUS.RQ, as a positive level
     input  var logic        dev_write,
     input  var logic [21:0] phys,       // -XADDR21..0, a word address
@@ -73,9 +79,14 @@ module cadr_xbus_ddr
   assign mem_write = dev_write;
 
   // A CADR word address into a byte address in the reserved region: a word is
-  // 32 bits, so two places left. cadr_ddr_map has the region.
-  assign mem_addr  = main_byte_address(phys);
-  assign mem_wdata = wdata;
+  // 32 bits, so two places left. cadr_ddr_map has both regions; which one is
+  // the held decode's say, and the mux is on the address alone --- the
+  // request, the direction and the word are the same either way.
+  logic [31:0] main_addr, display_addr;
+  assign main_addr    = main_byte_address(phys);
+  assign display_addr = display_byte_address(phys[14:0]);
+  assign mem_addr     = display ? display_addr : main_addr;
+  assign mem_wdata    = wdata;
 
   always_ff @(posedge clk) begin
     if (rst) begin

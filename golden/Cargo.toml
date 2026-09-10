@@ -43,3 +43,7 @@ path = "src/disk.rs"
 
 [dependencies]
 muir = { path = "../../muir" }
+
+[[bin]]
+name = "tv"
+path = "src/tv.rs"

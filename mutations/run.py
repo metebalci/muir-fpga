@@ -116,6 +116,7 @@ CHECKS = {
             "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv",
             "rtl/cadr_xbus_ddr.sv",
+            "rtl/cadr_tv.sv",
             "rtl/cadr_memory_path.sv",
         ],
         "top": "cadr_memory_path",
@@ -124,6 +125,27 @@ CHECKS = {
         # The memory path is driven from the bus interface's own trace: the
         # same stimulus, through the whole path.
         "golden": "busint_xbus.golden",
+    },
+    # The display controller, `rtl/cadr_tv.sv`, against muir's SimpleTv
+    # through Busint --- the same module list as `memory_path`, because the
+    # display is instantiated inside it and its frame buffer is the bridge
+    # at a second base, so the DUT is the path and not a harness.  Records
+    # aimed at the register face, the flag, the frame, the interrupt and the
+    # window's base belong here; `memory_path` cannot see the display at all,
+    # its trace never addressing it.
+    "tv": {
+        "sources": [
+            "rtl/cadr_ddr_map.sv",
+            "rtl/cadr_xbus_decode.sv",
+            "rtl/cadr_busint_xbus.sv",
+            "rtl/cadr_xbus_ddr.sv",
+            "rtl/cadr_tv.sv",
+            "rtl/cadr_memory_path.sv",
+        ],
+        "top": "cadr_memory_path",
+        "tb": "tb/cadr_tv_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "golden": "tv.golden",
     },
     "axi_master": {
         # No muir reference, so no trace: the testbench is the stimulus.
@@ -205,7 +227,7 @@ CHECKS = {
             "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_disk_controller.sv",
+            "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
             "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
         ],
         "top": "cadr_machine",
@@ -230,7 +252,7 @@ CHECKS = {
             "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_disk_controller.sv",
+            "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
             "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
         ],
         "top": "cadr_machine",
@@ -259,7 +281,7 @@ CHECKS = {
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_spy_registers.sv", "rtl/cadr_disk_controller.sv",
-            "rtl/cadr_memory_path.sv",
+            "rtl/cadr_tv.sv", "rtl/cadr_memory_path.sv",
             "rtl/cadr_machine.sv", "rtl/cadr_axi_master.sv",
             "rtl/cadr_axi_widen.sv", "tb/cadr_mem_count_harness.sv",
         ],
@@ -279,7 +301,7 @@ CHECKS = {
             "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_disk_controller.sv",
+            "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
             "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
             "rtl/cadr_probe.sv", "tb/cadr_probe_harness.sv",
         ],
@@ -326,7 +348,7 @@ CHECKS = {
                   "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
                   "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
                   "rtl/cadr_spy_registers.sv", "rtl/cadr_disk_controller.sv",
-                  "rtl/cadr_memory_path.sv",
+                  "rtl/cadr_tv.sv", "rtl/cadr_memory_path.sv",
                   "rtl/cadr_machine.sv"],
         "top": "cadr_arty",
         "tb": None,
