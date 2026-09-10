@@ -5,6 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Linux on the PS
 
+**The procedure --- card, server, jumper, console, what to expect --- is
+`docs/boot.md`.** This file is the reasoning and the evidence behind it.
+
 The fabric is the CADR; the PS runs Linux and serves it. Eventually that means
 the disk pack on microSD, blocks fed to the disk controller, and an RFB server
 reading the display out of DDR. **None of that exists.** This is the ground
@@ -299,7 +302,14 @@ and it is named in the file: if both fetches succeed and `bootz` then fails,
 the fallback runs with them set --- which means a corrupt `zImage` on the
 server, and a console session either way.
 
-**What has to exist on muirhost.** Two things, and neither is installed:
+**What has to exist on muirhost.** Two things. `tftpd-hpa` is installed and
+serving `/srv/tftp` on `:69` with `--secure` (Mete installed it, 10 Sep); the
+directory is owned by `hansolo` so the files can be refreshed without root.
+`system.dtb` and `zImage` are in it, copied from `build/sd/reserved/`, and
+fetched back over TFTP from this host with `curl` at the same 1,468-byte
+block size `uEnv.txt` asks for: both byte-identical to the staged copies,
+the 47.4 MB kernel in 1.4 s on the loopback. What that measures is the server
+and the files, not the board's link; the board's fetch time is still unmeasured.
 
 - **A TFTP server on UDP 69.** Port 69 is privileged and this U-Boot has no
   `tftpdstp`, so the port cannot be moved from the board side: this needs root
@@ -433,6 +443,11 @@ believable, and a device tree is no different.
   independently, so the two agree by construction rather than by luck. With the
   network loop, `system.dtb` and `zImage` do not go on the card at all and
   `build/sd/stock/` is unused, because the fallback boot is the control.
+- **The card is written**, 10 Sep, from muirhost over ssh to the laptop, with
+  the recipe above against `/dev/sda` (29.7 GB, usb, guarded by `lsblk` before
+  the wipe). One partition, `2048..62333951`, type `0x0c`, bootable, `vfat`
+  labelled `BOOT`; the three files read back with the staged sha256s. Nothing
+  else is on it.
 - **The boot-mode jumper has to be set to SD**, and **its designator is
   deliberately not asserted here.** Digilent's site returns 403 to automated
   fetches, so it could not be read from a primary source, and it should be read
