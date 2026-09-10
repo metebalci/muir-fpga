@@ -305,10 +305,63 @@ module cadr_microcycle #(
 
   logic [13:0] npc;
   logic [13:0] cs_radr;
-  // Read every tick: at the boundary the address is the PC being taken,
-  // and the rest of the cycle it is the PC standing.  One tick of latency
-  // into a phase that is 160 ns long here.
-  assign cs_radr = cpu_edge ? npc : pc;
+  // **THE ADDRESS IS THE PC AND NOTHING ELSE**, and what stood here was
+  // `cpu_edge ? npc : pc` --- the PC being taken over the boundary tick and
+  // the PC standing for the rest of the cycle.
+  //
+  // THE MUX BOUGHT ONE TICK OUT OF TWENTY-NINE AND COST FOUR LOGIC LEVELS.
+  // What IR takes at a boundary is `i`, which is `imem_q` as the tick before
+  // that boundary left it --- and the address in that tick is `pc`, the same
+  // under either version, `pc` having stood since the boundary before.  The
+  // mux reached only `imem_q` DURING THE BOUNDARY TICK ITSELF, which is a
+  // word read twenty-eight ticks before anything looks at it; the generator's
+  // shortest cycle is twenty-seven.  So the two are the same machine and the
+  // proof is not a check passing: `i` has exactly two consumers, `iob` and
+  // `ir_next`, and both are read only at `cpu_edge`.
+  //
+  // WHAT IT COST WAS THE CONTROL STORE'S ADDRESS PINS.  On the DDR=1 board
+  // at 5b03a4e, `u_phase_gen/tpclk_reg/C -> imem_reg_3/ADDRBWRADDR[13]` was
+  // 4.775 ns of a 5 ns tick --- 0.952 of logic over four LUTs and 3.823 of
+  // routing, `cpu_edge` at fanout 292 and the mux's output at fanout 25
+  // across twenty-four block RAMs and the PROM's two.  116 of that board's
+  // 278 failing endpoints were this one net fanned across the address pins.
+  // TPCLK had no business on a memory's address in the first place.
+  //
+  // AND THE REQUIREMENT IT LANDS UNDER IS THE ONE `cadr_machine.xdc` ALREADY
+  // CLAIMS FOR THIS MEMORY.  That file's own list of what qualifies for the
+  // microcycle names `imem_q` and `prom_q` beside the scratchpad latches:
+  // the address is constant across the microcycle and the word is read only
+  // at its end.  With the mux gone the path is `pc_reg -> imem_reg/ADDR`,
+  // slow to slow, and it takes the fifteen-tick exception the write port's
+  // address has carried all along.  Fifteen ticks is TIGHTER than the real
+  // deadline, which is the boundary at twenty-seven.
+  //
+  // AND WHAT IT ACTUALLY TAKES WAS ASKED OF THE ROUTED BOARD, because an
+  // exemption nobody measures is the thing this repository keeps being
+  // caught by.  The worst path into any of the twenty-six memories' address
+  // pins is now
+  //
+  //     +68.884 ns  processor/pc[8] --- the flop synthesis renamed
+  //                 `dram_q_reg[8]`, whose output net is `pc[8]`
+  //              -> processor/imem_reg_18/ADDRARDADDR[9]
+  //              5.425 ns (logic 0.456, route 4.969), ZERO logic levels
+  //
+  // --- a bare register output on a long wire to a RAMB36 at fanout 29,
+  // against 4.775 ns over four LUTs before.  It takes 5.4 ns, it is allowed
+  // 75, and the word it fetches is wanted at the boundary 145 ns away, or
+  // 220 at extra slow.  **It is also 0.4 ns MORE than a tick**, so the
+  // exception is not decoration here: at one tick this would still fail, on
+  // routing alone.  What entitles it to the microcycle is the argument
+  // above and not the number.
+  //
+  // **A DELAY SWEPT ON `microcycle` PUTS THE VISIBLE BOUND AT FORTY-THREE
+  // TICKS.**  The address delayed 1, 16, 29, 30, 36, 40 and 42 ticks all
+  // survive; 43 --- the read phase of an extra-slow microcycle --- is
+  // caught at microcycle 10, PC 0o54, on IR.  So a mutant between the
+  // exception's fifteen and that forty-three is an equivalence and must not
+  // be filed as a hole, and the record aimed here is at a whole microcycle,
+  // which is the smallest thing this check can resolve.
+  assign cs_radr = pc;
 
   logic promdisabled;
   logic bottom_1k, promenable;
