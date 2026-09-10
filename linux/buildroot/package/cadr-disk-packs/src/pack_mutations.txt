@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The mutation list for cadr-disk-pack: bugs `feeder_test.c` has to catch.
+# The mutation list for cadr-disk-packs: bugs `feeder_test.c` has to catch.
 #
 # `mutate.py` applies each record to a copy of this package's sources, builds
 # the check against it, and runs it.  A mutation the check FAILS on is a check

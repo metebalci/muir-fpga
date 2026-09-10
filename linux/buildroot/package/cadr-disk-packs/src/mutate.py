@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The mutation runner for cadr-disk-pack: bugs `feeder_test.c` has to catch.
+# The mutation runner for cadr-disk-packs: bugs `feeder_test.c` has to catch.
 #
 # `mutations/run.py` at the repository root does this for the fabric, and this
 # is the same idea one program along, in the package rather than in the
@@ -20,7 +20,7 @@
 # fails is BROKEN, and BROKEN fails the run.
 #
 # AND A MUTATION IN A FILE THE CHECK DOES NOT BUILD IS NOT A MUTATION EITHER.
-# `feeder_test.c` links the core and nothing else --- `cadr-disk-pack.c` is
+# `feeder_test.c` links the core and nothing else --- `cadr-disk-packs.c` is
 # the program's main and is never built here --- so a record naming it would
 # be applied, built around, and reported as surviving on evidence that does
 # not exist.  `@file` must be one of the core sources or headers below, and a

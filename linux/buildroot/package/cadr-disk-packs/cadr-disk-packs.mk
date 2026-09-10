@@ -9,15 +9,15 @@
 #
 # What is in it:
 #
-#   cadr-disk-pack      serves the CADR's disks from the drive bay on the
+#   cadr-disk-packs     serves the CADR's disks from the drive bay on the
 #                         card's second partition, on demand: the controller
 #                         posts the block it lacks and this fetches it into
 #                         the store, and takes written blocks back; and it
 #                         watches the bay while the machine runs, so a pack
 #                         copied in is a drive spinning up and one renamed
-#                         out is a drive taken away.  src/cadr-disk-pack.c's
+#                         out is a drive taken away.  src/cadr-disk-packs.c's
 #                         header says how
-#   S80cadr-disk-pack   mounts the card's boot partition read-only at
+#   S80cadr-disk-packs  mounts the card's boot partition read-only at
 #                         /mnt/card and its pack partition read-write at
 #                         /mnt/packs, and starts the program at boot, its log
 #                         on the console
@@ -29,27 +29,27 @@
 # files, because a rename and a delete are what has to be exercised.  `make
 # -C src mutants` is what says that check can fail.
 
-CADR_DISK_PACK_VERSION = 0
-CADR_DISK_PACK_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-disk-pack/src
-CADR_DISK_PACK_SITE_METHOD = local
-CADR_DISK_PACK_LICENSE = AGPL-3.0-or-later
+CADR_DISK_PACKS_VERSION = 0
+CADR_DISK_PACKS_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-disk-packs/src
+CADR_DISK_PACKS_SITE_METHOD = local
+CADR_DISK_PACKS_LICENSE = AGPL-3.0-or-later
 # /dev/mem, the EMIO tally guard and the logging: a static library and its
 # headers in the staging tree, because `local` rsyncs only this package's own
 # src/ and a sibling's files are not there when this builds.
 # package/cadr-common/cadr-common.mk's header has the argument.
-CADR_DISK_PACK_DEPENDENCIES = cadr-common
+CADR_DISK_PACKS_DEPENDENCIES = cadr-common
 
-define CADR_DISK_PACK_BUILD_CMDS
+define CADR_DISK_PACKS_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
 endef
 
-define CADR_DISK_PACK_INSTALL_TARGET_CMDS
+define CADR_DISK_PACKS_INSTALL_TARGET_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install
 endef
 
-define CADR_DISK_PACK_INSTALL_INIT_SYSV
-	$(INSTALL) -D -m 0755 $(CADR_DISK_PACK_PKGDIR)/S80cadr-disk-pack \
-		$(TARGET_DIR)/etc/init.d/S80cadr-disk-pack
+define CADR_DISK_PACKS_INSTALL_INIT_SYSV
+	$(INSTALL) -D -m 0755 $(CADR_DISK_PACKS_PKGDIR)/S80cadr-disk-packs \
+		$(TARGET_DIR)/etc/init.d/S80cadr-disk-packs
 endef
 
 $(eval $(generic-package))

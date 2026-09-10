@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
-config BR2_PACKAGE_CADR_DISK_PACK
-	bool "cadr-disk-pack"
+config BR2_PACKAGE_CADR_DISK_PACKS
+	bool "cadr-disk-packs"
 	select BR2_PACKAGE_CADR_COMMON
 	help
 	  The disk pack program: the program on the processing system that serves
