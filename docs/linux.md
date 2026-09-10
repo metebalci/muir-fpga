@@ -72,9 +72,10 @@ the procedure; `linux/uEnv.net` carries the reasoning next to the command).
 5. **The fallback is gone.** Digilent's stock boot was run once for comparison
    --- server stopped, board reset --- and reaches a login with `Memory:
    335116K/524288K`. Then Mete decided the board must never boot it: a Linux
-   with 512 MB owns the CADR's memory. The card's line ends in `|| reset`,
-   so a failed fetch reboots the board to try again, and a silent server
-   makes this U-Boot's TFTP retry without returning; the sections below that
+   with 512 MB owns the CADR's memory. The card's file sets
+   `cp_kernel2ram=reset`, so the fallback's own copy step reboots the board
+   to try again (`|| reset` on the fetch line was tried first and did not
+   fire on the real boot path); the sections below that
    call the fallback "the control" describe the first card and are kept as
    the record of why the network loop was built the way it was.
 

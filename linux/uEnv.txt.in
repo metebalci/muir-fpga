@@ -25,17 +25,26 @@
 # WHY A FAILED FETCH REBOOTS THE BOARD, AND NEVER BOOTS THE STOCK IMAGE
 #
 # `default_bootcmd` is `run uenvboot; run cp_kernel2ram && bootm ${netstart}`
-# --- a semicolon, not an `&&` --- so if uenvcmd simply fails, U-Boot goes on
-# to boot the card's `image.ub` with Digilent's own device tree and 512 MB,
-# which is a Linux that owns the CADR's memory.  Mete decided the board must
-# never do that: better stuck than wrong.  This U-Boot has no `while`, so the
-# way to wait is `|| reset` --- a fetch that fails reboots the board, which
-# tries again ten seconds later, for as long as it takes the server to appear.
-# Measured 10 Sep: a missing file gives `TFTP error: 'File not found'`,
-# `resetting ...`, and the next attempt; a server that is merely not
-# answering makes this U-Boot's TFTP retry on its own without returning, so
-# the board waits at the fetch and needs no reset.  Both end in the reserved
-# boot the moment the server answers, and in nothing else.
+# --- a semicolon, not an `&&` --- so when uenvcmd fails, U-Boot goes on to
+# `cp_kernel2ram`, which is `mmcinfo && fatload mmc 0 ${netstart}
+# ${kernel_img}`, and boots the card's `image.ub` with Digilent's own device
+# tree and 512 MB: a Linux that owns the CADR's memory.  Mete decided the board
+# must never do that --- better stuck than wrong.  This U-Boot has no `while`,
+# so the way to wait is to reboot and try again, and the way to make that
+# certain is to REPLACE THE FALLBACK'S OWN COPY STEP: this file is imported
+# before `default_bootcmd` runs, so the line below is what `run cp_kernel2ram`
+# finds.  A fetch that fails therefore ends in `resetting ...`, U-Boot's
+# banner ten seconds later, and another try, for as long as the server is
+# away; the first boot that completes is the reserved one.
+#
+# `|| reset` on the end of uenvcmd was tried first and IS NOT ENOUGH: when the
+# server's host is up but nothing listens, this U-Boot prints "TFTP server
+# died; starting again" and the rest of the `&&`/`||` list does not run at
+# all --- measured 10 Sep, the board fell through to image.ub with the reset
+# right there on the line.  The variable below caught the same case:
+# "starting again", "resetting ...", banner.  With the server answering, the
+# override is never reached and the boot is unchanged; measured too.
+cp_kernel2ram=reset
 #
 # WHY THERE IS NO ipaddr HERE
 #
@@ -75,6 +84,6 @@ tftpblocksize=1468
 
 # `env import -t` reads a text file of `name=value` lines, which is what
 # `uEnv.net` is; `${filesize}` is what the tftpboot before it just set.  If
-# anything in the chain fails, the board resets and tries again, as above.
-# Everything after this line is decided on the server.
-uenvcmd=tftpboot 0x0f800000 uEnv.net && env import -t 0x0f800000 ${filesize} && run netcmd || reset
+# anything in the chain fails, U-Boot falls through to `cp_kernel2ram`, which
+# is the reset above.  Everything after this line is decided on the server.
+uenvcmd=tftpboot 0x0f800000 uEnv.net && env import -t 0x0f800000 ${filesize} && run netcmd
