@@ -21,6 +21,14 @@
 // a later slice.  They are counted and printed, so what this check is still
 // being told rather than checking is on its own output.
 //
+// **AND ONE OF THEM HAS LEFT.**  The Xbus devices used to be answered from
+// the trace --- 16,951 cycles of this program's 17,466, the disk controller's
+// four registers being all it touches --- and `rtl/cadr_disk_controller.sv`
+// answers them now, with `device_ack` driven low here and never raised.  So
+// `md` on 11,301 of those rows is the fabric's own status word and the trace
+// is the reference for it rather than the source of it.  That is what a slice
+// landing looks like from this side: a drive line deleted, not commented out.
+//
 // `mf_map` is the one that is frankly circular: a SRCMAP is reached **once**
 // in 600,000 microcycles and its word is taken from the trace's own M column,
 // so on that single row M checks nothing.  One row is not a check of a map
@@ -299,6 +307,10 @@ int main(int argc, char **argv) {
   dut->boards = 32;      // Machine::new: MAIN_WORDS >> 16
   dut->mem_done = 0;
   dut->mem_rdata = 0;
+  // NOTHING OUTSIDE THE MACHINE ANSWERS AN XBUS DEVICE, and this is the whole
+  // of it: `device_ack` is driven low here and never again.  The display and
+  // the I/O board are not built and this program does not touch them; the
+  // disk controller is inside.
   dut->device_ack = 0;
   dut->device_rdata = 0;
   // Verilator records the previous value of a clock at eval time, so the
@@ -317,10 +329,29 @@ int main(int argc, char **argv) {
 
   // Present a row's stimulus: what the memory path would be driving over that
   // microcycle, and what the console would be holding.
+  // **`device_rdata` NO LONGER CARRIES THE WORD, AND THAT IS THE POINT OF THE
+  // SLICE.**  It used to be `rdata_for[row]`, the same column `mem_rdata`
+  // gets, so all 16,951 device cycles --- the boot PROM's disk polls --- were
+  // answered with muir's own word.  `rtl/cadr_disk_controller.sv` answers
+  // them now, and a line that went on handing back the right word would leave
+  // that module unchecked: CLAUDE.md's `md` trap verbatim, where a driven
+  // input that became an output kept being driven and both processor checks
+  // went green with MD unchecked.  What goes on the seam instead is the
+  // complement.
   auto drive = [&](const Row &r, size_t row) {
     dut->sintr = static_cast<uint8_t>(r.v[kSintr]);
     dut->mem_rdata = static_cast<uint32_t>(rdata_for[row]);
-    dut->device_rdata = dut->mem_rdata;
+    // **POISON ON THE SEAM, ALWAYS, AND NEVER DATA.**  `device_rdata` is what
+    // `cadr_machine.sv` puts on MEM<31:0> when no slave inside it is driving
+    // them, which is every device WRITE --- no slave drives the data lines on
+    // a write --- and every device READ the disk controller fails to answer.
+    // Holding the complement of the word MD should hold makes both of those
+    // loud: a processor whose -LOADMD has lost its RDCYC gate takes poison on
+    // a write, and a register block that stops driving reads poison instead
+    // of the word it happened to hand back last.  CLAUDE.md's rule is that a
+    // stimulus that poisons cannot move with the bug, and this one cannot: it
+    // is the trace's own column, complemented, keyed by the row.
+    dut->device_rdata = ~static_cast<uint32_t>(rdata_for[row]);
   };
 
   // What the DUT held over the microcycle now ending: sampled every tick, so
@@ -371,15 +402,23 @@ int main(int argc, char **argv) {
   bool was_unibus = false, was_nxm = false;
   uint32_t stuck_phys = 0;
   const char *stopped_because = "nothing on the bus answered it";
-  long device_answers = 0;
+  // HOW MANY DEVICE CYCLES THE FABRIC ITSELF ANSWERED.  Counted at the far
+  // end of the cycle rather than at the disk's own `dev_ack`, which no port
+  // brings out: a device cycle that reached -MEMACK without the NXM timer
+  // ending it was answered by something inside the machine, and the only
+  // thing inside is the disk controller --- `device_ack` is driven low at the
+  // top of `main` and never again.  On this program it must be all 16,951,
+  // and the guard below says so rather than printing a number nobody reads.
+  long device_answers = 0, device_timeouts = 0;
+  bool dev_cycle = false, dev_acked = false;
   // WHICH SLAVE EACH CYCLE WENT TO, counted at the grant. Not a diagnostic:
-  // this program's traffic turned out to be 16,951 device cycles against 512
-  // to main memory --- the boot PROM polls the disk controller's status
-  // register, which the decode places in Xbus I/O space --- and every one of
-  // those 16,951 is answered from the trace rather than by the fabric's own
-  // bridge. A check whose bus timing is 97% the testbench's own placement
-  // should say so on its output, and should fail rather than shrink quietly
-  // if the 512 ever become none.
+  // this program's traffic is 16,951 device cycles against 512 to main
+  // memory --- the boot PROM polls the disk controller's status register,
+  // which the decode places in Xbus I/O space --- and **all 16,951 are now
+  // answered by the fabric's own `cadr_disk_controller.sv`** where they used
+  // to be answered from the trace.  What is still the testbench's own
+  // placement is the 512, through `mem_done`.  The check should fail rather
+  // than shrink quietly if either count ever goes to none.
   long mem_cycles = 0, device_cycles = 0;
   long dev_writes_checked = 0;
   std::map<uint32_t,long> dev_words;
@@ -407,7 +446,6 @@ int main(int argc, char **argv) {
     // used for; taking it from the bridge's own `mem_write` times the answer
     // and never chooses the data.
     dut->mem_done = 0;
-    dut->device_ack = 0;
     if (dut->mem_req) saw_mem_req = true;
     if (dut->dev_rq && dut->device) saw_device = true;
     if (dut->ub_msyn) saw_ub = true;
@@ -429,14 +467,23 @@ int main(int argc, char **argv) {
     // the slave's answer has been driven and eval'd, so an acknowledgement
     // the interface makes combinationally reads back a tick after it
     // happened.  Measured, and the size of it: the printed histogram says -5
-    // on every read and -10 on every write, while the same acknowledgements
-    // observed after the answer is fed back in are **28 ticks from the grant
-    // on all 11,301 reads --- exactly muir's 28 --- and 17 on all 5,650
-    // writes against muir's 16.**  So of the two ticks this reports, one is
-    // real and one is the instrument.  The real one is the write's, and it is
-    // the signature of CLAUDE.md's fourth entry: the slave's answer is worked
-    // out before the clock edge rather than after it, so every
-    // acknowledgement made by a gate arrives late.
+    // on every device read and -5 on every device write, which is the
+    // instrument's one tick and nothing else.  **THE DEVICE WRITES USED TO
+    // READ -10 AND THE DISK CONTROLLER MOVED THEM**: when this testbench
+    // answered them, all 5,650 came back a tick late --- 17 ticks from the
+    // grant against muir's 16, the signature of CLAUDE.md's fourth entry,
+    // an answer worked out before the clock edge rather than after it ---
+    // and `rtl/cadr_disk_controller.sv`, answering combinationally off
+    // `dev_rq` inside the fabric, lands them at muir's own 16.  The reads
+    // were 28 ticks from the grant either way, which is muir's 28.
+    //
+    // The rest of the histogram is main memory and is the testbench's own
+    // rounding, not the fabric's: the 256 writes spread over -9, -7 and -5
+    // in 78, 104 and 74, the 256 reads over -4, -2 and 0 in the same three
+    // counts, the two NXM cycles at +5 and the single Unibus write at -10.
+    // Measured at the commit that added the disk controller; the shape
+    // follows from `ack_at_tick` being rounded up to a tick, and it is here
+    // so that a change in it is visible as a change and not read as noise.
     //
     // Moving both --- the answer to after the edge, and this observation to
     // after the second eval --- collapses the histogram to sub-tick, and was
@@ -463,21 +510,21 @@ int main(int argc, char **argv) {
     const long answer_tick =
         ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
     if (dut->mem_req && bus_outstanding && t >= answer_tick) dut->mem_done = 1;
-    // EVERY OTHER XBUS SLAVE, WHICH THE FABRIC DOES NOT HAVE.  The display
-    // and the disk controller are not built; what answers here is the trace,
-    // at the instant muir's own responder answered. That is stimulus, not a
-    // model: nothing about which device it is, or what it would have done, is
-    // guessed --- only that muir's machine got this word at this time.
+    // **THE XBUS DEVICES WERE ANSWERED FROM THE TRACE HERE, AND THAT LINE IS
+    // GONE.**  It raised `device_ack` whenever the decode said the cycle was
+    // a device's, at the instant muir's own responder answered, with
+    // `device_rdata` handed muir's word --- and it answered every one of this
+    // program's 16,951 device cycles.  Its own comment called that stimulus
+    // rather than a model, and it was: the fabric had no disk controller.  It
+    // has one now, `rtl/cadr_disk_controller.sv` inside `cadr_machine`, so
+    // `device_ack` stays low here and the four registers answer for
+    // themselves.  MD is compared every microcycle, so an answer at the wrong
+    // instant, or a status word that is not `0x2321`, fails on the row it
+    // happens on.
     //
-    // The word is the same `rdata_for` the memory path is given, so a device
-    // read and a memory read are told apart by the fabric's decode and by
-    // nothing here.
-    const long dev_answer_tick =
-        ack_at_tick - (dut->dev_write ? 0 : kXbusAckNs / kTickNs);
-    if (dut->dev_rq && dut->device && bus_outstanding && t >= dev_answer_tick) {
-      dut->device_ack = 1;
-      ++device_answers;
-    }
+    // Deleted rather than commented out or left unused, which is the whole
+    // lesson of CLAUDE.md's `md` entry: a testbench that goes on supplying
+    // the right answer leaves the new module unchecked and every check green.
     // POISON ON A WRITE.  -LOADMD is asserted on every acknowledgement and it
     // is RDCYC on the processor's side that keeps a write from strobing MD.
     // Handing back the word MD should hold makes that gate unobservable ---
@@ -486,9 +533,13 @@ int main(int argc, char **argv) {
     // it. Keyed off the DUT's own WRCYC, which is safe here in a way a shadow
     // memory would not be: it chooses poison, never data, so a processor that
     // had the direction wrong takes poison and says so.
+    //
+    // The seam's own poison is in `drive` above and stands on every
+    // microcycle rather than only on a write, because the disk controller
+    // answers device reads now and a seam that went quiet would let a module
+    // that stopped driving read back something plausible.
     if (dut->wrcyc) {
       dut->mem_rdata = ~static_cast<uint32_t>(rdata_for[k < total_rows ? k : 0]);
-      dut->device_rdata = dut->mem_rdata;
     }
     // Only a read takes a word: -LOADMD is gated by RDCYC, so a write must
     // not consume one. Using the DUT's own RDCYC to step the stimulus is safe
@@ -498,6 +549,15 @@ int main(int argc, char **argv) {
 
     dut->clk = 1;
     dut->eval();
+
+    if (dev_cycle && bus_outstanding && !dut->n_memack_o) {
+      if (dut->timed_out) {
+        if (!dev_acked) ++device_timeouts;
+      } else if (!dev_acked) {
+        ++device_answers;
+      }
+      dev_acked = true;
+    }
 
     if (bus_outstanding && !dut->mem_req && !dut->dev_rq && t > ack_at_tick) {
       bus_outstanding = false;
@@ -568,13 +628,11 @@ int main(int argc, char **argv) {
       if (r.v[kStall]) ++stalls;
       // The bus cycle this edge started, and when the interface will answer.
       // A cycle the fabric cannot answer: the decode did not select main
-      // memory, so the bridge never asked the DDR and nothing else is here to
-      // reply. THE FABRIC HAS NO I/O DEVICES --- no disk controller, no I/O
-      // board, no Unibus --- and `cadr_memory_path.sv` has no path for a
-      // device to answer at all: its `device` output says one would be
-      // wanted and nothing drives a reply. So the machine runs until the
-      // program first touches something that is not memory, and stops there
-      // rather than diverging.
+      // memory and no slave inside the machine claims the address. THE FABRIC
+      // HAS THE DISK CONTROLLER'S FOUR REGISTERS AND NOTHING ELSE ON THE
+      // XBUS --- no display, no I/O board, no Unibus --- so the machine runs
+      // until the program touches one of those, and stops there rather than
+      // diverging.
       // An NXM is not unanswerable: nothing is meant to answer it, muir's
       // interface times it out and so does the fabric's. Only a cycle
       // addressed to a bus the fabric does not have stops the run.
@@ -631,6 +689,8 @@ int main(int argc, char **argv) {
             bad += Fail(r, "the word at the Xbus seam", dut->dev_wdata,
                         md_at_row[k]);
         }
+        dev_cycle = dut->device;
+        dev_acked = false;
         if (dut->device) ++device_cycles;
         else if (!dut->nxm && !dut->unibus) ++mem_cycles;
         acked_armed = ack_for[k] != 0;
@@ -839,6 +899,30 @@ int main(int argc, char **argv) {
                  "looked at it\n");
     ++thin;
   }
+  // **EVERY DEVICE CYCLE MUST BE THE FABRIC'S OWN ANSWER.**  Nothing outside
+  // the machine drives `device_ack`, so a device cycle that got to -MEMACK
+  // without the NXM timer got there through `rtl/cadr_disk_controller.sv`.
+  // This is the guard that would have caught the slice going backwards: a
+  // testbench that started answering these again, or a decode that stopped
+  // selecting the disk, both show up here as a count that is not the whole
+  // 16,951 --- and a timed-out device cycle is not a quiet degradation, it is
+  // a poll the machine waits 4.25 us for.
+  if (device_answers != device_cycles || device_timeouts) {
+    std::fprintf(stderr,
+                 "FAIL: of %ld device cycles the fabric answered %ld and the "
+                 "NXM timer ended %ld; every one is the disk controller's and "
+                 "nothing outside the machine drives device_ack\n",
+                 device_cycles, device_answers, device_timeouts);
+    ++thin;
+  }
+  if (device_cycles == 0) {
+    std::fprintf(stderr,
+                 "FAIL: none of %ld bus cycles reached an Xbus device, so the "
+                 "disk controller's registers are claimed correct by a check "
+                 "that never read one\n",
+                 cycles_run);
+    ++thin;
+  }
   if (mem_cycles == 0) {
     std::fprintf(stderr,
                  "FAIL: none of %ld bus cycles reached main memory; every one "
@@ -907,8 +991,9 @@ int main(int argc, char **argv) {
       "    %ld microcycle lengths in 200 MHz ticks, %ld of them within a tick\n"
       "    rather than exact (slip %+ld to %+ld ns), %ld exempt for the Unibus\n"
       "    arbitration of %ld of %ld bus cycles\n"
-      "    of those bus cycles %ld reached main memory and %ld an Xbus device\n"
-      "    answered from the trace; %ld device writes put a word on the seam,\n"
+      "    of those bus cycles %ld reached main memory and %ld an Xbus device;\n"
+      "    %ld of those the fabric's own disk controller answered and %ld the\n"
+      "    NXM timer ended; %ld device writes put a word on the seam,\n"
       "    %zu distinct among them\n"
       "    reached: %ld POPJs, %ld jumps, %ld WRITE-I-MEMs, %ld dispatches of\n"
       "             which %ld read the memory, %ld PROM fetches, %ld control\n"
@@ -922,6 +1007,7 @@ int main(int argc, char **argv) {
       k, pack_trace ? "on a System 100 band" : "on MIT's boot PROM",
       lengths_checked, sub_tick, best_slip, worst_slip, arb_skipped,
       unibus_cycles, cycles_run, mem_cycles, device_cycles,
+      device_answers, device_timeouts,
       dev_writes_checked, dev_words.size(),
       popjs, jumps, iwrites, dispatches, disp_reads,
       prom_fetches, ram_fetches, stalls, map_sources, q_shifts, ilongs,

@@ -26,11 +26,15 @@
 // `cadr_microcycle.sv` says the same at the register.
 //
 // WHAT IS STILL OUTSIDE.  The number of memory boards, which is the machine's
-// configuration; the DDR itself, behind `mem_req`/`mem_done`; and every Xbus
-// slave that is not main memory, behind `dev_rq`/`device_ack`.  The last of
-// those is the wall this composition hits: the boot PROM reads the disk
-// controller's status register at microcycle 537,842 and there is no disk
-// controller.  The Unibus is outside too, and not merely unbuilt:
+// configuration; the DDR itself, behind `mem_req`/`mem_done`; and the Xbus
+// slaves that are neither main memory nor the disk --- the display and the
+// I/O board --- behind `dev_rq`/`device_ack`.  **THE DISK CONTROLLER'S FOUR
+// REGISTERS ARE INSIDE NOW**, `cadr_disk_controller.sv`, which is what the
+// boot PROM's 16,951 device cycles reach: 11,301 reads of the status register
+// from microcycle 537,848 on and 5,650 writes of the disk address register.
+// They used to be answered from the trace, and that was stimulus.  What is
+// still outside the disk is everything past its register face: the channel,
+// the drive and `S_AXI_HP2`.  The Unibus is outside too, and not merely unbuilt:
 // `cadr_busint_xbus.sv` is the Xbus half, and 347 of the System band's
 // 141,849 bus cycles arbitrate for a bus that is not here.
 
@@ -75,7 +79,7 @@ module cadr_machine #(
     // --- what the bus interface reports, for a check to watch
     output var logic        wrcyc,        // WRCYC, so a check can see the direction
 
-    // --- the Xbus, for a slave that is not main memory
+    // --- the Xbus, for a slave that is neither main memory nor the disk
     output var logic        device,       // the decode put this cycle outside memory
     output var logic        dev_rq,       // -XBUS.RQ
     output var logic        dev_write,
@@ -90,7 +94,12 @@ module cadr_machine #(
     // output --- a port that exists on one side of a boundary and not the
     // other.
     output var logic [31:0] dev_wdata,    // MEM<31:0> out of the cpu
-    input  var logic        device_ack,   // -XBUS.ACK from that slave
+    // -XBUS.ACK and MEM<31:0> from a slave out there.  Joined with the disk
+    // controller's below, as the open-collector line joins them; the disk
+    // answers only its own four addresses, so the two cannot both answer one
+    // cycle.  `device_rdata` shows through on a WRITE, where no slave drives
+    // the data lines --- see the note at the instance.
+    input  var logic        device_ack,
     input  var logic [31:0] device_rdata,
     output var logic        promdisable,  // PROMDISABLE, as the mode register holds it
     output var logic        ub_msyn,      // -UB MSYN, so a check can see the Unibus run
@@ -197,8 +206,8 @@ module cadr_machine #(
       .device     (device),
       .dev_rq     (dev_rq),
       .dev_write  (dev_write),
-      .device_ack (device_ack),
-      .device_rdata(device_rdata),
+      .device_ack (dev_ack_joined),
+      .device_rdata(dev_rdata_joined),
       .nxm        (nxm),
       .unibus     (unibus),
       .ub_msyn_o  (ub_msyn),
@@ -223,6 +232,55 @@ module cadr_machine #(
       .mem_done   (mem_done),
       .mem_rdata  (mem_rdata)
   );
+
+  // --- the disk controller, the first Xbus slave that is not main memory ---
+  //
+  // It hangs off the seam `cadr_memory_path.sv` brings out, at the same place
+  // an external slave does, and the two are joined the way the open-collector
+  // `-XBUS.ACK` joins them.  **THE MACHINE'S OWN `device_ack` PORT STAYS**:
+  // the display and the I/O board are still outside, and this is one slave
+  // arriving rather than the seam closing.
+  //
+  // A CYCLE CANNOT BE ANSWERED TWICE, and the decode is what says so:
+  // `cadr_xbus_decode.sv` makes `memory` and `device` mutually exclusive by
+  // construction --- Xbus I/O space or not --- and inside `device` this module
+  // claims only 0o17377774..7, four of the four million addresses the decode
+  // is checked against.  Anything hung on the external port owes the same
+  // discipline, and nothing here can enforce it for a slave it cannot see.
+  //
+  // THE DATA LINES ARE SEPARATE FROM THE ACKNOWLEDGEMENT, which is the bus
+  // and not a convenience: a slave drives MEM<31:0> only while it is
+  // answering a READ, so on a device write the seam is left to whatever is
+  // outside.  On the board that is nothing and reads zero; in
+  // `tb/cadr_machine_tb.cpp` it is the complement of the word MD should hold,
+  // which is what keeps the processor's RDCYC gate on -LOADMD observable:
+  // poison, never data.  It matters because main memory's own bridge refuses
+  // to latch on a write, so `mem_rdata` cannot reach MD on one whatever the
+  // processor does.  Measured with the seam held at zero instead, the
+  // mutation `rdcyc-gate-dropped` is caught on 2 rows of 600,000 and both
+  // are the single UNIBUS write, the one word this program puts on
+  // MEM<31:0> without a slave; with the poison it is caught on all 5,650
+  // device writes as well.
+  logic        disk_ack, disk_drives;
+  logic [31:0] disk_rdata;
+  logic        dev_ack_joined;
+  logic [31:0] dev_rdata_joined;
+
+  cadr_disk_controller disk (
+      .clk      (clk),
+      .rst      (rst),
+      .sel      (device),
+      .dev_rq   (dev_rq),
+      .dev_write(dev_write),
+      .phys     (phys),
+      .wdata    (wdata),
+      .dev_ack  (disk_ack),
+      .rdata    (disk_rdata),
+      .drives   (disk_drives)
+  );
+
+  assign dev_ack_joined   = disk_ack || device_ack;
+  assign dev_rdata_joined = disk_drives ? disk_rdata : device_rdata;
 
   // RDCYC leaves the processor for the check's sake: a write must not move
   // MD, and that is the thing this composition makes visible.
