@@ -52,55 +52,107 @@
 // hold.  `tb/cadr_disk_pack_tb.cpp` STARTs a transfer during a fill and
 // requires the miss.
 //
-// **AND THE CHANNEL'S INTERLOCK IS HONOURED, BOTH WAYS.**  `ch_active` is
-// the controller's own BUSY for a transfer: while it is up the channel owns
-// the slot it is walking and this module must neither fill one nor write one
-// back, so a request that arrives then is refused --- not queued, because a
-// request queued behind a walk would land at a moment Linux did not choose.
-// Linux reads `ch_active` in the status word and asks again.  It is read
-// through a register here, for the fitter --- the controller's state reaching
-// this module's state enables was -0.530 ns on the DDR=1 board --- and a
-// register is a tick behind, so the controller announces a START two ticks
-// ahead and, for the tick that still leaves, defers its walk while `moving`
-// says a block is in flight.  Neither side alone closes the window; both do.
+// **AND THE CHANNEL'S INTERLOCK IS HONOURED, BOTH WAYS, AND IT IS PER
+// SLOT.**  `ch_active` is the controller's own BUSY for a transfer, and
+// `ch_slot` the slot the walk is on: while the channel is active and not
+// waiting, a move on THAT slot is refused --- not queued, because a request
+// queued behind a walk would land at a moment Linux did not choose --- and a
+// move on any other slot is taken, because the store is a cache and a cache
+// that can only be filled while the CADR is idle is not one.  Linux reads
+// `ch_active`, `waiting` and the refusal in the status word and asks again.
+// The controller's side is read through registers here, for the fitter ---
+// its state reaching this module's enables was -0.530 ns on the DDR=1 board
+// --- and a register is a tick behind, so the tick in which the walk chooses
+// the slot a move has just begun on is the controller's to cover: it asks
+// once more, before a data word moves, whether its slot is still valid and
+// no move is on it, and looks the block up again if not.  Neither side alone
+// closes the window; both do.
+//
+// **THE REQUEST PATH.**  Twenty-four slots against 263,245 blocks cannot be
+// pre-filled, so the store is a cache Linux keeps and the controller says
+// what it lacks: REQ is the disk address of the block the walk is waiting
+// for --- or, posted at the start of the block before it, is about to want
+// --- with a valid bit, and IRQ carries the posting to the processing system
+// over `IRQ_F2P`.  Linux fetches the block into a slot of its choosing (the
+// tag written last is what ends the wait, whichever slot it lands in) or
+// DENIES it, on which the walk takes the miss it used to take at once.
+// DIRTY says which slots a transfer has written since Linux last moved them,
+// REF which slots the walk has taken a block from since Linux last cleared
+// the bit; between them they are what a replacement rule needs.  **THE RULE
+// IS LINUX'S**, because Linux chooses the slot: the one documented in
+// `docs/disk-controller.md` is second chance over the twenty-four --- pass a
+// slot whose REF bit is set and clear it, take the first whose bit is clear,
+// writing it back first if it is dirty, never the slot the walk is on.
 //
 // **WHAT LINUX WRITES AND READS**, sixteen words at `REG_BASE`, which is the
 // bottom of `M_AXI_GP0`'s window in the PS address map:
 //
 //   0  ADDR    the block's address in DDR; bits 6:0 must be zero
-//   1  TAG     {cylinder<11:0>, head<7:0>, block<7:0>}, bits 27:0 --- the
-//              disk address the block answers to, and what the walk looks a
-//              slot up by
+//   1  TAG     {unit<2:0>, cylinder<11:0>, head<7:0>, block<7:0>}, bits 30:0
+//              --- the disk address the block answers to, in the disk
+//              address register's own layout, and what the walk looks a
+//              slot up by.  Bit 31 reads zero and is ignored
 //   2  SLOT    which of the store's slots, bits 4:0, below SLOTS
 //   3  CTL     written: bit 0 fetch the record at ADDR into SLOT and tag it
 //                       bit 1 write SLOT back to the record at ADDR
 //                       bit 2 take SLOT's block away (no DDR traffic)
-//                       exactly one of the three, or the write is refused
+//                       exactly one of the three, or the write is refused;
+//                       bit 3 deny the request REQ holds: the walk waiting
+//                             on it stops with `store_miss`.  Independent
+//                             of bits 2:0 and never refused
 //              read:    bit 0 busy        a move is in progress
 //                       bit 1 done        the last request finished
 //                       bit 2 error       it met SLVERR or DECERR, or a
 //                                         burst that did not end where it
 //                                         should
 //                       bit 3 refused     the last CTL write was refused:
-//                                         busy, the channel active, an
-//                                         address not aligned, a slot past
-//                                         the store, or not one bit of 2:0
+//                                         busy, the channel active on the
+//                                         slot named, an address not
+//                                         aligned, a slot past the store,
+//                                         or not one bit of 2:0
 //                       bit 4 ch_active   the controller is walking, live
 //                       bit 5 store_miss  the walk asked the store for a
-//                                         block it does not hold, sticky
+//                                         block it does not hold and was
+//                                         denied it, or a track command
+//                                         found a sector absent; sticky
 //                                         until the controller's reset
+//                       bit 6 waiting     the walk is stopped for want of
+//                                         the block REQ names, live
 //   4  DRIVE   bits 7:0 a drive is present on that unit, 15:8 its read-only
 //              switch, 16 whether the drive's own time is charged
 //              (`Controller::timed`).  This is the drive seam
 //              `cadr_disk_controller.sv` takes eight units of: on the board
 //              a unit is present when Linux says a pack is mounted on it,
 //              and it comes up with nothing on any cable
+//   5  REQ     read only: bit 31 valid, bits 30:0 the disk address of the
+//              block the controller lacks, in TAG's layout --- so that
+//              REQ & 0x7fffffff is the TAG to write.  Valid falls when a
+//              slot's tag becomes that address, on a deny, and when the
+//              channel is stopped
+//   6  DIRTY   read only: bit s is up when a transfer has written slot s
+//              since Linux last fetched into it, wrote it back or took it
+//              away.  A dirty slot's block is on the pack only once it is
+//              written back
 //   7  IDENT   reads `IDENT`, a constant, so that the first read over GP0
 //              can tell the registers from a bus that answers zeros
+//   8  REF     bit s is up when the walk has taken slot s for a block since
+//              the bit was last cleared or the slot last fetched into.
+//              Written: a 1 clears the bit, a 0 leaves it
+//   9  IRQ     bit 0 a request was posted (REQ valid rose or was re-posted)
+//              bit 1 a slot became dirty
+//              bit 2 a move finished (busy fell)
+//              Written: a 1 clears the bit, a 0 leaves it.  `IRQ_F2P` is
+//              the OR of these under IRQEN, so a program without the
+//              interrupt reads them
+//  10  IRQEN   the mask, bits 2:0, read and written; zero at reset
 //
 // Every other word reads zero and ignores writes.  An access outside the
 // sixteen is answered SLVERR: Linux writing past the end of these registers
 // is a bug in Linux and gets a bus error rather than a silent nothing.
+// **EVERY ADDRESS ON GP0 IS ANSWERED**, in the window or out of it: a read
+// nothing answers does not fault the Arm, it hangs both cores at one PC
+// each, measured on the board.  `rtl/cadr_gp0_default.sv` answers for a
+// board that has GP0 and not this module.
 //
 // **THE GP0 FACE IS A SLAVE TO A 32-BIT AXI3 MASTER, AND IT IS SMALL ON
 // PURPOSE.**  A register access from the CPU is a single beat on an
@@ -199,9 +251,24 @@ module cadr_disk_pack #(
     input  var logic [31:0] store_rdata,   // two ticks behind the address this drives: see the seam below
     input  var logic        store_miss,
     input  var logic        ch_active,
-    // A block is in flight through the seam: the controller defers a walk on
-    // it.  `busy` by another name, so that the seam says what it means.
+    // A block is in flight through the seam, and which slot it is on: the
+    // controller looks its own slot up again when a move is on it.  `busy`
+    // by another name, so that the seam says what it means.
     output var logic        moving,
+    output var logic [4:0]  moving_slot,
+
+    // --- the request path, from the controller ---------------------------
+    input  var logic        req_valid,
+    input  var logic [30:0] req_tag,
+    input  var logic        req_post,     // one tick: a request was posted
+    input  var logic        ch_waiting,   // the walk stands for want of REQ's block
+    input  var logic [4:0]  ch_slot,      // the slot the walk is on
+    input  var logic        ch_wrote,     // one tick: a transfer wrote `ch_slot`
+    input  var logic        ch_hit,       // one tick: the walk took `ch_slot`
+    // Linux denies REQ: one tick, from CTL's bit 3.
+    output var logic        deny,
+    // To the processing system's `IRQ_F2P`: the OR of IRQ under IRQEN.
+    output var logic        irq,
 
     // --- the drive seam, eight units of it --------------------------------
     output var logic [7:0]  drive_present,
@@ -228,10 +295,23 @@ module cadr_disk_pack #(
   // The registers
   // ------------------------------------------------------------------------
   logic [31:0] r_addr;
-  logic [27:0] r_tag;
+  logic [30:0] r_tag;     // {unit, cylinder, head, block}
   logic [4:0]  r_slot;
   logic [24:0] r_drive;   // 7:0 present, 15:8 read-only, 16 timed
   logic        busy, done, error, refused;
+  // The cache's bookkeeping, and the interrupt.  All of it written by this
+  // module alone: the controller reports what the walk did as pulses and
+  // this side keeps the bits, so that each register has one writer.
+  logic [SLOTS-1:0] dirty, ref_bits;
+  logic [2:0]  irq_q, irqen;
+  logic        irq_r;
+  // The request, a tick behind the controller's: what REQ reads.
+  logic        req_valid_q;
+  logic [30:0] req_tag_q;
+  logic        ch_waiting_q;
+  logic [4:0]  ch_slot_q;
+  logic        busy_q;    // `busy` a tick ago, for the move-finished event
+  assign irq = irq_r;
   // **THE SEAM IS DRIVEN FROM REGISTERS, AND `moving` COVERS THE LAST WRITE.**
   // The four store lines used to be decoded straight off the state --- which
   // slot, which word, the tag or a beat --- and land on the enable of every
@@ -329,19 +409,24 @@ module cadr_disk_pack #(
   assign s_rdata   = rdata_q;
   assign s_rid     = r_id;
 
-  // The word a read returns.  CTL's read face is the six status bits.
+  // The word a read returns.  CTL's read face is the seven status bits.
   logic [31:0] ctl_word, r_word;
-  assign ctl_word = {26'd0, store_miss, ch_active, refused, error, done, busy};
+  assign ctl_word = {25'd0, ch_waiting_q, store_miss, ch_active, refused, error, done, busy};
   always_comb begin
     if (!r_in_q) r_word = 32'd0;
     else begin
       unique case (r_idx)
         4'd0:    r_word = r_addr;
-        4'd1:    r_word = {4'd0, r_tag};
+        4'd1:    r_word = {1'b0, r_tag};
         4'd2:    r_word = {27'd0, r_slot};
         4'd3:    r_word = ctl_word;
         4'd4:    r_word = {7'd0, r_drive};
+        4'd5:    r_word = {req_valid_q, req_tag_q};
+        4'd6:    r_word = 32'(dirty);
         4'd7:    r_word = IDENT;
+        4'd8:    r_word = 32'(ref_bits);
+        4'd9:    r_word = {29'd0, irq_q};
+        4'd10:   r_word = {29'd0, irqen};
         default: r_word = 32'd0;
       endcase
     end
@@ -370,13 +455,16 @@ module cadr_disk_pack #(
   // the DDR=1 board.  Registered here, the next tick's decision starts at
   // `go_q` and the registers, and is two levels deep.  Linux reads the
   // outcome tens of ticks later at the soonest.
-  logic [2:0] ctl_new, go_q;
-  assign ctl_new  = 3'(merge(32'd0, s_wdata, s_wstrb));
+  logic [3:0] ctl_new, go_q;
+  assign ctl_new  = 4'(merge(32'd0, s_wdata, s_wstrb));
   assign go_fetch = go_q[0];
   assign go_write = go_q[1];
   assign go_take  = go_q[2];
+  // The denial rides beside the move bits and is never refused: it is not a
+  // move, and the channel it reaches is waiting.
+  assign deny     = go_q[3];
   assign go_any   = go_fetch || go_write || go_take;
-  assign go_one   = (go_q == 3'b001) || (go_q == 3'b010) || (go_q == 3'b100);
+  assign go_one   = (go_q[2:0] == 3'b001) || (go_q[2:0] == 3'b010) || (go_q[2:0] == 3'b100);
 
   // What refuses a request.  Written out one term to a name so that a
   // refusal can be read back to its cause in the testbench's failure line.
@@ -386,15 +474,19 @@ module cadr_disk_pack #(
   // are current when they are read.  Off `r_addr` directly the alignment
   // test was in front of the address register's enable.
   logic bad_align, bad_slot, bad_busy, bad_ch;
-  logic bad_align_q, bad_slot_q;
+  logic bad_align_q, bad_slot_q, bad_ch_q;
   always_ff @(posedge clk) begin
     bad_align_q <= (r_addr[6:0] != 7'd0);
     bad_slot_q  <= (32'(r_slot) >= SLOTS);
+    // The channel active and not waiting, on the slot named: see the header.
+    // Registered like the two above, for the same reason and with the same
+    // argument that SLOT is an earlier beat than the CTL that acts on it.
+    bad_ch_q    <= ch_active_q && !ch_waiting_q && (r_slot == ch_slot_q);
   end
   assign bad_align = bad_align_q && !go_take;
   assign bad_slot  = bad_slot_q;
   assign bad_busy  = busy;
-  assign bad_ch    = ch_active_q;
+  assign bad_ch    = bad_ch_q;
   logic refuse;
   assign refuse = go_any && (!go_one || bad_align || bad_slot || bad_busy || bad_ch);
 
@@ -409,21 +501,60 @@ module cadr_disk_pack #(
       r_left <= 4'd0;
       w_bad <= 1'b0;
       r_addr  <= 32'd0;
-      r_tag   <= 28'd0;
+      r_tag   <= 31'd0;
       r_slot  <= 5'd0;
       r_drive <= 25'd0;
       refused <= 1'b0;
-      go_q    <= 3'd0;
+      go_q    <= 4'd0;
       ch_active_q <= 1'b0;
+      ch_waiting_q <= 1'b0;
+      ch_slot_q   <= 5'd0;
+      req_valid_q <= 1'b0;
+      req_tag_q   <= 31'd0;
+      dirty    <= '0;
+      ref_bits <= '0;
+      irq_q    <= 3'd0;
+      irqen    <= 3'd0;
+      irq_r    <= 1'b0;
+      busy_q   <= 1'b0;
       w_in    <= 1'b0;
       rdata_q <= 32'd0;
       rresp_q <= 2'b00;
       r_in_q  <= 1'b0;
     end else begin
-      ch_active_q <= ch_active;
+      ch_active_q  <= ch_active;
+      ch_waiting_q <= ch_waiting;
+      ch_slot_q    <= ch_slot;
+      req_valid_q  <= req_valid;
+      req_tag_q    <= req_tag;
+      busy_q       <= busy;
       // The request, held: what a CTL write asked for, a tick after the beat.
-      go_q <= (w_beat && w_in && (w_idx == 4'd3)) ? ctl_new : 3'd0;
+      go_q <= (w_beat && w_in && (w_idx == 4'd3)) ? ctl_new : 4'd0;
       if (go_any) refused <= refuse;
+      // --- the cache's bookkeeping, and the interrupt
+      //
+      // DIRTY: set by the walk writing a slot, cleared by a move on the slot
+      // being taken --- fetched into, written back or taken away --- at the
+      // go, the walk being unable to touch a slot a move is on.  REF: set by
+      // the walk taking a slot, cleared by a fetch into it or by Linux
+      // writing a 1.  IRQ: set by the three events, cleared by Linux writing
+      // a 1; a set and a clear in one tick, the set wins, because the event
+      // is newer than the read that decided to clear.
+      if (go_any && !refuse) begin
+        dirty[r_slot] <= 1'b0;
+        if (go_fetch) ref_bits[r_slot] <= 1'b0;
+      end
+      if (w_beat && w_in && (w_idx == 4'd8)) ref_bits <= ref_bits & ~SLOTS'(merge(32'd0, s_wdata, s_wstrb));
+      if (w_beat && w_in && (w_idx == 4'd9)) irq_q <= irq_q & ~3'(merge(32'd0, s_wdata, s_wstrb));
+      if (w_beat && w_in && (w_idx == 4'd10)) irqen <= 3'(merge({29'd0, irqen}, s_wdata, s_wstrb));
+      if (ch_wrote) begin
+        if (!dirty[ch_slot]) irq_q[1] <= 1'b1;
+        dirty[ch_slot] <= 1'b1;
+      end
+      if (ch_hit) ref_bits[ch_slot] <= 1'b1;
+      if (req_post) irq_q[0] <= 1'b1;
+      if (busy_q && !busy) irq_q[2] <= 1'b1;
+      irq_r <= |(irq_q & irqen);
       // --- writes
       unique case (wst)
         W_ADDR: if (s_awvalid) begin
@@ -438,7 +569,7 @@ module cadr_disk_pack #(
           else begin
             unique case (w_idx)
               4'd0: r_addr  <= merge(r_addr, s_wdata, s_wstrb);
-              4'd1: r_tag   <= 28'(merge({4'd0, r_tag}, s_wdata, s_wstrb));
+              4'd1: r_tag   <= 31'(merge({1'b0, r_tag}, s_wdata, s_wstrb));
               4'd2: r_slot  <= 5'(merge({27'd0, r_slot}, s_wdata, s_wstrb));
               4'd3: ;   // acted on next tick, from `go_q`
               4'd4: r_drive <= 25'(merge({7'd0, r_drive}, s_wdata, s_wstrb));
@@ -523,7 +654,8 @@ module cadr_disk_pack #(
   logic [3:0]  p_beat;             // within the burst
   logic [31:0] p_base;             // the block's address, latched at the go
   logic [4:0]  p_slot;
-  logic [27:0] p_tag;
+  logic [30:0] p_tag;
+  assign moving_slot = p_slot;
   // **A READ BEAT IS REGISTERED BEFORE IT REACHES THE STORE.**  RVALID and
   // RDATA leave the PS7 late in the tick --- the hard block's own output
   // delay is most of the 5 ns --- and written straight into the store they
@@ -643,7 +775,7 @@ module cadr_disk_pack #(
       P_TAG: begin
         seam_we    = 1'b1;
         seam_addr  = ST_TAG;
-        seam_wdata = {4'd0, p_tag};
+        seam_wdata = {1'b0, p_tag};
       end
       default: ;
     endcase
@@ -685,7 +817,7 @@ module cadr_disk_pack #(
       p_beat     <= 4'd0;
       p_base     <= 32'd0;
       p_slot     <= 5'd0;
-      p_tag      <= 28'd0;
+      p_tag      <= 31'd0;
       hi_pending <= 1'b0;
       hi_word    <= 32'd0;
       rb_valid   <= 1'b0;
