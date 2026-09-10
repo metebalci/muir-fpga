@@ -9,12 +9,12 @@
 #
 # What is in it:
 #
-#   cadr-pack-feeder      serves the CADR's disk from the pack file on the
+#   cadr-disk-pack      serves the CADR's disk from the pack file on the
 #                         card, on demand: the controller posts the block
 #                         it lacks and this fetches it into the store, and
-#                         takes written blocks back; src/cadr-pack-feeder.c's
+#                         takes written blocks back; src/cadr-disk-pack.c's
 #                         header says how
-#   S80cadr-pack-feeder   mounts the card at /mnt/card and starts the feeder
+#   S80cadr-disk-pack   mounts the card at /mnt/card and starts the feeder
 #                         at boot, its log on the console
 #
 # And `make -C src check` on the build host, which needs nothing but a C
@@ -22,22 +22,22 @@
 # register face with a scripted controller behind it that asks for the
 # reference trace's blocks and more.
 
-CADR_TOOLS_VERSION = 0
-CADR_TOOLS_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-tools/src
-CADR_TOOLS_SITE_METHOD = local
-CADR_TOOLS_LICENSE = AGPL-3.0-or-later
+CADR_DISK_PACK_VERSION = 0
+CADR_DISK_PACK_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-disk-pack/src
+CADR_DISK_PACK_SITE_METHOD = local
+CADR_DISK_PACK_LICENSE = AGPL-3.0-or-later
 
-define CADR_TOOLS_BUILD_CMDS
+define CADR_DISK_PACK_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
 endef
 
-define CADR_TOOLS_INSTALL_TARGET_CMDS
+define CADR_DISK_PACK_INSTALL_TARGET_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install
 endef
 
-define CADR_TOOLS_INSTALL_INIT_SYSV
-	$(INSTALL) -D -m 0755 $(CADR_TOOLS_PKGDIR)/S80cadr-pack-feeder \
-		$(TARGET_DIR)/etc/init.d/S80cadr-pack-feeder
+define CADR_DISK_PACK_INSTALL_INIT_SYSV
+	$(INSTALL) -D -m 0755 $(CADR_DISK_PACK_PKGDIR)/S80cadr-disk-pack \
+		$(TARGET_DIR)/etc/init.d/S80cadr-disk-pack
 endef
 
 $(eval $(generic-package))

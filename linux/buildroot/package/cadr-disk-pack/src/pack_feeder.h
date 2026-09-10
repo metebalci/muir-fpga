@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The pack feeder's core: the store as a cache Linux keeps.  A block the
+// The disk pack program's core: the store as a cache Linux keeps.  A block the
 // controller asks for goes from the pack into a slot of the store, a slot
 // the CADR wrote goes back onto the pack, both through the record in DDR.
 //
