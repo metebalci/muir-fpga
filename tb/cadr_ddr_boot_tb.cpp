@@ -225,7 +225,12 @@ Run Simulate(bool bit0_in_last) {
   // measuring a different board.
   dut->clk = 0;
   dut->rst = 1;
-  dut->sintr = 0;
+  // `sintr` was driven here and the line is DELETED rather than left: the
+  // machine's -XBUS.INTR is its own now --- the display's interrupt ORed with
+  // the disk's inside `cadr_machine` --- and it comes out as `sintr_o`.
+  // CLAUDE.md's `md` trap is exactly this: a driven input that becomes an
+  // output goes on being driveable, and the check goes green with the signal
+  // unchecked.
   dut->boards = 32;
   dut->device_ack = 0;
   dut->device_rdata = 0;

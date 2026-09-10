@@ -78,9 +78,12 @@ int main(int argc, char **argv) {
   const long TICKS = argc > 1 ? atol(argv[1]) : 40000000L;
 
   // The step-1 bitstream's configuration exactly, and that is the point: no
-  // interrupt, no Xbus device, 32 boards of memory declared and none behind
-  // the bridge. Change any of these and it is measuring a different board.
-  dut->clk = 0; dut->rst = 1; dut->sintr = 0; dut->boards = 32;
+  // Xbus device outside the machine, 32 boards of memory declared and none
+  // behind the bridge. Change any of these and it is measuring a different
+  // board.  **`sintr` is not driven here and the line was deleted, not left**:
+  // -XBUS.INTR is made inside `cadr_machine` now, out of the display's
+  // interrupt and the disk's, and comes back out as `sintr_o`.
+  dut->clk = 0; dut->rst = 1; dut->boards = 32;
   dut->device_ack = 0; dut->device_rdata = 0;
   dut->mem_done = 0; dut->mem_rdata = 0;          // NO MEMORY
   dut->eval();

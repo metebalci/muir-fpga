@@ -103,6 +103,7 @@ module cadr_mem_count_harness #(
   logic memstart, mbusy, mbusy_sync;
 
   logic        mem_done, mem_error;
+  logic        sintr;   // -XBUS.INTR, the machine's own; read by nothing here
   logic [31:0] mem_rdata;
 
   // The DDR=1 board's configuration exactly: no interrupt, no Xbus device,
@@ -115,7 +116,11 @@ module cadr_mem_count_harness #(
       // registers are inside `cadr_machine` and answer for themselves. This
       // port is for a slave that is still outside --- the display, the I/O
       // board --- and there is none.
-      .sintr(1'b0),
+      // -XBUS.INTR is the machine's own line now --- the display's vertical
+      // interrupt ORed with the disk's request, both inside --- and comes out
+      // as an observation output.  Nothing here reads it; this harness's
+      // program never enables either.
+      .sintr_o(sintr),
       // No drive on the disk's cable: this harness is the boot PROM, which
       // polls the status register and never writes a command.
       .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0),
@@ -229,7 +234,7 @@ module cadr_mem_count_harness #(
                     vmaok, jcond, nop, pcs1, pcs0, iwrited, wrcyc, device,
                     dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn,
                     n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc, nxm,
-                    unibus, memstart, mbusy, mbusy_sync, mem_error};
+                    unibus, memstart, mbusy, mbusy_sync, mem_error, sintr};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule
