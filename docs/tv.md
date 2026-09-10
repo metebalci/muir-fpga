@@ -364,7 +364,7 @@ new clause did exactly what its comment says.
   what `SETUP-CPT` writes, and that is all `lmtv.order` asks of a program
   on this board; the PROM's program is not loaded either, so a read of
   register 1 with the enable clear is zero, as in muir.
-- **The disk's interrupt is still not on `-XBUS.INTR`**, and the machine's
+- **The disk's interrupt joined `-XBUS.INTR` at `f8c6d25`**, after the board spun for ever in `AWAIT-DISK` waiting for it; what follows described the state before that, and the machine's
   `sintr` port still carries what is outside; see the decision above.
 - **The I/O board**, which is the other slave on the seam and the Unibus's
   business.
