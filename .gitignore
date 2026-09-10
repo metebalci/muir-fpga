@@ -48,3 +48,7 @@ vendor/
 NA/
 clockInfo.txt
 tight_setup_hold_pins.txt
+
+# The TFTP server's address for the card, filled into uEnv.txt by mksd.sh.
+# Private to this network; the repository is public.
+linux/local.conf

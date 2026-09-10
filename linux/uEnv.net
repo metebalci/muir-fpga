@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The boot command, served from /srv/tftp on muirhost and fetched by the one
+# The boot command, served by the TFTP server and fetched by the one
 # line the card carries (linux/uEnv.txt).  Edit here, copy to /srv/tftp,
 # reset the board; the card is never touched.
 #
 # WHAT IT DOES, AND WHY EACH PIECE IS WHERE IT IS
 #
-# The tree comes from muirhost: it is the one thing that changes.  The kernel
+# The tree comes from the server: it is the one thing that changes.  The kernel
 # and the root filesystem come from the card's own `image.ub` --- Digilent's
 # FIT, `kernel@0` and `ramdisk@0` --- because the loose `zImage` shipped
 # beside it in the BSP is build #2 where the FIT's kernel is build #1, and

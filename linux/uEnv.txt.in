@@ -3,37 +3,47 @@
 #
 # The card is written once; everything after it arrives over Ethernet.
 #
+# THIS IS A TEMPLATE.  `linux/mksd.sh` writes `uEnv.txt` from it with
+# @SERVERIP@ replaced by the TFTP server's address, read from `linux/local.conf`
+# --- which is gitignored, because this repository is public and the address
+# of a machine on a private network is not part of the project.
+#
 # U-Boot's preboot loads this from the card's FAT partition and imports it,
 # then `uenvboot` imports it a second time and runs `uenvcmd`.  Two imports,
 # and the order matters more than once below.
 #
-# THE COMMAND ITSELF IS NOT HERE.  `uenvcmd` fetches `uEnv.net` from muirhost,
+# THE COMMAND ITSELF IS NOT HERE.  `uenvcmd` fetches `uEnv.net` from the TFTP
+# server,
 # imports it, and runs the `netcmd` it defines.  The first card carried the
 # whole boot command, and it was wrong twice over on the first boot --- the
 # kernel loaded at 256 MB, which made that kernel forget the memory below it,
 # and a loose `zImage` that turned out to be a different build from the one
 # inside `image.ub` and dies under any tree --- and each correction would have
 # meant a card write.  This way the card carries one line that only says where
-# to ask, and the answer lives in `/srv/tftp/uEnv.net` beside the tree.
+# to ask, and the answer lives in the served `uEnv.net` beside the tree.
 #
-# WHY A FAILED FETCH IS THE CONTROL, AND NOT A FAILURE
+# WHY A FAILED FETCH REBOOTS THE BOARD, AND NEVER BOOTS THE STOCK IMAGE
 #
 # `default_bootcmd` is `run uenvboot; run cp_kernel2ram && bootm ${netstart}`
-# --- a semicolon, not an `&&`.  So when the TFTP server is not answering, the
-# `&&` chain in uenvcmd stops at the first fetch, uenvboot returns, and the
-# card boots the stock `image.ub` with the BSP's own device tree.  Server off
-# is the 512 MB control boot; server on is the 384 MB reserved boot; one card,
-# nothing touched between them.  With `netretry` unset the failure is one
-# attempt and not a loop (net/net.c, 669-685).  Measured 10 Sep: the control
-# boot reaches a login with 512 MB and the reserved boot with 384.
+# --- a semicolon, not an `&&` --- so if uenvcmd simply fails, U-Boot goes on
+# to boot the card's `image.ub` with Digilent's own device tree and 512 MB,
+# which is a Linux that owns the CADR's memory.  Mete decided the board must
+# never do that: better stuck than wrong.  This U-Boot has no `while`, so the
+# way to wait is `|| reset` --- a fetch that fails reboots the board, which
+# tries again ten seconds later, for as long as it takes the server to appear.
+# Measured 10 Sep: a missing file gives `TFTP error: 'File not found'`,
+# `resetting ...`, and the next attempt; a server that is merely not
+# answering makes this U-Boot's TFTP retry on its own without returning, so
+# the board waits at the fetch and needs no reset.  Both end in the reserved
+# boot the moment the server answers, and in nothing else.
 #
 # WHY THERE IS NO ipaddr HERE
 #
 # preboot ends in an unconditional `dhcp`, on every boot, whatever this file
 # says --- it is the last command of a string that was parsed before we were
 # imported.  There is a DHCP server on this LAN, so it answers and sets ipaddr
-# from yiaddr; Mete has reserved 192.168.80.31 for the board's MAC
-# 00:18:3e:02:a0:ad.  On a network without one, add ipaddr, netmask, and
+# from yiaddr; the DHCP server can pin the board's address by its MAC, which
+# the console prints.  On a network without one, add ipaddr, netmask, and
 # `bootpretryperiod=1000`: that last one does take effect on the same boot,
 # because this import happens before the `dhcp` in the same command string
 # (net/bootp.c line 716).
@@ -46,7 +56,7 @@
 # ipaddr and leaves serverip alone.  The second import re-applies it after the
 # dhcp in any case.  The compiled-in default is 172.16.119.130, which is not
 # this network.
-serverip=192.168.80.54
+serverip=@SERVERIP@
 
 # WHY loadbootenv_addr MOVES, AND WHY ONLY THE SECOND IMPORT OBEYS IT
 #
@@ -65,6 +75,6 @@ tftpblocksize=1468
 
 # `env import -t` reads a text file of `name=value` lines, which is what
 # `uEnv.net` is; `${filesize}` is what the tftpboot before it just set.  If
-# the fetch fails, the chain stops here and the card falls through to the
-# stock boot, as above.  Everything after this line is decided on muirhost.
-uenvcmd=tftpboot 0x0f800000 uEnv.net && env import -t 0x0f800000 ${filesize} && run netcmd
+# anything in the chain fails, the board resets and tries again, as above.
+# Everything after this line is decided on the server.
+uenvcmd=tftpboot 0x0f800000 uEnv.net && env import -t 0x0f800000 ${filesize} && run netcmd || reset

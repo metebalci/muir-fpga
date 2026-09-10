@@ -90,13 +90,20 @@ mkdir -p "$OUT/stock" "$OUT/reserved"
 # its default_bootcmd and boots image.ub with the BSP's own device tree.
 cp "$SRC/BOOT.BIN" "$SRC/image.ub" "$OUT/stock/"
 
-# Reserved: the same card plus the one-line uEnv.txt that asks muirhost for
+# Reserved: the same card plus the one-line uEnv.txt that asks the TFTP server for
 # the rest.  The rest --- our tree and the boot command --- goes in server/,
 # which is what /srv/tftp holds.  The BSP's loose zImage is not staged: it is
 # a different build from the kernel inside image.ub and dies under any tree
 # (measured 10 Sep); netcmd boots the FIT's own kernel and ramdisk.
 cp "$SRC/BOOT.BIN" "$SRC/image.ub" "$OUT/reserved/"
-cp linux/uEnv.txt "$OUT/reserved/uEnv.txt"
+# The card's file carries the TFTP server's address, which is private: it is
+# filled in here from linux/local.conf (gitignored; `SERVERIP=a.b.c.d`), and
+# the template is what the repository holds.
+[ -r linux/local.conf ] || die "linux/local.conf is missing: put SERVERIP=<the TFTP server's address> in it"
+. linux/local.conf
+[ -n "${SERVERIP:-}" ] || die "linux/local.conf does not set SERVERIP"
+sed "s/@SERVERIP@/$SERVERIP/" linux/uEnv.txt.in > "$OUT/reserved/uEnv.txt"
+grep -q '@SERVERIP@' "$OUT/reserved/uEnv.txt" && die "uEnv.txt still carries the marker"
 mkdir -p "$OUT/server"
 cp "$WORK/system-cadr.dtb" "$OUT/server/system.dtb"
 cp linux/uEnv.net "$OUT/server/uEnv.net"

@@ -14,12 +14,12 @@ read out of the binaries and wins.
 ## The pieces, and where each one lives
 
     the microSD card        in the board          BOOT.BIN, image.ub, uEnv.txt
-    the TFTP server         muirhost, /srv/tftp   uEnv.net, system.dtb
-    the serial console      muirhost, /dev/ttyUSB1
-    the card writer         the laptop (t490s)    muirhost has no card reader
+    the TFTP server         the build host, /srv/tftp   uEnv.net, system.dtb
+    the serial console      the build host, over the board's USB cable
+    the card writer         the laptop                  the build host has no card reader
 
 The card is written **once**. Its `uEnv.txt` is one line that fetches
-`uEnv.net` from muirhost and runs the command in it, so the boot command and
+`uEnv.net` from the TFTP server and runs the command in it, so the boot command and
 the device tree both live in `/srv/tftp`: a change to either is a `cp` there
 and a reset, and the card is never touched again. The kernel and the root
 filesystem are Digilent's, read out of the `image.ub` already on the card.
@@ -35,12 +35,12 @@ filesystem are Digilent's, read out of the `image.ub` already on the card.
    and running the CADR are two different sessions on the board.
 
 2. **U-Boot reads `uEnv.txt` from the card** and runs the one command in it:
-   fetch `uEnv.net` from `192.168.80.54` by TFTP and run the `netcmd` it
+   fetch `uEnv.net` from the TFTP server and run the `netcmd` it
    defines. That command fetches `system.dtb`, reads `image.ub` off the card,
    and boots the kernel and root filesystem inside it under our tree with
    `mem=384M cma=32M` on the kernel's command line. The board's own address
-   comes from DHCP (Mete has reserved `192.168.80.31` for its MAC,
-   `00:18:3e:02:a0:ad`); the server's address is in the card's file and a
+   comes from DHCP, pinned on the DHCP server to the board's MAC, which the
+   console prints; the TFTP server's address is in the card's file and a
    DHCP reply cannot overwrite it (`linux.md` says why).
 
 3. **If the fetches succeed**, Linux comes up seeing **384 MB**: `mem=384M`
@@ -49,18 +49,19 @@ filesystem are Digilent's, read out of the `image.ub` already on the card.
    `linux/uEnv.net` explains why it is the command line and not the node
    that does the work on this kernel.
 
-4. **If the first fetch fails** --- server down, cable out, wrong network ---
-   U-Boot falls through to the stock path: `image.ub` from the card, with
-   Digilent's own device tree. Linux then sees **512 MB**. This is not an
-   error path; it is **the control**. One card, nothing changed on it, and the
-   two boots differ only in whether muirhost answered. Stopping the server is
-   how the control is run on purpose:
+4. **If the fetch fails** --- server down, cable out, wrong network --- the
+   board waits, and never boots anything else. Left to itself U-Boot would
+   fall through to `image.ub` with Digilent's own device tree and 512 MB, a
+   Linux that owns the CADR's memory; Mete decided the board must never do
+   that. The card's line ends in `|| reset`, so a fetch that fails reboots
+   the board, which tries again ten seconds later, and a server that is
+   merely silent makes this U-Boot's TFTP retry on its own without
+   returning. Either way the first boot that completes is the reserved one.
+   Measured 10 September, both ways, at the U-Boot prompt.
 
-       sudo systemctl stop tftpd-hpa      # control boot, 512 MB
-       sudo systemctl start tftpd-hpa     # reserved boot, 384 MB
-
-   Both were seen on 10 September: the control boot reaches a login with
-   `Memory: 335116K/524288K`, the reserved boot with `303564K/393216K`.
+   Digilent's stock boot was run once for comparison before that decision,
+   from the first card: a login with `Memory: 335116K/524288K`, against
+   `303564K/393216K` on the reserved boot.
 
 5. **The kernel's root filesystem is built into `zImage`** (an initramfs), so
    there is no second partition and nothing on the card is mounted by Linux.
@@ -70,18 +71,20 @@ filesystem are Digilent's, read out of the `image.ub` already on the card.
 
 The console decides which boot happened, in its first seconds:
 
-    reserved boot     `Filename 'uEnv.net'` ... `Filename 'system.dtb'` ...
+    the boot          `Filename 'uEnv.net'` ... `Filename 'system.dtb'` ...
                       `Bytes transferred = 26265`, `reading image.ub`, then
                       `Kernel command line: ... mem=384M cma=32M`
-    control boot      the `uEnv.net` fetch fails, then `reading image.ub`
-                      and a command line without `mem=`
+    no server         `TFTP server died; starting again` and silence, or
+                      `TFTP error` then `resetting ...` and U-Boot's banner
+                      again ten seconds later; never `reading image.ub`
+                      before a `uEnv.net` was fetched
 
 Then, at the prompt, three things say the reservation is real:
 
     cat /proc/device-tree/model                       Zynq Arty Z7 Development Board
     ls /proc/device-tree/reserved-memory/             cadr@18000000 (reserved boot only)
     grep "System RAM" /proc/iomem                     00000000-17ffffff
-    grep MemTotal /proc/meminfo                       380320 kB, against 512 MB in the control
+    grep MemTotal /proc/meminfo                       380320 kB, against 512 MB under Digilent's tree
 
 Those four lines are what the board printed on 10 September; the third is the
 one that matters, since it says the kernel does not have the region at all.
@@ -91,21 +94,22 @@ one that matters, since it says the kernel does not have the region at all.
 Everything up to the power-on has been done once (10 September) and is
 recorded in `linux.md`; the steps are here so it can be done again.
 
-**On muirhost, once.**
+**On the build host, once.**
 
     sudo apt install tftpd-hpa                       # serves /srv/tftp on UDP 69
-    sudo chown hansolo:hansolo /srv/tftp             # so the files can be refreshed without root
-    sudo usermod -aG dialout hansolo                 # so the console can be read
+    sudo chown $USER /srv/tftp                       # so the files can be refreshed without root
+    sudo usermod -aG dialout $USER                   # so the console can be read
+    echo SERVERIP=<the TFTP server's address> > linux/local.conf   # gitignored; mksd.sh fills it into uEnv.txt
 
 `linux/mksd.sh` stages `build/sd/`. Then:
 
     cp build/sd/server/* /srv/tftp/
-    curl -o /dev/null tftp://192.168.80.54/system.dtb   # the server answers
+    curl -o /dev/null tftp://<the TFTP server's address>/system.dtb   # the server answers
 
 **On the laptop, once.** Copy `build/sd/reserved/{BOOT.BIN,image.ub,uEnv.txt}`
 there, insert the card, and identify it by `lsblk` --- the line that says
 `usb`, never from memory: it is `/dev/sda` on the laptop and `/dev/sda` is
-the system disk on muirhost. Then, with `D` set to that device:
+the system disk on the build host. Then, with `D` set to that device:
 
     sudo umount ${D}?* 2>/dev/null
     sudo sfdisk --wipe always $D <<'EOF'
@@ -126,7 +130,7 @@ JTAG on the first try.
 
 **At the board.** Card in the microSD slot. Boot-mode jumper to SD --- read
 the designator off the silkscreen, it is deliberately not written here.
-Ethernet to the same subnet as muirhost. USB to muirhost (that cable is both
+Ethernet on the TFTP server's subnet. USB to the build host (that cable is both
 JTAG and the console).
 
 **Every boot.** Keep the console log running --- it survives the board being
@@ -154,5 +158,5 @@ any more.
   loader whose `ps7_init` we already possess, is the step after this one.
 - **Anything with the reserved memory.** Linux leaves it alone; nothing yet
   puts a disk pack in it or reads a display out of it.
-- **Boot without muirhost.** A card holding `uEnv.net`'s command and
+- **Boot without the TFTP server.** A card holding `uEnv.net`'s command and
   `system.dtb` itself would, at the cost of a card write per change.
