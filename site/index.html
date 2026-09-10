@@ -152,13 +152,12 @@
           <text class="d-s" x="725" y="376" text-anchor="middle">the cable, not the protocol</text>
 
           <!-- down to the AXI ports -->
-          <path class="d-line d-done" d="M118,386 L118,464"/>
+          <path class="d-line" d="M118,386 L118,464"/>
           <text class="d-s" x="126" y="412">the only seam at machine speed</text>
           <!-- The disk's second leg: Linux writes the controller where the block is.
                Not one of the CADR's own disk registers, which are Xbus addresses
                the microcode writes; this one exists only because the pack is a file. -->
-          <path class="d-line" d="M725,386 L725,464 M876,238 L876,464 M380,386 L380,432.2 L660,432.2 L660,464"/>
-          <path class="d-line d-done" d="M310,386 L310,464"/>
+          <path class="d-line" d="M310,386 L310,464 M725,386 L725,464 M876,238 L876,464 M380,386 L380,432.2 L660,432.2 L660,464"/>
           <text class="d-s" x="400" y="424">the block&rsquo;s address</text>
           <text class="d-s" x="870" y="262" text-anchor="end">the console</text>
           <text class="d-s" x="302" y="452" text-anchor="end">the block, pulled</text>
@@ -187,8 +186,7 @@
                own silicon, which is why it stands outside the outline. -->
           <rect class="d-dash d-part" x="280" y="542" width="800" height="128"/>
           <text class="d-s" x="290" y="556">Linux</text>
-          <path class="d-line" d="M355,533.2 L915,533.2 M355,533.2 L355,562 M495,533.2 L495,562 M775,533.2 L775,562 M915,533.2 L915,562"/>
-          <path class="d-line d-done" d="M765,508 L765,533.2 M635,533.2 L635,562"/>
+          <path class="d-line" d="M765,508 L765,533.2 M355,533.2 L915,533.2 M355,533.2 L355,562 M495,533.2 L495,562 M635,533.2 L635,562 M775,533.2 L775,562 M915,533.2 L915,562"/>
 
           <!-- The boot loader, beside Linux: today Digilent's U-Boot out of their
                BOOT.BIN, but the card file, the network loop and the fabric load
@@ -253,8 +251,8 @@
                what makes two fabric ports and the processor's own path meet at
                one set of chips: four ports on its inside face, arbitrated in
                hardware, and one DRAM behind it. -->
-          <path class="d-line d-done" d="M118,508 L118,580"/>
-          <path class="d-line d-done" d="M240,508 L240,580"/>
+          <path class="d-line" d="M118,508 L118,580"/>
+          <path class="d-line" d="M240,508 L240,580"/>
           <rect class="d-plate" x="38" y="580" width="218" height="60"/>
           <rect class="d-dash d-ext" x="38" y="580" width="218" height="60"/>
           <text class="d-t" x="147" y="604" text-anchor="middle">DDR controller</text>
@@ -262,7 +260,7 @@
           <!-- the A9s reach memory through the controller like everything else;
                the line from the Linux outline is that port -->
           <path class="d-line" d="M256,610 L280,610"/>
-          <path class="d-line d-done" d="M147,640 L147,728"/>
+          <path class="d-line" d="M147,640 L147,728"/>
           <path class="d-line" d="M355,658 L355,728 M495,658 L495,728 M635,658 L635,728"/>
 
           <rect class="d-dash d-ext" x="-19" y="728" width="332" height="84"/>
