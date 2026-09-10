@@ -2297,10 +2297,15 @@
 @note 0o545. A no-drive controller that never answered at all fails the same
 @note rows the same way, MD reading zero instead of 0x2320, which is what
 @note the board did before this module existed.
+@note **THE ANCHOR MOVED AT 69a2246**, which added `&& !ch_busy` to this
+@note line: the channel is busy while it walks and `not_active` is the
+@note board's own BUSY as well as muir's `done_at`.  The mutation is the
+@note same one --- the sense of the counter's test --- and the added term is
+@note carried through unchanged so that only the direction is mutated.
 @old
-  assign not_active = (busy_ns == 32'd0);
+  assign not_active = (busy_ns == 32'd0) && !ch_busy;
 @new
-  assign not_active = (busy_ns != 32'd0);
+  assign not_active = (busy_ns != 32'd0) && !ch_busy;
 @end
 
 @mutation disk-decodes-one-word-low
@@ -3426,13 +3431,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note a read of register 2 which must still hold what the program put there,
 @note and then a transfer started with NO store into register 1 that walks
 @note the command list it was given before.
+@note **THE ANCHOR MOVED AT 69a2246**: `-XBUS INIT` gained the channel's
+@note stop and the eight error flops, and the block re-aligned its `<=`.
+@note The mutation is unchanged --- the disk address register given a pin on
+@note `-XINIT` it does not have.
 @old
       if (xbus_init) begin
-        cmd     <= 32'd0;
+        cmd       <= 32'd0;
 @new
       if (xbus_init) begin
-        cmd     <= 32'd0;
-        da      <= 32'd0;
+        cmd       <= 32'd0;
+        da        <= 32'd0;
 @end
 
 @mutation disk-attention-moved-to-the-multiple-unit-bit
@@ -3474,15 +3483,19 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note which clears BUSY on purpose.  This is the live mutation that tests the
 @note same property, which is the rule CLAUDE.md sets --- replace an
 @note equivalent mutant with the smallest magnitude that is caught.
+@note **THE ANCHOR MOVED AT 69a2246**: the store into register 0 gained the
+@note seven other transfer error flops and the Reset-0o16 arm, and the block
+@note re-aligned its `<=`.  The mutation is unchanged --- `-RESET ERR` given
+@note a reach into the drive's own two flags that it does not have.
 @old
           2'd0: begin
-            cmd     <= wdata;
-            timeout <= 1'b0;
+            cmd       <= wdata;
+            timeout   <= 1'b0;
 @new
           2'd0: begin
-            cmd     <= wdata;
-            timeout <= 1'b0;
-            u_fault <= 8'd0;
+            cmd       <= wdata;
+            timeout   <= 1'b0;
+            u_fault   <= 8'd0;
             u_seek_err <= 8'd0;
 @end
 
@@ -3624,12 +3637,23 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note compared against main memory word for word.  The trace's pack is a
 @note function of both the block and the offset within it precisely so that a
 @note word from the wrong offset is a wrong word.
+@note
+@note **THE ANCHOR MOVED WITH THE TRACK SLICE**, which gave `ch_ra` a second
+@note job: on a Read All it addresses the sector the serialiser is putting on
+@note the bus, and on a Write All it addresses the word the parser is putting
+@note back.  So the rotation now reaches three paths and not one --- and the
+@note track's two are inverses of each other, so the round trip in
+@note `tb/cadr_disk_tb.cpp` cannot see it.  What sees it is the SEAM, which
+@note is untouched: the trace's `PAGE` rows for an ordinary Read, its `BLK
+@note write` rows for a Write All, and the byte-for-byte comparison of a
+@note serialised track against the store read back through the seam.
 @old
   assign chb_a  = 13'(ch_slot) * 13'(BLOCK_WORDS)
-                + 13'(ch_read ? ch_ra[7:0] : ch_i[7:0]);
+                + 13'((ch_read || ch_track) ? ch_ra[7:0] : ch_i[7:0]);
 @new
   assign chb_a  = 13'(ch_slot) * 13'(BLOCK_WORDS)
-                + 13'(ch_read ? {ch_ra[7:1], ~ch_ra[0]} : ch_i[7:0]);
+                + 13'((ch_read || ch_track) ? {ch_ra[7:1], ~ch_ra[0]}
+                                            : ch_i[7:0]);
 @end
 
 @mutation disk-the-walk-stops-one-ccw-early
@@ -3701,4 +3725,129 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
           if (s_header[ch_slot][27:0] != hdr_want) begin
 @new
           if (s_header[ch_slot ^ 5'd1][27:0] != hdr_want) begin
+@end
+
+@mutation disk-parser-takes-the-first-zero-it-sees
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note `after_sync` wants "a zero after at least sixty-four ones, which is how
+@note the controller finds one too --- its `PREAMBLE DETECT` fires on the
+@note first zero after ones, and the preamble is never shorter than eight
+@note bytes of them".  Eight bytes of VFO LOCK is where the sixty-four comes
+@note from.
+@note
+@note **A WELL-FORMED SECTOR CANNOT TEST THIS AND THAT IS WHY THE PROPERTY
+@note CHECK EXISTS.**  A sector opens with 488 ones and the first zero in it
+@note is the sync's, so on the trace's own two Write All sectors every
+@note threshold from 1 to 488 finds the same place.  `tb/cadr_disk_tb.cpp`
+@note therefore lays a DECOY in the first sector's preamble before it writes
+@note the track back --- four runs of ones that are too short, of eight,
+@note sixteen, thirty-two and forty-eight, each followed by a zero --- so a
+@note parser that accepts after fewer than forty-nine takes its header out of
+@note the preamble and the block it lays is not the block that was read.
+@note
+@note **FORTY-NINE AND NOT SIXTY-FOUR IS THE HONEST BOUND.**  Between 49 and
+@note 488 the mutation is a real equivalence on anything this format lays
+@note down, and no stimulus made of well-formed sectors could tell 64 from
+@note 63.  This is written at eight, which is inside every run the decoy
+@note leaves, and CLAUDE.md's rule applies: where a sweep shows an
+@note equivalence, the record is the smallest magnitude that is caught.
+@note
+@note Written as a subtraction from `F_ONES` rather than as a bare 8 so that
+@note the parameter stays read and lint has nothing to say --- the rule that
+@note lint must not be the thing doing the catching.
+@old
+                    end else if (ps_ones >= 7'(F_ONES)) begin
+@new
+                    end else if (ps_ones >= 7'(F_ONES) - 7'd56) begin
+@end
+
+@mutation disk-serialiser-swaps-a-byte-lane
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "Everything goes low-order bit first and low-order byte first", so byte
+@note `k` of a word is bits `8k` to `8k+7` and the sector's data field is the
+@note block's words laid down in that order.  The data and its checkword
+@note start at bytes 92 and 1,116, which are both zero modulo four, so the
+@note lane IS the byte offset taken modulo the word and nothing else.
+@note
+@note Exclusive-or rather than a different expression, so that both bits of
+@note the lane stay read.  It is caught three ways: the trace's three `PAGE`
+@note rows carry the first 3,072 bytes of a Read All, the property check
+@note compares all 20,160 against `disk_unit::format` written out in the
+@note testbench, and the round trip lays a block whose words are byte-swapped
+@note back onto the pack --- but the first of those is the one that matters,
+@note because it is the only one that is muir's.
+@old
+  assign lane_lo = 2'(trk_p);
+@new
+  assign lane_lo = 2'(trk_p) ^ 2'd1;
+@end
+
+@mutation disk-track-leaves-out-the-header-checkword
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "HEADER ECC - a 32-bit checkword", the fifth of the ten fields
+@note `sys/doc/disk.text` lists and four bytes wide.  Leaving it out does not
+@note shorten the sector --- 1,164 bytes is what the drive's jumpers are set
+@note to and the postamble absorbs it --- it moves every field after it four
+@note bytes earlier, which is what a formatter that wrote nine fields would
+@note put on the pack.
+@note
+@note The offsets are written as sums for exactly this reason, so that a
+@note field whose length is questioned moves the ones after it rather than
+@note leaving a hole.  `F_HECC` stays read and `s_hck` is still what the
+@note header's own checkword is compared against on a Read, so lint has
+@note nothing to say and the check does the catching.
+@old
+  localparam int unsigned F_RELOCK   = F_HECC + 4;               // 70, ones
+@new
+  localparam int unsigned F_RELOCK   = F_HECC + 0;               // 70, ones
+@end
+
+@mutation disk-track-starts-a-byte-late
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note The stream begins at byte zero of the sector holding the block the disk
+@note address names --- `track_bytes` builds it from `sector_image_laid`,
+@note whose first byte is the first of the preamble.
+@note
+@note A byte late is the mutation that a run of sixty-one identical preamble
+@note bytes would hide if the check only looked at the start: the first sixty
+@note bytes are still `ff` and the sector's LAST byte is the one that falls
+@note off.  What sees it is the sync, which arrives at track byte 60 instead
+@note of 61 --- inside the trace's own first `PAGE` row, word 15 --- and then
+@note every field of every sector after it.
+@old
+                      trk_b     <= da_blk;
+                      trk_p     <= 11'd0;
+@new
+                      trk_b     <= da_blk;
+                      trk_p     <= 11'd1;
+@end
+
+@mutation disk-write-all-lays-the-track-one-sector-along
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note "The sector goes where the heads are, and its header goes in it.  That
+@note is what a formatter does: the drive writes the track under the heads,
+@note and the addresses in the headers are the program's to choose."  So
+@note `lay_down_track` puts chunk `k` at `(from + k) % blocks_per_track`,
+@note where `from` is the block the disk address named --- the same block the
+@note serialiser starts at, which is why one expression sets both.
+@note
+@note Mutated on the WRITE side alone, so that it is not a relabelling the
+@note round trip would carry consistently: a Read All still starts where it
+@note should and a Write All lays every sector one block on.  The trace's two
+@note `BLK write` rows are compared against muir's own pack, and the property
+@note check's round trip then finds seventeen blocks holding their
+@note neighbours' sectors.
+@old
+                      trk_b     <= da_blk;
+                      trk_p     <= 11'd0;
+                      trk_gap   <= 1'b0;
+@new
+                      trk_b     <= (code == 4'o13) ? da_blk + 8'd1 : da_blk;
+                      trk_p     <= 11'd0;
+                      trk_gap   <= 1'b0;
 @end
