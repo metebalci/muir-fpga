@@ -11,11 +11,11 @@
 #
 # What is in it:
 #
-#   cadr-screen       maps the display's region of DDR and serves it over
+#   cadr-terminal       maps the display's region of DDR and serves it over
 #                       RFB, RFC 6143, to a VNC viewer; read-only.
-#                       src/cadr-screen.c's header says how, and
+#                       src/cadr-terminal.c's header says how, and
 #                       src/screen_geom.h is the geometry with its sources
-#   S85cadr-screen    starts it at boot, its log on the console
+#   S85cadr-terminal    starts it at boot, its log on the console
 #
 # **AND AN INIT SCRIPT, WHERE cadr-console HAS NONE.**  The console is a
 # person at a prompt and started at boot would hold a second master on the
@@ -37,23 +37,23 @@
 # viewer written for the purpose on a loopback socket, and then every record
 # in src/screen_mutations.txt, each of which the check must fail on.
 
-CADR_SCREEN_VERSION = 0
-CADR_SCREEN_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-screen/src
-CADR_SCREEN_SITE_METHOD = local
-CADR_SCREEN_LICENSE = AGPL-3.0-or-later
-CADR_SCREEN_DEPENDENCIES = cadr-common
+CADR_TERMINAL_VERSION = 0
+CADR_TERMINAL_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-terminal/src
+CADR_TERMINAL_SITE_METHOD = local
+CADR_TERMINAL_LICENSE = AGPL-3.0-or-later
+CADR_TERMINAL_DEPENDENCIES = cadr-common
 
-define CADR_SCREEN_BUILD_CMDS
+define CADR_TERMINAL_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
 endef
 
-define CADR_SCREEN_INSTALL_TARGET_CMDS
+define CADR_TERMINAL_INSTALL_TARGET_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install
 endef
 
-define CADR_SCREEN_INSTALL_INIT_SYSV
-	$(INSTALL) -D -m 0755 $(CADR_SCREEN_PKGDIR)/S85cadr-screen \
-		$(TARGET_DIR)/etc/init.d/S85cadr-screen
+define CADR_TERMINAL_INSTALL_INIT_SYSV
+	$(INSTALL) -D -m 0755 $(CADR_TERMINAL_PKGDIR)/S85cadr-terminal \
+		$(TARGET_DIR)/etc/init.d/S85cadr-terminal
 endef
 
 $(eval $(generic-package))

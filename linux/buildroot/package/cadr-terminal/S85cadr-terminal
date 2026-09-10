@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The screen at boot: cadr-screen serving the CADR's display over RFB on port
+# The screen at boot: cadr-terminal serving the CADR's display over RFB on port
 # 5900, which a VNC viewer reaches as display :0.
 #
 # S85, after S80cadr-disk-pack: the drive comes present first, so the console
@@ -26,17 +26,17 @@
 # program is told where to write instead.
 
 PORT=5900
-PIDFILE=/var/run/cadr-screen.pid
+PIDFILE=/var/run/cadr-terminal.pid
 
 start() {
-	printf "Starting cadr-screen: "
+	printf "Starting cadr-terminal: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-screen -- --port "$PORT" --log /dev/console
+		--exec /usr/bin/cadr-terminal -- --port "$PORT" --log /dev/console
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 
 stop() {
-	printf "Stopping cadr-screen: "
+	printf "Stopping cadr-terminal: "
 	start-stop-daemon -K -q -p "$PIDFILE"
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 }

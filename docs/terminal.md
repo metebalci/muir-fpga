@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # The screen
 
-`cadr-screen`: the program on the processing system that shows the CADR's
+`cadr-terminal`: the program on the processing system that shows the CADR's
 display to a VNC viewer. Written at the slice, muir at `dad7249`, the fabric
 at the commit that added this file.
 
@@ -19,14 +19,14 @@ and the keyboard and mouse later, when the I/O board exists.
 
 ## What it is, and what it is not
 
-    cadr-screen [--port N] [--bind ADDR] [--log PATH] [--bow]
+    cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
                   [--window ADDR] [--interval-ms N] [--no-rre]
                   [--no-guard] [--once]
 
 It maps 128 KB at `0x1C00_0000` through `/dev/mem`, copies the visible 23,112
 words out of it once a frame while anybody is watching, and serves them over
 RFB --- RFC 6143, what a VNC viewer speaks --- on port 5900, which is display
-`:0`. `S85cadr-screen` starts it at boot.
+`:0`. `S85cadr-terminal` starts it at boot.
 
 **It is READ-ONLY.** No keyboard, no mouse, no pointer. A viewer's `KeyEvent`
 and `PointerEvent` are read off the wire, counted and dropped, and the program
@@ -125,7 +125,7 @@ loopback socket. This one is on a board at the end of a hundred-megabit link
 and the measurement goes the other way. **Which one a rectangle goes in is
 decided by measuring both and taking the smaller**, so a screen RRE would lose
 on costs the comparison and nothing else. Measured by `make -C
-linux/buildroot/package/cadr-screen/src check`, a whole screen at 32 bits a
+linux/buildroot/package/cadr-terminal/src check`, a whole screen at 32 bits a
 pixel:
 
     a real CADR screen (muir's, System 100)   Raw 2,958,336   RRE     55,784   53x
@@ -149,7 +149,7 @@ channel's, and nothing in the fabric has to know a viewer exists.
 
 ## What the check holds to
 
-`make -C linux/buildroot/package/cadr-screen/src check`, on the build host,
+`make -C linux/buildroot/package/cadr-terminal/src check`, on the build host,
 with no board: the server driven from screens made in the check, and a viewer
 written for the purpose on a real loopback socket. **420 checks, 0 failures**,
 then **15 mutations, 15 caught, 0 survived, 0 broken.** The whole thing takes
@@ -236,14 +236,14 @@ already needs.
 
 What the console should show at boot, after `S80cadr-disk-pack`'s lines:
 
-    Starting cadr-screen: OK
-    cadr-screen: the EMIO tally reads 0x8000.... 0x8000....: a fabric with the
+    Starting cadr-terminal: OK
+    cadr-terminal: the EMIO tally reads 0x8000.... 0x8000....: a fabric with the
       processing system in it; the display's window may be read
-    cadr-screen: the display's window is 128 KB at 0x1c000000; the screen is
+    cadr-terminal: the display's window is 128 KB at 0x1c000000; the screen is
       768x963, 24 words a line, 23112 of the window's 32768 words, one bit a
       pixel, a one bit WHITE (MODE BOW clear, the fabric's power-on state)
-    cadr-screen: the screen is BLANK: every visible word zero (0x00000000) ...
-    cadr-screen: RFB on 0.0.0.0:5900 --- display :0 to a viewer. NO
+    cadr-terminal: the screen is BLANK: every visible word zero (0x00000000) ...
+    cadr-terminal: RFB on 0.0.0.0:5900 --- display :0 to a viewer. NO
       AUTHENTICATION ... READ-ONLY ... Encodings: Raw and RRE, whichever is
       smaller for each rectangle
 
@@ -254,8 +254,8 @@ identical pixels cannot tell "the machine has not drawn" from "this program is
 reading the wrong address". When the machine draws, one more line says so and
 nothing further is printed per frame:
 
-    cadr-screen: the screen has content: 7572 of 739584 pixels lit
-    cadr-screen: viewer 192.168.x.x:nnnnn: connected; 1 watching
+    cadr-terminal: the screen has content: 7572 of 739584 pixels lit
+    cadr-terminal: viewer 192.168.x.x:nnnnn: connected; 1 watching
 
 **From a viewer**, on any machine that can reach the board:
 
@@ -277,8 +277,8 @@ notification and a blinking cursor, one per cent of the pixels lit --- is what
 muir shows at microcycle 25,000,000 and after, and is what the board should
 come to.
 
-**What to copy where.** Nothing new on the card: `cadr-screen` and
-`S85cadr-screen` are in the root filesystem, which is the initramfs, so it is
+**What to copy where.** Nothing new on the card: `cadr-terminal` and
+`S85cadr-terminal` are in the root filesystem, which is the initramfs, so it is
 `rootfs.cpio.uboot` that changes and it travels the way it always does ---
 `/srv/tftp` on the network path, the card's own copy on the card path
 (`docs/boot.md`).
@@ -304,13 +304,13 @@ come to.
 **One line in the top-level `Makefile`.** `buildroot-rebuild` names each of our
 packages so that a change to its sources is noticed --- "Buildroot does not
 watch our files" --- and it names `cadr-common`, `cadr-console` and
-`cadr-disk-pack`. `cadr-screen-reconfigure` belongs beside them. The first
+`cadr-disk-pack`. `cadr-terminal-reconfigure` belongs beside them. The first
 build after this slice works without it, because a new package has no stamp;
-**the second one, after an edit under `package/cadr-screen/src/`, silently
+**the second one, after an edit under `package/cadr-terminal/src/`, silently
 builds the old sources.** Measured, rather than argued from the comment: a
-marker string added to `cadr-screen.c` and a plain `make` in the Buildroot
+marker string added to `cadr-terminal.c` and a plain `make` in the Buildroot
 tree left the marker out of the binary on the target, and
-`cadr-screen-reconfigure` first put it in. That file was another session's
+`cadr-terminal-reconfigure` first put it in. That file was another session's
 while this slice ran and was deliberately not touched.
 
 **The image cost.** `rootfs.cpio` 6,251,520 -> 6,279,680, **+28,160 bytes

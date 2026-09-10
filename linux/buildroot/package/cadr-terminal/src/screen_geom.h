@@ -70,7 +70,7 @@
 // this program's `--bow` and its default is the fabric's own power-on
 // state, zero, which is also muir's `SimpleTv::default` and the mode both
 // reference programs leave it in (docs/tv.md, "the mode register stays 0
-// ... for the whole run").  docs/screen.md says what it would take to read
+// ... for the whole run").  docs/terminal.md says what it would take to read
 // it instead of assuming it.
 
 #ifndef SCREEN_GEOM_H

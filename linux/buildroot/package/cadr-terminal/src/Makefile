@@ -30,9 +30,9 @@
 # gitignored with the rest of vendor/, so a fresh clone has the check's
 # hand-computed anchors and its synthetic screen and says the real ones are
 # absent --- the same shape as `rtl_sys` skipping when the release archive is
-# not there.  docs/screen.md has the three commands that make them.
+# not there.  docs/terminal.md has the three commands that make them.
 
-PROGRAMS := cadr-screen
+PROGRAMS := cadr-terminal
 CORE     := screen_frame.c screen_rfb.c screen_server.c
 HEADERS  := screen_geom.h screen_frame.h screen_rfb.h screen_server.h
 
@@ -56,8 +56,8 @@ CFLAGS += -Wall -Wextra -std=gnu11
 
 all: $(PROGRAMS)
 
-cadr-screen: cadr-screen.c $(CORE) $(HEADERS)
-	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -o $@ cadr-screen.c $(CORE) $(COMMON_LINK)
+cadr-terminal: cadr-terminal.c $(CORE) $(HEADERS)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -o $@ cadr-terminal.c $(CORE) $(COMMON_LINK)
 
 install: all
 	install -d $(DESTDIR)/usr/bin
