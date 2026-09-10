@@ -717,6 +717,31 @@ def first_problem(out):
     return "(no output)"
 
 
+def lint_verdict(out):
+    """A lint that exited non-zero: caught, or a mutant that did not compile?
+
+    For a check that IS lint, the exit status cannot tell the two apart, and
+    it did not: `the-request-path-reaches-no-pin` was reported CAUGHT at the
+    request path's slice on a `@new` that left a dangling comma --- a syntax
+    error, not a lint finding.  A build failure must never read as caught;
+    the simulation path has made it BROKEN since the runner was written and
+    this path had not.
+
+    The tell is Verilator's own vocabulary, measured on 5.032: a lint
+    finding is `%Warning-CODE:` and the run ends `%Error: Exiting due to N
+    warning(s)`; a mutant that does not compile prints `%Error:` (a syntax
+    error) or `%Error-CODE:` (a pin that does not exist, an unsupported
+    construct) and ends `... N error(s)`.  So any `%Error` line that is not
+    the summary is the build failing, and the verdict is BROKEN with that
+    line; otherwise the warning is the catch.
+    """
+    for line in out.split("\n"):
+        t = line.strip()
+        if t.startswith("%Error") and not t.startswith("%Error: Exiting due to"):
+            return BROKEN, t
+    return CAUGHT, first_problem(out)
+
+
 def build_and_run(args, work, check):
     """Verilate the check in `work` and run it.  Returns a verdict."""
     spec = CHECKS[check]
@@ -846,7 +871,9 @@ def arty_check(args, work):
         cmd += extra_sources
         rc, out = run(cmd, work)
         if rc != 0:
-            return CAUGHT, first_problem(out)
+            # A lint finding is the catch; a mutant that does not compile is
+            # not a verdict on the check.  See `lint_verdict`.
+            return lint_verdict(out)
         ran += 1
     if ran == 0:
         return BROKEN, "none of the board configurations could be linted"
@@ -901,7 +928,8 @@ def cables_check(args, work):
            "rtl/cadr_cables_lint.sv"]
     rc, out = run(cmd, work)
     if rc != 0:
-        return CAUGHT, first_problem(out)
+        # The same lint-shaped path as `arty_check`: see `lint_verdict`.
+        return lint_verdict(out)
 
     # `current`, on the copy: keep what the mutation made, regenerate over it,
     # and see whether the generator disagrees.
@@ -1056,16 +1084,30 @@ def self_test(args):
     # all" fixture would be a rustc error rather than a lint one, a less
     # faithful stand-in for the case being covered; `kind: tcl` has no build at
     # all, so that arm would have nothing to test. Both are excluded here.
+    # And not a lint-only check either: there "does not build" and "caught"
+    # were once the same exit status, and the arm below is what tells them
+    # apart now; this arm wants a check whose build is a step of its own.
     fabric = [m for m in plain
-              if CHECKS[m.check].get("kind") not in ("generator", "tcl")]
+              if CHECKS[m.check].get("kind") not in ("generator", "tcl", "lint")]
     if not fabric:
         die("--self-test wants at least one mutation of the fabric")
     cheap = min(fabric, key=lambda m: len(CHECKS[m.check]["sources"]))
+    # A lint-only check, for the arm that plants a mutant which does not
+    # compile where the check IS lint.  Measured at the request path's slice:
+    # a `@new` with a dangling comma was reported CAUGHT, because lint failing
+    # and lint refusing to parse are one exit status.  `arty` is the one such
+    # check; the fixture is derived from whichever of its records comes
+    # first, so it does not rot when a record moves.
+    linted = [m for m in plain if CHECKS[m.check].get("kind") == "lint"]
 
     unappliable = record(cheap).replace(
         "@old\n", "@old\n  this line is not in the file\n", 1)
     unbuildable = re.sub(r"@new\n.*?@end", "@new\n  not verilog at all\n@end",
                          record(cheap), flags=re.S)
+    # The same mutant --- a dangling brace, the shape that was reported
+    # caught --- aimed at a check that is lint.
+    unparseable = (re.sub(r"@new\n.*?@end", "@new\n  };\n@end",
+                          record(linted[0]), flags=re.S) if linted else None)
     # After the @mutation line, not before it: a field ahead of the record it
     # belongs to is outside every record, which the parser rightly refuses.
     head, rest = record(cheap).split("\n", 1)
@@ -1082,6 +1124,8 @@ def self_test(args):
     cases = [
         ("a mutation that does not apply", unappliable, 1, "DID NOT APPLY"),
         ("a mutation lint rejects", unbuildable, 1, "DID NOT BUILD"),
+    ] + ([("a lint-only mutant that does not parse", unparseable, 1,
+           "DID NOT BUILD")] if unparseable else []) + [
         ("a survivor with nothing recorded", survived, 1, "SURVIVED"),
         ("a hole that has closed", closed, 1, "A HOLE THAT CLOSED"),
         ("a hole that is still open", still_open, 0, "known hole"),
