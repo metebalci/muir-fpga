@@ -61,7 +61,7 @@ struct screen_server {
 	unsigned long connects, drops, refused;
 	unsigned long input_events;
 	// What has gone out, by encoding, and what Raw would have cost for the
-	// rectangles RRE was used on: the measurement `docs/screen.md` quotes.
+	// rectangles RRE was used on: the measurement `docs/terminal.md` quotes.
 	unsigned long long sent_raw, sent_rre, saved_by_rre;
 	unsigned long rects_raw, rects_rre;
 	// And what RRE WOULD have cost for the rectangles it lost, so that the

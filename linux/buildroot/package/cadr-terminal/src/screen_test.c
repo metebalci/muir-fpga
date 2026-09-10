@@ -8,7 +8,7 @@
 //
 // **WHAT DRIVES IT.**  `screen_server.c` never reads DDR --- it is handed a
 // `struct screen_frame` --- so the check builds screens in memory, hands them
-// over exactly as `cadr-screen.c` hands over what it read out of the window,
+// over exactly as `cadr-terminal.c` hands over what it read out of the window,
 // and connects a viewer written here over a real TCP socket on the loopback
 // address.  Both ends are in this process, so the check pumps them by hand:
 // `pump` calls `screen_server_poll` and then reads whatever has arrived.
@@ -1257,7 +1257,7 @@ int main(int argc, char **argv)
 			check_disconnect_mid_frame(real_a);
 		} else {
 			printf("--- no real screens at %s: the check ran on its anchors and its own "
-			       "patterns. docs/screen.md has the three commands that make them\n",
+			       "patterns. docs/terminal.md has the three commands that make them\n",
 			       screens);
 		}
 	} else {

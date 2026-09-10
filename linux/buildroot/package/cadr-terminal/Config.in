@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
-config BR2_PACKAGE_CADR_SCREEN
-	bool "cadr-screen"
+config BR2_PACKAGE_CADR_TERMINAL
+	bool "cadr-terminal"
 	select BR2_PACKAGE_CADR_COMMON
 	help
 	  The screen: the program on the processing system that shows the
