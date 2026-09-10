@@ -30,12 +30,14 @@
 // A move is the four writes ADDR, TAG, SLOT, CTL and a read of CTL; the
 // pack side acts on the CTL beat one tick later and latches the other three
 // at that instant, so they may be rewritten at once.  A REFUSED move moved
-// nothing and issued no burst.  **THE REFUSAL IS PER SLOT**: with
-// `ch_active` up and `waiting` down it means the slot named is the one the
-// walk is on, and the answer is another slot, not a wait --- a move on any
-// other slot is taken during a walk.  The other refusals --- unaligned, a
-// slot past the store, two bits at once, busy --- are bugs in the caller and
-// are reported as such.
+// nothing and issued no burst.  **THE REFUSAL IS PER SLOT**: a move on the
+// slot the walk is on is refused, a move on any other slot is taken during
+// a walk, and the answer is another slot for a fetch or a later pass for a
+// write-back, never a wait.  The `ch_active` and `waiting` bits read back
+// beside `refused` are live and later than the beat, so they do not say
+// why the move was refused (`pack_side.c` at the refusal).  The other
+// refusals --- unaligned, a slot past the store, two bits at once, busy ---
+// are bugs in the caller and are reported as such.
 //
 // The face is reached through two function pointers so that the host test
 // can put a model of the RTL behind them and the board puts `/dev/mem`.
