@@ -343,15 +343,41 @@ CHECKS = {
     # both files are the same module and the two checks see different halves
     # of it.
     #
+    # WITH THE PACK SIDE UNDERNEATH.  `tb/cadr_disk_harness.sv` wires
+    # `rtl/cadr_disk_pack.sv` under the controller as the board does, and the
+    # block store is filled only through it --- so a mutation of the pack
+    # side can be aimed here too, where the whole trace sees it, as well as at
+    # `disk_pack` below, where it is cheap.  The harness is wiring, in
+    # `extra`.
+    #
     # **IT IS THE SLOWEST CHECK IN THE LIST AND THAT IS A CONSTANT AND NOT A
     # WASTE**: the trace holds one hang run out to 2.56 s, which is
-    # 512,000,000 ticks, and the fabric counts every one.  A minute a mutation.
+    # 512,000,000 ticks, and the fabric counts every one.  Two minutes a
+    # mutation.
     "disk": {
-        "sources": ["rtl/cadr_disk_controller.sv"],
-        "top": "cadr_disk_controller",
+        "sources": ["rtl/cadr_disk_controller.sv", "rtl/cadr_disk_pack.sv"],
+        "extra": ["tb/cadr_disk_harness.sv"],
+        "top": "cadr_disk_harness",
         "tb": "tb/cadr_disk_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": "disk.golden",
+    },
+    # The pack side held to the property: a record fetched over `S_AXI_HP2`
+    # is what the CADR's own transfer then moves into main memory, a block the
+    # CADR wrote is the record written back, exactly one handshake per
+    # channel per burst, a refusal moves nothing, a slot mid-fill is missed.
+    # `tb/cadr_axi_master_tb.cpp`'s situation: no muir reference, the
+    # testbench is the stimulus and a counting AXI3 slave the observer.  Same
+    # harness as `disk`; the controller is in `sources` because the one
+    # controller-side change the pack side needed --- the tag write that takes
+    # a block away --- is held here and nowhere else.
+    "disk_pack": {
+        "sources": ["rtl/cadr_disk_pack.sv", "rtl/cadr_disk_controller.sv"],
+        "extra": ["tb/cadr_disk_harness.sv"],
+        "top": "cadr_disk_harness",
+        "tb": "tb/cadr_disk_pack_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": None,
     },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
@@ -755,8 +781,8 @@ def arty_check(args, work):
 
     FIVE TIMES, BECAUSE THERE ARE FIVE BOARDS, exactly as `build/arty.pass`
     runs it. `PROBE_DEPTH` and `DDR` are both zero by default and the generate
-    blocks that instantiate `cadr_probe.sv`, `cadr_ps7.sv`, `cadr_axi_master.sv`
-    and `cadr_axi_widen.sv` are then not elaborated at all, so a lint of the
+    blocks that instantiate `cadr_probe.sv`, `cadr_ps7.sv`, `cadr_axi_master.sv`,
+    `cadr_axi_widen.sv` and `cadr_disk_pack.sv` are then not elaborated at all, so a lint of the
     default says nothing whatever about the two configurations the board is
     actually built in. A branch only one build reaches is a branch only one
     build checks --- and until the widening was pulled out into a module, that
@@ -778,10 +804,13 @@ def arty_check(args, work):
         # The instrumented one.
         (["-GPROBE_DEPTH=1024"], ["tb/cadr_arty_stubs.sv"],
          ["rtl/cadr_probe.sv"]),
-        # And the one with the processing system behind the memory port.
+        # And the one with the processing system behind the memory port,
+        # and the disk's pack side on the processing system's other two
+        # ports.
         (["-GDDR=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
-          "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv"]),
+          "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
+          "rtl/cadr_disk_pack.sv"]),
         # And the two the witness builds, which are branches only they
         # reach: nothing else elaborates `cadr_prove.sv` at all, and neither
         # of them elaborates the machine's own drive of the port.

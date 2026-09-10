@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Drives rtl/cadr_disk_controller.sv from the reference trace and compares the
-// register face. The trace is written by golden/src/disk.rs out of muir's own
-// disk_controller::Controller, driven register by register, and carries the
-// stimulus --- the drive, its read-only switch, whether its time is charged
-// --- as well as the expected outputs.
+// Drives the disk controller with its pack side underneath ---
+// `tb/cadr_disk_harness.sv`, which is `rtl/cadr_disk_controller.sv` and
+// `rtl/cadr_disk_pack.sv` wired as the board wires them --- from the
+// reference trace and compares the register face. The trace is written by
+// golden/src/disk.rs out of muir's own disk_controller::Controller, driven
+// register by register, and carries the stimulus --- the drive, its read-only
+// switch, whether its time is charged, and the pack --- as well as the
+// expected outputs.
 //
 // WHAT THIS CHECK HOLDS TO. Every `CYC` read row's read-back, and after every
 // `START` and every `INIT` the whole observable face: the status word, the
@@ -13,20 +16,35 @@
 // read back through four bus cycles of its own. And, since the channel
 // landed, everything a transfer leaves behind it: every `PAGE` row word for
 // word against a modelled main memory the controller reaches only through its
-// own bus master, and every `BLK write` row against the block store, read back
-// through the seam `S_AXI_HP2` will one day use.
+// own bus master, and every `BLK write` row against the block store --- which
+// is now READ BACK THE WAY THE BOARD WILL READ IT: the pack side writes the
+// slot back over `S_AXI_HP2` to the address the row names, into a modelled
+// DDR this testbench seeded with poison, and the record there is compared.
 //
-// **THE MODEL MEMORY AND THE BLOCK STORE COME FROM THE STIMULUS AND NEVER
-// FROM THE DUT.** CLAUDE.md's rule, twice over. Main memory here is filled
-// from the trace's `MEMPAGE` and `MEMW` rows --- what the PROGRAM put there,
-// never what the controller wrote --- and every destination page is filled
-// before the read that is meant to overwrite it, with a word that is a
-// function of both the page and the offset. So a transfer that never happened
-// reads back as poison and not as the data, and a transfer that went to the
-// wrong page reads back as some other page's poison. The block store is filled
-// from `BLK load` and `BLK lay` rows, which are what a formatter and the pack's
-// vendor put on the pack, and each of those words is a function of both the
-// block and the offset for the same reason.
+// **THE MODEL MEMORY, THE DDR AND THE BLOCK STORE COME FROM THE STIMULUS AND
+// NEVER FROM THE DUT.** CLAUDE.md's rule, three times over. Main memory here
+// is filled from the trace's `MEMPAGE` and `MEMW` rows --- what the PROGRAM
+// put there, never what the controller wrote --- and every destination page
+// is filled before the read that is meant to overwrite it, with a word that
+// is a function of both the page and the offset. So a transfer that never
+// happened reads back as poison and not as the data, and a transfer that went
+// to the wrong page reads back as some other page's poison. The block store
+// is filled from `BLK load` and `BLK lay` rows, which are what a formatter
+// and the pack's vendor put on the pack: each row's 259 words are put in the
+// modelled DDR at the address the ROW names --- the generator's choice,
+// spread across the address bits --- and the fabric is told that address over
+// `M_AXI_GP0` and fetches them itself. Nothing here writes the store.
+//
+// **THE PACK SIDE'S EVERY MOVE COSTS THE SAME TICKS, AND THE COST IS
+// MEASURED, NOT ASSUMED.** A fetch is nine AXI bursts and some hundreds of
+// ticks and it sits inside a group of rows the trace puts at one instant, so
+// the schedule below has to know exactly what it costs or the rows after it
+// land off their instant. So the slave answers with FIXED delays here ---
+// the varying ones are `tb/cadr_disk_pack_tb.cpp`'s business --- and the
+// pre-roll runs one fetch, one write-back and one register write into a
+// scratch slot the trace does not use and takes their lengths as the budget.
+// Every move is then padded to its budget, and one that runs over fails the
+// run.
 //
 // **NOTHING A COMMAND DOES IS EXEMPT ANY MORE.** `0o02` Read All and `0o13`
 // Write All go round the whole track as BYTES rather than as blocks, and the
@@ -63,7 +81,10 @@
 //
 // **THE GROUP IS ANCHORED ON ITS LAST START AND NOT ON ITS FIRST ROW**, and
 // that is not a detail: a START is the only thing in this module that loads a
-// timer, so it is the only row whose instant has to be exact. The hang in
+// timer, so it is the only row whose instant has to be exact.  The instant of
+// a store is the tick its request is first up; the controller takes the store
+// two ticks later and loads its timers two ticks short to say so, and a write
+// here costs four ticks so that the read after it sees the registers. The hang in
 // phase 0 is the twenty-seventh cycle at instant 0 and its timeout is read
 // 512,000,000 ticks later, either side of the boundary --- place the group
 // forward from instant 0 and the timer expires 26 ticks late and the check
@@ -91,7 +112,7 @@
 // the run says how many times it was taken.
 //
 // HOW LONG A WALK TAKES IS THE FABRIC'S BUSINESS, so the rows after a START
-// wait for the CHANNEL'S OWN REQUEST LINE to go quiet. That is a bus signal
+// wait for the CHANNEL'S OWN INTERLOCK to go quiet. That is a bus signal
 // and not an answer: a master that has stopped asking has finished, and
 // nothing about the controller's state is read to decide it. A walk that
 // never stops asking hits the cap and the run says so rather than hanging.
@@ -110,11 +131,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <string>
 #include <vector>
 
-#include "Vcadr_disk_controller.h"
+#include "Vcadr_disk_harness.h"
+#include "cadr_pack_side.h"
 #include "verilated.h"
+
+using namespace pack_side;
 
 namespace {
 
@@ -150,8 +175,8 @@ const long WALK_CAP = 1 << 20;
 // still cost what the dry pass gave them.
 const int WALK_QUIET = 4;
 
-// The store's 260 places in a slot: 0..255 the block, then these.
-const int ST_HEADER = 256, ST_HCK = 257, ST_DCK = 258, ST_TAG = 259;
+// The record's three words after the block, as the row and the DDR have them.
+const int ST_HEADER = 256, ST_HCK = 257, ST_DCK = 258;
 
 // Whether a store into START loads a timer, which is the only thing whose
 // instant has to be exact: a hang starts the 2.56 s counter, a seek or a
@@ -194,7 +219,7 @@ const unsigned TIME_BITS = BUSY_BITS | (1u << 2) | (1u << 1);
 
 struct Row {
   char kind;        // 'C' CYC, 'I' INIT, 'A' ATTACH, 'R' RO, 'T' TIMED, 'L' LAY
-                    // 'B' BLK, 'M' MEMPAGE, 'W' MEMW, 'P' PAGE
+                    // 'B' BLK, 'M' MEMPAGE, 'W' MEMW, 'P' PAGE, 'N' NEED
   long n;
   long now;
   int reg, wr;
@@ -202,10 +227,12 @@ struct Row {
   unsigned status, da, lma, ecc;
   int intr, pages;
   int unit, flag;
-  // BLK: why (0 stimulus, 1 an expected output), slot, the address, the three
-  // words.  MEMPAGE/PAGE: the page.  MEMW: the address and the word.
+  // BLK: why (0 stimulus, 1 an expected output), slot, the block's address
+  // in DDR, the disk address, the three words.  MEMPAGE/PAGE: the page.
+  // MEMW: the address and the word.  NEED: the disk address and its lba.
   int slot, cyl, head, blk, expected;
-  unsigned page, addr, word;
+  unsigned page, addr, word, lba;
+  unsigned long long at;
   size_t words;     // where the 256 words live in `bulk`
 };
 
@@ -232,7 +259,9 @@ int main(int argc, char **argv) {
   long h_timeout = -1, h_rev = -1, h_sector = -1, h_index = -1, h_pulse = -1;
   long h_ticks = -1;   // the trace's own last instant, in ticks
   long h_memory = -1, h_blockw = -1, h_slots = -1;
+  long h_record = -1, h_align = -1, h_needed = -1;
   long blk_rows = 0, mempage_rows = 0, memw_rows = 0, page_rows = 0;
+  long need_rows = 0;
 
   char line[8192];
   // BLK, MEMPAGE and PAGE rows are 256 words wide; read them with a big buffer.
@@ -263,6 +292,9 @@ int main(int argc, char **argv) {
         else if (k == "memory_words") h_memory = a;
         else if (k == "block_words") h_blockw = a;
         else if (k == "slots") h_slots = a;
+        else if (k == "record_bytes") h_record = a;
+        else if (k == "record_align") h_align = a;
+        else if (k == "blocks_needed") h_needed = a;
       }
       continue;
     }
@@ -321,23 +353,24 @@ int main(int argc, char **argv) {
       last_now = r.now;
       rows.push_back(r);
     } else if (std::strncmp(s, "BLK ", 4) == 0) {
-      // `BLK why slot lba cyl head blk header hck dck w0..w255`.  `why` is the
-      // whole of the difference between stimulus and an expected output, and
-      // the generator's own comment says the first model written against this
-      // trace got it wrong for want of it.
+      // `BLK why slot at lba cyl head blk header hck dck w0..w255`.  `why`
+      // is the whole of the difference between stimulus and an expected
+      // output, and the generator's own comment says the first model written
+      // against this trace got it wrong for want of it.  `at` is the block's
+      // address in DDR: where the record is put for the fabric to fetch, or
+      // where the fabric is sent to write it back.
       r.kind = 'B';
       char why[16];
-      unsigned lba;
-      if (std::sscanf(s, "BLK %15s %d %x %x %x %x %x %x %x", why, &r.slot,
-                      &lba, (unsigned *)&r.cyl, (unsigned *)&r.head,
-                      (unsigned *)&r.blk, &r.page, &r.addr, &r.word) != 9) {
+      if (std::sscanf(s, "BLK %15s %d %llx %x %x %x %x %x %x %x", why, &r.slot,
+                      &r.at, &r.lba, (unsigned *)&r.cyl, (unsigned *)&r.head,
+                      (unsigned *)&r.blk, &r.page, &r.addr, &r.word) != 10) {
         std::fprintf(stderr, "%s: cannot parse: %s", path, s);
         return 2;
       }
       r.expected = (std::strcmp(why, "write") == 0);
-      // The 256 words after the nine fields.
+      // The 256 words after the ten fields.
       const char *p = s;
-      for (int k = 0; k < 10; ++k) {
+      for (int k = 0; k < 11; ++k) {
         p = std::strchr(p, ' ');
         if (!p) { std::fprintf(stderr, "%s: short BLK row\n", path); return 2; }
         ++p;
@@ -390,6 +423,16 @@ int main(int argc, char **argv) {
       }
       ++memw_rows;
       rows.push_back(r);
+    } else if (std::strncmp(s, "NEED ", 5) == 0) {
+      // A block the START before it read off the pack.
+      r.kind = 'N';
+      if (std::sscanf(s, "NEED %x %x %x %x", &r.lba, (unsigned *)&r.cyl,
+                      (unsigned *)&r.head, (unsigned *)&r.blk) != 4) {
+        std::fprintf(stderr, "%s: cannot parse: %s", path, s);
+        return 2;
+      }
+      ++need_rows;
+      rows.push_back(r);
     } else {
       std::fprintf(stderr, "%s: unknown row: %s", path, s);
       return 2;
@@ -425,14 +468,29 @@ int main(int argc, char **argv) {
       ++wrong;
     }
   // The store has to be big enough for every block the program watches at
-  // once.  A trace that grew past the parameter would otherwise show up as a
-  // missing block in the middle of a walk.
+  // once, AND ONE MORE: the slot the pre-roll measures a fetch and a
+  // write-back in, which no row may use.  A trace that grew past the
+  // parameter would otherwise show up as a missing block in the middle of a
+  // walk.
   const long SLOTS = 24;
-  if (h_slots < 0 || h_slots > SLOTS) {
+  const int SCRATCH = SLOTS - 1;
+  if (h_slots < 0 || h_slots >= SLOTS) {
     std::fprintf(stderr,
                  "FAIL: the trace watches %ld blocks and the block store has "
-                 "%ld slots\n",
+                 "%ld slots, one of which this testbench needs for itself\n",
                  h_slots, SLOTS);
+    ++wrong;
+  }
+  if (h_record != RECORD_WORDS * 4 || h_align != (long)RECORD_ALIGN) {
+    std::fprintf(stderr,
+                 "FAIL: the trace's record is %ld bytes aligned to %ld and "
+                 "the pack side's is %d aligned to %u\n",
+                 h_record, h_align, RECORD_WORDS * 4, RECORD_ALIGN);
+    ++wrong;
+  }
+  if (h_needed != need_rows) {
+    std::fprintf(stderr, "FAIL: the header says %ld blocks needed and there "
+                         "are %ld NEED rows\n", h_needed, need_rows);
     ++wrong;
   }
   if (h_memory <= 0) {
@@ -446,7 +504,26 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  auto *dut = new Vcadr_disk_controller;
+  auto *dut = new Vcadr_disk_harness;
+
+  // ---- the pack side's far ends --------------------------------------------
+  //
+  // FIXED delays on both faces, so that every move costs the same ticks: see
+  // the note at the top.  The varying ones are the property check's.
+  Ddr ddr;
+  Hp2Slave hp2;
+  hp2.ddr = &ddr;
+  hp2.vary = false;
+  hp2.fixed_ready = 0;
+  hp2.fixed_resp = 1;
+  hp2.complain = [](const char *w) {
+    std::fprintf(stderr, "the pack side's slave: %s\n", w);
+  };
+  Gp0Master gp0;
+  gp0.vary = false;
+  gp0.complain = [](const char *w) {
+    std::fprintf(stderr, "the pack side's registers: %s\n", w);
+  };
 
   // ---- main memory, as the PROGRAM fills it ------------------------------
   //
@@ -460,6 +537,7 @@ int main(int argc, char **argv) {
   long tick = 0;
   int d_sel = 0, d_rq = 0, d_wr = 0, d_init = 0, d_rst = 1;
   unsigned d_phys = 0, d_wdata = 0;
+  // The drive as the trace has attached it: what the DRIVE register holds.
   unsigned d_present = 0, d_ro = 0;
   int d_timed = 0;
   // What `mine` and `which` will hold during the NEXT tick: the address match
@@ -483,9 +561,6 @@ int main(int argc, char **argv) {
     dut->dev_write = d_wr;
     dut->phys = d_phys;
     dut->wdata = d_wdata;
-    dut->drive_present = d_present;
-    dut->drive_read_only = d_ro;
-    dut->drive_timed = d_timed;
     dut->clk = 0;
     dut->eval();
     if (sample) sampled = dut->rdata;
@@ -518,9 +593,12 @@ int main(int argc, char **argv) {
     }
     if (dut->store_miss) ++miss_seen;
 
+    if (d_rst) hp2.reset(dut); else hp2.drive(dut);
     dut->eval();
+    hp2.sample(dut);
     dut->clk = 1;
     dut->eval();
+    if (!d_rst) hp2.after_edge(dut);
     ++tick;
     live_sel = d_sel;
     live_reg = d_sel ? (int)(d_phys & 3u) : -1;
@@ -530,32 +608,120 @@ int main(int argc, char **argv) {
   // Reset, then the pre-roll that puts the spindle in phase, stopping SLACK
   // ticks short of instant zero so that the first group has room in front of
   // the START it is anchored on.
+  gp0.quiet(dut);
   for (long i = 0; i < RESET_TICKS; ++i) run_tick(false);
   d_rst = 0;
-  while (tick < K - SLACK) run_tick(false);
 
-  // The block store's seam, one word a tick each way.  `store_rdata` is a
-  // tick behind, as a block RAM's read is, so a read costs exactly one tick
-  // and the word is there when it ends.
-  auto store_write = [&](int slot, int addr, unsigned v) {
-    dut->store_we = 1;
-    dut->store_slot = slot;
-    dut->store_addr = addr;
-    dut->store_wdata = v;
-    run_tick(false);
-    dut->store_we = 0;
+  // ---- the pack side, as Linux drives it ----------------------------------
+  //
+  // A register write or read over GP0, and a move of a block over HP2 asked
+  // for through the registers and waited out on the status word.  Each is
+  // run to completion and then PADDED to its budget, so that it costs the
+  // schedule exactly what the dry pass charged for it.
+  auto tick_fn = [&]() { run_tick(false); };
+  long T_REG = 0, T_FETCH = 0, T_WRITEBACK = 0;
+  int overran = 0;
+  auto pad_to = [&](long began, long budget, const char *what) {
+    if (budget > 0 && tick - began > budget) {
+      std::fprintf(stderr,
+                   "FAIL: %s took %ld ticks where the pre-roll measured %ld\n",
+                   what, tick - began, budget);
+      ++overran;
+    }
+    while (tick < began + budget) run_tick(false);
   };
-  auto store_read = [&](int slot, int addr) -> unsigned {
-    dut->store_we = 0;
-    dut->store_slot = slot;
-    dut->store_addr = addr;
-    run_tick(false);
-    return dut->store_rdata;
+  auto reg_write = [&](unsigned r, unsigned v) {
+    gp0.write(dut, tick_fn, REG_BASE + 4 * r, v);
   };
-  dut->store_we = 0;
-  dut->store_slot = 0;
-  dut->store_addr = 0;
-  dut->store_wdata = 0;
+  auto reg_read = [&](unsigned r) -> unsigned {
+    return gp0.read(dut, tick_fn, REG_BASE + 4 * r);
+  };
+  // The drive, as the DRIVE register carries it.
+  auto drive_write = [&]() {
+    const long began = tick;
+    reg_write(R_DRIVE, (d_present & 0xffu) | (d_ro & 0xffu) << 8 |
+                           (d_timed ? 1u << 16 : 0u));
+    pad_to(began, T_REG, "a DRIVE register write");
+  };
+  int pack_bad = 0;
+  auto wait_done = [&](const char *what) -> unsigned {
+    unsigned st = 0;
+    for (int n = 0; n < 400; ++n) {
+      st = reg_read(R_CTL);
+      if (!(st & ST_BUSY)) break;
+    }
+    if ((st & ST_BUSY) || !(st & ST_DONE) || (st & (ST_ERROR | ST_REFUSED))) {
+      std::fprintf(stderr, "FAIL: %s: the pack side's status is %02x\n", what, st);
+      ++pack_bad;
+    }
+    return st;
+  };
+  // A block's record, fetched from `at` into `slot` and tagged.
+  auto slot_fetch = [&](int slot, unsigned long long at, unsigned tag) {
+    const long began = tick;
+    reg_write(R_ADDR, (unsigned)at);
+    reg_write(R_TAG, tag);
+    reg_write(R_SLOT, (unsigned)slot);
+    reg_write(R_CTL, CTL_FETCH);
+    wait_done("a fetch");
+    pad_to(began, T_FETCH, "a fetch");
+  };
+  // A slot written back to `at`.
+  auto slot_writeback = [&](int slot, unsigned long long at) {
+    const long began = tick;
+    reg_write(R_ADDR, (unsigned)at);
+    reg_write(R_SLOT, (unsigned)slot);
+    reg_write(R_CTL, CTL_WRITE);
+    wait_done("a write-back");
+    pad_to(began, T_WRITEBACK, "a write-back");
+  };
+  // A slot's 259 words, as a write-back to a scratch address delivers them:
+  // the only way anything outside can see what the store holds.
+  unsigned long long scratch_at = 0x03000000ull;
+  auto slot_words = [&](int slot, std::vector<unsigned> &into) {
+    scratch_at += 0x480;   // 1,152: a record and its pad, 128-aligned
+    slot_writeback(slot, scratch_at);
+    unsigned w[RECORD_WORDS];
+    ddr.record(scratch_at, w);
+    into.assign(w, w + RECORD_WORDS);
+  };
+
+  // The budgets, measured on the scratch slot and a scratch record: one
+  // register write, one fetch, one write-back.  The scratch slot is then
+  // taken away so that no walk can find it.
+  {
+    const long t0 = tick;
+    reg_write(R_DRIVE, 0);
+    T_REG = tick - t0;
+    unsigned w[RECORD_WORDS];
+    for (int i = 0; i < RECORD_WORDS; ++i) w[i] = 0xC0DE0000u + (unsigned)i;
+    const unsigned long long at = 0x03F00000ull;
+    ddr.place(at, w);
+    const long t1 = tick;
+    // A tag no row can name: cylinder 4095, which is off every pack.
+    slot_fetch(SCRATCH, at, 0x0FFFFFFFu);
+    T_FETCH = tick - t1;
+    const long t2 = tick;
+    slot_writeback(SCRATCH, at + 0x800);
+    T_WRITEBACK = tick - t2;
+    unsigned back[RECORD_WORDS];
+    ddr.record(at + 0x800, back);
+    for (int i = 0; i < RECORD_WORDS; ++i)
+      if (back[i] != w[i]) {
+        std::fprintf(stderr, "FAIL: the pre-roll's round trip lost word %d\n", i);
+        return 1;
+      }
+    reg_write(R_SLOT, SCRATCH);
+    reg_write(R_CTL, CTL_TAKE);
+    wait_done("the take-away");
+    if (pack_bad) return 1;
+    // The pre-roll's own moves are not the trace's.
+    hp2.aw_count = hp2.w_count = hp2.b_count = hp2.ar_count = hp2.r_count = 0;
+    hp2.bursts = 0;
+    ddr.reads = ddr.writes = 0;
+  }
+
+  while (tick < K - SLACK) run_tick(false);
 
   // **A TURN OF THE SPINDLE ONCE TAKEN IS TAKEN FOR EVER.**  The fabric is
   // then that many ticks ahead of muir's clock for the rest of the run, and
@@ -589,12 +755,19 @@ int main(int argc, char **argv) {
   };
 
   // A write. The first tick drops -XBUS.RQ so that `taken` is clear and sets
-  // the address a tick ahead of the request; the second raises it, and the
-  // store lands at the edge that ends it.
+  // the address a tick ahead of the request; the second raises it, which is
+  // THE INSTANT OF THE STORE --- the request the controller latches, and the
+  // tick every timer it loads is measured from; the third and fourth are the
+  // two ticks the controller holds the store for, so that a read on the tick
+  // after sees the registers written.  `rtl/cadr_disk_controller.sv` loads
+  // its timers two ticks short for exactly this hold, and the trace's
+  // tick-sharp samples of them are what say the two agree.
   auto do_write = [&](int reg, unsigned v) {
     d_sel = 1; d_rq = 0; d_wr = 1; d_phys = REGS | (unsigned)reg; d_wdata = v;
     run_tick(false);
     d_rq = 1;
+    run_tick(false);
+    run_tick(false);
     run_tick(false);
   };
 
@@ -642,7 +815,8 @@ int main(int argc, char **argv) {
   long dm_starts = 0, track_starts = 0, starts = 0, unanchored_starts = 0;
   long groups = 0, shared_groups = 0;
   long full_timeouts = 0, hangs = 0;
-  long blk_loaded = 0, blk_compared = 0;
+  long blk_loaded = 0, blk_compared = 0, blocks_needed = 0;
+  std::set<unsigned> resident;   // the blocks the pack side has been given
   long pages_compared = 0, page_words = 0;
   unsigned counters_seen = 0;   // a bit a block-counter value
   unsigned codes_seen = 0;      // a bit a command code
@@ -819,9 +993,10 @@ int main(int argc, char **argv) {
         const Row &r = rows[k];
         if (r.kind == 'C') {
           if (r.wr) {
-            off += 2;
+            // Four ticks, and the instant is the second: the request.
+            off += 4;
             dry_sel = 1; dry_reg = r.reg;
-            long settle = off;
+            long settle = off - 2;
             if (first_settle < 0) first_settle = settle;
             if (r.reg == 0) dry_cmd = r.wdata;
             if (r.reg == 3) {
@@ -846,18 +1021,22 @@ int main(int argc, char **argv) {
           dry_ref_da = r.da;
         } else if (r.kind == 'A') {
           dry_present |= 1u << r.unit;
+          off += T_REG;
         } else if (r.kind == 'R') {
           if (r.flag) dry_ro |= 1u << (unsigned)(attached_unit < 0 ? 0 : 0);
           else dry_ro = 0;
+          off += T_REG;
         } else if (r.kind == 'T') {
           dry_timed = r.flag;
+          off += T_REG;
         } else if (r.kind == 'B') {
-          // Filling a slot is 260 words at a word a tick, and reading one back
-          // to compare is 259.
-          off += r.expected ? 259 : 260;
+          // A fetch over the pack side, or a write-back to compare: what the
+          // pre-roll measured each to cost.
+          off += r.expected ? T_WRITEBACK : T_FETCH;
         }
-        // ATTACH, RO, TIMED, LAY, MEMPAGE, MEMW and PAGE cost no ticks: they
-        // are levels on the drive's cable, or memory the program filled.
+        // LAY, MEMPAGE, MEMW, PAGE and NEED cost no ticks: memory the program
+        // filled, or a fact about the trace.  ATTACH, RO and TIMED are one
+        // register write each now that the drive is a register Linux writes.
       }
       // **THE GROUP IS ANCHORED ON THE LAST START THAT LOADS A TIMER THE
       // TRACE GOES ON TO ASK ABOUT A TICK AT A TIME**, and on its first row
@@ -920,15 +1099,28 @@ int main(int argc, char **argv) {
         case 'A':
           attached_unit = r.unit;
           d_present |= 1u << r.unit;
+          drive_write();
           break;
         case 'R':
           if (attached_unit >= 0) {
             if (r.flag) d_ro |= 1u << attached_unit;
             else d_ro &= ~(1u << attached_unit);
           }
+          drive_write();
           break;
         case 'T':
           d_timed = r.flag;
+          drive_write();
+          break;
+        // A block the START before this row read off the pack: it has to be
+        // resident, put there by a `BLK` row, or the trace is asking for a
+        // transfer the store cannot have served.
+        case 'N':
+          ++blocks_needed;
+          if (!resident.count(r.lba)) {
+            fail(r, "a block the transfer needed and no BLK row put on the pack side",
+                 r.lba, 0);
+          }
           break;
         case 'L':
           break;
@@ -953,38 +1145,45 @@ int main(int argc, char **argv) {
             }
           }
           break;
-        // The pack.  A `load` or `lay` row is what a formatter put there and
-        // is written into the store; a `write` row is what a transfer left
-        // and the store must already hold it.
+        // The pack.  A `load` or `lay` row is what a formatter put there: its
+        // record goes into the modelled DDR at the row's address and the
+        // fabric is told to fetch it.  A `write` row is what a transfer left:
+        // the fabric is told to write the slot back to the row's address ---
+        // a fresh one, poisoned --- and the record there must be these words.
         case 'B': {
           const unsigned tag = ((unsigned)r.cyl << 16) |
                                ((unsigned)r.head << 8) | (unsigned)r.blk;
           if (r.cyl == 0 && r.head == 0 && r.blk < 17) trk_slot[r.blk] = r.slot;
           if (r.expected) {
             ++blk_compared;
-            unsigned got = store_read(r.slot, ST_HEADER);
-            if (got != r.page) fail(r, "the block's header", got, r.page);
-            got = store_read(r.slot, ST_HCK);
-            if (got != r.addr) fail(r, "the block's header checkword", got, r.addr);
-            got = store_read(r.slot, ST_DCK);
-            if (got != r.word) fail(r, "the block's data checkword", got, r.word);
+            const unsigned pad_before = ddr.pad(r.at);
+            slot_writeback(r.slot, r.at);
+            unsigned got[RECORD_WORDS];
+            ddr.record(r.at, got);
+            if (got[ST_HEADER] != r.page) fail(r, "the block's header", got[ST_HEADER], r.page);
+            if (got[ST_HCK] != r.addr) fail(r, "the block's header checkword", got[ST_HCK], r.addr);
+            if (got[ST_DCK] != r.word) fail(r, "the block's data checkword", got[ST_DCK], r.word);
             for (int w = 0; w < 256 && !bad; ++w) {
-              got = store_read(r.slot, w);
-              if (got != bulk[r.words + w]) {
-                fail(r, "a word of the block the transfer wrote", got,
+              if (got[w] != bulk[r.words + w]) {
+                fail(r, "a word of the block the transfer wrote", got[w],
                      bulk[r.words + w]);
                 std::fprintf(stderr, "  slot %d word %d\n", r.slot, w);
               }
             }
+            if (ddr.pad(r.at) != pad_before)
+              fail(r, "the pad after the record, which a write-back must not touch",
+                   ddr.pad(r.at), pad_before);
           } else {
             ++blk_loaded;
-            for (int w = 0; w < 256; ++w)
-              store_write(r.slot, w, bulk[r.words + w]);
-            store_write(r.slot, ST_HEADER, r.page);
-            store_write(r.slot, ST_HCK, r.addr);
-            store_write(r.slot, ST_DCK, r.word);
-            store_write(r.slot, ST_TAG, tag);
+            unsigned rec[RECORD_WORDS];
+            for (int w = 0; w < 256; ++w) rec[w] = bulk[r.words + w];
+            rec[ST_HEADER] = r.page;
+            rec[ST_HCK] = r.addr;
+            rec[ST_DCK] = r.word;
+            ddr.place(r.at, rec);
+            slot_fetch(r.slot, r.at, tag);
           }
+          resident.insert(r.lba);
           break;
         }
         case 'I': {
@@ -1012,10 +1211,12 @@ int main(int argc, char **argv) {
               // instant it was meant to. The placement above is the part of
               // this testbench most likely to be wrong in a way the run
               // cannot explain, and this is how to see it.
+              // `tick - 2`: the request's tick, the last two ticks of the
+              // write being the controller's hold.
               if (getenv("DISK_DEBUG"))
                 std::fprintf(stderr, "START row %ld cmd %o tick %ld want %ld\n",
-                             r.n, lastcmd & 017u, tick, rows[i].now / 5 + K + turns);
-              if (tick != rows[i].now / 5 + K + turns) ++unanchored_starts;
+                             r.n, lastcmd & 017u, tick - 2, rows[i].now / 5 + K + turns);
+              if (tick - 2 != rows[i].now / 5 + K + turns) ++unanchored_starts;
               unsigned code = lastcmd & 017u;
               int unit = (int)((ref_da >> 28) & 7u);
               bool present = (d_present >> unit) & 1u;
@@ -1164,12 +1365,12 @@ int main(int argc, char **argv) {
     };
 
     // ---- the seventeen blocks as the trace left them ---------------------
+    //
+    // Read out of the store the only way there is: a write-back over the
+    // pack side to a scratch record, and the record read.
     std::vector<std::vector<unsigned>> orig(17, std::vector<unsigned>(259));
     auto snap = [&](int b, std::vector<unsigned> &into) {
-      for (int w = 0; w < 256; ++w) into[w] = store_read(trk_slot[b], w);
-      into[256] = store_read(trk_slot[b], ST_HEADER);
-      into[257] = store_read(trk_slot[b], ST_HCK);
-      into[258] = store_read(trk_slot[b], ST_DCK);
+      slot_words(trk_slot[b], into);
     };
     for (int b = 0; b < 17; ++b) snap(b, orig[b]);
 
@@ -1349,6 +1550,12 @@ int main(int argc, char **argv) {
     std::fprintf(stderr, "FAIL: %d mismatches\n", bad);
     return 1;
   }
+  if (pack_bad || overran || hp2.bad || gp0.bad) {
+    std::fprintf(stderr, "FAIL: the pack side: %d moves not done, %d over "
+                         "budget, %d protocol errors, %d register errors\n",
+                 pack_bad, overran, hp2.bad, gp0.bad);
+    return 1;
+  }
   if (miss_seen) {
     std::fprintf(stderr,
                  "FAIL: the walk asked the block store for a block it does not "
@@ -1379,8 +1586,9 @@ int main(int argc, char **argv) {
   want("seek errors", seek_errors);
   want("faults", faults);
   want("read-only packs", read_onlys);
-  want("blocks loaded into the store", blk_loaded);
-  want("blocks a transfer wrote and the store was compared on", blk_compared);
+  want("blocks fetched into the store over the pack side", blk_loaded);
+  want("blocks a transfer wrote, written back and compared", blk_compared);
+  want("blocks a transfer needed", blocks_needed);
   want("pages compared word for word", pages_compared);
   want("tracks read out and compared byte for byte", sc_bytes);
   want("bytes of a track read past its end", sc_wrap);
@@ -1430,14 +1638,19 @@ int main(int argc, char **argv) {
       "  the channel, held to the property and not to a trace:\n"
       "    %ld words read out of main memory, %ld written into it, %ld cycles\n"
       "      main memory did not answer\n"
-      "    %ld pages compared word for word (%ld words), %ld blocks loaded\n"
-      "      into the store, %ld blocks a transfer wrote compared against it\n"
+      "    %ld pages compared word for word (%ld words), %ld blocks fetched\n"
+      "      into the store over the pack side, %ld blocks a transfer wrote\n"
+      "      written back over it and compared, %ld blocks a transfer needed\n"
+      "      each resident when it ran\n"
       "    %ld ticks spent walking\n"
+      "  the pack side, at fixed delays: %ld AXI bursts, %ld read beats, %ld\n"
+      "    write beats, %ld register writes and %ld reads; a fetch %ld ticks,\n"
+      "    a write-back %ld, a register write %ld\n"
       "  the track, held to itself as well as to muir:\n"
       "    %ld bytes of a whole track serialised out of the store and\n"
       "      compared against disk_unit::format one byte at a time, %ld more\n"
       "      read past its end and found to be the start of it again\n"
-      "    %ld blocks read back through the seam after the parser put the\n"
+      "    %ld blocks written back over the pack side after the parser put the\n"
       "      same bytes back on the pack, with a preamble decoy in the first\n"
       "      sector that a parser accepting after fewer than 49 ones takes\n"
       "    %ld tracks stopped by a chunk that will not parse, the walk\n"
@@ -1455,7 +1668,9 @@ int main(int argc, char **argv) {
       checked_lma, checked_ecc, checked_intr, starts, dm_starts, track_starts,
       hangs, full_timeouts, chan_bits_seen,
       ch_reads, ch_writes, ch_nxms,
-      pages_compared, page_words, blk_loaded, blk_compared, walk_ticks,
+      pages_compared, page_words, blk_loaded, blk_compared, blocks_needed,
+      walk_ticks, hp2.bursts, hp2.r_count, hp2.w_count, gp0.writes, gp0.reads,
+      T_FETCH, T_WRITEBACK, T_REG,
       sc_bytes, sc_wrap, sc_slots, sc_stops,
       ex_counter, checked_counter, ex_charged,
       shared_groups, unanchored_starts, realignments);

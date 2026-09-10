@@ -95,7 +95,10 @@ module cadr_probe_harness #(
       // No drive on the disk's cable: this harness is the boot PROM, which
       // polls the status register and never writes a command.
       .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0),
-      .store_we(1'b0), .store_slot(5'd0), .store_addr(9'd0), .store_wdata(32'd0), .device_ack(1'b0), .device_rdata(32'd0),
+      .store_we(1'b0), .store_slot(5'd0), .store_addr(9'd0), .store_wdata(32'd0),
+      .store_rdata(store_rdata), .store_miss(store_miss), .ch_active(ch_active),
+      .store_busy(1'b0),
+      .device_ack(1'b0), .device_rdata(32'd0),
       .boards(7'd32),
       .mem_done(1'b0), .mem_rdata(32'd0),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -148,9 +151,14 @@ module cadr_probe_harness #(
 
   // The machine brings out more than the probe takes. Nothing here reads
   // the rest, and saying so is what keeps lint honest about it.
+  // The block store's read-back and the disk's two interlock signals, which
+  // `cadr_machine` brings out for the pack side and nothing here drives.
+  logic [31:0] store_rdata;
+  logic        store_miss, ch_active;
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
   assign unused = &{1'b0, phys, ub_addr, ub_rdata, arb_stage, mem_addr,
+                    store_rdata, store_miss, ch_active,
                     mem_wdata, dev_wdata, wrcyc, device, dev_rq, dev_write,
                     ub_msyn, ub_ssyn, n_memrq, n_memack, n_memgrant,
                     n_loadmd, rdcyc, nxm, unibus, memstart, timed_out,

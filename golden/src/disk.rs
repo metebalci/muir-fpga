@@ -18,9 +18,19 @@
 //!
 //! - `BLK`, a block as it lies on the pack: 256 data words, the header
 //!   word, its checkword and the data's. That is the drive's side of the
-//!   seam --- the 259 words `S_AXI_HP2` will one day fetch --- and it is
-//!   emitted at load and again whenever a transfer changes it, so the
-//!   testbench's store and muir's pack cannot drift apart.
+//!   seam --- the 259 words `S_AXI_HP2` fetches --- and it is emitted at
+//!   load and again whenever a transfer changes it, so the testbench's
+//!   store and muir's pack cannot drift apart. **Each row carries the
+//!   block's address**: where in DDR the testbench puts the 259 words for
+//!   the fabric to fetch, or where it has the fabric write them back to.
+//!   Chosen here and not by the testbench, spread across the address bits
+//!   and 128-byte aligned, so that a master that dropped an address bit or
+//!   landed one burst over lands on poison and not on a neighbour --- the
+//!   shadow-memory rule: the address is the stimulus's, never the DUT's.
+//! - `NEED`, the blocks a transfer read off the pack, in the order the
+//!   walk reached them: what `Unit::read_block` was asked for. It says
+//!   which of the `BLK` rows a START depends on, so a testbench can hold
+//!   that every one of them was fetched before the transfer ran.
 //! - `MEMPAGE` and `MEMW`, main memory as the *program* sets it, never as
 //!   the controller leaves it. CLAUDE.md's rule twice over: a shadow
 //!   filled from the DUT moves with the bug.
@@ -83,6 +93,20 @@ const CLP: u32 = 0o4000;
 /// to carry into the high 8 bits you will wrap around."
 const CLP_WRAP: u32 = 0x2_FFFE;
 
+/// A block's record in DDR: the 259 words, and the alignment the fabric's
+/// master needs so that no sixteen-beat burst of it crosses a 4 KB
+/// boundary. `rtl/cadr_disk_pack.sv` refuses an address that is not.
+const RECORD_BYTES: u32 = (BLOCK_WORDS as u32 + 3) * 4;
+const RECORD_ALIGN: u32 = 128;
+
+/// Where the k'th record goes: spread across sixteen address bits above
+/// the alignment, so that no two are neighbours and a dropped or doubled
+/// address bit lands somewhere nothing was put. Injective in `k` because
+/// `0x9E37` is odd; the generator asserts no two records overlap anyway.
+fn record_at(k: u32) -> u32 {
+    0x0100_0000 | ((k.wrapping_mul(0x9E37) & 0xFFFF) << 7)
+}
+
 /// Five nanoseconds, the master clock's period. Every instant the trace
 /// samples at is a multiple of this, because the fabric can only look at
 /// its own clock edges.
@@ -124,7 +148,8 @@ fn grid_before(t: u64) -> u64 {
 }
 
 /// A block as it lies on the pack: what the fabric's block store holds,
-/// and what `S_AXI_HP2` will one day fetch into it.
+/// and what `S_AXI_HP2` fetches into it --- the record `rtl/cadr_disk_pack.sv`
+/// reads at the block's address, these three words after the data.
 #[derive(Clone, PartialEq, Eq)]
 struct Image {
     header: u32,
@@ -152,6 +177,11 @@ struct Gen {
     blocks_to_pack: u64,
     pages_moved: u64,
     blk_rows: u64,
+    /// Every record address handed out, so that overlap is asserted.
+    placed: Vec<u32>,
+    needs: u64,
+    last_cmd: u32,
+    last_da: u32,
     starts: u64,
     counters_seen: std::collections::BTreeSet<u32>,
     hangs: u64,
@@ -175,6 +205,10 @@ impl Gen {
             blocks_to_pack: 0,
             pages_moved: 0,
             blk_rows: 0,
+            placed: Vec::new(),
+            needs: 0,
+            last_cmd: 0,
+            last_da: 0,
             starts: 0,
             counters_seen: std::collections::BTreeSet::new(),
             hangs: 0,
@@ -235,6 +269,10 @@ impl Gen {
         self.d.advance(self.now);
         if reg & 3 == 0 {
             *self.cmds.entry(v & 0o17).or_default() += 1;
+            self.last_cmd = v;
+        }
+        if reg & 3 == 2 {
+            self.last_da = v;
         }
         self.d.write(reg, v, &mut self.main);
         self.writes[(reg & 3) as usize] += 1;
@@ -246,7 +284,13 @@ impl Gen {
         } else {
             Vec::new()
         };
+        // Where the heads were before this store, for the blocks a
+        // transfer reads: see `needs` below.
+        let before = self.d.units[0].as_ref().map(|u| u.position());
         self.cyc(reg, true, v, 0, pages.len());
+        if reg & 3 == 3 {
+            self.needs(v_cmd_code(&self.last_cmd), before);
+        }
         for page in pages {
             self.pages_moved += 1;
             let mut row = format!("PAGE {page:x}");
@@ -321,6 +365,85 @@ impl Gen {
         }
     }
 
+    /// The blocks a START read off the pack, as `NEED` rows.
+    ///
+    /// **Derived from the model's own face and not from its internals**:
+    /// `Controller`'s fields are private and `command_list` does not say
+    /// which blocks it asked `read_block` for, so this walks the format's
+    /// order from the block the disk address named to the block the heads
+    /// stopped on --- `da` after the START, which is "the address of the
+    /// last block transferred" or "of the block being transferred when the
+    /// error occurred". Both are blocks the walk looked at. A Read All is
+    /// the whole track, as `track_bytes` is. Nothing is said for a START
+    /// that reached no block: a unit with nothing on its cable, a seek the
+    /// drive refused, a write to a read-only pack, and the codes that move
+    /// no data.
+    fn needs(&mut self, code: u32, before: Option<(u32, u32, u32)>) {
+        let unit = (self.last_da >> 28) & 7;
+        if unit != 0 || before.is_none() {
+            return;
+        }
+        let is_transfer = matches!(code, 0o00 | 0o10 | 0o11);
+        let is_read_all = code == 0o02;
+        if !(is_transfer || is_read_all) {
+            return;
+        }
+        let s = self.d.status();
+        // A fault or a seek error raised by this START means no block was
+        // read: the write to a read-only pack, and the seek off the pack.
+        if s & (1 << 6) != 0 || s & (1 << 10) != 0 {
+            return;
+        }
+        let (c0, h0, b0) = (
+            (self.last_da >> 16) & 0o7777,
+            (self.last_da >> 8) & 0xff,
+            self.last_da & 0xff,
+        );
+        if c0 >= G.cylinders || h0 >= G.heads || b0 >= G.blocks_per_track {
+            return;
+        }
+        let mut rows = Vec::new();
+        if is_read_all {
+            for b in 0..G.blocks_per_track {
+                rows.push((c0, h0, b));
+            }
+        } else {
+            let after = self.d.read(2);
+            let (c1, h1, b1) = ((after >> 16) & 0o7777, (after >> 8) & 0xff, after & 0xff);
+            let (mut c, mut h, mut b) = (c0, h0, b0);
+            loop {
+                rows.push((c, h, b));
+                if (c, h, b) == (c1, h1, b1) {
+                    break;
+                }
+                // "0 following block on same track, 1 block 0 on next track
+                // (next head), 2 block 0 on head 0 of next cylinder".
+                b += 1;
+                if b == G.blocks_per_track {
+                    b = 0;
+                    h += 1;
+                    if h == G.heads {
+                        h = 0;
+                        c += 1;
+                    }
+                }
+                assert!(
+                    rows.len() <= 600,
+                    "a transfer from {c0}/{h0}/{b0} never reaches {c1}/{h1}/{b1}"
+                );
+            }
+        }
+        for (c, h, b) in rows {
+            let lba = lba_of(c, h, b);
+            assert!(
+                self.shadow.contains_key(&lba),
+                "a transfer needs block {c}/{h}/{b}, which no BLK row put on the pack"
+            );
+            self.needs += 1;
+            self.say(format!("NEED {lba:x} {c:x} {h:x} {b:x}"));
+        }
+    }
+
     /// Every watched block whose 259 words have changed, said again.
     ///
     /// **The row says why it is there, and that is not decoration.** A block
@@ -347,8 +470,20 @@ impl Gen {
             self.shadow.insert(lba, img.clone());
             self.blk_rows += 1;
             n += 1;
+            // The block's address, a fresh one for every row --- a write-back
+            // that landed where the block was fetched from would otherwise
+            // read back as itself.
+            let at = record_at(self.placed.len() as u32);
+            assert_eq!(at % RECORD_ALIGN, 0, "record {at:#x} is not aligned");
+            for &other in &self.placed {
+                assert!(
+                    other.abs_diff(at) >= RECORD_BYTES.next_multiple_of(RECORD_ALIGN),
+                    "records at {other:#x} and {at:#x} overlap"
+                );
+            }
+            self.placed.push(at);
             let mut row = format!(
-                "BLK {why} {k} {lba:x} {c:x} {h:x} {b:x} {:x} {:x} {:x}",
+                "BLK {why} {k} {at:x} {lba:x} {c:x} {h:x} {b:x} {:x} {:x} {:x}",
                 img.header, img.header_checkword, img.data_checkword
             );
             for w in &img.data {
@@ -433,6 +568,11 @@ impl Gen {
         self.write(3, 0);
         self.read(0);
     }
+}
+
+/// The four bits of a command word the sequencer dispatches on.
+fn v_cmd_code(cmd: &u32) -> u32 {
+    cmd & 0o17
 }
 
 /// The checkword over a block's data, as the board writes it after every
@@ -929,9 +1069,11 @@ fn main() {
     head.push("# RO       n now v                 the drive's read-only switch".to_string());
     head.push("# TIMED    n now v                 whether the drive's time is charged".to_string());
     head.push("# LAY      n now cyl head blk      a sector laid down by a formatter".to_string());
-    head.push("# BLK      why slot lba cyl head blk header hck dck w0..w255".to_string());
-    head.push("#          why is load|lay --- stimulus, the store is filled --- or".to_string());
-    head.push("#          write, an expected output: the DUT's own store must hold it".to_string());
+    head.push("# BLK      why slot at lba cyl head blk header hck dck w0..w255".to_string());
+    head.push("#          why is load|lay --- stimulus, the record is put in DDR at `at`".to_string());
+    head.push("#          for the fabric to fetch --- or write, an expected output: the".to_string());
+    head.push("#          fabric writes the slot back to `at` and it must hold these words".to_string());
+    head.push("# NEED     lba cyl head blk       a block the START before it read off the pack".to_string());
     head.push("# MEMPAGE  page w0..w255           main memory, as the program fills it".to_string());
     head.push("# MEMW     addr word               one word of it".to_string());
     head.push("# CYC      n now reg write wdata rdata status da lma ecc intr pages".to_string());
@@ -947,6 +1089,8 @@ fn main() {
     head.push(format!("# sector_pulse_ns {}", disk_unit::SECTOR_PULSE_NS));
     head.push(format!("# sector_bytes {}", format::SECTOR));
     head.push(format!("# slots {}", g.watch.len()));
+    head.push(format!("# record_bytes {RECORD_BYTES}"));
+    head.push(format!("# record_align {RECORD_ALIGN}"));
     head.push(format!("# last_ns {}", g.now));
     head.push(format!("# ticks {}", g.now / TICK_NS));
     head.push("#".to_string());
@@ -987,6 +1131,7 @@ fn main() {
         "# starts {} pages_to_memory {} blocks_to_pack {} block_rows {}",
         g.starts, g.pages_moved, g.blocks_to_pack, g.blk_rows
     ));
+    head.push(format!("# blocks_needed {}", g.needs));
     head.push(format!("# hangs {} of which run to the timeout {}", g.hangs, g.full_timeouts));
 
     for l in &head {

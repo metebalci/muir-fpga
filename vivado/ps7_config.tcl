@@ -3,11 +3,13 @@
 #
 # The Arty Z7-20's processing system, as Digilent configures it.
 #
-# This file is 556 `CONFIG.PCW_*` properties and nothing else.  Sourced by
-# vivado/gen_ps7_init.tcl, which applies them to a bare `processing_system7`
-# and keeps the `ps7_init` routine the IP flow writes --- the routine that
-# brings up the memory controller, the PLLs and the pin multiplexing, without
-# which DDR does not answer and `S_AXI_HP0` is dead.
+# This file is Digilent's 556 `CONFIG.PCW_*` properties, verbatim, and then
+# THREE OF OURS merged over them at the bottom --- `S_AXI_HP2` on at 64 bits,
+# for the disk's pack.  Sourced by vivado/gen_ps7_init.tcl, which applies them
+# to a bare `processing_system7` and keeps the `ps7_init` routine the IP flow
+# writes --- the routine that brings up the memory controller, the PLLs and
+# the pin multiplexing, without which DDR does not answer and `S_AXI_HP0` is
+# dead.
 #
 # WHY DIGILENT'S AND NOT OURS.  Nothing in the routine depends on our fabric:
 # measured under Vivado 2026.1, `PCW_USE_S_AXI_HP0` off against on at 64 bits
@@ -40,11 +42,23 @@
 #     sed -n '282,840p' Arty-Z7-HW/src/bd/design_1.tcl | sha256sum
 #     # 5d533431c23bf55976d41721840dd15862c3e05df04b94f10a616e61dabba93b
 #
-# and the same sha256 is what `sed -n '/^set ps7_config/,/^]/p' ` on this file
-# gives with its first and last lines dropped.  559 lines, 556 properties: the
-# three that are not are backslash-newlines inside `PCW_MIO_TREE_PERIPHERALS`,
-# which Tcl replaces with a space even inside braces, so the value is one line
-# in effect and is left as Digilent wrote it.
+# and the same sha256 is what `sed -n '/^set ps7_config \[list/,/^]/p'` on
+# this file gives with its first and last lines dropped.  559 lines, 556
+# properties: the three that are not are backslash-newlines inside
+# `PCW_MIO_TREE_PERIPHERALS`, which Tcl replaces with a space even inside
+# braces, so the value is one line in effect and is left as Digilent wrote it.
+#
+# WHAT IS OURS, AND WHY IT IS OUTSIDE THE BLOCK.  `dict merge` at the bottom
+# turns `PCW_USE_S_AXI_HP2` on and gives it the same width and ID width HP0
+# has.  The disk's pack side, `rtl/cadr_disk_pack.sv`, is the master on it;
+# HP2 rather than HP1 because HP0 and HP1 share one DDR controller port (UG585
+# Table 5-11) and the disk's traffic is to stay off the machine's.  It is
+# merged over Digilent's list rather than edited into it so that the sha256
+# above still holds of the block as written, and so that what we changed is
+# three lines anyone can read.  `M_AXI_GP0`, which the pack side's registers
+# sit on, Digilent already has on.  Whether these three change the routine is
+# not assumed: `make current` regenerates it and compares the operations, and
+# the commit that added them reports the diff --- at 64 bits, none.
 #
 # WHAT IT IS CHECKED AGAINST.  The routine generated from this file agrees, op
 # for op across all three silicon revisions, with the one in Digilent's
@@ -630,3 +644,10 @@ set ps7_config [list \
     CONFIG.PCW_WDT_PERIPHERAL_DIVISOR0 {1} \
     CONFIG.PCW_WDT_PERIPHERAL_ENABLE {0} \
 ]
+
+# Ours.  See the header.
+set ps7_config [dict merge $ps7_config [list \
+    CONFIG.PCW_USE_S_AXI_HP2 {1} \
+    CONFIG.PCW_S_AXI_HP2_DATA_WIDTH {64} \
+    CONFIG.PCW_S_AXI_HP2_ID_WIDTH {6} \
+]]

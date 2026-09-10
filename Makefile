@@ -30,7 +30,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
        $(BUILD)/mem_count.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
-       $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass current
+       $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
+       current
 
 # ---------------------------------------------------------------- phase gen
 
@@ -326,7 +327,9 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 # The `DDR` pass is the only thing anywhere that elaborates `cadr_ps7.sv`
 # without Vivado, and what it holds is that all 620 PS7 pins are connected:
 # a pin the generator did not write is a PINMISSING against
-# `tb/cadr_ps7_stub.sv`, which carries the same 620 off the same parse.
+# `tb/cadr_ps7_stub.sv`, which carries the same 620 off the same parse.  It
+# is also the only pass that elaborates `rtl/cadr_disk_pack.sv` under the top
+# level, on the processing system's `S_AXI_HP2` and `M_AXI_GP0`.
 #
 # FIVE TIMES NOW, and `$(MACHINE)` COMES FIRST IN EVERY ONE. The top level
 # takes the witness's address from `cadr_ddr_map::main_byte_address`, and a
@@ -342,7 +345,7 @@ $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
                     rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
                     rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv \
-                    rtl/cadr_prove.sv \
+                    rtl/cadr_prove.sv rtl/cadr_disk_pack.sv \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -357,7 +360,7 @@ $(BUILD)/arty.pass: $(MACHINE) rtl/cadr_arty.sv rtl/cadr_probe.sv \
 	    -GDDR=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) rtl/cadr_arty.sv rtl/cadr_ps7.sv rtl/cadr_axi_master.sv \
-	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv
+	    rtl/cadr_axi_widen.sv rtl/cadr_mem_count.sv rtl/cadr_disk_pack.sv
 	$(VERILATOR) --lint-only -Wall -Irtl \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=1 \
@@ -626,21 +629,53 @@ disk-golden: $(BUILD)/disk.golden
 $(BUILD)/disk.golden: golden/src/disk.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin disk > $@
 
-# The drive and the register face against that trace.  **THIS IS THE SLOWEST
-# CHECK HERE AND THE REASON IS A CONSTANT THAT MUST NOT BE SHORTENED**: the
-# trace holds one hang run out to `TIMEOUT_NS`, 2.56 s, which is 512,000,000
-# ticks of this fabric's clock, and the fabric has to count every one of them.
-# A check that cannot tell that constant from a wrong one is `RD_FINISH_T`
-# again.  With the pre-roll that puts the spindle in phase it is about 552
-# million ticks and takes a minute or so.
-$(BUILD)/obj_disk/Vcadr_disk_controller: rtl/cadr_disk_controller.sv \
-                                         tb/cadr_disk_tb.cpp | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_disk \
-	    --top-module cadr_disk_controller \
-	    rtl/cadr_disk_controller.sv $(abspath tb/cadr_disk_tb.cpp)
+# The controller against that trace, WITH ITS PACK SIDE UNDERNEATH.  The
+# block store used to be filled by the testbench through a seam; now
+# `rtl/cadr_disk_pack.sv` fills it over `S_AXI_HP2` from records the testbench
+# puts in a modelled DDR at the addresses the trace names, asked to by register
+# writes over `M_AXI_GP0`, and the drive's presence, its read-only switch and
+# whether its time is charged are three of those registers.  So the harness is
+# the DUT --- `tb/cadr_disk_harness.sv` wires the two as `rtl/cadr_arty.sv`'s
+# `g_ddr` does --- and nothing reaches the store but the master.
+#
+# **THIS IS THE SLOWEST CHECK HERE AND THE REASON IS A CONSTANT THAT MUST NOT
+# BE SHORTENED**: the trace holds one hang run out to `TIMEOUT_NS`, 2.56 s,
+# which is 512,000,000 ticks of this fabric's clock, and the fabric has to
+# count every one of them.  A check that cannot tell that constant from a
+# wrong one is `RD_FINISH_T` again.  With the pre-roll that puts the spindle
+# in phase it is about 570 million ticks and takes two minutes or so.
+DISK_SRC := rtl/cadr_disk_controller.sv rtl/cadr_disk_pack.sv \
+            tb/cadr_disk_harness.sv
 
-$(BUILD)/disk.pass: $(BUILD)/obj_disk/Vcadr_disk_controller $(BUILD)/disk.golden
-	$(BUILD)/obj_disk/Vcadr_disk_controller $(BUILD)/disk.golden
+$(BUILD)/obj_disk/Vcadr_disk_harness: $(DISK_SRC) tb/cadr_disk_tb.cpp \
+                                      tb/cadr_pack_side.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_disk \
+	    --top-module cadr_disk_harness \
+	    $(DISK_SRC) $(abspath tb/cadr_disk_tb.cpp)
+
+$(BUILD)/disk.pass: $(BUILD)/obj_disk/Vcadr_disk_harness $(BUILD)/disk.golden
+	$(BUILD)/obj_disk/Vcadr_disk_harness $(BUILD)/disk.golden
+	@touch $@
+
+# ------------------------------------------------------------- the pack side
+
+# `rtl/cadr_disk_pack.sv` held to the property, which is `cadr_axi_master.sv`'s
+# situation: no muir reference --- `Unit::read_block` is a memcpy --- so the
+# testbench is the stimulus and a counting AXI3 slave is the observer.  A
+# block put in the modelled DDR and fetched is READ BACK BY THE CADR, through
+# the controller's own transfer into a poisoned page, and a block the CADR
+# wrote is written back and compared; the three words after the block are read
+# back through the status bits the controller raises when each is wrong.  Same
+# harness as `disk`, a few seconds rather than two minutes, and the mutations
+# aimed at the pack side run here.
+$(BUILD)/obj_disk_pack/Vcadr_disk_harness: $(DISK_SRC) tb/cadr_disk_pack_tb.cpp \
+                                           tb/cadr_pack_side.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_disk_pack \
+	    --top-module cadr_disk_harness \
+	    $(DISK_SRC) $(abspath tb/cadr_disk_pack_tb.cpp)
+
+$(BUILD)/disk_pack.pass: $(BUILD)/obj_disk_pack/Vcadr_disk_harness
+	$(BUILD)/obj_disk_pack/Vcadr_disk_harness
 	@touch $@
 
 $(BUILD):
