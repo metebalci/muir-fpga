@@ -20,7 +20,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 VFLAGS := --cc --exe --build -Wall
 
 .PHONY: check cables ps7 ps7-init current mutants mutants-selftest probe-selftest \
-        disk-golden clean
+        disk-golden disk-boot-golden clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -31,6 +31,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/mem_count.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
+       $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
        $(BUILD)/console.pass \
        current
@@ -569,7 +570,7 @@ MUTREV ?= HEAD
 # says which trace is missing, which is how this was found.
 mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
-         $(BUILD)/disk.golden $(BUILD)/tv.golden \
+         $(BUILD)/disk.golden $(BUILD)/disk_boot.golden $(BUILD)/tv.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
@@ -582,7 +583,8 @@ mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 # itself is invoked, and where it was once wrong.
 mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
                   $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
-                  $(BUILD)/disk.golden $(BUILD)/tv.golden \
+                  $(BUILD)/disk.golden $(BUILD)/disk_boot.golden \
+                  $(BUILD)/tv.golden \
                   $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
@@ -712,6 +714,50 @@ $(BUILD)/obj_disk_pack/Vcadr_disk_harness: $(DISK_SRC) tb/cadr_disk_pack_tb.cpp 
 
 $(BUILD)/disk_pack.pass: $(BUILD)/obj_disk_pack/Vcadr_disk_harness
 	$(BUILD)/obj_disk_pack/Vcadr_disk_harness
+	@touch $@
+
+# ------------------------------------------- the channel over a real pack
+
+# `golden/src/disk_boot.rs` walks command lists of more than one CCW over a
+# real System 100 pack, with the blocks fetched on demand --- the hole the
+# other three checks left between them, and the one the board fell through on
+# 2026-09-10.  `tb/cadr_disk_boot_tb.cpp` has the whole account.
+#
+# It needs `vendor/`, so it SKIPS where the release is not here, as
+# `rtl_sys.golden` does; the sum is checked before the archive is used and the
+# pack is decompressed fresh for the run and removed after.  A drive writes its
+# pack, so a generator run against a working image would not be reproducible
+# --- and this one is careful besides: `Unit::open` never writes the file, and
+# the Makefile still hands it a copy.
+.PHONY: disk-boot-golden
+disk-boot-golden: $(BUILD)/disk_boot.golden
+
+$(BUILD)/disk_boot.golden: golden/src/disk_boot.rs golden/Cargo.toml | $(BUILD)
+	@if [ ! -f $(SYS100_GZ) ]; then \
+	    echo "# skipped: the System 100 release is not here" > $@; \
+	    echo "disk_boot: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	else \
+	    set -e; \
+	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
+	        || { echo "disk_boot: $(SYS100_GZ) is not the release this trace was measured against"; exit 1; }; \
+	    trap 'rm -f $(BUILD)/disk-boot-pack.img $@.part' EXIT; \
+	    gunzip -c $(SYS100_GZ) > $(BUILD)/disk-boot-pack.img; \
+	    $(GOLDEN) --release --bin disk_boot -- --pack $(BUILD)/disk-boot-pack.img > $@.part; \
+	    mv $@.part $@; \
+	fi
+
+$(BUILD)/obj_disk_boot/Vcadr_disk_harness: $(DISK_SRC) tb/cadr_disk_boot_tb.cpp \
+                                           tb/cadr_pack_side.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_disk_boot \
+	    --top-module cadr_disk_harness \
+	    $(DISK_SRC) $(abspath tb/cadr_disk_boot_tb.cpp)
+
+# The testbench itself says "skipped" and passes when it is handed the stub,
+# so that `mutations/run.py`, which runs the binary and not this rule, does
+# the same rather than dying on a trace with no rows.
+$(BUILD)/disk_boot.pass: $(BUILD)/obj_disk_boot/Vcadr_disk_harness \
+                         $(BUILD)/disk_boot.golden
+	$(BUILD)/obj_disk_boot/Vcadr_disk_harness $(BUILD)/disk_boot.golden
 	@touch $@
 
 # ------------------------------------------------- the default slave on GP0
