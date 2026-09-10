@@ -62,13 +62,25 @@ const unsigned RECORD_ALIGN = 128;
 
 // The pack side's registers, at `REG_BASE`.
 const unsigned REG_BASE = 0x40000000u;
-enum Reg { R_ADDR = 0, R_TAG = 1, R_SLOT = 2, R_CTL = 3, R_DRIVE = 4, R_IDENT = 7 };
-enum Ctl {
-  CTL_FETCH = 1u << 0, CTL_WRITE = 1u << 1, CTL_TAKE = 1u << 2,
-  ST_BUSY = 1u << 0, ST_DONE = 1u << 1, ST_ERROR = 1u << 2, ST_REFUSED = 1u << 3,
-  ST_CH_ACTIVE = 1u << 4, ST_STORE_MISS = 1u << 5
+enum Reg {
+  R_ADDR = 0, R_TAG = 1, R_SLOT = 2, R_CTL = 3, R_DRIVE = 4, R_REQ = 5, R_DIRTY = 6,
+  R_IDENT = 7, R_REF = 8, R_IRQ = 9, R_IRQEN = 10
 };
+enum Ctl {
+  CTL_FETCH = 1u << 0, CTL_WRITE = 1u << 1, CTL_TAKE = 1u << 2, CTL_DENY = 1u << 3,
+  ST_BUSY = 1u << 0, ST_DONE = 1u << 1, ST_ERROR = 1u << 2, ST_REFUSED = 1u << 3,
+  ST_CH_ACTIVE = 1u << 4, ST_STORE_MISS = 1u << 5, ST_WAITING = 1u << 6
+};
+// REQ: the block the controller lacks, valid in bit 31, in TAG's layout below.
+const unsigned REQ_VALID = 1u << 31;
+// IRQ and IRQEN: the three events.
+enum Irq { IRQ_REQ = 1u << 0, IRQ_DIRTY = 1u << 1, IRQ_DONE = 1u << 2 };
 const unsigned IDENT = 0x5041434Bu;
+// The tag: {unit<2:0>, cylinder<11:0>, head<7:0>, block<7:0>}, the disk
+// address register's own layout without its bit 31.
+inline uint32_t tag_of(unsigned unit, unsigned c, unsigned h, unsigned b) {
+  return (unit & 7u) << 28 | (c & 0xFFFu) << 16 | (h & 0xFFu) << 8 | (b & 0xFFu);
+}
 
 // DCECC's code, for the checkword a Write leaves after the data: thirty-two
 // stages, taps 31, 29, 20, 10 and 8, a bit at a time low-order first.  A

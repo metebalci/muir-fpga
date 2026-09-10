@@ -61,6 +61,13 @@ module cadr_disk_harness #(
     input  var logic [31:0] ch_rdata,
     output var logic        ch_active,
     output var logic        store_miss,
+    // The request path, brought out beside the two above for the same
+    // reason: `tb/cadr_disk_tb.cpp` requires no request at any tick of the
+    // trace, and `tb/cadr_disk_pack_tb.cpp` watches the wait tick by tick.
+    output var logic        req_valid,
+    output var logic [30:0] req_tag,
+    output var logic        ch_waiting,
+    output var logic        irq,
 
     // --- M_AXI_GP0: the PS is the master, 32 bits -------------------------
     input  var logic [31:0] gp0_awaddr,
@@ -125,6 +132,8 @@ module cadr_disk_harness #(
   logic [7:0]  drive_present, drive_read_only;
   logic        drive_timed;
   logic        store_busy;
+  logic [4:0]  store_busy_slot, ch_slot;
+  logic        req_post, ch_wrote, ch_hit, deny;
 
   cadr_disk_controller #(
       .SLOTS(SLOTS)
@@ -139,7 +148,11 @@ module cadr_disk_harness #(
       .store_miss(store_miss),
       .ch_req(ch_req), .ch_write(ch_write), .ch_addr(ch_addr),
       .ch_wdata(ch_wdata), .ch_done(ch_done), .ch_nxm(ch_nxm),
-      .ch_rdata(ch_rdata), .ch_active(ch_active), .store_busy(store_busy)
+      .ch_rdata(ch_rdata), .ch_active(ch_active), .store_busy(store_busy),
+      .store_busy_slot(store_busy_slot),
+      .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
+      .ch_waiting(ch_waiting), .store_deny(deny), .ch_slot_o(ch_slot),
+      .ch_wrote(ch_wrote), .ch_hit(ch_hit)
   );
 
   cadr_disk_pack #(
@@ -170,6 +183,10 @@ module cadr_disk_harness #(
       .store_we(store_we), .store_slot(store_slot), .store_addr(store_addr),
       .store_wdata(store_wdata), .store_rdata(store_rdata),
       .store_miss(store_miss), .ch_active(ch_active), .moving(store_busy),
+      .moving_slot(store_busy_slot),
+      .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
+      .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
+      .ch_hit(ch_hit), .deny(deny), .irq(irq),
       .drive_present(drive_present), .drive_read_only(drive_read_only),
       .drive_timed(drive_timed)
   );

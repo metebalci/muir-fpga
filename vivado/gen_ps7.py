@@ -127,6 +127,17 @@ EXPOSED = [
     "MAXIGP0ARREADY",
     "MAXIGP0RDATA", "MAXIGP0RRESP", "MAXIGP0RID", "MAXIGP0RLAST",
     "MAXIGP0RVALID", "MAXIGP0RREADY",
+    # `IRQ_F2P`, the fabric's twenty interrupt lines into the processing
+    # system: bit 0 is the disk's, `rtl/cadr_disk_pack.sv`'s `irq` --- a
+    # block the CADR asked for that the store lacks, a slot a transfer wrote,
+    # a move finished --- and the other nineteen are tied low by the top
+    # level.  Digilent's configuration has `PCW_USE_FABRIC_INTERRUPT 1`,
+    # `PCW_IRQ_F2P_INTR 1` and `PCW_IRQ_F2P_MODE DIRECT` already, so the
+    # routine does not change: `make current` says so.  Bits 15:0 are the
+    # shared peripheral interrupts 61-68 and 84-91 of the GIC (UG585 Table
+    # 7-4), so bit 0 is interrupt 61, which a device tree names as
+    # `<0 29 4>`.
+    "IRQF2P",
 ]
 
 # Inputs that are not exposed but must not be zero by default, each with the

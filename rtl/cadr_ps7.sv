@@ -105,7 +105,8 @@ module cadr_ps7 (
     input  var logic [11:0]  gp0_rid,
     input  var logic         gp0_rlast,
     input  var logic         gp0_rvalid,
-    output var logic         gp0_rready
+    output var logic         gp0_rready,
+    input  var logic [19:0]  irqf2p
 );
 
   // PINCONNECTEMPTY is turned off rather than answered with wires nothing
@@ -196,6 +197,7 @@ module cadr_ps7 (
       .MAXIGP0RLAST(gp0_rlast),
       .MAXIGP0RVALID(gp0_rvalid),
       .MAXIGP0RREADY(gp0_rready),
+      .IRQF2P(irqf2p),
 
       // --- inputs tied to a stated value
       // as AWCACHE
@@ -301,7 +303,6 @@ module cadr_ps7 (
       .FTMTF2PDEBUG(32'b0),
       .FTMTF2PTRIG(4'b0),
       .FTMTP2FTRIGACK(4'b0),
-      .IRQF2P(20'b0),
       .MAXIGP1ACLK(1'b0),
       .MAXIGP1ARREADY(1'b0),
       .MAXIGP1AWREADY(1'b0),

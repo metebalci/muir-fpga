@@ -95,8 +95,22 @@ module cadr_machine #(
     output var logic        store_miss,
     output var logic        ch_active,
     // And the pack side's own half of the interlock: a block is in flight
-    // through the seam, and the controller defers a walk while it is.
+    // through the seam, on this slot, and the controller looks its own slot
+    // up again when a move is on it.
     input  var logic        store_busy,
+    input  var logic [4:0]  store_busy_slot,
+    // The request path and the cache's bookkeeping, straight through from
+    // `cadr_disk_controller.sv`, whose ports say what each is: the block
+    // the walk lacks, its posting, the wait, Linux's denial, the slot the
+    // walk is on and the two things it did to it.
+    output var logic        req_valid,
+    output var logic [30:0] req_tag,
+    output var logic        req_post,
+    output var logic        ch_waiting,
+    input  var logic        store_deny,
+    output var logic [4:0]  ch_slot,
+    output var logic        ch_wrote,
+    output var logic        ch_hit,
 
     // --- how many 64K-word memory boards are fitted, 1 to 60
     input  var logic [6:0]  boards,
@@ -360,7 +374,16 @@ module cadr_machine #(
       .ch_nxm   (ch_nxm),
       .ch_rdata (ch_rdata),
       .ch_active(ch_active),
-      .store_busy(store_busy)
+      .store_busy(store_busy),
+      .store_busy_slot(store_busy_slot),
+      .req_valid(req_valid),
+      .req_tag  (req_tag),
+      .req_post (req_post),
+      .ch_waiting(ch_waiting),
+      .store_deny(store_deny),
+      .ch_slot_o(ch_slot),
+      .ch_wrote (ch_wrote),
+      .ch_hit   (ch_hit)
   );
 
   assign dev_ack_joined   = disk_ack || device_ack;
