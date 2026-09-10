@@ -37,17 +37,19 @@
           <!-- The left column: the display output block, its port and the HDMI
                connector, placed here so the port's line reaches the DDR
                controller without crossing anything. Not started. -->
-          <rect class="d-plate" x="-160" y="274" width="74" height="112"/>
-          <rect class="d-box" x="-160" y="274" width="74" height="112"/>
-          <text class="d-t" x="-132" y="330" text-anchor="middle" transform="rotate(-90 -132 330)">display output</text>
-          <text class="d-s" x="-112" y="330" text-anchor="middle" transform="rotate(-90 -112 330)">scans the buffer, TMDS out</text>
-          <path class="d-line" d="M470,274 L470,256 L-123,256 L-123,274"/>
-          <path class="d-line" d="M-123,386 L-123,440 L-25,440 L-25,464"/>
+          <rect class="d-plate" x="-160" y="274" width="180" height="112"/>
+          <rect class="d-box" x="-160" y="274" width="180" height="112"/>
+          <text class="d-t" x="-70" y="300" text-anchor="middle">display output</text>
+          <text class="d-s" x="-70" y="322" text-anchor="middle">scans the display&rsquo;s buffer</text>
+          <text class="d-s" x="-70" y="336" text-anchor="middle">at the monitor&rsquo;s rate,</text>
+          <text class="d-s" x="-70" y="358" text-anchor="middle">TMDS out to HDMI</text>
+          <path class="d-line" d="M470,274 L470,256 L-70,256 L-70,274"/>
+          <path class="d-line" d="M-70,386 L-70,464"/>
           <path class="d-line" d="M-160,330 L-200,330"/>
-          <rect class="d-fill" x="-70" y="464" width="90" height="44"/>
-          <text class="d-m" x="-25" y="483" text-anchor="middle">S_AXI_HP3</text>
-          <text class="d-s" x="-25" y="499" text-anchor="middle">64 bits, AXI3</text>
-          <path class="d-line" d="M-25,508 L-25,610 L38,610"/>
+          <rect class="d-fill" x="-115" y="464" width="90" height="44"/>
+          <text class="d-m" x="-70" y="483" text-anchor="middle">S_AXI_HP3</text>
+          <text class="d-s" x="-70" y="499" text-anchor="middle">64 bits, AXI3</text>
+          <path class="d-line" d="M-70,508 L-70,610 L38,610"/>
           <rect class="d-dash d-ext" x="-330" y="288" width="130" height="84"/>
           <text class="d-t" x="-265" y="314" text-anchor="middle">HDMI</text>
           <text class="d-s" x="-265" y="336" text-anchor="middle">the display,</text>
