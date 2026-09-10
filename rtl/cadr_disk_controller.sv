@@ -5,20 +5,27 @@
 // An Xbus slave at 0o17377774 and, when a transfer is running, an Xbus
 // MASTER as well.
 //
-// A port of `disk_controller::Controller` as far as Read All and Write All
-// and no further: the four registers a program reads and writes, the eight
-// unit slots and what a drive on one of them answers, the spindle's block
-// counter, the seek and its attention, the hang timer --- and the channel:
-// the block store, the command list's walk with its sixteen-bit wrap, the
-// header compare and its mask, both checkwords through DCECC and the trap
-// that locates a burst, and the move into main memory a word at a time.
+// A port of `disk_controller::Controller` as far as muir has one: the four
+// registers a program reads and writes, the eight unit slots and what a
+// drive on one of them answers, the spindle's block counter, the seek and
+// its attention, the hang timer; the channel --- the block store, the
+// command list's walk with its sixteen-bit wrap, the header compare and its
+// mask, both checkwords through DCECC and the trap that locates a burst, and
+// the move into main memory a word at a time; and the TRACK --- `0o02` Read
+// All and `0o13` Write All, which go round the whole of one as bytes rather
+// than as blocks.
 //
-// WHAT IS STILL NOT HERE is the track: `0o02` Read All and `0o13` Write All
-// go round the whole track as bytes rather than as blocks, which wants the
-// sector format serialised bit by bit --- `disk_unit::sector_image` and the
-// parser that reads one back.  Both do their seek and their disk address
-// here, and neither moves a word; `tb/cadr_disk_tb.cpp` states what that
-// leaves exempt and counts it.
+// **THE TRACK IS THE ONLY THING ON THIS BOARD THAT IS A BIT STREAM.**
+// Everything else moves words: the walk, the store, the checkwords a byte at
+// a time.  Read All and Write All are the format itself --- "The format is
+// determined by the program that uses the Write All operation to format the
+// disk" --- so what crosses the channel is the 1,164 bytes a sector actually
+// carries, gaps, syncs, pad and checkwords included, and what comes back is
+// whatever a program chose to put there.  `disk_unit::sector_image_laid` is
+// the serialiser and `disk_unit::parse_sector` the parser, and the two are
+// inverses over a whole track: `tb/cadr_disk_tb.cpp` runs one into the other
+// as well as comparing both against the reference trace, because a trace
+// that reaches 3,072 bytes of 20,160 cannot hold either alone.
 //
 // THE NAME.  `cadr_xbus_ddr.sv` is main memory *in front of* DDR and is named
 // for that; this is not the same shape.  The controller is a device on the
@@ -334,6 +341,57 @@ module cadr_disk_controller #(
     ecc_byte = t;
   endfunction
 
+  // --- the format on the pack, byte by byte --------------------------------
+  //
+  // `disk_unit::format`, which is `sys/doc/disk.text`'s "The format of a
+  // block is" read straight down.  Ten fields adding to 1,164 bytes, which is
+  // the sector length MIT set the drive's jumpers to --- `dctrid.drw`, "Set
+  // sector length jumpers in drive to 1410 (octal) which is 1164. bytes".
+  // Everything goes low-order bit first and low-order byte first.
+  //
+  // **THE OFFSETS ARE WRITTEN AS SUMS AND NOT AS NUMBERS**, so that a field
+  // whose length is questioned moves the ones after it.
+  localparam int unsigned F_PREAMBLE = 53;                       // ones
+  localparam int unsigned F_VFO_LOCK = 8;                        // ones
+  localparam int unsigned F_HDR_SYNC = F_PREAMBLE + F_VFO_LOCK;  // 61
+  localparam int unsigned F_HEADER   = F_HDR_SYNC + 1;           // 62
+  localparam int unsigned F_HECC     = F_HEADER + 4;             // 66
+  localparam int unsigned F_RELOCK   = F_HECC + 4;               // 70, ones
+  localparam int unsigned F_DAT_SYNC = F_RELOCK + 20;            // 90
+  localparam int unsigned F_PAD      = F_DAT_SYNC + 1;           // 91
+  localparam int unsigned F_DATA     = F_PAD + 1;                // 92
+  localparam int unsigned F_DECC     = F_DATA + BLOCK_WORDS * 4; // 1116
+  localparam int unsigned F_POST     = F_DECC + 4;               // 1120, ones
+  localparam int unsigned F_SECTOR   = 1164;
+  // "A track contains (approximately) 20160. bytes (on a T-80 or a T-300)",
+  // which is Century Data's exact figure.  Seventeen sectors are 19,788 of
+  // them and the rest is the leftover the index closes, holding no block and
+  // written with ones like every other gap.
+  localparam int unsigned F_TRACK    = 20160;
+  localparam int unsigned F_LEFTOVER = F_TRACK - 17 * F_SECTOR;  // 372
+  // "SYNC - a byte containing octal 177", seven ones then a zero low bit
+  // first, and "PAD - a byte containing octal 377".
+  localparam logic [7:0]  F_SYNC     = 8'o177;
+  localparam logic [7:0]  F_PADB     = 8'o377;
+
+  // **A SECTOR IS 291 WHOLE WORDS AND THE LEFTOVER 93**, so every boundary
+  // this slice counts is a word boundary and neither the serialiser nor the
+  // parser ever straddles one.  `lay_down_track` cuts the written bytes at
+  // 1,164-byte strides and knows nothing of the leftover, which is why the
+  // parser counts words and not sectors of the track.
+  localparam int unsigned F_SECTOR_W = F_SECTOR / 4;             // 291
+  localparam int unsigned F_SECTOR_B = F_SECTOR * 8;             // 9,312
+  // What the parser still needs when it finds the data's sync: the pad, the
+  // data and its checkword.  `take_bits` answers `None` if they do not fit in
+  // the chunk, and NOTHING IS WRITTEN when it does --- which is why the fit
+  // is asked at the sync and not discovered by running off the end.
+  localparam int unsigned F_TAIL_B   = 8 + BLOCK_WORDS * 32 + 32;  // 8,232
+  // `after_sync`: "a zero after at least sixty-four ones, which is how the
+  // controller finds one too --- its `PREAMBLE DETECT` fires on the first
+  // zero after ones, and the preamble is never shorter than eight bytes of
+  // them."  Eight bytes of VFO LOCK is where the 64 comes from.
+  localparam int unsigned F_ONES     = 64;
+
   // --- the block store ----------------------------------------------------
   //
   // 259 words a slot and a tag beside them.  The 256 data words are a block
@@ -409,6 +467,14 @@ module cadr_disk_controller #(
       endcase
     end else if (ch_dck_we) begin
       s_dck[ch_dck_slot] <= ch_dck_val;
+    end else if (trk_meta_we) begin
+      // `write_sector_at`: the header, its checkword and the data's, as the
+      // parser found them and not as they should have been.  "A formatter
+      // can write a checkword that does not check", and `STATUS<17>` is what
+      // a later Read makes of it.
+      s_header[ch_slot] <= ps_hdr;
+      s_hck[ch_slot]    <= ps_hck;
+      s_dck[ch_slot]    <= ps_dck;
     end
   end
 
@@ -723,10 +789,10 @@ module cadr_disk_controller #(
   // **WHAT EACH COMMAND CODE DOES, AND WHERE THE ONE HOLE IS.**  0o00 read,
   // 0o10 read-compare and 0o11 write reach `Controller::transfer` and the
   // walk below it, all of it here.  0o02 Read All and 0o13 Write All reach
-  // `Controller::transfer_all`, whose seek, disk address and `track_ns` are
-  // here and whose TRACK is not --- it is the sector format serialised bit
-  // by bit and belongs with the parser that reads one back.  0o01 and 0o03
-  // reach neither and are charged an access time alone.
+  // `Controller::transfer_all`, which walks the same command list with a
+  // track's bytes on the disk side instead of a block's words, and that is
+  // here too.  0o01 and 0o03 reach neither and are charged an access time
+  // alone.
   //
   // A WRITE TO A READ-ONLY PACK is the exception to all of it: muir raises
   // the fault and returns before anything is cleared or moved, so it is here
@@ -736,8 +802,7 @@ module cadr_disk_controller #(
   assign code        = cmd[3:0];
   // The three that walk the command list a block at a time.
   assign is_transfer = (code == 4'o00) || (code == 4'o10) || (code == 4'o11);
-  // The two that go round the track as bytes: their seek and their disk
-  // address are here and the track is slice four's.
+  // The two that go round the track as bytes, `Controller::transfer_all`.
   assign is_all      = (code == 4'o02) || (code == 4'o13);
   // "01, 03 and 12: the Write, Write All and Read All sectors entered with
   // the memory channel pointed the other way."  **They do not seek**, which
@@ -799,7 +864,10 @@ module cadr_disk_controller #(
   // samples for, a sector at a time.
   typedef enum logic [4:0] {
     C_IDLE, C_CCW, C_LOOK, C_HDRC, C_HDRE, C_HDRCK, C_DATA, C_DCK, C_ECCQ,
-    C_TSPIN, C_TSCAN, C_MOVE, C_WEND, C_NEXT, C_ACCMUL, C_ACCMOD, C_ACCFIN
+    C_TSPIN, C_TSCAN, C_MOVE, C_WEND, C_NEXT, C_ACCMUL, C_ACCMOD, C_ACCFIN,
+    // The track: the slot the first sector comes out of, then a page at a
+    // time in either direction.
+    C_TLOOK, C_TRD, C_TWR
   } ch_state_e;
 
   ch_state_e   ch_state;
@@ -816,6 +884,116 @@ module cadr_disk_controller #(
   logic [16:0] trap_n;
   logic [13:0] trap_step;
   logic        ch_setda, ch_track;
+
+  // --- the track, and the two halves that are inverses over it ------------
+  //
+  // `disk_unit::sector_image_laid` on the way out and
+  // `disk_unit::parse_sector` on the way back.  A Read All puts the bytes
+  // under the head into the pages the command list names, four to a word,
+  // low-order byte first, going round and round --- the command does not
+  // advance the head, so a list longer than a track comes back to where it
+  // started.  A Write All takes the pages back into bytes, cuts them at
+  // 1,164-byte strides and lays each one where the heads are, "The format is
+  // determined by the program that uses the Write All operation to format
+  // the disk".
+  //
+  // **THE BIT RATE IS THE DRIVE'S AND THIS IS NOT IT.**  `BIT_NS` is 104, so
+  // a bit on the pack is 20.8 ticks of this clock and a whole track is a
+  // revolution: 16,666,667 ns, 3,333,334 ticks.  The serialiser takes a BYTE
+  // a tick and the parser a BIT a tick, and both pay a bus cycle a word on
+  // top.  MEASURED on the property check's twenty pages, 5,120 words:
+  //
+  //     Read All   44,250 ticks    221 us     8.6 ticks a word
+  //     Write All 184,427 ticks    922 us    36.0 ticks a word
+  //
+  // against the drive's 16.7 ms.  So the fabric is seventy-five times faster
+  // than the pack in one direction and eighteen in the other, nothing here
+  // is the constraint, and `track_ns` --- the heads' move, the wait for the
+  // block, and one whole revolution --- is what the operation is charged,
+  // exactly as muir has it.  What the stream does cost is the CHANNEL:
+  // 5,040 words for a whole track, where the longest block transfer in
+  // either trace is 256.
+  logic [7:0]  trk_b, trk_b_next;   // which block this sector is
+  logic [10:0] trk_p;               // the byte within the sector
+  logic        trk_gap;             // in the track's leftover
+  logic [8:0]  trk_g;               // the byte within it
+  // **A PARSE THAT FAILS STOPS THE TRACK AND NOT THE WALK.**
+  // `write_all_bytes` collects every page the list names and only then does
+  // `lay_down_track` cut and parse them, so a chunk that will not parse ends
+  // the LAYING where it stands while the command list goes on being fetched
+  // --- which is what the last memory address and `STATUS<20>` are made of.
+  logic        trk_lay;
+
+  // The parser.  Bit-serial, because `parse_sector` is: `after_sync` hunts a
+  // zero after at least sixty-four ones and nothing says that zero falls on
+  // a byte boundary.
+  //
+  // **IT DOES NOT RUN THE CODE.**  `parse_sector` computes `header_checks`
+  // and `data_checks` and `lay_down_track` reads NEITHER: what a Write All
+  // lays down is the header, the checkword and the data as the program wrote
+  // them, checking or not, and `STATUS<17>` and `<16>` are what a later Read
+  // makes of them.  `cadrdc/newdsk.31` agrees --- HEADER STROBE appears only
+  // in the Read sector at `024` and the Write sector at `124`, and the Write
+  // All sector from `300` finds the index and writes the track out without
+  // one.  So there is no DCECC in this path, and a checkword that does not
+  // check survives the round trip, which is the whole of issue 51.
+  typedef enum logic [2:0] {
+    P_SYNC1, P_HDR, P_HCK, P_SYNC2, P_PAD_, P_DATA_, P_DCK, P_DONE
+  } ps_state_e;
+  ps_state_e   ps_st;
+  logic [6:0]  ps_ones;     // consecutive ones, held at F_ONES
+  // The field being taken, low-order bit first.  THIRTY-ONE bits and not
+  // thirty-two: the thirty-second is the one arriving, so the word is
+  // `{ps_bitv, ps_sh}` and nothing ever reads a bit the register has already
+  // pushed out.  Written at thirty-two first, and lint said so.
+  logic [30:0] ps_sh;
+  logic [13:0] ps_n;        // bits into the field
+  logic [8:0]  ps_wc;       // the word within the 291-word chunk
+  logic [4:0]  ps_bit;      // the bit within the word
+  logic [13:0] ps_at;       // where that bit is in the chunk
+  logic [31:0] ps_hdr, ps_hck, ps_dck, ps_w;
+  logic        ps_wr;       // a parsed word goes into the store this tick
+  logic        trk_meta_we;
+  logic        ps_bitv;
+
+  assign trk_b_next = (trk_b == 8'(BPT-1)) ? 8'd0 : trk_b + 8'd1;
+  assign ps_at      = {ps_wc, ps_bit};
+  assign ps_bitv    = blk_w[ps_bit];
+
+  // A byte is taken out of the track only while the serialiser is filling a
+  // word, which is four ticks in every bus cycle.
+  logic       trk_adv, trk_end_sec, trk_end_gap, trk_step;
+  assign trk_adv     = (ch_state == C_TRD) && (ch_ph <= 3'd3);
+  assign trk_end_sec = !trk_gap && (trk_p == 11'(F_SECTOR-1))
+                     && (trk_b != 8'(BPT-1));
+  assign trk_end_gap = trk_gap && (trk_g == 9'(F_LEFTOVER-1));
+  assign trk_step    = trk_adv && (trk_end_sec || trk_end_gap);
+
+  // The byte the head is over.  `sector_image_laid` written as a select:
+  // 61 bytes of ones, the sync, the header and its checkword, 20 more ones,
+  // the sync, the pad, the data and its checkword, and 44 ones.  The header
+  // and its checkword start at byte 62, which is 2 modulo 4, and the data
+  // and its checkword at 92 and 1,116, which are both 0 --- so two lane
+  // indices are all this needs, and each is the byte offset taken modulo the
+  // word.
+  logic [1:0] lane_hi, lane_lo;
+  logic [7:0] trk_byte;
+  assign lane_hi = 2'(trk_p - 11'(F_HEADER));
+  assign lane_lo = 2'(trk_p);
+  always_comb begin
+    if      (trk_gap)                       trk_byte = 8'hff;
+    else if (trk_p <  11'(F_HDR_SYNC))      trk_byte = 8'hff;
+    else if (trk_p == 11'(F_HDR_SYNC))      trk_byte = F_SYNC;
+    else if (trk_p <  11'(F_HECC))          trk_byte = s_header[ch_slot][8*lane_hi +: 8];
+    else if (trk_p <  11'(F_RELOCK))        trk_byte = s_hck[ch_slot][8*lane_hi +: 8];
+    else if (trk_p <  11'(F_DAT_SYNC))      trk_byte = 8'hff;
+    else if (trk_p == 11'(F_DAT_SYNC))      trk_byte = F_SYNC;
+    else if (trk_p == 11'(F_PAD))           trk_byte = F_PADB;
+    else if (trk_p <  11'(F_DECC))          trk_byte = chb_q[8*lane_lo +: 8];
+    else if (trk_p <  11'(F_POST))          trk_byte = s_dck[ch_slot][8*lane_lo +: 8];
+    else                                    trk_byte = 8'hff;
+  end
+
   logic [27:0] acc_seek, acc_spin;
   logic [7:0]  acc_blk;
   logic [27:0] acc_at, acc_mv;
@@ -851,14 +1029,20 @@ module cadr_disk_controller #(
   // The store's other port.  A read transfer reads it ahead of the ECC and
   // ahead of the bus; a write transfer writes it behind the bus.
   logic [12:0] chb_a;
-  logic [31:0] chb_q;
+  logic [31:0] chb_q, chb_d;
   logic        chb_we;
+  // `ch_i` is the word within the PAGE and `ch_ra` the word within the
+  // BLOCK, and which of the two addresses the store is the direction ---
+  // except on a track, where both directions read or write the block by
+  // `ch_ra` while `ch_i` walks the page on the bus.
   assign chb_a  = 13'(ch_slot) * 13'(BLOCK_WORDS)
-                + 13'(ch_read ? ch_ra[7:0] : ch_i[7:0]);
-  assign chb_we = (ch_state == C_MOVE) && !ch_read && (ch_ph == 3'd2);
+                + 13'((ch_read || ch_track) ? ch_ra[7:0] : ch_i[7:0]);
+  assign chb_we = ((ch_state == C_MOVE) && !ch_read && (ch_ph == 3'd2))
+                || ps_wr;
+  assign chb_d  = ch_track ? ps_w : blk_w;
 
   always_ff @(posedge clk) begin
-    if (chb_we) blk_ram[chb_a] <= blk_w;
+    if (chb_we) blk_ram[chb_a] <= chb_d;
     chb_q <= blk_ram[chb_a];
   end
 
@@ -868,7 +1052,15 @@ module cadr_disk_controller #(
   logic [27:0] want_tag;
   logic        slot_hit;
   logic [4:0]  slot_of;
-  assign want_tag = {u_cyl[ch_unit], u_head[ch_unit], u_blk[ch_unit]};
+  // **A TRACK ASKS FOR A BLOCK THE HEADS ARE NOT ON.**  The walk's key is
+  // where the heads are; Read All and Write All go round the whole track
+  // from there without moving them, so their key is the sector the stream is
+  // on.  `trk_step` is the tick a new sector begins, and the key is the next
+  // block on it so that `ch_slot` can be latched at that same edge.
+  assign want_tag = ch_track
+                  ? {u_cyl[ch_unit], u_head[ch_unit],
+                     (trk_step ? trk_b_next : trk_b)}
+                  : {u_cyl[ch_unit], u_head[ch_unit], u_blk[ch_unit]};
   always_comb begin
     slot_hit = 1'b0;
     slot_of  = 5'd0;
@@ -984,6 +1176,23 @@ module cadr_disk_controller #(
       trap_step   <= 14'd0;
       ch_setda    <= 1'b0;
       ch_track    <= 1'b0;
+      trk_b       <= 8'd0;
+      trk_p       <= 11'd0;
+      trk_gap     <= 1'b0;
+      trk_g       <= 9'd0;
+      trk_lay     <= 1'b0;
+      ps_st       <= P_SYNC1;
+      ps_ones     <= 7'd0;
+      ps_sh       <= 31'd0;
+      ps_n        <= 14'd0;
+      ps_wc       <= 9'd0;
+      ps_bit      <= 5'd0;
+      ps_hdr      <= 32'd0;
+      ps_hck      <= 32'd0;
+      ps_dck      <= 32'd0;
+      ps_w        <= 32'd0;
+      ps_wr       <= 1'b0;
+      trk_meta_we <= 1'b0;
       acc_seek    <= 28'd0;
       acc_spin    <= 28'd0;
       acc_blk     <= 8'd0;
@@ -1044,8 +1253,50 @@ module cadr_disk_controller #(
       seek_ns_r <= seek_ns_c;
 
       // --- the channel, a word at a time --------------------------------
-      ch_dck_we <= 1'b0;
+      ch_dck_we   <= 1'b0;
+      ps_wr       <= 1'b0;
+      trk_meta_we <= 1'b0;
+      if (ps_wr)  ch_ra <= ch_ra + 9'd1;
       if (ch_busy) elapsed <= elapsed + 32'd5;
+
+      // --- the track goes past the head, a byte at a time -----------------
+      //
+      // `track_bytes`: seventeen sectors from the block the disk address
+      // names, and the LEFTOVER after the one whose block number is the last
+      // on the track --- wherever in the sequence that falls, which is why
+      // the gap is triggered on `trk_b` and not on the count.  A sector's
+      // data words come out of the store one tick ahead of the byte that
+      // needs them: `ch_ra` steps on the last lane of each, so `chb_q` holds
+      // the next word by the time the first lane of it is asked for, and it
+      // stands at zero through the sixty-one preamble bytes before the
+      // first.
+      if (trk_adv) begin
+        if (trk_gap) begin
+          if (trk_end_gap) begin
+            trk_gap <= 1'b0;
+            trk_g   <= 9'd0;
+          end else begin
+            trk_g <= trk_g + 9'd1;
+          end
+        end else if (trk_p == 11'(F_SECTOR-1)) begin
+          trk_p <= 11'd0;
+          if (trk_b == 8'(BPT-1)) begin
+            trk_gap <= 1'b1;
+            trk_g   <= 9'd0;
+          end
+        end else begin
+          trk_p <= trk_p + 11'd1;
+          if ((trk_p >= 11'(F_DATA)) && (trk_p < 11'(F_DECC))
+              && (lane_lo == 2'd3))
+            ch_ra <= ch_ra + 9'd1;
+        end
+        if (trk_step) begin
+          trk_b   <= trk_b_next;
+          ch_slot <= slot_of;
+          ch_ra   <= 9'd0;
+          if (!slot_hit) store_miss <= 1'b1;
+        end
+      end
       unique case (ch_state)
         C_IDLE: ;
         // The command list word, and `<21>` up for the length of its fetch.
@@ -1072,7 +1323,17 @@ module cadr_disk_controller #(
               // Xbus has.
               ch_page  <= ch_rdata[21:8];
               ch_more  <= ch_rdata[0];
-              ch_state <= C_LOOK;
+              // `each_ccw` and `command_list` walk the same list; the track
+              // has no block to look up and no header to compare, so it
+              // goes straight at the page.  `ch_ra` is the TRACK's position
+              // and is not touched here.
+              if (ch_track) begin
+                ch_i     <= 9'd0;
+                ch_ph    <= 3'd0;
+                ch_state <= ch_read ? C_TRD : C_TWR;
+              end else begin
+                ch_state <= C_LOOK;
+              end
             end
           end
         end
@@ -1296,6 +1557,11 @@ module cadr_disk_controller #(
           ch_moved <= ch_moved + 8'd1;
           if (!ch_more) begin
             ch_state <= C_ACCMUL;
+          end else if (ch_track) begin
+            // `each_ccw` has no block to advance to, "the track being one
+            // stream", so the heads stand and the next CCW is fetched.
+            ch_n     <= ch_n + 16'd1;
+            ch_state <= C_CCW;
           end else if (nb_off_pack) begin
             // "Header ECC Error also happens if an attempt is made to
             // continue a read or write operation past the end of the disk."
@@ -1312,6 +1578,208 @@ module cadr_disk_controller #(
             ch_state        <= C_CCW;
           end
         end
+        // The slot the track's first sector comes out of, and the only one
+        // Read All has to look up before it starts: the rest are latched at
+        // `trk_step` as the stream crosses into them.
+        C_TLOOK: begin
+          ch_ra <= 9'd0;
+          if (!slot_hit && ch_read) begin
+            store_miss <= 1'b1;
+            ch_state   <= C_ACCMUL;
+          end else begin
+            if (ch_read) ch_slot <= slot_of;
+            ch_state <= C_CCW;
+          end
+        end
+
+        // Read All.  Four ticks take four bytes out of the track and the
+        // fifth puts the word on the bus, "the track's bytes into the pages
+        // the command list names, four bytes to a word, low-order byte
+        // first".
+        //
+        // **THE NXM IS THE FIRST WORD'S OWN BUS CYCLE**, as it is for a
+        // block: muir asks `page + BLOCK_WORDS > main.len()` before it takes
+        // a byte, so its stream position is untouched by a page that is not
+        // there, and this one has taken four bytes by the time the cycle
+        // answers.  Nothing can tell them apart, because the walk stops --- a
+        // page that is not there is the end of the transfer either way.
+        C_TRD: begin
+          unique case (ch_ph)
+            3'd0, 3'd1, 3'd2, 3'd3: begin
+              blk_w[8*ch_ph[1:0] +: 8] <= trk_byte;
+              ch_ph <= ch_ph + 3'd1;
+            end
+            3'd4: begin
+              ch_req_r   <= 1'b1;
+              ch_write_r <= 1'b1;
+              ch_addr_r  <= {ch_page, ch_i[7:0]};
+              ch_wdata_r <= blk_w;
+              ch_ph      <= 3'd5;
+            end
+            default: if (ch_done) begin
+              ch_req_r <= 1'b0;
+              if (ch_nxm) begin
+                e_nxm    <= 1'b1;
+                ch_state <= C_ACCMUL;
+              end else if (ch_i == 9'(BLOCK_WORDS-1)) begin
+                ch_state <= C_NEXT;
+              end else begin
+                ch_i  <= ch_i + 9'd1;
+                ch_ph <= 3'd0;
+              end
+            end
+          endcase
+        end
+
+        // Write All.  A word off the bus, then its thirty-two bits into the
+        // parser one a tick, low-order bit first --- which is the order
+        // `to_le_bytes` and `b >> k & 1` put them in, so a word IS its bits
+        // from 0 to 31 and no byte lane appears here at all.
+        C_TWR: begin
+          unique case (ch_ph)
+            3'd0: begin
+              ch_req_r   <= 1'b1;
+              ch_write_r <= 1'b0;
+              ch_addr_r  <= {ch_page, ch_i[7:0]};
+              ch_ph      <= 3'd1;
+            end
+            3'd1: if (ch_done) begin
+              ch_req_r <= 1'b0;
+              if (ch_nxm) begin
+                e_nxm    <= 1'b1;
+                ch_state <= C_ACCMUL;
+              end else begin
+                blk_w  <= ch_rdata;
+                ps_bit <= 5'd0;
+                ch_ph  <= 3'd2;
+              end
+            end
+            default: begin
+              // ---- one bit through `parse_sector` ------------------------
+              if (trk_lay) begin
+                unique case (ps_st)
+                  // `after_sync`, and the ones counter is what says a run is
+                  // a preamble and not a byte that happens to have ones in
+                  // it.  It holds at F_ONES rather than counting on, because
+                  // a preamble is 488 of them and eleven bits would not hold
+                  // that.
+                  P_SYNC1, P_SYNC2: begin
+                    if (ps_bitv) begin
+                      if (ps_ones != 7'(F_ONES)) ps_ones <= ps_ones + 7'd1;
+                    end else if (ps_ones >= 7'(F_ONES)) begin
+                      ps_n <= 14'd0;
+                      if (ps_st == P_SYNC1) begin
+                        ps_st <= P_HDR;
+                      end else if (ps_at + 14'd1 + 14'(F_TAIL_B)
+                                   <= 14'(F_SECTOR_B)) begin
+                        // `take_bits` fits: the slot is looked up HERE and
+                        // not earlier, so a chunk that will not parse never
+                        // touches the store.
+                        ps_st   <= P_PAD_;
+                        ch_ra   <= 9'd0;
+                        ch_slot <= slot_of;
+                        if (!slot_hit) begin
+                          store_miss <= 1'b1;
+                          trk_lay    <= 1'b0;
+                        end
+                      end else begin
+                        // The data and its checkword do not fit in what is
+                        // left of the chunk: `None`, and the track stops.
+                        trk_lay <= 1'b0;
+                      end
+                    end else begin
+                      ps_ones <= 7'd0;
+                    end
+                  end
+                  P_HDR, P_HCK, P_DCK: begin
+                    ps_sh <= {ps_bitv, ps_sh[30:1]};
+                    if (ps_n == 14'd31) begin
+                      ps_n <= 14'd0;
+                      unique case (ps_st)
+                        P_HDR: begin
+                          ps_hdr <= {ps_bitv, ps_sh};
+                          ps_st  <= P_HCK;
+                        end
+                        P_HCK: begin
+                          ps_hck  <= {ps_bitv, ps_sh};
+                          ps_ones <= 7'd0;
+                          ps_st   <= P_SYNC2;
+                        end
+                        default: begin
+                          ps_dck      <= {ps_bitv, ps_sh};
+                          trk_meta_we <= 1'b1;
+                          ps_st       <= P_DONE;
+                        end
+                      endcase
+                    end else begin
+                      ps_n <= ps_n + 14'd1;
+                    end
+                  end
+                  // "PAD - a byte containing octal 377, which is here to fix
+                  // a bug in the logic for read-compare. (Ugh)"  Skipped, as
+                  // `take_bits(bits, at + 8, ...)` skips it.
+                  P_PAD_: begin
+                    if (ps_n == 14'd7) begin
+                      ps_n  <= 14'd0;
+                      ps_st <= P_DATA_;
+                    end else begin
+                      ps_n <= ps_n + 14'd1;
+                    end
+                  end
+                  P_DATA_: begin
+                    ps_sh <= {ps_bitv, ps_sh[30:1]};
+                    if (ps_n[4:0] == 5'd31) begin
+                      ps_w  <= {ps_bitv, ps_sh};
+                      ps_wr <= 1'b1;
+                    end
+                    if (ps_n == 14'(BLOCK_WORDS*32 - 1)) begin
+                      ps_n  <= 14'd0;
+                      ps_st <= P_DCK;
+                    end else begin
+                      ps_n <= ps_n + 14'd1;
+                    end
+                  end
+                  default: ;   // P_DONE: the rest of the chunk is gap
+                endcase
+              end
+              // ---- the chunk and the page --------------------------------
+              if (ps_bit == 5'd31) begin
+                if (ps_wc == 9'(F_SECTOR_W - 1)) begin
+                  // `while at + format::SECTOR <= bytes.len()`, one stride
+                  // done.  A chunk that did not reach the end of its own
+                  // parse is `None` and stops the laying; the walk goes on.
+                  //
+                  // **THE PARSE CAN END ON THE CHUNK'S LAST BIT**, and then
+                  // `ps_st` is still `P_DCK` at this point --- it goes to
+                  // `P_DONE` at this same edge.  That happens when the data's
+                  // sync is at bit 1,080 exactly, which is 352 bits later
+                  // than this format puts it, so nothing on a well-formed
+                  // pack reaches it; `tb/cadr_disk_tb.cpp` builds a chunk
+                  // that does, and the one a bit later that does not.
+                  if (!(ps_st == P_DONE
+                        || (ps_st == P_DCK && ps_n == 14'd31)))
+                    trk_lay <= 1'b0;
+                  ps_wc   <= 9'd0;
+                  ps_st   <= P_SYNC1;
+                  ps_ones <= 7'd0;
+                  ps_n    <= 14'd0;
+                  trk_b   <= trk_b_next;
+                end else begin
+                  ps_wc <= ps_wc + 9'd1;
+                end
+                if (ch_i == 9'(BLOCK_WORDS-1)) begin
+                  ch_state <= C_NEXT;
+                end else begin
+                  ch_i  <= ch_i + 9'd1;
+                  ch_ph <= 3'd0;
+                end
+              end else begin
+                ps_bit <= ps_bit + 5'd1;
+              end
+            end
+          endcase
+        end
+
         C_ACCMUL: begin
           acc_at   <= 28'(acc_blk) * 28'(SECTOR_NS);
           acc_mv   <= ch_track ? 28'(REVOLUTION_NS)
@@ -1463,8 +1931,10 @@ module cadr_disk_controller #(
                     end
                   end
                 end
-                // Read All and Write All: the seek, the disk address and the
-                // track's own time are here; the track itself is not.
+                // Read All and Write All: the seek, then the whole track as
+                // one stream of bytes --- out of the store's sectors on a
+                // Read All and into them on a Write All --- and then a
+                // revolution charged for it.
                 is_all: begin
                   if (present) begin
                     if (ro_fault) begin
@@ -1480,15 +1950,39 @@ module cadr_disk_controller #(
                       e_eccsoft <= 1'b0;
                       timeout   <= 1'b0;
                       ch_unit   <= sel_unit;
+                      ch_read   <= (code == 4'o02);
+                      ch_cmp    <= 1'b0;
                       ch_moved  <= 8'd0;
                       ch_track  <= 1'b1;
+                      ch_n      <= 16'd0;
+                      ch_i      <= 9'd0;
+                      ch_ra     <= 9'd0;
+                      ch_ph     <= 3'd0;
+                      ch_req_r  <= 1'b0;
                       acc_seek  <= seek_ns_r;
                       acc_spin  <= 28'(spin);
                       acc_blk   <= da_blk;
                       elapsed   <= 32'd0;
+                      // The stream starts at the block the disk address
+                      // names and goes round from there --- `track_bytes`
+                      // runs `(block + k) % blocks_per_track` and puts the
+                      // track's leftover after the sector whose block number
+                      // is the last on the track, wherever in the sequence
+                      // that falls.
+                      trk_b     <= da_blk;
+                      trk_p     <= 11'd0;
+                      trk_gap   <= 1'b0;
+                      trk_g     <= 9'd0;
+                      trk_lay   <= 1'b1;
+                      ps_st     <= P_SYNC1;
+                      ps_ones   <= 7'd0;
+                      ps_n      <= 14'd0;
+                      ps_wc     <= 9'd0;
+                      ps_bit    <= 5'd0;
                       if (!seek_here && seek_off_pack) begin
                         u_seek_err[sel_unit] <= 1'b1;
                         ch_setda <= 1'b0;
+                        ch_state <= C_ACCMUL;
                       end else begin
                         if (!seek_here) begin
                           u_cyl[sel_unit]  <= da_cyl;
@@ -1496,8 +1990,8 @@ module cadr_disk_controller #(
                           u_blk[sel_unit]  <= da_blk;
                         end
                         ch_setda <= 1'b1;
+                        ch_state <= C_TLOOK;
                       end
-                      ch_state <= C_ACCMUL;
                     end
                   end
                 end
