@@ -33,8 +33,10 @@
 // boot PROM's 16,951 device cycles reach: 11,301 reads of the status register
 // from microcycle 537,848 on and 5,650 writes of the disk address register.
 // They used to be answered from the trace, and that was stimulus.  What is
-// still outside the disk is everything past its register face: the channel,
-// the drive and `S_AXI_HP2`.  The Unibus is outside too, and not merely unbuilt:
+// still outside the disk is its pack side, `rtl/cadr_disk_pack.sv`, which is
+// three AXI faces and belongs beside the PS7 in the top level; the drive seam
+// and the block store's seam cross this boundary to reach it.  The Unibus is
+// outside too, and not merely unbuilt:
 // `cadr_busint_xbus.sv` is the Xbus half, and 347 of the System band's
 // 141,849 bus cycles arbitrate for a bus that is not here.
 
@@ -70,22 +72,31 @@ module cadr_machine #(
     // --- THE BLOCK STORE'S SEAM.
     //
     // The other half of the drive: a slot holds one block, its header, its
-    // header checkword and its data checkword, and `S_AXI_HP2` is what will
-    // fill it --- the pack is a file Linux puts in DDR and the block's
-    // address crosses over `M_AXI_GP0`.  Neither exists; the seam does, and
-    // `tb/cadr_disk_tb.cpp` drives the controller's end of it from the
-    // reference trace's `BLK` rows.  `rtl/cadr_arty.sv` ties it off, and with
-    // it tied off the whole store and the whole channel constant-fold, which
-    // is the same thing that happens to the drive.
+    // header checkword and its data checkword, and `rtl/cadr_disk_pack.sv`
+    // fills it over `S_AXI_HP2` --- the pack is a file Linux puts in DDR and
+    // the block's address crosses over `M_AXI_GP0`.  That module sits
+    // OUTSIDE this one, beside the memory port's adapter in `rtl/cadr_arty.sv`
+    // with `DDR=1`, because it is three AXI faces and a PS7 and this module
+    // is the machine; with `DDR=0` the top level ties the seam off and the
+    // store, the channel and the drive constant-fold.
     //
-    // Only the WRITE half leaves this module.  The read-back and the store's
-    // own interlock are the master's business and there is no master, so
-    // they are folded below rather than brought out to a port nothing can
-    // drive --- which is what `dev_wdata` was, one boundary along.
+    // Both halves cross here now.  `store_rdata` is what the write-back
+    // reads, a tick behind its address as a block RAM's read is; `store_miss`
+    // is the controller saying the walk asked for a block the store does not
+    // hold, and `ch_active` is its interlock --- the pack side must not touch
+    // a slot while the channel is walking.  They used to be folded inside,
+    // there being no master; a port on one side of a boundary and not the
+    // other is what `dev_wdata` was.
     input  var logic        store_we,
     input  var logic [4:0]  store_slot,
     input  var logic [8:0]  store_addr,
     input  var logic [31:0] store_wdata,
+    output var logic [31:0] store_rdata,
+    output var logic        store_miss,
+    output var logic        ch_active,
+    // And the pack side's own half of the interlock: a block is in flight
+    // through the seam, and the controller defers a walk while it is.
+    input  var logic        store_busy,
 
     // --- how many 64K-word memory boards are fitted, 1 to 60
     input  var logic [6:0]  boards,
@@ -312,11 +323,9 @@ module cadr_machine #(
   logic [31:0] dev_rdata_joined;
   // The channel, which makes the disk controller the second master on this
   // bus.  `cadr_memory_path.sv` has the arbiter and says what it holds to.
-  logic        ch_req, ch_write, ch_done, ch_nxm, ch_active;
+  logic        ch_req, ch_write, ch_done, ch_nxm;
   logic [21:0] ch_addr;
   logic [31:0] ch_wdata, ch_rdata;
-  logic [31:0] store_rdata;
-  logic        store_miss;
 
   cadr_disk_controller disk (
       .clk      (clk),
@@ -350,7 +359,8 @@ module cadr_machine #(
       .ch_done  (ch_done),
       .ch_nxm   (ch_nxm),
       .ch_rdata (ch_rdata),
-      .ch_active(ch_active)
+      .ch_active(ch_active),
+      .store_busy(store_busy)
   );
 
   assign dev_ack_joined   = disk_ack || device_ack;
@@ -360,11 +370,6 @@ module cadr_machine #(
   // MD, and that is the thing this composition makes visible.
   // -PROG.RESET and PROG.BOOT: the two pulses a mode-register write makes,
   // which the processor does not act on yet. See the note at the top.
-  // The store's read-back and its interlock, folded rather than brought out:
-  // see the note at the seam's ports.  `store_miss` is the controller saying
-  // the walk asked for a block the store does not hold, which cannot happen
-  // once `S_AXI_HP2` fetches on demand and which `build/disk.pass` requires
-  // to stay low at every tick of its own run.
   logic unused;
   assign n_loadmd_o = n_loadmd;
   assign n_memrq_o  = n_memrq;
@@ -372,8 +377,7 @@ module cadr_machine #(
   assign n_memgrant_o = n_memgrant;
   assign rdcyc_o    = rdcyc;
   assign dev_wdata  = wdata;
-  assign unused = &{1'b0, prog_reset, prog_boot, store_miss, ch_active,
-                    ^store_rdata};
+  assign unused = &{1'b0, prog_reset, prog_boot};
 
 endmodule
 

@@ -201,3 +201,105 @@ so if the count ever rises above one.
 The controller is also a bus **master**: the memory channel fetches its CCWs
 and moves its pages over the Xbus, and `cadr_machine.sv` has no provision for a
 second master on it. That is the other half of the same seam.
+
+## The pack side, built
+
+Written at the slice that replaced the block store's seam, so read the
+"before building" prose above as history: the drive has its channel and its
+pack side now. What was decided here, and what was measured.
+
+**The pack in DDR is muir's `Unit` split down the middle.** `Unit` is a
+file plus two tables --- `headers` and `data_checkwords`, the sectors a
+Write All laid down with something other than the format's own header and
+checkwords. On the board the file is in DDR and Linux is the drive: it
+decides which block goes in which of the store's 24 slots, hands the fabric
+**the block's address**, and takes a written block back. The seam between
+the drive and the controller is exactly the one the trace testbench drove
+from `BLK` rows --- 259 words a slot and a tag --- with `rtl/cadr_disk_pack.sv`
+on the drive's side of it. Nothing in fabric computes a header or a checkword
+for a fetched block; Linux does, as `Header::of` and `Ecc::over` do for a
+block nothing laid, and keeps what a write-back hands it.
+
+**The record is the 259 words at the block's address**: word i at
+address + 4i, low byte first, so the 256 data words are the pack file's
+own 1,024 bytes unchanged and the header, header checkword and data checkword
+follow at +1024, +1028, +1032. A 64-bit beat at + 8k carries words 2k and
+2k+1. Eight AXI3 bursts of sixteen beats and one of two; the last beat goes
+out with its low half strobed and its high half not, so the word after the
+record is never written. **The address must be 128-byte aligned** so that
+no burst crosses 4 KB, and an unaligned one is refused rather than masked.
+The Python model (`~/.cache/pack/packmodel.py` at the slice, thrown away)
+reproduced every `BLK write` and `PAGE` row of the trace with the store
+filled only through modelled records before a line of the RTL was written.
+
+**Linux writes five words and reads one more**, at `0x4000_0000` on
+`M_AXI_GP0`: `ADDR`, `TAG`, `SLOT`, `CTL` (fetch, write back, take away; and
+busy, done, error, refused, `ch_active`, `store_miss` read back), `DRIVE`
+(present, read-only, timed --- the drive seam, eight units of it) and
+`IDENT`. Anything outside the sixty-four bytes is SLVERR. Kept minimal on
+purpose: the block moves at Linux's word and the CADR never waits on Linux.
+
+**A fetch takes the slot away first and writes the tag last**, which needed
+one change to the controller: a tag written with bit 31 set clears the
+slot's valid bit, and Linux can take a pack away with it. **And the interlock
+is mutual.** A request while the channel is walking is refused, not queued;
+and a walk STARTed while the pack side is moving a block defers its first
+command-list fetch until the move is over, the wait coming off the access
+time like the rest of the walk. Mutual because the pack side reads
+`ch_active` through a register --- the controller's state reaching its
+enables was -0.530 ns on the DDR=1 board --- and a register is a tick
+behind: the controller announces a START two ticks ahead from the store's
+own hold registers, and the deferral covers the tick the announcement
+cannot. So a walk that meets a fill waits and reads the block whole, neither
+a miss nor half old and half new. Held by `tb/cadr_disk_pack_tb.cpp`, which
+STARTs a Read as a fetch begins and asks for a fetch in the middle of a
+42,946-shift `Ecc::trap`.
+
+**Fetching on demand is deliberately not built.** With the store a window
+Linux fills, a block the walk asks for and was not given stops the transfer,
+as it always did; the pack side reads `store_miss` back so a driver can see
+it. Making the walk wait for Linux instead would put the wait inside a
+transfer whose time the trace compares, and has no reference. It is the
+next thing the disk needs and the first thing a driver will ask for.
+
+**The register store is held one tick, and the timers it loads are loaded
+one tick short.** Found by the first fit with the drive present: the decision
+to store was made from the bus interface's tick counter --- `elapsed`
+reaching the 80 ns setup makes `-XBUS.RQ`, which makes the controller's
+`asked`, which through "a write, not taken, into register 3, a transfer, a
+drive present" reached the clock enable of every drive register --- seven
+logic levels, 6.8 ns, 3,620 of 23,423 endpoints failing by up to 2.077 ns
+on the DDR=1 board where the baseline met at +0.030. The remedy is the one
+`cadr_machine.xdc` prescribes for a signal read once a bus cycle: the
+acknowledgement stays a gate exactly as -MEMACK on a write does, and the
+registers take the store a tick after the request, from copies of the word
+and the register number registered every tick with no enable. Nothing on the
+bus can see 5 ns in a register --- the next cycle is 145 ns away --- except
+the trace, which samples every timer a START loads either side of its expiry
+to the tick; so each such load is written `- STORE_HOLD_NS` at the load, the
+spindle's position is taken from a one-tick copy rather than by arithmetic
+across the wrap, and the walk's tally of ticks starts at 5. `RD_FINISH_T`'s
+"two ticks short of 140 ns" is the precedent, and it is in the open rather
+than in the constant. The proof it is exact is that `disk-timeout-a-tick-
+short` and `disk-seek-settle-a-tick-short` are still caught: paid twice or
+not at all, they would survive. A write in the testbenches costs three ticks
+now --- the address, the request, the hold --- so that a read on the tick
+after sees the registers; the request's tick is still the instant.
+
+**Measured.** `disk.pass` holds the whole trace with the store reachable
+only over AXI at exactly the residue it had before: block counter exempt on
+136 rows and compared on 81, 29 rows one way round, 15 shared groups, 43
+STARTs off their instant, 1 turn; 27 blocks fetched, 5 written back and
+compared, all 46 `NEED` blocks resident. A fetch costs 302 ticks at fixed
+slave delays, a write-back 557, a register write 3. **Both directions of
+the beat are registered at the seam** --- `RVALID` and `RDATA` leave the PS7
+late in the tick, and written straight into the store they reached every
+slot's tag enable at -0.513 ns on the DDR=1 board; and the block RAM's own
+read offered straight to the PS7's `WDATA` pin was -0.505. Registered, a
+read beat still costs two ticks and a write beat four. The channel's
+access-time sum is registered before `elapsed` comes off it for the same
+reason, the tick counted by `elapsed` itself. `disk_pack.pass` runs
+22 fetches and 4 write-backs under varying delays with 243 bursts counted.
+`ps7_init` with `S_AXI_HP2` on at 64 bits is **byte-identical in its 673
+operations** to the committed routine, as CLAUDE.md predicted for HP0 and
+HP1, so Digilent's FSBL still needs no change.

@@ -3493,15 +3493,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note equivalent mutant with the smallest magnitude that is caught.
 @note **THE ANCHOR MOVED AT 69a2246**: the store into register 0 gained the
 @note seven other transfer error flops and the Reset-0o16 arm, and the block
-@note re-aligned its `<=`.  The mutation is unchanged --- `-RESET ERR` given
-@note a reach into the drive's own two flags that it does not have.
+@note re-aligned its `<=`.  **And again with the pack side**, when the store
+@note was held two ticks and the word became `st_wdata`, the copy taken at
+@note the request.  The mutation is unchanged --- `-RESET ERR` given a reach
+@note into the drive's own two flags that it does not have.
 @old
           2'd0: begin
-            cmd       <= wdata;
+            cmd       <= st_wdata;
             timeout   <= 1'b0;
 @new
           2'd0: begin
-            cmd       <= wdata;
+            cmd       <= st_wdata;
             timeout   <= 1'b0;
             u_fault   <= 8'd0;
             u_seek_err <= 8'd0;
@@ -3651,10 +3653,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the bus, and on a Write All it addresses the word the parser is putting
 @note back.  So the rotation now reaches three paths and not one --- and the
 @note track's two are inverses of each other, so the round trip in
-@note `tb/cadr_disk_tb.cpp` cannot see it.  What sees it is the SEAM, which
-@note is untouched: the trace's `PAGE` rows for an ordinary Read, its `BLK
-@note write` rows for a Write All, and the byte-for-byte comparison of a
-@note serialised track against the store read back through the seam.
+@note `tb/cadr_disk_tb.cpp` cannot see it.  What sees it is the store's OTHER
+@note port, which is untouched: the trace's `PAGE` rows for an ordinary Read,
+@note its `BLK write` rows for a Write All, and the byte-for-byte comparison
+@note of a serialised track against the store written back over the pack
+@note side.  (That port was the testbench's seam when this was written and is
+@note `rtl/cadr_disk_pack.sv`'s now; the argument is the same.)
 @old
   assign chb_a  = 13'(ch_slot) * 13'(BLOCK_WORDS)
                 + 13'((ch_read || ch_track) ? ch_ra[7:0] : ch_i[7:0]);
@@ -3858,4 +3862,279 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                       trk_b     <= (code == 4'o13) ? da_blk + 8'd1 : da_blk;
                       trk_p     <= 11'd0;
                       trk_gap   <= 1'b0;
+@end
+
+# --- the pack side: the block's address, and the master on S_AXI_HP2 ---------
+#
+# `rtl/cadr_disk_pack.sv` has no muir reference --- `Unit::read_block` is a
+# memcpy --- so it is held to the property in `tb/cadr_disk_pack_tb.cpp`, which
+# is the `axi_master` shape: the testbench is the stimulus and a counting AXI3
+# slave the observer, and every fetched block is read back THROUGH THE
+# CONTROLLER by the CADR's own transfer so that the two halves of the master
+# cannot round-trip each other's mistakes.  Records aim there because it costs
+# seconds; two are aimed at `disk` as well, where the whole trace sees the
+# pack side under it at two minutes a run, so that the trace check is known
+# to see the pack side and not merely to build it.
+#
+# EVERY RECORD IS CAUGHT ON ITS OWN LINE, and the lines are named in the notes:
+# two mutations of one master reported by one message would be CLAUDE.md's
+# stale-artefact trap --- one verdict counted twice.
+
+@mutation pack-stores-a-read-beat-two-words-along
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note Word i of the record is at the block's address + 4i, and a 64-bit beat
+@note at + 8k carries words 2k and 2k+1.  Two words along, the block lands in
+@note the store shifted, its last beat overwriting the header and its
+@note checkword, and the first two words of every fetched block are whatever
+@note the slot held before.
+@note
+@note Caught before a word moves, and not where the note first said: the
+@note data checkword is the code over the 256 words in order, and over the
+@note block shifted it does not check, so the CADR's first Read stops with
+@note `<16>` --- "an error bit after a Read of a fetched block is 0x12001".
+@note The page compare that would have caught it at word 0 never gets a
+@note page.  The record's words are a function of the address AND the
+@note offset, so a wrong offset is a wrong word and not a plausible
+@note neighbour; here the code sees that first.
+@old
+  assign word_lo = meta ? ST_HEADER + {7'd0, p_beat[0], 1'b0}
+                        : {1'b0, p_burst[2:0], p_beat[3:0], 1'b0};
+@new
+  assign word_lo = meta ? ST_HEADER + {7'd0, p_beat[0], 1'b0}
+                        : {1'b0, p_burst[2:0], p_beat[3:0], 1'b0} + 9'd2;
+@end
+
+@mutation pack-high-half-of-a-read-beat-is-the-low-half
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note The beat's high half is word 2k+1 and goes into the store the tick
+@note after the low half, out of the register the beat was taken into.  With
+@note the low half mixed into it every odd word of
+@note a fetched block is wrong by the even one before it --- the lane bug
+@note `cadr_axi_widen.sv`'s check exists for, one port along, and the one a
+@note fetch-then-write-back round trip could not see if the write side made
+@note it too.  Mixed in rather than substituted so that both halves of the
+@note beat stay read and lint has nothing to say: CLAUDE.md's "the address
+@note mixed into the word" idiom.  The write side is untouched here and the
+@note block is read back by the CADR.  Caught at the header CHECKWORD: word
+@note 257 of the record is the high half of beat 128 and comes in mixed with
+@note the header, so it no longer checks the header and the Read stops with
+@note `<17>` --- "an error bit after a Read of a fetched block is 0x22001".
+@note A different bit from the record above and from the one below, which
+@note is what tells the three apart on one message.
+@old
+              hi_word    <= rb_data[63:32];
+@new
+              hi_word    <= rb_data[63:32] ^ rb_data[31:0];
+@end
+
+@mutation pack-high-half-of-a-read-beat-is-the-low-half-on-the-trace
+@check disk
+@file rtl/cadr_disk_pack.sv
+@note The same bug, seen by the trace check: the pack side fills the store
+@note from the trace's `BLK` rows over AXI now, so a lane wrong on the way in
+@note is a block wrong in the store.  Caught before the first row, by the
+@note pre-roll's own round trip of a scratch record --- "the pre-roll's round
+@note trip lost word 1" --- which is the trace testbench's measurement of what
+@note a fetch and a write-back cost and the first thing in it that reads a
+@note block back; had that not been there, the first `PAGE` row would have.
+@note Aimed here so that the trace check is known to see the pack side under
+@note it, not merely to build it.
+@old
+              hi_word    <= rb_data[63:32];
+@new
+              hi_word    <= rb_data[63:32] ^ rb_data[31:0];
+@end
+
+@mutation pack-fetches-the-three-words-from-inside-the-block
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note The header, its checkword and the data's are at +1024, after the 256
+@note data words.  Fetched from +896 instead they are data words 224 to 226,
+@note so every block's header names the wrong block --- and the CADR's Read
+@note says so with `STATUS<18>`, header compare, before a word has moved.
+@note Caught at "an error bit after a Read of a fetched block is 0x42001":
+@note the same message as the two above with a third bit in it, the data
+@note right and the words beside it not.
+@old
+  localparam logic [31:0] META_OFFSET = 32'd1024;
+@new
+  localparam logic [31:0] META_OFFSET = 32'd896;
+@end
+
+@mutation pack-writes-back-one-burst-over
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note A write-back's bursts go where the record's are: the block's address,
+@note plus 128 a burst, plus 1,024 for the last.  One burst over, every word
+@note lands 32 words on and the record's first 32 are never written --- and
+@note the DDR is poisoned where nothing wrote, so they read as poison and not
+@note as the block.  Caught at "a word of the record written back", word 0.
+@note The read side is untouched, so this is not a relabelling a round trip
+@note would carry.
+@old
+  assign m_awaddr  = burst_addr;
+@new
+  assign m_awaddr  = burst_addr + 32'd128;
+@end
+
+@mutation pack-writes-back-one-burst-over-on-the-trace
+@check disk
+@file rtl/cadr_disk_pack.sv
+@note The same bug against the trace check, whose `BLK write` rows are
+@note compared by having the pack side write the slot back to the address
+@note the row names and reading the record there.  Caught before the first
+@note such row, by the pre-roll's round trip of a scratch record --- "the
+@note pre-roll's round trip lost word 0"; the first `BLK write` row, "a word
+@note of the block the transfer wrote", is behind it.
+@old
+  assign m_awaddr  = burst_addr;
+@new
+  assign m_awaddr  = burst_addr + 32'd128;
+@end
+
+@mutation pack-writes-the-pad-and-not-the-checkword
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note The record is 259 words and the last beat carries the data checkword
+@note in its low half and, in its high half, the word after the record ---
+@note which is Linux's, and the strobes are what keep it so.  Strobing the
+@note high half instead writes the pad and leaves the checkword unwritten.
+@note Caught at "the data checkword written back", and the pad's own check
+@note fails on the line after; the checkword is first because a record is
+@note compared before its neighbour.
+@old
+  assign m_wstrb   = (meta && p_beat[0]) ? 8'h0F : 8'hFF;
+@new
+  assign m_wstrb   = (meta && p_beat[0]) ? 8'hF0 : 8'hFF;
+@end
+
+@mutation pack-offers-the-write-address-twice
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note AWVALID held up into the first data beat's state offers the burst's
+@note address a second time after it was taken, and a slave that only
+@note recorded the address could not tell --- CLAUDE.md's
+@note `awvalid-held-up-after-awready`.  `tb/cadr_pack_side.h`'s slave takes
+@note every address it is offered, open burst or not, and counts: caught at
+@note "a second write address before the response".
+@old
+  assign m_awvalid = (pst == P_AW);
+@new
+  assign m_awvalid = (pst == P_AW) || (pst == P_W0);
+@end
+
+@mutation pack-honours-no-interlock
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note `ch_active` is the controller's BUSY for a transfer: while it is up the
+@note channel owns the slot it is walking, and a fetch into it or a
+@note write-back out of it would move words under the walk.  Refusing only
+@note when the pack side is itself busy leaves the walk unprotected.  The
+@note property check STARTs a Read of a block whose data checkword fails ---
+@note `Ecc::trap`'s 42,946 shifts of walking --- and asks for a fetch in the
+@note middle: caught at "refused, a request while the channel walks".
+@old
+  assign bad_ch    = ch_active_q;
+@new
+  assign bad_ch    = ch_active_q && busy;
+@end
+
+@mutation disk-walks-while-the-pack-side-moves
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note The interlock is mutual.  The pack side refuses a request while the
+@note channel is walking, and reads `ch_active` through a register, which is
+@note a tick behind; the controller announces a START two ticks ahead and,
+@note for the tick that still leaves, defers its first command-list fetch
+@note while `store_busy` says a block is moving through the seam.  Deferring
+@note only from the second CCW on leaves the first fetch, and so the walk's
+@note first slot lookup, running under a fill --- the slot has been taken
+@note away and its tag is not yet in, so the walk misses where it should
+@note have waited --- and, having missed, ends some hundreds of ticks before
+@note the fill does.  Caught at "the walk ended before the fill it met", the
+@note first of the three lines that case checks; "a walk that met a fill
+@note missed instead of waiting" is the second.  Written with `store_busy`
+@note still read, so lint has nothing to say.
+@old
+          if (!ch_req_r && !store_busy) begin
+@new
+          if (!ch_req_r && (!store_busy || ch_n == 16'd0)) begin
+@end
+
+@mutation pack-ignores-a-refused-read-burst
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note SLVERR or DECERR on a read beat says the port refused the burst, and
+@note the error bit is how Linux finds out.  Gated on a condition that is
+@note false inside the branch it sits in, it is never set: caught at "the
+@note error bit after SLVERR".  Written as an added term rather than a
+@note deleted line so that `m_rresp[1]` stays read and lint has nothing to
+@note say.
+@old
+            if (m_rresp[1]) error <= 1'b1;
+@new
+            if (m_rresp[1] && !m_rvalid) error <= 1'b1;
+@end
+
+@mutation pack-takes-the-drive-from-the-read-only-byte
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note DRIVE's low byte is which units have a pack and its second byte is the
+@note read-only switch of each.  Presence taken from the second byte leaves
+@note the CADR looking at an empty cable after Linux has mounted a pack:
+@note caught at "the status with a drive on unit 0", which still reads the
+@note boot PROM's `0x2321`.
+@old
+  assign drive_present   = r_drive[7:0];
+@new
+  assign drive_present   = r_drive[15:8];
+@end
+
+@mutation pack-answers-the-whole-bus-as-its-registers
+@check disk_pack
+@file rtl/cadr_disk_pack.sv
+@note The sixteen registers sit in a 64-byte window, and an access outside
+@note it is answered SLVERR so that a wrong pointer in Linux is a bus error
+@note and not a silent read of zero.  Widened to the whole lower half of the
+@note address space, a read past the window comes back OKAY: caught at "the
+@note response to a read outside the window".
+@old
+  assign r_in  = (r_at[31:6] == REG_BASE[31:6]);
+@new
+  assign r_in  = (r_at[31:6] == REG_BASE[31:6]) || !r_at[31];
+@end
+
+@mutation pack-take-away-leaves-the-slot-valid
+@check disk_pack
+@file rtl/cadr_disk_controller.sv
+@note The one thing the pack side needed of the controller: a tag written
+@note with bit 31 set takes the slot's block away, so that a fetch can
+@note invalidate the slot it is about to fill and Linux can take a pack away.
+@note Setting the valid bit instead of clearing it makes both no-ops.  The
+@note fill still misses --- the old tag is not the new block's --- so what
+@note catches it is the take-away itself: "a Read of a block taken away did
+@note not miss".
+@old
+          if (store_wdata[31]) begin
+            s_valid[store_slot] <= 1'b0;
+@new
+          if (store_wdata[31]) begin
+            s_valid[store_slot] <= 1'b1;
+@end
+
+@mutation the-disks-interlock-reaches-no-pin
+@check arty
+@file rtl/cadr_arty.sv
+@note `ch_active` left the machine with the pack side, and on the default
+@note board --- no `DDR`, no pack side --- the `witness` fold is the only
+@note thing that reads it.  Left out of the fold it is an output of
+@note `cadr_machine` nothing reads, which is an UNUSEDSIGNAL on the first
+@note lint pass: the same shape as `the-word-at-the-xbus-seam-reaches-no-pin`,
+@note one seam along.
+@old
+                   mem_req, mem_write, store_miss, ch_active};
+@new
+                   mem_req, mem_write, store_miss};
 @end

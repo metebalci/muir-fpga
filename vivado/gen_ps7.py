@@ -49,7 +49,9 @@ SPDX = ("// SPDX-FileCopyrightText: 2026 Mete Balci\n"
         "// SPDX-License-Identifier: AGPL-3.0-or-later")
 
 # The pins the fabric brings out, and the whole of them.  Everything else is
-# tied or left open below.
+# tied or left open below.  Three ports cross the boundary: `S_AXI_HP0` for
+# the machine's main memory, `S_AXI_HP2` for the disk's pack, `M_AXI_GP0` for
+# the disk's registers --- and the EMIO GPIO the memory tally is read on.
 #
 # `S_AXI_HP0` at its NATIVE 64 BITS, which is not an arbitrary choice: diffed
 # at 1d3a9bc, HP0 disabled against HP0 enabled at 64 bits gives a
@@ -92,6 +94,39 @@ EXPOSED = [
     # counters, and a port and its address decode would be a second design to
     # be wrong about.  The other 63 EMIO peripherals stay tied off below.
     "EMIOGPIOI",
+    # `S_AXI_HP2`, the disk's own port, at the same 64 bits and for the same
+    # reason: at 64 bits enabling an HP port changes `ps7_init` by nothing.
+    # HP2 and not HP1 because HP0 and HP1 share one DDR controller port
+    # (UG585 Table 5-11) and the disk's traffic is to stay off the machine's.
+    # `rtl/cadr_disk_pack.sv` is the master on it.
+    "SAXIHP2ACLK", "SAXIHP2ARESETN",
+    "SAXIHP2AWADDR", "SAXIHP2AWLEN", "SAXIHP2AWSIZE", "SAXIHP2AWBURST",
+    "SAXIHP2AWVALID", "SAXIHP2AWREADY",
+    "SAXIHP2WDATA", "SAXIHP2WSTRB", "SAXIHP2WLAST", "SAXIHP2WVALID",
+    "SAXIHP2WREADY",
+    "SAXIHP2BRESP", "SAXIHP2BVALID", "SAXIHP2BREADY",
+    "SAXIHP2ARADDR", "SAXIHP2ARLEN", "SAXIHP2ARSIZE", "SAXIHP2ARBURST",
+    "SAXIHP2ARVALID", "SAXIHP2ARREADY",
+    "SAXIHP2RDATA", "SAXIHP2RRESP", "SAXIHP2RLAST", "SAXIHP2RVALID",
+    "SAXIHP2RREADY",
+    # `M_AXI_GP0`, the one port on which the PS is the master: Linux writes
+    # the block's address and the drive's presence into
+    # `rtl/cadr_disk_pack.sv`'s registers through it.  What that slave needs
+    # is brought out; AWSIZE, AWBURST, the LOCK, CACHE, PROT and QOS lines
+    # and WID stay open, because a register access is a single word and the
+    # slave walks a burst a word at a time whatever the master says about
+    # it.  `MAXIGP0ACLK` is an input, driven by our 200 MHz like the HP
+    # clocks; `MAXIGP0ARESETN` is the PS saying the port is live.
+    "MAXIGP0ACLK", "MAXIGP0ARESETN",
+    "MAXIGP0AWADDR", "MAXIGP0AWLEN", "MAXIGP0AWID", "MAXIGP0AWVALID",
+    "MAXIGP0AWREADY",
+    "MAXIGP0WDATA", "MAXIGP0WSTRB", "MAXIGP0WLAST", "MAXIGP0WVALID",
+    "MAXIGP0WREADY",
+    "MAXIGP0BRESP", "MAXIGP0BID", "MAXIGP0BVALID", "MAXIGP0BREADY",
+    "MAXIGP0ARADDR", "MAXIGP0ARLEN", "MAXIGP0ARID", "MAXIGP0ARVALID",
+    "MAXIGP0ARREADY",
+    "MAXIGP0RDATA", "MAXIGP0RRESP", "MAXIGP0RID", "MAXIGP0RLAST",
+    "MAXIGP0RVALID", "MAXIGP0RREADY",
 ]
 
 # Inputs that are not exposed but must not be zero by default, each with the
@@ -103,6 +138,8 @@ TIED = {
                        "normal, non-cacheable, bufferable --- what a PL"
                        " master writing DDR through an AFI port asks for"),
     "SAXIHP0ARCACHE": ("4'b0011", "as AWCACHE"),
+    "SAXIHP2AWCACHE": ("4'b0011", "as HP0's: a PL master writing DDR"),
+    "SAXIHP2ARCACHE": ("4'b0011", "as AWCACHE"),
 }
 
 # Why an input that is tied to zero is tied to zero, for the ones where the
@@ -121,6 +158,17 @@ WHY_ZERO = {
     "SAXIHP0ARQOS": "as AWQOS",
     "SAXIHP0RDISSUECAP1EN": "the port's default issuing capability",
     "SAXIHP0WRISSUECAP1EN": "as RDISSUECAP1EN",
+    "SAXIHP2AWID": "one burst is outstanding at a time, so one ID",
+    "SAXIHP2ARID": "as AWID",
+    "SAXIHP2WID": "as AWID; AXI3 carries an ID on the write data channel",
+    "SAXIHP2AWLOCK": "no exclusive or locked access on this path",
+    "SAXIHP2ARLOCK": "as AWLOCK",
+    "SAXIHP2AWPROT": "data, secure, unprivileged, as HP0's",
+    "SAXIHP2ARPROT": "as AWPROT",
+    "SAXIHP2AWQOS": "no quality-of-service arbitration is asked for",
+    "SAXIHP2ARQOS": "as AWQOS",
+    "SAXIHP2RDISSUECAP1EN": "the port's default issuing capability",
+    "SAXIHP2WRISSUECAP1EN": "as RDISSUECAP1EN",
 }
 
 
@@ -166,6 +214,8 @@ def die(msg):
 # depend on the order this list happens to be written in.
 PREFIXES = [
     ("SAXIHP0", "hp0_"),
+    ("SAXIHP2", "hp2_"),
+    ("MAXIGP0", "gp0_"),
     ("EMIOGPIO", "gpio_"),
 ]
 
