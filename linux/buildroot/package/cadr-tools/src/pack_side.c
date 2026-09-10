@@ -73,29 +73,44 @@ int ps_request(struct pack_side *ps, uint32_t ctl, uint32_t addr, uint32_t tag, 
 	uint32_t st = ps->read(ps, PS_CTL);
 	if (st & PS_ST_REFUSED) {
 		*status = st;
-		if (one && !(addr & (PS_RECORD_ALIGN - 1) && ctl != PS_CTL_TAKE) && slot < PS_SLOTS
-		    && (st & PS_ST_CH_ACTIVE) && !(st & PS_ST_WAITING) && !(st & PS_ST_BUSY)) {
-			// The one refusal the face raises on its own: the slot named
-			// is the one the walk is on.  Not queued in fabric, by design,
-			// and not waited for here: the caller chooses another slot.
-			++ps->refused_walk;
-			return PS_WALK_SLOT;
-		}
-		++ps->refused_other;
-		if (!one)
+		// What refuses a move, from `rtl/cadr_disk_pack.sv`'s `refuse`: not
+		// one bit of three, an unaligned address, a slot past the store, a
+		// move in flight, or the channel active and not waiting ON THE SLOT
+		// NAMED --- `bad_ch`.  The first four are this program's own doing
+		// and are named.  Anything else IS `bad_ch`: the walk was on that
+		// slot at the beat.  **`ch_active` and `waiting` in the word read
+		// back are live, and the read is a GP0 round trip after the beat**,
+		// so they say where the walk is now, not where it was when it
+		// refused: between a START and its first lookup the controller's
+		// `ch_slot` still names the slot the previous transfer wrote, a
+		// write-back of that slot is refused there, and by the read the walk
+		// has missed and stands WAITING --- status 0x5a on the board at
+		// 13:48:13, once in 48,879 moves, and reproduced in feeder_test.c.
+		// The answer is the caller's: another slot for a fetch, a later pass
+		// for a write-back.
+		if (!one) {
+			++ps->refused_other;
 			snprintf(why, whylen, "refused: CTL 0x%x asks for %s", ctl,
 				 ctl ? "two requests in one word" : "nothing");
-		else if ((addr & (PS_RECORD_ALIGN - 1)) && ctl != PS_CTL_TAKE)
+			return -1;
+		}
+		if ((addr & (PS_RECORD_ALIGN - 1)) && ctl != PS_CTL_TAKE) {
+			++ps->refused_other;
 			snprintf(why, whylen, "refused: address 0x%08x is not 128-byte aligned", addr);
-		else if (slot >= PS_SLOTS)
+			return -1;
+		}
+		if (slot >= PS_SLOTS) {
+			++ps->refused_other;
 			snprintf(why, whylen, "refused: slot %u is past the store's %u", slot, PS_SLOTS);
-		else if (st & PS_ST_BUSY)
+			return -1;
+		}
+		if (st & PS_ST_BUSY) {
+			++ps->refused_other;
 			snprintf(why, whylen, "refused: the face was busy with a move this program did not start");
-		else if (st & PS_ST_WAITING)
-			snprintf(why, whylen, "refused while the walk waits, which cannot be the channel's doing (status 0x%02x)", st);
-		else
-			snprintf(why, whylen, "refused for a reason this program did not create (status 0x%02x)", st);
-		return -1;
+			return -1;
+		}
+		++ps->refused_walk;
+		return PS_WALK_SLOT;
 	}
 	// Accepted: busy until the move is over.
 	for (unsigned polls = 0; st & PS_ST_BUSY; ++polls) {

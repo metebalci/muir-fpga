@@ -355,7 +355,15 @@ static int answer(struct feeder *f, uint32_t tag, char *err, size_t errlen)
 	return -1;
 }
 
+static int feeder_pass(struct feeder *f, char *err, size_t errlen);
 int feeder_poll(struct feeder *f, char *err, size_t errlen)
+{
+	const int r = feeder_pass(f, err, errlen);
+	if (r < 0)
+		snprintf(f->last_failure, sizeof f->last_failure, "%s", err);
+	return r;
+}
+static int feeder_pass(struct feeder *f, char *err, size_t errlen)
 {
 	int actions = 0;
 	++f->polls;
@@ -387,9 +395,18 @@ int feeder_poll(struct feeder *f, char *err, size_t errlen)
 		}
 		const int r = feeder_writeback(f, s, err, errlen);
 		if (r == PS_WALK_SLOT) {
+			// The walk is on it, or was at the beat --- the previous
+			// transfer's slot during the next START's command-list fetch
+			// (feeder_test.c, the board's 0x5a).  The next pass.
 			++f->deferred_dirty;
+			if (++f->deferred_runs[s] > f->longest_deferral)
+				f->longest_deferral = f->deferred_runs[s];
+			if (f->deferred_runs[s] == FEEDER_DEFERRAL_CAP)
+				say(f, "slot %u (block %d) has been refused as the walk's on %u passes in a row; still trying",
+				    s, f->slot_lba[s], FEEDER_DEFERRAL_CAP);
 			continue;
 		}
+		f->deferred_runs[s] = 0;
 		if (r < 0)
 			return -1;
 		++actions;

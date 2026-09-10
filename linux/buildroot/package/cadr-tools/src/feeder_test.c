@@ -26,7 +26,7 @@
 // that the hand reaches before its leisure write-back (must be written
 // back before it is fetched into); forty more blocks than the store has
 // slots (so second chance must evict); a Write All's foreign header and
-// checkwords (so the sidecar has something to carry); and one address on
+// checkwords (so a restart has something to forget); and one address on
 // two units.  The pack sits on unit 2 throughout, so the unit field of
 // every tag is live and a request on unit 0 is the other-unit case.
 //
@@ -44,10 +44,9 @@
 // is passed on the refusal and never taken.  Every dirty slot is written
 // back within a few polls of the event unless the walk is on it.  And at
 // the end the pack file holds, block for block, what the scripted writes
-// imply; the sidecar brings the laid headers and checkwords back across a
-// restart; deleted, the pack starts fresh and the sidecar is rebuilt on the
-// first write-back; corrupted, it is refused and named, and replaced only
-// when asked.
+// imply; and after a restart the tables are the format's again --- a laid
+// header or checkword is forgotten, as muir's `Unit` forgets it, and the
+// data stands.
 //
 // THE MODEL OF THE REGISTER FACE follows `rtl/cadr_disk_pack.sv` at
 // a899799: the tag with the unit in bits 30:28; the refusal terms at its
@@ -215,7 +214,11 @@ struct fake {
 		uint32_t laid_hdr, laid_hck, laid_dck;
 	} queue[96];
 	int q_head, q_tail;
-	enum { T_IDLE, T_LOOK, T_WAIT, T_MOVE } tstate;
+	// T_START is the command-list fetch between a START and the first
+	// lookup: the channel active, waiting on nothing, and `ch_slot` still
+	// naming the slot the previous transfer was on --- the RTL sets it at a
+	// hit and nowhere else (`rtl/cadr_disk_controller.sv`, `C_LOOK`).
+	enum { T_IDLE, T_START, T_LOOK, T_WAIT, T_MOVE } tstate;
 	int t_idx, move_left;
 	int t_denied;
 	// The script's hooks: REF to force when the walk goes idle, or right
@@ -236,6 +239,7 @@ struct fake {
 	long worst_answer, worst_dirty;
 	unsigned long requests, answered, denied_ok, denied_wrong, evict_writebacks, walk_refusals_seen;
 	unsigned long hits_compared, words_compared, second_chance_runs, full_circles;
+	unsigned long start_refusals;	// refused in the command-list fetch, on the previous transfer's slot
 	int last_move_was_writeback_of;		// slot, or -1
 	// Write-backs to verify against the pack file after the poll.
 	struct { unsigned slot; uint32_t lba; uint32_t words[PACK_RECORD_WORDS]; } pending_wb[32];
@@ -338,7 +342,17 @@ static void check_second_chance(struct fake *k, unsigned s)
 		++k->full_circles;
 }
 
+static void walk_runs_on(struct fake *k);
+static void fake_write_at_beat(struct pack_side *ps, unsigned reg, uint32_t v);
+// The beat is acted on with the state at the beat; then the fabric runs on
+// before Linux reads anything back.
 static void fake_write(struct pack_side *ps, unsigned reg, uint32_t v)
+{
+	fake_write_at_beat(ps, reg, v);
+	if (reg == PS_CTL)
+		walk_runs_on(ps->ctx);
+}
+static void fake_write_at_beat(struct pack_side *ps, unsigned reg, uint32_t v)
 {
 	struct fake *k = ps->ctx;
 	switch (reg) {
@@ -389,6 +403,8 @@ static void fake_write(struct pack_side *ps, unsigned reg, uint32_t v)
 		if (bad_ch && one && !bad_align && !bad_slot && !busy) {
 			++k->refusals_walk;
 			k->walk_refused |= 1u << slot;
+			if (k->tstate == T_START)
+				++k->start_refusals;
 		}
 		return;
 	}
@@ -558,9 +574,12 @@ static void model_step(struct fake *k)
 				k->t_idx = 0;
 				k->t_denied = 0;
 				k->ch_active = 1;
-				k->tstate = T_LOOK;
-				again = 1;
+				k->tstate = T_START;
 			}
+			break;
+		case T_START:
+			k->tstate = T_LOOK;
+			again = 1;
 			break;
 		case T_LOOK: {
 			const uint32_t tag = x->tag[k->t_idx];
@@ -611,6 +630,28 @@ static void model_step(struct fake *k)
 			}
 			break;
 		}
+	}
+}
+
+// Between a CTL beat and Linux's read of the status --- a GP0 round trip,
+// tens of ticks --- the fabric runs on: a walk in its command-list fetch
+// reaches its lookup, and waits if the block is absent.  So a refusal
+// decided with the walk between transfers is read back with WAITING up,
+// which is the board's `status 0x5a` at 13:48:13.
+static void walk_runs_on(struct fake *k)
+{
+	if (k->tstate != T_START)
+		return;
+	struct xfer *x = &k->queue[k->q_head];
+	const uint32_t tag = x->tag[k->t_idx];
+	const int s = find_slot(k, tag);
+	if (s >= 0) {
+		hit(k, x, s);
+	} else {
+		if (!(k->req_valid && k->req_tag == tag))
+			post(k, tag);
+		k->waiting = 1;
+		k->tstate = T_WAIT;
 	}
 }
 
@@ -797,11 +838,6 @@ static void every_fetch_address_checked(void)
 	}
 }
 
-static int file_exists(const char *path)
-{
-	struct stat st;
-	return stat(path, &st) == 0;
-}
 
 int main(int argc, char **argv)
 {
@@ -816,12 +852,10 @@ int main(int argc, char **argv)
 	}
 	char err[256];
 
-	// The pack: a T-300's size, sparse, fresh for this run, with no sidecar.
-	char path[4096], meta[4096];
+	// The pack: a T-300's size, sparse, fresh for this run.
+	char path[4096];
 	snprintf(path, sizeof path, "%s/pack-test.img", argv[2]);
-	snprintf(meta, sizeof meta, "%s/pack-test.meta", argv[2]);
 	unlink(path);
-	unlink(meta);
 	{
 		int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
 		if (fd < 0 || ftruncate(fd, (off_t)G->cylinders * G->heads * G->blocks_per_track * PACK_BLOCK_BYTES) < 0) {
@@ -841,32 +875,18 @@ int main(int argc, char **argv)
 			close(fd);
 		}
 		struct pack w;
-		if (pack_open_with(&w, wrong, "", 0, err, sizeof err) == 0) {
+		if (pack_open(&w, wrong, 0, err, sizeof err) == 0) {
 			fail("a file of 1,234,567 bytes was opened as a pack");
 			pack_close(&w);
 		}
 		unlink(wrong);
 	}
-	// The derived name.
-	{
-		char n[64];
-		pack_meta_name("/mnt/card/pack.img", n, sizeof n);
-		if (strcmp(n, "/mnt/card/pack.meta") != 0)
-			fail("the sidecar of /mnt/card/pack.img is named %s", n);
-		pack_meta_name("/a/b/disk", n, sizeof n);
-		if (strcmp(n, "/a/b/disk.meta") != 0)
-			fail("the sidecar of /a/b/disk is named %s", n);
-	}
-	if (pack_open_with(&pk, path, meta, PACK_OPEN_WRITABLE, err, sizeof err) < 0) {
+	if (pack_open(&pk, path, 1, err, sizeof err) < 0) {
 		fail("opening the test pack: %s", err);
 		return 1;
 	}
 	if (pk.g.heads != 19)
 		fail("a file of a T-300's size was taken for %u heads", pk.g.heads);
-	if (pk.meta_state != PACK_META_ABSENT)
-		fail("with no sidecar the pack opened in state %d, not ABSENT", (int)pk.meta_state);
-	if (file_exists(meta))
-		fail("opening a pack created its sidecar; it is to be created at the first write-back");
 
 	// The face, the spare, the feeder.
 	memset(&k, 0, sizeof k);
@@ -1118,6 +1138,38 @@ int main(int argc, char **argv)
 				fail("block C landed in slot %d, not A's slot %d", find_slot(&k, x->tag[0]), vA);
 		}
 	}
+	// The board's fault of 13:48:13 (a899799 bitstream): a Write of block A
+	// ends and the CADR STARTs a Read of an absent block at once.  The
+	// feeder's write-back of A's slot lands in the command-list fetch,
+	// where the channel is active, not waiting, and `ch_slot` still names
+	// A's slot: refused as the walk's.  By the time the status is read the
+	// walk has looked its block up, missed and is WAITING --- status
+	// WAITING | CH_ACTIVE | REFUSED | DONE, 0x5a.  The feeder must take
+	// that as the walk's slot and write A back on a later pass, not fail.
+	unsigned long start_refusals = 0;
+	{
+		const uint32_t A = 0x2100u, B = 0x2101u;
+		lay_synth(A, 0x99u);
+		lay_synth(B, 0x99u);
+		struct xfer *x = enqueue(&k, UNIT, 0);
+		xfer_lba(x, A);
+		run();
+		x = enqueue(&k, UNIT, 1);
+		xfer_lba(x, A);
+		for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
+			x->page[0][j] = synth(A, j, 0xAAu);
+		x = enqueue(&k, UNIT, 0);
+		xfer_lba(x, B);
+		const unsigned long r0 = k.start_refusals, f0 = f.failures;
+		run();
+		start_refusals = k.start_refusals - r0;
+		if (start_refusals == 0)
+			fail("the write-back of the slot the previous transfer wrote never met the next START");
+		if (f.failures != f0)
+			fail("the feeder counted a failure on a refusal read back with WAITING up");
+		if (k.dirty)
+			fail("A's slot is still dirty after the START's refusal: DIRTY 0x%06x", k.dirty);
+	}
 	// The walk's slot: a chained Read whose first block sits in the one
 	// slot with REF down, and whose second block is absent.  The prefetch
 	// is posted while the walk is on that slot; the hand must be refused
@@ -1159,7 +1211,7 @@ int main(int argc, char **argv)
 		(void)X1;
 	}
 	// A Write All: foreign header and checkwords laid on a block, so the
-	// sidecar has something to carry.
+	// tables carry something a restart forgets.
 	unsigned long laid_blocks = 0;
 	{
 		const uint32_t L = 0x4000u;
@@ -1219,7 +1271,7 @@ int main(int argc, char **argv)
 			++laid_blocks;
 	}
 	if (laid_blocks == 0)
-		fail("no block carries a laid header or checkword: the sidecar test would be vacuous");
+		fail("no block carries a laid header or checkword: the restart test would be vacuous");
 
 	// ---- the driver's handling of what the face can refuse ------------------
 	unsigned long refusals = 0;
@@ -1308,216 +1360,48 @@ int main(int argc, char **argv)
 			fail("slot %d is still valid after a take-away", slot);
 	}
 
-	// ---- the sidecar ----------------------------------------------------------
-	unsigned long sidecar_blocks_compared = 0;
-	if (!file_exists(meta))
-		fail("the sidecar was not created by the first write-back");
-	else {
-		struct stat st;
-		stat(meta, &st);
-		if ((uint64_t)st.st_size != pack_meta_bytes(G))
-			fail("the sidecar is %lld bytes, wanting %llu", (long long)st.st_size, (unsigned long long)pack_meta_bytes(G));
-	}
-	// A restart from the files: the same headers and checkwords come back.
+	// ---- a restart: the tables are the format's again ---------------------------
+	// muir's `Unit` keeps `headers` and `data_checkwords` for the run; so does
+	// this.  Reopened, every touched block's data is what was written and its
+	// header and checkwords are the format's own --- and for the blocks laid
+	// with foreign ones that is a change, or this arm would be vacuous.
+	unsigned long restart_compared = 0, restart_differ = 0;
 	pack_close(&pk);
-	if (pack_open_with(&pk, path, meta, PACK_OPEN_WRITABLE, err, sizeof err) < 0)
-		fail("reopening the pack with its sidecar: %s", err);
+	if (pack_open(&pk, path, 1, err, sizeof err) < 0)
+		fail("reopening the pack: %s", err);
 	else {
-		if (pk.meta_state != PACK_META_READ)
-			fail("reopened with a sidecar present, the state is %d, not READ", (int)pk.meta_state);
-		if (pk.meta_headers_read == 0 || pk.meta_dcks_read == 0)
-			fail("the sidecar read back %zu laid headers and %zu laid checkwords; both should be live", pk.meta_headers_read, pk.meta_dcks_read);
-		for (size_t i = 0; i < n_blocks; ++i) {
-			const struct blk *s = &blocks[i];
-			if (!s->touched)
-				continue;
-			uint32_t want[PACK_RECORD_WORDS], got[PACK_RECORD_WORDS];
-			shadow_expect(s, want);
-			if (pack_record(&pk, s->lba, got, err, sizeof err) < 0)
-				fail("%s", err);
-			else if (memcmp(got, want, sizeof got) != 0)
-				fail("after the restart block %x's record is not what was written", s->lba);
-			else
-				++sidecar_blocks_compared;
-		}
-	}
-	// Deleted: the pack starts fresh, every block as the format lays it,
-	// and the sidecar is rebuilt on the first write-back.
-	unsigned long fresh_differ = 0;
-	pack_close(&pk);
-	unlink(meta);
-	if (pack_open_with(&pk, path, meta, PACK_OPEN_WRITABLE, err, sizeof err) < 0)
-		fail("reopening the pack without its sidecar: %s", err);
-	else {
-		if (pk.meta_state != PACK_META_ABSENT)
-			fail("reopened with the sidecar deleted, the state is %d, not ABSENT", (int)pk.meta_state);
 		if (pk.n_headers || pk.n_dcks)
-			fail("the tables are not empty after the sidecar was deleted");
+			fail("the tables are not empty after a restart: %zu headers, %zu checkwords", pk.n_headers, pk.n_dcks);
 		for (size_t i = 0; i < n_blocks; ++i) {
 			const struct blk *s = &blocks[i];
 			if (!s->touched)
 				continue;
-			uint32_t want[PACK_RECORD_WORDS], got[PACK_RECORD_WORDS], shadow_w[PACK_RECORD_WORDS];
+			uint32_t want[PACK_RECORD_WORDS], got[PACK_RECORD_WORDS], before[PACK_RECORD_WORDS];
 			format_words(s->lba, s->data, want);
-			shadow_expect(s, shadow_w);
+			shadow_expect(s, before);
 			if (pack_record(&pk, s->lba, got, err, sizeof err) < 0)
 				fail("%s", err);
 			else if (memcmp(got, want, sizeof got) != 0)
-				fail("without a sidecar block %x's record is not the format's own", s->lba);
-			if (memcmp(want, shadow_w, sizeof want) != 0)
-				++fresh_differ;
-		}
-		if (fresh_differ == 0)
-			fail("deleting the sidecar changed no record: the test is vacuous");
-		if (file_exists(meta))
-			fail("reopening recreated the sidecar before any write-back");
-		// The first write-back rebuilds it, with that block's entry.
-		const uint32_t L = 0x4000u;
-		uint32_t w[PACK_RECORD_WORDS];
-		struct blk *s = shadow(L, 0);
-		shadow_expect(s, w);	// the laid words, written back again
-		if (pack_writeback(&pk, L, w, err, sizeof err) < 0)
-			fail("the write-back that rebuilds the sidecar: %s", err);
-		if (!file_exists(meta))
-			fail("the first write-back did not create the sidecar");
-		else {
-			int fd = open(meta, O_RDONLY);
-			uint8_t hdr[PACK_META_HEADER_BYTES], entry[PACK_META_ENTRY_BYTES];
-			struct stat st;
-			fstat(fd, &st);
-			if ((uint64_t)st.st_size != pack_meta_bytes(G))
-				fail("the rebuilt sidecar is %lld bytes", (long long)st.st_size);
-			if (pread(fd, hdr, sizeof hdr, 0) != (ssize_t)sizeof hdr || memcmp(hdr, PACK_META_MAGIC, 8) != 0)
-				fail("the rebuilt sidecar does not begin with %s", PACK_META_MAGIC);
-			if (pread(fd, entry, sizeof entry, PACK_META_HEADER_BYTES + (off_t)L * PACK_META_ENTRY_BYTES) != (ssize_t)sizeof entry)
-				fail("reading block %x's entry of the rebuilt sidecar", L);
-			else {
-				const uint32_t flags = (uint32_t)entry[12] | (uint32_t)entry[13] << 8 | (uint32_t)entry[14] << 16 | (uint32_t)entry[15] << 24;
-				const uint32_t eh = (uint32_t)entry[0] | (uint32_t)entry[1] << 8 | (uint32_t)entry[2] << 16 | (uint32_t)entry[3] << 24;
-				if (flags != (PACK_META_HEADER_LAID | PACK_META_DCK_LAID))
-					fail("block %x's entry has flags 0x%x, wanting both laid", L, flags);
-				if (eh != w[256])
-					fail("block %x's entry carries header 0x%08x, wanting 0x%08x", L, eh, w[256]);
-			}
-			// And the entry of a block written as the format lays it is
-			// all zero.
-			if (pread(fd, entry, sizeof entry, PACK_META_HEADER_BYTES + (off_t)0x1000u * PACK_META_ENTRY_BYTES) == (ssize_t)sizeof entry) {
-				int nz = 0;
-				for (size_t i = 0; i < sizeof entry; ++i) nz |= entry[i];
-				if (nz)
-					fail("block 1000's entry is not zero in a rebuilt sidecar it was never laid into");
-			}
-			close(fd);
-		}
-		// Reopened, only that block carries its laid words.
-		pack_close(&pk);
-		if (pack_open_with(&pk, path, meta, PACK_OPEN_WRITABLE, err, sizeof err) < 0)
-			fail("reopening after the rebuild: %s", err);
-		else if (pk.meta_headers_read != 1 || pk.meta_dcks_read != 1)
-			fail("the rebuilt sidecar read back %zu headers and %zu checkwords, wanting 1 and 1", pk.meta_headers_read, pk.meta_dcks_read);
-	}
-	// Corrupted: refused, both files named; replaced only when asked.
-	unsigned long refused_sidecars = 0;
-	{
-		pack_close(&pk);
-		// The version.
-		int fd = open(meta, O_RDWR);
-		uint8_t v2[4] = { 2, 0, 0, 0 };
-		if (fd < 0 || pwrite(fd, v2, 4, 8) != 4)
-			fail("corrupting the sidecar's version");
-		close(fd);
-		struct pack w;
-		if (pack_open_with(&w, path, meta, PACK_OPEN_WRITABLE, err, sizeof err) == 0) {
-			fail("a sidecar of version 2 was accepted");
-			pack_close(&w);
-		} else {
-			if (!strstr(err, "version") || !strstr(err, meta) || !strstr(err, path))
-				fail("the version mismatch was reported as '%s'", err);
+				fail("after a restart block %x's record is not the format's own over the data written", s->lba);
 			else
-				++refused_sidecars;
+				++restart_compared;
+			if (memcmp(want, before, sizeof want) != 0)
+				++restart_differ;
 		}
-		// Asked to, the open replaces it: fresh tables, and the file is
-		// rewritten from zeros at the first write-back.
-		if (pack_open_with(&w, path, meta, PACK_OPEN_WRITABLE | PACK_OPEN_REPLACE_META, err, sizeof err) < 0)
-			fail("replacing a mismatched sidecar: %s", err);
-		else {
-			if (w.meta_state != PACK_META_REPLACED)
-				fail("asked to replace, the state is %d, not REPLACED", (int)w.meta_state);
-			if (w.n_headers || w.n_dcks)
-				fail("a replaced sidecar left entries in the tables");
-			uint32_t data[PACK_BLOCK_WORDS], words[PACK_RECORD_WORDS];
-			for (int j = 0; j < PACK_BLOCK_WORDS; ++j) data[j] = synth(0x1007u, j, 0x88u);
-			format_words(0x1007u, data, words);
-			if (pack_writeback(&w, 0x1007u, words, err, sizeof err) < 0)
-				fail("the write-back after a replacement: %s", err);
-			pack_close(&w);
-			fd = open(meta, O_RDONLY);
-			uint8_t hdr[PACK_META_HEADER_BYTES], entry[PACK_META_ENTRY_BYTES];
-			if (pread(fd, hdr, sizeof hdr, 0) != (ssize_t)sizeof hdr || hdr[8] != 1)
-				fail("the replaced sidecar does not carry version 1");
-			// Block 0x4000's laid entry from before the replacement is gone.
-			if (pread(fd, entry, sizeof entry, PACK_META_HEADER_BYTES + (off_t)0x4000u * PACK_META_ENTRY_BYTES) == (ssize_t)sizeof entry) {
-				int nz = 0;
-				for (size_t i = 0; i < sizeof entry; ++i) nz |= entry[i];
-				if (nz)
-					fail("the replaced sidecar still carries the old entry of block 4000");
-			}
-			close(fd);
-		}
-		// The size.
-		if (truncate(meta, (off_t)pack_meta_bytes(G) - 16) < 0)
-			fail("truncating the sidecar");
-		if (pack_open_with(&w, path, meta, PACK_OPEN_WRITABLE, err, sizeof err) == 0) {
-			fail("a sidecar 16 bytes short was accepted");
-			pack_close(&w);
-		} else if (!strstr(err, "bytes") || !strstr(err, meta))
-			fail("the size mismatch was reported as '%s'", err);
-		else
-			++refused_sidecars;
-		if (truncate(meta, (off_t)pack_meta_bytes(G)) < 0)
-			fail("restoring the sidecar's size");
-		// A pack newer than its sidecar.
-		{
-			struct stat st;
-			stat(meta, &st);
-			struct timeval tv[2];
-			tv[0].tv_sec = st.st_mtime + 10; tv[0].tv_usec = 0;
-			tv[1] = tv[0];
-			if (utimes(path, tv) < 0)
-				fail("touching the pack newer than its sidecar");
-		}
-		if (pack_open_with(&w, path, meta, PACK_OPEN_WRITABLE, err, sizeof err) == 0) {
-			fail("a pack newer than its sidecar was accepted");
-			pack_close(&w);
-		} else if (!strstr(err, "newer") || !strstr(err, meta) || !strstr(err, path))
-			fail("the newer pack was reported as '%s'", err);
-		else
-			++refused_sidecars;
-		// Touched back, it opens.
-		{
-			struct timeval tv[2];
-			gettimeofday(&tv[0], NULL);
-			tv[0].tv_sec -= 100;
-			tv[1] = tv[0];
-			if (utimes(path, tv) < 0)
-				fail("touching the pack older than its sidecar");
-		}
-		if (pack_open_with(&w, path, meta, PACK_OPEN_WRITABLE, err, sizeof err) < 0)
-			fail("the pack older than its sidecar was refused: %s", err);
-		else
-			pack_close(&w);
-		// No sidecar at all, by request: the tables live for the run.
-		if (pack_open_with(&w, path, "", PACK_OPEN_WRITABLE, err, sizeof err) < 0)
-			fail("opening without a sidecar: %s", err);
-		else {
-			if (w.meta_state != PACK_META_NONE)
-				fail("asked for no sidecar, the state is %d", (int)w.meta_state);
-			pack_close(&w);
-		}
+		if (restart_differ == 0)
+			fail("the restart changed no record: the arm is vacuous");
+		// And a Write All laid again after the restart is carried for this run.
+		const uint32_t L = 0x4000u;
+		uint32_t w[PACK_RECORD_WORDS], again[PACK_RECORD_WORDS];
+		shadow_expect(shadow(L, 0), w);
+		if (pack_writeback(&pk, L, w, err, sizeof err) < 0)
+			fail("laying after the restart: %s", err);
+		else if (pack_record(&pk, L, again, err, sizeof err) < 0 || memcmp(again, w, sizeof w) != 0)
+			fail("a header laid after the restart did not come back within the run");
+		pack_close(&pk);
 	}
 
 	unlink(path);
-	unlink(meta);
 	free(k.ddr);
 
 	// ---- the totals -------------------------------------------------------------
@@ -1551,30 +1435,31 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	printf("ok: the pack feeder serves the disk controller on demand and keeps\n"
-	       "    the pack, its headers and its checkwords across a restart\n"
+	       "    the pack as muir's Unit keeps it\n"
 	       "    %lu requests posted by the modelled controller --- %lu from the\n"
 	       "      trace's %lu NEED rows in %lu transfers --- %lu answered within\n"
 	       "      %ld poll(s) each, %lu denied (other unit, off the pack);\n"
 	       "      %lu hits compared, %lu words, every record 128-byte aligned\n"
 	       "      in the spare region\n"
 	       "    second chance over REF on every fetch, %lu times round the whole\n"
-	       "      store; the walk's slot refused %lu time(s) and passed; %lu dirty\n"
+	       "      store; the walk's slot refused %lu times and passed, %lu of them a\n"
+	       "      write-back meeting the next START and read back WAITING (the\n"
+	       "      board's 0x5a); %lu dirty\n"
 	       "      slot(s) written back on the way to being fetched into; every\n"
 	       "      dirty slot back within %ld poll(s) of the walk leaving it\n"
 	       "    %lu blocks touched, %lu bytes of the pack file equal to what the\n"
 	       "      scripted writes imply, %lu Writes from the trace and %lu from the\n"
 	       "      sweep; %lu load rows' checkwords agree with muir's Ecc, %lu laid\n"
-	       "    the sidecar: %lu blocks' laid headers and checkwords back across a\n"
-	       "      restart; deleted, %lu records fell back to the format's own and\n"
-	       "      the file was rebuilt on the first write-back; %lu mismatched\n"
-	       "      sidecars refused and named, one replaced on request\n"
+	       "    after a restart %lu blocks' records are the format's own over the\n"
+	       "      data written, %lu of them changed by it: the tables are the run's,\n"
+	       "      as muir's are\n"
 	       "    %lu refusals seen and named; a move that moved nothing seen by\n"
 	       "      its poison; %lu polls of a busy face, %lu passes over the face\n",
 	       k.requests, trace_requests, needs, transfers, k.answered, k.worst_answer, k.denied_ok,
 	       k.hits_compared, k.words_compared,
-	       k.full_circles, walk_case_refusals, k.evict_writebacks, k.worst_dirty,
+	       k.full_circles, k.refusals_walk, k.start_refusals, k.evict_writebacks, k.worst_dirty,
 	       touched, compared_final, writes, sweep_writes, ecc_checked, lays,
-	       sidecar_blocks_compared, fresh_differ, refused_sidecars,
+	       restart_compared, restart_differ,
 	       refusals, ps.polls, polls_run);
 	(void)loads;
 	(void)sweep_reads;

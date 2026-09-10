@@ -17,8 +17,7 @@
 // and asks the face to fetch them into a slot of its choosing, and the
 // walk goes on as if the block had been there.  A slot a transfer wrote is
 // marked DIRTY and this program takes it back over the same path and puts
-// it on the pack file, so the pack persists; the headers and checkwords
-// persist in a sidecar beside it.  `pack_file.c` is the pack in muir's
+// it on the pack file, so the pack persists.  `pack_file.c` is the pack in muir's
 // terms, `pack_side.c` the register face, `pack_feeder.c` the cache and
 // the moves; `feeder_test.c` holds all three, on the build host, to a
 // modelled controller that asks.
@@ -38,12 +37,11 @@
 //   2. IDENT.  Register 7 reads "PACK" for the pack side; "NONE" is the
 //      proving boards' default slave (`rtl/cadr_gp0_default.sv`), a board
 //      with GP0 and no disk.  Either is a reason to stop and say so.
-//   3. THE PACK, and its sidecar `pack.meta` beside it: read if it is there
-//      and matches, created on the first write-back if it is absent, and
-//      REFUSED --- one line naming both files and the mismatch, and this
-//      program stops --- if it does not match, unless `--replace-meta` says
-//      to start it fresh.  `rm pack.meta` resets a pack's headers and
-//      checkwords to what the format lays.  `pack_file.h` has the format.
+//   3. THE PACK: `pack.img`, the only disk file on the card.  Its headers and
+//      checkwords are muir's `Unit`'s: the format's own for a fresh pack,
+//      what a transfer or a Write All lays for the run, and forgotten at
+//      exit (`pack_file.h`; a sidecar that persisted them was built and
+//      dropped by Mete on 10 Sep).
 //   4. THE DRIVE COMES PRESENT: every slot of the store taken away (what it
 //      held before this program is unknown to it), DRIVE written with the
 //      unit the pack is on (`--unit`, 0 by default), its read-only switch
@@ -99,7 +97,7 @@
 //
 //     cadr-pack-feeder [--pack PATH] [--regs ADDR] [--log PATH] [--unit N]
 //                      [--timed] [--read-only] [--poll-us N] [--irq PATH]
-//                      [--replace-meta] [--no-guard] [--selftest] [--once]
+//                      [--no-guard] [--selftest] [--once]
 
 #include <errno.h>
 #include <fcntl.h>
@@ -224,7 +222,7 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: cadr-pack-feeder [options]\n"
-		"  --pack PATH     the pack file (default /mnt/card/pack.img); its sidecar is PATH with .meta\n"
+		"  --pack PATH     the pack file (default /mnt/card/pack.img)\n"
 		"  --regs ADDR     the pack side's registers (default 0x40000000)\n"
 		"  --log PATH      where to write (default stdout)\n"
 		"  --unit N        the unit the pack is on, 0..7 (default 0)\n"
@@ -232,7 +230,7 @@ static void usage(void)
 		"  --read-only     open the pack read-only and set the drive's read-only switch\n"
 		"  --poll-us N     how often REQ and DIRTY are polled (default 250)\n"
 		"  --irq PATH      sleep on this UIO device instead of only polling (see the header)\n"
-		"  --replace-meta  a sidecar that does not match the pack is started fresh instead of refused\n"
+
 		"  --no-guard      touch M_AXI_GP0 without checking the EMIO tally first\n"
 		"  --selftest      fetch block 0 into slot 0, write it back, compare, exit\n"
 		"  --once          do the checks, bring the drive present, and exit\n");
@@ -282,7 +280,7 @@ int main(int argc, char **argv)
 	const char *irq_path = NULL;
 	uint32_t regs_phys = PS_REG_BASE;
 	unsigned unit = 0, poll_us = 250;
-	int do_selftest = 0, once = 0, timed = 0, read_only = 0, replace_meta = 0, no_guard = 0;
+	int do_selftest = 0, once = 0, timed = 0, read_only = 0, no_guard = 0;
 	static const struct option opts[] = {
 		{ "pack", required_argument, NULL, 'p' },
 		{ "regs", required_argument, NULL, 'r' },
@@ -292,7 +290,6 @@ int main(int argc, char **argv)
 		{ "read-only", no_argument, NULL, 'R' },
 		{ "poll-us", required_argument, NULL, 'P' },
 		{ "irq", required_argument, NULL, 'i' },
-		{ "replace-meta", no_argument, NULL, 'M' },
 		{ "no-guard", no_argument, NULL, 'G' },
 		{ "selftest", no_argument, NULL, 's' },
 		{ "once", no_argument, NULL, 'o' },
@@ -300,7 +297,7 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:r:l:u:tRP:i:MGsoh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:r:l:u:tRP:i:Gsoh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'p': pack_path = optarg; break;
 		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
@@ -310,7 +307,6 @@ int main(int argc, char **argv)
 		case 'R': read_only = 1; break;
 		case 'P': poll_us = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'i': irq_path = optarg; break;
-		case 'M': replace_meta = 1; break;
 		case 'G': no_guard = 1; break;
 		case 's': do_selftest = 1; break;
 		case 'o': once = 1; break;
@@ -364,14 +360,11 @@ int main(int argc, char **argv)
 	// The drive is absent until the pack is open and the cache started.
 	ps_drive(&ps, 0, 0, 0);
 
-	// 3. The pack and its sidecar.
+	// 3. The pack.
 	struct pack pk;
 	char err[512];
-	if (pack_open_with(&pk, pack_path, NULL, (read_only ? 0 : PACK_OPEN_WRITABLE) | (replace_meta ? PACK_OPEN_REPLACE_META : 0),
-			   err, sizeof err) < 0) {
+	if (pack_open(&pk, pack_path, !read_only, err, sizeof err) < 0) {
 		say("no pack: %s", err);
-		if (strstr(err, "does not match"))
-			say("the sidecar is refused, not used: rm it to start the pack's headers and checkwords fresh, or --replace-meta to have this program do that");
 		say("the CADR sees a controller with no drive");
 		if (once)
 			return 1;
@@ -386,22 +379,7 @@ int main(int argc, char **argv)
 			say("block 0 word 0 is 0x%08x%s; header 0x%08x", rec[0],
 			    rec[0] == 0x4C42414Cu ? " (LABL: a labelled pack)" : "", rec[256]);
 	}
-	switch (pk.meta_state) {
-	case PACK_META_READ:
-		say("sidecar %s: read, %zu block(s) with a laid header, %zu with a laid data checkword", pk.meta_path,
-		    pk.meta_headers_read, pk.meta_dcks_read);
-		break;
-	case PACK_META_ABSENT:
-		say("sidecar %s: absent, so every block's header and checkwords are as the format lays them for a fresh pack; "
-		    "it will be created (%llu bytes) at the first write-back", pk.meta_path, (unsigned long long)pack_meta_bytes(&pk.g));
-		break;
-	case PACK_META_REPLACED:
-		say("sidecar %s: did not match the pack and is being replaced as asked; every block's header and checkwords are the format's own "
-		    "until written", pk.meta_path);
-		break;
-	case PACK_META_NONE:
-		break;
-	}
+	say("headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are");
 
 	struct feeder f;
 	if (feeder_init(&f, &pk, &ps, spare, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES, logf) < 0) {
@@ -476,9 +454,11 @@ int main(int argc, char **argv)
 		const time_t now = time(NULL);
 		if (now - last_said >= 60
 		    && (f.served != said_served || f.written_back != said_wb || f.denied != said_denied || f.failures != said_failures)) {
-			say("served %lu, written back %lu, denied %lu, refused for the walk's slot %lu, %lu lost at start, "
-			    "%lu failures; %lu polls, %lu of the face while busy",
-			    f.served, f.written_back, f.denied, f.refused_walk, f.lost_at_start, f.failures, f.polls, ps.polls);
+			say("served %lu, written back %lu, denied %lu, refused for the walk's slot %lu (write-backs deferred %lu, "
+			    "at most %u passes in a row), %lu lost at start, %lu failures%s%s; %lu polls, %lu of the face while busy",
+			    f.served, f.written_back, f.denied, f.refused_walk, f.deferred_dirty, f.longest_deferral,
+			    f.lost_at_start, f.failures, f.failures ? ", the last: " : "", f.failures ? f.last_failure : "",
+			    f.polls, ps.polls);
 			said_served = f.served;
 			said_wb = f.written_back;
 			said_denied = f.denied;

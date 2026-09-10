@@ -314,8 +314,13 @@ register face at `a899799` --- the request path --- and it serves on demand;
 the first revision, at `388d03b`, moved blocks and could not learn which
 block the CADR wanted (its record is in "The request path, built" below,
 and in the history of this section). `feeder_test.c` in the same directory
-is its check. **Nothing of this revision has run on the board**; the last
-paragraphs say what to copy and what the console must show.
+is its check. **It has run on the board**, with the `a899799` bitstream: the
+drive came present, the boot PROM asked for blocks 1, 0 and 17, and in the
+first minute the feeder served 32,780 blocks and wrote 16,101 back --- the
+CADR reading and writing its disk on silicon. That run also found the one
+fault this revision then fixed, below at "the refusal read back with
+WAITING up". The last paragraphs say what to copy and what the console
+must show.
 
 **What it does, in order.** *The guard first*: a read on `M_AXI_GP0` that
 nothing answers hangs both Arm cores (CLAUDE.md), so before any GP0 access
@@ -327,7 +332,7 @@ says why. `--no-guard` is for a board somebody knows. *IDENT second*:
 register 7 must read `"PACK"`; `"NONE"` is the proving boards' default slave
 and is named as such. *Then the pack*: `pack.img` on the card, muir's
 format, its geometry from its size (a T-300 is 269,562,880 bytes, a T-80
-70,937,600), and its sidecar `pack.meta` beside it, below. *Then the drive
+70,937,600), the only disk file on the card. *Then the drive
 comes present*: every one of the 24 slots is taken away --- what the store
 held before this program is unknown to it, the tags being in the fabric and
 not readable over GP0, and a slot that was DIRTY then is reported lost, once,
@@ -352,51 +357,65 @@ the wait, whichever slot it lands in. **The slot is second chance over
 REF**: a hand goes round the 24; a slot whose REF bit is up is passed and
 its bit cleared (a 1 written to REF), the first whose bit is down is taken.
 **A dirty victim is written back first**, or the CADR's write is lost.
-**The walk's slot is never taken**: the face refuses a move on it
-(`refused` with `ch_active` up and `waiting` down --- the refusal is per
-slot now), `ps_request` returns that as its own answer, `PS_WALK_SLOT`, and
-the hand moves on without a clear and without a pause; while the walk waits
-(`CTL` bit 6) every slot is anyone's. After the request, every slot DIRTY
-says a transfer wrote is written back at leisure, the walk's own left for
-the next pass. A request still standing after its block was served three
+**The walk's slot is never taken**: the face refuses a move on it (the
+refusal is per slot now), `ps_request` returns that as its own answer,
+`PS_WALK_SLOT`, and the hand moves on without a clear and without a pause;
+while the walk waits (`CTL` bit 6) every slot is anyone's. After the
+request, every slot DIRTY says a transfer wrote is written back at leisure,
+the walk's own left for the next pass --- deferred, counted, and said once
+if a slot is refused a hundred passes in a row (25 ms; a Read All holds a
+slot for a revolution, 16.7 ms).
+
+**The refusal read back with WAITING up, found on the board.** Once in
+48,879 moves the feeder failed a write-back with `refused while the walk
+waits, which cannot be the channel's doing (status 0x5a)`. `0x5a` is
+WAITING | CH_ACTIVE | REFUSED | DONE. The RTL's refusal terms at `a899799`
+(`rtl/cadr_disk_pack.sv` lines 476--491) are not one bit of three, an
+unaligned address, a slot past the store, busy, and `bad_ch_q <=
+ch_active_q && !ch_waiting_q && (r_slot == ch_slot_q)` (line 484), decided
+at the go; and the controller sets `ch_slot` at a hit and nowhere else
+(`rtl/cadr_disk_controller.sv`, `C_LOOK`, `ch_slot <= slot_of`). So between
+a START and its first `C_LOOK` --- the command-list fetch --- the channel is
+active, waiting on nothing, and `ch_slot` still names the slot the previous
+transfer was on, which for a Write is exactly the slot that just went DIRTY;
+a write-back of it in that window is refused by `bad_ch`, the walk then
+misses its block, posts and waits, and by the time Linux's read comes back
+the live bits say WAITING. **The RTL is conservative there, not wrong**:
+the refusal is harmless and the answer is a later pass. The feeder's fault
+was reading the live `ch_active` and `waiting` bits as the reason for the
+refusal; it now classifies a refusal by the request's own terms and takes
+any well-formed, non-busy one as the walk's slot. `feeder_test.c`
+reproduces it --- a model state for the command-list fetch, and the fabric
+running on between the CTL beat and the status read --- and the fixed
+feeder writes the slot back on the next pass, no failure counted; the
+mutation that restores the old reading is caught on it. A request still standing after its block was served three
 times over --- a tag that landed and did not match --- is said and denied
 rather than served for ever. Requests are counted; the first three are
 named on the console with block, slot and address, and every denied block
 is named once.
 
-**The header and the checkwords are muir's, and they persist in a
-sidecar.** `Unit` keeps `headers` and `data_checkwords` beside the file for
-the sectors a Write All laid down with something other than the format's
-own; `pack_file.c` keeps the same two tables and maintains them exactly as
+**The header and the checkwords are muir's, and they live for the run.**
+`Unit` keeps `headers` and `data_checkwords` beside the file for the
+sectors a Write All laid down with something other than the format's own;
+`pack_file.c` keeps the same two tables and maintains them exactly as
 `Unit::write_sector_at` does, so an ordinary Write (fresh checkword, header
 as fetched) and a Write All (whatever the program laid) both come out right
-without the feeder knowing which it was. muir's tables live in memory and
-in a checkpoint; here they also go to **`pack.meta` beside `pack.img`**,
-decided by Mete on 10 Sep, so a pack the CADR wrote reads the same after a
-reboot. `meta` is `rtl/cadr_disk_pack.sv`'s own word for the two-beat burst
-that carries these three words, not a new one. The format, everything
-little-endian like the pack's own words: 32 bytes of header ---
-`"CADRMETA"`, version 1, cylinders, heads, blocks a track, eight bytes zero
---- then one 16-byte entry per block of the pack at `32 + 16 * lba`: the
-header word laid, its checkword, the data checkword laid, and flags (bit 0
-the header entry is live, bit 1 the checkword entry is live). 4,211,952
-bytes for a T-300, 1,108,512 for a T-80. Written on every write-back after
-the data, at the block's own offset, with the same `fdatasync` discipline:
-one 16-byte write that lands or does not. **It is safe to delete** (Mete):
-absent, every block's header and checkwords are as the format lays them for
-a fresh pack --- muir's fresh-pack state --- the program says so once, and
-the file is created on the first write-back and not before, so **`rm
-pack.meta` is how a pack's headers and checkwords are reset**, and a pack
-nothing writes never grows one. A sidecar that **does not match** the pack
---- another magic or version, a size other than the geometry's, or a pack
-file newer than it (a pack copied over while an old sidecar stayed) --- is
-**refused**: one line naming both files and the mismatch, and the program
-stops with the CADR seeing no drive; `--replace-meta` is the one way to have
-it treated as absent, never silently. The newer-than test is on
-modification times, two seconds on FAT; a write-back touches the pack first
-and the sidecar after, so a pack the feeder wrote is never newer than its
-sidecar, and a copy that preserved an old time on the pack is the one case
-it cannot see. `pack_ecc.h` is DCECC's code as `disk_unit::Ecc` has it.
+without the feeder knowing which it was. Like muir's, the tables are in
+memory for the run: a fresh start has every block's header and checkwords
+as the format lays them --- `header_of` with the code over it, the code
+over the data --- and a sector laid with others forgets that at the next
+start. **A sidecar file that persisted the two tables (`pack.meta`) was
+built at this revision and dropped, by Mete on 10 Sep, once what it
+preserved was understood**: the pack file is the only disk file on the
+card, and the program holds exactly what muir's `Unit` holds. What got
+simpler: `pack_file.c` lost its file format, its creation on the first
+write-back, its mismatch rules (magic, version, size, a pack newer than the
+sidecar by mtime) and the flag that overrode them; `struct pack` five
+fields; the feeder an option and three console states; the host test a
+whole arm and seven mutations; the card a second file that had to agree
+with the first and a 4 MB write at the first write-back; and there is no
+procedure for resetting a pack's headers, because there is nothing to
+reset. `pack_ecc.h` is DCECC's code as `disk_unit::Ecc` has it.
 
 **Where the records go, and why.** `rtl/cadr_ddr_map.sv`'s spare, 56 MB
 from `0x1C80_0000`, nothing else in it today. One fetch area per slot at
@@ -454,9 +473,13 @@ header `0x30009` on block 1 among them), each `BLK load|lay` row the pack as
 laid; then, past the trace, one address on two units, three blocks off the
 pack, forty more blocks than the store has slots with Writes among them, a
 dirty slot the hand reaches before its leisure write-back, a prefetch posted
-while the walk stands on the one slot whose REF bit is down, and a Write All
-laying a foreign header and checkwords. The pack sits on unit 2 throughout,
-so the unit field of every tag is live. What it holds: every request
+while the walk stands on the one slot whose REF bit is down, a Write All
+laying a foreign header and checkwords, and the board's fault: a Write of a
+block followed at once by a Read of an absent one, the write-back landing
+in the command-list fetch and read back WAITING. The pack sits on unit 2
+throughout, so the unit field of every tag is live. The model decides a
+refusal with the state at the CTL beat and then lets the walk run on before
+the status is read, as the fabric does. What it holds: every request
 answered within one poll by the 259 words the pack carries, tagged with the
 request's own tag, from an aligned address in the spare, or denied exactly
 for the other unit and the off-pack blocks; no fetch or take-away ever on a
@@ -464,39 +487,38 @@ DIRTY slot; the REF bits cleared and the slot taken forming one run of the
 hand from where the last fetch left it, the slot taken with its bit down,
 the walk's slot passed on the refusal; every dirty slot back within three
 polls of the walk leaving it; the pack file at the end block for block what
-the scripted writes imply; the sidecar bringing the laid headers and
-checkwords back across a restart; deleted, the records falling back to the
-format's own and the file rebuilt on the first write-back; corrupted in
-version, size and age, refused and named, and replaced only on request. At
-this revision: 74 requests, 70 served and 4 denied, 109 hits and 28,231
-words compared, the hand four times round the store, 65 blocks and 66,560
-bytes of the pack compared at the end, 23 load rows' checkwords agreeing
-with muir's `Ecc`. **Nineteen hand mutations of the program are each caught
-on the property they break**: the denial dropped for an off-pack block and
+the scripted writes imply; and after a restart every record the format's
+own over the data written, the laid ones changed by that (six, or the arm
+is vacuous), a header laid again carried for the run. At this revision: 76
+requests, 72 served and 4 denied, 112 hits and 29,008 words compared, the
+hand four times round the store, the walk's slot refused 43 times of which
+9 in the command-list fetch, 67 blocks and 68,608 bytes of the
+pack compared at the end, 23 load rows' checkwords agreeing with muir's
+`Ecc`. **Fifteen hand mutations of the program are each caught on the
+property they break**: the denial dropped for an off-pack block and
 for the other unit (the feeder fails on the block), a dirty victim not
 written back ("fetched into while DIRTY: the CADR's write is lost"), the
 first slot taken regardless of REF and REF cleared wholesale ("second
 chance: ..."), the walk's slot retried instead of passed, the tag without
 its unit and with head and block swapped (the request is denied where it
 should be served), the record placed without its three words, the dirty
-event ignored (dirty for 7 polls), the sidecar entry not written, header
-entries ignored at open, the entry one block off (the file's size), the
-version and the newer-pack checks dropped, a mismatch used anyway, a laid
-header not tabled, the pad's poison test off by one, and a start that
-leaves the store alone. The mutation script is scratch, not in the tree.
+event ignored (dirty for 7 polls), the WAITING bit read back taken as "not
+the walk's" (the board's fault put back: the feeder fails the write-back),
+a deferred write-back given up (the slot's block forgotten: the slot stays
+dirty past the bound), a laid header not tabled, the pad's poison test off by
+one, and a start that leaves the store alone. The mutation script is
+scratch, not in the tree.
 
 **What to copy where.** The change is the root filesystem image alone:
-`rootfs.cpio.uboot` from `make buildroot-rebuild`, 2,808,359 bytes at this
+`rootfs.cpio.uboot` from `make buildroot-rebuild`, 2,805,700 bytes at this
 revision against 2,802,503 before (the program is 30,048 bytes on the
 target). On the network path that is one file into the TFTP server's
 directory and a reset; the bitstream, kernel, tree and loader are unchanged,
 and the bitstream must be the one with the request path (`a899799` or
 later --- the `997b734` one on the board today has no REQ register and the
 feeder would read zeros there and serve nothing). `linux/mksd-buildroot.sh`
-puts a pack on the card as `pack.img` with `PACK=<file>`; it does not yet
-copy a `pack.meta` beside it, which a pack that has been written on another
-board would want (a suggestion for its owner; without it the feeder starts
-that pack fresh and says so).
+puts a pack on the card as `pack.img` with `PACK=<file>`, and that is the
+whole of the disk on the card.
 
 **What the console must show, with a pack on the card and the drive
 untimed**, in this order, and nothing else at the same rate:
@@ -507,7 +529,7 @@ untimed**, in this order, and nothing else at the same rate:
     cadr-pack-feeder: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
     cadr-pack-feeder: pack /mnt/card/pack.img: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks
     cadr-pack-feeder: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
-    cadr-pack-feeder: sidecar /mnt/card/pack.meta: absent, so every block's header and checkwords are as the format lays them for a fresh pack; it will be created (4211952 bytes) at the first write-back
+    cadr-pack-feeder: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
     cadr-pack-feeder: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
     cadr-pack-feeder: 24 slots taken away; the drive on unit 0 is present (writable, untimed)
     cadr-pack-feeder: polling REQ and DIRTY every 250 us
@@ -515,9 +537,7 @@ untimed**, in this order, and nothing else at the same rate:
 The tally's two words are whatever the machine's memory cycles have counted
 by then (256 and 256 after the boot PROM's parity loop, `0x01008100` twice,
 as `vivado/ddr_run.tcl` and the earlier boot measured); the marker bits are
-what is checked. On a second boot with the same card the sidecar line reads
-`sidecar /mnt/card/pack.meta: read, N block(s) with a laid header, M with a
-laid data checkword`. **The drive coming present is the line that changes
+what is checked. **The drive coming present is the line that changes
 the CADR**: until then the boot PROM sits in `AWAIT-DRIVE-READY` polling a
 status of `0x2321`; with unit 0 present it goes on, and the first requests
 follow within the PROM's own time:
@@ -526,17 +546,25 @@ follow within the PROM's own time:
     cadr-pack-feeder: request 2: block ... served into slot 1 from 0x1c800800
     cadr-pack-feeder: request 3: block ... served into slot 2 from 0x1c801000; further requests are counted, not named
 
-Which block the PROM asks for first is what `request 1` will say and is not
-predicted here; the reference band's opening sequence, earlier in this file,
-shows a Write followed by a Read-compare and a Read before the pack is
-walked, so a DIRTY write-back --- and with it the sidecar's creation, one
-4 MB write to the card --- comes early. A band loading is consecutive
+On the board the PROM asked for blocks 1, 0 and 17 (unit 0: 0/0/1, 0/0/0,
+0/1/0), in that order; the reference band's opening sequence, earlier in
+this file, shows a Write followed by a Read-compare and a Read before the
+pack is walked, so DIRTY write-backs come early. A band loading is consecutive
 blocks in chained transfers, each next block posted as the one before it
 begins to move and served by the next poll, so the CADR sees a drive with
 no seek and a 250 us sector. Then, once a minute at most while the counts
 move:
 
-    cadr-pack-feeder: served 1234, written back 5, denied 0, refused for the walk's slot 3, 0 lost at start, 0 failures; 240000 polls, 6170 of the face while busy
+    cadr-pack-feeder: served 32780, written back 16101, denied 0, refused for the walk's slot 3 (write-backs deferred 3, at most 1 passes in a row), 0 lost at start, 0 failures; 240000 polls, 6170 of the face while busy
+
+The served and written-back figures are the board's first minute; the rest
+are placeholders for the shape. **A `failures` count above zero names its
+last failure on the same line** (`..., 1 failures, the last: writing slot 6
+(block 18764) back to ...`), and every failure was also said when it
+happened, once, with a repeat of the same text said once a minute. The
+board's one failure at this revision's first run was the WAITING refusal
+above, which is no failure now: it is a deferred write-back, counted in
+"refused for the walk's slot" and "write-backs deferred".
 
 A denial is named once per block, `denied block C/H/B on unit U: no pack on
 that unit` or `... off a pack of 815 cylinders, 19 heads, 17 blocks a
@@ -544,9 +572,7 @@ track`; a program on the CADR that addresses a second drive or runs off the
 pack produces exactly those and nothing worse. **What would be wrong**: the
 guard line saying the tally reads zero or all ones (the wrong bitstream, or
 the GPIO clock gated --- stop there; the program did); `no pack side ...
-"NONE"` (a proving board); `sidecar ... does not match ...` followed by
-`the CADR sees a controller with no drive` (a stale `pack.meta` beside a new
-pack: `rm` it, or `--replace-meta`); `request N: ...` lines with no
+"NONE"` (a proving board); `request N: ...` lines with no
 `served` count moving afterwards; or any `failures` above zero in the
 summary, each of which was named when it happened. `cadr-pack-feeder
 --selftest` still runs the round trip of block 0 through the store with the
