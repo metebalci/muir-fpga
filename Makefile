@@ -734,7 +734,7 @@ BR_GEN_PS7  := linux/buildroot/board/arty-z7-20/uboot/gen_ps7_init_gpl.py
 # sub-make convention would have carried is lost.
 BR_MAKE     := $(MAKE)
 
-.PHONY: buildroot buildroot-check
+.PHONY: buildroot buildroot-check buildroot-rebuild
 
 # The generated start-up routine has to be what vivado/ps7_init.ops gives
 # today, or U-Boot would be built from a stale claim.  Pure Python, no
@@ -752,6 +752,19 @@ buildroot: buildroot-check
 	@for f in /usr/bin/gnu*; do [ -x "$$f" ] && ln -sf "$$f" "$(BR_WORK)/bin/$${f#/usr/bin/gnu}"; done; true
 	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
+	@echo "buildroot: images in $(BR_OUT)/images:"
+	@ls -l $(BR_OUT)/images/ | grep -v '^total'
+
+# Buildroot does not watch our files: a change under linux/buildroot/ to
+# U-Boot's environment, its fragment, the kernel config, the tree or the
+# cadr-tools sources is not seen by a plain `make buildroot` once the package
+# has a build stamp.  This forces the three packages that read them to
+# reconfigure and rebuild, then finishes the image as `buildroot` does.
+buildroot-rebuild: buildroot-check
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) \
+	    uboot-reconfigure linux-reconfigure cadr-tools-reconfigure
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
