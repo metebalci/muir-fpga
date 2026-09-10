@@ -125,6 +125,11 @@ module cadr_mem_count_harness #(
       .req_valid(req_valid), .req_tag(req_tag), .req_post(req_post),
       .ch_waiting(ch_waiting), .ch_slot(ch_slot), .ch_wrote(ch_wrote),
       .ch_hit(ch_hit),
+      // The console's Unibus port, tied off: `con_req` and `con_msyn` low
+      // and the whole of it folds, as `cadr_machine`'s own port list says.
+      .con_req(1'b0), .con_msyn(1'b0), .con_write(1'b0),
+      .con_addr(18'd0), .con_wdata(16'd0),
+      .con_gnt(con_gnt), .con_ssyn(con_ssyn), .con_rdata(con_rdata),
       .device_ack(1'b0), .device_rdata(32'd0),
       .boards(7'd32),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
@@ -211,12 +216,15 @@ module cadr_mem_count_harness #(
   logic        req_valid, req_post, ch_waiting, ch_wrote, ch_hit;
   logic [30:0] req_tag;
   logic [4:0]  ch_slot;
+  logic        con_gnt, con_ssyn;
+  logic [15:0] con_rdata;
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
   assign unused = &{1'b0, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
                     store_rdata, store_miss, ch_active,
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,
+                    con_gnt, con_ssyn, con_rdata,
                     md, phys, ub_addr, ub_rdata, arb_stage, dev_wdata,
                     vmaok, jcond, nop, pcs1, pcs0, iwrited, wrcyc, device,
                     dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn,

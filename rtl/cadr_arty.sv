@@ -176,6 +176,13 @@ module cadr_arty #(
   logic [4:0]  store_busy_slot, ch_slot;
   logic [30:0] req_tag;
   logic        req_valid, req_post, ch_waiting, ch_wrote, ch_hit, store_deny;
+  // The console's half of the diagnostic bus.  `rtl/cadr_console.sv` in
+  // `g_ddr` drives it from `M_AXI_GP1`; tied off, the arbiter inside
+  // `cadr_memory_path` folds to a constant and the register block keeps its
+  // one master, which is the board this file builds by default.
+  logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
+  logic [17:0] con_addr;
+  logic [15:0] con_wdata, con_rdata;
   // A write or read that came back SLVERR or DECERR, held. Zero when there is
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
@@ -325,7 +332,11 @@ module cadr_arty #(
       .ub_addr_o(ub_addr),
       .ub_rdata_o(ub_rdata), .n_loadmd_o(n_loadmd), .rdcyc_o(rdcyc),
       .nxm(nxm), .unibus(unibus), .memstart(memstart),
-      .timed_out(timed_out), .mem_req(mem_req), .mem_write(mem_write),
+      .timed_out(timed_out),
+      .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
+      .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
+      .con_ssyn(con_ssyn), .con_rdata(con_rdata),
+      .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata)
   );
 
@@ -630,6 +641,21 @@ module cadr_arty #(
     logic        gp0_bvalid, gp0_bready, gp0_arvalid, gp0_arready;
     logic        gp0_rlast, gp0_rvalid, gp0_rready;
     logic [1:0]  gp0_bresp, gp0_rresp;
+    // `M_AXI_GP1`, the console's own port.  A second `M_AXI_GP` and not a
+    // share of GP0's window, because the slave that owns a GP port must
+    // answer the WHOLE of it --- a read nothing answers hangs both Arm cores
+    // at one PC each, measured --- and GP0 is already answered end to end by
+    // `cadr_disk_pack.sv` or `cadr_gp0_default.sv`.  `0x8000_0000` to
+    // `0xBFFF_FFFF` is its window, which Vivado states itself in
+    // `data/ip/xilinx/processing_system7_v5_5/bd/bd.tcl` at lines 125 and 135.
+    logic        gp1_aresetn;
+    logic [31:0] gp1_awaddr, gp1_araddr, gp1_wdata, gp1_rdata;
+    logic [3:0]  gp1_awlen, gp1_arlen, gp1_wstrb;
+    logic [11:0] gp1_awid, gp1_arid, gp1_bid, gp1_rid;
+    logic        gp1_awvalid, gp1_awready, gp1_wlast, gp1_wvalid, gp1_wready;
+    logic        gp1_bvalid, gp1_bready, gp1_arvalid, gp1_arready;
+    logic        gp1_rlast, gp1_rvalid, gp1_rready;
+    logic [1:0]  gp1_bresp, gp1_rresp;
     // The disk's interrupt into the processing system, `IRQ_F2P` bit 0:
     // the pack side's, or nothing on a board without one.
     logic        pack_irq;
@@ -754,6 +780,43 @@ module cadr_arty #(
 
     end
 
+    // ------------------------------------------------------- the console
+    //
+    // The sixteen diagnostic registers on `M_AXI_GP1`, so that a program in
+    // Linux can halt the machine, read its state and start it again.  It is
+    // outside `g_pack` because every board with a PS7 has one: the console
+    // is what says whether the machine is running, and a board that can only
+    // be watched through its lamps cannot answer that.
+    //
+    // Reset by the port's own reset, synchronised, as the pack side is ---
+    // and the machine is NOT reset with it: a console that reset the machine
+    // when Linux came up would be a console that could never be attached to
+    // a running machine, which is the only time it is wanted.
+    logic [2:0] gp1_rst_sync;
+    logic gp1_rst;
+    always_ff @(posedge clk) begin
+      gp1_rst_sync <= {gp1_rst_sync[1:0], gp1_aresetn};
+      gp1_rst      <= rst || !gp1_rst_sync[2];
+    end
+
+    cadr_console u_console (
+        .clk(clk), .rst(gp1_rst),
+        .s_awaddr(gp1_awaddr), .s_awlen(gp1_awlen), .s_awid(gp1_awid),
+        .s_awvalid(gp1_awvalid), .s_awready(gp1_awready),
+        .s_wdata(gp1_wdata), .s_wstrb(gp1_wstrb), .s_wlast(gp1_wlast),
+        .s_wvalid(gp1_wvalid), .s_wready(gp1_wready),
+        .s_bresp(gp1_bresp), .s_bid(gp1_bid), .s_bvalid(gp1_bvalid),
+        .s_bready(gp1_bready),
+        .s_araddr(gp1_araddr), .s_arlen(gp1_arlen), .s_arid(gp1_arid),
+        .s_arvalid(gp1_arvalid), .s_arready(gp1_arready),
+        .s_rdata(gp1_rdata), .s_rresp(gp1_rresp), .s_rid(gp1_rid),
+        .s_rlast(gp1_rlast), .s_rvalid(gp1_rvalid), .s_rready(gp1_rready),
+        .dbg_req(con_req), .dbg_gnt(con_gnt),
+        .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
+        .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
+        .clock_edge(clock_edge)
+    );
+
     cadr_ps7 u_ps7 (
         .hp0_aclk(clk),
         .gpio_i(gpio_i),
@@ -788,6 +851,17 @@ module cadr_arty #(
         .hp2_arvalid(hp2_arvalid), .hp2_arready(hp2_arready),
         .hp2_rdata(hp2_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
         .hp2_rvalid(hp2_rvalid), .hp2_rready(hp2_rready),
+        .gp1_aclk(clk), .gp1_aresetn(gp1_aresetn),
+        .gp1_awaddr(gp1_awaddr), .gp1_awlen(gp1_awlen), .gp1_awid(gp1_awid),
+        .gp1_awvalid(gp1_awvalid), .gp1_awready(gp1_awready),
+        .gp1_wdata(gp1_wdata), .gp1_wstrb(gp1_wstrb), .gp1_wlast(gp1_wlast),
+        .gp1_wvalid(gp1_wvalid), .gp1_wready(gp1_wready),
+        .gp1_bresp(gp1_bresp), .gp1_bid(gp1_bid), .gp1_bvalid(gp1_bvalid),
+        .gp1_bready(gp1_bready),
+        .gp1_araddr(gp1_araddr), .gp1_arlen(gp1_arlen), .gp1_arid(gp1_arid),
+        .gp1_arvalid(gp1_arvalid), .gp1_arready(gp1_arready),
+        .gp1_rdata(gp1_rdata), .gp1_rresp(gp1_rresp), .gp1_rid(gp1_rid),
+        .gp1_rlast(gp1_rlast), .gp1_rvalid(gp1_rvalid), .gp1_rready(gp1_rready),
         .gp0_aclk(clk), .gp0_aresetn(gp0_aresetn),
         .gp0_awaddr(gp0_awaddr), .gp0_awlen(gp0_awlen), .gp0_awid(gp0_awid),
         .gp0_awvalid(gp0_awvalid), .gp0_awready(gp0_awready),
@@ -833,6 +907,15 @@ module cadr_arty #(
     assign store_busy = 1'b0;
     assign store_busy_slot = 5'd0;
     assign store_deny = 1'b0;
+    // And no console: there is no `M_AXI_GP1` to put one on.  With `con_req`
+    // and `con_msyn` down the arbiter inside `cadr_memory_path` never grants,
+    // the mux folds to the processor's own half, and the register block is
+    // what `build/machine.pass` compares.
+    assign con_req = 1'b0;
+    assign con_msyn = 1'b0;
+    assign con_write = 1'b0;
+    assign con_addr = 18'd0;
+    assign con_wdata = 16'd0;
 
   end
 
@@ -898,7 +981,7 @@ module cadr_arty #(
   // It is not meant to be readable --- it is a load, and what it shows is
   // that the datapath is moving at all.
   //
-  // **All fifty-nine of them, including the ones something else already
+  // **All sixty-two of them, including the ones something else already
   // reads** --- `clock_edge`, `promdisable`, `timed_out`, `n_memack` drive
   // LEDs as well and are still here, because the rule the comment states is
   // the whole specification and a fold with exceptions in it is not a rule
@@ -920,7 +1003,7 @@ module cadr_arty #(
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
                    mem_req, mem_write, store_miss, ch_active,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
-                   ch_wrote, ch_hit};
+                   ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata};
     end
   end
 

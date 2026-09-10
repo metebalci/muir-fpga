@@ -185,6 +185,25 @@ module cadr_machine #(
     output var logic        memstart,     // MEMSTART, which also addresses the map
     output var logic        timed_out,
 
+    // --- THE CONSOLE'S HALF OF THE DIAGNOSTIC BUS.
+    //
+    // The sixteen registers at Unibus `0o766000` are the machine's, and
+    // `cadr_spy_registers.sv` inside `cadr_memory_path` holds them.  What is
+    // outside is the console itself, `rtl/cadr_console.sv`, an AXI slave on
+    // `M_AXI_GP1` --- an AXI face and nothing to do with the machine, beside
+    // the PS7 in `rtl/cadr_arty.sv`, exactly as the disk's pack side sits
+    // there.  So this seam is a second Unibus master asking the arbiter
+    // inside for the diagnostic bus.  With no console the top level ties
+    // `con_req` and `con_msyn` low and the whole of it folds.
+    input  var logic        con_req,
+    output var logic        con_gnt,
+    input  var logic        con_msyn,
+    input  var logic        con_write,
+    input  var logic [17:0] con_addr,
+    input  var logic [15:0] con_wdata,
+    output var logic        con_ssyn,
+    output var logic [15:0] con_rdata,
+
     // --- PS DDR3, behind the AXI adapter
     output var logic        mem_req,
     output var logic        mem_write,
@@ -317,6 +336,14 @@ module cadr_machine #(
       .mode_speed (mode_speed),
       .prog_reset (prog_reset),
       .prog_boot  (prog_boot),
+      .con_req    (con_req),
+      .con_gnt    (con_gnt),
+      .con_msyn   (con_msyn),
+      .con_write  (con_write),
+      .con_addr   (con_addr),
+      .con_wdata  (con_wdata),
+      .con_ssyn   (con_ssyn),
+      .con_rdata  (con_rdata),
       .mem_req    (mem_req),
       .mem_write  (mem_write),
       .mem_addr   (mem_addr),
