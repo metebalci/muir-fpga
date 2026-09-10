@@ -186,42 +186,51 @@ any more.
 The stepping stone above is Digilent's 2017.4 image; this is the image that
 replaces it, built entirely on the build host from a pinned Buildroot, so
 that the board is reproducible from the repository and a machine move.
-**It has not been booted on the board yet**; this section is what to copy
-where and what the console must show, written from the code that was read
-and the images that were built and inspected here, and the supervising
-session's board run will correct it where it is wrong. Everything above this
-line still describes the stepping stone and is left as it is until then.
+**It booted the board first time, 10 September**, on the network path
+described below: SPL, U-Boot, DHCP with the board's MAC, the five fetches,
+Linux 6.19 with the `no-map` reservation honoured (System RAM
+`00000000-17ffffff`, `MemTotal` 381472 kB), the counters readable from Linux
+with no clock trick, Dropbear answering, a prompt 15 s from reset. Then
+**Mete decided the shape for other users: the card is the product, and TFTP
+is this project's convenience** --- another user cannot be expected to have
+a server, so the card carries everything and boots on its own. That is what
+is described here; the card path has not been run on the board yet.
+Everything above this line still describes the stepping stone and is left as
+it is.
 
 ### What it is
 
     Buildroot   2026.02.3, the LTS   vendor/buildroot-2026.02.3.tar.xz, sha256 5a59e750...c6fc7fb
-    U-Boot      2026.01, mainline    SPL is the first-stage loader: boot.bin 127,456 B;
-                                     u-boot.img 1,075,820 B (a FIT: U-Boot proper and its tree)
+    U-Boot      2026.01, mainline    SPL is the first-stage loader: BOOT.BIN 127,456 B;
+                                     u-boot.img 1,076,532 B (a FIT: U-Boot proper and its tree)
     Linux       6.19.14, mainline    zImage 3,256,232 B; zynq-arty-z7-20.dtb 11,404 B
-    rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,792,210 B (6.2 MB unpacked), an
-                + evtest             initramfs fetched over TFTP; sdcard.img 64 MiB
+    rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,792,240 B (6.2 MB unpacked), an
+                + evtest             initramfs, unpacked into RAM on both paths
+    the card    one FAT32 partition  sdcard.img, 537,919,488 B (512 MiB + 1 MiB); seven files
+                                     today, 11.3 MB of them; pack.img when there is one
 
 Sizes are of the first build, 10 September, on the build host; the whole
 thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
-took 25 minutes of wall clock on 16 cores, the second and third `make
-buildroot` (after a change) minutes.
+took 25 minutes of wall clock on 16 cores, and `make buildroot` after a
+change minutes. **Buildroot does not watch our files**: after editing
+anything under `linux/buildroot/` run `make buildroot-rebuild`, which
+reconfigures U-Boot, the kernel and `cadr-tools` and finishes the image.
 
 `linux/buildroot/` is the Buildroot external tree; `make buildroot` builds
-the whole thing from the tarball (the first time takes about an hour and
-several gigabytes under `~/.cache/muir-fpga-buildroot`, never `/tmp`, never
-`build/`); `linux/mksd-buildroot.sh` stages the card and the server
-directories under `build/sd/buildroot/` the way `linux/mksd.sh` does for the
-stepping stone. Every file under `linux/buildroot/` carries the reason for
-what it holds; the ones worth knowing exist:
+the whole thing from the tarball (several gigabytes under
+`~/.cache/muir-fpga-buildroot`, never `/tmp`, never `build/`);
+`linux/mksd-buildroot.sh` stages the card and the server directory under
+`build/sd/buildroot/`. Every file under `linux/buildroot/` carries the reason
+for what it holds; the ones worth knowing exist:
 
     configs/arty_z7_20_defconfig               the whole image, pinned
     board/arty-z7-20/dts/xilinx/zynq-arty-z7-20.dts   the board, for Linux AND U-Boot
     board/arty-z7-20/uboot/ps7_init_gpl.c      the start-up routine, GENERATED from vivado/ps7_init.ops
     board/arty-z7-20/uboot/gen_ps7_init_gpl.py the generator; --check, and --compare against Vivado's
-    board/arty-z7-20/uboot/cadr.env            U-Boot's default environment: the retry loop
+    board/arty-z7-20/uboot/cadr.env            U-Boot's default environment: both paths, the retry loop
     board/arty-z7-20/uboot/uboot.fragment      what changes in xilinx_zynq_virt_defconfig
     board/arty-z7-20/linux/linux.config        the kernel: what the board has and nothing more
-    board/arty-z7-20/uEnv.txt.in, uEnv.net     the card's file and the served boot command
+    board/arty-z7-20/uEnv.txt.in, uEnv.net     the card's optional file and the served boot command
     board/arty-z7-20/genimage.cfg              the card as one image, sdcard.img
     package/cadr-tools/                        where our own programs go; one placeholder today
 
@@ -253,51 +262,94 @@ kernel out, which closes the hazard `linux.md` recorded --- "the
 reserved-memory node binds the kernel, and not the loader" --- for this
 U-Boot.
 
-### The card, the server, and the files
+### The card, and the two ways it boots
 
-    the card         BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt
-    /srv/tftp        uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
+    the card    BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional),
+                cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot,
+                pack.img (the disk pack as a file; nothing writes it yet)
+    /srv/tftp   uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
+                --- this project's convenience, the same five files
 
-**Three files on the card, not two.** Mainline U-Boot's SPL is the first
-stage and loads U-Boot proper as a second file, `u-boot.img`, from the FAT
-partition; Digilent's `BOOT.BIN` carried both because Xilinx's FSBL reads
-partitions out of the boot image. `u-boot.img` changes only when U-Boot does,
-so the card is still written once. It is a FIT --- U-Boot proper and its
-device tree in one flattened-tree container, which is what the generic Zynq
-SPL loads (`CONFIG_SPL_LOAD_FIT`) and asks for by that name --- so `mkimage
--l` prints nothing for it and `fdtget -l u-boot.img /images` is how to look
-inside; `mksd-buildroot.sh` checks it that way. The SPL's file is `boot.bin`
-in Buildroot's output and `BOOT.BIN` on the card, which is the name the boot
-ROM looks for; the staging script renames it.
+U-Boot's built-in environment (`cadr.env`) boots **from the card by
+default**: `cadr.bit` loaded and `fpga loadb`'d, then the tree, `zImage` and
+`rootfs.cpio.uboot` off the FAT partition, then `bootz`. No network is used
+and none is needed; DHCP is not attempted; a board with no cable boots. If
+the card's `uEnv.txt` sets `serverip`, the loader takes **the network path**
+instead: `dhcp`, fetch `uEnv.net` from that server, run the `netcmd` it
+defines, which fetches the same five files over TFTP and ends in the same
+`bootz`. That is this project's own card: the five files live in `/srv/tftp`
+and a change to any of them is a copy and a reset; the card is never
+rewritten. On either path a failure loops --- a message, ten seconds, another
+attempt, for ever; the network path does not fall back to the card's own
+copies, because a card that names a server is this project's and booting
+stale files silently is the thing this project decided against. Nothing
+else is ever booted.
 
-    echo SERVERIP=<the TFTP server's address> >  linux/local.conf   # as before
-    echo ETHADDR=<the board's MAC>            >> linux/local.conf   # NEW; the console printed it
-    make buildroot                                                  # once; ~1 h the first time
-    linux/mksd-buildroot.sh                                         # stages build/sd/buildroot/
-    cp build/sd/buildroot/server/* /srv/tftp/
+The root filesystem is the initramfs on both paths, unpacked into RAM, so
+nothing on the board drifts: the card is read and never written by anything
+here. **Small persistent state, if it is ever wanted --- an SSH host key is the
+obvious case, since Dropbear makes a new one at every boot --- would be a file
+on the card that the image reads at start**, not a partition and not a
+writable root; it is not built now.
 
-**`ETHADDR` is new and it matters.** Digilent's U-Boot read the board's MAC
-out of the QSPI flash's OTP area; mainline has no such code, so without a
-MAC in the card's file U-Boot makes up a random one (`NET_RANDOM_ETHADDR`,
-and it says so on the console) and the DHCP lease pinned to the board's real
-address is not the one it gets. The card's `ethaddr` is imported before
-`dhcp`, U-Boot writes it into the kernel's tree at boot (`fdt_fixup_ethernet`,
-on the `ethernet0` alias), and Linux asks DHCP with the same address. Like
-`SERVERIP` it lives in `linux/local.conf` and in no committed file.
+**Three files were two.** Mainline U-Boot's SPL is the first stage and loads
+U-Boot proper as a second file, `u-boot.img`, from the FAT partition;
+Digilent's `BOOT.BIN` carried both because Xilinx's FSBL reads partitions out
+of the boot image. `u-boot.img` is a FIT --- U-Boot proper and its device tree
+in one flattened-tree container, which is what the generic Zynq SPL loads
+(`CONFIG_SPL_LOAD_FIT`) --- so `mkimage -l` prints nothing for it and `fdtget
+-l u-boot.img /images` is how to look inside; `mksd-buildroot.sh` checks it
+that way, and checks that the U-Boot inside carries `bootcmd=run cadr_boot`
+and the `cadr_card` path. Buildroot writes the SPL as `boot.bin`; the card
+has it as `BOOT.BIN`, the name the boot ROM looks for.
 
-`mksd-buildroot.sh` copies the bitstream in as `server/cadr.bit` when
-`build/ddr/cadr_arty.bit` exists (or `BIT=` names one); otherwise it says so
-and the memory-on board's `.bit` goes to `/srv/tftp/cadr.bit` by hand, as
-above. It also writes `build/sd/buildroot/sdcard.img`, the card as one image
---- the same one-partition FAT32 layout as the recipe above, made by
-genimage --- so on the laptop either
+### Staging, and what to copy where
+
+    echo SERVERIP=<the TFTP server's address> >  linux/local.conf   # this project's card; omit for a standalone one
+    echo ETHADDR=<the board's MAC>            >> linux/local.conf   # optional; the console printed it
+    make buildroot                                                  # once; ~25 min the first time
+    BIT=<the memory-on board's .bit> linux/mksd-buildroot.sh        # stages build/sd/buildroot/
+    cp build/sd/buildroot/server/* /srv/tftp/                       # the network path's files
+
+**`BIT` is mandatory and names the bitstream explicitly.** An earlier version
+took `build/ddr/cadr_arty.bit` if it was there, and what was there was a
+build a day older than the one being served; the script now refuses to run
+without `BIT`, refuses a path that does not exist, and prints the
+bitstream's own header --- design name, part, date, time, as Vivado wrote
+them into the `.bit` --- so the provenance of every staging is in its log:
+
+    mksd-buildroot: bitstream /srv/tftp/cadr.bit
+    mksd-buildroot:   design cadr_arty;UserID=0XFFFFFFFF;Version=2026.1;...  part 7z020clg400  date 2026/09/10  time 07:38:09  4045564 bytes of configuration
+
+`PACK=<file>` puts a disk pack on the card as `pack.img`; without it the
+card has none, and the script says so. `STANDALONE=1` writes `uEnv.txt`
+without the server even when `local.conf` names one, for testing the card
+path from this host; with no `local.conf` at all the card is standalone.
+The script says which path the card it staged will take.
+
+**`ETHADDR`.** Digilent's U-Boot read the board's MAC out of the QSPI flash's
+OTP area; mainline has no such code, so without a MAC in the card's file
+U-Boot makes up a random one (`NET_RANDOM_ETHADDR`, and it says so on the
+console) --- harmless on the card path, and on the network path it means the
+DHCP lease pinned to the board's real address is not the one it gets. The
+card's `ethaddr` is imported before `dhcp`, U-Boot writes it into the
+kernel's tree at boot (`fdt_fixup_ethernet`, on the `ethernet0` alias), and
+Linux asks DHCP with the same address. Like `SERVERIP` it lives in
+`linux/local.conf` and in no committed file.
+
+`build/sd/buildroot/sdcard.img` is the card as one image --- the same
+one-partition FAT32 layout as the recipe above, 512 MiB, made by genimage
+from the whole `card/` directory and read back file by file --- so on the
+laptop either
 
     D=/dev/sdX   # the line that says usb, never from memory
     sudo dd if=sdcard.img of=$D bs=4M conv=fsync
 
-or the sfdisk/mkfs.vfat/cp recipe above with `card/BOOT.BIN`, `card/u-boot.img`
-and `card/uEnv.txt` instead of the stepping stone's three files. Both are the
-same card.
+or the sfdisk/mkfs.vfat/cp recipe above with everything in `card/`. Both
+are the same card. **For this project's board the card is written once**
+(new `BOOT.BIN`, `u-boot.img` and `uEnv.txt` against the stepping stone's);
+after that, `cp build/sd/buildroot/server/* /srv/tftp/` and a reset is the
+whole procedure for any change. For the card path, a change is a new card.
 
 ### What happens at power-on, and what the console must show
 
@@ -315,55 +367,55 @@ same card.
    branch is the right one). The SPL says nothing more when the load
    succeeds; `spl: error reading image u-boot.img` is the card without the
    second file. No banner at all, or the ROM parking (`0x200A` over JTAG),
-   is the card not latched or `ps7_init` wrong --- and `ps7_init` wrong would
-   be the first disagreement between the generated routine and Vivado's,
-   which `gen_ps7_init_gpl.py --compare` says there is none.
+   is the card not latched.
 
 2. **U-Boot proper** prints `U-Boot 2026.01`, `CPU: Zynq 7z020`,
-   `Silicon: v3.1`, `DRAM: ECC disabled 512 MiB`, and then --- expected,
-   and the reason `ETHADDR` exists ---
+   `Silicon: v3.1`, `DRAM: ECC disabled 512 MiB`, and --- unless `uEnv.txt`
+   carries `ethaddr` ---
 
        Warning: ethernet@e000b000 (eth0) using random MAC address - xx:xx:...
 
    Two seconds of `Hit any key to stop autoboot`, then `bootcmd` runs
-   `cadr_boot`: load `uEnv.txt`, import it (the real `ethaddr` replaces the
-   random one, `serverip` is set), `dhcp` (`DHCP client bound to address
-   ...`), import `uEnv.txt` again (lwIP's `dhcp` overwrote `serverip`; this
-   puts it back), run `uenvcmd`: fetch `uEnv.net`, import it, run `netcmd`.
+   `cadr_boot`, which loads and imports `uEnv.txt` if there is one (`cadr:
+   no uEnv.txt on the card; booting from the card` if not) and looks at
+   `serverip`.
 
-3. **`netcmd`** fetches `cadr.bit` and configures the fabric: `fpga loadb`
-   prints the bitstream header (`design filename = "..."`, `part number =
-   "7z020clg400"`), then `INFO:post config was not run, please run manually
-   if needed`, which is U-Boot's fixed wording and not a fault --- the driver
-   has just written the level shifters and the fabric resets itself
-   (`zynq_slcr_devcfg_enable`, the same two registers `ps7_post_config`
-   writes). The CADR starts here. Then `zynq-arty-z7-20.dtb`,
-   `zImage`, `rootfs.cpio.uboot` --- five `Filename '...'` /
-   `Bytes transferred = N` pairs in all --- and
+3. **The card path** (no `serverip`): seven `N bytes read in M ms` lines from
+   the FAT partition --- `cadr.bit` with `fpga loadb`'s header (`design
+   filename = "..."`, `part number = "7z020clg400"`) and U-Boot's fixed
+   `INFO:post config was not run, please run manually if needed`, which is
+   not a fault (the driver has just written the level shifters and the
+   fabric resets itself); the CADR starts here --- then the tree, `zImage`,
+   `rootfs.cpio.uboot`, and
 
        ## Loading init Ramdisk from Legacy Image at 04000000 ...
        ## Flattened Device Tree blob at 01f00000
        Starting kernel ...
 
-4. **If any fetch fails** --- server down, cable out --- the line
-   `cadr: the boot did not happen; trying again in 10 s` and another attempt
-   ten seconds later, for as long as the server is away; U-Boot's banner does
-   **not** reappear, because this is a loop and not the stepping stone's
-   `reset`. Nothing else is ever booted: there is no `image.ub`, no fallback,
-   and `bootcmd` never returns.
+   No `DHCP`, no `TFTP`, no `Filename` line anywhere.
 
-5. **Linux**, and the two things this image exists to establish are in its
-   first lines:
+   **The network path** (`serverip` set): `cadr: uEnv.txt names a server;
+   fetching over TFTP`, `DHCP client bound to address ...`, then `Filename
+   'uEnv.net'` and the same five files as `Filename '...'` / `Bytes
+   transferred = N` pairs, the `fpga loadb` lines after `cadr.bit`, and the
+   same three lines into the kernel.
+
+4. **If anything fails** --- a file missing on the card, the server down, the
+   cable out --- the line `cadr: the boot did not happen; trying again in
+   10 s` and another attempt ten seconds later, for as long as it takes;
+   U-Boot's banner does **not** reappear, because this is a loop and not the
+   stepping stone's `reset`. A missing card file is named by `load` ("`**
+   Unable to read file zImage **`") just before the message.
+
+5. **Linux**, and the two things the first boot established are in its
+   first lines and at its prompt:
 
        OF: reserved mem: 0x18000000..0x1fffffff (131072 KiB) nomap non-reusable cadr@18000000
 
    is the tree reserving the CADR's memory **with `no-map` and without
-   `mem=384M`** --- the thing the 4.9 kernel died on. If the kernel goes
-   quiet after `Memory policy: Data cache writealloc`, it has died the same
-   way and `mem=384M cma=32M` goes back on `uEnv.net`'s bootargs until it is
-   understood. If it boots, `linux/uEnv.net` is right and `linux.md`'s point 3
-   is about 4.9 only. Reading 6.19.14: `drivers/of/of_reserved_mem.c` marks
-   the region `MEMBLOCK_NOMAP`; `arch/arm/mm/mmu.c`'s `map_lowmem` and
+   `mem=384M`** --- the thing the 4.9 kernel died on, and this kernel does
+   not (measured 10 September). Reading 6.19.14: `drivers/of/of_reserved_mem.c`
+   marks the region `MEMBLOCK_NOMAP`; `arch/arm/mm/mmu.c`'s `map_lowmem` and
    `arch/arm/kernel/setup.c`'s `request_standard_resources` both walk
    `for_each_mem_range`, which skips it, so it is neither mapped nor "System
    RAM".
@@ -372,15 +424,17 @@ same card.
    stepping stone's password, kept because the board is on a private LAN;
    set in the defconfig, `BR2_TARGET_GENERIC_ROOT_PASSWD`), and over SSH from
    the address DHCP gave it, without the `ssh-rsa` incantation the 2018
-   Dropbear needed.
+   Dropbear needed. On the card path Linux still asks DHCP for an address
+   (`BR2_SYSTEM_DHCP="eth0"`); with no cable it waits its 15 s and goes on
+   to the prompt without one.
 
-At the prompt, the same four lines as above, and two changes to what they
-should say:
+At the prompt, the same four lines as above, and what they said on 10
+September under this image:
 
     cat /proc/device-tree/model                  Zynq Arty Z7 Development Board  (kept on purpose)
     ls /proc/device-tree/reserved-memory/        cadr@18000000
     grep "System RAM" /proc/iomem                00000000-17ffffff   -- from the node alone, no mem=
-    grep MemTotal /proc/meminfo                  about 384 MB
+    grep MemTotal /proc/meminfo                  381472 kB
     cat /proc/cmdline                            console=ttyPS0,115200 earlycon   -- and nothing about memory
     devmem 0xE000A068; devmem 0xE000A06C         0x01008100 twice, WITHOUT the APER_CLK_CTRL line first
 
@@ -391,24 +445,25 @@ the driver drops its reference after probe, so with `CONFIG_PM` the block is
 unclocked whenever no GPIO line is in use and the EMIO registers read zero,
 which is what 4.9 did. `linux.config` builds without `PM` (nothing on this
 board sleeps), the runtime-PM calls are stubs, and the clock the driver takes
-at probe stays on. If `devmem 0xE000A068` reads `0x00000000`, the clock is
-off after all and `devmem 0xF800012C 32 $(( $(devmem 0xF800012C) | 0x400000 ))`
-turns it on as before; the alternative kept in `linux.config`'s header is to
-read the lines through the driver (gpiochip lines 54..117 are EMIO 0..63).
+at probe stays on --- measured: the counters read from Linux with no clock
+trick. The alternative kept in `linux.config`'s header is to read the lines
+through the driver (gpiochip lines 54..117 are EMIO 0..63).
 
-**Verified on the built images, not the board**: the kernel's final `.config`
-has `PM`, `SUSPEND`, `CPU_IDLE` and `STRICT_DEVMEM` off and `DEVMEM`,
-`GPIO_ZYNQ`, `INPUT_EVDEV`, `USB_HID`, `USB_CHIPIDEA_HOST`, `MACB`,
-`REALTEK_PHY`, `MMC_SDHCI_OF_ARASAN`, `SERIAL_XILINX_PS_UART_CONSOLE` and
-`FPGA_MGR_ZYNQ_FPGA` on, and no `DRM` or `FB`; the served tree, decompiled,
-carries `cadr@18000000 { reg = <0x18000000 0x8000000>; no-map; }`, five
-devices enabled (uart0, gem0, sdhci0, qspi, usb0 as host), `serial0` on
-`serial@e0000000`, `ps-clk-frequency` 50,000,000, the PHY at address 1 and no
-`amba_pl`; U-Boot's own tree carries the same reservation and its default
-environment is `bootcmd=run cadr_boot` with the `cadr_*` variables as
-written; the SPL is 125,216 bytes against its 196,608-byte ceiling and links
-`ps_init_gpl.o` from the generated routine; and the SPL's cut-down tree
-holds exactly the serial, QSPI, MMC, SLCR and timer nodes.
+**Verified on the built images**: the kernel's final `.config` has `PM`,
+`SUSPEND`, `CPU_IDLE` and `STRICT_DEVMEM` off and `DEVMEM`, `GPIO_ZYNQ`,
+`INPUT_EVDEV`, `USB_HID`, `USB_CHIPIDEA_HOST`, `MACB`, `REALTEK_PHY`,
+`MMC_SDHCI_OF_ARASAN`, `SERIAL_XILINX_PS_UART_CONSOLE` and
+`FPGA_MGR_ZYNQ_FPGA` on, and no `DRM` or `FB`; the tree, decompiled, carries
+`cadr@18000000 { reg = <0x18000000 0x8000000>; no-map; }`, five devices
+enabled (uart0, gem0, sdhci0, qspi, usb0 as host), `serial0` on
+`serial@e0000000`, `ps-clk-frequency` 50,000,000, the PHY at address 1 and
+no `amba_pl`; U-Boot's own tree carries the same reservation; the SPL is
+125,216 bytes against its 196,608-byte ceiling and links `ps_init_gpl.o`
+from the generated routine; and the SPL's cut-down tree holds exactly the
+serial, QSPI, MMC, SLCR and timer nodes. The kernel also kept `CONFIG_VT`
+on: it is not user-selectable without `EXPERT` and defaults to yes, and with
+no framebuffer it is a dummy console nobody sees; `console=ttyPS0` is what
+decides where the messages go.
 
 **And one thing to know about `/dev/mem` on the reserved region**, from the
 code: `mmap` works and, opened `O_SYNC` as BusyBox's `devmem` does, gives an
@@ -444,10 +499,7 @@ keyboard-and-mouse addition on top --- HID core, the generic and quirk HID
 drivers, the USB HID transport, the input core and evdev --- is 129,569 bytes;
 `vmlinux` compresses 2.03:1 into this `zImage`, so together about 175 KB of
 the 3.26 MB `zImage`. `evtest` is 34,144 bytes in the root filesystem, about
-15 KB in the compressed initramfs. The kernel also kept `CONFIG_VT` on: it is
-not user-selectable without `EXPERT` and defaults to yes, and with no
-framebuffer it is a dummy console nobody sees; `console=ttyPS0` on the
-command line is what decides where the messages go.
+15 KB in the compressed initramfs.
 
 To prove it on the board, plug a keyboard in and watch the console:
 
@@ -470,15 +522,19 @@ and VBUS to the connector, neither of which this image can see from the code.
 ### What is deliberately not in this image
 
 - **No `mem=384M`, no `cma=32M`, no `uio_pdrv_genirq.of_id`** on the command
-  line: the first is the question being asked, the second was for Digilent's
+  line: the first is now measured unnecessary, the second was for Digilent's
   42 MB ramdisk against a 128 MB CMA pool, the third was for PL peripherals
   the tree no longer has.
 - **No saved environment.** U-Boot's environment is built in and lives
   nowhere (`ENV_IS_NOWHERE`; the generic configuration's `uboot.env` on the
   card is off), as the 2017 build's was: a boot decided from a file nothing
-  in the repository sees was the thing to avoid.
+  in the repository sees was the thing to avoid. `uEnv.txt` decides only
+  which of the two paths, and supplies two addresses.
+- **No fallback from the network path to the card**, for the reason above.
 - **No `fdt_high`/`initrd_high`**, for the reason in `uEnv.net`.
 - **No I2C, no SPI0, no FCLK**: off in `vivado/ps7_config.tcl`, off here.
 - **No display, no DRM, no framebuffer**: HDMI on this board is the fabric's.
+- **No writable storage from Linux**: the card is read by U-Boot and never
+  mounted; `pack.img` is a place, not yet a pack.
 - **No Vivado, no Xilinx tool of any kind** is needed to build the image;
   the one Xilinx-derived input is `vivado/ps7_init.ops`, committed.

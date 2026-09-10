@@ -1,30 +1,29 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The boot command for the Buildroot image, served by the TFTP server and
-# fetched by the one line the card carries.  Edit here, copy to /srv/tftp,
-# reset the board; the card is never touched.
+# The boot command for this project's own board, served by its TFTP server
+# and fetched by U-Boot's cadr_net when the card's uEnv.txt names a server.
+# Edit here, copy to /srv/tftp, reset the board; the card is never touched.
+# A card without a server named on it never reads this file: it boots the
+# same five files from the card (cadr.env's cadr_card).
 #
 # WHAT IT DOES.  The CADR goes into the fabric first: `fpga loadb` configures
 # it with cadr.bit and the machine is running its boot PROM out of DDR3
 # before the kernel is fetched.  Then the tree, the kernel and the root
-# filesystem, all three from the server, and `bootz` with all three --- a
-# zImage, a U-Boot ramdisk image (rootfs.cpio.uboot, the initramfs), and a
-# raw tree.  The addresses are U-Boot's environment's, set and explained in
-# linux/buildroot/board/arty-z7-20/uboot/cadr.env.
+# filesystem --- a zImage, a U-Boot ramdisk image (rootfs.cpio.uboot, the
+# initramfs) and a raw tree --- and cadr_bootz, which is the same last step
+# the card path takes: `bootz` with all three and the built-in bootargs.  The
+# addresses are U-Boot's environment's, set and explained in cadr.env.
 #
 # WHAT IS NOT ON THE COMMAND LINE, against the stepping stone's.  No
 # `mem=384M`: the tree's reserved-memory node, `no-map`, is what keeps this
-# kernel off the CADR's region, and whether it does is one of the two things
-# the first boot of this image is to establish (docs/boot.md, "The Buildroot
-# image").  No `cma=32M`: nothing here allocates from CMA and the kernel's
-# pool is the default.  No `uio_pdrv_genirq.of_id`: there are no PL
+# kernel off the CADR's region --- measured on the board 10 September, System
+# RAM 00000000-17ffffff from the node alone.  No `cma=32M`: nothing here
+# allocates from CMA.  No `uio_pdrv_genirq.of_id`: there are no PL
 # peripherals in the tree.  `earlycon` with no argument takes the console
 # from the tree's stdout-path.
 #
-# WHAT IS NOT DONE HERE.  fdt_high and initrd_high are left unset: U-Boot
-# relocates the tree and the ramdisk into memory it allocates below its own,
-# and the reserved-memory node in its tree keeps that below the CADR's
-# region.  If either is ever set to 0xffffffff the blobs stay where they were
-# loaded, which is also below it.
-netcmd=tftpboot ${cadr_bit_addr} cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize} && tftpboot ${cadr_fdt_addr} zynq-arty-z7-20.dtb && tftpboot ${cadr_kernel_addr} zImage && tftpboot ${cadr_ramdisk_addr} rootfs.cpio.uboot && setenv bootargs console=ttyPS0,115200 earlycon && bootz ${cadr_kernel_addr} ${cadr_ramdisk_addr} ${cadr_fdt_addr}
+# fdt_high and initrd_high are left unset: U-Boot relocates the tree and the
+# ramdisk into memory it allocates below its own, and the reserved-memory
+# node in its tree keeps that below the CADR's region.
+netcmd=tftpboot ${cadr_bit_addr} cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize} && tftpboot ${cadr_fdt_addr} zynq-arty-z7-20.dtb && tftpboot ${cadr_kernel_addr} zImage && tftpboot ${cadr_ramdisk_addr} rootfs.cpio.uboot && run cadr_bootz
