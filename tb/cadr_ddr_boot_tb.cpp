@@ -5,13 +5,21 @@
 // `mem_*`, running MIT's boot PROM from reset.
 //
 // WHY THIS EXISTS AND WHY MUIR IS NOT THE REFERENCE.  Every other check here
-// is held to muir.  This one cannot be, past a point: muir has a modelled
-// disk controller that answers the boot PROM's status polls and the board has
-// `device_ack` tied low and no controller at all, so the two machines part
-// company at about microcycle 537,900 by design.  What the board does after
-// that is not something muir can say.  So step four --- the machine with DDR
-// behind it, which is what `DDR=1` puts on the part --- needs a simulation
-// reference of its own, and this is it.
+// is held to muir, against a trace.  This one runs 200 ms of machine time ---
+// 862,932 microcycles --- and the boot PROM trace is 600,000 rows, so past
+// that there is no reference to be held to whatever the fabric does.  muir
+// has no column for a word in DDR either.  So step four --- the machine with
+// DDR behind it, which is what `DDR=1` puts on the part --- needs a
+// simulation reference of its own, and this is it.
+//
+// **THAT PARAGRAPH USED TO SAY THE TWO MACHINES PART COMPANY AT MICROCYCLE
+// 537,900 BECAUSE THE BOARD HAD NO DISK CONTROLLER, AND THAT IS NO LONGER
+// TRUE.**  `rtl/cadr_disk_controller.sv` is inside `cadr_machine` now and
+// answers the boot PROM's 16,951 polls with the same `0x2321` muir's does, so
+// the board's machine and muir's no-drive machine run the same program for as
+// far as either is asked to.  The parting that remains is the DRIVE: muir's
+// `rtl_sys` engine attaches one and diverges at microcycle 537,857, and this
+// fabric has none.
 //
 // WHAT MUIR STILL BACKS, and it is the whole of the claim this check pins:
 // `promh.text`'s PAGE-0-PARITY-FIX reads each of the 256 words of page 0 and
@@ -46,7 +54,10 @@
 // with whatever the bridge last returned --- `cadr_memory_path.sv` falls
 // through to `memory_rdata` when nothing acknowledges --- so after the parity
 // loop every one of the boot PROM's 16,951 disk polls read back the last word
-// of page 0.  Bit 0 of that word is what the PROM's JUMP-IF-BIT-CLEAR takes
+// of page 0.  (The polls are answered now and no longer go through that
+// fall-through at all, which does not retire the assertion: what it holds is
+// that page 0's contents must not steer the machine, and the two cycles to
+// empty Xbus space still take the unanswered path.)  Bit 0 of that word is what the PROM's JUMP-IF-BIT-CLEAR takes
 // for "the disk controller is ready", so configuration B's poison made the
 // machine write a CCW to physical 777 and halt at PC 40, ERROR-DISK-ERROR,
 // with the clock frozen.  Measured, and then decided against: **an unanswered
@@ -380,13 +391,14 @@ void CheckRun(const Run &r, bool bit0, char name) {
         first_changed >= 0 ? r.mem[first_changed] : 0,
         first_changed >= 0 ? Poison(static_cast<int>(first_changed), bit0) : 0);
 
-  // THE MACHINE IS STILL RUNNING.  It polls a disk controller that is not
-  // there and will do so for ever; what it must not do is halt, which is what
-  // it did when an unanswered read handed MD the last word of page 0.
-  // A microcycle that ends on the NXM timer is about 850 ticks long and the
-  // machine runs nothing else after the parity loop, so two thousand ticks is
-  // a couple of them.  A halt is not near this bound: it leaves the last edge
-  // sixteen million ticks back.
+  // THE MACHINE IS STILL RUNNING.  It waits for a drive that is not there ---
+  // the controller answers, and its status says not on line --- and will do
+  // so for ever; what it must not do is halt, which is what it did when an
+  // unanswered read handed MD the last word of page 0.  The bound is two
+  // thousand ticks, which was a couple of NXM timeouts when the polls were
+  // ending on the timer at about 850 ticks each and is now some seventy
+  // microcycles of a loop that runs at full speed.  A halt is not near it
+  // either way: it leaves the last edge sixteen million ticks back.
   Check(kTicks - r.last_edge_tick < 2000,
         "%c: the last clock edge was at tick %ld of %ld, %ld ticks back, so "
         "the machine is not running at the end", name, r.last_edge_tick,
@@ -429,8 +441,11 @@ void CheckRun(const Run &r, bool bit0, char name) {
   for (const auto &kv : ack_hist)
     std::printf(" %ld ticks x%ld", kv.first, kv.second);
   std::printf("\n");
-  std::printf("  NXM timeouts      %ld, every one a disk poll nothing "
-              "answers\n", r.timeouts);
+  // Two, and they are the boot PROM's two cycles to Xbus space with nothing
+  // in it --- not disk polls, which the disk controller answers now, and not
+  // memory, which DDR answers.  It read 13,710 before that module landed.
+  std::printf("  NXM timeouts      %ld, Xbus space with nothing in it\n",
+              r.timeouts);
   std::printf("  final PC          %lo, still running at tick %ld\n",
               r.final_pc, r.last_edge_tick);
 }

@@ -5,10 +5,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Before building the disk controller
 
-Reconnaissance, measured 2026-09-09, before a line of it was written. None of
-this is derivable from the RTL because none of it is in the RTL: it is what
-muir has to check against, what the two reference programs actually ask of it,
-and the two decisions that came out of that. Written down because it is an
+Reconnaissance, measured 2026-09-09 at `871b467`, before a line of it was
+written --- 56 commits before the memory path landed, so read that date on
+anything below which says what does or does not exist. None of this is
+derivable from the RTL because none of it is in the RTL: it is what muir has
+to check against, what the two reference programs actually ask of it, and the
+two decisions that came out of that. Written down because it is an
 afternoon of reading and probing and nobody should repeat it.
 
 ## muir has no `rtl`-level disk controller
@@ -177,13 +179,17 @@ reason.
 
 ## A gap in the seam, found while reading
 
-**`cadr_machine.sv` brings out `dev_rq`, `dev_write` and `phys`, and not the
-word.** `cadr_memory_path.sv` has `wdata` and its own comment calls `phys` and
-`wdata` "the address and the word" for a slave that is not main memory; the
-machine's boundary drops it. Harmless while nothing is an Xbus slave, and a
-silent slave bug the day one arrives --- an Xbus device could be written to and
-never see what. It wants a `dev_wdata` before the seam is built, and a mutation
-to prove the new port bites.
+**~~`cadr_machine.sv` brings out `dev_rq`, `dev_write` and `phys`, and not the
+word.~~ Closed at `b562621`.** `cadr_memory_path.sv` had `wdata` and its own
+comment calling `phys` and `wdata` "the address and the word" for a slave that
+is not main memory, and the machine's boundary dropped it: an Xbus device could
+have been written to and never seen what. `dev_wdata` is a port of
+`cadr_machine` now and the mutation this paragraph asked for is in
+`mutations/list.txt` --- together with what it found, which is that all 5,650
+device writes the boot PROM makes carry the same word and that word is zero.
+So a rotation of `dev_wdata` is an equivalence on that trace rather than a
+hole, and `build/machine.pass` counts the distinct words on the seam and says
+so if the count ever rises above one.
 
 The controller is also a bus **master**: the memory channel fetches its CCWs
 and moves its pages over the Xbus, and `cadr_machine.sv` has no provision for a

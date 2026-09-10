@@ -208,9 +208,16 @@ $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
 # is the word the fabric's own bus interface strobes into it, at the instant
 # that interface says, and the stall timing has to come out right with the
 # real interface underneath.
+#
+# `rtl/cadr_disk_controller.sv` is in the list because it is instantiated
+# inside `cadr_machine`, which is where the boot PROM's 16,951 device cycles
+# now land: they used to be answered from the trace by the testbench, and that
+# line is gone. It joins `nomem`, `ddr_boot`, `mem_count`, `arty` and `probe`
+# through this variable, all of which build the whole machine.
 MACHINE := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv rtl/cadr_ddr_map.sv \
            rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv rtl/cadr_xbus_ddr.sv \
-           rtl/cadr_spy_registers.sv rtl/cadr_memory_path.sv rtl/cadr_machine.sv
+           rtl/cadr_spy_registers.sv rtl/cadr_disk_controller.sv \
+           rtl/cadr_memory_path.sv rtl/cadr_machine.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_machine \

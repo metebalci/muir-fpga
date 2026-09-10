@@ -1791,9 +1791,15 @@
 # nor `memory_path` can see any of these, because each has the other half as
 # a testbench rather than as a design.
 #
-# It agrees for 537,841 microcycles but only about 500 bus cycles --- the boot
-# PROM computes for its first half million --- so composition is proved on
-# real cycles rather than on many of them. Aim accordingly.
+# It agrees for all 600,000 microcycles of the boot PROM, and 17,466 of those
+# carry a bus cycle: 512 to main memory, 16,951 to the disk controller's four
+# registers, two to empty Xbus space and one to the Unibus. The processor
+# computes for its first half million microcycles and then does nothing but
+# poll the disk, so main memory is proved on 512 cycles rather than on many of
+# them, and the Unibus on exactly one. Aim accordingly.
+#
+# The 512 and the 1 are what this section's records mostly reach; the 16,951
+# have a section of their own below, and the caveat that goes with them.
 
 @mutation the-write-line-is-driven-by-the-read-cycle
 @check machine
@@ -2104,6 +2110,200 @@
   assign dev_wdata  = ~wdata;
 @end
 
+# ======================================================= the disk controller ===
+#
+# `rtl/cadr_disk_controller.sv`, the four registers at 0o17377774, held to
+# `disk_controller::Controller`'s `status()`, `read` and `write` over MIT's
+# boot PROM.
+#
+# **READ THIS BEFORE FILING A HOLE HERE.  ON THIS TRACE THE WHOLE MODULE
+# REDUCES TO ONE CONSTANT AND A DECODE, SO A MUTATION THAT LEAVES `0x2321`
+# ALONE IS AN EQUIVALENCE AND NOT A HOLE.**  The boot PROM makes 11,301 reads
+# of the status register, every one answering `0x2321`, and 5,650 writes of
+# ZERO to the disk address register.  It never writes a command, never touches
+# CLP, never stores into START, and never reads back register 1, 2 or 3.  So:
+#
+#   the command register's contents      never written, so `cmd` is zero and
+#                                        the two status bits it decides ---
+#                                        <13> off CMD2 and <3> off the done
+#                                        enable --- are constant here.  What
+#                                        IS live is the DIRECTION each is
+#                                        computed in, which
+#                                        `disk-lossage-reads-cmd2-the-wrong-way`
+#                                        is aimed at.
+#   CLP                                  written by nothing on this trace
+#   the DA register's storage            written 5,650 times and read never
+#   the register select's low bit        registers 1, 2 and 3 are read by
+#                                        nothing, so a rotation of `which`
+#                                        moves a write from DA to CLP and a
+#                                        read of nothing to a read of nothing
+#   START                                stored into never
+#   an acknowledgement a tick LATE ON A
+#   WRITE                                invisible: 5,650 device writes
+#                                        acknowledged a tick late is exactly
+#                                        what this check passed with while the
+#                                        testbench answered them, measured on
+#                                        its own -MEMACK histogram
+#   the address match held in a
+#   register rather than combinational   a timing property and not a
+#                                        functional one, so no simulation
+#                                        check here can see it either way ---
+#                                        and it is not free: combinational it
+#                                        carries the map's ripple into
+#                                        -MEMACK and the DDR=0 board flow
+#                                        reads -6.195 ns on 1,065 endpoints
+#                                        of 14,312 against +0.067 ns MET and
+#                                        none failing with it held. What
+#                                        holds that is the fitter, and the
+#                                        module says so at the register.
+#
+# That is the control-store-writes-all-zeros shape for the third time in this
+# repository, and the answer is the same one: the trace that tells a register
+# block from a wire is the band, which needs the drive, the channel and
+# `S_AXI_HP2`.  Until then the records here aim at what `0x2321` and its
+# timing can see, and the list above is what they deliberately do not cover.
+
+@mutation disk-not-on-cylinder-at-bit-7
+@check machine
+@file rtl/cadr_disk_controller.sv
+@note `<8>` is "not on cylinder", `-ON CYL SYNC` never coming with nothing on
+@note the cable, and `<7>` is the selected drive's read-only switch. Moved
+@note one place down, the no-drive word becomes 0x22A1 where muir's
+@note `status::NO_DRIVE` is 0x2321 --- `tests/disk.rs` asserts the octal
+@note 0o21441 off both the behavioural model and the netlist board --- and
+@note the boot PROM's first status poll takes it.
+@note
+@note THIS IS THE ONE THAT MATTERS, because it is the smallest change the
+@note check can still see: the module's whole answer on this trace is that
+@note one word, so a bit of it is the finest grain there is.
+@old
+  assign status = 32'h0000_0320                             // <9> <8> <5>
+@new
+  assign status = 32'h0000_02a0                             // <9> <7> <5>
+@end
+
+@mutation disk-lossage-reads-cmd2-the-wrong-way
+@check machine
+@file rtl/cadr_disk_controller.sv
+@note `<13>` transfer aborted is `-LOSSAGE`, and with nothing on the cable
+@note the disk lossage stands: `NO SELECT` through the 74LS32 at DCCMD 0C16,
+@note which passes it only with CMD2 low. So the bit is the complement of
+@note the command register's bit 2 and not the bit itself.
+@note
+@note The direction is what is mutated rather than the term, because the
+@note term is constant on this trace --- the boot PROM never writes a command
+@note --- and inverting it is what moves the answer to 0x0321.
+@old
+  assign lossage = !cmd[2];
+@new
+  assign lossage = cmd[2];
+@end
+
+@mutation disk-says-it-is-busy
+@check machine
+@file rtl/cadr_disk_controller.sv
+@note `<0>` not active: "0 means the controller is busy, 1 means it is ready
+@note to accept a command." Nothing here takes time --- no transfer starts,
+@note `done_at` never moves --- so the controller is never busy.
+@note
+@note This is the bit the boot PROM BRANCHES on, and it is what the whole
+@note slice buys: with it clear the machine waits for not-active and never
+@note reaches the on-line wait at 0o541, which is the loop `rtl.golden`
+@note spends its last 62,154 microcycles in.
+@note
+@note So it is caught on the branch and not only on MD. Measured: microcycle
+@note 537,849 fails on the M bus (0x2320 for 0x2321), the ALU, R, OB, JCOND,
+@note PCS1 and MD, and 537,850 on PC --- 0o541 where the reference says
+@note 0o545. A no-drive controller that never answered at all fails the same
+@note rows the same way, MD reading zero instead of 0x2320, which is what
+@note the board did before this module existed.
+@old
+  assign not_active = 1'b1;
+@new
+  assign not_active = 1'b0;
+@end
+
+@mutation disk-decodes-one-word-low
+@check machine
+@file rtl/cadr_disk_controller.sv
+@note The four registers are at 0o17377774-7 and this module decodes them
+@note out of `phys` for itself, `sel` saying only that the cycle is some
+@note device's. One word low and nothing answers 0o17377774 at all: the
+@note cycle reaches no slave, the interface's own timer ends it 4.25 us
+@note later, and MD takes zero where muir has 0x2321.
+@note
+@note Written as an XOR rather than as a different constant so that every bit
+@note of `phys` stays read: CLAUDE.md's rule that lint catches a mutation at
+@note bit granularity, and that where lint does the catching the check never
+@note sees it.
+@old
+  assign mine_c  = sel && (phys[21:2] == REGS_PAGE);
+@new
+  assign mine_c  = sel && ((phys[21:2] ^ 20'd1) == REGS_PAGE);
+@end
+
+@mutation disk-answers-a-tick-late
+@check machine
+@file rtl/cadr_disk_controller.sv
+@note muir's controller answers a device cycle in 0 ns of its own ---
+@note `IDEAL_DEVICE_NS = 0` --- and `cadr_busint_xbus.sv` supplies the 80 ns
+@note of bus setup and the 60 ns deskew of the TD100 at REQLM 0C09 itself.
+@note So a slave that answers in the tick -XBUS.RQ reaches it puts -MEMACK at
+@note muir's own instant, and a register anywhere between `dev_rq` and
+@note `dev_ack` puts it 5 ns out on every cycle.
+@note
+@note A READ IS WHAT CATCHES THIS AND A WRITE IS NOT, which is worth stating
+@note so the next person does not read the survivor list wrongly. A read's
+@note acknowledgement ends a hang, and `RD_FINISH_T` counts from it, so a
+@note tick moves the microcycle's length and the length check has no
+@note tolerance. A write's does not: this same check passed for months with
+@note all 5,650 device writes acknowledged a tick late by the testbench that
+@note answered them.
+@old
+  // 0 ns of its own, and it must stay a gate: see the note at the top.
+  assign dev_ack = asked;
+@new
+  // 0 ns of its own, and it must stay a gate: see the note at the top.
+  logic ack_d;
+  always_ff @(posedge clk) ack_d <= asked;
+  assign dev_ack = asked && ack_d;
+@end
+
+@mutation rdcyc-gate-dropped
+@check machine
+@file rtl/cadr_microcycle.sv
+@note "-LOADMD equals MEMACK and RDCYC". The interface asserts -LOADMD on
+@note every acknowledgement, read or write --- `Busint` and
+@note `cadr_busint_xbus.sv` both do --- and it is this gate, on the
+@note processor's side where MIT put it, that keeps a write from strobing MD.
+@note
+@note IT IS HERE BECAUSE THE SLICE THAT ADDED THE DISK CONTROLLER COULD HAVE
+@note TAKEN IT AWAY. What makes an extra load visible is the seam carrying
+@note something MD must not take, and the testbench used to supply that by
+@note answering device cycles with the complement of the word. Deleting that
+@note line was the point of the slice; had `device_rdata` simply gone quiet,
+@note a write would have loaded MD with zero, which is what MD already holds
+@note on every device write this program makes, and the gate would have
+@note become unobservable in silence. `tb/cadr_machine_tb.cpp` puts poison on
+@note the seam on every microcycle instead, and `cadr_machine.sv` lets it
+@note through on a write, where no slave inside drives MEM<31:0>.
+@note
+@note MEASURED BOTH WAYS, because "still caught" is not the same claim as
+@note "caught by what I think": with the seam held at ZERO this is caught on
+@note exactly 2 rows, 537,847 and 537,848, and both of them are the single
+@note UNIBUS write --- `cadr_memory_path.sv` returns {16'hffff, ub_rdata}
+@note there, which is the one word in this program a write puts on MEM<31:0>
+@note by itself. A check standing on one bus cycle in 17,466 is one edit away
+@note from standing on none. With the poison it is caught from the first
+@note device write at 537,854 and on all 5,650 of them.
+@note
+@note Reasoning measured at the commit that added
+@note `rtl/cadr_disk_controller.sv`.
+@old
+  assign loadmd_edge = !n_loadmd && n_loadmd_q && rdcyc;
+@new
+  assign loadmd_edge = !n_loadmd && n_loadmd_q;
+@end
 
 # ================================================== the machine, behind DDR ===
 #

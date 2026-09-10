@@ -26,19 +26,32 @@
 // MEASURED at 200 MHz over 40,000,000 ticks --- 200 ms of machine time, this
 // file's default, and the single run every figure here comes from:
 //
-//     microcycles        590,925
+//     microcycles        852,515
 //     first mem_req      tick 23,597,357, microcycle 536,303
-//     NXM timeouts       13,783 in the 82 ms after it, which is 168 kHz
-//     after that cycle   1.50 us per microcycle, against 0.22 normal
-//     beat[19]           toggles every 0.79 s
+//     NXM timeouts       514 in the 82 ms after it
+//     after that cycle   0.26 us per microcycle, against 0.22 normal
+//     beat[19]           toggles every 0.14 s
 //
-// `docs/board.md` quotes 30,590 timeouts in 300 ms, from a longer run. The
-// rate is the figure to compare: the count depends on where the run stops,
-// and timeouts only begin at the first memory cycle, 118 ms in.
+// **EVERY ONE OF THOSE FIGURES MOVED WHEN THE DISK CONTROLLER LANDED, AND
+// THE NUMBERS IT REPLACES ARE WHY THIS FILE IS RUNNABLE.**  It used to read
+// 590,925 microcycles, 13,783 timeouts, 1.50 us a microcycle and beat[19]
+// every 0.79 s.  What made the difference is not memory: it is that 16,951 of
+// the boot PROM's 17,466 bus cycles are disk polls, and they used to reach no
+// slave at all and end on the NXM timer 4.25 us later.
+// `rtl/cadr_disk_controller.sv` answers them in 140 ns now, so what is left
+// timing out with no memory behind `mem_*` is the parity loop's own 512
+// cycles and the two to empty Xbus space.  The machine is about six times
+// faster than it was and LD1 blinks about six times as often.  **So
+// `docs/board.md`'s no-memory paragraph, and every figure in it, is measured
+// against a board that no longer exists**; it is not this file's to correct.
 //
-// There is no Makefile rule on purpose: this was added at a stop, and the rule
-// belongs to whoever owns the Makefile.  Build it by hand, from the repository
-// root, with `build/boot_prom.hex` already made:
+// `docs/board.md` quotes 30,590 timeouts in 300 ms, from a longer run of the
+// old configuration. The rate is the figure to compare: the count depends on
+// where the run stops, and timeouts only begin at the first memory cycle,
+// 118 ms in.
+//
+// `make nomem` builds and runs it.  By hand, from the repository root, with
+// `build/boot_prom.hex` already made, it is:
 //
 //     verilator --cc --exe --build -Wall -O2 -CFLAGS -O2 -Irtl \
 //         -Mdir build/obj_nomem \
@@ -46,7 +59,8 @@
 //         --top-module cadr_machine \
 //         rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv rtl/cadr_ddr_map.sv \
 //         rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv rtl/cadr_xbus_ddr.sv \
-//         rtl/cadr_spy_registers.sv rtl/cadr_memory_path.sv rtl/cadr_machine.sv \
+//         rtl/cadr_spy_registers.sv rtl/cadr_disk_controller.sv \
+//         rtl/cadr_memory_path.sv rtl/cadr_machine.sv \
 //         "$PWD"/tb/cadr_nomem_tb.cpp
 //     build/obj_nomem/Vcadr_machine [ticks]
 //

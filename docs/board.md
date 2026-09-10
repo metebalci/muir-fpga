@@ -515,9 +515,11 @@ went dark. **That halt was a bug, and it is fixed.** `cadr_xbus_ddr` held its
 `rdata` register past its own cycle, so every one of the 16,951 disk polls
 loaded MD with whatever DDR had last returned; an unanswered read gives MD
 zero now, decided and fixed at `05d28fa`. With that, 200 ms of machine time
-gives 590,925 microcycles and 13,783 timeouts **without** memory against
-592,681 and 13,710 **with** --- LD1's blink moves by three parts in a
-thousand, and nothing else moves at all.
+gives 852,515 microcycles and 514 timeouts **without** memory against
+862,932 and 2 **with** --- LD1's blink moves by one part in a hundred, and
+nothing else moves at all. (Those figures are with the disk controller's
+registers answering the boot PROM's polls; before `cadr_disk_controller.sv`
+existed the polls timed out and the same run gave 590,925 and 13,783.)
 
 The lamps are therefore not how the memory path is checked, and cannot be.
 The evidence is `vivado/ddr_run.tcl`'s four counters, read by the debugger at
@@ -580,19 +582,27 @@ Simulated afterwards to put numbers on it --- `cadr_machine` with `mem_done`
 tied low, which is the step-1 bitstream exactly:
 
     first mem_req            microcycle 536,303
-    NXM timeouts             30,590 in 300 ms
-    after the first cycle    1.49 us a microcycle, against 0.22 normal
-    LD1 (beat[19])           toggles every 0.79 s
+    NXM timeouts             514 in 200 ms --- the parity loop's 512 plus
+                             the two cycles to empty Xbus space
+    after the first cycle    0.26 us a microcycle, against 0.22 normal
+    LD1 (beat[19])           toggles every 0.14 s
 
-So LD1's period is about a second and a half, which is what "blinking very
-slowly" looks like against the 0.23 s it would be at full speed, and LD2
-blinks at about 0.78 s --- 65,536 timeouts a toggle, at 168 kHz.
+    (before the disk controller's registers answered the polls, the same run
+     gave 13,783 timeouts, 1.49 us a microcycle and LD1 every 0.79 s; the
+     16,951 polls each cost a 4.25 us timeout)
 
-**`tb/cadr_nomem_tb.cpp` prints that line as `beat[23]`, and LD1 has been
-`beat[19]` since `ad4a475`**: the lamp is sixteen times faster than the
-testbench's own comment says. What the testbench measures is the microcycle
-rate; which bit of the beat reaches the pin is `rtl/cadr_arty.sv`'s to say,
-and this table takes it from there.
+So LD1's period is a little over a quarter of a second, close to the 0.23 s it
+would be at full speed, because the boot PROM's 16,951 disk polls are answered
+now and no longer each cost a timeout. LD2 is nearly dark: 514 timeouts in
+200 ms is about 2.6 kHz, and 65,536 of them a toggle is a period near a
+minute. **This is the reading the original prediction expected from memory
+and got from the disk controller's registers instead** --- the timeouts that
+stopped were the polls, never the memory cycles.
+
+`tb/cadr_nomem_tb.cpp` printed that line as `beat[23]` until `bffbe9c`; LD1
+has been `beat[19]` since `ad4a475`, and both now agree. What the testbench
+measures is the microcycle rate; which bit of the beat reaches the pin is
+`rtl/cadr_arty.sv`'s to say, and this table takes it from there.
 
 **The general point is worth more than the correction.** The prediction was
 that no memory means no progress; the fabric's answer is that no memory means
