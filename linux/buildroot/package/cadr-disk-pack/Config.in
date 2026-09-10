@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 config BR2_PACKAGE_CADR_DISK_PACK
 	bool "cadr-disk-pack"
+	select BR2_PACKAGE_CADR_COMMON
 	help
 	  The disk pack program: the program on the processing system that serves
 	  the CADR's disk from the pack file on the card, with the init
@@ -9,3 +10,4 @@ config BR2_PACKAGE_CADR_DISK_PACK
 	  program, decided 10 Sep: the console, the RFB server, the Chaosnet
 	  bridge and USB input each get their own beside this one, and what
 	  they share goes into a cadr-common package when the second arrives.
+	  The second arrived on 10 Sep and cadr-common is that package.

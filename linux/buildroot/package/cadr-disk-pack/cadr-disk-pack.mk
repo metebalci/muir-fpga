@@ -26,6 +26,11 @@ CADR_DISK_PACK_VERSION = 0
 CADR_DISK_PACK_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-disk-pack/src
 CADR_DISK_PACK_SITE_METHOD = local
 CADR_DISK_PACK_LICENSE = AGPL-3.0-or-later
+# /dev/mem, the EMIO tally guard and the logging: a static library and its
+# headers in the staging tree, because `local` rsyncs only this package's own
+# src/ and a sibling's files are not there when this builds.
+# package/cadr-common/cadr-common.mk's header has the argument.
+CADR_DISK_PACK_DEPENDENCIES = cadr-common
 
 define CADR_DISK_PACK_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)

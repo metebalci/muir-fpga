@@ -6,6 +6,18 @@
 # The target build: Buildroot passes CC, CFLAGS and LDFLAGS for the ARM and
 # DESTDIR for install, and `all` makes the programs that go on the board.
 #
+# **TWO SOURCE LISTS FOR THE SHARED CODE, AND WHICH IS FOR WHICH BUILD.**
+# /dev/mem, the EMIO tally guard and the logging are `cadr-common`'s.
+# Buildroot's `local` site method rsyncs only THIS directory into the build
+# tree, so the sibling package's files are not there at target-build time and
+# a relative include of them would build here and fail under Buildroot.  So
+# the target build links the static library cadr-common installs to staging
+# --- $(TARGET_CONFIGURE_OPTS) carries --sysroot, so no -I and no -L --- and
+# the host build, where `..` is a real directory, compiles the same .c files
+# from it.  `make check` is a host build.  `make all COMMON=host` builds the
+# program itself that way, which is how the refactor onto cadr-common was
+# checked without Buildroot.
+#
 # The host build, `make check`: the disk pack program's core linked against a model
 # of the register face, with a scripted disk controller behind it posting
 # the requests the reference trace's transfers would and more, on the build
@@ -17,6 +29,17 @@ PROGRAMS := cadr-disk-pack
 CORE     := pack_file.c pack_side.c pack_feeder.c
 HEADERS  := pack_ecc.h pack_file.h pack_side.h pack_feeder.h
 
+COMMON      ?= staging
+COMMON_DIR  := ../../cadr-common/src
+COMMON_SRC  := $(COMMON_DIR)/cadr_log.c $(COMMON_DIR)/cadr_mem.c
+ifeq ($(COMMON),host)
+COMMON_CFLAGS := -I$(COMMON_DIR)
+COMMON_LINK   := $(COMMON_SRC)
+else
+COMMON_CFLAGS :=
+COMMON_LINK   := -lcadr-common
+endif
+
 HOSTCC ?= cc
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 GOLDEN ?= $(abspath ../../../../../build/disk.golden)
@@ -27,7 +50,7 @@ CFLAGS += -Wall -Wextra -std=gnu11
 all: $(PROGRAMS)
 
 cadr-disk-pack: cadr-disk-pack.c $(CORE) $(HEADERS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ cadr-disk-pack.c $(CORE)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -o $@ cadr-disk-pack.c $(CORE) $(COMMON_LINK)
 
 install: all
 	install -d $(DESTDIR)/usr/bin
