@@ -349,7 +349,7 @@
 
     <figure class="fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 520" role="img" aria-label="How the board boots on its own, as a sequence. Three lifelines: the microSD card, the processing system, and the fabric. A reset starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: U-Boot's own first stage, which runs the start-up routine, brings up DDR3 and loads U-Boot proper, also from the card. U-Boot reads uEnv.txt if the card has one; with no server named it loads cadr.bit from the card into the fabric, from which moment the CADR runs out of DDR3, then the device tree, the kernel and the root filesystem image from the card, and boots Linux beside the CADR with the CADR's 128 MB reserved. Linux reaches a login on the serial console; a keyboard on the USB port and a display on HDMI are the machine's own. On failure the loader tries again every ten seconds.">
+        <svg viewBox="0 0 1170 522" role="img" aria-label="How the board boots on its own, as a sequence. Three lifelines: the microSD card, the processing system, and the fabric. A reset starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: U-Boot's own first stage, which runs the start-up routine, brings up DDR3 and loads U-Boot proper, also from the card. U-Boot reads uEnv.txt if the card has one; with no server named it loads cadr.bit from the card into the fabric, from which moment the CADR runs out of DDR3, then the device tree, the kernel and the root filesystem image from the card, and boots Linux beside the CADR with the CADR's 128 MB reserved. Linux reaches a login on the serial console; a keyboard on the USB port and a display on HDMI are the machine's own. On failure the loader tries again every ten seconds.">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -357,6 +357,7 @@
           </defs>
           <text class="d-t" x="10" y="18">how the board boots</text>
           <text class="d-s" x="170" y="18">from the microSD card alone; no network needed</text>
+          <rect class="d-box" x="6" y="28" width="1158" height="484"/>
           <!-- lifelines -->
           <rect class="d-box d-ext" x="60" y="34" width="120" height="30"/>
           <text class="d-t" x="120" y="54" text-anchor="middle">microSD card</text>
@@ -411,7 +412,7 @@
 
     <figure class="fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 580" role="img" aria-label="How the board boots for development, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server, and the fabric. The reset and the two U-Boot stages come from the card as in the normal boot. U-Boot reads uEnv.txt from the card, which names a TFTP server, so it asks the DHCP server for its address, receives uEnv.net, the boot command, from the TFTP server, then cadr.bit, which it loads into the fabric, from which moment the CADR runs, then the device tree, the kernel and the root filesystem image, and boots Linux beside the CADR. From the reset to the login prompt took sixteen seconds, measured on 10 September 2026. On any failure the loader tries again every ten seconds.">
+        <svg viewBox="0 0 1170 582" role="img" aria-label="How the board boots for development, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server, and the fabric. The reset and the two U-Boot stages come from the card as in the normal boot. U-Boot reads uEnv.txt from the card, which names a TFTP server, so it asks the DHCP server for its address, receives uEnv.net, the boot command, from the TFTP server, then cadr.bit, which it loads into the fabric, from which moment the CADR runs, then the device tree, the kernel and the root filesystem image, and boots Linux beside the CADR. From the reset to the login prompt took sixteen seconds, measured on 10 September 2026. On any failure the loader tries again every ten seconds.">
           <defs>
             <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -419,6 +420,7 @@
           </defs>
           <text class="d-t" x="10" y="18">how the board boots for development</text>
           <text class="d-s" x="250" y="18">the microSD card holds the loader; the rest comes from a TFTP server</text>
+          <rect class="d-box" x="6" y="28" width="1158" height="544"/>
           <!-- lifelines -->
           <rect class="d-box d-ext" x="40" y="34" width="120" height="30"/>
           <text class="d-t" x="100" y="54" text-anchor="middle">microSD card</text>
