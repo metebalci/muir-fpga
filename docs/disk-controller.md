@@ -303,3 +303,152 @@ reason, the tick counted by `elapsed` itself. `disk_pack.pass` runs
 `ps7_init` with `S_AXI_HP2` on at 64 bits is **byte-identical in its 673
 operations** to the committed routine, as CLAUDE.md predicted for HP0 and
 HP1, so Digilent's FSBL still needs no change.
+
+## The pack feeder
+
+The program on Linux that serves the CADR's disk from the pack file on the
+card: `linux/buildroot/package/cadr-tools/src/cadr-pack-feeder.c` and the
+three files beside it, built into the Buildroot image and started at boot by
+`S80cadr-pack-feeder`. Written at `388d03b` against the register face as it
+stood there; `feeder_test.c` in the same directory is its check. **The moves
+are complete and checked, and the request path is not there to drive them
+--- read the last part of this section before anything else.**
+
+**What it does.** The pack is `pack.img` on the card's FAT partition, in
+muir's format --- 1,024 bytes a block, each word low byte first, block `lba`
+at byte `lba * 1024`, the file exactly the size the geometry implies, which
+is how a T-300 (269,562,880 bytes) is told from a T-80 (70,937,600). The
+init script mounts the card read-write at **`/mnt/card`** --- the one place
+Linux mounts it, since the root filesystem is an initramfs and U-Boot reads
+the card without mounting --- and the feeder opens `/mnt/card/pack.img`. It
+maps two things through `/dev/mem`, opened `O_SYNC` so both mappings are
+uncached: the pack side's sixteen registers at `0x4000_0000`, and 128 KB of
+the spare part of the CADR's region from `0x1C80_0000`. To serve block
+c/h/b into slot s it builds the block's record --- the 256 data words from
+the file, then the block's header, header checkword and data checkword ---
+puts the 259 words at the slot's fetch address, and asks the face to fetch
+them. To take back a block the CADR wrote it poisons the slot's write-back
+area, asks the face to write the slot back, checks that something moved and
+that the word after the record is still poison, and writes the 1,024 bytes
+into the pack file, `fdatasync` before it reports done.
+
+**The header and the checkwords are muir's, not recomputed from the
+address.** `Unit` keeps `headers` and `data_checkwords` beside the file for
+the sectors a Write All laid down with something other than the format's
+own; `pack_file.c` keeps the same two tables and maintains them exactly as
+`Unit::write_sector_at` does: a header that is `header_of` with a checkword
+over it leaves the table, any other enters it; a data checkword that is the
+code over the data leaves, any other enters. A written-back block hands the
+feeder all 259 words, so an ordinary Write (fresh checkword, header as
+fetched) and a Write All (whatever the program laid) both come out right
+without the feeder knowing which it was. Like muir's, the tables live only
+for the run --- the pack file has no room for them and muir persists them
+only in a checkpoint --- so a pack this wrote reads identically in muir and a
+pack muir wrote reads identically here, with the one caveat both share: a
+sector laid with a header or checkword that is not its own forgets that at
+the next start. `pack_ecc.h` is DCECC's code as `disk_unit::Ecc` has it, and
+the check holds it to muir on the header checkword and the data checkword
+of every `load` row of `disk.golden`.
+
+**The protocol, as read from `rtl/cadr_disk_pack.sv`.** Four writes and a
+read: ADDR, TAG (`{cylinder<11:0>, head<7:0>, block<7:0>}`), SLOT, then CTL
+with exactly one of fetch, write back, take away; the face acts on the CTL
+beat one tick later (`go_q`) and latches the other three at that instant,
+so they may be rewritten at once. CTL reads back busy, done, error,
+refused, `ch_active` and `store_miss`. A request is refused --- moving
+nothing, issuing no burst --- for an unaligned address, a slot past 24,
+two bits at once, a move already in flight, or the channel walking
+(`bad_align`, `bad_slot`, `bad_busy`, `bad_ch`, `go_one`). Of those only
+the last can arise from a correct program, and the driver retries it with a
+pause, because the fabric refuses rather than queues on purpose; the others
+are reported as the caller's bug, named from what was asked. The error bit
+is SLVERR or DECERR on a burst, or a burst that did not end where its
+length said, and the next clean move clears it. The driver reads IDENT
+between the CTL write and the status read: the two halves of GP0 are
+independent and a read on the heels of the write could see the word from
+before the request. The DRIVE register is the drive seam --- present,
+read-only, timed, eight units of it --- and the feeder writes it.
+
+**Where the records go, and why.** `rtl/cadr_ddr_map.sv`'s spare, 56 MB
+from `0x1C80_0000`, nothing else in it today. One fetch area per slot at
+`0x1C80_0000 + 2 KB * slot` and one write-back area per slot at
+`0x1C81_0000 + 2 KB * slot`. 128-byte alignment is the fabric's rule, so
+that no sixteen-beat burst crosses 4 KB; at a 2 KB stride from a 2 KB-
+aligned base a 1,036-byte record never does, and no two records overlap.
+Fetch and write-back areas are separate so that a write-back which moved
+nothing cannot read back as the block it was fetched from: the write-back
+area is poisoned before every move, a record still all poison afterwards is
+reported and not committed, and so is a pad word that was written.
+
+**The check.** `make -C linux/buildroot/package/cadr-tools/src check`, on
+the build host, needing a C compiler and `build/disk.golden`. It plays the
+trace's `BLK load|lay` rows onto a fresh pack file of a T-300's size, asks
+the feeder to serve each `NEED` row into the slot the trace names, and
+holds the model's store to the 259 words the pack carries, tagged with the
+disk address, from an aligned address in the spare with no burst across
+4 KB and no overlap; then plays each `BLK write` row into the model's slot
+and holds the pack file byte for byte to what the CADR wrote and the
+record read back out of it to the same 259 words. The register face is a
+model that follows the RTL's refusal terms and move semantics; the driver's
+refusal handling is exercised against it, the channel's retried, a move
+that moved nothing detected. At `388d03b`: 46 blocks served and 11,914
+words compared, 5 written back and 5,120 bytes compared, 23 load rows'
+checkwords agreeing with muir's `Ecc`, 6 refusals named, 275 polls of a
+busy face. Eight hand mutations --- the ECC's taps, `header_of`'s
+next-block code, a write-back off by one word, a 1 KB stride, a record with
+the wrong header, the checkword table ignored, an unaligned fetch address,
+the poison test off by one --- are each caught on the property they break.
+The scratch goes under `~/.cache/muir-fpga-pack-feeder`.
+
+**What the register face does not carry, and what the feeder therefore
+does today.** Nothing on `M_AXI_GP0` says **which block the CADR asked
+for**. The controller's walk looks a slot up by tag and, missing, stops
+the transfer and raises `store_miss` --- one sticky bit, read back in CTL
+(`cadr_disk_pack.sv`, the status word; `cadr_disk_controller.sv` at
+`store_miss`, whose own comment says "fetching on demand ... is not
+built"). The disk address the walk missed on is register 2 of the
+controller, on the Xbus, and no path reaches it from Linux. Nor does
+anything say **which slot a transfer wrote**, so the feeder cannot know a
+write-back is pending; and the TAG has no unit field, so the store cannot
+hold blocks of two drives with one disk address. So the feeder cannot serve
+on demand and does not pretend to: it opens the pack, maps both windows,
+checks IDENT reads "PACK", says what it found, **leaves the drive absent**
+--- the CADR then sees no drive, as it does today, rather than a drive whose
+every block is missing --- says why on the console once, and watches the
+status word. The 24-slot store against a 263,245-block pack means the
+request path is the whole of what is missing: no pre-filling can stand in
+for it. What that path needs, in the fabric's terms, is the disk address of
+the block the walk missed on readable over GP0 (unit, cylinder, head,
+block), a way to see which slots a transfer wrote, and --- for a program
+that does not poll --- an interrupt; that is the RTL's next slice and is
+not written here.
+
+**What has not been shown on the board.** Nothing of this has run on the
+board; the board it needs is the memory-on bitstream with the disk's pack
+side on `M_AXI_GP0` and `S_AXI_HP2`. Boot with a `pack.img` on the card and
+watch the console for:
+
+    cadr-pack-feeder: card mounted at /mnt/card
+    Starting cadr-pack-feeder: OK
+    cadr-pack-feeder: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
+    cadr-pack-feeder: pack /mnt/card/pack.img: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks
+    cadr-pack-feeder: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
+    cadr-pack-feeder: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
+    cadr-pack-feeder: the register face has no way to say which block the CADR asked for ...
+    cadr-pack-feeder: the drive is left absent (DRIVE = 0) ...
+
+Then, at the prompt, `cadr-pack-feeder --selftest`, which is the first
+thing the pack side has ever been asked to do on silicon: block 0 fetched
+over HP2 into slot 0, written back to the poisoned area, the 259 words
+compared and the pad checked, the slot taken away ---
+
+    cadr-pack-feeder: selftest: PASS: block 0 fetched over HP2 from 0x1c800000 into slot 0, written back to 0x1c810000, all 259 words equal, the pad untouched, the slot taken away
+
+A round trip through the store cannot see a fault the two directions share
+--- `tb/cadr_disk_pack_tb.cpp`'s header says why it reads every block back
+through the CADR instead --- so a PASS says the ports move a block on
+silicon and nothing subtler. A bus error at the first read means nothing
+answers on GP0 (the wrong bitstream); `no pack side ... register 7 reads
+0x...` means something does and it is not this face. `pack.img` is the name
+the card image already reserves; `PACK=<file> linux/mksd-buildroot.sh` puts
+one there.

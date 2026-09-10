@@ -1,12 +1,24 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The skeleton of our own programs on the processing system.  Buildroot's
-# `local` site method builds straight from the src/ directory beside this
-# file --- no tarball, no version, no hash --- so the next slice adds a C
-# file and a line to src/Makefile and has it on the board.  The one program
-# in it today does nothing but say what it is, so that the mechanism is
-# exercised before anything depends on it.
+# Our own programs on the processing system.  Buildroot's `local` site
+# method builds straight from the src/ directory beside this file --- no
+# tarball, no version, no hash --- so a program is a C file and a line in
+# src/Makefile.  `make buildroot-rebuild` at the repository root is what
+# makes Buildroot notice a change here.
+#
+# What is in it:
+#
+#   cadr-pack-feeder      serves the CADR's disk from the pack file on the
+#                         card; src/cadr-pack-feeder.c's header says how,
+#                         and what it cannot do until the register face
+#                         carries a request
+#   S80cadr-pack-feeder   mounts the card at /mnt/card and starts the feeder
+#                         at boot, its log on the console
+#
+# And `make -C src check` on the build host, which needs nothing but a C
+# compiler and build/disk.golden: the feeder's core run over the reference
+# trace against a model of the register face.
 
 CADR_TOOLS_VERSION = 0
 CADR_TOOLS_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-tools/src
@@ -19,6 +31,11 @@ endef
 
 define CADR_TOOLS_INSTALL_TARGET_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install
+endef
+
+define CADR_TOOLS_INSTALL_INIT_SYSV
+	$(INSTALL) -D -m 0755 $(CADR_TOOLS_PKGDIR)/S80cadr-pack-feeder \
+		$(TARGET_DIR)/etc/init.d/S80cadr-pack-feeder
 endef
 
 $(eval $(generic-package))

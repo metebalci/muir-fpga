@@ -3,6 +3,8 @@
 config BR2_PACKAGE_CADR_TOOLS
 	bool "cadr-tools"
 	help
-	  The programs that will run on the processing system beside the
-	  CADR: nothing yet but the place for them.  Built from the
-	  source directory beside this file.
+	  The programs that run on the processing system beside the CADR,
+	  built from the source directory beside this file.  Today:
+	  cadr-pack-feeder, which serves the CADR's disk from the pack
+	  file on the card, and the init script that mounts the card and
+	  starts it.
