@@ -105,7 +105,17 @@ cp "$SRC/BOOT.BIN" "$SRC/image.ub" "$OUT/reserved/"
 sed "s/@SERVERIP@/$SERVERIP/" linux/uEnv.txt.in > "$OUT/reserved/uEnv.txt"
 grep -q '@SERVERIP@' "$OUT/reserved/uEnv.txt" && die "uEnv.txt still carries the marker"
 mkdir -p "$OUT/server"
-cp "$WORK/system-cadr.dtb" "$OUT/server/system.dtb"
+# The served tree drops Digilent's amba_pl --- the peripherals of the design
+# cadr.bit displaces --- and keeps everything else, the reservation included.
+"$DTC" -I dtb -O dts -o "$WORK/cadr.dts" "$WORK/system-cadr.dtb" 2>/dev/null
+python3 - "$WORK/cadr.dts" "$WORK/nopl.dts" <<'PYEOF'
+import sys
+s=open(sys.argv[1]).read()
+i=s.index('\n\tamba_pl {'); j=s.index('\n\t};',i)+4
+open(sys.argv[2],'w').write(s[:i]+s[j:])
+PYEOF
+"$DTC" -I dts -O dtb -o "$OUT/server/system.dtb" "$WORK/nopl.dts" 2>/dev/null
+grep -q amba_pl "$WORK/nopl.dts" && die "amba_pl survived the trim"
 cp linux/uEnv.net "$OUT/server/uEnv.net"
 
 echo "staged $OUT"

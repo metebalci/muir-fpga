@@ -34,7 +34,19 @@
 # "rootfs image is not initramfs (write error)", then a panic.  The display
 # driver is the only user and 32 MB is ten framebuffers.
 #
+# THE CADR GOES INTO THE FABRIC FIRST.  Digilent's BOOT.BIN on the card
+# configured the fabric with Digilent's design; `fpga loadb` replaces it with
+# `cadr.bit` before Linux starts, so the machine and Linux share the board and
+# no BOOT.BIN of our own is needed and nothing on the card changes.  The tree
+# served as `system.dtb` therefore has Digilent's `amba_pl` --- their fabric
+# peripherals --- removed (mksd.sh does that), or Linux would probe hardware
+# that is no longer there.  Measured 10 Sep: the CADR's counters at the PS7
+# boundary read 256 reads and 256 writes asked and answered with Linux at its
+# login beside it.  A witness to read them from Linux must first turn the
+# GPIO block's clock back on --- APER_CLK_CTRL bit 22 --- because this kernel
+# gates it and the registers then read zero.
+#
 # fdt_high and initrd_high are left unset: U-Boot relocates the tree and the
 # ramdisk below 128 MB as it does for the stock boot, and the reservation is
 # above 384.
-netcmd=tftpboot 0x0f000000 system.dtb && fatload mmc 0 0x10000000 image.ub && setenv bootargs console=ttyPS0,115200 earlyprintk uio_pdrv_genirq.of_id=generic-uio mem=384M cma=32M && bootm 0x10000000:kernel@0 0x10000000:ramdisk@0 0x0f000000
+netcmd=tftpboot 0x0f800000 cadr.bit && fpga loadb 0 0x0f800000 ${filesize} && tftpboot 0x0f000000 system.dtb && fatload mmc 0 0x10000000 image.ub && setenv bootargs console=ttyPS0,115200 earlyprintk uio_pdrv_genirq.of_id=generic-uio mem=384M cma=32M && bootm 0x10000000:kernel@0 0x10000000:ramdisk@0 0x0f000000

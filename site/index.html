@@ -320,7 +320,7 @@
          first unattended boot with the one-line card, 10 September 2026. -->
     <figure class="fig dense">
       <div class="scroll">
-        <svg viewBox="0 0 1170 600" role="img" aria-label="How the board boots, as a sequence. Four lifelines: the microSD card, the processing system, the DHCP server, and the TFTP server. A reset, from the SRST button or over JTAG, starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: Digilent's first-stage loader, Digilent's bitstream and U-Boot. The loader runs ps7_init and brings up DDR, loads the bitstream into the fabric, and hands to U-Boot. U-Boot reads uEnv.txt from the card, gets its address from the DHCP server in under four seconds, fetches uEnv.net, the boot command, from the TFTP server, then system.dtb, the device tree, then reads image.ub from the card, the kernel and root filesystem, 47.7 MB in four seconds, and boots the kernel with mem=384M and cma=32M. Linux asks the DHCP server again, gets the same address, and reaches a login about two and a half minutes after the reset, with 384 MB and the CADR's 128 MB kept from it. If the fetch of uEnv.net fails, the board resets and tries again; Digilent's own image and tree are never booted.">
+        <svg viewBox="0 0 1170 600" role="img" aria-label="How the board boots, as a sequence. Four lifelines: the microSD card, the processing system, the DHCP server, and the TFTP server. A reset, from the SRST button or over JTAG, starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the card: Digilent's first-stage loader, Digilent's bitstream and U-Boot. The loader runs ps7_init and brings up DDR, loads the bitstream into the fabric, and hands to U-Boot. U-Boot reads uEnv.txt from the card, gets its address from the DHCP server in under four seconds, fetches uEnv.net, the boot command, from the TFTP server, then cadr.bit, the CADR's bitstream, which it loads into the fabric in place of Digilent's, then system.dtb, the device tree with Digilent's fabric peripherals removed, then reads image.ub from the card, the kernel and root filesystem, 47.7 MB in four seconds, and boots the kernel with mem=384M and cma=32M. Linux asks the DHCP server again, gets the same address, and reaches a login about two and a half minutes after the reset, with 384 MB and the CADR's 128 MB kept from it, the CADR having run since the fabric was configured. If the fetch of uEnv.net fails, the board resets and tries again; Digilent's own image and tree are never booted.">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -348,9 +348,9 @@
           <text class="d-s" x="478" y="148">FSBL</text>
           <text class="d-s" x="478" y="164">ps7_init, DDR3 up</text>
           <text class="d-s" x="478" y="180">Digilent's bitstream into the fabric</text>
-          <rect class="d-fill" x="440" y="200" width="30" height="230"/>
+          <rect class="d-fill" x="440" y="200" width="30" height="236"/>
           <text class="d-s" x="478" y="224">U-Boot</text>
-          <rect class="d-fill" x="440" y="430" width="30" height="130"/>
+          <rect class="d-fill" x="440" y="436" width="30" height="124"/>
           <text class="d-s" x="478" y="454">Linux 4.9, Digilent's build</text>
 
           <!-- the reset -->
@@ -370,14 +370,16 @@
           <text class="d-s" x="615" y="286" text-anchor="middle">&lt;IP&gt;</text>
 
           <line class="d-line" x1="470" y1="318" x2="1010" y2="318" marker-end="url(#arr)"/>
-          <text class="d-s" x="740" y="314" text-anchor="middle">TFTP uEnv.net &mdash; the boot command, 2,506 bytes</text>
+          <text class="d-s" x="740" y="314" text-anchor="middle">TFTP uEnv.net &mdash; the boot command, 3,385 bytes</text>
           <line class="d-line" x1="470" y1="346" x2="1010" y2="346" marker-end="url(#arr)"/>
-          <text class="d-s" x="740" y="342" text-anchor="middle">TFTP system.dtb &mdash; the device tree, 26,265 bytes</text>
+          <text class="d-s" x="740" y="342" text-anchor="middle">TFTP cadr.bit &mdash; the CADR, 4,045,764 bytes, into the fabric</text>
+          <line class="d-line" x1="470" y1="374" x2="1010" y2="374" marker-end="url(#arr)"/>
+          <text class="d-s" x="740" y="370" text-anchor="middle">TFTP system.dtb &mdash; the device tree, 10,472 bytes</text>
 
-          <line class="d-line" x1="120" y1="376" x2="440" y2="376" marker-end="url(#arr)"/>
-          <text class="d-s" x="280" y="372" text-anchor="middle">image.ub &mdash; kernel and root filesystem, 47.7 MB, 4 s</text>
+          <line class="d-line" x1="120" y1="404" x2="440" y2="404" marker-end="url(#arr)"/>
+          <text class="d-s" x="280" y="400" text-anchor="middle">image.ub &mdash; kernel and root filesystem, 47.7 MB, 4 s</text>
 
-          <text class="d-n" x="478" y="410">bootm &hellip; mem=384M cma=32M</text>
+          <text class="d-n" x="478" y="428">bootm &hellip; mem=384M cma=32M</text>
 
           <line class="d-line" x1="470" y1="484" x2="760" y2="484" marker-end="url(#arr)"/>
           <text class="d-s" x="615" y="480" text-anchor="middle">DHCP, again</text>
@@ -385,16 +387,15 @@
           <text class="d-s" x="615" y="502" text-anchor="middle">&lt;IP&gt;</text>
 
           <text class="d-s" x="478" y="546">login, 2&frac12; min after the reset</text>
-          <text class="d-s" x="478" y="562">384 MB &mdash; 0x18000000 and up is the CADR's</text>
+          <text class="d-s" x="478" y="562">384 MB &mdash; 0x18000000 and up is the CADR's, running since the bitstream</text>
 
-          <!-- the control -->
-          <text class="d-s" x="740" y="364" text-anchor="middle" fill-opacity="0.62">no uEnv.net &rarr; reset and try again; the stock image is never booted</text>
+          <text class="d-s" x="740" y="392" text-anchor="middle" fill-opacity="0.62">no uEnv.net &rarr; reset and try again; the stock image is never booted</text>
 
           <!-- time, at the left -->
           <text class="d-n" x="10" y="74" fill-opacity="0.62">0 s</text>
           <text class="d-n" x="10" y="244" fill-opacity="0.62">7 s</text>
           <text class="d-n" x="10" y="294" fill-opacity="0.62">11 s</text>
-          <text class="d-n" x="10" y="380" fill-opacity="0.62">17 s</text>
+          <text class="d-n" x="10" y="408" fill-opacity="0.62">17 s</text>
           <text class="d-n" x="10" y="550" fill-opacity="0.62">150 s</text>
         </svg>
       </div>
