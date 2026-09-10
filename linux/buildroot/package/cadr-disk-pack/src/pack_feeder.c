@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The pack feeder's core; `pack_feeder.h` says where the records go, what
+// The disk pack program's core; `pack_feeder.h` says where the records go, what
 // the replacement rule is, and why.
 
 #include "pack_feeder.h"
@@ -60,7 +60,7 @@ static void say(struct feeder *f, const char *fmt, ...)
 		return;
 	va_list ap;
 	va_start(ap, fmt);
-	fputs("cadr-pack-feeder: ", f->log);
+	fputs("cadr-disk-pack: ", f->log);
 	vfprintf(f->log, fmt, ap);
 	fputc('\n', f->log);
 	va_end(ap);

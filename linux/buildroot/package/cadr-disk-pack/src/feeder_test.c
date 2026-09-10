@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The pack feeder, held on the build host to a fabric that ASKS: no board,
+// The disk pack program, held on the build host to a fabric that ASKS: no board,
 // a model of the register face at a899799 in its place, and a scripted
 // disk controller behind the model posting the requests the CADR's
 // transfers would.
@@ -1434,7 +1434,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "FAIL: %d mismatches\n", bad);
 		return 1;
 	}
-	printf("ok: the pack feeder serves the disk controller on demand and keeps\n"
+	printf("ok: the disk pack program serves the disk controller on demand and keeps\n"
 	       "    the pack as muir's Unit keeps it\n"
 	       "    %lu requests posted by the modelled controller --- %lu from the\n"
 	       "      trace's %lu NEED rows in %lu transfers --- %lu answered within\n"
