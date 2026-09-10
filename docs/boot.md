@@ -30,13 +30,13 @@ second, Linux up with the reservation, the CADR's counters at 256 and 256.
     Buildroot   2026.02.3, the LTS   vendor/buildroot-2026.02.3.tar.xz, sha256 5a59e750...c6fc7fb
     U-Boot      2026.01, mainline    SPL is the first-stage loader: BOOT.BIN 127,456 B;
                                      u-boot.img 1,076,532 B (a FIT: U-Boot proper and its tree)
-    Linux       6.19.14, mainline    zImage 3,256,232 B; zynq-arty-z7-20.dtb 11,404 B
-    rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,792,240 B (6.2 MB unpacked), an
+    Linux       6.19.14, mainline    zImage 3,337,032 B; zynq-arty-z7-20.dtb 11,401 B
+    rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,801,388 B (6.2 MB unpacked), an
                 + evtest             initramfs, unpacked into RAM on both paths
     the card    one FAT32 partition  sdcard.img, 537,919,488 B (512 MiB + 1 MiB); seven files
                                      today, 11.3 MB of them; pack.img when there is one
 
-Sizes are of the first build, 10 September, on the build host; the whole
+Sizes are of the 10 September builds on the build host; the whole
 thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
 took 25 minutes of wall clock on 16 cores, and `make buildroot` after a
 change minutes. **Buildroot does not watch our files**: after editing
@@ -314,10 +314,37 @@ controller's twelve ULPI lines on MIO 28..39). Digilent's reference manual
 could not be read --- their site answers automated fetches with 403, as
 `linux.md` already records --- so the PHY's part number is not asserted here.
 Our tree writes the same port the way mainline's `zynq-zybo-z7.dts` writes
-the same part: `usb0` as host, `usb-phy` a `usb-nop-xceiv` with
-`reset-gpios = <&gpio0 46 GPIO_ACTIVE_LOW>`. The kernel has the controller in
-host mode over EHCI, HID over USB, and evdev; the root filesystem has
-`evtest`. No display and no DRM: HDMI on this board is a fabric matter.
+the same part --- `usb0` as host, the PHY a `usb-nop-xceiv` with
+`reset-gpios = <&gpio0 46 GPIO_ACTIVE_LOW>` --- **with one deliberate
+difference**: the controller names its PHY with `phys`, not the deprecated
+`usb-phy` every mainline Zynq tree still carries. The kernel has the
+controller in host mode over EHCI, HID over USB, and evdev; the root
+filesystem has `evtest`. No display and no DRM: HDMI on this board is a
+fabric matter.
+
+**Why `phys`: the port was dead with `usb-phy`, measured on the board 10
+September.** `chipidea-usb2` bound and created `ci_hdrc.0`; `phy0` bound;
+`ci_hdrc.0` never did, and dmesg said nothing --- no `ci_hdrc`, no root hub,
+no error, no defer. Read out of 6.19.14: `drivers/usb/phy/phy-generic.c`
+registers at `subsys_initcall`, `drivers/gpio/gpio-zynq.c` at
+`device_initcall`, so the PHY's first probe asks for its reset GPIO before
+gpio0 has a driver and is deferred. The ChipIdea core
+(`drivers/usb/chipidea/core.c`, `ci_hdrc_probe`) then probes synchronously at
+`device_initcall` and looks for a PHY three ways: a generic PHY
+(`CONFIG_GENERIC_PHY` off, `-ENOSYS`); a **`phys`** phandle (absent with
+`usb-phy`, `-ENODEV`); then "any registered USB2 usb_phy" --- and with `phy0`
+still deferred that is `-ENODEV` too, not `-EPROBE_DEFER`, so the probe takes
+the one exit with no `dev_err`: `ret = -ENXIO`, permanent. `phy0` binds
+later from the deferred-probe workqueue, to no one. Of the three lookups only
+the `phys` phandle answers `-EPROBE_DEFER` for a PHY not yet registered
+(`drivers/usb/phy/phy.c`, `__of_usb_find_phy`), so with `phys` the core
+waits for `phy0` and binds after it. The binding says the same
+(`chipidea,usb2-common.yaml`: `usb-phy` "deprecated: true. Use phys
+instead"). Whether mainline's own Zybo trees win or lose this race is not
+known here; ours does not race. `CONFIG_DEBUG_FS` is on now so that
+`/sys/kernel/debug/devices_deferred` and the PHY's ULPI registers can be read
+next time; Buildroot's `fstab` does not mount it, so
+`mount -t debugfs none /sys/kernel/debug` first.
 
 **What it costs**, measured on the built objects with `arm-linux-size`: the
 USB host stack itself --- core, EHCI, the ChipIdea glue, the nop PHY, and
@@ -325,10 +352,25 @@ USB mass storage --- is 229,947 bytes of text and data in `vmlinux`; the
 keyboard-and-mouse addition on top --- HID core, the generic and quirk HID
 drivers, the USB HID transport, the input core and evdev --- is 129,569 bytes;
 `vmlinux` compresses 2.03:1 into this `zImage`, so together about 175 KB of
-the 3.26 MB `zImage`. `evtest` is 34,144 bytes in the root filesystem, about
+the 3.34 MB `zImage`; `CONFIG_DEBUG_FS`, added after the probe-order finding,
+cost another 80,800 B of `zImage` (3,256,232 to 3,337,032). `evtest` is 34,144 bytes in the root filesystem, about
 15 KB in the compressed initramfs.
 
-To prove it on the board, plug a keyboard in and watch the console:
+To prove it on the board: first, without anything plugged in, the root hub
+must be in dmesg, in this order (the strings are `ehci-hcd.c`'s, `hcd.c`'s
+and `hub.c`'s):
+
+    ci_hdrc ci_hdrc.0: EHCI Host Controller
+    ci_hdrc ci_hdrc.0: new USB bus registered, assigned bus number 1
+    ci_hdrc ci_hdrc.0: USB 2.0 started, EHCI 1.00
+    usb usb1: New USB device found, idVendor=1d6b, idProduct=0002, bcdDevice= 6.19
+    usb usb1: Product: EHCI Host Controller
+    usb usb1: SerialNumber: ci_hdrc.0
+    hub 1-0:1.0: USB hub found
+    hub 1-0:1.0: 1 port detected
+
+and `/sys/bus/platform/devices/ci_hdrc.0/driver` points at `ci_hdrc`. Then
+plug a keyboard in and watch the console:
 
     usb 1-1: new low-speed USB device number 2 using ci_hdrc
     usb 1-1: New USB device found, idVendor=xxxx, idProduct=xxxx ...
@@ -342,9 +384,27 @@ then `ls /dev/input/` (an `event0`, and `event1` for a mouse), and
 which lists the device's capabilities and then prints one `Event: time ...,
 type 1 (EV_KEY), code 30 (KEY_A), value 1` per key press and release. Without
 `evtest`, `hexdump -C /dev/input/event0` shows the same 16-byte records. The
-first of those console lines is the port working at all; if nothing appears
-when a device is plugged in, the first suspects are the PHY's reset (MIO 46)
-and VBUS to the connector, neither of which this image can see from the code.
+root hub appearing is the controller and the PHY working; a device plugged
+in and nothing printed is VBUS not reaching the connector, which is the one
+thing the code cannot settle from here. Digilent's own tree told their PHY
+driver `drv-vbus`, i.e. to set the PHY's DrvVbus over ULPI; mainline's
+`CI_HDRC_PHY_VBUS_CONTROL` for this compatible calls `usb_phy_vbus_on()`,
+which for the nop PHY is a regulator this board does not describe, so
+nothing in software asserts it beyond the EHCI port-power bit. To test that
+from the prompt: with debugfs mounted, `cat
+/sys/kernel/debug/ulpi/ci_hdrc.0.ulpi/regs` shows the PHY's `OTG Control`
+(bit 5 DrvVbus, bit 6 DrvVbusExternal); and the controller's ULPI viewport
+is at `0xE0002170` (`view-port = <0x0170>` in Digilent's tree; the ChipIdea
+op register `OP_ULPI_VIEWPORT` at 0x30 past the op base at 0x140) with the
+layout `chipidea/ulpi.c` gives --- bit 30 RUN, bit 29 WRITE, bits 23:16 the
+ULPI register, bits 7:0 the data --- so
+
+    devmem 0xE0002170 32 0x600B0060      # ULPI 0x0B = OTG Control SET; 0x60 = DrvVbus | DrvVbusExternal
+
+sets both. If a keyboard then enumerates, the finding is that this board's
+PHY must be told to drive VBUS and the fix belongs in the tree or a small
+driver, not in a `devmem` line; if it does not, the connector's power is
+elsewhere. Neither is known here.
 
 ## What is deliberately not in this image
 
