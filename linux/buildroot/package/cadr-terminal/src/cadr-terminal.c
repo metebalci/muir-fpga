@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// cadr-screen: the program on Linux that shows the CADR's screen to a VNC
+// cadr-terminal: the program on Linux that shows the CADR's screen to a VNC
 // viewer.
 //
 // WHAT IT IS.  The CADR's display board --- MIT's TV, `rtl/cadr_tv.sv` ---
@@ -22,7 +22,7 @@
 // board is not in the fabric.  Mete asked for the screen first and the input
 // later, and this is the screen.
 //
-// HOW IT RUNS.  `S85cadr-screen` starts it at boot with `--log /dev/console`.
+// HOW IT RUNS.  `S85cadr-terminal` starts it at boot with `--log /dev/console`.
 // In order:
 //
 //   1. THE GUARD.  A read on `M_AXI_GP0` or `M_AXI_GP1` that nothing in the
@@ -52,7 +52,7 @@
 // with no path to the processing system.  The default here is the fabric's
 // own power-on state and muir's, zero --- a one bit is white --- which is
 // also the mode both reference programs leave the register in.  `--bow`
-// swaps it.  `screen_geom.h` and `docs/screen.md` say what reading it would
+// swaps it.  `screen_geom.h` and `docs/terminal.md` say what reading it would
 // take.
 //
 // WHAT IT PRINTS, low rate on purpose: one line when it starts, one when a
@@ -60,7 +60,7 @@
 // when the screen goes blank or stops being blank, and NOTHING per frame.  A
 // summary at most once a minute, and only while the counts move.
 //
-//     cadr-screen [--port N] [--bind ADDR] [--log PATH] [--bow]
+//     cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
 //                   [--interval-ms N] [--no-rre] [--no-guard] [--once]
 
 #include <errno.h>
@@ -96,7 +96,7 @@ static uint64_t monotonic_ns(void)
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: cadr-screen [options]\n"
+		"usage: cadr-terminal [options]\n"
 		"  --port N          the RFB port (default 5900, which is display :0)\n"
 		"  --bind ADDR       the address to listen on (default every interface)\n"
 		"  --log PATH        where to write (default stdout)\n"
@@ -157,18 +157,18 @@ int main(int argc, char **argv)
 	if (interval_ms == 0)
 		interval_ms = 1;
 	if (port > 65535) {
-		fprintf(stderr, "cadr-screen: --port %u: a port is 0 to 65535\n", port);
+		fprintf(stderr, "cadr-terminal: --port %u: a port is 0 to 65535\n", port);
 		return 2;
 	}
 	FILE *dest = stdout;
 	if (log_path) {
 		dest = fopen(log_path, "a");
 		if (!dest) {
-			fprintf(stderr, "cadr-screen: %s: %s\n", log_path, strerror(errno));
+			fprintf(stderr, "cadr-terminal: %s: %s\n", log_path, strerror(errno));
 			return 2;
 		}
 	}
-	cadr_log_init("cadr-screen: ", dest);
+	cadr_log_init("cadr-terminal: ", dest);
 
 	int mem = cadr_open_mem();
 	if (mem < 0)

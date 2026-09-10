@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The mutation runner for cadr-screen: bugs `screen_test.c` has to catch.
+# The mutation runner for cadr-terminal: bugs `screen_test.c` has to catch.
 #
 # `mutations/run.py` at the repository root does this for the fabric, and this
 # is the same idea one program along, in the package rather than in the
@@ -88,16 +88,16 @@ def apply(record, work, src, common):
     """A copy of the sources with the record applied, or a reason it cannot be."""
     here = os.path.join(work, record["mutation"])
     shutil.rmtree(here, ignore_errors=True)
-    os.makedirs(os.path.join(here, "cadr-screen", "src"))
+    os.makedirs(os.path.join(here, "cadr-terminal", "src"))
     os.makedirs(os.path.join(here, "cadr-common", "src", "cadr"))
-    for f in CORE + HEADERS + ["screen_test.c", "cadr-screen.c"]:
-        shutil.copy(os.path.join(src, f), os.path.join(here, "cadr-screen", "src", f))
+    for f in CORE + HEADERS + ["screen_test.c", "cadr-terminal.c"]:
+        shutil.copy(os.path.join(src, f), os.path.join(here, "cadr-terminal", "src", f))
     for f in COMMON:
         shutil.copy(os.path.join(common, f), os.path.join(here, "cadr-common", "src", f))
     for f in ("cadr_log.h", "cadr_mem.h"):
         shutil.copy(os.path.join(common, "cadr", f),
                     os.path.join(here, "cadr-common", "src", "cadr", f))
-    target = os.path.join(here, "cadr-screen", "src", record["file"])
+    target = os.path.join(here, "cadr-terminal", "src", record["file"])
     if not os.path.exists(target):
         return here, f"@file {record['file']} is not one of this package's sources"
     text = open(target).read()
@@ -110,7 +110,7 @@ def apply(record, work, src, common):
 
 
 def build_and_run(here, cc, cflags, screens):
-    src = os.path.join(here, "cadr-screen", "src")
+    src = os.path.join(here, "cadr-terminal", "src")
     common = os.path.join(here, "cadr-common", "src")
     binary = os.path.join(here, "screen_test")
     cmd = ([cc] + cflags.split() + ["-I" + common, "-o", binary,
