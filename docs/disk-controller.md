@@ -306,7 +306,7 @@ HP1, so Digilent's FSBL still needs no change.
 
 ## The disk pack program
 
-The program on Linux that serves the CADR's disk from the pack file on the
+The program on Linux that serves the CADR's disks from the drive bay on the
 card: `linux/buildroot/package/cadr-disk-pack/src/cadr-disk-pack.c` and the
 files beside it, built into the Buildroot image and started at boot by
 `S80cadr-disk-pack`. This is its second revision, written against the
@@ -330,18 +330,62 @@ bitstream with the processing system in it drives; all ones, or zero (the
 GPIO clock gated, or no instrument), and it stops before touching GP0 and
 says why. `--no-guard` is for a board somebody knows. *IDENT second*:
 register 7 must read `"PACK"`; `"NONE"` is the proving boards' default slave
-and is named as such. *Then the pack*: `pack.img` on the card, muir's
-format, its geometry from its size (a T-300 is 269,562,880 bytes, a T-80
-70,937,600), the only disk file on the card. *Then the drive
-comes present*: every one of the 24 slots is taken away --- what the store
-held before this program is unknown to it, the tags being in the fabric and
-not readable over GP0, and a slot that was DIRTY then is reported lost, once,
-with the count --- and DRIVE is written with the unit the pack is on
-(`--unit`, 0 by default), its read-only switch (`--read-only`) and whether
-its own time is charged (`--timed`; untimed by default, muir's default, with
-which every count this project quotes was measured). *Then the loop*, until
-SIGTERM or SIGINT, on which every dirty slot is written back and the drive
-is taken absent.
+and is named as such. *Then the store is emptied*: every one of the 24 slots
+is taken away --- what the store held before this program is unknown to it,
+the tags being in the fabric and not readable over GP0, and a slot that was
+DIRTY then is reported lost, once, with the count --- and DRIVE is written
+with nothing on any cable. *Then the bay is looked at*, and whichever packs
+are already in it come present, each with its own geometry from its own size
+(a T-300 is 269,562,880 bytes, a T-80 70,937,600) and its own write-protect
+switch from its own read-only mark; `--timed` says whether the drives' own
+seek and rotational times are charged (untimed by default, muir's default,
+with which every count this project quotes was measured). **An empty bay is
+not an error**: the program says so and goes on watching. *Then the loop*,
+until SIGTERM or SIGINT, on which every dirty slot is written back and every
+drive is taken absent.
+
+**THE DRIVE BAY, AND WHY THERE IS NO `--pack` AND NO `--unit`.** The packs
+live on the card's second partition, `/mnt/packs`, named `disk-pack-0.img` to
+`disk-pack-7.img`: whichever exist are the drives that are present, and the
+number in the name is the unit `DA<30:28>` selects. A file is a pack only at
+exactly one of the two geometries' sizes, which is also what makes a pack
+still being copied in not yet a drive. The bay is looked at every
+`--scan-ms` (250 by default) while the machine runs, so the card is written
+once and then never leaves the board: **copy a pack in and that drive comes
+ready, rename one out and it is taken away, `chmod -w` one and its
+write-protect switch flips** --- FAT's own read-only attribute, which Windows
+sets from a file's properties and Linux from `chmod`. None of it is applied
+in the middle of a transfer: a look that finds `ch_active` up changes nothing
+and is retried on the next poll, a quarter of a millisecond later, because a
+drive will not let you open the door with the heads loaded.
+
+**Renaming a pack out loses nothing and deleting one loses what the machine
+has written, and the link count is the whole of the difference.** A renamed
+file is still a file --- the descriptor this program holds followed it --- so
+the dirty slots of that unit are written back into the file under its new
+name before the drive goes away. A deleted file is nameless: `vfat`'s unlink
+calls `clear_nlink` as every local filesystem's does, so `pack_alive` reads
+zero, a flush would go into clusters the kernel frees at the last close, and
+this program says instead which unit and exactly how many blocks were lost
+and names them. A pack **written over where it lies** --- `scp` onto a name
+already in use --- is the third case and is not the second: the file is alive
+and its link count says so, but its contents are becoming somebody else's
+pack, so the old pack's words must not be flushed into it either. All three
+go through one path (`bay_remove`) with one flag saying whether flushing is
+right. The unit's slots are taken away in every case, because the store is a
+cache of the packs in the bay and a pack that has left takes its blocks with
+it. `docs/boot.md`, "The drive bay", is the same thing said for whoever is
+using the board rather than writing it.
+
+**One thing the fabric does not do yet.** A drive raises an attention when it
+comes ready, so a pack landing in the bay ought to raise one; this program
+writes an attention field in DRIVE (bits 24:17, one a unit, a pulse) and
+`feeder_test.c` holds it to that, but `rtl/cadr_disk_pack.sv`'s `r_drive` is
+twenty-five bits of which only 16:0 reach an output, and
+`rtl/cadr_disk_controller.sv` arms `u_att_armed` from a seek and a
+recalibrate and from nowhere else. So the field reaches nothing today.
+`pack_side.h` says which two lines of RTL would change that, and nothing else
+in this program depends on it.
 
 **The loop, as `rtl/cadr_disk_pack.sv`'s header prescribes it.** Each pass
 reads IRQ and clears what it read, then REQ, then DIRTY. A request (REQ bit
@@ -489,13 +533,56 @@ the walk's slot passed on the refusal; every dirty slot back within three
 polls of the walk leaving it; the pack file at the end block for block what
 the scripted writes imply; and after a restart every record the format's
 own over the data written, the laid ones changed by that (six, or the arm
-is vacuous), a header laid again carried for the run. At this revision: 76
-requests, 72 served and 4 denied, 112 hits and 29,008 words compared, the
-hand four times round the store, the walk's slot refused 43 times of which
-9 in the command-list fetch, 67 blocks and 68,608 bytes of the
-pack compared at the end, 23 load rows' checkwords agreeing with muir's
-`Ecc`. **Fifteen hand mutations of the program are each caught on the
-property they break**: the denial dropped for an off-pack block and
+is vacuous), a header laid again carried for the run.
+
+**AND THE DRIVE BAY, AGAINST A REAL DIRECTORY OF REAL FILES.** There is no
+modelling a rename and a delete, so the check makes a directory under its
+work directory and puts the trace's pack in it as unit 2's. A second drive
+--- a T-80 where the trace's is a T-300, so a geometry read off the wrong
+drive reads wrong --- is then put on unit 5 and: denied while its name does
+not exist; still not a drive as a file of 4,096 bytes, which is what a copy
+in flight looks like; a drive the moment the size is a T-80's, with its
+attention pulsed and nothing left standing in the field; served alongside
+unit 2 under the same block numbers out of two packs at once, in two slots;
+write-protected and unprotected by `chmod` alone, with a block the machine
+wrote flushed onto the pack before the switch flips and a write-back onto the
+protected pack then refused; **renamed away with a block the machine had
+written still in the store, and that block read back out of the renamed file
+by name**; **deleted with a block in the store, the loss said on a console
+the check reads back and requires to carry the unit, the count and the block
+number**; overwritten in place, where the file is alive and flushing into it
+would be wrong; and changed while `ch_active` is up, where four looks in a
+row must move nothing. A pack replaced under its own name serves the NEW
+file's words, the new file having been written by name before it was renamed
+in --- a shadow filled through the drive would have moved with the bug. Two
+more drives at units 0 and 7 hold the eight names to being the rule.
+
+At this revision: 88 requests, 83 served and 5 denied, 128 hits and 33,152
+words compared, the hand four times round the store, the walk's slot refused
+43 times of which 9 in the command-list fetch, 70 blocks and 71,680 bytes of
+the packs compared at the end, 23 load rows' checkwords agreeing with muir's
+`Ecc`; and in the bay, 16 looks, 8 drives appeared and 4 went away, 1 block
+flushed out with a rename and 2 lost in a delete and an overwrite, 4 looks
+put off for a transfer, 10 attention pulses.  The run is deterministic: two
+runs give byte-identical output.
+
+**Fourteen hand mutations of the drive bay are each caught on the property
+they break**, in `pack_mutations.txt` beside the sources, run by `make -C
+src mutants` with `mutate.py` --- `mutations/list.txt`'s record format, a
+build that fails is BROKEN and BROKEN fails the run, and a record naming a
+file the check does not build is BROKEN too, because a mutation nothing
+compiled is evidence that does not exist. They are: a file of any size taken
+for a pack, the read-only mark not read, a change applied in the middle of a
+transfer, a pack let go without a flush, a deleted pack flushed as if it had
+been renamed, a loss counted and not said, the slots of a departed pack left
+in the store, the name mapped to the wrong unit, a slot forgetting which
+drive its block came from, the flush after the write-protect switch instead
+of before, the pack not reopened when the mark moves, the attention not
+raised, the attention field left standing, and a flush into a pack being
+written over where it lies.
+
+**And fifteen earlier hand mutations, each caught on the property it
+breaks**: the denial dropped for an off-pack block and
 for the other unit (the disk pack program fails on the block), a dirty victim not
 written back ("fetched into while DIRTY: the CADR's write is lost"), the
 first slot taken regardless of REF and REF cleared wholesale ("second
@@ -506,32 +593,38 @@ event ignored (dirty for 7 polls), the WAITING bit read back taken as "not
 the walk's" (the board's fault put back: the disk pack program fails the write-back),
 a deferred write-back given up (the slot's block forgotten: the slot stays
 dirty past the bound), a laid header not tabled, the pad's poison test off by
-one, and a start that leaves the store alone. The mutation script is
-scratch, not in the tree.
+one, and a start that leaves the store alone. Those were run from a
+scratch script; the fourteen above are in the tree, and the earlier fifteen
+are worth adding to `pack_mutations.txt` next time this file is opened.
 
 **What to copy where.** The change is the root filesystem image alone:
-`rootfs.cpio.uboot` from `make buildroot-rebuild`, 2,805,700 bytes at this
-revision against 2,802,503 before (the program is 30,048 bytes on the
-target). On the network path that is one file into the TFTP server's
+`rootfs.cpio.uboot` from `make buildroot-rebuild`, 2,831,964 bytes at this
+revision (the program is 34,148 bytes on the target with the drive bay in
+it, against 30,048 before; the rest of the growth since 2,802,503 is other
+programs'). On the network path that is one file into the TFTP server's
 directory and a reset; the bitstream, kernel, tree and loader are unchanged,
 and the bitstream must be the one with the request path (`a899799` or
 later --- the `997b734` one on the board today has no REQ register and the
 feeder would read zeros there and serve nothing). `linux/mksd-buildroot.sh`
-puts a pack on the card as `pack.img` with `PACK=<file>`, and that is the
-whole of the disk on the card.
+puts packs in the bay with `PACKS="a.img 5=b.img"` and makes partition 2
+`PACKS_MB` big; but a pack is more usually copied to the running board with
+`scp` into `/mnt/packs`, which is the point of the second partition.
 
 **What the console must show, with a pack on the card and the drive
 untimed**, in this order, and nothing else at the same rate:
 
-    cadr-disk-pack: card mounted at /mnt/card
+    cadr-disk-pack: the boot partition is at /mnt/card, read-only
+    cadr-disk-pack: the drive bay is at /mnt/packs
     Starting cadr-disk-pack: OK
     cadr-disk-pack: the EMIO tally reads 0x01008100 0x01008100: a fabric with the processing system in it; M_AXI_GP0 may be read
     cadr-disk-pack: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
-    cadr-disk-pack: pack /mnt/card/pack.img: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks
-    cadr-disk-pack: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
-    cadr-disk-pack: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
     cadr-disk-pack: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
-    cadr-disk-pack: 24 slots taken away; the drive on unit 0 is present (writable, untimed)
+    cadr-disk-pack: the bay is /mnt/packs: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives that are present, and a file whose read-only mark is set is a write-protected drive
+    cadr-disk-pack: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
+    cadr-disk-pack: 24 slots taken away; the bay is /mnt/packs and the drives are untimed, which is muir's default
+    cadr-disk-pack: unit 0: /mnt/packs/disk-pack-0.img is a drive: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks, writable
+    cadr-disk-pack: unit 0: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
+    cadr-disk-pack: the bay is looked at every 250 ms, and never in the middle of a transfer
     cadr-disk-pack: polling REQ and DIRTY every 250 us
 
 The tally's two words are whatever the machine's memory cycles have counted

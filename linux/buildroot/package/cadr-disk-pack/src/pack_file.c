@@ -18,9 +18,22 @@
 const struct pack_geometry PACK_T80 = { 815, 5, 17 };
 const struct pack_geometry PACK_T300 = { 815, 19, 17 };
 
-static uint64_t pack_bytes_of(const struct pack_geometry *g)
+uint64_t pack_size_of(const struct pack_geometry *g)
 {
 	return (uint64_t)g->cylinders * g->heads * g->blocks_per_track * PACK_BLOCK_BYTES;
+}
+
+int pack_geometry_of_size(uint64_t bytes, struct pack_geometry *g)
+{
+	if (bytes == pack_size_of(&PACK_T300)) {
+		*g = PACK_T300;
+		return 0;
+	}
+	if (bytes == pack_size_of(&PACK_T80)) {
+		*g = PACK_T80;
+		return 0;
+	}
+	return -1;
 }
 
 int pack_open(struct pack *p, const char *path, int writable, char *err, size_t errlen)
@@ -39,20 +52,57 @@ int pack_open(struct pack *p, const char *path, int writable, char *err, size_t 
 	}
 	// The size is what ties the geometry to the image: muir's `open_with`
 	// refuses any other size, and the two types differ in theirs.
-	if ((uint64_t)st.st_size == pack_bytes_of(&PACK_T300))
-		p->g = PACK_T300;
-	else if ((uint64_t)st.st_size == pack_bytes_of(&PACK_T80))
-		p->g = PACK_T80;
-	else {
+	if (pack_geometry_of_size((uint64_t)st.st_size, &p->g) < 0) {
 		snprintf(err, errlen, "%s: %lld bytes, which is neither a T-300 (%llu) nor a T-80 (%llu)",
 			 path, (long long)st.st_size,
-			 (unsigned long long)pack_bytes_of(&PACK_T300),
-			 (unsigned long long)pack_bytes_of(&PACK_T80));
+			 (unsigned long long)pack_size_of(&PACK_T300),
+			 (unsigned long long)pack_size_of(&PACK_T80));
 		close(p->fd);
 		return -1;
 	}
 	p->writable = writable;
 	p->blocks = p->g.cylinders * p->g.heads * p->g.blocks_per_track;
+	p->dev = st.st_dev;
+	p->ino = st.st_ino;
+	p->size = st.st_size;
+	return 0;
+}
+
+int pack_alive(const struct pack *p)
+{
+	struct stat st;
+	if (p->fd < 0 || fstat(p->fd, &st) < 0)
+		return 0;
+	// `vfat`'s unlink calls `clear_nlink` on the inode, as every local
+	// filesystem's does, so a deleted pack reads zero here while its
+	// descriptor is still open and still writable --- and every byte
+	// written through it is thrown away at the last close.
+	return st.st_nlink > 0;
+}
+
+int pack_reopen(struct pack *p, const char *path, int writable, char *err, size_t errlen)
+{
+	const int fd = open(path, writable ? O_RDWR : O_RDONLY);
+	if (fd < 0) {
+		snprintf(err, errlen, "%s: %s", path, strerror(errno));
+		return -1;
+	}
+	struct stat st;
+	if (fstat(fd, &st) < 0) {
+		snprintf(err, errlen, "%s: %s", path, strerror(errno));
+		close(fd);
+		return -1;
+	}
+	// The same file, or this is not a reopen but a replacement, and the
+	// caller's tables belong to the pack that went away.
+	if (st.st_dev != p->dev || st.st_ino != p->ino || st.st_size != p->size) {
+		snprintf(err, errlen, "%s is not the file this drive was opened on any more", path);
+		close(fd);
+		return -1;
+	}
+	close(p->fd);
+	p->fd = fd;
+	p->writable = writable;
 	return 0;
 }
 

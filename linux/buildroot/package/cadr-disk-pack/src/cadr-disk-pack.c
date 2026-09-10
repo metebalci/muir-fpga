@@ -4,8 +4,9 @@
 // cadr-disk-pack: the program on Linux that serves the CADR's disk from
 // the pack file on the card.
 //
-// WHAT IT IS.  On the board the disk's pack is a file --- `pack.img` on the
-// card's FAT partition, muir's format, 1,024 bytes a block --- and the
+// WHAT IT IS.  On the board the disk's packs are files --- `disk-pack-0.img`
+// to `disk-pack-7.img` on the card's SECOND FAT partition, muir's format,
+// 1,024 bytes a block, one per unit --- and the
 // drive is this program: the fabric's disk controller holds a store of 24
 // blocks (`rtl/cadr_disk_controller.sv`) that Linux fills, and its pack side
 // (`rtl/cadr_disk_pack.sv`) moves a block between DDR and that store over
@@ -18,12 +19,41 @@
 // walk goes on as if the block had been there.  A slot a transfer wrote is
 // marked DIRTY and this program takes it back over the same path and puts
 // it on the pack file, so the pack persists.  `pack_file.c` is the pack in muir's
-// terms, `pack_side.c` the register face, `pack_feeder.c` the cache and
-// the moves; `feeder_test.c` holds all three, on the build host, to a
-// modelled controller that asks.
+// terms, `pack_bay.c` the eight names, `pack_side.c` the register face,
+// `pack_feeder.c` the cache, the moves and the drive bay's rules;
+// `feeder_test.c` holds all five, on the build host, to a modelled
+// controller that asks.
 //
-// HOW IT RUNS.  `S80cadr-disk-pack` mounts the card at /mnt/card and
-// starts this at boot with `--pack /mnt/card/pack.img --log /dev/console`.
+// **THE DRIVE BAY: EIGHT NAMES, AND THE CARD NEVER LEAVES THE BOARD.**
+// `/mnt/packs` is the card's second partition and holds nothing but disk
+// packs.  Whichever of `disk-pack-0.img` to `disk-pack-7.img` exist are the
+// drives that are present; the unit in a request chooses the file; a file
+// whose read-only mark is set is a write-protected drive.  There is no
+// option naming a pack and none naming a unit.  **The bay is watched while
+// the machine runs** (`--scan-ms`, 250 by default), so the three gestures
+// are the whole of disk administration and none of them needs a reboot, a
+// signal or a card reader:
+//
+//   COPY a file in     ---  that unit comes present, with its attention
+//                           raised, at the instant its last byte lands (a
+//                           file is a pack only at exactly a T-300's or a
+//                           T-80's size, so a copy in flight is not a drive)
+//   RENAME it out      ---  everything the machine has written is flushed
+//                           FIRST, into the file under its new name, because
+//                           the descriptor followed it; then the unit goes
+//                           absent, with its attention raised
+//   `chmod -w` it      ---  the drive's write-protect switch flips, what the
+//                           machine had written being flushed first
+//
+// DELETING a pack outright is the one gesture that loses something, and this
+// program does not pretend otherwise: an unlinked file has no name for a
+// flush to land in, so it says which unit and exactly how many blocks were
+// lost, and names them.  **None of the four happens in the middle of a
+// transfer**: a scan that finds the channel walking changes nothing and is
+// retried on the next poll, which is a quarter of a millisecond.
+//
+// HOW IT RUNS.  `S80cadr-disk-pack` mounts the card's second partition at
+// /mnt/packs and starts this at boot with `--log /dev/console`.
 // In order:
 //
 //   1. THE GUARD.  A read on M_AXI_GP0 that nothing in the fabric answers
@@ -37,19 +67,23 @@
 //   2. IDENT.  Register 7 reads "PACK" for the pack side; "NONE" is the
 //      proving boards' default slave (`rtl/cadr_gp0_default.sv`), a board
 //      with GP0 and no disk.  Either is a reason to stop and say so.
-//   3. THE PACK: `pack.img`, the only disk file on the card.  Its headers and
+//   3. THE STORE IS EMPTIED: every slot taken away (what it held before this
+//      program is unknown to it), and DRIVE written with nothing on any
+//      cable.
+//   4. THE BAY IS LOOKED AT: whichever of the eight names are packs come
+//      present, each with its own geometry from its own size and its own
+//      write-protect switch from its own read-only mark.  Their headers and
 //      checkwords are muir's `Unit`'s: the format's own for a fresh pack,
 //      what a transfer or a Write All lays for the run, and forgotten at
 //      exit (`pack_file.h`; a sidecar that persisted them was built and
-//      dropped by Mete on 10 Sep).
-//   4. THE DRIVE COMES PRESENT: every slot of the store taken away (what it
-//      held before this program is unknown to it), DRIVE written with the
-//      unit the pack is on (`--unit`, 0 by default), its read-only switch
-//      (`--read-only`) and whether its time is charged (`--timed`).
+//      dropped by Mete on 10 Sep).  **An empty bay is not an error**: the
+//      program says so and goes on watching, and a pack copied in afterwards
+//      is a drive spinning up while the boot PROM is still asking whether
+//      one is ready.
 //   5. THE LOOP: REQ and DIRTY polled, a request served or denied, dirty
-//      slots written back, until SIGTERM or SIGINT (the init script's
-//      stop), on which every dirty slot is written back, the drive is taken
-//      absent, and it says so.
+//      slots written back, the bay looked at every `--scan-ms`, until
+//      SIGTERM or SIGINT (the init script's stop), on which every dirty slot
+//      is written back, every drive is taken absent, and it says so.
 //
 // THE POLLING RATE AND THE LATENCY BUDGET.  `--poll-us`, 250 by default.
 // What the controller gives this program to answer in is the time the
@@ -95,8 +129,8 @@
 // line says which block, which slot, which address and what the face
 // answered, and a failure repeating is said once a minute.
 //
-//     cadr-disk-pack [--pack PATH] [--regs ADDR] [--log PATH] [--unit N]
-//                      [--timed] [--read-only] [--poll-us N] [--irq PATH]
+//     cadr-disk-pack [--packs DIR] [--regs ADDR] [--log PATH] [--timed]
+//                      [--poll-us N] [--scan-ms N] [--irq PATH]
 //                      [--no-guard] [--selftest] [--once]
 
 #include <errno.h>
@@ -115,6 +149,7 @@
 #include <cadr/cadr_log.h>
 #include <cadr/cadr_mem.h>
 
+#include "pack_bay.h"
 #include "pack_feeder.h"
 #include "pack_file.h"
 #include "pack_side.h"
@@ -171,13 +206,12 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: cadr-disk-pack [options]\n"
-		"  --pack PATH     the pack file (default /mnt/card/pack.img)\n"
+		"  --packs DIR     the drive bay: disk-pack-0.img .. disk-pack-7.img (default " BAY_DIR ")\n"
 		"  --regs ADDR     the pack side's registers (default 0x40000000)\n"
 		"  --log PATH      where to write (default stdout)\n"
-		"  --unit N        the unit the pack is on, 0..7 (default 0)\n"
-		"  --timed         charge the drive's own seek and rotational times (default: untimed, muir's default)\n"
-		"  --read-only     open the pack read-only and set the drive's read-only switch\n"
+		"  --timed         charge the drives' own seek and rotational times (default: untimed, muir's default)\n"
 		"  --poll-us N     how often REQ and DIRTY are polled (default 250)\n"
+		"  --scan-ms N     how often the bay is looked at (default 250)\n"
 		"  --irq PATH      sleep on this UIO device instead of only polling (see the header)\n"
 
 		"  --no-guard      touch M_AXI_GP0 without checking the EMIO tally first\n"
@@ -185,10 +219,15 @@ static void usage(void)
 		"  --once          do the checks, bring the drive present, and exit\n");
 }
 
-static int selftest(struct feeder *f, struct pack *pk, unsigned unit)
+static int selftest(struct feeder *f, unsigned unit)
 {
 	char err[256];
 	uint32_t want[PACK_RECORD_WORDS];
+	struct pack *pk = bay_pack(f->bay, unit);
+	if (!pk) {
+		say("selftest: no pack on unit %u", unit);
+		return 1;
+	}
 	if (pack_record(pk, 0, want, err, sizeof err) < 0) {
 		say("selftest: %s", err);
 		return 1;
@@ -224,20 +263,19 @@ static int selftest(struct feeder *f, struct pack *pk, unsigned unit)
 
 int main(int argc, char **argv)
 {
-	const char *pack_path = "/mnt/card/pack.img";
+	const char *packs_dir = BAY_DIR;
 	const char *log_path = NULL;
 	const char *irq_path = NULL;
 	uint32_t regs_phys = PS_REG_BASE;
-	unsigned unit = 0, poll_us = 250;
-	int do_selftest = 0, once = 0, timed = 0, read_only = 0, no_guard = 0;
+	unsigned poll_us = 250, scan_ms = 250;
+	int do_selftest = 0, once = 0, timed = 0, no_guard = 0;
 	static const struct option opts[] = {
-		{ "pack", required_argument, NULL, 'p' },
+		{ "packs", required_argument, NULL, 'p' },
 		{ "regs", required_argument, NULL, 'r' },
 		{ "log", required_argument, NULL, 'l' },
-		{ "unit", required_argument, NULL, 'u' },
 		{ "timed", no_argument, NULL, 't' },
-		{ "read-only", no_argument, NULL, 'R' },
 		{ "poll-us", required_argument, NULL, 'P' },
+		{ "scan-ms", required_argument, NULL, 'S' },
 		{ "irq", required_argument, NULL, 'i' },
 		{ "no-guard", no_argument, NULL, 'G' },
 		{ "selftest", no_argument, NULL, 's' },
@@ -246,15 +284,14 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:r:l:u:tRP:i:Gsoh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:r:l:tP:S:i:Gsoh", opts, NULL)) != -1) {
 		switch (c) {
-		case 'p': pack_path = optarg; break;
+		case 'p': packs_dir = optarg; break;
 		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'l': log_path = optarg; break;
-		case 'u': unit = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 't': timed = 1; break;
-		case 'R': read_only = 1; break;
 		case 'P': poll_us = (unsigned)strtoul(optarg, NULL, 0); break;
+		case 'S': scan_ms = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'i': irq_path = optarg; break;
 		case 'G': no_guard = 1; break;
 		case 's': do_selftest = 1; break;
@@ -262,8 +299,8 @@ int main(int argc, char **argv)
 		default: usage(); return 2;
 		}
 	}
-	if (unit > 7) {
-		fprintf(stderr, "cadr-disk-pack: --unit %u: a unit is 0 to 7\n", unit);
+	if (poll_us == 0) {
+		fprintf(stderr, "cadr-disk-pack: --poll-us 0 would spin\n");
 		return 2;
 	}
 	FILE *dest = stdout;
@@ -304,45 +341,52 @@ int main(int argc, char **argv)
 	// 2. The face is there, or nothing is.
 	if (probe_face(&ps, regs_phys) < 0)
 		return 1;
-	// The drive is absent until the pack is open and the cache started.
-	ps_drive(&ps, 0, 0, 0);
+	// Nothing on any cable until the bay has been looked at.
+	ps_drive(&ps, 0, 0, 0, 0);
 
-	// 3. The pack.
-	struct pack pk;
+	// 3. The bay and the cache.
 	char err[512];
-	if (pack_open(&pk, pack_path, !read_only, err, sizeof err) < 0) {
-		say("no pack: %s", err);
-		say("the CADR sees a controller with no drive");
-		if (once)
-			return 1;
-		for (;;)
-			sleep(3600);
-	}
-	say("pack %s: %u cylinders, %u heads, %u blocks a track, %u blocks%s",
-	    pack_path, pk.g.cylinders, pk.g.heads, pk.g.blocks_per_track, pk.blocks, read_only ? ", read-only" : "");
-	{
-		uint32_t rec[PACK_RECORD_WORDS];
-		if (pack_record(&pk, 0, rec, err, sizeof err) == 0)
-			say("block 0 word 0 is 0x%08x%s; header 0x%08x", rec[0],
-			    rec[0] == 0x4C42414Cu ? " (LABL: a labelled pack)" : "", rec[256]);
-	}
-	say("headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are");
-
+	struct bay bay;
+	bay_init(&bay, packs_dir);
 	struct feeder f;
-	if (feeder_init(&f, &pk, &ps, spare, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES, cadr_log_file()) < 0) {
+	if (feeder_init(&f, &bay, &ps, spare, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES, cadr_log_file()) < 0) {
 		say("the mapped region does not cover the records");
 		return 1;
 	}
 	say("records at 0x%08x (fetches) and 0x%08x (write-backs), %u slots 0x%x apart",
 	    feeder_fetch_addr(0), feeder_wb_addr(0), PS_SLOTS, FEEDER_RECORD_STRIDE);
+	say("the bay is %s: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives "
+	    "that are present, and a file whose read-only mark is set is a write-protected drive", packs_dir);
+	say("headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are");
 
-	if (do_selftest)
-		return selftest(&f, &pk, unit);
-
-	// 4. The drive comes present.
-	if (feeder_start(&f, unit, read_only, timed, err, sizeof err) < 0) {
+	// 4. The store is emptied and the bay looked at: the drives that are
+	// already in it come present here, and one copied in later comes
+	// present at the scan that sees it.
+	if (feeder_start(&f, timed, err, sizeof err) < 0) {
 		say("starting the cache: %s", err);
 		return 1;
+	}
+	{
+		const uint8_t present = bay_present_mask(&bay);
+		if (!present)
+			say("the bay is empty: the CADR sees a controller with no drive on any of the eight units. "
+			    "Copy a pack in as disk-pack-N.img and it becomes unit N's drive within %u ms, with no restart", scan_ms);
+		else
+			for (unsigned u = 0; u < BAY_UNITS; ++u)
+				if (present & (1u << u)) {
+					uint32_t rec[PACK_RECORD_WORDS];
+					if (pack_record(bay_pack(&bay, u), 0, rec, err, sizeof err) == 0)
+						say("unit %u: block 0 word 0 is 0x%08x%s; header 0x%08x", u, rec[0],
+						    rec[0] == 0x4C42414Cu ? " (LABL: a labelled pack)" : "", rec[256]);
+				}
+	}
+	say("the bay is looked at every %u ms, and never in the middle of a transfer", scan_ms);
+
+	if (do_selftest) {
+		unsigned u = 0;
+		while (u < BAY_UNITS && !bay_pack(&bay, u))
+			++u;
+		return selftest(&f, u < BAY_UNITS ? u : 0);
 	}
 	// The interrupt, behind its flag.
 	int irq_fd = -1;
@@ -367,6 +411,15 @@ int main(int argc, char **argv)
 	char last_fail[512] = "";
 	unsigned long said_served = 0, said_wb = 0, said_denied = 0, said_failures = 0;
 	unsigned long suppressed_failures = 0;
+	// The bay's own clock: a stat of eight names four thousand times a
+	// second buys nothing a quarter of a second does not.  `scan_due`
+	// stands until a scan actually runs, so a scan the channel deferred is
+	// retried on the NEXT POLL and not on the next interval.
+	unsigned long polls_per_scan = scan_ms ? (unsigned long)scan_ms * 1000ul / poll_us : 0ul;
+	if (scan_ms && polls_per_scan == 0)
+		polls_per_scan = 1;
+	unsigned long since_scan = 0;
+	int scan_due = 0;
 	while (!stopping) {
 		if (irq_fd >= 0) {
 			struct pollfd pfd = { irq_fd, POLLIN, 0 };
@@ -391,6 +444,18 @@ int main(int argc, char **argv)
 				++suppressed_failures;
 			}
 		}
+		// The bay.
+		if (polls_per_scan && ++since_scan >= polls_per_scan) {
+			since_scan = 0;
+			scan_due = 1;
+		}
+		if (scan_due) {
+			const int r = feeder_bay_scan(&f, err, sizeof err);
+			if (r <= 0)
+				scan_due = 0;
+			if (r < 0)
+				say("looking at the bay: %s", err);
+		}
 		if (irq_fd >= 0) {
 			// The events this pass saw are cleared in the fabric; re-arm
 			// the line for the next.
@@ -406,6 +471,12 @@ int main(int argc, char **argv)
 			    f.served, f.written_back, f.denied, f.refused_walk, f.deferred_dirty, f.longest_deferral,
 			    f.lost_at_start, f.failures, f.failures ? ", the last: " : "", f.failures ? f.last_failure : "",
 			    f.polls, ps.polls);
+			say("the bay: %lu looks (%lu put off for a transfer, at most %u polls in a row), %lu drive(s) appeared, "
+			    "%lu went away, %lu replaced, %lu write-protected, %lu unprotected, %lu block(s) flushed on the way out, "
+			    "%lu LOST in %lu event(s), %lu failure(s); the drives present are 0x%02x, write-protected 0x%02x",
+			    f.scans, f.scans_deferred, f.worst_scan_deferral, f.appeared, f.went_away, f.replaced,
+			    f.protects, f.unprotects, f.flushed, f.lost_blocks, f.lost_events, f.bay_failures,
+			    f.drive_present, f.drive_read_only);
 			said_served = f.served;
 			said_wb = f.written_back;
 			said_denied = f.denied;
@@ -413,13 +484,16 @@ int main(int argc, char **argv)
 			last_said = now;
 		}
 	}
-	// Stopping: the CADR's writes onto the pack, then no drive.
+	// Stopping: the CADR's writes onto the packs, then no drive on any
+	// cable.
 	const unsigned still = feeder_flush(&f, 50, err, sizeof err);
 	if (still)
 		say("stopping: %s", err);
-	ps_drive(&ps, 0, 0, 0);
-	say("stopped: served %lu, written back %lu, denied %lu, %lu failures; the drive on unit %u is absent%s",
-	    f.served, f.written_back, f.denied, f.failures, unit, still ? " and the CADR's last writes are not all on the pack" : "");
-	pack_close(&pk);
+	ps_drive(&ps, 0, 0, f.timed, bay_present_mask(&bay));
+	say("stopped: served %lu, written back %lu, denied %lu, %lu failures; the drives on units 0x%02x are absent%s",
+	    f.served, f.written_back, f.denied, f.failures, bay_present_mask(&bay),
+	    still ? " and the CADR's last writes are not all on their packs" : "");
+	for (unsigned u = 0; u < BAY_UNITS; ++u)
+		bay_close(&bay, u);
 	return still ? 1 : 0;
 }

@@ -27,8 +27,23 @@
 // back before it is fetched into); forty more blocks than the store has
 // slots (so second chance must evict); a Write All's foreign header and
 // checkwords (so a restart has something to forget); and one address on
-// two units.  The pack sits on unit 2 throughout, so the unit field of
-// every tag is live and a request on unit 0 is the other-unit case.
+// two units.  The trace's pack sits on unit 2 throughout, so the unit field
+// of every tag is live and a request on unit 0 is the other-unit case.
+//
+// AND THE DRIVE BAY, which is a real directory of real files under the work
+// directory --- there is no model of a filesystem here, because a rename
+// and a delete are exactly what has to be exercised.  A SECOND drive, a
+// T-80 where the trace's is a T-300, is copied into the bay on unit 5 and
+// then: served alongside unit 2, block for block out of its own pack with
+// its own geometry; RENAMED away with blocks the machine had written still
+// in the store, where the flush must land in the file under its new name;
+// DELETED with blocks in the store, where the flush cannot land anywhere
+// and the loss must be said, with the unit and the count, on the console
+// this test reads back; write-protected and unprotected by its read-only
+// mark alone; overwritten in place, where flushing would corrupt the copy
+// arriving and must not be attempted; and changed while the channel is
+// walking, where nothing may move at all.  A file of the wrong size is not
+// a drive, which is what makes a pack still being copied in not one.
 //
 // WHAT IS CHECKED, at the model's own registers as the fabric would see
 // them.  Every request the controller posts is answered within a bounded
@@ -69,8 +84,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <unistd.h>
 
+#include "pack_bay.h"
 #include "pack_ecc.h"
 #include "pack_feeder.h"
 #include "pack_file.h"
@@ -93,9 +110,12 @@ static void fail(const char *fmt, ...)
 	}
 }
 
-// The unit the pack is on for this run: not zero, so the tag's unit field
-// is live in every fetch.
+// The unit the trace's pack is on for this run: not zero, so the tag's unit
+// field is live in every fetch.  UNIT2 is the drive bay's second drive, a
+// T-80 against the trace's T-300, so that a geometry taken from the wrong
+// drive reads wrong.
 #define UNIT 2u
+#define UNIT2 5u
 #define ALL_SLOTS ((1u << PS_SLOTS) - 1u)
 // How many polls a request may stand before it is answered, and a dirty
 // slot before it is written back when the walk is not on it.
@@ -105,6 +125,12 @@ static void fail(const char *fmt, ...)
 #define TRANSFER_BOUND 64
 
 static const struct pack_geometry *G = &PACK_T300;
+// Which geometry a unit's pack has.  Two drives of two types is what says
+// nothing here reads one drive's geometry off the other.
+static const struct pack_geometry *geom(unsigned unit)
+{
+	return unit == UNIT2 ? &PACK_T80 : &PACK_T300;
+}
 
 // ------------------------------------------------------- the shadow pack
 // What the scripted writes imply the pack holds: the data, and whether the
@@ -112,19 +138,21 @@ static const struct pack_geometry *G = &PACK_T300;
 // expression of muir's `write_sector_at` rule, kept apart from
 // pack_file.c's so that a mutation there is caught here.
 struct blk {
+	unsigned unit;
 	uint32_t lba;
 	uint32_t data[PACK_BLOCK_WORDS];
 	uint32_t hdr, hck, dck;
 	int hdr_laid, dck_laid;
 	int touched;		// ever read or written by the script
+	int gone;		// its drive left the bay: not compared at the end
 };
-static struct blk blocks[128];
+static struct blk blocks[256];
 static size_t n_blocks;
 
-static struct blk *shadow(uint32_t lba, int make)
+static struct blk *shadow(unsigned unit, uint32_t lba, int make)
 {
 	for (size_t i = 0; i < n_blocks; ++i)
-		if (blocks[i].lba == lba)
+		if (blocks[i].lba == lba && blocks[i].unit == unit)
 			return &blocks[i];
 	if (!make)
 		return NULL;
@@ -133,20 +161,22 @@ static struct blk *shadow(uint32_t lba, int make)
 		exit(2);
 	}
 	memset(&blocks[n_blocks], 0, sizeof blocks[0]);
+	blocks[n_blocks].unit = unit;
 	blocks[n_blocks].lba = lba;
 	return &blocks[n_blocks++];
 }
 
 static void shadow_expect(const struct blk *s, uint32_t w[PACK_RECORD_WORDS])
 {
+	const struct pack_geometry *g = geom(s->unit);
 	memcpy(w, s->data, sizeof s->data);
 	uint32_t c, h, b;
-	pack_chb(G, s->lba, &c, &h, &b);
+	pack_chb(g, s->lba, &c, &h, &b);
 	if (s->hdr_laid) {
 		w[256] = s->hdr;
 		w[257] = s->hck;
 	} else {
-		w[256] = pack_header_of(G, c, h, b);
+		w[256] = pack_header_of(g, c, h, b);
 		w[257] = ecc_over_words(&w[256], 1);
 	}
 	w[258] = s->dck_laid ? s->dck : ecc_over_words(w, PACK_BLOCK_WORDS);
@@ -154,10 +184,11 @@ static void shadow_expect(const struct blk *s, uint32_t w[PACK_RECORD_WORDS])
 
 static void shadow_writeback(struct blk *s, const uint32_t w[PACK_RECORD_WORDS])
 {
+	const struct pack_geometry *g = geom(s->unit);
 	memcpy(s->data, w, sizeof s->data);
 	uint32_t c, h, b;
-	pack_chb(G, s->lba, &c, &h, &b);
-	const uint32_t own = pack_header_of(G, c, h, b);
+	pack_chb(g, s->lba, &c, &h, &b);
+	const uint32_t own = pack_header_of(g, c, h, b);
 	s->hdr_laid = !(w[256] == own && w[257] == ecc_over_words(&own, 1));
 	s->hdr = w[256];
 	s->hck = w[257];
@@ -166,12 +197,13 @@ static void shadow_writeback(struct blk *s, const uint32_t w[PACK_RECORD_WORDS])
 }
 
 // The format's own three words for a block.
-static void format_words(uint32_t lba, const uint32_t data[PACK_BLOCK_WORDS], uint32_t w[PACK_RECORD_WORDS])
+static void format_words(unsigned unit, uint32_t lba, const uint32_t data[PACK_BLOCK_WORDS], uint32_t w[PACK_RECORD_WORDS])
 {
+	const struct pack_geometry *g = geom(unit);
 	uint32_t c, h, b;
-	pack_chb(G, lba, &c, &h, &b);
+	pack_chb(g, lba, &c, &h, &b);
 	memcpy(w, data, PACK_BLOCK_BYTES);
-	w[256] = pack_header_of(G, c, h, b);
+	w[256] = pack_header_of(g, c, h, b);
 	w[257] = ecc_over_words(&w[256], 1);
 	w[258] = ecc_over_words(w, PACK_BLOCK_WORDS);
 }
@@ -198,6 +230,16 @@ struct fake {
 	uint32_t *ddr;		// the spare region, `ddr[0]` at `ddr_phys`
 	uint32_t ddr_phys, ddr_bytes;
 	int busy_left, busy_polls;	// status reads a move stays busy for
+	// The DRIVE register as the fabric would take it: the seam, and the
+	// attention field (bits 24:17) which is a PULSE --- what is written
+	// with it, and what stands in the last word written.
+	uint32_t drive_attention, drive_att_standing;
+	unsigned long drive_writes;
+	// A slot taken away while DIRTY is the CADR's write lost, and is a
+	// fault --- except where the script has just made a pack vanish with
+	// blocks still in the store, which is the one case where the loss is
+	// the honest outcome and must be reported rather than avoided.
+	int allow_dirty_take;
 	int done, error, refused;
 	int drop_next_write;		// a write-back that moves nothing
 	uint32_t last_addr, last_ctl;
@@ -212,7 +254,7 @@ struct fake {
 		int expect_deny;	// the script says this block is not servable
 		int laid;		// a Write All: the three words after the block are these
 		uint32_t laid_hdr, laid_hck, laid_dck;
-	} queue[96];
+	} queue[160];
 	int q_head, q_tail;
 	// T_START is the command-list fetch between a START and the first
 	// lookup: the channel active, waiting on nothing, and `ch_slot` still
@@ -242,7 +284,7 @@ struct fake {
 	unsigned long start_refusals;	// refused in the command-list fetch, on the previous transfer's slot
 	int last_move_was_writeback_of;		// slot, or -1
 	// Write-backs to verify against the pack file after the poll.
-	struct { unsigned slot; uint32_t lba; uint32_t words[PACK_RECORD_WORDS]; } pending_wb[32];
+	struct { unsigned slot, unit; uint32_t lba; uint32_t words[PACK_RECORD_WORDS]; } pending_wb[32];
 	int n_pending_wb;
 };
 
@@ -294,7 +336,7 @@ static uint32_t tag_lba(uint32_t tag, unsigned *unit)
 {
 	uint32_t c, h, b, lba;
 	ps_tag_split(tag, unit, &c, &h, &b);
-	if (pack_lba(G, c, h, b, &lba) < 0)
+	if (pack_lba(geom(*unit), c, h, b, &lba) < 0)
 		return 0xFFFFFFFFu;
 	return lba;
 }
@@ -359,7 +401,12 @@ static void fake_write_at_beat(struct pack_side *ps, unsigned reg, uint32_t v)
 	case PS_ADDR: k->regs[reg] = v; return;
 	case PS_TAG: k->regs[reg] = v & PS_TAG_MASK; return;
 	case PS_SLOT: k->regs[reg] = v & 0x1Fu; return;
-	case PS_DRIVE: k->regs[reg] = v & 0x1FFFFu; return;
+	case PS_DRIVE:
+		k->regs[reg] = v & 0x1FFFFu;
+		k->drive_att_standing = (v >> PS_DRIVE_ATTENTION_SHIFT) & 0xFFu;
+		k->drive_attention |= k->drive_att_standing;
+		++k->drive_writes;
+		return;
 	case PS_REF: k->ref &= ~(v & ALL_SLOTS); k->ref_cleared |= v & ALL_SLOTS; return;
 	case PS_IRQ: k->irq &= ~(v & 7u); return;
 	case PS_IRQEN: k->irqen = v & 7u; return;
@@ -413,7 +460,7 @@ static void fake_write_at_beat(struct pack_side *ps, unsigned reg, uint32_t v)
 	k->busy_left = k->busy_polls;
 	k->last_addr = addr;
 	if (go == PS_CTL_TAKE) {
-		if ((k->dirty & (1u << slot)) && !k->starting)
+		if ((k->dirty & (1u << slot)) && !k->starting && !k->allow_dirty_take)
 			fail("slot %u was taken away while DIRTY: the CADR's write is lost", slot);
 		k->valid[slot] = 0;
 		k->dirty &= ~(1u << slot);
@@ -463,6 +510,7 @@ static void fake_write_at_beat(struct pack_side *ps, unsigned reg, uint32_t v)
 					unsigned unit;
 					k->pending_wb[k->n_pending_wb].slot = slot;
 					k->pending_wb[k->n_pending_wb].lba = tag_lba(k->tag[slot], &unit);
+					k->pending_wb[k->n_pending_wb].unit = unit;
 					memcpy(k->pending_wb[k->n_pending_wb].words, k->store[slot], sizeof k->store[slot]);
 					++k->n_pending_wb;
 				}
@@ -509,9 +557,9 @@ static void hit(struct fake *k, struct xfer *x, int s)
 	k->waiting = 0;
 	unsigned unit;
 	const uint32_t lba = tag_lba(x->tag[k->t_idx], &unit);
-	struct blk *sh = shadow(lba, 0);
+	struct blk *sh = shadow(unit, lba, 0);
 	if (!sh) {
-		fail("the walk hit block %x, which the script never put on the pack", lba);
+		fail("the walk hit block %x of unit %u, which the script never put on that pack", lba, unit);
 	} else {
 		// What the store holds is what the pack carries.
 		uint32_t want[PACK_RECORD_WORDS];
@@ -674,12 +722,12 @@ static void xfer_block(struct xfer *x, uint32_t c, uint32_t h, uint32_t b)
 static void xfer_lba(struct xfer *x, uint32_t lba)
 {
 	uint32_t c, h, b;
-	pack_chb(G, lba, &c, &h, &b);
+	pack_chb(geom(x->unit), lba, &c, &h, &b);
 	xfer_block(x, c, h, b);
 }
 
 // ---- the run loop ------------------------------------------------------
-static struct pack pk;
+static struct bay bay;
 static struct feeder f;
 static struct fake k;
 static struct pack_side ps;
@@ -689,20 +737,27 @@ static void verify_pending_writebacks(void)
 {
 	for (int i = 0; i < k.n_pending_wb; ++i) {
 		const uint32_t lba = k.pending_wb[i].lba;
+		const unsigned unit = k.pending_wb[i].unit;
 		const uint32_t *w = k.pending_wb[i].words;
+		struct pack *pkp = bay_pack(&bay, unit);
 		uint8_t file_bytes[PACK_BLOCK_BYTES], want_bytes[PACK_BLOCK_BYTES];
-		if (pread(pk.fd, file_bytes, sizeof file_bytes, (off_t)lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof file_bytes) {
-			fail("reading block %x of the pack file after a write-back", lba);
+		if (!pkp) {
+			fail("block %x was written back on unit %u, which has no pack in the bay", lba, unit);
+			continue;
+		}
+		if (pread(pkp->fd, file_bytes, sizeof file_bytes, (off_t)lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof file_bytes) {
+			fail("reading block %x of unit %u's pack file after a write-back", lba, unit);
 			continue;
 		}
 		for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
 			for (int q = 0; q < 4; ++q)
 				want_bytes[4 * j + q] = (uint8_t)(w[j] >> (8 * q));
 		if (memcmp(file_bytes, want_bytes, sizeof file_bytes) != 0)
-			fail("block %x in the pack file differs from what the CADR wrote into slot %u", lba, k.pending_wb[i].slot);
+			fail("block %x in unit %u's pack file differs from what the CADR wrote into slot %u",
+			     lba, unit, k.pending_wb[i].slot);
 		uint32_t again[PACK_RECORD_WORDS];
 		char err[256];
-		if (pack_record(&pk, lba, again, err, sizeof err) < 0)
+		if (pack_record(pkp, lba, again, err, sizeof err) < 0)
 			fail("%s", err);
 		else if (memcmp(again, w, sizeof again) != 0)
 			fail("block %x's record after its write-back is not the 259 words written back", lba);
@@ -762,18 +817,87 @@ static void run(void)
 		}
 }
 
-static void lay(uint32_t lba, const uint32_t w[PACK_RECORD_WORDS])
+// The model stepped WITHOUT the feeder polling, so that a slot the CADR has
+// just written is still DIRTY when the drive bay is looked at.  That state
+// --- blocks the machine has given this program and this program has not yet
+// put back --- is what the whole rename-against-delete distinction is about,
+// and `run()` would flush it away before the bay was ever looked at.
+static void run_to_dirty(void)
+{
+	for (int n = 0; n < 64; ++n) {
+		model_step(&k);
+		if (k.tstate == T_IDLE && k.q_head >= k.q_tail && k.dirty)
+			return;
+	}
+	fail("the scripted Write left nothing dirty with the walk idle");
+}
+
+// One look at the bay: 0 it ran, 1 the channel was walking.
+static int scan(void)
 {
 	char err[256];
-	struct blk *s = shadow(lba, 1);
+	const int r = feeder_bay_scan(&f, err, sizeof err);
+	if (r < 0)
+		fail("feeder_bay_scan: %s", err);
+	return r;
+}
+
+// A page of synthetic words for a Write on a unit, and the same page as the
+// bytes the pack file must then carry.
+static void page_of(unsigned unit, uint32_t lba, uint32_t salt, uint32_t page[PACK_BLOCK_WORDS])
+{
+	for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
+		page[j] = synth(lba + unit * 0x10000u, j, salt);
+}
+
+// Block `lba` of `unit` made resident and then written by the CADR, left
+// DIRTY with the walk idle.  Returns the page written.
+static void write_and_leave_dirty(unsigned unit, uint32_t lba, uint32_t salt, uint32_t page[PACK_BLOCK_WORDS])
+{
+	struct xfer *x = enqueue(&k, unit, 0);
+	xfer_lba(x, lba);
+	run();
+	x = enqueue(&k, unit, 1);
+	xfer_lba(x, lba);
+	page_of(unit, lba, salt, page);
+	memcpy(x->page[0], page, PACK_BLOCK_BYTES);
+	run_to_dirty();
+	if (!k.dirty)
+		fail("unit %u block %x was written and no slot is dirty", unit, lba);
+}
+
+// What a pack file must carry at a block, read by name and not through
+// anything this program holds open.
+static void file_block_is(const char *path, unsigned lba, const uint32_t page[PACK_BLOCK_WORDS], const char *what)
+{
+	uint8_t got[PACK_BLOCK_BYTES], want[PACK_BLOCK_BYTES];
+	for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
+		for (int q = 0; q < 4; ++q)
+			want[4 * j + q] = (uint8_t)(page[j] >> (8 * q));
+	const int fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		fail("%s: %s: %s", what, path, strerror(errno));
+		return;
+	}
+	if (pread(fd, got, sizeof got, (off_t)lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof got)
+		fail("%s: reading block %x of %s", what, lba, path);
+	else if (memcmp(got, want, sizeof got) != 0)
+		fail("%s: block %x of %s is not what the machine wrote", what, lba, path);
+	close(fd);
+}
+
+static void lay(unsigned unit, uint32_t lba, const uint32_t w[PACK_RECORD_WORDS])
+{
+	char err[256];
+	struct blk *s = shadow(unit, lba, 1);
 	// A formatter laid the sector behind the store: a copy in the store is
 	// stale and Linux takes it away, writing it back first if the CADR's
 	// write is in it --- the trace's LAY rows are the fabric's stimulus and
 	// the testbench fetches them afresh; here the feeder is asked to.
 	{
 		uint32_t c, h, b;
-		pack_chb(G, lba, &c, &h, &b);
-		const int sl = find_slot(&k, ps_tag(UNIT, c, h, b));
+		pack_chb(geom(unit), lba, &c, &h, &b);
+		const int sl = find_slot(&k, ps_tag(unit, c, h, b));
 		if (sl >= 0) {
 			if ((k.dirty & (1u << sl)) && feeder_writeback(&f, (unsigned)sl, err, sizeof err) != 0)
 				fail("writing slot %d back before a lay: %s", sl, err);
@@ -781,24 +905,70 @@ static void lay(uint32_t lba, const uint32_t w[PACK_RECORD_WORDS])
 				fail("taking slot %d away before a lay: %s", sl, err);
 		}
 	}
-	if (pack_writeback(&pk, lba, w, err, sizeof err) < 0)
+	struct pack *pkp = bay_pack(&bay, unit);
+	if (!pkp)
+		fail("laying block %x on unit %u, which has no pack in the bay", lba, unit);
+	else if (pack_writeback(pkp, lba, w, err, sizeof err) < 0)
 		fail("laying block %x: %s", lba, err);
 	shadow_writeback(s, w);
 }
 
 // A synthetic block laid as the format lays it.
-static void lay_synth(uint32_t lba, uint32_t salt)
+static void lay_synth(unsigned unit, uint32_t lba, uint32_t salt)
 {
 	uint32_t data[PACK_BLOCK_WORDS], w[PACK_RECORD_WORDS];
 	for (int i = 0; i < PACK_BLOCK_WORDS; ++i)
-		data[i] = synth(lba, i, salt);
-	format_words(lba, data, w);
-	lay(lba, w);
+		data[i] = synth(lba + unit * 0x10000u, i, salt);
+	format_words(unit, lba, data, w);
+	lay(unit, lba, w);
 }
 
 static uint32_t hex(const char *s)
 {
 	return (uint32_t)strtoul(s, NULL, 16);
+}
+
+// A pack file of a geometry's size, sparse, fresh.
+static int make_pack(const char *path, const struct pack_geometry *g)
+{
+	unlink(path);
+	int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+	if (fd < 0 || ftruncate(fd, (off_t)pack_size_of(g)) < 0) {
+		fprintf(stderr, "feeder_test: %s: %s\n", path, strerror(errno));
+		if (fd >= 0)
+			close(fd);
+		return -1;
+	}
+	close(fd);
+	return 0;
+}
+
+// The console the program wrote, since `mark`: what a line has to be found
+// in.  A count that names nothing is not a report, and neither is a check
+// that only counts.
+static FILE *console;
+static char logpath[4096];
+static long console_mark(void)
+{
+	fflush(console);
+	return ftell(console);
+}
+static int console_says(long mark, const char *needle)
+{
+	fflush(console);
+	const long end = ftell(console);
+	if (end <= mark)
+		return 0;
+	char *buf = malloc((size_t)(end - mark) + 1);
+	if (!buf)
+		return 0;
+	fseek(console, mark, SEEK_SET);
+	const size_t n = fread(buf, 1, (size_t)(end - mark), console);
+	buf[n] = 0;
+	const int found = strstr(buf, needle) != NULL;
+	free(buf);
+	fseek(console, 0, SEEK_END);
+	return found;
 }
 
 // Checks on an address the feeder chose: the fabric's rules, and that no
@@ -852,18 +1022,26 @@ int main(int argc, char **argv)
 	}
 	char err[256];
 
-	// The pack: a T-300's size, sparse, fresh for this run.
-	char path[4096];
-	snprintf(path, sizeof path, "%s/pack-test.img", argv[2]);
-	unlink(path);
+	// The drive bay: a real directory of real files, because a rename and
+	// a delete are what has to be exercised and there is no modelling
+	// those.  The trace's pack goes in as unit 2's, at a T-300's size,
+	// sparse and fresh for this run.
+	char bay_dir[4000], path[4096];
+	snprintf(bay_dir, sizeof bay_dir, "%s/packs", argv[2]);
 	{
-		int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
-		if (fd < 0 || ftruncate(fd, (off_t)G->cylinders * G->heads * G->blocks_per_track * PACK_BLOCK_BYTES) < 0) {
-			fprintf(stderr, "feeder_test: %s: %s\n", path, strerror(errno));
-			return 2;
-		}
-		close(fd);
+		char cmd[4200];
+		snprintf(cmd, sizeof cmd, "rm -rf '%s'", bay_dir);
+		if (system(cmd) != 0)
+			fail("clearing %s", bay_dir);
 	}
+	if (mkdir(bay_dir, 0755) < 0 && errno != EEXIST) {
+		fprintf(stderr, "feeder_test: %s: %s\n", bay_dir, strerror(errno));
+		return 2;
+	}
+	bay_init(&bay, bay_dir);
+	bay_path(&bay, UNIT, path, sizeof path);
+	if (make_pack(path, &PACK_T300) < 0)
+		return 2;
 	{
 		// A file of the wrong size is refused, as muir refuses it.
 		char wrong[4096];
@@ -879,14 +1057,15 @@ int main(int argc, char **argv)
 			fail("a file of 1,234,567 bytes was opened as a pack");
 			pack_close(&w);
 		}
+		struct pack_geometry g;
+		if (pack_geometry_of_size(1234567, &g) == 0)
+			fail("1,234,567 bytes was taken for a geometry");
+		if (pack_geometry_of_size(pack_size_of(&PACK_T80), &g) < 0 || g.heads != 5)
+			fail("a T-80's size was not taken for a T-80");
+		if (pack_geometry_of_size(pack_size_of(&PACK_T300), &g) < 0 || g.heads != 19)
+			fail("a T-300's size was not taken for a T-300");
 		unlink(wrong);
 	}
-	if (pack_open(&pk, path, 1, err, sizeof err) < 0) {
-		fail("opening the test pack: %s", err);
-		return 1;
-	}
-	if (pk.g.heads != 19)
-		fail("a file of a T-300's size was taken for %u heads", pk.g.heads);
 
 	// The face, the spare, the feeder.
 	memset(&k, 0, sizeof k);
@@ -910,15 +1089,36 @@ int main(int argc, char **argv)
 	uint32_t ident;
 	if (!ps_ident_ok(&ps, &ident))
 		fail("IDENT read 0x%08x", ident);
-	if (feeder_init(&f, &pk, &ps, k.ddr, k.ddr_phys, k.ddr_bytes, NULL) < 0) {
+	// The console this program writes, read back: a loss that is not said
+	// is a loss pretended away, and only the text says it was said.
+	snprintf(logpath, sizeof logpath, "%s/console.log", argv[2]);
+	unlink(logpath);
+	console = fopen(logpath, "w+");
+	if (!console) {
+		fprintf(stderr, "feeder_test: %s: %s\n", logpath, strerror(errno));
+		return 2;
+	}
+	if (feeder_init(&f, &bay, &ps, k.ddr, k.ddr_phys, k.ddr_bytes, console) < 0) {
 		fail("feeder_init");
 		return 1;
 	}
 	every_fetch_address_checked();
 	k.starting = 1;
-	if (feeder_start(&f, UNIT, 0, 0, err, sizeof err) < 0)
+	if (feeder_start(&f, 0, err, sizeof err) < 0)
 		fail("feeder_start: %s", err);
 	k.starting = 0;
+	if (!bay_pack(&bay, UNIT))
+		fail("the trace's pack in the bay did not come present at the start");
+	else if (bay_pack(&bay, UNIT)->g.heads != 19)
+		fail("a file of a T-300's size was taken for %u heads", bay_pack(&bay, UNIT)->g.heads);
+	if (f.appeared != 1)
+		fail("%lu drives appeared at the start, wanting 1", f.appeared);
+	if (k.drive_attention != (1u << UNIT))
+		fail("the attention field was 0x%02x when the drive came present, wanting 0x%02x",
+		     k.drive_attention, 1u << UNIT);
+	if (k.drive_att_standing)
+		fail("the attention field stands at 0x%02x after the drive came present: it must be a pulse",
+		     k.drive_att_standing);
 	if (k.takes != PS_SLOTS)
 		fail("feeder_start took %lu slots away, not %u", k.takes, PS_SLOTS);
 	if (f.lost_at_start != 1)
@@ -982,7 +1182,7 @@ int main(int argc, char **argv)
 				words[i] = hex(w);
 			}
 			uint32_t lba2;
-			if (pack_lba(&pk.g, c, h, b, &lba2) < 0 || lba2 != lba)
+			if (pack_lba(G, c, h, b, &lba2) < 0 || lba2 != lba)
 				fail("line %ld: %u/%u/%u is lba %x here and %x in the trace", lineno, c, h, b, lba2, lba);
 			if (strcmp(why, "write") == 0) {
 				// The CADR wrote it: a Write of the block with these words
@@ -999,7 +1199,7 @@ int main(int argc, char **argv)
 				x->laid_dck = words[258];
 				run();
 				++transfers;
-				struct blk *s = shadow(lba, 0);
+				struct blk *s = shadow(UNIT, lba, 0);
 				uint32_t got[PACK_RECORD_WORDS];
 				if (s) {
 					shadow_expect(s, got);
@@ -1015,12 +1215,12 @@ int main(int argc, char **argv)
 						fail("line %ld: data checkword of block %x is 0x%08x here, 0x%08x in muir", lineno, lba, ecc_over_words(words, PACK_BLOCK_WORDS), words[258]);
 					else
 						++ecc_checked;
-					if (words[256] != pack_header_of(&pk.g, c, h, b))
-						fail("line %ld: header_of(%u,%u,%u) is 0x%08x here, 0x%08x in muir", lineno, c, h, b, pack_header_of(&pk.g, c, h, b), words[256]);
+					if (words[256] != pack_header_of(G, c, h, b))
+						fail("line %ld: header_of(%u,%u,%u) is 0x%08x here, 0x%08x in muir", lineno, c, h, b, pack_header_of(G, c, h, b), words[256]);
 				} else {
 					++lays;
 				}
-				lay(lba, words);
+				lay(UNIT, lba, words);
 			}
 		} else if (strcmp(kind, "NEED") == 0) {
 			const uint32_t lba = hex(strtok_r(NULL, " ", &save));
@@ -1028,7 +1228,7 @@ int main(int argc, char **argv)
 			const uint32_t h = hex(strtok_r(NULL, " ", &save));
 			const uint32_t b = hex(strtok_r(NULL, " ", &save));
 			++needs;
-			if (!shadow(lba, 0)) {
+			if (!shadow(UNIT, lba, 0)) {
 				fail("line %ld: NEED %x, which no BLK row put on the pack", lineno, lba);
 				continue;
 			}
@@ -1088,7 +1288,7 @@ int main(int argc, char **argv)
 		uint32_t lbas[40];
 		for (int i = 0; i < 40; ++i) {
 			lbas[i] = 0x1000u + 7u * (uint32_t)i;
-			lay_synth(lbas[i], 0x11u);
+			lay_synth(UNIT, lbas[i], 0x11u);
 		}
 		for (int i = 0; i < 40; ++i) {
 			struct xfer *x = enqueue(&k, UNIT, 0);
@@ -1100,7 +1300,7 @@ int main(int argc, char **argv)
 				x = enqueue(&k, UNIT, 1);
 				xfer_lba(x, lbas[i - 2]);
 				for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
-					x->page[0][j] = synth(lbas[i - 2], j, 0x22u + (uint32_t)i);
+					x->page[0][j] = synth(lbas[i - 2] + UNIT * 0x10000u, j, 0x22u + (uint32_t)i);
 				++sweep_writes;
 			}
 		}
@@ -1112,8 +1312,8 @@ int main(int argc, char **argv)
 	// its bit down.  The feeder must write A back and then fetch C there.
 	{
 		const uint32_t A = 0x2000u, C = 0x2001u;
-		lay_synth(A, 0x33u);
-		lay_synth(C, 0x33u);
+		lay_synth(UNIT, A, 0x33u);
+		lay_synth(UNIT, C, 0x33u);
 		struct xfer *x = enqueue(&k, UNIT, 0);
 		xfer_lba(x, A);
 		run();
@@ -1127,7 +1327,7 @@ int main(int argc, char **argv)
 			x = enqueue(&k, UNIT, 1);
 			xfer_lba(x, A);
 			for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
-				x->page[0][j] = synth(A, j, 0x44u);
+				x->page[0][j] = synth(A + UNIT * 0x10000u, j, 0x44u);
 			x = enqueue(&k, UNIT, 0);
 			xfer_lba(x, C);
 			const unsigned long ev0 = k.evict_writebacks;
@@ -1149,15 +1349,15 @@ int main(int argc, char **argv)
 	unsigned long start_refusals = 0;
 	{
 		const uint32_t A = 0x2100u, B = 0x2101u;
-		lay_synth(A, 0x99u);
-		lay_synth(B, 0x99u);
+		lay_synth(UNIT, A, 0x99u);
+		lay_synth(UNIT, B, 0x99u);
 		struct xfer *x = enqueue(&k, UNIT, 0);
 		xfer_lba(x, A);
 		run();
 		x = enqueue(&k, UNIT, 1);
 		xfer_lba(x, A);
 		for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
-			x->page[0][j] = synth(A, j, 0xAAu);
+			x->page[0][j] = synth(A + UNIT * 0x10000u, j, 0xAAu);
 		x = enqueue(&k, UNIT, 0);
 		xfer_lba(x, B);
 		const unsigned long r0 = k.start_refusals, f0 = f.failures;
@@ -1177,9 +1377,9 @@ int main(int argc, char **argv)
 	unsigned long walk_case_refusals = 0;
 	{
 		const uint32_t X1 = 0x3000u, X2 = 0x3001u, Y = 0x3002u;
-		lay_synth(X1, 0x55u);
-		lay_synth(X2, 0x55u);
-		lay_synth(Y, 0x55u);
+		lay_synth(UNIT, X1, 0x55u);
+		lay_synth(UNIT, X2, 0x55u);
+		lay_synth(UNIT, Y, 0x55u);
 		k.ref = 0;
 		struct xfer *x = enqueue(&k, UNIT, 0);
 		xfer_lba(x, X2);
@@ -1215,17 +1415,17 @@ int main(int argc, char **argv)
 	unsigned long laid_blocks = 0;
 	{
 		const uint32_t L = 0x4000u;
-		lay_synth(L, 0x66u);
+		lay_synth(UNIT, L, 0x66u);
 		struct xfer *x = enqueue(&k, UNIT, 1);
 		xfer_lba(x, L);
 		for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
-			x->page[0][j] = synth(L, j, 0x77u);
+			x->page[0][j] = synth(L + UNIT * 0x10000u, j, 0x77u);
 		x->laid = 1;
 		x->laid_hdr = 0x5A000000u | (L & 0xFFFFu);
 		x->laid_hck = ecc_over_words(&x->laid_hdr, 1) ^ 0x00010000u;
 		x->laid_dck = ecc_over_words(x->page[0], PACK_BLOCK_WORDS) ^ 0x80000001u;
 		run();
-		struct blk *s = shadow(L, 0);
+		struct blk *s = shadow(UNIT, L, 0);
 		if (!s || !s->hdr_laid || !s->dck_laid)
 			fail("the Write All did not lay a foreign header and checkword in the shadow");
 		// And read back: the laid words come through the store.
@@ -1233,6 +1433,384 @@ int main(int argc, char **argv)
 		xfer_lba(x, L);
 		run();
 	}
+
+
+	// ---- the drive bay ----------------------------------------------------
+	//
+	// A real directory of real files: a rename and a delete are exactly what
+	// has to be exercised and there is no modelling those.  Every arm below
+	// ends with the store consistent with the bay, because a drive that
+	// leaves takes its slots with it.
+	unsigned long bay_two_unit_hits = 0, bay_scans_deferred = 0;
+	char pack2[4096], taken_out[4096];
+	bay_path(&bay, UNIT2, pack2, sizeof pack2);
+	snprintf(taken_out, sizeof taken_out, "%s/taken-out.img", bay_dir);
+	{
+		// A unit with no file in the bay is a cable with nothing on it, and
+		// a request on it is DENIED exactly as one on unit 0 was.
+		struct xfer *x = enqueue(&k, UNIT2, 0);
+		xfer_block(x, 0, 0, 0);
+		x->expect_deny = 1;
+		++denials_expected;
+		const unsigned long d0 = k.denied_ok;
+		run();
+		if (k.denied_ok != d0 + 1)
+			fail("a request on unit %u, which has no file in the bay, was not denied", UNIT2);
+		k.miss = 0;
+	}
+	{
+		// A FILE OF THE WRONG SIZE IS NOT A DRIVE.  This is what makes a
+		// pack still being copied in not one: every intermediate size is
+		// the wrong size, and the drive appears when the last byte lands.
+		const int fd = open(pack2, O_RDWR | O_CREAT | O_TRUNC, 0644);
+		if (fd < 0 || ftruncate(fd, 4096) < 0)
+			fail("making a short file in the bay");
+		if (fd >= 0)
+			close(fd);
+		const unsigned long w0 = k.drive_writes;
+		scan();
+		if (bay_pack(&bay, UNIT2))
+			fail("a file of 4,096 bytes in the bay became unit %u's drive", UNIT2);
+		if (k.regs[PS_DRIVE] & (1u << UNIT2))
+			fail("DRIVE says unit %u is present with only a short file there", UNIT2);
+		if (k.drive_writes != w0)
+			fail("DRIVE was written by a scan that changed nothing");
+	}
+	{
+		// The copy finishes: a T-80 where the trace's drive is a T-300, so
+		// a geometry read off the wrong drive reads wrong.
+		if (make_pack(pack2, &PACK_T80) < 0)
+			return 2;
+		k.drive_attention = 0;
+		scan();
+		const struct pack *p2 = bay_pack(&bay, UNIT2);
+		if (!p2)
+			fail("a T-80 in the bay did not become unit %u's drive", UNIT2);
+		else if (p2->g.heads != 5 || p2->blocks != 815u * 5u * 17u)
+			fail("unit %u's pack was taken for %u heads and %u blocks, wanting a T-80's 5 and 69275",
+			     UNIT2, p2->g.heads, p2->blocks);
+		if (!(k.regs[PS_DRIVE] & (1u << UNIT2)))
+			fail("DRIVE does not say unit %u is present", UNIT2);
+		if (k.regs[PS_DRIVE] & (1u << (UNIT2 + 8)))
+			fail("unit %u came present write-protected with its write bits up", UNIT2);
+		if (k.drive_attention != (1u << UNIT2))
+			fail("the attention field was 0x%02x when unit %u's pack was loaded, wanting 0x%02x",
+			     k.drive_attention, UNIT2, 1u << UNIT2);
+		if (k.drive_att_standing)
+			fail("the attention field stands at 0x%02x: it must be a pulse", k.drive_att_standing);
+	}
+	{
+		// TWO UNITS SERVING TWO PACKS AT ONCE, under the same block number,
+		// each block out of its own file with its own geometry.
+		const uint32_t P = 0x900u;
+		lay_synth(UNIT, P, 0xB1u);
+		lay_synth(UNIT2, P, 0xB2u);
+		lay_synth(UNIT2, P + 1u, 0xB2u);
+		struct xfer *x = enqueue(&k, UNIT, 0);
+		xfer_lba(x, P);
+		x = enqueue(&k, UNIT2, 0);
+		xfer_lba(x, P);
+		x = enqueue(&k, UNIT, 0);
+		xfer_lba(x, P);
+		x = enqueue(&k, UNIT2, 0);
+		xfer_lba(x, P + 1u);
+		const unsigned long h0 = k.hits_compared;
+		run();
+		bay_two_unit_hits = k.hits_compared - h0;
+		if (bay_two_unit_hits < 4)
+			fail("%lu hits over two units, wanting at least 4", bay_two_unit_hits);
+		uint32_t c, h, b;
+		pack_chb(geom(UNIT), P, &c, &h, &b);
+		const int s1 = find_slot(&k, ps_tag(UNIT, c, h, b));
+		pack_chb(geom(UNIT2), P, &c, &h, &b);
+		const int s2 = find_slot(&k, ps_tag(UNIT2, c, h, b));
+		if (s1 < 0 || s2 < 0 || s1 == s2)
+			fail("block %x of two units did not sit in two slots at once (%d, %d)", P, s1, s2);
+	}
+	{
+		// **NOTHING MOVES IN THE MIDDLE OF A TRANSFER.**  The read-only mark
+		// is set with the channel walking: four looks change nothing and say
+		// so, and the change lands on the first look with the channel idle.
+		k.ch_active = 1;
+		k.waiting = 0;
+		const unsigned long w0 = k.drive_writes, d0 = f.scans_deferred, sc0 = f.scans;
+		if (chmod(pack2, 0444) < 0)
+			fail("chmod: %s", strerror(errno));
+		for (int n = 0; n < 4; ++n)
+			if (scan() != 1)
+				fail("the bay was looked at while the channel was walking");
+		bay_scans_deferred = f.scans_deferred - d0;
+		if (f.scans != sc0)
+			fail("a scan ran while the channel was walking");
+		if (bay_scans_deferred != 4)
+			fail("%lu looks were put off for the transfer, wanting 4", bay_scans_deferred);
+		if (k.drive_writes != w0)
+			fail("DRIVE was written while the channel was walking");
+		if (bay_read_only_mask(&bay) & (1u << UNIT2))
+			fail("the write-protect switch flipped in the middle of a transfer");
+		if (f.worst_scan_deferral < 4)
+			fail("the worst run of deferred looks reads %u, wanting at least 4", f.worst_scan_deferral);
+		k.ch_active = 0;
+		if (scan() != 0)
+			fail("the bay was still not looked at with the channel idle");
+		if (!(bay_read_only_mask(&bay) & (1u << UNIT2)))
+			fail("the read-only mark did not reach the drive");
+		if (!(k.regs[PS_DRIVE] & (1u << (UNIT2 + 8))))
+			fail("DRIVE does not say unit %u is write-protected", UNIT2);
+		if (f.protects != 1)
+			fail("%lu write-protections, wanting 1", f.protects);
+		// And the switch reaches the pack itself: a write-back onto it is
+		// refused, which is what a write-protected drive is for.
+		struct pack *p2 = bay_pack(&bay, UNIT2);
+		uint32_t rec[PACK_RECORD_WORDS];
+		if (!p2 || pack_record(p2, 0, rec, err, sizeof err) < 0)
+			fail("reading a write-protected pack: %s", err);
+		else if (pack_writeback(p2, 0, rec, err, sizeof err) == 0)
+			fail("a write-back onto a write-protected pack was taken");
+	}
+	{
+		// Unprotected again, and then a block the machine has written left
+		// in the store when the mark is set: **the flush comes before the
+		// switch**, or the block would be stranded in a store that may no
+		// longer write.
+		if (chmod(pack2, 0644) < 0)
+			fail("chmod: %s", strerror(errno));
+		scan();
+		if (bay_read_only_mask(&bay) & (1u << UNIT2))
+			fail("unit %u is still write-protected after its mark was cleared", UNIT2);
+		if (f.unprotects != 1)
+			fail("%lu unprotections, wanting 1", f.unprotects);
+		const uint32_t Q = 0x901u;
+		uint32_t page[PACK_BLOCK_WORDS];
+		lay_synth(UNIT2, Q, 0xC0u);
+		write_and_leave_dirty(UNIT2, Q, 0xC1u, page);
+		const unsigned long fl0 = f.flushed;
+		if (chmod(pack2, 0444) < 0)
+			fail("chmod: %s", strerror(errno));
+		scan();
+		if (f.flushed != fl0 + 1)
+			fail("%lu block(s) were flushed before the write-protect switch flipped, wanting 1", f.flushed - fl0);
+		if (k.dirty)
+			fail("a slot is still dirty after the write-protect flush: DIRTY 0x%06x", k.dirty);
+		file_block_is(pack2, Q, page, "the flush before a write-protect");
+		k.n_pending_wb = 0;
+		if (chmod(pack2, 0644) < 0)
+			fail("chmod: %s", strerror(errno));
+		scan();
+	}
+	unsigned long bay_flushed_out = 0, bay_lost = 0;
+	{
+		// **A RENAME TAKES A PACK OUT AND LOSES NOTHING.**  The file stays
+		// alive under its new name, this program's descriptor followed it,
+		// and the flush lands there --- read back by name, from a descriptor
+		// nothing here holds.
+		const uint32_t R = 0x902u;
+		uint32_t page[PACK_BLOCK_WORDS];
+		lay_synth(UNIT2, R, 0xD0u);
+		write_and_leave_dirty(UNIT2, R, 0xD1u, page);
+		const unsigned long fl0 = f.flushed, lost0 = f.lost_blocks, away0 = f.went_away;
+		k.drive_attention = 0;
+		const long mark = console_mark();
+		if (rename(pack2, taken_out) < 0)
+			fail("rename: %s", strerror(errno));
+		scan();
+		bay_flushed_out = f.flushed - fl0;
+		if (f.went_away != away0 + 1)
+			fail("the renamed pack did not leave the bay");
+		if (bay_flushed_out != 1)
+			fail("the renamed pack took %lu block(s) with it, wanting 1", bay_flushed_out);
+		if (f.lost_blocks != lost0)
+			fail("%lu block(s) were called lost on a RENAME, which loses nothing", f.lost_blocks - lost0);
+		if (bay_pack(&bay, UNIT2))
+			fail("unit %u still has a pack after its file was renamed away", UNIT2);
+		if (k.regs[PS_DRIVE] & (1u << UNIT2))
+			fail("DRIVE still says unit %u is present after its file was renamed away", UNIT2);
+		if (k.drive_attention != (1u << UNIT2))
+			fail("the attention field was 0x%02x when the drive went away, wanting 0x%02x",
+			     k.drive_attention, 1u << UNIT2);
+		if (k.dirty)
+			fail("DIRTY is 0x%06x after the drive went away", k.dirty);
+		file_block_is(taken_out, R, page, "the flush into the renamed pack");
+		if (!console_says(mark, "flushed onto the pack before it left the bay"))
+			fail("the console does not say the blocks were flushed on the way out");
+		// **A DRIVE THAT LEAVES TAKES ITS SLOTS WITH IT.**  A block of a pack
+		// that is no longer in the bay left in the store is a block the walk
+		// would hit and be served out of a drive that is not there.
+		for (unsigned sl = 0; sl < PS_SLOTS; ++sl)
+			if (k.valid[sl] && ((k.tag[sl] >> 28) & 7u) == UNIT2)
+				fail("slot %u still holds a block of unit %u after its pack was renamed out of the bay", sl, UNIT2);
+		k.n_pending_wb = 0;
+	}
+	{
+		// **A DELETE LOSES WHAT THE MACHINE HAD WRITTEN, AND THIS PROGRAM
+		// SAYS SO.**  The name is put back first so there is a drive again.
+		if (rename(taken_out, pack2) < 0)
+			fail("rename back: %s", strerror(errno));
+		scan();
+		if (!bay_pack(&bay, UNIT2))
+			fail("the pack renamed back into the bay did not become a drive again");
+		const uint32_t S = 0x903u;
+		uint32_t page[PACK_BLOCK_WORDS];
+		lay_synth(UNIT2, S, 0xE0u);
+		write_and_leave_dirty(UNIT2, S, 0xE1u, page);
+		const unsigned long lost0 = f.lost_blocks, ev0 = f.lost_events, fl0 = f.flushed;
+		const long mark = console_mark();
+		// The one place where a slot may be taken away DIRTY: the block has
+		// nowhere left to go and the honest thing is to say so.
+		k.allow_dirty_take = 1;
+		if (unlink(pack2) < 0)
+			fail("unlink: %s", strerror(errno));
+		scan();
+		k.allow_dirty_take = 0;
+		bay_lost = f.lost_blocks - lost0;
+		if (bay_lost != 1)
+			fail("a delete with one block in the store reported %lu lost, wanting 1", bay_lost);
+		if (f.lost_events != ev0 + 1)
+			fail("%lu loss events, wanting 1", f.lost_events - ev0);
+		if (f.flushed != fl0)
+			fail("%lu block(s) were 'flushed' into a file that had been deleted", f.flushed - fl0);
+		if (bay_pack(&bay, UNIT2))
+			fail("unit %u still has a pack after its file was deleted", UNIT2);
+		if (k.dirty)
+			fail("DIRTY is 0x%06x after the deleted pack's drive went away", k.dirty);
+		char want_line[128];
+		snprintf(want_line, sizeof want_line, "unit %u: LOST 1 block(s)", UNIT2);
+		if (!console_says(mark, want_line))
+			fail("the console does not name the unit and the count of the loss ('%s')", want_line);
+		snprintf(want_line, sizeof want_line, "The blocks: %u", S);
+		if (!console_says(mark, want_line))
+			fail("the console does not name the block that was lost ('%s')", want_line);
+		if (!console_says(mark, "RENAME a pack"))
+			fail("the console does not say what to do instead of deleting");
+		for (unsigned sl = 0; sl < PS_SLOTS; ++sl)
+			if (k.valid[sl] && ((k.tag[sl] >> 28) & 7u) == UNIT2)
+				fail("slot %u still holds a block of unit %u after its pack was deleted", sl, UNIT2);
+		k.n_pending_wb = 0;
+	}
+	{
+		// **A PACK OVERWRITTEN WHERE IT LIES IS NOT ONE TO FLUSH INTO.**  The
+		// file is alive and its link count says so, but its contents are
+		// becoming somebody else's pack, and the old pack's words would
+		// corrupt it.  So the blocks are lost and named, not written.
+		if (make_pack(pack2, &PACK_T80) < 0)
+			return 2;
+		scan();
+		const uint32_t T = 0x904u;
+		uint32_t page[PACK_BLOCK_WORDS];
+		lay_synth(UNIT2, T, 0xF0u);
+		write_and_leave_dirty(UNIT2, T, 0xF1u, page);
+		const unsigned long lost0 = f.lost_blocks, fl0 = f.flushed;
+		const int fd = open(pack2, O_RDWR);
+		if (fd < 0 || ftruncate(fd, 4096) < 0)
+			fail("truncating the pack in place");
+		if (fd >= 0)
+			close(fd);
+		k.allow_dirty_take = 1;
+		const long mark = console_mark();
+		scan();
+		k.allow_dirty_take = 0;
+		if (bay_pack(&bay, UNIT2))
+			fail("a pack truncated under the drive is still a drive");
+		if (f.flushed != fl0)
+			fail("%lu block(s) of the old pack were written into a file being written over", f.flushed - fl0);
+		if (f.lost_blocks != lost0 + 1)
+			fail("%lu block(s) reported lost when a pack was written over, wanting 1", f.lost_blocks - lost0);
+		if (!console_says(mark, "written over where it lies"))
+			fail("the console does not say the pack was written over where it lies");
+		if (unlink(pack2) < 0)
+			fail("unlink: %s", strerror(errno));
+		scan();
+		k.n_pending_wb = 0;
+	}
+	{
+		// **A PACK REPLACED UNDER ITS OWN NAME IS A NEW PACK**, and the
+		// proof is that the drive serves the NEW file's words: the new
+		// file's block is written by name, before it is renamed into place,
+		// and the shadow is set from that --- so a program that kept the old
+		// descriptor, or kept the old block in the store, serves the old
+		// words and is caught.  A shadow filled through the drive would have
+		// moved with the bug.
+		if (make_pack(pack2, &PACK_T80) < 0)
+			return 2;
+		scan();
+		const uint32_t Z = 0x906u;
+		lay_synth(UNIT2, Z, 0x11u);		// the OLD file's words at Z
+		struct xfer *x = enqueue(&k, UNIT2, 0);
+		xfer_lba(x, Z);
+		run();					// resident, out of the old file
+		char incoming[4096];
+		snprintf(incoming, sizeof incoming, "%s/incoming.img", bay_dir);
+		if (make_pack(incoming, &PACK_T80) < 0)
+			return 2;
+		uint32_t page[PACK_BLOCK_WORDS];
+		uint8_t bytes[PACK_BLOCK_BYTES];
+		page_of(UNIT2, Z, 0x22u, page);
+		for (int j = 0; j < PACK_BLOCK_WORDS; ++j)
+			for (int q = 0; q < 4; ++q)
+				bytes[4 * j + q] = (uint8_t)(page[j] >> (8 * q));
+		{
+			const int fd = open(incoming, O_RDWR);
+			if (fd < 0 || pwrite(fd, bytes, sizeof bytes, (off_t)Z * PACK_BLOCK_BYTES) != (ssize_t)sizeof bytes)
+				fail("writing the incoming pack by name");
+			if (fd >= 0)
+				close(fd);
+		}
+		struct blk *sh = shadow(UNIT2, Z, 1);
+		memcpy(sh->data, page, PACK_BLOCK_BYTES);
+		sh->hdr_laid = sh->dck_laid = 0;
+		const unsigned long away0 = f.went_away, in0 = f.appeared, rep0 = f.replaced;
+		if (rename(incoming, pack2) < 0)
+			fail("renaming the incoming pack into place: %s", strerror(errno));
+		scan();
+		if (f.went_away != away0 + 1 || f.appeared != in0 + 1)
+			fail("a pack replaced under its own name gave %lu removal(s) and %lu arrival(s), wanting 1 and 1",
+			     f.went_away - away0, f.appeared - in0);
+		if (f.replaced != rep0 + 1)
+			fail("the replacement was not counted as one");
+		if (!bay_pack(&bay, UNIT2))
+			fail("unit %u has no pack after one was renamed into its name", UNIT2);
+		// The walk asks for Z again: it must miss, and be served the NEW
+		// file's words.
+		x = enqueue(&k, UNIT2, 0);
+		xfer_lba(x, Z);
+		run();
+		k.n_pending_wb = 0;
+	}
+	{
+		// **THE EIGHT NAMES ARE THE RULE.**  Two more drives, at the two
+		// ends of the range, each serving the same block number out of its
+		// own file: a name mapped to the wrong unit hands one drive's words
+		// to the other and the hit comparison says so.
+		char p0[4096], p7[4096];
+		bay_path(&bay, 0, p0, sizeof p0);
+		bay_path(&bay, 7, p7, sizeof p7);
+		if (!strstr(p0, "disk-pack-0.img") || !strstr(p7, "disk-pack-7.img"))
+			fail("the bay's names are '%s' and '%s'", p0, p7);
+		if (make_pack(p0, &PACK_T300) < 0 || make_pack(p7, &PACK_T300) < 0)
+			return 2;
+		k.drive_attention = 0;
+		scan();
+		if (!bay_pack(&bay, 0) || !bay_pack(&bay, 7))
+			fail("the packs at the two ends of the range did not become drives");
+		if (bay_present_mask(&bay) != (uint8_t)((1u << 0) | (1u << UNIT) | (1u << UNIT2) | (1u << 7)))
+			fail("the drives present are 0x%02x, wanting 0x%02x", bay_present_mask(&bay),
+			     (1u << 0) | (1u << UNIT) | (1u << UNIT2) | (1u << 7));
+		if (k.drive_attention != (uint8_t)((1u << 0) | (1u << 7)))
+			fail("the attention field was 0x%02x when two drives came present at once", k.drive_attention);
+		const uint32_t N = 0x905u;
+		lay_synth(0, N, 0xA0u);
+		lay_synth(7, N, 0xA7u);
+		struct xfer *x = enqueue(&k, 0, 0);
+		xfer_lba(x, N);
+		x = enqueue(&k, 7, 0);
+		xfer_lba(x, N);
+		run();
+	}
+	// Unit 5's blocks went with its pack; nothing at the end may compare
+	// them against a file that is not there.
+	for (size_t i = 0; i < n_blocks; ++i)
+		if (blocks[i].unit == UNIT2)
+			blocks[i].gone = 1;
 
 	// ---- the end of the run: every dirty slot back, the pack as implied -----
 	{
@@ -1246,11 +1824,16 @@ int main(int argc, char **argv)
 	unsigned long touched = 0, compared_final = 0;
 	for (size_t i = 0; i < n_blocks; ++i) {
 		const struct blk *s = &blocks[i];
-		if (!s->touched)
+		if (!s->touched || s->gone)
 			continue;
+		struct pack *pkp = bay_pack(&bay, s->unit);
+		if (!pkp) {
+			fail("block %x of unit %u has no pack in the bay at the end", s->lba, s->unit);
+			continue;
+		}
 		++touched;
 		uint8_t file_bytes[PACK_BLOCK_BYTES], want_bytes[PACK_BLOCK_BYTES];
-		if (pread(pk.fd, file_bytes, sizeof file_bytes, (off_t)s->lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof file_bytes) {
+		if (pread(pkp->fd, file_bytes, sizeof file_bytes, (off_t)s->lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof file_bytes) {
 			fail("reading block %x of the pack file at the end", s->lba);
 			continue;
 		}
@@ -1263,7 +1846,7 @@ int main(int argc, char **argv)
 			compared_final += sizeof file_bytes;
 		uint32_t want[PACK_RECORD_WORDS], got[PACK_RECORD_WORDS];
 		shadow_expect(s, want);
-		if (pack_record(&pk, s->lba, got, err, sizeof err) < 0)
+		if (pack_record(pkp, s->lba, got, err, sizeof err) < 0)
 			fail("%s", err);
 		else if (memcmp(got, want, sizeof got) != 0)
 			fail("block %x's record at the end is not what the scripted writes imply", s->lba);
@@ -1315,7 +1898,7 @@ int main(int argc, char **argv)
 		// A write-back that moved nothing: seen by the poison, the pack
 		// left as it was.
 		const uint32_t lba = 0x1000u;
-		struct blk *s = shadow(lba, 0);
+		struct blk *s = shadow(UNIT, lba, 0);
 		int slot = find_slot(&k, ps_tag(UNIT, 0, 0, 0));
 		{
 			uint32_t c, h, b;
@@ -1332,7 +1915,8 @@ int main(int argc, char **argv)
 			slot = find_slot(&k, ps_tag(UNIT, c, h, b));
 		}
 		uint8_t before_bytes[PACK_BLOCK_BYTES], after_bytes[PACK_BLOCK_BYTES];
-		if (pread(pk.fd, before_bytes, sizeof before_bytes, (off_t)lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof before_bytes)
+		struct pack *pkp = bay_pack(&bay, UNIT);
+		if (pread(pkp->fd, before_bytes, sizeof before_bytes, (off_t)lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof before_bytes)
 			fail("reading the pack before the dropped write-back");
 		k.store[slot][5] ^= 0xFFFFFFFFu;
 		k.drop_next_write = 1;
@@ -1340,7 +1924,7 @@ int main(int argc, char **argv)
 			fail("a write-back that moved nothing was reported done");
 		else if (!strstr(err, "nothing"))
 			fail("a write-back that moved nothing was reported as '%s'", err);
-		if (pread(pk.fd, after_bytes, sizeof after_bytes, (off_t)lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof after_bytes)
+		if (pread(pkp->fd, after_bytes, sizeof after_bytes, (off_t)lba * PACK_BLOCK_BYTES) != (ssize_t)sizeof after_bytes)
 			fail("reading the pack after the dropped write-back");
 		if (memcmp(before_bytes, after_bytes, sizeof before_bytes) != 0)
 			fail("a write-back that moved nothing changed the pack");
@@ -1366,20 +1950,24 @@ int main(int argc, char **argv)
 	// header and checkwords are the format's own --- and for the blocks laid
 	// with foreign ones that is a change, or this arm would be vacuous.
 	unsigned long restart_compared = 0, restart_differ = 0;
-	pack_close(&pk);
-	if (pack_open(&pk, path, 1, err, sizeof err) < 0)
+	struct pack again_pk;
+	bay_path(&bay, UNIT, path, sizeof path);
+	for (unsigned u = 0; u < BAY_UNITS; ++u)
+		bay_close(&bay, u);
+	if (pack_open(&again_pk, path, 1, err, sizeof err) < 0)
 		fail("reopening the pack: %s", err);
 	else {
-		if (pk.n_headers || pk.n_dcks)
-			fail("the tables are not empty after a restart: %zu headers, %zu checkwords", pk.n_headers, pk.n_dcks);
+		if (again_pk.n_headers || again_pk.n_dcks)
+			fail("the tables are not empty after a restart: %zu headers, %zu checkwords",
+			     again_pk.n_headers, again_pk.n_dcks);
 		for (size_t i = 0; i < n_blocks; ++i) {
 			const struct blk *s = &blocks[i];
-			if (!s->touched)
+			if (!s->touched || s->gone || s->unit != UNIT)
 				continue;
 			uint32_t want[PACK_RECORD_WORDS], got[PACK_RECORD_WORDS], before[PACK_RECORD_WORDS];
-			format_words(s->lba, s->data, want);
+			format_words(s->unit, s->lba, s->data, want);
 			shadow_expect(s, before);
-			if (pack_record(&pk, s->lba, got, err, sizeof err) < 0)
+			if (pack_record(&again_pk, s->lba, got, err, sizeof err) < 0)
 				fail("%s", err);
 			else if (memcmp(got, want, sizeof got) != 0)
 				fail("after a restart block %x's record is not the format's own over the data written", s->lba);
@@ -1393,15 +1981,22 @@ int main(int argc, char **argv)
 		// And a Write All laid again after the restart is carried for this run.
 		const uint32_t L = 0x4000u;
 		uint32_t w[PACK_RECORD_WORDS], again[PACK_RECORD_WORDS];
-		shadow_expect(shadow(L, 0), w);
-		if (pack_writeback(&pk, L, w, err, sizeof err) < 0)
+		shadow_expect(shadow(UNIT, L, 0), w);
+		if (pack_writeback(&again_pk, L, w, err, sizeof err) < 0)
 			fail("laying after the restart: %s", err);
-		else if (pack_record(&pk, L, again, err, sizeof err) < 0 || memcmp(again, w, sizeof w) != 0)
+		else if (pack_record(&again_pk, L, again, err, sizeof err) < 0 || memcmp(again, w, sizeof w) != 0)
 			fail("a header laid after the restart did not come back within the run");
-		pack_close(&pk);
+		pack_close(&again_pk);
 	}
 
-	unlink(path);
+	{
+		char cmd[4200];
+		snprintf(cmd, sizeof cmd, "rm -rf '%s'", bay_dir);
+		if (system(cmd) != 0)
+			fail("clearing %s at the end", bay_dir);
+	}
+	fclose(console);
+	unlink(logpath);
 	free(k.ddr);
 
 	// ---- the totals -------------------------------------------------------------
@@ -1429,6 +2024,16 @@ int main(int argc, char **argv)
 		fail("the feeder counts %lu served, the face saw %lu answered", f.served, k.answered);
 	if (ps.polls == 0)
 		fail("the driver never polled a busy face");
+	if (f.appeared != 8 || f.went_away != 4)
+		fail("the bay saw %lu drives appear and %lu go away, wanting 8 and 4", f.appeared, f.went_away);
+	if (f.replaced < 1)
+		fail("no pack was ever replaced under its own name");
+	if (f.lost_blocks != 2 || f.lost_events != 2)
+		fail("the bay lost %lu block(s) in %lu event(s), wanting 2 and 2", f.lost_blocks, f.lost_events);
+	if (f.bay_failures)
+		fail("%lu failures in the bay", f.bay_failures);
+	if (ps.attentions == 0)
+		fail("no attention was ever raised: a drive coming ready raises one");
 
 	if (bad) {
 		fprintf(stderr, "FAIL: %d mismatches\n", bad);
@@ -1454,13 +2059,24 @@ int main(int argc, char **argv)
 	       "      data written, %lu of them changed by it: the tables are the run's,\n"
 	       "      as muir's are\n"
 	       "    %lu refusals seen and named; a move that moved nothing seen by\n"
-	       "      its poison; %lu polls of a busy face, %lu passes over the face\n",
+	       "      its poison; %lu polls of a busy face, %lu passes over the face\n"
+	       "    the drive bay, on real files: %lu looks, %lu drive(s) appeared and\n"
+	       "      %lu went away; two units served %lu hits out of two packs of two\n"
+	       "      types at once; a rename took %lu block(s) out with it, read back\n"
+	       "      from the renamed file; a delete and an overwrite lost %lu, each\n"
+	       "      said on the console with its unit and its block; the read-only\n"
+	       "      mark protected once and unprotected once, the flush first; a\n"
+	       "      pack replaced under its own name served the NEW file's words;\n"
+	       "      %lu look(s) put off for a transfer and nothing applied in one;\n"
+	       "      %lu attention pulse(s), none left standing\n",
 	       k.requests, trace_requests, needs, transfers, k.answered, k.worst_answer, k.denied_ok,
 	       k.hits_compared, k.words_compared,
 	       k.full_circles, k.refusals_walk, k.start_refusals, k.evict_writebacks, k.worst_dirty,
 	       touched, compared_final, writes, sweep_writes, ecc_checked, lays,
 	       restart_compared, restart_differ,
-	       refusals, ps.polls, polls_run);
+	       refusals, ps.polls, polls_run,
+	       f.scans, f.appeared, f.went_away, bay_two_unit_hits, bay_flushed_out,
+	       f.lost_blocks, bay_scans_deferred, ps.attentions);
 	(void)loads;
 	(void)sweep_reads;
 	return 0;
