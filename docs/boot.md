@@ -53,11 +53,12 @@ filesystem are Digilent's, read out of the `image.ub` already on the card.
    board waits, and never boots anything else. Left to itself U-Boot would
    fall through to `image.ub` with Digilent's own device tree and 512 MB, a
    Linux that owns the CADR's memory; Mete decided the board must never do
-   that. The card's line ends in `|| reset`, so a fetch that fails reboots
-   the board, which tries again ten seconds later, and a server that is
-   merely silent makes this U-Boot's TFTP retry on its own without
-   returning. Either way the first boot that completes is the reserved one.
-   Measured 10 September, both ways, at the U-Boot prompt.
+   that. The card's file sets `cp_kernel2ram=reset`, replacing the copy step
+   the fallback itself would run, so a fetch that fails ends in `resetting
+   ...` and another attempt ten seconds later, for as long as the server is
+   away. Measured 10 September on the real boot path, server stopped; a
+   `|| reset` on the end of the fetch line had been tried first and did not
+   fire on that path (`linux/uEnv.txt.in` says why).
 
    Digilent's stock boot was run once for comparison before that decision,
    from the first card: a login with `Memory: 335116K/524288K`, against
@@ -74,10 +75,9 @@ The console decides which boot happened, in its first seconds:
     the boot          `Filename 'uEnv.net'` ... `Filename 'system.dtb'` ...
                       `Bytes transferred = 26265`, `reading image.ub`, then
                       `Kernel command line: ... mem=384M cma=32M`
-    no server         `TFTP server died; starting again` and silence, or
-                      `TFTP error` then `resetting ...` and U-Boot's banner
-                      again ten seconds later; never `reading image.ub`
-                      before a `uEnv.net` was fetched
+    no server         `TFTP server died; starting again`, `resetting ...`,
+                      and U-Boot's banner again ten seconds later; never
+                      `reading image.ub` before a `uEnv.net` was fetched
 
 Then, at the prompt, three things say the reservation is real:
 
