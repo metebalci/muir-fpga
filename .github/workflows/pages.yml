@@ -26,10 +26,14 @@ permissions:
   pages: write
   id-token: write
 
-# One deployment at a time, and let a running one finish.
+# One deployment at a time, and a newer push supersedes an older one still
+# queued or running.  With cancel-in-progress false, a deployment that GitHub
+# left "in progress" blocked every later one for half an hour on 10 Sep
+# ("Deployment request failed ... due to in progress deployment"), so the
+# published page fell behind the branch by a dozen commits.
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
