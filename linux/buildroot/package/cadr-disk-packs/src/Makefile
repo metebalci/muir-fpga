@@ -36,7 +36,7 @@
 # a survivor nor a catch.  It is not part of `check`, because it builds and
 # runs the whole check once per record.
 
-PROGRAMS := cadr-disk-pack
+PROGRAMS := cadr-disk-packs
 CORE     := pack_file.c pack_bay.c pack_side.c pack_feeder.c
 HEADERS  := pack_ecc.h pack_file.h pack_bay.h pack_side.h pack_feeder.h
 
@@ -54,14 +54,14 @@ endif
 HOSTCC ?= cc
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 GOLDEN ?= $(abspath ../../../../../build/disk.golden)
-WORK   ?= $(HOME)/.cache/muir-fpga-disk-pack
+WORK   ?= $(HOME)/.cache/muir-fpga-disk-packs
 
 CFLAGS += -Wall -Wextra -std=gnu11
 
 all: $(PROGRAMS)
 
-cadr-disk-pack: cadr-disk-pack.c $(CORE) $(HEADERS)
-	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -o $@ cadr-disk-pack.c $(CORE) $(COMMON_LINK)
+cadr-disk-packs: cadr-disk-packs.c $(CORE) $(HEADERS)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -o $@ cadr-disk-packs.c $(CORE) $(COMMON_LINK)
 
 install: all
 	install -d $(DESTDIR)/usr/bin

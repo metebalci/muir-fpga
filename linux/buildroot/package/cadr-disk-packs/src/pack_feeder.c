@@ -64,7 +64,7 @@ static void say(struct feeder *f, const char *fmt, ...)
 		return;
 	va_list ap;
 	va_start(ap, fmt);
-	fputs("cadr-disk-pack: ", f->log);
+	fputs("cadr-disk-packs: ", f->log);
 	vfprintf(f->log, fmt, ap);
 	fputc('\n', f->log);
 	va_end(ap);

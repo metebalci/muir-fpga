@@ -46,7 +46,7 @@
 // the unit slots).
 #define BAY_UNITS 8
 // Where the packs are, and what they are called.  The directory is the
-// card's second partition; `S80cadr-disk-pack` mounts it there.
+// card's second partition; `S80cadr-disk-packs` mounts it there.
 #define BAY_DIR "/mnt/packs"
 #define BAY_NAME_FMT "disk-pack-%u.img"
 

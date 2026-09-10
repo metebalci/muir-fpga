@@ -307,9 +307,9 @@ HP1, so Digilent's FSBL still needs no change.
 ## The disk pack program
 
 The program on Linux that serves the CADR's disks from the drive bay on the
-card: `linux/buildroot/package/cadr-disk-pack/src/cadr-disk-pack.c` and the
+card: `linux/buildroot/package/cadr-disk-packs/src/cadr-disk-packs.c` and the
 files beside it, built into the Buildroot image and started at boot by
-`S80cadr-disk-pack`. This is its second revision, written against the
+`S80cadr-disk-packs`. This is its second revision, written against the
 register face at `a899799` --- the request path --- and it serves on demand;
 the first revision, at `388d03b`, moved blocks and could not learn which
 block the CADR wanted (its record is in "The request path, built" below,
@@ -505,9 +505,9 @@ interrupts = <0 29 4>;` (`IRQ_F2P` bit 0 is GIC interrupt 61) ---
 `CONFIG_UIO_PDRV_GENIRQ` in the kernel and `uio_pdrv_genirq.of_id=generic-uio`
 on its command line. Neither the tree nor the kernel is touched here.
 
-**The check.** `make -C linux/buildroot/package/cadr-disk-pack/src check`, on
+**The check.** `make -C linux/buildroot/package/cadr-disk-packs/src check`, on
 the build host, needing a C compiler and `build/disk.golden`; scratch under
-`~/.cache/muir-fpga-disk-pack`. The disk pack program's core runs against a model of
+`~/.cache/muir-fpga-disk-packs`. The disk pack program's core runs against a model of
 the register face at `a899799` --- the tag with the unit, REQ, DIRTY, REF,
 IRQ, IRQEN, DENY, the refusal per slot, `waiting` --- with a scripted disk
 controller behind it that **asks**: each run of the trace's `NEED` rows is
@@ -613,19 +613,19 @@ puts packs in the bay with `PACKS="a.img 5=b.img"` and makes partition 2
 **What the console must show, with a pack on the card and the drive
 untimed**, in this order, and nothing else at the same rate:
 
-    cadr-disk-pack: the boot partition is at /mnt/card, read-only
-    cadr-disk-pack: the drive bay is at /mnt/packs
-    Starting cadr-disk-pack: OK
-    cadr-disk-pack: the EMIO tally reads 0x01008100 0x01008100: a fabric with the processing system in it; M_AXI_GP0 may be read
-    cadr-disk-pack: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
-    cadr-disk-pack: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
-    cadr-disk-pack: the bay is /mnt/packs: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives that are present, and a file whose read-only mark is set is a write-protected drive
-    cadr-disk-pack: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
-    cadr-disk-pack: 24 slots taken away; the bay is /mnt/packs and the drives are untimed, which is muir's default
-    cadr-disk-pack: unit 0: /mnt/packs/disk-pack-0.img is a drive: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks, writable
-    cadr-disk-pack: unit 0: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
-    cadr-disk-pack: the bay is looked at every 250 ms, and never in the middle of a transfer
-    cadr-disk-pack: polling REQ and DIRTY every 250 us
+    cadr-disk-packs: the boot partition is at /mnt/card, read-only
+    cadr-disk-packs: the drive bay is at /mnt/packs
+    Starting cadr-disk-packs: OK
+    cadr-disk-packs: the EMIO tally reads 0x01008100 0x01008100: a fabric with the processing system in it; M_AXI_GP0 may be read
+    cadr-disk-packs: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
+    cadr-disk-packs: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
+    cadr-disk-packs: the bay is /mnt/packs: disk-pack-0.img to disk-pack-7.img, one a unit; whichever exist are the drives that are present, and a file whose read-only mark is set is a write-protected drive
+    cadr-disk-packs: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
+    cadr-disk-packs: 24 slots taken away; the bay is /mnt/packs and the drives are untimed, which is muir's default
+    cadr-disk-packs: unit 0: /mnt/packs/disk-pack-0.img is a drive: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks, writable
+    cadr-disk-packs: unit 0: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
+    cadr-disk-packs: the bay is looked at every 250 ms, and never in the middle of a transfer
+    cadr-disk-packs: polling REQ and DIRTY every 250 us
 
 The tally's two words are whatever the machine's memory cycles have counted
 by then (256 and 256 after the boot PROM's parity loop, `0x01008100` twice,
@@ -635,9 +635,9 @@ the CADR**: until then the boot PROM sits in `AWAIT-DRIVE-READY` polling a
 status of `0x2321`; with unit 0 present it goes on, and the first requests
 follow within the PROM's own time:
 
-    cadr-disk-pack: request 1: block B (C/H/B) served into slot 0 from 0x1c800000
-    cadr-disk-pack: request 2: block ... served into slot 1 from 0x1c800800
-    cadr-disk-pack: request 3: block ... served into slot 2 from 0x1c801000; further requests are counted, not named
+    cadr-disk-packs: request 1: block B (C/H/B) served into slot 0 from 0x1c800000
+    cadr-disk-packs: request 2: block ... served into slot 1 from 0x1c800800
+    cadr-disk-packs: request 3: block ... served into slot 2 from 0x1c801000; further requests are counted, not named
 
 On the board the PROM asked for blocks 1, 0 and 17 (unit 0: 0/0/1, 0/0/0,
 0/1/0), in that order; the reference band's opening sequence, earlier in
@@ -648,7 +648,7 @@ begins to move and served by the next poll, so the CADR sees a drive with
 no seek and a 250 us sector. Then, once a minute at most while the counts
 move:
 
-    cadr-disk-pack: served 32780, written back 16101, denied 0, refused for the walk's slot 3 (write-backs deferred 3, at most 1 passes in a row), 0 lost at start, 0 failures; 240000 polls, 6170 of the face while busy
+    cadr-disk-packs: served 32780, written back 16101, denied 0, refused for the walk's slot 3 (write-backs deferred 3, at most 1 passes in a row), 0 lost at start, 0 failures; 240000 polls, 6170 of the face while busy
 
 The served and written-back figures are the board's first minute; the rest
 are placeholders for the shape. **A `failures` count above zero names its
@@ -667,7 +667,7 @@ guard line saying the tally reads zero or all ones (the wrong bitstream, or
 the GPIO clock gated --- stop there; the program did); `no pack side ...
 "NONE"` (a proving board); `request N: ...` lines with no
 `served` count moving afterwards; or any `failures` above zero in the
-summary, each of which was named when it happened. `cadr-disk-pack
+summary, each of which was named when it happened. `cadr-disk-packs
 --selftest` still runs the round trip of block 0 through the store with the
 drive absent, as at `997b734`, and passes on the board at that bitstream.
 
@@ -801,7 +801,7 @@ abort the kernel cannot attribute; the pack side's out-of-window SLVERR is
 the decision recorded above and stands, but a program should not write
 outside the sixteen words.
 
-**What the Linux program (`linux/buildroot/package/cadr-disk-pack/src`) must
+**What the Linux program (`linux/buildroot/package/cadr-disk-packs/src`) must
 change**, for its author --- nothing there is edited by this slice:
 
 1. `pack_side.h`: `ps_tag(c, h, b)` gains the unit in bits 30:28
@@ -982,7 +982,7 @@ Measured on 2026-09-10, three ways, none of which reproduces it:
 
 The board's dump differs from muir in 352 of those 1,024 words. So whatever
 put the hole there is **outside `rtl/`**: the disk pack program in
-`linux/buildroot/package/cadr-disk-pack/`, where the pack is in DDR, or the
+`linux/buildroot/package/cadr-disk-packs/`, where the pack is in DDR, or the
 bitstream the board was carrying. Two things about the fabric are worth
 having written down before anyone looks there, because they shape what the
 symptom can mean:

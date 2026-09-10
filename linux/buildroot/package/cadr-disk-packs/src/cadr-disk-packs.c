@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// cadr-disk-pack: the program on Linux that serves the CADR's disk from
+// cadr-disk-packs: the program on Linux that serves the CADR's disk from
 // the pack file on the card.
 //
 // WHAT IT IS.  On the board the disk's packs are files --- `disk-pack-0.img`
@@ -52,7 +52,7 @@
 // transfer**: a scan that finds the channel walking changes nothing and is
 // retried on the next poll, which is a quarter of a millisecond.
 //
-// HOW IT RUNS.  `S80cadr-disk-pack` mounts the card's second partition at
+// HOW IT RUNS.  `S80cadr-disk-packs` mounts the card's second partition at
 // /mnt/packs and starts this at boot with `--log /dev/console`.
 // In order:
 //
@@ -129,7 +129,7 @@
 // line says which block, which slot, which address and what the face
 // answered, and a failure repeating is said once a minute.
 //
-//     cadr-disk-pack [--packs DIR] [--regs ADDR] [--log PATH] [--timed]
+//     cadr-disk-packs [--packs DIR] [--regs ADDR] [--log PATH] [--timed]
 //                      [--poll-us N] [--scan-ms N] [--irq PATH]
 //                      [--no-guard] [--selftest] [--once]
 
@@ -205,7 +205,7 @@ static int probe_face(struct pack_side *ps, uint32_t regs_phys)
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: cadr-disk-pack [options]\n"
+		"usage: cadr-disk-packs [options]\n"
 		"  --packs DIR     the drive bay: disk-pack-0.img .. disk-pack-7.img (default " BAY_DIR ")\n"
 		"  --regs ADDR     the pack side's registers (default 0x40000000)\n"
 		"  --log PATH      where to write (default stdout)\n"
@@ -300,18 +300,18 @@ int main(int argc, char **argv)
 		}
 	}
 	if (poll_us == 0) {
-		fprintf(stderr, "cadr-disk-pack: --poll-us 0 would spin\n");
+		fprintf(stderr, "cadr-disk-packs: --poll-us 0 would spin\n");
 		return 2;
 	}
 	FILE *dest = stdout;
 	if (log_path) {
 		dest = fopen(log_path, "a");
 		if (!dest) {
-			fprintf(stderr, "cadr-disk-pack: %s: %s\n", log_path, strerror(errno));
+			fprintf(stderr, "cadr-disk-packs: %s: %s\n", log_path, strerror(errno));
 			return 2;
 		}
 	}
-	cadr_log_init("cadr-disk-pack: ", dest);
+	cadr_log_init("cadr-disk-packs: ", dest);
 
 	// The mappings.  O_SYNC gives an uncached mapping of all of them: the
 	// registers must be, and the records the fabric reads and writes must
