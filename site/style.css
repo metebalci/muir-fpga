@@ -268,8 +268,13 @@ figure.screen img {
 .d-fill { fill: var(--paper); stroke: currentColor; stroke-width: 1.5; }
 .d-tex  { stroke: currentColor; stroke-width: 1.5; }
 .d-dash { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 6 5; }
-/* Linux is the room the programs sit in rather than a thing of its own, so
-   its outline is lighter than theirs. */
+/* THE LINE STYLES SAY ONE THING EACH, settled with Mete on 10 Sep.  Solid is
+   a thing --- a block, a connector, a program, whether inside the chip or on
+   the board.  Dashed is a boundary: the fabric from the processing system on
+   the architecture drawing, and a lifeline on the sequences.  Dotted is
+   software on the Arm cores: Linux, the room the programs sit in, and U-Boot
+   beside it.  What makes a thing external is its GREY FILL, not its outline,
+   which is why the connectors and the memory stopped being dashed. */
 .d-dot  { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 1 4; stroke-linecap: round; }
 .d-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .d-bus  { fill: none; stroke: currentColor; stroke-width: 4; }
