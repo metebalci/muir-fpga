@@ -384,27 +384,29 @@ then `ls /dev/input/` (an `event0`, and `event1` for a mouse), and
 which lists the device's capabilities and then prints one `Event: time ...,
 type 1 (EV_KEY), code 30 (KEY_A), value 1` per key press and release. Without
 `evtest`, `hexdump -C /dev/input/event0` shows the same 16-byte records. The
-root hub appearing is the controller and the PHY working; a device plugged
-in and nothing printed is VBUS not reaching the connector, which is the one
-thing the code cannot settle from here. Digilent's own tree told their PHY
-driver `drv-vbus`, i.e. to set the PHY's DrvVbus over ULPI; mainline's
-`CI_HDRC_PHY_VBUS_CONTROL` for this compatible calls `usb_phy_vbus_on()`,
-which for the nop PHY is a regulator this board does not describe, so
-nothing in software asserts it beyond the EHCI port-power bit. To test that
-from the prompt: with debugfs mounted, `cat
-/sys/kernel/debug/ulpi/ci_hdrc.0.ulpi/regs` shows the PHY's `OTG Control`
-(bit 5 DrvVbus, bit 6 DrvVbusExternal); and the controller's ULPI viewport
-is at `0xE0002170` (`view-port = <0x0170>` in Digilent's tree; the ChipIdea
-op register `OP_ULPI_VIEWPORT` at 0x30 past the op base at 0x140) with the
-layout `chipidea/ulpi.c` gives --- bit 30 RUN, bit 29 WRITE, bits 23:16 the
-ULPI register, bits 7:0 the data --- so
+root hub appearing is the controller and the PHY working. **VBUS is the
+board's own affair, and it was measured**: with the root hub up and a
+keyboard in, nothing enumerated; the PHY's ULPI `OTG Control` read `0x27`;
+`devmem 0xE0002170 32 0x600B0060` --- DrvVbus and DrvVbusExternal set
+through the controller's ULPI viewport --- made it `0x67`, and within a second
+the keyboard enumerated with three input devices. The connector's power
+switch is driven by the PHY (Digilent's tree told their PHY driver
+`drv-vbus`), and mainline has nothing that sets those bits for a ULPI PHY
+under ChipIdea: the core never writes `OTG Control`, the nop PHY's
+`set_vbus` is a regulator this board has none of, and the in-tree ULPI-bus
+PHY drivers are Qualcomm's and TI's. So the root filesystem carries one init
+script, `/etc/init.d/S15usbvbus` (from
+`linux/buildroot/board/arty-z7-20/rootfs-overlay/`), which waits for the root
+hub and does that write once, then reads the register back and prints
 
-    devmem 0xE0002170 32 0x600B0060      # ULPI 0x0B = OTG Control SET; 0x60 = DrvVbus | DrvVbusExternal
+    usbvbus: OTG Control 0x67 (DrvVbus set for the host port)
 
-sets both. If a keyboard then enumerates, the finding is that this board's
-PHY must be told to drive VBUS and the fix belongs in the tree or a small
-driver, not in a `devmem` line; if it does not, the connector's power is
-elsewhere. Neither is known here.
+on the console during init, before the network comes up. USB input is at the
+very end of the project, so this is the smallest correct fix and stops here;
+if it ever moves into the kernel, a ULPI-bus driver for this PHY setting
+`OTG Control` at probe is the shape. The register arithmetic (viewport at
+op base `0x140` + `0x30`, `0x0B` = OTG Control set, bits 5 and 6) is in the
+script's header with its sources.
 
 ## What is deliberately not in this image
 

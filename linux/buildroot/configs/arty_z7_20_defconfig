@@ -59,6 +59,9 @@ BR2_LINUX_KERNEL_CUSTOM_DTS_DIR="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/dts"
 # TFTP beside the kernel, so the card holds no filesystem.
 BR2_PACKAGE_DROPBEAR=y
 BR2_PACKAGE_EVTEST=y
+# One init script, S15usbvbus, which tells the USB PHY to drive VBUS to the
+# host connector; the script says why the kernel does not.
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/rootfs-overlay"
 BR2_PACKAGE_CADR_TOOLS=y
 BR2_TARGET_ROOTFS_CPIO=y
 BR2_TARGET_ROOTFS_CPIO_GZIP=y
