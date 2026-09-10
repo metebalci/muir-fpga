@@ -75,6 +75,15 @@ package cadr_ddr_map;
     return MAIN_BASE + (32'(phys) << 2);
   endfunction
 
+  // A word of the display's window into a byte address in its region.  The
+  // window is `simpletv::BUFFER_WORDS` long and aligned to its own size, so
+  // its offset is the low fifteen bits of the address and nothing is
+  // subtracted; `rtl/cadr_tv.sv` decodes the window and `rtl/cadr_xbus_ddr.sv`
+  // answers it at this base.
+  function automatic logic [31:0] display_byte_address(input logic [14:0] offset);
+    return DISPLAY_BASE + (32'(offset) << 2);
+  endfunction
+
 endpackage
 /* verilator lint_on UNUSEDPARAM */
 

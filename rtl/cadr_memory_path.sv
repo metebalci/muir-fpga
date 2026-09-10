@@ -28,7 +28,9 @@
 //
 // Until something is wired there, `device_ack` is low, nothing answers a
 // device cycle, and the interface's own timer ends it --- which is exactly
-// what a CADR with an empty backplane slot does.
+// what a CADR with an empty backplane slot does.  **The display is wired
+// inside now**, `cadr_tv` below, because its frame buffer is this module's
+// bridge at a second base; the disk hangs on the seam from `cadr_machine.sv`.
 //
 // **AND THERE ARE TWO MASTERS NOW.**  The disk controller's channel moves a
 // block into main memory a word at a time, and `Controller::write` reaches
@@ -62,6 +64,10 @@
 module cadr_memory_path (
     input  var logic        clk,          // 200 MHz, one tick = 5 ns
     input  var logic        rst,
+    // `-XBUS INIT` on the backplane, which is not a bus cycle: the display's
+    // vertical flag clears on it.  `cadr_machine.sv` ties it to the power-on
+    // reset, the one thing that asserts it there.
+    input  var logic        xbus_init,
 
     // The processor's side of the cables.
     input  var logic        mclk,         // MCLK7, the microcycle boundary
@@ -86,6 +92,8 @@ module cadr_memory_path (
     output var logic        dev_write,
     input  var logic        device_ack,   // -XBUS.ACK, from that slave
     input  var logic [31:0] device_rdata,
+    // The display's `SEND INTR`, onto -XBUS.INTR: see the instance below.
+    output var logic        tv_intr,
 
     // The disk controller's memory channel, the second master on this bus.
     // One word a cycle, the request standing until `ch_done`; `ch_nxm` says
@@ -220,12 +228,16 @@ module cadr_memory_path (
 
   logic [21:0] bus_phys;
   logic [31:0] bus_wdata;
-  logic        bus_write, bus_rq, bus_sel;
+  logic        bus_write, bus_rq, bus_sel, bus_display;
   assign bus_phys  = ch_own ? ch_addr  : phys;
   assign bus_wdata = ch_own ? ch_wdata : wdata;
   assign bus_write = ch_own ? ch_write : cpu_write;
   assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : cpu_rq);
-  assign bus_sel   = ch_own ? ch_memory : is_memory;
+  // The bridge answers main memory and the display's frame buffer, at two
+  // bases; the channel reaches only the first.  `tv_fb` is held in
+  // `cadr_tv`, as `is_memory` is held here, so this is a mux on registers.
+  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb);
+  assign bus_display = !ch_own && tv_fb;
 
   // The channel's answer comes a tick after main memory's, because the
   // bridge's `rdata` is a register: `dev_ack` is a gate on `mem_done` and the
@@ -336,6 +348,7 @@ module cadr_memory_path (
       .clk      (clk),
       .rst      (rst),
       .sel      (bus_sel),
+      .display  (bus_display),
       .dev_rq   (bus_rq),
       .dev_write(bus_write),
       .phys     (bus_phys),
@@ -355,14 +368,52 @@ module cadr_memory_path (
   assign dev_rq    = ch_own ? 1'b0 : cpu_rq;
   assign dev_write = cpu_write;
 
+  // --- the display, the second Xbus slave that is not main memory ---------
+  //
+  // **INSIDE THIS MODULE AND NOT BESIDE THE DISK IN `cadr_machine.sv`**,
+  // because half of it is this module's business: the frame buffer is a
+  // window onto main memory's bridge at a second base, and the signal that
+  // selects the bridge is made here.  The register face comes with it, so
+  // that the display is one board with one held decode, and so that
+  // `build/tv.pass` drives the wiring the board has rather than a harness
+  // of it.  `rtl/cadr_tv.sv` says what the board is and what is not built.
+  //
+  // It hangs on the same seam the disk does, at the same place: `sel` is the
+  // held `device`, and the display decodes its own two ranges out of `phys`
+  // as a board on the backplane does.  A cycle cannot be answered twice for
+  // the reason `cadr_machine.sv` gives at the disk: the decode makes `memory`
+  // and `device` exclusive, and inside `device` the display's 32,776 words
+  // and the disk's four are disjoint by construction.
+  logic        tv_ack, tv_drives, tv_fb;
+  logic [31:0] tv_rdata;
+
+  cadr_tv tv (
+      .clk      (clk),
+      .rst      (rst),
+      .xbus_init(xbus_init),
+      .sel      (device),
+      .dev_rq   (dev_rq),
+      .dev_write(dev_write),
+      .phys     (phys),
+      .wdata    (wdata),
+      .dev_ack  (tv_ack),
+      .rdata    (tv_rdata),
+      .drives   (tv_drives),
+      .fb_sel   (tv_fb),
+      .intr     (tv_intr)
+  );
+
   // The acknowledgements, joined as the open-collector `-XBUS.ACK` joins
   // them, and the word from whichever slave answered.  Nothing answers the
   // processor while the channel has the bus: its cycle simply waits, which is
   // what the per-word arbitration bounds.
-  assign dev_ack = !ch_own && (memory_ack || device_ack);
+  assign dev_ack = !ch_own && (memory_ack || tv_ack || device_ack);
   // The word from whichever slave answered. A Unibus register is sixteen bits
-  // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.
+  // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.  The
+  // display drives the lines only while answering a READ of a control word
+  // --- a write, and every frame-buffer cycle, leaves them to the others.
   assign rdata   = ub_ssyn      ? {16'hffff, ub_rdata}
+                 : tv_drives    ? tv_rdata
                  : device_ack   ? device_rdata
                                 : memory_rdata;
 

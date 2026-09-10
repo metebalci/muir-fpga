@@ -27,9 +27,12 @@
 //
 // WHAT IS STILL OUTSIDE.  The number of memory boards, which is the machine's
 // configuration; the DDR itself, behind `mem_req`/`mem_done`; and the Xbus
-// slaves that are neither main memory nor the disk --- the display and the
-// I/O board --- behind `dev_rq`/`device_ack`.  **THE DISK CONTROLLER'S FOUR
-// REGISTERS ARE INSIDE NOW**, `cadr_disk_controller.sv`, which is what the
+// slave that is neither main memory, the disk nor the display --- the I/O
+// board --- behind `dev_rq`/`device_ack`.  **The display is inside**, in
+// `cadr_memory_path.sv`, its frame buffer being that module's bridge at a
+// second base; `rtl/cadr_tv.sv` is the register face and the interrupt.
+// **THE DISK CONTROLLER'S FOUR REGISTERS ARE INSIDE TOO**,
+// `cadr_disk_controller.sv`, which is what the
 // boot PROM's 16,951 device cycles reach: 11,301 reads of the status register
 // from microcycle 537,848 on and 5,650 writes of the disk address register.
 // They used to be answered from the trace, and that was stimulus.  What is
@@ -203,6 +206,21 @@ module cadr_machine #(
   logic [1:0]  mode_speed;
   logic        n_memgrant, n_memack, n_loadmd;
 
+  // **`-XBUS.INTR` IS HALF IN THE FABRIC.**  `LM INT` is `UB INT OR XBUS
+  // INTR IN` at UBINTC 0E04, and the Xbus line is the display's vertical
+  // interrupt ORed with the disk's request.  The display's is made in
+  // `cadr_memory_path.sv`'s `cadr_tv` and joined here; the disk's is
+  // computed in `cadr_disk_controller.sv` and, by that module's own
+  // decision, not brought out.  So `sintr` is what a board OUTSIDE the
+  // fabric puts on the line --- the trace's column in `tb/cadr_machine_tb.cpp`
+  // --- and the join is one gate before the 74S175 at LCC 3E12, which
+  // `cadr_microcycle.sv` registers at the microcycle edge.  Nothing the
+  // two reference programs run raises it: neither enables the display's
+  // interrupt, so `build/machine.pass` holds this gate only as far as
+  // "the display never interrupts a program that never asks", and
+  // `build/tv.pass` holds the interrupt itself to the tick.
+  logic tv_intr;
+
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
   ) processor (
@@ -215,7 +233,7 @@ module cadr_machine #(
       .mode_speed  (mode_speed),
       .spy_eadr    (spy_eadr),
       .spy_rdata   (spy_rdata),
-      .sintr       (sintr),
+      .sintr       (sintr || tv_intr),
       .n_memack    (n_memack),
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
@@ -256,6 +274,9 @@ module cadr_machine #(
   cadr_memory_path memory (
       .clk        (clk),
       .rst        (rst),
+      // `-XBUS INIT`, as the disk takes it below: the power-on reset is the
+      // one thing that asserts it here.
+      .xbus_init  (rst),
       .mclk       (mclk),
       .n_memrq    (n_memrq),
       .wrcyc      (wrcyc),
@@ -271,6 +292,7 @@ module cadr_machine #(
       .dev_write  (dev_write),
       .device_ack (dev_ack_joined),
       .device_rdata(dev_rdata_joined),
+      .tv_intr    (tv_intr),
       .ch_req     (ch_req),
       .ch_write   (ch_write),
       .ch_addr    (ch_addr),

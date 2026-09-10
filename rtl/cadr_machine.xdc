@@ -93,6 +93,14 @@
 # the same argument.  Paths INTO them from the map need the microcycle and
 # get it; paths OUT of them are timed at the tick wherever they land on a
 # register that is not in this set, which is every register in the disk.
+#
+# **THE DISPLAY IS OUT OF THE SET THE SAME WAY, BUT FOR ITS THREE HELD
+# DECODES**, `ctl`, `fb` and `which` in `rtl/cadr_tv.sv`, held from `phys`
+# for the disk's reason.  Nothing else there qualifies: the frame counter
+# adds one a tick and presets the flag as it wraps, `taken` is the cycle's
+# latch, and the mode register's clock enable is -XBUS.RQ through the held
+# match --- read at the tick, so its D from the cpu's word is timed at the
+# tick too, as the disk's registers are.
 set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *mfinish_t_reg*    && \
                                   NAME !~ *rdfinish_t_reg*   && \
@@ -109,7 +117,10 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *ub_loadmd_reg*    && \
                                   NAME !~ *tpclk_q_reg*      && \
                                   (NAME !~ *disk/* || NAME =~ *disk/mine_reg* || \
-                                                      NAME =~ *disk/which_reg*)}]
+                                                      NAME =~ *disk/which_reg*) && \
+                                  (NAME !~ *memory/tv/* || NAME =~ *memory/tv/ctl_reg* || \
+                                                           NAME =~ *memory/tv/fb_reg* || \
+                                                           NAME =~ *memory/tv/which_reg*)}]
 
 # 15 ticks, not 29: the tightest instant a datapath register is read at is the
 # fast read tap.
