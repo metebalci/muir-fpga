@@ -263,6 +263,17 @@ module cadr_arty #(
       // Nothing raises an interrupt and nothing answers a device cycle: the
       // Xbus devices are their own slices and none of them exists.
       .sintr(1'b0), .device_ack(1'b0), .device_rdata(32'd0),
+      // NO DRIVE ON THE DISK'S CABLE, which is what the board has today and
+      // what `build/machine.pass` compares against: with `drive_present` at
+      // zero the status register answers `0x2321` --- not on line, not on
+      // cylinder, no unit selected --- for every one of the boot PROM's
+      // 11,301 polls. What will drive these is the pack Linux puts in DDR:
+      // `S_AXI_HP2` fetches a block into the controller's store, and a unit
+      // is present when the software behind that port says a pack is
+      // mounted on it. **Tied off, the whole drive constant-folds**, so the
+      // fit here counts the register face and the decode and not the
+      // spindle, the seek arithmetic or the eight attention counters.
+      .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0),
       // 32 boards of 64K words, which is muir's own default and what every
       // trace in this repository was taken with.
       .boards(7'd32),

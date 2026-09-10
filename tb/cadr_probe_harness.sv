@@ -91,7 +91,10 @@ module cadr_probe_harness #(
       // registers are inside `cadr_machine` and answer for themselves. This
       // port is for a slave that is still outside --- the display, the I/O
       // board --- and there is none.
-      .sintr(1'b0), .device_ack(1'b0), .device_rdata(32'd0),
+      .sintr(1'b0),
+      // No drive on the disk's cable: this harness is the boot PROM, which
+      // polls the status register and never writes a command.
+      .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0), .device_ack(1'b0), .device_rdata(32'd0),
       .boards(7'd32),
       .mem_done(1'b0), .mem_rdata(32'd0),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),

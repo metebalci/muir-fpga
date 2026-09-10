@@ -333,6 +333,26 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # The disk controller's drive and register face, against the program
+    # `golden/src/disk.rs` writes.  This is the check that can tell this
+    # module from a wire: the boot PROM reads one constant out of it 11,301
+    # times and writes zero to the disk address register 5,650, so `machine`
+    # can see the status word's bits and their DIRECTION and nothing else.
+    # Records aimed at the drive, the spindle, the seek, the hang timer and
+    # the two resets belong HERE and the ones aimed at `0x2321` belong there;
+    # both files are the same module and the two checks see different halves
+    # of it.
+    #
+    # **IT IS THE SLOWEST CHECK IN THE LIST AND THAT IS A CONSTANT AND NOT A
+    # WASTE**: the trace holds one hang run out to 2.56 s, which is
+    # 512,000,000 ticks, and the fabric counts every one.  A minute a mutation.
+    "disk": {
+        "sources": ["rtl/cadr_disk_controller.sv"],
+        "top": "cadr_disk_controller",
+        "tb": "tb/cadr_disk_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "disk.golden",
+    },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
     # and `busint_xbus` writes the stimulus AND the expected outputs, so a
