@@ -1231,6 +1231,47 @@ module cadr_disk_controller #(
     C_PF
   } ch_state_e;
 
+  // **`(* fsm_encoding = "one_hot" *)` DOES NOTHING HERE, MEASURED, AND THAT
+  // IS WHY IT IS NOT ABOVE THIS LINE.**  Thirty-one states in five bits
+  // makes every `ch_state == C_X` a five-input LUT standing in front of
+  // whatever else a clock enable tests, and on the DDR=1 board at 5b03a4e
+  // `ch_state_reg[2]` carried 169 loads and reached `ps_w_reg[*]/CE` over
+  // three LUTs and 3.872 ns of routing --- 4.920 ns of a 5 ns tick, and 61
+  // of that board's 278 failing endpoints sat behind that decode.  One hot
+  // is the obvious answer and the attribute was written, fitted and read
+  // back: Vivado 2026.1 reports `inferred FSM for state register` for
+  // `wst`, `rst_r` and `pst` in `cadr_disk_pack` and for the two AXI
+  // masters, and **not once for `ch_state`** --- it does not extract a
+  // state register assigned in the middle of a two-hundred-line process
+  // that also moves the datapath, and an attribute on a register it has not
+  // called a machine is dropped WITHOUT A WARNING OF ANY KIND.  The
+  // encoding tables in the synthesis log are the tell: five machines listed,
+  // this one absent.
+  //
+  // **AND IT WAS NOT A NO-OP.  IT DELETED THE CHANNEL FROM THE MEMORY-OFF
+  // BOARD.**  That is the finding, and it was nearly missed, because what
+  // the attribute bought was a BETTER NUMBER: `DDR=0` came out at +0.318 ns
+  // MET where the same source without it reads -0.191.  The register count
+  // is what gave it away --- 1,000 against 1,554, and the whole difference
+  // in one place: `u_machine/disk` holds 697 registers out of synthesis and
+  // 149 after opt, everything but the register face, `da`, `cmd`, the
+  // write data and the hang timer.  With no pack side there is no drive,
+  // `can_start` is `present || cmd[2]` and only the hang can fire, so the
+  // walk is unreachable and deleting it is LEGAL --- and a board a third of
+  // whose disk has been optimised away is not the board any figure was
+  // meant to describe.  A timing improvement whose mechanism is that the
+  // logic went away is this repository's oldest failure in a new costume,
+  // and the tell is never the slack.
+  //
+  // So the remedy that closed this family was not an encoding at all.  It
+  // was the two changes above it --- the DSP out of the sum's tick and the
+  // control store's address off TPCLK --- which took the memory-on board
+  // from -0.462 ns on 278 endpoints to -0.148 on thirteen, all of them
+  // routing.  **What is recorded here is the dead end**, so that the next
+  // person who reads `ch_state_reg[2]` at the top of a timing report does
+  // not spend the afternoon this cost.  Hand-writing the one-hot is still
+  // open, and it is a rewrite of every assignment in the process, not an
+  // attribute.
   ch_state_e   ch_state;
   logic [15:0] ch_n;            // which CCW the list is on
   logic [13:0] ch_page;         // XBI<21:8>, the page DCCCW latched
@@ -1402,8 +1443,27 @@ module cadr_disk_controller #(
   // The latency: the wait for the addressed block to come round from where
   // the spindle stood when the seek ended, both differences and the compare
   // that chooses between them into registers, then the choice.
-  logic [28:0] acc_d1, acc_d2, acc_lat_r;
+  logic [28:0] acc_d1, acc_lat_r;
   logic        acc_ge;
+  // **AND THE PRODUCT COMES OUT OF THE DSP INTO A REGISTER OF ITS OWN.**
+  // `acc_at` is `acc_blk * SECTOR_NS` and the fitter builds it in a
+  // DSP48E1, whose clock-to-output is 2.191 ns where a slice flop's is
+  // 0.456.  Put a twenty-nine-bit subtraction behind that in the same tick
+  // and the tick is gone before the carry chain starts: on the DDR=1 board
+  // at 5b03a4e it was `disk/acc_d20/CLK -> disk/acc_d2_reg[26]/D`, 5.244 ns
+  // over eight logic levels --- 2.191 out of the DSP, 1.493 of routing to
+  // the fabric and 1.440 of carry --- and 17 of that board's 278 failing
+  // endpoints.  **The multiply's own tick is not the problem; what a DSP
+  // costs is the tick AFTER it.**  So `acc_at_q` takes the product into
+  // fabric and the arithmetic below reads that.
+  //
+  // IT COSTS NO TICK.  `acc_at` is written at `C_ACCMUL` and read at
+  // `C_ACCSUM`, which is three states later at the least --- `C_ACCMOD` and
+  // `C_ACCMOD2` are between them and the remainder may turn four times ---
+  // so a register one tick behind `acc_at` is settled before anything asks
+  // for it.  Nothing about the expiry moves because nothing about the walk's
+  // length moves.
+  logic [27:0] acc_at_q;
   assign acc_total   = 32'(acc_seek) + 32'(acc_lat_r) + 32'(acc_mv);
   // Registered in a state of its own before `elapsed` is taken off it: the
   // three additions, the compare and the subtraction in one tick were 5.3 ns
@@ -1789,6 +1849,7 @@ module cadr_disk_controller #(
       acc_spin    <= 28'd0;
       acc_blk     <= 8'd0;
       acc_at      <= 28'd0;
+      acc_at_q    <= 28'd0;
       acc_mv      <= 28'd0;
       acc_total_r <= 32'd0;
       acc_left    <= 32'd0;
@@ -1797,7 +1858,6 @@ module cadr_disk_controller #(
       acc_over    <= 1'b0;
       acc_lat_r   <= 29'd0;
       acc_d1      <= 29'd0;
-      acc_d2      <= 29'd0;
       acc_ge      <= 1'b0;
       burst_width_q   <= 4'd0;
       burst_pattern_q <= 11'd0;
@@ -1946,6 +2006,11 @@ module cadr_disk_controller #(
       ch_dck_we   <= 1'b0;
       ps_wr       <= 1'b0;
       trk_meta_we <= 1'b0;
+      // The product out of the DSP and into fabric, a tick behind, so
+      // that nothing downstream starts at a DSP output.  See the note at
+      // the declaration: `acc_at` is written three states before it is
+      // read, so this costs nothing.
+      acc_at_q    <= acc_at;
       if (ps_wr)  ch_ra <= ch_ra + 9'd1;
       if (ch_busy) elapsed <= elapsed + 32'd5;
 
@@ -2601,18 +2666,31 @@ module cadr_disk_controller #(
             ch_state <= C_ACCSUM;
           end
         end
-        // The latency --- a compare and two differences, then the choice,
-        // each into a register --- and the three-way sum off that register
-        // a tick later: together they were sixteen logic levels and 5.4 ns
-        // of logic alone.
+        // The latency --- a compare and ONE difference into registers, then
+        // the choice --- and the three-way sum off that register a tick
+        // later: together they were sixteen logic levels and 5.4 ns of logic
+        // alone when they stood in one tick.
+        //
+        // **THE SECOND DIFFERENCE IS THE FIRST ONE PLUS A REVOLUTION, AND IT
+        // MOVES TO THE TICK THAT CHOOSES.**  What stood here was
+        // `acc_d2 <= REVOLUTION_NS - acc_spin + acc_at` beside
+        // `acc_d1 <= acc_at - acc_spin`: two twenty-nine-bit adds in series
+        // off the DSP's product, in the tick the DSP's own 2.191 ns had
+        // already spent.  In twenty-nine-bit arithmetic
+        // `(acc_at - acc_spin) + REVOLUTION_NS` and
+        // `REVOLUTION_NS - acc_spin + acc_at` are the SAME BITS --- addition
+        // modulo 2^29 does not care in what order it is done, and the wrap
+        // `acc_d1` takes when `acc_at < acc_spin` is exactly the wrap the
+        // revolution undoes, which is the branch that reads it.  So there is
+        // one adder here and one there, each starting at a slice flop, and
+        // `acc_d2` is gone: 29 registers back and no tick spent.
         C_ACCSUM: begin
-          acc_ge   <= (acc_at >= acc_spin);
-          acc_d1   <= 29'(acc_at) - 29'(acc_spin);
-          acc_d2   <= 29'(REVOLUTION_NS) - 29'(acc_spin) + 29'(acc_at);
+          acc_ge   <= (acc_at_q >= acc_spin);
+          acc_d1   <= 29'(acc_at_q) - 29'(acc_spin);
           ch_state <= C_ACCSUM2;
         end
         C_ACCSUM2: begin
-          acc_lat_r <= acc_ge ? acc_d1 : acc_d2;
+          acc_lat_r <= acc_ge ? acc_d1 : (acc_d1 + 29'(REVOLUTION_NS));
           ch_state  <= C_ACCSUM3;
         end
         C_ACCSUM3: begin
