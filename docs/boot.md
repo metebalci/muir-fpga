@@ -14,14 +14,15 @@ read out of the binaries and wins.
 ## The pieces, and where each one lives
 
     the microSD card        in the board          BOOT.BIN, image.ub, uEnv.txt
-    the TFTP server         the build host, /srv/tftp   uEnv.net, system.dtb
+    the TFTP server         the build host, /srv/tftp   uEnv.net, cadr.bit, system.dtb
     the serial console      the build host, over the board's USB cable
     the card writer         the laptop                  the build host has no card reader
 
 The card is written **once**. Its `uEnv.txt` is one line that fetches
-`uEnv.net` from the TFTP server and runs the command in it, so the boot command and
-the device tree both live in `/srv/tftp`: a change to either is a `cp` there
-and a reset, and the card is never touched again. The kernel and the root
+`uEnv.net` from the TFTP server and runs the command in it, so the boot
+command, the CADR's bitstream and the device tree all live in `/srv/tftp`: a
+change to any of them is a `cp` there and a reset, and the card is never
+touched again. The kernel and the root
 filesystem are Digilent's, read out of the `image.ub` already on the card.
 
 ## What happens at power-on
@@ -36,16 +37,22 @@ filesystem are Digilent's, read out of the `image.ub` already on the card.
 
 2. **U-Boot reads `uEnv.txt` from the card** and runs the one command in it:
    fetch `uEnv.net` from the TFTP server and run the `netcmd` it
-   defines. That command fetches `system.dtb`, reads `image.ub` off the card,
-   and boots the kernel and root filesystem inside it under our tree with
-   `mem=384M cma=32M` on the kernel's command line. The board's own address
+   defines. That command fetches `cadr.bit` and **loads it into the fabric**
+   (`fpga loadb`), displacing Digilent's design; fetches `system.dtb`; reads
+   `image.ub` off the card; and boots the kernel and root filesystem inside
+   it under our tree with `mem=384M cma=32M` on the kernel's command line.
+   The CADR starts the moment the fabric is configured and is running its
+   boot PROM out of DDR3 before Linux has finished uncompressing. The board's own address
    comes from DHCP, pinned on the DHCP server to the board's MAC, which the
    console prints; the TFTP server's address is in the card's file and a
    DHCP reply cannot overwrite it (`linux.md` says why).
 
-3. **If the fetches succeed**, Linux comes up seeing **384 MB**: `mem=384M`
-   is what keeps it off the CADR's region, and the tree's `reserved-memory`
-   node names the same region so `/proc/device-tree` says whose it is.
+3. **If the fetches succeed**, Linux comes up seeing **384 MB** beside the
+   running CADR: `mem=384M` is what keeps it off the CADR's region, and the
+   tree's `reserved-memory` node names the same region so `/proc/device-tree`
+   says whose it is. The served tree has Digilent's `amba_pl` --- the
+   peripherals of the design `cadr.bit` displaced --- removed, so Linux probes
+   nothing that is no longer there.
    `linux/uEnv.net` explains why it is the command line and not the node
    that does the work on this kernel.
 
@@ -79,12 +86,15 @@ The console decides which boot happened, in its first seconds:
                       and U-Boot's banner again ten seconds later; never
                       `reading image.ub` before a `uEnv.net` was fetched
 
-Then, at the prompt, three things say the reservation is real:
+Then, at the prompt, four things say the reservation is real and the CADR ran:
 
     cat /proc/device-tree/model                       Zynq Arty Z7 Development Board
     ls /proc/device-tree/reserved-memory/             cadr@18000000 (reserved boot only)
     grep "System RAM" /proc/iomem                     00000000-17ffffff
-    grep MemTotal /proc/meminfo                       380320 kB, against 512 MB under Digilent's tree
+    grep MemTotal /proc/meminfo                       380360 kB, against 512 MB under Digilent's tree
+    devmem 0xF800012C 32 $(( $(devmem 0xF800012C) | 0x400000 ))   # this kernel gates the GPIO block's clock; turn it on
+    devmem 0xE000A068; devmem 0xE000A06C               0x01008100 twice: 256 reads and 256 writes,
+                                                       asked and answered, at the PS7's boundary
 
 Those four lines are what the board printed on 10 September; the third is the
 one that matters, since it says the kernel does not have the region at all.
@@ -94,7 +104,10 @@ one that matters, since it says the kernel does not have the region at all.
 Everything up to the power-on has been done once (10 September) and is
 recorded in `linux.md`; the steps are here so it can be done again.
 
-**On the build host, once.**
+**On the build host, once.** The bitstream is the memory-on board,
+`DDR=1 OUTDIR=build/ddr vivado -mode batch -source vivado/bitstream.tcl`,
+copied to `/srv/tftp/cadr.bit`; the one served on 10 September was built at
+`1446bf6`.
 
     sudo apt install tftpd-hpa                       # serves /srv/tftp on UDP 69
     sudo chown $USER /srv/tftp                       # so the files can be refreshed without root
@@ -103,7 +116,7 @@ recorded in `linux.md`; the steps are here so it can be done again.
 
 `linux/mksd.sh` stages `build/sd/`. Then:
 
-    cp build/sd/server/* /srv/tftp/
+    cp build/sd/server/* /srv/tftp/ && cp build/ddr/cadr_arty.bit /srv/tftp/cadr.bit
     curl -o /dev/null tftp://<the TFTP server's address>/system.dtb   # the server answers
 
 **On the laptop, once.** Copy `build/sd/reserved/{BOOT.BIN,image.ub,uEnv.txt}`
@@ -153,9 +166,6 @@ any more.
 
 ## What this does not do yet
 
-- **Run the CADR at the same time.** The bitstream in the card's `BOOT.BIN`
-  is Digilent's. Our own `BOOT.BIN`, with our bitstream and a first-stage
-  loader whose `ps7_init` we already possess, is the step after this one.
 - **Anything with the reserved memory.** Linux leaves it alone; nothing yet
   puts a disk pack in it or reads a display out of it.
 - **Boot without the TFTP server.** A card holding `uEnv.net`'s command and
