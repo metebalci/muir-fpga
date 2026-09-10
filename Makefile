@@ -32,6 +32,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
+       $(BUILD)/console.pass \
        current
 
 # ---------------------------------------------------------------- phase gen
@@ -731,6 +732,43 @@ $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 	$(BUILD)/obj_gp0_default/Vcadr_gp0_default
 	@touch $@
 
+# --------------------------------------------------------------- the console
+
+# `rtl/cadr_console.sv` is the sixteen diagnostic registers on `M_AXI_GP1`, so
+# that a program in Linux can halt the machine, read its state and start it
+# again.  muir's console is CC and its whole vocabulary is `crate::spy`; this
+# is `spy_read` and `spy_write` reached from the processing system, with the
+# register block `rtl/cadr_spy_registers.sv` untouched between them.
+#
+# THE HARNESS AND NOT THE MODULE, and the harness is the attachment.  Joining
+# a second master to the diagnostic bus means a mux at the register block's
+# Unibus port and an arbiter in front of it, both of which belong in
+# `rtl/cadr_memory_path.sv`; `tb/cadr_console_harness.sv` writes them, the
+# check holds them, and `docs/console.md` carries them as a patch.  The
+# processor in it is the real one, running MIT's boot PROM out of
+# `build/rtl.golden` as `microcycle.pass` runs it --- so the machine the
+# console stops is the one the reference describes, and the sixteen registers
+# are compared against `Engine::spy_read`'s own answers, microcycle for
+# microcycle.  It halts and starts the machine sixteen times and all 600,000
+# microcycles still agree.
+#
+# It takes about seven seconds.
+CONSOLE_SRC := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv \
+               rtl/cadr_spy_registers.sv rtl/cadr_console.sv \
+               tb/cadr_console_harness.sv
+
+$(BUILD)/obj_console/Vcadr_console_harness: $(CONSOLE_SRC) \
+                                            tb/cadr_console_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_console \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_console_harness $(CONSOLE_SRC) \
+	    $(abspath tb/cadr_console_tb.cpp)
+
+$(BUILD)/console.pass: $(BUILD)/obj_console/Vcadr_console_harness \
+                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_console/Vcadr_console_harness $(BUILD)/rtl.golden
+	@touch $@
+
 $(BUILD):
 	@mkdir -p $(BUILD)
 
@@ -811,13 +849,16 @@ buildroot: buildroot-check
 
 # Buildroot does not watch our files: a change under linux/buildroot/ to
 # U-Boot's environment, its fragment, the kernel config, the tree or the
-# cadr-disk-pack sources is not seen by a plain `make buildroot` once the package
-# has a build stamp.  This forces the three packages that read them to
+# sources of our own programs is not seen by a plain `make buildroot` once the
+# package has a build stamp.  This forces every package that reads them to
 # reconfigure and rebuild, then finishes the image as `buildroot` does.
+# cadr-common is named before its consumers: they link the library it puts in
+# the staging tree, so a stale one would be linked into both programs.
 buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) \
-	    uboot-reconfigure linux-reconfigure cadr-disk-pack-reconfigure
+	    uboot-reconfigure linux-reconfigure cadr-common-reconfigure \
+	    cadr-console-reconfigure cadr-disk-pack-reconfigure
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'

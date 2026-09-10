@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_CADR_CONSOLE
+	bool "cadr-console"
+	select BR2_PACKAGE_CADR_COMMON
+	help
+	  The console: the program on the processing system that halts
+	  the CADR, reads its sixteen diagnostic registers and starts it
+	  again, over M_AXI_GP1.  Its vocabulary is muir's spy module's
+	  with no translation in between.
+
+	  It is INTERACTIVE and has no init script: a console that ran
+	  unasked would be a second master on the diagnostic bus for as
+	  long as the board was up.
