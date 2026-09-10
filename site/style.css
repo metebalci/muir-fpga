@@ -214,6 +214,11 @@ figure.fig { margin: 34px 0 36px; }
   transform: translateX(-50%);
 }
 .fig.dense svg { min-width: 1272px; }
+/* The architecture drawing grew to the right (the Pmods, HDMI and USB) and is
+   drawn on a 1380-unit canvas; rendered at 1500px its labels stay the size
+   they were at 1272 for 1170 units. */
+.fig.dense.wide { width: 1500px; }
+.fig.dense.wide svg { min-width: 1500px; }
 /* A picture at its own size, wider than the band: the page scrolls to it
    rather than shrinking it, which is what a browser showing an image file
    does and what makes 1-bit text unreadable. */
