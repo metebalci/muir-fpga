@@ -419,6 +419,7 @@
 @mutation a-bidirectional-wire-loses-its-enable
 @check cables
 @file rtl/cadr_cables.svh
+@build-fails
 @note Of the 92 wires, 48 are driven from both ends and are carried as value
 @note plus enable out with the resolved wire back in, because fabric has no
 @note bus to fight over. A wire that lost its enable would be driven always.
@@ -430,6 +431,7 @@
 @mutation a-signal-is-renamed
 @check cables
 @file rtl/cadr_cables.svh
+@build-fails
 @note The mangling is settled and inherited by everything generated. A name
 @note that drifted from it would still elaborate on its own; what says it has
 @note drifted is that the generator writes something else.

@@ -480,7 +480,7 @@ VERDICTS = [CAUGHT, HOLE, SURVIVED, CLOSED, BROKEN, UNAPPLIED]
 
 class Mutation(object):
     def __init__(self, name, check, path, notes, old, new, line,
-                 hole, hole_line):
+                 hole, hole_line, build_fails=False):
         self.name = name
         self.check = check
         self.path = path
@@ -490,6 +490,7 @@ class Mutation(object):
         self.line = line          # where it is in list.txt, for error messages
         self.hole = hole          # the issue holding it open, "#3", or None
         self.hole_line = hole_line
+        self.build_fails = build_fails   # @build-fails: the refusal is the catch
         self.verdict = None
         self.detail = ""
         self.also = []            # for a survivor: other checks that missed it
@@ -534,7 +535,8 @@ def parse(path):
                 mutations.append(
                     Mutation(cur["name"], cur["check"], cur["file"], notes,
                              cur["old"], cur["new"], cur["line"],
-                             cur["hole"], cur["hole_line"]))
+                             cur["hole"], cur["hole_line"],
+                             cur["build_fails"]))
                 cur, field = None, None
                 old, new, notes = [], [], []
                 continue
@@ -549,6 +551,7 @@ def parse(path):
                 die("%s:%d: @mutation inside a record" % (path, n))
             cur = {"name": line[len("@mutation "):].strip(), "line": n,
                    "check": None, "file": None, "hole": None,
+                   "build_fails": False,
                    "hole_line": 0}
             old, new, notes = [], [], []
         elif cur is None:
@@ -567,6 +570,13 @@ def parse(path):
                 die("%s:%d: `%s`: @hole wants an issue, as `@hole #3`, not `%s`"
                     % (path, n, cur["name"], hole))
             cur["hole"], cur["hole_line"] = hole, n
+        elif line == "@build-fails":
+            # For a check that IS lint, a mutant the build refuses is normally
+            # BROKEN and not a verdict.  `cables` is the exception: it mutates
+            # a GENERATED header, and the header failing to elaborate is the
+            # finding itself.  A record says so here rather than the runner
+            # guessing from the check's name.
+            cur["build_fails"] = True
         elif line == "@note" or line.startswith("@note "):
             # A bare `@note` is a blank line between paragraphs.
             notes.append(line[len("@note"):].strip())
@@ -759,7 +769,7 @@ def first_problem(out):
     return "(no output)"
 
 
-def lint_verdict(out):
+def lint_verdict(out, build_fails=False):
     """A lint that exited non-zero: caught, or a mutant that did not compile?
 
     For a check that IS lint, the exit status cannot tell the two apart, and
@@ -776,15 +786,27 @@ def lint_verdict(out):
     construct) and ends `... N error(s)`.  So any `%Error` line that is not
     the summary is the build failing, and the verdict is BROKEN with that
     line; otherwise the warning is the catch.
+
+    UNLESS the record says the build is the catch.  `cables` mutates a
+    GENERATED header, `rtl/cadr_cables.svh`, and the thing it is holding is
+    that the header is what the generator writes: a renamed port or a lost
+    enable makes the port list no longer elaborate, and that refusal IS the
+    finding.  Two such records went BROKEN when this classifier landed ---
+    `a-signal-is-renamed` and `a-bidirectional-wire-loses-its-enable` --- so a
+    record declares which it expects with `@build-fails`, and only then is an
+    error the catch.  A record without it keeps the strict reading, which is
+    what caught the dangling comma.
     """
     for line in out.split("\n"):
         t = line.strip()
         if t.startswith("%Error") and not t.startswith("%Error: Exiting due to"):
-            return BROKEN, t
+            return (CAUGHT if build_fails else BROKEN), t
+    if build_fails:
+        return BROKEN, "the build was expected to fail and did not"
     return CAUGHT, first_problem(out)
 
 
-def build_and_run(args, work, check):
+def build_and_run(args, work, check, build_fails=False):
     """Verilate the check in `work` and run it.  Returns a verdict."""
     spec = CHECKS[check]
     if spec.get("kind") == "generator":
@@ -792,9 +814,9 @@ def build_and_run(args, work, check):
     if spec.get("kind") == "tcl":
         return tcl_check(args, work, spec)
     if check == "cables":
-        return cables_check(args, work)
+        return cables_check(args, work, build_fails)
     if check == "arty":
-        return arty_check(args, work)
+        return arty_check(args, work, build_fails)
 
     for src, dest in spec.get("files", []):
         # `exist_ok`, because the two processor checks place the same image
@@ -855,7 +877,7 @@ def tcl_check(args, work, spec):
     return SURVIVED, out.strip().split("\n")[-1]
 
 
-def arty_check(args, work):
+def arty_check(args, work, build_fails=False):
     """The top level, linted. Lint failing is the mutation being caught.
 
     FIVE TIMES, BECAUSE THERE ARE FIVE BOARDS, exactly as `build/arty.pass`
@@ -917,7 +939,7 @@ def arty_check(args, work):
         if rc != 0:
             # A lint finding is the catch; a mutant that does not compile is
             # not a verdict on the check.  See `lint_verdict`.
-            return lint_verdict(out)
+            return lint_verdict(out, build_fails)
         ran += 1
     if ran == 0:
         return BROKEN, "none of the board configurations could be linted"
@@ -957,7 +979,7 @@ def generator_check(args, work, spec):
     return SURVIVED, "the generator wrote its output without complaint"
 
 
-def cables_check(args, work):
+def cables_check(args, work, build_fails=False):
     """The cables check is two targets, and it takes both to hold the claim.
 
     `cables.pass` is lint alone, which catches a wrong direction or a name
@@ -973,7 +995,7 @@ def cables_check(args, work):
     rc, out = run(cmd, work)
     if rc != 0:
         # The same lint-shaped path as `arty_check`: see `lint_verdict`.
-        return lint_verdict(out)
+        return lint_verdict(out, build_fails)
 
     # `current`, on the copy: keep what the mutation made, regenerate over it,
     # and see whether the generator disagrees.
@@ -1432,7 +1454,7 @@ def main():
         if problem:
             m.verdict, m.detail = UNAPPLIED, problem
             return m
-        m.verdict, m.detail = build_and_run(args, work, m.check)
+        m.verdict, m.detail = build_and_run(args, work, m.check, m.build_fails)
         # `@hole` says the check is known not to catch this and names the
         # issue.  It turns a survivor into a recorded exception --- and a
         # mutation that IS caught while still carrying one into a failure,
