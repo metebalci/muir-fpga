@@ -13,7 +13,7 @@
   <div class="band">
     <figure class="fig dense wide">
       <div class="scroll">
-<svg viewBox="0 0 1380 1076" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Five AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. Beside the bus interface, a debug cable adapter, not started, puts the cable's 21 wires onto 8 Pmod pins in beats and presents the same registers on M_AXI_GP1; the two Pmod connectors are drawn at the board's right side. The TV block's display goes to a display output block at the fabric's right, not started, which scans the display's buffer out of DDR over a fifth port, S_AXI_HP3, and drives the HDMI connector on the board; the processing system's USB host controller, driven by Linux, carries a keyboard and mouse. Neither is started. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. Below the ports is the processing system: an outline for Linux on the Arm cores, partly built: it boots from the card beside the running CADR with the CADR's 128 MB kept from it, and holds the programs that will run under it, none of them started; beside it the boot loader, U-Boot, partly built: the card file, the network loop and the fabric load are ours and run on the board, the loader binary is still Digilent's, and beside it a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm cores from the Linux group beside it, and one line out of the chip to the DRAM. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. Below the board's own parts, six status lights: LD0 says the fabric is clocked and LD1 that microcycles are retiring — between them, whether the machine is running — with four more for bring-up. How far along each block is, which the drawing otherwise says in colour --- green only for what the board itself has shown, turquoise for what is checked here and has not run on the board: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today from the boot PROM, with no memory behind it, and its first 1,024 microcycles have been read back over JTAG and agree with muir column by column, which is 0.17 per cent of the run and reaches no memory cycle; the bus interface is partly built, wanting only the debug cable; the disk controller is checked in simulation and has not run on the board: its registers, its drive, its channel, Read All and Write All are checked against muir over a scripted trace, and its pack side --- the block fetched over S_AXI_HP2 from the block's address Linux writes over M_AXI_GP0 --- against a modelled memory; the TV and the I/O board are not started. The memory path over S_AXI_HP0, drawn from the bridge through the port to the DDR3, is verified: every piece of it has a check, and the machine has run its boot PROM out of real DDR3 on the board with a witness outside its logic counting every cycle. Below the drawing, two bars: 6.20 per cent of the LUTs, 3,299 of 53,200, and 26.43 per cent of the block RAM, 37 tiles of 140. ">
+<svg viewBox="0 0 1560 1076" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 200 MHz, 29 ticks to the 145 ns microcycle. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Five AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the Chaosnet buffers and the console; and M_AXI_GP1, over which muir on the PS drives the debug cable. Beside the bus interface, a debug cable adapter, not started, puts the cable's 21 wires onto 8 Pmod pins in beats and presents the same registers on M_AXI_GP1; the two Pmod connectors are drawn at the board's right side. The TV block's display goes to a display output block at the fabric's left, not started, which scans the display's buffer out of DDR over a fifth port, S_AXI_HP3, and drives the HDMI connector on the board; the processing system's USB host controller, driven by Linux, carries a keyboard and mouse. Neither is started. On the Linux side: the RFB server, the pack as a file on microSD, Chaosnet routing over gigabit Ethernet, and the console. Below the ports is the processing system: an outline for Linux on the Arm cores, partly built: it boots from the card beside the running CADR with the CADR's 128 MB kept from it, and holds the programs that will run under it, none of them started; beside it the boot loader, U-Boot, partly built: the card file, the network loop and the fabric load are ours and run on the board, the loader binary is still Digilent's, and beside it a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm cores from the Linux group beside it, and one line out of the chip to the DRAM. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. Below the board's own parts, six status lights: LD0 says the fabric is clocked and LD1 that microcycles are retiring — between them, whether the machine is running — with four more for bring-up. How far along each block is, which the drawing otherwise says in colour --- green only for what the board itself has shown, turquoise for what is checked here and has not run on the board: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose runs on the board today from the boot PROM, with no memory behind it, and its first 1,024 microcycles have been read back over JTAG and agree with muir column by column, which is 0.17 per cent of the run and reaches no memory cycle; the bus interface is partly built, wanting only the debug cable; the disk controller is checked in simulation and has not run on the board: its registers, its drive, its channel, Read All and Write All are checked against muir over a scripted trace, and its pack side --- the block fetched over S_AXI_HP2 from the block's address Linux writes over M_AXI_GP0 --- against a modelled memory; the TV and the I/O board are not started. The memory path over S_AXI_HP0, drawn from the bridge through the port to the DDR3, is verified: every piece of it has a check, and the machine has run its boot PROM out of real DDR3 on the board with a witness outside its logic counting every cycle. Below the drawing, two bars: 6.20 per cent of the LUTs, 3,299 of 53,200, and 26.43 per cent of the block RAM, 37 tiles of 140. ">
           <text class="d-t" x="10" y="18">muir-fpga on the Arty Z7-20</text>
           <text class="d-s" x="196" y="18">XC7Z020-1CLG400C</text>
 
@@ -32,7 +32,25 @@
           <text class="d-s" x="832" y="18">not started</text>
           <rect class="d-box d-ext d-key" x="912" y="8" width="13" height="13"/>
           <text class="d-s" x="932" y="18">outside the project</text>
-          <rect class="d-box" x="10" y="28" width="1160" height="668.5"/>
+          <g transform="translate(180,0)">
+          <rect class="d-box" x="-170" y="28" width="1340" height="668.5"/>
+          <!-- The left column: the display output block, its port and the HDMI
+               connector, placed here so the port's line reaches the DDR
+               controller without crossing anything. Not started. -->
+          <rect class="d-plate" x="-160" y="274" width="74" height="112"/>
+          <rect class="d-box" x="-160" y="274" width="74" height="112"/>
+          <text class="d-t" x="-132" y="330" text-anchor="middle" transform="rotate(-90 -132 330)">display output</text>
+          <text class="d-s" x="-112" y="330" text-anchor="middle" transform="rotate(-90 -112 330)">scans the buffer, TMDS out</text>
+          <path class="d-line" d="M470,274 L470,256 L-123,256 L-123,274"/>
+          <path class="d-line" d="M-123,386 L-123,728 M-123,440 L-25,440 L-25,464"/>
+          <rect class="d-fill" x="-70" y="464" width="90" height="44"/>
+          <text class="d-m" x="-25" y="483" text-anchor="middle">S_AXI_HP3</text>
+          <text class="d-s" x="-25" y="499" text-anchor="middle">64 bits, AXI3</text>
+          <path class="d-line" d="M-25,508 L-25,610 L38,610"/>
+          <rect class="d-dash d-ext" x="-170" y="728" width="100" height="84"/>
+          <text class="d-t" x="-120" y="754" text-anchor="middle">HDMI</text>
+          <text class="d-s" x="-120" y="776" text-anchor="middle">the display,</text>
+          <text class="d-s" x="-120" y="790" text-anchor="middle">from the fabric</text>
 
           <text class="d-s" x="16" y="48">PL &mdash; fabric</text>
           <text class="d-s" x="156" y="50">the processor: two boards</text>
@@ -254,22 +272,7 @@
           <text class="d-s" x="1043" y="776" text-anchor="middle">keyboard and mouse,</text>
           <text class="d-s" x="1043" y="790" text-anchor="middle">on the PS&rsquo;s host port</text>
           <path class="d-line" d="M1043,670 L1043,728"/>
-          <rect class="d-dash d-ext" x="1200" y="368" width="150" height="84"/>
-          <text class="d-t" x="1275" y="394" text-anchor="middle">HDMI</text>
-          <text class="d-s" x="1275" y="416" text-anchor="middle">the display,</text>
-          <text class="d-s" x="1275" y="430" text-anchor="middle">from the fabric</text>
-          <!-- Between the TV and the connector: the block that scans the display's
-               buffer out of DDR at the monitor's rate and encodes it for the wire,
-               over its own port. Not started. -->
-          <rect class="d-plate" x="1088" y="300" width="74" height="130"/>
-          <rect class="d-box" x="1088" y="300" width="74" height="130"/>
-          <text class="d-t" x="1116" y="365" text-anchor="middle" transform="rotate(-90 1116 365)">display output</text>
-          <text class="d-s" x="1138" y="365" text-anchor="middle" transform="rotate(-90 1138 365)">scans the buffer, TMDS out</text>
-          <path class="d-line" d="M540,386 L540,410 L1088,410 M1162,410 L1200,410 M1125,430 L1125,464"/>
-          <rect class="d-fill" x="1070" y="464" width="90" height="44"/>
-          <text class="d-m" x="1115" y="483" text-anchor="middle">S_AXI_HP3</text>
-          <text class="d-s" x="1115" y="499" text-anchor="middle">64 bits, AXI3</text>
-          <path class="d-line" d="M1115,508 L1115,526 L1165,526 L1165,690 L200,690 L200,640"/>
+
 
           <!-- The connectors on the board itself. The pack is a file on the
                card; the terminal is a VNC client and Chaosnet's other machines
@@ -349,6 +352,7 @@
           <rect x="190" y="1046" width="174.4" height="13" fill="currentColor" fill-opacity="0.42"/>
           <text class="d-n" x="862" y="1058">26.43%</text>
           <text class="d-s" x="922" y="1058" fill-opacity="0.62">37 of 140 tiles</text>
+          </g>
         </svg>
       </div>
     </figure>
