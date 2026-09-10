@@ -101,6 +101,67 @@
 # latch, and the mode register's clock enable is -XBUS.RQ through the held
 # match --- read at the tick, so its D from the cpu's word is timed at the
 # tick too, as the disk's registers are.
+#
+# **AND THE CONSOLE'S READ-BACK IS IN THE SET, WHICH IS THE WHOLE REASON IT
+# IS INSIDE THIS MACHINE.**  `rtl/cadr_console.sv` is an AXI slave on
+# `M_AXI_GP1` a level above, beside the PS7, and it reads the sixteen
+# diagnostic registers --- which is `Engine::spy_read`, a sixteen-way mux over
+# `IR`, `PC`, `OPC`, `OB`, the A and M buses, `ST` and the two flag words.
+# With the register that catches that mux's answer up there in the console,
+# this file could not name it: it is read `read_xdc -ref cadr_machine` and
+# cannot reach a level above, which is the same wall `mem_addr` met and the
+# reason `rtl/cadr_ddr.xdc` exists.  The board flow then asked the mux to
+# settle in one tick and reported
+#
+#     -12.837 ns  u_machine/processor/md_reg[15]/C
+#              -> g_ddr.u_console/eng_rdata_reg[1]/D
+#              17.703 ns over 24 logic levels, 70% of it routing
+#
+# on 5,698 endpoints of 27,144, where the commit before the console read
+# -0.148 ns on the same board.  Two and a half ticks, and the worst this
+# project has measured.
+#
+# `rtl/cadr_console_bus.sv` moves that register in here, where it falls into
+# the set with no naming --- and it earns the set on this file's own test
+# rather than by being in the right module.  Its input is the mux, whose every
+# source is a register that moves at the microcycle boundary and stands still
+# between; and it is loaded AT THE BOUNDARY AND NOWHERE ELSE, `mclk` being its
+# whole clock enable, so it is launched at one boundary and captured at the
+# next with twenty-nine ticks to settle in at normal speed and forty-four at
+# extra slow. Loaded every tick it would be a register holding whatever a
+# relaxed path had reached, which is the too-wide exemption in its purest
+# form; `console-read-back-is-not-held-to-the-boundary` is the mutation that
+# says so, and `build/console.pass` catches it by MEASURING the lag --- reading
+# `PC` with the machine running and asking which row the answer belongs to.
+# A halted read cannot resolve it, the machine having stopped moving.
+#
+# **AND ITS CLOCK ENABLE WAS ASKED ABOUT RATHER THAN REASONED ABOUT**, which
+# is the trap this file already records one register along --- `elapsed ->
+# md/CE`, where a relaxed register's enable went with it. The prose written
+# here first said the enable was not relaxed at all, because `mclk` is made
+# from `tpclk` and `tpclk_q` and both are excluded above. `get_property
+# REQUIREMENT` says otherwise, and it is the third startpoint that does it.
+# Synthesised at this slice with this file read scoped, every path into
+# `con_rdata_reg[*]/CE`:
+#
+#     5.000 ns   u_machine/processor/u_phase_gen/tpclk_reg   x64
+#     5.000 ns   u_machine/processor/tpclk_q_reg             x64
+#    75.000 ns   u_machine/processor/started_reg             x64
+#
+# The two that make the edge stay at one tick, which is what matters: a
+# boundary that arrived a microcycle late would put the capture anywhere.
+# `started` is relaxed, and is the one register in the design for which that
+# cannot mean anything --- it goes high at the first boundary out of reset and
+# never changes again, so "its input is stable across the microcycle and its
+# consumer reads it only at the end" is true of it more completely than of
+# anything else in the set.
+#
+# The reasoning was right about the half that decides and wrong about the
+# whole, and only the question told the difference. The same query says every
+# one of 400 paths into `con_rdata_reg[*]/D` asks for 75.000, worst
+# `vma_reg[14]/C` at 24 logic levels with 57.148 ns of slack --- so the
+# naming took, which a slack figure alone could never have said.
+
 set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *mfinish_t_reg*    && \
                                   NAME !~ *rdfinish_t_reg*   && \

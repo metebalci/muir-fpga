@@ -139,7 +139,8 @@ $(BUILD)/prove.pass: $(BUILD)/obj_prove/Vcadr_prove_harness
 # same trace. Checked two ways --- the timing still agrees with muir, and a read
 # returns the word an earlier write put there.
 MEMPATH := rtl/cadr_ddr_map.sv rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv \
-           rtl/cadr_xbus_ddr.sv rtl/cadr_tv.sv rtl/cadr_memory_path.sv
+           rtl/cadr_xbus_ddr.sv rtl/cadr_tv.sv rtl/cadr_console_bus.sv \
+           rtl/cadr_memory_path.sv
 
 $(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Irtl -Mdir $(BUILD)/obj_memory_path \
@@ -250,7 +251,7 @@ $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
 MACHINE := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv rtl/cadr_ddr_map.sv \
            rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv rtl/cadr_xbus_ddr.sv \
            rtl/cadr_spy_registers.sv rtl/cadr_disk_controller.sv rtl/cadr_tv.sv \
-           rtl/cadr_memory_path.sv rtl/cadr_machine.sv
+           rtl/cadr_console_bus.sv rtl/cadr_memory_path.sv rtl/cadr_machine.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_machine \
@@ -744,8 +745,9 @@ $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 # THE HARNESS AND NOT THE MODULE, and the harness is the attachment.  Joining
 # a second master to the diagnostic bus means a mux at the register block's
 # Unibus port and an arbiter in front of it, both of which belong in
-# `rtl/cadr_memory_path.sv`; `tb/cadr_console_harness.sv` writes them, the
-# check holds them, and `docs/console.md` carries them as a patch.  The
+# `rtl/cadr_console_bus.sv`, which `rtl/cadr_memory_path.sv` instantiates ---
+# so what this check holds is the module the board carries and not a copy of
+# it in a harness.  The
 # processor in it is the real one, running MIT's boot PROM out of
 # `build/rtl.golden` as `microcycle.pass` runs it --- so the machine the
 # console stops is the one the reference describes, and the sixteen registers
@@ -755,8 +757,8 @@ $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 #
 # It takes about seven seconds.
 CONSOLE_SRC := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv \
-               rtl/cadr_spy_registers.sv rtl/cadr_console.sv \
-               tb/cadr_console_harness.sv
+               rtl/cadr_spy_registers.sv rtl/cadr_console_bus.sv \
+               rtl/cadr_console.sv tb/cadr_console_harness.sv
 
 $(BUILD)/obj_console/Vcadr_console_harness: $(CONSOLE_SRC) \
                                             tb/cadr_console_tb.cpp | $(BUILD)

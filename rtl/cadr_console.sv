@@ -109,11 +109,13 @@
 // **THE CONSOLE IS THE SECOND MASTER ON THE DIAGNOSTIC BUS**, and it asks.
 // The first is the CADR itself: `0o766000` is Unibus space, the boot PROM
 // writes the mode register there, and `cadr_busint_xbus.sv` runs that cycle.
-// So `dbg_req` goes up and the cycle waits for `dbg_gnt`; the arbiter is
-// outside this module because the thing it has to see --- whether the
-// processor's own Unibus cycle is running --- is `cadr_memory_path.sv`'s.
-// `tb/cadr_console_harness.sv` is that arbiter, written as the attachment
-// writes it, and `docs/console.md` carries the patch.
+// So `dbg_req` goes up and the cycle waits for `dbg_gnt`.  The arbiter is
+// outside this module for two reasons: what it has to see --- whether the
+// processor's own Unibus cycle is running --- belongs to
+// `cadr_memory_path.sv`, and what it holds has to be inside `cadr_machine`
+// for `cadr_machine.xdc` to reach.  It is `rtl/cadr_console_bus.sv`, one
+// module instantiated by that file and by `tb/cadr_console_harness.sv`, so
+// that the check holds the thing on the board and not a copy of it.
 //
 // **AND THE CONSOLE'S HOLD ON THAT BUS IS BOUNDED, because the processor's
 // is not.**  A CADR bus cycle that is not answered ends on the NXM timer at
@@ -206,7 +208,15 @@ module cadr_console #(
     output var logic [17:0] ub_addr,
     output var logic [15:0] ub_wdata,     // SPY<15:0> out
     input  var logic        ub_ssyn,      // -UB SSYN: the block answers
-    input  var logic [15:0] ub_rdata,     // SPY<15:0> back
+    // `SPY<15:0>` back.  **It arrives already registered**, and by design:
+    // `rtl/cadr_console_bus.sv` captures the sixteen-way diagnostic mux at
+    // the microcycle boundary inside `cadr_machine`, where
+    // `rtl/cadr_machine.xdc` can relax it.  Captured here instead the board
+    // read -12.837 ns; that module's header has the whole of it.  What it
+    // costs is that this word is the machine as of the last boundary, which
+    // is exact on a halted machine and is muir's own read-phase semantics on
+    // a running one.
+    input  var logic [15:0] ub_rdata,
 
     // --- the machine's own beat: one tick high for every microcycle the
     // --- processor retired, `cadr_microcycle.sv`'s `clock_edge`.
