@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The pack feeder at boot: the card mounted read-write at /mnt/card, and
-# cadr-pack-feeder serving the CADR's disk from /mnt/card/pack.img.
+# The disk pack program at boot: the card mounted read-write at /mnt/card, and
+# cadr-disk-pack serving the CADR's disk from /mnt/card/pack.img.
 #
 # THE CARD IS MOUNTED HERE AND NOWHERE ELSE.  U-Boot reads it and Linux's
 # root filesystem is an initramfs in RAM, so until this script the card was
@@ -25,23 +25,23 @@
 CARD_DEV=/dev/mmcblk0p1
 CARD=/mnt/card
 PACK=$CARD/pack.img
-PIDFILE=/var/run/cadr-pack-feeder.pid
+PIDFILE=/var/run/cadr-disk-pack.pid
 
 start() {
 	mkdir -p "$CARD"
 	if mountpoint -q "$CARD" 2>/dev/null || mount -t vfat -o rw "$CARD_DEV" "$CARD" 2>/dev/null; then
-		echo "cadr-pack-feeder: card mounted at $CARD"
+		echo "cadr-disk-pack: card mounted at $CARD"
 	else
-		echo "cadr-pack-feeder: no card partition at $CARD_DEV; the feeder will find no pack"
+		echo "cadr-disk-pack: no card partition at $CARD_DEV; the feeder will find no pack"
 	fi
-	printf "Starting cadr-pack-feeder: "
+	printf "Starting cadr-disk-pack: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-pack-feeder -- --pack "$PACK" --log /dev/console
+		--exec /usr/bin/cadr-disk-pack -- --pack "$PACK" --log /dev/console
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 
 stop() {
-	printf "Stopping cadr-pack-feeder: "
+	printf "Stopping cadr-disk-pack: "
 	start-stop-daemon -K -q -p "$PIDFILE"
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 	sync

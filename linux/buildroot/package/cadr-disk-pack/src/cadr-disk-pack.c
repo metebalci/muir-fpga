@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// cadr-pack-feeder: the program on Linux that serves the CADR's disk from
+// cadr-disk-pack: the program on Linux that serves the CADR's disk from
 // the pack file on the card.
 //
 // WHAT IT IS.  On the board the disk's pack is a file --- `pack.img` on the
@@ -22,7 +22,7 @@
 // the moves; `feeder_test.c` holds all three, on the build host, to a
 // modelled controller that asks.
 //
-// HOW IT RUNS.  `S80cadr-pack-feeder` mounts the card at /mnt/card and
+// HOW IT RUNS.  `S80cadr-disk-pack` mounts the card at /mnt/card and
 // starts this at boot with `--pack /mnt/card/pack.img --log /dev/console`.
 // In order:
 //
@@ -95,7 +95,7 @@
 // line says which block, which slot, which address and what the face
 // answered, and a failure repeating is said once a minute.
 //
-//     cadr-pack-feeder [--pack PATH] [--regs ADDR] [--log PATH] [--unit N]
+//     cadr-disk-pack [--pack PATH] [--regs ADDR] [--log PATH] [--unit N]
 //                      [--timed] [--read-only] [--poll-us N] [--irq PATH]
 //                      [--no-guard] [--selftest] [--once]
 
@@ -139,7 +139,7 @@ static void say(const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
-	fputs("cadr-pack-feeder: ", logf);
+	fputs("cadr-disk-pack: ", logf);
 	vfprintf(logf, fmt, ap);
 	fputc('\n', logf);
 	va_end(ap);
@@ -221,7 +221,7 @@ static int probe_face(struct pack_side *ps, uint32_t regs_phys)
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: cadr-pack-feeder [options]\n"
+		"usage: cadr-disk-pack [options]\n"
 		"  --pack PATH     the pack file (default /mnt/card/pack.img)\n"
 		"  --regs ADDR     the pack side's registers (default 0x40000000)\n"
 		"  --log PATH      where to write (default stdout)\n"
@@ -314,14 +314,14 @@ int main(int argc, char **argv)
 		}
 	}
 	if (unit > 7) {
-		fprintf(stderr, "cadr-pack-feeder: --unit %u: a unit is 0 to 7\n", unit);
+		fprintf(stderr, "cadr-disk-pack: --unit %u: a unit is 0 to 7\n", unit);
 		return 2;
 	}
 	logf = stdout;
 	if (log_path) {
 		logf = fopen(log_path, "a");
 		if (!logf) {
-			fprintf(stderr, "cadr-pack-feeder: %s: %s\n", log_path, strerror(errno));
+			fprintf(stderr, "cadr-disk-pack: %s: %s\n", log_path, strerror(errno));
 			return 2;
 		}
 	}

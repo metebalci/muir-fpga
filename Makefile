@@ -31,7 +31,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/mem_count.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
-       $(BUILD)/gp0_default.pass \
+       $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
        current
 
 # ---------------------------------------------------------------- phase gen
@@ -138,7 +138,7 @@ $(BUILD)/prove.pass: $(BUILD)/obj_prove/Vcadr_prove_harness
 # same trace. Checked two ways --- the timing still agrees with muir, and a read
 # returns the word an earlier write put there.
 MEMPATH := rtl/cadr_ddr_map.sv rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv \
-           rtl/cadr_xbus_ddr.sv rtl/cadr_memory_path.sv
+           rtl/cadr_xbus_ddr.sv rtl/cadr_tv.sv rtl/cadr_memory_path.sv
 
 $(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Irtl -Mdir $(BUILD)/obj_memory_path \
@@ -146,6 +146,35 @@ $(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cp
 
 $(BUILD)/memory_path.pass: $(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden
 	$(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden
+	@touch $@
+
+# ---------------------------------------------------------------- the display
+
+# The display controller --- the TV --- against muir's own `simpletv::SimpleTv`
+# driven through `busint::Busint`: `golden/src/tv.rs` is a scripted program,
+# because neither reference program touches a control register of it, and it
+# reaches the register face, the sync RAM, the vertical interrupt at every
+# tick of twenty-five frames, and the frame buffer as a window into DDR.
+#
+# THE DUT IS `cadr_memory_path`, NOT A HARNESS: `rtl/cadr_tv.sv` is
+# instantiated inside it, its frame buffer being that module's bridge at the
+# display's base, so the wiring checked is the wiring on the board.  Same
+# sources as `memory_path`, another trace and another testbench; the modelled
+# DDR answers at once so that the timing is comparable with muir, whose TV
+# takes no time of its own.
+#
+# The trace is 77 million ticks --- twenty-five frames, because a write
+# landing on the very tick a frame begins first becomes reachable at the
+# twenty-fifth --- and takes a minute or so.
+$(BUILD)/tv.golden: golden/src/tv.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin tv > $@
+
+$(BUILD)/obj_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_tv_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_tv \
+	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_tv_tb.cpp)
+
+$(BUILD)/tv.pass: $(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden
+	$(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden
 	@touch $@
 
 # ------------------------------------------------------------------ DDR map
@@ -219,7 +248,7 @@ $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
 # through this variable, all of which build the whole machine.
 MACHINE := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv rtl/cadr_ddr_map.sv \
            rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv rtl/cadr_xbus_ddr.sv \
-           rtl/cadr_spy_registers.sv rtl/cadr_disk_controller.sv \
+           rtl/cadr_spy_registers.sv rtl/cadr_disk_controller.sv rtl/cadr_tv.sv \
            rtl/cadr_memory_path.sv rtl/cadr_machine.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
@@ -537,7 +566,7 @@ MUTREV ?= HEAD
 # says which trace is missing, which is how this was found.
 mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
-         $(BUILD)/disk.golden \
+         $(BUILD)/disk.golden $(BUILD)/tv.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
@@ -550,7 +579,7 @@ mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 # itself is invoked, and where it was once wrong.
 mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
                   $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
-                  $(BUILD)/disk.golden \
+                  $(BUILD)/disk.golden $(BUILD)/tv.golden \
                   $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
@@ -782,13 +811,13 @@ buildroot: buildroot-check
 
 # Buildroot does not watch our files: a change under linux/buildroot/ to
 # U-Boot's environment, its fragment, the kernel config, the tree or the
-# cadr-tools sources is not seen by a plain `make buildroot` once the package
+# cadr-disk-pack sources is not seen by a plain `make buildroot` once the package
 # has a build stamp.  This forces the three packages that read them to
 # reconfigure and rebuild, then finishes the image as `buildroot` does.
 buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) \
-	    uboot-reconfigure linux-reconfigure cadr-tools-reconfigure
+	    uboot-reconfigure linux-reconfigure cadr-disk-pack-reconfigure
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'

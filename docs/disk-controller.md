@@ -304,19 +304,19 @@ reason, the tick counted by `elapsed` itself. `disk_pack.pass` runs
 operations** to the committed routine, as CLAUDE.md predicted for HP0 and
 HP1, so Digilent's FSBL still needs no change.
 
-## The pack feeder
+## The disk pack program
 
 The program on Linux that serves the CADR's disk from the pack file on the
-card: `linux/buildroot/package/cadr-tools/src/cadr-pack-feeder.c` and the
+card: `linux/buildroot/package/cadr-disk-pack/src/cadr-disk-pack.c` and the
 files beside it, built into the Buildroot image and started at boot by
-`S80cadr-pack-feeder`. This is its second revision, written against the
+`S80cadr-disk-pack`. This is its second revision, written against the
 register face at `a899799` --- the request path --- and it serves on demand;
 the first revision, at `388d03b`, moved blocks and could not learn which
 block the CADR wanted (its record is in "The request path, built" below,
 and in the history of this section). `feeder_test.c` in the same directory
 is its check. **It has run on the board**, with the `a899799` bitstream: the
 drive came present, the boot PROM asked for blocks 1, 0 and 17, and in the
-first minute the feeder served 32,780 blocks and wrote 16,101 back --- the
+first minute the disk pack program served 32,780 blocks and wrote 16,101 back --- the
 CADR reading and writing its disk on silicon. That run also found the one
 fault this revision then fixed, below at "the refusal read back with
 WAITING up". The last paragraphs say what to copy and what the console
@@ -367,7 +367,7 @@ if a slot is refused a hundred passes in a row (25 ms; a Read All holds a
 slot for a revolution, 16.7 ms).
 
 **The refusal read back with WAITING up, found on the board.** Once in
-48,879 moves the feeder failed a write-back with `refused while the walk
+48,879 moves the disk pack program failed a write-back with `refused while the walk
 waits, which cannot be the channel's doing (status 0x5a)`. `0x5a` is
 WAITING | CH_ACTIVE | REFUSED | DONE. The RTL's refusal terms at `a899799`
 (`rtl/cadr_disk_pack.sv` lines 476--491) are not one bit of three, an
@@ -381,7 +381,7 @@ transfer was on, which for a Write is exactly the slot that just went DIRTY;
 a write-back of it in that window is refused by `bad_ch`, the walk then
 misses its block, posts and waits, and by the time Linux's read comes back
 the live bits say WAITING. **The RTL is conservative there, not wrong**:
-the refusal is harmless and the answer is a later pass. The feeder's fault
+the refusal is harmless and the answer is a later pass. The disk pack program's fault
 was reading the live `ch_active` and `waiting` bits as the reason for the
 refusal; it now classifies a refusal by the request's own terms and takes
 any well-formed, non-busy one as the walk's slot. `feeder_test.c`
@@ -400,7 +400,7 @@ sectors a Write All laid down with something other than the format's own;
 `pack_file.c` keeps the same two tables and maintains them exactly as
 `Unit::write_sector_at` does, so an ordinary Write (fresh checkword, header
 as fetched) and a Write All (whatever the program laid) both come out right
-without the feeder knowing which it was. Like muir's, the tables are in
+without the disk pack program knowing which it was. Like muir's, the tables are in
 memory for the run: a fresh start has every block's header and checkwords
 as the format lays them --- `header_of` with the code over it, the code
 over the data --- and a sector laid with others forgets that at the next
@@ -411,7 +411,7 @@ card, and the program holds exactly what muir's `Unit` holds. What got
 simpler: `pack_file.c` lost its file format, its creation on the first
 write-back, its mismatch rules (magic, version, size, a pack newer than the
 sidecar by mtime) and the flag that overrode them; `struct pack` five
-fields; the feeder an option and three console states; the host test a
+fields; the disk pack program an option and three console states; the host test a
 whole arm and seven mutations; the card a second file that had to agree
 with the first and a 4 MB write at the first write-back; and there is no
 procedure for resetting a pack's headers, because there is nothing to
@@ -461,9 +461,9 @@ interrupts = <0 29 4>;` (`IRQ_F2P` bit 0 is GIC interrupt 61) ---
 `CONFIG_UIO_PDRV_GENIRQ` in the kernel and `uio_pdrv_genirq.of_id=generic-uio`
 on its command line. Neither the tree nor the kernel is touched here.
 
-**The check.** `make -C linux/buildroot/package/cadr-tools/src check`, on
+**The check.** `make -C linux/buildroot/package/cadr-disk-pack/src check`, on
 the build host, needing a C compiler and `build/disk.golden`; scratch under
-`~/.cache/muir-fpga-pack-feeder`. The feeder's core runs against a model of
+`~/.cache/muir-fpga-disk-pack`. The disk pack program's core runs against a model of
 the register face at `a899799` --- the tag with the unit, REQ, DIRTY, REF,
 IRQ, IRQEN, DENY, the refusal per slot, `waiting` --- with a scripted disk
 controller behind it that **asks**: each run of the trace's `NEED` rows is
@@ -496,14 +496,14 @@ hand four times round the store, the walk's slot refused 43 times of which
 pack compared at the end, 23 load rows' checkwords agreeing with muir's
 `Ecc`. **Fifteen hand mutations of the program are each caught on the
 property they break**: the denial dropped for an off-pack block and
-for the other unit (the feeder fails on the block), a dirty victim not
+for the other unit (the disk pack program fails on the block), a dirty victim not
 written back ("fetched into while DIRTY: the CADR's write is lost"), the
 first slot taken regardless of REF and REF cleared wholesale ("second
 chance: ..."), the walk's slot retried instead of passed, the tag without
 its unit and with head and block swapped (the request is denied where it
 should be served), the record placed without its three words, the dirty
 event ignored (dirty for 7 polls), the WAITING bit read back taken as "not
-the walk's" (the board's fault put back: the feeder fails the write-back),
+the walk's" (the board's fault put back: the disk pack program fails the write-back),
 a deferred write-back given up (the slot's block forgotten: the slot stays
 dirty past the bound), a laid header not tabled, the pad's poison test off by
 one, and a start that leaves the store alone. The mutation script is
@@ -523,16 +523,16 @@ whole of the disk on the card.
 **What the console must show, with a pack on the card and the drive
 untimed**, in this order, and nothing else at the same rate:
 
-    cadr-pack-feeder: card mounted at /mnt/card
-    Starting cadr-pack-feeder: OK
-    cadr-pack-feeder: the EMIO tally reads 0x01008100 0x01008100: a fabric with the processing system in it; M_AXI_GP0 may be read
-    cadr-pack-feeder: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
-    cadr-pack-feeder: pack /mnt/card/pack.img: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks
-    cadr-pack-feeder: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
-    cadr-pack-feeder: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
-    cadr-pack-feeder: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
-    cadr-pack-feeder: 24 slots taken away; the drive on unit 0 is present (writable, untimed)
-    cadr-pack-feeder: polling REQ and DIRTY every 250 us
+    cadr-disk-pack: card mounted at /mnt/card
+    Starting cadr-disk-pack: OK
+    cadr-disk-pack: the EMIO tally reads 0x01008100 0x01008100: a fabric with the processing system in it; M_AXI_GP0 may be read
+    cadr-disk-pack: the pack side answers at 0x40000000 (IDENT "PACK"); status 0x00
+    cadr-disk-pack: pack /mnt/card/pack.img: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks
+    cadr-disk-pack: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
+    cadr-disk-pack: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
+    cadr-disk-pack: records at 0x1c800000 (fetches) and 0x1c810000 (write-backs), 24 slots 0x800 apart
+    cadr-disk-pack: 24 slots taken away; the drive on unit 0 is present (writable, untimed)
+    cadr-disk-pack: polling REQ and DIRTY every 250 us
 
 The tally's two words are whatever the machine's memory cycles have counted
 by then (256 and 256 after the boot PROM's parity loop, `0x01008100` twice,
@@ -542,9 +542,9 @@ the CADR**: until then the boot PROM sits in `AWAIT-DRIVE-READY` polling a
 status of `0x2321`; with unit 0 present it goes on, and the first requests
 follow within the PROM's own time:
 
-    cadr-pack-feeder: request 1: block B (C/H/B) served into slot 0 from 0x1c800000
-    cadr-pack-feeder: request 2: block ... served into slot 1 from 0x1c800800
-    cadr-pack-feeder: request 3: block ... served into slot 2 from 0x1c801000; further requests are counted, not named
+    cadr-disk-pack: request 1: block B (C/H/B) served into slot 0 from 0x1c800000
+    cadr-disk-pack: request 2: block ... served into slot 1 from 0x1c800800
+    cadr-disk-pack: request 3: block ... served into slot 2 from 0x1c801000; further requests are counted, not named
 
 On the board the PROM asked for blocks 1, 0 and 17 (unit 0: 0/0/1, 0/0/0,
 0/1/0), in that order; the reference band's opening sequence, earlier in
@@ -555,7 +555,7 @@ begins to move and served by the next poll, so the CADR sees a drive with
 no seek and a 250 us sector. Then, once a minute at most while the counts
 move:
 
-    cadr-pack-feeder: served 32780, written back 16101, denied 0, refused for the walk's slot 3 (write-backs deferred 3, at most 1 passes in a row), 0 lost at start, 0 failures; 240000 polls, 6170 of the face while busy
+    cadr-disk-pack: served 32780, written back 16101, denied 0, refused for the walk's slot 3 (write-backs deferred 3, at most 1 passes in a row), 0 lost at start, 0 failures; 240000 polls, 6170 of the face while busy
 
 The served and written-back figures are the board's first minute; the rest
 are placeholders for the shape. **A `failures` count above zero names its
@@ -574,13 +574,13 @@ guard line saying the tally reads zero or all ones (the wrong bitstream, or
 the GPIO clock gated --- stop there; the program did); `no pack side ...
 "NONE"` (a proving board); `request N: ...` lines with no
 `served` count moving afterwards; or any `failures` above zero in the
-summary, each of which was named when it happened. `cadr-pack-feeder
+summary, each of which was named when it happened. `cadr-disk-pack
 --selftest` still runs the round trip of block 0 through the store with the
 drive absent, as at `997b734`, and passes on the board at that bitstream.
 
 ## The request path, built
 
-Written at the slice after the feeder, which found the face wanting: the
+Written at the slice after the disk pack program, which found the face wanting: the
 store is a cache Linux keeps, and the controller now says what it lacks.
 `rtl/cadr_disk_controller.sv` (the request register, the wait, the
 prefetch, the events) and `rtl/cadr_disk_pack.sv` (the registers Linux
@@ -690,13 +690,13 @@ the routine and says so. Bit 0 of `IRQ_F2P` is shared peripheral interrupt
 
 **GP0 is answered on every board that has it.** A read nothing answers on
 GP0 does not fault the Arm; it hangs both cores at one PC each (measured on
-the board, the feeder reading IDENT on a bitstream without the pack side).
+the board, the disk pack program reading IDENT on a bitstream without the pack side).
 So: with `DDR=1` the pack side completes every transaction --- the sixteen
 words, SLVERR outside them, anywhere in the port's gigabyte; the two
 proving boards (`PROVE=1`, `PROVE=2`), which bring GP0 out without the pack
 side, carry `rtl/cadr_gp0_default.sv`, which completes every read with
 OKAY and `0x4E4F4E45` ("NONE") and every write with OKAY, dropped, so that
-the feeder's own IDENT check says "not this face" instead of freezing the
+the disk pack program's own IDENT check says "not this face" instead of freezing the
 processor; `gp0_default.pass` holds that it answers, the arty lint that it
 is wired. **The default board (`DDR=0`) has no `PS7` in it and cannot
 answer**: a program that touches `0x4000_0000` on that bitstream hangs the
@@ -708,7 +708,7 @@ abort the kernel cannot attribute; the pack side's out-of-window SLVERR is
 the decision recorded above and stands, but a program should not write
 outside the sixteen words.
 
-**What the Linux program (`linux/buildroot/package/cadr-tools/src`) must
+**What the Linux program (`linux/buildroot/package/cadr-disk-pack/src`) must
 change**, for its author --- nothing there is edited by this slice:
 
 1. `pack_side.h`: `ps_tag(c, h, b)` gains the unit in bits 30:28
@@ -724,7 +724,7 @@ change**, for its author --- nothing there is edited by this slice:
    refusal while `PS_ST_WAITING` is up cannot come from the channel at all.
    `PS_ST_STORE_MISS` no longer means "the store lacked a block": it means
    a denial (or a track command's absent sector).
-4. The feeder: serve on demand. Read `REQ` on the interrupt (or by polling
+4. The disk pack program: serve on demand. Read `REQ` on the interrupt (or by polling
    `REQ` valid / `CTL` waiting); the disk address is bits 30:0 and the
    `lba` is `pack_file`'s from cylinder, head and block; unit is bits
    30:28 and selects the pack (one pack today: deny anything on another

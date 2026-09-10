@@ -44,7 +44,7 @@ thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
 took 25 minutes of wall clock on 16 cores, and `make buildroot` after a
 change minutes. **Buildroot does not watch our files**: after editing
 anything under `linux/buildroot/` run `make buildroot-rebuild`, which
-reconfigures U-Boot, the kernel and `cadr-tools` and finishes the image.
+reconfigures U-Boot, the kernel and `cadr-disk-pack` and finishes the image.
 
 `linux/buildroot/` is the Buildroot external tree; `make buildroot` builds
 the whole thing from the tarball (several gigabytes under
@@ -62,7 +62,7 @@ for what it holds; the ones worth knowing exist:
     board/arty-z7-20/linux/linux.config        the kernel: what the board has and nothing more
     board/arty-z7-20/uEnv.txt.in, uEnv.net     the card's optional file and the served boot command
     board/arty-z7-20/genimage.cfg              the card as one image, sdcard.img
-    package/cadr-tools/                        where our own programs go; one placeholder today
+    package/cadr-disk-pack/                        where our own programs go; one placeholder today
 
 **The start-up routine is the same one, proved rather than assumed.** U-Boot's
 SPL runs `ps7_init()` and `ps7_post_config()` from a `ps7_init_gpl.c`, as
