@@ -74,6 +74,14 @@ struct feeder {
 	unsigned long polls, requests, served, denied, written_back, takes;
 	unsigned long refused_walk, deferred_dirty, nothing_moved, pad_written, failures;
 	unsigned long lost_at_start;
+	// The last failure, for the summary line: a count that names nothing
+	// is not a report.
+	char last_failure[256];
+	// How many passes a dirty slot has been refused as the walk's in a row,
+	// per slot, and the longest run seen: bounded, so a slot the walk never
+	// leaves is said rather than deferred for ever.
+	unsigned deferred_runs[PS_SLOTS];
+	unsigned longest_deferral;
 	// What has been named on the console.
 	unsigned long named_requests;
 	uint32_t named_denials[FEEDER_NAMED_DENIALS];
@@ -117,6 +125,11 @@ int feeder_start(struct feeder *f, unsigned unit, int read_only, int timed, char
 // Returns how many moves and denials it made, or -1 with `err` on a failure
 // it could not get past (the pass is otherwise complete).
 int feeder_poll(struct feeder *f, char *err, size_t errlen);
+
+// How many passes in a row a dirty slot may be refused as the walk's before
+// it is said: a block's move is some 256 bus cycles, a Read All a
+// revolution of 16.7 ms, so at 250 us a poll a hundred passes is 25 ms.
+#define FEEDER_DEFERRAL_CAP 100
 
 // Every dirty slot written back, for a stop: as many passes as it takes,
 // up to `passes`.  Returns the number still dirty.
