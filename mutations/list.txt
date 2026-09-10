@@ -5035,3 +5035,122 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
           answered <= 1'b1;
 @end
+
+# Two records from the timing slice that took the memory-on board from
+# -0.462 ns on 278 endpoints to -0.148 ns on thirteen.  They are here rather than in mutations/list.txt
+# because a second session owned that file while this work ran; merge them
+# in, in this order, at the end of the disk block and beside the other
+# `microcycle` records respectively.
+#
+# WHAT THEY AIM AT
+#
+#   the-control-store-is-addressed-a-microcycle-stale
+#       rtl/cadr_microcycle.sv, `@check microcycle`.  Holds the change that
+#       took the control store's address off TPCLK.
+#
+#   disk-latency-does-not-go-round-the-pack
+#       rtl/cadr_disk_controller.sv, `@check disk`.  Holds the algebraic
+#       rewrite that took the second twenty-nine-bit adder out of the tick
+#       the DSP had already spent.
+#
+# Both were built and run against the slice's own tree before being written
+# here, and both are CAUGHT:
+#
+#   the-control-store-is-addressed-a-microcycle-stale
+#       microcycle 10 (PC 0o54): IR is 8009c00a09c, reference says
+#       8009c00a09b --- FAIL: 20 mismatches over 21 microcycles
+#
+#   disk-latency-does-not-go-round-the-pack
+#       row 388 at 2675832050 ns (tick 568499752): the read-back is
+#       09000006, muir says 09000007; row 390, not-active or an attention
+#       --- FAIL: 2 mismatches
+#
+# Run in an isolated tree at 8af82de plus the slice's two files, with
+# `--list` pointing at a copy of list.txt with these appended.  Runner
+# summary lines:
+#
+#   --only microcycle    26 mutations, 24 caught, 2 known holes (#1), 0 survived
+#   --only machine       17 mutations, 16 caught, 1 known hole (#13), 0 survived
+#   --only disk          60 mutations, 59 caught, 0 holes, 0 survived
+#   --only disk-latency   1 mutation,   1 caught  (this record, once the lint
+#                                                  trap below was fixed)
+
+@mutation the-control-store-is-addressed-a-microcycle-stale
+@check microcycle
+@file rtl/cadr_microcycle.sv
+@note The control store's read address WAS `cpu_edge ? npc : pc`, a mux on
+@note the boundary that put TPCLK four logic levels from twenty-six block
+@note RAMs' address pins --- 4.775 ns of a 5 ns tick and 116 of the DDR=1
+@note board's 278 failing endpoints at 5b03a4e.  It is `pc` now, which is
+@note the same register the mux's output would have been, and the word is
+@note read at the boundary twenty-eight ticks later.
+@note
+@note **AND THE BOUND THAT NOW COVERS IT IS FIFTEEN TICKS WHERE THE CHECK
+@note CANNOT SEE PAST FORTY-THREE**, which is the honest way to say what
+@note this record is for.  `pc_reg -> imem_reg/ADDR` is slow to slow, so it
+@note takes `cadr_machine.xdc`'s microcycle exception --- the one that file's
+@note own list already claims for `imem_q` and `prom_q`.  Asked what a
+@note mutation just outside that bound does, by delaying the address through
+@note a shift register and sweeping the depth on this very check:
+@note
+@note     1 tick    survives      16 ticks   survives
+@note     29        survives      30         survives
+@note     36        survives      40         survives
+@note     42        survives      43         CAUGHT
+@note
+@note --- caught at microcycle 10, PC 0o54, IR 8009c00a09c where muir says
+@note 8009c00a09b, the word one address behind.  Forty-three ticks is the
+@note read phase of an EXTRA SLOW microcycle, which is what the machine
+@note comes up in.  So the exception is twenty-eight ticks TIGHTER than the
+@note coarsest thing any check here can resolve, and a mutant between 16 and
+@note 42 is an equivalence and must not be filed as a hole: `pc` is constant
+@note across the microcycle and the address arriving late inside it changes
+@note no word anyone reads.  Same fact as the level-1 map read that survives
+@note being registered, from the other side.
+@note
+@note The live record is therefore at the smallest magnitude the check can
+@note see, which is a whole microcycle: LPC is the PC of the instruction
+@note before, and a control store addressed by it fetches the last word
+@note again.
+@old
+  assign cs_radr = pc;
+@new
+  assign cs_radr = lpc;
+@end
+
+@mutation disk-latency-does-not-go-round-the-pack
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note `disk_unit::until` is the wait for the addressed block to come round
+@note from where the spindle stood when the seek ended: the difference if the
+@note block is still ahead, and that difference PLUS A REVOLUTION if it has
+@note already gone past.  The two used to be two registers, `acc_d1` and
+@note `acc_d2`, computed side by side --- and `acc_d2` was
+@note `REVOLUTION_NS - acc_spin + acc_at`, two twenty-nine-bit adds in series
+@note off a DSP48E1 whose clock-to-output is 2.191 ns.  That was 5.244 ns of
+@note a 5 ns tick, `disk/acc_d20/CLK -> disk/acc_d2_reg[26]/D`, and 17 of the
+@note DDR=1 board's 278 failing endpoints at 5b03a4e.
+@note
+@note In twenty-nine-bit arithmetic `(acc_at - acc_spin) + REVOLUTION_NS` is
+@note the SAME BITS as `REVOLUTION_NS - acc_spin + acc_at`, so the revolution
+@note moved to the tick that chooses between the two and `acc_d2` is gone.
+@note What this holds is that it is still added: dropping it takes the
+@note wrapped difference --- the block having gone past, `acc_at - acc_spin`
+@note is negative and wraps to something near 2^29 --- and charges a wait
+@note that is not the drive's.  No tick was added and none was taken away,
+@note which `disk-seek-settle-a-tick-short` and `disk-timeout-a-tick-short`
+@note are what say.
+@note
+@note **THE ARMS ARE SWAPPED RATHER THAN THE REVOLUTION DROPPED**, and lint
+@note is why: written as `acc_lat_r <= acc_d1;` the mutation leaves `acc_ge`
+@note read by nothing and Verilator refuses the build, so the check never
+@note runs and the runner reports a broken mutation instead of a caught one.
+@note Swapping charges the revolution to the block that is still AHEAD and
+@note nothing to the one that has gone past --- every signal stays used, and
+@note it is the sharper question anyway: which side of the compare the
+@note revolution belongs to.
+@old
+          acc_lat_r <= acc_ge ? acc_d1 : (acc_d1 + 29'(REVOLUTION_NS));
+@new
+          acc_lat_r <= acc_ge ? (acc_d1 + 29'(REVOLUTION_NS)) : acc_d1;
+@end
