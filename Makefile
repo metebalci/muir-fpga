@@ -931,7 +931,7 @@ buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) \
 	    uboot-reconfigure linux-reconfigure cadr-common-reconfigure \
-	    cadr-console-reconfigure cadr-disk-pack-reconfigure
+	    cadr-console-reconfigure cadr-disk-pack-reconfigure cadr-screen-reconfigure
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'

@@ -1,0 +1,51 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The screen at boot: cadr-screen serving the CADR's display over RFB on port
+# 5900, which a VNC viewer reaches as display :0.
+#
+# S85, after S80cadr-disk-pack: the drive comes present first, so the console
+# log reads in the order the machine needs things.  Nothing here depends on
+# that order --- the display's region of DDR is there whether or not a pack is
+# --- but a log that reads in the wrong order gets read in the wrong order.
+#
+# **IT LISTENS ON EVERY INTERFACE AND HAS NO PASSWORD.**  RFC 6143's `None` is
+# the only security type this server offers, so anybody who can reach port
+# 5900 on this board sees the screen.  That is deliberate and is the same
+# decision the rest of this image already makes --- root logs in with the
+# password `root` over Dropbear (linux/buildroot/configs/arty_z7_20_defconfig)
+# --- because the board is on a private LAN and the screen has to be watched
+# from another machine: the board has no display of its own, and a server
+# bound to the loopback address would be reachable only by somebody already
+# logged in.  `--bind 127.0.0.1` is how that is changed, and then a viewer
+# reaches it over an SSH tunnel.
+#
+# The log goes to the console, which is where the board is watched from
+# (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
+# program is told where to write instead.
+
+PORT=5900
+PIDFILE=/var/run/cadr-screen.pid
+
+start() {
+	printf "Starting cadr-screen: "
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
+		--exec /usr/bin/cadr-screen -- --port "$PORT" --log /dev/console
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+	printf "Stopping cadr-screen: "
+	start-stop-daemon -K -q -p "$PIDFILE"
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?

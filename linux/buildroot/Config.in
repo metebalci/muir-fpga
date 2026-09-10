@@ -3,3 +3,4 @@
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-common/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-console/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-disk-pack/Config.in"
+source "$BR2_EXTERNAL_CADR_PATH/package/cadr-screen/Config.in"
