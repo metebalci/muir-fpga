@@ -5189,3 +5189,114 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
       if (mclk || !mclk) con_rdata <= sr_rdata;
 @end
+
+# ---------------------------------------------------------------------------
+# The CCW walk, over a real pack --- `disk_boot`.
+#
+# THE BOARD'S OWN SYMPTOM IS THE FIRST OF THESE.  On 2026-09-10 the board
+# booted, loaded its microcode off the pack and halted itself at microcode PC
+# `0o5163` on `ILLOP-IF-PAGE-FAULT`: the cold boot's first `COLD-DISK-READ` is
+# one command list of three CCWs into physical pages 0, 1 and 2, and only page
+# 0 arrived.  What made that survivable is that nothing in this repository had
+# ever walked a list of more than one CCW whose blocks the store has to ask
+# Linux for --- `disk` walks lists of three but pre-fills every block, and
+# `disk_pack` fills on demand but every list in it is one CCW long bar a
+# chained pair whose first block is already resident.
+#
+# **AND THE FABRIC IS NOT WHAT DID IT.**  Measured, three ways, after the
+# check below was built: `disk_boot` passes; `cadr_machine` with a modelled
+# DDR and a feeder on the block-store seam runs the whole cold boot and leaves
+# physical 0..1023 byte-identical to muir; and so does `cadr_machine` with
+# `rtl/cadr_disk_pack.sv` under it over a modelled `S_AXI_HP2`, which is
+# `rtl/cadr_arty.sv`'s `g_ddr` short of the PS7.  So these records are here to
+# say that the check would have caught it, and not because anything in `rtl/`
+# was changed.
+
+@mutation ccw-walk-honours-only-the-first-ccw
+@check disk_boot
+@file rtl/cadr_disk_controller.sv
+@note **THIS IS THE BOARD'S SYMPTOM, WRITTEN AS A MUTATION.**  The More flag
+@note is taken only for a track command, so a block walk moves the first
+@note page of a list and stops --- exactly what the board did to the cold
+@note boot's three-CCW `COLD-DISK-READ`.
+@note
+@note `ch_more <= 1'b0` is what the bug looks like and lint refuses it:
+@note `ch_rdata` is read for the page field but bit 0 would be read by
+@note nothing, and Verilator's UNUSEDSIGNAL is per bit.  `&& ch_track` keeps
+@note every bit used and is a bug somebody could plausibly write --- the
+@note flag mattering only where `each_ccw` walks a list, and not where
+@note `command_list` does.
+@note
+@note Caught by `disk` as well as by `disk_boot`, because `disk.golden` moves
+@note three pages in a START three times.  It is aimed here because this is
+@note the check that runs the board's own list over the board's own pack.
+@old
+              ch_more  <= ch_rdata[0];
+@new
+              ch_more  <= ch_rdata[0] && ch_track;
+@end
+
+@mutation ccw-walk-stops-after-four-pages
+@check disk_boot
+@file rtl/cadr_disk_controller.sv
+@note A channel that stops after a fixed number of pages however many the
+@note list asks for.  `disk_boot` catches it on the cold boot's own second
+@note list, which is nine CCWs, and on the sixteen after it.
+@note
+@note **WHO ELSE SEES IT, MEASURED AND NOT PREDICTED.**  The note here first
+@note said `disk` and `disk_pack` were both blind to it, on the grounds that
+@note the longest command list `disk.golden` walks moves three pages.  That
+@note is true of the trace and false of the check: `disk_pack` SURVIVES it
+@note --- and so do `ddr_boot`, `machine` and `probe` --- but `disk` CATCHES
+@note it, on `tb/cadr_disk_tb.cpp`'s own track section, which builds a
+@note command list of its own long enough to carry a whole track's 20,160
+@note bytes and fails at "the last memory address after a Read All is
+@note 001003ff, wanting 001013ff".  So the check that sees it is not the
+@note trace's lists but the testbench's, which is worth knowing before
+@note somebody quotes the trace at it.  CLAUDE.md's own entry: prose about
+@note why a mutation is the right one ages faster than the mutation, and
+@note this one was wrong the day it was written.
+@note
+@note `ch_moved` is the count of pages already moved and is incremented in
+@note the same tick, so `>= 3` stops the walk once four have gone.
+@old
+          if (!ch_more) begin
+@new
+          if (!ch_more || ch_moved >= 8'd3) begin
+@end
+
+@mutation ccw-walk-runs-one-page-past-the-list
+@check disk_boot
+@file rtl/cadr_disk_controller.sv
+@note The converse of the one above: the walk goes on when the More flag says
+@note stop.  A list of one moves two pages, a list of three moves four, and
+@note the page after each list is a page of memory nothing asked to be
+@note written --- which on the cold boot's first list is physical page 3, the
+@note page `%SYS-COM` lives under.
+@note
+@note `ch_moved != 8'd0` rather than dropping the term, so that `ch_more`
+@note stays read here as well as at `C_HDRCK`: at the first `C_NEXT` of a
+@note transfer `ch_moved` is still zero, so the first CCW's clear More flag
+@note is ignored and the second is obeyed.
+@old
+          if (!ch_more) begin
+@new
+          if (!ch_more && ch_moved != 8'd0) begin
+@end
+
+@mutation the-command-list-walks-backwards
+@check disk_boot
+@file rtl/cadr_disk_controller.sv
+@note "Only bits `<15:0>` of the CLP can count", and this counts them the
+@note other way: the second CCW is fetched from `clp - 1` rather than
+@note `clp + 1`.  The pages a list names then come out of whatever is below
+@note the command list, which for the cold boot is the microcode symbol area.
+@note
+@note Subtraction rather than deleting `ch_n`, because `ch_n` is written in
+@note `C_NEXT` and read only here: dropped, Verilator reports it unused and
+@note the build fails instead of the check.
+@old
+  assign clp_now = {clp[31:16], clp[15:0] + ch_n};
+@new
+  assign clp_now = {clp[31:16], clp[15:0] - ch_n};
+@end
