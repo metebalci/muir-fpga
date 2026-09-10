@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# What this board changes in U-Boot's generic Zynq configuration,
+# configs/xilinx_zynq_virt_defconfig at 2026.01.  Merged over it by
+# Buildroot (BR2_TARGET_UBOOT_CONFIG_FRAGMENT_FILES); the start-up routine's
+# CONFIG_XILINX_PS_INIT_FILE is set by Buildroot too, from
+# BR2_TARGET_UBOOT_ZYNQ_PS7_INIT_FILE.
+
+# Our tree, and only ours.  The generic configuration lists seventeen boards
+# in OF_LIST; those trees would be built and packed into u-boot.itb for
+# nothing.  scripts/Makefile.dts adds CONFIG_DEFAULT_DEVICE_TREE to the dtbs
+# built, which is how a tree not in arch/arm/dts/Makefile's list gets built.
+CONFIG_DEFAULT_DEVICE_TREE="zynq-arty-z7-20"
+CONFIG_OF_LIST="zynq-arty-z7-20"
+CONFIG_SPL_OF_LIST="zynq-arty-z7-20"
+
+# The default environment is board/xilinx/zynq/cadr.env (put there by a hook
+# in external.mk) and bootcmd runs it.  The environment is built in and lives
+# nowhere else: the generic configuration would also look for uboot.env on
+# the card (ENV_IS_IN_FAT), and a saved environment is a second place a boot
+# can be decided from that nothing in the repository sees.  The 2017 build
+# had the same property (CONFIG_ENV_IS_NOWHERE) and it was counted a virtue.
+CONFIG_ENV_SOURCE_FILE="cadr"
+CONFIG_USE_BOOTCOMMAND=y
+CONFIG_BOOTCOMMAND="run cadr_boot"
+CONFIG_ENV_IS_NOWHERE=y
+# CONFIG_ENV_IS_IN_FAT is not set
+# CONFIG_ENV_IS_IN_NAND is not set
+# CONFIG_ENV_IS_IN_SPI_FLASH is not set
+# CONFIG_ENV_REDUNDANT is not set
+
+# The card's file sets ethaddr, and the interface has already been given a
+# random one at probe (NET_RANDOM_ETHADDR, kept so that a card without the
+# line still gets on the network, noisily).  Without this, an ethaddr once
+# set may not be changed (include/env_flags.h: "ethaddr:mo") and the import
+# would be refused.
+CONFIG_ENV_OVERWRITE=y
+
+# Two seconds at the console to interrupt, then the loop.
+CONFIG_BOOTDELAY=2
+
+# bootz is what boots the zImage; DISTRO_DEFAULTS selects it already, and
+# saying so here means a change there cannot take it away silently.
+CONFIG_CMD_BOOTZ=y

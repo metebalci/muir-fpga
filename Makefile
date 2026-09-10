@@ -683,3 +683,75 @@ $(BUILD):
 
 clean:
 	rm -rf $(BUILD) golden/target
+
+# ------------------------------------------------------------ Linux, Buildroot
+
+# The image the processing system boots: mainline U-Boot with its SPL as the
+# first-stage loader, mainline Linux, a BusyBox root filesystem, all from a
+# Buildroot pinned by version and sha256 like the BSP and the System 100
+# archive.  linux/buildroot/ is the BR2_EXTERNAL tree --- the defconfig, the
+# board's device tree, the start-up routine generated from vivado/ps7_init.ops,
+# the kernel config, U-Boot's environment --- and every file in it says why it
+# is as it is.  docs/boot.md, "The Buildroot image", is the procedure.
+#
+# THE BUILD IS NOT UNDER build/ AND NOT UNDER /tmp.  It is several gigabytes
+# and takes an hour the first time; /tmp is a RAM disk on the build host.
+# BR_WORK puts the Buildroot source and its output directory under ~/.cache
+# and can be pointed elsewhere.  The downloads go to vendor/buildroot-dl,
+# gitignored with the rest of vendor/, so a second build fetches nothing:
+# BR2_DL_DIR in the defconfig says so relative to the external tree.
+#
+# The Buildroot tarball is fetched by hand, like the BSP, and summed before
+# use.  buildroot.org publishes no sha256 file for it (only a GPG .sign); the
+# sum below is of the tarball as fetched on 2026-09-10 and is the claim.
+#
+# MAKEFLAGS is cleared for the inner make: Buildroot runs its own parallel
+# builds per package (BR2_JLEVEL, all cores by default) and a top-level -j
+# handed down to it is a different, less tested mode.
+#
+# THE BUILD HOST'S COREUTILS ARE NOT GNU's.  Ubuntu 26.04 ships uutils
+# coreutils, with the GNU ones beside them as /usr/bin/gnu*.  Buildroot's
+# dependency check refuses the uutils `install` outright
+# (support/dependencies/dependencies.sh, uutils issue 12166) and asks for a
+# system-wide update-alternatives; and the check is not the end of it ---
+# U-Boot's SPL alignment step is `dd conv=block,sync bs=4`
+# (scripts/Makefile.xpl), which uutils dd rejects, measured.  Rather than
+# change the machine, $(BR_WORK)/bin holds a symlink for every /usr/bin/gnu*
+# under its plain name and goes first on the PATH of the inner make only.  On
+# a host without gnu* binaries the directory stays empty and nothing changes.
+BR_VERSION  := 2026.02.3
+BR_TARBALL  := vendor/buildroot-$(BR_VERSION).tar.xz
+BR_SHA      := 5a59e7501b0b4ec52c41f4bfa79412320e0b37eae5f719605a258e8d0c6fc7fb
+BR_URL      := https://buildroot.org/downloads/buildroot-$(BR_VERSION).tar.xz
+BR_WORK     ?= $(HOME)/.cache/muir-fpga-buildroot
+BR_SRC      := $(BR_WORK)/buildroot-$(BR_VERSION)
+BR_OUT      := $(BR_WORK)/out
+BR_EXTERNAL := $(abspath linux/buildroot)
+BR_GEN_PS7  := linux/buildroot/board/arty-z7-20/uboot/gen_ps7_init_gpl.py
+# Not written as $(MAKE) in the recipe: GNU make runs any recipe line that
+# names $(MAKE) even under -n, so `make -n buildroot` would start the build.
+# The inner make gets a clean MAKEFLAGS anyway (see above), so nothing the
+# sub-make convention would have carried is lost.
+BR_MAKE     := $(MAKE)
+
+.PHONY: buildroot buildroot-check
+
+# The generated start-up routine has to be what vivado/ps7_init.ops gives
+# today, or U-Boot would be built from a stale claim.  Pure Python, no
+# Vivado, so it runs anywhere the repository does.
+buildroot-check:
+	@python3 $(BR_GEN_PS7) --check
+
+buildroot: buildroot-check
+	@test -f $(BR_TARBALL) || { \
+	    echo "no Buildroot at $(BR_TARBALL); fetch it with"; \
+	    echo "  curl -o $(BR_TARBALL) $(BR_URL)"; exit 1; }
+	@echo "$(BR_SHA)  $(BR_TARBALL)" | sha256sum -c --quiet - \
+	    || { echo "$(BR_TARBALL) is not the Buildroot this image was built with"; exit 1; }
+	@mkdir -p $(BR_WORK)/bin vendor/buildroot-dl
+	@for f in /usr/bin/gnu*; do [ -x "$$f" ] && ln -sf "$$f" "$(BR_WORK)/bin/$${f#/usr/bin/gnu}"; done; true
+	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
+	@echo "buildroot: images in $(BR_OUT)/images:"
+	@ls -l $(BR_OUT)/images/ | grep -v '^total'
