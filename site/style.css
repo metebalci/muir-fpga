@@ -268,6 +268,9 @@ figure.screen img {
 .d-fill { fill: var(--paper); stroke: currentColor; stroke-width: 1.5; }
 .d-tex  { stroke: currentColor; stroke-width: 1.5; }
 .d-dash { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 6 5; }
+/* Linux is the room the programs sit in rather than a thing of its own, so
+   its outline is lighter than theirs. */
+.d-dot  { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 1 4; stroke-linecap: round; }
 .d-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
 .d-bus  { fill: none; stroke: currentColor; stroke-width: 4; }
 .d-plate { fill: var(--paper); }
