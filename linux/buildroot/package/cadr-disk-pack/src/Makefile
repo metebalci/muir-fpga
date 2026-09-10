@@ -23,11 +23,22 @@
 # the requests the reference trace's transfers would and more, on the build
 # host --- no board, no fabric, nothing but a C compiler and build/disk.golden
 # (`make disk-golden` at the repository root writes it).  Scratch goes under
-# ~/.cache, never /tmp, which is a RAM disk on the build host.
+# ~/.cache, never /tmp, which is a RAM disk on the build host.  The drive bay
+# is checked there too, against a real directory of real files under the same
+# work directory: the eight names, a pack appearing and going away, a rename
+# and a delete each with blocks the machine had written, the read-only mark
+# moving, and two units serving two packs at once.
+#
+# And `make mutants`, which is what says `make check` can fail: each record
+# in pack_mutations.txt is a bug this package's check has to catch, applied
+# to a copy of these sources, built in a directory of its own and run.
+# mutate.py is the runner and its header says why a build failure is neither
+# a survivor nor a catch.  It is not part of `check`, because it builds and
+# runs the whole check once per record.
 
 PROGRAMS := cadr-disk-pack
-CORE     := pack_file.c pack_side.c pack_feeder.c
-HEADERS  := pack_ecc.h pack_file.h pack_side.h pack_feeder.h
+CORE     := pack_file.c pack_bay.c pack_side.c pack_feeder.c
+HEADERS  := pack_ecc.h pack_file.h pack_bay.h pack_side.h pack_feeder.h
 
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src
@@ -66,7 +77,11 @@ $(WORK)/feeder_test: feeder_test.c $(CORE) $(HEADERS)
 	@mkdir -p $(WORK)
 	$(HOSTCC) $(HOSTCFLAGS) -o $@ feeder_test.c $(CORE)
 
+mutants:
+	@test -f $(GOLDEN) || { echo "no $(GOLDEN): run 'make disk-golden' at the repository root"; exit 1; }
+	python3 mutate.py --list pack_mutations.txt --work $(WORK)/mutants --golden $(GOLDEN) $(MUTANT_ARGS)
+
 clean:
 	rm -f $(PROGRAMS)
 
-.PHONY: all install check clean
+.PHONY: all install check mutants clean

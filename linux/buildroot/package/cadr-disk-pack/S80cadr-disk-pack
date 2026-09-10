@@ -2,41 +2,70 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The disk pack program at boot: the card mounted read-write at /mnt/card, and
-# cadr-disk-pack serving the CADR's disk from /mnt/card/pack.img.
+# The disk pack program at boot: the card's two partitions mounted, and
+# cadr-disk-pack serving the CADR's disks from the drive bay at /mnt/packs.
 #
-# THE CARD IS MOUNTED HERE AND NOWHERE ELSE.  U-Boot reads it and Linux's
-# root filesystem is an initramfs in RAM, so until this script the card was
-# never mounted; the pack is the one thing on the card the machine writes
-# (CLAUDE.md, "the pack is the one thing on the card that the machine
-# writes"), and it is written in place --- a pack has to stay the size the
-# drive is, so there is no temporary file and no rename, as muir's diskpack
-# says of its own writes.  The feeder syncs every block it writes.
+# **THE CARD IS WRITTEN ONCE AND NEVER LEAVES THE BOARD.**  That is what the
+# second partition is for: the first holds the loader and the boot files and
+# is not touched at run time, the second holds nothing but disk packs and is
+# where a pack is copied to, renamed out of, or write-protected while the
+# machine runs.  Both are FAT32 --- deliberately, so that the card can be
+# read and written from Windows, which cannot write ext4 --- and the price is
+# no journal, which is why the partition that would hurt to lose is the one
+# that is mounted read-only.
 #
-# /dev/mmcblk0p1 is the card's one FAT32 partition (linux/buildroot/board/
-# arty-z7-20/genimage.cfg).  No card, or a card without the partition, is
-# not a fault here: the feeder starts anyway, finds no pack, says so once
-# and idles, and the CADR sees a controller with no drive.
+#   /dev/mmcblk0p1 -> /mnt/card    READ-ONLY.  BOOT.BIN, u-boot.img,
+#                                  uEnv.txt and, on a standalone card,
+#                                  cadr.bit, the tree, the kernel and the
+#                                  root filesystem.  A power cut while this
+#                                  is writable is a board that needs a card
+#                                  reader again, and this project's whole
+#                                  point is that it does not.  To replace a
+#                                  boot file from the board:
+#                                      mount -o remount,rw /mnt/card
+#                                      ... cp ...
+#                                      sync && mount -o remount,ro /mnt/card
+#   /dev/mmcblk0p2 -> /mnt/packs   READ-WRITE.  disk-pack-0.img to
+#                                  disk-pack-7.img, whichever exist.  A pack
+#                                  is the one thing on the card the machine
+#                                  writes, and it is written in place --- a
+#                                  pack has to stay the size the drive is, so
+#                                  there is no temporary file and no rename,
+#                                  as muir's diskpack says of its own writes.
+#                                  The program syncs every block it writes.
+#
+# Neither the boot ROM nor U-Boot ever looks at the second partition.
+#
+# A card without either partition is not a fault here: the program starts
+# anyway, finds an empty bay, says so, and goes on watching --- and the CADR
+# sees a controller with no drive on any of the eight units until a pack is
+# copied in, at which point that unit's drive comes ready with no restart.
 #
 # The log goes to the console, which is where the board is watched from
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
-# feeder is told where to write instead.
+# program is told where to write instead.
 
-CARD_DEV=/dev/mmcblk0p1
-CARD=/mnt/card
-PACK=$CARD/pack.img
+BOOT_DEV=/dev/mmcblk0p1
+PACKS_DEV=/dev/mmcblk0p2
+BOOT=/mnt/card
+PACKS=/mnt/packs
 PIDFILE=/var/run/cadr-disk-pack.pid
 
 start() {
-	mkdir -p "$CARD"
-	if mountpoint -q "$CARD" 2>/dev/null || mount -t vfat -o rw "$CARD_DEV" "$CARD" 2>/dev/null; then
-		echo "cadr-disk-pack: card mounted at $CARD"
+	mkdir -p "$BOOT" "$PACKS"
+	if mountpoint -q "$BOOT" 2>/dev/null || mount -t vfat -o ro "$BOOT_DEV" "$BOOT" 2>/dev/null; then
+		echo "cadr-disk-pack: the boot partition is at $BOOT, read-only"
 	else
-		echo "cadr-disk-pack: no card partition at $CARD_DEV; the feeder will find no pack"
+		echo "cadr-disk-pack: no boot partition at $BOOT_DEV"
+	fi
+	if mountpoint -q "$PACKS" 2>/dev/null || mount -t vfat -o rw "$PACKS_DEV" "$PACKS" 2>/dev/null; then
+		echo "cadr-disk-pack: the drive bay is at $PACKS"
+	else
+		echo "cadr-disk-pack: no pack partition at $PACKS_DEV; the bay will be empty"
 	fi
 	printf "Starting cadr-disk-pack: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-disk-pack -- --pack "$PACK" --log /dev/console
+		--exec /usr/bin/cadr-disk-pack -- --packs "$PACKS" --log /dev/console
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 
@@ -45,7 +74,8 @@ stop() {
 	start-stop-daemon -K -q -p "$PIDFILE"
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 	sync
-	umount "$CARD" 2>/dev/null
+	umount "$PACKS" 2>/dev/null
+	umount "$BOOT" 2>/dev/null
 }
 
 case "$1" in

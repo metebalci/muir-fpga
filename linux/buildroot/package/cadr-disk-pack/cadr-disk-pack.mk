@@ -9,18 +9,25 @@
 #
 # What is in it:
 #
-#   cadr-disk-pack      serves the CADR's disk from the pack file on the
-#                         card, on demand: the controller posts the block
-#                         it lacks and this fetches it into the store, and
-#                         takes written blocks back; src/cadr-disk-pack.c's
+#   cadr-disk-pack      serves the CADR's disks from the drive bay on the
+#                         card's second partition, on demand: the controller
+#                         posts the block it lacks and this fetches it into
+#                         the store, and takes written blocks back; and it
+#                         watches the bay while the machine runs, so a pack
+#                         copied in is a drive spinning up and one renamed
+#                         out is a drive taken away.  src/cadr-disk-pack.c's
 #                         header says how
-#   S80cadr-disk-pack   mounts the card at /mnt/card and starts the feeder
-#                         at boot, its log on the console
+#   S80cadr-disk-pack   mounts the card's boot partition read-only at
+#                         /mnt/card and its pack partition read-write at
+#                         /mnt/packs, and starts the program at boot, its log
+#                         on the console
 #
 # And `make -C src check` on the build host, which needs nothing but a C
-# compiler and build/disk.golden: the feeder's core against a model of the
-# register face with a scripted controller behind it that asks for the
-# reference trace's blocks and more.
+# compiler and build/disk.golden: the core against a model of the register
+# face with a scripted controller behind it that asks for the reference
+# trace's blocks and more, and the drive bay against a real directory of real
+# files, because a rename and a delete are what has to be exercised.  `make
+# -C src mutants` is what says that check can fail.
 
 CADR_DISK_PACK_VERSION = 0
 CADR_DISK_PACK_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-disk-pack/src

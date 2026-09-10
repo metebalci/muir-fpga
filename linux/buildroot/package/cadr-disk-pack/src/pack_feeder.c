@@ -6,22 +6,26 @@
 
 #include "pack_feeder.h"
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
-int feeder_init(struct feeder *f, struct pack *p, struct pack_side *ps,
+int feeder_init(struct feeder *f, struct bay *bay, struct pack_side *ps,
 		volatile uint32_t *mem, uint32_t mem_phys, size_t mem_bytes, FILE *log)
 {
 	memset(f, 0, sizeof *f);
-	f->pack = p;
+	f->bay = bay;
 	f->ps = ps;
 	f->mem = mem;
 	f->mem_phys = mem_phys;
 	f->mem_bytes = mem_bytes;
 	f->log = log;
-	for (unsigned s = 0; s < PS_SLOTS; ++s)
+	for (unsigned s = 0; s < PS_SLOTS; ++s) {
 		f->slot_lba[s] = -1;
+		f->slot_unit[s] = -1;
+	}
 	// Both areas for every slot must be inside what is mapped.
 	if (mem_phys > FEEDER_SPARE_BASE || mem_phys + mem_bytes < FEEDER_SPARE_BASE + FEEDER_MAP_BYTES)
 		return -1;
@@ -76,18 +80,19 @@ int feeder_serve(struct feeder *f, unsigned unit, uint32_t c, uint32_t h, uint32
 		++f->failures;
 		return -1;
 	}
-	if (unit != f->unit) {
-		snprintf(err, errlen, "unit %u has no pack; the pack is on unit %u", unit, f->unit);
+	struct pack *pk = bay_pack(f->bay, unit);
+	if (!pk) {
+		snprintf(err, errlen, "unit %u has no pack in the bay", unit);
 		++f->failures;
 		return -1;
 	}
-	if (pack_lba(&f->pack->g, c, h, b, &lba) < 0) {
-		snprintf(err, errlen, "%u/%u/%u is off the pack", c, h, b);
+	if (pack_lba(&pk->g, c, h, b, &lba) < 0) {
+		snprintf(err, errlen, "%u/%u/%u is off unit %u's pack", c, h, b, unit);
 		++f->failures;
 		return -1;
 	}
 	uint32_t words[PACK_RECORD_WORDS];
-	if (pack_record(f->pack, lba, words, err, errlen) < 0) {
+	if (pack_record(pk, lba, words, err, errlen) < 0) {
 		++f->failures;
 		return -1;
 	}
@@ -109,23 +114,38 @@ int feeder_serve(struct feeder *f, unsigned unit, uint32_t c, uint32_t h, uint32
 		++f->failures;
 		// A refused request moved nothing and the slot holds what it held;
 		// an accepted one that failed had taken the slot's block away first.
-		if (!(st & PS_ST_REFUSED))
+		if (!(st & PS_ST_REFUSED)) {
 			f->slot_lba[slot] = -1;
+			f->slot_unit[slot] = -1;
+		}
 		return -1;
 	}
-	// A stale claim on the same block elsewhere in the table is dropped.
+	// A stale claim on the same block of the same unit elsewhere in the
+	// table is dropped.  Two units' packs share block numbers, so the unit
+	// is part of the comparison.
 	for (unsigned s = 0; s < PS_SLOTS; ++s)
-		if (s != slot && f->slot_lba[s] == (int32_t)lba)
+		if (s != slot && f->slot_lba[s] == (int32_t)lba && f->slot_unit[s] == (int8_t)unit) {
 			f->slot_lba[s] = -1;
+			f->slot_unit[s] = -1;
+		}
 	f->slot_lba[slot] = (int32_t)lba;
+	f->slot_unit[slot] = (int8_t)unit;
 	++f->served;
 	return 0;
 }
 
 int feeder_writeback(struct feeder *f, unsigned slot, char *err, size_t errlen)
 {
-	if (slot >= PS_SLOTS || f->slot_lba[slot] < 0) {
-		snprintf(err, errlen, "slot %u holds no block this feeder served", slot);
+	if (slot >= PS_SLOTS || f->slot_lba[slot] < 0 || f->slot_unit[slot] < 0) {
+		snprintf(err, errlen, "slot %u holds no block this program served", slot);
+		++f->failures;
+		return -1;
+	}
+	const unsigned unit = (unsigned)f->slot_unit[slot];
+	struct pack *pk = bay_pack(f->bay, unit);
+	if (!pk) {
+		snprintf(err, errlen, "slot %u holds block %d of unit %u, whose pack has left the bay",
+			 slot, f->slot_lba[slot], unit);
 		++f->failures;
 		return -1;
 	}
@@ -171,7 +191,7 @@ int feeder_writeback(struct feeder *f, unsigned slot, char *err, size_t errlen)
 			 slot, lba, addr);
 		return -1;
 	}
-	if (pack_writeback(f->pack, lba, words, err, errlen) < 0) {
+	if (pack_writeback(pk, lba, words, err, errlen) < 0) {
 		++f->failures;
 		return -1;
 	}
@@ -198,13 +218,14 @@ int feeder_take(struct feeder *f, unsigned slot, char *err, size_t errlen)
 		return -1;
 	}
 	f->slot_lba[slot] = -1;
+	f->slot_unit[slot] = -1;
 	++f->takes;
 	return 0;
 }
 
-int feeder_start(struct feeder *f, unsigned unit, int read_only, int timed, char *err, size_t errlen)
+int feeder_start(struct feeder *f, int timed, char *err, size_t errlen)
 {
-	f->unit = unit & 7u;
+	f->timed = timed;
 	f->hand = 0;
 	// What the store holds is unknown to this program: every slot taken
 	// away, and a dirty one is a write this program cannot put on the pack,
@@ -225,6 +246,7 @@ int feeder_start(struct feeder *f, unsigned unit, int read_only, int timed, char
 			return -1;
 		}
 		f->slot_lba[s] = -1;
+		f->slot_unit[s] = -1;
 	}
 	if (f->lost_at_start)
 		say(f, "%lu slot(s) were dirty before this program started; their blocks are unknown to it and the CADR's writes to them are lost",
@@ -232,9 +254,22 @@ int feeder_start(struct feeder *f, unsigned unit, int read_only, int timed, char
 	// Whatever stood in IRQ and REF before this program is not its.
 	ps_irq_clear(f->ps, PS_IRQ_REQ | PS_IRQ_DIRTY | PS_IRQ_DONE);
 	ps_ref_clear(f->ps, (1u << PS_SLOTS) - 1u);
-	ps_drive(f->ps, (uint8_t)(1u << f->unit), (uint8_t)(read_only ? 1u << f->unit : 0u), timed);
-	say(f, "%u slots taken away; the drive on unit %u is present (%s, %s)", PS_SLOTS, f->unit,
-	    read_only ? "read-only" : "writable", timed ? "its own time charged" : "untimed");
+	// Nothing on any cable until the bay has been looked at.
+	ps_drive(f->ps, 0, 0, f->timed, 0);
+	say(f, "%u slots taken away; the bay is %s and the drives are %s", PS_SLOTS, f->bay->dir,
+	    f->timed ? "timed: their own seek and rotational times are charged" : "untimed, which is muir's default");
+	// The bay as it already stands.  The channel can be walking while this
+	// program starts --- the CADR runs from configuration and Linux takes
+	// seconds to boot --- so the scan is retried rather than forced.
+	for (unsigned tries = 0; tries < 64; ++tries) {
+		const int r = feeder_bay_scan(f, err, errlen);
+		if (r < 0)
+			return -1;
+		if (r == 0)
+			return 0;
+		f->ps->pause(f->ps);
+	}
+	say(f, "the channel was walking through 64 tries of the first look at the bay; the drives come present at the next scan");
 	return 0;
 }
 
@@ -287,14 +322,15 @@ static int answer(struct feeder *f, uint32_t tag, char *err, size_t errlen)
 	uint32_t c, h, b, lba;
 	ps_tag_split(tag, &unit, &c, &h, &b);
 	++f->requests;
-	if (unit != f->unit) {
+	struct pack *pk = bay_pack(f->bay, unit);
+	if (!pk) {
 		deny(f, tag, "no pack on that unit");
 		return 1;
 	}
-	if (pack_lba(&f->pack->g, c, h, b, &lba) < 0) {
+	if (pack_lba(&pk->g, c, h, b, &lba) < 0) {
 		char why[96];
 		snprintf(why, sizeof why, "off a pack of %u cylinders, %u heads, %u blocks a track",
-			 f->pack->g.cylinders, f->pack->g.heads, f->pack->g.blocks_per_track);
+			 pk->g.cylinders, pk->g.heads, pk->g.blocks_per_track);
 		deny(f, tag, why);
 		return 1;
 	}
@@ -431,4 +467,259 @@ unsigned feeder_flush(struct feeder *f, unsigned passes, char *err, size_t errle
 	if (still)
 		snprintf(err, errlen, "%u slot(s) still dirty after %u passes: DIRTY 0x%06x", still, passes, dirty);
 	return still;
+}
+
+// ---- the drive bay ------------------------------------------------------
+//
+// `pack_feeder.h` says what the four events are and why renaming a pack out
+// is safe where deleting one is not.  Everything below is the *when*: the
+// channel idle, the flush first, the slots taken away, the seam written
+// once at the end of a pass.
+
+unsigned feeder_flush_unit(struct feeder *f, unsigned unit, unsigned passes,
+			   unsigned long *wrote, char *err, size_t errlen)
+{
+	unsigned long done = 0;
+	unsigned still = 0;
+	for (unsigned n = 0; n < passes; ++n) {
+		const uint32_t dirty = ps_dirty(f->ps);
+		int deferred = 0;
+		still = 0;
+		for (unsigned s = 0; s < PS_SLOTS; ++s) {
+			if (!(dirty & (1u << s)) || f->slot_unit[s] != (int8_t)unit)
+				continue;
+			++still;
+			const int r = feeder_writeback(f, s, err, errlen);
+			if (r == PS_WALK_SLOT) {
+				deferred = 1;
+			} else if (r == 0) {
+				++done;
+				--still;
+			} else {
+				// Said here rather than counted only: a flush is the
+				// last chance a block has, and `feeder_poll`'s
+				// once-a-minute reporting is not on this path.
+				say(f, "unit %u: %s", unit, err);
+			}
+			// Another pass would only repeat a real failure, so the slot
+			// is left dirty and counted as still owed --- which is what
+			// the caller reports as lost.
+		}
+		if (still == 0 || !deferred)
+			break;
+		f->ps->pause(f->ps);
+	}
+	if (wrote)
+		*wrote = done;
+	return still;
+}
+
+unsigned feeder_take_unit(struct feeder *f, unsigned unit, char *err, size_t errlen)
+{
+	unsigned n = 0;
+	for (unsigned pass = 0; pass < FEEDER_FLUSH_PASSES; ++pass) {
+		int deferred = 0;
+		for (unsigned s = 0; s < PS_SLOTS; ++s) {
+			if (f->slot_unit[s] != (int8_t)unit)
+				continue;
+			const int r = feeder_take(f, s, err, errlen);
+			if (r == PS_WALK_SLOT)
+				deferred = 1;
+			else if (r == 0)
+				++n;
+		}
+		if (!deferred)
+			break;
+		f->ps->pause(f->ps);
+	}
+	// Whatever is left is forgotten here whether the face took it or not:
+	// the pack those blocks came from has left the bay and this program
+	// must not go on claiming to know what is in the store.
+	for (unsigned s = 0; s < PS_SLOTS; ++s)
+		if (f->slot_unit[s] == (int8_t)unit) {
+			f->slot_lba[s] = -1;
+			f->slot_unit[s] = -1;
+		}
+	return n;
+}
+
+// The blocks of one unit the machine has written and this program has not
+// yet put back, named for a console line.
+static unsigned owed_blocks(struct feeder *f, unsigned unit, char *out, size_t outlen)
+{
+	const uint32_t dirty = ps_dirty(f->ps);
+	unsigned owed = 0, named = 0;
+	size_t at = 0;
+	out[0] = 0;
+	for (unsigned s = 0; s < PS_SLOTS; ++s) {
+		if (!(dirty & (1u << s)) || f->slot_unit[s] != (int8_t)unit)
+			continue;
+		++owed;
+		if (named < FEEDER_NAMED_LOSSES && at + 16 < outlen) {
+			at += (size_t)snprintf(out + at, outlen - at, "%s%d", named ? " " : "", f->slot_lba[s]);
+			++named;
+		}
+	}
+	if (owed > named && at + 8 < outlen)
+		snprintf(out + at, outlen - at, " and %u more", owed - named);
+	return owed;
+}
+
+// A pack leaving the bay.  `may_flush` is false only where flushing would be
+// wrong rather than impossible: a pack being OVERWRITTEN IN PLACE is still a
+// live file with a live link count, so `pack_alive` would say yes, and
+// writing the machine's blocks into a copy somebody is halfway through
+// making would corrupt the new pack with the old one's words.
+static void bay_remove(struct feeder *f, unsigned unit, int may_flush, const char *why,
+		       uint8_t *attention, char *err, size_t errlen)
+{
+	struct pack *pk = bay_pack(f->bay, unit);
+	const int alive = may_flush && pk && pack_alive(pk);
+	unsigned long wrote = 0;
+	if (alive)
+		feeder_flush_unit(f, unit, FEEDER_FLUSH_PASSES, &wrote, err, errlen);
+	f->flushed += wrote;
+	// Whatever is STILL dirty on this unit is lost, whichever way it got
+	// there: the file was deleted and the flush had nowhere to land, the
+	// file is being overwritten and the flush was not attempted, or the
+	// flush was attempted and failed.  A count that names nothing is not a
+	// report, so the blocks are named.
+	char blocks[512];
+	const unsigned lost = owed_blocks(f, unit, blocks, sizeof blocks);
+	if (lost) {
+		++f->lost_events;
+		f->lost_blocks += lost;
+		say(f, "unit %u: LOST %u block(s) THE MACHINE HAD WRITTEN and this program had not yet put on the pack: %s. "
+		       "The blocks: %s. RENAME a pack to take it out --- a renamed file keeps its blocks, because this "
+		       "program's descriptor follows it and the flush lands there; a deleted one cannot.",
+		    unit, lost, why, blocks);
+	} else if (wrote) {
+		say(f, "unit %u: %lu block(s) the machine had written were flushed onto the pack before it left the bay (%s)",
+		    unit, wrote, why);
+	}
+	feeder_take_unit(f, unit, err, errlen);
+	bay_close(f->bay, unit);
+	*attention |= (uint8_t)(1u << unit);
+	++f->went_away;
+	if (!lost && !wrote)
+		say(f, "unit %u: the drive is absent (%s)", unit, why);
+}
+
+static void bay_add(struct feeder *f, unsigned unit, const struct bay_look *l,
+		    uint8_t *attention, char *err, size_t errlen)
+{
+	char path[4096];
+	bay_path(f->bay, unit, path, sizeof path);
+	if (bay_open(f->bay, unit, l, err, errlen) < 0) {
+		++f->bay_failures;
+		if (f->refused_ino[unit] != l->ino || f->refused_size[unit] != l->size) {
+			f->refused_ino[unit] = l->ino;
+			f->refused_size[unit] = l->size;
+			say(f, "unit %u: %s (said once for this file; the bay is looked at again and again)", unit, err);
+		}
+		return;
+	}
+	f->refused_ino[unit] = 0;
+	f->refused_size[unit] = 0;
+	const struct pack *pk = bay_pack(f->bay, unit);
+	*attention |= (uint8_t)(1u << unit);
+	++f->appeared;
+	say(f, "unit %u: %s is a drive: %u cylinders, %u heads, %u blocks a track, %u blocks, %s",
+	    unit, path, pk->g.cylinders, pk->g.heads, pk->g.blocks_per_track, pk->blocks,
+	    l->read_only ? "write-protected (its read-only mark is set)" : "writable");
+}
+
+int feeder_bay_scan(struct feeder *f, char *err, size_t errlen)
+{
+	// **NOT IN THE MIDDLE OF A TRANSFER.**  The channel is walking for one
+	// unit at a time and this program cannot see which, so it waits for the
+	// whole channel --- a block is some 256 bus cycles and a chain of them
+	// is still well under a millisecond, and the caller comes back on its
+	// next poll rather than on its next scan.
+	if (ps_status(f->ps) & PS_ST_CH_ACTIVE) {
+		++f->scans_deferred;
+		if (++f->scan_deferrals_in_a_row > f->worst_scan_deferral)
+			f->worst_scan_deferral = f->scan_deferrals_in_a_row;
+		return 1;
+	}
+	f->scan_deferrals_in_a_row = 0;
+	// A bay that is NOT THERE is not a bay that is empty.  An unmounted
+	// card must not read as eight packs having been deleted at once.
+	{
+		if (access(f->bay->dir, R_OK | X_OK) < 0) {
+			if (!f->bay_missing_said) {
+				f->bay_missing_said = 1;
+				say(f, "the bay %s cannot be read (%s); the drives that are in it stay as they are",
+				    f->bay->dir, strerror(errno));
+			}
+			return 0;
+		}
+		if (f->bay_missing_said) {
+			f->bay_missing_said = 0;
+			say(f, "the bay %s can be read again", f->bay->dir);
+		}
+	}
+	++f->scans;
+	uint8_t attention = 0;
+	int failed = 0;
+	for (unsigned u = 0; u < BAY_UNITS; ++u) {
+		struct bay_look l;
+		bay_look(f->bay, u, &l);
+		struct bay_drive *d = &f->bay->d[u];
+		if (d->present) {
+			const struct pack *pk = &d->pack;
+			const int same_file = l.there && l.dev == pk->dev && l.ino == pk->ino;
+			const int unchanged = same_file && l.is_pack && l.size == pk->size;
+			if (!unchanged) {
+				// It went away, was replaced by another file under the
+				// same name, or is being written over where it lies.
+				const int overwritten = same_file;
+				const char *why = overwritten
+					? "the file under that name is being written over where it lies, which this program cannot flush into"
+					: l.there
+					? "another file is under that name now"
+					: "the name is gone";
+				bay_remove(f, u, !overwritten, why, &attention, err, errlen);
+				if (l.there)
+					++f->replaced;
+				if (l.there && l.is_pack)
+					bay_add(f, u, &l, &attention, err, errlen);
+			} else if (l.read_only != d->read_only) {
+				// **THE FLUSH COMES BEFORE THE SWITCH.**  A block written
+				// while the pack was writable belongs on the pack, and a
+				// store told a moment later that it may not write would
+				// never put it there.
+				unsigned long wrote = 0;
+				if (l.read_only) {
+					feeder_flush_unit(f, u, FEEDER_FLUSH_PASSES, &wrote, err, errlen);
+					f->flushed += wrote;
+				}
+				if (bay_reopen(f->bay, u, !l.read_only, err, errlen) < 0) {
+					++f->bay_failures;
+					say(f, "unit %u: %s", u, err);
+					failed = 1;
+				} else {
+					if (l.read_only)
+						++f->protects;
+					else
+						++f->unprotects;
+					say(f, "unit %u: the pack is %s now, its read-only mark in the filesystem having %s%s",
+					    u, l.read_only ? "WRITE-PROTECTED" : "writable",
+					    l.read_only ? "been set" : "been cleared",
+					    wrote ? " (what the machine had written was flushed onto it first)" : "");
+				}
+			}
+		} else if (l.there && l.is_pack) {
+			bay_add(f, u, &l, &attention, err, errlen);
+		}
+	}
+	// The seam, written once and only where something moved.
+	const uint8_t present = bay_present_mask(f->bay);
+	const uint8_t read_only = bay_read_only_mask(f->bay);
+	if (attention || present != f->drive_present || read_only != f->drive_read_only) {
+		ps_drive(f->ps, present, read_only, f->timed, attention);
+		f->drive_present = present;
+		f->drive_read_only = read_only;
+	}
+	return failed ? -1 : 0;
 }

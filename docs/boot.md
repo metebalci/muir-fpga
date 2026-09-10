@@ -36,8 +36,10 @@ it --- a board with this card and no network is the whole machine.
     Linux       6.19.14, mainline    zImage 3,337,032 B; zynq-arty-z7-20.dtb 11,401 B
     rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,801,388 B (6.2 MB unpacked), an
                 + evtest             initramfs, unpacked into RAM on both paths
-    the card    one FAT32 partition  sdcard.img, 537,919,488 B (512 MiB + 1 MiB); seven files
-                                     today, 11.3 MB of them; pack.img when there is one
+    the card    two FAT32 partitions sdcard.img, 4,296,015,872 B (1 MiB + 512 MiB + 3,584 MiB,
+                                     sparse: 277 MB on disk).  Partition 1: the loader and
+                                     the boot files, seven of them, 11.3 MB.  Partition 2:
+                                     the drive bay --- nothing but disk packs
 
 Sizes are of the 10 September builds on the build host; the whole
 thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
@@ -94,9 +96,10 @@ U-Boot.
 
 ## The card, and the two ways it boots
 
-    the card    BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional),
-                cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot,
-                pack.img (the disk pack as a file; nothing writes it yet)
+    partition 1 BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional),
+                cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
+    partition 2 disk-pack-0.img .. disk-pack-7.img, whichever exist, and a
+                README.TXT; neither the boot ROM nor U-Boot ever looks here
     /srv/tftp   uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
                 --- this project's convenience, the same five files
 
@@ -116,10 +119,11 @@ stale files silently is the thing this project decided against. Nothing
 else is ever booted.
 
 The root filesystem is the initramfs on both paths, unpacked into RAM, so
-nothing on the board drifts: the card is read and never written by anything
-here. **Small persistent state, if it is ever wanted --- an SSH host key is the
-obvious case, since Dropbear makes a new one at every boot --- would be a file
-on the card that the image reads at start**, not a partition and not a
+nothing on the board drifts: **partition 1 is read by the loader and mounted
+READ-ONLY by Linux**, and the one thing the board writes is a disk pack on
+partition 2. **Small persistent state, if it is ever wanted --- an SSH host key
+is the obvious case, since Dropbear makes a new one at every boot --- would be
+a file on the card that the image reads at start**, not a partition and not a
 writable root; it is not built now.
 
 **Three files were two.** Mainline U-Boot's SPL is the first stage and loads
@@ -151,8 +155,14 @@ them into the `.bit` --- so the provenance of every staging is in its log:
     mksd-buildroot: bitstream /srv/tftp/cadr.bit
     mksd-buildroot:   design cadr_arty;UserID=0XFFFFFFFF;Version=2026.1;...  part 7z020clg400  date 2026/09/10  time 07:38:09  4045564 bytes of configuration
 
-`PACK=<file>` puts a disk pack on the card as `pack.img`; without it the
-card has none, and the script says so. `STANDALONE=1` writes `uEnv.txt`
+`PACKS="a.img 5=b.img"` puts disk packs in the bay on partition 2, an entry
+being `unit=path` or a bare path taking the lowest free unit; without it the
+bay is empty, and the script says so and says how to fill it from the running
+board. A file whose size is neither a T-300's nor a T-80's is refused here,
+because on the board it would simply not be a drive. `PACKS_MB=<n>` is how
+big partition 2 is made --- 3,584 by default, thirteen T-300 packs, which
+fits any card of 4 GB and up; a bigger card leaves the rest of itself unused,
+which costs nothing. `STANDALONE=1` writes `uEnv.txt`
 without the server even when `local.conf` names one, for testing the card
 path from this host; with no `local.conf` at all the card is standalone.
 The script says which path the card it staged will take.
@@ -167,19 +177,102 @@ kernel's tree at boot (`fdt_fixup_ethernet`, on the `ethernet0` alias), and
 Linux asks DHCP with the same address. Like `SERVERIP` it lives in
 `linux/local.conf` and in no committed file.
 
-`build/sd/buildroot/sdcard.img` is the card as one image --- the same
-one-partition FAT32 layout as the recipe above, 512 MiB, made by genimage
-from the whole `card/` directory and read back file by file --- so on the
-laptop either
+`build/sd/buildroot/sdcard.img` is the card as one image --- MBR, two
+primary FAT32 partitions of type `0x0c` aligned to a megabyte, made by
+genimage from the staged `card/` and `packs/` directories and read back file
+by file out of each partition, with the partition table itself read back and
+checked rather than assumed --- so on the laptop
 
     D=/dev/sdX   # the line that says usb, never from memory
     sudo dd if=sdcard.img of=$D bs=4M conv=fsync
 
-or the sfdisk/mkfs.vfat/cp recipe above with everything in `card/`. Both
-are the same card. **For this project's board the card is written once**
-(new `BOOT.BIN`, `u-boot.img` and `uEnv.txt` against the stepping stone's);
-after that, `cp build/sd/buildroot/server/* /srv/tftp/` and a reset is the
-whole procedure for any change. For the card path, a change is a new card.
+The image is sparse on the build host (277 MB for a 4.1 GB image with no
+pack in it) but `dd` writes every byte, so allow a few minutes.
+
+**THE CARD IS WRITTEN ONCE AND THEN NEVER LEAVES THE BOARD.** That is what
+the second partition is for: adding, replacing or protecting a disk pack is
+`scp` to the running board and nothing else --- "The drive bay" below. For
+this project's own board a change to the loader, kernel or bitstream is `cp
+build/sd/buildroot/server/* /srv/tftp/` and a reset; for a standalone card
+those live on partition 1, and they can be replaced from the board with
+
+    mount -o remount,rw /mnt/card && cp ... && sync && mount -o remount,ro /mnt/card
+
+which is the one reason that partition is mounted at all. It is mounted
+read-only by default because a power cut with the loader writable is a board
+that needs a card reader again, and this project's whole point is that it
+does not.
+
+## The drive bay
+
+**Partition 2 holds disk packs and nothing else, and the eight names are the
+whole of the interface.**
+
+    /mnt/packs/disk-pack-0.img  ... /mnt/packs/disk-pack-7.img
+
+Whichever of the eight exist are the drives that are present, and the number
+in the name is the unit the machine selects with `DA<30:28>`. A pack is a
+file in muir's format and is a pack only at exactly a T-300's 269,562,880
+bytes or a T-80's 70,937,600 --- which is also what makes a pack still being
+copied in not yet a drive: every intermediate size is the wrong size.
+`cadr-disk-pack` looks at the bay every 250 ms while the machine runs, so
+none of the three gestures below needs a reboot, a signal, or the card out of
+the board. **None of them is applied in the middle of a transfer** either:
+a look that finds the channel walking changes nothing and is retried a
+quarter of a millisecond later.
+
+    copy a pack in            that unit's drive comes ready, with its
+                              attention raised, at the instant the last byte
+                              lands
+    rename a pack out         that unit's drive is taken away --- and
+                              anything the machine had written is written
+                              into the file under its new name FIRST
+    chmod -w a pack           that drive's write-protect switch flips; what
+                              the machine had written is flushed onto the
+                              pack before it does
+
+From another machine:
+
+    scp band.img root@<the board>:/mnt/packs/disk-pack-0.img     # load unit 0
+    ssh root@<the board> mv /mnt/packs/disk-pack-0.img /mnt/packs/kept.img
+    ssh root@<the board> chmod -w /mnt/packs/disk-pack-1.img     # write-protect unit 1
+
+or from the board's own prompt, with `tftp -g -r band.img -l
+/mnt/packs/disk-pack-0.img <the server>`. The read-only mark is FAT's own
+attribute, so Windows sets it from a file's properties and `chmod -w` sets it
+from Linux, and they are the same bit.
+
+**RENAMING IS THE WAY TO TAKE A PACK OUT, AND DELETING ONE IS NOT.** A
+renamed file is still a file: the descriptor the program holds followed it,
+so what the machine had written and the program had not yet given back is
+flushed into the file under its new name and nothing is lost. A deleted file
+is nameless, and a flush would go into clusters the kernel frees at the last
+close --- so the program does not pretend: it says which unit and exactly how
+many blocks were lost, and names them.
+
+    cadr-disk-pack: unit 0: LOST 3 block(s) THE MACHINE HAD WRITTEN and this program
+      had not yet put on the pack: the name is gone.  The blocks: 2304 2305 2306.
+      RENAME a pack to take it out --- a renamed file keeps its blocks, because this
+      program's descriptor follows it and the flush lands there; a deleted one cannot.
+
+For the same reason, **do not copy a new pack over one that is in use**:
+`scp` onto an existing name writes the new pack over the old one where it
+lies, and the old pack's words are then the wrong words to flush into it. The
+program sees the size change, takes the drive away, reports the blocks lost
+and says the file was written over where it lies. Rename the old one out
+first, then copy the new one in.
+
+**With no pack at all the machine is not stuck**, it is waiting: the boot
+PROM polls its drive's status in `AWAIT-DRIVE-READY`, so copying a pack in
+should let it go on with no reboot. *Expected rather than measured* --- the
+program's own check holds the drive coming present and the attention being
+raised, and the board has not yet been asked to do it.
+
+**FAT32 for both partitions, deliberately.** The card must be readable and
+writable from Windows, which cannot write ext4. What it costs is the journal,
+and what makes that bearable is that a pack is a working copy whose master is
+in the archive, and that the partition it would hurt to lose --- the
+loader's --- is mounted read-only.
 
 ## What happens at power-on, and what the console must show
 
@@ -426,8 +519,9 @@ script's header with its sources.
 - **No `fdt_high`/`initrd_high`**, for the reason in `uEnv.net`.
 - **No I2C, no SPI0, no FCLK**: off in `vivado/ps7_config.tcl`, off here.
 - **No display, no DRM, no framebuffer**: HDMI on this board is the fabric's.
-- **No writable storage from Linux**: the card is read by U-Boot and never
-  mounted; `pack.img` is a place, not yet a pack.
+- **No writable storage from Linux but the drive bay**: partition 1 is read
+  by U-Boot and mounted read-only, and partition 2 holds disk packs and
+  nothing else. There is no writable root and no saved state.
 - **No Vivado, no Xilinx tool of any kind** is needed to build the image;
   the one Xilinx-derived input is `vivado/ps7_init.ops`, committed.
 

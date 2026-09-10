@@ -17,7 +17,7 @@ void ps_init(struct pack_side *ps)
 	// A move is nine bursts, some 650 ticks at 5 ns; a register read over
 	// GP0 is longer than that.  The cap is for a face that never answers.
 	ps->poll_cap = 100000;
-	ps->fetches = ps->writebacks = ps->takes = ps->denials = 0;
+	ps->fetches = ps->writebacks = ps->takes = ps->denials = ps->attentions = 0;
 	ps->refused_walk = ps->refused_other = ps->errors = ps->polls = ps->stuck = 0;
 }
 
@@ -40,9 +40,18 @@ int ps_ident_ok(struct pack_side *ps, uint32_t *got)
 	return *got == PS_IDENT_WORD;
 }
 
-void ps_drive(struct pack_side *ps, uint8_t present, uint8_t read_only, int timed)
+void ps_drive(struct pack_side *ps, uint8_t present, uint8_t read_only, int timed, uint8_t attention)
 {
-	ps->write(ps, PS_DRIVE, (uint32_t)present | (uint32_t)read_only << 8 | (timed ? 1u << 16 : 0u));
+	const uint32_t seam = (uint32_t)present << PS_DRIVE_PRESENT_SHIFT
+			    | (uint32_t)read_only << PS_DRIVE_READ_ONLY_SHIFT
+			    | (timed ? PS_DRIVE_TIMED : 0u);
+	if (attention) {
+		// The seam and the attention together, then the seam alone: the
+		// field is a pulse either way round, which is what an attention is.
+		ps->write(ps, PS_DRIVE, seam | (uint32_t)attention << PS_DRIVE_ATTENTION_SHIFT);
+		++ps->attentions;
+	}
+	ps->write(ps, PS_DRIVE, seam);
 }
 
 void ps_deny(struct pack_side *ps)
