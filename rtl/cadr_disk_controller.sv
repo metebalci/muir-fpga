@@ -258,9 +258,14 @@ module cadr_disk_controller #(
     // slot during the ~300 ticks of a fill misses it rather than reading a
     // block half old and half new.
     //
-    // `store_rdata` is a tick behind, as a block RAM's read is.  It is what
-    // the write-back reads, and the only way anything outside can see what a
-    // Write left on the pack.
+    // `store_rdata` is TWO ticks behind `store_addr`: the block RAM's own
+    // tick, and one in a register on the way out --- the read is the RAM's
+    // output through a mux, 2.6 ns of the tick before it has crossed to the
+    // pack side, and it reached that module's registers 19 ps late on the
+    // DDR=1 board at ef9dee9.  It is what the write-back reads, and the only
+    // way anything outside can see what a Write left on the pack.  The pack
+    // side drives the four lines below from registers of its own, so a write
+    // lands here the tick after it decides one.
     input  var logic        store_we,
     input  var logic [4:0]  store_slot,
     input  var logic [8:0]  store_addr,
@@ -358,11 +363,22 @@ module cadr_disk_controller #(
   // starts at it, so that what expires expires at muir's instant.
   localparam logic [31:0] STORE_HOLD_NS = 32'd10;
 
-  // A drive's own time, less the hold; zero stays zero, because a seek to the
-  // cylinder the heads are on is charged nothing and must not underflow.
-  function automatic logic [27:0] held(input logic [27:0] ns);
-    return (ns > 28'(STORE_HOLD_NS)) ? ns - 28'(STORE_HOLD_NS) : 28'd0;
-  endfunction
+  // **AND ONE TICK MORE ON THE WAY OUT.**  The counters' answers in the
+  // status word are registers --- `busy_zero_q`, `att_zero_q`,
+  // `block_counter_q` --- because as wires --- a 32-bit zero test, eight
+  // 28-bit ones, two compares on the spindle --- then the word, the register
+  // mux, the driver, the machine's join and the memory path's mux, they were
+  // eight logic levels into MD's data pins across three modules: `disk/busy_ns_reg[*]/C -> processor/md_held_reg[*]/D`, -0.46 ns
+  // on the DDR=1 board once the disk was timed at the tick.  A register there
+  // shows every timer's expiry one tick late, so every timer is loaded one
+  // tick shorter still, and the spindle starts one tick further on: what the
+  // register shows at any tick is then what the wire showed at it.  The
+  // trace's own tick-sharp samples --- `disk-timeout-a-tick-short`,
+  // `disk-seek-settle-a-tick-short`, `disk-index-pulse-a-tick-narrow` ---
+  // are what say the compensation is exact, as they say it of the store's.
+  localparam logic [31:0] READ_HOLD_NS = 32'd5;
+  // What a timer a START loads is loaded short by, all told.
+  localparam logic [31:0] HOLD_NS = STORE_HOLD_NS + READ_HOLD_NS;
 
   localparam logic [27:0] SEEK_SETTLE_NS       = 28'd5_939_729;
   localparam logic [16:0] SEEK_NS_PER_CYLINDER = 17'd60_271;
@@ -518,13 +534,17 @@ module cadr_disk_controller #(
   always_ff @(posedge clk) begin
     seam_meta_q   <= seam_meta;
     seam_meta_sel <= store_addr >= 9'(BLOCK_WORDS);
+    // The second tick: the mux into a register, so that what crosses the
+    // seam starts at one.  See the port.
+    store_rdata   <= seam_meta_sel ? seam_meta_q : seam_q;
   end
-  assign store_rdata = seam_meta_sel ? seam_meta_q : seam_q;
 
+  // The reset is at the END of this process so that only `s_valid` carries
+  // it: the tag, the header and the checkwords are not reset --- a slot is
+  // valid by its bit and not by its contents --- and written with the reset
+  // in front of them, every one of their enables took the synchroniser's net.
   always_ff @(posedge clk) begin
-    if (rst) begin
-      s_valid <= '0;
-    end else if (store_we && store_addr >= 9'(BLOCK_WORDS)) begin
+    if (store_we && store_addr >= 9'(BLOCK_WORDS)) begin
       unique case (store_addr[1:0])
         2'd0: s_header[store_slot] <= store_wdata;
         2'd1: s_hck[store_slot]    <= store_wdata;
@@ -550,6 +570,7 @@ module cadr_disk_controller #(
       s_hck[ch_slot]    <= ps_hck;
       s_dck[ch_slot]    <= ps_dck;
     end
+    if (rst_q) s_valid <= '0;
   end
 
   // **THE ADDRESS MATCH IS TAKEN ONCE AND HELD, AND THE REASON IS TIMING
@@ -597,7 +618,24 @@ module cadr_disk_controller #(
   assign asked = mine && dev_rq;
 
   // 0 ns of its own, and it must stay a gate: see the note at the top.
-  assign dev_ack = asked;
+  //
+  // **AND THE GATE IS THE BUS INTERFACE'S, NOT THIS SLAVE'S.**  What is
+  // driven here is the held match alone.  `cadr_busint_xbus.sv` reads
+  // `dev_ack` in one place, `answering = GRANTED && dev_rq && dev_ack`, so
+  // the AND with -XBUS.RQ is made there whatever a slave puts on the line,
+  // and a slave that made it too sent the request out to itself and back:
+  // `busint/FSM_sequential_state_reg[1]/C -> processor/mfinish_t_reg[*]/CE`,
+  // six logic levels and 4.98 ns on the DDR=1 board at ef9dee9, of which
+  // one level and two crossings were -XBUS.RQ arriving here to be ANDed with
+  // `mine` and leaving again as the acknowledgement.  Fourteen of the
+  // board's failing endpoints, all of them the processor's two countdowns,
+  // which are counters and rightly outside the microcycle exception.  The
+  // data lines are still driven only while `asked` --- `drives` below keeps
+  // the request in it --- and -MEMACK lands on the same tick as before,
+  // because the request was always a term of it at the far end.  What
+  // `mine` says before -XBUS.RQ is up is what the address decode says: this
+  // cycle is this slave's.  Nothing reads it then.
+  assign dev_ack = mine;
 
   // --- the three registers a program can write ---------------------------
   //
@@ -640,16 +678,54 @@ module cadr_disk_controller #(
   logic [7:0]  u_att_armed;
   logic [27:0] u_att_ns [8];
 
+  // **THE RESET IS TAKEN INTO A REGISTER OF THIS MODULE'S OWN, AND THE
+  // SPINDLE STARTS A TICK ON TO PAY FOR IT.**  `rst` is the board's
+  // synchroniser, one net into some two and a half thousand reset pins here,
+  // and the fitter could not bring a copy of it within reach of them all:
+  // 4.7 ns of routing into the ECC register's clear with no logic on the
+  // path at all.  `rst_q` is a tick behind, so this module comes out of
+  // reset one tick after the machine does.  Nothing on the bus can reach it
+  // in that tick, and nothing here moves in it but the spindle --- which
+  // would then be five nanoseconds behind muir's `now` for ever, and the
+  // trace samples the block counter either side of every edge.  So `spin`
+  // and `into` are reset to FIVE for it, the value the machine's first free
+  // tick would have put in them --- and to five more on top, for the read
+  // word being a register a tick behind the counter (`READ_HOLD_NS`), so the
+  // counter runs a tick ahead of muir's `now` and the word shows `now`.
+  // `spin_q` to `spin_q3` stay at zero, which is what they hold at those
+  // same ticks either way.
+  // This is `STORE_HOLD_NS`'s argument at the other end of the run; the
+  // record `disk-reset-held-and-not-paid-for` is what says the check sees
+  // it, the same way `disk-timeout-a-tick-short` says it sees the hold.
+  logic rst_q;
+  always_ff @(posedge clk) rst_q <= rst;
+
+  // **THE DRIVE SEAM IS NOT HELD ON THE WAY IN, AND THAT WAS MEASURED
+  // TOO.**  The three come from registers Linux writes in
+  // `cadr_disk_pack.sv`; driven straight into the status word as a wire
+  // they crossed two modules and eight logic levels to land on MD, -0.129 ns
+  // on the DDR=1 board at ef9dee9.  The counters in the status word are read
+  // through registers now, which is what cut that path; a register on the seam as
+  // well made the drive appear TWO ticks after Linux said so, and
+  // `tb/cadr_disk_pack_tb.cpp` reads the status the tick after the DRIVE
+  // register's write is acknowledged, saw an empty cable, and said so.  The
+  // `_q` names stay, as the readers' side of the seam.
+  logic [7:0] drive_present_q, drive_read_only_q;
+  logic       drive_timed_q;
+  assign drive_present_q   = drive_present;
+  assign drive_read_only_q = drive_read_only;
+  assign drive_timed_q     = drive_timed;
+
   logic [2:0] sel_unit;
   logic       present, read_only;
   assign sel_unit  = da[30:28];
-  assign present   = drive_present[sel_unit];
-  assign read_only = drive_read_only[sel_unit];
+  assign present   = drive_present_q[sel_unit];
+  assign read_only = drive_read_only_q[sel_unit];
 
   logic [7:0] att_ready;
   always_comb begin
     for (int u = 0; u < 8; u++)
-      att_ready[u] = drive_present[u] && u_att_armed[u] && (u_att_ns[u] == 28'd0);
+      att_ready[u] = drive_present_q[u] && u_att_armed[u] && att_zero_q[u];
   end
 
   logic attention, any_attention;
@@ -673,19 +749,32 @@ module cadr_disk_controller #(
   // the cap never binds.  It is written anyway because the drawing's counter
   // has one.
   logic [23:0] spin, spin_next;
-  // `spin` as it stood one tick ago: what a START held one tick reads for
-  // the spindle's position at the request, exactly and across the wrap.  A
-  // subtraction would have to know whether the block's instant fell inside
-  // the tick, and muir's `until` decides that at the request.
-  logic [23:0] spin_q, spin_q2;
+  // `spin` as it stood three ticks ago: what a START held two ticks reads
+  // for the spindle's position at the request, exactly and across the wrap,
+  // the counter itself running a tick ahead of muir's `now` for the read
+  // word's sake (`READ_HOLD_NS`).  A subtraction would have to know whether
+  // the block's instant fell inside the tick, and muir's `until` decides
+  // that at the request.
+  logic [23:0] spin_q, spin_q2, spin_q3;
   logic [19:0] into;
   logic [4:0]  region;
   logic        wrapping, stepping;
   logic [19:0] pulse_ns;
 
   assign spin_next = spin + 24'd5;
-  assign wrapping  = spin_next >= REVOLUTION_NS;
-  assign stepping  = (into + 20'd5 >= SECTOR_NS) && (region < 5'(BPT));
+  // **THE WRAP AND THE STEP ARE REGISTERS, COMPARED A TICK EARLY.**  As
+  // gates on `spin_next` and `into + 5` they put an adder, a compare and the
+  // subtraction in series on the counters' own data pins, thirteen logic
+  // levels; `spin >= REVOLUTION_NS - 10` at tick t is `spin + 5 >=
+  // REVOLUTION_NS` at t+1, which is `cadr_phase_gen.sv`'s trick for its
+  // taps.  After a wrap the count is under five, so the tick after a wrap
+  // cannot wrap, and after a step `into` is under five likewise; both terms
+  // are written in.  `disk-index-pulse-a-tick-narrow` and
+  // `disk-block-counter-off-by-a-region` are what say the edges still fall
+  // where muir puts them.
+  logic wrap_q, step_q;
+  assign wrapping  = wrap_q;
+  assign stepping  = step_q;
   assign pulse_ns  = (region == 5'd0) ? INDEX_PULSE_NS : SECTOR_PULSE_NS;
 
   // "The count steps to `k` as region `k`'s pulse ends and holds the region
@@ -718,7 +807,9 @@ module cadr_disk_controller #(
   // polling `<0>`.  Nothing in either trace reads the register during a walk,
   // so the two cannot be told apart there.
   logic        ch_busy;
-  assign not_active = (busy_ns == 32'd0) && !ch_busy;
+  // Through the register, with the store looked ahead at: see the note at
+  // `busy_zero_q`.
+  assign not_active = busy_zero_q && !ch_busy;
 
   // `hanging` says the counter now running is the 2.56 s timer and not a
   // drive's own time, so that only its expiry sets the timeout flop.  See the
@@ -739,18 +830,45 @@ module cadr_disk_controller #(
   // A recalibrate seeks home, so its distance is the cylinder the heads are
   // on rather than the difference; codes 0o05 and 0o15 are the at-ease sector
   // and share their low three bits.
-  logic        is_recal;
-  logic [11:0] cyl_now, cyl_to, cyl_n;
-  logic [27:0] seek_span, seek_ns_c, seek_ns_r;
+  //
+  // **THREE REGISTERS DEEP, NOT ONE, AND NOT FOUR.**  The operands --- the
+  // heads' cylinder through the unit's mux, the address's, the recalibrate's
+  // decode --- into the first; the distance, a compare and a difference,
+  // into the second; the multiply with the settle added on the multiplier's
+  // own post-adder into the third.  In one tick they were ten logic levels
+  // into the multiplier's input alone, -5.9 ns on the DDR=1 board at
+  // ef9dee9, the first fit to time the disk at all.
+  //
+  // **THREE IS THE MOST THE TRACE ALLOWS**, and that is a measurement and
+  // not a guess: `tb/cadr_disk_pack_tb.cpp` and the trace both place a store
+  // into the disk address and the START that reads its distance four ticks
+  // apart --- back-to-back bus writes on the 5 ns grid --- so `seek_ns_r`
+  // must hold the new address's distance three edges after `da` takes it.
+  // A fourth stage, tried first, read the old distance at every such START
+  // and the property check said so at its first timed seek.  The heads and
+  // the command are the other inputs and change no closer to a START than
+  // that.
+  //
+  // The compare that says which way the difference goes is made in the
+  // first stage with the operands, so the second is two differences side by
+  // side and a choice; and the value the timers take --- the seek less the
+  // hold --- is a second product with its own settle, because the hold's
+  // subtraction after the sum was nine logic levels into every attention
+  // countdown.  Zero stays zero: a seek to the cylinder the heads are on has
+  // a zero settle and a zero product either way.
+  logic        is_recal, is_recal_r, gt_r;
+  logic [11:0] cyl_now, cyl_to, cyl_now_r, cyl_to_r, cyl_n, cyl_n_r;
+  logic [7:0]  head_now_r, blk_now_r;
+  logic [27:0] settle_r, settle_held_r, seek_ns_c, seek_held_c, seek_ns_r, seek_held_r;
   assign is_recal = (cmd[2:0] == 3'b101) && cmd[9];
   assign cyl_now  = u_cyl[sel_unit];
   assign cyl_to   = da[27:16];
-  assign cyl_n    = is_recal ? cyl_now
-                             : ((cyl_now > cyl_to) ? cyl_now - cyl_to : cyl_to - cyl_now);
+  assign cyl_n    = is_recal_r ? cyl_now_r
+                               : (gt_r ? cyl_now_r - cyl_to_r : cyl_to_r - cyl_now_r);
   // Both operands widened before the multiply, or the product is taken at the
   // width of the wider one and 4,095 cylinders of it fall off the top.
-  assign seek_span = 28'(cyl_n) * 28'(SEEK_NS_PER_CYLINDER);
-  assign seek_ns_c = (cyl_n == 12'd0) ? 28'd0 : SEEK_SETTLE_NS + seek_span;
+  assign seek_ns_c   = 28'(cyl_n_r) * 28'(SEEK_NS_PER_CYLINDER) + settle_r;
+  assign seek_held_c = 28'(cyl_n_r) * 28'(SEEK_NS_PER_CYLINDER) + settle_held_r;
 
   // --- the status word ---------------------------------------------------
   //
@@ -777,6 +895,35 @@ module cadr_disk_controller #(
   logic e_rcdiff, e_ccwcyc, e_nxm, e_overrun;
   logic e_hdrcmp, e_hdrecc, e_ecchard, e_eccsoft;
 
+  //
+  // **WHAT IS HELD IS THE COUNTERS' ANSWERS, AND ONLY THOSE.**  Three
+  // registers stand between the counters and the status word: whether the
+  // busy counter is at zero, whether each attention countdown is, and the
+  // block counter --- a 32-bit zero test, eight 28-bit ones and two compares
+  // on the spindle, which with the rest of the word behind them were eight
+  // logic levels into MD's data pins.  Each is a tick behind the counter it
+  // reads, and the timers pay for the tick (`READ_HOLD_NS`).  Everything
+  // else in the word is a flop read straight: the command, the timeout and
+  // the seven other error flops, the drive's own two, the arm of each
+  // attention.  A first draft registered the whole word, and the trace's
+  // check found what that costs: `tb/cadr_disk_tb.cpp` reads a register back
+  // the tick after a store into it lands, with no tick between, and a word a
+  // tick behind shows that read the flops as they stood before the store ---
+  // which is the same word a design that had mis-written one of them shows,
+  // so `disk-reset-err-reaches-the-drive` survived.  The flops stay wires
+  // into the word for that reason, and the one counter a command store
+  // reaches --- BUSY, on a `0o16` or an init --- has the store looked ahead
+  // at in its register's own tick.
+  logic       cmd_reset;
+  logic       busy_zero_q;
+  logic [7:0] att_zero_q, block_counter_q;
+  assign cmd_reset = xbus_init || (st_go && st_which == 2'd0 && st_wdata[3:0] == 4'o16);
+  always_ff @(posedge clk) begin
+    busy_zero_q     <= (busy_ns == 32'd0) || cmd_reset;
+    for (int u = 0; u < 8; u++) att_zero_q[u] <= (u_att_ns[u] == 28'd0);
+    block_counter_q <= block_counter;
+  end
+
   logic transfer_lossage, disk_lossage, lossage;
   assign transfer_lossage = (timeout && not_active) || e_nxm || e_overrun
                           || e_hdrecc || e_hdrcmp || e_ecchard || e_eccsoft;
@@ -796,7 +943,7 @@ module cadr_disk_controller #(
   // concatenation of eighteen zeros and a dozen names is not readable against
   // it.  Everything not named here is zero, and the table says why for each.
   logic [31:0] status;
-  assign status = {block_counter, 24'd0}                       // <31:24>
+  assign status = {block_counter_q, 24'd0}                     // <31:24>
                 | (e_rcdiff   ? 32'h0040_0000 : 32'd0)         // <22>
                 | (e_ccwcyc   ? 32'h0020_0000 : 32'd0)         // <21>
                 | (e_nxm      ? 32'h0010_0000 : 32'd0)         // <20>
@@ -821,7 +968,8 @@ module cadr_disk_controller #(
   logic [31:0] word;
   always_comb begin
     unique case (which)
-      // 0: STATUS.
+      // 0: STATUS.  The counters in it are read through registers: see
+      // `READ_HOLD_NS`.
       2'd0: word = status;
       // 1: MEMORY ADDRESS.  "Address of the last memory reference made by the
       // disk control."  <23:22> is the controller type, 0 for a Trident, so
@@ -848,7 +996,16 @@ module cadr_disk_controller #(
   // anything, and the driver is named rather than implied --- `drives` is
   // what `cadr_machine.sv` mixes this onto the seam with, and what leaves the
   // seam free on a write, where MEM<31:0> belongs to the master.
-  assign drives = asked && !dev_write;
+  //
+  // **AND `drives` IS THE MATCH AND THE DIRECTION, NOT THE REQUEST.**  As
+  // `asked && !dev_write` the request was a term of every data line: the bus
+  // interface's counter through this gate, the word mux, the machine's join
+  // and the memory path's mux to MD's data pins, `busint/elapsed_reg[*]/C ->
+  // processor/md_held_reg[*]/D` at -1.2 ns.  The word is on the lines from
+  // the moment the slave is selected for a read, and what samples them is
+  // -LOADMD, with the request up; a write cycle shows the seam's poison
+  // exactly as before, because the direction is still in it.
+  assign drives = mine && !dev_write;
   assign rdata  = drives ? word : 32'd0;
 
   // --- what a write does -------------------------------------------------
@@ -873,9 +1030,28 @@ module cadr_disk_controller #(
   logic        st_go;
   logic [31:0] st_wdata;
   logic [1:0]  st_which;
-  logic        st_can_start, st_present, st_ro_fault;
-  logic        st_is_transfer, st_is_all, st_is_reversed;
   logic        st_seek_here, st_seek_off;
+  // **ONE FLAG A DECISION, AND THE DECISION MADE WHOLE.**  The second stage
+  // used to hold the START's terms separately --- can it start, is the
+  // command a transfer, is a drive present, is the pack read-only --- and
+  // the third ANDed them again in front of every register a START loads:
+  // with the request and the command's code beside them that was a cone of
+  // eleven register bits, five and six logic levels into the clock enables
+  // of the heads' position, 173 failing endpoints from `st_is_all` alone
+  // when the disk was first timed at the tick.  Each flag below is the
+  // whole of one arm's condition, so the third stage asks one bit and the
+  // unit.  The codes are disjoint, so exactly one flag can be up, and the
+  // command's code and two bits ride along as registers so that `cmd` is
+  // not in the cone either.
+  logic        st_xfer;        // a Read, Read-Compare or Write, on a present drive that is not read-only
+  logic        st_all;         // a Read All or Write All, likewise
+  logic        st_fault;       // a write to a read-only pack: the fault and nothing else
+  logic        st_rev;         // 0o01 or 0o03: the access time alone
+  logic        st_seek;        // 0o04 or 0o14 with a drive
+  logic        st_atease;      // 0o05 or 0o15 with a drive
+  logic        st_hang;        // a START the sequencer never finishes
+  logic [3:0]  st_code;
+  logic        st_recal, st_fclr;   // `cmd[9]` and `cmd[8]`, as they stood
 
   // "Writing anything at this address initiates the operation specified in
   // the command, disk address, and command list pointer registers."  It is
@@ -915,6 +1091,14 @@ module cadr_disk_controller #(
   // clear, and the reserved codes --- are the ones that do not need a drive.
   logic can_start;
   assign can_start = present || cmd[2];
+  // The store being decoded is a START that may start: register 3, with
+  // `can_start`.  And the codes the arms below are keyed on, named here so
+  // that the flags read as the arms do.
+  logic start_c, is_seek, is_atease, is_hangs;
+  assign start_c   = (which_q == 2'd3) && can_start;
+  assign is_seek   = (code == 4'o04) || (code == 4'o14);
+  assign is_atease = (code == 4'o05) || (code == 4'o15);
+  assign is_hangs  = (code == 4'o07) || (code == 4'o17) || (code == 4'o12);
 
   // Where the disk address register says the heads should go.
   logic [11:0] da_cyl;
@@ -927,8 +1111,11 @@ module cadr_disk_controller #(
   // cylinder".  A seek to where the heads already are is not one, and muir
   // answers it before it looks at the geometry.
   logic seek_here, seek_off_pack;
-  assign seek_here     = (da_cyl == u_cyl[sel_unit]) && (da_head == u_head[sel_unit])
-                      && (da_blk == u_blk[sel_unit]);
+  // Against the copies the seek's first stage keeps of the heads' position,
+  // which stand a tick behind them: the heads move at a START, and the next
+  // START's decode is two ticks after that at the closest the bus allows.
+  assign seek_here     = (da_cyl == cyl_now_r) && (da_head == head_now_r)
+                      && (da_blk == blk_now_r);
   assign seek_off_pack = (da_cyl >= 12'(CYLINDERS)) || (da_head >= 8'(HEADS))
                       || (da_blk >= 8'(BPT));
 
@@ -960,7 +1147,8 @@ module cadr_disk_controller #(
   // samples for, a sector at a time.
   typedef enum logic [4:0] {
     C_IDLE, C_CCW, C_LOOK, C_HDRC, C_HDRE, C_HDRCK, C_DATA, C_DCK, C_ECCQ,
-    C_TSPIN, C_TSCAN, C_MOVE, C_WEND, C_NEXT, C_ACCMUL, C_ACCMOD, C_ACCSUM,
+    C_TSPIN, C_TSCAN, C_TSOFT, C_TSOFT2, C_MOVE, C_WEND, C_NEXT,
+    C_ACCMUL, C_ACCMOD, C_ACCMOD2, C_ACCSUM, C_ACCSUM2, C_ACCSUM3, C_ACCDIFF,
     C_ACCFIN,
     // The track: the slot the first sector comes out of, then a page at a
     // time in either direction.
@@ -1047,24 +1235,43 @@ module cadr_disk_controller #(
   logic [13:0] ps_n;        // bits into the field
   logic [8:0]  ps_wc;       // the word within the 291-word chunk
   logic [4:0]  ps_bit;      // the bit within the word
-  logic [13:0] ps_at;       // where that bit is in the chunk
   logic [31:0] ps_hdr, ps_hck, ps_dck, ps_w;
   logic        ps_wr;       // a parsed word goes into the store this tick
   logic        trk_meta_we;
   logic        ps_bitv;
 
   assign trk_b_next = (trk_b == 8'(BPT-1)) ? 8'd0 : trk_b + 8'd1;
-  assign ps_at      = {ps_wc, ps_bit};
-  assign ps_bitv    = blk_w[ps_bit];
+  // `take_bits` fits: `at + 1 + F_TAIL_B <= F_SECTOR_B` with `at` the bit's
+  // place in the chunk, `{ps_wc, ps_bit}` --- which is `at <= F_SECTOR_B -
+  // F_TAIL_B - 1`, written as the word and the bit of that bound so that it
+  // is two constant compares and not an adder into a fourteen-bit one --- the fitter built the sum as a carry chain in front
+  // of the parser's state.  Still in the format's own constants, so a field
+  // whose length is questioned moves it.
+  localparam int unsigned F_FIT_AT = F_SECTOR_B - F_TAIL_B - 1;   // 1,079
+  logic ps_fits;
+  assign ps_fits = (ps_wc < 9'(F_FIT_AT / 32))
+                || ((ps_wc == 9'(F_FIT_AT / 32)) && (ps_bit <= 5'(F_FIT_AT % 32)));
+  // Bit 0, always: the word is shifted down a bit as each is taken, so that
+  // no thirty-two-way select stands in front of the parser.  `ps_bit` still
+  // counts, for `ps_at` and the word's end.
+  assign ps_bitv    = blk_w[0];
 
   // A byte is taken out of the track only while the serialiser is filling a
   // word, which is four ticks in every bus cycle.
+  //
+  // Whether the byte is the sector's last, or the leftover's, is a register
+  // made a tick early: `trk_p` will be 1,163 next tick if it is 1,162 and
+  // advancing, or 1,163 and not.  The compare was in front of `trk_b`'s
+  // enable and the slot's.
   logic       trk_adv, trk_end_sec, trk_end_gap, trk_step;
+  logic       trk_p_last_q, trk_g_last_q, ps_bit_last_q, ps_wc_last_q;
   assign trk_adv     = (ch_state == C_TRD) && (ch_ph <= 3'd3);
-  assign trk_end_sec = !trk_gap && (trk_p == 11'(F_SECTOR-1))
-                     && (trk_b != 8'(BPT-1));
-  assign trk_end_gap = trk_gap && (trk_g == 9'(F_LEFTOVER-1));
+  assign trk_end_sec = !trk_gap && trk_p_last_q && (trk_b != 8'(BPT-1));
+  assign trk_end_gap = trk_gap && trk_g_last_q;
   assign trk_step    = trk_adv && (trk_end_sec || trk_end_gap);
+  logic [7:0] trk_byte_q;
+  logic [1:0] trd_lane;            // which lane the byte a tick behind fills
+  assign trd_lane = 2'(ch_ph - 3'd1);
 
   // The byte the head is over.  `sector_image_laid` written as a select:
   // 61 bytes of ones, the sync, the header and its checkword, 20 more ones,
@@ -1081,13 +1288,13 @@ module cadr_disk_controller #(
     if      (trk_gap)                       trk_byte = 8'hff;
     else if (trk_p <  11'(F_HDR_SYNC))      trk_byte = 8'hff;
     else if (trk_p == 11'(F_HDR_SYNC))      trk_byte = F_SYNC;
-    else if (trk_p <  11'(F_HECC))          trk_byte = s_header[ch_slot][8*lane_hi +: 8];
-    else if (trk_p <  11'(F_RELOCK))        trk_byte = s_hck[ch_slot][8*lane_hi +: 8];
+    else if (trk_p <  11'(F_HECC))          trk_byte = hdr_q[8*lane_hi +: 8];
+    else if (trk_p <  11'(F_RELOCK))        trk_byte = hck_q[8*lane_hi +: 8];
     else if (trk_p <  11'(F_DAT_SYNC))      trk_byte = 8'hff;
     else if (trk_p == 11'(F_DAT_SYNC))      trk_byte = F_SYNC;
     else if (trk_p == 11'(F_PAD))           trk_byte = F_PADB;
-    else if (trk_p <  11'(F_DECC))          trk_byte = chb_q[8*lane_lo +: 8];
-    else if (trk_p <  11'(F_POST))          trk_byte = s_dck[ch_slot][8*lane_lo +: 8];
+    else if (trk_p <  11'(F_DECC))          trk_byte = chb_q2[8*lane_lo +: 8];
+    else if (trk_p <  11'(F_POST))          trk_byte = dck_q[8*lane_lo +: 8];
     else                                    trk_byte = 8'hff;
   end
 
@@ -1115,16 +1322,32 @@ module cadr_disk_controller #(
   // `acc_spin` has been brought back inside a revolution by the state below
   // it, which is an add and at most four subtractions where the model has a
   // remainder.
-  logic [28:0] acc_latency;
   logic [31:0] acc_total, acc_total_r;
-  assign acc_latency = (acc_at >= acc_spin) ? 29'(acc_at) - 29'(acc_spin)
-                     : 29'(REVOLUTION_NS) - 29'(acc_spin) + 29'(acc_at);
-  assign acc_total   = 32'(acc_seek) + 32'(acc_latency) + 32'(acc_mv);
+  // The latency: the wait for the addressed block to come round from where
+  // the spindle stood when the seek ended, both differences and the compare
+  // that chooses between them into registers, then the choice.
+  logic [28:0] acc_d1, acc_d2, acc_lat_r;
+  logic        acc_ge;
+  assign acc_total   = 32'(acc_seek) + 32'(acc_lat_r) + 32'(acc_mv);
   // Registered in a state of its own before `elapsed` is taken off it: the
   // three additions, the compare and the subtraction in one tick were 5.3 ns
   // into `busy_ns` on the DDR=1 board, the first board to fit the drive at
   // all.  The tick it costs is counted by `elapsed` like every other tick of
   // the walk, so nothing about the expiry moves.
+  //
+  // **AND THE SUBTRACTION OF `elapsed` HAS A STATE OF ITS OWN TOO.**  Made
+  // in the tick that loads `busy_ns`, the compare and the difference were
+  // two carry chains in series into the counter's data pins:
+  // `disk/elapsed_reg[2]/C -> disk/busy_ns_reg[3]/D`, eight logic levels
+  // and 5.04 ns on the DDR=1 board at ef9dee9.  So `C_ACCDIFF` takes both
+  // into registers and `C_ACCFIN` loads from them --- less the one tick that
+  // `elapsed` has counted in between, which is the same arithmetic the
+  // counter does for itself every tick.  Same rule as above: the tick is
+  // the walk's, and the expiry does not move.
+  logic [31:0] acc_left;   // `acc_total_r - elapsed`, as of C_ACCDIFF
+  logic        acc_owed;   // and whether that was positive
+  logic [27:0] acc_less;   // `acc_spin` less a revolution, as of C_ACCMOD
+  logic        acc_over;   // and whether it was a revolution or more
 
   // The bus master's own four lines, registered: a master asserts good
   // address, write and data 80 ns before it asserts the request, and a
@@ -1152,34 +1375,69 @@ module cadr_disk_controller #(
                 || ps_wr;
   assign chb_d  = ch_track ? ps_w : blk_w;
 
+  // **AND ITS READ IS TWO TICKS BEHIND THE ADDRESS.**  The store is six
+  // block RAMs and the word comes out of a mux across them, 2.7 ns of the
+  // tick before it reaches a register; `chb_q2` is that register.  Every
+  // reader had a tick to spare already except the first word of a page's
+  // move, which has a second settling tick now.
+  logic [31:0] chb_q2;
   always_ff @(posedge clk) begin
     if (chb_we) blk_ram[chb_a] <= chb_d;
-    chb_q <= blk_ram[chb_a];
+    chb_q  <= blk_ram[chb_a];
+    chb_q2 <= chb_q;
   end
 
   // Which slot holds the block under the heads.  Twenty-four comparators, as
   // a board with a window on a pack has: the tag is the address and there is
   // no arithmetic between them.
-  logic [27:0] want_tag;
-  logic        slot_hit;
-  logic [4:0]  slot_of;
+  logic [27:0] want_tag, want_tag_q;
+  logic [7:0]  want_blk;
+  logic        slot_hit_c, slot_hit;
+  logic [4:0]  slot_of_c, slot_of;
   // **A TRACK ASKS FOR A BLOCK THE HEADS ARE NOT ON.**  The walk's key is
   // where the heads are; Read All and Write All go round the whole track
   // from there without moving them, so their key is the sector the stream is
-  // on.  `trk_step` is the tick a new sector begins, and the key is the next
-  // block on it so that `ch_slot` can be latched at that same edge.
-  assign want_tag = ch_track
-                  ? {u_cyl[ch_unit], u_head[ch_unit],
-                     (trk_step ? trk_b_next : trk_b)}
-                  : {u_cyl[ch_unit], u_head[ch_unit], u_blk[ch_unit]};
+  // on: for a Read All the NEXT block, so that `ch_slot` can be latched at
+  // `trk_step`, the tick a new sector begins; for the first sector and for a
+  // Write All's parser the block the stream is on.
+  //
+  // **THE LOOKUP IS THREE REGISTERS DEEP, AND EVERY KEY IT IS ASKED ABOUT
+  // HAS STOOD FOR LONGER THAN THAT.**  The key is an eight-way mux on the unit,
+  // the twenty-four comparators are twenty-eight bits each, and the priority
+  // encoder behind them is five bits wide: made in the tick that reads it,
+  // that was seventeen logic levels from `ch_state` back into `ch_state`,
+  // 20.1 ns, on the DDR=1 board at ef9dee9 --- where it had never been timed,
+  // the whole disk having fallen into `rtl/cadr_machine.xdc`'s microcycle
+  // set.  So the key is registered and the answer is registered off it.  A
+  // Read All's next block has been the next block for a whole sector; the
+  // walk's key is the heads' position, set at the START or at `C_NEXT`, and
+  // `C_LOOK` comes after a command-list fetch --- the request goes out the
+  // tick after, the answer is a tick behind that at the testbench's fastest,
+  // so the decision is four ticks on at the earliest; the parser's key is
+  // the chunk's block, set a chunk earlier.  The first sector's lookup at
+  // `C_TLOOK` is the one place the key has just moved, and that state waits
+  // the three ticks and says so.
+  assign want_blk = (ch_state == C_TRD) ? trk_b_next
+                  : (ch_track ? trk_b : u_blk[ch_unit]);
+  assign want_tag = {u_cyl[ch_unit], u_head[ch_unit], want_blk};
+  // Three, in fact: the key, the twenty-four compares, the encoder.  The
+  // middle stage was eight levels and -1.3 ns on its own.
+  logic [SLOTS-1:0] hit_q;
   always_comb begin
-    slot_hit = 1'b0;
-    slot_of  = 5'd0;
+    slot_hit_c = 1'b0;
+    slot_of_c  = 5'd0;
     for (int k = 0; k < int'(SLOTS); k++)
-      if (s_valid[k] && s_tag[k] == want_tag) begin
-        slot_hit = 1'b1;
-        slot_of  = 5'(k);
+      if (hit_q[k]) begin
+        slot_hit_c = 1'b1;
+        slot_of_c  = 5'(k);
       end
+  end
+  always_ff @(posedge clk) begin
+    want_tag_q <= want_tag;
+    for (int k = 0; k < int'(SLOTS); k++)
+      hit_q[k] <= s_valid[k] && (s_tag[k] == want_tag_q);
+    slot_hit   <= slot_hit_c;
+    slot_of    <= slot_of_c;
   end
 
   // The header a sector at this address should carry, under the mask.
@@ -1187,8 +1445,24 @@ module cadr_disk_controller #(
   // cylinder, and it has no counterpart in the disk address register: on
   // DCHDCM the first of the 25LS2521's four compares puts the read byte on
   // both sides of itself, so a header differing there alone is not an error.
+  // The registered key: `C_HDRC` is a walk state, where the key is the
+  // heads' position and has stood since before `C_LOOK`.
   logic [27:0] hdr_want;
-  assign hdr_want = want_tag;
+  assign hdr_want = want_tag_q;
+
+  // **THE SLOT'S THREE WORDS, READ INTO REGISTERS.**  `s_header`, `s_hck`
+  // and `s_dck` are distributed RAM twenty-four deep, and read by `ch_slot`
+  // into a twenty-eight-bit compare or the code's byte step in the same tick
+  // they were ten logic levels into `e_hdrcmp` and `ch_state`.  `ch_slot` is
+  // set at `C_LOOK` and at `trk_step`, and the first reader of each is a
+  // tick or more behind: `C_HDRC` waits one, and the track's header bytes
+  // come sixty-one preamble bytes after the sector begins.
+  logic [31:0] hdr_q, hck_q, dck_q;
+  always_ff @(posedge clk) begin
+    hdr_q <= s_header[ch_slot];
+    hck_q <= s_hck[ch_slot];
+    dck_q <= s_dck[ch_slot];
+  end
 
   // Where the command list is now: only `<15:0>` counts.
   logic [31:0] clp_now;
@@ -1204,34 +1478,54 @@ module cadr_disk_controller #(
     for (int k = 10; k >= 0; k--) if (ecc_r[k]) burst_low = 4'(k);
     for (int k = 0; k <= 10; k++) if (ecc_r[k]) burst_high = 4'(k);
   end
-  logic [3:0]  burst_width;
-  logic [10:0] burst_pattern;
+  logic        ch_i_last, ecc_zero_q, hck_eq_q, hdr_eq_q, ecc_hi_zero_q;
+  logic [31:0] ecc_next;
+  assign ecc_next = ecc_bit(ecc_r, 1'b0, 1'b1);
+  logic [3:0]  burst_width, burst_width_q;
+  logic [10:0] burst_pattern, burst_pattern_q;
   assign burst_width   = burst_high - burst_low;
   assign burst_pattern = ecc_r[10:0] >> burst_low;
 
   // The block after this one: "0 following block on same track, 1 block 0 on
   // next track (next head), 2 block 0 on head 0 of next cylinder".
-  logic [11:0] nb_c;
-  logic [7:0]  nb_h, nb_b;
+  //
+  // Registered, because the chain of three carries and two compares off an
+  // eight-way mux on the unit reached the enable of every head-position
+  // register fourteen logic levels deep at `C_NEXT`.  The heads move at the
+  // START and at `C_NEXT` itself, and the next `C_NEXT` is a page's walk
+  // away, so a copy one tick behind is the same value where it is read.
+  // ... and the position itself comes through a register first, the unit's
+  // mux being three levels on its own.  Two ticks behind, then, against a
+  // page's walk.
+  logic [11:0] hd_cyl_q, nb_c_c, nb_c;
+  logic [7:0]  hd_head_q, hd_blk_q, nb_h_c, nb_b_c, nb_h, nb_b;
   logic        nb_off_pack;
   always_comb begin
-    nb_c = u_cyl[ch_unit];
-    nb_h = u_head[ch_unit];
-    nb_b = u_blk[ch_unit] + 8'd1;
-    if (nb_b >= 8'(BPT)) begin
-      nb_b = 8'd0;
-      nb_h = u_head[ch_unit] + 8'd1;
-      if (nb_h >= 8'(HEADS)) begin
-        nb_h = 8'd0;
-        nb_c = u_cyl[ch_unit] + 12'd1;
+    nb_c_c = hd_cyl_q;
+    nb_h_c = hd_head_q;
+    nb_b_c = hd_blk_q + 8'd1;
+    if (nb_b_c >= 8'(BPT)) begin
+      nb_b_c = 8'd0;
+      nb_h_c = hd_head_q + 8'd1;
+      if (nb_h_c >= 8'(HEADS)) begin
+        nb_h_c = 8'd0;
+        nb_c_c = hd_cyl_q + 12'd1;
       end
     end
   end
-  assign nb_off_pack = (nb_c >= 12'(CYLINDERS));
+  always_ff @(posedge clk) begin
+    hd_cyl_q    <= u_cyl[ch_unit];
+    hd_head_q   <= u_head[ch_unit];
+    hd_blk_q    <= u_blk[ch_unit];
+    nb_c        <= nb_c_c;
+    nb_h        <= nb_h_c;
+    nb_b        <= nb_b_c;
+    nb_off_pack <= (nb_c_c >= 12'(CYLINDERS));
+  end
 
   // The held decode.  One process, because it is this slave's own state.
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst_q) begin
       mine  <= 1'b0;
       which <= 2'd0;
     end else begin
@@ -1241,7 +1535,7 @@ module cadr_disk_controller #(
   end
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst_q) begin
       // Power-on.  `-XINIT` clears the command register --- the 74LS175 at
       // DCCMD 0C21 and the 74LS273 at 0C10, pin 1 of each --- and stops the
       // channel; the disk address counters, the command list pointer and the
@@ -1260,16 +1554,23 @@ module cadr_disk_controller #(
       st_go       <= 1'b0;
       st_wdata    <= 32'd0;
       st_which    <= 2'd0;
-      st_can_start <= 1'b0;
-      st_present  <= 1'b0;
-      st_ro_fault <= 1'b0;
-      st_is_transfer <= 1'b0;
-      st_is_all   <= 1'b0;
-      st_is_reversed <= 1'b0;
+      st_xfer     <= 1'b0;
+      st_all      <= 1'b0;
+      st_fault    <= 1'b0;
+      st_rev      <= 1'b0;
+      st_seek     <= 1'b0;
+      st_atease   <= 1'b0;
+      st_hang     <= 1'b0;
+      st_code     <= 4'd0;
+      st_recal    <= 1'b0;
+      st_fclr     <= 1'b0;
       st_seek_here <= 1'b0;
       st_seek_off <= 1'b0;
       spin_q      <= 24'd0;
       spin_q2     <= 24'd0;
+      spin_q3     <= 24'd0;
+      wrap_q      <= 1'b0;
+      step_q      <= 1'b0;
       busy_ns     <= 32'd0;
       hanging     <= 1'b0;
       timeout     <= 1'b0;
@@ -1326,15 +1627,47 @@ module cadr_disk_controller #(
       acc_at      <= 28'd0;
       acc_mv      <= 28'd0;
       acc_total_r <= 32'd0;
+      acc_left    <= 32'd0;
+      acc_owed    <= 1'b0;
+      acc_less    <= 28'd0;
+      acc_over    <= 1'b0;
+      acc_lat_r   <= 29'd0;
+      acc_d1      <= 29'd0;
+      acc_d2      <= 29'd0;
+      acc_ge      <= 1'b0;
+      burst_width_q   <= 4'd0;
+      burst_pattern_q <= 11'd0;
+      ch_i_last     <= 1'b0;
+      ecc_zero_q    <= 1'b1;
+      hck_eq_q      <= 1'b0;
+      hdr_eq_q      <= 1'b0;
+      ecc_hi_zero_q <= 1'b0;
+      trk_p_last_q  <= 1'b0;
+      trk_g_last_q  <= 1'b0;
+      ps_bit_last_q <= 1'b0;
+      ps_wc_last_q  <= 1'b0;
+      trk_byte_q    <= 8'd0;
       elapsed     <= 32'd0;
       ch_dck_we   <= 1'b0;
       ch_dck_slot <= 5'd0;
       ch_dck_val  <= 32'd0;
       store_miss  <= 1'b0;
-      spin        <= 24'd0;
-      into        <= 20'd0;
+      // Ten, not zero: five for the reset held a tick here (see `rst_q`),
+      // five for the read word held a tick on the way out (`READ_HOLD_NS`).
+      spin        <= 24'd10;
+      into        <= 20'd10;
       region      <= 5'd0;
       seek_ns_r   <= 28'd0;
+      seek_held_r <= 28'd0;
+      settle_r    <= 28'd0;
+      settle_held_r <= 28'd0;
+      cyl_n_r     <= 12'd0;
+      cyl_now_r   <= 12'd0;
+      cyl_to_r    <= 12'd0;
+      head_now_r  <= 8'd0;
+      blk_now_r   <= 8'd0;
+      gt_r        <= 1'b0;
+      is_recal_r  <= 1'b0;
       u_fault     <= 8'd0;
       u_seek_err  <= 8'd0;
       u_att_armed <= 8'd0;
@@ -1346,6 +1679,9 @@ module cadr_disk_controller #(
       end
     end else begin
       // --- the spindle, which turns whatever the bus is doing
+      wrap_q <= !wrapping && (spin >= REVOLUTION_NS - 24'd10);
+      step_q <= !wrapping && !stepping && (into >= SECTOR_NS - 20'd10)
+             && (region < 5'(BPT));
       if (wrapping) begin
         spin   <= spin_next - REVOLUTION_NS;
         into   <= 20'(spin_next - REVOLUTION_NS);
@@ -1372,29 +1708,71 @@ module cadr_disk_controller #(
       end
 
       // --- the attentions, one countdown a unit
+      // Zero stays zero, so the countdown runs whenever the unit is armed
+      // and the enable is the arm alone rather than a 28-bit zero test.
       for (int u = 0; u < 8; u++) begin
-        if (u_att_armed[u] && u_att_ns[u] != 28'd0)
+        if (u_att_armed[u])
           u_att_ns[u] <= (u_att_ns[u] > 28'd5) ? u_att_ns[u] - 28'd5 : 28'd0;
       end
 
+      // --- the flags the walk reads instead of the compares they stand for:
+      // each exact by construction, because what it compares has stood, or
+      // will have moved by exactly one step, when it is read
+      ch_i_last     <= (ch_i == 9'(BLOCK_WORDS-1));
+      ecc_zero_q    <= (ecc_r == 32'd0);
+      hck_eq_q      <= (ecc_r == hck_q);
+      hdr_eq_q      <= (hdr_q[27:0] == hdr_want);
+      // The scan shifts the register every tick, so this is the test on the
+      // value about to land: `ecc_bit` with nothing coming in and feedback
+      // on, which is what both scanning states shift by.
+      ecc_hi_zero_q <= (ecc_next[31:11] == 21'd0);
+      // The parser's word end, likewise made on the bit about to be taken:
+      // `ps_bit` counts only while a word is going through, and is put back
+      // to zero before the next.  And the chunk's end, whose counter moves
+      // once a word.
+      ps_bit_last_q <= ((ch_state == C_TWR) && (ch_ph >= 3'd2)) ? (ps_bit == 5'd30) : 1'b0;
+      ps_wc_last_q  <= (ps_wc == 9'(F_SECTOR_W - 1));
+      trk_p_last_q  <= (trk_adv && !trk_gap) ? (trk_p == 11'(F_SECTOR-2))
+                                             : (trk_p == 11'(F_SECTOR-1));
+      trk_g_last_q  <= (trk_adv && trk_gap)  ? (trk_g == 9'(F_LEFTOVER-2))
+                                             : (trk_g == 9'(F_LEFTOVER-1));
+      trk_byte_q    <= trk_byte;
+
       // --- how long the next seek would take, from where the heads are now
-      seek_ns_r <= seek_ns_c;
+      cyl_now_r   <= cyl_now;
+      cyl_to_r    <= cyl_to;
+      head_now_r  <= u_head[sel_unit];
+      blk_now_r   <= u_blk[sel_unit];
+      gt_r        <= (cyl_now > cyl_to);
+      is_recal_r  <= is_recal;
+      cyl_n_r     <= cyl_n;
+      settle_r      <= (cyl_n == 12'd0) ? 28'd0 : SEEK_SETTLE_NS;
+      settle_held_r <= (cyl_n == 12'd0) ? 28'd0 : SEEK_SETTLE_NS - 28'(HOLD_NS);
+      seek_ns_r   <= seek_ns_c;
+      seek_held_r <= seek_held_c;
       // --- the spindle two ticks ago, and the bus as it stands, for a held
       // store; and the store's decode, one flag a decision, from registers
       spin_q  <= spin;
       spin_q2 <= spin_q;
+      spin_q3 <= spin_q2;
       wdata_q <= wdata;
       which_q <= which;
       store_q <= store_now;
       st_go       <= store_q;
       st_wdata    <= wdata_q;
       st_which    <= which_q;
-      st_can_start <= can_start;
-      st_present  <= present;
-      st_ro_fault <= ro_fault;
-      st_is_transfer <= is_transfer;
-      st_is_all   <= is_all;
-      st_is_reversed <= is_reversed;
+      st_xfer     <= start_c && is_transfer && present && !ro_fault;
+      st_all      <= start_c && is_all && present && !ro_fault;
+      st_fault    <= start_c && (is_transfer || is_all) && present && ro_fault;
+      st_rev      <= start_c && is_reversed;
+      st_seek     <= start_c && is_seek && present;
+      st_atease   <= start_c && is_atease && present;
+      // The three the sequencer never comes back from, and the two that do
+      // not without a drive to answer them.
+      st_hang     <= start_c && (is_hangs || ((is_seek || code == 4'o06) && !present));
+      st_code     <= code;
+      st_recal    <= cmd[9];
+      st_fclr     <= cmd[8];
       st_seek_here <= seek_here;
       st_seek_off <= seek_off_pack;
 
@@ -1424,7 +1802,7 @@ module cadr_disk_controller #(
           end else begin
             trk_g <= trk_g + 9'd1;
           end
-        end else if (trk_p == 11'(F_SECTOR-1)) begin
+        end else if (trk_p_last_q) begin
           trk_p <= 11'd0;
           if (trk_b == 8'(BPT-1)) begin
             trk_gap <= 1'b1;
@@ -1498,9 +1876,15 @@ module cadr_disk_controller #(
             ch_state <= C_HDRC;
           end
         end
+        // One tick for `hdr_q` to take the slot `C_LOOK` chose, one for
+        // `hdr_eq_q` to compare it, then the decision; `ch_ph` is zero out
+        // of `C_LOOK`.
         C_HDRC: begin
-          if (s_header[ch_slot][27:0] != hdr_want) begin
+          if (ch_ph != 3'd2) begin
+            ch_ph <= ch_ph + 3'd1;
+          end else if (!hdr_eq_q) begin
             e_hdrcmp <= 1'b1;
+            ch_ph    <= 3'd0;
             ch_state <= C_ACCMUL;
           end else begin
             ecc_r    <= 32'd0;
@@ -1512,7 +1896,7 @@ module cadr_disk_controller #(
         // `Ecc::raw` are the same thirty-two bits, so what the code leaves
         // after the four header bytes IS the checkword to compare against.
         C_HDRE: begin
-          ecc_r <= ecc_byte(ecc_r, s_header[ch_slot][8*ch_ph[1:0] +: 8]);
+          ecc_r <= ecc_byte(ecc_r, hdr_q[8*ch_ph[1:0] +: 8]);
           if (ch_ph == 3'd3) begin
             ch_ph    <= 3'd0;
             ch_state <= C_HDRCK;
@@ -1520,9 +1904,14 @@ module cadr_disk_controller #(
             ch_ph <= ch_ph + 3'd1;
           end
         end
+        // The compare is a register, `hck_eq_q`, and this waits the tick it
+        // takes.  `ch_ph` is zero out of `C_HDRE`.
         C_HDRCK: begin
-          if (ecc_r != s_hck[ch_slot]) begin
+          if (ch_ph == 3'd0) begin
+            ch_ph <= 3'd1;
+          end else if (!hck_eq_q) begin
             e_hdrecc <= 1'b1;
+            ch_ph    <= 3'd0;
             ch_state <= C_ACCMUL;
           end else begin
             ecc_r    <= 32'd0;
@@ -1536,17 +1925,23 @@ module cadr_disk_controller #(
         // through the code as the board's shift register reads them.  Five
         // ticks a word: one to take the store's word and ask for the next,
         // four to run its bytes through.
+        //
+        // **THE WORD IS SHIFTED DOWN A BYTE AS EACH GOES THROUGH**, so the
+        // code always reads `blk_w[7:0]` and no lane is selected: the mux on
+        // the phase was two of five logic levels into the register.  The
+        // same in `C_DCK` and on the write side of `C_MOVE`.
         C_DATA: begin
           if (ch_ph == 3'd0) begin
-            blk_w <= chb_q;
+            blk_w <= chb_q2;
             ch_ra <= ch_ra + 9'd1;
             ch_ph <= 3'd1;
           end else begin
-            ecc_r <= ecc_byte(ecc_r, blk_w[8*(3'(ch_ph) - 3'd1) +: 8]);
+            ecc_r <= ecc_byte(ecc_r, blk_w[7:0]);
+            blk_w <= {8'd0, blk_w[31:8]};
             if (ch_ph == 3'd4) begin
               ch_ph <= 3'd0;
-              if (ch_i == 9'(BLOCK_WORDS-1)) begin
-                blk_w    <= s_dck[ch_slot];
+              if (ch_i_last) begin
+                blk_w    <= dck_q;
                 ch_state <= C_DCK;
               end else begin
                 ch_i <= ch_i + 9'd1;
@@ -1557,7 +1952,8 @@ module cadr_disk_controller #(
           end
         end
         C_DCK: begin
-          ecc_r <= ecc_byte(ecc_r, blk_w[8*ch_ph[1:0] +: 8]);
+          ecc_r <= ecc_byte(ecc_r, blk_w[7:0]);
+          blk_w <= {8'd0, blk_w[31:8]};
           if (ch_ph == 3'd3) begin
             ch_ph    <= 3'd0;
             ch_state <= C_ECCQ;
@@ -1567,15 +1963,23 @@ module cadr_disk_controller #(
         end
         // "A checkword that checks leaves the register at zero and there is
         // nothing to report."
+        //
+        // The zero test is a register, `ecc_zero_q`, and this waits the tick
+        // it takes: thirty-two bits into `ch_state` and the register's own
+        // enable was six levels.  `ch_ph` is zero out of `C_DCK`.
         C_ECCQ: begin
           ch_i  <= 9'd0;
           ch_ra <= 9'd0;
-          ch_ph <= 3'd0;
-          if (ecc_r == 32'd0) begin
-            ch_state <= C_MOVE;
+          if (ch_ph == 3'd0) begin
+            ch_ph <= 3'd1;
           end else begin
-            trap_n   <= 17'(ECC_SPIN);
-            ch_state <= C_TSPIN;
+            ch_ph <= 3'd0;
+            if (ecc_zero_q) begin
+              ch_state <= C_MOVE;
+            end else begin
+              trap_n   <= 17'(ECC_SPIN);
+              ch_state <= C_TSPIN;
+            end
           end
         end
         // `newdsk.31` at 070: "Run the ECC register the right number of
@@ -1597,17 +2001,8 @@ module cadr_disk_controller #(
           // "Zero" is the board's `-ECC=ZERO`, the S133 at 0C27, which reads
           // ECC11 to ECC31 and not the ten below them: what is left is the
           // burst, and eleven bits is the span that makes a soft error soft.
-          if (ecc_r[31:11] == 21'd0) begin
-            if (trap_step >= 14'(burst_width)) begin
-              e_eccsoft <= 1'b1;
-              // "Note that the bit position is off by 1; the first bit in
-              // the block is bit 1."
-              ecc_reg   <= {5'd0, burst_pattern,
-                            16'(trap_step - 14'(burst_width)) + 16'd1};
-            end else begin
-              e_ecchard <= 1'b1;
-            end
-            ch_state <= C_ACCMUL;
+          if (ecc_hi_zero_q) begin
+            ch_state <= C_TSOFT;
           end else if (trap_step == 14'(ECC_BITS)) begin
             e_ecchard <= 1'b1;
             ch_state  <= C_ACCMUL;
@@ -1615,6 +2010,28 @@ module cadr_disk_controller #(
             ecc_r     <= ecc_bit(ecc_r, 1'b0, 1'b1);
             trap_step <= trap_step + 14'd1;
           end
+        end
+        // The burst, worked out from a register that has stopped shifting:
+        // two priority encoders, a subtraction and a compare against the
+        // step were ten logic levels into `e_eccsoft` and `ecc_reg` when made
+        // in the scan's own tick.  Two ticks the walk pays and the result
+        // does not move; the trap's instant is compared nowhere.
+        C_TSOFT: begin
+          burst_width_q   <= burst_width;
+          burst_pattern_q <= burst_pattern;
+          ch_state        <= C_TSOFT2;
+        end
+        C_TSOFT2: begin
+          if (trap_step >= 14'(burst_width_q)) begin
+            e_eccsoft <= 1'b1;
+            // "Note that the bit position is off by 1; the first bit in
+            // the block is bit 1."
+            ecc_reg   <= {5'd0, burst_pattern_q,
+                          16'(trap_step) - 16'(burst_width_q) + 16'd1};
+          end else begin
+            e_ecchard <= 1'b1;
+          end
+          ch_state <= C_ACCMUL;
         end
         // The page.  A read puts the block's words into memory, a
         // read-compare only looks at them --- "This error does not stop the
@@ -1629,18 +2046,19 @@ module cadr_disk_controller #(
         C_MOVE: begin
           if (ch_read) begin
             unique case (ch_ph)
-              3'd0: ch_ph <= 3'd1;              // the store's read settles
-              3'd1: begin
-                blk_w <= chb_q;
-                ch_ra <= ch_ra + 9'd1;
-                ch_ph <= 3'd2;
-              end
+              3'd0: ch_ph <= 3'd1;              // the store's read settles...
+              3'd1: ch_ph <= 3'd2;              // ...and crosses its register
               3'd2: begin
+                blk_w <= chb_q2;
+                ch_ra <= ch_ra + 9'd1;
+                ch_ph <= 3'd3;
+              end
+              3'd3: begin
                 ch_req_r   <= 1'b1;
                 ch_write_r <= !ch_cmp;
                 ch_addr_r  <= {ch_page, ch_i[7:0]};
                 ch_wdata_r <= blk_w;
-                ch_ph      <= 3'd3;
+                ch_ph      <= 3'd4;
               end
               default: if (ch_done) begin
                 ch_req_r <= 1'b0;
@@ -1649,11 +2067,13 @@ module cadr_disk_controller #(
                   ch_state <= C_ACCMUL;
                 end else begin
                   if (ch_cmp && ch_rdata != blk_w) e_rcdiff <= 1'b1;
-                  if (ch_i == 9'(BLOCK_WORDS-1)) begin
+                  if (ch_i_last) begin
                     ch_state <= C_NEXT;
                   end else begin
+                    // The next word was asked for at the take above and has
+                    // had the request's ticks to arrive.
                     ch_i  <= ch_i + 9'd1;
-                    ch_ph <= 3'd1;
+                    ch_ph <= 3'd2;
                   end
                 end
               end
@@ -1676,12 +2096,15 @@ module cadr_disk_controller #(
                   ch_ph <= 3'd2;
                 end
               end
-              3'd2: begin ecc_r <= ecc_byte(ecc_r, blk_w[7:0]);   ch_ph <= 3'd3; end
-              3'd3: begin ecc_r <= ecc_byte(ecc_r, blk_w[15:8]);  ch_ph <= 3'd4; end
-              3'd4: begin ecc_r <= ecc_byte(ecc_r, blk_w[23:16]); ch_ph <= 3'd5; end
+              // The word goes into the store whole at phase 2 --- `chb_d`
+              // reads `blk_w` before this edge shifts it --- and through the
+              // code a byte a tick from there.
+              3'd2: begin ecc_r <= ecc_byte(ecc_r, blk_w[7:0]); blk_w <= {8'd0, blk_w[31:8]}; ch_ph <= 3'd3; end
+              3'd3: begin ecc_r <= ecc_byte(ecc_r, blk_w[7:0]); blk_w <= {8'd0, blk_w[31:8]}; ch_ph <= 3'd4; end
+              3'd4: begin ecc_r <= ecc_byte(ecc_r, blk_w[7:0]); blk_w <= {8'd0, blk_w[31:8]}; ch_ph <= 3'd5; end
               default: begin
-                ecc_r <= ecc_byte(ecc_r, blk_w[31:24]);
-                if (ch_i == 9'(BLOCK_WORDS-1)) begin
+                ecc_r <= ecc_byte(ecc_r, blk_w[7:0]);
+                if (ch_i_last) begin
                   ch_state <= C_WEND;
                 end else begin
                   ch_i  <= ch_i + 9'd1;
@@ -1730,14 +2153,24 @@ module cadr_disk_controller #(
         // The slot the track's first sector comes out of, and the only one
         // Read All has to look up before it starts: the rest are latched at
         // `trk_step` as the stream crosses into them.
+        //
+        // The key --- the heads, moved by the START that landed a tick ago,
+        // and `trk_b` with them --- is three registers from the answer, so
+        // this waits three ticks before it looks.  `ch_ph` is zero out of
+        // the START.
         C_TLOOK: begin
           ch_ra <= 9'd0;
-          if (!slot_hit && ch_read) begin
-            store_miss <= 1'b1;
-            ch_state   <= C_ACCMUL;
+          if (ch_ph != 3'd3) begin
+            ch_ph <= ch_ph + 3'd1;
           end else begin
-            if (ch_read) ch_slot <= slot_of;
-            ch_state <= C_CCW;
+            ch_ph <= 3'd0;
+            if (!slot_hit && ch_read) begin
+              store_miss <= 1'b1;
+              ch_state   <= C_ACCMUL;
+            end else begin
+              if (ch_read) ch_slot <= slot_of;
+              ch_state <= C_CCW;
+            end
           end
         end
 
@@ -1752,25 +2185,35 @@ module cadr_disk_controller #(
         // there, and this one has taken four bytes by the time the cycle
         // answers.  Nothing can tell them apart, because the walk stops --- a
         // page that is not there is the end of the transfer either way.
+        //
+        // **THE BYTE IS TAKEN OUT OF A REGISTER, A TICK AFTER IT WAS UNDER
+        // THE HEAD.**  `trk_byte` is a ten-way select on where the stream is
+        // and then a lane of one of four words, and straight into the word
+        // being assembled it was seven logic levels, -0.46 ns on the board
+        // without the memory.  `trk_byte_q` takes it every tick; the four
+        // ticks that advance the stream are the same four, and the assembly
+        // follows them one behind, so the word is on the bus a tick later
+        // than it was and the same bytes are in it.
         C_TRD: begin
           unique case (ch_ph)
-            3'd0, 3'd1, 3'd2, 3'd3: begin
-              blk_w[8*ch_ph[1:0] +: 8] <= trk_byte;
+            3'd0: ch_ph <= 3'd1;   // the first byte into `trk_byte_q`
+            3'd1, 3'd2, 3'd3, 3'd4: begin
+              blk_w[8*trd_lane +: 8] <= trk_byte_q;
               ch_ph <= ch_ph + 3'd1;
             end
-            3'd4: begin
+            3'd5: begin
               ch_req_r   <= 1'b1;
               ch_write_r <= 1'b1;
               ch_addr_r  <= {ch_page, ch_i[7:0]};
               ch_wdata_r <= blk_w;
-              ch_ph      <= 3'd5;
+              ch_ph      <= 3'd6;
             end
             default: if (ch_done) begin
               ch_req_r <= 1'b0;
               if (ch_nxm) begin
                 e_nxm    <= 1'b1;
                 ch_state <= C_ACCMUL;
-              end else if (ch_i == 9'(BLOCK_WORDS-1)) begin
+              end else if (ch_i_last) begin
                 ch_state <= C_NEXT;
               end else begin
                 ch_i  <= ch_i + 9'd1;
@@ -1805,6 +2248,7 @@ module cadr_disk_controller #(
             end
             default: begin
               // ---- one bit through `parse_sector` ------------------------
+              blk_w <= {1'b0, blk_w[31:1]};
               if (trk_lay) begin
                 unique case (ps_st)
                   // `after_sync`, and the ones counter is what says a run is
@@ -1819,8 +2263,7 @@ module cadr_disk_controller #(
                       ps_n <= 14'd0;
                       if (ps_st == P_SYNC1) begin
                         ps_st <= P_HDR;
-                      end else if (ps_at + 14'd1 + 14'(F_TAIL_B)
-                                   <= 14'(F_SECTOR_B)) begin
+                      end else if (ps_fits) begin
                         // `take_bits` fits: the slot is looked up HERE and
                         // not earlier, so a chunk that will not parse never
                         // touches the store.
@@ -1892,8 +2335,8 @@ module cadr_disk_controller #(
                 endcase
               end
               // ---- the chunk and the page --------------------------------
-              if (ps_bit == 5'd31) begin
-                if (ps_wc == 9'(F_SECTOR_W - 1)) begin
+              if (ps_bit_last_q) begin
+                if (ps_wc_last_q) begin
                   // `while at + format::SECTOR <= bytes.len()`, one stride
                   // done.  A chunk that did not reach the end of its own
                   // parse is `None` and stops the laying; the walk goes on.
@@ -1916,7 +2359,7 @@ module cadr_disk_controller #(
                 end else begin
                   ps_wc <= ps_wc + 9'd1;
                 end
-                if (ch_i == 9'(BLOCK_WORDS-1)) begin
+                if (ch_i_last) begin
                   ch_state <= C_NEXT;
                 end else begin
                   ch_i  <= ch_i + 9'd1;
@@ -1936,16 +2379,45 @@ module cadr_disk_controller #(
           acc_spin <= acc_spin + acc_seek;
           ch_state <= C_ACCMOD;
         end
+        // Each turn of the remainder is two ticks --- the compare and the
+        // difference into registers, then the choice --- so that neither
+        // stands in front of the other on `acc_spin`'s data pins.  At most
+        // four turns; every tick of them is the walk's.
         C_ACCMOD: begin
-          if (acc_spin >= 28'(REVOLUTION_NS)) begin
-            acc_spin <= acc_spin - 28'(REVOLUTION_NS);
+          acc_over  <= (acc_spin >= 28'(REVOLUTION_NS));
+          acc_less  <= acc_spin - 28'(REVOLUTION_NS);
+          ch_state  <= C_ACCMOD2;
+        end
+        C_ACCMOD2: begin
+          if (acc_over) begin
+            acc_spin <= acc_less;
+            ch_state <= C_ACCMOD;
           end else begin
             ch_state <= C_ACCSUM;
           end
         end
+        // The latency --- a compare and two differences, then the choice,
+        // each into a register --- and the three-way sum off that register
+        // a tick later: together they were sixteen logic levels and 5.4 ns
+        // of logic alone.
         C_ACCSUM: begin
+          acc_ge   <= (acc_at >= acc_spin);
+          acc_d1   <= 29'(acc_at) - 29'(acc_spin);
+          acc_d2   <= 29'(REVOLUTION_NS) - 29'(acc_spin) + 29'(acc_at);
+          ch_state <= C_ACCSUM2;
+        end
+        C_ACCSUM2: begin
+          acc_lat_r <= acc_ge ? acc_d1 : acc_d2;
+          ch_state  <= C_ACCSUM3;
+        end
+        C_ACCSUM3: begin
           acc_total_r <= acc_total;
-          ch_state    <= C_ACCFIN;
+          ch_state    <= C_ACCDIFF;
+        end
+        C_ACCDIFF: begin
+          acc_left <= acc_total_r - elapsed;
+          acc_owed <= acc_total_r > elapsed;
+          ch_state <= C_ACCFIN;
         end
         C_ACCFIN: begin
           // "When a transfer is terminated by an error, the disk address
@@ -1955,39 +2427,39 @@ module cadr_disk_controller #(
           // transferred."  Either way it is where the heads are.
           if (ch_setda)
             da <= {1'b0, ch_unit, u_cyl[ch_unit], u_head[ch_unit], u_blk[ch_unit]};
-          busy_ns  <= !drive_timed ? 32'd0
-                    : ((acc_total_r > elapsed) ? acc_total_r - elapsed : 32'd0);
+          // `acc_left` was taken a tick ago and `elapsed` has counted five
+          // since, so what is still owed is five less --- and zero stays
+          // zero, as the counter itself has it.
+          busy_ns  <= !drive_timed_q ? 32'd0
+                    : ((acc_owed && acc_left > 32'd5) ? acc_left - 32'd5 : 32'd0);
           ch_state <= C_IDLE;
         end
         default: ch_state <= C_IDLE;
       endcase
 
-      // --- the backplane's init, which is not a bus cycle
-      if (xbus_init) begin
-        cmd       <= 32'd0;
-        busy_ns   <= 32'd0;
-        hanging   <= 1'b0;
-        timeout   <= 1'b0;
-        e_rcdiff  <= 1'b0;
-        e_ccwcyc  <= 1'b0;
-        e_nxm     <= 1'b0;
-        e_overrun <= 1'b0;
-        e_hdrcmp  <= 1'b0;
-        e_hdrecc  <= 1'b0;
-        e_ecchard <= 1'b0;
-        e_eccsoft <= 1'b0;
-        // `RESET` stops the channel: DCCHAN 0E16, DCBUSY 0C26.
-        ch_state  <= C_IDLE;
-        ch_req_r  <= 1'b0;
-      end else begin
+      if (!xbus_init) begin
         if (!asked) taken <= 1'b0;
         else if (store_now) taken <= 1'b1;
       end
       // The store lands here, two ticks after the request: see the note at
       // the top.  Every term below is a register --- the `st_*` flags, `cmd`,
-      // `da` --- so a data pin is two logic levels from one.  Not under
-      // `xbus_init`, which clears what a store would set.
-      if (st_go && !xbus_init) begin
+      // `da` --- so a data pin is two logic levels from one.
+      //
+      // **`-XBUS INIT` IS NOT A TERM OF THE STORE ANY MORE; IT COMES AFTER
+      // IT.**  Written as `st_go && !xbus_init`, the init was the first gate
+      // of every register's enable and the START's whole decode sat behind
+      // it, and on the board `xbus_init` is the power-on reset: `rst_sync_
+      // reg[3]/C -> disk/u_blk_reg[*]/CE`, six logic levels and 5.05 ns,
+      // 36 of the DDR=1 board's failing endpoints at ef9dee9 --- three
+      // quarters of it the reset synchroniser's net crossing the disk.  The
+      // init block now follows the store, so on the flops it has a pin on it
+      // wins by coming last, and on the ones it has no pin on --- the disk
+      // address, the pointer, the drive --- a store landing in the same tick
+      // lands, which is what a level on `-XINIT` and a strobe on `-LOAD DA`
+      // would do to two 74LS chips.  Nothing exercises the tick they meet
+      // in: `rst` holds the whole process in its reset branch on the board,
+      // and the trace never stores into a controller being initialised.
+      if (st_go) begin
         unique case (st_which)
           // "Writing the command register does NOT initiate a transfer,
           // unlike most disk controllers.  Use register 3 (START) to initiate
@@ -2027,235 +2499,233 @@ module cadr_disk_controller #(
           // from the switch."  Nothing models the switch, here or in muir.
           2'd2: da <= st_wdata;
           // --- START, and the sequencer such as this slice has one --------
+          //
+          // One flag an arm, and the flags are exclusive: see them at
+          // `st_xfer`.  A START whose flag is none of these does nothing,
+          // which is the store into START with nothing on the cable and a
+          // code that needs one, and 0o16 --- the Reset that took effect at
+          // the store into the command register, so that MIT's "takes effect
+          // as soon as it is stored" is why it does nothing here.
           default: begin
-            if (st_can_start) begin
-              unique case (1'b1)
-                // A transfer: the seek it begins with, the read-only fault
-                // that stops a write before it, and then the walk.
-                //
-                // **`Controller::transfer` CLEARS THE EIGHT ERROR FLOPS
-                // BEFORE IT DOES ANYTHING ELSE**, which the board does at
-                // the store into the command register instead --- `-RESET
-                // ERR` is `-LOAD CMD` OR `-XINIT` and a START is neither.
-                // Every transfer in `build/disk.golden` is preceded by a
-                // command store, so nothing tells the two apart; muir's is
-                // taken so that a second START with no store between does
-                // not leave the last transfer's errors standing.
-                st_is_transfer: begin
-                  if (st_present) begin
-                    if (st_ro_fault) begin
-                      u_fault[sel_unit] <= 1'b1;
-                    end else begin
-                      e_rcdiff  <= 1'b0;
-                      e_ccwcyc  <= 1'b0;
-                      e_nxm     <= 1'b0;
-                      e_overrun <= 1'b0;
-                      e_hdrcmp  <= 1'b0;
-                      e_hdrecc  <= 1'b0;
-                      e_ecchard <= 1'b0;
-                      e_eccsoft <= 1'b0;
-                      timeout   <= 1'b0;
-                      ch_unit   <= sel_unit;
-                      ch_read   <= (code != 4'o11);
-                      ch_cmp    <= (code == 4'o10);
-                      ch_moved  <= 8'd0;
-                      ch_n      <= 16'd0;
-                      ch_i      <= 9'd0;
-                      ch_ra     <= 9'd0;
-                      ch_ph     <= 3'd0;
-                      ch_req_r  <= 1'b0;
-                      ch_track  <= 1'b0;
-                      // The length is measured from where the heads were and
-                      // where the spindle stood when the START landed.
-                      // The spindle as it stood at the request, and the
-                      // walk's tally beginning a tick in: the store is held.
-                      acc_seek  <= seek_ns_r;
-                      acc_spin  <= 28'(spin_q2);
-                      acc_blk   <= da_blk;
-                      elapsed   <= STORE_HOLD_NS;
-                      if (!st_seek_here && st_seek_off) begin
-                        // A seek the drive refuses: no walk, no disk address,
-                        // and the access time still charged with no blocks.
-                        u_seek_err[sel_unit] <= 1'b1;
-                        ch_setda <= 1'b0;
-                        ch_state <= C_ACCMUL;
-                      end else begin
-                        if (!st_seek_here) begin
-                          u_cyl[sel_unit]  <= da_cyl;
-                          u_head[sel_unit] <= da_head;
-                          u_blk[sel_unit]  <= da_blk;
-                        end
-                        ch_setda <= 1'b1;
-                        ch_state <= C_CCW;
-                      end
-                    end
-                  end
+            // A transfer: the seek it begins with and then the walk.  The
+            // read-only fault that stops a write before it is `st_fault`.
+            //
+            // **`Controller::transfer` CLEARS THE EIGHT ERROR FLOPS
+            // BEFORE IT DOES ANYTHING ELSE**, which the board does at
+            // the store into the command register instead --- `-RESET
+            // ERR` is `-LOAD CMD` OR `-XINIT` and a START is neither.
+            // Every transfer in `build/disk.golden` is preceded by a
+            // command store, so nothing tells the two apart; muir's is
+            // taken so that a second START with no store between does
+            // not leave the last transfer's errors standing.
+            if (st_xfer) begin
+              e_rcdiff  <= 1'b0;
+              e_ccwcyc  <= 1'b0;
+              e_nxm     <= 1'b0;
+              e_overrun <= 1'b0;
+              e_hdrcmp  <= 1'b0;
+              e_hdrecc  <= 1'b0;
+              e_ecchard <= 1'b0;
+              e_eccsoft <= 1'b0;
+              timeout   <= 1'b0;
+              ch_unit   <= sel_unit;
+              ch_read   <= (st_code != 4'o11);
+              ch_cmp    <= (st_code == 4'o10);
+              ch_moved  <= 8'd0;
+              ch_n      <= 16'd0;
+              ch_i      <= 9'd0;
+              ch_ra     <= 9'd0;
+              ch_ph     <= 3'd0;
+              ch_req_r  <= 1'b0;
+              ch_track  <= 1'b0;
+              // The length is measured from where the heads were and
+              // where the spindle stood when the START landed.
+              // The spindle as it stood at the request, and the
+              // walk's tally beginning a tick in: the store is held.
+              acc_seek  <= seek_ns_r;
+              acc_spin  <= 28'(spin_q3);
+              acc_blk   <= da_blk;
+              elapsed   <= HOLD_NS;
+              if (!st_seek_here && st_seek_off) begin
+                // A seek the drive refuses: no walk, no disk address,
+                // and the access time still charged with no blocks.
+                u_seek_err[sel_unit] <= 1'b1;
+                ch_setda <= 1'b0;
+                ch_state <= C_ACCMUL;
+              end else begin
+                if (!st_seek_here) begin
+                  u_cyl[sel_unit]  <= da_cyl;
+                  u_head[sel_unit] <= da_head;
+                  u_blk[sel_unit]  <= da_blk;
                 end
-                // Read All and Write All: the seek, then the whole track as
-                // one stream of bytes --- out of the store's sectors on a
-                // Read All and into them on a Write All --- and then a
-                // revolution charged for it.
-                st_is_all: begin
-                  if (st_present) begin
-                    if (st_ro_fault) begin
-                      u_fault[sel_unit] <= 1'b1;
-                    end else begin
-                      e_rcdiff  <= 1'b0;
-                      e_ccwcyc  <= 1'b0;
-                      e_nxm     <= 1'b0;
-                      e_overrun <= 1'b0;
-                      e_hdrcmp  <= 1'b0;
-                      e_hdrecc  <= 1'b0;
-                      e_ecchard <= 1'b0;
-                      e_eccsoft <= 1'b0;
-                      timeout   <= 1'b0;
-                      ch_unit   <= sel_unit;
-                      ch_read   <= (code == 4'o02);
-                      ch_cmp    <= 1'b0;
-                      ch_moved  <= 8'd0;
-                      ch_track  <= 1'b1;
-                      ch_n      <= 16'd0;
-                      ch_i      <= 9'd0;
-                      ch_ra     <= 9'd0;
-                      ch_ph     <= 3'd0;
-                      ch_req_r  <= 1'b0;
-                      // The spindle as it stood at the request, and the
-                      // walk's tally beginning a tick in: the store is held.
-                      acc_seek  <= seek_ns_r;
-                      acc_spin  <= 28'(spin_q2);
-                      acc_blk   <= da_blk;
-                      elapsed   <= STORE_HOLD_NS;
-                      // The stream starts at the block the disk address
-                      // names and goes round from there --- `track_bytes`
-                      // runs `(block + k) % blocks_per_track` and puts the
-                      // track's leftover after the sector whose block number
-                      // is the last on the track, wherever in the sequence
-                      // that falls.
-                      trk_b     <= da_blk;
-                      trk_p     <= 11'd0;
-                      trk_gap   <= 1'b0;
-                      trk_g     <= 9'd0;
-                      trk_lay   <= 1'b1;
-                      ps_st     <= P_SYNC1;
-                      ps_ones   <= 7'd0;
-                      ps_n      <= 14'd0;
-                      ps_wc     <= 9'd0;
-                      ps_bit    <= 5'd0;
-                      if (!st_seek_here && st_seek_off) begin
-                        u_seek_err[sel_unit] <= 1'b1;
-                        ch_setda <= 1'b0;
-                        ch_state <= C_ACCMUL;
-                      end else begin
-                        if (!st_seek_here) begin
-                          u_cyl[sel_unit]  <= da_cyl;
-                          u_head[sel_unit] <= da_head;
-                          u_blk[sel_unit]  <= da_blk;
-                        end
-                        ch_setda <= 1'b1;
-                        ch_state <= C_TLOOK;
-                      end
-                    end
-                  end
+                ch_setda <= 1'b1;
+                ch_state <= C_CCW;
+              end
+            end
+            // Read All and Write All: the seek, then the whole track as
+            // one stream of bytes --- out of the store's sectors on a
+            // Read All and into them on a Write All --- and then a
+            // revolution charged for it.
+            if (st_all) begin
+              e_rcdiff  <= 1'b0;
+              e_ccwcyc  <= 1'b0;
+              e_nxm     <= 1'b0;
+              e_overrun <= 1'b0;
+              e_hdrcmp  <= 1'b0;
+              e_hdrecc  <= 1'b0;
+              e_ecchard <= 1'b0;
+              e_eccsoft <= 1'b0;
+              timeout   <= 1'b0;
+              ch_unit   <= sel_unit;
+              ch_read   <= (st_code == 4'o02);
+              ch_cmp    <= 1'b0;
+              ch_moved  <= 8'd0;
+              ch_track  <= 1'b1;
+              ch_n      <= 16'd0;
+              ch_i      <= 9'd0;
+              ch_ra     <= 9'd0;
+              ch_ph     <= 3'd0;
+              ch_req_r  <= 1'b0;
+              // The spindle as it stood at the request, and the
+              // walk's tally beginning a tick in: the store is held.
+              acc_seek  <= seek_ns_r;
+              acc_spin  <= 28'(spin_q3);
+              acc_blk   <= da_blk;
+              elapsed   <= HOLD_NS;
+              // The stream starts at the block the disk address
+              // names and goes round from there --- `track_bytes`
+              // runs `(block + k) % blocks_per_track` and puts the
+              // track's leftover after the sector whose block number
+              // is the last on the track, wherever in the sequence
+              // that falls.
+              trk_b     <= da_blk;
+              trk_p     <= 11'd0;
+              trk_gap   <= 1'b0;
+              trk_g     <= 9'd0;
+              trk_lay   <= 1'b1;
+              ps_st     <= P_SYNC1;
+              ps_ones   <= 7'd0;
+              ps_n      <= 14'd0;
+              ps_wc     <= 9'd0;
+              ps_bit    <= 5'd0;
+              if (!st_seek_here && st_seek_off) begin
+                u_seek_err[sel_unit] <= 1'b1;
+                ch_setda <= 1'b0;
+                ch_state <= C_ACCMUL;
+              end else begin
+                if (!st_seek_here) begin
+                  u_cyl[sel_unit]  <= da_cyl;
+                  u_head[sel_unit] <= da_head;
+                  u_blk[sel_unit]  <= da_blk;
                 end
-                // The two sectors entered with the channel turned round that
-                // still finish: no seek, no data, the access time of one
-                // block, and the overrun on 03.
-                st_is_reversed: begin
-                  if (code == 4'o03) e_overrun <= 1'b1;
-                  ch_unit  <= sel_unit;
-                  ch_moved <= 8'd1;
-                  ch_track <= 1'b0;
-                  ch_setda <= 1'b0;
-                  acc_seek <= seek_ns_r;
-                  acc_spin <= 28'(spin_q2);           // at the request: held
-                  acc_blk  <= da_blk;
-                  elapsed  <= STORE_HOLD_NS;
-                  ch_state <= C_ACCMUL;
+                ch_setda <= 1'b1;
+                ch_state <= C_TLOOK;
+              end
+            end
+            // A WRITE TO A READ-ONLY PACK: muir raises the fault and returns
+            // before anything is cleared or moved.
+            if (st_fault) u_fault[sel_unit] <= 1'b1;
+            // The two sectors entered with the channel turned round that
+            // still finish: no seek, no data, the access time of one
+            // block, and the overrun on 03.
+            if (st_rev) begin
+              if (st_code == 4'o03) e_overrun <= 1'b1;
+              ch_unit  <= sel_unit;
+              ch_moved <= 8'd1;
+              ch_track <= 1'b0;
+              ch_setda <= 1'b0;
+              acc_seek <= seek_ns_r;
+              acc_spin <= 28'(spin_q3);           // at the request: held
+              acc_blk  <= da_blk;
+              elapsed  <= HOLD_NS;
+              ch_state <= C_ACCMUL;
+            end
+            // Seek, and the seek of sector 4's undocumented twin.  The
+            // heads' move is charged and the attention comes up when they
+            // arrive --- both from the DISTANCE THE ADDRESS NAMES, which
+            // muir charges whether or not the seek was refused.  With
+            // nothing on the cable the sequencer waits for a drive that
+            // never answers and MIT's board with the timeout jumper in
+            // ends it 2.56 s on: that is `st_hang`.
+            if (st_seek) begin
+              if (!st_seek_here) begin
+                if (st_seek_off) begin
+                  u_seek_err[sel_unit] <= 1'b1;
+                end else begin
+                  u_cyl[sel_unit]  <= da_cyl;
+                  u_head[sel_unit] <= da_head;
+                  u_blk[sel_unit]  <= da_blk;
                 end
-                // Seek, and the seek of sector 4's undocumented twin.  The
-                // heads' move is charged and the attention comes up when they
-                // arrive --- both from the DISTANCE THE ADDRESS NAMES, which
-                // muir charges whether or not the seek was refused.  With
-                // nothing on the cable the sequencer waits for a drive that
-                // never answers and MIT's board with the timeout jumper in
-                // ends it 2.56 s on.
-                (code == 4'o04) || (code == 4'o14): begin
-                  if (st_present) begin
-                    if (!st_seek_here) begin
-                      if (st_seek_off) begin
-                        u_seek_err[sel_unit] <= 1'b1;
-                      end else begin
-                        u_cyl[sel_unit]  <= da_cyl;
-                        u_head[sel_unit] <= da_head;
-                        u_blk[sel_unit]  <= da_blk;
-                      end
-                    end
-                    // Both two ticks short: the store is held.  See the top.
-                    busy_ns              <= drive_timed ? 32'(held(seek_ns_r)) : 32'd0;
-                    u_att_armed[sel_unit] <= 1'b1;
-                    u_att_ns[sel_unit]    <= drive_timed ? held(seek_ns_r) : 28'd0;
-                  end else begin
-                    // Two ticks short: the store is held.  See the top.
-                    busy_ns <= TIMEOUT_NS - STORE_HOLD_NS;
-                    hanging <= 1'b1;
-                  end
-                end
-                // At ease, and with it the recalibrate and the fault clear.
-                // "At ease ... clears the attention"; the recalibrate takes
-                // the heads home and clears the drive's own two flags, which
-                // is the only thing that clears a seek error; the fault clear
-                // takes the fault away on its own.  A recalibrate raises an
-                // attention when the heads arrive and does NOT make the
-                // controller busy --- muir charges nothing here, and MIT's
-                // driver polls the attention rather than not-active.
-                (code == 4'o05) || (code == 4'o15): begin
-                  if (st_present) begin
-                    u_att_armed[sel_unit] <= 1'b0;
-                    if (cmd[9]) begin
-                      u_cyl[sel_unit]      <= 12'd0;
-                      u_head[sel_unit]     <= 8'd0;
-                      u_blk[sel_unit]      <= 8'd0;
-                      u_fault[sel_unit]    <= 1'b0;
-                      u_seek_err[sel_unit] <= 1'b0;
-                      u_att_armed[sel_unit] <= 1'b1;
-                      u_att_ns[sel_unit]    <= drive_timed ? held(seek_ns_r) : 28'd0;   // two ticks short: held
-                    end
-                    if (cmd[8]) u_fault[sel_unit] <= 1'b0;
-                  end
-                end
-                // Offset clear, which needs a drive to answer it and hangs
-                // without one.
-                code == 4'o06: begin
-                  if (!st_present) begin
-                    // Two ticks short: the store is held.  See the top.
-                    busy_ns <= TIMEOUT_NS - STORE_HOLD_NS;
-                    hanging <= 1'b1;
-                  end
-                end
-                // Reset, which took effect at the store into the command
-                // register: this is the START that follows it, and MIT's
-                // "takes effect as soon as it is stored" is why it does
-                // nothing here.
-                code == 4'o16: begin
-                end
-                // The three codes `newdsk.31` leaves the sequencer in: 0o07
-                // and 0o17 are sector 7, which the microcode does not write,
-                // and 0o12 is the Read All sector entered with the memory
-                // channel turned round.  All three start and never finish.
-                default: begin
-                  busy_ns <= TIMEOUT_NS - STORE_HOLD_NS;   // two ticks short: held
-                  hanging <= 1'b1;
-                end
-              endcase
+              end
+              // Both three ticks short: the store is held two and the read
+              // word one.  See the top.
+              busy_ns              <= drive_timed_q ? 32'(seek_held_r) : 32'd0;
+              u_att_armed[sel_unit] <= 1'b1;
+              u_att_ns[sel_unit]    <= drive_timed_q ? seek_held_r : 28'd0;
+            end
+            // At ease, and with it the recalibrate and the fault clear.
+            // "At ease ... clears the attention"; the recalibrate takes
+            // the heads home and clears the drive's own two flags, which
+            // is the only thing that clears a seek error; the fault clear
+            // takes the fault away on its own.  A recalibrate raises an
+            // attention when the heads arrive and does NOT make the
+            // controller busy --- muir charges nothing here, and MIT's
+            // driver polls the attention rather than not-active.
+            if (st_atease) begin
+              u_att_armed[sel_unit] <= 1'b0;
+              if (st_recal) begin
+                u_cyl[sel_unit]      <= 12'd0;
+                u_head[sel_unit]     <= 8'd0;
+                u_blk[sel_unit]      <= 8'd0;
+                u_fault[sel_unit]    <= 1'b0;
+                u_seek_err[sel_unit] <= 1'b0;
+                u_att_armed[sel_unit] <= 1'b1;
+                u_att_ns[sel_unit]    <= drive_timed_q ? seek_held_r : 28'd0;   // three ticks short: held
+              end
+              if (st_fclr) u_fault[sel_unit] <= 1'b0;
+            end
+            // The sequencer waiting for a drive that never answers: a seek
+            // or an offset clear with nothing on the cable, and the three
+            // codes `newdsk.31` leaves it in --- 0o07 and 0o17 are sector
+            // 7, which the microcode does not write, and 0o12 is the Read
+            // All sector entered with the memory channel turned round.
+            // MIT's board with the timeout jumper in ends all of them
+            // 2.56 s on.  Two ticks short: the store is held.  See the top.
+            if (st_hang) begin
+              busy_ns <= TIMEOUT_NS - HOLD_NS;
+              hanging <= 1'b1;
             end
           end
         endcase
+      end
+
+      // --- the backplane's init, which is not a bus cycle.  Last, so that it
+      // wins over a store landing in the same tick on every flop it reaches:
+      // see the note at the store.
+      if (xbus_init) begin
+        cmd       <= 32'd0;
+        busy_ns   <= 32'd0;
+        hanging   <= 1'b0;
+        timeout   <= 1'b0;
+        e_rcdiff  <= 1'b0;
+        e_ccwcyc  <= 1'b0;
+        e_nxm     <= 1'b0;
+        e_overrun <= 1'b0;
+        e_hdrcmp  <= 1'b0;
+        e_hdrecc  <= 1'b0;
+        e_ecchard <= 1'b0;
+        e_eccsoft <= 1'b0;
+        // `RESET` stops the channel: DCCHAN 0E16, DCBUSY 0C26.
+        ch_state  <= C_IDLE;
+        ch_req_r  <= 1'b0;
       end
     end
   end
 
   logic unused;
-  assign unused = &{1'b0, cmd[31:12], cmd[7:4]};
+  // ... and the low bits of the code's next value, of which only the high
+  // twenty-one are tested.
+  assign unused = &{1'b0, cmd[31:12], cmd[7:4], ecc_next[10:0]};
 
 endmodule
 

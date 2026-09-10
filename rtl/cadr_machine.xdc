@@ -68,6 +68,31 @@
 # because the scratchpad latches share that suffix --- `amem_q`, `mmem_q`,
 # `pdl_q`, `spc_q` --- and they are exactly the registers that should be
 # relaxed.
+#
+# **THE DISK CONTROLLER IS OUT OF THE SET, WHOLE, BUT FOR ITS TWO HELD
+# DECODES.**  `all_registers` under `cadr_machine` took every register of
+# `rtl/cadr_disk_controller.sv` the day that module landed, and by this
+# file's own test nearly none of them qualifies: the spindle adds five
+# nanoseconds a tick, the busy counter and the eight attention countdowns
+# subtract five a tick, `elapsed` counts the walk, and the channel moves a
+# word a tick through a state machine whose every register is its own input.
+# The one register the name list happened to catch was `elapsed` --- the bus
+# interface's pattern matched the disk's too --- and everything else was
+# relaxed to seventy-five nanoseconds.  Asked of the routed DDR=1 board at
+# ef9dee9: 3,904 of the disk's 4,000 internal paths carried the exception,
+# and the longest of them was 20.1 ns, seventeen logic levels from
+# `ch_state_reg[1]` back into `ch_state_reg[2]`.  Every timing figure that
+# board reported with the drive in it was of a design a quarter of which was
+# not being timed.  This is the too-wide exemption CLAUDE.md warns looks
+# exactly like one that is right, found by asking the checkpoint what
+# requirement the paths carried rather than reading the summary.
+#
+# The two that stay are `mine` and `which`: the slave's address match and
+# register number, taken once from the far end of the map and constant for
+# the microcycle --- `cadr_memory_path.sv`'s held decode one slave along, and
+# the same argument.  Paths INTO them from the map need the microcycle and
+# get it; paths OUT of them are timed at the tick wherever they land on a
+# register that is not in this set, which is every register in the disk.
 set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *mfinish_t_reg*    && \
                                   NAME !~ *rdfinish_t_reg*   && \
@@ -82,7 +107,9 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *deskewed_reg*     && \
                                   NAME !~ *ub_acked_reg*     && \
                                   NAME !~ *ub_loadmd_reg*    && \
-                                  NAME !~ *tpclk_q_reg*}]
+                                  NAME !~ *tpclk_q_reg*      && \
+                                  (NAME !~ *disk/* || NAME =~ *disk/mine_reg* || \
+                                                      NAME =~ *disk/which_reg*)}]
 
 # 15 ticks, not 29: the tightest instant a datapath register is read at is the
 # fast read tap.

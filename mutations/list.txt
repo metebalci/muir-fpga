@@ -2310,10 +2310,14 @@
 @note board's own BUSY as well as muir's `done_at`.  The mutation is the
 @note same one --- the sense of the counter's test --- and the added term is
 @note carried through unchanged so that only the direction is mutated.
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the busy
+@note counter's zero test is a register, `busy_zero_q`, a tick ahead of the
+@note word that reads it.  The mutation is unchanged --- the sense of the test
+@note turned round.
 @old
-  assign not_active = (busy_ns == 32'd0) && !ch_busy;
+    busy_zero_q     <= (busy_ns == 32'd0) || cmd_reset;
 @new
-  assign not_active = (busy_ns != 32'd0) && !ch_busy;
+    busy_zero_q     <= (busy_ns != 32'd0) || cmd_reset;
 @end
 
 @mutation disk-decodes-one-word-low
@@ -2352,14 +2356,19 @@
 @note tolerance. A write's does not: this same check passed for months with
 @note all 5,650 device writes acknowledged a tick late by the testbench that
 @note answered them.
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the slave
+@note drives the held match alone and the AND with -XBUS.RQ is the bus
+@note interface's.  So "a register between `dev_rq` and `dev_ack`" is now a
+@note slave that acknowledges the request a tick after it arrives, which is
+@note the same 5 ns in the same place; the old shape --- a delayed copy of
+@note `asked` --- would have been an equivalence, `mine` standing for
+@note sixteen ticks before the request.
 @old
-  // 0 ns of its own, and it must stay a gate: see the note at the top.
-  assign dev_ack = asked;
+  assign dev_ack = mine;
 @new
-  // 0 ns of its own, and it must stay a gate: see the note at the top.
   logic ack_d;
-  always_ff @(posedge clk) ack_d <= asked;
-  assign dev_ack = asked && ack_d;
+  always_ff @(posedge clk) ack_d <= dev_rq;
+  assign dev_ack = mine && ack_d;
 @end
 
 @mutation rdcyc-gate-dropped
@@ -3509,6 +3518,32 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
             u_seek_err <= 8'd0;
 @end
 
+@mutation disk-reset-held-and-not-paid-for
+@check disk
+@file rtl/cadr_disk_controller.sv
+@note The controller takes the board's reset into a register of its own, for
+@note the fitter --- one net into two and a half thousand reset pins could not
+@note be placed within a tick of them all --- and so comes out of reset one
+@note tick after the machine does.  The spindle is the one thing that moves
+@note in that tick, and it is reset to FIVE to pay for it: the value the
+@note machine's first free tick would have put there --- and to five more,
+@note because the word a read returns is a register a tick behind the
+@note counter (`READ_HOLD_NS`), so the counter runs a tick ahead of muir's
+@note `now` and the word shows `now`.  Reset to five alone, the second hold
+@note is not paid for and the block counter reads five nanoseconds behind
+@note muir's for the whole run; the trace samples it either side of all
+@note eighteen region edges, one tick apart.  `STORE_HOLD_NS`'s argument at
+@note the other end of the run, and `disk-timeout-a-tick-short`'s kind of
+@note evidence for it.  Written at five and not zero so that it is the
+@note smaller of the two holds that is missing.
+@old
+      spin        <= 24'd10;
+      into        <= 20'd10;
+@new
+      spin        <= 24'd5;
+      into        <= 20'd5;
+@end
+
 @mutation disk-seek-settle-a-tick-short
 @check disk
 @file rtl/cadr_disk_controller.sv
@@ -3576,10 +3611,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note compare error and the transfer stops with nothing moved.  Written as a
 @note wider compare rather than as a narrower one so that every bit of the
 @note header stays read and lint has nothing to say.
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the slot's
+@note header is read into `hdr_q` a tick ahead of the compare, and the
+@note compare is a register a tick ahead of the decision.  The mutation is
+@note unchanged.
 @old
-          if (s_header[ch_slot][27:0] != hdr_want) begin
+      hdr_eq_q      <= (hdr_q[27:0] == hdr_want);
 @new
-          if (s_header[ch_slot] != {4'd0, hdr_want}) begin
+      hdr_eq_q      <= (hdr_q == {4'd0, hdr_want});
 @end
 
 @mutation disk-data-checkword-misses-the-last-word
@@ -3597,16 +3636,15 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note control-store entry warns about read the other way round: a block that
 @note was never checked reads back exactly like one that was, unless the
 @note checkword is over exactly the bytes the board writes it over.
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the last-word
+@note test is a register, `ch_i_last`, made every tick and read by every
+@note state that walks a page --- so this now stops every move a word short
+@note as well as the code.  The Read's data field is still checked before
+@note anything moves, so it is still caught there first.
 @old
-              if (ch_i == 9'(BLOCK_WORDS-1)) begin
-                blk_w    <= s_dck[ch_slot];
-                ch_state <= C_DCK;
-              end else begin
+      ch_i_last     <= (ch_i == 9'(BLOCK_WORDS-1));
 @new
-              if (ch_i == 9'(BLOCK_WORDS-2)) begin
-                blk_w    <= s_dck[ch_slot];
-                ch_state <= C_DCK;
-              end else begin
+      ch_i_last     <= (ch_i == 9'(BLOCK_WORDS-2));
 @end
 
 @mutation disk-command-list-carries-out-of-sixteen-bits
@@ -3733,10 +3771,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the data is.  Two mutations of one memory's addressing that report the
 @note same failure would be the stale-artefact trap CLAUDE.md records, so
 @note they are written to report different ones.
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the header is
+@note read into `hdr_q` by `ch_slot` a tick ahead of the compare, so the slot
+@note is rotated at that read.  Still caught at the header compare, before a
+@note word has moved.
 @old
-          if (s_header[ch_slot][27:0] != hdr_want) begin
+    hdr_q <= s_header[ch_slot];
 @new
-          if (s_header[ch_slot ^ 5'd1][27:0] != hdr_want) begin
+    hdr_q <= s_header[ch_slot ^ 5'd1];
 @end
 
 @mutation disk-parser-takes-the-first-zero-it-sees
@@ -3830,12 +3872,15 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note off.  What sees it is the sync, which arrives at track byte 60 instead
 @note of 61 --- inside the trace's own first `PAGE` row, word 15 --- and then
 @note every field of every sector after it.
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the START's arms
+@note became one `if` a flag and lost two levels of nesting.  The mutation
+@note is unchanged.
 @old
-                      trk_b     <= da_blk;
-                      trk_p     <= 11'd0;
+              trk_b     <= da_blk;
+              trk_p     <= 11'd0;
 @new
-                      trk_b     <= da_blk;
-                      trk_p     <= 11'd1;
+              trk_b     <= da_blk;
+              trk_p     <= 11'd1;
 @end
 
 @mutation disk-write-all-lays-the-track-one-sector-along
@@ -3854,14 +3899,18 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `BLK write` rows are compared against muir's own pack, and the property
 @note check's round trip then finds seventeen blocks holding their
 @note neighbours' sectors.
+@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the START's arms
+@note became one `if` a flag and lost two levels of nesting, and the code is
+@note read from `st_code`, the copy taken at the request.  The mutation is
+@note unchanged.
 @old
-                      trk_b     <= da_blk;
-                      trk_p     <= 11'd0;
-                      trk_gap   <= 1'b0;
+              trk_b     <= da_blk;
+              trk_p     <= 11'd0;
+              trk_gap   <= 1'b0;
 @new
-                      trk_b     <= (code == 4'o13) ? da_blk + 8'd1 : da_blk;
-                      trk_p     <= 11'd0;
-                      trk_gap   <= 1'b0;
+              trk_b     <= (st_code == 4'o13) ? da_blk + 8'd1 : da_blk;
+              trk_p     <= 11'd0;
+              trk_gap   <= 1'b0;
 @end
 
 # --- the pack side: the block's address, and the master on S_AXI_HP2 ---------

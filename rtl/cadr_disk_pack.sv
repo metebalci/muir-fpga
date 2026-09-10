@@ -196,7 +196,7 @@ module cadr_disk_pack #(
     output var logic [4:0]  store_slot,
     output var logic [8:0]  store_addr,
     output var logic [31:0] store_wdata,
-    input  var logic [31:0] store_rdata,   // a tick behind, as a block RAM's read is
+    input  var logic [31:0] store_rdata,   // two ticks behind the address this drives: see the seam below
     input  var logic        store_miss,
     input  var logic        ch_active,
     // A block is in flight through the seam: the controller defers a walk on
@@ -232,9 +232,29 @@ module cadr_disk_pack #(
   logic [4:0]  r_slot;
   logic [24:0] r_drive;   // 7:0 present, 15:8 read-only, 16 timed
   logic        busy, done, error, refused;
-  assign moving = busy;
+  // **THE SEAM IS DRIVEN FROM REGISTERS, AND `moving` COVERS THE LAST WRITE.**
+  // The four store lines used to be decoded straight off the state --- which
+  // slot, which word, the tag or a beat --- and land on the enable of every
+  // tag and header register in the controller: `FSM_onehot_pst_reg/C ->
+  // u_machine/disk/s_tag_reg[*]/CE`, 49 of the DDR=1 board's 128 failing
+  // endpoints at ef9dee9, three quarters of each path spent crossing from
+  // this module to that one.  Registered here, the crossing starts at a
+  // register and the controller's own decode is all that is left in the
+  // tick.  It costs one tick on every write into the store, and the tick
+  // matters exactly once: the tag, written last, lands the tick after
+  // `busy` falls, so `moving` stays up for it --- a walk deferring on
+  // `store_busy` must not find the slot half-tagged.  The read side pays
+  // the same tick going out and one more coming back, which is why the
+  // write-back below is six ticks a beat and not four.
+  assign moving = busy || store_we;
   // The controller's interlock, a tick behind: see the header.
   logic        ch_active_q;
+  // What the state decodes for the seam this tick, registered onto it at the
+  // edge.  `seam` is the controller's word for its side of the same port.
+  logic        seam_we;
+  logic [4:0]  seam_slot;
+  logic [8:0]  seam_addr;
+  logic [31:0] seam_wdata;
 
   assign drive_present   = r_drive[7:0];
   assign drive_read_only = r_drive[15:8];
@@ -248,7 +268,10 @@ module cadr_disk_pack #(
   // The GP0 slave: a write channel and a read channel, independent
   // ------------------------------------------------------------------------
   typedef enum logic [1:0] { W_ADDR, W_DATA, W_RESP } wstate_e;
-  typedef enum logic [1:0] { R_ADDR, R_DATA } rstate_e;
+  // A read has a tick between the address and the first beat, and between
+  // beats, in which the word and the response are made into registers: see
+  // `R_PREP` below.
+  typedef enum logic [1:0] { R_ADDR, R_PREP, R_PREP2, R_DATA } rstate_e;
   wstate_e wst;
   rstate_e rst_r;
 
@@ -257,9 +280,26 @@ module cadr_disk_pack #(
   logic [3:0]  r_left;             // beats still owed on the read
   logic        w_bad;              // a beat outside the window: SLVERR
 
-  logic w_in, r_in;                // the beat is one of the sixteen words
+  // Whether the beat's address is one of the sixteen words.
+  //
+  // **THE WRITE SIDE'S IS A REGISTER, COMPARED A TICK EARLY.**  It is a
+  // 26-bit compare against the window, and made where the beat lands it
+  // reached the clock enable of every register a beat can write:
+  // `w_at_reg[25]/C -> r_drive_reg[*]/CE`, seven logic levels and 4.98 ns on
+  // the DDR=1 board at ef9dee9, 72% of it routing.  `w_at` changes at two
+  // places only --- taken from AWADDR, and walked up a word a beat --- so the
+  // compare is made on the value about to be loaded and lands beside it, and
+  // the enable reads one register bit.  This is `cadr_phase_gen.sv`'s trick
+  // for its taps: the same question a tick early, the answer on the same
+  // tick.  The read side's stays a gate, because what reads it is `R_PREP`'s
+  // register and nothing else.
+  logic w_in, r_in;
   logic [3:0] w_idx, r_idx;
-  assign w_in  = (w_at[31:6] == REG_BASE[31:6]);
+  function automatic logic in_window(input logic [31:6] page);
+    return page == REG_BASE[31:6];
+  endfunction
+  logic [31:0] w_next;             // the beat after this one
+  assign w_next = w_at + 32'd4;
   assign r_in  = (r_at[31:6] == REG_BASE[31:6]);
   assign w_idx = w_at[5:2];
   assign r_idx = r_at[5:2];
@@ -270,26 +310,39 @@ module cadr_disk_pack #(
   assign s_bresp   = w_bad ? 2'b10 : 2'b00;
   assign s_bid     = w_id;
 
+  // **THE WORD AND THE RESPONSE ARE REGISTERS, MADE THE TICK BEFORE RVALID.**
+  // Driven straight off `r_at` --- the window compare, then which of the
+  // sixteen, then the mux --- they reached the PS7's own RDATA pins four
+  // logic levels late: `r_at_reg[8]/C -> u_ps7/MAXIGP0RDATA[14]`, -0.164 ns
+  // on the DDR=1 board at ef9dee9, and the hard block's setup is most of the
+  // tick.  So `R_PREP` makes both into registers and `R_DATA` offers them;
+  // the address walks up at the handshake and the next beat goes through
+  // `R_PREP` again.  One tick a beat, on a register read Linux makes a
+  // handful of times a block.
+  logic [31:0] rdata_q;
+  logic [1:0]  rresp_q;
+  logic        r_in_q;   // `r_in`, the tick after the address moved
   assign s_arready = (rst_r == R_ADDR);
   assign s_rvalid  = (rst_r == R_DATA);
   assign s_rlast   = (r_left == 4'd0);
-  assign s_rresp   = r_in ? 2'b00 : 2'b10;
+  assign s_rresp   = rresp_q;
+  assign s_rdata   = rdata_q;
   assign s_rid     = r_id;
 
   // The word a read returns.  CTL's read face is the six status bits.
-  logic [31:0] ctl_word;
+  logic [31:0] ctl_word, r_word;
   assign ctl_word = {26'd0, store_miss, ch_active, refused, error, done, busy};
   always_comb begin
-    if (!r_in) s_rdata = 32'd0;
+    if (!r_in_q) r_word = 32'd0;
     else begin
       unique case (r_idx)
-        4'd0:    s_rdata = r_addr;
-        4'd1:    s_rdata = {4'd0, r_tag};
-        4'd2:    s_rdata = {27'd0, r_slot};
-        4'd3:    s_rdata = ctl_word;
-        4'd4:    s_rdata = {7'd0, r_drive};
-        4'd7:    s_rdata = IDENT;
-        default: s_rdata = 32'd0;
+        4'd0:    r_word = r_addr;
+        4'd1:    r_word = {4'd0, r_tag};
+        4'd2:    r_word = {27'd0, r_slot};
+        4'd3:    r_word = ctl_word;
+        4'd4:    r_word = {7'd0, r_drive};
+        4'd7:    r_word = IDENT;
+        default: r_word = 32'd0;
       endcase
     end
   end
@@ -327,9 +380,19 @@ module cadr_disk_pack #(
 
   // What refuses a request.  Written out one term to a name so that a
   // refusal can be read back to its cause in the testbench's failure line.
+  // The two that look at a register Linux wrote are registers themselves,
+  // made the tick after the write: ADDR and SLOT are earlier beats than the
+  // CTL that acts on them, and `go_q` is a tick behind that beat, so they
+  // are current when they are read.  Off `r_addr` directly the alignment
+  // test was in front of the address register's enable.
   logic bad_align, bad_slot, bad_busy, bad_ch;
-  assign bad_align = (r_addr[6:0] != 7'd0) && !go_take;
-  assign bad_slot  = (32'(r_slot) >= SLOTS);
+  logic bad_align_q, bad_slot_q;
+  always_ff @(posedge clk) begin
+    bad_align_q <= (r_addr[6:0] != 7'd0);
+    bad_slot_q  <= (32'(r_slot) >= SLOTS);
+  end
+  assign bad_align = bad_align_q && !go_take;
+  assign bad_slot  = bad_slot_q;
   assign bad_busy  = busy;
   assign bad_ch    = ch_active_q;
   logic refuse;
@@ -352,6 +415,10 @@ module cadr_disk_pack #(
       refused <= 1'b0;
       go_q    <= 3'd0;
       ch_active_q <= 1'b0;
+      w_in    <= 1'b0;
+      rdata_q <= 32'd0;
+      rresp_q <= 2'b00;
+      r_in_q  <= 1'b0;
     end else begin
       ch_active_q <= ch_active;
       // The request, held: what a CTL write asked for, a tick after the beat.
@@ -361,6 +428,7 @@ module cadr_disk_pack #(
       unique case (wst)
         W_ADDR: if (s_awvalid) begin
           w_at  <= s_awaddr;
+          w_in  <= in_window(s_awaddr[31:6]);
           w_id  <= s_awid;
           w_bad <= 1'b0;
           wst   <= W_DATA;
@@ -377,7 +445,8 @@ module cadr_disk_pack #(
               default: ;
             endcase
           end
-          w_at <= w_at + 32'd4;
+          w_at <= w_next;
+          w_in <= in_window(w_next[31:6]);
           if (s_wlast) wst <= W_RESP;
         end
         W_RESP: if (s_bready) wst <= W_ADDR;
@@ -390,12 +459,28 @@ module cadr_disk_pack #(
           r_at   <= s_araddr;
           r_id   <= s_arid;
           r_left <= s_arlen;
-          rst_r  <= R_DATA;
+          rst_r  <= R_PREP;
+        end
+        // The window compare into a register, then the word and the response
+        // for the beat `r_at` names into theirs; RVALID follows.  Two ticks,
+        // because the compare and the sixteen-way mux together were seven
+        // levels into the word.
+        R_PREP: begin
+          r_in_q <= r_in;
+          rst_r  <= R_PREP2;
+        end
+        R_PREP2: begin
+          rdata_q <= r_word;
+          rresp_q <= r_in_q ? 2'b00 : 2'b10;
+          rst_r   <= R_DATA;
         end
         R_DATA: if (s_rready) begin
           r_at <= r_at + 32'd4;
           if (r_left == 4'd0) rst_r <= R_ADDR;
-          else r_left <= r_left - 4'd1;
+          else begin
+            r_left <= r_left - 4'd1;
+            rst_r  <= R_PREP;
+          end
         end
         default: rst_r <= R_ADDR;
       endcase
@@ -424,9 +509,11 @@ module cadr_disk_pack #(
     P_TAG,      // the tag, last
     P_AW,       // a write burst's address
     P_W0,       // ask the store for the beat's low word
-    P_W1,       // ... and its high word, the low one arriving
-    P_W2,       // the high one arriving
-    P_W3,       // both in registers: the beat stands until taken
+    P_W1,       // ... and its high word
+    P_W2,       // the seam's tick out and the store's tick back
+    P_W3,       // the low word arriving
+    P_W4,       // the high one arriving
+    P_W5,       // both in registers: the beat stands until taken
     P_B         // the burst's response
   } pstate_e;
   pstate_e pst;
@@ -462,9 +549,19 @@ module cadr_disk_pack #(
   assign meta = (p_burst == 4'(DATA_BURSTS));
 
   // Where the burst is in DDR, and which word of the record its beat is.
+  //
+  // **THE ADDRESS IS A REGISTER, MADE WHERE `p_burst` MOVES.**  As an adder
+  // off `p_burst` and `p_base` it reached the PS7's address pins a tick short
+  // --- `p_burst_reg[*]/C -> u_ps7/SAXIHP2A[RW]ADDR[*]`, -0.013 ns on the
+  // DDR=1 board at ef9dee9, the hard block's setup being most of the tick.
+  // `p_burst` changes at four places, each of which knows the next value, so
+  // the sum is made there and the address channel offers a register.
   logic [31:0] burst_addr;
-  assign burst_addr = meta ? p_base + META_OFFSET
-                           : p_base + {21'd0, p_burst[2:0], 7'd0};   // + 128 * burst
+  function automatic logic [31:0] addr_of(input logic [31:0] base,
+                                          input logic [3:0] burst);
+    return (burst == 4'(DATA_BURSTS)) ? base + META_OFFSET
+                                      : base + {21'd0, burst[2:0], 7'd0};   // + 128 * burst
+  endfunction
   // The record's word index of the beat's low half: 2 * (16 * burst + beat)
   // for the data, 256 + 2 * beat for the rest --- which is the store's own
   // numbering of those places.
@@ -493,7 +590,7 @@ module cadr_disk_pack #(
   assign m_awsize  = SIZE_BEAT;
   assign m_awburst = BURST_INCR;
   assign m_awvalid = (pst == P_AW);
-  assign m_wvalid  = (pst == P_W3);
+  assign m_wvalid  = (pst == P_W5);
   assign m_wdata   = {whi, wlo};
   // The pad after the data checkword is never written: the record's last
   // beat goes out with only its low half strobed.
@@ -501,13 +598,18 @@ module cadr_disk_pack #(
   assign m_wlast   = last_beat;
   assign m_bready  = (pst == P_B);
 
-  // --- the seam, driven from the state
+  // --- the seam, driven from the state through a register
   //
-  // The store's read is a tick behind its address, so a write beat's two
-  // words are asked for on two ticks and arrive on the two after: P_W0 asks
-  // for the low word, P_W1 asks for the high one as the low arrives and is
-  // taken into `wlo`, P_W2 takes the high one into `whi`, and P_W3 offers the
-  // beat from the two registers until it is taken.
+  // The seam is registered on the way out and the store's read is registered
+  // on the way back, so an address decided here reaches the block RAM a tick
+  // later and its word is back two ticks after that.  A write beat's two
+  // words are therefore asked for on two ticks and arrive three ticks after
+  // each: P_W0 asks for the low word, P_W1 for the high, P_W2 waits, P_W3
+  // takes the low one into `wlo`, P_W4 the high one into `whi`, and P_W5
+  // offers the beat from the two registers until it is taken.  Six ticks a
+  // beat where it was four; a write-back is some 260 ticks longer against a
+  // sector's 968 us on the pack, and `tb/cadr_disk_tb.cpp` measures what a
+  // write-back costs rather than assuming it.
   logic [8:0] read_word;
   always_comb begin
     unique case (pst)
@@ -517,34 +619,48 @@ module cadr_disk_pack #(
   end
 
   always_comb begin
-    store_we    = 1'b0;
-    store_slot  = p_slot;
-    store_addr  = read_word;
-    store_wdata = 32'd0;
+    seam_we    = 1'b0;
+    seam_slot  = p_slot;
+    seam_addr  = read_word;
+    seam_wdata = 32'd0;
     unique case (pst)
       P_TAKE: begin
-        store_we    = 1'b1;
-        store_addr  = ST_TAG;
-        store_wdata = {1'b1, 31'd0};
+        seam_we    = 1'b1;
+        seam_addr  = ST_TAG;
+        seam_wdata = {1'b1, 31'd0};
       end
       P_R: begin
         if (hi_pending) begin
-          store_we    = 1'b1;
-          store_addr  = word_lo | 9'd1;
-          store_wdata = hi_word;
+          seam_we    = 1'b1;
+          seam_addr  = word_lo | 9'd1;
+          seam_wdata = hi_word;
         end else if (rb_valid) begin
-          store_we    = 1'b1;
-          store_addr  = word_lo;
-          store_wdata = rb_data[31:0];
+          seam_we    = 1'b1;
+          seam_addr  = word_lo;
+          seam_wdata = rb_data[31:0];
         end
       end
       P_TAG: begin
-        store_we    = 1'b1;
-        store_addr  = ST_TAG;
-        store_wdata = {4'd0, p_tag};
+        seam_we    = 1'b1;
+        seam_addr  = ST_TAG;
+        seam_wdata = {4'd0, p_tag};
       end
       default: ;
     endcase
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      store_we    <= 1'b0;
+      store_slot  <= 5'd0;
+      store_addr  <= 9'd0;
+      store_wdata <= 32'd0;
+    end else begin
+      store_we    <= seam_we;
+      store_slot  <= seam_slot;
+      store_addr  <= seam_addr;
+      store_wdata <= seam_wdata;
+    end
   end
 
   // The high word of the last meta beat is the pad and goes nowhere; the
@@ -579,6 +695,7 @@ module cadr_disk_pack #(
       busy       <= 1'b0;
       done       <= 1'b0;
       error      <= 1'b0;
+      burst_addr <= 32'd0;
     end else begin
       unique case (pst)
         P_IDLE: if (go_any && !refuse) begin
@@ -588,6 +705,7 @@ module cadr_disk_pack #(
           p_slot  <= r_slot;
           p_tag   <= r_tag;
           p_burst <= 4'd0;
+          burst_addr <= addr_of(r_addr, 4'd0);
           p_beat  <= 4'd0;
           busy    <= 1'b1;
           done    <= 1'b0;
@@ -627,8 +745,9 @@ module cadr_disk_pack #(
           if (hi_pending) begin
             hi_pending <= 1'b0;
             if (last_beat) begin
-              p_burst <= p_burst + 4'd1;
-              pst     <= last_burst ? P_TAG : P_AR;
+              p_burst    <= p_burst + 4'd1;
+              burst_addr <= addr_of(p_base, p_burst + 4'd1);
+              pst        <= last_burst ? P_TAG : P_AR;
             end else begin
               p_beat <= p_beat + 4'd1;
             end
@@ -637,8 +756,9 @@ module cadr_disk_pack #(
             if (pad_beat) begin
               // One word only; the pad is dropped.  This is always the last
               // beat of the last burst.
-              p_burst <= p_burst + 4'd1;
-              pst     <= P_TAG;
+              p_burst    <= p_burst + 4'd1;
+              burst_addr <= addr_of(p_base, p_burst + 4'd1);
+              pst        <= P_TAG;
             end else begin
               hi_word    <= rb_data[63:32];
               hi_pending <= 1'b1;
@@ -655,15 +775,17 @@ module cadr_disk_pack #(
           pst    <= P_W0;
         end
         P_W0: pst <= P_W1;
-        P_W1: begin
+        P_W1: pst <= P_W2;
+        P_W2: pst <= P_W3;
+        P_W3: begin
           wlo <= store_rdata;
-          pst <= P_W2;
+          pst <= P_W4;
         end
-        P_W2: begin
+        P_W4: begin
           whi <= store_rdata;
-          pst <= P_W3;
+          pst <= P_W5;
         end
-        P_W3: if (m_wready) begin
+        P_W5: if (m_wready) begin
           if (last_beat) pst <= P_B;
           else begin
             p_beat <= p_beat + 4'd1;
@@ -672,7 +794,8 @@ module cadr_disk_pack #(
         end
         P_B: if (m_bvalid) begin
           if (m_bresp[1]) error <= 1'b1;
-          p_burst <= p_burst + 4'd1;
+          p_burst    <= p_burst + 4'd1;
+          burst_addr <= addr_of(p_base, p_burst + 4'd1);
           if (last_burst) begin
             busy <= 1'b0;
             done <= 1'b1;
