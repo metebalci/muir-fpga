@@ -121,6 +121,11 @@ module cadr_console_harness #(
     // --- what a check watches
     output var logic        con_req,
     output var logic        con_gnt,
+    // The microcycle boundary and the console's acknowledgement, which are
+    // the two instants the read-back's lag is measured between: `con_rdata`
+    // is loaded at `mclk` and the console takes it at `-UB SSYN`.
+    output var logic        mclk_o,
+    output var logic        con_ssyn_o,
     output var logic        run_o,
     output var logic        promdisable_o,
     output var logic        errstop_o,
@@ -136,6 +141,8 @@ module cadr_console_harness #(
 
   // The console's half of the diagnostic bus.
   logic        con_msyn, con_write, con_ssyn;
+  assign mclk_o     = mclk;
+  assign con_ssyn_o = con_ssyn;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
 
@@ -145,39 +152,47 @@ module cadr_console_harness #(
   logic [15:0] sr_wdata, sr_rdata;
 
   // ------------------------------------------------------------------------
-  // THE ARBITER AND THE MUX --- the attachment, in the words the patch uses
+  // THE ARBITER AND THE MUX --- `rtl/cadr_console_bus.sv`, the real one
   // ------------------------------------------------------------------------
   //
-  // **THE GRANT IS TAKEN ONLY WITH THE PROCESSOR'S OWN STROBE DOWN, AND HELD
-  // UNTIL THE CONSOLE LETS GO.**  Taken any other way it would truncate a
-  // Unibus cycle already counting on `elapsed` inside the register block ---
-  // the block starts its count at the strobe and clears it when the strobe
-  // falls, so a strobe masked in the middle is a cycle that never answers and
-  // the processor's own NXM timer is what would find it, 4,250 ns later.
+  // This harness used to hold a hand-written copy of the arbiter, because the
+  // attachment had not landed and `rtl/cadr_memory_path.sv` was another
+  // session's file.  It has landed, and the arbiter is a module of its own
+  // for exactly that reason: **two descriptions of one thing drift, and the
+  // check would then be holding the copy.**  `cadr_memory_path.sv`
+  // instantiates the same module in the same way, so what is checked here is
+  // what is on the board.
   //
-  // The other way round is bounded and safe: while the console has the bus a
-  // processor strobe is masked, so its cycle simply starts late.  The console
-  // holds the bus for `DIAGNOSTIC_NS` plus the drop --- 260 ns, 52 ticks ---
-  // against that same 4,250 ns timer, so a Unibus cycle waiting behind the
-  // console cannot become an NXM.  Sixteen to one, and it is the same
-  // argument `cadr_memory_path.sv`'s per-word channel arbiter is held to.
-  logic con_own;
-  always_ff @(posedge clk) begin
-    if (rst) con_own <= 1'b0;
-    else if (con_own) con_own <= con_req;
-    else con_own <= con_req && !cpu_msyn;
-  end
-  assign con_gnt = con_own && !gnt_inhibit;
+  // `gnt_inhibit` is the one thing the harness still adds, and it is stimulus
+  // with no counterpart in the fabric: it holds the grant off for ever, which
+  // is how `LOST_T` is exercised.
+  logic con_gnt_raw;
+  assign con_gnt = con_gnt_raw && !gnt_inhibit;
 
-  assign sr_msyn  = con_own ? con_msyn  : cpu_msyn;
-  assign sr_write = con_own ? con_write : cpu_write;
-  assign sr_addr  = con_own ? con_addr  : cpu_addr;
-  assign sr_wdata = con_own ? con_wdata : cpu_wdata;
-  // `-UB SSYN` goes back to whoever asked and to nobody else.  A slave
-  // answering a master that is not there is what a shared bus must not do.
-  assign con_ssyn  = con_own ? sr_ssyn : 1'b0;
-  assign cpu_ssyn  = con_own ? 1'b0    : sr_ssyn;
-  assign con_rdata = sr_rdata;
+  cadr_console_bus console_bus (
+      .clk       (clk),
+      .rst       (rst),
+      .mclk      (mclk),
+      .cpu_msyn  (cpu_msyn),
+      .cpu_write (cpu_write),
+      .cpu_addr  (cpu_addr),
+      .cpu_wdata (cpu_wdata),
+      .cpu_ssyn  (cpu_ssyn),
+      .con_req   (con_req),
+      .con_gnt   (con_gnt_raw),
+      .con_msyn  (con_msyn),
+      .con_write (con_write),
+      .con_addr  (con_addr),
+      .con_wdata (con_wdata),
+      .con_ssyn  (con_ssyn),
+      .con_rdata (con_rdata),
+      .sr_msyn   (sr_msyn),
+      .sr_write  (sr_write),
+      .sr_addr   (sr_addr),
+      .sr_wdata  (sr_wdata),
+      .sr_ssyn   (sr_ssyn),
+      .sr_rdata  (sr_rdata)
+  );
   assign cpu_rdata = sr_rdata;
 
   cadr_console console (
