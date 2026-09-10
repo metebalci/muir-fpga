@@ -1,0 +1,58 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The pack feeder at boot: the card mounted read-write at /mnt/card, and
+# cadr-pack-feeder serving the CADR's disk from /mnt/card/pack.img.
+#
+# THE CARD IS MOUNTED HERE AND NOWHERE ELSE.  U-Boot reads it and Linux's
+# root filesystem is an initramfs in RAM, so until this script the card was
+# never mounted; the pack is the one thing on the card the machine writes
+# (CLAUDE.md, "the pack is the one thing on the card that the machine
+# writes"), and it is written in place --- a pack has to stay the size the
+# drive is, so there is no temporary file and no rename, as muir's diskpack
+# says of its own writes.  The feeder syncs every block it writes.
+#
+# /dev/mmcblk0p1 is the card's one FAT32 partition (linux/buildroot/board/
+# arty-z7-20/genimage.cfg).  No card, or a card without the partition, is
+# not a fault here: the feeder starts anyway, finds no pack, says so once
+# and idles, and the CADR sees a controller with no drive.
+#
+# The log goes to the console, which is where the board is watched from
+# (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
+# feeder is told where to write instead.
+
+CARD_DEV=/dev/mmcblk0p1
+CARD=/mnt/card
+PACK=$CARD/pack.img
+PIDFILE=/var/run/cadr-pack-feeder.pid
+
+start() {
+	mkdir -p "$CARD"
+	if mountpoint -q "$CARD" 2>/dev/null || mount -t vfat -o rw "$CARD_DEV" "$CARD" 2>/dev/null; then
+		echo "cadr-pack-feeder: card mounted at $CARD"
+	else
+		echo "cadr-pack-feeder: no card partition at $CARD_DEV; the feeder will find no pack"
+	fi
+	printf "Starting cadr-pack-feeder: "
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
+		--exec /usr/bin/cadr-pack-feeder -- --pack "$PACK" --log /dev/console
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+	printf "Stopping cadr-pack-feeder: "
+	start-stop-daemon -K -q -p "$PIDFILE"
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	sync
+	umount "$CARD" 2>/dev/null
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?
