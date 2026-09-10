@@ -180,3 +180,305 @@ any more.
   puts a disk pack in it or reads a display out of it.
 - **Boot without the TFTP server.** A card holding `uEnv.net`'s command and
   `system.dtb` itself would, at the cost of a card write per change.
+
+## The Buildroot image
+
+The stepping stone above is Digilent's 2017.4 image; this is the image that
+replaces it, built entirely on the build host from a pinned Buildroot, so
+that the board is reproducible from the repository and a machine move.
+**It has not been booted on the board yet**; this section is what to copy
+where and what the console must show, written from the code that was read
+and the images that were built and inspected here, and the supervising
+session's board run will correct it where it is wrong. Everything above this
+line still describes the stepping stone and is left as it is until then.
+
+### What it is
+
+    Buildroot   2026.02.3, the LTS   vendor/buildroot-2026.02.3.tar.xz, sha256 5a59e750...c6fc7fb
+    U-Boot      2026.01, mainline    SPL is the first-stage loader: boot.bin 127,456 B;
+                                     u-boot.img 1,075,820 B (a FIT: U-Boot proper and its tree)
+    Linux       6.19.14, mainline    zImage 3,256,232 B; zynq-arty-z7-20.dtb 11,404 B
+    rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,792,210 B (6.2 MB unpacked), an
+                + evtest             initramfs fetched over TFTP; sdcard.img 64 MiB
+
+Sizes are of the first build, 10 September, on the build host; the whole
+thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
+took 25 minutes of wall clock on 16 cores, the second and third `make
+buildroot` (after a change) minutes.
+
+`linux/buildroot/` is the Buildroot external tree; `make buildroot` builds
+the whole thing from the tarball (the first time takes about an hour and
+several gigabytes under `~/.cache/muir-fpga-buildroot`, never `/tmp`, never
+`build/`); `linux/mksd-buildroot.sh` stages the card and the server
+directories under `build/sd/buildroot/` the way `linux/mksd.sh` does for the
+stepping stone. Every file under `linux/buildroot/` carries the reason for
+what it holds; the ones worth knowing exist:
+
+    configs/arty_z7_20_defconfig               the whole image, pinned
+    board/arty-z7-20/dts/xilinx/zynq-arty-z7-20.dts   the board, for Linux AND U-Boot
+    board/arty-z7-20/uboot/ps7_init_gpl.c      the start-up routine, GENERATED from vivado/ps7_init.ops
+    board/arty-z7-20/uboot/gen_ps7_init_gpl.py the generator; --check, and --compare against Vivado's
+    board/arty-z7-20/uboot/cadr.env            U-Boot's default environment: the retry loop
+    board/arty-z7-20/uboot/uboot.fragment      what changes in xilinx_zynq_virt_defconfig
+    board/arty-z7-20/linux/linux.config        the kernel: what the board has and nothing more
+    board/arty-z7-20/uEnv.txt.in, uEnv.net     the card's file and the served boot command
+    board/arty-z7-20/genimage.cfg              the card as one image, sdcard.img
+    package/cadr-tools/                        where our own programs go; one placeholder today
+
+**The start-up routine is the same one, proved rather than assumed.** U-Boot's
+SPL runs `ps7_init()` and `ps7_post_config()` from a `ps7_init_gpl.c`, as
+Digilent's FSBL did. Ours is generated from `vivado/ps7_init.ops` --- the
+committed, `make current`-checked list of the 673 register operations of
+Digilent's routine --- so that a checkout without Vivado can build the
+loader. `gen_ps7_init_gpl.py --compare build/ps7/ps7_init_gpl.c` reads the
+file Vivado itself writes and requires the same operations in the same
+tables in the same order: 660 in 18 tables, identical, measured at the commit
+that added it. The 13 the generated file does not carry are the three
+`ps7_debug` tables nothing runs and the SCU-timer helpers U-Boot has its own
+copy of. `make buildroot-check` (which `make buildroot` runs first) fails if
+the C ever stops being what the `.ops` say.
+
+**One device tree for both.** Mainline has no Arty Z7 tree; ours is written
+like `zynq-zybo-z7.dts` from Digilent's own BSP tree and `vivado/ps7_config.tcl`,
+and it differs from every mainline Zynq board in three things the files
+settle: the console is **UART 0**, the PS clock is **50 MHz**, the PHY is at
+MDIO address **1**. It includes `linux/cadr-reserved.dtsi` --- the same node
+the stepping stone appended --- and is compiled twice, by the kernel and by
+U-Boot. U-Boot reading it matters: mainline U-Boot honours a `reserved-memory`
+node in its *own* tree for its own relocation (`common/memtop.c`) and for
+where it puts the fdt and the ramdisk (`lib/lmb.c`), and does not rewrite the
+kernel's memory node (`ARCH_FIXUP_FDT_MEMORY` is off in `xilinx_zynq_virt`).
+So the loader stays out of the CADR's region by the same node that keeps the
+kernel out, which closes the hazard `linux.md` recorded --- "the
+reserved-memory node binds the kernel, and not the loader" --- for this
+U-Boot.
+
+### The card, the server, and the files
+
+    the card         BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt
+    /srv/tftp        uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
+
+**Three files on the card, not two.** Mainline U-Boot's SPL is the first
+stage and loads U-Boot proper as a second file, `u-boot.img`, from the FAT
+partition; Digilent's `BOOT.BIN` carried both because Xilinx's FSBL reads
+partitions out of the boot image. `u-boot.img` changes only when U-Boot does,
+so the card is still written once. It is a FIT --- U-Boot proper and its
+device tree in one flattened-tree container, which is what the generic Zynq
+SPL loads (`CONFIG_SPL_LOAD_FIT`) and asks for by that name --- so `mkimage
+-l` prints nothing for it and `fdtget -l u-boot.img /images` is how to look
+inside; `mksd-buildroot.sh` checks it that way. The SPL's file is `boot.bin`
+in Buildroot's output and `BOOT.BIN` on the card, which is the name the boot
+ROM looks for; the staging script renames it.
+
+    echo SERVERIP=<the TFTP server's address> >  linux/local.conf   # as before
+    echo ETHADDR=<the board's MAC>            >> linux/local.conf   # NEW; the console printed it
+    make buildroot                                                  # once; ~1 h the first time
+    linux/mksd-buildroot.sh                                         # stages build/sd/buildroot/
+    cp build/sd/buildroot/server/* /srv/tftp/
+
+**`ETHADDR` is new and it matters.** Digilent's U-Boot read the board's MAC
+out of the QSPI flash's OTP area; mainline has no such code, so without a
+MAC in the card's file U-Boot makes up a random one (`NET_RANDOM_ETHADDR`,
+and it says so on the console) and the DHCP lease pinned to the board's real
+address is not the one it gets. The card's `ethaddr` is imported before
+`dhcp`, U-Boot writes it into the kernel's tree at boot (`fdt_fixup_ethernet`,
+on the `ethernet0` alias), and Linux asks DHCP with the same address. Like
+`SERVERIP` it lives in `linux/local.conf` and in no committed file.
+
+`mksd-buildroot.sh` copies the bitstream in as `server/cadr.bit` when
+`build/ddr/cadr_arty.bit` exists (or `BIT=` names one); otherwise it says so
+and the memory-on board's `.bit` goes to `/srv/tftp/cadr.bit` by hand, as
+above. It also writes `build/sd/buildroot/sdcard.img`, the card as one image
+--- the same one-partition FAT32 layout as the recipe above, made by
+genimage --- so on the laptop either
+
+    D=/dev/sdX   # the line that says usb, never from memory
+    sudo dd if=sdcard.img of=$D bs=4M conv=fsync
+
+or the sfdisk/mkfs.vfat/cp recipe above with `card/BOOT.BIN`, `card/u-boot.img`
+and `card/uEnv.txt` instead of the stepping stone's three files. Both are the
+same card.
+
+### What happens at power-on, and what the console must show
+
+1. **The boot ROM loads `BOOT.BIN`**: U-Boot's SPL. It runs `ps7_init()` ---
+   MIO, PLLs, clocks, DDR, peripheral resets, the 660 operations --- prints
+   its banner, loads `u-boot.img` from the FAT partition, runs
+   `ps7_post_config()` (the level shifters and the fabric resets, which is
+   what makes `S_AXI_HP0` live), and jumps to U-Boot.
+
+       U-Boot SPL 2026.01 (...)
+       Silicon version:	3
+       Trying to boot from MMC1
+
+   `Silicon version: 3` is this board (3.1; `linux.md` says why the `else`
+   branch is the right one). The SPL says nothing more when the load
+   succeeds; `spl: error reading image u-boot.img` is the card without the
+   second file. No banner at all, or the ROM parking (`0x200A` over JTAG),
+   is the card not latched or `ps7_init` wrong --- and `ps7_init` wrong would
+   be the first disagreement between the generated routine and Vivado's,
+   which `gen_ps7_init_gpl.py --compare` says there is none.
+
+2. **U-Boot proper** prints `U-Boot 2026.01`, `CPU: Zynq 7z020`,
+   `Silicon: v3.1`, `DRAM: ECC disabled 512 MiB`, and then --- expected,
+   and the reason `ETHADDR` exists ---
+
+       Warning: ethernet@e000b000 (eth0) using random MAC address - xx:xx:...
+
+   Two seconds of `Hit any key to stop autoboot`, then `bootcmd` runs
+   `cadr_boot`: load `uEnv.txt`, import it (the real `ethaddr` replaces the
+   random one, `serverip` is set), `dhcp` (`DHCP client bound to address
+   ...`), import `uEnv.txt` again (lwIP's `dhcp` overwrote `serverip`; this
+   puts it back), run `uenvcmd`: fetch `uEnv.net`, import it, run `netcmd`.
+
+3. **`netcmd`** fetches `cadr.bit` and configures the fabric: `fpga loadb`
+   prints the bitstream header (`design filename = "..."`, `part number =
+   "7z020clg400"`), then `INFO:post config was not run, please run manually
+   if needed`, which is U-Boot's fixed wording and not a fault --- the driver
+   has just written the level shifters and the fabric resets itself
+   (`zynq_slcr_devcfg_enable`, the same two registers `ps7_post_config`
+   writes). The CADR starts here. Then `zynq-arty-z7-20.dtb`,
+   `zImage`, `rootfs.cpio.uboot` --- five `Filename '...'` /
+   `Bytes transferred = N` pairs in all --- and
+
+       ## Loading init Ramdisk from Legacy Image at 04000000 ...
+       ## Flattened Device Tree blob at 01f00000
+       Starting kernel ...
+
+4. **If any fetch fails** --- server down, cable out --- the line
+   `cadr: the boot did not happen; trying again in 10 s` and another attempt
+   ten seconds later, for as long as the server is away; U-Boot's banner does
+   **not** reappear, because this is a loop and not the stepping stone's
+   `reset`. Nothing else is ever booted: there is no `image.ub`, no fallback,
+   and `bootcmd` never returns.
+
+5. **Linux**, and the two things this image exists to establish are in its
+   first lines:
+
+       OF: reserved mem: 0x18000000..0x1fffffff (131072 KiB) nomap non-reusable cadr@18000000
+
+   is the tree reserving the CADR's memory **with `no-map` and without
+   `mem=384M`** --- the thing the 4.9 kernel died on. If the kernel goes
+   quiet after `Memory policy: Data cache writealloc`, it has died the same
+   way and `mem=384M cma=32M` goes back on `uEnv.net`'s bootargs until it is
+   understood. If it boots, `linux/uEnv.net` is right and `linux.md`'s point 3
+   is about 4.9 only. Reading 6.19.14: `drivers/of/of_reserved_mem.c` marks
+   the region `MEMBLOCK_NOMAP`; `arch/arm/mm/mmu.c`'s `map_lowmem` and
+   `arch/arm/kernel/setup.c`'s `request_standard_resources` both walk
+   `for_each_mem_range`, which skips it, so it is neither mapped nor "System
+   RAM".
+
+   Then the login: `cadr login:` on the console, `root` / `root` (the
+   stepping stone's password, kept because the board is on a private LAN;
+   set in the defconfig, `BR2_TARGET_GENERIC_ROOT_PASSWD`), and over SSH from
+   the address DHCP gave it, without the `ssh-rsa` incantation the 2018
+   Dropbear needed.
+
+At the prompt, the same four lines as above, and two changes to what they
+should say:
+
+    cat /proc/device-tree/model                  Zynq Arty Z7 Development Board  (kept on purpose)
+    ls /proc/device-tree/reserved-memory/        cadr@18000000
+    grep "System RAM" /proc/iomem                00000000-17ffffff   -- from the node alone, no mem=
+    grep MemTotal /proc/meminfo                  about 384 MB
+    cat /proc/cmdline                            console=ttyPS0,115200 earlycon   -- and nothing about memory
+    devmem 0xE000A068; devmem 0xE000A06C         0x01008100 twice, WITHOUT the APER_CLK_CTRL line first
+
+**The `APER_CLK_CTRL` line is gone because this kernel has no power
+management.** `drivers/gpio/gpio-zynq.c` gates the block's clock through
+runtime PM --- `zynq_gpio_runtime_suspend()` is `clk_disable_unprepare()`, and
+the driver drops its reference after probe, so with `CONFIG_PM` the block is
+unclocked whenever no GPIO line is in use and the EMIO registers read zero,
+which is what 4.9 did. `linux.config` builds without `PM` (nothing on this
+board sleeps), the runtime-PM calls are stubs, and the clock the driver takes
+at probe stays on. If `devmem 0xE000A068` reads `0x00000000`, the clock is
+off after all and `devmem 0xF800012C 32 $(( $(devmem 0xF800012C) | 0x400000 ))`
+turns it on as before; the alternative kept in `linux.config`'s header is to
+read the lines through the driver (gpiochip lines 54..117 are EMIO 0..63).
+
+**Verified on the built images, not the board**: the kernel's final `.config`
+has `PM`, `SUSPEND`, `CPU_IDLE` and `STRICT_DEVMEM` off and `DEVMEM`,
+`GPIO_ZYNQ`, `INPUT_EVDEV`, `USB_HID`, `USB_CHIPIDEA_HOST`, `MACB`,
+`REALTEK_PHY`, `MMC_SDHCI_OF_ARASAN`, `SERIAL_XILINX_PS_UART_CONSOLE` and
+`FPGA_MGR_ZYNQ_FPGA` on, and no `DRM` or `FB`; the served tree, decompiled,
+carries `cadr@18000000 { reg = <0x18000000 0x8000000>; no-map; }`, five
+devices enabled (uart0, gem0, sdhci0, qspi, usb0 as host), `serial0` on
+`serial@e0000000`, `ps-clk-frequency` 50,000,000, the PHY at address 1 and no
+`amba_pl`; U-Boot's own tree carries the same reservation and its default
+environment is `bootcmd=run cadr_boot` with the `cadr_*` variables as
+written; the SPL is 125,216 bytes against its 196,608-byte ceiling and links
+`ps_init_gpl.o` from the generated routine; and the SPL's cut-down tree
+holds exactly the serial, QSPI, MMC, SLCR and timer nodes.
+
+**And one thing to know about `/dev/mem` on the reserved region**, from the
+code: `mmap` works and, opened `O_SYNC` as BusyBox's `devmem` does, gives an
+uncached mapping (`arch/arm/mm/mmu.c`, `phys_mem_access_prot`); `read()` and
+`write()` on `/dev/mem` over `0x18000000..0x1fffffff` are expected to fail
+with `EFAULT`, because the kernel reaches them through the linear map and a
+`no-map` region has none (`drivers/char/mem.c` copies with
+`copy_from_kernel_nofault`, so it fails rather than oopses). Programs that
+read the CADR's memory from Linux mmap it; `dd if=/dev/mem` does not work
+there. The board confirms or corrects this.
+
+### The USB port: a keyboard and a mouse
+
+The Arty Z7-20's USB is the processing system's, not the fabric's:
+Digilent's tree has `usb0` --- the Zynq ChipIdea controller at `0xe0002000`,
+`compatible = "xlnx,zynq-usb-2.20a", "chipidea,usb2"`, `phy_type = "ulpi"`
+--- enabled as a host (`dr_mode = "host"`) with its PHY's reset on MIO 46
+(`pcw.dtsi`'s `usb-reset = <&gpio0 46 0>`; `vivado/ps7_config.tcl`'s
+`PCW_USB0_RESET_IO {MIO 46}`, `PCW_USB_RESET_POLARITY {Active Low}`, the
+controller's twelve ULPI lines on MIO 28..39). Digilent's reference manual
+could not be read --- their site answers automated fetches with 403, as
+`linux.md` already records --- so the PHY's part number is not asserted here.
+Our tree writes the same port the way mainline's `zynq-zybo-z7.dts` writes
+the same part: `usb0` as host, `usb-phy` a `usb-nop-xceiv` with
+`reset-gpios = <&gpio0 46 GPIO_ACTIVE_LOW>`. The kernel has the controller in
+host mode over EHCI, HID over USB, and evdev; the root filesystem has
+`evtest`. No display and no DRM: HDMI on this board is a fabric matter.
+
+**What it costs**, measured on the built objects with `arm-linux-size`: the
+USB host stack itself --- core, EHCI, the ChipIdea glue, the nop PHY, and
+USB mass storage --- is 229,947 bytes of text and data in `vmlinux`; the
+keyboard-and-mouse addition on top --- HID core, the generic and quirk HID
+drivers, the USB HID transport, the input core and evdev --- is 129,569 bytes;
+`vmlinux` compresses 2.03:1 into this `zImage`, so together about 175 KB of
+the 3.26 MB `zImage`. `evtest` is 34,144 bytes in the root filesystem, about
+15 KB in the compressed initramfs. The kernel also kept `CONFIG_VT` on: it is
+not user-selectable without `EXPERT` and defaults to yes, and with no
+framebuffer it is a dummy console nobody sees; `console=ttyPS0` on the
+command line is what decides where the messages go.
+
+To prove it on the board, plug a keyboard in and watch the console:
+
+    usb 1-1: new low-speed USB device number 2 using ci_hdrc
+    usb 1-1: New USB device found, idVendor=xxxx, idProduct=xxxx ...
+    input: ... as /devices/soc0/axi/e0002000.usb/ci_hdrc.0/usb1/1-1/.../input/input0
+    hid-generic 0003:XXXX:XXXX.0001: input: USB HID v1.11 Keyboard [...] on usb-ci_hdrc.0-1/input0
+
+then `ls /dev/input/` (an `event0`, and `event1` for a mouse), and
+
+    evtest /dev/input/event0
+
+which lists the device's capabilities and then prints one `Event: time ...,
+type 1 (EV_KEY), code 30 (KEY_A), value 1` per key press and release. Without
+`evtest`, `hexdump -C /dev/input/event0` shows the same 16-byte records. The
+first of those console lines is the port working at all; if nothing appears
+when a device is plugged in, the first suspects are the PHY's reset (MIO 46)
+and VBUS to the connector, neither of which this image can see from the code.
+
+### What is deliberately not in this image
+
+- **No `mem=384M`, no `cma=32M`, no `uio_pdrv_genirq.of_id`** on the command
+  line: the first is the question being asked, the second was for Digilent's
+  42 MB ramdisk against a 128 MB CMA pool, the third was for PL peripherals
+  the tree no longer has.
+- **No saved environment.** U-Boot's environment is built in and lives
+  nowhere (`ENV_IS_NOWHERE`; the generic configuration's `uboot.env` on the
+  card is off), as the 2017 build's was: a boot decided from a file nothing
+  in the repository sees was the thing to avoid.
+- **No `fdt_high`/`initrd_high`**, for the reason in `uEnv.net`.
+- **No I2C, no SPI0, no FCLK**: off in `vivado/ps7_config.tcl`, off here.
+- **No display, no DRM, no framebuffer**: HDMI on this board is the fabric's.
+- **No Vivado, no Xilinx tool of any kind** is needed to build the image;
+  the one Xilinx-derived input is `vivado/ps7_init.ops`, committed.

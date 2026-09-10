@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The card's one file, for the Buildroot boot.  THIS IS A TEMPLATE:
+# linux/mksd-buildroot.sh writes uEnv.txt from it with @SERVERIP@ and
+# @ETHADDR@ filled in from linux/local.conf, which is gitignored because
+# this repository is public and a machine's address on a private network,
+# or a board's MAC, is not part of the project.
+#
+# This is the same shape as the stepping stone's card file (linux/uEnv.txt.in)
+# with two differences, both explained in the U-Boot environment it is read
+# by (linux/buildroot/board/arty-z7-20/uboot/cadr.env):
+#
+#   ethaddr is here, because mainline U-Boot cannot read the board's MAC from
+#   the QSPI flash's OTP area as Digilent's could, and the board must ask
+#   DHCP with the address the server's lease is pinned to;
+#
+#   cp_kernel2ram=reset is not, because the loop that waits for the server is
+#   in U-Boot's own default environment now and there is no fallback boot to
+#   disarm.  A card written for the stepping stone still works with this
+#   U-Boot --- the variable is simply never read --- but asks with a random
+#   MAC, so write a new card.
+#
+# U-Boot's cadr_boot imports this file, runs `dhcp`, imports it again ---
+# lwIP's dhcp overwrites serverip from the reply, and the second import puts
+# it back --- and then runs uenvcmd.  The command itself is not here: uenvcmd
+# fetches uEnv.net from the TFTP server and runs the netcmd it defines, so
+# that a change to the boot command, the bitstream, the kernel, the tree or
+# the root filesystem is a copy into /srv/tftp and a reset, and the card is
+# never written again.
+serverip=@SERVERIP@
+ethaddr=@ETHADDR@
+
+# 1468 rather than the 512-byte default (RFC 2348); U-Boot's lwIP TFTP reads
+# this variable (net/lwip/tftp.c).
+tftpblocksize=1468
+
+uenvcmd=tftpboot ${cadr_uenv_addr} uEnv.net && env import -t ${cadr_uenv_addr} ${filesize} && run netcmd
