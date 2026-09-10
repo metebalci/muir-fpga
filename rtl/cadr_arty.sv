@@ -155,6 +155,19 @@ module cadr_arty #(
   // two arms of the `DDR` generate below and nowhere else.
   logic mem_done;
   logic [31:0] mem_rdata;
+  // The disk's two seams, likewise driven from one arm or the other: the
+  // drive --- which units have a pack, the read-only switch, whether the
+  // drive's time is charged --- and the block store's fill port. With `DDR`
+  // off both are tied off here and the whole drive constant-folds; with it
+  // on, `rtl/cadr_disk_pack.sv` drives them from registers Linux writes and
+  // from the pack in DDR.
+  logic [7:0]  drive_present, drive_read_only;
+  logic        drive_timed;
+  logic        store_we;
+  logic [4:0]  store_slot;
+  logic [8:0]  store_addr;
+  logic [31:0] store_wdata, store_rdata;
+  logic        store_miss, ch_active, store_busy;
   // A write or read that came back SLVERR or DECERR, held. Zero when there is
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
@@ -263,25 +276,25 @@ module cadr_arty #(
       // Nothing raises an interrupt and nothing answers a device cycle: the
       // Xbus devices are their own slices and none of them exists.
       .sintr(1'b0), .device_ack(1'b0), .device_rdata(32'd0),
-      // NO DRIVE ON THE DISK'S CABLE, which is what the board has today and
-      // what `build/machine.pass` compares against: with `drive_present` at
-      // zero the status register answers `0x2321` --- not on line, not on
-      // cylinder, no unit selected --- for every one of the boot PROM's
-      // 11,301 polls. What will drive these is the pack Linux puts in DDR:
-      // `S_AXI_HP2` fetches a block into the controller's store, and a unit
-      // is present when the software behind that port says a pack is
-      // mounted on it. **Tied off, the whole drive constant-folds**, so the
-      // fit here counts the register face and the decode and not the
-      // spindle, the seek arithmetic or the eight attention counters.
-      .drive_present(8'd0), .drive_read_only(8'd0), .drive_timed(1'b0),
-      // AND NO PACK IN DDR EITHER, which is the other half of the same seam:
-      // `S_AXI_HP2` is what will write the block store, and it is off in
-      // `ps7_config.tcl` and tied off in the generated wrapper. Tied off
-      // here, the store, the command list's walk, the two checkwords and the
-      // channel's bus master all constant-fold, so the fit here counts none
-      // of them.
-      .store_we(1'b0), .store_slot(5'd0), .store_addr(9'd0),
-      .store_wdata(32'd0),
+      // THE DRIVE, AND THE PACK. With `DDR` off there is no drive on the
+      // disk's cable, which is what `build/machine.pass` compares against:
+      // with `drive_present` at zero the status register answers `0x2321`
+      // --- not on line, not on cylinder, no unit selected --- for every one
+      // of the boot PROM's 11,301 polls, and **tied off, the whole drive
+      // constant-folds**, so that fit counts the register face and the
+      // decode and not the spindle, the seek arithmetic or the eight
+      // attention counters. With `DDR` on, `rtl/cadr_disk_pack.sv` in
+      // `g_ddr` drives all of it: a unit is present when Linux writes that
+      // it has a pack mounted, and the block store is filled over
+      // `S_AXI_HP2` from the pack in DDR at the block's address Linux writes
+      // over `M_AXI_GP0`. That is what stops the drive, the store, the
+      // command list's walk, the two checkwords and the channel's bus master
+      // folding, and why the two fits differ by more than the adapter.
+      .drive_present(drive_present), .drive_read_only(drive_read_only),
+      .drive_timed(drive_timed),
+      .store_we(store_we), .store_slot(store_slot), .store_addr(store_addr),
+      .store_wdata(store_wdata), .store_rdata(store_rdata),
+      .store_miss(store_miss), .ch_active(ch_active), .store_busy(store_busy),
       // 32 boards of 64K words, which is muir's own default and what every
       // trace in this repository was taken with.
       .boards(7'd32),
@@ -548,6 +561,135 @@ module cadr_arty #(
         .gpio(gpio_i)
     );
 
+    // ------------------------------------------------------ the pack side
+    //
+    // `rtl/cadr_disk_pack.sv`: the block's address and the drive's presence,
+    // registers Linux writes over `M_AXI_GP0`, and the master on `S_AXI_HP2`
+    // that fetches a block from the pack in DDR into the controller's store
+    // and writes one back. Its header has the record, the registers and the
+    // interlock; what belongs here is only the wiring and the reset.
+    //
+    // **ONLY WITH `DDR` SET, NOT ON A `PROVE` BOARD.** The two proving boards
+    // were passed on silicon at `51bc74a` and are about the memory port; the
+    // disk's ports have no place in them, so on those the PS7's HP2 and GP0
+    // pins are tied here and the drive seam is tied off as on the default
+    // board.
+    //
+    // THE RESET IS BOTH PORTS' AND THE MACHINE'S. `MAXIGP0ARESETN` and
+    // `SAXIHP2ARESETN` are the PS saying each port is live, and until Linux
+    // is up neither is: held in reset, the pack side's registers read zero,
+    // so `drive_present` is zero and the CADR sees an empty cable exactly as
+    // it does with `DDR` off. Synchronised in as `hp0_aresetn` is.
+    logic        hp2_aresetn, gp0_aresetn;
+    logic [31:0] hp2_awaddr, hp2_araddr;
+    logic [3:0]  hp2_awlen, hp2_arlen;
+    logic [1:0]  hp2_awsize, hp2_arsize, hp2_awburst, hp2_arburst;
+    logic        hp2_awvalid, hp2_awready, hp2_wlast, hp2_wvalid, hp2_wready;
+    logic        hp2_bvalid, hp2_bready, hp2_arvalid, hp2_arready;
+    logic        hp2_rlast, hp2_rvalid, hp2_rready;
+    logic [63:0] hp2_wdata, hp2_rdata;
+    logic [7:0]  hp2_wstrb;
+    logic [1:0]  hp2_bresp, hp2_rresp;
+    logic [31:0] gp0_awaddr, gp0_araddr, gp0_wdata, gp0_rdata;
+    logic [3:0]  gp0_awlen, gp0_arlen, gp0_wstrb;
+    logic [11:0] gp0_awid, gp0_arid, gp0_bid, gp0_rid;
+    logic        gp0_awvalid, gp0_awready, gp0_wlast, gp0_wvalid, gp0_wready;
+    logic        gp0_bvalid, gp0_bready, gp0_arvalid, gp0_arready;
+    logic        gp0_rlast, gp0_rvalid, gp0_rready;
+    logic [1:0]  gp0_bresp, gp0_rresp;
+
+    if (DDR != 0) begin : g_pack
+
+      logic [2:0] pack_rst_sync;
+      always_ff @(posedge clk) begin
+        pack_rst_sync <= {pack_rst_sync[1:0], hp2_aresetn && gp0_aresetn};
+      end
+      logic pack_rst;
+      assign pack_rst = rst || !pack_rst_sync[2];
+
+      cadr_disk_pack u_pack (
+          .clk(clk), .rst(pack_rst),
+          .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
+          .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
+          .s_wdata(gp0_wdata), .s_wstrb(gp0_wstrb), .s_wlast(gp0_wlast),
+          .s_wvalid(gp0_wvalid), .s_wready(gp0_wready),
+          .s_bresp(gp0_bresp), .s_bid(gp0_bid), .s_bvalid(gp0_bvalid),
+          .s_bready(gp0_bready),
+          .s_araddr(gp0_araddr), .s_arlen(gp0_arlen), .s_arid(gp0_arid),
+          .s_arvalid(gp0_arvalid), .s_arready(gp0_arready),
+          .s_rdata(gp0_rdata), .s_rresp(gp0_rresp), .s_rid(gp0_rid),
+          .s_rlast(gp0_rlast), .s_rvalid(gp0_rvalid), .s_rready(gp0_rready),
+          .m_awaddr(hp2_awaddr), .m_awlen(hp2_awlen), .m_awsize(hp2_awsize),
+          .m_awburst(hp2_awburst), .m_awvalid(hp2_awvalid),
+          .m_awready(hp2_awready),
+          .m_wdata(hp2_wdata), .m_wstrb(hp2_wstrb), .m_wlast(hp2_wlast),
+          .m_wvalid(hp2_wvalid), .m_wready(hp2_wready),
+          .m_bresp(hp2_bresp), .m_bvalid(hp2_bvalid), .m_bready(hp2_bready),
+          .m_araddr(hp2_araddr), .m_arlen(hp2_arlen), .m_arsize(hp2_arsize),
+          .m_arburst(hp2_arburst), .m_arvalid(hp2_arvalid),
+          .m_arready(hp2_arready),
+          .m_rdata(hp2_rdata), .m_rresp(hp2_rresp), .m_rlast(hp2_rlast),
+          .m_rvalid(hp2_rvalid), .m_rready(hp2_rready),
+          .store_we(store_we), .store_slot(store_slot),
+          .store_addr(store_addr), .store_wdata(store_wdata),
+          .store_rdata(store_rdata), .store_miss(store_miss),
+          .ch_active(ch_active), .moving(store_busy),
+          .drive_present(drive_present), .drive_read_only(drive_read_only),
+          .drive_timed(drive_timed)
+      );
+
+    end else begin : g_nopack
+
+      // A `PROVE` board: no drive, no pack, and the PS7's disk pins quiet.
+      assign drive_present = 8'd0;
+      assign drive_read_only = 8'd0;
+      assign drive_timed = 1'b0;
+      assign store_we = 1'b0;
+      assign store_slot = 5'd0;
+      assign store_addr = 9'd0;
+      assign store_wdata = 32'd0;
+      assign store_busy = 1'b0;
+      assign hp2_awaddr = 32'd0;
+      assign hp2_awlen = 4'd0;
+      assign hp2_awsize = 2'd0;
+      assign hp2_awburst = 2'd0;
+      assign hp2_awvalid = 1'b0;
+      assign hp2_wdata = 64'd0;
+      assign hp2_wstrb = 8'd0;
+      assign hp2_wlast = 1'b0;
+      assign hp2_wvalid = 1'b0;
+      assign hp2_bready = 1'b0;
+      assign hp2_araddr = 32'd0;
+      assign hp2_arlen = 4'd0;
+      assign hp2_arsize = 2'd0;
+      assign hp2_arburst = 2'd0;
+      assign hp2_arvalid = 1'b0;
+      assign hp2_rready = 1'b0;
+      assign gp0_awready = 1'b0;
+      assign gp0_wready = 1'b0;
+      assign gp0_bresp = 2'd0;
+      assign gp0_bid = 12'd0;
+      assign gp0_bvalid = 1'b0;
+      assign gp0_arready = 1'b0;
+      assign gp0_rdata = 32'd0;
+      assign gp0_rresp = 2'd0;
+      assign gp0_rid = 12'd0;
+      assign gp0_rlast = 1'b0;
+      assign gp0_rvalid = 1'b0;
+      // Read here, so that a board without the pack side leaves nothing of
+      // the PS7's disk pins unread.
+      logic unused_pack;
+      assign unused_pack = ^{hp2_aresetn, gp0_aresetn, hp2_awready,
+                             hp2_wready, hp2_bresp, hp2_bvalid, hp2_arready,
+                             hp2_rdata, hp2_rresp, hp2_rlast, hp2_rvalid,
+                             gp0_awaddr, gp0_awlen, gp0_awid, gp0_awvalid,
+                             gp0_wdata, gp0_wstrb, gp0_wlast, gp0_wvalid,
+                             gp0_bready, gp0_araddr, gp0_arlen, gp0_arid,
+                             gp0_arvalid, gp0_rready, store_rdata,
+                             store_miss, ch_active};
+
+    end
+
     cadr_ps7 u_ps7 (
         .hp0_aclk(clk),
         .gpio_i(gpio_i),
@@ -568,7 +710,31 @@ module cadr_arty #(
         .hp0_arburst(arburst),
         .hp0_arvalid(arvalid), .hp0_arready(arready),
         .hp0_rdata(hp0_rdata), .hp0_rresp(rresp), .hp0_rlast(rlast),
-        .hp0_rvalid(rvalid), .hp0_rready(rready)
+        .hp0_rvalid(rvalid), .hp0_rready(rready),
+        // The disk's two ports, both clocked by the fabric as HP0 is.
+        .hp2_aclk(clk), .hp2_aresetn(hp2_aresetn),
+        .hp2_awaddr(hp2_awaddr), .hp2_awlen(hp2_awlen),
+        .hp2_awsize(hp2_awsize), .hp2_awburst(hp2_awburst),
+        .hp2_awvalid(hp2_awvalid), .hp2_awready(hp2_awready),
+        .hp2_wdata(hp2_wdata), .hp2_wstrb(hp2_wstrb), .hp2_wlast(hp2_wlast),
+        .hp2_wvalid(hp2_wvalid), .hp2_wready(hp2_wready),
+        .hp2_bresp(hp2_bresp), .hp2_bvalid(hp2_bvalid), .hp2_bready(hp2_bready),
+        .hp2_araddr(hp2_araddr), .hp2_arlen(hp2_arlen),
+        .hp2_arsize(hp2_arsize), .hp2_arburst(hp2_arburst),
+        .hp2_arvalid(hp2_arvalid), .hp2_arready(hp2_arready),
+        .hp2_rdata(hp2_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
+        .hp2_rvalid(hp2_rvalid), .hp2_rready(hp2_rready),
+        .gp0_aclk(clk), .gp0_aresetn(gp0_aresetn),
+        .gp0_awaddr(gp0_awaddr), .gp0_awlen(gp0_awlen), .gp0_awid(gp0_awid),
+        .gp0_awvalid(gp0_awvalid), .gp0_awready(gp0_awready),
+        .gp0_wdata(gp0_wdata), .gp0_wstrb(gp0_wstrb), .gp0_wlast(gp0_wlast),
+        .gp0_wvalid(gp0_wvalid), .gp0_wready(gp0_wready),
+        .gp0_bresp(gp0_bresp), .gp0_bid(gp0_bid), .gp0_bvalid(gp0_bvalid),
+        .gp0_bready(gp0_bready),
+        .gp0_araddr(gp0_araddr), .gp0_arlen(gp0_arlen), .gp0_arid(gp0_arid),
+        .gp0_arvalid(gp0_arvalid), .gp0_arready(gp0_arready),
+        .gp0_rdata(gp0_rdata), .gp0_rresp(gp0_rresp), .gp0_rid(gp0_rid),
+        .gp0_rlast(gp0_rlast), .gp0_rvalid(gp0_rvalid), .gp0_rready(gp0_rready)
     );
 
     // Held once it has ever happened: an error is a fault to find, not a
@@ -590,6 +756,15 @@ module cadr_arty #(
     assign mem_done  = 1'b0;
     assign mem_rdata = 32'd0;
     assign ddr_error = 1'b0;
+    // And no drive and no pack: see the machine's instantiation.
+    assign drive_present = 8'd0;
+    assign drive_read_only = 8'd0;
+    assign drive_timed = 1'b0;
+    assign store_we = 1'b0;
+    assign store_slot = 5'd0;
+    assign store_addr = 9'd0;
+    assign store_wdata = 32'd0;
+    assign store_busy = 1'b0;
 
   end
 
@@ -655,7 +830,7 @@ module cadr_arty #(
   // It is not meant to be readable --- it is a load, and what it shows is
   // that the datapath is moving at all.
   //
-  // **All forty-nine of them, including the ones something else already
+  // **All fifty-two of them, including the ones something else already
   // reads** --- `clock_edge`, `promdisable`, `timed_out`, `n_memack` drive
   // LEDs as well and are still here, because the rule the comment states is
   // the whole specification and a fold with exceptions in it is not a rule
@@ -669,13 +844,13 @@ module cadr_arty #(
     end else begin
       witness <= ^{pc, lpc, opc, st, ir, a, m, alu, r, ob, q, dc, lc,
                    vma, md, phys, ub_addr, ub_rdata, arb_stage,
-                   mem_addr, mem_wdata, dev_wdata,
+                   mem_addr, mem_wdata, dev_wdata, store_rdata,
                    vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge,
                    wrcyc, device, dev_rq, dev_write, promdisable,
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
-                   mem_req, mem_write};
+                   mem_req, mem_write, store_miss, ch_active};
     end
   end
 
