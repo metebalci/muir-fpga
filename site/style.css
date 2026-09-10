@@ -270,7 +270,7 @@ figure.screen img {
   --st-done:  #2da44e;   /* on the board: silicon has shown it */
   --st-built: #0aa2c0;   /* checked in simulation, not yet run on the board */
   --st-part:  #d97706;   /* partly built: some of it verified, some not there */
-  --st-wip:   #4493f8;   /* being built now: somebody is in those files today */
+  --st-wip:   #8250df;   /* being built now: somebody is in those files today --- violet, since blue sat too near the turquoise */
   --st-ext:   #d0d7de;   /* outside the project */
 }
 .d-done, .d-built, .d-part, .d-wip, .d-ext { fill-opacity: 0.32; stroke-width: 2; }
