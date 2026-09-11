@@ -63,6 +63,7 @@ BR2_PACKAGE_EVTEST=y
 # host connector; the script says why the kernel does not.
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_CADR_PATH)/board/arty-z7-20/rootfs-overlay"
 BR2_PACKAGE_CADR_CONSOLE=y
+BR2_PACKAGE_CADR_READOUT=y
 BR2_PACKAGE_CADR_DISK_PACKS=y
 BR2_PACKAGE_CADR_TERMINAL=y
 # Buildroot builds output/target/ up and never removes what a package stopped

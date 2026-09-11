@@ -5033,6 +5033,85 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                  : (tv_drives && dev_write) ? tv_rdata
 @end
 
+# THE WINDOW READ BACK, which is the half of the display nothing outside this
+# check ever exercises.  A run light is a blind write; a character is drawn by
+# `BITBLT-INNER-4` and `XTVCHO3`, which READ the frame-buffer word, merge the
+# glyph's bits into it and write it again.  So a display that could be written
+# and not read would paint the microcode's run lights and never a character,
+# and the four records below are the ways that could happen.  The first three
+# are caught by the trace; the last is caught only by configuration B, which
+# is why that configuration exists --- see `tb/cadr_tv_tb.cpp`'s head.
+
+@mutation tv-display-answers-a-window-read
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note WHICH SLAVE ANSWERS A READ OF THE WINDOW.  The display board drives
+@note MEM<31:0> only while it is answering a read of a CONTROL word; the
+@note frame buffer is main memory's bridge at the display's base and the
+@note bridge drives the lines for it.  A display that drove them for the
+@note window too wins the mux in `cadr_memory_path.sv` --- `tv_drives` is
+@note ahead of `memory_rdata` there --- and every read of the screen comes
+@note back as one of the eight control words instead, which for the window's
+@note own low three bits is the mode register or zero.  `fb` is already read
+@note by `fb_sel`, so lint has nothing to say about this.
+@old
+  assign drives = ctl && !dev_write;
+@new
+  assign drives = (ctl || fb) && !dev_write;
+@end
+
+@mutation tv-window-read-ignores-the-word-ddr-returned
+@check tv
+@file rtl/plumbing/cadr_xbus_ddr.sv
+@note The bridge's `rdata` is its driver onto MEM<31:0> and is cleared when
+@note the cycle ends, so a window read that never takes DDR's word gives the
+@note lines what they already held, which is zero.  The screen would be
+@note written correctly and read back black.  Caught on the trace's first
+@note read-back of the window, the last word of the buffer at offset 32,767,
+@note where MD must be the word the program put there.  Main memory's reads
+@note are untouched, so this is the display's half of the bridge alone.
+@old
+      if (!dev_write) rdata <= mem_rdata;
+@new
+      if (!dev_write) rdata <= display ? rdata : mem_rdata;
+@end
+
+@mutation tv-window-base-a-page-off
+@check tv
+@file rtl/plumbing/cadr_ddr_map.sv
+@note `tv-window-base-a-word-off` is the same line one word over; a page is
+@note the magnitude that matters to anything reading the screen out of DDR,
+@note since 256 words is ten and two thirds lines of the picture.  Caught at
+@note the port on the first frame-buffer cycle, whose byte address is
+@note asserted against the stimulus's own before the model answers it, and
+@note again by the count of window cycles that reached the display's region.
+@old
+    return DISPLAY_BASE + (32'(offset) << 2);
+@new
+    return DISPLAY_BASE + 32'd1024 + (32'(offset) << 2);
+@end
+
+@mutation tv-window-answered-before-ddr-does
+@check tv
+@file rtl/plumbing/cadr_xbus_ddr.sv
+@note THE RECORD CONFIGURATION B EXISTS FOR.  A window cycle acknowledged
+@note the moment it is asked, rather than when the memory behind it answers,
+@note strobes MD before `rdata` has the word --- so the machine reads zero
+@note from a screen that was written correctly.  It is invisible to the
+@note trace by construction: muir's TV takes no time of its own, so the
+@note trace's modelled DDR must answer in the same tick, and at zero latency
+@note `mem_done` is already up when `asked` is.  `memory_path` and
+@note `ddr_boot` would both catch the same bug at main memory's base --- six
+@note ticks of latency and four to twenty-six --- but neither ever addresses
+@note the window, and this term is the display's alone.  Caught by
+@note configuration B, whose memory is thirty-seven ticks behind every
+@note request.
+@old
+  assign dev_ack = asked && (done || mem_done);
+@new
+  assign dev_ack = asked && (done || mem_done || display);
+@end
+
 # ----------------------------------------------------------------------------
 # THE CONSOLE, `rtl/plumbing/cadr_console.sv`.  The sixteen diagnostic registers on
 # `M_AXI_GP1`: `Engine::spy_read` and `Machine::spy_write` reached from the
@@ -5661,6 +5740,90 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
       if (mclk) con_rdata <= sr_rdata;
 @new
       if (mclk || !mclk) con_rdata <= sr_rdata;
+@end
+
+# ---------------------------------------------------------------------------
+# THE READOUT OF THE MACHINE'S MEMORIES, page 0's words 10, 11 and 12.
+#
+# Eight arrays and the OPC shift register hold nearly everything a CADR is,
+# and until this window existed not one word of any of them left
+# `cadr_microcycle.sv`.  The three ways it can be wrong are the three a
+# window has: it can read the wrong memory, it can read the wrong word of the
+# right memory, and it can hand over a word staler than the echo that is
+# supposed to say how fresh it is.
+#
+# **AND THE THREE ARE CAUGHT BY THREE DIFFERENT PHASES OF ONE CHECK, WHICH IS
+# WHY ALL THREE PHASES EXIST.**  Phase A runs MIT's boot PROM and reads the
+# memories back; phase B poisons them from outside, injectively in the memory
+# and the address; phase C watches the window's three wires every tick.  The
+# notes below say which phase catches each record and, where it matters,
+# which phases do not --- because a record caught by a phase somebody might
+# think redundant is the argument for keeping that phase.
+
+@mutation readout-reads-the-memory-beside-the-one-asked
+@check readout
+@file rtl/machine/cadr_microcycle.sv
+@note The selector names which of the ten memories a word comes from, and
+@note nothing else in the window can be wrong in a way that looks more like
+@note working: the echo still names what was asked, the word is a real word
+@note of a real memory, and only its being the wrong memory's says so.
+@note Written as an XOR so that every bit of the selector stays used --- an
+@note addition that dropped one would be caught by lint rather than by the
+@note check, which is the bit-granularity lesson.
+@note **Phase A alone would catch this one**, the control store being all
+@note zeros after the boot PROM's pass and the PROM beside it holding 323
+@note distinct words.
+@old
+    unique case (ro_a1[17:14])
+@new
+    unique case (ro_a1[17:14] ^ 4'd1)
+@end
+
+@mutation readout-reads-the-word-after-the-one-asked
+@check readout
+@file rtl/machine/cadr_microcycle.sv
+@note A window misaddressed by one reads back a whole memory shifted, which
+@note is the most ordinary way to be wrong and the one hardest to see: the
+@note words are all real words of the right memory.
+@note **PHASE A CANNOT CATCH THIS AT ALL AND PHASE B IS WHY IT EXISTS.**  The
+@note boot PROM's pass over the control store writes ZERO to all 16,384
+@note words --- it is clearing the store, not loading microcode --- so
+@note against the machine's own content every address of that memory holds
+@note the same word and a readout off by one agrees with every one of them.
+@note The check prints the distinct-word count for exactly this reason. With
+@note the poison in place, injective in the address, it is caught on the
+@note first word.
+@old
+    ro_imem_q <= imem[ro_a0[13:0]];
+@new
+    ro_imem_q <= imem[ro_a0[13:0] ^ 14'd1];
+@end
+
+@mutation readout-hands-over-a-word-a-tick-staler-than-its-echo
+@check readout
+@file rtl/machine/cadr_microcycle.sv
+@note The echo is the whole of what makes this a readout and not a guess: a
+@note program compares it with the address it asked for and takes the word
+@note only when they agree.  An echo that runs a stage AHEAD of the word is
+@note worse than no echo at all --- it says fresh when the word beside it is
+@note still the previous address's.
+@note **AND NOTHING REACHABLE OVER THE CONSOLE'S WINDOW CAN SEE IT**, which
+@note is the finding this record carries.  An AXI read cannot come back
+@note inside the three ticks the pipeline takes, so by the time any program
+@note looks, a right design and this one have both settled and agree; phases
+@note A and B of the check pass it, all 49,296 words.  Phase C is the one
+@note that looks, watching the window's three wires every tick and taking
+@note the word standing at the first tick the echo names what was asked ---
+@note and nine of its twelve addresses are still in flight when the write
+@note that asked for them completes, which is what says it is looking at the
+@note right instant.
+@note The other direction, an echo a stage LATE, is harmless and is not a
+@note record: it says "not yet" when the word is already there, and a
+@note program that waits for the echo simply waits a tick longer.
+@old
+      ro_echo <= ro_a1;
+@new
+      ro_echo <= ro_a0;
 @end
 
 # ---------------------------------------------------------------------------
