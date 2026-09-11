@@ -291,8 +291,8 @@ load, the spindle's position is taken from a one-tick copy rather than by
 arithmetic across the wrap, and the walk's tally of ticks starts at 5.
 `RD_FINISH_T`'s "two ticks short of 140 ns" is the precedent, and it is in the
 open rather than in the constant. The proof it is exact is that
-`disk-timeout-a-tick-
-short` and `disk-seek-settle-a-tick-short` are still caught. Paid twice or
+`disk-timeout-a-tick-short` and `disk-seek-settle-a-tick-short` are still
+caught. Paid twice or
 not at all, they would survive. A write in the testbenches costs three ticks
 now --- the address, the request, the hold --- so that a read on the tick
 after sees the registers. The request's tick is still the instant.
@@ -479,8 +479,8 @@ for resetting a pack's headers, because there is nothing to reset.
 nothing else in it today. There is one fetch area per slot at
 `0x1C80_0000 + 2 KB * slot` and one write-back area per slot at
 `0x1C81_0000 + 2 KB * slot`. 128-byte alignment is the fabric's rule, so
-that no sixteen-beat burst crosses 4 KB. At a 2 KB stride from a 2 KB-
-aligned base a 1,036-byte record never does, and no two records overlap.
+that no sixteen-beat burst crosses 4 KB. At a 2 KB stride from a
+2 KB-aligned base a 1,036-byte record never does, and no two records overlap.
 Fetch and write-back areas are separate so that a write-back which moved
 nothing cannot read back as the block it was fetched from. The write-back
 area is poisoned before every move. A record still all poison afterwards is
@@ -1147,7 +1147,7 @@ vacuous in silence.
 
 ### What is not held, and it is not the band
 
-Five records cover the expression and the wire:
+Six records cover the expression and the wire:
 `disk-interrupt-never-leaves-the-module` (the board's own bug, put back),
 `disk-interrupts-while-it-is-still-active`,
 `disk-attention-interrupt-reads-the-attention-the-wrong-way`,
