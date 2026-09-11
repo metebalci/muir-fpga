@@ -1262,7 +1262,17 @@ def check_makefile():
     # own model rather than a mutation of the source.  Naming it here rather
     # than aiming a record is the second of the two ways CLAUDE.md says close
     # this warning, and it is the one that stands alone.
-    known = set(CHECKS) | {"ddr_map", "readout_face"}
+    # `checkpoint` is the same shape as `readout_face` and closed the same
+    # way, and the reason is worth writing down rather than inherited: its
+    # DUT is a C program under `boards/`, and its judge is muir's own reader.
+    # It already carries mutations --- three of them, in `chk_rtl.c` behind
+    # `CHK_MUTATE`, built by its own Makefile and run by its own rule, with
+    # the catching line asserted and the leg that caught each one named.  A
+    # record aimed at it here would be a fourth mutation run by a different
+    # machinery against the same file, and this runner has no way to build a
+    # C program three times over and put muir behind it.  So it is named
+    # here, which is the one of CLAUDE.md's two ways that stands alone.
+    known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint"}
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

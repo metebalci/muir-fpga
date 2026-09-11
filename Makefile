@@ -36,7 +36,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
-       $(BUILD)/readout_face.pass \
+       $(BUILD)/readout_face.pass $(BUILD)/checkpoint.pass \
        $(BUILD)/iob.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -1084,6 +1084,102 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 	$(MAKE) -C $(READOUT_SRC) all COMMON=host
 	$(MAKE) -C $(READOUT_SRC) clean
 	@echo "readout: the program builds and its core agrees with a modelled window"
+	@touch $@
+
+# ------------------------------------------- the checkpoint, and muir itself
+
+# `cadr-checkpoint` writes the board's machine as a muir checkpoint, and this
+# is the only check in the repository whose judge is muir's own reader.
+#
+# **THE PROOF IS THE ROUND TRIP AND IT HAS THREE LEGS, BECAUSE ONE IS NOT
+# ENOUGH.**  Measured, not assumed --- three mutants of `chk_rtl.c` were built
+# and run against each leg, and no leg catches all three:
+#
+#   1. muir LOADS the file and SAVES IT BACK BYTE FOR BYTE.  This is muir's
+#      own round-trip property (`tests/checkpoint.rs`, "the checkpoint loads
+#      and saves as itself") and it holds the framing: every field at the
+#      offset muir's reader expects, every array's count, every flag a 0 or a
+#      1, every range check passed, and the packing muir's own rather than
+#      merely a legal one.  It catches the mutant that drops a byte.
+#   2. muir's own REPORT of what it resumed names the microcycle count and
+#      the nanoseconds the synthetic machine was given.  Two fields the
+#      window really does read, asserted in muir's words rather than through
+#      an exit code --- `vivado/probe.tcl`'s lesson, one program along.
+#   3. the file's SHA-256 against the value recorded here.  **This is the leg
+#      that catches a field carrying a WRONG VALUE in a RIGHT-SHAPED SLOT**,
+#      which the round trip cannot see by construction: muir re-saves whatever
+#      it read, so any valid value survives it.  Two of the three mutants ---
+#      the mouse's quadrature phases written 0 where a fresh mouse has 2, and
+#      `Machine::opc` taken from the OPC shift register instead of LPC ---
+#      load, re-save identically, and are caught here and nowhere else.
+#
+# **SO THIS DIGEST IS A GOLDEN VALUE AND MOVES LIKE ONE.**  It is of the file
+# the host check writes from its own fixed synthetic machine, which is
+# deterministic; it changes when muir's format changes, when `chk_rtl.c`
+# changes, or when somebody gets a field wrong.  To move it: run the round
+# trip, satisfy yourself that muir still takes the file, write the new value
+# here, and say in the commit WHAT MOVED --- the same rule `muir.commit`
+# states for a trace, because this is one.
+CHECKPOINT_SRC  := boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src
+CHECKPOINT_WORK := $(HOME)/.cache/muir-fpga-checkpoint
+CHECKPOINT_SHA  := 9bc79063064d6f2336d69b384b7e73a8e76631998f167e108779678f3bb1b6db
+# What muir prints for the synthetic machine: 0x1234567890 microcycles and
+# 0x9876543210 ticks of five nanoseconds each, the two the model sets.
+CHECKPOINT_RESUMED := at 78187493520 microcycles, 3274101291600 ns, 1 memory boards
+# muir's binary, built into golden's own target directory because muir is
+# already golden's path dependency there and the library half is compiled
+# once for both.
+MUIR_BIN := golden/target/release/muir
+
+$(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
+                          $(CHECKPOINT_SRC)/checkpoint_test.c \
+                          $(CHECKPOINT_SRC)/chk.c $(CHECKPOINT_SRC)/chk.h \
+                          $(CHECKPOINT_SRC)/chk_rtl.c $(CHECKPOINT_SRC)/chk_rtl.h \
+                          $(CHECKPOINT_SRC)/pack_bind.c $(CHECKPOINT_SRC)/pack_bind.h \
+                          $(CHECKPOINT_SRC)/sha256.c $(CHECKPOINT_SRC)/sha256.h \
+                          $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
+                          $(READOUT_SRC)/cadr_image.h | $(BUILD)
+	$(MAKE) -C $(CHECKPOINT_SRC) check CHK=$(CHECKPOINT_WORK)/out.chk
+	$(MAKE) -C $(CHECKPOINT_SRC) all COMMON=host READOUT=host
+	$(MAKE) -C $(CHECKPOINT_SRC) clean
+	$(MAKE) -C $(CHECKPOINT_SRC) mutants
+	$(CARGO) build --quiet --release --manifest-path $(MUIR)/muir/Cargo.toml \
+	    --bin muir --target-dir golden/target
+	@set -e; W=$(CHECKPOINT_WORK); M=$(MUIR_BIN); \
+	 $$M --rtl --stop-after 0 --resume $$W/out.chk --checkpoint $$W/back.chk \
+	     > $$W/muir.log 2>&1 \
+	   || { echo "checkpoint: muir REFUSED the file cadr-checkpoint wrote"; \
+	        sed -n '$$p' $$W/muir.log; exit 1; }; \
+	 cmp $$W/out.chk $$W/back.chk \
+	   || { echo "checkpoint: muir loaded the file and saved DIFFERENT bytes"; exit 1; }; \
+	 grep -q "$(CHECKPOINT_RESUMED)" $$W/muir.log \
+	   || { echo "checkpoint: muir did not resume the machine the model wrote:"; \
+	        grep '^resumed' $$W/muir.log; exit 1; }; \
+	 echo "$(CHECKPOINT_SHA)  $$W/out.chk" | sha256sum -c --status - \
+	   || { echo "checkpoint: the file is not the one this digest was recorded for."; \
+	        echo "checkpoint: it is $$(sha256sum $$W/out.chk | cut -d' ' -f1)."; \
+	        echo "checkpoint: muir still takes it, so this is a change and not"; \
+	        echo "checkpoint: necessarily a fault --- say what moved and record it."; \
+	        exit 1; }; \
+	 echo "checkpoint: muir loaded $$(stat -c%s $$W/out.chk) bytes and saved them back identically,"; \
+	 echo "checkpoint: resumed $$(grep '^resumed' $$W/muir.log | sed 's/^resumed: [^ ]* //'),"; \
+	 echo "checkpoint: and the file is the one the digest was recorded for."; \
+	 for m in 1 2 3; do \
+	   $$W/checkpoint_test-$$m $$W $$W/mut-$$m.chk > $$W/mut-$$m.out 2>&1 \
+	     || { echo "checkpoint: mutant $$m did not build or did not run: BROKEN"; \
+	          cat $$W/mut-$$m.out; exit 1; }; \
+	   what=$$(sed -n 's/^checkpoint: THIS IS A MUTANT --- //p' $$W/mut-$$m.out); \
+	   if ! $$M --rtl --stop-after 0 --resume $$W/mut-$$m.chk \
+	            --checkpoint $$W/mut-$$m-back.chk > $$W/mut-$$m.log 2>&1; then \
+	     echo "checkpoint: mutant $$m caught, muir refused it --- $$what"; \
+	   elif ! cmp -s $$W/mut-$$m.chk $$W/mut-$$m-back.chk; then \
+	     echo "checkpoint: mutant $$m caught, muir saved other bytes --- $$what"; \
+	   elif ! echo "$(CHECKPOINT_SHA)  $$W/mut-$$m.chk" | sha256sum -c --status -; then \
+	     echo "checkpoint: mutant $$m caught by the digest alone --- $$what"; \
+	   else \
+	     echo "checkpoint: mutant $$m SURVIVED all three legs --- $$what"; exit 1; \
+	   fi; \
+	 done
 	@touch $@
 
 $(BUILD):

@@ -36,9 +36,20 @@ CADR_READOUT_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-readout/src
 CADR_READOUT_SITE_METHOD = local
 CADR_READOUT_LICENSE = AGPL-3.0-or-later
 CADR_READOUT_DEPENDENCIES = cadr-common
+# **THE WINDOW IS A LIBRARY AS WELL AS A PROGRAM.**  `cadr-checkpoint` drives
+# the same readout and must not carry a copy of `readout.c`; Buildroot's
+# `local` site method rsyncs only a package's own src/, so the way one package
+# uses another's code here is a static library in the staging tree, which is
+# what cadr-common already is. Nothing of this goes on the target --- the
+# library is for linking and the program is the only thing installed.
+CADR_READOUT_INSTALL_STAGING = YES
 
 define CADR_READOUT_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
+endef
+
+define CADR_READOUT_INSTALL_STAGING_CMDS
+	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D) DESTDIR=$(STAGING_DIR) install-staging
 endef
 
 define CADR_READOUT_INSTALL_TARGET_CMDS
