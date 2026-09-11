@@ -99,7 +99,14 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
      3  CYCLESH  bits 63:32, LATCHED when CYCLES was read
      4  TICKS    200 MHz ticks since reset, bits 31:0 --- `Rtl::ns()` / 5
      5  TICKSH   bits 63:32, latched when TICKS was read
-     6-15        read UNMAPPED; writes dropped
+     6  RESET    **the one word of page 0 that is written.**  A write of
+                 `RESET_KEY` and of nothing else pulses the machine's reset
+                 for `RESET_T` ticks.  It reads
+                   bits 31:16  `RESET_KEY`'s own top half, `0x5253`, a marker
+                   bits 15:8   console resets since the CONSOLE came up,
+                               saturating at 255
+                   bit 0       a pulse is up now
+     7-15        read UNMAPPED; writes dropped
 
     page 1, REG_BASE + 0x40, the sixteen diagnostic registers, word k
     being EADR k:
@@ -139,6 +146,160 @@ zero is what a dead bus reads and all ones what an undriven one reads,
 measured on this board's own EMIO pins. **A value that means nothing must not
 be a value the instrument can mean.**
 
+### The reset
+
+**`rtl/cadr_arty.sv`'s reset was MMCM lock or BTN0 and nothing else**, so
+restarting the CADR meant a finger on a board nobody is sitting at, or a fresh
+bitstream --- on a board that runs Linux beside the machine and is reached
+over the network. Mete asked for a soft reboot from the processing system;
+page 0's word 6 is it, and **it joins BTN0 rather than replacing it.**
+
+**It is a pulse of a stated length and not a level.** A level is a bit a
+program can set and then be killed, or forget, or crash holding, and a machine
+held in reset by a level looks exactly like a machine that will not start with
+nothing to say which. A write arms a countdown and software cannot extend it,
+shorten it or hold it.
+
+**`RESET_T` is 64 ticks, 320 ns.** Every register in `cadr_machine` takes a
+synchronous reset, so one tick would clear them all and the number looks
+arbitrary --- which is why it has a floor and the floor is written down. The
+machine's own power-on reset is never short (`rst_sync` is four deep and
+`!mmcm_locked` holds it for the MMCM's whole lock time), so a machine that had
+only ever seen a one-tick reset would be released in a way the board never
+performs. The floor is **one whole generator cycle at extra slow, 44 ticks**:
+that is the longest interval over which any of the machine's own timing is in
+flight --- the phase generator's ring, the seven read taps at 15 to 32, the
+write pulses, the two countdowns --- and CLAUDE.md already records that muir's
+`chip.rs` goes on deriving `-TPR60` from `phase_ns` at ticks 11 to 18 of a
+plain power-on reset, so a reset shorter than the cycle it interrupts lands in
+a region the model and the fabric are known to disagree in and nothing
+compares. 64 is the smallest power of two above 44, so the countdown ends on a
+borrow --- which is why `LOST_T` is 4,096 and not 4,000. **It is a floor with
+margin and is stated as one**; nothing derives 64, what is derived is that it
+must be more than 44.
+
+**The write does not answer until the pulse is over.** `W_RESET` holds the
+write channel through the countdown, so `BVALID` is offered after the machine
+has left reset. A program's store therefore returns with the machine running
+again and the next read of `FLAG-1` means something. It costs one Arm store
+320 ns.
+
+**`RESET_KEY` is `"RSET"`, `0x5253_4554`, and an arbitrary value must not
+reset the machine.** Chosen the way `cadr_arty.sv` chooses `PROVE_WORD`: four
+distinct bytes, none of them `00` or `FF`, halves that differ and neither a
+rotation of the other; not zero, not all ones, not `IDENT`, not `UNMAPPED`,
+and not what register 6 itself reads back --- so a program echoing anything it
+has read from this face cannot reset the machine by accident. A write's
+unstrobed lanes are merged against zero as every other write here is, and
+**because no byte of the key is `00`, a write that does not strobe all four
+lanes cannot equal it whatever those lanes hold.** That is one rule and not
+two; the strobes are not tested separately.
+
+**What it clears of the console's own, and what it must not.** `cycles` and
+`ticks` are cleared, because they are not the console's: CYCLES is
+`Machine::cycles`, zero at reset, and TICKS is `Rtl::ns()`, zero with it. A
+CYCLES that went on counting would name a microcycle no row of any trace has.
+STAT's `answered` and `lost` are **not** cleared --- they are the console's own
+history on the diagnostic bus, and resetting the machine does not make a cycle
+that was lost unlost.
+
+**And the console does not reset itself, which is the decision rather than a
+detail.** Three reasons, of which the third is the one that would show on the
+board. A console that forgot the reset could not report it, and register 6's
+count is what a program reads to know the machine in front of it is the one it
+restarted. A console reset by the machine's reset would clear STAT, so the
+instrument would erase the evidence it exists to carry. And --- the one that
+matters --- **the AXI write that asked for the reset is in flight while the
+pulse is up**: a reset reaching `wst` drops it back to `W_ADDR` with no
+`BVALID` ever offered, and a GP write nothing answers hangs both Arm cores at
+one PC each. The console would freeze the machine it was written to un-freeze,
+and only the power cycle it exists to avoid would recover the board.
+
+**What takes the pulse on the board, and the rule.** `rtl/cadr_arty.sv`
+declares `mach_rst` as `rst || con_mach_rst`, **registered** --- a register and
+not a gate, for the reason `pack_rst` gives at the same shape: it lands on some
+two thousand registers spread across `cadr_machine`, and a LUT between the
+countdown and that fanout is a LUT on every one of their reset pins. The rule
+for what takes it: **`mach_rst` replaces `rst` wherever `rst` means "since the
+MACHINE started", and `rst` stays wherever it means "since the FABRIC was
+configured".** So `u_machine`, `u_probe`, `witness`, `beat`, `nxm_count`,
+`bus_nxm` and LD4's colours take `mach_rst`; `axi_rst`, `pack_rst`, `gp0_rst`,
+`gp1_rst`, the tally `u_count` and `error_seen` keep `rst`.
+
+The tidier alternative --- folding `con_mach_rst` into `rst_sync` beside BTN0
+--- is wrong in three places at once, and each is on the record in the top
+level:
+
+- it would reset the console itself, through `gp1_rst`: the freeze above;
+- it would reset the pack side, through `pack_rst`, and Linux's mounted pack
+  with it --- `cadr_disk_pack.sv`'s registers are the disk pack program's
+  state, not the machine's;
+- it would reset `cadr_axi_master` mid-transaction, through `axi_rst`, which
+  is an AXI protocol violation the PS7 cannot recover from. It is also
+  unnecessary, and the argument is structural rather than about what a program
+  happens to do: the machine drops `mem_req` at reset, `cadr_axi_master`
+  finishes its transaction and returns to IDLE when it sees that, and
+  `cadr_xbus_ddr`'s `dev_ack` is `asked && (done || mem_done)` with
+  `asked = sel && dev_rq` --- so a transaction completing into a machine that
+  is no longer asking is ignored by construction.
+
+**And the probe re-arms with it**, which is a capability and not a side
+effect. `rtl/cadr_probe.sv`'s own words are that it fills from the first
+microcycle after reset and freezes, so a machine that has been restarted has
+new first microcycles and the probe must be looking at those. Until now
+re-arming meant BTN0 or a fresh bitstream; it is a store from Linux now. The
+price is that a console reset spoils a readout in progress --- which BTN0
+already did.
+
+**WHERE THE PULSE LANDS WAS ASKED OF THE DESIGN.** CLAUDE.md's `elapsed ->
+md/CE` entry says a relaxed register's clock enable goes with it, and a signal
+reaching a reset that drags a long cone into an enable is invisible in a slack
+figure. Synthesised at this slice, `DDR=1`, scoped XDC read, `all_fanout -flat
+-endpoints_only` from the two `mach_rst_reg` cells:
+
+    the top level's, into cadr_machine   1,008 R, 24 S, 19 D, 12 block-RAM
+                                         address bits, 2 ENARDEN, 3 ports
+                                         --- AND NOT ONE CLOCK ENABLE
+    cadr_console's own                   153 endpoints, 17 of them clock
+                                         enables, every one of them
+                                         eng_wdata_reg[*]/CE or
+                                         eng_for_w_reg/CE inside that file:
+                                         the `!mach_rst` gate on `E_IDLE`
+
+Every one of 400 paths out of `mach_rst_reg` asks for **5.000 ns** --- no
+exception touches it and none should --- and the worst is +0.472 ns over two
+logic levels. `mach_rst` appears **nowhere** in either board's
+`report_timing_summary`: `grep -c mach_rst timing.rpt` is 0 for both.
+
+And the cone that arms it is eighteen startpoints, all registers of
+`cadr_console`: `wst`, `w_at<6:2>`, `w_in`, `rst_t<6:0>` and `mach_rst`
+itself. **The address match is held and not computed**, which is the rule the
+memory path and the disk controller are both held to; there is no map, no
+`phys` and no `vma` anywhere near it, and there could not be, the module being
+outside `cadr_machine`. Measured all the same.
+
+**A CONSOLE RESET DOES NOT CLEAR MEMORY, AND MUST NOT.** `amem`, `mmem`, `pdl`
+and `imem` in `cadr_microcycle.sv` are RAM and no reset this machine has
+clears them --- not this one, not BTN0's, and not MIT's own `RESET`, which is a
+wire into flip flops and reaches no 93425A. So a machine reset a second time
+re-executes the boot PROM's instructions from the top with the scratchpads its
+first run left. Measured: `amem` diverges on the **first** microcycle of the
+replay, A and M reading `0x1fc` where muir says 0, while PC, IR, LPC and OPC
+agree for all 600,000. That is the right behaviour: a console reset that
+cleared memory would be a **different** reset from the button's, and then
+there would be two resets to reason about instead of one.
+
+**What is not exercised, said rather than left to be assumed.** The engine
+holds off starting a diagnostic cycle while the pulse is up --- the register
+block is inside the machine and in reset with it, so a cycle begun then would
+strobe a block that cannot answer and would end on `LOST_T` with STAT's sticky
+`lost` set, a lie since nothing was lost. **`tb/cadr_console_tb.cpp` cannot
+reach that guard**, because its AXI master runs one transaction at a time and
+the read and write channels never overlap. On the board they do: the two
+Cortex-A9s can have a read and a write outstanding on GP1 at once. A testbench
+with two independent channel drivers is what would exercise it, and there is
+no mutation record aimed at it for that reason.
+
 ### The bound
 
 `LOST_T` (line 167) is 4,096 ticks, 20.48 us. That much after the request the
@@ -175,7 +336,10 @@ per-word arbiter is held to, one bus along.
 `build/console.pass` runs `tb/cadr_console_harness.sv` --- the console, the
 register block and **the real processor** with MIT's boot PROM in its control
 store --- from `build/rtl.golden`, the same trace and the same stimulus
-`tb/cadr_microcycle_tb.cpp` drives it from. It takes about seven seconds.
+`tb/cadr_microcycle_tb.cpp` drives it from. It takes about fourteen seconds,
+twice what it took before the reset landed: the extra seven are the reset's
+replay of the whole reference, and CLAUDE.md's rule about `disk.golden`'s
+full-length timeout applies --- that is the price of the check.
 
 | operation | held to | where |
 |---|---|---|
@@ -193,6 +357,10 @@ store --- from `build/rtl.golden`, the same trace and the same stimulus
 | `LOST_T` | a property, asserted as a number | the check holds the grant off for ever and requires the read to complete and to say it was lost |
 | the arbiter | a property | the console must not take the bus with the processor's strobe up, and must not truncate its cycle |
 | the mode register write | muir's bit assignment, and read-back | `../muir/src/spy.rs:203-213` for the register, `353-356` for `FLAG-1` bit 12 |
+| the reset's key | a property, and this project's own idiom | twelve writes that are not the key pulse nothing; the key does |
+| the reset's length | a property, asserted as a number | the ticks the line is up are counted and compared with `RESET_T` |
+| the machine after a reset | muir: `Engine::boot` is reset then run | `run` up and `promdisable` down, and it re-executes all 600,000 microcycles of the boot PROM from zero --- PC, IR, LPC and OPC |
+| the console after a reset | a decision, argued in the module | IDENT, STAT's sticky `lost` and the reset count all stand, and the AXI write that asked completes |
 | `-PROG.RESET`, `PROG.BOOT` | muir: pulses and not settings | `../muir/src/spy.rs:229-234`, `../muir/src/busint.rs:254-263`; that they are *made* is checked here, what they reach is the machine's |
 
 **Five signals this check compares with muir that nothing else in the
@@ -241,7 +409,12 @@ One line, named below.
 `cadr_spy_registers` and are folded into `unused` at `rtl/cadr_machine.sv:425`
 at this slice. The harness brings them out and the check sees them made; what
 they should *do* --- reset the machine, raise `BOOT.TRAP` --- is the machine's and
-is not built.
+is not built. **This is NOT what page 0's word 6 does**, and the two must not
+be confused: `-PROG.RESET` is MIT's own, made inside the machine off a mode
+write and reaching the machine's own reset tree, and word 6 is the console's,
+made outside the machine and ORed with BTN0 in `cadr_arty.sv`. Whoever lands
+`-PROG.RESET` should say how the two meet; the obvious answer is that they
+meet at `mach_rst`, and it is not taken here.
 
 **Examine and deposit of main memory do not go through the machine, and
 cannot.** In muir, CC reaches the debuggee's memory **not** through the spy
@@ -290,6 +463,24 @@ inferred from an exit code:
         STAT's answered bit after a lost cycle is 0xc, the reference says 0x8
     console-read-back-is-not-held-to-the-boundary
         the read-back's lag in microcycles is 0x0, the reference says 0x1
+
+Six more for the reset, in the same shape:
+
+    console-resets-the-machine-on-any-value
+        a write of zero pulsed the machine's reset
+    console-reset-pulse-a-tick-short
+        the ticks the machine's reset was held for is 0x3f, the reference
+        says 0x40
+    console-answers-the-reset-write-before-the-machine-is-back
+        the write answered with the machine still in reset is 0x1, the
+        reference says 0x0
+    console-resets-itself-with-the-machine
+        an AXI transaction did not complete inside the engine's own bound is
+        0x3, the reference says 0x0
+    console-forgets-that-it-reset-the-machine
+        resets counted after one reset is 0x0, the reference says 0x1
+    console-counts-microcycles-across-its-own-reset
+        CYCLES after a console reset is 0x124f82, the reference says 0x927c0
 
 ## The processing system
 
@@ -526,6 +717,47 @@ and it is the reason a slice re-runs the records aimed at a file and not only
 its own. Fixed, and the record says why it moved. After it: `arty` 7 of 7,
 `memory_path` 10 of 10, `tv` 20 of 20, `console` 7 of 7, all caught.
 
+### The reset's own fit, and what it is not
+
+**Measured in an isolated copy of the working tree at HEAD `1d3a9bc` plus this
+change --- NOT of a commit**, because the session that made it may not write
+git history. Nothing under `rtl/` or `vivado/` in that copy was uncommitted
+except `cadr_arty.sv` and `cadr_console.sv`, both of them this change, so it
+is HEAD plus exactly this and nothing else --- checked file by file against
+`git show HEAD:` before the run, and the copy is why a module another session
+added to `rtl/` afterwards cannot have reached it. Board
+flow, `vivado/bitstream.tcl`, both configurations, zero critical warnings:
+
+                            HEAD 1d3a9bc      + the reset
+    DDR=1  worst slack      -0.049 ns         -0.209 ns
+           failing          1 of 27,044       101 of 27,142
+           total negative   -0.049 ns         -6.650 ns
+           hold             +0.051 ns         +0.048 ns
+           LUTs / regs      6,923 / 5,036     6,978 / 5,067
+    DDR=0  worst slack      +0.132 ns, MET    +0.084 ns, MET
+           failing          0 of 16,028       0 of 16,028
+           LUTs / regs      3,025 / 1,566     3,032 / 1,566
+
+**The memory-on board did not close before this change and does not close
+after it, and the 0.16 ns between them is not the reset.** `grep -c mach_rst`
+on both `timing.rpt` files is **0**: the reset appears in neither report. Every
+failing path in both is the disk controller's, and the three builds name three
+different ones ---
+
+    HEAD           -0.049  u_machine/memory/ch_own_reg/C -> disk/ch_state_reg[0]/D
+    + the reset    -0.209  disk/ch_state_reg[1]_rep/C -> disk/ch_slot_reg[0]_replica_1/CE
+    isolation      -0.247  disk/da_reg[28]/C -> disk/u_cyl_reg[6][0]/CE
+
+--- where **the isolation build is this change with the pulse made and folded
+but NOT reaching the machine**, one line at `u_machine`'s instantiation. It is
+the WORST of the three. So the reset net is not what moves the number: what
+moves is where the placer puts a disk controller that was already sitting at
+zero, and CLAUDE.md's own figure for that is a quarter of a nanosecond. Three
+builds, three worst nets, 0.198 ns between the best and the worst, and the
+build with no reset net at all is the bottom. **Reported as a number and not
+as a regression**, and the isolation build is the evidence rather than the
+reasoning.
+
 **The numbers, fitted in isolated trees at `3198d8b` plus this slice**, board
 flow, `vivado/bitstream.tcl`, both configurations, zero critical warnings and
 zero errors:
@@ -601,6 +833,12 @@ package builds on the host and fails on the target; each consumer's
 `src/Makefile` therefore names **two source lists and which build each is
 for** --- `COMMON=staging` links `-lcadr-common`, `COMMON=host` compiles the
 common `.c` files by path, and `make check` is always the host list.
+
+**`cadr-console` has no `reset` command yet**, and adding one is a store of
+`0x52534554` to `REG_BASE + 0x18` plus a read of the same word to report the
+count. It is deliberately not written here: `linux/` is another session's and
+`docs/console.md` is where the next person finds the key. The host check in
+that package models the slave and would want the register modelled with it.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
 `start`, `step N`, `regs`, `status`, `examine` and `deposit`. `status` is the
