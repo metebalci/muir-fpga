@@ -494,6 +494,29 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The I/O board --- the keyboard, the mouse, the two clocks and the status
+    # register they share, on the Unibus --- against the scripted program
+    # `golden/src/iob.rs` writes out of muir's own `ioboard::IoBoard` through
+    # `busint::IoBoardTiming`.
+    #
+    # A SCRIPTED PROGRAM BECAUSE NEITHER REFERENCE PROGRAM ASKS ANYTHING OF THE
+    # CARD.  Measured: MIT's boot PROM never addresses it at all in 600,000
+    # microcycles, and a System 100 band reaches three of its registers in 271
+    # bus cycles of 141,849 --- one read of the status register, 135 reads of
+    # each half of the microsecond counter, and one write of the keyboard's
+    # interrupt enable.  So this is the only check that can tell this module
+    # from a wire, and every record aimed at the card belongs here.
+    #
+    # The run is about twenty seconds: 81 million ticks of the trace, and then
+    # a real bus cycle at every one of the 524,288 addresses and directions an
+    # eighteen-bit `ub_addr` can carry.
+    "iob": {
+        "sources": ["rtl/cadr_io_board.sv"],
+        "top": "cadr_io_board",
+        "tb": "tb/cadr_io_board_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "iob.golden",
+    },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
     # and `busint_xbus` writes the stimulus AND the expected outputs, so a
