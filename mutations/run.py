@@ -542,6 +542,32 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The readout of the machine's memories, page 0's words 10, 11 and 12 ---
+    # the same harness as `console`, with a different testbench.  What is
+    # aimed here is the window: the address register in `cadr_console.sv`, the
+    # three-tick pipeline at the end of `cadr_microcycle.sv`, the second read
+    # port of every memory and the echo.
+    #
+    # **`sources` names `cadr_microcycle.sv`, WHICH `console` HAS IN `extra`,
+    # and that is the split on purpose**: a mutation of the processor's own
+    # datapath belongs at `microcycle`, where a reference trace can see it,
+    # and a mutation of the readout belongs here, where nothing else looks.
+    # A record aimed at the microcycle's datapath and routed to this check
+    # would be caught by accident or not at all --- this testbench runs no
+    # trace and compares no column of one.
+    "readout": {
+        "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_console.sv"],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "tb/cadr_console_harness.sv",
+        ],
+        "top": "cadr_console_harness",
+        "tb": "tb/cadr_readout_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
     # The I/O board --- the keyboard, the mouse, the two clocks and the status
     # register they share, on the Unibus --- against the scripted program
     # `golden/src/iob.rs` writes out of muir's own `ioboard::IoBoard` through
@@ -1227,7 +1253,16 @@ def check_makefile():
     # check the Makefile runs that this runner has never heard of is a check
     # with no mutations against it, and until it is named here there is
     # nothing anywhere to say so. `machine` was that for a while.
-    known = set(CHECKS) | {"ddr_map"}   # ddr_map is lint over constants only
+    # `ddr_map` is lint over constants only.  `readout_face` is the Linux
+    # side of the readout window --- C under `boards/`, which this runner's
+    # own copy does carry, so a record COULD be aimed at `readout.c` and none
+    # is: what that check holds is the program's transport against a model,
+    # and the property it exists for --- that a word whose echo is not the
+    # address asked for is refused --- is already a deliberate failure in its
+    # own model rather than a mutation of the source.  Naming it here rather
+    # than aiming a record is the second of the two ways CLAUDE.md says close
+    # this warning, and it is the one that stands alone.
+    known = set(CHECKS) | {"ddr_map", "readout_face"}
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

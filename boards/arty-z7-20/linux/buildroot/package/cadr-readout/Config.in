@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_CADR_READOUT
+	bool "cadr-readout"
+	select BR2_PACKAGE_CADR_COMMON
+	help
+	  The readout: the program that prints the CADR's own memories.
+	  The control store, the boot PROM, the scratchpads, the
+	  pushdown buffer, the micro-stack, the dispatch memory and both
+	  levels of the map are inside the fabric, and the console's
+	  readout window is the only way out of them.
+
+	  It halts the machine while it reads and starts it again
+	  afterwards, so it is run when somebody wants to look. It is
+	  not a daemon and has no init script.

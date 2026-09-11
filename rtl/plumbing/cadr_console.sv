@@ -488,6 +488,18 @@ module cadr_console #(
     input  var logic [31:0] mach_q,
     input  var logic [31:0] mach_md,
 
+    // --- the readout of the machine's memories, page 0's words 10, 11 and
+    // --- 12.  `ro_addr` is `{sel<3:0>, word<13:0>}` and is written by word
+    // --- 10; `ro_data` is the word and `ro_echo` the address it was read
+    // --- at, both arriving already registered from inside `cadr_machine`
+    // --- for the reason `ub_rdata` and `mach_vma` above arrive registered.
+    // --- The pipeline is three ticks and nothing here waits on it: what
+    // --- makes a stale word impossible to mistake for a fresh one is the
+    // --- echo, which a reader compares with what it wrote.
+    output var logic [17:0] ro_addr,
+    input  var logic [47:0] ro_data,
+    input  var logic [17:0] ro_echo,
+
     // --- the reset the console makes: `RESET_T` ticks after a write of
     // --- `RESET_KEY` to page 0's word 6, and never otherwise.  A register
     // --- and not a countdown's comparison, so that what reaches the
@@ -599,6 +611,48 @@ module cadr_console #(
   localparam logic [3:0] R_Q   = 4'd8;
   localparam logic [3:0] R_MD  = 4'd9;
 
+  // Page 0's words 10, 11 and 12: the readout of the machine's memories.
+  //
+  // **WHY THEY ARE HERE AND NOT ON PAGE 1.**  Page 1's sixteen words ARE
+  // `EADR<3:0>`, MIT's own numbering of the diagnostic bus, and a
+  // seventeenth would renumber `cadr_spy_registers.sv` and put it out of
+  // step with `Engine::spy_read` for ever.  The readout is not on the
+  // diagnostic bus at all --- it is three wires out of `cadr_machine`, as
+  // `VMA`, `Q` and `MD` are --- so it goes where those went, in the range
+  // this module's own header has always called free.  Words 13, 14 and 15
+  // still read `UNMAPPED`.
+  //
+  // **WORD 10 IS WRITTEN WITH AN ADDRESS AND READ AS AN ECHO, AND THE TWO
+  // ARE UNCORRELATED ON PURPOSE.**  That is the diagnostic bus's own rule
+  // --- `cadr/busint.erface`: "read and write at the same address are
+  // uncorrelated" --- and here it is what makes the window one word instead
+  // of two: a reader writes the address it wants and reads back the address
+  // the word it is about to take was actually read at.  Equal means fresh.
+  // Out of reset the machine answers `RO_NONE`, the reserved selector,
+  // which is an address nobody may ask for.
+  //
+  // **AND THE READ OF WORD 10 LATCHES ALL THREE**, exactly as the read of
+  // word 7 latches the virtual address register, `Q` and `MD`.  The reason
+  // is the same and is the rule for the whole of page 0: a program that
+  // read the echo, then the low half, then the high half out of three
+  // different ticks would have three instants and no way to know it.  One
+  // enable, three registers, and a three-beat burst from word 10 is the
+  // natural way to read a word out.
+  localparam logic [3:0] R_RO    = 4'd10;
+  localparam logic [3:0] R_RO_LO = 4'd11;
+  localparam logic [3:0] R_RO_HI = 4'd12;
+
+  // The reserved selector and the word a selector this fabric does not map
+  // reads back.  **They are `cadr_microcycle.sv`'s and are repeated here
+  // rather than parameterised**, because they are properties of the window
+  // the two modules share and not of either one: a parameter would let a
+  // board set them apart, and two ends of one window that disagree about
+  // what "nothing" looks like is the failure the value exists to prevent.
+  // `localparam` and not `parameter` for a second reason as well: the
+  // parameter list carries a mutation anchor with a trailing comma on it.
+  localparam logic [17:0] RO_NONE      = 18'h3FFFF;
+  localparam logic [47:0] RO_NO_MEMORY = 48'hA5A5_5A5A_A5A5;
+
   logic [7:0] resets;
   logic [6:0] rst_t;
 
@@ -609,6 +663,13 @@ module cadr_console #(
   logic w_is_reset;
   assign w_is_reset = w_in && !w_idx[4] && (w_idx[3:0] == R_RESET) &&
                       (w_full == RESET_KEY);
+
+  // And which beat names the readout's address.  **It takes no key**, unlike
+  // word 6: a wrong address reads a wrong word and nothing else happens,
+  // where a wrong reset stops the machine.  The two words are guarded
+  // differently because the two mistakes cost differently.
+  logic w_is_ro;
+  assign w_is_ro = w_in && !w_idx[4] && (w_idx[3:0] == R_RO);
 
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
@@ -792,6 +853,15 @@ module cadr_console #(
   // is a name that rots the day the list grows, and this file's own record
   // `console-md-is-not-latched-by-the-read-of-vma` is anchored on the line.
   logic        held_arm;
+
+  // The readout's three, latched together by a read of word 10, and its arm
+  // held for the reason `held_arm` is held: a clock enable carries whatever
+  // cone drives it, and the -0.145 ns above is what that costs when the cone
+  // is the address match.
+  logic [17:0] held_ro_echo;
+  logic [47:0] held_ro_data;
+  logic        ro_arm;
+
   always_comb begin
     if (!r_in_q) r_word = UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
@@ -818,6 +888,12 @@ module cadr_console #(
         R_VMA:   r_word = held_vma;
         R_Q:     r_word = held_q;
         R_MD:    r_word = held_md;
+        // The readout, from the latch and never from the wires, for the
+        // reason the three above are: the echo and the two halves must name
+        // one instant of the pipeline or the echo says nothing.
+        R_RO:    r_word = {14'd0, held_ro_echo};
+        R_RO_LO: r_word = held_ro_data[31:0];
+        R_RO_HI: r_word = {16'd0, held_ro_data[47:32]};
         default: r_word = UNMAPPED;
       endcase
     end
@@ -847,6 +923,17 @@ module cadr_console #(
       held_vma    <= 32'd0;
       held_q      <= 32'd0;
       held_md     <= 32'd0;
+      // **NOT ZERO**, because zero is a word a memory can hold and an
+      // address a reader can ask for.  `RO_NONE` is the reserved selector
+      // and `RO_NO_MEMORY` is what the machine answers for one, so a face
+      // read before anything was asked says "nothing has been asked" in
+      // both words rather than answering word zero of the control store.
+      // `cadr_microcycle.sv` declares both and this repeats them; they are
+      // parameters of the window and not of either module.
+      ro_addr      <= RO_NONE;
+      held_ro_echo <= RO_NONE;
+      held_ro_data <= RO_NO_MEMORY;
+      ro_arm       <= 1'b0;
       mach_rst    <= 1'b0;
       rst_t       <= 7'd0;
       resets      <= 8'd0;
@@ -880,6 +967,11 @@ module cadr_console #(
           // outside the window is dropped, and all of them complete with
           // OKAY and nothing else happens --- **including a write of word 6
           // that is not the key**, which is the whole point of the key.
+          // The readout's address, which takes no state of its own: it is a
+          // register load beside the state machine and not a step in it, so
+          // a write of word 10 completes exactly as a dropped write of word
+          // 13 does and the engine is never asked for anything.
+          if (w_is_ro) ro_addr <= w_full[17:0];
           if (w_in && w_idx[4]) wst <= W_CYCLE;
           else if (w_is_reset) begin
             mach_rst <= 1'b1;
@@ -926,6 +1018,9 @@ module cadr_console #(
           // later: see `held_arm`'s declaration for the -0.145 ns that says
           // why.
           held_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA);
+          // And the readout's, by the read of word 10 and by nothing else,
+          // for the reason the three above take one enable.
+          ro_arm   <= r_in && !r_idx[4] && (r_idx[3:0] == R_RO);
           rst_r <= (r_in && r_idx[4]) ? R_CYCLE : R_PREP;
         end
         R_CYCLE: if (eng_done_r) begin
@@ -938,6 +1033,24 @@ module cadr_console #(
             held_vma <= mach_vma;
             held_q   <= mach_q;
             held_md  <= mach_md;
+          end
+          // **THE ECHO COMES FROM THE MACHINE AND NOT FROM `ro_addr`, AND
+          // NOTHING REACHABLE OVER THIS WINDOW COULD TELL.**  Latching the
+          // address this module itself holds would make the echo a
+          // tautology --- always equal to what was asked, and so unable to
+          // say anything about whether the word beside it had arrived.  It
+          // is written down here because it is an equivalence over AXI and
+          // not a hole: the machine's pipeline is three ticks and the
+          // earliest a read can reach `R_PREP` after the write that set the
+          // address is five, so the two sources agree on every transaction
+          // this face can be given.  Telling them apart needs a read
+          // OVERLAPPING the write that armed it, which no master here
+          // issues, and `tb/cadr_readout_tb.cpp`'s own master is sequential.
+          // The property the echo actually buys is held one level down,
+          // where the pipeline can be watched every tick.
+          if (ro_arm) begin
+            held_ro_echo <= ro_echo;
+            held_ro_data <= ro_data;
           end
           rst_r <= R_PREP2;
         end

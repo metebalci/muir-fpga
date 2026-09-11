@@ -112,6 +112,11 @@ module cadr_probe_harness #(
       .con_addr(18'd0), .con_wdata(16'd0),
       .con_gnt(con_gnt), .con_ssyn(con_ssyn), .con_rdata(con_rdata),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
+      // The readout window on the machine's memories.  No console on this
+      // harness asks it anything, so the address stands at the reserved
+      // selector and the two answers fold below with every other output.
+      .con_ro_addr(18'h3FFFF), .con_ro_data(con_ro_data),
+      .con_ro_echo(con_ro_echo),
       .device_ack(1'b0), .device_rdata(32'd0),
       .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'd0),
       .ser_ready(1'b0), .chaos_intr(1'b0), .ser_reset(ser_reset),
@@ -191,6 +196,8 @@ module cadr_probe_harness #(
   // Page 0's words 7 and 8, which no console on this harness reads: folded
   // below with the rest, the way every other output of `cadr_machine` is.
   logic [31:0] con_vma, con_q, con_md;
+  logic [47:0] con_ro_data;
+  logic [17:0] con_ro_echo;
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
   assign unused = &{1'b0, phys, ub_addr, ub_rdata, arb_stage, mem_addr,
@@ -198,6 +205,7 @@ module cadr_probe_harness #(
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,
                     con_gnt, con_ssyn, con_rdata, con_vma, con_q, con_md,
+                    con_ro_data, con_ro_echo,
                     mem_wdata, dev_wdata, wrcyc, device, dev_rq, dev_write,
                     ub_msyn, ub_ssyn, n_memrq, n_memack, n_memgrant,
                     n_loadmd, rdcyc, nxm, unibus, memstart, timed_out,

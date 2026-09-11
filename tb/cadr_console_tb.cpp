@@ -1093,11 +1093,28 @@ int main(int argc, char **argv) {
   Run(4 * 44);
   const size_t at_end = k;
 
-  // Every word of page 0, and the ten that are not registers.
+  // Every word of page 0, and the three that are still not registers.
   long unmapped_seen = 0;
-  // 6 is RESET --- see the reset section --- and 7, 8 and 9 are VMA, Q and
-  // MD, read and compared at every halt above.
-  for (unsigned i = 10; i < 16; ++i) {
+  // 6 is RESET --- see the reset section --- 7, 8 and 9 are VMA, Q and MD,
+  // read and compared at every halt above, and **10, 11 and 12 are the
+  // readout of the machine's memories**, which `build/readout.pass` holds
+  // in full against every array in the processor.  What is asserted here is
+  // only that they are no longer unmapped and that the window's own idle
+  // values are what they read before anything has been asked of it: the
+  // machine has been halted since `SpyWrite(3, 0)` above and nothing has
+  // ever written word 10, so the echo must still be the reserved selector
+  // and the word the one a selector this fabric does not map answers with.
+  // **A zero in either would be a window that cannot say "nothing has been
+  // asked"**, which is the whole reason neither value is zero.
+  {
+    const uint32_t echo = ReadWord(Con(10));
+    if (echo != 0x3FFFFu) Fail("the readout's echo before anything is asked", echo, 0x3FFFFu);
+    const uint32_t lo = ReadWord(Con(11));
+    if (lo != 0x5A5AA5A5u) Fail("the readout's low half before anything is asked", lo, 0x5A5AA5A5u);
+    const uint32_t hi = ReadWord(Con(12));
+    if (hi != 0xA5A5u) Fail("the readout's high half before anything is asked", hi, 0xA5A5u);
+  }
+  for (unsigned i = 13; i < 16; ++i) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("an unused page-0 word", w, kUnmapped);
     ++unmapped_seen;

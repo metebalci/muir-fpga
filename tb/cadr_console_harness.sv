@@ -154,7 +154,23 @@ module cadr_console_harness #(
     output var logic        stathenb_o,
     output var logic [1:0]  mode_speed_o,
     output var logic        prog_reset_o,
-    output var logic        prog_boot_o
+    output var logic        prog_boot_o,
+
+    // --- the readout window's three wires, brought out so that a check can
+    // --- watch the pipeline EVERY TICK rather than through AXI.  The
+    // --- property that needs it: the echo and the word arrive together, so
+    // --- at the first tick the echo names the address a program asked for,
+    // --- the word standing beside it is that address's.  A word a tick
+    // --- staler than its echo is an echo that lies, and nothing reachable
+    // --- over AXI can see it --- an AXI read cannot come back inside the
+    // --- three ticks the pipeline takes, so by the time a program looks,
+    // --- both a right design and a stale one have settled.  `build/readout
+    // --- .pass`'s third phase is the one that looks, and
+    // --- `readout-hands-over-a-word-a-tick-staler-than-its-echo` is the
+    // --- record that says it bites.
+    output var logic [17:0] ro_addr_o,
+    output var logic [47:0] ro_data_o,
+    output var logic [17:0] ro_echo_o
 );
 
   logic [3:0]  spy_eadr;
@@ -167,6 +183,12 @@ module cadr_console_harness #(
   assign con_ssyn_o = con_ssyn;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
+  // The readout window's three wires, console to processor and back.
+  logic [17:0] con_ro_addr, con_ro_echo;
+  logic [47:0] con_ro_data;
+  assign ro_addr_o = con_ro_addr;
+  assign ro_data_o = con_ro_data;
+  assign ro_echo_o = con_ro_echo;
 
   // What reaches the register block, and what comes back.
   logic        sr_msyn, sr_write, sr_ssyn;
@@ -284,6 +306,16 @@ module cadr_console_harness #(
       .mach_vma   (con_vma),
       .mach_q     (con_q),
       .mach_md    (con_md),
+      // The readout of the processor's memories, page 0's words 10, 11 and
+      // 12.  Wired here as `boards/arty-z7-20/cadr_arty.sv` wires it, which
+      // is this harness's own rule: the check must hold the thing on the
+      // board and not a copy of it.  What the window IS is checked by
+      // `build/readout.pass` and its own harness; what this one needs is
+      // for the ports to exist, so that a console read of word 10 while the
+      // machine runs is a read of something and not of an open wire.
+      .ro_addr    (con_ro_addr),
+      .ro_data    (con_ro_data),
+      .ro_echo    (con_ro_echo),
       .mach_rst   (con_mach_rst)
   );
 
@@ -355,7 +387,10 @@ module cadr_console_harness #(
       .memstart    (memstart_u),
       .rdcyc       (rdcyc_u),
       .wrcyc       (wrcyc),
-      .clock_edge  (clock_edge)
+      .clock_edge  (clock_edge),
+      .ro_addr     (con_ro_addr),
+      .ro_data     (con_ro_data),
+      .ro_echo     (con_ro_echo)
   );
 
   // The processor's memory-path half is not here: this harness is the

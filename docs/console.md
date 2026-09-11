@@ -124,7 +124,13 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
      8  Q        the Q register, all 32 bits, latched when VMA was read
      9  MD       the memory data register, all 32 bits, latched when VMA
                  was read
-     10-15       read UNMAPPED; writes dropped
+    10  READOUT  **written** with `{sel<3:0>, word<13:0>}`, which names one
+                 word of one of the machine's memories; **read** as the echo
+                 of the address the word beside it was read at.  Reading it
+                 latches the echo and both halves of the word together
+    11  READ LO  that word's bits 31:0
+    12  READ HI  that word's bits 47:32, in bits 15:0
+     13-15       read UNMAPPED; writes dropped
 
     page 1, REG_BASE + 0x40, the sixteen diagnostic registers, word k
     being EADR k:
@@ -412,6 +418,113 @@ paths now; those are the disk controller at -0.242 ns and the console's own
 reset counter off `MAXIGP1ACLK` at -0.225 and -0.197, all of which predate
 this change. **The memory-off board was not fitted for this**, and its cost is
 64 flip flops that fold into `witness` with every other output.
+
+### The readout of the machine's memories, page 0's words 10, 11 and 12
+
+**What it is for.** The sixteen diagnostic registers and the three words
+beside them are the whole of what a console can see. The machine's own
+memories are not among them. The control store, the boot PROM, the A and M
+scratchpads, the pushdown buffer, the micro-stack, the dispatch memory and
+both levels of the map are inside `cadr_microcycle.sv`, and until this window
+existed not one word of any of them left it. Every investigation of a board
+that went wrong was conducted through a keyhole.
+
+**It is not the debugger and is not meant to become one.** The debugger for
+this machine is CC over the debug cable, which reads the scratchpads and the
+pushdown buffer by forcing a microinstruction into the instruction register.
+That is the machine's own answer, and using it tests a piece of the CADR
+rather than adding a piece that is not the CADR. This window is the crude
+thing beside it: cheap, always there, and needing nothing of the machine but
+that it stand still.
+
+**How it is read.** Write word 10 with the selector and the word wanted. Read
+word 10, then word 11, then word 12. The read of word 10 latches all three, so
+the echo and the two halves name one instant. Compare the echo with the
+address you wrote: equal means the word is that address's. This is the same
+rule the rest of page 0 obeys, where the high half of a counter is latched by
+the low half's read.
+
+**The selectors.** 0 is the control store, 16,384 words of 48 bits. 1 is the
+boot PROM, 1,024 of 48. 2 is the A memory and 4 the pushdown buffer, 1,024 of
+32 each. 3 is the M memory and 5 the micro-stack, 32 words each. 6 is the
+dispatch memory, 2,048 of 17 bits. 7 is the level-1 map, 2,048 of 5 bits, and
+8 the level-2 map, 1,024 of 24. 9 is the OPC shift register, 8 of 14 bits. 10
+is a table of twenty-one of the processor's own registers, which the
+diagnostic bus has no register for. A selector this fabric does not map reads
+`0xA5A5_5A5A_A5A5`, and out of reset the echo reads `0x3FFFF`, which names
+that reserved selector. Neither is a value a memory can hold or an address a
+program may ask for.
+
+**It cannot disturb the machine, and that is by construction.** Every memory
+has a second read port of its own. Nothing in the readout drives an address,
+an enable or a word that the machine reads. The alternative was to mux the
+readout's address onto the address the machine already drives, which would
+have cost a few dozen lookup tables instead of the two thousand this costs.
+It was refused for two reasons. The dispatch memory and both map levels
+are written at an address that is the same expression as the read's, so a mux
+there moves the write with the read, and a readout that can corrupt the
+dispatch memory is not an instrument. And those three addresses are the
+machine's own longest combinational chains, which a mux would lengthen to buy
+a debugging aid.
+
+**What it costs, measured either side.** On the `DDR=1` board, against the
+same commit without it, the readout adds 2,071 Slice LUTs and 2.5 block RAM
+tiles, and 503 registers. The worst path is inside the disk controller either
+way, so the window is on nobody's critical path, and both boards still meet
+their timing. The memory-off board is not a measurement of a live readout: it
+has no console, so the address is tied to the reserved selector and much of
+the window folds.
+
+**Where the lookup tables went is the interesting half.** The control store's
+second port was free, because its read and write addresses are the same net
+and it was using one block RAM port; it is a true dual-port memory now at the
+same 24 tiles. The boot PROM took a whole second copy. The A memory, the
+pushdown buffer and the M memory left block RAM altogether: each already used
+both ports of its block RAM, one writing and one reading at different
+addresses, and a third port is one more than a block RAM has. The dispatch
+memory, both map levels and the micro-stack were distributed RAM already and
+doubled.
+
+**Forcing the three back into block RAM was tried and changes nothing.** With
+`ram_style = "block"` on the A memory, the M memory and the pushdown buffer,
+the fit is identical to the digit: the same 9,589 lookup tables, the same
+5,915 registers, the same 39.5 tiles, the same +0.103 ns, and the same three
+memories still absent from the block RAM mapping report. Vivado will not build
+a memory with one write port and two independent read addresses as two block
+RAMs, and it does not say so. So the lookup tables are the price of the window
+and not of a missing directive.
+
+**A read taken while the machine runs is a torn sample.** The word comes from
+whatever the array held three ticks earlier, and the register table comes from
+three boundaries if three reads straddle them. The intended use is a halted
+machine, where every array stands and the readout is exact.
+
+**A halted machine still fires its write pulses, and this was found by the
+check being wrong about it.** `build/readout.pass` was written expecting every
+word to stand while the machine was halted, and three did not. MACHRUN gates
+`-CLK0`, which is what stops microcycles retiring. The write pulses come off
+the phase generator, which nothing stops, and the last instruction's
+destination is therefore re-written once a generator cycle for ever, with the
+same word. At most six words can be standing, one for each pulse. It is
+harmless, because the word written is the word that instruction was going to
+write. It is not nothing, because anything reading those arrays off a halted
+board cannot assume they are inert, and because anything that ever WROTE
+through this window would be fighting those pulses.
+
+**What the check holds it to.** `build/readout.pass` runs the machine on MIT's
+boot PROM, halts it from the console and reads every word of every memory
+back, comparing each against the array itself. It then poisons every array
+from outside, injectively in the memory and the address, and reads them all
+again. The second phase exists because the first tests almost nothing on its
+own: the boot PROM's pass over the control store writes zero to all 16,384
+words, so against a readout that returned a constant zero the first phase
+would pass on the largest memory in the machine. The check prints how many
+distinct words each memory held, so that nobody has to take its coverage on
+trust. A third phase watches the window's three wires every tick, because a
+word a tick staler than its echo is invisible to anything reached over AXI. A
+fourth makes every entry of the register table hold a different word, because
+at a boot PROM halt Q, VMA and MD all read zero and a mux that crossed any two
+of them would agree with the machine at every one.
 
 ### MD, page 0's word 9
 
@@ -1137,3 +1250,36 @@ stale binary.
 - The Unibus map, and with it examine and deposit *through the machine*.
 - The debug cable, which is a different instrument on a different port and
   has a section of its own in `README.md`.
+- **Writing a memory through the readout window.** The window reads and does
+  not write. Writing one would have to fight the write pulses a halted machine
+  goes on firing, and nothing has asked for it.
+
+## The program that reads it
+
+**`cadr-readout`, in its own Buildroot package.** It halts the machine, reads
+what the window reaches and prints it, and starts the machine again. With no
+argument it prints the register table with the flag word's bits named. With
+`--dump NAME` it prints a whole memory, a word a line, in a form `diff` will
+take against another dump. With `--word NAME:ADDR` it prints one word, and
+with `--list` it says what the window reaches. It compares the echo on every
+word and refuses any word whose echo is not the address it asked for.
+
+**It is not the debugger and is not meant to become one.** The debugger for
+this machine is CC over the debug cable, which reads the scratchpads and the
+pushdown buffer by forcing a microinstruction into the instruction register.
+That is MIT's own answer and it tests a piece of the CADR rather than adding a
+piece that is not the CADR. This is the crude thing beside it.
+
+**What holds it.** `build/readout_face.pass` runs the program's core against a
+model of the window on the build host, with a poisoned machine behind it. It
+holds the transport: that the address goes where the window takes it, that the
+three words are read in the order that latches them together, that the machine
+is halted first and started again, and that a word whose echo is not the
+address asked for is refused. The fabric is `build/readout.pass`'s to hold.
+
+**A checkpoint is not built.** muir's own checkpoint format would take the
+whole machine, and the window reaches the processor's memories and registers
+and nothing else: the disk controller, the I/O board with its microsecond
+clock, the bus interface's own registers and the display's control side are
+all outside it. Anything CC can read can be written into that format later,
+through a path that is the machine rather than beside it.

@@ -35,7 +35,9 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
-       $(BUILD)/console.pass $(BUILD)/iob.pass $(BUILD)/unibus.pass \
+       $(BUILD)/console.pass $(BUILD)/readout.pass \
+       $(BUILD)/readout_face.pass \
+       $(BUILD)/iob.pass $(BUILD)/unibus.pass \
        muir-pin current
 
 # ----------------------------------------------------------------- muir's pin
@@ -1021,6 +1023,69 @@ $(BUILD)/console.pass: $(BUILD)/obj_console/Vcadr_console_harness \
 	$(BUILD)/obj_console/Vcadr_console_harness $(BUILD)/rtl.golden
 	@touch $@
 
+# ------------------------------------------------------------- the readout
+#
+# The window on the machine's memories, held to every word of every array in
+# the processor.  **The same harness as the console's**, built again with a
+# different testbench and into a directory of its own: the readout is reached
+# through `cadr_console`'s page 0 and the arrays are inside `cadr_microcycle`,
+# which is exactly what `tb/cadr_console_harness.sv` already puts together.  A
+# harness of its own would be a second description of one attachment, which is
+# what that file was extracted to stop.
+#
+# `--public-flat-rw` because the reference IS the arrays: the readout is the
+# suspect and the storage is what it is held to, and a testbench that could
+# only see the memories through the readout would be holding the readout to
+# itself.  The header of `tb/cadr_readout_tb.cpp` says why that is not the
+# shadow-memory mistake.
+#
+# **NO REFERENCE TRACE.**  What this check holds is a property of the window
+# and not of what the machine computes, so the stimulus is MIT's boot PROM
+# running out of the machine's own control store and then a poison from
+# outside, injective in the memory and the address.  Its own output says how
+# much of each memory the program varied, because the boot PROM's pass over
+# the control store writes one constant and a check that did not say so would
+# be reporting coverage it does not have.
+$(BUILD)/obj_readout/Vcadr_console_harness: $(CONSOLE_SRC) \
+                                            tb/cadr_readout_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $(BUILD)/obj_readout \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_console_harness $(CONSOLE_SRC) \
+	    $(abspath tb/cadr_readout_tb.cpp)
+
+$(BUILD)/readout.pass: $(BUILD)/obj_readout/Vcadr_console_harness \
+                       $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_readout/Vcadr_console_harness
+	@touch $@
+
+# ------------------------------------------------ the readout's Linux side
+#
+# `cadr-readout` is the program that prints the machine's memories through the
+# console's window, and this is its own host check: the program's core against
+# a model of the window, with a poisoned machine behind it.  It needs nothing
+# but a C compiler --- no board, no fabric, no Verilator.
+#
+# **IT IS THE TRANSPORT AND NOT THE FABRIC.**  `build/readout.pass` holds the
+# second read ports, the pipeline and the echo against the arrays themselves;
+# this holds that the program writes the address where the window takes it,
+# reads the three words in the order that latches them together, halts the
+# machine first, and REFUSES a word whose echo is not the address it asked
+# for.  The numbers the two share --- the selectors, the three word offsets
+# and the two values that mean nothing --- are written down in
+# `rtl/machine/cadr_microcycle.sv` and repeated in the program's own headers,
+# because C cannot read Verilog.
+READOUT_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-readout/src
+
+$(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
+                            $(READOUT_SRC)/cadr_image.h \
+                            $(READOUT_SRC)/readout_test.c \
+                            $(READOUT_SRC)/cadr-readout.c | $(BUILD)
+	$(MAKE) -C $(READOUT_SRC) check
+	$(MAKE) -C $(READOUT_SRC) all COMMON=host
+	$(MAKE) -C $(READOUT_SRC) clean
+	@echo "readout: the program builds and its core agrees with a modelled window"
+	@touch $@
+
 $(BUILD):
 	@mkdir -p $(BUILD)
 
@@ -1110,7 +1175,8 @@ buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) \
 	    uboot-reconfigure linux-reconfigure cadr-common-reconfigure \
-	    cadr-console-reconfigure cadr-disk-packs-reconfigure cadr-terminal-reconfigure
+	    cadr-console-reconfigure cadr-readout-reconfigure \
+	    cadr-disk-packs-reconfigure cadr-terminal-reconfigure
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'

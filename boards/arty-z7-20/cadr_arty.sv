@@ -259,6 +259,15 @@ module cadr_arty #(
   // datapath wire, this one is the same register taken at the boundary for a
   // reader outside the machine's constraints.
   logic [31:0] con_vma, con_q, con_md;
+  // And the readout of the machine's memories, page 0's words 10, 11 and 12.
+  // The address goes in and the word and its echo come back; the window is
+  // `rtl/plumbing/cadr_console.sv`'s and the second read ports are the last
+  // section of `rtl/machine/cadr_microcycle.sv`.  On a board with no console
+  // the address is tied off and the two answers fold into `witness` with
+  // every other output, because a fold with exceptions in it is not a rule
+  // anybody can check.
+  logic [17:0] con_ro_addr, con_ro_echo;
+  logic [47:0] con_ro_data;
 
   // ------------------------------------------------- the I/O board's cables
   //
@@ -534,6 +543,8 @@ module cadr_arty #(
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
+      .con_ro_addr(con_ro_addr), .con_ro_data(con_ro_data),
+      .con_ro_echo(con_ro_echo),
       // The I/O board's cables, tied off above with the slice that will
       // drive each, and what the card shows.
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
@@ -1025,6 +1036,8 @@ module cadr_arty #(
         // The virtual address register, `Q` and `MD`, page 0's words 7, 8
         // and 9.
         .mach_vma(con_vma), .mach_q(con_q), .mach_md(con_md),
+        // The readout, page 0's words 10, 11 and 12.
+        .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
         // The machine's reset, ORed with the board's own at the declaration
         // above.  **Not `gp1_rst` and not this instance's own `rst`**: see
         // the rule there and `rtl/plumbing/cadr_console.sv`'s header.
@@ -1130,6 +1143,10 @@ module cadr_arty #(
     assign con_write = 1'b0;
     assign con_addr = 18'd0;
     assign con_wdata = 16'd0;
+    // And nothing asks the readout anything: the address stands at the
+    // reserved selector, the machine answers `RO_NO_MEMORY` for ever, and
+    // both answers fold below.
+    assign con_ro_addr = 18'h3FFFF;
     // And no console reset either, so `mach_rst` is `rst` a tick late on
     // this board and the whole of the OR folds away.
     assign con_mach_rst = 1'b0;
@@ -1229,7 +1246,7 @@ module cadr_arty #(
                    mem_req, mem_write, store_miss, ch_active,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
-                   con_vma, con_q, con_md,
+                   con_vma, con_q, con_md, con_ro_data, con_ro_echo,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
