@@ -33,6 +33,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
+       $(BUILD)/map_boot.pass \
        $(BUILD)/console.pass \
        muir-pin current
 
@@ -338,6 +339,37 @@ $(BUILD)/obj_ddr_boot/Vcadr_machine: $(MACHINE) tb/cadr_ddr_boot_tb.cpp | $(BUIL
 
 $(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_ddr_boot/Vcadr_machine
+	@touch $@
+
+# --------------------------------------- the map, read through a real memory
+
+# `machine.pass` and `ddr_boot.pass` each hold half of what a map does and
+# neither holds the join.  There the word `mem_rdata` carries is muir's own MD
+# column keyed by the ROW, so it is right whatever address the map produced and
+# a mistranslation is invisible; here it is fetched from a store keyed by
+# `mem_addr`.  `ddr_boot` has a real store and no muir reference at all, so it
+# cannot compare -VMAOK, MD or the instant of anything.
+#
+# The boot PROM does write a second-level map entry and read through it:
+# `SET-UP-FOUR-PAGES` writes four at microcycles 536,290 to 536,299, each from
+# no access to MAP-ACCESS-CODE 3, and the first bus cycle is at 536,302 ---
+# twelve microcycles after the first and three after the last.  That is
+# `PDL-BUFFER-REFILL`'s own shape, which is where the board halted on
+# 2026-09-10, and the testbench re-derives the gap from the trace at every run
+# so that a reference which stopped exercising it says so.
+#
+# Page 0 holds what muir's memory holds --- zero --- so the comparison against
+# muir is exact with no exemption anywhere; every other address holds a poison
+# injective in it, so a read the map sends a page wide takes a word muir never
+# had.  Thirteen seconds, the same 600,000 microcycles as `machine.pass`.
+$(BUILD)/obj_map_boot/Vcadr_machine: $(MACHINE) tb/cadr_map_boot_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_map_boot \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_map_boot_tb.cpp)
+
+$(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
+                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_map_boot/Vcadr_machine $(BUILD)/rtl.golden
 	@touch $@
 
 # ------------------------------------------------- the memory port's tally
