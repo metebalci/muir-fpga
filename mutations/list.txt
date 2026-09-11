@@ -5034,10 +5034,18 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note predict is not a bound.  This is `RD_FINISH_T` one file along: the check
 @note asserts the number, and is caught at "a lost read took longer than the
 @note bound".
+@note **The anchor moved when the console got its reset**: `LOST_T` stopped
+@note being the last parameter of the list and gained a comma, so `@old`
+@note matched zero times and the run stopped rather than passing quietly.
+@note That is the anchor rotting loudly, which is what this format is for,
+@note and it is the second time a console record has done it --- the first was
+@note `the-request-path-reaches-no-pin` when the fold grew a line.  The
+@note comma is part of the anchor now, which means it will rot again if
+@note anything is ever added after `RESET_T`.
 @old
-    parameter int unsigned LOST_T   = 4096
+    parameter int unsigned LOST_T   = 4096,
 @new
-    parameter int unsigned LOST_T   = 8000
+    parameter int unsigned LOST_T   = 8000,
 @end
 
 @mutation console-says-a-lost-cycle-was-answered
@@ -5054,6 +5062,152 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
           answered <= !eng_lost;
 @new
           answered <= 1'b1;
+@end
+
+# THE CONSOLE'S RESET, page 0's word 6.  Mete asked for a soft reboot from the
+# processing system and this is it: a write of `RESET_KEY` and of nothing else
+# pulses the machine's reset for `RESET_T` ticks, joining BTN0 rather than
+# replacing it.  Six ways to be wrong: the key not tested, the pulse the wrong
+# length, the write answered before the machine is back, the console resetting
+# itself, the console unable to say it reset the machine, and the machine's own
+# beat counting across its own restart.
+
+@mutation console-resets-the-machine-on-any-value
+@check console
+@file rtl/cadr_console.sv
+@note **THE ONE THE KEY EXISTS FOR.**  A reset that any write to the right
+@note address performs is a machine a stuck bus, a truncated store or a wild
+@note pointer can restart, and the rule this project keeps meeting is that a
+@note value which means nothing --- zero from a dead bus, all ones from an
+@note undriven one --- must not be a value the instrument can mean.  Written
+@note as `!= ~RESET_KEY` rather than by deleting the comparison, so that every
+@note bit of `w_full` stays used and lint does not catch this instead of the
+@note check: that is the bit-granularity lesson, and three earlier drafts in
+@note this file died on it.  `tb/cadr_console_tb.cpp` writes twelve things
+@note that are not the key --- zero, all ones, IDENT, UNMAPPED, the register's
+@note own read-back, the key byte-reversed, two single-bit neighbours of it,
+@note the key with the strobes short two ways, and the key at the words either
+@note side --- and requires each to pulse nothing.  Caught at "a write of zero
+@note pulsed the machine's reset", the first of the twelve.
+@old
+  assign w_is_reset = w_in && !w_idx[4] && (w_idx[3:0] == R_RESET) &&
+                      (w_full == RESET_KEY);
+@new
+  assign w_is_reset = w_in && !w_idx[4] && (w_idx[3:0] == R_RESET) &&
+                      (w_full != ~RESET_KEY);
+@end
+
+@mutation console-reset-pulse-a-tick-short
+@check console
+@file rtl/cadr_console.sv
+@note `RESET_T` is 64 ticks and the module states why: the floor is one whole
+@note generator cycle at extra slow, 44 ticks, and 64 is the smallest power of
+@note two above it.  **A reset works at almost any length** --- every register
+@note in `cadr_machine` takes a synchronous reset, so one tick clears them all
+@note and the machine boots --- so a check that only asked whether the machine
+@note came back would call every length right, on no evidence.  That is
+@note `RD_FINISH_T` and `LOST_T` a third time: the constant is the claim, and
+@note the check counts the ticks the line is up.  ONE TICK SHORT rather than
+@note some round number, because a sweep here is trivial --- the check asserts
+@note the number, so the smallest magnitude that can be caught is one, and
+@note CLAUDE.md's rule is to take that one.  `disk-seek-settle-a-tick-short`
+@note is the same shape one bus along.  Caught at "the ticks the machine's
+@note reset was held for is 0x3f, the reference says 0x40".
+@old
+    parameter int unsigned RESET_T  = 64
+@new
+    parameter int unsigned RESET_T  = 63
+@end
+
+@mutation console-answers-the-reset-write-before-the-machine-is-back
+@check console
+@file rtl/cadr_console.sv
+@note `W_RESET` holds the write channel through the countdown, so `BVALID` is
+@note offered after the machine has left reset and not before --- which is
+@note what makes "reset, then read FLAG-1" a sequence a program can write with
+@note no delay in it.  Answer early and the store returns while the machine is
+@note still held, so the very next read is of a machine in reset and a program
+@note that acted on it would be acting on nothing.  A silent no-op is the
+@note failure this project keeps meeting.  Written as `mach_rst || !mach_rst`
+@note so that `mach_rst` stays read here and lint does not take this instead
+@note of the check; the same form `console-read-back-is-not-held-to-the-
+@note boundary` uses on `mclk`, and for the same reason.  Caught at "the write
+@note answered with the machine still in reset is 0x1, the reference says
+@note 0x0".
+@old
+        W_RESET: if (!mach_rst) wst <= w_last_q ? W_RESP : W_DATA;
+@new
+        W_RESET: if (mach_rst || !mach_rst) wst <= w_last_q ? W_RESP : W_DATA;
+@end
+
+@mutation console-resets-itself-with-the-machine
+@check console
+@file rtl/cadr_console.sv
+@note **THE DECISION, AND IT IS THE ONE THAT WOULD SHOW ON THE BOARD.**  The
+@note console is deliberately not reset by the reset it makes, and the reason
+@note is not that it would forget the count: it is that THE AXI WRITE THAT
+@note ASKED FOR THE RESET IS IN FLIGHT WHILE THE PULSE IS UP.  A reset
+@note reaching `wst` drops it back to `W_ADDR` with no `BVALID` ever offered,
+@note and a GP write nothing answers does not fault the Arm --- it hangs both
+@note cores at one PC each, measured on this board and set out at length in
+@note `rtl/cadr_gp0_default.sv`.  The console would freeze the machine it was
+@note written to un-freeze, and the only thing that could recover the board is
+@note the power cycle the console exists to avoid.  This is the same defect in
+@note the console's own file rather than in `rtl/cadr_arty.sv`, which the
+@note runner cannot aim at through this check; the top level's declaration of
+@note `mach_rst` carries the rule and the three places folding the pulse into
+@note `rst_sync` would break.  Caught at "an AXI transaction did not complete
+@note inside the engine's own bound is 0x3, the reference says 0x0", which is
+@note the only way a testbench can report a freeze.
+@old
+    if (rst) begin
+      wst         <= W_ADDR;
+@new
+    if (rst || mach_rst) begin
+      wst         <= W_ADDR;
+@end
+
+@mutation console-forgets-that-it-reset-the-machine
+@check console
+@file rtl/cadr_console.sv
+@note **A CONSOLE THAT CANNOT REPORT THAT IT RESET THE MACHINE IS A CONSOLE
+@note NOBODY CAN BELIEVE.**  Word 6's count is what a program reads to know
+@note that the machine in front of it is the one it restarted, and it is the
+@note read-back evidence for the decision above --- a console the machine's
+@note reset reached would answer zero here for ever.  Stuck at zero rather
+@note than deleted, so that `resets` stays read on the left of the saturation
+@note test and lint does not take this instead of the check.  It also makes
+@note the register read `0x5253_0000` after any number of resets, which is
+@note exactly what it reads before the first one: an instrument whose "it
+@note happened" and "it never happened" are the same word.  Caught at "resets
+@note counted after one reset is 0x0, the reference says 0x1".
+@old
+            if (resets != 8'hFF) resets <= resets + 8'd1;
+@new
+            if (resets != 8'hFF) resets <= 8'd0;
+@end
+
+@mutation console-counts-microcycles-across-its-own-reset
+@check console
+@file rtl/cadr_console.sv
+@note CYCLES is `Machine::cycles` and TICKS is `Rtl::ns()`, and both are zero
+@note at reset in muir --- so a console reset clears them, because they are
+@note the machine's and not the console's.  Left running they name a microcycle
+@note no row of any trace has: after a restart the console would report
+@note 1,200,000 for a machine on its six-hundred-thousandth microcycle, and
+@note every register the console reads back is compared against the row CYCLES
+@note names.  This is the OTHER half of the decision above, and the two are
+@note deliberately not the same rule: what is the machine's restarts, what is
+@note the console's own --- STAT's sticky `lost`, IDENT, the reset count ---
+@note does not.  Caught at "CYCLES after a console reset is 0x124f82, the
+@note reference says 0x927c0" --- 1,200,002 against 600,000, which is the
+@note count of two runs where the reference has one.
+@old
+    if (rst || mach_rst) begin
+      cycles <= 64'd0;
+@new
+    if (rst) begin
+      cycles <= 64'd0;
 @end
 
 # Two records from the timing slice that took the memory-on board from
