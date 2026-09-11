@@ -57,5 +57,8 @@ raw=$(stat -c %s "$img")
 xzs=$(stat -c %s "$img.xz")
 echo "mksd-release: $img.xz  $xzs bytes, from $raw --- this is what is published"
 echo "mksd-release: the user writes it with"
-echo "    xz -dc $(basename "$img").xz | sudo dd of=/dev/sdX bs=4M conv=sparse status=progress"
-echo "mksd-release: a card of 4 GB or more, and about twelve megabytes actually written"
+echo "    xz -dc $(basename "$img").xz | sudo dd of=/dev/sdX bs=4M status=progress"
+echo "mksd-release: a card of 4 GB or more.  NOT conv=sparse: it skips runs of"
+echo "mksd-release: zeros, so on a card that held something before, the parts of"
+echo "mksd-release: a file that are legitimately zero keep the old bytes and the"
+echo "mksd-release: card does not hold what the image says it holds"
