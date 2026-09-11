@@ -37,10 +37,10 @@ is the whole machine.
     Linux       6.19.14, mainline    zImage 3,337,032 B; zynq-arty-z7-20.dtb 11,401 B
     rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,801,388 B (6.2 MB unpacked), an
                 + evtest             initramfs, unpacked into RAM on both paths
-    the card    two FAT32 partitions sdcard.img, 4,296,015,872 B (1 MiB + 512 MiB + 3,584 MiB,
-                                     sparse: 277 MB on disk).  Partition 1: the loader and
-                                     the boot files, seven of them, 11.3 MB.  Partition 2:
-                                     the drive bay --- nothing but disk packs
+    the card    two FAT32 partitions sdcard.img, 3,222,274,048 B (1 MiB + 512 MiB + 2,560 MiB
+                                     by default, sparse: 277 MB on disk).  Partition 1: the
+                                     loader and the boot files, seven of them, 11.3 MB.
+                                     Partition 2: the drive bay --- nothing but disk packs
 
 The sizes are of the 10 September builds on the build host. The whole
 thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
@@ -185,10 +185,25 @@ them into the `.bit` --- so the provenance of every staging is in its log:
 is `unit=path`, or a bare path taking the lowest free unit. Without it the
 bay is empty, and the script says so and says how to fill it from the running
 board. A file whose size is neither a T-300's nor a T-80's is refused here,
-because on the board it would simply not be a drive. `PACKS_MB=<n>` is how
-big partition 2 is made. The default is 3,584, which is thirteen T-300 packs
-and fits any card of 4 GB and up. A bigger card leaves the rest of itself
-unused, which costs nothing. `STANDALONE=1` writes `uEnv.txt` without the
+because on the board it would simply not be a drive. `BOOT_MB=<n>` and `PACKS_MB=<n>` are
+how big the two partitions are made. The defaults are 512 and 2,560, which
+is nine T-300 packs and fits any card of 4 GB and up.
+
+How big a card has to be follows from two numbers. The boot partition holds
+seven files that come to 11.3 MB. A T-300 pack is 257 MiB and a T-80 is 68.
+
+| card | `BOOT_MB` | `PACKS_MB` | holds |
+|---|---|---|---|
+| 1 GB | 64 | 832 | three T-300 packs |
+| 2 GB | 64 | 1856 | seven |
+| 4 GB | 512 | 2560 | nine, the defaults |
+
+So **1 GB is the absolute minimum**, and one pack fits on far less than that.
+**4 GB takes a full bay of eight**, which is 2,056 MiB of packs. Nobody runs
+eight. The boot partition is a parameter because half a gigabyte of it on a
+1 GB card is most of the card. A bigger card leaves the rest of itself
+unused, which costs nothing, and `dd` writes every byte of whatever size is
+asked for. `STANDALONE=1` writes `uEnv.txt` without the
 server even when `local.conf` names one, for testing the card path from this
 host. With no `local.conf` at all the card is standalone. The script says
 which path the card it staged will take.

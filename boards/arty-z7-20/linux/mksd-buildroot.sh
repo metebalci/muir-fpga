@@ -30,11 +30,24 @@
 # PACKS names files to place, space separated.  An entry is `unit=path` or
 # just `path`, which takes the lowest unit not yet spoken for; a pack lands
 # as disk-pack-<unit>.img, which is the only thing that decides which drive
-# it is.  PACKS_MB is how big partition 2 is made --- 3,584 MiB by default,
-# thirteen T-300 packs, which fits any card of 4 GB and up.  A bigger card
-# leaves the rest of itself unused, which costs nothing and is not worth a
-# resize step at first boot; set PACKS_MB to the card you have if you want
-# all of it.
+# it is.
+#
+# HOW BIG A CARD HAS TO BE.  BOOT_MB and PACKS_MB are the two partitions and
+# both are parameters, because half a gigabyte of boot partition on a 1 GB
+# card is most of the card.  The boot partition holds seven files and they
+# come to about 11 MiB.  A T-300 pack is 257 MiB and a T-80 is 68.
+#
+#     card    BOOT_MB  PACKS_MB   holds
+#     1 GB         64       832   three T-300 packs
+#     2 GB         64      1856   seven
+#     4 GB        512      2560   nine          <-- the defaults
+#
+# So **1 GB is the absolute minimum** and one pack fits on far less than
+# that, while **4 GB takes a full bay of eight**, which is 2,056 MiB of
+# packs.  Nobody runs eight.  A bigger card leaves the rest of itself
+# unused, which costs nothing and is not worth a resize step at first boot;
+# set PACKS_MB to the card you have if you want all of it, and remember that
+# `dd` writes every byte of whatever size you ask for.
 #
 # THE CARD CARRIES EVERYTHING AND BOOTS ON ITS OWN; the server directory is
 # this project's convenience.  Which path the loader takes is decided by the
@@ -62,7 +75,8 @@ OUT=${OUT:-build/sd/buildroot}
 BOARD=boards/arty-z7-20/linux/buildroot/board/arty-z7-20
 BIT=${BIT:-}
 PACKS=${PACKS:-}
-PACKS_MB=${PACKS_MB:-3584}
+BOOT_MB=${BOOT_MB:-512}
+PACKS_MB=${PACKS_MB:-2560}
 STANDALONE=${STANDALONE:-}
 DTC=${DTC:-$HOSTBIN/dtc}
 
@@ -110,6 +124,10 @@ packs_need=$(( packs_total / 1048576 + 8 ))
 [ "$PACKS_MB" -ge "$packs_need" ] \
   || die "PACKS_MB=$PACKS_MB is too small for the packs named ($packs_need MiB needed)"
 [ "$PACKS_MB" -ge 64 ] || die "PACKS_MB=$PACKS_MB: the pack partition is not worth making smaller than 64 MiB"
+# The boot partition holds seven files and they come to about 11 MiB, so 32 MiB
+# is a floor with room for a second bitstream rather than a tight fit.  It is a
+# parameter because half a gigabyte of it on a 1 GB card is most of the card.
+[ "$BOOT_MB" -ge 32 ] || die "BOOT_MB=$BOOT_MB: the boot partition holds about 11 MiB of files and 32 MiB is the floor"
 
 # The bitstream's own header: Vivado writes the design name (with its
 # UserID and Version), the part, the date and the time as tagged fields after
@@ -298,7 +316,7 @@ if [ -x "$HOSTBIN/genimage" ]; then
   # 270 MB pack is not copied a third time.
   cp -al "$OUT/card" "$TMP/root/card"
   cp -al "$OUT/packs" "$TMP/root/packs"
-  CADR_PACKS_SIZE="${PACKS_MB}M" PATH="$HOSTBIN:$PATH" "$HOSTBIN/genimage" \
+  CADR_BOOT_SIZE="${BOOT_MB}M" CADR_PACKS_SIZE="${PACKS_MB}M" PATH="$HOSTBIN:$PATH" "$HOSTBIN/genimage" \
       --rootpath "$TMP/root" --tmppath "$TMP/tmp" \
       --inputpath "$TMP/in" --outputpath "$OUT" --config "$BOARD/genimage.cfg" >"$TMP/genimage.log" 2>&1 \
       || { cat "$TMP/genimage.log" >&2; die "genimage failed"; }
