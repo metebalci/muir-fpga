@@ -39,8 +39,16 @@
 #
 #     card    BOOT_MB  PACKS_MB   the bay, and what is left over
 #     1 GB         64       832   three drives
-#     2 GB         64      1856   seven drives
-#     4 GB         64      3712   all eight, and room for six spare packs
+#     2 GB         64      1792   seven drives
+#     4 GB         64      3584   all eight, and room for six spare packs
+#
+# Those are sized against what a card of that name really holds, which is
+# less than the name: 1,003,520,000 bytes for a 1 GB card, 2,003,795,968 for
+# a 2 GB and 3,965,190,144 for a 4 GB, with 16 MiB left spare on top of the
+# partition table's own megabyte.  **An image larger than the card does not
+# warn, it fails part way**: `dd` stops with "No space left on device", the
+# boot partition is written because it comes first, and the pack partition
+# is left truncated and claiming room the card has not got.
 #
 # **THE BAY IS EIGHT AND NO MORE**, because a drive is `disk-pack-<unit>.img`
 # and a unit is 0 to 7.  Eight T-300 packs are 2,056 MiB.  Space past that
