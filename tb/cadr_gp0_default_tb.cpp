@@ -9,7 +9,7 @@
 // hangs both cores at one PC each --- measured on the board when the pack
 // feeder read the register face on a bitstream without the pack side.  So a
 // board that brings the port out and has nothing on it answers everything
-// with `rtl/cadr_gp0_default.sv`, and this is what says that module answers.
+// with `rtl/plumbing/cadr_gp0_default.sv`, and this is what says that module answers.
 // `build/arty.pass` holds that it is wired into the two proving boards; it
 // cannot hold what it does, being lint.
 //

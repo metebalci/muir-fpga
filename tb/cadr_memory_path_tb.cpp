@@ -40,7 +40,7 @@
 // `build/ddr_boot.pass` held it from `05d28fa`: the boot PROM's 16,951 disk
 // polls went unanswered, read the bridge's stale word, and bit 0 of it steered
 // the program, so configuration B caught a bridge that held its word. At
-// `70169fb` `rtl/cadr_disk_controller.sv`'s registers began answering those
+// `70169fb` `rtl/machine/cadr_disk_controller.sv`'s registers began answering those
 // polls and the only unanswered cycles left on that program are two to empty
 // Xbus space whose data the PROM ignores --- so the mutation stopped being
 // caught while every check stayed green. A property held by which program
@@ -165,7 +165,7 @@ Arb RunOnce(bool stream, std::map<unsigned, unsigned> &ddr) {
   long req_since = -1;
   int req_last = 0;
   // The channel's own state: one word at a time, the request standing until
-  // `ch_done`, exactly as `rtl/cadr_disk_controller.sv` drives it.
+  // `ch_done`, exactly as `rtl/machine/cadr_disk_controller.sv` drives it.
   int word = 0;
   std::vector<int> landed(kBlockWords, 0);
   long words_this_cycle = 0;

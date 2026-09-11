@@ -9,7 +9,7 @@
 // block lands and that paragraph goes, this file goes with it.  It is not a
 // check: it asserts nothing, it is not in `make check`, and it cannot fail.
 //
-// WHY IT EXISTS.  `rtl/cadr_arty.sv` said the machine "stalls there for ever"
+// WHY IT EXISTS.  `boards/arty-z7-20/cadr_arty.sv` said the machine "stalls there for ever"
 // at the boot PROM's first main-memory cycle, and the board said otherwise:
 // Mete reported LD1 blinking, slowly.  The prediction was wrong and re-reading
 // the RTL would have produced another prediction.  So the configuration the
@@ -38,7 +38,7 @@
 // every 0.79 s.  What made the difference is not memory: it is that 16,951 of
 // the boot PROM's 17,466 bus cycles are disk polls, and they used to reach no
 // slave at all and end on the NXM timer 4.25 us later.
-// `rtl/cadr_disk_controller.sv` answers them in 140 ns now, so what is left
+// `rtl/machine/cadr_disk_controller.sv` answers them in 140 ns now, so what is left
 // timing out with no memory behind `mem_*` is the parity loop's own 512
 // cycles and the two to empty Xbus space.  The machine is about six times
 // faster than it was and LD1 blinks about six times as often.  **So
@@ -53,14 +53,15 @@
 // `make nomem` builds and runs it.  By hand, from the repository root, with
 // `build/boot_prom.hex` already made, it is:
 //
-//     verilator --cc --exe --build -Wall -O2 -CFLAGS -O2 -Irtl \
+//     verilator --cc --exe --build -Wall -O2 -CFLAGS -O2 \
+//         -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 //         -Mdir build/obj_nomem \
 //         -GPROM_HEX='"'"$PWD"'/build/boot_prom.hex"' \
 //         --top-module cadr_machine \
-//         rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv rtl/cadr_ddr_map.sv \
-//         rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv rtl/cadr_xbus_ddr.sv \
-//         rtl/cadr_spy_registers.sv rtl/cadr_disk_controller.sv \
-//         rtl/cadr_memory_path.sv rtl/cadr_machine.sv \
+//         rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
+//         rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv rtl/plumbing/cadr_xbus_ddr.sv \
+//         rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv \
+//         rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv \
 //         "$PWD"/tb/cadr_nomem_tb.cpp
 //     build/obj_nomem/Vcadr_machine [ticks]
 //

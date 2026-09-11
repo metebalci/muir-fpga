@@ -94,7 +94,7 @@
 //
 //   The two pulses.  `-PROG.RESET` and `PROG.BOOT`, bits 6 and 7 of a mode
 //   write, leave `cadr_spy_registers` and are folded into `unused` at
-//   `rtl/cadr_machine.sv:425`.  This harness brings them out, so the pulses
+//   `rtl/machine/cadr_machine.sv:425`.  This harness brings them out, so the pulses
 //   themselves are checked here; what they should *do* is the machine's.
 
 #include <cerrno>
@@ -136,7 +136,7 @@ bool ParseRow(const char *line, Row &r) {
   return true;
 }
 
-// The window on `M_AXI_GP1`, as `rtl/cadr_console.sv` parameterises it.
+// The window on `M_AXI_GP1`, as `rtl/plumbing/cadr_console.sv` parameterises it.
 constexpr uint32_t kBase     = 0x80000000u;
 constexpr uint32_t kIdent    = 0x434F4E53u;   // "CONS"
 constexpr uint32_t kUnmapped = ~kIdent;
@@ -149,7 +149,7 @@ enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
               kRegTicks = 4, kRegTicksH = 5, kRegReset = 6, kRegVma = 7,
               kRegQ = 8 };
 
-// The reset register's key and the pulse it makes, as `rtl/cadr_console.sv`
+// The reset register's key and the pulse it makes, as `rtl/plumbing/cadr_console.sv`
 // parameterises them.  `RESET_KEY` is "RSET" --- four distinct bytes, none of
 // them `00` or `FF`, so a write that does not strobe all four lanes cannot
 // equal it however the lanes are merged, and neither a dead bus's zeros nor
@@ -354,7 +354,7 @@ int main(int argc, char **argv) {
   Sample prev = take();
 
   // **THE READ-BACK'S LAG, MEASURED AND NOT ASSERTED.**
-  // `rtl/cadr_console_bus.sv` captures the diagnostic mux's answer at the
+  // `rtl/machine/cadr_console_bus.sv` captures the diagnostic mux's answer at the
   // microcycle boundary and nowhere else, so that the sixteen-way mux has a
   // microcycle to settle instead of a tick --- which is what turned -12.837 ns
   // on 5,698 endpoints back into a met board.  The price is that the console
@@ -401,7 +401,7 @@ int main(int argc, char **argv) {
 
   // **THE REPLAY AFTER A CONSOLE RESET COMPARES THE CONTROL FLOW AND NOT THE
   // DATAPATH, AND THE REASON IS A PROPERTY OF EVERY RESET THIS MACHINE HAS.**
-  // `amem`, `mmem`, `pdl` and `imem` in `rtl/cadr_microcycle.sv` are RAM and
+  // `amem`, `mmem`, `pdl` and `imem` in `rtl/machine/cadr_microcycle.sv` are RAM and
   // no reset clears them --- not this one, not BTN0's, and not MIT's own
   // `RESET`, which is a wire into flip flops and reaches no 93425A.  So a
   // machine reset a second time re-executes the boot PROM's instructions from
@@ -1135,7 +1135,7 @@ int main(int argc, char **argv) {
   // ------------------------------------------------------------------ the reset
   //
   // **A CONSOLE THAT CANNOT RESTART THE MACHINE CAN ONLY WATCH IT DIE.**  On
-  // the board `rtl/cadr_arty.sv`'s reset is MMCM lock or BTN0, and BTN0 is a
+  // the board `boards/arty-z7-20/cadr_arty.sv`'s reset is MMCM lock or BTN0, and BTN0 is a
   // finger on a board nobody is sitting at.  Page 0's word 6 takes
   // `RESET_KEY` and pulses the machine's reset for `RESET_T` ticks; nothing
   // else it can be written with does anything at all.
@@ -1343,7 +1343,7 @@ int main(int argc, char **argv) {
   // lines above --- and, the one that matters on the board, would have
   // abandoned the very AXI write that asked for the reset, leaving the Arm
   // core waiting for a response that never comes.  That is the freeze
-  // `rtl/cadr_gp0_default.sv` exists to prevent, delivered by the console
+  // `rtl/plumbing/cadr_gp0_default.sv` exists to prevent, delivered by the console
   // itself.
   {
     const uint32_t w = ReadWord(Con(kRegReset));
@@ -1397,7 +1397,7 @@ int main(int argc, char **argv) {
   if (lag_seen != 1) {
     std::fprintf(stderr,
                  "FAIL: the console's read-back is %ld microcycles behind the "
-                 "machine; `rtl/cadr_console_bus.sv` says one, being loaded at "
+                 "machine; `rtl/machine/cadr_console_bus.sv` says one, being loaded at "
                  "the microcycle boundary and nowhere else\n", lag_seen);
     ++thin;
   }

@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # A JTAG chain, and the Vivado hardware manager around it, in enough detail
-# to run `vivado/probe.tcl` with no board and no Vivado. `tclsh` and nothing
+# to run `boards/arty-z7-20/vivado/probe.tcl` with no board and no Vivado. `tclsh` and nothing
 # else. `tb/cadr_probe_jtag_tb.tcl` is what drives it.
 #
-# WHY THIS EXISTS.  `vivado/probe.tcl` is the only thing that will ever be
+# WHY THIS EXISTS.  `boards/arty-z7-20/vivado/probe.tcl` is the only thing that will ever be
 # able to say the board computes what muir computes, and until this file it
 # was the one program in the repository that nothing could run. It shipped
 # with a one-character bug --- `-tdi [string repeat 0 ...]` where the chain
@@ -42,7 +42,7 @@
 #   instruction is loaded. A script that reached Shift-DR without passing
 #   through Capture-DR would be modelled as though it had captured.
 #
-#   NOT SILICON, AND NOT `rtl/cadr_probe.sv`.  There is no DRCK here, no
+#   NOT SILICON, AND NOT `rtl/plumbing/xilinx7/cadr_probe.sv`.  There is no DRCK here, no
 #   clock, and no edges. The probe's shift register clocking the wrong edge of
 #   DRCK, capturing after advancing instead of before, or gating on SEL
 #   wrongly, are all invisible to this file. `tb/cadr_probe_tb.cpp` is what
@@ -57,7 +57,7 @@
 #   fact.
 #
 #   NOT A CLAIM THAT THE CHAIN IS THIS CHAIN.  The device table is written by
-#   the caller. It is quoted from the same two BSDL files `vivado/probe.tcl`
+#   the caller. It is quoted from the same two BSDL files `boards/arty-z7-20/vivado/probe.tcl`
 #   names, so both agree, and a check where both sides are quoting one source
 #   cannot tell you the source is right.
 #
@@ -127,7 +127,7 @@ proc model_shift {n L cap tdi} {
 }
 
 # A scan's value as Vivado hands it back: a hex string, no prefix, one digit
-# per four bits. `%llx` and not `%x` for the reason vivado/probe.tcl's own
+# per four bits. `%llx` and not `%x` for the reason boards/arty-z7-20/vivado/probe.tcl's own
 # `hexof` gives --- `format %x` truncates a bignum to 64 bits in silence.
 proc model_hex {value n} {
     if {$::model(msb_first)} {
@@ -142,7 +142,7 @@ proc model_hex {value n} {
 
 # `set v 0x$hex` and then `expr {$v}`, never `expr {0x[dict get ...]}`. Inside
 # braces there is no substitution before parsing, so the second is a syntax
-# error --- the same trap `vivado/probe.tcl` documents at `set idval 0x$idraw`,
+# error --- the same trap `boards/arty-z7-20/vivado/probe.tcl` documents at `set idval 0x$idraw`,
 # and the reason a hex string is bound to a variable first.
 proc model_arg_tdi {argv} {
     if {[dict exists $argv -tdi]} {
@@ -154,8 +154,8 @@ proc model_arg_tdi {argv} {
 
 # ------------------------------------------------------------ the sample
 #
-# valid, then the cycle, then the data --- the order `rtl/cadr_probe.sv`
-# stores it in and `vivado/probe.tcl` unpacks. 1 + 32 + 421 = 454.
+# valid, then the cycle, then the data --- the order `rtl/plumbing/xilinx7/cadr_probe.sv`
+# stores it in and `boards/arty-z7-20/vivado/probe.tcl` unpacks. 1 + 32 + 421 = 454.
 proc model_sample {} {
     set j [expr {$::model(rd) % $::model(depth)}]
     set data [uplevel #0 [concat $::model(datafn) [list $j]]]
@@ -231,7 +231,7 @@ proc run_state_hw_jtag {state} {
 
 # ------------------------------------------------ the hardware manager, stubbed
 #
-# Enough of it for `vivado/probe.tcl` to open a target and count devices, and
+# Enough of it for `boards/arty-z7-20/vivado/probe.tcl` to open a target and count devices, and
 # no more. `get_hw_devices` lists from the TDI end, which is the opposite of
 # the order the raw scan reads in --- that opposition is a thing the script
 # has to get right and so is modelled rather than smoothed over.

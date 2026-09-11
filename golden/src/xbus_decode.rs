@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-//! The reference for `rtl/cadr_xbus_decode.sv`: which side of the bus a
+//! The reference for `rtl/machine/cadr_xbus_decode.sv`: which side of the bus a
 //! physical address is on and whether anything lives there, out of muir's own
 //! `busint::decode`.
 //!

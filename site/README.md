@@ -27,7 +27,7 @@ and the architecture drawing is byte for byte the same in both files. They are
 hand-placed rather than generated: nothing here reads the RTL, so **a change to
 the architecture is a change to the drawing**, by hand, and the two can drift.
 Everything they assert about the machine comes from `README.md`,
-`rtl/cadr_cables.map` and `rtl/cadr_xbus_decode.sv`; every number on the fuller
+`rtl/machine/cadr_cables.map` and `rtl/machine/cadr_xbus_decode.sv`; every number on the fuller
 page was re-derived from those before it was written down.
 
 ## The one change to muir's stylesheet

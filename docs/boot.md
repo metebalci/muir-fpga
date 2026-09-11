@@ -45,19 +45,19 @@ Sizes are of the 10 September builds on the build host; the whole
 thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
 took 25 minutes of wall clock on 16 cores, and `make buildroot` after a
 change minutes. **Buildroot does not watch our files**: after editing
-anything under `linux/buildroot/` run `make buildroot-rebuild`, which
+anything under `boards/arty-z7-20/linux/buildroot/` run `make buildroot-rebuild`, which
 reconfigures U-Boot, the kernel and `cadr-disk-packs` and finishes the image.
 
-`linux/buildroot/` is the Buildroot external tree; `make buildroot` builds
+`boards/arty-z7-20/linux/buildroot/` is the Buildroot external tree; `make buildroot` builds
 the whole thing from the tarball (several gigabytes under
 `~/.cache/muir-fpga-buildroot`, never `/tmp`, never `build/`);
-`linux/mksd-buildroot.sh` stages the card and the server directory under
-`build/sd/buildroot/`. Every file under `linux/buildroot/` carries the reason
+`boards/arty-z7-20/linux/mksd-buildroot.sh` stages the card and the server directory under
+`build/sd/buildroot/`. Every file under `boards/arty-z7-20/linux/buildroot/` carries the reason
 for what it holds; the ones worth knowing exist:
 
     configs/arty_z7_20_defconfig               the whole image, pinned
     board/arty-z7-20/dts/xilinx/zynq-arty-z7-20.dts   the board, for Linux AND U-Boot
-    board/arty-z7-20/uboot/ps7_init_gpl.c      the start-up routine, GENERATED from vivado/ps7_init.ops
+    board/arty-z7-20/uboot/ps7_init_gpl.c      the start-up routine, GENERATED from boards/arty-z7-20/vivado/ps7_init.ops
     board/arty-z7-20/uboot/gen_ps7_init_gpl.py the generator; --check, and --compare against Vivado's
     board/arty-z7-20/uboot/cadr.env            U-Boot's default environment: both paths, the retry loop
     board/arty-z7-20/uboot/uboot.fragment      what changes in xilinx_zynq_virt_defconfig
@@ -90,7 +90,7 @@ deleted a day earlier).
 
 **The start-up routine is the same one, proved rather than assumed.** U-Boot's
 SPL runs `ps7_init()` and `ps7_post_config()` from a `ps7_init_gpl.c`, as
-Digilent's FSBL did. Ours is generated from `vivado/ps7_init.ops` --- the
+Digilent's FSBL did. Ours is generated from `boards/arty-z7-20/vivado/ps7_init.ops` --- the
 committed, `make current`-checked list of the 673 register operations of
 Digilent's routine --- so that a checkout without Vivado can build the
 loader. `gen_ps7_init_gpl.py --compare build/ps7/ps7_init_gpl.c` reads the
@@ -102,10 +102,10 @@ copy of. `make buildroot-check` (which `make buildroot` runs first) fails if
 the C ever stops being what the `.ops` say.
 
 **One device tree for both.** Mainline has no Arty Z7 tree; ours is written
-like `zynq-zybo-z7.dts` from Digilent's own BSP tree and `vivado/ps7_config.tcl`,
+like `zynq-zybo-z7.dts` from Digilent's own BSP tree and `boards/arty-z7-20/vivado/ps7_config.tcl`,
 and it differs from every mainline Zynq board in three things the files
 settle: the console is **UART 0**, the PS clock is **50 MHz**, the PHY is at
-MDIO address **1**. It includes `linux/cadr-reserved.dtsi` --- the same node
+MDIO address **1**. It includes `boards/arty-z7-20/linux/cadr-reserved.dtsi` --- the same node
 the stepping stone appended --- and is compiled twice, by the kernel and by
 U-Boot. U-Boot reading it matters: mainline U-Boot honours a `reserved-memory`
 node in its *own* tree for its own relocation (`common/memtop.c`) and for
@@ -161,10 +161,10 @@ has it as `BOOT.BIN`, the name the boot ROM looks for.
 
 ## Staging, and what to copy where
 
-    echo SERVERIP=<the TFTP server's address> >  linux/local.conf   # this project's card; omit for a standalone one
-    echo ETHADDR=<the board's MAC>            >> linux/local.conf   # optional; the console printed it
+    echo SERVERIP=<the TFTP server's address> >  boards/arty-z7-20/linux/local.conf   # this project's card; omit for a standalone one
+    echo ETHADDR=<the board's MAC>            >> boards/arty-z7-20/linux/local.conf   # optional; the console printed it
     make buildroot                                                  # once; ~25 min the first time
-    BIT=<the memory-on board's .bit> linux/mksd-buildroot.sh        # stages build/sd/buildroot/
+    BIT=<the memory-on board's .bit> boards/arty-z7-20/linux/mksd-buildroot.sh        # stages build/sd/buildroot/
     cp build/sd/buildroot/server/* /srv/tftp/                       # the network path's files
 
 **`BIT` is mandatory and names the bitstream explicitly.** An earlier version
@@ -197,7 +197,7 @@ DHCP lease pinned to the board's real address is not the one it gets. The
 card's `ethaddr` is imported before `dhcp`, U-Boot writes it into the
 kernel's tree at boot (`fdt_fixup_ethernet`, on the `ethernet0` alias), and
 Linux asks DHCP with the same address. Like `SERVERIP` it lives in
-`linux/local.conf` and in no committed file.
+`boards/arty-z7-20/linux/local.conf` and in no committed file.
 
 `build/sd/buildroot/sdcard.img` is the card as one image --- MBR, two
 primary FAT32 partitions of type `0x0c` aligned to a megabyte, made by
@@ -426,7 +426,7 @@ The Arty Z7-20's USB is the processing system's, not the fabric's:
 Digilent's tree has `usb0` --- the Zynq ChipIdea controller at `0xe0002000`,
 `compatible = "xlnx,zynq-usb-2.20a", "chipidea,usb2"`, `phy_type = "ulpi"`
 --- enabled as a host (`dr_mode = "host"`) with its PHY's reset on MIO 46
-(`pcw.dtsi`'s `usb-reset = <&gpio0 46 0>`; `vivado/ps7_config.tcl`'s
+(`pcw.dtsi`'s `usb-reset = <&gpio0 46 0>`; `boards/arty-z7-20/vivado/ps7_config.tcl`'s
 `PCW_USB0_RESET_IO {MIO 46}`, `PCW_USB_RESET_POLARITY {Active Low}`, the
 controller's twelve ULPI lines on MIO 28..39). Digilent's reference manual
 could not be read --- their site answers automated fetches with 403, as
@@ -514,7 +514,7 @@ under ChipIdea: the core never writes `OTG Control`, the nop PHY's
 `set_vbus` is a regulator this board has none of, and the in-tree ULPI-bus
 PHY drivers are Qualcomm's and TI's. So the root filesystem carries one init
 script, `/etc/init.d/S15usbvbus` (from
-`linux/buildroot/board/arty-z7-20/rootfs-overlay/`), which waits for the root
+`boards/arty-z7-20/linux/buildroot/board/arty-z7-20/rootfs-overlay/`), which waits for the root
 hub and does that write once, then reads the register back and prints
 
     usbvbus: OTG Control 0x67 (DrvVbus set for the host port)
@@ -539,13 +539,13 @@ script's header with its sources.
   which of the two paths, and supplies two addresses.
 - **No fallback from the network path to the card**, for the reason above.
 - **No `fdt_high`/`initrd_high`**, for the reason in `uEnv.net`.
-- **No I2C, no SPI0, no FCLK**: off in `vivado/ps7_config.tcl`, off here.
+- **No I2C, no SPI0, no FCLK**: off in `boards/arty-z7-20/vivado/ps7_config.tcl`, off here.
 - **No display, no DRM, no framebuffer**: HDMI on this board is the fabric's.
 - **No writable storage from Linux but the drive bay**: partition 1 is read
   by U-Boot and mounted read-only, and partition 2 holds disk packs and
   nothing else. There is no writable root and no saved state.
 - **No Vivado, no Xilinx tool of any kind** is needed to build the image;
-  the one Xilinx-derived input is `vivado/ps7_init.ops`, committed.
+  the one Xilinx-derived input is `boards/arty-z7-20/vivado/ps7_init.ops`, committed.
 
 ## The stepping stone: Digilent's image, superseded
 
@@ -596,7 +596,7 @@ filesystem are Digilent's, read out of the `image.ub` already on the card.
    says whose it is. The served tree has Digilent's `amba_pl` --- the
    peripherals of the design `cadr.bit` displaced --- removed, so Linux probes
    nothing that is no longer there.
-   `linux/uEnv.net` explains why it is the command line and not the node
+   `boards/arty-z7-20/linux/uEnv.net` explains why it is the command line and not the node
    that does the work on this kernel.
 
 4. **If the fetch fails** --- server down, cable out, wrong network --- the
@@ -608,7 +608,7 @@ filesystem are Digilent's, read out of the `image.ub` already on the card.
    ...` and another attempt ten seconds later, for as long as the server is
    away. Measured 10 September on the real boot path, server stopped; a
    `|| reset` on the end of the fetch line had been tried first and did not
-   fire on that path (`linux/uEnv.txt.in` says why).
+   fire on that path (`boards/arty-z7-20/linux/uEnv.txt.in` says why).
 
    Digilent's stock boot was run once for comparison before that decision,
    from the first card: a login with `Memory: 335116K/524288K`, against
@@ -658,16 +658,16 @@ Everything up to the power-on has been done once (10 September) and is
 recorded in `linux.md`; the steps are here so it can be done again.
 
 **On the build host, once.** The bitstream is the memory-on board,
-`DDR=1 OUTDIR=build/ddr vivado -mode batch -source vivado/bitstream.tcl`,
+`DDR=1 OUTDIR=build/ddr vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl`,
 copied to `/srv/tftp/cadr.bit`; the one served on 10 September was built at
 `1446bf6`.
 
     sudo apt install tftpd-hpa                       # serves /srv/tftp on UDP 69
     sudo chown $USER /srv/tftp                       # so the files can be refreshed without root
     sudo usermod -aG dialout $USER                   # so the console can be read
-    echo SERVERIP=<the TFTP server's address> > linux/local.conf   # gitignored; mksd.sh fills it into uEnv.txt
+    echo SERVERIP=<the TFTP server's address> > boards/arty-z7-20/linux/local.conf   # gitignored; mksd.sh fills it into uEnv.txt
 
-`linux/mksd.sh` stages `build/sd/`. Then:
+`boards/arty-z7-20/linux/mksd.sh` stages `build/sd/`. Then:
 
     cp build/sd/server/* /srv/tftp/ && cp build/ddr/cadr_arty.bit /srv/tftp/cadr.bit
     curl -o /dev/null tftp://<the TFTP server's address>/system.dtb   # the server answers
@@ -704,7 +704,7 @@ power-cycled, and the port is named by its USB identity rather than by a
 `ttyUSB` number, which changes when the board is replugged while something
 still holds the old one:
 
-    linux/console.py /dev/serial/by-id/usb-Digilent_Digilent_Adept_USB_Device_003017A6FFE5-if01-port0 build/console.log &
+    boards/arty-z7-20/linux/console.py /dev/serial/by-id/usb-Digilent_Digilent_Adept_USB_Device_003017A6FFE5-if01-port0 build/console.log &
 
 Then reset the board. **Nobody has to be at it**: `rst -srst` from `xsdb`
 over JTAG restarts the boot ROM exactly as the SRST button does, and the

@@ -95,7 +95,7 @@ const CLP_WRAP: u32 = 0x2_FFFE;
 
 /// A block's record in DDR: the 259 words, and the alignment the fabric's
 /// master needs so that no sixteen-beat burst of it crosses a 4 KB
-/// boundary. `rtl/cadr_disk_pack.sv` refuses an address that is not.
+/// boundary. `rtl/plumbing/cadr_disk_pack.sv` refuses an address that is not.
 const RECORD_BYTES: u32 = (BLOCK_WORDS as u32 + 3) * 4;
 const RECORD_ALIGN: u32 = 128;
 
@@ -148,7 +148,7 @@ fn grid_before(t: u64) -> u64 {
 }
 
 /// A block as it lies on the pack: what the fabric's block store holds,
-/// and what `S_AXI_HP2` fetches into it --- the record `rtl/cadr_disk_pack.sv`
+/// and what `S_AXI_HP2` fetches into it --- the record `rtl/plumbing/cadr_disk_pack.sv`
 /// reads at the block's address, these three words after the data.
 #[derive(Clone, PartialEq, Eq)]
 struct Image {

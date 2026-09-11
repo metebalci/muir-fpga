@@ -82,7 +82,7 @@ LIST = os.path.join(HERE, "list.txt")
 # is not frozen; it gets mutations when a slice lands.
 CHECKS = {
     "phase_gen": {
-        "sources": ["rtl/cadr_phase_gen.sv"],
+        "sources": ["rtl/machine/cadr_phase_gen.sv"],
         "top": "cadr_phase_gen",
         "tb": "tb/cadr_phase_gen_tb.cpp",
         "flags": [],
@@ -90,21 +90,21 @@ CHECKS = {
     },
     "cables": {
         # Lint alone is not what this check holds to; see cables_check().
-        "sources": ["rtl/cadr_cables.svh", "rtl/cadr_cables_lint.sv"],
+        "sources": ["rtl/machine/cadr_cables.svh", "rtl/machine/cadr_cables_lint.sv"],
         "top": "cadr_cables_lint",
         "tb": None,
-        "flags": ["-Irtl"],
+        "flags": ["-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": None,
     },
     "busint_xbus": {
-        "sources": ["rtl/cadr_busint_xbus.sv"],
+        "sources": ["rtl/machine/cadr_busint_xbus.sv"],
         "top": "cadr_busint_xbus",
         "tb": "tb/cadr_busint_xbus_tb.cpp",
         "flags": [],
         "golden": "busint_xbus.golden",
     },
     "xbus_decode": {
-        "sources": ["rtl/cadr_xbus_decode.sv"],
+        "sources": ["rtl/machine/cadr_xbus_decode.sv"],
         "top": "cadr_xbus_decode",
         "tb": "tb/cadr_xbus_decode_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
@@ -112,21 +112,21 @@ CHECKS = {
     },
     "memory_path": {
         "sources": [
-            "rtl/cadr_ddr_map.sv",
-            "rtl/cadr_xbus_decode.sv",
-            "rtl/cadr_busint_xbus.sv",
-            "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_tv.sv",
-            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv",
         ],
         "top": "cadr_memory_path",
         "tb": "tb/cadr_memory_path_tb.cpp",
-        "flags": ["-Irtl"],
+        "flags": ["-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         # The memory path is driven from the bus interface's own trace: the
         # same stimulus, through the whole path.
         "golden": "busint_xbus.golden",
     },
-    # The display controller, `rtl/cadr_tv.sv`, against muir's SimpleTv
+    # The display controller, `rtl/machine/cadr_tv.sv`, against muir's SimpleTv
     # through Busint --- the same module list as `memory_path`, because the
     # display is instantiated inside it and its frame buffer is the bridge
     # at a second base, so the DUT is the path and not a harness.  Records
@@ -135,33 +135,33 @@ CHECKS = {
     # its trace never addressing it.
     "tv": {
         "sources": [
-            "rtl/cadr_ddr_map.sv",
-            "rtl/cadr_xbus_decode.sv",
-            "rtl/cadr_busint_xbus.sv",
-            "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_tv.sv",
-            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv",
         ],
         "top": "cadr_memory_path",
         "tb": "tb/cadr_tv_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": "tv.golden",
     },
     "axi_master": {
         # No muir reference, so no trace: the testbench is the stimulus.
-        "sources": ["rtl/cadr_axi_master.sv"],
+        "sources": ["rtl/plumbing/cadr_axi_master.sv"],
         "top": "cadr_axi_master",
         "tb": "tb/cadr_axi_master_tb.cpp",
         "flags": [],
         "golden": None,
     },
     # The 32-bit word in the port's 64-bit beat.  It was six assignments
-    # inside `rtl/cadr_arty.sv`'s `g_ddr`, where nothing could reach it: that
+    # inside `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr`, where nothing could reach it: that
     # file cannot be simulated, so lint and the fitter were the whole of the
     # evidence for it.  A module has a check; a generate block in a top level
     # that Verilator cannot elaborate does not.
     "axi_widen": {
-        "sources": ["rtl/cadr_axi_widen.sv"],
+        "sources": ["rtl/plumbing/cadr_axi_widen.sv"],
         "top": "cadr_axi_widen",
         "tb": "tb/cadr_axi_widen_tb.cpp",
         "flags": [],
@@ -175,14 +175,14 @@ CHECKS = {
     # nothing is aimed at.
     #
     # `tb/cadr_prove_harness.sv` is the wiring, not the thing checked, and it
-    # is in `tb/` because both Vivado scripts read `[glob rtl/*.sv]`.
+    # is in `tb/` because both Vivado scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`.
     "prove": {
-        "sources": ["rtl/cadr_prove.sv"],
-        "extra": ["rtl/cadr_axi_master.sv", "rtl/cadr_axi_widen.sv",
+        "sources": ["rtl/plumbing/cadr_prove.sv"],
+        "extra": ["rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
                   "tb/cadr_prove_harness.sv"],
         "top": "cadr_prove_harness",
         "tb": "tb/cadr_prove_tb.cpp",
-        "flags": ["-Irtl"],
+        "flags": ["-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         # No muir reference, so no trace: the testbench is the stimulus and
         # the AXI3 slave underneath it is the observer.
         "golden": None,
@@ -199,7 +199,7 @@ CHECKS = {
     # with its own copy as the working directory, so the image has to be put
     # where that path resolves.
     "microcycle": {
-        "sources": ["rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv"],
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
         "top": "cadr_microcycle",
         "tb": "tb/cadr_microcycle_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
@@ -207,7 +207,7 @@ CHECKS = {
         "files": [("boot_prom.hex", "build/boot_prom.hex")],
     },
     "microcycle_sys": {
-        "sources": ["rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv"],
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
         "top": "cadr_microcycle",
         "tb": "tb/cadr_microcycle_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
@@ -224,18 +224,18 @@ CHECKS = {
     # Makefile does.
     "machine": {
         "sources": [
-            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
-            "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
-            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
-            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
         ],
         # Built because `cadr_machine` instantiates it; the console's own
         # check is what holds it, so no mutation is aimed at it here.
-        "extra": ["rtl/cadr_console_state.sv"],
+        "extra": ["rtl/machine/cadr_console_state.sv"],
         "top": "cadr_machine",
         "tb": "tb/cadr_machine_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": "rtl.golden",
         "gprom": True,
     },
@@ -252,16 +252,16 @@ CHECKS = {
     # about fifteen seconds --- the slowest check here that is not a trace.
     "ddr_boot": {
         "sources": [
-            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
-            "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
-            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
-            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
         ],
-        "extra": ["rtl/cadr_console_state.sv"],
+        "extra": ["rtl/machine/cadr_console_state.sv"],
         "top": "cadr_machine",
         "tb": "tb/cadr_ddr_boot_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": None,
         "gprom": True,
     },
@@ -284,18 +284,18 @@ CHECKS = {
     # slice: four of the five are caught both ways and
     # `the-memory-address-loses-its-page-bit` is caught only here.
     "map_boot": {
-        "sources": ["rtl/cadr_microcycle.sv", "rtl/cadr_ddr_map.sv"],
+        "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_ddr_map.sv"],
         "extra": [
-            "rtl/cadr_phase_gen.sv",
-            "rtl/cadr_xbus_decode.sv",
-            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
-            "rtl/cadr_console_bus.sv", "rtl/cadr_console_state.sv",
-            "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
+            "rtl/machine/cadr_phase_gen.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_map_boot_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": "rtl.golden",
         "gprom": True,
     },
@@ -313,46 +313,46 @@ CHECKS = {
     # and the port held in reset --- and the second is what a mutation that
     # counted the fabric's own intentions falls over.
     "mem_count": {
-        "sources": ["rtl/cadr_mem_count.sv"],
+        "sources": ["rtl/plumbing/cadr_mem_count.sv"],
         "extra": [
-            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
-            "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
-            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_spy_registers.sv", "rtl/cadr_disk_controller.sv",
-            "rtl/cadr_tv.sv", "rtl/cadr_console_bus.sv",
-            "rtl/cadr_console_state.sv", "rtl/cadr_memory_path.sv",
-            "rtl/cadr_machine.sv", "rtl/cadr_axi_master.sv",
-            "rtl/cadr_axi_widen.sv", "tb/cadr_mem_count_harness.sv",
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
+            "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_console_bus.sv",
+            "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_memory_path.sv",
+            "rtl/machine/cadr_machine.sv", "rtl/plumbing/cadr_axi_master.sv",
+            "rtl/plumbing/cadr_axi_widen.sv", "tb/cadr_mem_count_harness.sv",
         ],
         "top": "cadr_mem_count_harness",
         "tb": "tb/cadr_mem_count_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": None,
         "gprom": True,
     },
     # The probe the board will be read through. `tb/cadr_probe_harness.sv`
-    # wires it to `cadr_machine` exactly as `rtl/cadr_arty.sv` does and the
+    # wires it to `cadr_machine` exactly as `boards/arty-z7-20/cadr_arty.sv` does and the
     # testbench shifts all 1,024 samples out through the probe's own JTAG shift
     # register, so what these mutations are aimed at is an instrument whose
     # only other verification is a board nobody has run it on yet.
     "probe": {
         "sources": [
-            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
-            "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
-            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-            "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
-            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
-            "rtl/cadr_probe.sv", "tb/cadr_probe_harness.sv",
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+            "rtl/plumbing/xilinx7/cadr_probe.sv", "tb/cadr_probe_harness.sv",
         ],
-        "extra": ["rtl/cadr_console_state.sv"],
+        "extra": ["rtl/machine/cadr_console_state.sv"],
         "top": "cadr_probe_harness",
         "tb": "tb/cadr_probe_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": "rtl.golden",
         "gprom": True,
     },
     # The OTHER half of the probe, and the only check here of something that
-    # is not fabric at all.  `vivado/probe.tcl` reads the capture off the board
+    # is not fabric at all.  `boards/arty-z7-20/vivado/probe.tcl` reads the capture off the board
     # over JTAG; `tb/cadr_probe_jtag_tb.tcl` runs it against a shift-chain
     # model in `tb/cadr_jtag_chain.tcl`, on seven chains, with no board and no
     # Vivado.
@@ -370,7 +370,7 @@ CHECKS = {
     # checked, and mutating them would be mutating a testbench.
     "probe_jtag": {
         "kind": "tcl",
-        "sources": ["vivado/probe.tcl"],
+        "sources": ["boards/arty-z7-20/vivado/probe.tcl"],
         "tb": "tb/cadr_probe_jtag_tb.tcl",
         "golden": None,
     },
@@ -383,14 +383,14 @@ CHECKS = {
     # a mutation aimed at it and only cadr_arty.sv does.
     "arty": {
         "kind": "lint",
-        "sources": ["rtl/cadr_arty.sv"],
-        "extra": ["rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
-                  "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
-                  "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
-                  "rtl/cadr_spy_registers.sv", "rtl/cadr_disk_controller.sv",
-                  "rtl/cadr_tv.sv", "rtl/cadr_console_bus.sv",
-                  "rtl/cadr_console_state.sv", "rtl/cadr_memory_path.sv",
-                  "rtl/cadr_machine.sv"],
+        "sources": ["boards/arty-z7-20/cadr_arty.sv"],
+        "extra": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+                  "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+                  "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+                  "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
+                  "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_memory_path.sv",
+                  "rtl/machine/cadr_machine.sv"],
         "top": "cadr_arty",
         "tb": None,
         "flags": [],
@@ -407,7 +407,7 @@ CHECKS = {
     # of it.
     #
     # WITH THE PACK SIDE UNDERNEATH.  `tb/cadr_disk_harness.sv` wires
-    # `rtl/cadr_disk_pack.sv` under the controller as the board does, and the
+    # `rtl/plumbing/cadr_disk_pack.sv` under the controller as the board does, and the
     # block store is filled only through it --- so a mutation of the pack
     # side can be aimed here too, where the whole trace sees it, as well as at
     # `disk_pack` below, where it is cheap.  The harness is wiring, in
@@ -418,7 +418,7 @@ CHECKS = {
     # 512,000,000 ticks, and the fabric counts every one.  Two minutes a
     # mutation.
     "disk": {
-        "sources": ["rtl/cadr_disk_controller.sv", "rtl/cadr_disk_pack.sv"],
+        "sources": ["rtl/machine/cadr_disk_controller.sv", "rtl/plumbing/cadr_disk_pack.sv"],
         "extra": ["tb/cadr_disk_harness.sv"],
         "top": "cadr_disk_harness",
         "tb": "tb/cadr_disk_tb.cpp",
@@ -445,7 +445,7 @@ CHECKS = {
     # CCW-walk records below carry `@check disk_boot` and the notes say what
     # else sees them.
     "disk_boot": {
-        "sources": ["rtl/cadr_disk_controller.sv", "rtl/cadr_disk_pack.sv"],
+        "sources": ["rtl/machine/cadr_disk_controller.sv", "rtl/plumbing/cadr_disk_pack.sv"],
         "extra": ["tb/cadr_disk_harness.sv"],
         "top": "cadr_disk_harness",
         "tb": "tb/cadr_disk_boot_tb.cpp",
@@ -462,7 +462,7 @@ CHECKS = {
     # controller-side change the pack side needed --- the tag write that takes
     # a block away --- is held here and nowhere else.
     "disk_pack": {
-        "sources": ["rtl/cadr_disk_pack.sv", "rtl/cadr_disk_controller.sv"],
+        "sources": ["rtl/plumbing/cadr_disk_pack.sv", "rtl/machine/cadr_disk_controller.sv"],
         "extra": ["tb/cadr_disk_harness.sv"],
         "top": "cadr_disk_harness",
         "tb": "tb/cadr_disk_pack_tb.cpp",
@@ -475,7 +475,7 @@ CHECKS = {
     # without the pack side answers with this; `arty` holds that it is wired,
     # and this holds that it answers.
     "gp0_default": {
-        "sources": ["rtl/cadr_gp0_default.sv"],
+        "sources": ["rtl/plumbing/cadr_gp0_default.sv"],
         "top": "cadr_gp0_default",
         "tb": "tb/cadr_gp0_default_tb.cpp",
         "flags": [],
@@ -484,21 +484,21 @@ CHECKS = {
     # The console: the sixteen diagnostic registers on `M_AXI_GP1`, held to
     # `Engine::spy_read` over MIT's boot PROM.  The harness is the console,
     # `cadr_spy_registers.sv` and the REAL processor, with the arbiter that
-    # `rtl/cadr_memory_path.sv` instantiates --- the same module, not a copy
+    # `rtl/machine/cadr_memory_path.sv` instantiates --- the same module, not a copy
     # of it --- so a mutation of either is caught by what the console reads
     # back at a microcycle the reference names, by the AXI3 protocol on the
     # face, or by the sweep that measures the read-back's lag with the machine
     # running.
     "console": {
-        "sources": ["rtl/cadr_console.sv", "rtl/cadr_console_bus.sv",
-                    "rtl/cadr_console_state.sv"],
+        "sources": ["rtl/plumbing/cadr_console.sv", "rtl/machine/cadr_console_bus.sv",
+                    "rtl/machine/cadr_console_state.sv"],
         "extra": [
-            "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
-            "rtl/cadr_spy_registers.sv", "tb/cadr_console_harness.sv",
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_spy_registers.sv", "tb/cadr_console_harness.sv",
         ],
         "top": "cadr_console_harness",
         "tb": "tb/cadr_console_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
         "golden": "rtl.golden",
         "gprom": True,
     },
@@ -519,7 +519,7 @@ CHECKS = {
     # a real bus cycle at every one of the 524,288 addresses and directions an
     # eighteen-bit `ub_addr` can carry.
     "iob": {
-        "sources": ["rtl/cadr_io_board.sv"],
+        "sources": ["rtl/machine/cadr_io_board.sv"],
         "top": "cadr_io_board",
         "tb": "tb/cadr_io_board_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2"],
@@ -552,9 +552,9 @@ CHECKS = {
 # The three files golden/src/cables.rs writes.  `current` regenerates them and
 # fails if anything moved; this does the same to a copy.
 GENERATED = [
-    "rtl/cadr_cables.svh",
-    "rtl/cadr_cables.map",
-    "rtl/cadr_cables_lint.sv",
+    "rtl/machine/cadr_cables.svh",
+    "rtl/machine/cadr_cables.map",
+    "rtl/machine/cadr_cables_lint.sv",
 ]
 
 # What a mutation run comes to.  The first two are what a healthy run is made
@@ -728,10 +728,11 @@ def copy_tree(dest, with_golden=False, rev=None):
     if os.path.exists(dest):
         shutil.rmtree(dest)
     os.makedirs(dest)
-    # `vivado` as well as `rtl` and `tb`: `vivado/probe.tcl` is the source the
-    # probe_jtag mutations are aimed at, and the working tree is no more
-    # mutable for a Tcl script than for a module.
-    dirs = ["rtl", "tb", "vivado"] + (["golden"] if with_golden else [])
+    # `boards` as well as `rtl` and `tb`:
+    # `boards/arty-z7-20/vivado/probe.tcl` is the source the probe_jtag
+    # mutations are aimed at, and the working tree is no more mutable for a
+    # Tcl script than for a module.
+    dirs = ["rtl", "tb", "boards"] + (["golden"] if with_golden else [])
     if rev:
         # A directory that did not exist at `rev` is not an error, and this is
         # not hypothetical: `--since` names EARLIER revisions on purpose, and
@@ -880,7 +881,7 @@ def lint_verdict(out, build_fails=False):
     line; otherwise the warning is the catch.
 
     UNLESS the record says the build is the catch.  `cables` mutates a
-    GENERATED header, `rtl/cadr_cables.svh`, and the thing it is holding is
+    GENERATED header, `rtl/machine/cadr_cables.svh`, and the thing it is holding is
     that the header is what the generator writes: a renamed port or a lost
     enable makes the port list no longer elaborate, and that refusal IS the
     finding.  Two such records went BROKEN when this classifier landed ---
@@ -956,7 +957,7 @@ def tcl_check(args, work, spec):
     the mutation --- and it is written down rather than smoothed over.
 
     The harness resolves the script under test from its own directory, so
-    running it out of the copy tests the copy's `vivado/probe.tcl` and the
+    running it out of the copy tests the copy's `boards/arty-z7-20/vivado/probe.tcl` and the
     working tree's is never read.
     """
     cmd = [args.tclsh, os.path.join(work, spec["tb"])]
@@ -983,42 +984,42 @@ def arty_check(args, work, build_fails=False):
 
     A CONFIGURATION WHOSE FILES ARE NOT IN THE COPY IS SKIPPED, and that is not
     tidiness either. `--since` names EARLIER revisions on purpose, and
-    `rtl/cadr_ps7.sv` arrives at b5542c5; a pass that verilated it
+    `boards/arty-z7-20/cadr_ps7.sv` arrives at b5542c5; a pass that verilated it
     unconditionally would report BROKEN for every arty record against anything
     older, which is the `git archive` pathspec lesson in a second place.
     """
     spec = CHECKS["arty"]
     prom = "-GPROM_HEX=\"%s\"" % os.path.join(args.goldens, "boot_prom.hex")
-    base = [args.verilator, "--lint-only", "-Wall", "-Irtl", prom,
+    base = [args.verilator, "--lint-only", "-Wall", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20", prom,
             "--top-module", spec["top"]]
     boards = [
         # The default board: the machine and nothing else.
         ([], ["tb/cadr_arty_stubs.sv"], []),
         # The instrumented one.
         (["-GPROBE_DEPTH=1024"], ["tb/cadr_arty_stubs.sv"],
-         ["rtl/cadr_probe.sv"]),
+         ["rtl/plumbing/xilinx7/cadr_probe.sv"]),
         # And the one with the processing system behind the memory port,
         # and the disk's pack side on the processing system's other two
         # ports.
         (["-GDDR=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
-         ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
-          "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
-          "rtl/cadr_disk_pack.sv", "rtl/cadr_console.sv"]),
+         ["boards/arty-z7-20/cadr_ps7.sv", "rtl/plumbing/cadr_axi_master.sv",
+          "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
+          "rtl/plumbing/cadr_disk_pack.sv", "rtl/plumbing/cadr_console.sv"]),
         # And the two the witness builds, which are branches only they
         # reach: nothing else elaborates `cadr_prove.sv` at all, and neither
         # of them elaborates the machine's own drive of the port.
         # A proving board brings GP0 out without the pack side, and answers
         # every address on it with the default slave.
         (["-GPROVE=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
-         ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
-          "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
-          "rtl/cadr_prove.sv", "rtl/cadr_gp0_default.sv",
-          "rtl/cadr_console.sv"]),
+         ["boards/arty-z7-20/cadr_ps7.sv", "rtl/plumbing/cadr_axi_master.sv",
+          "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
+          "rtl/plumbing/cadr_prove.sv", "rtl/plumbing/cadr_gp0_default.sv",
+          "rtl/plumbing/cadr_console.sv"]),
         (["-GPROVE=2"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
-         ["rtl/cadr_ps7.sv", "rtl/cadr_axi_master.sv",
-          "rtl/cadr_axi_widen.sv", "rtl/cadr_mem_count.sv",
-          "rtl/cadr_prove.sv", "rtl/cadr_gp0_default.sv",
-          "rtl/cadr_console.sv"]),
+         ["boards/arty-z7-20/cadr_ps7.sv", "rtl/plumbing/cadr_axi_master.sv",
+          "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
+          "rtl/plumbing/cadr_prove.sv", "rtl/plumbing/cadr_gp0_default.sv",
+          "rtl/plumbing/cadr_console.sv"]),
     ]
     ran = 0
     for generics, stubs, extra_sources in boards:
@@ -1082,8 +1083,8 @@ def cables_check(args, work, build_fails=False):
     against the copy, with plain diff standing in for `git diff`.
     """
     cmd = [args.verilator, "--lint-only", "-Wall",
-           "--top-module", "cadr_cables_lint", "-Irtl",
-           "rtl/cadr_cables_lint.sv"]
+           "--top-module", "cadr_cables_lint", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20",
+           "rtl/machine/cadr_cables_lint.sv"]
     rc, out = run(cmd, work)
     if rc != 0:
         # The same lint-shaped path as `arty_check`: see `lint_verdict`.
@@ -1124,7 +1125,7 @@ def check_coverage(mutations):
     """
     # The lint harness is generated, tied off and has no behaviour; what
     # carries the port list is the header it includes, which is mutated.
-    exempt = {"rtl/cadr_cables_lint.sv"}
+    exempt = {"rtl/machine/cadr_cables_lint.sv"}
     touched = set(m.path for m in mutations)
     builds = set()
     for spec in CHECKS.values():
@@ -1486,7 +1487,7 @@ def main():
     else:
         dirty = subprocess.run(
             ["git", "-C", REPO, "status", "--porcelain", "--", "rtl", "tb",
-             "vivado", "golden"],
+             "boards", "golden"],
             stdout=subprocess.PIPE).stdout.decode("utf-8", "replace")
         if dirty.strip():
             sys.stdout.write(

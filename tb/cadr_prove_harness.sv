@@ -9,17 +9,17 @@
 // address, and whether the word that comes back off one address goes out
 // again unaltered at another.  Those questions have three modules in them, so
 // the check has three modules in it: this wires them exactly as
-// `rtl/cadr_arty.sv`'s `g_ddr` does and brings out the 64-bit AXI3 port
+// `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` does and brings out the 64-bit AXI3 port
 // `cadr_ps7.sv` would be on the far end of.
 //
 // IT IS IN `tb/` FOR THE REASON `tb/cadr_arty_stubs.sv` GIVES.  Both Vivado
-// scripts read `[glob rtl/*.sv]`, so a wiring harness in `rtl/` would join
+// scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`, so a wiring harness in `rtl/` would join
 // the bitstream --- a second copy of the memory path, in the synthesised
 // design, that nothing on the board would ever reach.  `tb/` is globbed by
 // nothing.
 //
 // AND IT IS A HARNESS AND NOT THE THING CHECKED.  The mutations are aimed at
-// `rtl/cadr_prove.sv`; this file is in the runner's `extra` beside the
+// `rtl/plumbing/cadr_prove.sv`; this file is in the runner's `extra` beside the
 // adapter and the widening, which have checks of their own.  What it can
 // still get wrong is a crossing in its own wiring --- and the top level can
 // get the same one, which is what `build/arty.pass`'s `DDR=1` lint pass and
@@ -36,11 +36,11 @@ module cadr_prove_harness #(
     input  var logic        go,
 
     // What the witness is asked to do. Inputs here for the reason
-    // `rtl/cadr_prove.sv`'s header gives: one model, both steps, and an
+    // `rtl/plumbing/cadr_prove.sv`'s header gives: one model, both steps, and an
     // address the check can sweep.
     input  var logic [31:0] addr,
     input  var logic [31:0] word,
-    // Where a read writes back what came back.  See `rtl/cadr_prove.sv`.
+    // Where a read writes back what came back.  See `rtl/plumbing/cadr_prove.sv`.
     input  var logic [31:0] echo_addr,
     input  var logic        writes,
 

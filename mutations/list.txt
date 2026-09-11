@@ -222,8 +222,8 @@
 # about checking things, and it is the sharpest lesson this project has had.
 #
 # A DIAGNOSTIC GETS LESS TESTING THAN THE THING IT DIAGNOSES, and its SUCCESS
-# branch gets none at all while the thing is failing.  `vivado/fit.tcl` and
-# `vivado/bitstream.tcl` both did `get_property SLACK [get_timing_paths ...]`
+# branch gets none at all while the thing is failing.  `boards/arty-z7-20/vivado/fit.tcl` and
+# `boards/arty-z7-20/vivado/bitstream.tcl` both did `get_property SLACK [get_timing_paths ...]`
 # unguarded.  That call returns an empty list when there is nothing to report,
 # and nothing to report is what meeting timing looks like --- so the first
 # design to close timing would have thrown, exited non-zero and printed
@@ -245,7 +245,7 @@
 
 @mutation tse-falls-late
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note TPTSE goes away at 5 ns and comes back at 25. Moving the fall to 10
 @note leaves the pulse the right shape and in the wrong place.
 @old
@@ -256,7 +256,7 @@
 
 @mutation tse-returns-late
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note The other end of the same pulse.
 @old
   localparam int unsigned TSE_ON_T   = 25 / TICK_NS;   //  25 ns
@@ -266,7 +266,7 @@
 
 @mutation tpr60-opens-early
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note -TPR60 is a window on the phase, 60 to 100 ns, and SPEEDCLK's source.
 @note Opening it at 55 is five nanoseconds of a signal that drives the front
 @note panel's clock.
@@ -278,7 +278,7 @@
 
 @mutation tpr60-closes-a-tick-late
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note The window is half-open in muir --- `(60..60+TPR_PULSE_NS)` --- so the
 @note tick at 100 ns is outside it. An inclusive compare is the off-by-one
 @note that a range written as two comparisons invites.
@@ -290,7 +290,7 @@
 
 @mutation normal-speed-reads-the-fast-tap
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note The 74S151 at CLOCK1 1D08 selects the read phase on {SSPEED1, SSPEED0,
 @note -ILONG}. One wrong entry in that table is one wrong microcycle length,
 @note and the testbench's tap coverage exists for exactly this.
@@ -302,7 +302,7 @@
 
 @mutation extra-slow-stretches-with-ilong
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note At extra slow, 160 ns is already the longest tap the chain provides, so
 @note ILONG adds nothing. Making it stretch anyway is the reading of "ILONG
 @note adds forty nanoseconds" that forgets the exception.
@@ -314,7 +314,7 @@
 
 @mutation the-read-phase-is-selected-at-the-start-of-the-cycle
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note The 74S151's output is read at 65 ns, not at the start of the cycle,
 @note and it only shows if speed or ILONG move between the two --- which the
 @note last segment of the trace does deliberately, "speed and ILONG changing
@@ -329,7 +329,7 @@
 
 @mutation the-write-pulse-opens-a-tick-late
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note -TPW30, measured from the end of the read phase. The instant lives in
 @note a register of its own since 5646c91, so that the counter drives a
 @note comparator and nothing else; a tick out is a tick out either way.
@@ -341,7 +341,7 @@
 
 @mutation the-control-store-pulse-closes-late
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note -TPW45, the one that ends the write to the control store.
 @old
   localparam int unsigned WPIRAM_OFF_T = 45 / TICK_NS; // -TPW45
@@ -351,7 +351,7 @@
 
 @mutation the-write-pulse-outlives-the-boundary
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note muir clamps the pulse to the cycle boundary --- `WP_OFF_NS.min(RESTART)`
 @note --- because with no gate delays a pulse that outlived it would write at
 @note the next instruction's address. Dropping the clamp is the bug that
@@ -363,7 +363,7 @@
 
 @mutation hang-restarts-the-cycle-instead-of-parking-it
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note -HANG holds the next -TPR0 off and the generator parks at cycle_t.
 @note Written the other way round it parks when it should run and runs when
 @note it should park. Inverted rather than deleted, because deleting the term
@@ -376,7 +376,7 @@
 
 @mutation the-parked-generator-never-wraps
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note `wrap` has two terms because the park is one tick past the last tick
 @note of the cycle: without the second, a generator that -HANG parked would
 @note count on past the end when -HANG lifted rather than starting a new
@@ -406,7 +406,7 @@
 
 @mutation a-wire-the-interface-drives-is-made-an-output
 @check cables
-@file rtl/cadr_cables.svh
+@file rtl/machine/cadr_cables.svh
 @note -MEMACK comes from the bus interface: the processor listens. Making it
 @note an output is the direction error the whole generated header exists to
 @note prevent, and it is the one kind lint alone can catch.
@@ -418,7 +418,7 @@
 
 @mutation a-bidirectional-wire-loses-its-enable
 @check cables
-@file rtl/cadr_cables.svh
+@file rtl/machine/cadr_cables.svh
 @build-fails
 @note Of the 92 wires, 48 are driven from both ends and are carried as value
 @note plus enable out with the resolved wire back in, because fabric has no
@@ -430,7 +430,7 @@
 
 @mutation a-signal-is-renamed
 @check cables
-@file rtl/cadr_cables.svh
+@file rtl/machine/cadr_cables.svh
 @build-fails
 @note The mangling is settled and inherited by everything generated. A name
 @note that drifted from it would still elaborate on its own; what says it has
@@ -443,7 +443,7 @@
 
 @mutation mits-name-for-a-wire-is-changed
 @check cables
-@file rtl/cadr_cables.svh
+@file rtl/machine/cadr_cables.svh
 @note The comment is MIT's own name, and cadr_cables.map is what ties every
 @note identifier back to it. Lint cannot see a comment; only regenerating
 @note can. This is the mutation that says `current` is load-bearing and not
@@ -462,7 +462,7 @@
 
 @mutation memack-registered-on-a-write
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note XACK is made from XBUS ACK IN by the 74S64 at REQLM 0C11 --- a gate.
 @note Only a read goes through the 60 ns tap of the TD100 at 0C09. Registering
 @note both puts the acknowledgement a tick late on every write.
@@ -474,7 +474,7 @@
 
 @mutation grant-waits-for-a-later-edge
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note A request standing at the master clock edge is granted at that edge:
 @note the priority logic registers -MEMRQ and does not care how long it has
 @note been up. Making it always wait for the next edge costs a whole
@@ -513,7 +513,7 @@
 
 @mutation timeout-oscillator-restarted-at-the-grant
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note The 74LS124 at REQTIM 0A01 has run since the power came up, and the
 @note grant only opens its output. Restarting it at the grant is the obvious
 @note way to write it and is wrong on every cycle but the lucky ones --- it
@@ -530,7 +530,7 @@
 
 @mutation xbus-rq-dropped-at-the-acknowledgement
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note "-XBUS.ACK ... remains asserted until the -XBUS.RQ signal is removed by
 @note the master": the request stays out through the acknowledgement, and the
 @note slave holds its answer against it. A master that dropped it the moment
@@ -544,12 +544,12 @@
 
 @mutation the-setup-time-is-short
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note "it is the responsibility of the bus master to assert good address,
 @note write, and data lines 80 ns. prior to asserting -XBUS.RQ".
 @note
 @note AND IT NOW HOLDS A TIMING EXCEPTION HONEST AS WELL, which is worth
-@note saying because nothing about the record shows it. `rtl/cadr_machine.xdc`
+@note saying because nothing about the record shows it. `rtl/plumbing/xilinx7/cadr_machine.xdc`
 @note gives `mem_addr`, `mem_wdata` and `mem_write` sixteen ticks to reach the
 @note AXI adapter's registers --- on the strength of the same sentence quoted
 @note above, and nothing else. An exemption too wide tests nothing and looks
@@ -571,7 +571,7 @@
 
 @mutation the-read-deskew-is-long
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note The 60 ns tap of the TD100 at REQLM 0C09, which is what puts the word
 @note in MD.
 @old
@@ -582,7 +582,7 @@
 
 @mutation the-deskew-starts-a-tick-late
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note `elapsed` still holds the answering tick's value where this runs, which
 @note is the sort of thing that is one off as easily as not.
 @old
@@ -593,7 +593,7 @@
 
 @mutation the-timeout-oscillator-runs-fast
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note 850 ns, so 425 a half period --- chip::VCO_PERIOD.
 @old
   localparam int unsigned VCO_HALF_T = 425 / 5;
@@ -603,7 +603,7 @@
 
 @mutation the-timeout-comes-a-period-early
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note NXM TIMEOUT is registered on the sixth rise of the gated output, which
 @note is the first rise plus busint::TIMEOUT_NS, five whole periods.
 @old
@@ -614,7 +614,7 @@
 
 @mutation the-timer-starts-on-a-rise-instead-of-a-fall
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note The gated output takes its first fall at the oscillator's first fall
 @note strictly after the grant, and the rises are counted from there.
 @note Waiting for a rise instead moves the whole count a half period on.
@@ -633,7 +633,7 @@
 
 @mutation the-timeout-flag-outlives-its-cycle
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note The flag belongs to the cycle standing, as `Ack::timed_out` does: it
 @note goes when the cpu lifts -MEMRQ. What outlives the cycle is the NXM bit
 @note in the bus error register at REQERR, which is not this slice.
@@ -645,7 +645,7 @@
 
 @mutation no-loadmd-on-a-write
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note On the Xbus the word lands with the acknowledgement, so -LOADMD and
 @note -MEMACK coincide --- on a write as well, where MD is strobed with
 @note nothing new in it. Suppressing it on writes is the plausible-looking
@@ -663,7 +663,7 @@
 
 @mutation the-cycle-ends-without-waiting-for-the-cpu
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note -MEMACK stays low until the cpu lifts -MEMRQ, MFINISHD_NS after the
 @note acknowledgement. Leaving ACKED at once makes it one tick wide.
 @old
@@ -684,7 +684,7 @@
 
 @mutation the-unibus-starts-a-page-late
 @check xbus_decode
-@file rtl/cadr_xbus_decode.sv
+@file rtl/machine/cadr_xbus_decode.sv
 @note The Unibus half: the diagnostic bus's sixteen registers and the I/O
 @note board with its Chaosnet interface.
 @old
@@ -695,7 +695,7 @@
 
 @mutation xbus-io-space-starts-a-page-late
 @check xbus_decode
-@file rtl/cadr_xbus_decode.sv
+@file rtl/machine/cadr_xbus_decode.sv
 @note The two slots below the Unibus. A page out either way moves the
 @note boundary between main memory and the devices.
 @old
@@ -706,7 +706,7 @@
 
 @mutation the-frame-buffer-is-at-the-wrong-slot
 @check xbus_decode
-@file rtl/cadr_xbus_decode.sv
+@file rtl/machine/cadr_xbus_decode.sv
 @note simpletv::BUFFER at 0o17000000 for BUFFER_WORDS: 3,932,160 is 120 times
 @note 32,768, which is why this is a comparison on a slice and not a pair of
 @note bounds.
@@ -718,7 +718,7 @@
 
 @mutation the-displays-registers-are-twice-as-wide
 @check xbus_decode
-@file rtl/cadr_xbus_decode.sv
+@file rtl/machine/cadr_xbus_decode.sv
 @note Eight control registers at simpletv::CONTROL, aligned to eight. Reading
 @note one bit fewer of the address makes it sixteen, and swallows four words
 @note that answer to nothing and one of the disk controller's.
@@ -730,7 +730,7 @@
 
 @mutation the-disk-registers-are-a-block-low
 @check xbus_decode
-@file rtl/cadr_xbus_decode.sv
+@file rtl/machine/cadr_xbus_decode.sv
 @note disk_controller::REGS at 0o17377774 for four. The four words between the
 @note display's registers and the disk's answer to nothing, and the reference
 @note says so too.
@@ -742,7 +742,7 @@
 
 @mutation one-memory-board-too-many
 @check xbus_decode
-@file rtl/cadr_xbus_decode.sv
+@file rtl/machine/cadr_xbus_decode.sv
 @note A board is 64K words and they start at zero, so the whole comparison is
 @note on the slot number and the bound is exclusive. Inclusive gives the
 @note machine a board that is not fitted.
@@ -754,7 +754,7 @@
 
 @mutation the-page-is-taken-from-the-wrong-bits
 @check xbus_decode
-@file rtl/cadr_xbus_decode.sv
+@file rtl/machine/cadr_xbus_decode.sv
 @note `let page = (phys >> 8) & 0o37777`, and both boundaries come off it.
 @old
   assign page = phys[21:8];
@@ -764,7 +764,7 @@
 
 @mutation the-unibus-is-also-nxm
 @check xbus_decode
-@file rtl/cadr_xbus_decode.sv
+@file rtl/machine/cadr_xbus_decode.sv
 @note Exactly one answer, always. Nothing in the reference can catch a decode
 @note that gives two, because the reference only ever names one --- which is
 @note why the testbench counts them itself. This is the mutation that check
@@ -813,7 +813,7 @@
 
 @mutation the-bridge-holds-the-word-past-its-cycle
 @check memory_path
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note METE'S DECISION, HELD: an unanswered read gives MD zero.  `rdata` is
 @note the slave's driver onto MEM<31:0>; held across cycles it hands MD a word
 @note on every cycle nothing answered, because `cadr_memory_path.sv` falls
@@ -863,7 +863,7 @@
 
 @mutation bridge-writes-the-address-instead-of-the-data
 @check memory_path
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note The shadow memory was once keyed by the DUT's own mem_addr and filled
 @note from its own mem_wdata, so it moved with the bug and this passed. It is
 @note keyed by the trace's phys and filled with the trace's wdata now.
@@ -880,7 +880,7 @@
 
 @mutation bridge-drops-an-address-bit
 @check memory_path
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note The other half of the same lesson: a bridge that dropped a bit wrote
 @note consistent nonsense, and a shadow keyed by the DUT's address agreed
 @note with it on every read. Written as a flip rather than a truncation so
@@ -895,7 +895,7 @@
 
 @mutation bridge-answers-at-an-address-nothing-is-at
 @check memory_path
-@file rtl/cadr_memory_path.sv
+@file rtl/machine/cadr_memory_path.sv
 @note A cycle to an address with nothing at it reaches no slave and the
 @note interface's own timer ends it. A bridge that answered anyway would take
 @note the NXM timeout out of the machine altogether.
@@ -914,7 +914,7 @@
 @note empty space reach the bridge. The channel's arm is left alone so
 @note the check sees exactly the property the record names.
 @note
-@note Re-aimed a third time when the display landed: the bridge's select gained the frame-buffer window, `tv_fb`, held in `rtl/cadr_tv.sv` as `is_memory` is held here.
+@note Re-aimed a third time when the display landed: the bridge's select gained the frame-buffer window, `tv_fb`, held in `rtl/machine/cadr_tv.sv` as `is_memory` is held here.
 @old
   assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb);
 @new
@@ -923,7 +923,7 @@
 
 @mutation every-cycle-is-a-read-on-the-xbus
 @check memory_path
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note WRCYC is latched for the cycle and goes out to the slave as the bus's
 @note write line. Held low, every cycle reaches the slave as a read.
 @note
@@ -939,7 +939,7 @@
 
 @mutation the-bridge-adds-a-tick
 @check memory_path
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note The bridge is deliberately thin: dev_ack follows mem_done with no
 @note register in the way, so the whole of the latency belongs to the memory
 @note behind it and shows up as the device's answer time. A register here is
@@ -953,7 +953,7 @@
 
 @mutation the-word-is-corrupted-on-its-way-to-md
 @check memory_path
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note Read data is latched because the cpu takes it at -LOADMD and the word
 @note has to still be there. This is what says the word that arrives is the
 @note word that was stored.
@@ -975,7 +975,7 @@
 
 @mutation main-memory-is-a-word-wide
 @check memory_path
-@file rtl/cadr_ddr_map.sv
+@file rtl/plumbing/cadr_ddr_map.sv
 @note A CADR word is 32 bits, so the byte address is the word address two
 @note places left. This map is shared with the Linux side --- a
 @note reserved-memory node, whatever loads a band --- so it is the one thing
@@ -988,7 +988,7 @@
 
 @mutation main-memory-is-reserved-somewhere-else
 @check memory_path
-@file rtl/cadr_ddr_map.sv
+@file rtl/plumbing/cadr_ddr_map.sv
 @note The base of the reserved region, which both sides agree on.
 @old
   localparam logic [31:0] MAIN_BASE  = 32'h1800_0000;
@@ -1005,7 +1005,7 @@
 
 @mutation awvalid-held-up-after-awready
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note A master that holds awvalid up after awready issues a second write, and
 @note a slave that only records the address cannot tell. The testbench counts
 @note handshakes per transaction and requires exactly one on each channel
@@ -1018,7 +1018,7 @@
 
 @mutation master-returns-to-idle-early
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note The bridge holds mem_req up until it has taken the word, so the answer
 @note has to stand until it lets go. A testbench that dropped the request the
 @note instant mem_done appeared would never give the master the chance to
@@ -1031,7 +1031,7 @@
 
 @mutation the-write-response-error-is-ignored
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note OKAY is 00 and EXOKAY 01; SLVERR and DECERR have bit 1 set, and
 @note mem_error is what says one came back. Assigning zero rather than
 @note deleting the branch, so that bresp stays read and lint has nothing to
@@ -1048,7 +1048,7 @@
 
 @mutation a-byte-lane-is-masked-off
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note A whole word, every time: the CADR has no byte writes on this path.
 @old
   assign m_axi_wstrb = 4'b1111;
@@ -1058,7 +1058,7 @@
 
 @mutation the-beat-is-not-the-last
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note At a burst of one every beat is the last. A slave would wait forever
 @note for a beat that never comes.
 @old
@@ -1069,7 +1069,7 @@
 
 @mutation the-transfer-is-eight-bytes-wide
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note awsize and arsize are 2^2 = 4 bytes, one 32-bit word.
 @old
   localparam logic [2:0] SIZE_WORD = 3'b010;  // 2^2 = 4 bytes
@@ -1079,7 +1079,7 @@
 
 @mutation the-burst-is-two-beats
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note awlen and arlen are zero: one beat. The CADR has no way to ask for the
 @note next word before it has this one, so bursts would buy nothing.
 @old
@@ -1090,7 +1090,7 @@
 
 @mutation the-read-address-is-a-word-on
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note Latched at IDLE and held for the whole transaction, because AXI wants
 @note the payload stable from valid until ready --- and unchanged, because
 @note the address is the bridge's.
@@ -1102,7 +1102,7 @@
 
 @mutation the-word-is-corrupted-on-the-way-out
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note Address and data carried through unchanged is half of what this check
 @note holds to. Written as a flip so that mem_wdata stays read.
 @old
@@ -1113,7 +1113,7 @@
 
 @mutation the-word-is-corrupted-on-the-way-back
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note The other direction, which is what the read-back property catches.
 @old
             mem_rdata <= m_axi_rdata;
@@ -1123,7 +1123,7 @@
 
 @mutation reads-and-writes-are-the-wrong-way-round
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note mem_write says which. The coarsest possible bug, and worth having in
 @note the list precisely because a check that missed it would be worthless.
 @old
@@ -1134,7 +1134,7 @@
 
 @mutation the-write-is-answered-before-the-data-is-taken
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note The two channels are independent and either can be taken first, so the
 @note transaction is done when both have been. Waiting only for AW leaves the
 @note word unsent.
@@ -1147,7 +1147,7 @@
 
 @mutation the-answer-is-given-before-the-response-comes-back
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note mem_done is held once the word is done, and a write is not done until B
 @note has come back. Answering at WRESP lets the bridge go while the response
 @note channel is still outstanding.
@@ -1164,9 +1164,9 @@
 
 # ============================================================ the widening ===
 #
-# `rtl/cadr_axi_widen.sv`: the machine's 32-bit word in `S_AXI_HP0`'s 64-bit
+# `rtl/plumbing/cadr_axi_widen.sv`: the machine's 32-bit word in `S_AXI_HP0`'s 64-bit
 # beat.  Six assignments, and until they were pulled out into a module they
-# lived in `rtl/cadr_arty.sv`'s `g_ddr`, where nothing could reach them --- the
+# lived in `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr`, where nothing could reach them --- the
 # top level has an `MMCME2_BASE` and a `PS7` in it and Verilator has neither,
 # so lint and the fitter were the whole of the evidence.  Every mutation below
 # builds, lints, fits and programs; none of them is anything but a machine that
@@ -1185,7 +1185,7 @@
 
 @mutation the-read-lane-is-taken-from-the-wrong-half
 @check axi_widen
-@file rtl/cadr_axi_widen.sv
+@file rtl/plumbing/cadr_axi_widen.sv
 @note The lane select inverted: a read of the low word gives the high one and
 @note the other way about. Both halves stay read, so lint has nothing to say
 @note about it, and on the board it is a machine whose every other main-memory
@@ -1202,7 +1202,7 @@
 
 @mutation the-read-lane-is-selected-by-the-write-address
 @check axi_widen
-@file rtl/cadr_axi_widen.sv
+@file rtl/plumbing/cadr_axi_widen.sv
 @note Each direction has to take its own address: the strobes are placed by
 @note `s_awaddr` and the lane is selected by `s_araddr`, because those are the
 @note addresses the two transactions are at. `cadr_axi_master` holds each
@@ -1222,7 +1222,7 @@
 
 @mutation the-write-reaches-both-halves-of-the-beat
 @check axi_widen
-@file rtl/cadr_axi_widen.sv
+@file rtl/plumbing/cadr_axi_widen.sv
 @note The strobes are the whole of what keeps a write out of the half it is
 @note not addressed to: the word is offered in both halves of the beat, so a
 @note strobe pattern that opens both writes the neighbouring word as well.
@@ -1240,7 +1240,7 @@
 
 @mutation the-half-selecting-bit-leaks-into-the-beat-address
 @check axi_widen
-@file rtl/cadr_axi_widen.sv
+@file rtl/plumbing/cadr_axi_widen.sv
 @note The beat address is the word's with the low three bits cleared. Clearing
 @note two of them leaves bit 2 in it, so the port is asked for a beat at a
 @note four-byte boundary --- which on a 64-bit AXI3 port with `AWSIZE` of eight
@@ -1260,7 +1260,7 @@
 
 @mutation the-word-is-offered-in-only-one-half-of-the-beat
 @check axi_widen
-@file rtl/cadr_axi_widen.sv
+@file rtl/plumbing/cadr_axi_widen.sv
 @note The word goes into both halves of the beat and the strobes choose which
 @note copy lands. Offering it only in the low half makes every write to an odd
 @note word write zero, and only that: the strobes are still right, so the
@@ -1273,7 +1273,7 @@
 
 @mutation the-beat-says-it-is-a-word-wide
 @check axi_widen
-@file rtl/cadr_axi_widen.sv
+@file rtl/plumbing/cadr_axi_widen.sv
 @note `AWSIZE` and `ARSIZE` are the beat's and not the word's: eight bytes,
 @note which is what makes a full-width beat with four strobes the way a
 @note 32-bit word crosses a 64-bit port. Saying four bytes while driving
@@ -1289,7 +1289,7 @@
 
 @mutation the-burst-length-the-port-takes-is-the-wrong-nibble
 @check axi_widen
-@file rtl/cadr_axi_widen.sv
+@file rtl/plumbing/cadr_axi_widen.sv
 @note AXI4 carries eight bits of burst length and AXI3 four, so the narrowing
 @note is a truncation. Rotating the nibble rather than taking another one,
 @note because `s_arlen[7:4]` is already accounted for in the unused fold and
@@ -1406,7 +1406,7 @@
 
 @mutation the-read-response-error-is-ignored
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note The other half of what issue #3 left untested. A read carries its
 @note response on rresp, and a slave that cannot answer says so there.
 @old
@@ -1417,7 +1417,7 @@
 
 @mutation an-error-is-reported-when-there-was-none
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note The opposite failure to ignoring an error, and the one a check that
 @note only ever saw good responses could never distinguish: reporting a
 @note failure on every transaction that worked. Inverted rather than made
@@ -1430,7 +1430,7 @@
 
 @mutation the-error-outlives-its-transaction
 @check axi_master
-@file rtl/cadr_axi_master.sv
+@file rtl/plumbing/cadr_axi_master.sv
 @note mem_error is cleared as each transaction is latched, so it belongs to
 @note the one being answered. Left standing it is sticky: one refused write
 @note and every read after it looks refused too, which is worse than not
@@ -1442,7 +1442,7 @@
 
 @mutation the-cycle-timer-wraps-under-a-long-request
 @check busint_xbus
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note `elapsed` gates -XBUS.RQ through SETUP_T. Ten bits of it wrap at 1,024
 @note ticks, and the request then falls for the sixteen it takes to count
 @note back up --- in the middle of a cycle, on a signal that is a level on
@@ -1496,7 +1496,7 @@
 
 @mutation the-a-memory-pass-around-is-inverted
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note A scratchpad write is one microcycle behind the instruction that
 @note computed it, and the pass-around is what hides that from the microcode:
 @note the comparators at ACTL 3B21/3B27 match the source address against the
@@ -1511,7 +1511,7 @@
 
 @mutation the-a-memory-pass-around-never-fires
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The comparator inverted rather than the mux: the pass-around fires on
 @note every address but the one it is for. Inverted rather than deleted so
 @note that `aadr` stays read.
@@ -1523,7 +1523,7 @@
 
 @mutation the-m-memory-pass-around-ignores-what-the-write-was
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The 93S46 at MCTL 4B18 matches five bits of the pending write address
 @note and `DESTMD` as its sixth. Without that sixth bit an A-only write
 @note passes its word around to an M source whose address happens to match
@@ -1545,7 +1545,7 @@
 
 @mutation the-dispatch-mask-is-a-bit-too-wide
 @check microcycle_sys
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note `IR<7:5>` is a length and the mask is `(1 << len) - 1`. Without the
 @note minus one every dispatch takes one more bit of R than it asked for.
 @note On the band, because the boot PROM writes the dispatch memory
@@ -1560,7 +1560,7 @@
 
 @mutation a-map-dispatch-is-recognised-by-the-wrong-gate
 @check microcycle_sys
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note `-DMAPBENB = NOR(IR8, IR9)` at DSPCTL 3F14, so a dispatch takes a map
 @note bit *instead of* R0 whenever either bit is set. Read as a NAND it takes
 @note the map bit only when both are, and R0 comes back in the rest of the
@@ -1577,7 +1577,7 @@
 
 @mutation the-second-map-level-is-read-at-the-wrong-entry
 @check microcycle_sys
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note Both levels are asynchronous and chained combinationally: a lookup is
 @note a ripple through two RAMs inside one cycle, the first level's five bits
 @note standing above the low five of `MAPI` to address the second. Read one
@@ -1605,7 +1605,7 @@
 
 @mutation the-first-map-level-is-read-at-the-wrong-entry
 @check microcycle_sys
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The other half of the same chain, and the same reasoning about which
 @note signal to mutate: eleven bits of `MAPI` pick the level-1 entry, and
 @note `adr0` addresses that RAM's write too.
@@ -1617,7 +1617,7 @@
 
 @mutation the-scratchpad-latches-follow-in-the-wrong-phase
 @check microcycle_sys
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The third of the three things `rtl.rs`'s header calls easy to model one
 @note step out of place, and the one the other two mutations here do not
 @note reach. The 93425As have no clock pin: what holds a word between phases
@@ -1652,7 +1652,7 @@
 
 @mutation the-stacks-push-pass-around-is-inverted
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The third pass-around, and the one that is not a comparator: while a
 @note push is pending, `SPCWPASS` at CONTRL 3D21 turns the 74S241s at
 @note 4E17/4E18 on and `-SPCPASS` turns the latch off, so the word about to
@@ -1671,7 +1671,7 @@
 
 @mutation the-first-map-level-is-read-a-microcycle-stale
 @check microcycle_sys
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note "THERE IS NO MMU STATE." Both levels are asynchronous and chained
 @note combinationally --- VMEM0 1C14 drives `-VMAP4..0`, which are VMEM1
 @note 1E04's address --- so a lookup is a ripple through two RAMs inside one
@@ -1714,7 +1714,7 @@
 
 @mutation the-map-is-written-with-the-wrong-frame
 @check microcycle_sys
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note MAPWR1D is `WMAPD AND VMA25` at VCTL2 1C15 and the level-2 word is
 @note VMA<23:0> --- the frame the translation returns. Corrupting what is
 @note stored asks the plainest possible question about the map: is anything
@@ -1727,7 +1727,7 @@
 
 @mutation the-read-finish-delay-is-charged-in-full
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note `-RDFINISH` is `-MFINISH` through the TD50 at VCTL1 1D23 and the TD250
 @note at 1D22 --- 140 ns on the tap ordering --- and the fabric charges two
 @note ticks fewer, deliberately: ending a hang costs it two ticks the board
@@ -1751,7 +1751,7 @@
 
 @mutation the-read-finish-delay-is-a-tick-longer
 @check machine
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The boundary is `memack + N + 2`: the countdown expires at tick X,
 @note RD.IN.PROGRESS is visible from X+1, the parked generator samples -HANG
 @note pre-edge at the posedge ending X+1 and raises TPCLK. Wanting `memack +
@@ -1784,7 +1784,7 @@
 
 @mutation a-hang-ends-a-tick-late-on-the-machine
 @check machine
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The composed check's own edge, and it has moved back twice. It
 @note exempted a WHOLE tick for one commit, which is what let a
 @note microcycle-early grant pass as a five-nanosecond length slip; the
@@ -1805,7 +1805,7 @@
 
 @mutation use-md-does-not-mind-a-nopped-cycle
 @check microcycle_sys
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note `USE.MD` is `NOR(-SRCMD, NOPA)` at VCTL1 3F18: this instruction reads
 @note MD, and a nopped cycle reads nothing. Without the gate a nopped
 @note instruction whose source field happens to name MD stalls the machine
@@ -1822,7 +1822,7 @@
 
 @mutation a-write-to-vma-is-taken-as-a-write-to-md
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note `DESTMDR` is the destination decode's bit 22: of the two memory
 @note destinations, VMA is bit 22 low and MD bit 22 high. Ignoring the bit
 @note makes every VMA write an MD write as well.
@@ -1835,7 +1835,7 @@
 @mutation the-wait-term-that-never-fires-on-a-read
 @hole #1
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note One of the three terms of -WAIT at VCTL1 3F16, and one of the two that
 @note never fire on either program: the first term, `DESTMEM AND
 @note MBUSY.SYNC`, carries the whole stall path on everything observed. So
@@ -1859,7 +1859,7 @@
 @mutation the-wait-term-that-never-fires-on-a-fetch
 @hole #1
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The other of the two: `LCINC AND NEEDFETCH AND MBUSY.SYNC`. Suppressed
 @note with a constant rather than deleted, so that every signal stays read
 @note and lint has nothing to say --- a term removed outright would take
@@ -1897,7 +1897,7 @@
 
 @mutation the-write-line-is-driven-by-the-read-cycle
 @check machine
-@file rtl/cadr_machine.sv
+@file rtl/machine/cadr_machine.sv
 @note WRCYC and RDCYC are separate cables and the bus interface takes WRCYC.
 @note Crossed here, every cycle reaches the memory path as the opposite of
 @note what the processor asked for. Both modules are unchanged and correct;
@@ -1913,7 +1913,7 @@
 
 @mutation the-grant-comes-a-microcycle-early
 @check machine
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note MCLK7 has to coincide with the edge the processor's own registers move
 @note on, not follow it. `-MEMRQ` is `MEMSTART AND VMAOK OR MBUSY` and
 @note MEMSTART is registered at the edge *before* the cycle runs, so the
@@ -1952,7 +1952,7 @@
 
 @mutation the-data-cable-back-from-memory-is-rotated
 @check machine
-@file rtl/cadr_machine.sv
+@file rtl/machine/cadr_machine.sv
 @note MEM<31:0> comes back from the bus interface to the processor, and this
 @note is the only check that has both ends of it: `microcycle` is given the
 @note word by its testbench and `memory_path` has no processor to give it to.
@@ -1984,7 +1984,7 @@
 
 @mutation the-mbusy-tap-is-charged-at-the-full-delay
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The other of the two countdowns off the acknowledgement, and the one
 @note that had no mutation against it while `-RDFINISH` did. `MBUSY` clears
 @note on `-MFINISHD`, the 30 ns tap of the TD50 at VCTL1 1D23 --- a number
@@ -1998,7 +1998,7 @@
 
 @mutation a-hang-may-be-taken-while-a-wait-is-up
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note "A WAIT comes first, and this is not a tidiness: parking the generator
 @note stops the master clock, and the master clock is what MBUSY.SYNC follows
 @note MEMRQ on --- so a park taken while -WAIT is up would hold the cpu clock
@@ -2016,7 +2016,7 @@
 
 @mutation a-tap-lands-at-the-wrap
 @check phase_gen
-@file rtl/cadr_phase_gen.sv
+@file rtl/machine/cadr_phase_gen.sv
 @note 5646c91 rewrote every tap from `phase_next == X` to `phase == X - 1`,
 @note and its comment says why that is safe: "`phase_next` is only not
 @note `phase + 1` at the wrap, and no tap lands there."
@@ -2040,7 +2040,7 @@
 
 @mutation the-word-is-corrupted-on-its-way-into-md
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note MD is an OUTPUT of the processor now, not a column the testbench
 @note drives, and it is loaded from the cables at -LOADMD. Nothing in this
 @note list was aimed at it after it crossed over.
@@ -2060,7 +2060,7 @@
 
 @mutation md-does-not-land-when-the-machine-is-hung
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The word is caught at -LOADMD and moved into MD at the next boundary
 @note --- or at a hang, because a hung machine has no boundary coming and
 @note the microcycle waiting on the word would never see it. Dropping the
@@ -2074,7 +2074,7 @@
 
 @mutation the-address-the-decode-sees-is-a-microcycle-old
 @check machine
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note `phys` is the live map output while MEMSTART is up and the registered
 @note copy afterwards, and the live half is not a convenience. The grant is
 @note taken at the edge that *ends* the MEMSTART microcycle, and the decode
@@ -2095,7 +2095,7 @@
 
 @mutation the-held-decode-is-a-microcycle-late
 @check machine
-@file rtl/cadr_memory_path.sv
+@file rtl/machine/cadr_memory_path.sv
 @note The decode is held for timing and the holding is a tick, which is
 @note invisible because the address is constant for the microcycle it belongs
 @note to. A microcycle is not invisible: the grant reads `unibus` at the edge
@@ -2112,7 +2112,7 @@
 
 @mutation the-request-is-held-a-microcycle-rather-than-a-tick
 @check machine
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note `MEMSTART AND VMAOK` is held for a tick so the map stops reaching the
 @note bus interface's own counter, and the argument that a tick is safe is
 @note that the interface reads -MEMRQ once, at the end of the microcycle,
@@ -2134,7 +2134,7 @@
 @mutation the-unibus-acknowledgement-and-the-md-strobe-change-places
 @hole #13
 @check machine
-@file rtl/cadr_busint_xbus.sv
+@file rtl/machine/cadr_busint_xbus.sv
 @note The two Unibus deadlines are held as instants rather than added to a
 @note captured SSYN time, so that the adder is off the path that ends on the
 @note processor's read-finish counters. Holding an instant is only the same
@@ -2177,7 +2177,7 @@
 
 @mutation the-word-at-the-xbus-seam-is-rotated
 @check machine
-@file rtl/cadr_machine.sv
+@file rtl/machine/cadr_machine.sv
 @note `cadr_machine.sv` used to bring out `dev_rq`, `dev_write` and `phys`
 @note and not the word, so a slave hung on this seam could be written to and
 @note never see what --- and the failure would have appeared in the slave.
@@ -2206,7 +2206,7 @@
 
 # ======================================================= the disk controller ===
 #
-# `rtl/cadr_disk_controller.sv`, the four registers at 0o17377774, held to
+# `rtl/machine/cadr_disk_controller.sv`, the four registers at 0o17377774, held to
 # `disk_controller::Controller`'s `status()`, `read` and `write` over MIT's
 # boot PROM.
 #
@@ -2259,7 +2259,7 @@
 
 @mutation disk-not-on-cylinder-at-bit-7
 @check machine
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `<8>` is "not on cylinder", `-ON CYL SYNC` never coming with nothing on
 @note the cable, and `<7>` is the selected drive's read-only switch. Moved
 @note one place down, the no-drive word becomes 0x22A1 where muir's
@@ -2278,7 +2278,7 @@
 
 @mutation disk-lossage-reads-cmd2-the-wrong-way
 @check machine
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `<13>` transfer aborted is `-LOSSAGE`, and with nothing on the cable
 @note the disk lossage stands: `NO SELECT` through the 74LS32 at DCCMD 0C16,
 @note which passes it only with CMD2 low. So the bit is the complement of
@@ -2295,7 +2295,7 @@
 
 @mutation disk-says-it-is-busy
 @check machine
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `<0>` not active: "0 means the controller is busy, 1 means it is ready
 @note to accept a command." `not_active()` is `now >= done_at`, which in
 @note fabric is the busy counter at zero. The boot PROM starts nothing that
@@ -2330,7 +2330,7 @@
 
 @mutation disk-decodes-one-word-low
 @check machine
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The four registers are at 0o17377774-7 and this module decodes them
 @note out of `phys` for itself, `sel` saying only that the cycle is some
 @note device's. One word low and nothing answers 0o17377774 at all: the
@@ -2349,7 +2349,7 @@
 
 @mutation disk-answers-a-tick-late
 @check machine
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note muir's controller answers a device cycle in 0 ns of its own ---
 @note `IDEAL_DEVICE_NS = 0` --- and `cadr_busint_xbus.sv` supplies the 80 ns
 @note of bus setup and the 60 ns deskew of the TD100 at REQLM 0C09 itself.
@@ -2381,7 +2381,7 @@
 
 @mutation rdcyc-gate-dropped
 @check machine
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note "-LOADMD equals MEMACK and RDCYC". The interface asserts -LOADMD on
 @note every acknowledgement, read or write --- `Busint` and
 @note `cadr_busint_xbus.sv` both do --- and it is this gate, on the
@@ -2408,7 +2408,7 @@
 @note device write at 537,854 and on all 5,650 of them.
 @note
 @note Reasoning measured at the commit that added
-@note `rtl/cadr_disk_controller.sv`.
+@note `rtl/machine/cadr_disk_controller.sv`.
 @old
   assign loadmd_edge = !n_loadmd && n_loadmd_q && rdcyc;
 @new
@@ -2445,7 +2445,7 @@
 #
 # AND THE RECORD THAT HELD THAT DECISION IS NO LONGER HERE.  `the-bridge-
 # holds-the-word-past-its-cycle` was aimed at this check and caught by
-# configuration B from `05d28fa`; at `70169fb` `rtl/cadr_disk_controller.sv`
+# configuration B from `05d28fa`; at `70169fb` `rtl/machine/cadr_disk_controller.sv`
 # began answering the boot PROM's 16,951 polls, which were the unanswered
 # cycles it needed, and it survived from there.  It is a `memory_path` record
 # now, where the stimulus carries unanswered cycles by construction rather
@@ -2457,7 +2457,7 @@
 
 @mutation the-read-address-is-rotated
 @check ddr_boot
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note AT THE READ ONLY, and that is the whole of the record.  `mem_addr`
 @note addresses this slave's write as well as its read, so a bijection
 @note applied to both relabels the storage consistently --- written to the
@@ -2480,7 +2480,7 @@
 
 @mutation the-write-never-reaches-the-memory
 @check ddr_boot
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note A write that never leaves the bridge.  `dev_write` stays read, through
 @note `mem_write`, so lint has nothing to say about it.
 @note
@@ -2496,7 +2496,7 @@
 
 @mutation the-write-carries-the-address-mixed-into-the-word
 @check ddr_boot
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note The shadow-memory lesson at the far end of the path: a bridge writing
 @note the address instead of the data.  Mixed in with an XOR rather than
 @note replacing the word, so that `wdata` stays read at every bit --- lint
@@ -2515,7 +2515,7 @@
 
 @mutation the-word-arrives-with-its-halves-swapped
 @check ddr_boot
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note The read data lane crossed.  Every bit of `mem_rdata` stays used, which
 @note is the only way to write it: dropping half would leave the other half
 @note unread and lint would reject the mutant before the check saw it.
@@ -2537,7 +2537,7 @@
 
 # ================================================ the memory port's tally ===
 #
-# `rtl/cadr_mem_count.sv` is the board's only POSITIVE witness that the
+# `rtl/plumbing/cadr_mem_count.sv` is the board's only POSITIVE witness that the
 # machine's memory cycles were answered, and everything below is aimed at it.
 # The boot PROM's whole main-memory traffic is an identity copy of page 0, so
 # page 0 reading back unchanged afterwards says the same thing whether the
@@ -2604,14 +2604,14 @@
 #   fact.
 #
 # AND THE PACKING IS MUTATED TOO, because it moved into this module from
-# `rtl/cadr_arty.sv` for the reason the widening did: a field placed one bit
+# `boards/arty-z7-20/cadr_arty.sv` for the reason the widening did: a field placed one bit
 # over in a file nothing can simulate is a number that still looks like a
 # measurement. The two records that reach it are the marker bits and the two
 # halves changing places.
 
 @mutation the-request-is-counted-as-a-write-answered
 @check mem_count
-@file rtl/cadr_mem_count.sv
+@file rtl/plumbing/cadr_mem_count.sv
 @note THE FALSE WITNESS, which is the whole reason this module counts what it
 @note counts. A tally that takes the fabric's own request as evidence that
 @note the processing system answered reads 256 on a board whose port was
@@ -2634,7 +2634,7 @@
 
 @mutation the-request-is-counted-as-a-read-answered
 @check mem_count
-@file rtl/cadr_mem_count.sv
+@file rtl/plumbing/cadr_mem_count.sv
 @note The read channel's half of the record above. The two counters are
 @note separate code and a check that caught one and not the other would be
 @note reported as green.
@@ -2647,7 +2647,7 @@
 
 @mutation the-write-is-counted-while-the-master-is-still-waiting
 @check mem_count
-@file rtl/cadr_mem_count.sv
+@file rtl/plumbing/cadr_mem_count.sv
 @note The handshake reduced to the master's own half of it. `bready` is a
 @note level --- `cadr_axi_master` holds it up for the whole of WRESP --- so
 @note this counts ticks of waiting rather than answers, and the number goes
@@ -2664,7 +2664,7 @@
 
 @mutation the-read-is-counted-while-the-master-is-still-waiting
 @check mem_count
-@file rtl/cadr_mem_count.sv
+@file rtl/plumbing/cadr_mem_count.sv
 @note The read channel's half of the record above: `rready` is
 @note `state == RDATA`, a level, and counting it counts the wait.
 @old
@@ -2675,7 +2675,7 @@
 
 @mutation the-request-is-counted-every-tick-it-stands
 @check mem_count
-@file rtl/cadr_mem_count.sv
+@file rtl/plumbing/cadr_mem_count.sv
 @note `mem_req` IS A LEVEL, held up until the word is done or the interface
 @note has timed the cycle out, so what makes `asked_*` a count of
 @note transactions is the edge and nothing else. Inverted rather than
@@ -2694,7 +2694,7 @@
 
 @mutation the-marker-bits-say-nothing
 @check mem_count
-@file rtl/cadr_mem_count.sv
+@file rtl/plumbing/cadr_mem_count.sv
 @note THE BIT PATTERN THAT SAYS WHO WROTE THE WORD, inverted. Measured on the
 @note board: with the level shifters on and nothing in the fabric driving the
 @note EMIO pins --- a DDR=0 bitstream --- the processing system reads both
@@ -2716,9 +2716,9 @@
 
 @mutation the-two-halves-of-the-tally-change-places
 @check mem_count
-@file rtl/cadr_mem_count.sv
+@file rtl/plumbing/cadr_mem_count.sv
 @note THE PACKING, and the reason it is in this module rather than in
-@note `rtl/cadr_arty.sv` where it was written: a field placed in the wrong
+@note `boards/arty-z7-20/cadr_arty.sv` where it was written: a field placed in the wrong
 @note register is a number that still looks like a measurement, and the top
 @note level cannot be simulated. With the halves swapped, `DATA_2_RO` carries
 @note what was asked for and `DATA_3_RO` what was answered --- and on a board
@@ -2734,7 +2734,7 @@
 
 @mutation the-two-directions-of-the-tally-are-crossed
 @check mem_count
-@file rtl/cadr_mem_count.sv
+@file rtl/plumbing/cadr_mem_count.sv
 @note THE RECORD THE THIRD CONFIGURATION EXISTS FOR. The boot PROM reads
 @note page 0 and writes it straight back, 256 of each, so a tally with its
 @note two `answered` counters swapped reads 256 and 256 in LIVE and 0 and 0
@@ -2765,7 +2765,7 @@
 
 # ======================================================== the top level ===
 #
-# `rtl/cadr_arty.sv` is the only file here that cannot be simulated ---
+# `boards/arty-z7-20/cadr_arty.sv` is the only file here that cannot be simulated ---
 # Verilator has no `MMCME2_BASE` --- so `build/arty.pass` is lint alone,
 # against the stubs in `tb/cadr_arty_stubs.sv`. What lint can hold is
 # nevertheless the file's whole specification, which its own comment states:
@@ -2791,7 +2791,7 @@
 
 @mutation an-output-is-folded-twice-and-another-not-at-all
 @check arty
-@file rtl/cadr_arty.sv
+@file boards/arty-z7-20/cadr_arty.sv
 @note The fold is forty-nine identifiers written by hand in one expression,
 @note and the failure a list like that has is not a deleted line, it is a
 @note name repeated where the next one belongs. `pc` for `lpc` costs two of
@@ -2810,7 +2810,7 @@
 
 @mutation the-word-at-the-xbus-seam-reaches-no-pin
 @check arty
-@file rtl/cadr_arty.sv
+@file boards/arty-z7-20/cadr_arty.sv
 @note The bug d454d1c found, put back. `dev_wdata` is MEM<31:0> on its way to
 @note an Xbus slave; no slave exists, so nothing in the top level reads it and
 @note it was connected to nothing at all --- the one output of `cadr_machine`
@@ -2830,7 +2830,7 @@
 
 @mutation the-beat-that-came-back-is-the-one-that-went-out
 @check arty
-@file rtl/cadr_arty.sv
+@file boards/arty-z7-20/cadr_arty.sv
 @note The `DDR` arm is a branch only one build reaches. Until this record the
 @note runner linted the default board alone, where `g_ddr` is not elaborated,
 @note and nothing in this list was aimed at anything inside it --- so the
@@ -2862,7 +2862,7 @@
 
 # ================================================================ the witness ===
 #
-# `rtl/cadr_prove.sv` is what goes on the board ahead of the machine, and it is
+# `rtl/plumbing/cadr_prove.sv` is what goes on the board ahead of the machine, and it is
 # the first thing here whose OTHER half is not fabric at all: a debugger
 # reading and writing DDR from outside the design.  That is the whole reason
 # the two steps exist --- CLAUDE.md's shadow-memory lesson says a model taken
@@ -2873,7 +2873,7 @@
 #
 # WHAT THE CHECK IS.  `tb/cadr_prove_tb.cpp` runs the harness --- the state
 # machine with `cadr_axi_master` and `cadr_axi_widen` under it, wired as
-# `rtl/cadr_arty.sv`'s `g_ddr` wires them --- against a 64-bit AXI3 slave whose
+# `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` wires them --- against a 64-bit AXI3 slave whose
 # model memory is filled with the COMPLEMENT of the word before every
 # transaction.  The beat address, the strobes and the strobed half of the data
 # are each compared against what the stimulus asked for and never against what
@@ -2887,7 +2887,7 @@
 # neighbouring lane the moment the payload is taken.
 #
 # WHAT NOTHING HERE CAN CATCH, and it is worth saying rather than filing.
-# `rtl/cadr_arty.sv` chooses the address and the word, and a top level that
+# `boards/arty-z7-20/cadr_arty.sv` chooses the address and the word, and a top level that
 # crossed `.addr(PROVE_ADDR)` with `.word(PROVE_WORD)` would leave every signal
 # read, lint clean, and this check untouched --- the check cannot see the top
 # level, and the top level cannot be simulated.  What stands against it is that
@@ -2897,11 +2897,11 @@
 
 @mutation the-request-goes-up-before-the-address-is-good
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note The bus specification makes the master responsible for asserting good
 @note address, write and data lines 80 ns before the request ---
 @note `cadr_busint_xbus.sv`'s SETUP_T, sixteen ticks --- and
-@note `rtl/cadr_ddr.xdc` relaxes the adapter's address and data registers to
+@note `rtl/plumbing/xilinx7/cadr_ddr.xdc` relaxes the adapter's address and data registers to
 @note sixteen ticks ON THE STRENGTH OF IT. So a witness that raises `mem_req`
 @note early does not merely break a rule: it turns that constraint into a
 @note claim about a board where it is false, and the fitter would time the
@@ -2925,11 +2925,11 @@
 
 @mutation the-write-back-does-not-wait-the-eighty-nanoseconds
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note The second half of the record above. The write-back is a transaction of
 @note its own and owes the bus the same sixteen ticks the first one did; the
 @note easy mistake is to treat it as a continuation and send it straight out,
-@note which is what this does. `rtl/cadr_ddr.xdc` would then be relaxing the
+@note which is what this does. `rtl/plumbing/xilinx7/cadr_ddr.xdc` would then be relaxing the
 @note adapter's address registers for a payload that had not settled --- and
 @note on a `PROVE=2` board the write-back is the ONLY transaction whose word
 @note is not a constant the fitter can propagate, so it is the one that
@@ -2946,7 +2946,7 @@
 
 @mutation a-refused-transaction-reads-as-a-good-one
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note SLVERR or DECERR is a cycle that reached the port and was REFUSED,
 @note which is a different fault from a wrong word and must not light the
 @note same lamp. Inverting the term rather than deleting it, because deleting
@@ -2967,10 +2967,10 @@
 
 @mutation the-verdict-is-taken-from-the-word-the-inputs-hold-now
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note `want` is the word this sequence is about, held from the tick it
 @note started. Comparing against the input instead is invisible on the board
-@note --- `rtl/cadr_arty.sv` ties `word` to a constant, so the two are the
+@note --- `boards/arty-z7-20/cadr_arty.sv` ties `word` to a constant, so the two are the
 @note same signal there --- and it is exactly the class of bug that only a
 @note check which moves its inputs can find. The testbench scribbles the
 @note complement over `word` the moment the payload is taken, for this.
@@ -2995,7 +2995,7 @@
 
 @mutation the-witness-does-not-stop
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note Both steps' whole requirement is ONE sequence and then silence: the port
 @note comes live, the transactions go out, and somebody reads the result later
 @note with nobody at the board. `go` is tied high there, so a HELD state that
@@ -3019,7 +3019,7 @@
 
 @mutation the-word-lands-one-lane-over
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note Bit 2 of the address is what `cadr_axi_widen.sv` places the write
 @note strobes by and selects the read lane by, so flipping it moves the word
 @note into the other half of the same 64-bit beat: the word is destroyed at
@@ -3039,7 +3039,7 @@
 
 @mutation the-write-back-carries-the-constant-and-not-the-word-that-came-back
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note THE POINT OF STEP THREE IS THAT THE FABRIC DOES NOT DO THE COMPARING.
 @note A witness that writes out its own `want` instead of what the memory
 @note returned reports the answer it was built with, whatever the port said
@@ -3060,11 +3060,11 @@
 
 @mutation the-write-back-lands-in-the-beat-it-just-read
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note The second address must not share a 64-bit beat with the first, or the
 @note write-back overwrites the thing it read --- and then a second run of the
 @note same case reads what the first run wrote, which is a witness marking its
-@note own homework by a longer route. `rtl/cadr_arty.sv` puts them seven beats
+@note own homework by a longer route. `boards/arty-z7-20/cadr_arty.sv` puts them seven beats
 @note apart and says so; this puts them in the same one.
 @note
 @note Written as an XOR and not as the splice it is. The plain
@@ -3085,7 +3085,7 @@
 
 @mutation a-write-board-owes-one-transaction-and-a-read-board-two
 @check prove
-@file rtl/cadr_prove.sv
+@file rtl/plumbing/cadr_prove.sv
 @note `echo_due` is the whole of the difference between the two steps: a read
 @note owes a write-back and a write does not. Setting it unconditionally gives
 @note a `PROVE=1` board a second transaction it was never meant to have ---
@@ -3106,7 +3106,7 @@
 
 # --------------------------------------------------- the probe, three of them
 #
-# `rtl/cadr_probe.sv` is the instrument the board will be read through, and
+# `rtl/plumbing/xilinx7/cadr_probe.sv` is the instrument the board will be read through, and
 # it is the one piece of fabric here whose other verification --- a run on
 # silicon --- has not happened. So the check on it has to bite, and these say
 # whether it does. The check is `tb/cadr_probe_tb.cpp`: the machine runs from
@@ -3126,7 +3126,7 @@
 
 @mutation the-sample-carries-the-next-microcycles-number
 @check probe
-@file rtl/cadr_probe.sv
+@file rtl/plumbing/xilinx7/cadr_probe.sv
 @note `cycle` is the trace's first column and the only direct proof that the
 @note window begins at microcycle zero: the comparison tool checks it counts
 @note 0, 1, 2 with no gap and no repeat, and reports a capture without one as
@@ -3145,7 +3145,7 @@
 
 @mutation the-readout-is-rotated-by-a-bit
 @check probe
-@file rtl/cadr_probe.sv
+@file rtl/plumbing/xilinx7/cadr_probe.sv
 @note The half of this core that no simulation of the machine reaches and no
 @note board has yet run: the JTAG shift register. Loading it a bit out of
 @note place moves every field of every sample by one, which is not obviously
@@ -3171,7 +3171,7 @@
 
 @mutation the-read-pointer-moves-on-every-bit
 @check probe
-@file rtl/cadr_probe.sv
+@file rtl/plumbing/xilinx7/cadr_probe.sv
 @note The pointer advances on the CAPTURE edge, once a scan, deliberately:
 @note that way a scan cut short or shifted with the wrong length still moves
 @note it exactly once and the reader stays in step. Advancing it on each
@@ -3189,7 +3189,7 @@
 
 # -------------------------------------- the probe's reader, four of them
 #
-# `vivado/probe.tcl` is the other half of the probe: the thing that reads the
+# `boards/arty-z7-20/vivado/probe.tcl` is the other half of the probe: the thing that reads the
 # capture off the board over JTAG and writes what `tools/probe_check.py`
 # diffs against muir. Everything above this line is fabric; these four are
 # not, and they are here because a script nobody can run is the sharpest
@@ -3214,10 +3214,10 @@
 # WHAT THE CHECK CANNOT SEE is in `tb/cadr_jtag_chain.tcl`'s header and is
 # the thing to read before trusting a green run: it is a shift chain, not a
 # TAP state machine and not silicon, so a DRCK edge, `BSCANE2`'s real
-# behaviour and every property of `rtl/cadr_probe.sv` are outside it. Those
+# behaviour and every property of `rtl/plumbing/xilinx7/cadr_probe.sv` are outside it. Those
 # belong to the `probe` mutations above.
 #
-# THE REASONING BELOW WAS TRUE AT ace4131, which is where `vivado/probe.tcl`
+# THE REASONING BELOW WAS TRUE AT ace4131, which is where `boards/arty-z7-20/vivado/probe.tcl`
 # reached its present shape and where the chain was measured on silicon: both
 # IDCODEs exact, the part at the TDO end, IR total 10, first bit out least
 # significant, DONE high. CLAUDE.md's rule is that `@old`/`@new` rots loudly
@@ -3233,7 +3233,7 @@
 
 @mutation the-idcode-scan-drives-tdi-with-zeros
 @check probe_jtag
-@file vivado/probe.tcl
+@file boards/arty-z7-20/vivado/probe.tcl
 @note THE BUG THAT SHIPPED, restored exactly. What terminates the chain is
 @note TDI coming back out behind the last device, so the scan is
 @note self-terminating only if TDI is driven with something that is neither a
@@ -3258,7 +3258,7 @@ set idraw [scan_dr_hw_jtag $scan_len -tdi [string repeat 0 [expr {$scan_len / 4}
 
 @mutation the-chain-is-read-from-the-wrong-end
 @check probe_jtag
-@file vivado/probe.tcl
+@file boards/arty-z7-20/vivado/probe.tcl
 @note `chain` is ordered from the TDO end, so the devices between ours and
 @note TDO put their bypass bits IN FRONT of the sample in a DR scan and those
 @note behind it put theirs after. Swap the two counts and the returned scan
@@ -3286,7 +3286,7 @@ set before $mine
 
 @mutation the-instruction-register-is-measured-and-ignored
 @check probe_jtag
-@file vivado/probe.tcl
+@file boards/arty-z7-20/vivado/probe.tcl
 @note THE SWEEP'S SIN, WRITTEN AS ONE LINE. ace4131 replaced a search over IR
 @note paddings with a single scan that MEASURES the chain's instruction
 @note register length, the device order and Vivado's bit order at once, before
@@ -3317,7 +3317,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-done-bit-is-read-from-a-fixed-offset
 @check probe_jtag
-@file vivado/probe.tcl
+@file boards/arty-z7-20/vivado/probe.tcl
 @note DONE comes back for free on the way past --- bit 5 of the PL TAP's own
 @note instruction-register capture, "1 when DONE is released" per its BSDL ---
 @note and it is the only reading of DONE anywhere that comes from the TAP
@@ -3344,7 +3344,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 # ================================ the disk controller, with a drive on it ===
 #
-# `rtl/cadr_disk_controller.sv` again, and the other half of it.  The section
+# `rtl/machine/cadr_disk_controller.sv` again, and the other half of it.  The section
 # above is what MIT's boot PROM can see --- one constant and a decode --- and
 # these are what only a drive can: the eight unit slots, the spindle's block
 # counter, the seek and its attention, the hang timer, and the two resets.
@@ -3387,7 +3387,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-selects-the-unit-from-the-wrong-bits
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "Many bits in these registers refer to the 'selected unit', which is
 @note that disk unit whose number is currently in bits <30:28> of the
 @note disk-address register."  One bit down and the drive on unit 0 is found
@@ -3407,7 +3407,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-block-counter-off-by-a-region
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "The count steps to `k` as region `k`'s pulse ends and holds the region
 @note before it through the pulse."  Stepping at the region's START instead
 @note leaves the counter one region ahead for the width of every pulse ---
@@ -3426,7 +3426,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-timeout-a-tick-short
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `TIMEOUT_NS` is 2.56 s: the 74LS124 at DCTMOT 0B04 section 1 at 20 ms,
 @note divided by 128 by the 74393 at 0C03.  That is 512,000,000 ticks of this
 @note fabric's clock, and five nanoseconds off it is one tick.
@@ -3449,7 +3449,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-init-clears-the-disk-address
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `-XINIT` clears the command register --- the 74LS175 at DCCMD 0C21 and
 @note the 74LS273 at 0C10, pin 1 of each --- and stops the channel.  "The
 @note disk address counters (the 74LS193s at DCDA 0A17-0A21), the command
@@ -3475,7 +3475,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-attention-moved-to-the-multiple-unit-bit
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `<2>` is the SELECTED unit's attention and `<4>` is "multiple units
 @note selected", which `Controller` never sets and nothing in this fabric
 @note can.  Moving the bit therefore loses the attention and lights a bit
@@ -3494,7 +3494,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-reset-err-reaches-the-drive
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `-RESET ERR` is `-LOAD CMD` OR `-XINIT` (74LS08 at DCCMD 0D14) and it
 @note clears the EIGHT TRANSFER ERROR FLOPS.  The drive's own flags are not
 @note among them: a fault goes away on a fault clear and a seek error only on
@@ -3532,7 +3532,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-reset-held-and-not-paid-for
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The controller takes the board's reset into a register of its own, for
 @note the fitter --- one net into two and a half thousand reset pins could not
 @note be placed within a tick of them all --- and so comes out of reset one
@@ -3558,7 +3558,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-seek-settle-a-tick-short
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `seek_ns(n)` is `SEEK_SETTLE_NS + n * SEEK_NS_PER_CYLINDER`, and the
 @note settle is Century Data's own figure.  Five nanoseconds off it is one
 @note tick of this clock out of 1,212,055.
@@ -3579,7 +3579,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-index-pulse-a-tick-narrow
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The index pulse is 4,000 ns and a sector pulse 1,240, and the block
 @note counter "holds the region before through the pulse".  So the pulse's
 @note WIDTH is where the counter steps, and one tick off it moves that edge
@@ -3604,11 +3604,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # codes and sets no error bit, so `machine` and `probe` see the register face
 # and nothing behind it; every record below is aimed at `disk` for that reason,
 # except the arbiter's, which is aimed at `memory_path` because the arbiter is
-# in `rtl/cadr_memory_path.sv` and has no trace at all.
+# in `rtl/machine/cadr_memory_path.sv` and has no trace at all.
 
 @mutation disk-header-compare-without-its-mask
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The header compare is masked to `0x0fff_ffff`, and the mask is not a
 @note convenience: on DCHDCM the 25LS2521 at C22 has `RSH<7:0>` on its A
 @note inputs and `HDCM<7:0>` on its B, `HDCM` comes off four 74LS153 muxes
@@ -3635,7 +3635,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-data-checkword-misses-the-last-word
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The data checkword is the code run over all 256 words of the block and
 @note then over the checkword itself, and a field that checks leaves the
 @note register at zero.  Over 255 words it does not, so every block a Read
@@ -3661,7 +3661,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-command-list-carries-out-of-sixteen-bits
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "Only bits <15:0> of the CLP can count; if you attempt to carry into the
 @note high 8 bits you will wrap around."  `DCCLP` is four 74LS569s at 0D21,
 @note 0D22, 0D23 and 0D25 counting `XBAO<15:0>` with the last carry going
@@ -3682,7 +3682,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-block-store-read-one-word-along
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note **MUTATED AT THE READ AND NOT AT THE ADDRESS**, which is the lesson the
 @note map's two records were rewritten for: an address expression shared by a
 @note memory's read and its write is a bijection on the storage and mutating
@@ -3708,7 +3708,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note its `BLK write` rows for a Write All, and the byte-for-byte comparison
 @note of a serialised track against the store written back over the pack
 @note side.  (That port was the testbench's seam when this was written and is
-@note `rtl/cadr_disk_pack.sv`'s now; the argument is the same.)
+@note `rtl/plumbing/cadr_disk_pack.sv`'s now; the argument is the same.)
 @old
   assign chb_a  = 13'(ch_slot) * 13'(BLOCK_WORDS)
                 + 13'((ch_read || ch_track) ? ch_ra[7:0] : ch_i[7:0]);
@@ -3720,7 +3720,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-the-walk-stops-one-ccw-early
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "<0> More flag" is what says the command list goes on, and `DCCCW`
 @note clocks `XBI0` into the LAST CCW flag at every fetch.  Honoured only on
 @note the first fetch, a three-page transfer moves one page and stops.
@@ -3739,7 +3739,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation arbiter-gives-the-bus-back-every-second-word
 @check memory_path
-@file rtl/cadr_memory_path.sv
+@file rtl/machine/cadr_memory_path.sv
 @note **THE PROCESSOR'S NXM TIMER IS 4,250 ns AND A BLOCK IS 256 WORDS.**  The
 @note arbiter yields after every word and the processor wins, because a
 @note channel that kept the bus for a block would turn a legitimate memory
@@ -3764,7 +3764,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-block-store-read-from-the-wrong-slot
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The other half of the store's addressing, and a different kind of thing
 @note from the record above: that one mis-addresses the DATA WITHIN a slot,
 @note and this takes the wrong ANSWER FROM THE TAG.  The store is a window on
@@ -3795,7 +3795,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-parser-takes-the-first-zero-it-sees
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `after_sync` wants "a zero after at least sixty-four ones, which is how
 @note the controller finds one too --- its `PREAMBLE DETECT` fires on the
 @note first zero after ones, and the preamble is never shorter than eight
@@ -3830,7 +3830,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-serialiser-swaps-a-byte-lane
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "Everything goes low-order bit first and low-order byte first", so byte
 @note `k` of a word is bits `8k` to `8k+7` and the sector's data field is the
 @note block's words laid down in that order.  The data and its checkword
@@ -3852,7 +3852,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-track-leaves-out-the-header-checkword
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "HEADER ECC - a 32-bit checkword", the fifth of the ten fields
 @note `sys/doc/disk.text` lists and four bytes wide.  Leaving it out does not
 @note shorten the sector --- 1,164 bytes is what the drive's jumpers are set
@@ -3873,7 +3873,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-track-starts-a-byte-late
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The stream begins at byte zero of the sector holding the block the disk
 @note address names --- `track_bytes` builds it from `sector_image_laid`,
 @note whose first byte is the first of the preamble.
@@ -3897,7 +3897,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-write-all-lays-the-track-one-sector-along
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "The sector goes where the heads are, and its header goes in it.  That
 @note is what a formatter does: the drive writes the track under the heads,
 @note and the addresses in the headers are the program's to choose."  So
@@ -3927,7 +3927,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 # --- the pack side: the block's address, and the master on S_AXI_HP2 ---------
 #
-# `rtl/cadr_disk_pack.sv` has no muir reference --- `Unit::read_block` is a
+# `rtl/plumbing/cadr_disk_pack.sv` has no muir reference --- `Unit::read_block` is a
 # memcpy --- so it is held to the property in `tb/cadr_disk_pack_tb.cpp`, which
 # is the `axi_master` shape: the testbench is the stimulus and a counting AXI3
 # slave the observer, and every fetched block is read back THROUGH THE
@@ -3943,7 +3943,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-stores-a-read-beat-two-words-along
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note Word i of the record is at the block's address + 4i, and a 64-bit beat
 @note at + 8k carries words 2k and 2k+1.  Two words along, the block lands in
 @note the store shifted, its last beat overwriting the header and its
@@ -3968,7 +3968,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-high-half-of-a-read-beat-is-the-low-half
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note The beat's high half is word 2k+1 and goes into the store the tick
 @note after the low half, out of the register the beat was taken into.  With
 @note the low half mixed into it every odd word of
@@ -3992,7 +3992,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-high-half-of-a-read-beat-is-the-low-half-on-the-trace
 @check disk
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note The same bug, seen by the trace check: the pack side fills the store
 @note from the trace's `BLK` rows over AXI now, so a lane wrong on the way in
 @note is a block wrong in the store.  Caught before the first row, by the
@@ -4010,7 +4010,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-fetches-the-three-words-from-inside-the-block
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note The header, its checkword and the data's are at +1024, after the 256
 @note data words.  Fetched from +896 instead they are data words 224 to 226,
 @note so every block's header names the wrong block --- and the CADR's Read
@@ -4026,7 +4026,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-writes-back-one-burst-over
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note A write-back's bursts go where the record's are: the block's address,
 @note plus 128 a burst, plus 1,024 for the last.  One burst over, every word
 @note lands 32 words on and the record's first 32 are never written --- and
@@ -4042,7 +4042,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-writes-back-one-burst-over-on-the-trace
 @check disk
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note The same bug against the trace check, whose `BLK write` rows are
 @note compared by having the pack side write the slot back to the address
 @note the row names and reading the record there.  Caught before the first
@@ -4057,7 +4057,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-writes-the-pad-and-not-the-checkword
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note The record is 259 words and the last beat carries the data checkword
 @note in its low half and, in its high half, the word after the record ---
 @note which is Linux's, and the strobes are what keep it so.  Strobing the
@@ -4073,7 +4073,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-offers-the-write-address-twice
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note AWVALID held up into the first data beat's state offers the burst's
 @note address a second time after it was taken, and a slave that only
 @note recorded the address could not tell --- CLAUDE.md's
@@ -4088,7 +4088,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-honours-no-interlock
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note `ch_active` is the controller's BUSY for a transfer: while it is up the
 @note channel owns the slot it is walking, and a fetch into it or a
 @note write-back out of it would move words under the walk.  Refusing only
@@ -4106,7 +4106,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-refuses-every-slot-during-a-walk
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note The interlock is per slot: a move on the slot the walk is on is
 @note refused and a move on any other is taken, because a cache that can
 @note only be filled while the CADR is idle is not a cache and a prefetch
@@ -4125,7 +4125,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-refuses-during-a-wait
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note While the walk waits for a block it is on no slot, whatever `ch_slot`
 @note still names --- the slot of the block it last moved --- and a move on
 @note that slot must be taken: a Linux that chose it for the block the walk
@@ -4142,7 +4142,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-walks-onto-a-slot-a-move-is-on
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The interlock is mutual and per slot.  The pack side refuses a move on
 @note the slot the walk is on and reads that slot through a register, a tick
 @note behind; so a move that began on a slot in the tick before the walk
@@ -4165,7 +4165,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-ignores-a-refused-read-burst
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note SLVERR or DECERR on a read beat says the port refused the burst, and
 @note the error bit is how Linux finds out.  Gated on a condition that is
 @note false inside the branch it sits in, it is never set: caught at "the
@@ -4180,7 +4180,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-takes-the-drive-from-the-read-only-byte
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note DRIVE's low byte is which units have a pack and its second byte is the
 @note read-only switch of each.  Presence taken from the second byte leaves
 @note the CADR looking at an empty cable after Linux has mounted a pack:
@@ -4194,7 +4194,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-answers-the-whole-bus-as-its-registers
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note The sixteen registers sit in a 64-byte window, and an access outside
 @note it is answered SLVERR so that a wrong pointer in Linux is a bus error
 @note and not a silent read of zero.  Widened to the whole lower half of the
@@ -4208,7 +4208,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-take-away-leaves-the-slot-valid
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The one thing the pack side needed of the controller: a tag written
 @note with bit 31 set takes the slot's block away, so that a fetch can
 @note invalidate the slot it is about to fill and Linux can take a pack away.
@@ -4226,7 +4226,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-disks-interlock-reaches-no-pin
 @check arty
-@file rtl/cadr_arty.sv
+@file boards/arty-z7-20/cadr_arty.sv
 @note `ch_active` left the machine with the pack side, and on the default
 @note board --- no `DDR`, no pack side --- the `witness` fold is the only
 @note thing that reads it.  Left out of the fold it is an output of
@@ -4241,7 +4241,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-request-path-reaches-no-pin
 @check arty
-@file rtl/cadr_arty.sv
+@file boards/arty-z7-20/cadr_arty.sv
 @note The request path's seven outputs left the machine with the pack side's
 @note slice, and on the default board the `witness` fold is the only thing
 @note that reads them.  The two pulses left out of the fold are outputs of
@@ -4253,7 +4253,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note went UNAPPLIED, which is the `@old` rotting loudly rather than quietly
 @note --- the good case, and the reason a slice that touches a file re-runs
 @note every record aimed at it and not only its own.  Caught by `--only arty`
-@note after `rtl/cadr_console_bus.sv` landed; the three console outputs are
+@note after `rtl/machine/cadr_console_bus.sv` landed; the three console outputs are
 @note in the anchor now for the same reason `ch_hit` was.
 @note
 @note **AND IT MOVED AGAIN**, when `sintr_o` joined the fold with the
@@ -4283,7 +4283,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-interrupt-reaches-no-pin
 @check arty
-@file rtl/cadr_arty.sv
+@file boards/arty-z7-20/cadr_arty.sv
 @note `IRQ_F2P` is the one pin the pack side's interrupt has, and the PS7's
 @note twenty lines are an input the wrapper names because an unconnected
 @note PS7 input produces no warning of any kind.  Tied low here, the pack
@@ -4297,11 +4297,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-proving-board-answers-nothing-on-gp0
 @check arty
-@file rtl/cadr_arty.sv
+@file boards/arty-z7-20/cadr_arty.sv
 @note A read nothing answers on `M_AXI_GP0` hangs both Arm cores, measured
 @note on the board with the pack feeder reading the register face on a
 @note bitstream without the pack side.  The two proving boards bring GP0 out
-@note without the pack side and answer it with `rtl/cadr_gp0_default.sv`;
+@note without the pack side and answer it with `rtl/plumbing/cadr_gp0_default.sv`;
 @note that module's own check holds that it answers, and what lint can hold
 @note is that it is wired: its read-address valid left unconnected is a
 @note PINMISSING on the `PROVE=1` pass, the first that elaborates it.
@@ -4329,7 +4329,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-misses-instead-of-waiting
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The wait: a walk whose block the store lacks stands in `C_LOOK` until
 @note a tag says the block has arrived.  Taking the miss on the first tick
 @note instead --- the behaviour the store had before the request path --- is
@@ -4344,7 +4344,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-asks-for-the-wrong-block
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note REQ is the disk address the walk lacks, in the tag's own layout, and
 @note Linux fetches exactly that.  One block along, Linux is sent for the
 @note wrong block, and the tag that arrives never matches the request, so it
@@ -4359,7 +4359,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-request-never-clears
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note REQ falls when a slot's tag becomes the block asked for, so that Linux
 @note reading it after a fill sees nothing owed.  Cleared only on a denial,
 @note a served request stands for ever and the next interrupt is a lie.
@@ -4373,7 +4373,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-not-active-while-waiting
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "0 means the controller is busy, 1 means it is ready to accept a
 @note command", and a walk standing for its block is busy: a driver polling
 @note `<0>` during the wait must see it down, or it starts the next transfer
@@ -4388,7 +4388,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-resumes-late-from-a-wait
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The stall is bounded: after the tag lands the walk resumes within the
 @note lookup's three ticks and ends `4 + lat` ticks sooner than a fresh walk
 @note would, having made its command-list fetch before the wait; the check
@@ -4420,7 +4420,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-writes-the-store-while-waiting
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note Nothing moves while the walk waits.  A walk that writes the store
 @note during its wait --- here word zero of the slot it last stood on, with
 @note whatever `blk_w` holds --- leaves a block on the pack side wrong for
@@ -4437,7 +4437,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-prefetch-not-posted
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The next block is asked for as the current one begins to move, so
 @note that Linux has the current block's 256 bus cycles to answer.  With the
 @note prefetch state never entered the next block is asked for only when
@@ -4451,7 +4451,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-prefetch-asks-for-a-block-it-has
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The trace's half of the request path: every block a transfer needs is
 @note fetched before the START that needs it, so no request is ever posted
 @note and every row stays where it was.  A prefetch that asks for the next
@@ -4467,7 +4467,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-forgets-the-unit-in-the-tag
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "Many bits in these registers refer to the 'selected unit'", and the
 @note unit is in the tag so that one cylinder, head and block on two drives
 @note are two blocks.  Matching the other twenty-eight bits alone, either
@@ -4482,7 +4482,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-deny-not-honoured
 @check disk_pack
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note A denial ends the wait the other way: Linux cannot serve the block, and
 @note the walk takes the miss it used to take at once, so that a CADR
 @note asking for a block that is not on the pack does not wait for ever.
@@ -4498,7 +4498,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-dirty-not-set-by-a-write
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note DIRTY is what tells Linux a slot's block is on the pack only once it is
 @note written back.  Never set, a Write's page is lost the moment Linux
 @note takes the slot for another block.  Caught at "DIRTY after the Write
@@ -4513,7 +4513,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-dirty-not-cleared-by-a-move
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note A fetch into a slot, a write-back of it or a take-away leaves nothing
 @note in it that Linux does not hold, so the bit clears at the go.  Left
 @note standing, Linux writes back for ever.  Caught at "DIRTY after the
@@ -4526,7 +4526,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-ref-not-set-by-a-hit
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note REF is what a replacement rule needs and cannot see from outside: the
 @note walk taking a slot for a block makes no bus cycle Linux can watch.
 @note Never set, second chance evicts the block the CADR reads every time.
@@ -4539,7 +4539,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-request-event-not-raised
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note IRQ's bit 0 is the posting of a request, and it is what wakes a program
 @note that does not poll.  Raised only on a denial --- never --- caught at
 @note "IRQ's request bit during the wait".
@@ -4551,7 +4551,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-interrupt-ignores-the-mask
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note `IRQ_F2P` is the OR of the events under IRQEN, which comes up zero so
 @note that a program which has not asked for the interrupt does not get
 @note one.  Ored with the mask instead of masked by it, the line is up with
@@ -4564,7 +4564,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation pack-answers-only-its-window
 @check disk_pack
-@file rtl/cadr_disk_pack.sv
+@file rtl/plumbing/cadr_disk_pack.sv
 @note Every address on GP0 is answered, in the window or out of it: a read
 @note nothing answers hangs both Arm cores, measured on the board.  A slave
 @note that takes a read address only inside its sixteen words leaves a read
@@ -4578,13 +4578,13 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @end
 
 # ----------------------------------------------------------------------------
-# THE DEFAULT SLAVE ON GP0, `rtl/cadr_gp0_default.sv`.  One property: every
+# THE DEFAULT SLAVE ON GP0, `rtl/plumbing/cadr_gp0_default.sv`.  One property: every
 # transaction completes, with the response the module says it gives.  Five
 # ways not to.
 
 @mutation gp0-default-takes-no-read-address
 @check gp0_default
-@file rtl/cadr_gp0_default.sv
+@file rtl/plumbing/cadr_gp0_default.sv
 @note ARREADY only while a read is already in flight is ARREADY never, which
 @note is the board's frozen cores.  Caught at "a transaction did not
 @note complete: the read's last beat".
@@ -4596,7 +4596,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation gp0-default-never-answers-a-write
 @check gp0_default
-@file rtl/cadr_gp0_default.sv
+@file rtl/plumbing/cadr_gp0_default.sv
 @note A write's response comes after its last beat.  Waiting for a beat that
 @note is NOT the last, a one-beat write --- every register write Linux makes
 @note --- is never answered.  Caught at "a transaction did not complete: the
@@ -4609,7 +4609,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation gp0-default-rlast-a-beat-early
 @check gp0_default
-@file rtl/cadr_gp0_default.sv
+@file rtl/plumbing/cadr_gp0_default.sv
 @note RLAST on the last beat and on no other; a master that sees it early
 @note stops taking beats and the slave stands with one owed.  Caught at
 @note "RLAST on a beat that is not the last".
@@ -4621,7 +4621,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation gp0-default-answers-with-the-reads-id
 @check gp0_default
-@file rtl/cadr_gp0_default.sv
+@file rtl/plumbing/cadr_gp0_default.sv
 @note The write response carries the write address's ID; the interconnect
 @note matches responses to requests by it, and a write and a read in flight
 @note together have different ones.  The read's ID mixed in rather than
@@ -4635,7 +4635,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation gp0-default-answers-the-wrong-word
 @check gp0_default
-@file rtl/cadr_gp0_default.sv
+@file rtl/plumbing/cadr_gp0_default.sv
 @note The word is the one thing a program can read to learn it is not on the
 @note pack side's face: "NONE" and not "PACK".  Caught at "RDATA".
 @old
@@ -4646,7 +4646,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 # ---------------------------------------------------------------- the display
 #
-# `rtl/cadr_tv.sv` against `build/tv.golden`, through `cadr_memory_path`.  The
+# `rtl/machine/cadr_tv.sv` against `build/tv.golden`, through `cadr_memory_path`.  The
 # five the slice was asked for --- the frame a tick off, the enable ignored,
 # the window's base a word off, a bit lane of the bitmap swapped, the
 # acknowledgement a tick late --- and the rest of the register face, the
@@ -4655,7 +4655,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-frame-a-tick-long
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note `simpletv::FRAME_NS` is 15,456,000 ns, 3,091,200 ticks: 966 lines of
 @note 16.000 us, measured on the netlist board.  One tick more and the second
 @note frame's preset --- the first the trace watches with the enable up ---
@@ -4670,7 +4670,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-frame-a-tick-short
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note The other side of the same tick.
 @old
   localparam logic [21:0] FRAME_T = 22'd3_091_200;
@@ -4680,7 +4680,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-interrupt-enable-ignored
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note `SEND INTR` is the flag ANDed with `MODE INTR ENB` at the 74S08 at
 @note NXBCTL 0D10.  Without the AND the flag alone is on -XBUS.INTR, and the
 @note trace's first frame --- the preset with the enable OFF, which the
@@ -4694,7 +4694,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-window-base-a-word-off
 @check tv
-@file rtl/cadr_ddr_map.sv
+@file rtl/plumbing/cadr_ddr_map.sv
 @note The frame buffer is DDR at `DISPLAY_BASE`, and the debugger, the display
 @note output block and the RFB server will all read it there.  A base one
 @note word over puts every bit of the screen a word along --- consistently,
@@ -4710,7 +4710,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-bitmap-lane-swapped
 @check tv
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note One bit a pixel, so two bit lanes crossed on the way into DDR is two
 @note columns of the screen crossed in every word.  Crossed only for the
 @note window, so main memory's own records are untouched, and caught at the
@@ -4723,7 +4723,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-acknowledgement-a-tick-late
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note muir's TV takes 0 ns of its own, so a write acknowledges at -XBUS.RQ
 @note and a read at the deskew tap 60 ns on; `cadr_busint_xbus.sv` supplies
 @note both.  A slave that answered the tick after the request puts -MEMACK
@@ -4741,7 +4741,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-flag-not-preset-while-the-interrupt-is-enabled
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note `-TVMA CLR` presets the flag every frame whatever the mode register
 @note holds; a preset gated on the enable being OFF never raises the
 @note interrupt from a frame, only from a write.  Written as a gate rather
@@ -4755,7 +4755,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-write-cannot-clear-the-flag
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note The 74LS74 at NXBCTL 0E14 is clocked by `-LOAD MODE` with `XDI 4` as
 @note its data, so a write of the register with bit 4 clear CLEARS the flag
 @note --- which is how INTRX0 takes the interrupt.  A flop that could only
@@ -4769,7 +4769,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-preset-beats-the-write
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note The order at one edge.  A write landing on the tick a frame begins
 @note keeps the written bit: muir's `written_at` is that instant and
 @note `vert_flag` asks for a frame STRICTLY since.  Swapping the two
@@ -4788,7 +4788,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-init-does-not-clear-the-flag
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note `-XBUS INIT` reaches one flop on this board, the flag's, at pin 13 of
 @note the 74LS74.  Gated on the enable being off it clears nothing the
 @note trace can see: the init at frame 9 comes with the interrupt up and
@@ -4801,7 +4801,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-init-clears-the-mode-register
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note And one flop only.  The 25LS2519 clears on `-POWER RESET`, which the
 @note backplane's `-XBUS POWER RESET` carries and nothing the microcode
 @note does raises; `lmtv.order`'s "cleared by Xbus reset" is about the sync
@@ -4818,7 +4818,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-clock-mode-bits-crossed
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note The four data pins of the 2519 are `XDI 3..0` straight; two of them
 @note crossed makes `CLOCK MODE 0` and `1` each other's.  The window system
 @note read-modify-writes this register, so what is written has to read back:
@@ -4831,7 +4831,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-sync-ram-reads-back-without-the-enable
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note The 2147s' chip select is `SYNC PROM ENB` and the 74S472's its
 @note complement, so with the enable clear a read of register 1 is the
 @note PROM's word --- zero here, its program not being loaded on this path
@@ -4846,7 +4846,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-sync-ram-read-from-the-wrong-half
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note The pointer's top bit inverted on the READ alone.  Not on both: a
 @note bijection on an address that indexes the write as well as the read
 @note relabels the storage consistently and is an equivalence, which
@@ -4860,7 +4860,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-answers-its-neighbours
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note The 74S138 at NXBCTL 0F13 decodes eight words and the four above them
 @note answer to nothing: `lmtv.order` runs the registers `173777x0` to
 @note `x7`, and `busint::decode` says the four between the display's and
@@ -4889,7 +4889,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-window-half-size
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note `MAIN-SCREEN-BUFFER-LENGTH` is `0o100000` words and the window is
 @note aligned to it, so the match is on the top seven address bits.  Eight
 @note bits, and the upper 16,384 words of the screen --- lines 512 to 962
@@ -4902,7 +4902,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-store-repeats-while-the-request-stands
 @check tv
-@file rtl/cadr_tv.sv
+@file rtl/machine/cadr_tv.sv
 @note ONCE PER BUS CYCLE: -XBUS.RQ stands for six ticks after a write is
 @note acknowledged and the word is taken at the first.  Every store here is
 @note idempotent, so a store repeated on each of those ticks is invisible
@@ -4919,7 +4919,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-frame-buffer-reads-from-the-main-base
 @check tv
-@file rtl/cadr_xbus_ddr.sv
+@file rtl/plumbing/cadr_xbus_ddr.sv
 @note The window's base on writes alone: a read of the frame buffer then
 @note fetches main memory's word at the same offset, and a screen written
 @note there could never be read back by the machine.  Caught at the port on
@@ -4933,7 +4933,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-window-select-dropped-in-the-path
 @check tv
-@file rtl/cadr_memory_path.sv
+@file rtl/machine/cadr_memory_path.sv
 @note `bus_display` is what tells the bridge which base; made from the
 @note channel's ownership the wrong way round it is never up, and every
 @note frame-buffer cycle lands in main memory's region --- at the right
@@ -4947,7 +4947,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation tv-register-word-not-selected-in-the-path
 @check tv
-@file rtl/cadr_memory_path.sv
+@file rtl/machine/cadr_memory_path.sv
 @note The word from whichever slave answered.  With the display's word
 @note never selected, a read of the mode register gives what main memory's
 @note bridge holds, which is zero: caught on the program's first read-back,
@@ -4960,7 +4960,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @end
 
 # ----------------------------------------------------------------------------
-# THE CONSOLE, `rtl/cadr_console.sv`.  The sixteen diagnostic registers on
+# THE CONSOLE, `rtl/plumbing/cadr_console.sv`.  The sixteen diagnostic registers on
 # `M_AXI_GP1`: `Engine::spy_read` and `Machine::spy_write` reached from the
 # processing system, with `cadr_spy_registers.sv` untouched between them.  Six
 # ways to be wrong, each caught on its own line of `build/console.pass`'s
@@ -4970,7 +4970,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-reads-the-register-after-the-one-asked
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note `EADR<3:0>` is which of the sixteen, and the reference has a column for
 @note every one of them.  Asking for the register beside the one the program
 @note named gives IR<31:16> where IR<15:0> was wanted and PC where OPC was.
@@ -4987,7 +4987,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-write-goes-out-as-a-read
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note A halt is a write of zero to the clock control register --- CC's first
 @note act on a debuggee, muir/tests/lashup.rs:152.  A cycle that goes out as a
 @note read strobes nothing, `RUN` stays up and the machine never stops, which
@@ -5001,10 +5001,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-ident-is-not-cons
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note IDENT is the first read a program makes and the only thing that tells
 @note this face from a bus of zeros, a bus of ones, or the proving boards'
-@note `rtl/cadr_gp0_default.sv` answering "NONE".  Its complement is what an
+@note `rtl/plumbing/cadr_gp0_default.sv` answering "NONE".  Its complement is what an
 @note unmapped address reads, so this makes register 0 indistinguishable from
 @note register 6.  Caught at "IDENT is 0xbcb0b1ac, the reference says
 @note 0x434f4e53".
@@ -5016,7 +5016,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-does-not-answer-an-address-it-does-not-map
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note **THE ONE THAT MATTERS ON THE BOARD.**  A read nothing answers on a GP
 @note port does not fault the Arm; it hangs both cores at one PC each,
 @note measured.  A slave that takes the address and then never offers a beat
@@ -5033,7 +5033,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-bound-is-not-a-bound
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note The engine gives up `LOST_T` ticks after the request and answers the
 @note read saying so, because an AXI transaction that waits on the diagnostic
 @note bus for ever is the frozen cores again one level in.  A longer bound
@@ -5059,7 +5059,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-says-a-lost-cycle-was-answered
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note STAT's `answered` bit is the last cycle's and `lost` is sticky since
 @note reset; a face that reports every cycle answered leaves a program unable
 @note to tell a register it read from one the machine never gave it.  The word
@@ -5083,7 +5083,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-resets-the-machine-on-any-value
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note **THE ONE THE KEY EXISTS FOR.**  A reset that any write to the right
 @note address performs is a machine a stuck bus, a truncated store or a wild
 @note pointer can restart, and the rule this project keeps meeting is that a
@@ -5108,7 +5108,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-reset-pulse-a-tick-short
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note `RESET_T` is 64 ticks and the module states why: the floor is one whole
 @note generator cycle at extra slow, 44 ticks, and 64 is the smallest power of
 @note two above it.  **A reset works at almost any length** --- every register
@@ -5130,7 +5130,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-answers-the-reset-write-before-the-machine-is-back
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note `W_RESET` holds the write channel through the countdown, so `BVALID` is
 @note offered after the machine has left reset and not before --- which is
 @note what makes "reset, then read FLAG-1" a sequence a program can write with
@@ -5151,7 +5151,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-resets-itself-with-the-machine
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note **THE DECISION, AND IT IS THE ONE THAT WOULD SHOW ON THE BOARD.**  The
 @note console is deliberately not reset by the reset it makes, and the reason
 @note is not that it would forget the count: it is that THE AXI WRITE THAT
@@ -5159,10 +5159,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note reaching `wst` drops it back to `W_ADDR` with no `BVALID` ever offered,
 @note and a GP write nothing answers does not fault the Arm --- it hangs both
 @note cores at one PC each, measured on this board and set out at length in
-@note `rtl/cadr_gp0_default.sv`.  The console would freeze the machine it was
+@note `rtl/plumbing/cadr_gp0_default.sv`.  The console would freeze the machine it was
 @note written to un-freeze, and the only thing that could recover the board is
 @note the power cycle the console exists to avoid.  This is the same defect in
-@note the console's own file rather than in `rtl/cadr_arty.sv`, which the
+@note the console's own file rather than in `boards/arty-z7-20/cadr_arty.sv`, which the
 @note runner cannot aim at through this check; the top level's declaration of
 @note `mach_rst` carries the rule and the three places folding the pulse into
 @note `rst_sync` would break.  Caught at "an AXI transaction did not complete
@@ -5178,7 +5178,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-forgets-that-it-reset-the-machine
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note **A CONSOLE THAT CANNOT REPORT THAT IT RESET THE MACHINE IS A CONSOLE
 @note NOBODY CAN BELIEVE.**  Word 6's count is what a program reads to know
 @note that the machine in front of it is the one it restarted, and it is the
@@ -5198,7 +5198,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-counts-microcycles-across-its-own-reset
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note CYCLES is `Machine::cycles` and TICKS is `Rtl::ns()`, and both are zero
 @note at reset in muir --- so a console reset clears them, because they are
 @note the machine's and not the console's.  Left running they name a microcycle
@@ -5233,7 +5233,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-reads-q-where-the-virtual-address-is
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note **THE ONE THE INSTRUMENT EXISTS TO RULE OUT.**  Page 0's words 7 and 8
 @note are there to say whether `VMA` and `Q` are EQUAL or a page apart, so a
 @note console that hands back each where the other was asked for answers the
@@ -5258,7 +5258,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-crosses-vma-and-q-at-the-capture
 @check console
-@file rtl/cadr_console_state.sv
+@file rtl/machine/cadr_console_state.sv
 @note The same fault one module along, at the boundary capture inside
 @note `cadr_machine` rather than at the console's read mux, and it is a
 @note separate record because the two wires run through two files and a check
@@ -5279,7 +5279,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note boundaries, and every read this check makes of them is made at a HALT,
 @note where the machine is not moving at all.  It is an equivalence in
 @note simulation and a real defect in fabric, where the boundary is what earns
-@note the register `rtl/cadr_machine.xdc`'s relaxed set; the console's PC lag
+@note the register `rtl/plumbing/xilinx7/cadr_machine.xdc`'s relaxed set; the console's PC lag
 @note sweep can tell the two apart for `con_rdata` only because a running
 @note machine's PC moves and these two words are never read while it runs.
 @note Recorded here so that nobody files it as a hole against a check doing
@@ -5294,7 +5294,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-q-is-not-latched-by-the-read-of-vma
 @check console
-@file rtl/cadr_console.sv
+@file rtl/plumbing/cadr_console.sv
 @note **THE LATCH IS WHAT MAKES THE PAIR ONE INSTANT.**  The read of word 7
 @note takes the virtual address register AND `Q` in the same tick and word 8
 @note reads what it took; a word 8 that armed the latch for itself would give
@@ -5325,11 +5325,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # WHAT THEY AIM AT
 #
 #   the-control-store-is-addressed-a-microcycle-stale
-#       rtl/cadr_microcycle.sv, `@check microcycle`.  Holds the change that
+#       rtl/machine/cadr_microcycle.sv, `@check microcycle`.  Holds the change that
 #       took the control store's address off TPCLK.
 #
 #   disk-latency-does-not-go-round-the-pack
-#       rtl/cadr_disk_controller.sv, `@check disk`.  Holds the algebraic
+#       rtl/machine/cadr_disk_controller.sv, `@check disk`.  Holds the algebraic
 #       rewrite that took the second twenty-nine-bit adder out of the tick
 #       the DSP had already spent.
 #
@@ -5357,7 +5357,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-control-store-is-addressed-a-microcycle-stale
 @check microcycle
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note The control store's read address WAS `cpu_edge ? npc : pc`, a mux on
 @note the boundary that put TPCLK four logic levels from twenty-six block
 @note RAMs' address pins --- 4.775 ns of a 5 ns tick and 116 of the DDR=1
@@ -5400,7 +5400,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-latency-does-not-go-round-the-pack
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note `disk_unit::until` is the wait for the addressed block to come round
 @note from where the spindle stood when the seek ended: the difference if the
 @note block is still ahead, and that difference PLUS A REVOLUTION if it has
@@ -5437,7 +5437,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation console-read-back-is-not-held-to-the-boundary
 @check console
-@file rtl/cadr_console_bus.sv
+@file rtl/machine/cadr_console_bus.sv
 @note **THE ONE THAT HOLDS THE EXEMPTION.**  `con_rdata` is inside
 @note `cadr_machine` so that `cadr_machine.xdc`'s fifteen-tick multicycle
 @note reaches it, and it earns that on the file's own test only because it is
@@ -5478,14 +5478,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # check below was built: `disk_boot` passes; `cadr_machine` with a modelled
 # DDR and a feeder on the block-store seam runs the whole cold boot and leaves
 # physical 0..1023 byte-identical to muir; and so does `cadr_machine` with
-# `rtl/cadr_disk_pack.sv` under it over a modelled `S_AXI_HP2`, which is
-# `rtl/cadr_arty.sv`'s `g_ddr` short of the PS7.  So these records are here to
+# `rtl/plumbing/cadr_disk_pack.sv` under it over a modelled `S_AXI_HP2`, which is
+# `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` short of the PS7.  So these records are here to
 # say that the check would have caught it, and not because anything in `rtl/`
 # was changed.
 
 @mutation ccw-walk-honours-only-the-first-ccw
 @check disk_boot
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note **THIS IS THE BOARD'S SYMPTOM, WRITTEN AS A MUTATION.**  The More flag
 @note is taken only for a track command, so a block walk moves the first
 @note page of a list and stops --- exactly what the board did to the cold
@@ -5509,7 +5509,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation ccw-walk-stops-after-four-pages
 @check disk_boot
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note A channel that stops after a fixed number of pages however many the
 @note list asks for.  `disk_boot` catches it on the cold boot's own second
 @note list, which is nine CCWs, and on the sixteen after it.
@@ -5538,7 +5538,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation ccw-walk-runs-one-page-past-the-list
 @check disk_boot
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note The converse of the one above: the walk goes on when the More flag says
 @note stop.  A list of one moves two pages, a list of three moves four, and
 @note the page after each list is a page of memory nothing asked to be
@@ -5557,7 +5557,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-command-list-walks-backwards
 @check disk_boot
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "Only bits `<15:0>` of the CLP can count", and this counts them the
 @note other way: the second CCW is fetched from `clp - 1` rather than
 @note `clp + 1`.  The pages a list names then come out of whatever is below
@@ -5576,10 +5576,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # ============================================== -XBUS.INTR, and its one gate ===
 #
 # The disk controller computes `interrupt()` and now DRIVES it, and
-# `rtl/cadr_machine.sv` ORs it with the display's where UBINTC 0E04 does.
+# `rtl/machine/cadr_machine.sv` ORs it with the display's where UBINTC 0E04 does.
 # Until 2026-09-10 the level was computed and kept: `STATUS<3>` reported it,
 # `cadr_machine`'s `sintr` was a stimulus port fed from the trace and
-# `rtl/cadr_arty.sv` tied it to zero.  What that cost was measured on the
+# `boards/arty-z7-20/cadr_arty.sv` tied it to zero.  What that cost was measured on the
 # board that night --- the machine boots, loads its microcode off the pack,
 # restores the whole band, and then spins for ever in `AWAIT-DISK` at
 # microcode `0o25221`, because `A-DISK-BUSY` is cleared in exactly one place,
@@ -5641,7 +5641,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-interrupt-never-leaves-the-module
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note THE BOARD'S OWN BUG OF 2026-09-10, put back.  The expression stays and
 @note `STATUS<3>` goes on reporting it; what stops is the LEVEL on the
 @note backplane.  A machine wired this way restores a whole System band off
@@ -5662,7 +5662,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-interrupts-while-it-is-still-active
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "Done Interrupt Enable.  Enables NOT-ACTIVE (bit 0 of the status
 @note register) to cause an interrupt": the interrupt is the END of a
 @note transfer and not the enable bit on its own.  Without the term the
@@ -5684,7 +5684,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-attention-interrupt-reads-the-attention-the-wrong-way
 @check disk
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note "Attention Interrupt Enable", the other half of `interrupt()`: a
 @note seek that has arrived on any of the eight units raises `<1>`, and with
 @note `<10>` of the command register set that is an interrupt.  Read the
@@ -5706,7 +5706,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation disk-done-interrupt-enable-read-the-wrong-way
 @check machine
-@file rtl/cadr_disk_controller.sv
+@file rtl/machine/cadr_disk_controller.sv
 @note THE WHOLE WIRE, END TO END, and that is why this one is aimed at the
 @note composed machine rather than at `disk`, which also catches it.  The
 @note boot PROM never writes the command register, so `<11>` is zero on all
@@ -5729,7 +5729,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-disk-half-of-the-interrupt-gate-inverted
 @check machine
-@file rtl/cadr_machine.sv
+@file rtl/machine/cadr_machine.sv
 @note `LM INT` is `UB INT OR XBUS INTR IN` at UBINTC 0E04, and the Xbus line
 @note is the display's vertical interrupt ORed with the disk's request.  This
 @note reads the disk's half the wrong way round, which on this program --- no
@@ -5753,7 +5753,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-display-half-of-the-interrupt-gate-inverted
 @check machine
-@file rtl/cadr_machine.sv
+@file rtl/machine/cadr_machine.sv
 @note The same gate from the other side.  `build/tv.pass` holds the display's
 @note interrupt itself to the tick, inside `cadr_memory_path`; what it cannot
 @note see is whether the level gets from there to the processor, because that
@@ -5768,7 +5768,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 # ---------------------------------------------------------------------------
 # The I/O board: the keyboard, the mouse, the two clocks and the status
-# register they share, on the Unibus.  `rtl/cadr_io_board.sv` against
+# register they share, on the Unibus.  `rtl/machine/cadr_io_board.sv` against
 # `build/iob.golden`, which `golden/src/iob.rs` writes out of muir's own
 # `ioboard::IoBoard` through `busint::IoBoardTiming`.
 #
@@ -5799,7 +5799,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-kbd-ready-cleared-by-either-half
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note **The keyboard's ready bit is cleared by a read of the LOW half alone.**
 @note The 74LS74 at IOBKBD 0B30 has `-READ.KBD.LOW` on its clear pin and
 @note nothing else, which is why microcode 323's Unibus channel "needs to read
@@ -5818,7 +5818,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-mouse-ready-cleared-by-a-read-of-x
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The same shape one register along: the 74LS109 at IOBCSR 0C26 has
 @note `-READ.MOUSE.Y` on its clear and a read of X leaves `MOUSE READY`
 @note standing.  The program steps X, reads X, and then reads the status
@@ -5832,7 +5832,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-mouse-samples-at-16-us
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note `KB CLK^` is 8,000 ns --- `QC` of the 74LS163 at IOBCLK 0D24 counting
 @note `1 USEC CLK` --- and the mouse holds each quadrature phase for 16,000,
 @note two of the card's clocks, so that every step is latched into `NEW` and
@@ -5848,7 +5848,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-mouse-clock-follows-the-microsecond-clocks-phase
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note `KB CLK^` divides `1 USEC CLK`, whose first edge is 890 ns after
 @note power-on, so the obvious fabric is a divider hung off that phase --- and
 @note muir counts the mouse's clock from power-on at plain multiples of 8,000
@@ -5865,7 +5865,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-mouse-turns-the-other-way
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note IOBMS2's direction, in the 74LS86s at 0A26 and 0B23: `OLD A xor NEW B`
 @note into the 74LS569s' `U/-D`.  Crossed, every count goes the wrong way and
 @note the first single step down from zero reads 1 where muir reads `0o7777`.
@@ -5879,7 +5879,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-mouse-counts-on-every-edge
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The 74LS569s' enable is low --- counting --- when exactly one line of the
 @note pair changed between two clocks; both moving, or neither, counts nothing.
 @note INVERTED and not dropped, and the difference was measured: with the
@@ -5894,7 +5894,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-x-register-reads-the-switches
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The read buffer at IOBMS2 0C24 puts `NEW`'s FOUR QUADRATURE LINES ---
 @note `NEW HORA`, `NEW HORB`, `NEW VERA`, `NEW VERB` --- above the X count and
 @note its THREE SWITCHES above the Y count, and the seven lines are one latch,
@@ -5925,7 +5925,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-y-register-reads-the-quadrature
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The other half of the same wiring: bits 12 to 14 of the Y register are
 @note `MOUSE TAILSW`, `MIDSW` and `HEADSW` --- the left, middle and right
 @note buttons, `io1/mouse.text`'s `10000`, `20000` and `40000` --- and bit 15
@@ -5939,7 +5939,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-mouse-latch-never-takes-the-lines
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The 74LS374 at IOBMSE 0A24 latches the seven lines on `KB CLK^`; held,
 @note the counters still run --- the count is made from `mnew` and `lines`
 @note together --- but the four quadrature bits and the three switches the two
@@ -5953,7 +5953,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-counters-low-half-answers-on-the-grid
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note **The microsecond counter's low half is the one place this card is off
 @note the 5 ns grid.**  `busint::IOB_USEC_LOW_NS` is 313 ns past the edge ---
 @note the next edge of the 16 MHz `MCLK^` and then the TD250 --- measured on
@@ -5970,7 +5970,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-counters-low-half-is-read-at-ssyn
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note **The counter's low half is read at `-UB MSYN`, not at `-UB SSYN`**, and
 @note every other register on the card is read or written at `-SSYN`.  muir's
 @note `busint.rs` says why: "the board latches it on the way to answering,
@@ -5991,7 +5991,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-mains-counter-reloads-not-accumulates
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note **`SIXTY_CYCLE_NS` is 16,666,666, which is 1 modulo 5**, so the sixty
 @note cycle clock's boundaries lie off the fabric's grid.  A counter that adds
 @note five nanoseconds a tick and SUBTRACTS the period is exactly
@@ -6010,7 +6010,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-write-lands-at-the-register-strobe
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note **muir lands a Unibus write to this card at the acknowledgement**, not
 @note at the card's own load pulse: `busint.rs`'s `Responder::Unibus` arm makes
 @note `answered` equal to `ssyn` for every register here, where
@@ -6033,7 +6033,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-init-leaves-the-serial-port-alone
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note **`ser_ready` is a port and not a 2651, and `-UB INIT` must reach it.**
 @note `-INIT*` into the 8837 at IOBXCV 0F06 IS the chip's own `RESET` pin, so
 @note the card owes the serial slice the pulse; the trace shows `serrdy`
@@ -6050,7 +6050,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-init-clears-the-keyboard
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note `-UB INIT` reaches five flip-flops and the 2651 AND NOTHING ELSE:
 @note `KBD READY` (the 74LS74 at IOBKBD 0B30), `MOUSE READY` (the 74LS109 at
 @note IOBCSR 0C26), the mouse counters, the interval timer and the microsecond
@@ -6071,7 +6071,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-init-reloads-the-interval-timer
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The other half of the same rule: the four 74LS193s at CLKTIM and the
 @note 74LS279's latch at 0D09 have no pin on `-UB INIT` either.  The program
 @note loads an interval, pulses `-UB INIT` while it is still running, and looks
@@ -6091,7 +6091,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-clock-group-decodes-a3
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The 74LS138 at CLK60H 0B21 decodes the clock group on `UBADDR1` and
 @note `UBADDR2` alone, so **`A3` is not decoded and `0o76413x` is `0o76412x`**.
 @note A card that decoded it reads the mains counter where the microsecond
@@ -6106,7 +6106,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-keyboard-group-answers-one-edge-early
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The keyboard, mouse, status and beep registers select through TWO stages
 @note of the microsecond clock and answer 250 ns after the second edge strictly
 @note past `-MSYN`, which is between 1,250 and 2,250 ns depending on where the
@@ -6123,7 +6123,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-microsecond-clock-starts-a-tick-late
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note `ioboard::FIRST_USEC_EDGE_NS` is 890: the 74S163 at IOBCLK 0C21 counting
 @note the 16 MHz `MCLK^` from its power-on state, measured on the netlist, and
 @note the edges are 1,000 ns apart from there.  One tick late and every answer
@@ -6137,7 +6137,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-upper-byte-does-not-float
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note Nothing drives `UBO8`..`UBO15` on a read of the status register, so the
 @note upper byte floats high through the 8838s and reads `0o177400`.  Microcode
 @note 323 masks the bit it wants, so this is invisible to the machine and
@@ -6150,7 +6150,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-a-read-of-the-beep-does-not-click
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note **The beep has no value in it and is not gated by `-WRITE`.**
 @note `-CLICK.AUDIO` is `Y4` of the 74LS138 at IOBKBD 0C22, whose enables are
 @note `-SELECT.764100` and `-SELECT KBD OR MOUSE` and neither is `-WRITE`, so a
@@ -6165,7 +6165,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-serial-enable-is-not-writable
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note `SER INT ENABLE` is not one of the 74LS175's four but the second half of
 @note the 74LS74 at IOBSER 0D21, with `UBI7` on its `D` and the same
 @note `KBD/MOUSE.CSR.CLK^` on its clock, so a write of the status register sets
@@ -6180,7 +6180,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-a-write-of-the-csr-clears-the-ready-bits
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note A write can reach five bits and no others: `KBD READY` and `MOUSE READY`
 @note are clocked and cleared by their own pins and stand through it.  The
 @note program brings both up, writes zero, and reads the register back.
@@ -6196,7 +6196,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-interval-timer-is-a-tick-short
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note One count of the four 74LS193s at CLKTIM is `16 USEC CLK`, 16,000 ns, and
 @note the interval is counted DOWN from what was written --- `iob.wlr` puts
 @note `16 USEC CLK` on `F21-04 CNT DW` with `F21-05 CNT UP` on `HI3`, and MIT's
@@ -6213,7 +6213,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation iob-the-block-select-reaches-a-page-lower
 @check iob
-@file rtl/cadr_io_board.sv
+@file rtl/machine/cadr_io_board.sv
 @note The DM8136s at IOBADR 0F08 and 0F09 match `A<17:7>`, one page.  **The
 @note live form of this is the one that reaches DOWN**, and slice one measured
 @note why: widening the top from `0o764176` to `0o764200` SURVIVES and is an
@@ -6258,7 +6258,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-second-level-map-write-misses-its-entry
 @check map_boot
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note THE BOARD'S FIRST SUSPECT, made a fabric bug.  `MAPWR1D` is `WMAPD AND
 @note VMA25` at VCTL2 1C15 and the entry is `{VMAP<4:0>, MAPI<4:0>}`; written
 @note one entry along, the entry the program then reads through stands at the
@@ -6282,7 +6282,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation a-read-translates-through-a-stale-map-entry
 @check map_boot
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note THE BOARD'S SECOND SUSPECT: the read goes through an entry that is not
 @note the one the map was just asked about.  The physical page is taken from
 @note the LIVE map word at the edge that starts the cycle --- the module's own
@@ -6318,7 +6318,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-access-bit-comes-from-the-page-half-of-the-map-word
 @check map_boot
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note THE BOARD'S THIRD SUSPECT: the access bits read from the wrong half of
 @note the second-level word.  `-PFR` is `NOT(-LVMO23)` at VCTL2 1D26 and
 @note `-LVMO23` is the top bit of the 24-bit entry; `VMO<13:0>` under it is the
@@ -6351,7 +6351,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-physical-page-is-one-too-high
 @check map_boot
-@file rtl/cadr_microcycle.sv
+@file rtl/machine/cadr_microcycle.sv
 @note THE RECORD THAT SAYS THIS CHECK IS NOT A COPY OF `machine`.  The three
 @note above are all caught there as well --- two on -VMAOK and one on the NXM
 @note timer --- because each of them makes the machine do something visibly
@@ -6374,7 +6374,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-memory-address-loses-its-page-bit
 @check map_boot
-@file rtl/cadr_ddr_map.sv
+@file rtl/plumbing/cadr_ddr_map.sv
 @note THE ONE ONLY THIS CHECK CAN SEE, and the reason it exists.  The four
 @note records above are caught by `machine` as well, each for a reason of its
 @note own --- two on -VMAOK, one on the NXM timer, and one because the disk

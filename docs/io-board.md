@@ -25,7 +25,7 @@ not built.
 `golden/src/iob.rs` writes `build/iob.golden`, `make iob-golden` makes it, and
 a throwaway Python model was run against it until the two agreed row for row.
 What that model found is near the end, because it is the part of slice one
-worth reading before anything else. `rtl/cadr_io_board.sv` and
+worth reading before anything else. `rtl/machine/cadr_io_board.sv` and
 `tb/cadr_io_board_tb.cpp` are slice two, and `make build/iob.pass` is the
 check; what it holds to and what it cannot is the last section but one.
 
@@ -275,7 +275,7 @@ Mete's session's direction: this project reproduces the machine and is held to
 muir, and a module taking ready-made deltas is a different card --- one that
 cannot lose counts, whose `NEW`/`OLD` latches and comparator disappear, and
 against which this trace stops being a reference for the mouse half. So
-`rtl/cadr_io_board.sv` takes `mouse_lines<6:0>` and the encoder that turns
+`rtl/machine/cadr_io_board.sv` takes `mouse_lines<6:0>` and the encoder that turns
 Linux's deltas into quadrature phases is fabric beside it; on this slice that
 encoder is in `tb/cadr_io_board_tb.cpp`. The two shapes as they were posed,
 and why the second was declined:
@@ -375,7 +375,7 @@ Said here rather than given a column, per CLAUDE.md's rule.
   because the parts behind them are two other slices. A card that answers
   `0o764140`--`0o764176` with nothing behind it would fail on the real
   machine and passes here. **Slice two therefore made this an exemption with
-  a number on it**: `rtl/cadr_io_board.sv` decodes the whole block and
+  a number on it**: `rtl/machine/cadr_io_board.sv` decodes the whole block and
   answers only the two groups it implements, the check requires that it does
   not answer the other fifteen addresses, and it prints how many answering
   directions that covers --- twenty-seven of the fifty-five the decode names.
@@ -501,7 +501,7 @@ answer. Same family as the equivalences CLAUDE.md already catalogues.
 
 ## What slice two built
 
-1. **`rtl/cadr_io_board.sv`**, a Unibus slave in `cadr_spy_registers.sv`'s
+1. **`rtl/machine/cadr_io_board.sv`**, a Unibus slave in `cadr_spy_registers.sv`'s
    shape: `clk`, `rst`, `ub_msyn`, `ub_write`, `ub_addr`, `ub_wdata` in;
    `ub_ssyn`, `ub_rdata` out; plus `ub_init`, `ser_ready`, `chaos_intr` and
    the mouse's seven lines and the keyboard's word in, and `ser_reset`, the
