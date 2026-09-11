@@ -37,10 +37,11 @@ is the whole machine.
     Linux       6.19.14, mainline    zImage 3,337,032 B; zynq-arty-z7-20.dtb 11,401 B
     rootfs      BusyBox + Dropbear   rootfs.cpio.uboot 2,801,388 B (6.2 MB unpacked), an
                 + evtest             initramfs, unpacked into RAM on both paths
-    the card    two FAT32 partitions sdcard.img, 2,752,512,000 B (1 MiB + 64 MiB + 2,560 MiB
-                                     by default, sparse: 277 MB on disk).  Partition 1: the
-                                     loader and the boot files, seven of them, 11.3 MB.
-                                     Partition 2: the drive bay --- nothing but disk packs
+    the card    two FAT32 partitions sdcard.img, 622,854,144 B carrying one pack
+                                     (1 MiB + 64 MiB + 529 MiB; sparse, 277 MB on disk).
+                                     Partition 1: the loader and the boot files, seven of
+                                     them, 11.3 MB.  Partition 2: the drive bay --- nothing
+                                     but disk packs
 
 The sizes are of the 10 September builds on the build host. The whole
 thing --- toolchain download, host tools, U-Boot, kernel, root filesystem ---
@@ -186,22 +187,30 @@ is `unit=path`, or a bare path taking the lowest free unit. Without it the
 bay is empty, and the script says so and says how to fill it from the running
 board. A file whose size is neither a T-300's nor a T-80's is refused here,
 because on the board it would simply not be a drive. `BOOT_MB=<n>` and `PACKS_MB=<n>` are
-how big the two partitions are made. The defaults are 64 and 2,560, which is
-nine T-300 packs and fits any card of 4 GB and up. The whole image is
-2,625 MiB.
+how big the two partitions are made. `BOOT_MB` is 64. `PACKS_MB`, left
+unset, is what the packs named come to plus 264 MiB, which is room for one
+more drive. One T-300 pack therefore makes an image of 594 MiB rather than of
+some round gigabyte, and it writes in about a minute. `dd` writes every byte
+of an image, so a partition sized for a full bay costs seven drives' worth of
+zeros on a card carrying one.
 
 How big a card has to be follows from two numbers. The boot partition holds
 seven files that come to 11.3 MB. A T-300 pack is 257 MiB and a T-80 is 68.
 
-| card | `BOOT_MB` | `PACKS_MB` | holds |
+| card | `BOOT_MB` | `PACKS_MB` | the bay, and what is left over |
 |---|---|---|---|
-| 1 GB | 64 | 832 | three T-300 packs |
-| 2 GB | 64 | 1856 | seven |
-| 4 GB | 64 | 2560 | nine, the defaults |
+| 1 GB | 64 | 832 | three drives |
+| 2 GB | 64 | 1856 | seven drives |
+| 4 GB | 64 | 3712 | all eight, and room for six spare packs |
+
+**The bay is eight and no more.** A drive is `disk-pack-<unit>.img` and a unit
+is 0 to 7. Eight T-300 packs are 2,056 MiB. Space past that holds packs under
+other names, which the bay ignores, so it is where backups and bands that are
+not mounted live.
 
 So **1 GB is the absolute minimum**, and one pack fits on far less than that.
-**4 GB takes a full bay of eight**, which is 2,056 MiB of packs. Nobody runs
-eight. The boot partition is 64 MiB on every card. That is six times what its seven
+**4 GB takes a full bay of eight and six spare packs beside it.** Nobody runs
+eight drives. The boot partition is 64 MiB on every card. That is six times what its seven
 files need, with room for a second bitstream and a second kernel beside them.
 It is a parameter because half a gigabyte of it on a 1 GB card would be most
 of the card. A bigger card leaves the rest of itself

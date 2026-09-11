@@ -37,10 +37,22 @@
 # card is most of the card.  The boot partition holds seven files and they
 # come to about 11 MiB.  A T-300 pack is 257 MiB and a T-80 is 68.
 #
-#     card    BOOT_MB  PACKS_MB   holds
-#     1 GB         64       832   three T-300 packs
-#     2 GB         64      1856   seven
-#     4 GB         64      2560   nine          <-- the defaults
+#     card    BOOT_MB  PACKS_MB   the bay, and what is left over
+#     1 GB         64       832   three drives
+#     2 GB         64      1856   seven drives
+#     4 GB         64      3712   all eight, and room for six spare packs
+#
+# **THE BAY IS EIGHT AND NO MORE**, because a drive is `disk-pack-<unit>.img`
+# and a unit is 0 to 7.  Eight T-300 packs are 2,056 MiB.  Space past that
+# holds packs under other names, which the bay ignores, so it is where
+# backups and bands not currently mounted live.
+#
+# **BUT THE DEFAULT IS NOT A CARD, IT IS THE PACKS.**  BOOT_MB is 64 and
+# PACKS_MB, unset, is what the packs named come to plus 264 MiB --- room for
+# one more drive.  One T-300 pack therefore makes an image of 594 MiB rather
+# than of some round gigabyte, and it writes in about a minute.  Ask for a
+# bigger partition when the card is bigger and the bay should be able to
+# fill up without another write.
 #
 # So **1 GB is the absolute minimum** and one pack fits on far less than
 # that, while **4 GB takes a full bay of eight**, which is 2,056 MiB of
@@ -79,7 +91,7 @@ BOARD=boards/arty-z7-20/linux/buildroot/board/arty-z7-20
 BIT=${BIT:-}
 PACKS=${PACKS:-}
 BOOT_MB=${BOOT_MB:-64}
-PACKS_MB=${PACKS_MB:-2560}
+PACKS_MB=${PACKS_MB:-}          # empty means "what the packs need, plus one drive"
 STANDALONE=${STANDALONE:-}
 DTC=${DTC:-$HOSTBIN/dtc}
 
@@ -124,6 +136,13 @@ for entry in $PACKS; do
 done
 # FAT32 needs a little room of its own; a megabyte a pack is generous.
 packs_need=$(( packs_total / 1048576 + 8 ))
+# THE DEFAULT IS WHAT IS BEING CARRIED PLUS ROOM FOR ONE MORE DRIVE, not a
+# round number.  `dd` writes every byte of the image, so a partition sized for
+# nine drives costs eight drives' worth of zeros on a card carrying one.  A
+# T-300 is 257 MiB, so the spare room is 264: enough to copy a pack in beside
+# what is there, and enough on its own for an empty bay.  Ask for more with
+# PACKS_MB and the table in this header says what each card takes.
+[ -n "$PACKS_MB" ] || PACKS_MB=$(( packs_need + 264 ))
 [ "$PACKS_MB" -ge "$packs_need" ] \
   || die "PACKS_MB=$PACKS_MB is too small for the packs named ($packs_need MiB needed)"
 [ "$PACKS_MB" -ge 64 ] || die "PACKS_MB=$PACKS_MB: the pack partition is not worth making smaller than 64 MiB"
