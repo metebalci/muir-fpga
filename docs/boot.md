@@ -200,8 +200,16 @@ seven files that come to 11.3 MB. A T-300 pack is 257 MiB and a T-80 is 68.
 | card | `BOOT_MB` | `PACKS_MB` | the bay, and what is left over |
 |---|---|---|---|
 | 1 GB | 64 | 832 | three drives |
-| 2 GB | 64 | 1856 | seven drives |
-| 4 GB | 64 | 3712 | all eight, and room for six spare packs |
+| 2 GB | 64 | 1792 | seven drives |
+| 4 GB | 64 | 3584 | all eight, and room for six spare packs |
+
+Those are sized against what a card of that name really holds, which is less
+than the name. A 1 GB card is 1,003,520,000 bytes, a 2 GB is 2,003,795,968 and
+a 4 GB is 3,965,190,144. Each row leaves 16 MiB spare on top of the partition
+table's own megabyte. **An image larger than the card does not warn, it fails
+part way.** `dd` stops with "No space left on device", the boot partition is
+written because it comes first, and the pack partition is left truncated and
+claiming room the card has not got.
 
 **The bay is eight and no more.** A drive is `disk-pack-<unit>.img` and a unit
 is 0 to 7. Eight T-300 packs are 2,056 MiB. Space past that holds packs under
