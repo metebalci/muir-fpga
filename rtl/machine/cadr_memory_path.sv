@@ -649,17 +649,17 @@ module cadr_memory_path (
   // display drives the lines only while answering a READ of a control word
   // --- a write, and every frame-buffer cycle, leaves them to the others.
   //
-  // **AND THE TOP HALF IS ALL ONES HERE AND ZERO IN muir, AND NOTHING
-  // COMPARES THEM.**  `Machine::bus_read` (`../muir/src/machine.rs:710`)
+  // **THE TOP HALF IS ZERO BECAUSE muir'S IS, AND IT WAS ONES UNTIL 11 Sep.**  `Machine::bus_read` (`../muir/src/machine.rs:710`)
   // answers a Unibus register with `self.ioboard.read(r, self.ns) as u32` ---
   // a `u16` widened, so `MEM<31:16>` is ZERO --- under a comment saying "the
   // Unibus carries 16 bits, in the bottom of one Lisp machine word".  This
-  // line drives `16'hffff` there instead, on the argument that an undriven
-  // open-collector line reads as a one.  **The check does not decide between
-  // them**: `tb/cadr_unibus_tb.cpp` asserts `(c.word >> 16) == 0xFFFF` against
-  // a constant of its own and compares only `c.word & 0xFFFF` with muir, so
-  // the sixteen bits where the two disagree are held to this fabric's own
-  // choice and to nothing else.
+  // This line drove `16'hffff` there until 11 Sep, on the argument that an
+  // undriven open-collector line reads as a one --- and `tb/cadr_unibus_tb.cpp`
+  // asserted `(c.word >> 16) == 0xFFFF` against a constant of its OWN and
+  // compared only `c.word & 0xFFFF` with muir, so the sixteen bits where the
+  // two machines disagreed were held to this fabric's own choice and to
+  // nothing else.  Both are corrected: the word follows muir and the check
+  // asserts muir's value with the reason beside it.
   //
   // **It is a live suspect and not a note.**  Every Unibus register read on
   // the board gives `0xFFFF_xxxx` where muir gives `0x0000_xxxx`, so any
@@ -671,7 +671,7 @@ module cadr_memory_path (
   // zero.  **Which of the two is right is a question about the real Xbus and
   // is not this file's to decide**, so nothing is changed here: it is written
   // down where somebody meeting the line will meet it.
-  assign rdata   = ub_ssyn      ? {16'hffff, ub_rdata}
+  assign rdata   = ub_ssyn      ? {16'h0000, ub_rdata}
                  : tv_drives    ? tv_rdata
                  : device_ack   ? device_rdata
                                 : memory_rdata;

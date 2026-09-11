@@ -455,8 +455,13 @@ int main(int argc, char **argv) {
     CheckTiming(c, where);
     if (!c.answered()) return c;
     if (c.by != 2) failures += Fail("which slave pulled -UB SSYN", (unsigned)c.by, 2, where);
-    if ((c.word >> 16) != 0xFFFFu)
-      failures += Fail("MEM<31:16> on a Unibus read", c.word >> 16, 0xFFFFu, where);
+    // muir's `Machine::bus_read` widens a sixteen-bit register to a word, so
+    // `MEM<31:16>` is ZERO, under its own comment that the Unibus carries
+    // sixteen bits in the bottom of one Lisp machine word.  This asserted
+    // 0xFFFF against a constant of its own until 11 Sep, which held the one
+    // place the two machines disagreed to this fabric's own choice.
+    if ((c.word >> 16) != 0x0000u)
+      failures += Fail("MEM<31:16> on a Unibus read", c.word >> 16, 0x0000u, where);
     if ((c.word & 0xFFFFu) != want) failures += Fail("the word", c.word & 0xFFFFu, want, where);
     ++card_reads;
     Named(uaddr);
