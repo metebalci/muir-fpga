@@ -5661,6 +5661,470 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @end
 
 # ---------------------------------------------------------------------------
+# The I/O board: the keyboard, the mouse, the two clocks and the status
+# register they share, on the Unibus.  `rtl/cadr_io_board.sv` against
+# `build/iob.golden`, which `golden/src/iob.rs` writes out of muir's own
+# `ioboard::IoBoard` through `busint::IoBoardTiming`.
+#
+# THIS IS THE ONLY CHECK THAT CAN TELL THIS MODULE FROM A WIRE.  Measured with
+# a probe against muir's `rtl` engine: MIT's boot PROM never addresses the card
+# at all in 600,000 microcycles, and a System 100 band reaches three of its
+# registers in 271 bus cycles of 141,849.  So every record aimed at the card
+# carries `@check iob` and no other check sees any of them.
+#
+# WHAT CANNOT BE MUTATED HERE, said once so nobody hunts for it.  **muir's
+# snap** --- `MouseInterface::sample` dragging a step whose due time has fallen
+# behind the last edge forward onto that edge, so that the first two steps of a
+# move land on consecutive `KB CLK^` edges and the rest on every other one ---
+# is the MOUSE's behaviour and not the card's, and on this slice it lives in
+# `tb/cadr_io_board_tb.cpp`.  A mutation cannot reach a testbench.  Slice one
+# measured what getting it wrong costs (307 face rows and 27 read-backs, the
+# counters one behind muir for the length of every move); the two records here
+# that stand nearest it are `iob-the-mouse-samples-at-16-us` and
+# `iob-the-mouse-clock-follows-the-microsecond-clocks-phase`, which break the
+# card's half of the same agreement.
+#
+# AND ONE MEASURED EQUIVALENCE, so it is not filed as a hole: making
+# `t_msyn`, `t_edge` or `edges` wrap rather than saturate survives, and not by
+# luck --- `ub_ssyn` latches the first time `answer_now` is true and nothing
+# clears it while `-UB MSYN` stands, so a wrapped counter still crosses its
+# threshold for the first time at the same tick.  The module says so at the
+# constant.
+
+@mutation iob-kbd-ready-cleared-by-either-half
+@check iob
+@file rtl/cadr_io_board.sv
+@note **The keyboard's ready bit is cleared by a read of the LOW half alone.**
+@note The 74LS74 at IOBKBD 0B30 has `-READ.KBD.LOW` on its clear pin and
+@note nothing else, which is why microcode 323's Unibus channel "needs to read
+@note the high-order word first" (`uc-interrupt.lisp`): the word stands until
+@note both halves are in.  A card clearing on either half loses the low half
+@note of every scan code the channel ever fetches.
+@note
+@note The program reads the high half with the bit set and then the status
+@note register, which is the one place in the trace that tells the two apart.
+@old
+              R_KBD_LOW: if (!wr) kbd_ready <= 1'b0;
+@new
+              R_KBD_LOW,
+              R_KBD_HIGH: if (!wr) kbd_ready <= 1'b0;
+@end
+
+@mutation iob-mouse-ready-cleared-by-a-read-of-x
+@check iob
+@file rtl/cadr_io_board.sv
+@note The same shape one register along: the 74LS109 at IOBCSR 0C26 has
+@note `-READ.MOUSE.Y` on its clear and a read of X leaves `MOUSE READY`
+@note standing.  The program steps X, reads X, and then reads the status
+@note register expecting the bit still up.
+@old
+              R_MOUSE_Y: if (!wr) mouse_ready <= 1'b0;
+@new
+              R_MOUSE_Y,
+              R_MOUSE_X: if (!wr) mouse_ready <= 1'b0;
+@end
+
+@mutation iob-the-mouse-samples-at-16-us
+@check iob
+@file rtl/cadr_io_board.sv
+@note `KB CLK^` is 8,000 ns --- `QC` of the 74LS163 at IOBCLK 0D24 counting
+@note `1 USEC CLK` --- and the mouse holds each quadrature phase for 16,000,
+@note two of the card's clocks, so that every step is latched into `NEW` and
+@note then into `OLD` before the next.  A card sampling at the mouse's own
+@note rate instead sees each phase once and counts half of what it should,
+@note which is the card's half of the agreement muir's snap is the mouse's
+@note half of.
+@old
+  localparam int unsigned KB_CLK_T       = 8_000 / 5;
+@new
+  localparam int unsigned KB_CLK_T       = 16_000 / 5;
+@end
+
+@mutation iob-the-mouse-clock-follows-the-microsecond-clocks-phase
+@check iob
+@file rtl/cadr_io_board.sv
+@note `KB CLK^` divides `1 USEC CLK`, whose first edge is 890 ns after
+@note power-on, so the obvious fabric is a divider hung off that phase --- and
+@note muir counts the mouse's clock from power-on at plain multiples of 8,000
+@note instead, which is what the trace was taken from.  890 ns is a ninth of a
+@note clock, and the program reads the two mouse registers six times each in
+@note six SUCCESSIVE clocks in the middle of a move, placed so that `-UB SSYN`
+@note falls inside the clock the latch last moved on; a phase shift moves some
+@note of those reads into the clock next door.
+@old
+      kb_t        <= 11'(KB_CLK_T - 1);
+@new
+      kb_t        <= 11'(KB_CLK_T - 1 + FIRST_EDGE_T);
+@end
+
+@mutation iob-the-mouse-turns-the-other-way
+@check iob
+@file rtl/cadr_io_board.sv
+@note IOBMS2's direction, in the 74LS86s at 0A26 and 0B23: `OLD A xor NEW B`
+@note into the 74LS569s' `U/-D`.  Crossed, every count goes the wrong way and
+@note the first single step down from zero reads 1 where muir reads `0o7777`.
+@note Written as a crossing rather than an inversion so that every bit of the
+@note pair stays read and lint is not what catches it.
+@old
+    up    = o[0] ^ n[1];
+@new
+    up    = o[1] ^ n[0];
+@end
+
+@mutation iob-the-mouse-counts-on-every-edge
+@check iob
+@file rtl/cadr_io_board.sv
+@note The 74LS569s' enable is low --- counting --- when exactly one line of the
+@note pair changed between two clocks; both moving, or neither, counts nothing.
+@note INVERTED and not dropped, and the difference was measured: with the
+@note snap a step changes one line of a pair and never two, so `xor` widened to
+@note `or` is an EQUIVALENCE and would have been filed as a hole.  Inverted, the
+@note counters run on every clock the mouse is still.
+@old
+    moved = (o[0] ^ n[0]) ^ (o[1] ^ n[1]);
+@new
+    moved = ~((o[0] ^ n[0]) ^ (o[1] ^ n[1]));
+@end
+
+@mutation iob-the-x-register-reads-the-switches
+@check iob
+@file rtl/cadr_io_board.sv
+@note The read buffer at IOBMS2 0C24 puts `NEW`'s FOUR QUADRATURE LINES ---
+@note `NEW HORA`, `NEW HORB`, `NEW VERA`, `NEW VERB` --- above the X count and
+@note its THREE SWITCHES above the Y count, and the seven lines are one latch,
+@note so which four of them reach which register is wiring and not logic.
+@note Shifted three bits along, the X register reports the switches and one
+@note quadrature line.  Every bit of `mnew` stays read at the comparator, so
+@note lint is not what catches this.
+@note
+@note **AND THE MISTAKE THIS DOES NOT COVER, MEASURED AND NOT A HOLE.**
+@note Reading `lines` --- the seven lines live, before the 74LS374 at IOBMSE
+@note 0A24 latches them --- in place of `mnew` SURVIVES, at both registers,
+@note and it is an equivalence rather than a hole in the check.  muir's snap
+@note puts every step of a move onto a `KB CLK^` edge, which is the edge the
+@note latch takes them on, so the lines and the latch change at one instant
+@note and never differ where anything reads; the switches change at a `BTN`
+@note row and the program reads them back INSIDE the clock the latch takes
+@note them on, which is after that edge.  What the trace can tell from `NEW`
+@note is a value one clock LATE --- `OLD`, the 74LS374 at 0A22 --- and this
+@note module has no register for it: `OLD` is `NEW` a clock ago and the edge
+@note that makes it is the edge that uses it, so the count and the comparator
+@note are written in terms of `mnew` and `lines` and the second latch is a
+@note copy nothing would read.  Measured at the slice, both directions.
+@old
+        R_MOUSE_X:  word = {mnew[3:0], mouse_x};
+@new
+        R_MOUSE_X:  word = {mnew[6:3], mouse_x};
+@end
+
+@mutation iob-the-y-register-reads-the-quadrature
+@check iob
+@file rtl/cadr_io_board.sv
+@note The other half of the same wiring: bits 12 to 14 of the Y register are
+@note `MOUSE TAILSW`, `MIDSW` and `HEADSW` --- the left, middle and right
+@note buttons, `io1/mouse.text`'s `10000`, `20000` and `40000` --- and bit 15
+@note is ground.  The program holds every one of the eight masks and reads
+@note each back.
+@old
+        R_MOUSE_Y:  word = {1'b0, mnew[6:4], mouse_y};
+@new
+        R_MOUSE_Y:  word = {1'b0, mnew[2:0], mouse_y};
+@end
+
+@mutation iob-the-mouse-latch-never-takes-the-lines
+@check iob
+@file rtl/cadr_io_board.sv
+@note The 74LS374 at IOBMSE 0A24 latches the seven lines on `KB CLK^`; held,
+@note the counters still run --- the count is made from `mnew` and `lines`
+@note together --- but the four quadrature bits and the three switches the two
+@note mouse registers report are whatever the card came up with.  `lines` stays
+@note read at the counters and the comparator, so lint is not what catches it.
+@old
+        mnew    <= lines;
+@new
+        mnew    <= mnew;
+@end
+
+@mutation iob-the-counters-low-half-answers-on-the-grid
+@check iob
+@file rtl/cadr_io_board.sv
+@note **The microsecond counter's low half is the one place this card is off
+@note the 5 ns grid.**  `busint::IOB_USEC_LOW_NS` is 313 ns past the edge ---
+@note the next edge of the 16 MHz `MCLK^` and then the TD250 --- measured on
+@note the netlist board, so muir answers at 1,203 + 1,000k and the fabric can
+@note only answer at 1,205.  Rounding DOWN instead answers a tick early on
+@note every one of the trace's 208 reads of that register, and the trace
+@note carries a `slip` column rather than a tolerance so that the rounding is
+@note a stated instant.
+@old
+  localparam int unsigned USEC_LOW_T     = (313 + 4) / 5;
+@new
+  localparam int unsigned USEC_LOW_T     = 313 / 5;
+@end
+
+@mutation iob-the-counters-low-half-is-read-at-ssyn
+@check iob
+@file rtl/cadr_io_board.sv
+@note **The counter's low half is read at `-UB MSYN`, not at `-UB SSYN`**, and
+@note every other register on the card is read or written at `-SSYN`.  muir's
+@note `busint.rs` says why: "the board latches it on the way to answering,
+@note before the edge that answers has counted", and the band's first read of
+@note the register took one less on the netlist than a count taken at the
+@note answer.  Moved to the answer, the latch is a microsecond further on
+@note wherever an edge falls inside the cycle.
+@note
+@note Written as `first || land` and not as `land` alone: the latch is then
+@note taken twice and the second wins, which is the mutation, and `first`
+@note stays read.  Replacing it outright leaves `first` with no reader and
+@note Verilator refuses to build the mutant, which is lint doing the catching.
+@old
+        if (first && sel && !wr && clkgrp && which[1:0] == C_USEC_LOW) begin
+@new
+        if ((first || land) && sel && !wr && clkgrp && which[1:0] == C_USEC_LOW) begin
+@end
+
+@mutation iob-the-mains-counter-reloads-not-accumulates
+@check iob
+@file rtl/cadr_io_board.sv
+@note **`SIXTY_CYCLE_NS` is 16,666,666, which is 1 modulo 5**, so the sixty
+@note cycle clock's boundaries lie off the fabric's grid.  A counter that adds
+@note five nanoseconds a tick and SUBTRACTS the period is exactly
+@note `now mod SIXTY_CYCLE_NS` and increments at the first tick at or after
+@note each boundary; one that reloads with zero instead loses four nanoseconds
+@note a period and drifts a boundary earlier every 1.25 seconds.  The program
+@note reads the register at fourteen boundaries on ALTERNATING sides --- a
+@note cycle is 350 ns long and the two grid instants that straddle a boundary
+@note are five apart, so both sides of one boundary cannot be read --- which
+@note gives the same bound from the two directions.
+@old
+  assign mains_less = mains_acc + TICK_NS - SIXTY_CYCLE_NS;
+@new
+  assign mains_less = 24'd0;
+@end
+
+@mutation iob-the-write-lands-at-the-register-strobe
+@check iob
+@file rtl/cadr_io_board.sv
+@note **muir lands a Unibus write to this card at the acknowledgement**, not
+@note at the card's own load pulse: `busint.rs`'s `Responder::Unibus` arm makes
+@note `answered` equal to `ssyn` for every register here, where
+@note `Responder::Interface` --- the diagnostic block --- lands at
+@note `REGISTER_STROBE_NS`, 150 ns past `-MSYN`.  On the card the pulses ARE
+@note earlier than that (`-LOAD INTERVAL` is `Y2` of the 74LS138 at CLK60H
+@note 0B21, gated by `-WRITE` while `-MSYN` is up), so taking the card's
+@note instant rather than muir's is the natural mistake and the trace is the
+@note only thing that says which.  This is the diagnostic block's own instant,
+@note 30 ticks, applied to every write.
+@note
+@note What sees it is `CLOCK READY`: the trace loads ten intervals and looks
+@note one tick either side of the end of each, so an interval that started
+@note twenty ticks early is over twenty ticks early.
+@old
+  assign land = ub_msyn && answer_now && !ub_ssyn;
+@new
+  assign land = ub_msyn && (wr ? (t_msyn == 7'd30) : answer_now) && !ub_ssyn;
+@end
+
+@mutation iob-init-leaves-the-serial-port-alone
+@check iob
+@file rtl/cadr_io_board.sv
+@note **`ser_ready` is a port and not a 2651, and `-UB INIT` must reach it.**
+@note `-INIT*` into the 8837 at IOBXCV 0F06 IS the chip's own `RESET` pin, so
+@note the card owes the serial slice the pulse; the trace shows `serrdy`
+@note falling at every one of its three `-UB INIT` rows, and the testbench's
+@note stand-in for the 2651 drops its ready line on `ser_reset` and on nothing
+@note else --- so what this holds is that the CARD carried the pulse across.
+@note `ub_init` stays read at the enables below, so lint is not what catches
+@note this.
+@old
+  assign ser_reset = ub_init;
+@new
+  assign ser_reset = 1'b0;
+@end
+
+@mutation iob-init-clears-the-keyboard
+@check iob
+@file rtl/cadr_io_board.sv
+@note `-UB INIT` reaches five flip-flops and the 2651 AND NOTHING ELSE:
+@note `KBD READY` (the 74LS74 at IOBKBD 0B30), `MOUSE READY` (the 74LS109 at
+@note IOBCSR 0C26), the mouse counters, the interval timer and the microsecond
+@note counter have no pin on it and count on.  The program presses a key,
+@note pulses `-UB INIT`, and reads the status register and then the low half.
+@old
+      if (ub_init) begin
+        en175  <= 4'd0;
+        ser_en <= 1'b0;
+      end
+@new
+      if (ub_init) begin
+        en175     <= 4'd0;
+        ser_en    <= 1'b0;
+        kbd_ready <= 1'b0;
+      end
+@end
+
+@mutation iob-init-reloads-the-interval-timer
+@check iob
+@file rtl/cadr_io_board.sv
+@note The other half of the same rule: the four 74LS193s at CLKTIM and the
+@note 74LS279's latch at 0D09 have no pin on `-UB INIT` either.  The program
+@note loads an interval, pulses `-UB INIT` while it is still running, and looks
+@note at `CLOCK READY`.
+@old
+      if (ub_init) begin
+        en175  <= 4'd0;
+        ser_en <= 1'b0;
+      end
+@new
+      if (ub_init) begin
+        en175       <= 4'd0;
+        ser_en      <= 1'b0;
+        clock_ready <= 1'b1;
+      end
+@end
+
+@mutation iob-the-clock-group-decodes-a3
+@check iob
+@file rtl/cadr_io_board.sv
+@note The 74LS138 at CLK60H 0B21 decodes the clock group on `UBADDR1` and
+@note `UBADDR2` alone, so **`A3` is not decoded and `0o76413x` is `0o76412x`**.
+@note A card that decoded it reads the mains counter where the microsecond
+@note counter's low half should be.  The program reads all four aliases.
+@old
+      unique case (which[1:0])
+        C_USEC_LOW:  word = usec_latch[15:0];
+@new
+      unique case (which[2:1])
+        C_USEC_LOW:  word = usec_latch[15:0];
+@end
+
+@mutation iob-the-keyboard-group-answers-one-edge-early
+@check iob
+@file rtl/cadr_io_board.sv
+@note The keyboard, mouse, status and beep registers select through TWO stages
+@note of the microsecond clock and answer 250 ns after the second edge strictly
+@note past `-MSYN`, which is between 1,250 and 2,250 ns depending on where the
+@note request fell; the clocks and the GPIO take one stage fewer and none.  The
+@note program raises `-UB MSYN` at every one of the two hundred instants a
+@note 200 MHz fabric can inside the card's microsecond, at a register that
+@note waits two edges, one that waits one and one that waits none, so a stage
+@note dropped is caught at every phase and not only at the lucky ones.
+@old
+      answer_now = (edges >= 2'd2) && (t_edge >= 7'(STRAIGHT_T));
+@new
+      answer_now = (edges >= 2'd1) && (t_edge >= 7'(STRAIGHT_T));
+@end
+
+@mutation iob-the-microsecond-clock-starts-a-tick-late
+@check iob
+@file rtl/cadr_io_board.sv
+@note `ioboard::FIRST_USEC_EDGE_NS` is 890: the 74S163 at IOBCLK 0C21 counting
+@note the 16 MHz `MCLK^` from its power-on state, measured on the netlist, and
+@note the edges are 1,000 ns apart from there.  One tick late and every answer
+@note that waits for an edge is five nanoseconds late, which is the first row
+@note of the trace.
+@old
+      usec_t      <= 8'(FIRST_EDGE_T - 1);
+@new
+      usec_t      <= 8'(FIRST_EDGE_T);
+@end
+
+@mutation iob-the-upper-byte-does-not-float
+@check iob
+@file rtl/cadr_io_board.sv
+@note Nothing drives `UBO8`..`UBO15` on a read of the status register, so the
+@note upper byte floats high through the 8838s and reads `0o177400`.  Microcode
+@note 323 masks the bit it wants, so this is invisible to the machine and
+@note visible to every read in the trace --- the first of them.
+@old
+        R_CSR:      word = FLOATING | {8'd0, ser_en, clock_ready, kbd_ready,
+@new
+        R_CSR:      word = {8'd0, ser_en, clock_ready, kbd_ready,
+@end
+
+@mutation iob-a-read-of-the-beep-does-not-click
+@check iob
+@file rtl/cadr_io_board.sv
+@note **The beep has no value in it and is not gated by `-WRITE`.**
+@note `-CLICK.AUDIO` is `Y4` of the 74LS138 at IOBKBD 0C22, whose enables are
+@note `-SELECT.764100` and `-SELECT KBD OR MOUSE` and neither is `-WRITE`, so a
+@note read clicks the 74LS74 at 0C27 as a write does.  The program clicks it
+@note both ways and then runs six references at MIT's own half-wavelength,
+@note `uc-hacks.lisp`'s `BEEP-WAVELENGTH` of `1350` octal.
+@old
+              R_BEEP:    audio <= !audio;
+@new
+              R_BEEP:    if (wr) audio <= !audio;
+@end
+
+@mutation iob-the-serial-enable-is-not-writable
+@check iob
+@file rtl/cadr_io_board.sv
+@note `SER INT ENABLE` is not one of the 74LS175's four but the second half of
+@note the 74LS74 at IOBSER 0D21, with `UBI7` on its `D` and the same
+@note `KBD/MOUSE.CSR.CLK^` on its clock, so a write of the status register sets
+@note it as it sets the other four --- `ioboard::csr::WRITABLE` is `0o217` and
+@note not `0o17`.  Written so that the bit can still be cleared and never set,
+@note which keeps `ub_wdata[7]` read and lint out of it.
+@old
+                ser_en <= ub_wdata[7];
+@new
+                ser_en <= ser_en && ub_wdata[7];
+@end
+
+@mutation iob-a-write-of-the-csr-clears-the-ready-bits
+@check iob
+@file rtl/cadr_io_board.sv
+@note A write can reach five bits and no others: `KBD READY` and `MOUSE READY`
+@note are clocked and cleared by their own pins and stand through it.  The
+@note program brings both up, writes zero, and reads the register back.
+@old
+              R_CSR: if (wr) begin
+                en175  <= ub_wdata[3:0];
+@new
+              R_CSR: if (wr) begin
+                kbd_ready   <= 1'b0;
+                mouse_ready <= 1'b0;
+                en175  <= ub_wdata[3:0];
+@end
+
+@mutation iob-the-interval-timer-is-a-tick-short
+@check iob
+@file rtl/cadr_io_board.sv
+@note One count of the four 74LS193s at CLKTIM is `16 USEC CLK`, 16,000 ns, and
+@note the interval is counted DOWN from what was written --- `iob.wlr` puts
+@note `16 USEC CLK` on `F21-04 CNT DW` with `F21-05 CNT UP` on `HI3`, and MIT's
+@note own `doc/iob.text` agrees, while microcode 323 says the opposite of its
+@note own board (discrepancy 74).  A count one tick short is five nanoseconds
+@note an interval; the program looks at `CLOCK READY` at the last grid instant
+@note before each interval ends and at the first at or after it, so this is
+@note the record that says the check sees time.
+@old
+        if (iv_t == 12'd1) begin
+@new
+        if (iv_t == 12'd2) begin
+@end
+
+@mutation iob-the-block-select-reaches-a-page-lower
+@check iob
+@file rtl/cadr_io_board.sv
+@note The DM8136s at IOBADR 0F08 and 0F09 match `A<17:7>`, one page.  **The
+@note live form of this is the one that reaches DOWN**, and slice one measured
+@note why: widening the top from `0o764176` to `0o764200` SURVIVES and is an
+@note equivalence, because `(0o764200 >> 4) & 7` is 0 and the 74LS138 at 0E20
+@note sends group 0 nowhere, so an address one word past the block answers
+@note nothing however wide the match is.  A page lower puts `0o763100` into the
+@note keyboard and mouse group, and the decode sweep --- a real bus cycle at
+@note every one of the 262,144 addresses an eighteen-bit `ub_addr` can carry,
+@note read and written --- reaches it in address order well before the block.
+@old
+  assign in_block_c = (ub_addr[17:7] == BLOCK) && !ub_addr[0];
+@new
+  assign in_block_c = ((ub_addr[17:7] == BLOCK) || (ub_addr[17:7] == BLOCK - 11'd1))
+                      && !ub_addr[0];
+@end
+
+# ---------------------------------------------------------------------------
 # THE MAP, WRITTEN AND THEN READ THROUGH, AGAINST A REAL MEMORY
 #
 # `map_boot` is `machine` with one thing changed: `mem_rdata` is fetched from a

@@ -28,13 +28,13 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
+       $(BUILD)/map_boot.pass \
        $(BUILD)/mem_count.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
-       $(BUILD)/map_boot.pass \
-       $(BUILD)/console.pass \
+       $(BUILD)/console.pass $(BUILD)/iob.pass \
        muir-pin current
 
 # ----------------------------------------------------------------- muir's pin
@@ -216,11 +216,7 @@ $(BUILD)/tv.pass: $(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden
 # read of the status register, 135 reads of each half of the microsecond
 # counter, and one write of the keyboard's interrupt enable.
 #
-# THE REFERENCE ONLY, FOR NOW.  Slice one of the card is the trace and a
-# throwaway Python model checked against it; there is no SystemVerilog and
-# nothing here compares anything, which is why this target is not in `check`
-# and is named without a suffix.  `docs/io-board.md` says what the next slice
-# builds and what seam it hangs on.
+# `docs/io-board.md` says what each slice builds and what seam it hangs on.
 #
 # The trace is 81 million ticks --- 404 ms of the card's own time, which is
 # what it takes for the microsecond counter to carry into its high half twice
@@ -237,6 +233,21 @@ iob-golden: $(BUILD)/iob.golden
 
 $(BUILD)/iob.golden: golden/src/iob.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin iob > $@
+
+# Slice two: the card itself, one module and one testbench at the Unibus seam,
+# as the disk controller's check lives at its four registers.  The run replays
+# the whole trace tick for tick, then sweeps the decode over all 262,144
+# addresses in both directions with a real bus cycle each, then holds the
+# priority chain to page IOBINT's own equations --- which is the only part no
+# trace against this model can reach, the Chaosnet interface being `None`
+# unless one is plugged in.
+$(BUILD)/obj_iob/Vcadr_io_board: rtl/cadr_io_board.sv tb/cadr_io_board_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_iob \
+	    --top-module cadr_io_board rtl/cadr_io_board.sv $(abspath tb/cadr_io_board_tb.cpp)
+
+$(BUILD)/iob.pass: $(BUILD)/obj_iob/Vcadr_io_board $(BUILD)/iob.golden
+	$(BUILD)/obj_iob/Vcadr_io_board $(BUILD)/iob.golden
+	@touch $@
 
 # ------------------------------------------------------------------ DDR map
 
@@ -660,6 +671,7 @@ MUTREV ?= HEAD
 mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
          $(BUILD)/disk.golden $(BUILD)/disk_boot.golden $(BUILD)/tv.golden \
+         $(BUILD)/iob.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
