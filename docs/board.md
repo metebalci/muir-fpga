@@ -101,7 +101,7 @@ libusb detaches it from the JTAG interface once it has write permission.
     set_property PROGRAM.FILE build/bitstream/cadr_arty.bit [current_hw_device]
     program_hw_devices [current_hw_device]
 
-`vivado/program.tcl` does this and checks the answer. **What says it worked is
+`boards/arty-z7-20/vivado/program.tcl` does this and checks the answer. **What says it worked is
 the DONE bit**, not the absence of an error: `program_hw_devices` can complete
 against a device that did not take the configuration.
 
@@ -121,7 +121,7 @@ JTAG-programmed board, and a design that reads DDR gets no answer. Neither
 looks like a missing initialisation: the first looks like a bitstream that did
 not load and the second like a broken memory path.
 
-Two consequences, both deliberate in `rtl/cadr_arty.sv`:
+Two consequences, both deliberate in `boards/arty-z7-20/cadr_arty.sv`:
 
 - **The fabric clock comes from an MMCM off the board's 125 MHz pin, not from
   the PS.** It runs the moment the bitstream loads. A bring-up where nothing
@@ -140,10 +140,10 @@ is the record of it. Each adds exactly one unknown --- the processing system,
 then the fabric writing, then the fabric reading, then the machine --- so each
 is worth running only once the one before it has passed.
 
-    vivado/ddr_check.tcl     the controller starts, DDR answers, no bitstream
-    vivado/prove_write.tcl   the fabric writes a word, the debugger reads it
-    vivado/prove_read.tcl    the fabric reads a word and echoes it, three cases
-    vivado/ddr_run.tcl       the machine runs its boot PROM out of real DDR3
+    boards/arty-z7-20/vivado/ddr_check.tcl     the controller starts, DDR answers, no bitstream
+    boards/arty-z7-20/vivado/prove_write.tcl   the fabric writes a word, the debugger reads it
+    boards/arty-z7-20/vivado/prove_read.tcl    the fabric reads a word and echoes it, three cases
+    boards/arty-z7-20/vivado/ddr_run.tcl       the machine runs its boot PROM out of real DDR3
 
 These are **XSDB** scripts and not Vivado ones, run from the repository root:
 what they need is a debugger on the APU, not a hardware manager. Each takes
@@ -157,14 +157,14 @@ failures apart.
 
 The start-up routine, which is generated and not committed:
 
-    vivado -mode batch -source vivado/gen_ps7_init.tcl
+    vivado -mode batch -source boards/arty-z7-20/vivado/gen_ps7_init.tcl
     # writes build/ps7/ps7_init.tcl
 
 and, from step two on, a bitstream of the board that step is about:
 
-    PROVE=1 OUTDIR=build/prove-write vivado -mode batch -source vivado/bitstream.tcl
-    PROVE=2 OUTDIR=build/prove-read  vivado -mode batch -source vivado/bitstream.tcl
-    DDR=1   OUTDIR=build/ddr         vivado -mode batch -source vivado/bitstream.tcl
+    PROVE=1 OUTDIR=build/prove-write vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
+    PROVE=2 OUTDIR=build/prove-read  vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
+    DDR=1   OUTDIR=build/ddr         vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
 
 **Step two's board and step three's are two different bitstreams with the same
 file name**, one directory apart. Pointing step three at step two's produces
@@ -178,7 +178,7 @@ million reads before giving up, which over JTAG is not a bound anybody will
 wait for, and the routine is not ours to change. **A controller that never
 comes up therefore hangs rather than failing.**
 
-    timeout 600 ~/Xilinx/2026.1/Vivado/bin/xsdb vivado/ddr_check.tcl
+    timeout 600 ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/ddr_check.tcl
 
 Exit 124 is "the poll never finished", which is its own finding and not a
 crash.
@@ -251,7 +251,7 @@ already `0xF`, the witness fires the instant the part configures --- before the
 poison lands --- and the block reads thirty-two words of filler, which looks
 exactly like a fabric that cannot write. It cost one run at `700b98a`.
 
-The machine, `DDR=1`, has no such trigger: `rtl/cadr_arty.sv` resets it on the
+The machine, `DDR=1`, has no such trigger: `boards/arty-z7-20/cadr_arty.sv` resets it on the
 MMCM's lock or BTN0, so it starts the instant the part configures and reaches
 its memory cycles 118 ms later whether or not anybody has brought the port up.
 Poisoning 256 words over JTAG takes longer than that. So the port must be
@@ -260,7 +260,7 @@ Poisoning 256 words over JTAG takes longer than that. So the port must be
     ps7_init -> clear LVL_SHFTR_EN -> poison -> ps7_post_config -> program
              -> wait -> read
 
-which works only because of the same SLCR fact, and `vivado/ddr_run.tcl` reads
+which works only because of the same SLCR fact, and `boards/arty-z7-20/vivado/ddr_run.tcl` reads
 `0xF8000900` again after programming and stops if it is not `0x0000000F`.
 Measured on four runs at `1709d60`. No RTL change was needed for the start
 problem.
@@ -272,7 +272,7 @@ session on one download.
 
 ### Step one --- the controller starts, and DDR answers
 
-    timeout 600 ~/Xilinx/2026.1/Vivado/bin/xsdb vivado/ddr_check.tcl
+    timeout 600 ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/ddr_check.tcl
 
 No bitstream, and **no `ps7_post_config`**: this is the processor side alone,
 and the point is that it depends on nothing this project built. What says it
@@ -300,7 +300,7 @@ Passed twice at `398edfc`, recorded in `700b98a`. A mismatch names the address:
 ### Step two --- the fabric writes, the debugger reads it back
 
     BIT=build/prove-write/cadr_arty.bit \
-        timeout 900 ~/Xilinx/2026.1/Vivado/bin/xsdb vivado/prove_write.tcl
+        timeout 900 ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/prove_write.tcl
 
 `PROVE=1` puts `0x8A5C36E1` at `0x18A72EE4` through the machine's own memory
 port --- the same `cadr_axi_master` -> `cadr_axi_widen` -> `cadr_ps7` chain the
@@ -339,7 +339,7 @@ the design marking its own work.
 ### Step three --- the fabric reads, and echoes what it read
 
     BIT=build/prove-read/cadr_arty.bit \
-        timeout 900 ~/Xilinx/2026.1/Vivado/bin/xsdb vivado/prove_read.tcl
+        timeout 900 ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/prove_read.tcl
 
 Three cases, one session, one download, **no button**. The fabric reads
 `0x18A72EE4` and writes what it read, raw, to `0x18A72F18` --- seven beats
@@ -383,7 +383,7 @@ when the port comes live. Check `BIT=`.
 ### Step four --- the machine runs out of real DDR3
 
     BIT=build/ddr/cadr_arty.bit \
-        timeout 900 ~/Xilinx/2026.1/Vivado/bin/xsdb vivado/ddr_run.tcl
+        timeout 900 ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/ddr_run.tcl
 
 `DDR=1` puts the processing system behind the machine's own memory port. The
 boot PROM's whole main-memory traffic is `PAGE-0-PARITY-FIX`: it reads each of
@@ -400,7 +400,7 @@ enumerated and none counts accesses, and Xilinx's own performance tooling
 instantiates a counter IP in the fabric for exactly this reason.
 
 **So the fabric counts, at the processing system's own handshakes.**
-`rtl/cadr_mem_count.sv` keeps four fifteen-bit saturating counters --- what the
+`rtl/plumbing/cadr_mem_count.sv` keeps four fifteen-bit saturating counters --- what the
 machine *asked* the port for, split by direction, and what the processing
 system *answered*, `BVALID`/`BREADY` for a write and the last
 `RVALID`/`RREADY` beat for a read. A fabric that never issued a transaction
@@ -522,7 +522,7 @@ registers answering the boot PROM's polls; before `cadr_disk_controller.sv`
 existed the polls timed out and the same run gave 590,925 and 13,783.)
 
 The lamps are therefore not how the memory path is checked, and cannot be.
-The evidence is `vivado/ddr_run.tcl`'s four counters, read by the debugger at
+The evidence is `boards/arty-z7-20/vivado/ddr_run.tcl`'s four counters, read by the debugger at
 the processing system's own boundary, and page 0 read back against the poison
 that was put there. The probe cannot answer it either: it captures microcycles
 0 to DEPTH-1 and the first `mem_req` is at 536,303.
@@ -602,7 +602,7 @@ stopped were the polls, never the memory cycles.
 `tb/cadr_nomem_tb.cpp` printed that line as `beat[23]` until `bffbe9c`; LD1
 has been `beat[19]` since `ad4a475`, and both now agree. What the testbench
 measures is the microcycle rate; which bit of the beat reaches the pin is
-`rtl/cadr_arty.sv`'s to say, and this table takes it from there.
+`boards/arty-z7-20/cadr_arty.sv`'s to say, and this table takes it from there.
 
 **The general point is worth more than the correction.** The prediction was
 that no memory means no progress; the fabric's answer is that no memory means

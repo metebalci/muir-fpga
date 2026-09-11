@@ -247,7 +247,7 @@ int main(int argc, char **argv) {
     return sampled;
   };
   // Four ticks: the address a tick ahead, the request, and the two ticks the
-  // controller holds the store for --- see `rtl/cadr_disk_controller.sv`.
+  // controller holds the store for --- see `rtl/machine/cadr_disk_controller.sv`.
   auto do_write = [&](int reg, unsigned v) {
     d_sel = 1; d_rq = 0; d_wr = 1; d_phys = REGS | (unsigned)reg; d_wdata = v;
     run_tick(false);

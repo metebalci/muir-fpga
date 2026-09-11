@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-//! The reference trace for `rtl/cadr_phase_gen.sv`, taken from muir's own
+//! The reference trace for `rtl/machine/cadr_phase_gen.sv`, taken from muir's own
 //! `clock::Behavioural` --- the model the `chip` engine runs.
 //!
 //! One line per five-nanosecond tick: the inputs the tick was driven with,

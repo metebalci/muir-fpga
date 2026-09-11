@@ -14,7 +14,7 @@
 //! drives, through `part::pinout`. `cable.rs`'s prose table gives the same
 //! answers for the nine signals it lists, and this agrees with it or fails.
 //!
-//! Writes `rtl/cadr_cables.svh` and, beside it, `rtl/cadr_cables.map` ---
+//! Writes `rtl/machine/cadr_cables.svh` and, beside it, `rtl/machine/cadr_cables.map` ---
 //! every mangled identifier against the name MIT wrote, so a waveform can be
 //! read against the drawing.
 
@@ -317,9 +317,9 @@ fn main() {
     writeln!(stub).unwrap();
     writeln!(stub, "`default_nettype wire").unwrap();
 
-    std::fs::write("rtl/cadr_cables.svh", &sv).expect("write rtl/cadr_cables.svh");
-    std::fs::write("rtl/cadr_cables.map", &map).expect("write rtl/cadr_cables.map");
-    std::fs::write("rtl/cadr_cables_lint.sv", &stub).expect("write rtl/cadr_cables_lint.sv");
+    std::fs::write("rtl/machine/cadr_cables.svh", &sv).expect("write rtl/machine/cadr_cables.svh");
+    std::fs::write("rtl/machine/cadr_cables.map", &map).expect("write rtl/machine/cadr_cables.map");
+    std::fs::write("rtl/machine/cadr_cables_lint.sv", &stub).expect("write rtl/machine/cadr_cables_lint.sv");
 
     eprintln!(
         "cadr_cables: {} wires --- {ins} in, {outs} out, {bidi} both ways",

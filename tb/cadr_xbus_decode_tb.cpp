@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Checks rtl/cadr_xbus_decode.sv against muir's busint::decode at every one of
+// Checks rtl/machine/cadr_xbus_decode.sv against muir's busint::decode at every one of
 // the 4,194,304 addresses the Xbus can carry, for each board count in the
 // reference. Not sampled: 22 bits is small enough to walk.
 //

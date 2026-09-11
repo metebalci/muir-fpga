@@ -8,7 +8,7 @@
 # Everything in this repository agrees with muir in simulation.  Nothing has
 # ever compared what the *board* computes against what the model computes,
 # because the board's observable surface is six LEDs.  An in-fabric probe
-# --- `rtl/cadr_probe.sv` --- records the datapath one sample per microcycle
+# --- `rtl/plumbing/xilinx7/cadr_probe.sv` --- records the datapath one sample per microcycle
 # from microcycle zero and reads it out over JTAG; this turns that readout
 # into a verdict.
 #
@@ -57,7 +57,7 @@
 #   * column names decorated the way Vivado decorates them:
 #     `slot_0 : u_ila_0 : pc[13:0]` is the column `pc`.  A `[hi:lo]` or `[n]`
 #     width suffix is stripped, everything up to the last `:` is dropped, and
-#     MIT's own names are mangled the way `rtl/cadr_cables.map` mangles them:
+#     MIT's own names are mangled the way `rtl/machine/cadr_cables.map` mangles them:
 #     a leading `-` becomes `n_`, and `.`, space, `/` and `>` become `_`.  So
 #     a column named `-VMAOK` is the trace's `n_vmaok`.
 #   * the housekeeping columns `Sample in Buffer`, `Sample in Window` and
@@ -256,7 +256,7 @@ def read_capture(path, golden_names, radix_override=None, renames=None):
             cap.meta[m.group(1).strip().lower()] = m.group(2).strip()
     if header_at is None:
         raise Bad("%s: no header line names any column of the reference "
-                  "trace; is this a capture, as `vivado/probe.tcl` or a "
+                  "trace; is this a capture, as `boards/arty-z7-20/vivado/probe.tcl` or a "
                   "Vivado ILA export writes one?" % path)
 
     cap.header_line = header_at + 1

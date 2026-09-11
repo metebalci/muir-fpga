@@ -70,7 +70,7 @@ const BOARDS: u32 = 32;
 const MEMORY_WORDS: u32 = BOARDS * (1 << 16);
 
 /// A block's record in DDR: the 259 words, and the alignment
-/// `rtl/cadr_disk_pack.sv` refuses an address without.
+/// `rtl/plumbing/cadr_disk_pack.sv` refuses an address without.
 const RECORD_BYTES: u32 = (BLOCK_WORDS as u32 + 3) * 4;
 const RECORD_ALIGN: u32 = 128;
 

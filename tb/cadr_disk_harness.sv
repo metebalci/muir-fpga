@@ -3,8 +3,8 @@
 //
 // The disk controller with its pack side underneath it.
 //
-// `rtl/cadr_disk_controller.sv` is the controller --- the register face, the
-// drive, the channel, the track --- and `rtl/cadr_disk_pack.sv` is what fills
+// `rtl/machine/cadr_disk_controller.sv` is the controller --- the register face, the
+// drive, the channel, the track --- and `rtl/plumbing/cadr_disk_pack.sv` is what fills
 // its block store: the block's address written over `M_AXI_GP0`, the master on
 // `S_AXI_HP2` that fetches the record and writes it back.  The seam between
 // them is 260 words a slot and a tag, and until this harness the testbench
@@ -15,8 +15,8 @@
 // GP0 face.
 //
 // IT IS IN `tb/` FOR THE REASON `tb/cadr_arty_stubs.sv` GIVES.  Both Vivado
-// scripts read `[glob rtl/*.sv]`, so a wiring harness in `rtl/` would join the
-// bitstream.  `rtl/cadr_arty.sv`'s `g_ddr` wires the same two modules the same
+// scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`, so a wiring harness in `rtl/` would join the
+// bitstream.  `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` wires the same two modules the same
 // way, with `cadr_ps7.sv` on the far end of both faces.
 //
 // AND IT IS A HARNESS AND NOT THE THING CHECKED.  Two checks build it:

@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# `vivado/probe.tcl`, run against `tb/cadr_jtag_chain.tcl`, on seven chains.
+# `boards/arty-z7-20/vivado/probe.tcl`, run against `tb/cadr_jtag_chain.tcl`, on seven chains.
 # No board, no Vivado, no bitstream: `tclsh tb/cadr_probe_jtag_tb.tcl`, 80 ms.
 #
 #     make build/probe_jtag.pass
 #
-# WHAT THIS HOLDS THE SCRIPT TO.  Not the exit code. `vivado/probe.tcl`'s own
+# WHAT THIS HOLDS THE SCRIPT TO.  Not the exit code. `boards/arty-z7-20/vivado/probe.tcl`'s own
 # header claims that "a board that is not that chain fails on the check that
 # names it, not on a sample of zeros", and an exit code cannot tell those
 # apart --- a chain that fails at the right place and one that limps on and
@@ -19,17 +19,17 @@
 # WHAT `tb/cadr_jtag_chain.tcl` DOES NOT MODEL is written at length in its own
 # header and is the thing to read before quoting this check. In one line: it
 # is a shift chain, not a TAP and not silicon, and it cannot see a DRCK edge,
-# `BSCANE2`'s real behaviour, or anything at all about `rtl/cadr_probe.sv` ---
+# `BSCANE2`'s real behaviour, or anything at all about `rtl/plumbing/xilinx7/cadr_probe.sv` ---
 # which `tb/cadr_probe_tb.cpp` holds instead, in Verilator, against muir.
 #
-# WHY IT IS IN `tb/`.  Both `vivado/fit.tcl` and `vivado/bitstream.tcl` read
-# `[glob rtl/*.sv]`, so a simulation-only file under `rtl/` becomes part of
+# WHY IT IS IN `tb/`.  Both `boards/arty-z7-20/vivado/fit.tcl` and `boards/arty-z7-20/vivado/bitstream.tcl` read
+# `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`, so a simulation-only file under `rtl/` becomes part of
 # the bitstream --- `tb/cadr_arty_stubs.sv` is there for exactly that reason
 # and says so. These two are Tcl and no glob would take them, but the rule is
 # the rule and the obvious wrong home for a stub is the one that causes the
 # accident. `tb/` is globbed by nothing.
 #
-# THE CHAIN THE MODEL PRESENTS is quoted from the same BSDLs `vivado/probe.tcl`
+# THE CHAIN THE MODEL PRESENTS is quoted from the same BSDLs `boards/arty-z7-20/vivado/probe.tcl`
 # quotes --- xc7z020_clg400.bsd and zynq7000_arm_dap.bsd --- and confirmed
 # against silicon at ace4131: both IDCODEs exact, the part at the TDO end, IR
 # total 10, first bit out least significant, DONE high. Both sides quoting one
@@ -42,7 +42,7 @@ source [file join $here cadr_jtag_chain.tcl]
 # The script under test. Overridable so that the mutation runner can point at
 # a copy, and resolved from this file rather than from the working directory.
 set probe [expr {[info exists ::env(PROBE_TCL)] ? $::env(PROBE_TCL)
-                                                : [file join $here .. vivado probe.tcl]}]
+                                                : [file join $here .. boards arty-z7-20 vivado probe.tcl]}]
 set probe [file normalize $probe]
 
 # ------------------------------------------------------------- the two devices
@@ -109,7 +109,7 @@ proc one_hot {j} { return [expr {1 << $j}] }
 
 # --------------------------------------------------------------- a single case
 #
-# Run as a child process, because `vivado/probe.tcl` ends in `exit` on every
+# Run as a child process, because `boards/arty-z7-20/vivado/probe.tcl` ends in `exit` on every
 # path --- there is no way to source it seven times in one interpreter.
 proc setup_case {case} {
     global ZYNQ DAP ZYNQ_IR5 DEPTHS START_AT
@@ -145,8 +145,8 @@ if {[lindex $argv 0] eq "--case"} {
 # ------------------------------------------------------- what `good` exported
 #
 # THE FIELD TABLE IS NOT COPIED HERE, AND THAT IS THE POINT. There are already
-# three descriptions of the probe's 421-bit payload --- `rtl/cadr_probe.sv`,
-# `tb/cadr_probe_tb.cpp` and `vivado/probe.tcl` --- and a fourth would be one
+# three descriptions of the probe's 421-bit payload --- `rtl/plumbing/xilinx7/cadr_probe.sv`,
+# `tb/cadr_probe_tb.cpp` and `boards/arty-z7-20/vivado/probe.tcl` --- and a fourth would be one
 # more thing to keep in step and one more way to be wrong in agreement.
 #
 # So the layout is MEASURED instead. The `good` case hands the script a buffer
@@ -159,7 +159,7 @@ if {[lindex $argv 0] eq "--case"} {
 # transposed pair, a dropped bit, an off-by-one in the offset walk and a
 # column exported from the wrong place all break it.
 # `set v 0x$cell` before `expr`, never `expr {0x$cell}` --- braces defer no
-# substitution, so the second does not parse. vivado/probe.tcl says the same
+# substitution, so the second does not parse. boards/arty-z7-20/vivado/probe.tcl says the same
 # where it builds `idval`.
 proc hexval {s} {
     set v 0x$s
@@ -278,7 +278,7 @@ file mkdir $outdir
 set self [file normalize [info script]]
 set bad 0
 set broke {}
-puts "vivado/probe.tcl against tb/cadr_jtag_chain.tcl:"
+puts "boards/arty-z7-20/vivado/probe.tcl against tb/cadr_jtag_chain.tcl:"
 
 foreach spec $CASES {
     lassign $spec case want_exit want_lines
@@ -325,7 +325,7 @@ if {$bad} {
     puts "FAIL: $bad of [llength $CASES] chains read wrongly: [join $broke {, }]"
     exit 1
 }
-puts "ok: [llength $CASES] chains, and vivado/probe.tcl reads each one the way\
+puts "ok: [llength $CASES] chains, and boards/arty-z7-20/vivado/probe.tcl reads each one the way\
  it says it does"
 puts "    the four it must refuse fail on the check that names them, not later"
 puts "    421 payload bits, one-hot, tile 22 columns in header order with no\

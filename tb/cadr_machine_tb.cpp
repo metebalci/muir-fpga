@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Drives rtl/cadr_machine.sv --- the processor and the memory path joined by
+// Drives rtl/machine/cadr_machine.sv --- the processor and the memory path joined by
 // the cables --- from muir's own trace, and compares every microcycle.  The trace is written by golden/src/rtl.rs out of muir's `rtl`
 // engine running MIT's boot PROM: a real program, not a scripted stimulus.
 //
@@ -17,13 +17,13 @@
 // dispatch memory's word, and the console's registers.  The bus interface is
 // here too, as its far end: this testbench answers -MEMRQ with -MEMGRANT and
 // -MEMACK at the instants muir's own interface answered them.
-// `rtl/cadr_busint_xbus.sv` is the real thing and has a check of its own.  Every one leaves with
+// `rtl/machine/cadr_busint_xbus.sv` is the real thing and has a check of its own.  Every one leaves with
 // a later slice.  They are counted and printed, so what this check is still
 // being told rather than checking is on its own output.
 //
 // **AND ONE OF THEM HAS LEFT.**  The Xbus devices used to be answered from
 // the trace --- 16,951 cycles of this program's 17,466, the disk controller's
-// four registers being all it touches --- and `rtl/cadr_disk_controller.sv`
+// four registers being all it touches --- and `rtl/machine/cadr_disk_controller.sv`
 // answers them now, with `device_ack` driven low here and never raised.  So
 // `md` on 11,301 of those rows is the fabric's own status word and the trace
 // is the reference for it rather than the source of it.  That is what a slice
@@ -124,7 +124,7 @@
 // The control store comes up all ones rather than zero, and that is what
 // makes the 16,384 words the boot PROM writes worth writing: every one of
 // them is zero, so with the RAM coming up zero a write that never happened
-// reads back exactly like one that did.  rtl/cadr_microcycle.sv says so at
+// reads back exactly like one that did.  rtl/machine/cadr_microcycle.sv says so at
 // the array.
 
 #include <algorithm>
@@ -339,7 +339,7 @@ int main(int argc, char **argv) {
   // **`device_rdata` NO LONGER CARRIES THE WORD, AND THAT IS THE POINT OF THE
   // SLICE.**  It used to be `rdata_for[row]`, the same column `mem_rdata`
   // gets, so all 16,951 device cycles --- the boot PROM's disk polls --- were
-  // answered with muir's own word.  `rtl/cadr_disk_controller.sv` answers
+  // answered with muir's own word.  `rtl/machine/cadr_disk_controller.sv` answers
   // them now, and a line that went on handing back the right word would leave
   // that module unchecked: CLAUDE.md's `md` trap verbatim, where a driven
   // input that became an output kept being driven and both processor checks
@@ -492,7 +492,7 @@ int main(int argc, char **argv) {
     // answered them, all 5,650 came back a tick late --- 17 ticks from the
     // grant against muir's 16, the signature of CLAUDE.md's fourth entry,
     // an answer worked out before the clock edge rather than after it ---
-    // and `rtl/cadr_disk_controller.sv`, answering combinationally off
+    // and `rtl/machine/cadr_disk_controller.sv`, answering combinationally off
     // `dev_rq` inside the fabric, lands them at muir's own 16.  The reads
     // were 28 ticks from the grant either way, which is muir's 28.
     //
@@ -510,7 +510,7 @@ int main(int argc, char **argv) {
     // why.  It is not here because on its own it turns this check red on 58
     // microcycles, each exactly one 220 ns wait long, which nobody has
     // characterised.  See the `RD_FINISH_T` comment in
-    // `rtl/cadr_microcycle.sv` and issue #11.
+    // `rtl/machine/cadr_microcycle.sv` and issue #11.
     //
     // Anyone re-deriving these numbers should move the observation first and
     // measure again.  Two published readings of this histogram were wrong
@@ -535,7 +535,7 @@ int main(int argc, char **argv) {
     // `device_rdata` handed muir's word --- and it answered every one of this
     // program's 16,951 device cycles.  Its own comment called that stimulus
     // rather than a model, and it was: the fabric had no disk controller.  It
-    // has one now, `rtl/cadr_disk_controller.sv` inside `cadr_machine`, so
+    // has one now, `rtl/machine/cadr_disk_controller.sv` inside `cadr_machine`, so
     // `device_ack` stays low here and the four registers answer for
     // themselves.  MD is compared every microcycle, so an answer at the wrong
     // instant, or a status word that is not `0x2321`, fails on the row it
@@ -941,7 +941,7 @@ int main(int argc, char **argv) {
   }
   // **EVERY DEVICE CYCLE MUST BE THE FABRIC'S OWN ANSWER.**  Nothing outside
   // the machine drives `device_ack`, so a device cycle that got to -MEMACK
-  // without the NXM timer got there through `rtl/cadr_disk_controller.sv`.
+  // without the NXM timer got there through `rtl/machine/cadr_disk_controller.sv`.
   // This is the guard that would have caught the slice going backwards: a
   // testbench that started answering these again, or a decode that stopped
   // selecting the disk, both show up here as a count that is not the whole

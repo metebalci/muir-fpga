@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Drives rtl/cadr_microcycle.sv from muir's own trace and compares every
+// Drives rtl/machine/cadr_microcycle.sv from muir's own trace and compares every
 // microcycle.  The trace is written by golden/src/rtl.rs out of muir's `rtl`
 // engine running MIT's boot PROM: a real program, not a scripted stimulus.
 //
@@ -17,7 +17,7 @@
 // dispatch memory's word, and the console's registers.  The bus interface is
 // here too, as its far end: this testbench answers -MEMRQ with -MEMGRANT and
 // -MEMACK at the instants muir's own interface answered them.
-// `rtl/cadr_busint_xbus.sv` is the real thing and has a check of its own.  Every one leaves with
+// `rtl/machine/cadr_busint_xbus.sv` is the real thing and has a check of its own.  Every one leaves with
 // a later slice.  They are counted and printed, so what this check is still
 // being told rather than checking is on its own output.
 //
@@ -60,7 +60,7 @@
 //
 // AND THE TOLERANCE ON A STALLED MICROCYCLE IS A WHOLE TICK, NOT LESS.  The
 // -MEMACK driven here is this testbench's model of the interface, and the
-// interface is `rtl/cadr_busint_xbus.sv`, which puts it a tick from where the
+// interface is `rtl/machine/cadr_busint_xbus.sv`, which puts it a tick from where the
 // ideal instant is.  With the processor's -RDFINISH set for the *real*
 // interface --- which is what `machine.pass` runs, the same processor with
 // `cadr_busint_xbus.sv` underneath --- a hang ends a tick from where this
@@ -120,7 +120,7 @@
 // The control store comes up all ones rather than zero, and that is what
 // makes the 16,384 words the boot PROM writes worth writing: every one of
 // them is zero, so with the RAM coming up zero a write that never happened
-// reads back exactly like one that did.  rtl/cadr_microcycle.sv says so at
+// reads back exactly like one that did.  rtl/machine/cadr_microcycle.sv says so at
 // the array.
 
 #include <cerrno>

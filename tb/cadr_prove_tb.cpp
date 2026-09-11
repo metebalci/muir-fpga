@@ -3,7 +3,7 @@
 //
 // The witness, against an AXI3 slave that is not the design.
 //
-// `rtl/cadr_prove.sv` is the fabric half of the two steps that decide whether
+// `rtl/plumbing/cadr_prove.sv` is the fabric half of the two steps that decide whether
 // the memory port works before the machine is put behind it.  On the board its
 // other half is a debugger reading and writing DDR --- an observer outside the
 // design, and the whole reason those steps are worth doing.  Here that
@@ -13,7 +13,7 @@
 //
 // IT IS THE HARNESS AND NOT THE MODULE THAT IS INSTANTIATED, deliberately.
 // `tb/cadr_prove_harness.sv` puts `cadr_axi_master` and `cadr_axi_widen`
-// underneath, exactly as `rtl/cadr_arty.sv`'s `g_ddr` does, because the
+// underneath, exactly as `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` does, because the
 // question the steps ask is not whether a state machine sequences but whether
 // a word ends up at an address --- and there are three modules between the
 // two.  Each of the three has a check of its own; this is the only one that
@@ -42,7 +42,7 @@
 //   FILLER and echoes it, so a beat filled with the filler could not tell
 //   that write-back from one that never happened --- the
 //   memory-whose-only-exercise-writes-one-constant trap, one move along.
-//   `vivado/prove_read.tcl` gives the echo beat its own filler for exactly
+//   `boards/arty-z7-20/vivado/prove_read.tcl` gives the echo beat its own filler for exactly
 //   this reason and says so.
 //
 //   THE BEAT IS COMPARED AGAINST WHAT THE STIMULUS ASKED FOR, not against
@@ -68,7 +68,7 @@
 //   because it is a read and then a write and never three of anything.
 //
 //   THE 80 ns THE BUS SPECIFICATION PUTS ON A MASTER, ON BOTH TRANSACTIONS.
-//   `rtl/cadr_ddr.xdc` relaxes the adapter's address and data registers to
+//   `rtl/plumbing/xilinx7/cadr_ddr.xdc` relaxes the adapter's address and data registers to
 //   sixteen ticks on the strength of it, and on a `PROVE` board this module is
 //   the master that owes it.  Nothing else anywhere would notice a witness
 //   that raised `mem_req` in the same tick as the address --- the constraint
@@ -82,7 +82,7 @@
 //   inputs instead of its own registers lands in the wrong half and compares
 //   against poison.  On the board those four are tied to constants and none of
 //   this could ever show; here it is what makes the latching load-bearing, and
-//   the latching is what `rtl/cadr_ddr.xdc`'s eighty nanoseconds are a claim
+//   the latching is what `rtl/plumbing/xilinx7/cadr_ddr.xdc`'s eighty nanoseconds are a claim
 //   about.  `echo_addr` is scribbled at the same instant the payload is taken,
 //   which is long before the write-back needs it --- so a witness that read
 //   the pin at that moment rather than its own copy writes one lane over.
@@ -239,7 +239,7 @@ int main(int argc, char **argv) {
   // beat, so the write-back cannot reach what it read, and the other half of
   // it, so a widening stuck on one half is caught in one direction or the
   // other. The board's own pair has the same two properties and its own
-  // reasons for the exact numbers, which `rtl/cadr_arty.sv` gives.
+  // reasons for the exact numbers, which `boards/arty-z7-20/cadr_arty.sv` gives.
   struct Op {
     unsigned addr, word, echo;
     bool write;
@@ -273,7 +273,7 @@ int main(int argc, char **argv) {
     }
     // And the board's own numbers, so the thing that will be built is a case
     // here and not merely a configuration of one. `PROVE=1` writes; the three
-    // that follow are the three cases `vivado/prove_read.tcl` runs in one
+    // that follow are the three cases `boards/arty-z7-20/vivado/prove_read.tcl` runs in one
     // session, in its order, each one re-armed and run again.
     const unsigned A = 0x18A72EE4u, W = 0x8A5C36E1u, E = 0x18A72F18u;
     ops.push_back({A, W, E, true,  0, 0, false});   // step two
@@ -530,7 +530,7 @@ int main(int argc, char **argv) {
           std::fprintf(stderr,
                        "tick %ld: mem_req rose %ld ticks after the payload "
                        "settled; the bus gives the master 80 ns and "
-                       "rtl/cadr_ddr.xdc relaxes the adapter on it\n",
+                       "rtl/plumbing/xilinx7/cadr_ddr.xdc relaxes the adapter on it\n",
                        tick, setup);
           ++bad;
         }

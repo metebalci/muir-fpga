@@ -118,10 +118,10 @@ disk, for the same reason.
 ## The decisions
 
 **The frame buffer is DDR, through main memory's bridge at a second base.**
-`rtl/cadr_ddr_map.sv` has reserved 8 MB at `0x1C00_0000` for the display
+`rtl/plumbing/cadr_ddr_map.sv` has reserved 8 MB at `0x1C00_0000` for the display
 since before anything filled it; the machine's 32,768 words are the first
 128 KB of it, `display_byte_address(offset) = DISPLAY_BASE + 4 * offset`.
-`rtl/cadr_tv.sv` decodes the window as the board's MAPADR switch does and
+`rtl/machine/cadr_tv.sv` decodes the window as the board's MAPADR switch does and
 says so on `fb_sel`, held; `cadr_memory_path.sv` selects `cadr_xbus_ddr`
 on it beside `is_memory`, and the bridge takes a `display` input that picks
 the base --- a mux on the address alone, in the 80 ns the bus gives the
@@ -289,7 +289,7 @@ re-aimed with a note saying so: `bridge-writes-the-address-instead-of-the-data`,
 
 ## The fit
 
-Board flow, `vivado/bitstream.tcl`, Vivado 2026.1, both configurations,
+Board flow, `boards/arty-z7-20/vivado/bitstream.tcl`, Vivado 2026.1, both configurations,
 in isolated copies of two trees: HEAD at `15975ae` --- whose RTL is
 `a899799`'s, and whose figures reproduce that commit message's exactly, so
 the flow is deterministic --- and this slice on top of it.
@@ -349,7 +349,7 @@ exceptions (2 and 4) and pass `assert_multicycle_applied`; from the
 checkpoint, every path OUT of the display's three held decodes asks for
 5.000 ns, paths INTO them ask for 5.000 and 75.000 (the map arriving,
 relaxed), and every path into the frame counter, the flag, the mode
-register and the cycle's latch asks for 5.000 --- `rtl/cadr_machine.xdc`'s
+register and the cycle's latch asks for 5.000 --- `rtl/plumbing/xilinx7/cadr_machine.xdc`'s
 new clause did exactly what its comment says.
 
 ## What is not built

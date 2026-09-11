@@ -47,7 +47,7 @@
 // **AND LINUX IS IN THE LOOP.**  The store comes up empty and stays a cache:
 // the walk asks for what it lacks over REQ, and the feeder below --- second
 // chance over the twenty-four slots, the walk's slot passed over, the same
-// rule `linux/buildroot/package/cadr-disk-pack/src/pack_feeder.c` runs on the
+// rule `boards/arty-z7-20/linux/buildroot/package/cadr-disk-pack/src/pack_feeder.c` runs on the
 // board --- answers it a varying number of ticks later.  Nothing is
 // pre-filled: a fabric that could not ask would move no block at all.
 //

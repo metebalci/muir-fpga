@@ -3,7 +3,7 @@
 //
 // The I/O board against muir, at the Unibus.
 //
-// The DUT is `rtl/cadr_io_board.sv` alone, driven by `build/iob.golden`, which
+// The DUT is `rtl/machine/cadr_io_board.sv` alone, driven by `build/iob.golden`, which
 // `golden/src/iob.rs` writes out of muir's own `ioboard::IoBoard` through
 // `busint::IoBoardTiming`.  The seam is the one the card has on the machine:
 // `-UB MSYN`, `ub_write`, `ub_addr`, `ub_wdata` in and `-UB SSYN`, `ub_rdata`
@@ -68,7 +68,7 @@
 // decodes the whole block, because the decode is one sheet, so the trace's
 // `DEC` rows say the card answers the Chaosnet interface's group
 // (`0o764140`-`0o764156`) and the serial port's (`0o764160`-`0o764176`).
-// Those are two other slices and `rtl/cadr_io_board.sv` does not answer them;
+// Those are two other slices and `rtl/machine/cadr_io_board.sv` does not answer them;
 // this check requires that it does not, names the fifteen addresses, and
 // prints how many answering directions it let through --- so the day either
 // slice lands, this line is what says so.  No `CYC` row goes near them.

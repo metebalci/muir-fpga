@@ -28,7 +28,7 @@ whose build path is compiled into this `u-boot.elf`.
 
 The first boot corrected this file in three places, each measured on the
 console with the board reset over JTAG between attempts (`docs/boot.md` has
-the procedure; `linux/uEnv.net` carries the reasoning next to the command).
+the procedure; `boards/arty-z7-20/linux/uEnv.net` carries the reasoning next to the command).
 
 1. **The loose `zImage` in the BSP is not the kernel in `image.ub`.** It is
    build `#2` (`Tue Mar 27 23:13:26`) where the FIT's `kernel@0` is build `#1`
@@ -80,8 +80,8 @@ the procedure; `linux/uEnv.net` carries the reasoning next to the command).
    the record of why the network loop was built the way it was.
 
 6. **No private addresses in this repository.** It is public; the TFTP
-   server's address lives in `linux/local.conf`, which is gitignored, and
-   `mksd.sh` fills it into `uEnv.txt` from `linux/uEnv.txt.in`. Machines are
+   server's address lives in `boards/arty-z7-20/linux/local.conf`, which is gitignored, and
+   `mksd.sh` fills it into `uEnv.txt` from `boards/arty-z7-20/linux/uEnv.txt.in`. Machines are
    named by their role here --- the build host, the laptop, the TFTP server.
 
 ## The premise that is wrong
@@ -230,7 +230,7 @@ So the FIT never has to be repacked: a loose `zImage`, a loose `system.dtb` and
 lines beginning with `#`, so the file can carry comments and an SPDX header ---
 and a blank line is safe too, though for a stranger reason: it parses as an
 empty name, takes the delete branch, and fails silently to delete a variable
-that was never there. `linux/uEnv.txt` leans on both, being mostly prose.
+that was never there. `boards/arty-z7-20/linux/uEnv.txt` leans on both, being mostly prose.
 
 **`$partid` is empty, always, and empty means partition 1.** It is used by both
 of those commands and defined by neither, and the earlier reading of that ---
@@ -347,7 +347,7 @@ the build host, which is a sharper control than the old plan's "rename `uEnv.txt
 the card" --- that required unplugging the board, finding a reader, and
 trusting that nothing else changed in the handling.
 
-**It is a real control only because `fdt_high` is set late.** `linux/uEnv.txt`
+**It is a real control only because `fdt_high` is set late.** `boards/arty-z7-20/linux/uEnv.txt`
 sets `fdt_high` and `initrd_high` inside `uenvcmd`, *after* both fetches, and
 not as imported variables. Imported, they would also apply to the fallback
 `bootm image.ub`, where `fdt_high=~0` makes `boot_relocate_fdt` call
@@ -378,7 +378,7 @@ and the files, not the board's link; the board's fetch time is still unmeasured.
 - **A served directory** holding `system.dtb` and `zImage`, 95 MB copied out of
   `build/sd/reserved/`.
 
-`serverip` is the TFTP server's address, from `linux/local.conf`, which the router fixes. `ipaddr` is
+`serverip` is the TFTP server's address, from `boards/arty-z7-20/linux/local.conf`, which the router fixes. `ipaddr` is
 deliberately absent: preboot ends in an unconditional `dhcp` whatever the card
 says, there is a DHCP server on this LAN, and `CONFIG_BOOTP_SERVERIP` means a
 DHCP reply cannot overwrite `serverip`.
@@ -423,7 +423,7 @@ the spare. `0x1800_0000` and 128 MB are exactly `RESERVED_BASE` and
 `RESERVED_MB` in `cadr_ddr_map.sv`; sub-dividing is a change to make when
 something claims a sub-region by phandle, and not before.
 
-## What is in `linux/`
+## What is in `boards/arty-z7-20/linux/`
 
     cadr-reserved.dtsi   the reserved-memory node, appended to the BSP's tree
     uEnv.txt             the TFTP boot, with fdt_high and initrd_high pinned
@@ -496,7 +496,7 @@ believable, and a device tree is no different.
 
       M=$(mktemp -d) && sudo mount ${D}1 $M
       sudo cp build/sd/reserved/BOOT.BIN build/sd/reserved/image.ub $M/
-      sudo cp linux/uEnv.txt $M/
+      sudo cp boards/arty-z7-20/linux/uEnv.txt $M/
       sudo sync && sudo umount $M && rmdir $M
 
   One FAT32 primary partition, MBR, type `0x0c`, bootable --- which is what

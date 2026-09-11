@@ -60,7 +60,7 @@ those are carried as a value and an enable out with the resolved wire back in.
 
 Net names are mangled to legal identifiers: a leading `-` becomes `n_`; `.`,
 space, `/` and `>` become `_`; a leading digit takes an `x`; a collision is an
-error. `rtl/cadr_cables.map` holds every identifier against the name MIT wrote.
+error. `rtl/machine/cadr_cables.map` holds every identifier against the name MIT wrote.
 
 ## The debug cable
 
@@ -113,7 +113,7 @@ it would be holding the fabric to a path the hardware never had.
 
 ## Memory in DDR
 
-Shared with the Linux side, so it is settled early in `rtl/cadr_ddr_map.sv` and
+Shared with the Linux side, so it is settled early in `rtl/plumbing/cadr_ddr_map.sv` and
 **reserved at the size the machine could one day want**. A quarter of the
 board's 512 MB; Linux keeps 384.
 

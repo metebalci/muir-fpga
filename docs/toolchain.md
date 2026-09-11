@@ -43,7 +43,7 @@ does and it is the whole of the install.
 ## For a bitstream
 
 **Vivado 2026.1.** Any recent version should do; nothing here is version-bound
-that we know of, and the reports quoted in `rtl/cadr_machine.xdc` and
+that we know of, and the reports quoted in `rtl/plumbing/xilinx7/cadr_machine.xdc` and
 `docs/board.md` were taken on 2026.1.
 
 **Only the Zynq-7000 device family.** The installer lets you deselect the rest
@@ -86,9 +86,9 @@ applies to your shells and not to `ssh host 'cmd'` or cron.
 ## Running the flows
 
     make build/boot_prom.hex                        # the PROM image, generated
-    vivado -mode batch -source vivado/fit.tcl       # synth, place, route, report
-    vivado -mode batch -source vivado/bitstream.tcl # the above, plus a .bit
-    vivado -mode batch -source vivado/program.tcl   # program a board
+    vivado -mode batch -source boards/arty-z7-20/vivado/fit.tcl       # synth, place, route, report
+    vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl # the above, plus a .bit
+    vivado -mode batch -source boards/arty-z7-20/vivado/program.tcl   # program a board
 
 From the repository root. Each takes its settings from the environment:
 

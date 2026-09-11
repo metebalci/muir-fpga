@@ -4,7 +4,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 # The console
 
-Written at the console slice, 2026-09-10, against `rtl/cadr_console.sv` as it
+Written at the console slice, 2026-09-10, against `rtl/plumbing/cadr_console.sv` as it
 stands at this slice. Numbers and line ranges below are measured at that
 point; read the date on anything that looks like a fact about the fabric.
 
@@ -12,7 +12,7 @@ point; read the date on anything that looks like a fact about the fabric.
 CADR loads its microcode from its pack, does a fixed amount of disk work and
 stops moving. The lamps say a beat is running and the probe sees only the
 first 1,024 microcycles, which is 0.17% of the boot PROM and structurally
-cannot be moved (`rtl/cadr_probe.sv`: it fills from the first microcycle after
+cannot be moved (`rtl/plumbing/xilinx7/cadr_probe.sv`: it fills from the first microcycle after
 reset and freezes, which is what makes it need nobody at the board). So the
 question --- is it waiting, or has it halted, and where is its PC --- has had no
 instrument at all. **The console is that instrument.**
@@ -67,9 +67,9 @@ the machine has stopped."
 
 ## What is here
 
-`rtl/cadr_console.sv` is a **master on the diagnostic bus with an AXI slave
+`rtl/plumbing/cadr_console.sv` is a **master on the diagnostic bus with an AXI slave
 face on `M_AXI_GP1`**. It is not a second copy of the register block:
-`rtl/cadr_spy_registers.sv` is the register block, it is not touched by this
+`rtl/machine/cadr_spy_registers.sv` is the register block, it is not touched by this
 slice, and the console drives its Unibus port exactly as `cadr_busint_xbus`
 does. Its timing --- `-UB SSYN` at `DIAGNOSTIC_NS` after the strobe, the write
 pulse's leading edge `REGISTER_PULSE_NS` before the register loads, and the
@@ -81,7 +81,7 @@ second description of one thing, and the two would drift.
 ### The register map
 
 **Thirty-two words at `REG_BASE`, two pages of sixteen**, in
-`rtl/cadr_console.sv`'s header (lines 32-77 at this slice) and its read mux
+`rtl/plumbing/cadr_console.sv`'s header (lines 32-77 at this slice) and its read mux
 (`r_word`, lines 430-446). `REG_BASE` is `0x8000_0000` (line 156), the bottom
 of `M_AXI_GP1`'s window; `IDENT` is `"CONS"` (line 158) and `UNMAPPED` its
 complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
@@ -135,10 +135,10 @@ low read latched.
 
 **Every address on GP1 is answered, and with OKAY.** A read nothing answers
 on a GP port does not fault the Arm, it hangs both cores at one PC each,
-measured on the board and set out at length in `rtl/cadr_gp0_default.sv`. So a
+measured on the board and set out at length in `rtl/plumbing/cadr_gp0_default.sv`. So a
 read outside the thirty-two words completes with `UNMAPPED` and a write
 outside them completes and is dropped, over the whole gigabyte GP1 decodes.
-OKAY and not SLVERR, which is where this differs from `rtl/cadr_disk_pack.sv`:
+OKAY and not SLVERR, which is where this differs from `rtl/plumbing/cadr_disk_pack.sv`:
 an error response to a Cortex-A9's posted write arrives as an imprecise
 external abort the kernel cannot attribute to a process. The pack side can
 afford SLVERR because a board with GP0 and no pack side has
@@ -151,7 +151,7 @@ be a value the instrument can mean.**
 
 ### The reset
 
-**`rtl/cadr_arty.sv`'s reset was MMCM lock or BTN0 and nothing else**, so
+**`boards/arty-z7-20/cadr_arty.sv`'s reset was MMCM lock or BTN0 and nothing else**, so
 restarting the CADR meant a finger on a board nobody is sitting at, or a fresh
 bitstream --- on a board that runs Linux beside the machine and is reached
 over the network. Mete asked for a soft reboot from the processing system;
@@ -218,7 +218,7 @@ pulse is up**: a reset reaching `wst` drops it back to `W_ADDR` with no
 one PC each. The console would freeze the machine it was written to un-freeze,
 and only the power cycle it exists to avoid would recover the board.
 
-**What takes the pulse on the board, and the rule.** `rtl/cadr_arty.sv`
+**What takes the pulse on the board, and the rule.** `boards/arty-z7-20/cadr_arty.sv`
 declares `mach_rst` as `rst || con_mach_rst`, **registered** --- a register and
 not a gate, for the reason `pack_rst` gives at the same shape: it lands on some
 two thousand registers spread across `cadr_machine`, and a LUT between the
@@ -247,7 +247,7 @@ level:
   is no longer asking is ignored by construction.
 
 **And the probe re-arms with it**, which is a capability and not a side
-effect. `rtl/cadr_probe.sv`'s own words are that it fills from the first
+effect. `rtl/plumbing/xilinx7/cadr_probe.sv`'s own words are that it fills from the first
 microcycle after reset and freezes, so a machine that has been restarted has
 new first microcycles and the probe must be looking at those. Until now
 re-arming meant BTN0 or a fresh bitstream; it is a store from Linux now. The
@@ -339,9 +339,9 @@ an artefact of the gap. A burst of two beats over words 7 and 8 is how a
 program should ask.
 
 **They arrive already captured**, at the microcycle boundary, by
-`rtl/cadr_console_state.sv` inside `cadr_machine` --- the same module
+`rtl/machine/cadr_console_state.sv` inside `cadr_machine` --- the same module
 `tb/cadr_console_harness.sv` instantiates, not a copy of it. Inside, because
-`rtl/cadr_machine.xdc` is read `-ref cadr_machine` and cannot relax a register
+`rtl/plumbing/xilinx7/cadr_machine.xdc` is read `-ref cadr_machine` and cannot relax a register
 outside it: that is the wall the console's own read-back met at -12.837 ns.
 `mclk` and not `clock_edge`, because `MCLK` runs whether or not `MACHRUN`
 does, so a machine the console has stopped goes on refreshing them and the
@@ -411,7 +411,7 @@ along.
 writes the mode register there --- so the register block has two masters.
 `cadr_console` asks with `dbg_req` and waits for `dbg_gnt`; the arbiter is
 outside the module because the thing it must see, whether the processor's own
-Unibus cycle is running, is `rtl/cadr_memory_path.sv`'s.
+Unibus cycle is running, is `rtl/machine/cadr_memory_path.sv`'s.
 
 **The grant is taken only with the processor's own strobe down, and held
 until the console lets go.** Taken any other way it would truncate a Unibus
@@ -463,7 +463,7 @@ brings out four. `WMAPD`, `DESTSPCD`, `IMODD`, `PDLWRITED` and `SPUSHD` --- the
 write-pipeline enables, the 74LS244 inputs on SPY2 3F15 --- are internal to the
 processor and appear on no port; grepping `rtl/` and `tb/` for their names
 returns `cadr_microcycle.sv`, this check's testbench, and one comment ---
-`rtl/cadr_probe.sv:103-104`, which lists exactly these five among the columns
+`rtl/plumbing/xilinx7/cadr_probe.sv:103-104`, which lists exactly these five among the columns
 it cannot carry "because `cadr_machine` has no port for it". They are `FLAG-2`'s bits 13, 12, 10, 9 and 8, and reading that
 register through the console is what compares them. Because which of them a
 given microcycle carries is the boot PROM's business and not the check's, the
@@ -480,7 +480,7 @@ run reported itself content. Measured, and fixed.
 
 **Single step.** The board's is `SSTEP` and `SSDONE`, two flip flops of the
 74S174 at OLORD1 1A10, and `MACHRUN`'s first term `SSTEP AND -SSDONE`
-(`../muir/src/rtl.rs:1119-1128`). `rtl/cadr_microcycle.sv` has neither and
+(`../muir/src/rtl.rs:1119-1128`). `rtl/machine/cadr_microcycle.sv` has neither and
 says so at its port list --- "the fabric has no console yet" --- and
 `cadr_spy_registers.sv` takes bit 0 of a CLK write and drops bits 4:1. So a
 write of 2 to the clock control register goes down the diagnostic bus, lands
@@ -500,7 +500,7 @@ register 13 landed 0 times (muir's `write_strobe` is `eadr & 7`, so: once)"*.
 One line, named below.
 
 **The two pulses reach nothing.** `-PROG.RESET` and `PROG.BOOT` leave
-`cadr_spy_registers` and are folded into `unused` at `rtl/cadr_machine.sv:425`
+`cadr_spy_registers` and are folded into `unused` at `rtl/machine/cadr_machine.sv:425`
 at this slice. The harness brings them out and the check sees them made; what
 they should *do* --- reset the machine, raise `BOOT.TRAP` --- is the machine's and
 is not built. **This is NOT what page 0's word 6 does**, and the two must not
@@ -518,11 +518,11 @@ registers but through the debuggee's Unibus map: map register 17 at
 buffer on the write side and a read buffer on the read side
 (`../muir/src/lashup.rs:262-284`, `../muir/src/machine.rs:518-580`,
 `../muir/tests/lashup.rs:712-769`). **That Unibus map is not in the fabric.**
-`rtl/cadr_memory_path.sv` says so at its own fold: "Above the register block
+`rtl/machine/cadr_memory_path.sv` says so at its own fold: "Above the register block
 there is nothing on this Unibus yet, so the top of the page number goes
 nowhere: only `0o766xxx` is answered." So `cadr-console` examines and deposits
 through `/dev/mem` on the machine's reserved DDR region instead, at
-`rtl/cadr_ddr_map.sv`'s own address arithmetic, and says in its own output
+`rtl/plumbing/cadr_ddr_map.sv`'s own address arithmetic, and says in its own output
 that it is reading DDR directly and not through the machine. The two are not
 the same claim: a word read through the machine passes the map, the decode
 and the bus interface, and a word read out of DDR does not.
@@ -578,9 +578,9 @@ Six more for the reset, in the same shape:
 
 ## The processing system
 
-`vivado/ps7_config.tcl` turns `PCW_USE_M_AXI_GP1` on, merged over Digilent's
+`boards/arty-z7-20/vivado/ps7_config.tcl` turns `PCW_USE_M_AXI_GP1` on, merged over Digilent's
 verbatim block at the bottom beside `S_AXI_HP2`; the sha256 the header quotes
-of that block is unchanged, so its claim still holds. `vivado/gen_ps7.py`
+of that block is unchanged, so its claim still holds. `boards/arty-z7-20/vivado/gen_ps7.py`
 brings the twenty-seven `MAXIGP1*` pins out under the name rule, `gp1_*`.
 
 **Those three files are in the attachment patch and not in the tree, and the
@@ -594,7 +594,7 @@ the wrapper in the tree alone would leave `make check` red on a defect nobody
 could fix without the other half. Measured at this slice.
 
 **Enabling `M_AXI_GP1` changes the start-up routine by nothing.** Measured at
-this slice under Vivado 2026.1: `vivado/ps7_init.ops` regenerated with GP1 on
+this slice under Vivado 2026.1: `boards/arty-z7-20/vivado/ps7_init.ops` regenerated with GP1 on
 is **byte-identical** to the one committed with it off --- 673 operations, 24
 procs, across all three silicon revisions. So the loader does not change and
 there is no decision to take. That is the same answer HP0 and HP1 gave at 64
@@ -625,24 +625,24 @@ share it the same way --- with a decode in front --- or the console can move.
 
 ## The attachment
 
-**`rtl/cadr_console.sv` is not wired into `rtl/cadr_arty.sv` by this slice.**
+**`rtl/plumbing/cadr_console.sv` is not wired into `boards/arty-z7-20/cadr_arty.sv` by this slice.**
 Another session is in `cadr_machine.sv`, `cadr_memory_path.sv` and
 `cadr_arty.sv`, so the wiring is a written patch and not an edit:
 
     ~/.cache/muir-fpga-console-attachment.patch
 
 against `d77cdae`, `patch -p1` from the repository root. It touches **eight**
-files and no others: `rtl/cadr_memory_path.sv`, `rtl/cadr_machine.sv`,
-`rtl/cadr_arty.sv`, `Makefile`, `mutations/run.py`, and the three that carry
-`M_AXI_GP1` --- `vivado/ps7_config.tcl`, `vivado/gen_ps7.py` and the
-generated `rtl/cadr_ps7.sv`. `make current` passes immediately after it,
+files and no others: `rtl/machine/cadr_memory_path.sv`, `rtl/machine/cadr_machine.sv`,
+`boards/arty-z7-20/cadr_arty.sv`, `Makefile`, `mutations/run.py`, and the three that carry
+`M_AXI_GP1` --- `boards/arty-z7-20/vivado/ps7_config.tcl`, `boards/arty-z7-20/vivado/gen_ps7.py` and the
+generated `boards/arty-z7-20/cadr_ps7.sv`. `make current` passes immediately after it,
 because the generated file is in the patch beside the generator; `make ps7`
 regenerates it identically.
 
 **It is verified and not merely written.** `tb/cadr_console_harness.sv` is the
 same arbiter and the same mux, so `build/console.pass` holds them; and the
 patch was applied to a clean export of `d77cdae` (with this slice's
-`rtl/cadr_ps7.sv` and `rtl/cadr_console.sv` beside it) and **all five board
+`boards/arty-z7-20/cadr_ps7.sv` and `rtl/plumbing/cadr_console.sv` beside it) and **all five board
 configurations lint clean** --- default, `PROBE_DEPTH=1024`, `DDR=1`,
 `PROVE=1`, `PROVE=2`. Two faults were found that way and fixed before this
 was written: the console's three outputs from `cadr_machine` were unread on
@@ -653,19 +653,19 @@ rule anybody can check".
 
 What the patch does, file by file:
 
-**`rtl/cadr_memory_path.sv`** --- eight new ports (`con_req`, `con_gnt`,
+**`rtl/machine/cadr_memory_path.sv`** --- eight new ports (`con_req`, `con_gnt`,
 `con_msyn`, `con_write`, `con_addr`, `con_wdata`, `con_ssyn`, `con_rdata`),
-and an instance of `rtl/cadr_console_bus.sv` between them and the register
+and an instance of `rtl/machine/cadr_console_bus.sv` between them and the register
 block: the arbiter began as four `assign`s inline here and is a module of its
 own now, for the reason the timing section below gives. Nothing else in the
 file changes, and with `con_req` low the arbiter folds to a constant and the
 mux to the processor's own half --- which is what `build/machine.pass`
 compares, byte for byte before and after.
 
-**`rtl/cadr_machine.sv`** --- the same eight ports, passed straight through to
+**`rtl/machine/cadr_machine.sv`** --- the same eight ports, passed straight through to
 the `memory` instance.
 
-**`rtl/cadr_arty.sv`** --- the eight signals declared at module scope, added to
+**`boards/arty-z7-20/cadr_arty.sv`** --- the eight signals declared at module scope, added to
 the `u_machine` instantiation, tied off on the board with no PS7 and folded
 into `witness`; and inside `g_ddr`, the `gp1_*` wires, a reset synchroniser on
 `gp1_aresetn`, the `cadr_console` instance and the PS7's twenty-seven GP1
@@ -676,7 +676,7 @@ that. The machine is deliberately **not** reset with the port: a console that
 reset the machine when Linux came up could never be attached to a running
 machine, which is the only time it is wanted.
 
-**`Makefile`** --- `rtl/cadr_console.sv` added to `arty.pass`'s prerequisites
+**`Makefile`** --- `rtl/plumbing/cadr_console.sv` added to `arty.pass`'s prerequisites
 and to its three PS7 command lines.
 
 **`mutations/run.py`** --- the same file added to `arty_check`'s three PS7
@@ -688,7 +688,7 @@ Not in the patch, because they are in two files this slice does not own and
 because each needs a check of its own. Named here so that the next person does
 not have to find them:
 
-**`rtl/cadr_spy_registers.sv`**, at the CLK register's write. It is
+**`rtl/machine/cadr_spy_registers.sv`**, at the CLK register's write. It is
 
     REG_CLK: run <= held[0];
 
@@ -696,7 +696,7 @@ and the board's clock control register is five bits: `RUN`, `STEP`, `NOP11`,
 `IDEBUG`, `LDSTAT` (`../muir/src/spy.rs:266-281`). `STEP` at least has to
 leave the module.
 
-**`rtl/cadr_microcycle.sv`**, at `MACHRUN`. It is
+**`rtl/machine/cadr_microcycle.sv`**, at `MACHRUN`. It is
 
     assign machrun  = srun && !errhalt && !stathalt && !wait_;
 
@@ -737,17 +737,17 @@ cone, so pipelining after it, deskewing it, or capturing it later all leave
 the arc exactly where it was. Three of those were tried on paper before the
 fourth was seen.
 
-**What was wrong was the deadline, not the depth.** `rtl/cadr_machine.xdc`
+**What was wrong was the deadline, not the depth.** `rtl/plumbing/xilinx7/cadr_machine.xdc`
 already relaxes `-from $slow -to $slow` to fifteen ticks, and `md_reg` is in
 `slow`; the console's register was not, **because that file is read
 `read_xdc -ref cadr_machine` and the console is a level above it**, in
 `cadr_arty.sv` beside the PS7. It is the same wall `mem_addr` met --- a scoped
-file cannot name what is outside its scope, and that is why `rtl/cadr_ddr.xdc`
+file cannot name what is outside its scope, and that is why `rtl/plumbing/xilinx7/cadr_ddr.xdc`
 exists at all. So the arc was slow-to-fast, which the exception does not match
 and must not.
 
 **The remedy is a register in the right module, and no new exception at all.**
-`rtl/cadr_console_bus.sv` is the arbiter, the mux and the read-back register,
+`rtl/machine/cadr_console_bus.sv` is the arbiter, the mux and the read-back register,
 instantiated by `cadr_memory_path.sv` --- inside `cadr_machine`, where the
 register falls into `slow` with no naming. `report_exceptions` on the fitted
 board lists **the same seven exceptions as before**; nothing was added to be
@@ -815,12 +815,12 @@ its own. Fixed, and the record says why it moved. After it: `arty` 7 of 7,
 
 **Measured in an isolated copy of the working tree at HEAD `1d3a9bc` plus this
 change --- NOT of a commit**, because the session that made it may not write
-git history. Nothing under `rtl/` or `vivado/` in that copy was uncommitted
+git history. Nothing under `rtl/` or `boards/arty-z7-20/vivado/` in that copy was uncommitted
 except `cadr_arty.sv` and `cadr_console.sv`, both of them this change, so it
 is HEAD plus exactly this and nothing else --- checked file by file against
 `git show HEAD:` before the run, and the copy is why a module another session
 added to `rtl/` afterwards cannot have reached it. Board
-flow, `vivado/bitstream.tcl`, both configurations, zero critical warnings:
+flow, `boards/arty-z7-20/vivado/bitstream.tcl`, both configurations, zero critical warnings:
 
                             HEAD 1d3a9bc      + the reset
     DDR=1  worst slack      -0.049 ns         -0.209 ns
@@ -853,7 +853,7 @@ as a regression**, and the isolation build is the evidence rather than the
 reasoning.
 
 **The numbers, fitted in isolated trees at `3198d8b` plus this slice**, board
-flow, `vivado/bitstream.tcl`, both configurations, zero critical warnings and
+flow, `boards/arty-z7-20/vivado/bitstream.tcl`, both configurations, zero critical warnings and
 zero errors:
 
                             before (37711fe)      after
@@ -905,8 +905,8 @@ measured thing now. **The reasoning read as true and was not, and only
 
 ## What Linux does
 
-`linux/buildroot/package/cadr-console/` is the program `cadr-console`, and
-`linux/buildroot/package/cadr-common/` is what it and the disk pack program
+`boards/arty-z7-20/linux/buildroot/package/cadr-console/` is the program `cadr-console`, and
+`boards/arty-z7-20/linux/buildroot/package/cadr-common/` is what it and the disk pack program
 now share --- the `/dev/mem` mapping, the EMIO tally's marker-bit guard, the
 `"NONE"` word the proving boards answer with, and the logging prefix. The
 guards run in order, before anything: the tally's marker bits
@@ -930,7 +930,7 @@ common `.c` files by path, and `make check` is always the host list.
 
 **`cadr-console` has no `reset` command yet**, and adding one is a store of
 `0x52534554` to `REG_BASE + 0x18` plus a read of the same word to report the
-count. It is deliberately not written here: `linux/` is another session's and
+count. It is deliberately not written here: `boards/arty-z7-20/linux/` is another session's and
 `docs/console.md` is where the next person finds the key. The host check in
 that package models the slave and would want the register modelled with it.
 
@@ -947,7 +947,7 @@ person at a prompt, and started at boot it would hold a second master on the
 diagnostic bus for as long as the board was up, taking the bus from the
 processor's own cycles with nobody reading what it said.
 
-**The host check** is `make -C linux/buildroot/package/cadr-console/src
+**The host check** is `make -C boards/arty-z7-20/linux/buildroot/package/cadr-console/src
 check`, on the build host, needing nothing but a C compiler; scratch under
 `~/.cache/muir-fpga-console`. It runs the program's core against a model of
 the slave --- the two pages, the latch, the lost bit, `UNMAPPED`, and a
@@ -957,7 +957,7 @@ checks. The model is a model and not the RTL, and says so at its head, as
 `tb/cadr_console_tb.cpp`.
 
 **The mutation runner cannot reach a C program** --- it copies `rtl/`, `tb/`
-and `vivado/` by pathspec and has no check for one, and a record naming a
+and `boards/arty-z7-20/vivado/` by pathspec and has no check for one, and a record naming a
 check the runner has no entry for kills the whole run at parse, for every
 record. So the substitute is eight mutations applied by hand to a scratch
 copy and reverted, and this table is the record of them. All eight caught:
@@ -971,7 +971,7 @@ copy and reverted, and this table is the record of them. All eight caught:
     FLAG-2's four open bits dropped        console_test.c:495
     CYCLESH read before the low word       console_test.c:531
 
-`make -C linux/buildroot/package/cadr-disk-pack/src check` is byte-for-byte
+`make -C boards/arty-z7-20/linux/buildroot/package/cadr-disk-pack/src check` is byte-for-byte
 what it was before the move --- 76 requests, 72 answered, 4 denied, 67 blocks
 --- re-run from a cleared work directory so that it was a build and not a
 stale binary.

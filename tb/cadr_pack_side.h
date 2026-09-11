@@ -56,7 +56,7 @@ namespace pack_side {
 
 // The record: 259 words at the block's address --- the block, its header, its
 // header checkword and its data checkword --- and the pad word after them
-// that a write-back must never touch.  `rtl/cadr_disk_pack.sv`'s header.
+// that a write-back must never touch.  `rtl/plumbing/cadr_disk_pack.sv`'s header.
 const int RECORD_WORDS = 259;
 const unsigned RECORD_ALIGN = 128;
 

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Drives rtl/cadr_probe.sv --- the in-fabric probe the board will be read
+// Drives rtl/plumbing/xilinx7/cadr_probe.sv --- the in-fabric probe the board will be read
 // through --- and asks it the two questions nothing else can.
 //
 // **DOES SAMPLE j HOLD ROW j?**  The probe is wired to `cadr_machine`
-// exactly as `rtl/cadr_arty.sv` wires it, the machine is run from reset, and
+// exactly as `boards/arty-z7-20/cadr_arty.sv` wires it, the machine is run from reset, and
 // every sample is compared against `build/rtl.golden` --- the same reference
 // the processor checks use, column for column.  Nothing about the alignment
 // is asserted here or worked out on paper.  It cost one wrong answer to
@@ -51,9 +51,9 @@
 
 namespace {
 
-// The layout, most significant field first, as `rtl/cadr_probe.sv`
+// The layout, most significant field first, as `rtl/plumbing/xilinx7/cadr_probe.sv`
 // concatenates it.  Held here as a table rather than as offsets, so that this
-// program and `vivado/probe.tcl` are two readings of one list and not two
+// program and `boards/arty-z7-20/vivado/probe.tcl` are two readings of one list and not two
 // lists.
 struct Field {
   const char *name;

@@ -4,10 +4,10 @@
 // The console, the register block and the processor, wired as the attachment
 // wires them --- **and this file IS the attachment, proved before it lands.**
 //
-// `rtl/cadr_console.sv` is a second master on the diagnostic bus and the CADR
+// `rtl/plumbing/cadr_console.sv` is a second master on the diagnostic bus and the CADR
 // is the first.  Joining them means a mux at `cadr_spy_registers`'s Unibus
 // port and an arbiter in front of it, and both belong in
-// `rtl/cadr_memory_path.sv`, which this slice does not own --- another
+// `rtl/machine/cadr_memory_path.sv`, which this slice does not own --- another
 // session is in that file.  So the mux and the arbiter are written here, the
 // check holds them, and `docs/console.md` carries them as a patch for
 // whoever owns `cadr_memory_path.sv`, `cadr_machine.sv` and `cadr_arty.sv` to
@@ -46,7 +46,7 @@
 // registers spread across the machine and `cadr_arty.sv` already registers
 // `pack_rst` for exactly that reason.  What comes out drives the register
 // block, the arbiter and the processor.  **It does NOT drive the console**,
-// which is the decision `rtl/cadr_console.sv`'s header argues at length: a
+// which is the decision `rtl/plumbing/cadr_console.sv`'s header argues at length: a
 // console reset by the machine's reset would abandon the AXI write that
 // asked for it, and a GP write that never answers hangs both Arm cores.
 //
@@ -174,11 +174,11 @@ module cadr_console_harness #(
   logic [15:0] sr_wdata, sr_rdata;
 
   // ------------------------------------------------------------------------
-  // THE ARBITER AND THE MUX --- `rtl/cadr_console_bus.sv`, the real one
+  // THE ARBITER AND THE MUX --- `rtl/machine/cadr_console_bus.sv`, the real one
   // ------------------------------------------------------------------------
   //
   // This harness used to hold a hand-written copy of the arbiter, because the
-  // attachment had not landed and `rtl/cadr_memory_path.sv` was another
+  // attachment had not landed and `rtl/machine/cadr_memory_path.sv` was another
   // session's file.  It has landed, and the arbiter is a module of its own
   // for exactly that reason: **two descriptions of one thing drift, and the
   // check would then be holding the copy.**  `cadr_memory_path.sv`
@@ -192,7 +192,7 @@ module cadr_console_harness #(
   assign con_gnt = con_gnt_raw && !gnt_inhibit;
 
   // The board's own reset joined with the console's pulse, registered ---
-  // `rtl/cadr_arty.sv`, which does the same and says why.  Everything of the
+  // `boards/arty-z7-20/cadr_arty.sv`, which does the same and says why.  Everything of the
   // machine takes this; the console takes `rst`.
   logic con_mach_rst, mach_rst;
   always_ff @(posedge clk) mach_rst <= rst || con_mach_rst;
@@ -225,8 +225,8 @@ module cadr_console_harness #(
   assign cpu_rdata = sr_rdata;
 
   // The virtual address register and `Q` for page 0's words 7 and 8, captured
-  // at the microcycle boundary.  **`rtl/cadr_console_state.sv`, the same
-  // module `rtl/cadr_machine.sv` instantiates and not a copy of it**, for the
+  // at the microcycle boundary.  **`rtl/machine/cadr_console_state.sv`, the same
+  // module `rtl/machine/cadr_machine.sv` instantiates and not a copy of it**, for the
   // reason the arbiter above is a module: two descriptions of one thing
   // drift, and the check would then be holding the copy.  In the fabric its
   // `vma` and `q` are `cadr_machine`'s internal wires off the processor;
