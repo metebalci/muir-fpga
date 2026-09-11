@@ -19,6 +19,14 @@
 #                                 zImage rootfs.cpio.uboot            -> /srv/tftp
 #     build/sd/buildroot/sdcard.img                                   -> dd, instead of both
 #
+# **DO NOT WRITE THE IMAGE WITH `conv=sparse`.**  It skips runs of zeros, so
+# wherever the image holds zeros the card keeps whatever was there before.
+# A disk pack is full of legitimate zeros.  Measured on 11 Sep: the image's
+# md5 was right on the laptop, the card's `disk-pack-0.img` came out with a
+# different one, and the card mounted and looked perfectly healthy.  Written
+# again in full, it matched.  The flag is safe only on a blank card, which
+# nobody can check, so it is never offered.
+#
 # **THE CARD IS WRITTEN ONCE AND THEN NEVER LEAVES THE BOARD.**  That is what
 # the second partition is for and it is why PACKS is optional: from the first
 # boot onwards the ordinary way to put a pack on the card is to copy it to

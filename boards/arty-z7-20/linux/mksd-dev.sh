@@ -42,12 +42,17 @@ if [ ! -r boards/arty-z7-20/linux/local.conf ]; then
 	exit 1
 fi
 
+# PACKS_MB is passed by exporting it rather than as an assignment prefix: a
+# prefix that comes out of a parameter expansion is not an assignment, it is
+# the command name, and `PACKS_MB=3584: not found` is what that looks like.
+[ -z "${PACKS_MB:-}" ] || export PACKS_MB
 OUT="$OUT" BIT="$BIT" BOOT_MB=${BOOT_MB:-64} PACKS="${PACKS:-}" \
-    ${PACKS_MB:+PACKS_MB="$PACKS_MB"} \
     boards/arty-z7-20/linux/mksd-buildroot.sh
 
 img="$OUT/sdcard.img"
 echo "mksd-dev: $img  $(stat -c %s "$img") bytes"
 echo "mksd-dev: write it with"
-echo "    sudo dd if=$img of=/dev/sdX bs=4M conv=sparse status=progress"
+echo "    sudo dd if=$img of=/dev/sdX bs=4M status=progress"
+echo "mksd-dev: NOT conv=sparse --- it leaves the old card's bytes wherever the"
+echo "mksd-dev: image has zeros, and a disk pack is full of legitimate zeros"
 echo "mksd-dev: and $OUT/server/ is what goes to the TFTP server's directory"
