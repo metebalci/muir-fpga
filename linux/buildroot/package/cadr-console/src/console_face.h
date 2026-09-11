@@ -14,7 +14,13 @@
 //     3  CYCLESH  bits 63:32, **latched when CYCLES was read**
 //     4  TICKS    200 MHz ticks since reset, bits 31:0
 //     5  TICKSH   bits 63:32, latched when TICKS was read
-//     6-15        UNMAPPED
+//     6  RESET    the machine's reset: a write of "RSET" and of nothing else
+//                 pulses it.  This program does not write it; the read-back
+//                 carries a marker and a count of resets
+//     7  VMA      the virtual address register, all 32 bits, as of the last
+//                 microcycle boundary.  **Reading it LATCHES Q beside it**
+//     8  Q        the Q register, all 32 bits, latched when VMA was read
+//     9-15        UNMAPPED
 //
 //   page 1, +0x40, word k IS diagnostic register `EADR` k:
 //     read   a diagnostic READ cycle: `SPY<15:0>` in bits 15:0 with 31:16
@@ -64,7 +70,8 @@
 
 // Page 0.
 enum cons_p0 { CONS_IDENT = 0, CONS_STAT = 1, CONS_CYCLES = 2, CONS_CYCLESH = 3,
-	       CONS_TICKS = 4, CONS_TICKSH = 5 };
+	       CONS_TICKS = 4, CONS_TICKSH = 5, CONS_RESET = 6, CONS_VMA = 7,
+	       CONS_Q = 8 };
 enum cons_stat_bit { CONS_ST_BUSY = 1u << 0, CONS_ST_GNT = 1u << 1,
 		     CONS_ST_ANSWERED = 1u << 2, CONS_ST_LOST = 1u << 3 };
 
@@ -179,6 +186,48 @@ uint32_t cons_stat(struct console *c);
 uint64_t cons_cycles(struct console *c);
 uint64_t cons_ticks(struct console *c);
 
+// --- the virtual address register and Q, page 0's words 7 and 8 ----------
+//
+// **NEITHER IS ON THE DIAGNOSTIC BUS.**  ../muir/src/spy.rs is the whole
+// vocabulary of MIT's sixteen --- IR in three halves, OPC, PC, OB, the two
+// flag words, M, A and ST, and the open bus at 3 --- and neither the virtual
+// address register nor Q is among them, so `cons_read_regs` above cannot show
+// either and no console on that bus alone ever could.  They come out of
+// `cadr_machine` on wires of their own and land on page 0 beside CYCLES and
+// TICKS, which are also the machine's and are also not on that bus.
+//
+// **WHY THEY ARE WORTH READING.**  On 2026-09-10 the board ran a System 100
+// band for 351 million microcycles and halted inside PDL-BUFFER-REFILL, where
+// the microcode reads a second-level map entry, writes it back with
+// read/write access ORed in, and then reads THROUGH the entry it has just
+// hacked --- and that read took a page fault, which muir on the same pack
+// does not.  Two suspects: the map write did not take, or the address read is
+// not the page the map was hacked for.  Three faults injected into muir
+// reproduce the board's readout bit for bit --- same PC, same OPC, same
+// FLAG-1 and FLAG-2, same IR, A, M and OB --- so the sixteen cannot separate
+// them.  These two can, and the whole of it is in one comparison: **the
+// map-side faults leave VMA and Q equal, and the wrong-address fault leaves
+// them one page apart.**  A CADR page is 256 words and VMA<23:8> is the page
+// number the map is indexed by, which is why the page numbers are carried
+// here beside the raw words.
+//
+// **READ VMA FIRST.**  The read of word 7 latches Q beside it, so the pair
+// names one microcycle; a program that reads word 8 alone gets whatever the
+// last read of word 7 latched.  Same rule as CYCLES then CYCLESH and the same
+// reason: two loads of a running machine are two instants, and a comparison
+// across the gap would answer a question nobody asked.  `cons_read_vmaq` is
+// in that order for that reason.
+//
+// Halt the machine first if the answer is to mean anything: on a halted
+// machine these are exact, MCLK running whether or not MACHRUN does.
+struct cons_vmaq {
+	uint32_t vma, q;
+	uint32_t vma_page, q_page;	/* bits 23:8, which is what the map indexes by */
+	int unmapped;			/* both words read UNMAPPED: a fabric without them */
+};
+void cons_read_vmaq(struct console *c, struct cons_vmaq *v);
+void cons_say_vmaq(const struct cons_vmaq *v);
+
 // One diagnostic cycle.  `cons_spy_read` returns 0 with `*v` set, or -1 when
 // the cycle was not answered --- in which case `*v` is untouched and there is
 // no data, bit 16 being the whole of the answer.
@@ -216,6 +265,11 @@ void cons_step(struct console *c, unsigned n, struct cons_step *s);
 struct cons_regs {
 	uint16_t v[16];
 	uint16_t lost;
+	// Page 0's words 7 and 8, read after the sixteen and printed with
+	// them.  They are not diagnostic registers and the printing says so;
+	// they are here because a person who typed `regs` wants the machine's
+	// state and not a list of what happens to be on one bus.
+	struct cons_vmaq vq;
 };
 void cons_read_regs(struct console *c, struct cons_regs *r);
 // muir's name for a register on a read.
@@ -236,6 +290,7 @@ struct cons_status {
 	struct cons_flag1 f1;
 	struct cons_flag2 f2;
 	uint16_t pc, opc;
+	struct cons_vmaq vq;		/* page 0's words 7 and 8; see above */
 	uint64_t cycles_first, cycles_second, ticks;
 	unsigned settle_us;
 	int running;			/* CYCLES moved */

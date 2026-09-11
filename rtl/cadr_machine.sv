@@ -214,6 +214,17 @@ module cadr_machine #(
     input  var logic [15:0] con_wdata,
     output var logic        con_ssyn,
     output var logic [15:0] con_rdata,
+    // **AND THE TWO REGISTERS THAT ARE NOT ON THAT BUS.**  MIT's sixteen
+    // carry `IR`, `OPC`, `PC`, `OB`, the two flag words, `M`, `A` and `ST`
+    // and nothing else, so neither the virtual address register nor `Q` can
+    // be read through `cadr_spy_registers` at all.  They leave here already
+    // captured at the microcycle boundary --- `rtl/cadr_console_state.sv`
+    // below, instantiated inside this module ON PURPOSE, because a register
+    // sampling `vma` from outside `cadr_machine` is outside the reach of
+    // `rtl/cadr_machine.xdc` and gets one tick for a path the file relaxes to
+    // fifteen.  That is the -12.837 ns the console's own read-back met.
+    output var logic [31:0] con_vma,
+    output var logic [31:0] con_q,
 
     // --- PS DDR3, behind the AXI adapter
     output var logic        mem_req,
@@ -324,6 +335,21 @@ module cadr_machine #(
       .rdcyc       (rdcyc),
       .wrcyc       (wrcyc),
       .clock_edge  (clock_edge)
+  );
+
+  // The virtual address register and `Q` for the console, captured at the
+  // microcycle boundary.  It is four lines and it is still a module of its
+  // own, for the reason `rtl/cadr_console_bus.sv` gives at the same shape:
+  // `tb/cadr_console_harness.sv` instantiates THIS module and not a copy of
+  // it, so the check holds what the board has.
+  cadr_console_state console_state (
+      .clk     (clk),
+      .rst     (rst),
+      .mclk    (mclk),
+      .vma     (vma),
+      .q       (q),
+      .con_vma (con_vma),
+      .con_q   (con_q)
   );
 
   cadr_memory_path memory (

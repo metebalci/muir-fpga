@@ -188,6 +188,15 @@ module cadr_arty #(
   logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
+  // The virtual address register and `Q` on their own wires, page 0's words 7
+  // and 8.  They are NOT on the diagnostic bus --- MIT's sixteen have no
+  // register for either --- and they leave `cadr_machine` already captured at
+  // the microcycle boundary, `rtl/cadr_console_state.sv` being instantiated
+  // inside it so that `rtl/cadr_machine.xdc` can reach the capture.  On a
+  // board with no console they still exist and fold into `witness` with the
+  // other outputs, because a fold with exceptions in it is not a rule anybody
+  // can check.
+  logic [31:0] con_vma, con_q;
 
   // ------------------------------------------------------ the machine's reset
   //
@@ -407,6 +416,7 @@ module cadr_arty #(
       .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
+      .con_vma(con_vma), .con_q(con_q),
       .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata)
   );
@@ -886,6 +896,8 @@ module cadr_arty #(
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
+        // The virtual address register and `Q`, page 0's words 7 and 8.
+        .mach_vma(con_vma), .mach_q(con_q),
         // The machine's reset, ORed with the board's own at the declaration
         // above.  **Not `gp1_rst` and not this instance's own `rst`**: see
         // the rule there and `rtl/cadr_console.sv`'s header.
@@ -1067,7 +1079,7 @@ module cadr_arty #(
   // It is not meant to be readable --- it is a load, and what it shows is
   // that the datapath is moving at all.
   //
-  // **All sixty-two of them, including the ones something else already
+  // **All sixty-five of them, including the ones something else already
   // reads** --- `clock_edge`, `promdisable`, `timed_out`, `n_memack` drive
   // LEDs as well and are still here, because the rule the comment states is
   // the whole specification and a fold with exceptions in it is not a rule
@@ -1090,6 +1102,7 @@ module cadr_arty #(
                    mem_req, mem_write, store_miss, ch_active,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
+                   con_vma, con_q,
                    sintr};
     end
   end

@@ -230,6 +230,9 @@ CHECKS = {
             "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
             "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
         ],
+        # Built because `cadr_machine` instantiates it; the console's own
+        # check is what holds it, so no mutation is aimed at it here.
+        "extra": ["rtl/cadr_console_state.sv"],
         "top": "cadr_machine",
         "tb": "tb/cadr_machine_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
@@ -255,6 +258,7 @@ CHECKS = {
             "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
             "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
         ],
+        "extra": ["rtl/cadr_console_state.sv"],
         "top": "cadr_machine",
         "tb": "tb/cadr_ddr_boot_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
@@ -286,8 +290,8 @@ CHECKS = {
             "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
-            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
-            "rtl/cadr_machine.sv",
+            "rtl/cadr_console_bus.sv", "rtl/cadr_console_state.sv",
+            "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
         ],
         "top": "cadr_machine",
         "tb": "tb/cadr_map_boot_tb.cpp",
@@ -315,7 +319,8 @@ CHECKS = {
             "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
             "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
             "rtl/cadr_spy_registers.sv", "rtl/cadr_disk_controller.sv",
-            "rtl/cadr_tv.sv", "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
+            "rtl/cadr_tv.sv", "rtl/cadr_console_bus.sv",
+            "rtl/cadr_console_state.sv", "rtl/cadr_memory_path.sv",
             "rtl/cadr_machine.sv", "rtl/cadr_axi_master.sv",
             "rtl/cadr_axi_widen.sv", "tb/cadr_mem_count_harness.sv",
         ],
@@ -339,6 +344,7 @@ CHECKS = {
             "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv", "rtl/cadr_machine.sv",
             "rtl/cadr_probe.sv", "tb/cadr_probe_harness.sv",
         ],
+        "extra": ["rtl/cadr_console_state.sv"],
         "top": "cadr_probe_harness",
         "tb": "tb/cadr_probe_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
@@ -382,7 +388,8 @@ CHECKS = {
                   "rtl/cadr_ddr_map.sv", "rtl/cadr_xbus_decode.sv",
                   "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
                   "rtl/cadr_spy_registers.sv", "rtl/cadr_disk_controller.sv",
-                  "rtl/cadr_tv.sv", "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
+                  "rtl/cadr_tv.sv", "rtl/cadr_console_bus.sv",
+                  "rtl/cadr_console_state.sv", "rtl/cadr_memory_path.sv",
                   "rtl/cadr_machine.sv"],
         "top": "cadr_arty",
         "tb": None,
@@ -483,7 +490,8 @@ CHECKS = {
     # face, or by the sweep that measures the read-back's lag with the machine
     # running.
     "console": {
-        "sources": ["rtl/cadr_console.sv", "rtl/cadr_console_bus.sv"],
+        "sources": ["rtl/cadr_console.sv", "rtl/cadr_console_bus.sv",
+                    "rtl/cadr_console_state.sv"],
         "extra": [
             "rtl/cadr_phase_gen.sv", "rtl/cadr_microcycle.sv",
             "rtl/cadr_spy_registers.sv", "tb/cadr_console_harness.sv",
