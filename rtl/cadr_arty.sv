@@ -188,6 +188,64 @@ module cadr_arty #(
   logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
+
+  // ------------------------------------------------------ the machine's reset
+  //
+  // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN0 RATHER THAN
+  // REPLACING IT.**  `rst` above is the MMCM's lock and the button; a write of
+  // `RESET_KEY` to the console's word 6 pulses `con_mach_rst` for 64 ticks,
+  // and this is the OR.  Mete asked for a soft reboot from the processing
+  // system --- the board runs Linux beside the machine, and restarting the
+  // CADR had meant a finger on a board nobody is sitting at, or a fresh
+  // bitstream.  `rtl/cadr_console.sv`'s header has the key, the length and
+  // why it is a pulse and not a level.
+  //
+  // **A REGISTER AND NOT A GATE**, for the reason `pack_rst` below gives at
+  // the same shape: this lands on some two thousand registers spread across
+  // `cadr_machine`, and a LUT between the countdown and that fanout is a LUT
+  // on every one of their reset pins.  One tick later on a reset costs
+  // nothing that anything counts, `rst` itself already being four
+  // synchroniser stages deep.
+  //
+  // **AND THE RULE FOR WHAT TAKES IT: `mach_rst` replaces `rst` wherever
+  // `rst` means "since the MACHINE started", and `rst` stays wherever it
+  // means "since the FABRIC was configured".**  Written down because the
+  // alternative --- folding `con_mach_rst` into `rst_sync` beside BTN0, which
+  // is tidier and looks right --- is wrong in three places at once, and each
+  // of the three is worth having on the record:
+  //
+  //   - **It would reset the console itself**, through `gp1_rst`.  The AXI
+  //     write that asked for the reset is IN FLIGHT while the pulse is up, so
+  //     `wst` would drop back to `W_ADDR` with no `BVALID` ever offered ---
+  //     and a GP write nothing answers hangs both Arm cores at one PC each,
+  //     measured on this board.  The console would freeze the machine it was
+  //     written to un-freeze.
+  //   - **It would reset the pack side**, through `pack_rst`, and Linux's
+  //     mounted pack with it: `cadr_disk_pack.sv`'s registers are the disk
+  //     pack program's state, not the machine's, and a restart of the CADR is
+  //     not a reason to forget which file is in the drive.
+  //   - **It would reset `cadr_axi_master` mid-transaction**, through
+  //     `axi_rst`, which is an AXI protocol violation the PS7 cannot recover
+  //     from --- VALID dropped without READY, or R beats returned to a master
+  //     with RREADY low.  It is also unnecessary: the machine drops `mem_req`
+  //     at reset, `cadr_axi_master` finishes its transaction and returns to
+  //     IDLE when it sees that (its `DONE` state), and `cadr_xbus_ddr`'s
+  //     `dev_ack` is `asked && (done || mem_done)` with `asked = sel &&
+  //     dev_rq` --- so a transaction that completes into a machine which is
+  //     no longer asking is ignored by construction and not by luck.  That is
+  //     a structural argument and not "the boot PROM does not touch memory
+  //     for 118 ms", which would be a claim about what a program happens to
+  //     do.
+  //
+  // The tally `u_count` also keeps `rst`, and for its own reason: it counts
+  // the PS7's handshakes at the boundary, on the port's side of the seam, and
+  // it is the one instrument `vivado/ddr_run.tcl` reads with nobody at the
+  // board.  So its counts are cumulative across a console reset, which is
+  // stated rather than fixed --- an instrument a program can clear from Linux
+  // is an instrument whose reading depends on who has been at the console.
+  logic con_mach_rst;
+  logic mach_rst;
+  always_ff @(posedge clk) mach_rst <= rst || con_mach_rst;
   // A write or read that came back SLVERR or DECERR, held. Zero when there is
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
@@ -292,7 +350,7 @@ module cadr_arty #(
   cadr_machine #(
       .PROM_HEX(PROM_HEX)
   ) u_machine (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO
       // HERE.**  The display and the disk controller are both inside
       // `cadr_machine` and their two requests are ORed there; what comes out
@@ -827,7 +885,11 @@ module cadr_arty #(
         .dbg_req(con_req), .dbg_gnt(con_gnt),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
-        .clock_edge(clock_edge)
+        .clock_edge(clock_edge),
+        // The machine's reset, ORed with the board's own at the declaration
+        // above.  **Not `gp1_rst` and not this instance's own `rst`**: see
+        // the rule there and `rtl/cadr_console.sv`'s header.
+        .mach_rst(con_mach_rst)
     );
 
     cadr_ps7 u_ps7 (
@@ -929,6 +991,9 @@ module cadr_arty #(
     assign con_write = 1'b0;
     assign con_addr = 18'd0;
     assign con_wdata = 16'd0;
+    // And no console reset either, so `mach_rst` is `rst` a tick late on
+    // this board and the whole of the OR folds away.
+    assign con_mach_rst = 1'b0;
 
   end
 
@@ -970,7 +1035,15 @@ module cadr_arty #(
     cadr_probe #(
         .DEPTH(PROBE_DEPTH)
     ) u_probe (
-        .clk(clk), .rst(rst),
+        // **AND THE PROBE RE-ARMS ON A CONSOLE RESET**, which is a capability
+        // and not a side effect.  Its own words are that it "fills from the
+        // first microcycle after reset and freezes", so a machine that has
+        // been restarted has new first microcycles and the probe must be
+        // looking at those.  Until now re-arming meant BTN0 or a fresh
+        // bitstream; it is a store from Linux now.  The price is that a
+        // console reset spoils a readout in progress --- which BTN0 already
+        // did, and which is the same instrument either way.
+        .clk(clk), .rst(mach_rst),
         // ONE SAMPLE A MICROCYCLE, on the machine's own boundary. A
         // free-running probe at 200 MHz would mostly record a machine
         // standing still and would line up with no row of anything.
@@ -1003,7 +1076,7 @@ module cadr_arty #(
   // `dev_wdata` was found missing from both.
   logic witness;
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (mach_rst) begin
       witness <= 1'b0;
     end else begin
       witness <= ^{pc, lpc, opc, st, ir, a, m, alu, r, ob, q, dc, lc,
@@ -1028,7 +1101,7 @@ module cadr_arty #(
   // enough to be obviously alive and slow enough to count.
   logic [23:0] beat;
   always_ff @(posedge clk) begin
-    if (rst) beat <= 24'd0;
+    if (mach_rst) beat <= 24'd0;
     else if (clock_edge) beat <= beat + 24'd1;
   end
 
@@ -1067,7 +1140,7 @@ module cadr_arty #(
   logic [16:0] nxm_count;
   always_ff @(posedge clk) begin
     timed_out_q <= timed_out;
-    if (rst) nxm_count <= 17'd0;
+    if (mach_rst) nxm_count <= 17'd0;
     else if (timed_out && !timed_out_q) nxm_count <= nxm_count + 17'd1;
   end
 
@@ -1097,9 +1170,9 @@ module cadr_arty #(
   // boards disagree only about what would count as something.
   assign {led4_r, led4_g, led4_b} = lamp4;
   if (PROVE == 0) begin : g_lamp_boot
-    assign lamp4 = {!mmcm_locked || rst,
-                    mmcm_locked && !rst &&  promdisable,
-                    mmcm_locked && !rst && !promdisable};
+    assign lamp4 = {!mmcm_locked || mach_rst,
+                    mmcm_locked && !mach_rst &&  promdisable,
+                    mmcm_locked && !mach_rst && !promdisable};
   end
 
   // LD5 is the bus, latched on each acknowledgement: red if that cycle was a
@@ -1127,7 +1200,7 @@ module cadr_arty #(
   logic memack_q, bus_nxm;
   always_ff @(posedge clk) begin
     memack_q <= !n_memack;
-    if (rst) begin
+    if (mach_rst) begin
       bus_nxm <= 1'b1;                       // nothing has answered yet
     end else if (!n_memack && !memack_q) begin
       bus_nxm <= timed_out;                  // latch the outcome at the ack

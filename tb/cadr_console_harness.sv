@@ -37,6 +37,22 @@
 //   `gnt_inhibit` holds the grant off for ever, which nothing in the fabric
 //   can do.  It is how `LOST_T` is exercised: a bound nothing exercises is
 //   not a bound, and the Arm hangs at one PC if an AXI read never completes.
+//
+// **AND THE CONSOLE'S RESET IS WIRED HERE THE WAY `cadr_arty.sv` WIRES IT**,
+// which is the same rule as the arbiter above: the check must hold the thing
+// on the board and not a copy of it.  `mach_rst` leaves `cadr_console`, is
+// ORed with this harness's own `rst` --- the board's MMCM lock and BTN0 ---
+// and the OR is REGISTERED, because a reset lands on some two thousand
+// registers spread across the machine and `cadr_arty.sv` already registers
+// `pack_rst` for exactly that reason.  What comes out drives the register
+// block, the arbiter and the processor.  **It does NOT drive the console**,
+// which is the decision `rtl/cadr_console.sv`'s header argues at length: a
+// console reset by the machine's reset would abandon the AXI write that
+// asked for it, and a GP write that never answers hangs both Arm cores.
+//
+// `mach_rst_o` brings it out so that the check can count the pulse's ticks.
+// A pulse is a thing you can only see by looking every tick, and its length
+// is a number the module states.
 
 `default_nettype none
 
@@ -118,6 +134,12 @@ module cadr_console_harness #(
     // --- the grant held off for ever, to exercise the engine's own bound
     input  var logic        gnt_inhibit,
 
+    // --- the machine's reset as `cadr_arty.sv` makes it: this harness's own
+    // --- `rst` or the console's pulse, registered.  Watched every tick, so
+    // --- that `RESET_T` is asserted as a length and not as "something
+    // --- happened".
+    output var logic        mach_rst_o,
+
     // --- what a check watches
     output var logic        con_req,
     output var logic        con_gnt,
@@ -169,9 +191,16 @@ module cadr_console_harness #(
   logic con_gnt_raw;
   assign con_gnt = con_gnt_raw && !gnt_inhibit;
 
+  // The board's own reset joined with the console's pulse, registered ---
+  // `rtl/cadr_arty.sv`, which does the same and says why.  Everything of the
+  // machine takes this; the console takes `rst`.
+  logic con_mach_rst, mach_rst;
+  always_ff @(posedge clk) mach_rst <= rst || con_mach_rst;
+  assign mach_rst_o = mach_rst;
+
   cadr_console_bus console_bus (
       .clk       (clk),
-      .rst       (rst),
+      .rst       (mach_rst),
       .mclk      (mclk),
       .cpu_msyn  (cpu_msyn),
       .cpu_write (cpu_write),
@@ -231,12 +260,13 @@ module cadr_console_harness #(
       .ub_wdata   (con_wdata),
       .ub_ssyn    (con_ssyn),
       .ub_rdata   (con_rdata),
-      .clock_edge (clock_edge)
+      .clock_edge (clock_edge),
+      .mach_rst   (con_mach_rst)
   );
 
   cadr_spy_registers spy_registers (
       .clk        (clk),
-      .rst        (rst),
+      .rst        (mach_rst),
       .mclk       (mclk),
       .ub_msyn    (sr_msyn),
       .ub_write   (sr_write),
@@ -259,7 +289,7 @@ module cadr_console_harness #(
       .PROM_HEX(PROM_HEX)
   ) processor (
       .clk         (clk),
-      .rst         (rst),
+      .rst         (mach_rst),
       .run         (run_o),
       .promdisable (promdisable_o),
       .errstop     (errstop_o),

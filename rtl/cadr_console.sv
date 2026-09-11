@@ -50,7 +50,14 @@
 //                 by five --- the machine's own time, which runs whether or
 //                 not the machine does, so CYCLES against TICKS is a rate
 //     5  TICKSH   bits 63:32, latched when TICKS was read
-//     6-15        read `UNMAPPED`; writes dropped
+//     6  RESET    **the one word of page 0 that is written.**  A write of
+//                 `RESET_KEY` and of nothing else pulses the machine's reset
+//                 for `RESET_T` ticks; see below.  It reads
+//                   bits 31:16  `RESET_KEY`'s own top half, a marker
+//                   bits 15:8   how many console resets since the CONSOLE
+//                               came up, saturating at 255
+//                   bit 0       a pulse is up now
+//     7-15        read `UNMAPPED`; writes dropped
 //
 //   page 1, `REG_BASE + 0x40`, the sixteen diagnostic registers, word k
 //   being `EADR` k:
@@ -92,6 +99,147 @@
 // zero is what a dead bus reads and all ones is what an undriven one reads,
 // measured on this board's own EMIO pins, and **a value that means nothing
 // must not be a value the instrument can mean.**
+//
+// **THE RESET, WHICH IS WHY REGISTER 6 EXISTS.**  `rtl/cadr_arty.sv`'s reset
+// is MMCM lock or BTN0 and nothing else, so restarting the CADR has meant a
+// finger on a board or a fresh bitstream.  Mete asked for a soft reboot from
+// the processing system and this is where it belongs: the console is already
+// the thing that says whether the machine is running.
+//
+// **IT IS A PULSE OF A STATED LENGTH AND NOT A LEVEL.**  A level is a bit a
+// program can set and then be killed, or forget, or crash holding --- and a
+// machine held in reset by a level looks exactly like a machine that will not
+// start, with nothing to say which.  So a write arms a countdown, the
+// countdown is `RESET_T` ticks, and there is no way for software to extend
+// it, shorten it or hold it.
+//
+// **`RESET_T` IS 64 TICKS, 320 ns, AND THE NUMBER HAS A FLOOR AND A REASON.**
+// Every register in `cadr_machine` takes a synchronous reset, so one tick
+// would clear them all at once and the length looks arbitrary.  It is not:
+//
+//   - The machine's own power-on reset is never short.  `rst_sync` is four
+//     deep and `!mmcm_locked` holds it for the MMCM's whole lock time, so a
+//     machine that had only ever seen a one-tick reset would be released in
+//     a way the board itself never performs.  A console reset that is not the
+//     board's reset is a second reset to reason about.
+//   - The floor is one whole generator cycle at extra slow, 44 ticks or
+//     220 ns.  That is the longest interval over which any of the machine's
+//     own timing is in flight --- `cadr_phase_gen.sv`'s ring, the seven read
+//     taps at 15 to 32, the write pulses, and the two countdowns.  muir's
+//     reference is not silent inside a reset either: CLAUDE.md records that
+//     `chip.rs` goes on deriving `-TPR60` from `phase_ns` at ticks 11 to 18
+//     of a plain power-on reset, so a reset shorter than the cycle it
+//     interrupts is a region the model and the fabric are known to disagree
+//     in and nothing compares.
+//   - 64 is the smallest power of two above that floor, so the countdown is
+//     six bits and its end is a borrow rather than a comparison --- which is
+//     why `LOST_T` is 4,096 and not 4,000, one register along.
+//
+// It is a floor with margin and it is stated as one.  Nothing here derives 64
+// from anything; what is derived is that it must be more than 44.
+//
+// **AND THE WRITE DOES NOT ANSWER UNTIL THE PULSE IS OVER.**  `W_RESET` holds
+// the write channel through the countdown, so `BVALID` is offered after the
+// machine has left reset and not before.  A program's store therefore returns
+// when the machine is running again, and the very next read of `FLAG-1` means
+// something.  The cost is 64 ticks --- 320 ns --- of one Arm store, against
+// `LOST_T`'s 4,096 for a diagnostic cycle, so nothing has to be told about it.
+//
+// **`RESET_KEY` IS "RSET", AND AN ARBITRARY VALUE MUST NOT RESET THE
+// MACHINE.**  The rule this project keeps meeting is that a value which means
+// nothing must not be a value the instrument can mean: zero is what a dead
+// bus reads and all ones what an undriven one reads, measured on this board's
+// own EMIO pins.  So the key is chosen the way `cadr_arty.sv` chooses
+// `PROVE_WORD`: **four distinct bytes, none of them `00` or `FF`**, halves
+// that differ and neither a rotation of the other, and it is not `IDENT`, not
+// `UNMAPPED`, and not what register 6 itself reads back --- so a program that
+// echoes anything it has read from this face cannot reset the machine by
+// accident.  A write's unstrobed lanes are merged against zero as every other
+// write here is, and because no byte of the key is `00` **a write that does
+// not strobe all four lanes cannot equal it, whatever the lanes hold.**  That
+// is one rule and not two: the strobes are not tested separately.
+//
+// **WHAT THE RESET CLEARS OF THE CONSOLE'S OWN, AND WHAT IT MUST NOT.**
+//
+//   - `cycles` and `ticks` are cleared, because they are not the console's:
+//     CYCLES is `Machine::cycles`, which is zero at reset, and TICKS is
+//     `Rtl::ns()`, which is zero with it.  A CYCLES that went on counting
+//     across a reset would name a microcycle no row of any trace has.
+//   - STAT's `answered` and `lost` are NOT cleared.  They are the console's
+//     own history on the diagnostic bus, and resetting the machine does not
+//     make a cycle that was lost unlost.
+//   - **The console does not reset itself, and this is the decision rather
+//     than a detail.**  Three reasons, of which the third is the one that
+//     would show on the board.  A console that forgot the reset could not
+//     report it, and register 6's count is what a program reads to know the
+//     machine it is looking at is the one it restarted.  A console reset by
+//     the machine's reset would also clear STAT, so the instrument would
+//     erase the evidence it exists to carry.  And --- the one that matters ---
+//     the AXI write that asked for the reset is IN FLIGHT while the pulse is
+//     up: a reset reaching `wst` would drop it back to `W_ADDR` with no
+//     `BVALID` ever offered, and a GP write that never answers hangs both Arm
+//     cores at one PC each, which is measured and is exactly what
+//     `rtl/cadr_gp0_default.sv` exists to prevent.  The console would freeze
+//     the machine it was written to un-freeze.
+//
+// **AND THE ENGINE DOES NOT START A DIAGNOSTIC CYCLE WHILE THE PULSE IS UP.**
+// `cadr_spy_registers` is inside the machine and is in reset with it, so a
+// cycle begun during the pulse would strobe a block that cannot answer and
+// would set STAT's sticky `lost` --- a lie, since nothing was lost.  A cycle
+// asked for during the pulse simply waits; 64 ticks against `LOST_T`'s 4,096
+// is a sixty-fourth of the bound, and the grant itself cannot come earlier
+// anyway, `cadr_console_bus`'s arbiter being in reset too.
+//
+// **A cycle ALREADY IN FLIGHT when the reset lands is a different case and is
+// not guarded**, and it is worth saying which it is rather than leaving it to
+// be assumed.  The write channel cannot be in one --- a word-6 write goes
+// straight from `W_DATA` to `W_RESET` and never asks the engine --- but the
+// read channel can, the two being independent and the processing system
+// driving both at once.  What happens then is bounded and honest: the grant
+// drops, `-UB SSYN` does not come while the block is held, and the read
+// completes with bit 16 set saying it was not answered, which is true.  It
+// costs that one read `LOST_T` ticks, 20 us, and it sets STAT's sticky
+// `lost`.  **`tb/cadr_console_tb.cpp` cannot reach either case**: its AXI
+// master runs one transaction at a time, so a read and a write never overlap
+// there.  A testbench with two independent channel drivers is what would
+// exercise them, and there is no mutation record aimed at the guard for that
+// reason.
+//
+// **WHERE THE PULSE GOES IS `rtl/cadr_arty.sv`'s**, and it joins BTN0 rather
+// than replacing it.  What leaves here is one register, `mach_rst`, so that
+// what reaches the machine's reset pin is a flop and not a countdown's
+// comparison.
+//
+// **AND WHERE IT LANDS WAS ASKED OF THE DESIGN RATHER THAN REASONED ABOUT**,
+// which is what CLAUDE.md's `elapsed -> md/CE` entry demands of anything that
+// reaches a reset: a relaxed register's clock enable goes with it, and a
+// signal that drags a long cone into an enable is invisible in a slack figure.
+// Synthesised at this slice, `DDR=1`, with the scoped XDC read, `all_fanout
+// -flat -endpoints_only` from the two `mach_rst_reg` cells:
+//
+//   the top level's, into `cadr_machine`   1,008 R, 24 S, 19 D, 12 block-RAM
+//                                          address bits, 2 ENARDEN, 3 ports
+//                                          --- **and NOT ONE CLOCK ENABLE**
+//   this module's own                      153 endpoints, of which 17 are
+//                                          clock enables and every one of
+//                                          them is `eng_wdata_reg[*]/CE` or
+//                                          `eng_for_w_reg/CE` in this file,
+//                                          which is the `!mach_rst` gate on
+//                                          `E_IDLE` above and nothing else
+//
+// Every one of 400 paths out of `mach_rst_reg` asks for 5.000 ns --- no
+// exception touches it and none should --- and the worst is +0.472 ns over two
+// logic levels.  `mach_rst` appears nowhere in either board's
+// `report_timing_summary`.
+//
+// **And the cone that arms it is eighteen startpoints, all registers of this
+// module.**  `all_fanin -flat -startpoints_only` on `mach_rst_reg/D` gives
+// `wst`, `w_at<6:2>`, `w_in`, `rst_t<6:0>` and `mach_rst` itself --- so the
+// address match really is HELD and not computed, which is the rule
+// `cadr_memory_path.sv` and the disk controller are both held to, and there
+// is no map, no `phys` and no `vma` anywhere near it.  There could not be:
+// this module is outside `cadr_machine`.  Measured rather than assumed all
+// the same, because that is what the rule asks for.
 //
 // **WHY GP1 AND NOT GP0, WHICH IS WHERE `README.md` PUTS THE CONSOLE.**  A
 // slave that owns a GP port must answer the whole of it, and GP0 is already
@@ -166,7 +314,19 @@ module cadr_console #(
     // Unibus cycle in front of it is bounded by its NXM timer at 4,250 ns.
     // 4,096 ticks is 20.48 us, four NXM timeouts, and it is a bound on how
     // long the Arm may stall and nothing else.
-    parameter int unsigned LOST_T   = 4096
+    parameter int unsigned LOST_T   = 4096,
+    // What must be written to page 0's word 6, and to nothing else, for the
+    // machine to be reset: "RSET".  Four distinct bytes, none `00` or `FF`,
+    // so no partly-strobed write can reach it; not zero, not all ones, not
+    // `IDENT`, not `UNMAPPED`, and not what register 6 reads back.  The
+    // header has the whole argument.
+    parameter logic [31:0] RESET_KEY = 32'h5253_4554,
+    // How many 200 MHz ticks the machine's reset is held for.  64 ticks is
+    // 320 ns: the floor is one generator cycle at extra slow, 44 ticks, and
+    // this is the smallest power of two above it so that the countdown ends
+    // on a borrow.  See the header --- it is a floor with margin and is not
+    // derived from anything.
+    parameter int unsigned RESET_T  = 64
 ) (
     input  var logic        clk,          // 200 MHz, one tick = 5 ns
     input  var logic        rst,
@@ -220,7 +380,15 @@ module cadr_console #(
 
     // --- the machine's own beat: one tick high for every microcycle the
     // --- processor retired, `cadr_microcycle.sv`'s `clock_edge`.
-    input  var logic        clock_edge
+    input  var logic        clock_edge,
+
+    // --- the reset the console makes: `RESET_T` ticks after a write of
+    // --- `RESET_KEY` to page 0's word 6, and never otherwise.  A register
+    // --- and not a countdown's comparison, so that what reaches the
+    // --- machine's reset pin has a whole tick of its own.  `cadr_arty.sv`
+    // --- ORs it with the board's own reset --- MMCM lock and BTN0 --- and
+    // --- gives the machine the result; it joins them and replaces neither.
+    output var logic        mach_rst
 );
 
   // spy::BASE, and "the EADR<3:0> lines just follow the Unibus address
@@ -233,8 +401,16 @@ module cadr_console #(
 
   logic [63:0] cycles, ticks;
 
+  // **AND A CONSOLE RESET CLEARS THEM**, because they are not the console's.
+  // CYCLES is `Machine::cycles`, which `Engine::boot` leaves at zero, and
+  // TICKS is `Rtl::ns()`, which is zero with it.  A CYCLES that went on
+  // counting across a reset would name a microcycle no row of any trace has,
+  // and every register the console reads back is compared against the row
+  // CYCLES names.  They restart when the pulse ends; the machine leaves reset
+  // one tick later, `cadr_arty.sv` registering the OR, and that tick is the
+  // whole of the skew between the two clocks.
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst || mach_rst) begin
       cycles <= 64'd0;
       ticks  <= 64'd0;
     end else begin
@@ -247,7 +423,8 @@ module cadr_console #(
   // The GP1 face's state, declared before the engine that reads it
   // ------------------------------------------------------------------------
 
-  typedef enum logic [2:0] { W_ADDR, W_DATA, W_CYCLE, W_RESP } wstate_e;
+  typedef enum logic [2:0] { W_ADDR, W_DATA, W_CYCLE, W_RESET,
+                             W_RESP } wstate_e;
   typedef enum logic [2:0] { R_ADDR, R_START, R_CYCLE, R_PREP, R_PREP2,
                              R_DATA } rstate_e;
   wstate_e wst;
@@ -280,11 +457,44 @@ module cadr_console #(
   assign w_spy = {s_wstrb[1] ? s_wdata[15:8] : 8'd0,
                   s_wstrb[0] ? s_wdata[7:0]  : 8'd0};
 
+  // The whole beat, unstrobed lanes reading zero the same way, which is what
+  // the reset key is compared against.  Because no byte of `RESET_KEY` is
+  // `00`, a beat that does not strobe all four lanes cannot equal it whatever
+  // those lanes carried --- so the strobes need no test of their own.
+  logic [31:0] w_full;
+  assign w_full = {s_wstrb[3] ? s_wdata[31:24] : 8'd0,
+                   s_wstrb[2] ? s_wdata[23:16] : 8'd0,
+                   s_wstrb[1] ? s_wdata[15:8]  : 8'd0,
+                   s_wstrb[0] ? s_wdata[7:0]   : 8'd0};
+
   // **THE WRITE BEAT'S REGISTER AND WORD ARE LATCHED AT THE BEAT**, because
   // `w_at` walks up in the same tick the beat lands: the cycle that follows
   // would otherwise be aimed at the register after the one written.
   logic [3:0]  w_eadr_q;
   logic [15:0] w_spy_q;
+
+  // ------------------------------------------------------------------------
+  // The machine's reset: page 0's word 6, and the only word of that page
+  // anything may write
+  // ------------------------------------------------------------------------
+  //
+  // `mach_rst` is the pulse.  `rst_t` counts it out and `resets` counts the
+  // pulses, saturating rather than wrapping --- a counter that can read zero
+  // again is a counter that can say "no reset has ever happened" when one
+  // has, which is the all-ones-and-all-zeros rule in its counting form.
+
+  localparam logic [3:0] R_RESET = 4'd6;
+
+  logic [7:0] resets;
+  logic [6:0] rst_t;
+
+  // Which page-0 word this beat names, and whether it is the key.  The
+  // address match is `w_in`, taken at AWVALID and held --- it is not computed
+  // here --- for the reason `cadr_memory_path.sv` and the disk controller
+  // both give at their own decodes.
+  logic w_is_reset;
+  assign w_is_reset = w_in && !w_idx[4] && (w_idx[3:0] == R_RESET) &&
+                      (w_full == RESET_KEY);
 
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
@@ -342,9 +552,15 @@ module cadr_console #(
         // wait state, and its request is a level off that state, so without
         // this the engine would see the request still up and run the cycle
         // again --- once for every register a program touched.
+        // **AND NOT WHILE THE MACHINE IS IN RESET.**
+        // `cadr_spy_registers` is inside the machine and is held in reset
+        // with it, so a cycle begun during the pulse would strobe a block
+        // that cannot answer and would end on `LOST_T` with STAT's sticky
+        // `lost` set --- a lie, since nothing was lost.  A cycle asked for
+        // during the pulse waits for it: 64 ticks against the bound's 4,096.
         E_IDLE: begin
           waited <= 13'd0;
-          if (!eng_done && (eng_w_req || eng_r_req)) begin
+          if (!eng_done && !mach_rst && (eng_w_req || eng_r_req)) begin
             eng_for_w <= eng_w_req;
             eng_eadr  <= eng_w_req ? w_eadr_q : r_idx[3:0];
             eng_write <= eng_w_req;
@@ -448,6 +664,14 @@ module cadr_console #(
         4'd3:    r_word = cycles_hi_q;
         4'd4:    r_word = ticks[31:0];
         4'd5:    r_word = ticks_hi_q;
+        // The reset register, and it does not read zero when nothing has
+        // happened: the key's own top half is the marker, so a virgin read
+        // is `0x5253_0000` --- neither what a dead bus reads nor what an
+        // undriven one does, and it names the key's own first half to
+        // whoever is looking.  Reading it and writing the word straight back
+        // cannot reset the machine, which is one of the twelve things
+        // `tb/cadr_console_tb.cpp` writes here and requires to do nothing.
+        R_RESET: r_word = {RESET_KEY[31:16], resets, 7'd0, mach_rst};
         default: r_word = UNMAPPED;
       endcase
     end
@@ -473,7 +697,19 @@ module cadr_console #(
       r_lost      <= 1'b0;
       cycles_hi_q <= 32'd0;
       ticks_hi_q  <= 32'd0;
+      mach_rst    <= 1'b0;
+      rst_t       <= 7'd0;
+      resets      <= 8'd0;
     end else begin
+      // --- the machine's reset, counted out.  Written first so that the
+      // write channel below can arm it in the same tick and win: a pulse
+      // armed here is up from the next tick and for `RESET_T` ticks, and
+      // `W_RESET` is left the tick after it drops.
+      if (mach_rst) begin
+        if (rst_t == 7'd0) mach_rst <= 1'b0;
+        else rst_t <= rst_t - 7'd1;
+      end
+
       // --- writes
       unique case (wst)
         W_ADDR: if (s_awvalid) begin
@@ -488,13 +724,29 @@ module cadr_console #(
           w_spy_q  <= w_spy;
           w_at     <= w_next;
           w_in     <= in_window(w_next[31:7]);
-          // Page 1 is a diagnostic write and takes a bus cycle.  Page 0 is
-          // read-only and outside the window is dropped; both complete with
-          // OKAY and nothing else happens.
+          // Page 1 is a diagnostic write and takes a bus cycle.  Page 0's
+          // word 6 with the key on it resets the machine and takes the
+          // pulse.  Every other page-0 word is read-only, everything
+          // outside the window is dropped, and all of them complete with
+          // OKAY and nothing else happens --- **including a write of word 6
+          // that is not the key**, which is the whole point of the key.
           if (w_in && w_idx[4]) wst <= W_CYCLE;
+          else if (w_is_reset) begin
+            mach_rst <= 1'b1;
+            rst_t    <= 7'(RESET_T - 1);
+            // Saturating: see the declaration.
+            if (resets != 8'hFF) resets <= resets + 8'd1;
+            wst      <= W_RESET;
+          end
           else if (s_wlast) wst <= W_RESP;
         end
         W_CYCLE: if (eng_done_w) wst <= w_last_q ? W_RESP : W_DATA;
+        // **THE WRITE DOES NOT ANSWER UNTIL THE PULSE IS OVER**, so a
+        // program's store returns with the machine already running again and
+        // the next read of `FLAG-1` means something.  It costs one Arm store
+        // `RESET_T` ticks --- 320 ns --- and it is what makes "reset then
+        // ask" a sequence a program can write without a delay in it.
+        W_RESET: if (!mach_rst) wst <= w_last_q ? W_RESP : W_DATA;
         W_RESP: if (s_bready) wst <= W_ADDR;
         default: wst <= W_ADDR;
       endcase
@@ -543,10 +795,12 @@ module cadr_console #(
 
   // The AXI3 length on the write channel is not read: a register access is
   // walked a beat at a time until WLAST says it is over, and one write is in
-  // flight at a time so the response's ID is the address's.  The strobes on
-  // the top two lanes name bytes no diagnostic register has.
+  // flight at a time so the response's ID is the address's.  All four strobes
+  // and all thirty-two data bits ARE read --- `w_full`, which the reset key
+  // is compared against; only a diagnostic write drops the top half, and it
+  // drops it in `w_spy` where the reason is written.
   logic unused_s;
-  assign unused_s = ^{s_awlen, s_wstrb[3:2], s_wdata[31:16]};
+  assign unused_s = ^{s_awlen};
 
 endmodule
 

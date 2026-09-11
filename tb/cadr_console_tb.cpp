@@ -146,7 +146,16 @@ constexpr uint32_t kLostT    = 4096u;
 uint32_t Con(unsigned i) { return kBase + 4u * i; }
 uint32_t Spy(unsigned e) { return kBase + 0x40u + 4u * e; }
 enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
-              kRegTicks = 4, kRegTicksH = 5 };
+              kRegTicks = 4, kRegTicksH = 5, kRegReset = 6 };
+
+// The reset register's key and the pulse it makes, as `rtl/cadr_console.sv`
+// parameterises them.  `RESET_KEY` is "RSET" --- four distinct bytes, none of
+// them `00` or `FF`, so a write that does not strobe all four lanes cannot
+// equal it however the lanes are merged, and neither a dead bus's zeros nor
+// an undriven bus's ones can arrive at it.  `RESET_T` is 64 ticks, 320 ns.
+constexpr uint32_t kResetKey  = 0x52534554u;   // "RSET"
+constexpr uint32_t kResetMark = kResetKey >> 16;
+constexpr long     kResetT    = 64;
 
 // muir's own two constants, tests/spy.rs:703-707: `FLAG-1` with nothing
 // wrong, running and halted.
@@ -367,6 +376,7 @@ int main(int argc, char **argv) {
   bool bus_outstanding = false;
   long ack_at_tick = 0;
   long lengths_checked = 0, sub_tick = 0, arb_skipped = 0, resume_skipped = 0;
+  long replay_rows = 0;
   bool machine_halted = false;
 
   // ---- the AXI master on GP1, one transaction at a time, driven from the
@@ -387,6 +397,30 @@ int main(int argc, char **argv) {
   auto rnd = [&]() { jitter = jitter * 1664525u + 1013904223u; return jitter >> 9; };
 
   long axi_reads = 0, axi_writes = 0, axi_beats = 0, axi_stalls = 0;
+
+  // **THE REPLAY AFTER A CONSOLE RESET COMPARES THE CONTROL FLOW AND NOT THE
+  // DATAPATH, AND THE REASON IS A PROPERTY OF EVERY RESET THIS MACHINE HAS.**
+  // `amem`, `mmem`, `pdl` and `imem` in `rtl/cadr_microcycle.sv` are RAM and
+  // no reset clears them --- not this one, not BTN0's, and not MIT's own
+  // `RESET`, which is a wire into flip flops and reaches no 93425A.  So a
+  // machine reset a second time re-executes the boot PROM's instructions from
+  // the top with the scratchpads its first run left, while muir's
+  // `Machine::new` starts them at zero.  Measured: `amem` diverges on the
+  // FIRST microcycle of the replay, A and M reading 0x1fc where the reference
+  // says 0, and PC, IR, LPC and OPC agree.  That is the honest claim and it is
+  // the right one --- a console reset that cleared memory would be a DIFFERENT
+  // reset from the button's, and then there would be two resets to reason
+  // about instead of one.  The microcycle's length goes with the datapath, a
+  // stall being a wait for a word.
+  bool replaying = false;
+
+  // **THE MACHINE'S RESET, WATCHED EVERY TICK.**  A pulse is a thing you can
+  // only see by looking every tick, and `RESET_T` is a length the module
+  // states rather than "something happened" --- `LOST_T`'s lesson one
+  // register along.  `mrst_runs` counts separate pulses, which is what says a
+  // write that is not the key made none at all.
+  long mrst_ticks = 0, mrst_runs = 0;
+  bool mrst_prev = false;
 
   // One tick, in `tb/cadr_microcycle_tb.cpp`'s own order: one evaluation with
   // the clock high, which is the edge, and one with it low, which settles the
@@ -434,6 +468,7 @@ int main(int argc, char **argv) {
       if (prev.ir != r.v[kIr]) Fail("IR", prev.ir, r.v[kIr]);
       if (prev.lpc != r.v[kLpc]) Fail("LPC", prev.lpc, r.v[kLpc]);
       if (prev.opc != r.v[kOpc]) Fail("OPC", prev.opc, r.v[kOpc]);
+      if (!replaying) {
       if (prev.st != r.v[kSt]) Fail("ST", prev.st, r.v[kSt]);
       if (prev.a != r.v[kA]) Fail("the A bus", prev.a, r.v[kA]);
       if (prev.m != r.v[kM]) Fail("the M bus", prev.m, r.v[kM]);
@@ -451,12 +486,13 @@ int main(int argc, char **argv) {
       if (prev.pcs1 != r.v[kPcs1]) Fail("PCS1", prev.pcs1, r.v[kPcs1]);
       if (prev.pcs0 != r.v[kPcs0]) Fail("PCS0", prev.pcs0, r.v[kPcs0]);
       if (prev.iwrited != r.v[kIwrited]) Fail("IWRITED", prev.iwrited, r.v[kIwrited]);
+      }
 
       // The microcycle's own length.  A microcycle the console stopped the
       // clock in the middle of is as long as the halt, so `last_edge` is
       // dropped at each halt and the next edge re-anchors it; the exemption
       // is one microcycle a halt and is counted.
-      if (last_edge >= 0) {
+      if (last_edge >= 0 && !replaying) {
         const uint64_t want = r.v[kNs] - prev_ns;
         const uint64_t got = static_cast<uint64_t>(tick - last_edge) * kTickNs;
         if (got != want) {
@@ -476,6 +512,7 @@ int main(int argc, char **argv) {
         }
         ++lengths_checked;
       }
+      if (replaying) ++replay_rows;
       pc_ring[k & 7] = static_cast<size_t>(r.v[kPc] & 0x3fffu);
       last_edge = tick;
       prev_ns = r.v[kNs];
@@ -547,6 +584,13 @@ int main(int argc, char **argv) {
     dut->clk = 0;
     dut->eval();
     prev = take();
+
+    const bool mrst_now = dut->mach_rst_o != 0;
+    if (mrst_now) {
+      ++mrst_ticks;
+      if (!mrst_prev) ++mrst_runs;
+    }
+    mrst_prev = mrst_now;
 
     // -- the handshakes, as they stand before the edge that consummates them
     axi.aw_hs = dut->s_awvalid && dut->s_awready;
@@ -886,7 +930,7 @@ int main(int argc, char **argv) {
 
   // Every word of page 0, and the ten that are not registers.
   long unmapped_seen = 0;
-  for (unsigned i = 6; i < 16; ++i) {
+  for (unsigned i = 7; i < 16; ++i) {   // 6 is RESET; see the reset section
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("an unused page-0 word", w, kUnmapped);
     ++unmapped_seen;
@@ -1016,8 +1060,249 @@ int main(int argc, char **argv) {
   }
   // And the machine is unharmed by all of it.
   if (k != at_end) Fail("the machine ran while it was halted", k, at_end);
-  SpyWrite(3, 1);
-  Run(200);
+
+  // ------------------------------------------------------------------ the reset
+  //
+  // **A CONSOLE THAT CANNOT RESTART THE MACHINE CAN ONLY WATCH IT DIE.**  On
+  // the board `rtl/cadr_arty.sv`'s reset is MMCM lock or BTN0, and BTN0 is a
+  // finger on a board nobody is sitting at.  Page 0's word 6 takes
+  // `RESET_KEY` and pulses the machine's reset for `RESET_T` ticks; nothing
+  // else it can be written with does anything at all.
+  //
+  // What is held, and where the reference is:
+  //
+  //   a wrong value does nothing   a property, and this project's own idiom:
+  //                                zero is what a dead bus reads and all ones
+  //                                what an undriven one reads, so neither may
+  //                                be a value the instrument can mean.
+  //                                Twelve writes below --- the key
+  //                                byte-reversed, two single-bit neighbours
+  //                                of it, the key with the strobes short, and
+  //                                the key at the words either side.
+  //   the key pulses               and the pulse is `RESET_T` ticks, COUNTED.
+  //                                `LOST_T`'s lesson one register along: a
+  //                                length nobody asserts is not a length, and
+  //                                a reset that is a level a program can
+  //                                leave asserted is not a pulse.
+  //   the machine comes back up    muir: `Engine::boot` is reset then run,
+  //                                and `cadr_spy_registers.sv`'s own reset
+  //                                block calls itself the boot button held
+  //                                --- `run` up, `promdisable` down.  So the
+  //                                machine re-runs MIT's boot PROM from
+  //                                microcycle zero, and the trace is REWOUND
+  //                                and compared column for column again.
+  //   the console does not         a decision, argued in the module.  The
+  //   reset itself                 count in register 6 reads back non-zero
+  //                                after the reset, which a console the
+  //                                machine's reset reached could not do; and
+  //                                STAT's sticky `lost` bit, set just above,
+  //                                survives it.
+  //   CYCLES and TICKS restart     because they ARE the machine's:
+  //                                `Machine::cycles` is zero at reset and
+  //                                `Rtl::ns()` with it, so a CYCLES that went
+  //                                on counting would name a microcycle no row
+  //                                of any trace has.
+
+  // The register before anything has been asked of it.  **NEITHER ZERO NOR
+  // ALL ONES**: a virgin read that answered zero would be indistinguishable
+  // from a bus that is not there, which is the trap the EMIO tally's marker
+  // bits and `UNMAPPED` both exist to avoid.
+  {
+    const uint32_t w = ReadWord(Con(kRegReset));
+    if (w == 0u || w == 0xFFFFFFFFu)
+      Fail("the reset register before any reset", w, kResetMark << 16);
+    if ((w >> 16) != kResetMark)
+      Fail("the reset register's marker", w >> 16, kResetMark);
+    if (((w >> 8) & 0xFFu) != 0u)
+      Fail("resets counted before any was asked", (w >> 8) & 0xFFu, 0u);
+    if (w & 1u) Fail("the reset register says a pulse is up", 1, 0);
+  }
+
+  // ---- a write of anything but the key does nothing at all.
+  long wrong_writes = 0;
+  {
+    const struct { const char *what; uint32_t at; uint32_t v; uint32_t strb; }
+        wrong[] = {
+            {"zero", Con(kRegReset), 0u, 0xFu},
+            {"all ones", Con(kRegReset), 0xFFFFFFFFu, 0xFu},
+            {"IDENT written back", Con(kRegReset), kIdent, 0xFu},
+            {"UNMAPPED written back", Con(kRegReset), kUnmapped, 0xFu},
+            {"the register's own read-back", Con(kRegReset), kResetMark << 16, 0xFu},
+            {"the key byte-reversed", Con(kRegReset), 0x54455352u, 0xFu},
+            {"the key with bit 0 flipped", Con(kRegReset), kResetKey ^ 1u, 0xFu},
+            {"the key with bit 31 flipped", Con(kRegReset), kResetKey ^ 0x80000000u, 0xFu},
+            {"the key with only the low byte strobed", Con(kRegReset), kResetKey, 0x1u},
+            {"the key with the top byte held off", Con(kRegReset), kResetKey, 0x7u},
+            {"the key at the word beside it", Con(kRegReset + 1), kResetKey, 0xFu},
+            {"the key at the word before it", Con(kRegReset - 1), kResetKey, 0xFu},
+        };
+    for (const auto &t : wrong) {
+      const long runs_before = mrst_runs;
+      DoWrite(t.at, t.v, t.strb);
+      Run(kResetT * 4);
+      if (mrst_runs != runs_before) {
+        std::fprintf(stderr,
+                     "tick %ld: a write of %s pulsed the machine's reset\n",
+                     tick, t.what);
+        ++bad;
+      }
+      const uint32_t w = ReadWord(Con(kRegReset));
+      if (((w >> 8) & 0xFFu) != 0u) {
+        std::fprintf(stderr,
+                     "tick %ld: a write of %s reset the machine: the reset "
+                     "count reads %u, the reference says 0\n",
+                     tick, t.what, (w >> 8) & 0xFFu);
+        ++bad;
+      }
+      if (dut->run_o) {
+        std::fprintf(stderr,
+                     "tick %ld: a write of %s started the halted machine\n",
+                     tick, t.what);
+        ++bad;
+      }
+      ++wrong_writes;
+    }
+  }
+
+  // ---- and the key does.  PROMDISABLE is set first, so that the reset has
+  // ---- something to clear that a program can see through the same face.
+  SpyWrite(5, 0x20);
+  Run(4 * 44);
+  if (!dut->promdisable_o) Fail("PROMDISABLE before the reset", 0, 1);
+  if (dut->run_o) Fail("RUN before the reset", 1, 0);
+  if (k != at_end) Fail("the machine ran before the reset", k, at_end);
+
+  const long runs_before_key  = mrst_runs;
+  const long ticks_before_key = mrst_ticks;
+  DoWrite(Con(kRegReset), kResetKey, 0xF);
+  const long pulse = mrst_ticks - ticks_before_key;
+
+  // **THE PULSE IS `RESET_T` TICKS AND THE CHECK ASSERTS THE NUMBER.**  A
+  // check that only asked whether the machine came back would call any length
+  // right, and a reset is precisely the kind of thing that works at the wrong
+  // length --- every register inside the machine takes a synchronous reset, so
+  // one tick clears them all and the machine boots.  That is `RD_FINISH_T`
+  // and `LOST_T` a third time: the constant is the claim.
+  //
+  // AND THE SAME MEASUREMENT SAYS THE WRITE DID NOT ANSWER EARLY.  `DoWrite`
+  // returns at the B handshake, so every one of the 64 ticks having been
+  // counted by the time it returns is exactly the statement that `BVALID` was
+  // offered after the machine left reset.  A console that answered the moment
+  // it armed the countdown would report a pulse of two or three.
+  //
+  // **THE TWO ARE ASKED IN THIS ORDER SO THAT EACH MUTATION GETS ITS OWN
+  // LINE.**  A console that answered the moment it armed the countdown fails
+  // both --- the write returns with the line still up AND the ticks counted
+  // so far are two --- and asked the other way round both records
+  // (`console-reset-pulse-a-tick-short` and
+  // `console-answers-the-reset-write-before-the-machine-is-back`) print the
+  // same first line.  Measured, both ways.
+  if (mrst_runs != runs_before_key + 1)
+    Fail("pulses on a write of the key", mrst_runs - runs_before_key, 1);
+  if (dut->mach_rst_o)
+    Fail("the write answered with the machine still in reset", 1, 0);
+  if (pulse != kResetT)
+    Fail("the ticks the machine's reset was held for", pulse, kResetT);
+
+  // **CHECKED HERE AND NOT A TICK LATER**, because the trace is rewound in
+  // the next statement and the machine's first microcycle after the reset has
+  // to be its own.  The write does not answer until the pulse is over, which
+  // is what makes these two reads of the machine's own state legitimate this
+  // early: `run` up and `promdisable` down is `Engine::boot`, and it is what
+  // `cadr_spy_registers.sv`'s reset block means by the boot button held.
+  if (!dut->run_o) Fail("RUN after a console reset", 0, 1);
+  if (dut->promdisable_o) Fail("PROMDISABLE after a console reset", 1, 0);
+
+  // ---- AND THE MACHINE RE-RUNS MIT'S BOOT PROM FROM MICROCYCLE ZERO.
+  //
+  // The claim worth making, and the only one that says the reset reached
+  // everything rather than the two bits a status read happens to show: the
+  // trace is rewound, `k` goes back to nothing, and every column is compared
+  // again from row 0 --- the same comparison the 600,000 microcycles above
+  // were held to, against a machine that has already run all of them once.
+  std::rewind(f);
+  k = 0;
+  if (!read_next(cur)) {
+    std::fprintf(stderr, "FAIL: %s: cannot be rewound\n", path);
+    ++bad;
+  }
+  dut->rdata = static_cast<uint32_t>(rdata_for[0]);
+  dut->sintr = static_cast<uint8_t>(cur.v[kSintr]);
+  last_edge = -1;
+  bus_outstanding = false;
+  replaying = true;
+  // **THE WHOLE REFERENCE AND NOT A PREFIX.**  It costs ten seconds on top of
+  // this check's seven, and it buys the only evidence there is that a console
+  // reset leaves a machine that WORKS rather than one that merely starts: the
+  // boot PROM's control-store pass, PROMDISABLE, and the 16,951 disk polls are
+  // all past microcycle 500,000, and on the replay every one of them is being
+  // executed against an `imem` the FIRST run filled with zeros where a cold
+  // fabric has all ones.  A twenty-thousand-microcycle prefix would have said
+  // nothing about any of it.
+  const size_t kReplay = total_rows;
+  const long replay_deadline = tick + static_cast<long>(kReplay) * 96 + 100000;
+  while (k < kReplay && tick < replay_deadline && bad < 20) Tick();
+  if (k < kReplay && bad < 20) {
+    std::fprintf(stderr,
+                 "FAIL: after the console's reset the machine reached %zu of "
+                 "the first %zu microcycles\n", k, kReplay);
+    ++bad;
+  }
+  // The comparison is switched off the way the main run switches it off ---
+  // by exhausting the rows --- rather than left on to compare the second
+  // reset below against a trace that knows nothing about it.
+  const size_t at_replay = k;
+  k = total_rows;
+  replaying = false;
+
+  // ---- CYCLES restarted with it, and the console did not.
+  {
+    const std::vector<uint32_t> c = DoRead(Con(kRegCycles), 1);
+    const uint64_t cy = c.at(0) | (static_cast<uint64_t>(c.at(1)) << 32);
+    // The machine is running, so CYCLES may have moved on by a microcycle or
+    // two between the last `Tick()` above and the beat that answered: what is
+    // held is that it counts from the reset and not from the beginning of
+    // time, which is a difference of 600,000.
+    if (cy < at_replay || cy > at_replay + 8)
+      Fail("CYCLES after a console reset", cy, at_replay);
+  }
+  // **THE CONSOLE DID NOT RESET ITSELF**, and that is the decision the module
+  // argues rather than a detail of it.  A console the machine's reset reached
+  // would count zero here, would have lost STAT's sticky `lost` bit set a few
+  // lines above --- and, the one that matters on the board, would have
+  // abandoned the very AXI write that asked for the reset, leaving the Arm
+  // core waiting for a response that never comes.  That is the freeze
+  // `rtl/cadr_gp0_default.sv` exists to prevent, delivered by the console
+  // itself.
+  {
+    const uint32_t w = ReadWord(Con(kRegReset));
+    if ((w >> 16) != kResetMark)
+      Fail("the reset register's marker after a reset", w >> 16, kResetMark);
+    if (((w >> 8) & 0xFFu) != 1u)
+      Fail("resets counted after one reset", (w >> 8) & 0xFFu, 1u);
+    if (w & 1u) Fail("the reset register says a pulse is still up", 1, 0);
+    const uint32_t id = ReadWord(Con(kRegIdent));
+    if (id != kIdent) Fail("IDENT after a console reset", id, kIdent);
+    const uint32_t s = ReadWord(Con(kRegStat));
+    if ((s & 0x8u) == 0)
+      Fail("STAT's sticky lost bit across a machine reset", s, s | 8u);
+  }
+
+  // ---- a second reset, so that the count is a count and not a flag, and so
+  // ---- that the machine can be reset twice without a power cycle --- which
+  // ---- is the whole request.
+  const long ticks_before_key2 = mrst_ticks;
+  DoWrite(Con(kRegReset), kResetKey, 0xF);
+  const long pulse2 = mrst_ticks - ticks_before_key2;
+  if (pulse2 != kResetT)
+    Fail("the ticks the second reset was held for", pulse2, kResetT);
+  Run(4 * 44);
+  {
+    const uint32_t w = ReadWord(Con(kRegReset));
+    if (((w >> 8) & 0xFFu) != 2u)
+      Fail("resets counted after two resets", (w >> 8) & 0xFFu, 2u);
+    if (!dut->run_o) Fail("RUN after the second console reset", 0, 1);
+  }
 
   dut->final();
   delete dut;
@@ -1116,6 +1401,27 @@ int main(int argc, char **argv) {
       "    NOT TESTED IN VALUE: the high halves of CYCLES and TICKS, which are\n"
       "      zero over a 600,000-microcycle reference; the burst reads both\n"
       "      halves so the latch's shape is exercised and its value is not\n"
+      "    the reset: %ld writes that are not the key pulsed nothing --- zero,\n"
+      "      all ones, IDENT, UNMAPPED, the register's own read-back, the key\n"
+      "      byte-reversed, two single-bit neighbours of it, the key with the\n"
+      "      strobes short, and the key at the words either side.  The key\n"
+      "      itself held the machine's reset for %ld ticks and the second one\n"
+      "      for %ld, which is the length `RESET_T` states, and the write did\n"
+      "      not answer until it was over.  The machine came back up with RUN\n"
+      "      set and PROMDISABLE clear --- muir's `Engine::boot`, and\n"
+      "      `cadr_spy_registers.sv`'s own boot button held --- and RE-EXECUTED\n"
+      "      ALL %ld MICROCYCLES OF MIT'S BOOT PROM FROM MICROCYCLE ZERO, on a\n"
+      "      machine that had already run every one of them once.  PC, IR, LPC\n"
+      "      and OPC compared against the same reference on every row; the\n"
+      "      DATAPATH IS NOT COMPARED THERE and must not be, because `amem`,\n"
+      "      `mmem`, `pdl` and `imem` are RAM and NO reset this machine has\n"
+      "      clears them --- not this one, not BTN0's, not MIT's own RESET,\n"
+      "      which is a wire into flip flops and reaches no 93425A.  A is\n"
+      "      0x1fc on the replay's first row where the reference says 0, and\n"
+      "      that is right: a console reset that cleared memory would be a\n"
+      "      DIFFERENT reset from the button's.  The console survived its own\n"
+      "      reset: IDENT, STAT's sticky lost bit and the reset count all\n"
+      "      stand, and the AXI write that asked for the reset completed\n"
       "    MEASURED, NOT ASSERTED, because the files are not this slice's:\n"
       "      a write of 2 to the clock control register moved the machine on\n"
       "      %ld of %ld halts (muir: one microcycle each --- SSTEP/SSDONE are\n"
@@ -1125,7 +1431,8 @@ int main(int argc, char **argv) {
       resume_skipped, regs_compared, regs_hunted, flag2_wmapd, flag2_destspcd,
       flag2_imodd, flag2_pdlwrited, flag2_spushd, flag2_iwrited, axi_reads, axi_writes,
       axi_beats, axi_stalls, unmapped_seen, kUnmapped, cpu_waited,
-      lag_seen, lag_samples, lag_moving, step_moved,
-      visits, alias_landed);
+      lag_seen, lag_samples, lag_moving,
+      wrong_writes, pulse, pulse2, replay_rows,
+      step_moved, visits, alias_landed);
   return 0;
 }
