@@ -12,7 +12,7 @@
 //     1  STAT     bit 0 busy, 1 gnt, 2 answered, 3 lost (sticky since reset)
 //     2  CYCLES   microcycles retired since reset, bits 31:0
 //     3  CYCLESH  bits 63:32, **latched when CYCLES was read**
-//     4  TICKS    160 MHz ticks since reset, bits 31:0
+//     4  TICKS    100 MHz ticks since reset, bits 31:0
 //     5  TICKSH   bits 63:32, latched when TICKS was read
 //     6  RESET    the machine's reset: a write of "RSET" and of nothing else
 //                 pulses it.  This program does not write it; the read-back
@@ -75,16 +75,19 @@
 // this program that is about the wall clock rather than about the machine.
 //
 // The fabric's clock is the MMCM in `boards/arty-z7-20/cadr_arty.sv`: a
-// 1000 MHz VCO divided by `CLKOUT0_DIVIDE_F`, which is 6.250, so a tick is
-// 6.25 ns and 1,000 / 6.25 = 160 of them fit in a microsecond.  It was 200
-// while the tick was 5 ns.
+// 1000 MHz VCO divided by `CLKOUT0_DIVIDE_F`, which is 10.000, so a tick is
+// 10 ns and 1,000 / 10 = 100 of them fit in a real microsecond --- a hundred
+// exactly, the way it was a hundred and sixty exactly at 6.25 ns and two
+// hundred at 5.  Every tick this board has ever been built with divides 1,000
+// without remainder, which is why this constant has never needed to be
+// anything but an integer.
 //
 // **THE MACHINE'S OWN TIME DID NOT CHANGE AND THIS IS NOT A CONVERSION FOR
 // IT.**  A microcycle is 29 ticks whatever a tick costs, and `status`
 // measures microcycles against a wall-clock wait, so the only place the two
 // meet is here and in `console_test.c`'s model.  Getting it wrong prints a
 // wrong duration; it cannot corrupt anything.
-#define CONS_TICKS_PER_US  160u
+#define CONS_TICKS_PER_US  100u
 
 // Page 0.
 enum cons_p0 { CONS_IDENT = 0, CONS_STAT = 1, CONS_CYCLES = 2, CONS_CYCLESH = 3,

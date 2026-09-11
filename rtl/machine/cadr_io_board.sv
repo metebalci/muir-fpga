@@ -130,7 +130,7 @@
 `default_nettype none
 
 module cadr_io_board (
-    input  var logic        clk,          // 160 MHz, one tick = 6.25 ns
+    input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
 
     // --- the Unibus, as a slave sees it
@@ -201,23 +201,25 @@ module cadr_io_board (
   // is 890 ns after power-on and they are 1,000 ns apart from there, and NO
   // UNIBUS RESET MOVES THEM.
   //
-  // **AND THIS CLOCK IS 1.25 REAL MICROSECONDS LONG, DELIBERATELY.**  200
+  // **AND THIS CLOCK IS 2.0 REAL MICROSECONDS LONG, DELIBERATELY.**  200
   // ticks is a microsecond of the MACHINE's time, which is MIT's grid; the
-  // board clocks a tick at 6.25 ns rather than 5 (`cadr_arty.sv`, and its
-  // header is the argument), so this counter advances once per 1,250 real
-  // nanoseconds and a CADR wall clock run off it loses 4 h 48 m a day.  Mete
-  // decided on 2026-09-11 that the machine keeps agreeing with muir for now:
-  // the checks are the backbone, `iob.golden` compares tick counts, and
+  // board clocks a tick at 10 ns rather than 5 (`cadr_arty.sv`, and its
+  // header is the argument), so this counter advances once per 2,000 real
+  // nanoseconds and a CADR wall clock run off it loses half a day in a day.
+  // Mete decided on 2026-09-11 that the machine keeps agreeing with muir for
+  // now: the checks are the backbone, `iob.golden` compares tick counts, and
   // nothing built yet needs the time of day.  The card is not composed into
   // `cadr_machine` at all, so nothing on the board reads it.
   //
-  // **6.25 WAS CHOSEN PARTLY SO THAT UNDOING THIS IS ONE CONSTANT.**  A real
-  // microsecond is exactly 160 ticks of 6.25 ns, a whole number, so restoring
-  // real time here means writing 160 in place of the division below and
-  // changing nothing else --- at the price of this module no longer agreeing
-  // with muir, which is why it has not been done.  `SIXTY_CYCLE_NS` below is
-  // the same family and slows in the same proportion, so its 60 Hz is 48 Hz
-  // of real time.
+  // **UNDOING THIS IS STILL ONE CONSTANT, WHICH IS WHY THE TICK IS A NUMBER
+  // THAT DIVIDES 1,000.**  A real microsecond is exactly 100 ticks of 10 ns,
+  // a whole number, so restoring real time here means writing 100 in place of
+  // the division below and changing nothing else --- at the price of this
+  // module no longer agreeing with muir, which is why it has not been done.
+  // It was 160 while the tick was 6.25 ns and 200 while it was 5; every tick
+  // this board has been built with leaves the constant whole.
+  // `SIXTY_CYCLE_NS` below is the same family and slows in the same
+  // proportion, so its 60 Hz is 30 Hz of real time.
   localparam int unsigned FIRST_EDGE_T   = 890 / 5;
   localparam int unsigned USEC_PERIOD_T  = 1000 / 5;
 

@@ -20,10 +20,10 @@
 # measurement.  Nothing here needs it to be tight; it needs it to exist.
 #
 # AND WHY THE TWO DOMAINS ARE ASYNCHRONOUS.  They are: TCK comes off a cable
-# and the fabric's 160 MHz comes off an MMCM.  What crosses between them is
+# and the fabric's 100 MHz comes off an MMCM.  What crosses between them is
 # `rd_addr` --- through a two-flop synchroniser --- and `mem_q`, which is
 # quasi-static by construction: the pointer moves once a scan, 454 TCKs apart,
-# and the 160 MHz side re-reads the word every 6.25 ns, so it has been
+# and the 100 MHz side re-reads the word every 10 ns, so it has been
 # standing for thousands of ticks before the JTAG side loads it.  Saying
 # "asynchronous" is what keeps the placer from spending itself on a path that
 # has tens of microseconds and is reported as if it had one tick.

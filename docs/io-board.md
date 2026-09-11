@@ -247,22 +247,23 @@ instead reloads a down-counter with 3,333,333 ticks loses a nanosecond a
 period, and the trace reads the register at fourteen boundaries on alternating
 sides to catch it.
 
-**A tick is 6.25 ns, so this card's two clocks no longer agree with the wall.**
+**A tick is 10 ns, so this card's two clocks no longer agree with the wall.**
 Everything above is the machine's own time, where a tick is five nanoseconds
 because that is what MIT's drawings are drawn on, and every tick count in the
 design is unchanged. What changed on 2026-09-11 is how long a tick lasts: the
-fabric runs at 160 MHz, so the machine runs at 80% of the speed the hardware
-ran. `USEC_PERIOD_T` is 200 ticks, which is now 1.25 real microseconds, and a
-CADR wall clock run off this counter loses 4 h 48 m a day. The sixty-cycle
-counter is the same family and slows in the same proportion, its mains edges
-arriving at 48 Hz. **Mete's decision is that both keep agreeing with muir for
-now**, because the checks are the backbone of this project and nothing built
-yet needs the time of day --- this card is not composed into `cadr_machine` at
-all, so nothing on the board reads either of them. **And 6.25 was chosen partly
-so that undoing it is one constant.** A real microsecond is exactly 160 ticks,
-a whole number, so restoring real time here means changing `USEC_PERIOD_T` and
-nothing else, rather than a rewrite or a second clock domain. Doing it would
-put this module out of agreement with muir, which is why it has not been done.
+fabric runs at 100 MHz, so the machine runs at 50% of the speed the hardware
+ran. `USEC_PERIOD_T` is 200 ticks, which is now 2.0 real microseconds, and a
+CADR wall clock run off this counter loses half a day in a day. The
+sixty-cycle counter is the same family and slows in the same proportion, its
+mains edges arriving at 30 Hz. **Mete's decision is that both keep agreeing
+with muir for now**, because the checks are the backbone of this project and
+nothing built yet needs the time of day --- this card is not composed into
+`cadr_machine` at all, so nothing on the board reads either of them. **And
+undoing it is still one constant, which is part of why the tick is a number
+that divides a thousand.** A real microsecond is exactly 100 ticks, a whole
+number, so restoring real time here means changing `USEC_PERIOD_T` and nothing
+else, rather than a rewrite or a second clock domain. Doing it would put this
+module out of agreement with muir, which is why it has not been done.
 
 **A write lands at `-UB SSYN`, because that is where muir puts it.**
 `busint.rs`'s `Responder::Unibus` arm makes `answered` equal to `ssyn` for
@@ -306,7 +307,7 @@ posed, and why the second was declined.
 muir puts the encoders in `terminal::mouse`, the far end rather than the card,
 and what crosses the card's edge is seven lines: four quadrature and three
 switches. A USB mouse gives deltas, and turning a delta into quadrature phases
-16 us apart --- 20 real microseconds, the tick being 6.25 ns --- in software
+16 us apart --- 32 real microseconds, the tick being 10 ns --- in software
 over `M_AXI_GP0` is 50,000 writes a second, so the phase generator cannot be in
 `cadr-usb-input`. There are two shapes, and the trace supports either:
 
@@ -766,8 +767,10 @@ early, `t_msyn` and `t_edge` count since the strobe and since the last edge,
 answer itself, and `busy`, `first` and `edges` are one tick deep.
 
 That was measured and not read off the filter expression. Synthesised with the
-file read scoped, every path out of every one of those registers asks for
-6.250 ns, which is one tick; none asks for 93.750. The five held ones do carry
+file read scoped at the 6.25 ns tick of that afternoon, every path out of every
+one of those registers asks for 6.250 ns, which is one tick; none asks for
+93.750. The two requirements are one tick and fifteen, and at the 10 ns tick
+built since they read 10.000 and 150.000. The five held ones do carry
 the exception where it is right: 32 of `sel`'s 133 paths, 32 of `kbm`'s 101,
 32 of `wr`'s 131 and 32 of `which`'s 133, which are the thirty-two bits of the
 read mux reaching MD.

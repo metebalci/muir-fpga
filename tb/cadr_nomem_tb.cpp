@@ -23,8 +23,11 @@
 // corrected by measurement rather than by reasoning again, which is why the
 // measurement is worth keeping runnable.
 //
-// MEASURED at 200 MHz over 40,000,000 ticks --- 200 ms of machine time, this
-// file's default, and the single run every figure here comes from:
+// MEASURED over 40,000,000 ticks --- 200 ms of MACHINE time, this file's
+// default, and the single run every figure here comes from.  Every figure
+// below is in the machine's own time, ticks times MIT's 5 ns grid, so none of
+// them moved when the board's tick did; what a wristwatch at the board reads
+// is twice as long, the tick being 10 ns since 2026-09-11:
 //
 //     microcycles        852,515
 //     first mem_req      tick 23,597,357, microcycle 536,303

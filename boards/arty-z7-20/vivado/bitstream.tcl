@@ -40,31 +40,39 @@
 # -0.129 ns at 712909e, -0.384 at b1bcc34, -0.054 at cc6b9ce, -0.233 on 79
 # endpoints by the time the disk, the display and the console had landed. Mete
 # decided on 2026-09-11 to stop chasing it and remove timing as a threat to
-# the machine's correctness instead: `cadr_arty.sv`'s MMCM now divides its
-# 1000 MHz VCO by 6.25 rather than by 5, so a tick is 6.25 ns and the machine
-# runs at 80% of the speed the hardware ran. **Not one tick COUNT in the
-# design changed and no check moved**, because the machine's own clock is the
-# only clock it has; `cadr_arty.sv`'s header is the whole argument.
+# the machine's correctness instead. THE TICK MOVED TWICE THAT DAY: to 6.25 ns
+# in the morning, where both boards closed for the first time, and to 10 ns in
+# the afternoon, when a one-character change to a multiplexer cost a third of
+# a nanosecond and the memory-on board read -0.261 ns and did not close again.
+# A design sitting near zero turns every edit into a timing question, which is
+# what the second move buys off; Mete's words were "if you have timing
+# concern, we can even increase the tick to 10ns". So `cadr_arty.sv`'s MMCM
+# divides its 1000 MHz VCO by 10 rather than by 5, a tick is 10 ns, and the
+# machine runs at 50% of the speed the hardware ran. **Not one tick COUNT in
+# the design changed and no check moved**, because the machine's own clock is
+# the only clock it has; `cadr_arty.sv`'s header is the whole argument.
 #
-# Measured on the tree that made that change (parent 7eb6846), both boards,
-# this flow:
+# Measured at `822535c` with that change and nothing else, both boards, this
+# flow:
 #
 #     board          WNS        failing   hold      LUTs    registers   BRAM
-#     memory-off    +0.375 ns   0/16,316  +0.036    3,685     1,662      37
-#     DDR=1         +0.362 ns   0/27,578  +0.025    7,352     5,195      37
+#     memory-off    +1.537 ns   0/25,525  +0.073    5,194     1,848      37
+#     DDR=1         +0.657 ns   0/38,593  +0.030    9,543     5,894      39.5
 #
 # (`report_utilization`'s Slice LUTs and Slice Registers, and Block RAM Tiles.
-# The `BIT:` line below prints CELL counts instead, 3,033 and 7,000 LUT cells
-# and 38 BMEM cells, and the two do not agree by construction --- the note at
-# that check says why.) The worst path on the memory-off board is
+# The `BIT:` line below prints CELL counts instead, 3,508 and 8,219 LUT cells
+# and 38 and 41 BMEM cells, and the two do not agree by construction --- the
+# note at that check says why.) At the same commit, with only the divider back
+# at 6.250, the DDR board reads -0.261 ns; at 7.000 it reads +0.160. The worst
+# path on the memory-off board is
 #
-#     +0.375 ns  u_machine/processor/ir_reg[29]/C
-#             -> u_machine/processor/u_phase_gen/tpclk_reg/D
-#             5.780 ns data path (logic 1.368, route 4.412), 5 logic levels
+#     +1.537 ns  mach_rst_reg__0/C
+#             -> u_machine/processor/iwr_reg[46]/R
+#             7.724 ns data path (logic 0.456, route 7.268), 0 logic levels
 #
-# and on the DDR board it is the pack side's block store reaching the disk
-# controller's tag, 0 logic levels and 5.142 ns of pure routing --- which is
-# what a design with headroom looks like: placement, not depth.
+# and on the DDR board it is the disk's channel request reaching MD's clock
+# enable, nine logic levels and 8.688 ns of which 7.116 is routing --- which
+# is what a design with headroom looks like: placement, not depth.
 #
 # **THE NET IS THE PLACEMENT AND THE FAMILY IS THE FINDING**, and that was
 # worth writing down when this flow was failing for exactly the reason it is
@@ -259,7 +267,7 @@ if {$exceptions < 2} {
 }
 if {$clocks < 2} {
     puts "BIT: FAILED --- $clocks clock(s); expected the board's 125 MHz and"
-    puts "BIT: the MMCM's 160 MHz derived from it. A generated clock that did"
+    puts "BIT: the MMCM's 100 MHz derived from it. A generated clock that did"
     puts "BIT: not appear means the fabric is being timed against the wrong one."
     exit 1
 }

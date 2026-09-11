@@ -96,8 +96,8 @@
 // the smallest of those budgets; what the answer then costs is a 1 KB read
 // of the pack file (from the page cache after the first touch; a cold read
 // off the card is milliseconds and is the part no rate here can hide), 259
-// uncached word writes into DDR and a fetch of some 300 ticks, 1.5 us.
-// With the drive UNTIMED --- the default, because it is muir's default and
+// uncached word writes into DDR and a fetch of some 300 ticks, 3 us at the
+// 10 ns tick.  With the drive UNTIMED --- the default, because it is muir's default and
 // every count this project quotes was measured with it off --- the walk
 // asks at the START and the budget is nil: every first block of a transfer
 // waits the poll latency plus the answer, and a chained block's budget is
@@ -178,9 +178,9 @@ static void mmio_write(struct pack_side *ps, unsigned reg, uint32_t v)
 	m->regs[reg] = v;
 	__sync_synchronize();
 }
-// A move is some 300 to 650 ticks, 1.5 to 3.3 us; a pause between status
-// reads shorter than a register read itself buys nothing, and 20 us keeps
-// a fetch to a handful of polls.
+// A move is some 300 to 650 ticks, 3 to 6.5 us at the 10 ns tick; a pause
+// between status reads shorter than a register read itself buys nothing, and
+// 20 us keeps a fetch to a handful of polls.
 static void mmio_pause(struct pack_side *ps)
 {
 	(void)ps;

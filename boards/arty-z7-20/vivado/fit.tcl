@@ -18,10 +18,10 @@
 # pins.
 #
 # BOTH FIGURES ABOVE WERE MEASURED AT A 5 ns TICK, which is what the board ran
-# at until 2026-09-11; a tick is 6.25 ns now and this flow reports **+0.131 ns
-# with 0 failing endpoints of 20,404**, hold +0.085, 6,411 Slice LUTs, 3,740
-# registers, 37 block RAM tiles --- measured on the tree that made that change,
-# parent 7eb6846. `boards/arty-z7-20/cadr_arty.sv`'s header is the argument
+# at until 2026-09-11; a tick is 10 ns now and this flow reports **+1.447 ns
+# with 0 failing endpoints of 30,596**, hold +0.097, 8,530 Slice LUTs, 4,436
+# registers, 39.5 block RAM tiles --- measured at `822535c` with the tick
+# change and nothing else. `boards/arty-z7-20/cadr_arty.sv`'s header is the argument
 # for the tick; `bitstream.tcl`'s is the board flow's own pair of figures. The
 # out-of-context flow is still the tighter of the two, which is what it has
 # always been: the machine here has no MMCM in front of it and no fold behind
@@ -46,7 +46,7 @@ synth_design -top cadr_machine -part $part -mode out_of_context \
 
 # THE CLOCK IS THIS FLOW'S, NOT THE DESIGN'S.  Out of context `cadr_machine`
 # is the top and `clk` is a port, so the period is declared here.  In a board
-# flow there is no such port --- `cadr_arty.sv` makes the 160 MHz with an MMCM
+# flow there is no such port --- `cadr_arty.sv` makes the 100 MHz with an MMCM
 # from the board's 125 --- and `create_clock` on it reports "No valid
 # object(s) found", which is indistinguishable in a log from a constraint that
 # silently applied to nothing.  That failure has cost an evening in this
@@ -85,7 +85,7 @@ read_xdc rtl/plumbing/xilinx7/cadr_machine.xdc
 # 10,972 paths --- the statement was read either way, so the exception exists
 # either way. What separates them is the SETUP REQUIREMENT the paths ask for:
 # fifteen periods where the multicycle arrived, one period everywhere it did
-# not --- 93.750 ns against 6.250 at the tick this builds. A design where
+# not --- 150.000 ns against 10.000 at the tick this builds. A design where
 # nothing asks for fifteen periods is the unconstrained design, whatever the
 # exceptions report says.
 #
