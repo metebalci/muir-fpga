@@ -107,9 +107,12 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                                saturating at 255
                    bit 0       a pulse is up now
      7  VMA      the virtual address register, all 32 bits, as of the last
-                 microcycle boundary.  **Reading it LATCHES Q beside it**
+                 microcycle boundary.  **Reading it LATCHES Q AND MD beside
+                 it**
      8  Q        the Q register, all 32 bits, latched when VMA was read
-     9-15        read UNMAPPED; writes dropped
+     9  MD       the memory data register, all 32 bits, latched when VMA
+                 was read
+     10-15       read UNMAPPED; writes dropped
 
     page 1, REG_BASE + 0x40, the sixteen diagnostic registers, word k
     being EADR k:
@@ -338,6 +341,9 @@ independent loads of a running machine is two instants and the answer would be
 an artefact of the gap. A burst of two beats over words 7 and 8 is how a
 program should ask.
 
+**MD joined that latch on 2026-09-11 and the rule is now VMA first**, a burst
+of three beats over words 7, 8 and 9. The section below has it.
+
 **They arrive already captured**, at the microcycle boundary, by
 `rtl/machine/cadr_console_state.sv` inside `cadr_machine` --- the same module
 `tb/cadr_console_harness.sv` instantiates, not a copy of it. Inside, because
@@ -383,7 +389,8 @@ routed board put that cone into **sixty-four clock enables** and read
 **-0.145 ns** at `r_at_reg[19]/C -> held_q_reg[0]/CE`. That is CLAUDE.md's
 `elapsed -> md/CE` in a new place, and it is exactly what a slack figure
 cannot tell you. The remedy is the one this repository already prescribes:
-**hold the match, do not compute it.** `vq_arm` takes the decision at
+**hold the match, do not compute it.** `held_arm` (it was `vq_arm` until MD
+joined it) takes the decision at
 `R_START` and registers it, the latch happens a state later at `R_PREP` ---
 still before `R_PREP2` takes `r_word` --- and what reaches the sixty-four
 enables is one flop and no logic. +0.559 ns after.
@@ -393,6 +400,130 @@ paths now; those are the disk controller at -0.242 ns and the console's own
 reset counter off `MAXIGP1ACLK` at -0.225 and -0.197, all of which predate
 this change. **The memory-off board was not fitted for this**, and its cost is
 64 flip flops that fold into `witness` with every other output.
+
+### MD, page 0's word 9
+
+**Why there is a third word.** The pair above was read on the board on
+2026-09-11 at 05:35, with the halt reproduced. The virtual address register
+read `0o2640010` and `Q` read `0o600000000`. That virtual address is exactly
+what muir shows for the two map-side injections. The wrong-address injection
+puts `0o2640410` there instead. So the machine asked for the page it meant to
+ask for. What is left is the map, and MD is where the next evidence is.
+
+**What MD is.** MD is the memory data register. It holds the word a completed
+read left there, as of the last microcycle boundary. It is not on the
+diagnostic bus. `../muir/src/spy.rs` names MIT's sixteen and MD is not among
+them, exactly as the pair is not.
+
+**What its reading means, first answer.** A reference the map refuses starts
+no bus cycle at all. The cycle is armed by `MEMSTART` and `VMAOK` together. So
+a read that page faulted never strobed `-LOADMD`. What stands in MD is the
+word before it. Compare that word against muir's own `md` column for the same
+microcycle.
+
+**And MD is itself a map index, which is the sharper answer.**
+`cadr_microcycle.sv:1006` makes `MAPI` equal `VMA<23:8>` while `MEMSTART` is
+up, and `MD<23:8>` otherwise. Those are the 74S258s at VMAS 1C20, whose select
+is `-MEMSTART`. So `MD<23:8>` is the entry a `SRCMAP` read looks at.
+`VMA<23:8>` is the entry a memory reference goes through. In
+`PDL-BUFFER-REFILL` the microcode does one of each. Those two page numbers are
+therefore which entry each of them was, and the program prints both.
+
+**It joined the pair's latch and did not stand alone.** A read of word 7 now
+latches all three. Words 8 and 9 read that latch. The rule is VMA first, and a
+burst of three beats over words 7, 8 and 9 is how a program should ask.
+
+The argument for standing alone is real and is answered rather than ignored. A
+three-word latch is not the same object as a two-word one. The read order
+becomes a rule a reader can get wrong, and a rule a reader can get wrong will
+be got wrong.
+
+What settles it is that MD read live would be a different microcycle from the
+pair. A three-beat burst's third beat is several ticks after its first. MD
+really does move from one microcycle to the next, being the memory data
+register on a machine that makes 17,466 bus cycles in the boot PROM alone. A
+program would then print an MD beside a VMA that never stood beside it. That
+is this instrument lying about the thing it exists to decide, because "what
+did the read through the hacked entry return" is a question about MD at the
+microcycle VMA names and about nothing else.
+
+Joining also keeps page 0 to one rule. A low word's read latches what belongs
+with it. CYCLES then CYCLESH, TICKS then TICKSH, VMA then the rest. Standing
+alone would put two kinds of word on one page and leave the reader to know
+which is which.
+
+The rule is then made unmissable where it can be. `cons_read_machine_words` is
+the only reader of the three that the Linux program offers, and there is
+deliberately no way to fetch one of them on its own. `tb/cadr_console_tb.cpp`
+asserts at every halt that words 8 and 9 read alone give what the last read of
+word 7 took.
+
+**What the check holds.** `build/console.pass` reads all three at all sixteen
+halts. Each is compared against `build/rtl.golden`'s own column for the row the
+console says it stopped at. MD differs from VMA at 14 of the 16 halts and from
+Q at 15. A halt where two of the three read alike is not evidence and is
+counted separately, which is the PC lag sweep's own lesson.
+
+The latch is asserted in value for MD as it is for Q, and this is where MD
+earns its place twice over. Word 9 is read alone at every halt and must give
+the MD the last read of word 7 took. 13 of those 15 reads are taken where the
+latched MD and the live one differ. The same test for Q is evidence at 2 of
+15, because Q is `0xfffffffe` on all but the first thousand rows of MIT's boot
+PROM.
+
+**What it does not hold.** That the three are one instant rather than three
+reads a few ticks apart. Every read here is made at a halt, where none of the
+three is moving, so three instants and one read alike. No arrangement of this
+reference can tell them apart.
+
+**The arc the constraints claim, measured rather than derived.** Every
+register of `cadr_console_state.sv` falls in `cadr_machine.xdc`'s relaxed set,
+so the fabric is told each of these three captures has fifteen ticks. That is
+a claim about the machine's own behaviour, and an exemption too wide tests
+nothing.
+
+It had to be asked for MD in particular. `vma` and `q` are written inside `if
+(mclk_edge)` in `cadr_microcycle.sv` and nowhere else, so they cannot move
+between boundaries at all. `md` can. `md_pending && (mclk_edge || hang)` takes
+the word `-LOADMD` deskewed, in the middle of a parked generator.
+
+So the check measures it every tick over MIT's whole boot PROM. It records the
+shortest distance from a change of each source to the boundary that captures
+it. Over 1,215,502 boundaries: **VMA 44 ticks, Q 44, MD 26.** All three are
+above the fifteen, and MD is the one that is not 44. The check fails below
+fifteen, so a reference that stopped exercising this re-opens it.
+
+**And where the arcs land was asked of the routed design.** `DDR=1`, board
+flow, routed from a checkpoint, at the working tree this slice was written in:
+
+    into the capture, con_md_reg    96 paths: 32 D pins at 75.000 ns, which is
+                                   the relaxed set, and 64 more at 5.000 ns,
+                                   the clock enables and the resets.  Worst
+                                   +0.663 ns at mach_rst_reg/C ->
+                                   con_md_reg[13]/R.  con_vma and con_q are
+                                   96 each in the same shape
+    out of the capture             32 paths, all 5.000 ns, ZERO logic levels,
+                                   worst +2.806 ns:
+                                   con_md_reg[25]/C -> held_md_reg[25]/D
+    into the console's latch       96 paths, all 5.000 ns, worst +0.310 ns
+    out of held_arm                96 paths, all 5.000 ns, and every one of
+                                   them a clock enable.  One logic level,
+                                   worst +2.121 ns
+
+**The arm is still one flop, which is the thing the pair's slice got wrong
+first.** `held_arm` reaches 96 clock enables and no data pin at all, and its
+own fanin is 30 startpoints, every one of them `r_at_reg[*]`. That is the
+address register, taken at ARVALID and held. So the match is held and not
+computed, which is the rule this repository gives every decode, and the third
+word joined that arrangement rather than reopening it.
+
+**No failing path touches the capture or the latch.** The board's worst is
+-0.233 ns on 79 endpoints, at
+`u_machine/disk/ch_state_reg[1]/C -> u_machine/disk/ch_ra_reg[1]/CE`. That is
+the disk controller and it predates this change; the same family is recorded
+above at -0.242 ns, nine picoseconds away and well inside the quarter of a
+nanosecond this project calls placement noise. The third word costs 64 flip
+flops, 32 at the capture and 32 at the latch.
 
 ### The bound
 

@@ -58,10 +58,12 @@
 //                               came up, saturating at 255
 //                   bit 0       a pulse is up now
 //     7  VMA      the virtual address register, all 32 bits, as of the last
-//                 microcycle boundary.  **Reading this word LATCHES `Q`
-//                 beside it**, so the two name one microcycle
+//                 microcycle boundary.  **Reading this word LATCHES `Q` AND
+//                 `MD` beside it**, so the three name one microcycle
 //     8  Q        the `Q` register, all 32 bits, latched when VMA was read
-//     9-15        read `UNMAPPED`; writes dropped
+//     9  MD       the memory data register, all 32 bits, latched when VMA
+//                 was read
+//     10-15       read `UNMAPPED`; writes dropped
 //
 //   page 1, `REG_BASE + 0x40`, the sixteen diagnostic registers, word k
 //   being `EADR` k:
@@ -86,8 +88,8 @@
 // the low one gets whatever the last low read latched, which is why the
 // order is the rule and not the advice.
 //
-// **WORDS 7 AND 8: THE VIRTUAL ADDRESS REGISTER AND `Q`, AND WHY THEY ARE
-// ON THIS PAGE AND NOT THE OTHER.**  On 2026-09-10 the board ran a System 100
+// **WORDS 7, 8 AND 9: THE VIRTUAL ADDRESS REGISTER, `Q` AND `MD`, AND WHY
+// THEY ARE ON THIS PAGE AND NOT THE OTHER.**  On 2026-09-10 the board ran a System 100
 // band for 351 million microcycles and halted inside `PDL-BUFFER-REFILL`: the
 // microcode reads a second-level map entry, writes it back with read/write
 // access ORed in, and then reads through the entry it has just hacked, and
@@ -100,9 +102,20 @@
 // faults leave `VMA` and `Q` equal and the wrong-address fault leaves them one
 // page apart.**
 //
+// **AND `MD` IS THE THIRD, 2026-09-11, BECAUSE THE PAIR NARROWED THE HALT TO
+// ONE SUSPECT AND `MD` IS WHERE THAT SUSPECT'S EVIDENCE IS.**  Reproduced on
+// the board at 05:35: the virtual address register reads `0o2640010` and `Q`
+// reads `0o600000000`.  `0o2640010` is EXACTLY what muir shows for the two
+// map-side injections --- the wrong-address injection puts `0o2640410` there
+// --- so the machine asked for the page it meant to ask for and what is left
+// is the map.  `MD` is what the last read RETURNED, and at that halt it holds
+// either the map word the microcode wrote back or the word the faulting read
+// produced.  Either one moves the diagnosis on; nothing else on either page
+// can say which.
+//
 //   - **They are not on page 1 because they are not on the diagnostic bus.**
-//     `../muir/src/spy.rs` is the whole vocabulary of MIT's sixteen and
-//     neither register is in it; `EADR<3:0>` names sixteen things and all
+//     `../muir/src/spy.rs` is the whole vocabulary of MIT's sixteen and none
+//     of the three is in it; `EADR<3:0>` names sixteen things and all
 //     sixteen are MIT's.  A seventeenth would mean renumbering MIT's own
 //     register block, which is not this module's to do and would put
 //     `cadr_spy_registers.sv` and `Engine::spy_read` out of step for ever.
@@ -110,9 +123,9 @@
 //     their own, and land here beside CYCLES and TICKS --- which are also the
 //     machine's and are also not on that bus.
 //   - **They sit beside the sixteen and displace nothing.**  Page 0 had words
-//     7 to 15 reading `UNMAPPED`; these take the first two, exactly as the
+//     7 to 15 reading `UNMAPPED`; these take the first three, exactly as the
 //     reset took word 6.  Page 1 is untouched, word for word.
-//   - **Each is ONE 32-bit word and neither is split into halves.**  The
+//   - **Each is ONE 32-bit word and none is split into halves.**  The
 //     sixteen are sixteen bits because `SPY<15:0>` is sixteen wires, which is
 //     why MIT reads `OB`, `M`, `A` and `ST` as two registers each.  **Page 0
 //     is not on that bus**: its words are 32 bits and CYCLES, TICKS and IDENT
@@ -121,15 +134,39 @@
 //     that settles it --- a comparison of two 32-bit values assembled out of
 //     four separately-timed reads, which is this instrument lying in a new
 //     way about the one thing it was built to decide.
-//   - **THE SPLIT THAT IS MADE IS BETWEEN THE TWO WORDS, AND IT CARRIES A
-//     LATCH.**  The question asked of them is whether they are EQUAL or a
-//     page apart, so a pair read as two independent loads of a running
+//   - **THE SPLIT THAT IS MADE IS BETWEEN THE WORDS, AND IT CARRIES A
+//     LATCH.**  The question asked of the first two is whether they are EQUAL
+//     or a page apart, so a pair read as two independent loads of a running
 //     machine is two instants and the answer would be an artefact of the gap.
-//     The read of word 7 therefore latches BOTH, and word 8 reads that latch:
-//     the rule is **VMA then Q**, exactly as it is CYCLES then CYCLESH one
-//     register along and for the same reason.  A burst of two beats over
-//     words 7 and 8 is the way a program should ask, and a program that reads
-//     word 8 alone gets whatever the last read of word 7 latched.
+//     The read of word 7 therefore latches ALL THREE, and words 8 and 9 read
+//     that latch: the rule is **VMA first**, exactly as it is CYCLES then
+//     CYCLESH one register along and for the same reason.  A burst of three
+//     beats over words 7, 8 and 9 is the way a program should ask, and a
+//     program that reads 8 or 9 alone gets whatever the last read of word 7
+//     latched.
+//   - **AND `MD` JOINS THAT LATCH RATHER THAN STANDING ALONE, WHICH IS THE
+//     DECISION THIS SLICE HAD TO TAKE AND NOT A DETAIL OF WIRING.**  Standing
+//     alone it would read the machine live while words 7 and 8 read a latch,
+//     and a three-beat burst's third beat is several ticks after its first:
+//     on a running machine that is a different microcycle, and `md` really
+//     does change from one to the next --- it is the memory data register and
+//     the boot PROM alone loads it 17,466 times.  So a program would print an
+//     `MD` beside a `VMA` that never stood beside it.  **That is this
+//     instrument lying about the thing it exists to decide**, because "what
+//     did the read through the hacked entry return" is a question about `MD`
+//     AT THE MICROCYCLE `VMA` NAMES and about nothing else.  The argument
+//     against joining is real and is answered rather than ignored: a
+//     three-word latch is not the same object as a two-word one, and a rule a
+//     reader can get wrong is a rule that will be got wrong.  What answers it
+//     is that joining keeps page 0 to ONE rule --- a low word's read latches
+//     what belongs with it, CYCLES then CYCLESH, TICKS then TICKSH, VMA then
+//     the rest --- where standing alone would put two kinds of word on one
+//     page and leave the reader to know which is which.  And the rule is made
+//     unmissable where it can be: the program in
+//     `boards/arty-z7-20/linux/buildroot/package/cadr-console/` offers no way
+//     to read one of the three on its own, and `tb/cadr_console_tb.cpp`
+//     asserts at every halt that words 8 and 9 read alone give what the last
+//     read of word 7 took.
 //   - **They arrive already captured**, at the microcycle boundary, inside
 //     `cadr_machine` --- `rtl/machine/cadr_console_state.sv`, which says why.  What
 //     this module latches is therefore a register of `cadr_machine` and not
@@ -436,15 +473,17 @@ module cadr_console #(
     // --- processor retired, `cadr_microcycle.sv`'s `clock_edge`.
     input  var logic        clock_edge,
 
-    // --- the virtual address register and `Q`, page 0's words 7 and 8.
+    // --- the virtual address register, `Q` and `MD`, page 0's words 7, 8
+    // --- and 9.
     // --- **They arrive already captured at the microcycle boundary**, by
     // --- `rtl/machine/cadr_console_state.sv` inside `cadr_machine`, for the reason
     // --- `ub_rdata` above arrives captured: a register out here sampling the
     // --- machine's datapath is outside `rtl/plumbing/xilinx7/cadr_machine.xdc`'s reach and is
     // --- asked for in one tick.  What this module does with them is latch
-    // --- the PAIR at a read of word 7, so that the two name one instant.
+    // --- ALL THREE at a read of word 7, so that they name one instant.
     input  var logic [31:0] mach_vma,
     input  var logic [31:0] mach_q,
+    input  var logic [31:0] mach_md,
 
     // --- the reset the console makes: `RESET_T` ticks after a write of
     // --- `RESET_KEY` to page 0's word 6, and never otherwise.  A register
@@ -549,12 +588,13 @@ module cadr_console #(
 
   localparam logic [3:0] R_RESET = 4'd6;
 
-  // Page 0's words 7 and 8: the virtual address register and `Q`.  The read
-  // of `R_VMA` latches the pair; `R_Q` reads what it latched.  See the
-  // header for why they are here, why neither is split into halves, and why
-  // one read arms both.
+  // Page 0's words 7, 8 and 9: the virtual address register, `Q` and `MD`.
+  // The read of `R_VMA` latches all three; `R_Q` and `R_MD` read what it
+  // latched.  See the header for why they are here, why none is split into
+  // halves, and why one read arms the three.
   localparam logic [3:0] R_VMA = 4'd7;
   localparam logic [3:0] R_Q   = 4'd8;
+  localparam logic [3:0] R_MD  = 4'd9;
 
   logic [7:0] resets;
   logic [6:0] rst_t;
@@ -724,13 +764,13 @@ module cadr_console #(
   logic [31:0] stat_word, r_word;
   assign stat_word = {28'd0, lost_ever, answered, dbg_gnt, (est != E_IDLE)};
   logic [31:0] cycles_hi_q, ticks_hi_q;
-  // The pair, latched together by a read of word 7.  **Not cleared by a
+  // The three, latched together by a read of word 7.  **Not cleared by a
   // console reset**, for the same reason `cycles_hi_q` is not: they are the
   // console's copy and not the machine's, the next read of word 7 re-arms
   // them, and a console that forgot what it had read would be a console the
   // machine's reset had reached --- which is the decision the header argues
   // at length.
-  logic [31:0] held_vma, held_q;
+  logic [31:0] held_vma, held_q, held_md;
   // **AND THE ARM IS HELD AND NOT COMPUTED**, which is the rule
   // `cadr_memory_path.sv` and the disk controller are both held to and which
   // this module already obeys at the reset's own address match.  Measured
@@ -740,12 +780,15 @@ module cadr_console #(
   // **-0.145 ns** at `r_at_reg[19]/C -> held_q_reg[0]/CE`.  That is
   // CLAUDE.md's `elapsed -> md/CE` in a new place: a register's enable
   // carries whatever cone drives it, and a slack figure says nothing about
-  // which. `vq_arm` is that decision taken at `R_START` and registered, so
-  // what reaches the sixty-four enables is one flop and no logic, and the
+  // which. `held_arm` is that decision taken at `R_START` and registered, so
+  // what reaches those enables is one flop and no logic, and the
   // latch itself happens a state later at `R_PREP` --- still before
   // `R_PREP2` takes `r_word`, which is what makes the read of word 7 answer
-  // with what it latched.
-  logic        vq_arm;
+  // with what it latched.  **It was `vq_arm` while it armed two registers and
+  // is `held_arm` now that it arms three**: a name that lists what it covers
+  // is a name that rots the day the list grows, and this file's own record
+  // `console-md-is-not-latched-by-the-read-of-vma` is anchored on the line.
+  logic        held_arm;
   always_comb begin
     if (!r_in_q) r_word = UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
@@ -765,12 +808,13 @@ module cadr_console #(
         // cannot reset the machine, which is one of the twelve things
         // `tb/cadr_console_tb.cpp` writes here and requires to do nothing.
         R_RESET: r_word = {RESET_KEY[31:16], resets, 7'd0, mach_rst};
-        // The pair, from the latch and never from the wires: a word taken
+        // The three, from the latch and never from the wires: a word taken
         // straight off `mach_vma` here would be this beat's instant while
-        // word 8 was the beat before's, and the two would name one microcycle
-        // only by luck.
+        // word 8 was the beat before's, and the three would name one
+        // microcycle only by luck.
         R_VMA:   r_word = held_vma;
         R_Q:     r_word = held_q;
+        R_MD:    r_word = held_md;
         default: r_word = UNMAPPED;
       endcase
     end
@@ -794,11 +838,12 @@ module cadr_console #(
       r_idx_q     <= 5'd0;
       r_spy       <= 16'd0;
       r_lost      <= 1'b0;
-      vq_arm      <= 1'b0;
+      held_arm    <= 1'b0;
       cycles_hi_q <= 32'd0;
       ticks_hi_q  <= 32'd0;
       held_vma    <= 32'd0;
       held_q      <= 32'd0;
+      held_md     <= 32'd0;
       mach_rst    <= 1'b0;
       rst_t       <= 7'd0;
       resets      <= 8'd0;
@@ -870,13 +915,14 @@ module cadr_console #(
           r_idx_q <= r_idx;
           if (r_in && !r_idx[4] && r_idx[3:0] == 4'd2) cycles_hi_q <= cycles[63:32];
           if (r_in && !r_idx[4] && r_idx[3:0] == 4'd4) ticks_hi_q  <= ticks[63:32];
-          // **AND THE PAIR, BY ONE ENABLE.**  A read of word 7 takes the
-          // virtual address register AND `Q` in the same tick, so the two
-          // words a program reads back are one instant of the machine; word
-          // 8 does not arm this, or a read of 7 then 8 would be two.  The
-          // decision is taken here and the taking is a state later: see
-          // `vq_arm`'s declaration for the -0.145 ns that says why.
-          vq_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA);
+          // **AND THE THREE, BY ONE ENABLE.**  A read of word 7 takes the
+          // virtual address register, `Q` AND `MD` in the same tick, so the
+          // three words a program reads back are one instant of the machine;
+          // words 8 and 9 do not arm this, or a read of 7 then 8 then 9 would
+          // be three.  The decision is taken here and the taking is a state
+          // later: see `held_arm`'s declaration for the -0.145 ns that says
+          // why.
+          held_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA);
           rst_r <= (r_in && r_idx[4]) ? R_CYCLE : R_PREP;
         end
         R_CYCLE: if (eng_done_r) begin
@@ -885,9 +931,10 @@ module cadr_console #(
           rst_r  <= R_PREP;
         end
         R_PREP: begin
-          if (vq_arm) begin
+          if (held_arm) begin
             held_vma <= mach_vma;
             held_q   <= mach_q;
+            held_md  <= mach_md;
           end
           rst_r <= R_PREP2;
         end
