@@ -339,6 +339,38 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The map's two access bits told apart, which `map_boot` cannot do: muir
+    # refuses the access on 0 of its 600,000 microcycles and every map word the
+    # boot PROM writes has bits 23 and 22 alike, so `-VMAOK` was only ever
+    # compared in its permitted direction.  This check moves one field of one
+    # microinstruction of MIT's own PROM so that the same program writes
+    # `MAP-ACCESS-CODE` 3, 2 and 0, and runs it four times.
+    #
+    # `gprom_path` rather than `gprom`: the testbench WRITES its patched image
+    # before the model reads it, so it must have a file of its own, and that
+    # file belongs in the mutant's own work directory.  Sharing one would be
+    # the stale-artifact family this file's neighbours keep meeting --- every
+    # mutant writing one path, and a later run reading an earlier one's PROM.
+    # Everything else is `map_boot`'s entry.
+    "map_access": {
+        "sources": ["rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_ddr_map.sv"],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_map_access_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": "rtl.golden",
+        "gprom_path": "map_access_prom.hex",
+    },
     # The memory port's tally, which is the board's only positive witness that
     # the machine's memory cycles were ANSWERED.  The boot PROM's traffic is an
     # identity copy, so page 0 reading back unchanged says the same thing
@@ -1023,7 +1055,12 @@ def build_and_run(args, work, check, build_fails=False):
     obj = os.path.join(work, "obj_" + check)
     cmd = [args.verilator, "--cc", "--exe", "--build", "-Wall"]
     cmd += spec["flags"]
-    if spec.get("gprom"):
+    if spec.get("gprom_path"):
+        # A check that writes its own PROM names it here, and it is placed in
+        # the mutant's work directory so two mutants cannot share one file.
+        cmd += ["-GPROM_HEX=\"%s\""
+                % os.path.join(work, spec["gprom_path"])]
+    elif spec.get("gprom"):
         cmd += ["-GPROM_HEX=\"%s\""
                 % os.path.join(args.goldens, "boot_prom.hex")]
     cmd += ["-Mdir", obj, "--top-module", spec["top"]]
@@ -1041,6 +1078,11 @@ def build_and_run(args, work, check, build_fails=False):
     cmd = [os.path.join(obj, "V" + spec["top"])]
     if spec["golden"]:
         cmd.append(os.path.join(args.goldens, spec["golden"]))
+    # The Makefile hands such a check two more paths: where to write its
+    # patched PROM, and the unaltered one to build it from.
+    if spec.get("gprom_path"):
+        cmd.append(os.path.join(work, spec["gprom_path"]))
+        cmd.append(os.path.join(args.goldens, "boot_prom.hex"))
     rc, out = run(cmd, work)
     if rc != 0:
         return CAUGHT, first_problem(out)
