@@ -26,7 +26,13 @@
 //! resampling as it goes, and the sample that survives is the one the
 //! microcycle ran on.  The trace is otherwise identical to one taken with
 //! plain [`Engine::step`], which is worth checking column by column after any
-//! change here: only `md` and `ack` may move, and only on stalled rows.
+//! change here: only `md` and `ack` may move.
+//!
+//! **`md` is the one column the drain cannot get right, and it is taken off
+//! the `M` bus instead.**  See [`Trace::row`]: a hang that costs no time is
+//! still a hang, `MD` is still strobed before the read phase, and no number of
+//! ticks of draining will separate it from the microcycle it precedes.  So
+//! `md` may move on an unstalled row, where every other column may not.
 
 use muir::engine::Engine;
 use muir::machine::Halt;
@@ -72,7 +78,7 @@ impl Trace {
     /// Runs one microcycle and returns its row.
     pub fn row(&mut self, e: &mut Rtl, cycle: u64) -> Result<&str, Halt> {
         let mut lpc = e.lpc();
-        let mut md = e.machine().md;
+        let mut md = e.machine().md as u64;
         let mut vma = e.machine().vma;
         // When `-MEMACK` is due for the cycle in flight. Watched through the
         // stall as well as after it: a cycle that arbitrates for the Unibus
@@ -95,7 +101,7 @@ impl Trace {
                 e.pc()
             );
             lpc = e.lpc();
-            md = e.machine().md;
+            md = e.machine().md as u64;
             vma = e.machine().vma;
             if let Some(at) = e.busint().ack_at() {
                 ack = at;
@@ -104,41 +110,65 @@ impl Trace {
         if ack == 0 {
             ack = e.busint().ack_at().unwrap_or(0);
         }
-        // A hang that resolves and runs its microcycle inside one
-        // `step_until` is the case the drain above cannot catch: `stall_for`
-        // carries the bus to the end of the stretch, `-LOADMD` strobes `MD`
-        // there, and the read phase is then taken again *in the same call*
-        // and runs --- which is the point of the stretch, "the word is in MD
-        // for the read phase".  So a stalled microcycle's `MD` is read back
-        // after it, where an unstalled one's is read before.
+        // `MD` INSIDE A MICROCYCLE, AND WHY NO AMOUNT OF DRAINING FINDS IT.
+        //
+        // `MD` moves inside a microcycle under one gate: `-HANG`, which is
+        // `NAND(RD.IN.PROGRESS, USE.MD, -CLK3G)` at VCTL1 3F17.  The hang
+        // holds the read phase off until `-RDFINISH`, so the word is in `MD`
+        // *before* the phase that reads it --- "the word is in MD for the read
+        // phase", which is what the stretch is for.  Everything else that
+        // writes `MD` --- `DESTMDR` at VCTL2 1D27, and the fabric's commit of
+        // a word held over a cycle that did not hang --- lands on the cpu
+        // clock edge, after the sample the testbench compares.
+        //
+        // **A hang that costs no time is still a hang.**  [`Rtl::stall_for`]
+        // charges `max(finish, ns + cycle) - cycle`, so a read acknowledged
+        // early enough that `-RDFINISH` falls inside the microcycle's own
+        // length stretches it by nothing --- MIT's "may be just barely in time
+        // to avoid a HANG" --- and `Rtl::step_body` then runs the microcycle
+        // in the same `step_until` call.  The drain above sees no extra call
+        // and no nanosecond of stall, so `drained` and the `stall` column are
+        // both zero on a row whose `MD` has moved.  Draining at a finer grain
+        // cannot help: the stretch is not a length to subdivide.  Measured on
+        // the band: this is microcycle 2,247,076, PC `0o5414`, where the
+        // acknowledgement lands two nanoseconds into a 185 ns microcycle.
+        //
+        // So `MD` is not read back at all.  It is taken off the **`M` bus**,
+        // which muir records in the read phase that ran and which *is* `MD`
+        // whenever the instruction reads it: `mfenb` is on for any `IR<31>`
+        // source that is neither SPC nor PDL, and the `MF` mux answers
+        // `self.m.md` for `SRCMD` (`Rtl::read_phase`).  That is an identity in
+        // muir rather than an inference about which stall happened when, and
+        // it needs no `NOPA` and no `DESTMDR` test: a nopped `SRCMD` cannot
+        // hang, so the bus still reads the word `MD` came in with, and a
+        // `DESTMDR` writes at the edge, after the read phase has driven it.
+        //
+        // Where `SRCMD` is not encoded, `USE.MD` is down, `-HANG` cannot be
+        // taken, and `MD` cannot move inside the microcycle --- so the sample
+        // above stands: taken before the step, and carried forward by the
+        // drain, which is where a `-WAIT`'s master clock edges commit a word.
+        //
+        // The two rows that used to hold the read-back's own conditions still
+        // hold this, and were re-measured for it.  Microcycle 1,418,019 both
+        // reads `MD` and writes it: the bus word is 0 and `OB` is `0o20000`,
+        // so reading `MD` back after the step gives the instruction's own
+        // store --- which is where the next row's column starts, and not what
+        // this one's read phase saw.  Microcycle 1,062,761 hangs 528 ns on a
+        // read of the pack's label: `MD` came in holding 7 and the bus hands
+        // over `LABL`, so not reading back at all gives 7.  The `M` bus gives
+        // 0 and `LABL`, which is right both times.
         //
         // `MD` alone: `VMA` moves on the cpu clock edge, which a stall holds
-        // off, so a read-back would be the *next* microcycle's address.
-        //
-        // And only for a **hang**, which is what `USE.MD` --- `NOR(-SRCMD,
-        // NOPA)` at VCTL1 3F18 --- decides: a `-WAIT` lets the master clock
-        // run and `MD` is strobed inside the drain where the loop above sees
-        // it, so a read-back there would be the *next* microcycle's word.
-        // Measured both ways on the pack trace: reading back on every stalled
-        // row is wrong at microcycle 1,418,019, and never reading back is
-        // wrong at 1,062,761.
+        // off, so reading it back would be the *next* microcycle's address.
         let signals = e.signals();
+        assert_eq!(signals[1].0, "IR", "muir reordered Rtl::signals()");
+        assert_eq!(signals[4].0, "M", "muir reordered Rtl::signals()");
         let row_ir = signals[1].1;
-        let row_nop = e.spy()[6].1 != 0;
-        let srcmd = (row_ir >> 31) & 1 != 0 && (row_ir >> 29) & 1 != 0
+        let srcmd = (row_ir >> 31) & 1 != 0
+            && (row_ir >> 29) & 1 != 0
             && (row_ir >> 26) & 7 == 2;
-        // ...and not when the instruction writes `MD` itself.  `DESTMDR` is
-        // `MDSEL AND -CLK2C` at VCTL2 1D27, taken at the edge, so a read-back
-        // after such a microcycle is that instruction's own store and not the
-        // word its read phase saw.  Measured: without this the pack trace
-        // fails at microcycle 1,418,019, where `MD` is both read and written.
-        let class = (row_ir >> 43) & 3;
-        let dest = !row_nop && (class == 0 || class == 3);
-        let destmdr = dest && (row_ir >> 25) & 1 == 0
-            && (row_ir >> 23) & 1 != 0
-            && (row_ir >> 22) & 1 != 0;
-        if drained > 0 && srcmd && !row_nop && !destmdr {
-            md = e.machine().md;
+        if srcmd {
+            md = signals[4].1;
         }
 
         let stall = e.stalled_ns() - self.last_stalled;
