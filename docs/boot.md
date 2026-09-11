@@ -297,14 +297,17 @@ everything the bay does not hold is zeros and the kernel and the bitstream
 compress well. Ship it compressed. Filling the card rather than sizing the bay
 to eight packs cost 0.3 MB of download.
 
-Writing it costs far less than 2.28 GB of I/O. On Linux and macOS,
-`conv=sparse` skips the runs of zeros and writes only the twelve megabytes
-that are real, which takes seconds:
+Write it whole:
 
-    xz -dc cadr-sdcard.img.xz | sudo dd of=/dev/sdX bs=4M conv=sparse status=progress
+    xz -dc cadr-sdcard.img.xz | sudo dd of=/dev/sdX bs=4M status=progress
 
-Windows tools write the whole decompressed image, which is three or four
-minutes and is fine. **`STANDALONE=1` matters**: without it the card would
+**Not `conv=sparse`, and this was measured rather than reasoned.** That flag
+skips runs of zeros, so wherever the image has zeros the card keeps whatever
+it held before. A disk pack is full of legitimate zeros. Written that way on
+11 September, the image was right and the card's pack was not: a different
+checksum, on a card that mounted and looked perfectly healthy. The flag is
+safe only on a card that is already blank, which is not a thing anybody can
+check, so it is not offered. Writing 3.83 GB takes three or four minutes. **`STANDALONE=1` matters**: without it the card would
 carry this project's own TFTP server address and boot over a network the user
 has not got.
 
