@@ -4264,11 +4264,20 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note pattern is the argument for the rule, not against it: an `@old` that
 @note rots stops the run and says which line, where prose would have gone on
 @note reading as true.
+@note
+@note **AND A THIRD TIME**, when the virtual address register and `Q` joined
+@note the fold as page 0's words 7 and 8.  Three slices, three UNAPPLIED runs,
+@note each caught by `--only arty` --- so the anchor is not going to stop
+@note moving, and the thing to take from it is that it moves LOUDLY.  A record
+@note aimed at the last line of a growing list is a record that asks to be
+@note re-read every time the list grows, which is what it is for.
 @old
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
+                   con_vma, con_q,
                    sintr};
 @new
                    ch_wrote, con_gnt, con_ssyn, con_rdata,
+                   con_vma, con_q,
                    sintr};
 @end
 
@@ -5208,6 +5217,103 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
     if (rst) begin
       cycles <= 64'd0;
+@end
+
+# THE VIRTUAL ADDRESS REGISTER AND `Q`, page 0's words 7 and 8.  They are not
+# on the diagnostic bus --- `../muir/src/spy.rs` names the sixteen and neither
+# is among them --- and they are here because the board's halt inside
+# `PDL-BUFFER-REFILL` is decided by their DIFFERENCE: three faults injected
+# into muir give the same PC, the same OPC, the same two flag words and the
+# same `IR`, `A`, `M` and `OB`, and differ only in whether the two are equal or
+# a page apart.  So an instrument that could read one where the other was
+# wanted would answer the question it exists for, confidently, and be wrong;
+# two of the three records below are that fault, one in each of the two files
+# it could be made in, and the third is the latch that makes the pair one
+# instant rather than two reads.
+
+@mutation console-reads-q-where-the-virtual-address-is
+@check console
+@file rtl/cadr_console.sv
+@note **THE ONE THE INSTRUMENT EXISTS TO RULE OUT.**  Page 0's words 7 and 8
+@note are there to say whether `VMA` and `Q` are EQUAL or a page apart, so a
+@note console that hands back each where the other was asked for answers the
+@note question with the two sides swapped --- and reports "equal" for "equal"
+@note either way, which is how it would go unnoticed until it had sent
+@note somebody after the wrong suspect.
+@note Written as a SWAP and not as one word taking the other's value, so that
+@note both registers stay read and lint does not catch this instead of the
+@note check --- the bit-granularity lesson.  What catches it is that the two
+@note differ at 15 of the 16 halts; a halt where they read alike is not
+@note evidence, which is why the check counts the discriminating ones and has
+@note a floor under them.
+@note Caught at "microcycle 66 (PC 144): VMA reads ffffffff, the reference
+@note says 00000000".
+@old
+        R_VMA:   r_word = held_vma;
+        R_Q:     r_word = held_q;
+@new
+        R_VMA:   r_word = held_q;
+        R_Q:     r_word = held_vma;
+@end
+
+@mutation console-crosses-vma-and-q-at-the-capture
+@check console
+@file rtl/cadr_console_state.sv
+@note The same fault one module along, at the boundary capture inside
+@note `cadr_machine` rather than at the console's read mux, and it is a
+@note separate record because the two wires run through two files and a check
+@note that held only one end would be holding half of the path.  Crossed here
+@note the console's own mux is right and every word it hands back is the other
+@note register.
+@note A swap again, for the same lint reason, and caught at "microcycle 66
+@note (PC 144): VMA reads ffffffff, the reference says 00000000" --- the same
+@note line the record above is caught at, which is the point: the fault is the
+@note same fault and the check cannot tell which end of the wire made it.
+@note **The obvious mutation of this file is NOT here and the reason is worth
+@note the space.**  Loading the pair every tick instead of at the microcycle
+@note boundary --- `mclk || !mclk`, which is what catches the same fault in
+@note `cadr_console_bus.sv` --- SURVIVES.  **Measured by hand at this slice
+@note and not reasoned about**, the run exiting 0 with nothing on stderr; and
+@note it is an equivalence rather than a hole:
+@note `vma` and `q` are microcycle registers, they stand still between
+@note boundaries, and every read this check makes of them is made at a HALT,
+@note where the machine is not moving at all.  It is an equivalence in
+@note simulation and a real defect in fabric, where the boundary is what earns
+@note the register `rtl/cadr_machine.xdc`'s relaxed set; the console's PC lag
+@note sweep can tell the two apart for `con_rdata` only because a running
+@note machine's PC moves and these two words are never read while it runs.
+@note Recorded here so that nobody files it as a hole against a check doing
+@note its job.
+@old
+      con_vma <= vma;
+      con_q   <= q;
+@new
+      con_vma <= q;
+      con_q   <= vma;
+@end
+
+@mutation console-q-is-not-latched-by-the-read-of-vma
+@check console
+@file rtl/cadr_console.sv
+@note **THE LATCH IS WHAT MAKES THE PAIR ONE INSTANT.**  The read of word 7
+@note takes the virtual address register AND `Q` in the same tick and word 8
+@note reads what it took; a word 8 that armed the latch for itself would give
+@note the machine as of ITS own read, so a program reading 7 then 8 would be
+@note comparing two instants and the difference it found could be the gap
+@note rather than the machine.  That is the CYCLES/CYCLESH rule one register
+@note along, and unlike that one it is asserted in value here: the check reads
+@note word 8 ALONE at every halt and requires the Q the LAST read of word 7
+@note latched, which is the previous halt's.
+@note A sample where the latched `Q` and the live one agree says nothing, so
+@note the check counts the ones where they differ and fails if there are none.
+@note Caught at "microcycle 66 (PC 144): Q read alone is ffffffff, the last
+@note read of VMA latched 00000000 --- word 8 is a latch armed by word 7, not
+@note the machine live".
+@old
+          vq_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA);
+@new
+          vq_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA ||
+                                          r_idx[3:0] == R_Q);
 @end
 
 # Two records from the timing slice that took the memory-on board from

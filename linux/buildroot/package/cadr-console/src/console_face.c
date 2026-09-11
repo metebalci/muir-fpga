@@ -137,6 +137,65 @@ uint64_t cons_ticks(struct console *c)
 	return (uint64_t)hi << 32 | lo;
 }
 
+// **VMA FIRST, ALWAYS**, for the reason CYCLES goes before CYCLESH: the read
+// of word 7 latches Q beside it, so the pair names one microcycle of the
+// machine.  Reading word 8 first would pair a Q the last read of word 7
+// latched with a VMA from now.
+void cons_read_vmaq(struct console *c, struct cons_vmaq *v)
+{
+	v->vma = c->read(c, CONS_VMA);
+	v->q = c->read(c, CONS_Q);
+	// VMA<23:8> is the page number, which is what the two levels of the
+	// map are indexed by: a CADR page is 256 words.  The bits above 24
+	// are not address --- a map write carries its data there --- so the
+	// page numbers are given beside the raw words and not instead of
+	// them.
+	v->vma_page = (v->vma >> 8) & 0xFFFFu;
+	v->q_page = (v->q >> 8) & 0xFFFFu;
+	// A fabric older than these two words answers UNMAPPED at both, and
+	// UNMAPPED is a value that means nothing: it must not be read as a
+	// virtual address.  Both, because either alone could in principle be
+	// a word the machine really holds.
+	v->unmapped = v->vma == CONS_UNMAPPED && v->q == CONS_UNMAPPED;
+}
+
+void cons_say_vmaq(const struct cons_vmaq *v)
+{
+	if (v->unmapped) {
+		say("  VMA and Q both read 0x%08x, which is this face's own UNMAPPED: page 0's words 7 and 8 "
+		    "are not in this bitstream", CONS_UNMAPPED);
+		return;
+	}
+	say("  VMA 0x%08x  %o   the virtual address register, page 0 word 7 --- NOT a diagnostic register: "
+	    "MIT's sixteen have none for it.  Page VMA<23:8> = %o", v->vma, v->vma, v->vma_page);
+	say("  Q   0x%08x  %o   the Q register, page 0 word 8, latched when VMA was read so the two name "
+	    "one microcycle.  Page Q<23:8> = %o", v->q, v->q, v->q_page);
+	// **THE TWO VALUES AND WHAT EACH MEANS, AND NO NAME FOR THE
+	// COMPARISON.**  In PDL-BUFFER-REFILL the microcode reads a
+	// second-level map entry, writes it back with read/write access ORed
+	// in, and then reads through the entry it has just hacked.  Three
+	// faults injected into muir give the same PC, OPC, flag words, IR, A,
+	// M and OB, and are told apart here and nowhere else.
+	if (v->vma == v->q)
+		say("  VMA and Q hold the same word.  In PDL-BUFFER-REFILL that is what the map-side faults "
+		    "leave behind --- the address read IS the page the map was hacked for, so a page fault "
+		    "there is the map write not having taken");
+	else if (v->vma_page == v->q_page)
+		say("  VMA and Q differ but name the same page %o, so whatever is between them is inside one "
+		    "page of 256 words and the map sees one entry for both", v->vma_page);
+	else
+		// The distance in OCTAL, as the page numbers beside it are:
+		// one page apart is `1`, which is the reading this word pair
+		// was put on the face to make visible.
+		say("  VMA and Q name DIFFERENT pages, %o and %o, %lo pages apart.  In PDL-BUFFER-REFILL that "
+		    "is what the wrong-address fault leaves behind --- the address read is not the page the "
+		    "map was hacked for", v->vma_page, v->q_page,
+		    (unsigned long)(v->vma_page > v->q_page ? v->vma_page - v->q_page
+							    : v->q_page - v->vma_page));
+	say("  both are as of the last microcycle boundary, which is exact on a halted machine --- halt "
+	    "first if the answer is to mean anything");
+}
+
 int cons_spy_read(struct console *c, unsigned eadr, uint16_t *v)
 {
 	const uint32_t w = c->read(c, CONS_SPY_WORD(eadr & 15u));
@@ -220,6 +279,10 @@ void cons_read_regs(struct console *c, struct cons_regs *r)
 		else
 			r->v[k] = v;
 	}
+	// And the two that are not on that bus.  No diagnostic cycle is run
+	// for these, so they cannot be lost and there is no bit for them in
+	// `lost`; they are two loads of page 0.
+	cons_read_vmaq(c, &r->vq);
 }
 
 int cons_status(struct console *c, unsigned settle_us, struct cons_status *st)
@@ -238,6 +301,10 @@ int cons_status(struct console *c, unsigned settle_us, struct cons_status *st)
 		st->lost = 1;
 	if (cons_spy_read(c, SPY_OPC, &opc) < 0)
 		st->lost = 1;
+	// The virtual address register and Q, which no diagnostic cycle can
+	// reach: two loads of page 0, taken inside the bracket with
+	// everything else so that they belong to the same look at the machine.
+	cons_read_vmaq(c, &st->vq);
 	if (c->pause)
 		c->pause(c, settle_us);
 	st->cycles_second = cons_cycles(c);
@@ -313,6 +380,7 @@ void cons_say_status(const struct cons_status *st)
 	    (unsigned long long)st->cycles_second, st->settle_us,
 	    (unsigned long long)(st->cycles_second - st->cycles_first), (unsigned long long)st->ticks);
 	say("status: PC %o (0x%04x), OPC %o", st->pc, st->pc, st->opc);
+	cons_say_vmaq(&st->vq);
 	say("status: FLAG-1 0x%04x: SRUN %s, SSDONE %s, ERR %s, -STATHALT %s, -WAIT %s, PROMDISABLE %s",
 	    st->flag1_word, st->f1.srun ? "up" : "down", st->f1.ssdone ? "up" : "down",
 	    st->f1.err ? "up" : "down", st->f1.stathalt ? "halted" : "clear",
@@ -359,4 +427,9 @@ void cons_say_regs(const struct cons_regs *r)
 		if (k == SPY_FLAG_2)
 			cons_say_flag2(r->v[k]);
 	}
+	// **AND THE TWO THAT ARE NOT AMONG THEM**, said so rather than
+	// printed as though they were a seventeenth and eighteenth register:
+	// `EADR<3:0>` names sixteen things and all sixteen are MIT's.
+	say("and page 0's words 7 and 8, which are the machine's own and are on no diagnostic register:");
+	cons_say_vmaq(&r->vq);
 }
