@@ -194,6 +194,26 @@ half is still a claim nothing exercises**, since neither reference program
 enables the display's interrupt, and this paragraph is where that is
 written down.
 
+**The frame is 3,091,200 ticks, and since 2026-09-11 that is 19.32 real
+milliseconds and not 15.456.** Mete decided that day to make a tick 6.25 ns
+rather than 5, so the fabric runs at 160 MHz and the machine at 80% of the
+speed the hardware ran. Every tick count in the design is unchanged --- this
+module's `FRAME_T` among them --- so the machine's own time is exactly what it
+was and not one golden trace moved. What it costs is that the vertical
+interrupt arrives at **51.76 Hz where the display board scanned at 64.70**, and
+MIT's microcode uses that interrupt as its roughly-sixty-cycle clock for mouse
+tracking and the scheduler's sequence break. So the machine's idea of a second
+is 80% of one. **Mete's decision is that this keeps agreeing with muir for
+now**, because the checks are the backbone of this project and nothing built
+yet needs the time of day. **And 6.25 was chosen partly so that undoing it is
+one constant.** A real frame is exactly 2,472,960 ticks, a whole number, so
+restoring real time here means changing `FRAME_T` and nothing else, rather than
+a rewrite or a second clock domain. Doing it would put this module out of
+agreement with muir, which is why it has not been done.
+`boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src/screen_geom.h`
+carries both numbers for the same reason, `SCREEN_FRAME_NS` and
+`SCREEN_FRAME_REAL_NS`.
+
 **The vertical spacing has no register.** Register 3's bits 6--0 are the
 74LS273's spacing for a sync generator this board does not have. muir
 stores them and nothing reads them back, so lint and the fitter agree they
@@ -295,6 +315,12 @@ both configurations and in isolated copies of two trees. The trees are HEAD at
 `15975ae` and this slice on top of it. That HEAD's RTL is `a899799`'s, and its
 figures reproduce that commit message's exactly, so the flow is deterministic.
 
+**Every figure in this section was measured at a 5 ns tick**, which is what
+this fabric ran at until 2026-09-11. The tick is 6.25 ns now and both boards
+close; the last paragraph of the section says so with the numbers. The
+analysis is kept as it was taken, because a path's logic levels and its share
+of routing do not move when the clock does.
+
                             memory off (DDR=0)          memory on (DDR=1)
                             15975ae     +display        15975ae     +display
     worst negative slack    -0.019      -0.006          -0.133      -0.462 ns
@@ -334,10 +360,10 @@ Meanwhile the family that WAS the memory-on board's worst, the memory
 adapter's state into MD's clock enable at -0.133 on 42, meets at +0.007.
 
 So the placer found a different solution for a design 54 LUTs and a block
-RAM larger. This board has never closed, and it has several families with next
-to no margin by construction, an adder whose logic alone takes three quarters
-of the tick among them. It came out a third of a nanosecond worse where it had
-been within noise. **That is more than the quarter of a nanosecond CLAUDE.md
+RAM larger. This board had never closed at that tick, and it has several
+families with next to no margin by construction, an adder whose logic alone
+takes three quarters of a 5 ns tick among them. It came out a third of a
+nanosecond worse where it had been within noise. **That is more than the quarter of a nanosecond CLAUDE.md
 calls placement noise, and it is reported as such rather than as noise.** What
 it is not is a path the display made or lengthened. The checkpoint says so, and
 the numbers above are the measurement. Whether the disk's adder should be given
@@ -349,8 +375,22 @@ exceptions (2 and 4) and pass `assert_multicycle_applied`. From the
 checkpoint, every path OUT of the display's three held decodes asks for
 5.000 ns, paths INTO them ask for 5.000 and 75.000 (the map arriving,
 relaxed), and every path into the frame counter, the flag, the mode
-register and the cycle's latch asks for 5.000. `rtl/plumbing/xilinx7/cadr_machine.xdc`'s
-new clause did exactly what its comment says.
+register and the cycle's latch asks for 5.000. Those are one tick and fifteen
+ticks, so at the 6.25 ns tick built today the same requirements read 6.250 and
+93.750; the assertion matches the string it is handed by
+`boards/arty-z7-20/vivado/tick.tcl` and so moved with the tick.
+`rtl/plumbing/xilinx7/cadr_machine.xdc`'s new clause did exactly what its
+comment says.
+
+**Both boards close at the 6.25 ns tick.** Mete decided on 2026-09-11 to stop
+treating timing closure as something to chase and divide the MMCM's 1000 MHz
+VCO by 6.25 rather than 5 --- one parameter in
+`boards/arty-z7-20/cadr_arty.sv`, nothing under `rtl/`. Measured on the tree
+whose parent is `7eb6846`, the whole design reads **+0.375 ns** with memory off
+and **+0.362 ns** with `DDR=1`, **zero failing endpoints on either**, which is
+the largest margin any build of this design has had. The display's paths were
+never the question and they are further from it now; the adder that took three
+quarters of a tick takes three fifths of one.
 
 ## What is not built
 

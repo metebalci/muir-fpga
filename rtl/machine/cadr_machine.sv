@@ -48,7 +48,7 @@
 module cadr_machine #(
     parameter string PROM_HEX = "build/boot_prom.hex"
 ) (
-    input  var logic        clk,          // 200 MHz, one tick = 5 ns
+    input  var logic        clk,          // 160 MHz, one tick = 6.25 ns
     input  var logic        rst,
 
     // --- -XBUS.INTR, WHICH IS NOT A PORT ANY MORE AND USED TO BE.

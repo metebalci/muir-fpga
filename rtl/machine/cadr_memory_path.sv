@@ -62,7 +62,7 @@
 `default_nettype none
 
 module cadr_memory_path (
-    input  var logic        clk,          // 200 MHz, one tick = 5 ns
+    input  var logic        clk,          // 160 MHz, one tick = 6.25 ns
     input  var logic        rst,
     // `-XBUS INIT` on the backplane, which is not a bus cycle: the display's
     // vertical flag clears on it.  `cadr_machine.sv` ties it to the power-on

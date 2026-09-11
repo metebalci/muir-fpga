@@ -67,7 +67,7 @@ SPDX = ("// SPDX-FileCopyrightText: 2026 Mete Balci\n"
 # until then the PS-PL level shifters are off and the port is dead.  A fabric
 # that waits on it needs nobody at the board.
 #
-# `SAXIHP0ACLK` is an INPUT, driven by our own 200 MHz: the fabric clocks the
+# `SAXIHP0ACLK` is an INPUT, driven by our own 160 MHz: the fabric clocks the
 # port rather than the other way round, and the fabric clock stays on the pin
 # because a bitstream programmed over JTAG does not start the PS.
 EXPOSED = [
@@ -116,7 +116,7 @@ EXPOSED = [
     # is brought out; AWSIZE, AWBURST, the LOCK, CACHE, PROT and QOS lines
     # and WID stay open, because a register access is a single word and the
     # slave walks a burst a word at a time whatever the master says about
-    # it.  `MAXIGP0ACLK` is an input, driven by our 200 MHz like the HP
+    # it.  `MAXIGP0ACLK` is an input, driven by our 160 MHz like the HP
     # clocks; `MAXIGP0ARESETN` is the PS saying the port is live.
     "MAXIGP0ACLK", "MAXIGP0ARESETN",
     "MAXIGP0AWADDR", "MAXIGP0AWLEN", "MAXIGP0AWID", "MAXIGP0AWVALID",
