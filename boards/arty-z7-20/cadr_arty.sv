@@ -188,15 +188,18 @@ module cadr_arty #(
   logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
-  // The virtual address register and `Q` on their own wires, page 0's words 7
-  // and 8.  They are NOT on the diagnostic bus --- MIT's sixteen have no
-  // register for either --- and they leave `cadr_machine` already captured at
+  // The virtual address register, `Q` and `MD` on their own wires, page 0's
+  // words 7, 8 and 9.  They are NOT on the diagnostic bus --- MIT's sixteen
+  // have no register for any of them --- and they leave `cadr_machine`
+  // already captured at
   // the microcycle boundary, `rtl/machine/cadr_console_state.sv` being instantiated
   // inside it so that `rtl/plumbing/xilinx7/cadr_machine.xdc` can reach the capture.  On a
   // board with no console they still exist and fold into `witness` with the
   // other outputs, because a fold with exceptions in it is not a rule anybody
-  // can check.
-  logic [31:0] con_vma, con_q;
+  // can check.  **`con_md` is not the `md` port above**: that one is the
+  // datapath wire, this one is the same register taken at the boundary for a
+  // reader outside the machine's constraints.
+  logic [31:0] con_vma, con_q, con_md;
 
   // ------------------------------------------------------ the machine's reset
   //
@@ -416,7 +419,7 @@ module cadr_arty #(
       .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
-      .con_vma(con_vma), .con_q(con_q),
+      .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
       .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata)
   );
@@ -896,8 +899,9 @@ module cadr_arty #(
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
-        // The virtual address register and `Q`, page 0's words 7 and 8.
-        .mach_vma(con_vma), .mach_q(con_q),
+        // The virtual address register, `Q` and `MD`, page 0's words 7, 8
+        // and 9.
+        .mach_vma(con_vma), .mach_q(con_q), .mach_md(con_md),
         // The machine's reset, ORed with the board's own at the declaration
         // above.  **Not `gp1_rst` and not this instance's own `rst`**: see
         // the rule there and `rtl/plumbing/cadr_console.sv`'s header.
@@ -1102,7 +1106,7 @@ module cadr_arty #(
                    mem_req, mem_write, store_miss, ch_active,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
-                   con_vma, con_q,
+                   con_vma, con_q, con_md,
                    sintr};
     end
   end
