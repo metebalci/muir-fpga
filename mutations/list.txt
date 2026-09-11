@@ -4271,13 +4271,19 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note moving, and the thing to take from it is that it moves LOUDLY.  A record
 @note aimed at the last line of a growing list is a record that asks to be
 @note re-read every time the list grows, which is what it is for.
+@note
+@note **AND A FOURTH TIME**, when `MD` joined the pair as page 0's word 9 ---
+@note `con_md`, which is NOT the `md` port beside it but the same register
+@note taken at the microcycle boundary for a reader outside the machine's
+@note constraints.  The slice that moved it re-ran this record rather than
+@note only its own, which is the rule the third note above already states.
 @old
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
-                   con_vma, con_q,
+                   con_vma, con_q, con_md,
                    sintr};
 @new
                    ch_wrote, con_gnt, con_ssyn, con_rdata,
-                   con_vma, con_q,
+                   con_vma, con_q, con_md,
                    sintr};
 @end
 
@@ -5219,17 +5225,31 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
       cycles <= 64'd0;
 @end
 
-# THE VIRTUAL ADDRESS REGISTER AND `Q`, page 0's words 7 and 8.  They are not
-# on the diagnostic bus --- `../muir/src/spy.rs` names the sixteen and neither
-# is among them --- and they are here because the board's halt inside
+# THE VIRTUAL ADDRESS REGISTER, `Q` AND `MD`, page 0's words 7, 8 and 9.  None
+# of the three is
+# on the diagnostic bus --- `../muir/src/spy.rs` names the sixteen and none
+# is among them --- and the first two are here because the board's halt inside
 # `PDL-BUFFER-REFILL` is decided by their DIFFERENCE: three faults injected
 # into muir give the same PC, the same OPC, the same two flag words and the
 # same `IR`, `A`, `M` and `OB`, and differ only in whether the two are equal or
 # a page apart.  So an instrument that could read one where the other was
 # wanted would answer the question it exists for, confidently, and be wrong;
-# two of the three records below are that fault, one in each of the two files
-# it could be made in, and the third is the latch that makes the pair one
+# two of the first three records below are that fault, one in each of the two
+# files it could be made in, and the third is the latch that makes the pair one
 # instant rather than two reads.
+#
+# **`MD` JOINED THEM ON 2026-09-11 AND BRINGS THREE RECORDS OF ITS OWN, IN THE
+# SAME THREE SHAPES.**  Reproduced on the board at 05:35, the virtual address
+# register reads `0o2640010`, which is exactly what muir shows for the two
+# MAP-SIDE injections --- the wrong-address one puts `0o2640410` there --- so
+# the machine asked for the page it meant to ask for and what is left is the
+# map.  `MD` is where the next evidence is: it is the word the last COMPLETED
+# read left, and `cadr_microcycle.sv:1006` makes it the map's own index when
+# `MEMSTART` is down, so `MD<23:8>` against `VMA<23:8>` is the entry a
+# `SRCMAP` read looked at against the entry the machine read through.  An
+# instrument that handed `MD` back where `VMA` was asked for would answer THAT
+# with the two sides swapped, which is why the crossing is written twice, once
+# in each file, exactly as the pair's is.
 
 @mutation console-reads-q-where-the-virtual-address-is
 @check console
@@ -5309,11 +5329,125 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note Caught at "microcycle 66 (PC 144): Q read alone is ffffffff, the last
 @note read of VMA latched 00000000 --- word 8 is a latch armed by word 7, not
 @note the machine live".
+@note
+@note **THE ANCHOR MOVED WHEN `MD` JOINED THE LATCH**, `vq_arm` becoming
+@note `held_arm`: a name that lists what it covers rots the day the list
+@note grows, and renaming it was the slice's own choice rather than a
+@note consequence.  So this record was re-written with it rather than left to
+@note go UNAPPLIED --- the `@old` would have rotted loudly, which is the good
+@note case, but a record whose file you are editing is one you fix in the same
+@note commit.
 @old
-          vq_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA);
+          held_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA);
 @new
-          vq_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA ||
-                                          r_idx[3:0] == R_Q);
+          held_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA ||
+                                            r_idx[3:0] == R_Q);
+@end
+
+@mutation console-reads-md-where-the-virtual-address-is
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **THE CROSSING THAT WOULD MAKE THIS INSTRUMENT LIE ABOUT THE MAP.**
+@note `MD` is on page 0 because `cadr_microcycle.sv:1006` makes `MAPI`
+@note `VMA<23:8>` while `MEMSTART` is up and `MD<23:8>` otherwise --- the
+@note 74S258s at VMAS 1C20, whose select is `-MEMSTART` --- so `MD`'s page
+@note against `VMA`'s is the entry a `SRCMAP` read LOOKED AT against the entry
+@note the machine read THROUGH, and in `PDL-BUFFER-REFILL` the microcode does
+@note one of each.  A console that hands each word back where the other was
+@note asked for reports those two entries the wrong way round and says
+@note "the same page" for "the same page" either way, which is how it would go
+@note unnoticed until it had sent somebody after the wrong suspect.  Reading
+@note the wrong register is exactly the mistake this word had to be made safe
+@note from.
+@note A SWAP and not one word taking the other's value, so that both registers
+@note stay read and lint does not catch this instead of the check --- the
+@note bit-granularity lesson, and the same shape as the pair's own record
+@note above.
+@note What makes it evidence is that `MD` and `VMA` differ at 14 of the 16
+@note halts; a halt where they read alike says nothing, so the check counts
+@note the discriminating ones and has a floor under them.  **Measured, and the
+@note measurement shows the floor doing its work**: the first two halts, at
+@note microcycles 4 and 66, have `MD` and `VMA` both zero and the crossing is
+@note invisible at each of them.  It is the third that bites.
+@note Caught at "microcycle 999 (PC 200): VMA reads 00000004, the reference
+@note says 00000000".
+@old
+        R_VMA:   r_word = held_vma;
+        R_Q:     r_word = held_q;
+        R_MD:    r_word = held_md;
+@new
+        R_VMA:   r_word = held_md;
+        R_Q:     r_word = held_q;
+        R_MD:    r_word = held_vma;
+@end
+
+@mutation console-crosses-md-and-the-virtual-address-at-the-capture
+@check console
+@file rtl/machine/cadr_console_state.sv
+@note The same fault one module along, at the boundary capture inside
+@note `cadr_machine` rather than at the console's read mux, and a separate
+@note record for the reason the pair's pair of records gives: the two wires
+@note run through two files and a check that held only one end would be
+@note holding half of the path.  Crossed here the console's own mux is right
+@note and every word it hands back is the other register.
+@note A swap again, for the same lint reason.
+@note **AND THE EQUIVALENCE THE PAIR'S RECORD NAMES IS NOT AN EQUIVALENCE FOR
+@note `md`, WHICH IS WORTH SAYING RATHER THAN ASSUMING.**  That record
+@note records `mclk || !mclk` --- loading every tick instead of at the
+@note boundary --- as SURVIVING, because `vma` and `q` are written only inside
+@note `if (mclk_edge)` and cannot move between boundaries at all.  `md` CAN:
+@note `md_pending && (mclk_edge || hang)` takes the word `-LOADMD` deskewed in
+@note the middle of a PARKED generator.  It is still not a record, because
+@note every read this check makes is made at a HALT where nothing is moving,
+@note so the two load rules are indistinguishable here as well.  What holds
+@note that arc instead is a MEASUREMENT on the check's own output: the
+@note shortest distance from a change of each source to the boundary that
+@note captures it, over MIT's whole boot PROM --- VMA 44 ticks, Q 44, MD 26,
+@note against the fifteen `rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes
+@note these arcs to.  The check fails below fifteen.  Recorded here so that
+@note nobody files either half as a hole.
+@note Caught at "microcycle 999 (PC 200): VMA reads 00000004, the reference
+@note says 00000000" --- the same line the record above is caught at, which is
+@note the point: the fault is the same fault and the check cannot tell which
+@note end of the wire made it.
+@old
+      con_vma <= vma;
+      con_q   <= q;
+      con_md  <= md;
+@new
+      con_vma <= md;
+      con_q   <= q;
+      con_md  <= vma;
+@end
+
+@mutation console-md-is-not-latched-by-the-read-of-vma
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **THE LATCH IS WHAT MAKES THE THREE ONE INSTANT, AND `MD` IS THE WORD
+@note THAT PROVES IT.**  The read of word 7 takes the virtual address
+@note register, `Q` AND `MD` in the same tick and words 8 and 9 read what it
+@note took; a word 9 that armed the latch for itself would give the machine as
+@note of ITS own read, so a program reading 7, 8 then 9 would be comparing
+@note three instants and any difference it found could be the gap rather than
+@note the machine.  That is the CYCLES/CYCLESH rule two registers along.
+@note **It is a separate record from the `Q` one and not a duplicate of it**,
+@note because a latch that armed on word 9 is invisible to the `Q` test
+@note entirely --- and because `MD` is where this property is actually
+@note exercised: the check reads word 9 ALONE at every halt and requires the
+@note `MD` the LAST read of word 7 latched, and **13 of those 15 reads are
+@note taken where that latched `MD` and the live one differ, against 2 of 15
+@note for `Q`.**  `Q` is `0xfffffffe` on all but the first thousand rows of
+@note MIT's boot PROM and `MD` is the memory data register on a machine doing
+@note 17,466 bus cycles, so the same test is nearly vacuous for one word and
+@note sharp for the other.
+@note Caught at "microcycle 999 (PC 200): MD read alone is 00000004, the last
+@note read of VMA latched 00000000 --- word 9 is on word 7's latch, not the
+@note machine live".
+@old
+          held_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA);
+@new
+          held_arm <= r_in && !r_idx[4] && (r_idx[3:0] == R_VMA ||
+                                            r_idx[3:0] == R_MD);
 @end
 
 # Two records from the timing slice that took the memory-on board from

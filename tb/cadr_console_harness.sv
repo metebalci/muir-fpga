@@ -224,22 +224,24 @@ module cadr_console_harness #(
   );
   assign cpu_rdata = sr_rdata;
 
-  // The virtual address register and `Q` for page 0's words 7 and 8, captured
-  // at the microcycle boundary.  **`rtl/machine/cadr_console_state.sv`, the same
+  // The virtual address register, `Q` and `MD` for page 0's words 7, 8 and 9,
+  // captured at the microcycle boundary.  **`rtl/machine/cadr_console_state.sv`, the same
   // module `rtl/machine/cadr_machine.sv` instantiates and not a copy of it**, for the
   // reason the arbiter above is a module: two descriptions of one thing
   // drift, and the check would then be holding the copy.  In the fabric its
   // `vma` and `q` are `cadr_machine`'s internal wires off the processor;
   // here they are this harness's own outputs off the same processor.
-  logic [31:0] con_vma, con_q;
+  logic [31:0] con_vma, con_q, con_md;
   cadr_console_state console_state (
       .clk     (clk),
       .rst     (mach_rst),
       .mclk    (mclk),
       .vma     (vma),
       .q       (q),
+      .md      (md),
       .con_vma (con_vma),
-      .con_q   (con_q)
+      .con_q   (con_q),
+      .con_md  (con_md)
   );
 
   cadr_console console (
@@ -281,6 +283,7 @@ module cadr_console_harness #(
       .clock_edge (clock_edge),
       .mach_vma   (con_vma),
       .mach_q     (con_q),
+      .mach_md    (con_md),
       .mach_rst   (con_mach_rst)
   );
 

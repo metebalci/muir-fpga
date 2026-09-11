@@ -135,7 +135,7 @@ module cadr_mem_count_harness #(
       .con_req(1'b0), .con_msyn(1'b0), .con_write(1'b0),
       .con_addr(18'd0), .con_wdata(16'd0),
       .con_gnt(con_gnt), .con_ssyn(con_ssyn), .con_rdata(con_rdata),
-      .con_vma(con_vma), .con_q(con_q),
+      .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
       .device_ack(1'b0), .device_rdata(32'd0),
       .boards(7'd32),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
@@ -226,14 +226,14 @@ module cadr_mem_count_harness #(
   logic [15:0] con_rdata;
   // Page 0's words 7 and 8, which no console on this harness reads: folded
   // below with the rest, the way every other output of `cadr_machine` is.
-  logic [31:0] con_vma, con_q;
+  logic [31:0] con_vma, con_q, con_md;
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
   assign unused = &{1'b0, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
                     store_rdata, store_miss, ch_active,
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,
-                    con_gnt, con_ssyn, con_rdata, con_vma, con_q,
+                    con_gnt, con_ssyn, con_rdata, con_vma, con_q, con_md,
                     md, phys, ub_addr, ub_rdata, arb_stage, dev_wdata,
                     vmaok, jcond, nop, pcs1, pcs0, iwrited, wrcyc, device,
                     dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn,
