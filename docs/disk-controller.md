@@ -169,7 +169,7 @@ is slower than the machine's own spacing.
   value 0 to 17 and no other.
 - **The timeout.** `TIMEOUT_NS` is 2.56 s. It is the 74LS124 at DCTMOT 0B04
   section 1 at 20 ms, divided by 128 by the 74393 at 0C03. **That is
-  512,000,000 ticks of the fabric's 200 MHz clock**, so running every hanging
+  512,000,000 ticks of the fabric's clock**, so running every hanging
   code out to it would cost more than the rest of `make check` together. The
   check runs one full-length hang, and checks the rest for the hang itself.
   The hang is visible on the store to START, because `Controller::hang`
@@ -213,7 +213,11 @@ a second master on it. That is the other half of the same seam.
 This was written at the slice that replaced the block store's seam, so read
 the "before building" prose above as history. The drive has its channel and
 its pack side now. What follows is what was decided here, and what was
-measured.
+measured. **Every slack figure below was measured at a 5 ns tick**, which is
+what this fabric ran at until 2026-09-11; a tick is 6.25 ns now and both boards
+close, so the figures below name the arcs their remedies were written for and
+not the state of any board today. The remedies stand whatever a tick costs,
+because each of them is a register and not a margin.
 
 **The pack in DDR is muir's `Unit` split down the middle.** `Unit` is a file
 plus two tables, `headers` and `data_checkwords`, which hold the sectors a
@@ -284,7 +288,8 @@ the one `cadr_machine.xdc` prescribes for a signal read once a bus cycle. The
 acknowledgement stays a gate exactly as -MEMACK on a write does, and the
 registers take the store a tick after the request, from copies of the word and
 the register number registered every tick with no enable. Nothing on the bus
-can see 5 ns in a register, because the next cycle is 145 ns away. The
+can see one tick in a register, because the next cycle is a whole microcycle
+away. The
 exception is the trace, which samples every timer a START loads either side of
 its expiry to the tick. So each such load is written `- STORE_HOLD_NS` at the
 load, the spindle's position is taken from a one-tick copy rather than by
@@ -420,8 +425,9 @@ and the hand moves on without a clear and without a pause. While the walk
 waits (`CTL` bit 6) every slot is anyone's. After the request, every slot
 DIRTY says a transfer wrote is written back at leisure, and the walk's own is
 left for the next pass. Such a write-back is deferred, counted, and said once
-if a slot is refused a hundred passes in a row (25 ms; a Read All holds a slot
-for a revolution, 16.7 ms).
+if a slot is refused a hundred passes in a row (25 ms of real time; a Read All
+holds a slot for a revolution, 16.7 ms of the machine's own time and 20.8 ms of
+real).
 
 **The refusal read back with WAITING up, found on the board.** Once in
 48,879 moves the disk pack program failed a write-back with `refused while the walk

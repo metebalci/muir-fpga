@@ -91,12 +91,19 @@ unsigned screen_server_port(const struct screen_server *s);
 void screen_server_close(struct screen_server *s);
 
 // The most often a viewer is given the whole screen: one frame of the
-// board's own raster, SCREEN_FRAME_NS, 15.456 ms.  A viewer asking for the
-// whole screen at every poll would otherwise have this program encode
-// 739,584 pixels instead of sleeping.  A frame is the right interval because
-// the machine cannot produce a new picture faster than the display board
-// scans one; an incremental update is never held back.
-#define SCREEN_FULL_UPDATE_NS ((uint64_t)SCREEN_FRAME_NS)
+// board's own raster.  A viewer asking for the whole screen at every poll
+// would otherwise have this program encode 739,584 pixels instead of
+// sleeping.  A frame is the right interval because the machine cannot produce
+// a new picture faster than the display board scans one; an incremental
+// update is never held back.
+//
+// **IT IS THE REAL FRAME AND NOT THE MACHINE'S**, and the two stopped being
+// the same number when the tick became 6.25 ns.  This is compared against
+// `CLOCK_MONOTONIC` by `screen_server_poll`'s caller, so what it has to be is
+// how long the FABRIC takes over a frame: 3,091,200 ticks, 19.32 ms, where
+// the machine's own name for that interval is still muir's 15.456 ms.  See
+// `screen_geom.h` for both and for why they are kept apart.
+#define SCREEN_FULL_UPDATE_NS ((uint64_t)SCREEN_FRAME_REAL_NS)
 
 // A connection that has not got through RFC 6143's opening exchange in this
 // long is dropped: a port scanner that opens a socket and says nothing must

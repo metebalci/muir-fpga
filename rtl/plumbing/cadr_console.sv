@@ -46,8 +46,10 @@
 //                 machine it is debugging, and it is what says the machine is
 //                 running without stopping it to ask
 //     3  CYCLESH  bits 63:32, **latched when CYCLES was read**: see below
-//     4  TICKS    200 MHz ticks since reset, bits 31:0.  `Rtl::ns()` divided
-//                 by five --- the machine's own time, which runs whether or
+//     4  TICKS    the fabric's own ticks since reset, bits 31:0 --- 160 MHz
+//                 ones, `cadr_arty.sv`'s MMCM deciding that.  It is
+//                 `Rtl::ns()` divided by five, muir's nanoseconds being
+//                 MIT's grid: the MACHINE's own time, which runs whether or
 //                 not the machine does, so CYCLES against TICKS is a rate
 //     5  TICKSH   bits 63:32, latched when TICKS was read
 //     6  RESET    **the one word of page 0 that is written.**  A write of
@@ -400,11 +402,12 @@ module cadr_console #(
     // What an address in neither page reads: the complement of IDENT.
     parameter logic [31:0] UNMAPPED = ~IDENT,
     // How long a diagnostic cycle may take before the engine gives up, in
-    // 200 MHz ticks.  The cycle itself is `DIAGNOSTIC_NS` = 250 ns = 50
-    // ticks; the rest is the wait for the grant, and the processor's own
-    // Unibus cycle in front of it is bounded by its NXM timer at 4,250 ns.
-    // 4,096 ticks is 20.48 us, four NXM timeouts, and it is a bound on how
-    // long the Arm may stall and nothing else.
+    // ticks.  The cycle itself is `DIAGNOSTIC_NS` = 250 ns = 50 ticks; the
+    // rest is the wait for the grant, and the processor's own Unibus cycle
+    // in front of it is bounded by its NXM timer at 4,250 ns, which is 850
+    // ticks.  4,096 ticks is nearly five of those timeouts --- 25.6 us of
+    // real time at the 6.25 ns tick --- and it is a bound on how long the Arm
+    // may stall and nothing else.
     parameter int unsigned LOST_T   = 4096,
     // What must be written to page 0's word 6, and to nothing else, for the
     // machine to be reset: "RSET".  Four distinct bytes, none `00` or `FF`,
@@ -412,14 +415,14 @@ module cadr_console #(
     // `IDENT`, not `UNMAPPED`, and not what register 6 reads back.  The
     // header has the whole argument.
     parameter logic [31:0] RESET_KEY = 32'h5253_4554,
-    // How many 200 MHz ticks the machine's reset is held for.  64 ticks is
-    // 320 ns: the floor is one generator cycle at extra slow, 44 ticks, and
+    // How many ticks the machine's reset is held for.  64 ticks is 400 ns of
+    // real time: the floor is one generator cycle at extra slow, 44 ticks, and
     // this is the smallest power of two above it so that the countdown ends
     // on a borrow.  See the header --- it is a floor with margin and is not
     // derived from anything.
     parameter int unsigned RESET_T  = 64
 ) (
-    input  var logic        clk,          // 200 MHz, one tick = 5 ns
+    input  var logic        clk,          // 160 MHz, one tick = 6.25 ns
     input  var logic        rst,
 
     // --- `M_AXI_GP1`, on which the processing system is the master.  AXI3,

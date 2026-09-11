@@ -83,7 +83,7 @@
 `default_nettype none
 
 module cadr_tv (
-    input  var logic        clk,        // 200 MHz, one tick = 5 ns
+    input  var logic        clk,        // 160 MHz, one tick = 6.25 ns
     input  var logic        rst,
 
     // `-XBUS INIT` on the backplane: clears the vertical flag's flop and
@@ -120,6 +120,26 @@ module cadr_tv (
   localparam logic [6:0]  BUFFER_SLOT  = 7'd120;
 
   // simpletv::FRAME_NS, 15,456,000 ns, in ticks.
+  //
+  // **SO THE FRAME IS 19.32 REAL MILLISECONDS AND THE VERTICAL INTERRUPT
+  // ARRIVES AT 51.76 Hz, WHERE THE DISPLAY BOARD SCANNED AT 64.70.**  These
+  // are the machine's nanoseconds divided by MIT's five-nanosecond grid, and
+  // the board clocks a tick at 6.25 ns rather than 5 --- `cadr_arty.sv`, whose
+  // header is the argument.  It matters more here than anywhere else in the
+  // machine, because **MIT's microcode uses this interrupt as its
+  // roughly-sixty-cycle clock**: mouse tracking and the scheduler's sequence
+  // break both run off it, so the machine's idea of a second is 80% of one.
+  // Mete decided on 2026-09-11 that the machine keeps agreeing with muir for
+  // now --- the checks are the backbone and `tv.golden` compares tick counts
+  // --- and this is the record of what that costs rather than a fix.
+  //
+  // **6.25 WAS CHOSEN PARTLY SO THAT UNDOING IT IS ONE CONSTANT.**  A real
+  // frame is exactly 2,472,960 ticks of 6.25 ns, a whole number, so restoring
+  // real time here is that number in place of this one and nothing else ---
+  // at the price of this module no longer agreeing with muir.  The RFB server
+  // on the processing system does the opposite and paces off the REAL frame,
+  // because it compares against `CLOCK_MONOTONIC`: see `SCREEN_FRAME_REAL_NS`
+  // in `boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src/screen_geom.h`.
   localparam logic [21:0] FRAME_T = 22'd3_091_200;
 
   // --- the held match --------------------------------------------------

@@ -43,9 +43,11 @@
 // on this board does.
 //
 // **The control store is read synchronously**, the read issued at the
-// microcycle boundary with `NPC` as its address and complete one 200 MHz tick
-// later --- 5 ns into a microcycle that is 145 ns at normal speed and 220 ns
-// at the extra slow the boot PROM runs at.
+// microcycle boundary with `NPC` as its address and complete ONE TICK later
+// --- one tick of the 29 a microcycle is at normal speed, or of the 44 at the
+// extra slow the boot PROM runs at.  (145 ns and 220 ns on MIT's drawings;
+// 181.25 and 275 of real time at this board's 6.25 ns tick.  The COUNT is
+// what matters and the count does not move with the tick.)
 //
 // **The scratchpads are read while CLK is high, and the 74S373s are what
 // holds the word.**  `rtl.rs`'s header is explicit: the 93425As have "no clock
@@ -94,7 +96,7 @@ module cadr_microcycle #(
     // twelve hex digits.  Generated into build/, never committed.
     parameter string PROM_HEX = "build/boot_prom.hex"
 ) (
-    input  var logic        clk,          // 200 MHz, one tick = 5 ns
+    input  var logic        clk,          // 160 MHz, one tick = 6.25 ns
     input  var logic        rst,          // RESET, synchronous, active high
 
     // --- the console's registers: OLORD1 1A09 and 1A10.  The fabric has no
@@ -321,7 +323,8 @@ module cadr_microcycle #(
   //
   // WHAT IT COST WAS THE CONTROL STORE'S ADDRESS PINS.  On the DDR=1 board
   // at 5b03a4e, `u_phase_gen/tpclk_reg/C -> imem_reg_3/ADDRBWRADDR[13]` was
-  // 4.775 ns of a 5 ns tick --- 0.952 of logic over four LUTs and 3.823 of
+  // 4.775 ns of the 5 ns tick that board was clocked at --- 0.952 of logic
+  // over four LUTs and 3.823 of
   // routing, `cpu_edge` at fanout 292 and the mux's output at fanout 25
   // across twenty-four block RAMs and the PROM's two.  116 of that board's
   // 278 failing endpoints were this one net fanned across the address pins.
@@ -601,7 +604,7 @@ module cadr_microcycle #(
   // early is the 74S373 drawn one state too soon."  So the latch follows the
   // memory *while CLK is high* and holds through the write phase --- and a
   // synchronous read enabled by TPCLK is exactly that, with the read landing
-  // one 200 MHz tick into a read phase 160 ns long.  It also settles the
+  // one tick into a read phase of 32 ticks.  It also settles the
   // read-during-write question for nothing: the write pulses fire with TPCLK
   // low, when the latches have stopped following.
   //

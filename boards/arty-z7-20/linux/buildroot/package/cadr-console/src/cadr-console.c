@@ -246,8 +246,13 @@ static void do_ident(struct console *c)
 	say("IDENT 0x%08x  STAT 0x%08x (busy %d, gnt %d, answered %d, lost-since-reset %d)",
 	    id, stat, !!(stat & CONS_ST_BUSY), !!(stat & CONS_ST_GNT),
 	    !!(stat & CONS_ST_ANSWERED), !!(stat & CONS_ST_LOST));
-	say("CYCLES %llu microcycles, TICKS %llu at 5 ns = %llu us since reset",
-	    (unsigned long long)cy, (unsigned long long)ti, (unsigned long long)(ti / 200));
+	// TICKS is the fabric's clock and the divisor is the one number here
+	// that is about the wall clock: `CONS_TICKS_PER_US`, 160 at the 6.25 ns
+	// tick `cadr_arty.sv`'s MMCM builds.  The microcycle count beside it is
+	// the machine's own and needs no conversion at all.
+	say("CYCLES %llu microcycles, TICKS %llu at 6.25 ns = %llu us since reset",
+	    (unsigned long long)cy, (unsigned long long)ti,
+	    (unsigned long long)(ti / CONS_TICKS_PER_US));
 }
 
 // One command line, already split.  0 to go on, 1 to stop.

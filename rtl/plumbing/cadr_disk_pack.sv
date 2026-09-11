@@ -658,7 +658,7 @@ module cadr_disk_pack #(
   assign moving_slot = p_slot;
   // **A READ BEAT IS REGISTERED BEFORE IT REACHES THE STORE.**  RVALID and
   // RDATA leave the PS7 late in the tick --- the hard block's own output
-  // delay is most of the 5 ns --- and written straight into the store they
+  // delay is several nanoseconds of it --- and written straight into the store they
   // reached the enable of every slot's tag and header in the controller:
   // -0.513 ns on the DDR=1 board, the ten worst paths all from
   // `SAXIHP2ACLK`.  So a beat is taken into `rb_*` and stored from there the

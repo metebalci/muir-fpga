@@ -3,9 +3,24 @@
 #
 # Timing constraints for the composed machine.
 #
-# 200 MHz exists only to resolve the 5 ns delay-line taps. Netlist logic
-# settles *between* phases, where the 75 ns fast read tap is the real
-# constraint. Hold all 1,821 registers to the tick and the routed report says
+# The master clock exists only to resolve the delay-line taps, which the
+# drawings place five nanoseconds apart and which this design therefore holds
+# as tick COUNTS --- 15, 17, 20, 23, 25, 28 and 32 of them.  Netlist logic
+# settles *between* phases, where the fast read tap at fifteen ticks is the
+# real constraint.  (The board clocks a tick at 6.25 ns, so that tap is
+# 93.75 ns of real time; `boards/arty-z7-20/cadr_arty.sv` decides the length
+# of a tick and is the only thing that does.  Every exception in this file is
+# written in CYCLES and rescales with it by itself.)
+#
+# **EVERY NANOSECOND FIGURE BELOW WAS MEASURED WHEN A TICK WAS 5 ns**, which
+# it was until 2026-09-11, and none of them has been rewritten: a measurement
+# is worth its provenance and not worth being multiplied by 1.25 in a text
+# editor.  So where a report excerpt below says a path "asks for 5.000 ns" it
+# is one tick and asks for 6.250 today, and where it says "75.000" it is
+# fifteen ticks and asks for 93.750.  The RATIOS --- which path is relaxed and
+# which is not, and by how much a slack figure moved when something changed
+# --- are what those excerpts were quoted for, and they are unaffected.  The
+# current figures are in `boards/arty-z7-20/vivado/bitstream.tcl`'s header. Hold all 1,821 registers to the tick and the routed report says
 # WNS -17.265 ns on the map lookup rippling into the control store's address,
 # 21.615 ns over 26 logic levels --- a path that has a phase to happen in.
 # (That register count is of the design as it then was. At 712909e the machine
@@ -24,7 +39,7 @@
 #     microcycle because `aadr` comes off IR, so the latch captures the same
 #     value every tick and only the last is read. `imem_q` and `prom_q` too.
 #   - A free-running counter does not: it is its own input, and a 15-tick
-#     multicycle says its increment may take 75 ns, at which point it does not
+#     multicycle says its increment may take fifteen ticks, at which point it does not
 #     count. `mfinish_t`, `rdfinish_t`, `elapsed`, `vco_count`, `arb_t`,
 #     `phase_t`.
 #   - An edge detector does not: it exists to spot a transition and is read

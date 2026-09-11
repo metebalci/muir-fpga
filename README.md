@@ -1,13 +1,25 @@
 # muir-fpga
 
-This is the MIT CADR on an FPGA, at **rtl level**, at the speed the hardware
-ran.
+This is the MIT CADR on an FPGA, at **rtl level**, at 80% of the speed the
+hardware ran.
 
 [muir](https://github.com/metebalci/muir) simulates the CADR at three
 fidelities. `rtl` is the middle one. It has the machine's own two-phase clock,
 every datapath signal on it, and everything that is a matter of *when*. That
 means bus waits and hangs, arbitration, and timeouts. This repository is that
-machine in fabric, at the CADR's own 145 ns microcycle.
+machine in fabric, at the CADR's own microcycle of 29 clock ticks.
+
+The eighty per cent is one number and is worth being exact about. Every
+instant the CADR names is a whole number of ticks --- the microcycle is 29 of
+them, the seven read taps are 15, 17, 20, 23, 25, 28 and 32 --- and every one
+of those counts is MIT's own. What this board chooses is how long a tick
+lasts, and it makes one 6.25 nanoseconds where the hardware's was 5. So the
+machine is scaled and not distorted: a microcycle is 145 nanoseconds on MIT's
+drawings and 181.25 here, every instant keeps its exact ratio to every other,
+and nothing inside the machine can tell. The reason is timing closure, which
+at 5 nanoseconds this design did not reach and at 6.25 it does with room to
+spare --- and a setup violation in a machine whose semantics are pinned to a
+tick is a threat to correctness rather than to speed.
 
 muir's netlists are read to **derive** things. They give the port list's
 directions, the address decode's boundaries, and every constant that came off

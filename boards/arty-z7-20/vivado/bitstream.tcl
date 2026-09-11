@@ -35,48 +35,62 @@
 #   3. THAT THE BITSTREAM IS A BITSTREAM. `write_bitstream` reporting success
 #      and leaving a file too small to be one is the same class of thing.
 #
-# TIMING STILL FAILS, BUT NOT WHERE THIS USED TO SAY IT DID. What stood here
-# named `md` reaching the tick-rate counters through both map levels and the
-# decode, about 11.6 ns of logic arriving somewhere that has 5 ns. That figure
-# predates the two holdings in `cadr_memory_path.sv` and `cadr_microcycle.sv`,
-# and it was arithmetic rather than a routed report. The first board run to
-# measure it, at 712909e, found something else:
+# TIMING IS MET, AND WHAT MADE IT MET WAS THE TICK AND NOT THE DESIGN. For as
+# long as this file has existed a tick was 5 ns and the board did not close:
+# -0.129 ns at 712909e, -0.384 at b1bcc34, -0.054 at cc6b9ce, -0.233 on 79
+# endpoints by the time the disk, the display and the console had landed. Mete
+# decided on 2026-09-11 to stop chasing it and remove timing as a threat to
+# the machine's correctness instead: `cadr_arty.sv`'s MMCM now divides its
+# 1000 MHz VCO by 6.25 rather than by 5, so a tick is 6.25 ns and the machine
+# runs at 80% of the speed the hardware ran. **Not one tick COUNT in the
+# design changed and no check moved**, because the machine's own clock is the
+# only clock it has; `cadr_arty.sv`'s header is the whole argument.
 #
-#     -0.129 ns  u_machine/processor/u_phase_gen/n_tpwp_reg/C
-#             -> u_machine/processor/dmem_reg_1536_1791_7_7/RAMS64E_A/WE
-#             4.186 ns data path (logic 0.828, route 3.358), 3 logic levels
+# Measured on the tree that made that change (parent 7eb6846), both boards,
+# this flow:
 #
-# The phase generator's write pulse arriving at the dispatch memory's LUTRAM
-# write enables. All 16 failing endpoints of 14,135 are that one net fanned
-# across the LUTRAM slices, 80% of the delay is routing, and hold is met at
-# +0.079 ns. Out of context the same design is -0.484 ns, 94 failing endpoints
-# of 13,444.
+#     board          WNS        failing   hold      LUTs    registers   BRAM
+#     memory-off    +0.375 ns   0/16,316  +0.036    3,685     1,662      37
+#     DDR=1         +0.362 ns   0/27,578  +0.025    7,352     5,195      37
 #
-# AND THE ENDPOINT IS NOT STABLE ACROSS REVISIONS, which is worth writing down
-# because the paragraph it replaced was wrong in exactly that way. Run again
-# on the tree at b1bcc34 --- two commits later, both of them in the top level
-# --- this flow gives -0.384 ns, 10 failing endpoints of 14,054, and the worst
-# path is not that net at all:
+# (`report_utilization`'s Slice LUTs and Slice Registers, and Block RAM Tiles.
+# The `BIT:` line below prints CELL counts instead, 3,033 and 7,000 LUT cells
+# and 38 BMEM cells, and the two do not agree by construction --- the note at
+# that check says why.) The worst path on the memory-off board is
 #
-#     -0.384 ns  u_machine/processor/ir_reg[25]/C
-#             -> u_machine/processor/mfinish_t_reg[2]/R
+#     +0.375 ns  u_machine/processor/ir_reg[29]/C
+#             -> u_machine/processor/u_phase_gen/tpclk_reg/D
+#             5.780 ns data path (logic 1.368, route 4.412), 5 logic levels
 #
-# which is the family the out-of-context run has at the top, a datapath
-# register reaching a tick-rate counter's reset. Two commits apart, two
-# different worst nets, both in the 0.1 to 0.4 ns band. **The family is the
-# finding; the net is the placement.** Quote a net from here only with the
-# commit beside it.
+# and on the DDR board it is the pack side's block store reaching the disk
+# controller's tag, 0 logic levels and 5.142 ns of pure routing --- which is
+# what a design with headroom looks like: placement, not depth.
 #
-# So what is left is fanout and placement rather than depth of logic, and `md`
-# through the map is not the finding any more.
+# **THE NET IS THE PLACEMENT AND THE FAMILY IS THE FINDING**, and that was
+# worth writing down when this flow was failing for exactly the reason it is
+# worth writing down now. Three revisions at the 5 ns tick gave three
+# different worst nets in the 0.1 to 0.4 ns band. Quote a net from here only
+# with the commit beside it.
 #
-# The bitstream is written anyway and the failure reported: a bitstream that
-# fails timing is not a working machine, but it is a working flow, and the two
-# unknowns are worth separating rather than compounding.
+# The bitstream is written even when timing fails, and the failure reported: a
+# bitstream that fails timing is not a working machine, but it is a working
+# flow, and the two unknowns are worth separating rather than compounding.
 
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z020clg400-1"}]
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/bitstream"}]
 file mkdir $outdir
+
+# HOW LONG A TICK IS, ASKED OF THE FABRIC THAT DECIDES IT.  The board's own
+# 125 MHz is declared in `boards/arty-z7-20/cadr_arty.xdc` and never moves;
+# the machine's clock is derived from it by the MMCM in
+# `boards/arty-z7-20/cadr_arty.sv`, so Vivado works the generated clock out on
+# its own and no `create_clock` is needed for it here.  What IS needed is the
+# same number in Tcl, because the two assertions below match a setup
+# requirement as a formatted string.  `tick.tcl` parses the MMCM's four
+# parameters and fails loudly if it cannot find exactly one of each, so a
+# period written here can never come apart from the one being built.
+source boards/arty-z7-20/vivado/tick.tcl
+set tick [cadr_tick_ns]
 
 # AND ONE SWITCH, WHICH BUILDS A DIFFERENT BOARD.
 #
@@ -211,7 +225,7 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
 if {$port > 0}        { lappend inside g_ddr.u_axi }
-assert_constraints_scoped $inside 5.0
+assert_constraints_scoped $inside $tick
 
 # --- 1. did the constraints apply?
 #
@@ -245,7 +259,7 @@ if {$exceptions < 2} {
 }
 if {$clocks < 2} {
     puts "BIT: FAILED --- $clocks clock(s); expected the board's 125 MHz and"
-    puts "BIT: the MMCM's 200 MHz derived from it. A generated clock that did"
+    puts "BIT: the MMCM's 160 MHz derived from it. A generated clock that did"
     puts "BIT: not appear means the fabric is being timed against the wrong one."
     exit 1
 }
@@ -257,13 +271,13 @@ if {$clocks < 2} {
 # either way, and the `foreach` bug would pass the count. What separates them
 # is the setup requirement the paths ask for. The count still earns its place:
 # it is the half that says a setup exception has a hold exception beside it.
-assert_multicycle_applied 5.0 15
+assert_multicycle_applied $tick 15
 # And the memory port's own deadline, which has a destination only on this
 # board: with `DDR` off, `mem_addr` reaches nothing but a false-pathed fold
 # and the exception is real, legal and connected to nothing. Asserting it
 # there would fail on a healthy design; not asserting it here would leave the
 # 80 ns claim exactly as unchecked as it was before it existed.
-if {$port > 0} { assert_multicycle_applied 5.0 16 }
+if {$port > 0} { assert_multicycle_applied $tick 16 }
 
 opt_design
 place_design
@@ -316,9 +330,10 @@ report_clocks                          -file $outdir/clocks.rpt
 # It is the sharpest of a family: a diagnostic gets less testing than the
 # thing it diagnoses, and this one lives in **the path that only exists once
 # the thing works**. A project that has been failing at something has never
-# run its own success case. This branch had never executed here either --- the
-# design has not met 200 MHz until now --- so it is being fixed on the
-# strength of what happened next door rather than after it happens twice.
+# run its own success case. This branch had never executed here at all until
+# the tick became 6.25 ns --- the design had never met its clock --- so it was
+# fixed on the strength of what happened next door rather than after it
+# happened twice, and the first run that exercised it found it correct.
 set paths [get_timing_paths -quiet -max_paths 1 -delay_type max]
 if {[llength $paths]} {
     set wns [get_property SLACK [lindex $paths 0]]
