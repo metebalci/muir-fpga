@@ -5659,3 +5659,174 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
   assign sintr_o = disk_intr || !tv_intr;
 @end
+
+# ---------------------------------------------------------------------------
+# THE MAP, WRITTEN AND THEN READ THROUGH, AGAINST A REAL MEMORY
+#
+# `map_boot` is `machine` with one thing changed: `mem_rdata` is fetched from a
+# store keyed by `mem_addr` instead of handed over keyed by the trace's row, so
+# the physical address the map produced is used to fetch something.  Page 0
+# holds what muir's memory holds --- zero --- and every other address holds a
+# poison injective in it, so a read the map sends a page wide takes a word muir
+# never had and MD says so on the microcycle it happens.
+#
+# THE PROPERTY IS LIVE IN THE BOOT PROM, measured against muir and against
+# CLAUDE.md, which said it was not: `SET-UP-FOUR-PAGES` writes four
+# second-level entries at microcycles 536,290, 536,293, 536,297 and 536,299,
+# each from ZERO --- no access --- to MAP-ACCESS-CODE 3, and the first bus
+# cycle is at 536,302.  Twelve microcycles after the first and three after the
+# last.  `PDL-BUFFER-REFILL`'s `((VMA-WRITE-MAP) IOR M-PGF-TEM ...)` is seven
+# microcycles ahead of `P-R-1`, which is where the board halted on 2026-09-10;
+# this is the same shape on a program that needs no pack.
+#
+# WHAT THIS PROGRAM CANNOT REACH, so that nobody files it as a hole: muir
+# refuses the access on NONE of the 600,000 microcycles, and every map word the
+# boot PROM writes has MAP-ACCESS-CODE 3 --- bits 23 and 22 alike.  So -VMAOK
+# is compared only in its permitted direction and the two access bits cannot be
+# told from each other.  `the-access-bits-swap-halves` below is that
+# equivalence, measured, with the record that stands in its place.
+
+@mutation the-second-level-map-write-misses-its-entry
+@check map_boot
+@file rtl/cadr_microcycle.sv
+@note THE BOARD'S FIRST SUSPECT, made a fabric bug.  `MAPWR1D` is `WMAPD AND
+@note VMA25` at VCTL2 1C15 and the entry is `{VMAP<4:0>, MAPI<4:0>}`; written
+@note one entry along, the entry the program then reads through stands at the
+@note zero it came up with --- no access --- and the read is refused.
+@note
+@note This is what `PDL-BUFFER-REFILL` would see if its map hack did not take,
+@note and injecting exactly that into muir reproduces the board's halted
+@note console readout bit for bit: PC 0o25041, OPC 0o25034, FLAG-1 0xfd00,
+@note FLAG-2 0xc0db, IR 0x1802d0049300, at microcycle 2,196,668 of MIT's own
+@note System 100 band.
+@note
+@note `machine` catches it too, on -VMAOK: an entry that stays zero refuses the
+@note access and the trace says it was permitted.  It is aimed here because
+@note this is the check the property belongs to, and because here it fails on
+@note the ADDRESS as well as on the permission.
+@old
+        if (vma[25]) l2_map[adr1] <= vma[23:0];
+@new
+        if (vma[25]) l2_map[adr1 ^ 10'd1] <= vma[23:0];
+@end
+
+@mutation a-read-translates-through-a-stale-map-entry
+@check map_boot
+@file rtl/cadr_microcycle.sv
+@note THE BOARD'S SECOND SUSPECT: the read goes through an entry that is not
+@note the one the map was just asked about.  The physical page is taken from
+@note the LIVE map word at the edge that starts the cycle --- the module's own
+@note comment says "`self.lvmo` has just taken `vmo`, so the page is this
+@note cycle's" --- and this takes it from the 74S373 at VMEMDR 1D14 instead,
+@note which is the word the LAST memory cycle latched.  On the first memory
+@note cycle that is `LVMO_AT_POWER_ON`, physical page 0o37777, and the boot
+@note PROM's parity loop reads a page that has nothing of muir's in it.
+@note
+@note **`machine` CATCHES IT TOO, AND NOT FOR THE REASON IT LOOKS LIKE.**
+@note Measured: page 0o37777 is 0o17777400 words up and a 32-board machine is
+@note 0o10000000 words, so the stale page is NOT main memory at all --- the
+@note decode calls it Xbus space with nothing in it, the cycle ends on the
+@note 4.25 us NXM timer, and `machine.pass` fails on MD and on the
+@note microcycle's length rather than on the address.  Same catch, wrong
+@note reason, which CLAUDE.md's `probe.tcl` entry says is worth writing down.
+@note `the-physical-page-is-one-too-high` below is the same family kept
+@note INSIDE main memory, and that one only this check sees.
+@note
+@note **A STALER `lvmo_eff` IS AN EQUIVALENCE AND IS NOT FILED AS A HOLE.**
+@note Dropping the 74S373's transparency --- `assign lvmo_eff = lvmo;` ---
+@note survives `map_boot`, `ddr_boot`, `machine`, `microcycle` and `probe`
+@note alike, measured.  `lvmo_eff` reaches nothing but `-PFR` and `-PFW`, its
+@note `<21:0>` being in this module's own unused fold, and both access bits
+@note are set in the power-on latch and in every entry the boot PROM writes.
+@note The address does not come through it at all; it comes through `vmo`
+@note here, which is what this record moves.
+@old
+          phys_r     <= {vmo[13:0], vma[7:0]};
+@new
+          phys_r     <= {lvmo[13:0], vma[7:0]};
+@end
+
+@mutation the-access-bit-comes-from-the-page-half-of-the-map-word
+@check map_boot
+@file rtl/cadr_microcycle.sv
+@note THE BOARD'S THIRD SUSPECT: the access bits read from the wrong half of
+@note the second-level word.  `-PFR` is `NOT(-LVMO23)` at VCTL2 1D26 and
+@note `-LVMO23` is the top bit of the 24-bit entry; `VMO<13:0>` under it is the
+@note physical page.  Taken from bit 13 instead, every entry the boot PROM
+@note writes --- physical pages 0, 1, 0o36777 and 0o37766 --- decides the
+@note permission by an address bit, and page 0 refuses its own parity loop.
+@note
+@note **WRITTEN AS AN AND RATHER THAN AS A SUBSTITUTION, and lint is why.**
+@note `assign pfr = lvmo_eff[13];` leaves bit 23 read nowhere and Verilator
+@note stops the build --- CLAUDE.md's bit-granularity lesson, met again: lint
+@note would be doing the catching and the check would not.  Keeping bit 23 in
+@note the expression makes the permission depend on a bit of the page half
+@note without taking any bit out of use.
+@note
+@note **THE SWAP OF THE TWO ACCESS BITS IS AN EQUIVALENCE ON THIS PROGRAM AND
+@note IS NOT FILED AS A HOLE.**  `pfr` from bit 22 with `pfw` from bit 23,
+@note built and run: it survives `map_boot`, and not by luck.  Every map word
+@note `SET-UP-FOUR-PAGES` writes carries MAP-ACCESS-CODE 3 --- bits 23 and 22
+@note both set --- and the power-on latch has both set as well, so the two are
+@note never unequal anywhere in 600,000 microcycles and no read can tell them
+@note apart.  `PDL-BUFFER-REFILL`'s own entry is `0o27200352` before the hack,
+@note bit 23 clear with bit 22 set, which is exactly where they differ.  What
+@note would close it is a machine-level reference whose program holds an
+@note asymmetric map word, which means the band on `cadr_machine` and a pack.
+@old
+  assign pfr   = lvmo_eff[23];
+@new
+  assign pfr   = lvmo_eff[23] && lvmo_eff[13];
+@end
+
+@mutation the-physical-page-is-one-too-high
+@check map_boot
+@file rtl/cadr_microcycle.sv
+@note THE RECORD THAT SAYS THIS CHECK IS NOT A COPY OF `machine`.  The three
+@note above are all caught there as well --- two on -VMAOK and one on the NXM
+@note timer --- because each of them makes the machine do something visibly
+@note different.  This one does not: the page the map gives is one too high,
+@note the address is still main memory, the decode still selects it, -VMAOK is
+@note still permitted and the cycle is still answered at muir's own instant.
+@note The only thing wrong is WHICH WORD comes back.
+@note
+@note `tb/cadr_machine_tb.cpp` hands `mem_rdata` muir's own MD column keyed by
+@note the ROW, so the word is right whatever address went out and MD agrees
+@note with muir on every one of the 600,000 microcycles.  Here the store is
+@note keyed by `mem_addr` and everything outside page 0 is poison injective in
+@note it, so the first read takes a word muir never had.  Measured: `machine`
+@note SURVIVES this and `map_boot` catches it.
+@old
+          phys_r     <= {vmo[13:0], vma[7:0]};
+@new
+          phys_r     <= {vmo[13:0] + 14'd1, vma[7:0]};
+@end
+
+@mutation the-memory-address-loses-its-page-bit
+@check map_boot
+@file rtl/cadr_ddr_map.sv
+@note THE ONE ONLY THIS CHECK CAN SEE, and the reason it exists.  The four
+@note records above are caught by `machine` as well, each for a reason of its
+@note own --- two on -VMAOK, one on the NXM timer, and one because the disk
+@note controller's four registers sit on the same physical address and stop
+@note answering.  None of them is caught there on the ADDRESS.
+@note
+@note `cadr_ddr_map::main_byte_address` is the last step from the map's
+@note physical word to the byte address on `mem_*`, and NOTHING but the memory
+@note port goes through it: a device cycle never reaches it, so a fault here
+@note moves main memory and leaves the disk controller, the display and the
+@note NXM decode exactly where they were.  `machine.pass` never looks at
+@note `mem_addr` --- it hands `mem_rdata` muir's own MD column keyed by the
+@note ROW --- so every column it compares agrees and it SURVIVES, measured.
+@note Here the store is keyed by `mem_addr`: the 256 reads land on page 1 and
+@note take poison, and the 256 writes land outside page 0 and are named at the
+@note address.
+@note
+@note Written as an XOR of one bit rather than as a dropped bit, which is
+@note CLAUDE.md's rule: dropping it leaves `phys<8>` read nowhere and lint
+@note does the catching instead of the check.
+@old
+    return MAIN_BASE + (32'(phys) << 2);
+@new
+    return MAIN_BASE + (32'(phys ^ 22'd256) << 2);
+@end
