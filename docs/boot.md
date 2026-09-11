@@ -378,7 +378,7 @@ is mounted read-only.
    path Linux still asks DHCP for an address (`BR2_SYSTEM_DHCP="eth0"`). With
    no cable it waits its 15 s and goes on to the prompt without one.
 
-At the prompt there are the same four lines as above. This is what they said
+At the prompt the same checks are run as above. This is what they said
 on 10 September under this image:
 
     cat /proc/device-tree/model                  Zynq Arty Z7 Development Board  (kept on purpose)

@@ -53,10 +53,19 @@ are approaching a hundred gigabytes you will never use. The install is about
 65 GB with Zynq-7000 alone.
 
 **A licence is needed.** Vivado will not launch without one, even for the free
-tier. The failure is `[Common 17-345]`, at startup, before anything is read. A
-Vivado ML Standard licence is free and node-locked to a host id. Generate it on
-AMD's licensing site and install it with `vlm`, or point `XILINXD_LICENSE_FILE`
-at the `.lic`.
+tier. The failure is `[Common 17-345]`, at startup, before anything is read.
+The free licence is node-locked to a host id. Generate it on AMD's licensing
+site and install it with `vlm`, or point `XILINXD_LICENSE_FILE` at the `.lic`.
+
+**The tier this project uses is BASIC, and the distinction matters.** The
+licence here reads `Vivado_Basic_Package` with `License_Tier:BASIC`. This
+document said "ML Standard" for a while and that was wrong, and the error cost
+a session: BASIC refuses `create_debug_core` outright, so Vivado's scripted
+debug flow is unavailable and `mark_debug` is useless without a core. Nothing
+here has needed more. Synthesis, place and route, the bitstream and the
+hardware manager all run, and `xc7z020clg400-1` is covered. Read the licence
+and its stated limits before planning around a Vivado feature, or around its
+absence.
 
 **PetaLinux is not needed**, and it is not in the unified installer's product
 list for this version. Both halves of the boot chain are already in Vivado.
