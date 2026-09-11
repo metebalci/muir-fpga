@@ -27,6 +27,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
+       $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
        $(BUILD)/map_boot.pass \
        $(BUILD)/mem_count.pass \
@@ -748,6 +749,72 @@ $(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/src/trace.rs \
 $(BUILD)/microcycle_sys.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
                               $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl_sys.golden
+	@touch $@
+
+# ------------------------------------------ MD holds what its instruction put
+
+# A property on the same module and the same two programs, measured every
+# tick: from the `cpu_edge` where DESTMDR writes MD until the write phase with
+# WMAPD up, MD does not change. The map is indexed by MD<23:8> whenever
+# MEMSTART is down, and `wmapd` is registered at the boundary, so an
+# instruction that puts a virtual address in MD and then writes the map
+# through it needs MD to stand across several microcycles; a held word
+# committing inside that span writes the map at a different entry and says
+# nothing.
+#
+# No new reference. MD has two writers and one of them is the instruction, so
+# any other change inside the window is the other one. The model is verilated
+# `--public-flat-rw` because DESTMDR, WMAPD, the write pulse and `md_pending`
+# are internal, and a testbench re-decoding them out of IR would be checking
+# its own decode.
+#
+# THE COVERAGE IS THE FINDING and it is on the check's own output: how many
+# windows, how long, how many carried a -LOADMD at all, and how close the
+# nearest one came when none did.
+$(BUILD)/obj_md_hold/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_md_hold_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Mdir $(BUILD)/obj_md_hold \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_md_hold_tb.cpp)
+
+$(BUILD)/md_hold.pass: $(BUILD)/obj_md_hold/Vcadr_microcycle \
+                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_md_hold/Vcadr_microcycle $(BUILD)/rtl.golden
+	@touch $@
+
+$(BUILD)/md_hold_sys.pass: $(BUILD)/obj_md_hold/Vcadr_microcycle \
+                           $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_md_hold/Vcadr_microcycle $(BUILD)/rtl_sys.golden
+	@touch $@
+
+# THE ONE TICK NO TRACE REACHES, AND THIS TARGET IS RED ON PURPOSE.
+#
+# `md_hold` prints, on both programs, that no -LOADMD ever rose on the tick a
+# DESTMDR wrote MD: not once in 600,000 microcycles of the boot PROM nor in
+# 2,200,000 of the band. That one tick is the only case in which the MD
+# register takes its first branch and the `else if` that clears `md_pending`
+# never runs, so it is the only case in which a word strobed before an
+# instruction's write can land after it --- and no trace this project has can
+# put a check on it.
+#
+# So the stimulus does: it runs MIT's boot PROM and drives one extra -LOADMD,
+# for one tick, on a DESTMDR boundary, against a control run that places none.
+# What it asserts is muir's rule, which is that the edge consumes the word and
+# the instruction's stands.
+#
+# IT IS NOT IN `check` AND MUST NOT BE ADDED UNTIL IT PASSES. The defect it
+# names is real and unfixed, measured at this commit: md_pending survives the
+# edge and the held word commits 44 ticks later, one extra-slow microcycle,
+# over the word the instruction put there. The test is written first, as the
+# house rule has it, and joins `check` in the commit that makes it pass. It
+# runs the boot PROM twice and takes about half a minute.
+$(BUILD)/obj_md_inject/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_md_inject_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Mdir $(BUILD)/obj_md_inject \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_md_inject_tb.cpp)
+
+$(BUILD)/md_inject.pass: $(BUILD)/obj_md_inject/Vcadr_microcycle \
+                         $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_md_inject/Vcadr_microcycle $(BUILD)/rtl.golden
 	@touch $@
 
 # --------------------------------------------------- the disk, with a drive

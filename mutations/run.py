@@ -214,6 +214,46 @@ CHECKS = {
         "golden": "rtl_sys.golden",
         "files": [("boot_prom.hex", "build/boot_prom.hex")],
     },
+    # MD STILL HOLDS WHAT ITS OWN INSTRUCTION PUT THERE.  The same module and
+    # the same two programs as the pair above, and a property rather than an
+    # agreement: from the `cpu_edge` where DESTMDR writes MD until the write
+    # pulse with WMAPD up, nothing may commit a word strobed before that edge.
+    # `--public-flat-rw` because DESTMDR, WMAPD, the write pulse and
+    # `md_pending` are internal; a testbench re-decoding them out of IR would
+    # be checking its own decode.
+    "md_hold": {
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
+        "top": "cadr_microcycle",
+        "tb": "tb/cadr_md_hold_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw"],
+        "golden": "rtl.golden",
+        "files": [("boot_prom.hex", "build/boot_prom.hex")],
+    },
+    "md_hold_sys": {
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
+        "top": "cadr_microcycle",
+        "tb": "tb/cadr_md_hold_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw"],
+        "golden": "rtl_sys.golden",
+        "files": [("boot_prom.hex", "build/boot_prom.hex")],
+    },
+    # THE ONE TICK NO TRACE REACHES.  A directed stimulus rather than a
+    # program: MIT's boot PROM with one extra -LOADMD driven on a DESTMDR
+    # boundary, against a control run that drives none.  It is NOT in `make
+    # check` and it does not pass, because the defect it names is real and
+    # unfixed; no record may be aimed at it until it does, a mutation
+    # "caught" by a check that was already failing being caught by nothing.
+    # It is named here so that `check_makefile` knows the target the Makefile
+    # carries, and so that the record has somewhere to go on the day the fix
+    # lands.
+    "md_inject": {
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
+        "top": "cadr_microcycle",
+        "tb": "tb/cadr_md_inject_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw"],
+        "golden": "rtl.golden",
+        "files": [("boot_prom.hex", "build/boot_prom.hex")],
+    },
     # The composed machine: the processor with the memory path under it,
     # nothing driven nearer than mem_req/mem_done.  Its own module is pure
     # wiring, which is what makes it the only check that can catch a cable
