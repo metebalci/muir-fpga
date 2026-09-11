@@ -3,5 +3,6 @@
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-common/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-console/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-readout/Config.in"
+source "$BR2_EXTERNAL_CADR_PATH/package/cadr-checkpoint/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-disk-packs/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-terminal/Config.in"

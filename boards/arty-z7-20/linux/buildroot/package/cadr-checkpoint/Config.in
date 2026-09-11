@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_CADR_CHECKPOINT
+	bool "cadr-checkpoint"
+	select BR2_PACKAGE_CADR_COMMON
+	select BR2_PACKAGE_CADR_READOUT
+	help
+	  The checkpoint program. It reads the CADR's own memories
+	  through the console's readout window and its main memory
+	  through /dev/mem, and writes the whole machine as a muir
+	  checkpoint. The file can then be opened in muir and resumed.
+
+	  It digests the disk packs at the same instant and writes a
+	  sidecar beside the checkpoint naming them, because a
+	  checkpoint carries the blocks a run has written and never the
+	  disk itself: resumed over a pack that has moved on, it
+	  restores a machine into a disk it never had, and nothing in
+	  muir can notice.
+
+	  It halts the machine while it reads and starts it again
+	  afterwards. It is not a daemon and has no init script: it is
+	  run once, when somebody wants the machine in a file.
