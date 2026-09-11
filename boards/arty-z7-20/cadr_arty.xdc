@@ -16,7 +16,7 @@
 # deliberately: a false path on a human pressing a button is noise, and an
 # output timing constraint on an LED is a fiction about a pin nothing samples.
 #
-# THE MACHINE'S 160 MHz IS NOT HERE, and that is not an omission. `cadr_arty.sv`
+# THE MACHINE'S 100 MHz IS NOT HERE, and that is not an omission. `cadr_arty.sv`
 # makes it with an MMCM, and Vivado derives the generated clock from this one
 # through the primitive without being told. Writing a second `create_clock`
 # for the MMCM's output would override that derivation and silently unhook

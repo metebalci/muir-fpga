@@ -14,7 +14,7 @@ void ps_init(struct pack_side *ps)
 	ps->write = NULL;
 	ps->pause = NULL;
 	ps->ctx = NULL;
-	// A move is nine bursts, some 650 ticks --- 4 us at the 6.25 ns tick; a
+	// A move is nine bursts, some 650 ticks --- 6.5 us at the 10 ns tick; a
 	// register read over
 	// GP0 is longer than that.  The cap is for a face that never answers.
 	ps->poll_cap = 100000;

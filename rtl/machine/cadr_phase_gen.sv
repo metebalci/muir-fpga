@@ -15,14 +15,16 @@
 // 140) are 15, 17, 20, 32, 23, 25 and 28 ticks.  `phase` counts those ticks.
 //
 // **`TICK_NS` IS THE CONVERSION FROM MIT'S DRAWINGS AND NOT THE LENGTH OF A
-// TICK.**  It is 5 for ever, because the drawings' grid is 5 ns and dividing
-// by anything else rounds an instant --- at 10 the first tap collapses to
-// zero ticks and SELECT lands on top of another tap.  How long a tick then
-// LASTS is the board's business and nobody's here: `boards/arty-z7-20/cadr_arty.sv`
-// makes it 6.25 ns, so this generator's cycle is 29 ticks of 6.25 rather
-// than of 5 and every instant keeps its exact ratio to every other.  The
-// machine cannot tell, and neither can any check --- they all compare tick
-// counts.
+// TICK, AND THE BOARD'S TICK IS 10 ns, WHICH MAKES SAYING THIS PROPERLY
+// URGENT.**  `TICK_NS` is 5 for ever, because the drawings' grid is 5 ns and
+// dividing by anything else rounds an instant: write 10 HERE and the first
+// tap collapses to zero ticks and SELECT lands on top of another tap.  How
+// long a tick then LASTS is the board's business and nobody's here ---
+// `boards/arty-z7-20/cadr_arty.sv` makes it 10 ns, so this generator's cycle
+// is 29 ticks of 10 rather than of 5 and every instant keeps its exact ratio
+// to every other.  The two tens are unrelated numbers that happen to match:
+// one is a divisor here and one is a clock period there.  The machine cannot
+// tell, and neither can any check --- they all compare tick counts.
 //
 // MACHRUN is deliberately not a port.  `-CLK0` is `-TPCLK AND MACHRUN` at
 // CLOCK2 1D10, which is on the board and not in the generator; `clock.rs`
@@ -40,7 +42,7 @@
 `default_nettype none
 
 module cadr_phase_gen (
-    input  var logic       clk,        // 160 MHz, one tick = 6.25 ns
+    input  var logic       clk,        // 100 MHz, one tick = 10 ns
     input  var logic       rst,        // RESET, synchronous, active high
     input  var logic       hang,       // -HANG from VCTL1, true = stalling
     input  var logic       ilong,      // -ILONG from FLAG, true = stretch
@@ -98,8 +100,10 @@ module cadr_phase_gen (
   // provides.  `Speed::read_phase_ns` has the same table.
   //
   // FIVE, FOR EVER: this is MIT's grid and not the board's clock.  See the
-  // header --- `cadr_arty.sv` makes a tick 6.25 ns and nothing below moves
-  // for it, because what is written below is tick COUNTS.
+  // header --- `cadr_arty.sv` makes a tick 10 ns and nothing below moves for
+  // it, because what is written below is tick COUNTS.  A reader who sets this
+  // to 10 to "match the board" builds a different machine that still lights
+  // LEDs.
   localparam int unsigned TICK_NS = 5;
 
   // The fixed instants, all measured from -TPR0 at phase zero.

@@ -46,7 +46,7 @@
 //                 machine it is debugging, and it is what says the machine is
 //                 running without stopping it to ask
 //     3  CYCLESH  bits 63:32, **latched when CYCLES was read**: see below
-//     4  TICKS    the fabric's own ticks since reset, bits 31:0 --- 160 MHz
+//     4  TICKS    the fabric's own ticks since reset, bits 31:0 --- 100 MHz
 //                 ones, `cadr_arty.sv`'s MMCM deciding that.  It is
 //                 `Rtl::ns()` divided by five, muir's nanoseconds being
 //                 MIT's grid: the MACHINE's own time, which runs whether or
@@ -405,8 +405,8 @@ module cadr_console #(
     // ticks.  The cycle itself is `DIAGNOSTIC_NS` = 250 ns = 50 ticks; the
     // rest is the wait for the grant, and the processor's own Unibus cycle
     // in front of it is bounded by its NXM timer at 4,250 ns, which is 850
-    // ticks.  4,096 ticks is nearly five of those timeouts --- 25.6 us of
-    // real time at the 6.25 ns tick --- and it is a bound on how long the Arm
+    // ticks.  4,096 ticks is nearly five of those timeouts --- 41 us of
+    // real time at the 10 ns tick --- and it is a bound on how long the Arm
     // may stall and nothing else.
     parameter int unsigned LOST_T   = 4096,
     // What must be written to page 0's word 6, and to nothing else, for the
@@ -422,7 +422,7 @@ module cadr_console #(
     // derived from anything.
     parameter int unsigned RESET_T  = 64
 ) (
-    input  var logic        clk,          // 160 MHz, one tick = 6.25 ns
+    input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
 
     // --- `M_AXI_GP1`, on which the processing system is the master.  AXI3,

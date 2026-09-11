@@ -28,7 +28,7 @@
 # Digilent's four fabric clocks out of the PS, and `boards/arty-z7-20/cadr_ps7.sv`
 # leaves `FCLKCLK` unconnected --- nothing in this design takes any of them.
 # The machine's clock is made in the fabric by the MMCM in
-# `boards/arty-z7-20/cadr_arty.sv`, 160 MHz since 2026-09-11, and changing a
+# `boards/arty-z7-20/cadr_arty.sv`, 100 MHz since 2026-09-11, and changing a
 # number here would change `ps7_init` and cost the byte-for-byte agreement
 # with Digilent's own routine that the paragraph above is about.
 #

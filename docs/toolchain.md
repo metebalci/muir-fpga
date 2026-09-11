@@ -115,8 +115,8 @@ machine's own period; the board makes that clock with an MMCM from the board's
 jitter and uncertainty. A design can meet out of context and miss on the board
 by that much. **The board run is the one that decides.**
 
-**Neither flow holds a clock period of its own.** The machine's tick is 6.25 ns
---- 160 MHz --- and the only place that is decided is `CLKOUT0_DIVIDE_F` in
+**Neither flow holds a clock period of its own.** The machine's tick is 10 ns
+--- 100 MHz --- and the only place that is decided is `CLKOUT0_DIVIDE_F` in
 `boards/arty-z7-20/cadr_arty.sv`. `boards/arty-z7-20/vivado/tick.tcl` parses
 the MMCM's four parameters out of that file --- the crystal's period, the input
 divider, the feedback multiplier and the output divider --- and returns the

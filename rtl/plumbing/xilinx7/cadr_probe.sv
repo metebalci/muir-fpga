@@ -80,7 +80,7 @@
 //
 // THE CLOCK CROSSING IS QUASI-STATIC AND THAT IS ON PURPOSE.  `rd_addr` lives
 // in the DRCK domain and moves once per scan --- 454 TCKs, tens of
-// microseconds --- while `mem_q` is read in the 160 MHz domain through a
+// microseconds --- while `mem_q` is read in the 100 MHz domain through a
 // two-flop synchroniser on the address.  By the time the JTAG side loads
 // `mem_q` at the next CAPTURE, the address has been stable for thousands of
 // ticks and the word for very nearly as many.  It is the same argument
@@ -93,7 +93,7 @@ module cadr_probe #(
     // Samples.  A power of two, because the read pointer wraps on it.
     parameter int unsigned DEPTH = 1024
 ) (
-    input  var logic             clk,      // 160 MHz, the machine's own
+    input  var logic             clk,      // 100 MHz, the machine's own
     input  var logic             rst,
     input  var logic             qualify,  // `clock_edge`: one tick a microcycle
 

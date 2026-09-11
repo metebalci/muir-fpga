@@ -91,20 +91,20 @@
 #define SCREEN_FRAME_NS         15456000u
 
 // AND THE SAME FRAME IN REAL TIME, WHICH IS A DIFFERENT NUMBER NOW.  A tick
-// is 6.25 ns on this board --- `boards/arty-z7-20/cadr_arty.sv`'s MMCM, and
-// its header says why --- so the fabric takes 3,091,200 x 6.25 = 19,320,000
-// real nanoseconds over a frame and the vertical interrupt arrives at
-// 51.76 Hz where the display board scanned at 64.70.  The machine cannot tell
-// (it counts ticks), but this program compares against `CLOCK_MONOTONIC` and
+// is 10 ns on this board --- `boards/arty-z7-20/cadr_arty.sv`'s MMCM, and its
+// header says why --- so the fabric takes 3,091,200 x 10 = 30,912,000 real
+// nanoseconds over a frame and the vertical interrupt arrives at 32.35 Hz
+// where the display board scanned at 64.70.  The machine cannot tell (it
+// counts ticks), but this program compares against `CLOCK_MONOTONIC` and
 // therefore can: pacing a viewer off the machine's 15.456 ms would hand out
-// whole screens a quarter faster than the fabric can produce them.
+// whole screens twice as fast as the fabric can produce them.
 //
 // **THE TWO ARE KEPT APART RATHER THAN RECONCILED.**  Making the fabric's
-// frame 2,472,960 ticks would put `cadr_tv.sv` out of agreement with muir,
+// frame 1,545,600 ticks would put `cadr_tv.sv` out of agreement with muir,
 // and the checks are the backbone; Mete's decision is that the machine keeps
 // agreeing with muir for now.  `docs/tv.md` and `docs/terminal.md` carry the
 // consequence.
-#define SCREEN_FRAME_REAL_NS    19320000u
+#define SCREEN_FRAME_REAL_NS    30912000u
 
 // `MODE<2>`, `MODE BOW`, for whoever quotes the number: muir simpletv.rs:100.
 #define SCREEN_MODE_BOW         0004u

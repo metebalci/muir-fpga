@@ -55,7 +55,7 @@
 `default_nettype none
 
 module cadr_busint_xbus (
-    input  var logic clk,          // 160 MHz, one tick = 6.25 ns
+    input  var logic clk,          // 100 MHz, one tick = 10 ns
     input  var logic rst,          // synchronous, active high
 
     // MCLK7 across the cables, one tick wide: the microcycle boundary, which

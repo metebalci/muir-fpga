@@ -102,7 +102,7 @@
 `default_nettype none
 
 module cadr_console_state (
-    input  var logic        clk,          // 160 MHz, one tick = 6.25 ns
+    input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
     input  var logic        mclk,         // MCLK7, the microcycle boundary
 
