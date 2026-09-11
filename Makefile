@@ -716,7 +716,7 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 # where git does not track it, so nothing else would notice it being replaced.
 #
 # The pack is decompressed for each run and removed after, so BUILD needs
-# 269 MB free while this runs and keeps the 297 MB trace. `clean` takes
+# 269 MB free while this runs and keeps the 392 MB trace. `clean` takes
 # whichever is there.
 #
 # The trace runs from microcycle zero, and that is not a choice: a window into
@@ -790,7 +790,7 @@ $(BUILD)/md_hold_sys.pass: $(BUILD)/obj_md_hold/Vcadr_microcycle \
 #
 # `md_hold` prints, on both programs, that no -LOADMD ever rose on the tick a
 # DESTMDR wrote MD: not once in 600,000 microcycles of the boot PROM nor in
-# 2,200,000 of the band. That one tick is the only case in which the MD
+# 2,800,000 of the band. That one tick is the only case in which the MD
 # register takes its first branch and the `else if` that clears `md_pending`
 # never runs, so it is the only case in which a word strobed before an
 # instruction's write can land after it --- and no trace this project has can
