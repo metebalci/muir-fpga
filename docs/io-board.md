@@ -21,11 +21,13 @@ the card is, what the two reference programs actually ask of it, the
 decisions, what the check will hold to and cannot, and what is deliberately
 not built.
 
-**Slice one is the reference and the model. There is no SystemVerilog.**
+**Slice one is the reference and the model; slice two is the card.**
 `golden/src/iob.rs` writes `build/iob.golden`, `make iob-golden` makes it, and
 a throwaway Python model was run against it until the two agreed row for row.
-What that model found is at the end, because it is the part of this slice
-worth reading before the next one starts.
+What that model found is near the end, because it is the part of slice one
+worth reading before anything else. `rtl/cadr_io_board.sv` and
+`tb/cadr_io_board_tb.cpp` are slice two, and `make build/iob.pass` is the
+check; what it holds to and what it cannot is the last section but one.
 
 ## What muir says the card is
 
@@ -267,8 +269,18 @@ the trace drives it with a `SER` row, and the 2651 itself is the serial
 slice's. **`-UB INIT` must reach it**, because `-INIT*` is the chip's own
 `RESET` pin; the trace shows `serrdy` falling at every init.
 
-**Where the mouse's encoders live is NOT decided here, and slice two has to
-decide it.** muir puts them in `terminal::mouse` --- the far end, not the card
+**THE MOUSE'S SEAM IS DECIDED AND IT IS MIT'S CARD: the card takes the seven
+lines.** Slice one posed it as an open question and slice two answered it, at
+Mete's session's direction: this project reproduces the machine and is held to
+muir, and a module taking ready-made deltas is a different card --- one that
+cannot lose counts, whose `NEW`/`OLD` latches and comparator disappear, and
+against which this trace stops being a reference for the mouse half. So
+`rtl/cadr_io_board.sv` takes `mouse_lines<6:0>` and the encoder that turns
+Linux's deltas into quadrature phases is fabric beside it; on this slice that
+encoder is in `tb/cadr_io_board_tb.cpp`. The two shapes as they were posed,
+and why the second was declined:
+
+muir puts the encoders in `terminal::mouse` --- the far end, not the card
 --- and what crosses the card's edge is seven lines: four quadrature and three
 switches. A USB mouse gives deltas, and turning a delta into quadrature phases
 16 us apart in software over `M_AXI_GP0` is 62,500 writes a second, so the
@@ -281,14 +293,14 @@ supports either:
 - **the card takes deltas** and adds them to the counters directly, setting
   `MOUSE READY` on a change.
 
-The second is smaller and is a different card: it cannot lose counts, and
-`NEW`/`OLD` and the comparator disappear. **If it is chosen, this trace stops
-being a reference for the mouse half**, because the counters would move at
-different instants; if the first is chosen, the encoder's contract is Gray
-phases in the order 00, 01, 11, 10, a step every `MOUSE_STEP_NS` = 16,000 ns,
-both lines of each pair high at power-on, and **muir's snap** --- see the
-model's findings below, which is where that word is explained and where the
-cost of getting it wrong is measured.
+The first was taken. The encoder's contract is Gray phases in the order 00,
+01, 11, 10, a step every `MOUSE_STEP_NS` = 16,000 ns, both lines of each pair
+high at power-on, and **muir's snap** --- see the model's findings below,
+which is where that word is explained and where the cost of getting it wrong
+is measured. **A mutation cannot reach it**, because on this slice the encoder
+is in the testbench; `mutations/list.txt` says so where the card's records
+begin, and the two records that stand nearest it break the card's half of the
+same agreement --- its 8 us clock's rate and its phase.
 
 **The interrupt leaves the card as a vector and a request.** `-UB INTR` and
 `-UB BR5` on the backplane; `machine.rs:455` ORs `interrupt_request` with
@@ -362,7 +374,28 @@ Said here rather than given a column, per CLAUDE.md's rule.
   makes of them, because the decode is one sheet; no `CYC` goes near them,
   because the parts behind them are two other slices. A card that answers
   `0o764140`--`0o764176` with nothing behind it would fail on the real
-  machine and passes here.
+  machine and passes here. **Slice two therefore made this an exemption with
+  a number on it**: `rtl/cadr_io_board.sv` decodes the whole block and
+  answers only the two groups it implements, the check requires that it does
+  not answer the other fifteen addresses, and it prints how many answering
+  directions that covers --- twenty-seven of the fifty-five the decode names.
+  Whoever builds either slice makes the card answer its group, with
+  `busint::IOB_CHAOS_BUFFER_NS`, `IOB_RBUF_SETUP_NS` and `IOB_SERIAL_NS` for
+  the instants, and moves that line.
+- **The latch on the mouse's seven lines, from the lines themselves.**
+  Measured at slice two, as a mutation on both mouse registers: reading
+  `lines` where the card reads `NEW` survives. muir's snap puts every step of
+  a move onto a `KB CLK^` edge, which is the edge the 74LS374 at IOBMSE 0A24
+  takes them on, so the lines and the latch change at one instant and never
+  differ where anything reads; the switches change at a `BTN` row and the
+  program reads them back inside the clock the latch takes them on, which is
+  after that edge. What the trace CAN tell from `NEW` is a value one clock
+  **late** --- `OLD`, the 74LS374 at 0A22 --- and the module has no register
+  for that: `OLD` is `NEW` a clock ago and the edge that makes it is the edge
+  that uses it, so the count and the comparator are written in terms of `NEW`
+  and the lines and the second latch would be a copy nothing reads. Recorded
+  rather than filed as a hole, and the live records on that wiring are the
+  two that cross which four of the seven lines reach which register.
 - **`take_beep` and `AUDIO_QUIET_NS`.** muir's own comment says they are the
   far end's arithmetic and not the board's; the card has the 74LS74 at
   IOBKBD 0C27 and nothing else, so `AUDIO` is the column and the beep is not.
@@ -466,30 +499,58 @@ direction --- reaching a page lower, `0o763000` --- which puts `0o763776` into
 group 7 and is caught at row 24 on the first cycle the card is not supposed to
 answer. Same family as the equivalences CLAUDE.md already catalogues.
 
-## What slice two builds
+## What slice two built
 
 1. **`rtl/cadr_io_board.sv`**, a Unibus slave in `cadr_spy_registers.sv`'s
    shape: `clk`, `rst`, `ub_msyn`, `ub_write`, `ub_addr`, `ub_wdata` in;
-   `ub_ssyn`, `ub_rdata` out; plus `ub_init`, `ser_ready` in and the
-   interrupt request and its vector out, and the seam the keyboard and mouse
-   arrive on. Inside: the decode, the two counters and the answer machine off
-   a free-running microsecond clock, the keyboard's shift register and its
-   ready flop, the mouse's two latches, comparator and two counters, the
-   microsecond counter with its thirty-two-bit latch, the mains counter as an
-   accumulator, the interval timer, the status register and the priority
-   encoder.
-2. **`tb/cadr_io_board_tb.cpp`**, a Unibus master replaying `iob.golden`: it
-   raises `-UB MSYN` at `msyn` with the address and the direction, requires
-   `-UB SSYN` at `ssyn` and nowhere else, compares `ub_rdata` there, drops
-   `-UB MSYN` at `off`, and compares the whole face at every row. It also
-   holds the decode against the `DEC` and `DECNONE` rows, which needs the
-   decode reachable --- either as its own module, the way `cadr_xbus_decode`
-   is, or through a second small testbench.
-3. **The Makefile's check**, alongside `iob-golden`.
-4. **Mutation records**, and the twenty-nine above are the list to start from:
-   each was measured to be caught, and the row it is caught at is in this
-   document.
-5. **The decision about the mouse's seam**, above.
+   `ub_ssyn`, `ub_rdata` out; plus `ub_init`, `ser_ready`, `chaos_intr` and
+   the mouse's seven lines and the keyboard's word in, and `ser_reset`, the
+   interrupt request and its vector, `AUDIO` and the card's own state out.
+   Inside: the decode, the answer machine off a free-running microsecond
+   clock, the keyboard's word and its ready flop, the mouse's latch,
+   comparator and two counters, the microsecond counter with its
+   thirty-two-bit latch, the mains counter as an accumulator, the interval
+   timer, the status register and the priority encoder.
+2. **`tb/cadr_io_board_tb.cpp`**, a Unibus master replaying `iob.golden` tick
+   for tick, and the mouse's encoders with muir's snap in them, since the
+   card takes the lines and not deltas.
+3. **The Makefile's `iob.pass`**, in `check`.
+4. **Twenty-five mutation records** and the runner's `iob` entry.
+
+**Two things the card's own state made the module say out loud.**
+
+**The match is held and not computed**, which is the disk controller's
+-6.195 ns lesson at the second slave on this seam. It costs nothing here and
+the module says why at the register: the earliest answer the card can give is
+fifty ticks after `-UB MSYN`, so a match a tick behind the strobe is a match
+forty-nine ticks early. The reference trace is a master with **no address
+setup at all** --- `-UB MSYN` and the address arrive on the same nanosecond,
+and two cycles running back to back have the next `-MSYN` at the instant the
+last one dropped --- so a card that needed the address at the strobe would
+have had to compute it.
+
+**And the sixty-cycle accumulator was the module's only timing problem.**
+Written the obvious way --- `mains_acc + 5 >= SIXTY_CYCLE_NS`, and then that
+sum less the period --- it puts an adder, a 24-bit compare and a subtraction
+in series on the accumulator's own data pins: eleven logic levels and
+**-0.702 ns** out of context, measured, the worst path in the module by a
+mile and the only one that missed. The remedy is the one
+`cadr_disk_controller.sv` already uses for its spindle and
+`cadr_phase_gen.sv` for its taps: compare a tick early into a register, and
+make the two candidates adders in parallel with the mux after them. The check
+passes byte-identically either way, which is what says the transformation is
+exact.
+
+**Two placement rules, because a zero-time trace does not replay on a clocked
+fabric.** 177 pairs of rows share an instant. `-UB MSYN` drops one tick early,
+at `off - 5`, so the bus is idle for a tick before the next cycle; and a row
+whose action changes something the face shows --- a press, the serial port's
+ready line, `-UB INIT` --- is pushed one tick when it would otherwise land on
+the tick the previous row's face is compared at, with every row at that
+instant after it pushed with it. Seven rows are pushed and the check prints
+the count. A move or a switch changes nothing the card shows until its next
+`KB CLK^`, and a cycle changes nothing on the tick its `-MSYN` rises, so
+those share a tick and are not pushed.
 
 Then, and separately: the composition under `cadr_memory_path.sv` beside
 `cadr_spy_registers`, which needs the address decode in front of both slaves
