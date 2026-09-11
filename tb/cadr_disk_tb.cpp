@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Drives the disk controller with its pack side underneath ---
-// `tb/cadr_disk_harness.sv`, which is `rtl/cadr_disk_controller.sv` and
-// `rtl/cadr_disk_pack.sv` wired as the board wires them --- from the
+// `tb/cadr_disk_harness.sv`, which is `rtl/machine/cadr_disk_controller.sv` and
+// `rtl/plumbing/cadr_disk_pack.sv` wired as the board wires them --- from the
 // reference trace and compares the register face. The trace is written by
 // golden/src/disk.rs out of muir's own disk_controller::Controller, driven
 // register by register, and carries the stimulus --- the drive, its read-only
@@ -462,7 +462,7 @@ int main(int argc, char **argv) {
   for (const auto &c : consts)
     if (c.got != c.want) {
       std::fprintf(stderr,
-                   "FAIL: the trace says %s is %ld and rtl/cadr_disk_"
+                   "FAIL: the trace says %s is %ld and rtl/machine/cadr_disk_"
                    "controller.sv has %ld\n",
                    c.what, c.got, c.want);
       ++wrong;
@@ -779,7 +779,7 @@ int main(int argc, char **argv) {
   // THE INSTANT OF THE STORE --- the request the controller latches, and the
   // tick every timer it loads is measured from; the third and fourth are the
   // two ticks the controller holds the store for, so that a read on the tick
-  // after sees the registers written.  `rtl/cadr_disk_controller.sv` loads
+  // after sees the registers written.  `rtl/machine/cadr_disk_controller.sv` loads
   // its timers two ticks short for exactly this hold, and the trace's
   // tick-sharp samples of them are what say the two agree.
   auto do_write = [&](int reg, unsigned v) {

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The two Xilinx primitives `rtl/cadr_arty.sv` instantiates, as empty shells,
+// The two Xilinx primitives `boards/arty-z7-20/cadr_arty.sv` instantiates, as empty shells,
 // so that Verilator can elaborate the top level and lint it.
 //
-// **THIS FILE MUST NEVER MOVE TO `rtl/`.**  `vivado/fit.tcl` and
-// `vivado/bitstream.tcl` both read `[glob rtl/*.sv]`, so a stub `MMCME2_BASE`
+// **THIS FILE MUST NEVER MOVE TO `rtl/`.**  `boards/arty-z7-20/vivado/fit.tcl` and
+// `boards/arty-z7-20/vivado/bitstream.tcl` both read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`, so a stub `MMCME2_BASE`
 // there would be handed to synthesis alongside --- and in place of --- the real
 // primitive, and the board would get a wire where its clock generator belongs.
 // That builds, programs, and runs the machine at 125 MHz with 8 ns taps: a
@@ -13,7 +13,7 @@
 // keeps meeting.  Nothing globs `tb/`, which is the whole reason this is here.
 // CLAUDE.md and `docs/pending-rules.md` both say the same.
 //
-// **AND NOTHING HERE MODELS ANYTHING.**  `rtl/cadr_arty.sv` cannot be
+// **AND NOTHING HERE MODELS ANYTHING.**  `boards/arty-z7-20/cadr_arty.sv` cannot be
 // simulated and this does not make it simulable: the MMCM below multiplies
 // nothing, so `CLKOUT0` is the input clock and a model built on it would run
 // the machine at 125 MHz with 8 ns taps --- the very design error the
@@ -91,7 +91,7 @@ module BUFG (
   assign O = I;
 endmodule
 
-// The third primitive, and the one `rtl/cadr_arty.sv` only instantiates when
+// The third primitive, and the one `boards/arty-z7-20/cadr_arty.sv` only instantiates when
 // `PROBE_DEPTH` is set. Same rule as the two above: this models nothing.
 // The JTAG side is dead here --- SEL low, DRCK low --- which is exactly what
 // a board with nobody scanning it looks like, and it is all lint needs. What

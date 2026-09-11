@@ -1,0 +1,42 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The CADR's memory, told to Linux.
+//
+// `rtl/plumbing/cadr_ddr_map.sv` reserves the top 128 MB of the Arty Z7-20's 512 MB for
+// the machine.  Nothing here decides that: this file is the same fact in the
+// device tree's own words, and the two have to move together.
+//
+//   RESERVED_BASE = 0x1800_0000, RESERVED_MB = 128
+//
+// One node for the whole reservation rather than three for main memory, the
+// display and the spare.  128 MB at 0x1800_0000 is exactly what the map's
+// RESERVED_BASE and RESERVED_MB say; sub-dividing it is a change to make when
+// something claims a sub-region by phandle, and not before.
+//
+// `no-map`, and the reason is coherency rather than tidiness.  S_AXI_HP does
+// not snoop the A9 caches, so a cacheable kernel mapping of memory the fabric
+// writes would go stale in a way that reads as a fabric fault --- the worst
+// class of bug available here.  `no-map` keeps the region out of the kernel's
+// linear map entirely, and makes a later userspace mapping uncached by
+// construction.
+//
+// Reserving is necessary but not sufficient: U-Boot relocates the device tree
+// to the top of RAM, which is this region, unless `fdt_high` says otherwise.
+// See `boards/arty-z7-20/linux/uEnv.txt` and `docs/linux.md`.
+//
+// This is appended to the BSP's decompiled device tree --- dtc merges the two
+// root definitions.
+
+/ {
+	reserved-memory {
+		#address-cells = <0x01>;
+		#size-cells = <0x01>;
+		ranges;
+
+		cadr@18000000 {
+			reg = <0x18000000 0x08000000>;
+			no-map;
+		};
+	};
+};

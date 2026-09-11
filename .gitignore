@@ -51,10 +51,10 @@ tight_setup_hold_pins.txt
 
 # The TFTP server's address for the card, filled into uEnv.txt by mksd.sh.
 # Private to this network; the repository is public.
-linux/local.conf
+boards/arty-z7-20/linux/local.conf
 
 # Buildroot's downloads (vendor/buildroot-dl, already under vendor/ above) and
 # its build tree, which the Makefile keeps out of the repository altogether
 # --- BR_WORK, under ~/.cache by default.  Nothing of the build lands here;
 # the staged card and server directories go under build/ like everything
-# else.  linux/local.conf, above, also carries ETHADDR for the new card.
+# else.  boards/arty-z7-20/linux/local.conf, above, also carries ETHADDR for the new card.

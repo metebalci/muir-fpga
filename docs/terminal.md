@@ -11,7 +11,7 @@ at the commit that added this file.
 
 The display block is built and checked (`docs/tv.md`), and nothing could look
 at what it draws. **It needs no new fabric to fix that**, which is why this
-came next: `rtl/cadr_tv.sv` keeps no frame buffer of its own --- a cycle to
+came next: `rtl/machine/cadr_tv.sv` keeps no frame buffer of its own --- a cycle to
 the window at `0o17000000` is answered by main memory's bridge at the
 display's own base in PS DDR3 --- so the picture the machine draws is 92,448
 bytes of ordinary DDR, and Linux can map it. Mete asked for the screen first
@@ -46,7 +46,7 @@ opening line rather than left to be discovered. `--bind 127.0.0.1` restricts
 it to the board itself, and then a viewer reaches it over an SSH tunnel.
 
 **It cannot read `MODE BOW`.** Whether a one bit shows white or black is four
-flops in the fabric (`rtl/cadr_tv.sv:141`, cleared to zero at `:195`) and
+flops in the fabric (`rtl/machine/cadr_tv.sv:141`, cleared to zero at `:195`) and
 nothing carries them to the processing system: `M_AXI_GP0` is the disk's and
 `M_AXI_GP1` the console's, and neither has a word for the display. So the
 default is the fabric's own power-on state and muir's, zero --- a one bit is
@@ -54,7 +54,7 @@ white --- which is also the mode both reference programs leave the register in
 (`docs/tv.md`: "the mode register stays 0 ... for the whole run"), and
 `--bow` swaps it. **What it would take to read it instead of assuming it**: a
 word on the console's register face carrying `mode[3:0]`, which is one
-register and one line in `rtl/cadr_console.sv`, or an EMIO GPIO bit beside the
+register and one line in `rtl/plumbing/cadr_console.sv`, or an EMIO GPIO bit beside the
 memory tally. Neither is built, and the assumption is right for every program
 this project has run. It is written down here so that a screen that comes out
 inverted is diagnosed in one step.
@@ -78,11 +78,11 @@ reading. `screen_geom.h` carries the table below beside the code, and
 | 963 lines | `HEIGHT` | muir `src/simpletv.rs:69`, `(:CADR 963.)`, "was 896. for CPT" |
 | 24 words to a line | `WORDS_PER_LINE` | muir `src/simpletv.rs:73`, `MAIN-SCREEN-LOCATIONS-PER-LINE` |
 | one bit a pixel | | muir `src/simpletv.rs:7`; `docs/tv.md` |
-| 32,768 words in the window | `BUFFER_WORDS` | muir `src/simpletv.rs:43`; `rtl/cadr_ddr_map.sv:71` |
+| 32,768 words in the window | `BUFFER_WORDS` | muir `src/simpletv.rs:43`; `rtl/plumbing/cadr_ddr_map.sv:71` |
 | 23,112 of them are the screen | `visible()` | muir `src/terminal/mod.rs:88`; 963 x 24 |
-| the window is at `0x1C00_0000` | `DISPLAY_BASE` | `rtl/cadr_ddr_map.sv:67` |
-| word *n* is at base + 4*n* | `display_byte_address` | `rtl/cadr_ddr_map.sv:83`; `rtl/cadr_xbus_ddr.sv:87` |
-| a frame is 15,456,000 ns | `FRAME_NS` | muir `src/simpletv.rs:145`; `rtl/cadr_tv.sv:123` |
+| the window is at `0x1C00_0000` | `DISPLAY_BASE` | `rtl/plumbing/cadr_ddr_map.sv:67` |
+| word *n* is at base + 4*n* | `display_byte_address` | `rtl/plumbing/cadr_ddr_map.sv:83`; `rtl/plumbing/cadr_xbus_ddr.sv:87` |
+| a frame is 15,456,000 ns | `FRAME_NS` | muir `src/simpletv.rs:145`; `rtl/machine/cadr_tv.sv:123` |
 
 **Which bit is which pixel.** muir `src/simpletv.rs:254-257`:
 
@@ -125,7 +125,7 @@ loopback socket. This one is on a board at the end of a hundred-megabit link
 and the measurement goes the other way. **Which one a rectangle goes in is
 decided by measuring both and taking the smaller**, so a screen RRE would lose
 on costs the comparison and nothing else. Measured by `make -C
-linux/buildroot/package/cadr-terminal/src check`, a whole screen at 32 bits a
+boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src check`, a whole screen at 32 bits a
 pixel:
 
     a real CADR screen (muir's, System 100)   Raw 2,958,336   RRE     55,784   53x
@@ -149,7 +149,7 @@ channel's, and nothing in the fabric has to know a viewer exists.
 
 ## What the check holds to
 
-`make -C linux/buildroot/package/cadr-terminal/src check`, on the build host,
+`make -C boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src check`, on the build host,
 with no board: the server driven from screens made in the check, and a viewer
 written for the purpose on a real loopback socket. **420 checks, 0 failures**,
 then **15 mutations, 15 caught, 0 survived, 0 broken.** The whole thing takes
@@ -229,7 +229,7 @@ frame above. And `MODE BOW`, which nothing in the fabric will tell it.
 ## On the board
 
 **The bitstream must be the memory-on one, `DDR=1`.** With `DDR` clear
-`rtl/cadr_arty.sv` ties `mem_done` low and there is no memory behind the
+`boards/arty-z7-20/cadr_arty.sv` ties `mem_done` low and there is no memory behind the
 machine's memory port at all, so the display's window is answered by nothing
 and the region in DDR is never written. That is the same bitstream the disk
 already needs.

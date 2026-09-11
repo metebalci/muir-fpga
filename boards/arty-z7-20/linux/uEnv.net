@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The boot command, served by the TFTP server and fetched by the one
+# line the card carries (boards/arty-z7-20/linux/uEnv.txt).  Edit here, copy to /srv/tftp,
+# reset the board; the card is never touched.
+#
+# WHAT IT DOES, AND WHY EACH PIECE IS WHERE IT IS
+#
+# The tree comes from the server: it is the one thing that changes.  The kernel
+# and the root filesystem come from the card's own `image.ub` --- Digilent's
+# FIT, `kernel@0` and `ramdisk@0` --- because the loose `zImage` shipped
+# beside it in the BSP is build #2 where the FIT's kernel is build #1, and
+# build #2 dies silently after "Memory policy" under Digilent's own tree as
+# well as ours.  Measured 10 Sep on the board.  `bootm <fit>:<kernel>
+# <fit>:<ramdisk> <fdt-address>` is U-Boot's own syntax for a FIT's pieces
+# under a raw tree.  The kernel loads at 0x8000 --- the FIT says so --- so
+# the kernel's idea of where memory starts is 0, as it must be: a zImage
+# loaded at 0x10000000 forgets the 256 MB below it ("Ignoring memory range
+# 0x0 - 0x10000000"), and that is how the first card failed.
+#
+# mem=384M is what actually keeps Linux off the CADR's memory.  The tree's
+# reserved-memory node is kept, and is what /proc/device-tree shows, but on
+# this 4.9 kernel a `no-map` region inside the memory the kernel owns kills
+# it silently right after "Memory policy"; the same node without `no-map`
+# boots but leaves the region in the kernel's cached linear map.  With
+# mem=384M the region is not RAM to the kernel at all --- /proc/iomem says
+# System RAM ends at 0x17ffffff --- and the node is harmless and true.
+# U-Boot rewrites the tree's memory node from its own DRAM size on every
+# boot, so shrinking the node in the tree does nothing; measured too.
+#
+# cma=32M because the kernel's default pool is 128 MB and with 384 MB total
+# that left too little ordinary memory to unpack the 42 MB root filesystem:
+# "rootfs image is not initramfs (write error)", then a panic.  The display
+# driver is the only user and 32 MB is ten framebuffers.
+#
+# THE CADR GOES INTO THE FABRIC FIRST.  Digilent's BOOT.BIN on the card
+# configured the fabric with Digilent's design; `fpga loadb` replaces it with
+# `cadr.bit` before Linux starts, so the machine and Linux share the board and
+# no BOOT.BIN of our own is needed and nothing on the card changes.  The tree
+# served as `system.dtb` therefore has Digilent's `amba_pl` --- their fabric
+# peripherals --- removed (mksd.sh does that), or Linux would probe hardware
+# that is no longer there.  Measured 10 Sep: the CADR's counters at the PS7
+# boundary read 256 reads and 256 writes asked and answered with Linux at its
+# login beside it.  A witness to read them from Linux must first turn the
+# GPIO block's clock back on --- APER_CLK_CTRL bit 22 --- because this kernel
+# gates it and the registers then read zero.
+#
+# fdt_high and initrd_high are left unset: U-Boot relocates the tree and the
+# ramdisk below 128 MB as it does for the stock boot, and the reservation is
+# above 384.
+netcmd=tftpboot 0x0f800000 cadr.bit && fpga loadb 0 0x0f800000 ${filesize} && tftpboot 0x0f000000 system.dtb && fatload mmc 0 0x10000000 image.ub && setenv bootargs console=ttyPS0,115200 earlyprintk uio_pdrv_genirq.of_id=generic-uio mem=384M cma=32M && bootm 0x10000000:kernel@0 0x10000000:ramdisk@0 0x0f000000

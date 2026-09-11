@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # The map, and the check that stands behind the board's halt
 
 The CADR's virtual memory map is two levels of asynchronous RAM inside
-`rtl/cadr_microcycle.sv`: 2,048 five-bit entries addressed by `VMA<23:13>`,
+`rtl/machine/cadr_microcycle.sv`: 2,048 five-bit entries addressed by `VMA<23:13>`,
 and 1,024 twenty-four-bit entries addressed by `{VMAP<4:0>, VMA<12:8>}`. A
 lookup is a ripple through both inside one microcycle. The top two bits of the
 second-level word are the access code — `-LVMO23` becomes `-PFR` at VCTL2
@@ -57,7 +57,7 @@ across the three. The sixteen diagnostic registers do not carry `VMA` or `Q`,
 and those are the two that differ: `Q` holds the address the map was hacked
 for (`((MD Q-R) VMA)` put it there) and `VMA` holds the address that faulted.
 **So a halted board cannot be asked which suspect it is** without either two
-more registers on `rtl/cadr_console.sv` or a microinstruction stepped by hand
+more registers on `rtl/plumbing/cadr_console.sv` or a microinstruction stepped by hand
 to put `VMA` on `OB`.
 
 One more thing the injections settle. muir reaches `PDL-BUFFER-REFILL`'s first

@@ -4,7 +4,7 @@
 // The display controller against muir, through the whole memory path.
 //
 // The DUT is `cadr_memory_path` as the machine wires it --- the decode, the
-// bus interface, the bridge and `rtl/cadr_tv.sv` inside it --- driven on the
+// bus interface, the bridge and `rtl/machine/cadr_tv.sv` inside it --- driven on the
 // cpu's side of the cables by `build/tv.golden`, which `golden/src/tv.rs`
 // writes out of muir's own `simpletv::SimpleTv` through `busint::Busint`.
 // No harness: the wiring under test is the wiring on the board.
@@ -62,7 +62,7 @@
 
 namespace {
 
-// rtl/cadr_ddr_map.sv's two bases, and the display's window as
+// rtl/plumbing/cadr_ddr_map.sv's two bases, and the display's window as
 // simpletv::BUFFER / BUFFER_WORDS and CONTROL / CONTROL_WORDS have them.
 constexpr uint32_t kMainBase = 0x1800'0000u;
 constexpr uint32_t kDisplayBase = 0x1C00'0000u;

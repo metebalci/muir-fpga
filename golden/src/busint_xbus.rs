@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-//! The reference trace for `rtl/cadr_busint_xbus.sv`: the processor's Xbus
+//! The reference trace for `rtl/machine/cadr_busint_xbus.sv`: the processor's Xbus
 //! memory cycle, out of muir's own `busint::Busint`.
 //!
 //! The cycle, from `cadr1/xspec.text.3` by way of `busint.rs`:

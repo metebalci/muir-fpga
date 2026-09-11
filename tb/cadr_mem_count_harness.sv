@@ -7,13 +7,13 @@
 // reads out of EMIO is the number of transactions the processing system
 // answered, and reads zero when it answered none" --- and that claim has the
 // machine, the bridge, the adapter and the widening in it.  So the check has
-// them in it: this wires them exactly as `rtl/cadr_arty.sv`'s `g_ddr` does
+// them in it: this wires them exactly as `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` does
 // and brings out the 64-bit AXI3 port `cadr_ps7.sv` would be on the far end
 // of, together with the sixty-four EMIO bits the tally puts out and the
 // machine's own request.
 //
 // IT IS IN `tb/` FOR THE REASON `tb/cadr_arty_stubs.sv` GIVES.  Both Vivado
-// scripts read `[glob rtl/*.sv]`, so a wiring harness in `rtl/` would join
+// scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`, so a wiring harness in `rtl/` would join
 // the bitstream --- a second copy of the memory path, in the synthesised
 // design, that nothing on the board would ever reach.
 //
@@ -29,7 +29,7 @@
 // AND IT IS SYNCHRONISED IN, three stages, exactly as the top level does it:
 // the release is asynchronous to this clock by construction.
 //
-// The mutations are aimed at `rtl/cadr_mem_count.sv`; everything else here is
+// The mutations are aimed at `rtl/plumbing/cadr_mem_count.sv`; everything else here is
 // in the runner's `extra`, having checks of its own.
 
 `default_nettype none

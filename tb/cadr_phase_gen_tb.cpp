@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Drives rtl/cadr_phase_gen.sv from the reference trace and compares every
+// Drives rtl/machine/cadr_phase_gen.sv from the reference trace and compares every
 // tick.  The trace is written by golden/src/phase_gen.rs out of muir's own
 // clock::Behavioural, and carries the stimulus as well as the expected
 // outputs, so there is one definition of both.

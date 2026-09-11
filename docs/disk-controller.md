@@ -215,7 +215,7 @@ checkwords. On the board the file is in DDR and Linux is the drive: it
 decides which block goes in which of the store's 24 slots, hands the fabric
 **the block's address**, and takes a written block back. The seam between
 the drive and the controller is exactly the one the trace testbench drove
-from `BLK` rows --- 259 words a slot and a tag --- with `rtl/cadr_disk_pack.sv`
+from `BLK` rows --- 259 words a slot and a tag --- with `rtl/plumbing/cadr_disk_pack.sv`
 on the drive's side of it. Nothing in fabric computes a header or a checkword
 for a fetched block; Linux does, as `Header::of` and `Ecc::over` do for a
 block nothing laid, and keeps what a write-back hands it.
@@ -307,7 +307,7 @@ HP1, so Digilent's FSBL still needs no change.
 ## The disk pack program
 
 The program on Linux that serves the CADR's disks from the drive bay on the
-card: `linux/buildroot/package/cadr-disk-packs/src/cadr-disk-packs.c` and the
+card: `boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src/cadr-disk-packs.c` and the
 files beside it, built into the Buildroot image and started at boot by
 `S80cadr-disk-packs`. This is its second revision, written against the
 register face at `a899799` --- the request path --- and it serves on demand;
@@ -380,14 +380,14 @@ using the board rather than writing it.
 **One thing the fabric does not do yet.** A drive raises an attention when it
 comes ready, so a pack landing in the bay ought to raise one; this program
 writes an attention field in DRIVE (bits 24:17, one a unit, a pulse) and
-`feeder_test.c` holds it to that, but `rtl/cadr_disk_pack.sv`'s `r_drive` is
+`feeder_test.c` holds it to that, but `rtl/plumbing/cadr_disk_pack.sv`'s `r_drive` is
 twenty-five bits of which only 16:0 reach an output, and
-`rtl/cadr_disk_controller.sv` arms `u_att_armed` from a seek and a
+`rtl/machine/cadr_disk_controller.sv` arms `u_att_armed` from a seek and a
 recalibrate and from nowhere else. So the field reaches nothing today.
 `pack_side.h` says which two lines of RTL would change that, and nothing else
 in this program depends on it.
 
-**The loop, as `rtl/cadr_disk_pack.sv`'s header prescribes it.** Each pass
+**The loop, as `rtl/plumbing/cadr_disk_pack.sv`'s header prescribes it.** Each pass
 reads IRQ and clears what it read, then REQ, then DIRTY. A request (REQ bit
 31) is the disk address of the block the walk lacks in the tag's own layout,
 `{unit<2:0>, cylinder<11:0>, head<7:0>, block<7:0>}`: a unit other than the
@@ -414,11 +414,11 @@ slot for a revolution, 16.7 ms).
 48,879 moves the disk pack program failed a write-back with `refused while the walk
 waits, which cannot be the channel's doing (status 0x5a)`. `0x5a` is
 WAITING | CH_ACTIVE | REFUSED | DONE. The RTL's refusal terms at `a899799`
-(`rtl/cadr_disk_pack.sv` lines 476--491) are not one bit of three, an
+(`rtl/plumbing/cadr_disk_pack.sv` lines 476--491) are not one bit of three, an
 unaligned address, a slot past the store, busy, and `bad_ch_q <=
 ch_active_q && !ch_waiting_q && (r_slot == ch_slot_q)` (line 484), decided
 at the go; and the controller sets `ch_slot` at a hit and nowhere else
-(`rtl/cadr_disk_controller.sv`, `C_LOOK`, `ch_slot <= slot_of`). So between
+(`rtl/machine/cadr_disk_controller.sv`, `C_LOOK`, `ch_slot <= slot_of`). So between
 a START and its first `C_LOOK` --- the command-list fetch --- the channel is
 active, waiting on nothing, and `ch_slot` still names the slot the previous
 transfer was on, which for a Write is exactly the slot that just went DIRTY;
@@ -461,7 +461,7 @@ with the first and a 4 MB write at the first write-back; and there is no
 procedure for resetting a pack's headers, because there is nothing to
 reset. `pack_ecc.h` is DCECC's code as `disk_unit::Ecc` has it.
 
-**Where the records go, and why.** `rtl/cadr_ddr_map.sv`'s spare, 56 MB
+**Where the records go, and why.** `rtl/plumbing/cadr_ddr_map.sv`'s spare, 56 MB
 from `0x1C80_0000`, nothing else in it today. One fetch area per slot at
 `0x1C80_0000 + 2 KB * slot` and one write-back area per slot at
 `0x1C81_0000 + 2 KB * slot`. 128-byte alignment is the fabric's rule, so
@@ -474,7 +474,7 @@ reported and not committed, and so is a pad word that was written.
 
 **The polling rate and the latency budget.** `--poll-us`, 250 by default,
 `IRQEN` zero. What the controller gives Linux to answer in is time the walk
-spends anyway (`rtl/cadr_disk_controller.sv`, "prefetch"): at a START with
+spends anyway (`rtl/machine/cadr_disk_controller.sv`, "prefetch"): at a START with
 the drive's time charged, the seek --- 5,939,729 ns settle plus 60,271 ns a
 cylinder, nothing for none --- and the rotational wait, 0 to 16,666,667 ns;
 and for each further block of a chained list the sector's own 968,448 ns,
@@ -505,7 +505,7 @@ interrupts = <0 29 4>;` (`IRQ_F2P` bit 0 is GIC interrupt 61) ---
 `CONFIG_UIO_PDRV_GENIRQ` in the kernel and `uio_pdrv_genirq.of_id=generic-uio`
 on its command line. Neither the tree nor the kernel is touched here.
 
-**The check.** `make -C linux/buildroot/package/cadr-disk-packs/src check`, on
+**The check.** `make -C boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src check`, on
 the build host, needing a C compiler and `build/disk.golden`; scratch under
 `~/.cache/muir-fpga-disk-packs`. The disk pack program's core runs against a model of
 the register face at `a899799` --- the tag with the unit, REQ, DIRTY, REF,
@@ -605,7 +605,7 @@ programs'). On the network path that is one file into the TFTP server's
 directory and a reset; the bitstream, kernel, tree and loader are unchanged,
 and the bitstream must be the one with the request path (`a899799` or
 later --- the `997b734` one on the board today has no REQ register and the
-feeder would read zeros there and serve nothing). `linux/mksd-buildroot.sh`
+feeder would read zeros there and serve nothing). `boards/arty-z7-20/linux/mksd-buildroot.sh`
 puts packs in the bay with `PACKS="a.img 5=b.img"` and makes partition 2
 `PACKS_MB` big; but a pack is more usually copied to the running board with
 `scp` into `/mnt/packs`, which is the point of the second partition.
@@ -629,7 +629,7 @@ untimed**, in this order, and nothing else at the same rate:
 
 The tally's two words are whatever the machine's memory cycles have counted
 by then (256 and 256 after the boot PROM's parity loop, `0x01008100` twice,
-as `vivado/ddr_run.tcl` and the earlier boot measured); the marker bits are
+as `boards/arty-z7-20/vivado/ddr_run.tcl` and the earlier boot measured); the marker bits are
 what is checked. **The drive coming present is the line that changes
 the CADR**: until then the boot PROM sits in `AWAIT-DRIVE-READY` polling a
 status of `0x2321`; with unit 0 present it goes on, and the first requests
@@ -675,14 +675,14 @@ drive absent, as at `997b734`, and passes on the board at that bitstream.
 
 Written at the slice after the disk pack program, which found the face wanting: the
 store is a cache Linux keeps, and the controller now says what it lacks.
-`rtl/cadr_disk_controller.sv` (the request register, the wait, the
-prefetch, the events) and `rtl/cadr_disk_pack.sv` (the registers Linux
+`rtl/machine/cadr_disk_controller.sv` (the request register, the wait, the
+prefetch, the events) and `rtl/plumbing/cadr_disk_pack.sv` (the registers Linux
 reads and the interrupt) have the reasoning at each line; this is the
 register map as built, what the checks hold, and what the Linux program
 has to change.
 
 **The register map**, sixteen words at `0x4000_0000` on `M_AXI_GP0`, in
-`rtl/cadr_disk_pack.sv`'s header (lines 87--147 at this slice) and its
+`rtl/plumbing/cadr_disk_pack.sv`'s header (lines 87--147 at this slice) and its
 read mux (`r_word`):
 
     0  ADDR    the block's address in DDR; bits 6:0 zero                   (unchanged)
@@ -773,10 +773,10 @@ block are two blocks. DIRTY, REF and the three events are read back
 exactly. A denial ends a wait with `store_miss` and the page untouched.
 Every address on GP0 is answered.
 
-**The interrupt.** `IRQ_F2P` bit 0, brought out of `rtl/cadr_ps7.sv` by
-`vivado/gen_ps7.py` (the other nineteen tied low in `rtl/cadr_arty.sv`).
+**The interrupt.** `IRQ_F2P` bit 0, brought out of `boards/arty-z7-20/cadr_ps7.sv` by
+`boards/arty-z7-20/vivado/gen_ps7.py` (the other nineteen tied low in `boards/arty-z7-20/cadr_arty.sv`).
 Digilent's configuration already has `PCW_USE_FABRIC_INTERRUPT 1`,
-`PCW_IRQ_F2P_INTR 1` and `PCW_IRQ_F2P_MODE DIRECT` (`vivado/ps7_config.tcl`
+`PCW_IRQ_F2P_INTR 1` and `PCW_IRQ_F2P_MODE DIRECT` (`boards/arty-z7-20/vivado/ps7_config.tcl`
 lines 253--254, 628), so `ps7_init` does not change: `make current` compares
 the routine and says so. Bit 0 of `IRQ_F2P` is shared peripheral interrupt
 61 on the GIC (UG585 Table 7-4), which a device tree names `<0 29 4>`.
@@ -787,7 +787,7 @@ the board, the disk pack program reading IDENT on a bitstream without the pack s
 So: with `DDR=1` the pack side completes every transaction --- the sixteen
 words, SLVERR outside them, anywhere in the port's gigabyte; the two
 proving boards (`PROVE=1`, `PROVE=2`), which bring GP0 out without the pack
-side, carry `rtl/cadr_gp0_default.sv`, which completes every read with
+side, carry `rtl/plumbing/cadr_gp0_default.sv`, which completes every read with
 OKAY and `0x4E4F4E45` ("NONE") and every write with OKAY, dropped, so that
 the disk pack program's own IDENT check says "not this face" instead of freezing the
 processor; `gp0_default.pass` holds that it answers, the arty lint that it
@@ -801,7 +801,7 @@ abort the kernel cannot attribute; the pack side's out-of-window SLVERR is
 the decision recorded above and stands, but a program should not write
 outside the sixteen words.
 
-**What the Linux program (`linux/buildroot/package/cadr-disk-packs/src`) must
+**What the Linux program (`boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src`) must
 change**, for its author --- nothing there is edited by this slice:
 
 1. `pack_side.h`: `ps_tag(c, h, b)` gains the unit in bits 30:28
@@ -868,7 +868,7 @@ where `COLD-DISK-READ` puts it rather than assuming it.
 
 ### What the walk is, as built
 
-`rtl/cadr_disk_controller.sv`, and it is `Controller::command_list` state for
+`rtl/machine/cadr_disk_controller.sv`, and it is `Controller::command_list` state for
 state:
 
     C_CCW    fetch the word at `clp_now` --- `{clp[31:16], clp[15:0] + ch_n}`,
@@ -964,7 +964,7 @@ and quoting the trace at this question gives the wrong answer.
 
 Measured on 2026-09-10, three ways, none of which reproduces it:
 
-1. `disk_boot` passes at HEAD --- the controller with `rtl/cadr_disk_pack.sv`
+1. `disk_boot` passes at HEAD --- the controller with `rtl/plumbing/cadr_disk_pack.sv`
    under it over a modelled `S_AXI_HP2`, walking the cold boot's own lists
    over the real pack, with the feeder delayed by anything from a tick to
    50,000 and the processor polling as often as every 40 ticks.
@@ -974,15 +974,15 @@ Measured on 2026-09-10, three ways, none of which reproduces it:
    1,441,677 and **physical words 0 to 1023 come out byte-identical to muir**
    at the same point. The machine goes on past it, to PC `0o25333` at four
    million microcycles, where the board halted at `0o5163`.
-3. The same again with `rtl/cadr_disk_pack.sv` under the machine over a
+3. The same again with `rtl/plumbing/cadr_disk_pack.sv` under the machine over a
    modelled `S_AXI_HP2` and a feeder on `M_AXI_GP0` --- which is
-   `rtl/cadr_arty.sv`'s `g_ddr` short of the PS7 --- also byte-identical to
+   `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` short of the PS7 --- also byte-identical to
    muir over 0 to 1023, with `store_miss` low, nothing denied and no protocol
    error on the port.
 
 The board's dump differs from muir in 352 of those 1,024 words. So whatever
 put the hole there is **outside `rtl/`**: the disk pack program in
-`linux/buildroot/package/cadr-disk-packs/`, where the pack is in DDR, or the
+`boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/`, where the pack is in DDR, or the
 bitstream the board was carrying. Two things about the fabric are worth
 having written down before anyone looks there, because they shape what the
 symptom can mean:
@@ -1008,7 +1008,7 @@ symptom can mean:
 `uc-cold-disk.lisp` assigns `COPY-BUFFER-CCW-BLOCK-LENGTH 1000` --- 512
 decimal --- and says so in its own words: "The two pages starting at
 COPY-BUFFER-CCW-PAGE-ORIGIN are used for disk CCWs, allowing transfer of up
-to 512. pages (128k words) at a time." `rtl/cadr_disk_controller.sv` counts
+to 512. pages (128k words) at a time." `rtl/machine/cadr_disk_controller.sv` counts
 the pages a walk has moved in `logic [7:0] ch_moved`, so a list of more than
 255 wraps it, where muir's `command_list` returns a `u32` into
 `access_ns(from, to, block, n)`. **It costs nothing as the board runs**: the
@@ -1057,11 +1057,11 @@ running system's page-fault path waits on the interrupt instead.
 
 ### What was wrong
 
-`rtl/cadr_disk_controller.sv` had computed the level all along ---
+`rtl/machine/cadr_disk_controller.sv` had computed the level all along ---
 `not_active && (cmd[11] || (cmd[10] && any_attention))`, the done enable or an
 attention with the attention enable, `Controller::interrupt()` exactly --- and
 reported it in `STATUS<3>`. It was **not a port**. `cadr_machine`'s `sintr`
-was still a stimulus input fed from the trace, and `rtl/cadr_arty.sv` tied it
+was still a stimulus input fed from the trace, and `boards/arty-z7-20/cadr_arty.sv` tied it
 to `1'b0`. Nothing joined the two: the `dev_wdata` shape, a signal that
 exists on one side of a boundary and not the other, and the module's own
 header had said so in as many words rather than fixing it.
@@ -1072,12 +1072,12 @@ ask. They are one expression and they are now one wire.
 ### What is built
 
 `cadr_disk_controller` brings the level out as `intr`.
-`rtl/cadr_machine.sv` ORs it with the display's `tv_intr` --- `LM INT` is
+`rtl/machine/cadr_machine.sv` ORs it with the display's `tv_intr` --- `LM INT` is
 `UB INT OR XBUS INTR IN` at UBINTC 0E04, and the join belongs one gate before
 the 74S175 at LCC 3E12, which `cadr_microcycle.sv` registers at the microcycle
 edge --- and brings the result out as `sintr_o`, for a check to compare and
 for the top level to fold. `sintr` has stopped being an input of `cadr_machine`
-anywhere: the tie-off in `rtl/cadr_arty.sv` is gone, and so is every line in
+anywhere: the tie-off in `boards/arty-z7-20/cadr_arty.sv` is gone, and so is every line in
 `tb/` that drove it. Deleted and not left unused, which is CLAUDE.md's `md`
 trap word for word --- Verilator lets a testbench write an output, so a drive
 line that stayed would have gone on supplying the right answer with every

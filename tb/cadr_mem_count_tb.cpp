@@ -5,7 +5,7 @@
 // debugger will read out of EMIO say what happened, and does it say nothing
 // when nothing happened?
 //
-// WHY THERE IS A CHECK HERE AT ALL.  `rtl/cadr_mem_count.sv` is an INSTRUMENT,
+// WHY THERE IS A CHECK HERE AT ALL.  `rtl/plumbing/cadr_mem_count.sv` is an INSTRUMENT,
 // and an instrument nothing checks is worse than no instrument: it will be
 // read on a board, once, and believed.  Step four of the board plan is the
 // machine running with DDR answering its 512 page-0 cycles, and the only
@@ -60,8 +60,8 @@
 // only what the tally has to be read against.
 //
 // THE TALLY IS READ AS THE DEBUGGER READS IT, as sixty-four EMIO GPIO bits,
-// and unpacked here the way `vivado/ddr_run.tcl` unpacks them.  The packing
-// is `rtl/cadr_mem_count.sv`'s and its header has the table; what matters
+// and unpacked here the way `boards/arty-z7-20/vivado/ddr_run.tcl` unpacks them.  The packing
+// is `rtl/plumbing/cadr_mem_count.sv`'s and its header has the table; what matters
 // here is that a field placed one bit over is a number that still looks like
 // a measurement, so this reads the word and not four counters.
 //
@@ -521,7 +521,7 @@ void CheckRun(const Run &r, Mode mode) {
   }
 
   // THE MACHINE IS STILL RUNNING either way. It waits on a drive that is not
-  // there --- `rtl/cadr_disk_controller.sv` answers the polls and its status
+  // there --- `rtl/machine/cadr_disk_controller.sv` answers the polls and its status
   // says not on line --- and will do so for ever; what it must not do is
   // halt.
   Check(kTicks - r.last_edge_tick < 2000,

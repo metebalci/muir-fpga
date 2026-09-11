@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The two things `tb/cadr_probe_tb.cpp` has to ask `rtl/cadr_probe.sv`,
+// The two things `tb/cadr_probe_tb.cpp` has to ask `rtl/plumbing/xilinx7/cadr_probe.sv`,
 // under one top so that Verilator can build them together.
 //
 // **`u_real` is the probe wired to the machine exactly as `cadr_arty.sv`
@@ -23,7 +23,7 @@
 // made here instead, and made much wider than the machine's own.
 //
 // THIS FILE MUST NEVER MOVE TO `rtl/`, for the reason `tb/cadr_arty_stubs.sv`
-// gives at length: both Vivado flows read `[glob rtl/*.sv]`.
+// gives at length: both Vivado flows read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`.
 
 `default_nettype none
 

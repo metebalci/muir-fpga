@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Drives rtl/cadr_busint_xbus.sv from the reference trace and compares every
+// Drives rtl/machine/cadr_busint_xbus.sv from the reference trace and compares every
 // tick. The trace is written by golden/src/busint_xbus.rs out of muir's own
 // busint::Busint, and carries the stimulus as well as the expected outputs.
 //

@@ -14,7 +14,7 @@
 //
 // **THAT PARAGRAPH USED TO SAY THE TWO MACHINES PART COMPANY AT MICROCYCLE
 // 537,900 BECAUSE THE BOARD HAD NO DISK CONTROLLER, AND THAT IS NO LONGER
-// TRUE.**  `rtl/cadr_disk_controller.sv` is inside `cadr_machine` now and
+// TRUE.**  `rtl/machine/cadr_disk_controller.sv` is inside `cadr_machine` now and
 // answers the boot PROM's 16,951 polls with the same `0x2321` muir's does, so
 // the board's machine and muir's no-drive machine run the same program for as
 // far as either is asked to.  The parting that remains is the DRIVE: muir's
@@ -95,7 +95,7 @@
 // is asserted here on every one of the 512, at delays muir never exercised.
 //
 // WHAT DRIVES THE DUT.  Nothing nearer than `mem_req`/`mem_done`, exactly as
-// `rtl/cadr_arty.sv` wires it with `DDR=1`: no interrupt, no Xbus device, 32
+// `boards/arty-z7-20/cadr_arty.sv` wires it with `DDR=1`: no interrupt, no Xbus device, 32
 // boards of memory declared.  `mem_rdata` is held at a word with bit 0 SET
 // whenever the model is not answering, so a bridge that latched at the wrong
 // instant would take a word the PROM reads as a ready disk --- poison, never
