@@ -35,7 +35,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
-       $(BUILD)/console.pass $(BUILD)/iob.pass \
+       $(BUILD)/console.pass $(BUILD)/iob.pass $(BUILD)/unibus.pass \
        muir-pin current
 
 # ----------------------------------------------------------------- muir's pin
@@ -167,7 +167,7 @@ $(BUILD)/prove.pass: $(BUILD)/obj_prove/Vcadr_prove_harness
 # returns the word an earlier write put there.
 MEMPATH := rtl/plumbing/cadr_ddr_map.sv rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv \
            rtl/plumbing/cadr_xbus_ddr.sv rtl/machine/cadr_tv.sv rtl/machine/cadr_console_bus.sv \
-           rtl/machine/cadr_memory_path.sv
+           rtl/machine/cadr_io_board.sv rtl/machine/cadr_memory_path.sv
 
 $(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_memory_path \
@@ -250,6 +250,38 @@ $(BUILD)/iob.pass: $(BUILD)/obj_iob/Vcadr_io_board $(BUILD)/iob.golden
 	$(BUILD)/obj_iob/Vcadr_io_board $(BUILD)/iob.golden
 	@touch $@
 
+# ------------------------------------------- the Unibus, with both its slaves
+
+# Slice three: the card under the machine.  `iob.pass` above holds the card at
+# its own seam, with a Unibus master in the testbench.  This holds the
+# composition: the machine's own memory cycle arbitrating for the Unibus,
+# putting the strobe out with the address the map produced, taking the card's
+# answer back and turning it into -MEMACK and -LOADMD, and the word the card
+# drove arriving on MEM<15:0>.
+#
+# THE DUT IS `cadr_memory_path`, as it is for the display, because the card is
+# instantiated inside it and the wiring checked is the wiring the board has.
+#
+# **NO OTHER CHECK RUNS A UNIBUS READ.**  Measured: MIT's boot PROM runs one
+# Unibus cycle in 17,466 and it is the write of the mode register, so
+# `cadr_busint_xbus.sv`'s MD strobe --- the one instant on either bus where the
+# word and the acknowledgement come apart --- had never carried a word anybody
+# compared.
+#
+# The reference is `iob.golden`, for its decode table: that trace carries
+# `ioboard::answers` for all 262,144 Unibus addresses in both directions, which
+# is what says which of these cycles must be answered and by whom.  Everything
+# else the run compares is its own stimulus.  About twenty seconds, most of it
+# the 13.1 million ticks the microsecond counter takes to carry into its high
+# half.
+$(BUILD)/obj_unibus/Vcadr_memory_path: $(MEMPATH) tb/cadr_unibus_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_unibus \
+	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_unibus_tb.cpp)
+
+$(BUILD)/unibus.pass: $(BUILD)/obj_unibus/Vcadr_memory_path $(BUILD)/iob.golden
+	$(BUILD)/obj_unibus/Vcadr_memory_path $(BUILD)/iob.golden
+	@touch $@
+
 # ------------------------------------------------------------------ DDR map
 
 # Constants only, and shared with the Linux side, so all lint can do is prove
@@ -322,6 +354,7 @@ $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
 MACHINE := rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
            rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv rtl/plumbing/cadr_xbus_ddr.sv \
            rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv rtl/machine/cadr_tv.sv \
+           rtl/machine/cadr_io_board.sv \
            rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
            rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
 

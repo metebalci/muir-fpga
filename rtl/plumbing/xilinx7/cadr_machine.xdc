@@ -117,6 +117,89 @@
 # match --- read at the tick, so its D from the cpu's word is timed at the
 # tick too, as the disk's registers are.
 #
+# **AND THE I/O BOARD IS OUT OF THE SET THE SAME WAY, BUT FOR ITS FIVE HELD
+# DECODES**, `sel`, `kbm`, `clkgrp`, `wr` and `which` in
+# `rtl/machine/cadr_io_board.sv`.  The card landed under `cadr_machine` with
+# the composition of 2026-09-11 and `all_registers` would have taken every one
+# of its registers, which is the trap this file records one module up: a
+# relaxed set defined as every register minus a name list swallows every module
+# written after it, and the disk controller cost three slices' fit figures that
+# way.
+#
+# The five that stay are the held match, for the disk's `mine`/`which` reason
+# exactly: they are taken from `ub_addr`, which is `phys` with a subtraction on
+# it and is constant for the microcycle, and nothing reads them until the
+# card's own answer machine decides --- and **the earliest answer this card can
+# give is fifty ticks after `-UB MSYN`**, the TD250 at IOBADR 0E09, with the
+# keyboard-and-mouse group waiting two edges of the microsecond clock on top of
+# that.  A tick of holding cannot reach across fifty.
+#
+# NOTHING ELSE THERE QUALIFIES, and the list is worth writing out because the
+# card is mostly clocks:
+#
+#   - `usec_t`, `kb_t` and `iv_t` count down one a tick and `mains_acc` adds
+#     five nanoseconds a tick with `mains_wrap` comparing it a tick early ---
+#     free-running counters, each its own input, which this file's second
+#     bullet refuses at any depth;
+#   - `t_msyn` and `t_edge` count ticks since the strobe and since the last
+#     edge of the microsecond clock, and are what decide when the card
+#     answers;
+#   - `ub_ssyn` IS the answer.  It is read every tick by `cadr_busint_xbus`,
+#     which is watching for its rise to start the two Unibus instants, so it
+#     is the same kind of register as `deskewed`, `ub_acked` and `ub_loadmd`
+#     above and is refused for the same reason;
+#   - `usec` is a counter, and it is read by `usec_latch` at a tick that can be
+#     the one after it moved --- `-UB MSYN` falls where it falls --- so even
+#     though it advances only once in two hundred ticks, the arc out of it is a
+#     one-tick arc;
+#   - `busy`, `first` and `edges` are the cycle's own state, one tick deep.
+#
+# **AND ASKING THE SAME QUESTION OF THE OTHER SLAVE FOUND SOMETHING THIS FILE
+# HAS BEEN WRONG ABOUT SINCE THE REGISTER BLOCK LANDED.**  The card's
+# `ub_ssyn` is out of the set by the module clause above.  The DIAGNOSTIC
+# REGISTER BLOCK's is the same signal on the same wired-OR --- both pull
+# `-UB SSYN`, which `cadr_busint_xbus.sv` watches every tick for its rise ---
+# and it is named nowhere, so it falls into `slow` by default.  Synthesised at
+# this slice with this file read scoped, on the memory-off board:
+#
+#     memory/spy_registers/ub_ssyn_reg   54 of 54 paths ask for 93.750 ns
+#     memory/iob/ub_ssyn_reg            138 of 138 paths ask for  6.250 ns
+#     memory/busint/ssyn_seen_reg        21 of 23 paths ask for  93.750 ns
+#
+# **That is `elapsed -> md/CE` again: one gate, one relaxed input and one
+# timed one, and only the source decides.**  The arc that matters is
+# `ub_ssyn -> ssyn_seen -> ub_ack_at`, where the interface makes the two
+# Unibus instants at the tick it SEES the answer; relaxed, the tool permits
+# that rise to take fifteen ticks and `-MEMACK` to land fifteen ticks late on
+# a register-block cycle.  Nothing in simulation can see it --- a Verilator
+# run is exact whatever this file says --- and until 2026-09-11 nothing ran a
+# Unibus READ at all.
+#
+# **IT IS NOT FIXED HERE AND THE REASON IS THAT THE ONE-LINE FIX IS TOO
+# WIDE IN THE OTHER DIRECTION.**  `ub_ssyn` has two consumers and they want
+# different deadlines: it is the select of the `rdata` mux into MD, which is
+# read at the MD strobe twenty ticks later and genuinely has them, and it is
+# the interface's edge, which has one tick.  Excluding the register relaxes
+# neither and over-tightens the first, which costs slack for a claim that is
+# false.  The remedy the file's own rule prescribes is the one `deskewed`
+# took: shorten the control path by registering the decision, so that what
+# reaches `ssyn_seen` starts at a named fast register and what reaches MD does
+# not.  That is a change to `cadr_busint_xbus.sv` and to the register block,
+# not to this file, and it wants its own fit either side.  Measured and
+# written down rather than half-done.
+#
+# **THE READ SIDE WAS CONSIDERED FOR THE SET AND LEFT OUT ON PURPOSE.**
+# `usec_latch`, `mains`, `scancode`, the two mouse counters, the status
+# register's flip-flops, `interval` and `audio` would all pass this file's test
+# read literally: each is loaded at one known instant and read at `-LOADMD`,
+# which is seventy ticks later at the earliest.  They are left timed at the
+# tick anyway, because naming thirteen registers to buy slack nothing has asked
+# for is the too-wide exemption this file exists to warn about, and because the
+# measurement says it is not needed: with the whole card at one tick the board
+# closes.  If a future fit ever needs them, the argument above is the one to
+# make, one register at a time, and `usec` must stay out of the set or the arc
+# into `usec_latch` goes with it.
+#
 # **AND THE CONSOLE'S READ-BACK IS IN THE SET, WHICH IS THE WHOLE REASON IT
 # IS INSIDE THIS MACHINE.**  `rtl/plumbing/cadr_console.sv` is an AXI slave on
 # `M_AXI_GP1` a level above, beside the PS7, and it reads the sixteen
@@ -196,7 +279,12 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                                       NAME =~ *disk/which_reg*) && \
                                   (NAME !~ *memory/tv/* || NAME =~ *memory/tv/ctl_reg* || \
                                                            NAME =~ *memory/tv/fb_reg* || \
-                                                           NAME =~ *memory/tv/which_reg*)}]
+                                                           NAME =~ *memory/tv/which_reg*) && \
+                                  (NAME !~ *memory/iob/* || NAME =~ *memory/iob/sel_reg* || \
+                                                            NAME =~ *memory/iob/kbm_reg* || \
+                                                            NAME =~ *memory/iob/clkgrp_reg* || \
+                                                            NAME =~ *memory/iob/wr_reg* || \
+                                                            NAME =~ *memory/iob/which_reg*)}]
 
 # 15 ticks, not 29: the tightest instant a datapath register is read at is the
 # fast read tap.
@@ -405,6 +493,26 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 # enables, 3 logic levels and 80% route delay. Two revisions, two worst nets:
 # the family is stable and the net is placement, so a net quoted from a timing
 # report belongs with the commit it was measured at.
+#
+# MEASURED AT THIS SLICE, the I/O board's composition, both boards through
+# `boards/arty-z7-20/vivado/bitstream.tcl` and against the same two fits run
+# from a worktree at 74fa921 on the same machine and the same tool:
+#
+#                            memory-off               DDR=1
+#     worst negative slack   +0.375 -> +0.393 ns      +0.362 -> +0.153 ns
+#     failing endpoints      0 of 16,316 -> 0/16,843  0 of 27,578 -> 0/28,166
+#     hold                   +0.036 -> +0.048 ns      +0.025 -> +0.043 ns
+#     Slice LUTs             3,685 -> 3,895           7,352 -> 7,518
+#     Slice Registers        1,662 -> 1,863           5,195 -> 5,412
+#     block RAM tiles        37, unchanged            37, unchanged
+#
+# Both still meet.  **The memory-on board's 209 ps is placement and not the
+# card**: its worst path moved from the pack side's `store_wdata` into the
+# disk's tag to `disk/rst_q_reg/C -> disk/ch_i_reg[0]/R`, zero logic levels
+# and 92% routing, and no path of the card appears anywhere in that report.
+# The card's own worst, on the memory-off board where it is not folded away,
+# is `memory/iob/t_edge_reg[0]/C -> memory/iob/iv_t_reg[0]/R` at +0.646 ns.
+# Quote these with the commit, as this file's own note says.
 #
 # The 10,972 paths this file relaxes to 75.000 ns out of context, and the
 # 10,929 it relaxes on the board --- 10,956 there once routed --- are what

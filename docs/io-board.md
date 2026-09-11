@@ -21,13 +21,17 @@ below which says what does or does not exist. It has the same shape as
 actually ask of it, the decisions, what the check will hold to and cannot, and
 what is deliberately not built.
 
-**Slice one is the reference and the model. Slice two is the card.**
+**Slice one is the reference and the model. Slice two is the card. Slice
+three puts the card under the machine.**
 `golden/src/iob.rs` writes `build/iob.golden`, and `make iob-golden` makes it.
 A throwaway Python model was run against it until the two agreed row for row.
 What that model found is near the end, because it is the part of slice one
 worth reading before anything else. `rtl/machine/cadr_io_board.sv` and
 `tb/cadr_io_board_tb.cpp` are slice two, and `make build/iob.pass` is the
 check. What it holds to and what it cannot is the last section but one.
+Slice three is the composition under `rtl/machine/cadr_memory_path.sv` and
+`make build/unibus.pass` is its check; the section "What slice three built"
+is near the end.
 
 ## What muir says the card is
 
@@ -576,11 +580,217 @@ pushed and the check prints the count. A move or a switch changes nothing the
 card shows until its next `KB CLK^`, and a cycle changes nothing on the tick
 its `-MSYN` rises, so those share a tick and are not pushed.
 
-Two things follow separately. The first is the composition under
-`cadr_memory_path.sv` beside `cadr_spy_registers`, which needs the address
-decode in front of both slaves and is where `busint_xbus.golden` becomes the
-reference again. The second is the Linux side, `cadr-usb-input`, which is last
-in the agreed order of work.
+Two things followed separately. The first was the composition under
+`cadr_memory_path.sv` beside `cadr_spy_registers`, which is slice three below.
+The second is the Linux side, `cadr-usb-input`, which is last in the agreed
+order of work.
+
+## What slice three built
+
+Slice three put the card on the Unibus inside the machine. It is one
+instantiation, a join and a mux in `rtl/machine/cadr_memory_path.sv`, the
+cables carried out through `rtl/machine/cadr_machine.sv` to
+`boards/arty-z7-20/cadr_arty.sv`, and a check of its own.
+
+1. **`cadr_io_board` is instantiated in `cadr_memory_path.sv`**, beside
+   `cadr_spy_registers`. Both hang off the seam `cadr_console_bus.sv`
+   presents, `-UB SSYN` is the OR of theirs as the open-collector line on the
+   backplane is, and the word is a mux on which of them answered.
+2. **`ub_ssyn_by` is a new observation output**, two bits: which slave is
+   pulling the line. The line itself cannot tell them apart, and "at most one
+   of them answers any address" is the whole claim the composition makes.
+3. **The card's four cables cross to the top level and are tied off there**,
+   each naming the slice that will drive it: the keyboard and the mouse to
+   `cadr-usb-input`, the ready line to the serial slice, the request to the
+   Chaosnet slice.
+4. **`tb/cadr_unibus_tb.cpp` and `make build/unibus.pass`** are the check. It
+   is the twenty-eighth.
+5. **`rtl/plumbing/xilinx7/cadr_machine.xdc` takes the card out of its relaxed
+   set** but for the five registers of its held match.
+6. **Six mutation records**, with the runner's `unibus` entry, and a seventh
+   moved here from `machine`: the new check closed issue #13.
+
+### The new check closed a recorded hole
+
+`the-unibus-acknowledgement-and-the-md-strobe-change-places` exchanges the bus
+interface's two Unibus instants, so the cycle is acknowledged where the MD
+strobe belongs and MD is strobed where the acknowledgement belongs. It had
+carried `@hole #13` since it was written.
+
+The hole's own prose said what would close it. "It is not an equivalence:
+exchanging the two instants puts `-LOADMD` after `-MEMACK` instead of before,
+which is observable wherever a Unibus read's word is used. Nothing here uses
+one." Nothing did. `build/unibus.pass` uses one, and the record is caught on
+its first cycle at "-MEMACK, in ticks after -UB SSYN is 20, wanting 30". The
+record is `@check unibus` now and carries no hole, and issue #13 has no
+records holding it open.
+
+### There is no decode in front of the two slaves, and that is deliberate
+
+Slice two expected one. It would make the two mutations that matter
+untestable. CLAUDE.md records the shape: the display's
+`tv-answers-its-neighbours`, written as a wider address match gated by the
+decode's `device`, survived. A slave that honours a guard which is checked
+exhaustively elsewhere cannot answer an address the guard refuses, so the
+mutation tests the guard and not the slave.
+
+On the backplane each board decodes the whole address for itself and pulls
+`-SSYN` if the address is its own. That is what both of these do. A match
+widened in either of them is then visible. The record that says so is
+`unibus-the-register-block-reaches-down-into-the-cards-page`.
+
+**The collision is only reachable from that side, and the mutation run is
+what found it.** Widening the card until it covers the register block cannot
+be written at all. The 74LS138 at IOBADR 0E20 splits the card's block on
+`A<6:4>` and sends groups 0 to 3 nowhere, and the register block's sixteen
+registers are at `A<6:4>` 0 and 1. So a card whose page match reached
+`0o766000` would still answer nothing there, however wide the match became.
+That is the same equivalence `iob-the-block-select-reaches-a-page-lower`
+records at the other end of the block.
+
+**And `cadr_spy_registers.sv` had never been mutated.** It was in no check's
+source list, so `check_coverage` --- which unions those lists --- had nothing
+to say about it, while every check that builds `cadr_machine` built it through
+the include path. It is in `unibus`'s list now, with the record above aimed at
+it.
+
+What replaces the decode is an assertion. The check runs a real bus cycle at
+every word address of `0o763000`--`0o770776` in both directions and requires
+that at most one slave answers each. It also checks the two slaves' sets for
+overlap over all 262,144 Unibus addresses with no simulation at all, against
+muir's own `ioboard::answers` table and the register block's base.
+
+### No other check runs a Unibus read
+
+This was measured rather than assumed. `build/machine.pass` prints "the Unibus
+arbitration of 1 of 17466 bus cycles", and that one cycle is MIT's boot PROM
+writing the mode register at `0o766012`. `busint_xbus.golden`'s addresses are
+main memory and empty Xbus space, and it runs no Unibus cycle at all. The band
+trace runs against `Vcadr_microcycle`, where `-MEMACK` and `-LOADMD` are
+muir's stimulus.
+
+So `cadr_busint_xbus.sv`'s MD strobe had never carried a word anybody compared.
+That is the one instant on either bus where the word and the acknowledgement
+come apart: the word lands `UNIBUS_STROBE_NS` after `-UB SSYN` and the
+acknowledgement `UNIBUS_ACK_NS` after it, fifty nanoseconds later, which is why
+`n_loadmd` is a port of its own. `build/unibus.pass` compares both instants on
+every one of its answered cycles.
+
+### What the check compares, and what it refuses to compare
+
+The card's own answers belong to `build/iob.pass` and are not repeated. What
+`build/unibus.pass` compares instead is what its own testbench put in: the
+twenty-four-bit scan code it strobed, the seven mouse lines it drove, the
+interval and the interrupt enables it wrote. A word that came from the
+stimulus cannot move with a bug in the card, in the mux or in the bus
+interface.
+
+The register block's word is a poison injective in the register number, driven
+from the address the testbench is itself driving and never from `spy_eadr`. So
+a mux that returned the other slave's word is caught in both directions.
+
+The microsecond counter is compared as a difference and never as a value. Two
+reads whose `-UB MSYN` instants the run measures to be a whole number of the
+card's microseconds apart must differ by exactly that many counts. That is the
+timebase claim and it needs no model of the counter's phase. The run stands
+still for 9.8 million ticks so that the count carries into its high half, which
+is what makes that half a live comparison rather than zero against zero.
+
+The mouse's counting is not exercised here and is not meant to be. The lines
+are held still, so the two counters stay where reset left them and the two
+mouse registers carry the switch and quadrature lines the testbench drove.
+
+### What the sweep shows that is not a fault
+
+muir's `busint::register` answers `0o766040`--`0o766076`, the bus interface's
+own interrupt control and error status registers, and `0o766140`--`0o766176`,
+the Unibus map. This fabric builds none of them. `cadr_spy_registers.sv`
+answers `0o766000`--`0o766036` and no more, so those thirty-two addresses time
+out here where muir would answer. The run prints the count rather than hiding
+it.
+
+### The interrupt request goes out and is not joined into `-XBUS.INTR`
+
+This is a decision rather than an omission, and the reason is precise. `LM INT`
+is `UB INT OR XBUS INTR IN` at UBINTC 0E04, so on the board the card's
+interrupt does reach the processor. But muir's `Machine::unibus_interrupt`
+takes it only while `ENABLE UB INTS` is set, and that is bit 10 of the bus
+interface's own interrupt control register at Unibus `0o766040`. That register
+is one of the ones this fabric does not have.
+
+Joining the request straight into `sintr_o` would therefore raise the
+processor's interrupt where muir raises it only under a bit no program here can
+set. What closes this is `0o766040` itself: the register, `ENABLE UB INTS`,
+`UB INT` and the vector field a handler reads back. Until then `iob_intr` and
+`iob_vector` are observation outputs and the top level folds them.
+
+### What the card costs the board
+
+Measured through `boards/arty-z7-20/vivado/bitstream.tcl` on both boards, and
+against the same two fits run from a worktree at `74fa921` on the same machine
+and the same tool, so the comparison is an A and a B and not two readings.
+
+| | memory-off | `DDR=1` |
+|---|---|---|
+| worst negative slack | +0.375 to +0.393 ns | +0.362 to +0.153 ns |
+| failing endpoints | 0 of 16,316 to 0 of 16,843 | 0 of 27,578 to 0 of 28,166 |
+| hold | +0.036 to +0.048 ns | +0.025 to +0.043 ns |
+| Slice LUTs | 3,685 to 3,895 | 7,352 to 7,518 |
+| Slice Registers | 1,662 to 1,863 | 5,195 to 5,412 |
+| block RAM tiles | 37, unchanged | 37, unchanged |
+
+Both boards still meet timing. The memory-on board lost 209 ps, and that is
+placement rather than the card. Its worst path moved from the pack side's
+`store_wdata` reaching the disk controller's tag to
+`disk/rst_q_reg/C -> disk/ch_i_reg[0]/R`, which is zero logic levels and 92%
+routing, and no path of the card appears anywhere in that report.
+
+The card's own worst path, on the memory-off board where it is not folded
+away, is `memory/iob/t_edge_reg[0]/C -> memory/iob/iv_t_reg[0]/R` at
++0.646 ns.
+
+### The card is out of the relaxed register set, and that was asked of the design
+
+`rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes a set defined as every
+register minus a name list, so a module written after it is swallowed whole.
+CLAUDE.md records what that cost on the disk controller: 3,904 of its 4,000
+internal paths carried the fifteen-cycle exception and three slices' fit
+figures were of a design a quarter of which was not being timed.
+
+The card is excluded whole, but for the five registers of its held match:
+`sel`, `kbm`, `clkgrp`, `wr` and `which`. Everything else there is a clock or
+a cycle's own state. `usec_t`, `kb_t` and `iv_t` count down one a tick,
+`mains_acc` adds five nanoseconds a tick with `mains_wrap` comparing it a tick
+early, `t_msyn` and `t_edge` count since the strobe and since the last edge,
+`usec` is a counter read by a latch at an arbitrary tick, `ub_ssyn` is the
+answer itself, and `busy`, `first` and `edges` are one tick deep.
+
+That was measured and not read off the filter expression. Synthesised with the
+file read scoped, every path out of every one of those registers asks for
+6.250 ns, which is one tick; none asks for 93.750. The five held ones do carry
+the exception where it is right: 32 of `sel`'s 133 paths, 32 of `kbm`'s 101,
+32 of `wr`'s 131 and 32 of `which`'s 133, which are the thirty-two bits of the
+read mux reaching MD.
+
+**The fitter does not test the keyboard or the mouse on this board.** With the
+cables tied off, `scancode`, `kbd_ready`, `mouse_ready`, `mnew`, the two mouse
+counters and `kb_t` all constant-fold and no cell of them survives synthesis.
+That is the drive seam's own lesson and it will stop being true the day
+`cadr-usb-input` drives them.
+
+### The console's drop discipline is load-bearing, and it was measured
+
+`cadr_console.sv`'s engine drops `-UB MSYN` and then holds its request up until
+the slave has let `-UB SSYN` go. Its own comment says why: "dropping the
+request while SSYN is still up would hand the next master a bus that is already
+answering." The testbench's master model follows it.
+
+That is not decoration. Written the impolite way, with the request dropped
+beside the strobe, a processor cycle standing behind the console was
+acknowledged by the register block's leftover `-UB SSYN` rather than by the
+card. It is the same fact as the bus idling for a tick at every change of owner
+in this module's channel arbiter, and the discipline lives in the console
+rather than in the arbiter.
 
 ## What is not built
 
@@ -594,6 +804,12 @@ in the agreed order of work.
   the order of work. The kernel side is done, and `evtest` printed Mete's name
   off a USB keyboard on the board on 10 Sep.
 - **The Unibus interrupt cycle.** Nothing in `rtl/` puts a vector on the bus
-  or arbitrates `BR5`. The card's request is a port until somebody does.
+  or arbitrates `BR5`, and the bus interface's own interrupt control register
+  at `0o766040` does not exist either. The card's request leaves the machine as
+  an observation output and is not joined into `-XBUS.INTR`; the section above
+  says why that is a decision.
+- **The Unibus map and the bus interface's own registers.**
+  `0o766040`--`0o766076` and `0o766140`--`0o766176` are `Responder::Interface`
+  in muir and are answered by nothing here. `build/unibus.pass` counts them.
 - **`-BOOT*`.** The keyboard's boot key runs to the processor board past the
   bus interface and nothing presses it, in muir or here.

@@ -26,9 +26,9 @@
 // `cadr_microcycle.sv` says the same at the register.
 //
 // WHAT IS STILL OUTSIDE.  The number of memory boards, which is the machine's
-// configuration; the DDR itself, behind `mem_req`/`mem_done`; and the Xbus
-// slave that is neither main memory, the disk nor the display --- the I/O
-// board --- behind `dev_rq`/`device_ack`.  **The display is inside**, in
+// configuration; the DDR itself, behind `mem_req`/`mem_done`; and any Xbus
+// slave that is neither main memory, the disk nor the display, behind
+// `dev_rq`/`device_ack`.  **The display is inside**, in
 // `cadr_memory_path.sv`, its frame buffer being that module's bridge at a
 // second base; `rtl/machine/cadr_tv.sv` is the register face and the interrupt.
 // **THE DISK CONTROLLER'S FOUR REGISTERS ARE INSIDE TOO**,
@@ -38,10 +38,17 @@
 // They used to be answered from the trace, and that was stimulus.  What is
 // still outside the disk is its pack side, `rtl/plumbing/cadr_disk_pack.sv`, which is
 // three AXI faces and belongs beside the PS7 in the top level; the drive seam
-// and the block store's seam cross this boundary to reach it.  The Unibus is
-// outside too, and not merely unbuilt:
-// `cadr_busint_xbus.sv` is the Xbus half, and 347 of the System band's
-// 141,849 bus cycles arbitrate for a bus that is not here.
+// and the block store's seam cross this boundary to reach it.
+//
+// **AND THE I/O BOARD IS INSIDE NOW**, `cadr_io_board.sv`, the second slave on
+// the Unibus beside the diagnostic register block: the keyboard, the mouse,
+// the microsecond counter, the sixty-cycle clock, the interval timer and the
+// status register they share.  It is instantiated in `cadr_memory_path.sv`
+// where the Unibus seam is, as the display is; what crosses this boundary is
+// what MIT plugged into the card --- the keyboard's cable, the mouse's seven
+// lines, the serial chip's ready line, the Chaosnet interface's request ---
+// and what the card shows.  None of the four is driven yet and
+// `boards/arty-z7-20/cadr_arty.sv` says which slice will drive each.
 
 `default_nettype none
 
@@ -126,6 +133,32 @@ module cadr_machine #(
     output var logic        ch_wrote,
     output var logic        ch_hit,
 
+    // --- THE I/O BOARD'S CABLES, straight through to `cadr_memory_path`.
+    //
+    // The card is a Unibus slave inside this machine; these are the things
+    // plugged into it, and their header is at the instance there.  A port
+    // rather than a tie-off inside for `drive_present`'s reason: what is on
+    // a cable is not a property of the board it plugs into, and a check has
+    // to be able to move it.
+    input  var logic        kbd_strobe,
+    input  var logic [23:0] kbd_code,
+    input  var logic [6:0]  mouse_lines,
+    input  var logic        ser_ready,
+    input  var logic        chaos_intr,
+    output var logic        ser_reset,
+    // `-UB INTR` and `-UB BR5`.  Not joined into `sintr_o` below, and the
+    // note at the instance in `cadr_memory_path.sv` says why: muir takes a
+    // Unibus interrupt only under `ENABLE UB INTS`, which lives in the bus
+    // interface's own register at `0o766040` and is not built.
+    output var logic        iob_intr,
+    output var logic [7:0]  iob_vector,
+    output var logic        audio,
+    output var logic [7:0]  csr_face,
+    output var logic [11:0] mouse_x,
+    output var logic [11:0] mouse_y,
+    output var logic        clock_ready,
+    output var logic [15:0] interval,
+
     // --- how many 64K-word memory boards are fitted, 1 to 60
     input  var logic [6:0]  boards,
 
@@ -189,6 +222,9 @@ module cadr_machine #(
     output var logic        mbusy_sync_o,
     output var logic [17:0] ub_addr_o,
     output var logic [15:0] ub_rdata_o,
+    // Which slave is pulling `-UB SSYN`: bit 0 the diagnostic register block,
+    // bit 1 the I/O board.  See the port in `cadr_memory_path.sv`.
+    output var logic [1:0]  ub_ssyn_by,
     output var logic        n_loadmd_o,
     output var logic        rdcyc_o,
     output var logic        nxm,          // Xbus space with nothing in it
@@ -398,6 +434,21 @@ module cadr_machine #(
       .arb_stage  (arb_stage),
       .ub_addr_o  (ub_addr_o),
       .ub_rdata_o (ub_rdata_o),
+      .ub_ssyn_by (ub_ssyn_by),
+      .kbd_strobe (kbd_strobe),
+      .kbd_code   (kbd_code),
+      .mouse_lines(mouse_lines),
+      .ser_ready  (ser_ready),
+      .chaos_intr (chaos_intr),
+      .ser_reset  (ser_reset),
+      .iob_intr   (iob_intr),
+      .iob_vector (iob_vector),
+      .audio      (audio),
+      .csr_face   (csr_face),
+      .mouse_x    (mouse_x),
+      .mouse_y    (mouse_y),
+      .clock_ready(clock_ready),
+      .interval   (interval),
       .n_loadmd   (n_loadmd),
       .spy_eadr   (spy_eadr),
       .spy_rdata  (spy_rdata),
