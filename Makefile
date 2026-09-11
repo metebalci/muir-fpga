@@ -29,7 +29,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
-       $(BUILD)/map_boot.pass \
+       $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
@@ -464,6 +464,39 @@ band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom
 	    gunzip -c $(SYS100_GZ) > $(BUILD)/band-pack.img; \
 	    $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden --pack $(BUILD)/band-pack.img; \
 	fi
+
+# ------------------------------------- the map's two access bits, told apart
+
+# `map_boot.pass` compares a map entry written and then read through, and its
+# own output says what it cannot reach: muir refuses the access on 0 of those
+# 600,000 microcycles, and every map word MIT's boot PROM writes has bits 23
+# and 22 alike, so `-VMAOK` is compared only in its permitted direction and the
+# two access bits cannot be told apart.  That is the half the board halts in.
+#
+# The band cannot close it either, measured: `rtl_sys.golden`'s first refused
+# access is at microcycle 2,084,533 and its first asymmetric map word at
+# 2,088,933, where a whole-machine comparison has long stopped.
+#
+# So this check moves ONE field of ONE microinstruction of MIT's own boot PROM.
+# At PROM address `0o274` the byte masker's mask IS the map word that
+# `SET-UP-FOUR-PAGES` writes, so the mask's right edge is the access code, and
+# moving it gives {1,1}, {1,0} and {0,0} with nothing else about the program
+# changed.  The patched word and the four map entries are read back out of the
+# machine over the console's readout window, so a patch that missed fails
+# naming what it found rather than passing.  `tb/cadr_map_access_tb.cpp`'s
+# header says what that costs and `docs/map-access.md` argues it.
+#
+# Four runs, three of 600,000 microcycles and one short, about a minute.
+$(BUILD)/obj_map_access/Vcadr_machine: $(MACHINE) tb/cadr_map_access_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_map_access \
+	    -GPROM_HEX='"$(abspath $(BUILD))/map_access_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_map_access_tb.cpp)
+
+$(BUILD)/map_access.pass: $(BUILD)/obj_map_access/Vcadr_machine \
+                          $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_map_access/Vcadr_machine $(BUILD)/rtl.golden \
+	    $(BUILD)/map_access_prom.hex $(BUILD)/boot_prom.hex
+	@touch $@
 
 # ------------------------------------------------- the memory port's tally
 

@@ -6941,3 +6941,92 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
     return MAIN_BASE + (32'(phys ^ 22'd256) << 2);
 @end
+
+@mutation map-read-permission-takes-the-write-bit
+@check map_access
+@file rtl/machine/cadr_microcycle.sv
+@note THE PROPERTY THIS CHECK EXISTS FOR.  A second-level map entry's bit 23
+@note permits the access at all and bit 22 permits a write, and until this
+@note check landed NOTHING in the tree compared them apart: muir refuses the
+@note access on 0 of `map_boot`'s 600,000 microcycles, and every map word
+@note MIT's boot PROM writes has the two bits alike.  So a fabric that took
+@note read permission from the write bit passed every check there was.
+@note
+@note Both bits stay read, so lint cannot do the catching instead.  Caught by
+@note the read-only configuration's permitted read, at microcycle 536,302.
+@old
+  assign pfr   = lvmo_eff[23];
+@new
+  assign pfr   = lvmo_eff[23] && lvmo_eff[22];
+@end
+
+@mutation map-access-bits-swapped
+@check map_access
+@file rtl/machine/cadr_microcycle.sv
+@note The two access bits in each other's place, which is the pair of nets
+@note crossed at VMEMDR 1D14.  Both stay read, so it is the bit-granularity
+@note case lint is blind to.  Caught on the same line as the record above:
+@note the read-only entry's permitted read becomes a refusal.
+@old
+  assign pfr   = lvmo_eff[23];
+  assign pfw   = !(!lvmo_eff[22] && wrcyc);
+@new
+  assign pfr   = lvmo_eff[22];
+  assign pfw   = !(!lvmo_eff[23] && wrcyc);
+@end
+
+@mutation map-write-bit-refuses-a-read-too
+@check map_access
+@file rtl/machine/cadr_microcycle.sv
+@note The `WRCYC` term of the 74S00 at VCTL1 1D17 dropped, so the write bit
+@note refuses a read as well.  That is the third way to confuse the two bits
+@note and the third caught on the read-only entry's permitted read.
+@old
+  assign pfw   = !(!lvmo_eff[22] && wrcyc);
+@new
+  assign pfw   = !(!lvmo_eff[22] && (wrcyc || rdcyc));
+@end
+
+@mutation map-refusal-still-starts-a-cycle
+@check map_access
+@file rtl/machine/cadr_microcycle.sv
+@note The other half of a refusal, and the half a `-VMAOK` comparison alone
+@note would miss: a reference the map refuses must start NO bus cycle.  muir
+@note says so in its own words --- `tests/busint.rs`'s
+@note `a_bus_timeout_is_not_a_page_fault` asserts that a refused read is one
+@note "the cycle never started" and a refused write one "which never reached
+@note the bus".  `vmaok` stays read by MBUSY.SYNC and by the jump conditions,
+@note so lint is silent.  Caught at microcycle 536,304, the read-only entry's
+@note refused write, by -MEMRQ going out.
+@old
+  assign memgo = memstart && vmaok;
+@new
+  assign memgo = memstart;
+@end
+
+@mutation level-2-map-write-takes-the-new-first-level-entry
+@check map_access
+@file rtl/machine/cadr_microcycle.sv
+@note The level-2 write indexed by the level-1 entry THE SAME INSTRUCTION is
+@note writing.  That is `Machine::write_map`'s ordering, which re-reads
+@note `l1_map[l1_index]` after the level-1 write; `Rtl::step` computes both
+@note addresses before either write, and the fabric follows `Rtl`, which is
+@note the engine every golden trace comes from.
+@note
+@note NOTHING ELSE IN THE TREE SEES THIS, and the reason is that nothing
+@note reaches it: across 3,400,000 microcycles of reference trace there is not
+@note one map write with both VMA<26> and VMA<25> up, and in MIT's whole
+@note microcode no `VMA-WRITE-MAP` names both enables.  `LEVEL-1-MAP-MISS`
+@note writes level 1 alone, reads main memory, and only then fills the 32
+@note level-2 entries one at a time.  The hardware defines no answer either:
+@note both pulses are -WP1 and the 93425A's output is high impedance while it
+@note is written, so the block the word lands in is whatever those nets
+@note settle to.  The record exists to stop the fabric drifting off `Rtl`
+@note silently, not because either ordering is known to be right.
+@note
+@note Caught by the check's fourth configuration alone.
+@old
+        if (vma[25]) l2_map[adr1] <= vma[23:0];
+@new
+        if (vma[25]) l2_map[vma[26] ? {vma[31:27], mapi[4:0]} : adr1] <= vma[23:0];
+@end
