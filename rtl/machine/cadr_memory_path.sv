@@ -58,6 +58,38 @@
 // the -6.5 ns family the held decode was written to cut off is untouched: the
 // channel's address goes through a decode of its own into a register, and
 // what reaches the bridge's `sel` is a mux on two registered bits.
+//
+// **AND THE UNIBUS HAS TWO SLAVES ON IT NOW.**  `cadr_spy_registers.sv` is
+// the diagnostic register block at `0o766000` and `cadr_io_board.sv` is the
+// I/O board at `0o764100`-`0o764126`: the keyboard, the mouse, the two clocks
+// and the status register they share.  Both hang off the seam
+// `cadr_console_bus.sv` presents, `-UB SSYN` is the OR of theirs as the
+// open-collector line on the backplane is, and the word is a mux on which of
+// them answered.
+//
+// **THERE IS NO DECODE IN FRONT OF THEM, AND THAT IS DELIBERATE.**  The
+// obvious composition is one decode that hands the cycle to a slave, and it
+// would make both of the mutations that matter here untestable.  CLAUDE.md
+// records the shape: the display's `tv-answers-its-neighbours`, written as a
+// wider address match gated by the decode's `device`, SURVIVED, because a
+// slave that honours a guard checked exhaustively elsewhere cannot answer an
+// address the guard refuses --- so the mutation tests the guard and not the
+// slave.  On the backplane each board decodes the whole address for itself
+// and pulls `-SSYN` if it is its own; that is what both of these do, and a
+// match widened in either of them is then visible here.  What replaces the
+// decode is the assertion: `build/unibus.pass` runs a real bus cycle at every
+// word address of `0o760000`-`0o777776` in both directions and requires that
+// AT MOST ONE slave answers each, which is the claim a decode would have
+// assumed rather than tested.
+//
+// **AND THE TWO MASTERS' ARBITER COVERS BOTH SLAVES.**  The console takes the
+// bus for `DIAGNOSTIC_NS` plus the drop and can only name the register block
+// --- `cadr_console.sv` builds its address as `SPY_BASE | eadr<<1` and cannot
+// reach the card at all --- but it takes the BUS, not the block, so a
+// processor cycle to the card is masked while it holds, exactly as a
+// processor cycle to the block is.  Two masters driving one set of address
+// lines at once is what a shared bus must not do, and putting the card on the
+// far side of the arbiter is what keeps that true without a second argument.
 
 `default_nettype none
 
@@ -109,12 +141,59 @@ module cadr_memory_path (
     // What else the decode made of the address, so that a cycle nothing
     // answers can say why rather than merely time out.
     output var logic        nxm,          // Xbus space with nothing in it
-    output var logic        unibus,       // the Unibus, which is its own slice
+    output var logic        unibus,       // the Unibus, which now has two
+                                          // slaves on it and is no longer a
+                                          // slice of its own
     output var logic        ub_msyn_o,    // -UB MSYN, brought out for a check
     output var logic        ub_ssyn_o,
     output var logic [2:0]  arb_stage,
     output var logic [17:0] ub_addr_o,
     output var logic [15:0] ub_rdata_o,
+    // **WHICH SLAVE IS PULLING `-UB SSYN`**: bit 0 the diagnostic register
+    // block, bit 1 the I/O board.  `ub_ssyn_o` is the line itself, which is
+    // the OR of these and cannot tell them apart --- and "at most one of them
+    // answers any address" is the whole claim the composition makes, so it is
+    // measured here rather than inferred from the word that came back.  Two
+    // slaves answering one cycle would show as `2'b11` and show as nothing at
+    // all on the line.
+    output var logic [1:0]  ub_ssyn_by,
+
+    // --- THE I/O BOARD'S OWN CABLES, which cross this boundary and every one
+    // above it until something drives them.
+    //
+    // `rtl/machine/cadr_io_board.sv` is the second slave on the Unibus and is
+    // instantiated below.  What it needs from outside the machine is what MIT
+    // plugged into the card: the keyboard's cable, the mouse's seven lines,
+    // the 2651's ready line and the Chaosnet interface's request.  None of
+    // the four exists in fabric yet --- `cadr-usb-input` is last in the order
+    // of work, the serial port and the Chaosnet interface are two slices of
+    // their own --- so `boards/arty-z7-20/cadr_arty.sv` ties all four off and
+    // says which slice will drive each.  They are ports rather than constants
+    // here for the reason `drive_present` is: a thing on a cable is not a
+    // property of the board it plugs into, and a check has to be able to move
+    // it.  `build/unibus.pass` drives the keyboard and the mouse from here.
+    input  var logic        kbd_strobe,
+    input  var logic [23:0] kbd_code,
+    input  var logic [6:0]  mouse_lines,
+    input  var logic        ser_ready,
+    input  var logic        chaos_intr,
+
+    // `-INIT*` into the 8837 at IOBXCV 0F06 is the 2651's own reset pin, so
+    // the card owes the serial slice this whether or not the chip is fitted.
+    output var logic        ser_reset,
+    // `-UB INTR` and `-UB BR5`: the card's `intr_request` and `intr_vector`.
+    // Nothing in `rtl/` runs a Unibus interrupt cycle, and the note at the
+    // instance below says what that costs and what would close it.
+    output var logic        iob_intr,
+    output var logic [7:0]  iob_vector,
+    // `AUDIO`, the level the speaker's pair is driven to.
+    output var logic        audio,
+    // The card's own state, as `cadr_io_board.sv` brings it out for a check.
+    output var logic [7:0]  csr_face,
+    output var logic [11:0] mouse_x,
+    output var logic [11:0] mouse_y,
+    output var logic        clock_ready,
+    output var logic [15:0] interval,
 
     // --- THE CONSOLE, the second master on the diagnostic bus.
     //
@@ -186,6 +265,18 @@ module cadr_memory_path (
   logic        sr_msyn, sr_write, sr_ssyn;
   logic [17:0] sr_addr;
   logic [15:0] sr_wdata;
+
+  // The two slaves' own answers, before the bus joins them.  `sr_ssyn` is
+  // `-UB SSYN` as a master sees it --- the open-collector line, which is up
+  // if anything is pulling it --- and `ub_rdata` is the word of whichever
+  // slave is answering.  The mux is on `iob_ssyn` and not on the card's own
+  // select, so a card that answers nothing shows nothing, which is the rule
+  // the DDR bridge broke by holding its word past its cycle.
+  logic        blk_ssyn, iob_ssyn;
+  logic [15:0] blk_rdata, iob_rdata;
+  assign sr_ssyn    = blk_ssyn || iob_ssyn;
+  assign ub_rdata   = iob_ssyn ? iob_rdata : blk_rdata;
+  assign ub_ssyn_by = {iob_ssyn, blk_ssyn};
 
   cadr_console_bus console_bus (
       .clk       (clk),
@@ -381,8 +472,9 @@ module cadr_memory_path (
   // 22-bit physical space, shifted left one because the Unibus counts bytes.
   // It is computed and held above, with the decode.
 
-  // Above the register block there is nothing on this Unibus yet, so the top
-  // of the page number goes nowhere: only 0o766xxx is answered.
+  // Both slaves decode `ub_addr[17:0]`, which is nine bits of page and eight
+  // of word; the pages above `0o777` of the fourteen the subtraction leaves
+  // go nowhere, there being no Unibus location above `0o777776`.
   logic unused_page;
   assign unused_page = &{1'b0, ub_page[13:9]};
 
@@ -394,8 +486,8 @@ module cadr_memory_path (
       .ub_write   (sr_write),
       .ub_addr    (sr_addr),
       .ub_wdata   (sr_wdata),
-      .ub_ssyn    (sr_ssyn),
-      .ub_rdata   (ub_rdata),
+      .ub_ssyn    (blk_ssyn),
+      .ub_rdata   (blk_rdata),
       .spy_eadr   (spy_eadr),
       .spy_rdata  (spy_rdata),
       .run        (run),
@@ -405,6 +497,87 @@ module cadr_memory_path (
       .mode_speed (mode_speed),
       .prog_reset (prog_reset),
       .prog_boot  (prog_boot)
+  );
+
+  // --- the I/O board, the second Unibus slave -----------------------------
+  //
+  // The keyboard, the mouse, the microsecond counter, the sixty-cycle clock,
+  // the interval timer and the status register they share, at `0o764100` to
+  // `0o764126`.  `rtl/machine/cadr_io_board.sv` is the card and
+  // `build/iob.pass` holds it to `ioboard::IoBoard` through
+  // `busint::IoBoardTiming` over 81 million ticks; what is new here is that a
+  // cycle of the machine's own reaches it.
+  //
+  // **WHY IT MATTERS MORE THAN ITS SIZE SUGGESTS.**  The microsecond counter
+  // at `0o764120` is the CADR's whole timebase: MIT's `(TIME)` is that
+  // counter shifted, and the wall clock, `PROCESS-SLEEP`, every Chaosnet timer
+  // and the scheduler hang off it.  A System 100 band's first
+  // `READ-MICROSECOND-CLOCK` is at microcycle 2,087,379 and `TRACK-MOUSE`
+  // reads `0o764104` and `0o764106` six thousand microcycles later.  Unwired,
+  // those reads are answered by nothing and MD takes zero, which is Mete's
+  // own decision for an unanswered cycle and not a fault --- but a machine
+  // whose clock reads zero for ever is not one that can run a scheduler.
+  //
+  // **THE STROBE ARRIVES LONG AFTER THE ADDRESS HERE, WHICH THE CARD'S TRACE
+  // CANNOT SAY.**  `golden/src/iob.rs` is a master with no address setup at
+  // all --- `-UB MSYN` and the address on the same nanosecond, and the next
+  // cycle's strobe on the tick the last one dropped --- so the card is
+  // written to need the address only fifty ticks after the strobe and holds
+  // its match in a register rather than computing it.  This master is the
+  // other extreme, and it was measured rather than assumed: `ub_addr` is a
+  // register off `phys`, which is the far end of the map and stands still for
+  // the whole microcycle, while `-UB MSYN` is `UNIBUS_ADDRESS_NS` --- twenty
+  // ticks --- after a grant that is itself two master clocks past the
+  // arbitration.  So the address is settled tens of ticks before the strobe
+  // and the held match is never the thing that is late.
+  //
+  // **`-UB INIT` IS TIED TO THE POWER-ON RESET.**  It clears the 74LS175's
+  // four interrupt enables and the 74LS74's serial enable and reaches nothing
+  // else.  Nothing in this fabric pulls it: the bus interface's own registers
+  // at `0o766040`-`0o766076`, which are where a program would, are not built
+  // --- `cadr_spy_registers.sv` answers `0o766000`-`0o766036` and no more ---
+  // and there is no console button on the line.  So the one thing that
+  // asserts it here is `rst`, which is `xbus_init`'s argument one bus along.
+  // It is tied rather than made a port because a port carrying nothing but
+  // `rst` at every level up to the top level says less than this comment.
+  cadr_io_board iob (
+      .clk        (clk),
+      .rst        (rst),
+      .ub_msyn    (sr_msyn),
+      .ub_write   (sr_write),
+      .ub_addr    (sr_addr),
+      .ub_wdata   (sr_wdata),
+      .ub_ssyn    (iob_ssyn),
+      .ub_rdata   (iob_rdata),
+      .ub_init    (rst),
+      .kbd_strobe (kbd_strobe),
+      .kbd_code   (kbd_code),
+      .mouse_lines(mouse_lines),
+      .ser_ready  (ser_ready),
+      .ser_reset  (ser_reset),
+      .chaos_intr (chaos_intr),
+      // **THE REQUEST GOES OUT AND IS NOT ORed INTO `-XBUS.INTR`, AND THAT IS
+      // A DECISION RATHER THAN AN OMISSION.**  `LM INT` is `UB INT OR XBUS
+      // INTR IN` at UBINTC 0E04, so on the board the card's interrupt does
+      // reach the processor --- but not as a level.  muir's
+      // `Machine::unibus_interrupt` takes it only while `ENABLE UB INTS` is
+      // set, which is bit 10 of the bus interface's own interrupt control
+      // register at Unibus `0o766040`, and that register is one of the ones
+      // this fabric does not have.  Joining the request straight into
+      // `sintr_o` would therefore raise the processor's interrupt where muir
+      // raises it only under a bit no program here can set, which is a
+      // divergence and not a wire.  So it leaves as an observation output,
+      // the top level folds it, and what closes it is `0o766040` --- the
+      // register, `ENABLE UB INTS`, `UB INT` and the vector field a handler
+      // reads back --- and not a gate.
+      .intr_request(iob_intr),
+      .intr_vector (iob_vector),
+      .audio      (audio),
+      .csr_face   (csr_face),
+      .mouse_x    (mouse_x),
+      .mouse_y    (mouse_y),
+      .clock_ready(clock_ready),
+      .interval   (interval)
   );
 
   cadr_xbus_ddr main_memory (

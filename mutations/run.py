@@ -565,6 +565,40 @@ CHECKS = {
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": "iob.golden",
     },
+    # The I/O board UNDER THE MACHINE: the composition of slice three, which
+    # put the card on the Unibus beside the diagnostic register block.  Same
+    # module list as `memory_path` with the card added, because the card is
+    # instantiated inside `cadr_memory_path` and the DUT is the path rather
+    # than a harness of it --- the display's arrangement exactly.
+    #
+    # WHAT BELONGS HERE AND NOT IN `iob`.  `iob` drives the card alone and is
+    # the only thing that can tell that module from a wire; this one drives a
+    # cycle of the MACHINE'S and is the only thing that can tell the
+    # composition from a wire.  So records aimed at the `-UB SSYN` join, at the
+    # mux on the word, at either slave's address match reaching the other's
+    # block, and at the bus interface's two Unibus instants belong here.
+    #
+    # `iob.golden` is its reference, for the decode table it carries:
+    # `ioboard::answers` for all 262,144 Unibus addresses in both directions.
+    # Everything else the run compares is its own stimulus.
+    "unibus": {
+        "sources": [
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_memory_path.sv",
+        ],
+        "top": "cadr_memory_path",
+        "tb": "tb/cadr_unibus_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": "iob.golden",
+    },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
     # and `busint_xbus` writes the stimulus AND the expected outputs, so a

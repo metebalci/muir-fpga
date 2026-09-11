@@ -2187,8 +2187,7 @@
 @end
 
 @mutation the-unibus-acknowledgement-and-the-md-strobe-change-places
-@hole #13
-@check machine
+@check unibus
 @file rtl/machine/cadr_busint_xbus.sv
 @note The two Unibus deadlines are held as instants rather than added to a
 @note captured SSYN time, so that the adder is off the path that ends on the
@@ -2202,21 +2201,24 @@
 @note because dropping one leaves its parameter unread and lint rejects the
 @note mutation before the check ever sees it --- twice, on the way to this.
 @note
-@note WHY IT SURVIVES, which is #13 and is not the same thing as the
-@note `-XBUS.RQ` wrap. That was a signal no reference had a column for, and
-@note the fix was to give a testbench somewhere to look. This is **a path
-@note nothing enters**: `tb/cadr_busint_xbus_tb.cpp` never drives `unibus`,
-@note so the whole ARB/UB branch is untested by construction rather than by
-@note oversight, and no column would help. MIT's boot PROM makes exactly one
-@note Unibus cycle and the composed check exempts arbitrated cycles from the
-@note length comparison --- so the one cycle that exists is the one cycle
-@note exempted. The band makes 347 and is not run composed.
+@note **THIS WAS ISSUE #13, AND SLICE THREE OF THE I/O BOARD CLOSED IT.**  The
+@note hole's own prose said what would close it: "it is not an equivalence
+@note --- exchanging the two instants puts -LOADMD after -MEMACK instead of
+@note before, which is observable wherever a Unibus read's word is used.
+@note Nothing here uses one."  Nothing did.  `tb/cadr_busint_xbus_tb.cpp`
+@note never drives `unibus`, so the whole ARB/UB branch was untested by
+@note construction; MIT's boot PROM makes exactly ONE Unibus cycle and it is a
+@note WRITE, where the processor gates -LOADMD by RDCYC and the strobe changes
+@note nothing; and the composed check exempts arbitrated cycles from its
+@note length comparison, so the one cycle that existed was the one cycle
+@note exempted.
 @note
-@note The record stays and stays red until that testbench drives `unibus`
-@note and exercises arbitration. It is not an equivalence: exchanging the two
-@note instants puts -LOADMD after -MEMACK instead of before, which is
-@note observable wherever a Unibus read's word is used. Nothing here uses
-@note one.
+@note `build/unibus.pass` uses one.  It runs the machine's own Unibus cycle at
+@note both slaves and compares both instants against `-UB SSYN` on every
+@note answered cycle --- `unibus_strobe_ns` out of the trace's own header for
+@note the MD strobe, `busint::UNIBUS_ACK_NS` for the acknowledgement --- and
+@note it is caught on the first one, at "-MEMACK, in ticks after -UB SSYN is
+@note 20, wanting 30".  It stays `@check unibus` and carries no `@hole`.
 @note
 @note The anchor follows the line: both instants are held one tick early now,
 @note because the comparisons that read them are registers rather than gates
@@ -4304,6 +4306,13 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note shape of the record above.  One pulse dropped, so that the fold still
 @note parses: a build failure is not lint doing the catching either.
 @note
+@note **AND A FIFTH TIME, when the I/O board's ten outputs joined the fold**
+@note at slice three of the card --- `ser_reset`, the interrupt request and
+@note its vector, `AUDIO`, the status register's face, the two mouse counters,
+@note `CLOCK READY`, the interval and `ub_ssyn_by`.  The slice that moved them
+@note re-ran this record rather than only its own and found it UNAPPLIED,
+@note which is the rule three notes down being followed rather than restated.
+@note
 @note **The anchor moved when the console joined the fold** and this record
 @note went UNAPPLIED, which is the `@old` rotting loudly rather than quietly
 @note --- the good case, and the reason a slice that touches a file re-runs
@@ -4335,10 +4344,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @old
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md,
+                   ser_reset, iob_intr, iob_vector, audio, csr_face,
+                   mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
 @new
                    ch_wrote, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md,
+                   ser_reset, iob_intr, iob_vector, audio, csr_face,
+                   mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
 @end
 
@@ -6417,6 +6430,182 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
   assign in_block_c = ((ub_addr[17:7] == BLOCK) || (ub_addr[17:7] == BLOCK - 11'd1))
                       && !ub_addr[0];
+@end
+
+# ---------------------------------------------------------------------------
+# THE I/O BOARD UNDER THE MACHINE: THE UNIBUS WITH BOTH ITS SLAVES
+#
+# `build/unibus.pass` against `cadr_memory_path` with the card instantiated
+# inside it, which is slice three of the I/O board.  `iob` above is the card;
+# this is the composition, and the two hold different things:
+#
+#   `iob`     the card alone, a Unibus master in the testbench, against muir's
+#             `ioboard::IoBoard` through `busint::IoBoardTiming`.
+#   `unibus`  a cycle of the MACHINE'S --- the bus interface arbitrating for
+#             the Unibus, the address `cadr_memory_path` computed off the map,
+#             the card's answer becoming -MEMACK and -LOADMD, and the word
+#             reaching MEM<15:0>.
+#
+# **NO OTHER CHECK IN THIS REPOSITORY RUNS A UNIBUS READ.**  Measured:
+# `build/machine.pass` prints "the Unibus arbitration of 1 of 17466 bus
+# cycles", and that one cycle is MIT's boot PROM WRITING the mode register.
+# `busint_xbus.golden`'s addresses are main memory and empty Xbus space and it
+# runs no Unibus cycle at all.  So `cadr_busint_xbus.sv`'s MD strobe --- the
+# one instant on either bus where the word and the acknowledgement come apart
+# --- had never carried a word anybody compared, and the records below are the
+# first thing that holds it.
+#
+# **AND THERE IS NO DECODE IN FRONT OF THE TWO SLAVES, WHICH IS WHAT MAKES
+# THESE RECORDS LIVE.**  CLAUDE.md records the display's
+# `tv-answers-its-neighbours` surviving because it honoured a guard that was
+# exhaustively checked elsewhere: a mutation downstream of such a guard tests
+# the guard and not the thing.  Here each slave matches the whole address for
+# itself, as a board on the backplane does, so a match widened in either of
+# them is visible --- and `ub_ssyn_by` says which slave pulled the line, so two
+# answering at once is measured rather than inferred from the word that came
+# back.
+
+@mutation unibus-the-word-comes-from-the-other-slave
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **The mux on the returned word, crossed.**  Two slaves share
+@note `-UB SSYN` the way the open-collector line on the backplane shares it,
+@note and the word has to come from whichever of them is answering.  Crossed,
+@note a read of the card gives back the diagnostic register block's word and a
+@note read of the block gives back the card's.
+@note
+@note This is the mutation the check's poison exists for.  `spy_rdata` is
+@note driven from the address `tb/cadr_unibus_tb.cpp` is itself driving ---
+@note never from `spy_eadr`, which is the DUT's --- and is injective in the
+@note register number, so a card read that comes back as the poison and a
+@note block read that does not are both named at the word.
+@note
+@note Both signals stay read, so lint does no catching here.
+@old
+  assign ub_rdata   = iob_ssyn ? iob_rdata : blk_rdata;
+@new
+  assign ub_rdata   = iob_ssyn ? blk_rdata : iob_rdata;
+@end
+
+@mutation unibus-the-two-slaves-ssyn-is-anded
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **`-UB SSYN` is an open-collector line and is the OR of what is pulling
+@note it.**  Written as an AND, no cycle is ever answered at all, because no
+@note address is both slaves'.
+@note
+@note Written as an AND rather than as a dropped operand deliberately:
+@note dropping one leaves the other slave's answer read nowhere and Verilator
+@note stops the build, which is lint doing the catching instead of the check.
+@note CLAUDE.md's rule about bit granularity, one bus along.
+@old
+  assign sr_ssyn    = blk_ssyn || iob_ssyn;
+@new
+  assign sr_ssyn    = blk_ssyn && iob_ssyn;
+@end
+
+@mutation unibus-the-register-block-reaches-down-into-the-cards-page
+@check unibus
+@file rtl/machine/cadr_spy_registers.sv
+@note **The diagnostic register block's address match widened until it covers
+@note the I/O board**, which is the collision the composition must not have.
+@note The block answers `0o766000`-`0o766036`; reaching a block lower it
+@note answers `0o764000` upward as well, and every register of the card is
+@note then claimed by two slaves.  `ub_ssyn_by` reads 3 where the sweep wants
+@note 2, and a read of the card comes back as this check's poison for whatever
+@note `ub_addr<4:1>` happens to be.
+@note
+@note **THE COLLISION IS ONLY REACHABLE FROM THIS SIDE, AND THAT IS WORTH
+@note KNOWING RATHER THAN HUNTING FOR.**  The obvious mirror --- widening the
+@note CARD until it covers the block --- cannot be written, and the reason is
+@note the 74LS138 at IOBADR 0E20: it splits the block on `A<6:4>` and sends
+@note groups 0 to 3 nowhere.  The register block's sixteen registers are at
+@note `A<6:4>` 0 and 1, so a card whose page compare reached `0o766000` would
+@note still answer nothing there, however wide the page match became.  That is
+@note the same equivalence `iob-the-block-select-reaches-a-page-lower` records
+@note one line along, met from the other end.  It took a mutation that did not
+@note build --- `A<17:11>` in place of `A<17:7>`, which leaves `ub_addr<10:7>`
+@note read nowhere and Verilator says so --- to go and look.
+@note
+@note **AND THIS FILE HAD NEVER BEEN MUTATED AT ALL.**  Measured at the time
+@note this record was written: `cadr_spy_registers.sv` was in no check's source
+@note list, so `check_coverage` --- which unions those lists --- had nothing to
+@note say about it, while every check that builds `cadr_machine` built it
+@note through the include path.  It is in `unibus`'s list now.
+@old
+  assign selected = (ub_addr >= BASE) && (ub_addr < BASE + 18'o40);
+@new
+  assign selected = (ub_addr >= BASE - 18'o2000) && (ub_addr < BASE + 18'o40);
+@end
+
+@mutation unibus-the-card-is-not-behind-the-arbiter
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **The card taken off the diagnostic bus's arbiter and wired to the
+@note processor's own master.**  The console takes the BUS and not the
+@note register block --- it can only name the block, `cadr_console.sv` building
+@note its address as `SPY_BASE | eadr<<1`, but a bus has one master at a time
+@note --- so a processor cycle to the card must be masked while the console
+@note holds, exactly as a processor cycle to the block is.  Wired straight to
+@note `ub_msyn`, the card answers a second master's address lines while the
+@note console is driving them.
+@note
+@note Caught where the check runs a card cycle under a console hold.  The
+@note `sr_*` seam stays read by the register block, so lint does no catching.
+@old
+      .ub_msyn    (sr_msyn),
+      .ub_write   (sr_write),
+      .ub_addr    (sr_addr),
+      .ub_wdata   (sr_wdata),
+      .ub_ssyn    (iob_ssyn),
+@new
+      .ub_msyn    (ub_msyn),
+      .ub_write   (ub_write),
+      .ub_addr    (ub_addr),
+      .ub_wdata   (wdata[15:0]),
+      .ub_ssyn    (iob_ssyn),
+@end
+
+@mutation unibus-the-address-on-the-bus-is-odd
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **The fill bit of the shift that makes a Unibus address.**
+@note `busint::unibus_address` shifts the word address left one because the
+@note Unibus counts bytes, and MIT's own note on the debug master says "bit 0
+@note of the address is always zero".  Filled with a one instead, every
+@note address the machine puts on the bus is odd.
+@note
+@note **`machine` SURVIVES this and cannot do otherwise.**  MIT's boot PROM
+@note runs one Unibus cycle in 17,466 and it is the write of the mode register
+@note at `0o766012`; the diagnostic register block selects on a RANGE and
+@note takes `EADR<3:0>` from `ub_addr[4:1]`, so `0o766013` is still register 5
+@note and PROMDISABLE is still set.  The I/O board refuses an odd address ---
+@note `ioboard::answers` does too --- so it is the card that stops answering,
+@note which only a check that reads the card can see.
+@old
+  assign ub_addr_c = {ub_page[8:0], phys[7:0], 1'b0};
+@new
+  assign ub_addr_c = {ub_page[8:0], phys[7:0], 1'b1};
+@end
+
+@mutation unibus-the-md-strobe-lands-with-the-acknowledgement
+@check unibus
+@file rtl/machine/cadr_busint_xbus.sv
+@note **"MSYN OUT drops at SSYN T100 and -LOADMD rises with it, so the word
+@note lands 50 ns BEFORE the acknowledgement, where an Xbus word lands with
+@note it."**  That is the one place on either bus where the word and the
+@note acknowledgement come apart, and it is what `n_loadmd` is a port of its
+@note own for.  Moved to 150, the two coincide and the Unibus stops being
+@note different from the Xbus.
+@note
+@note **Nothing else in `make check` runs a Unibus read**, so nothing else can
+@note see this: the boot PROM's single Unibus cycle is a WRITE, where
+@note `cadr_microcycle.sv` gates -LOADMD by RDCYC and the strobe changes
+@note nothing at all, and `busint_xbus.golden` never leaves the Xbus.
+@old
+  localparam int unsigned UB_STROBE_T  = 100 / 5;   // -UB SSYN to the MD strobe
+@new
+  localparam int unsigned UB_STROBE_T  = 150 / 5;   // -UB SSYN to the MD strobe
 @end
 
 # ---------------------------------------------------------------------------

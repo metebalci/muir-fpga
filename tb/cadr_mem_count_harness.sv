@@ -102,6 +102,14 @@ module cadr_mem_count_harness #(
   logic n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc, nxm, unibus;
   logic memstart, mbusy, mbusy_sync;
 
+  // The I/O board's cables, tied off: no keyboard, no mouse, no serial chip
+  // and no Chaosnet interface, each its own slice.  What the card gives back
+  // is folded below with every other output of `cadr_machine`.
+  logic        ser_reset, iob_intr, audio, clock_ready;
+  logic [7:0]  iob_vector, csr_face;
+  logic [11:0] mouse_x, mouse_y;
+  logic [15:0] interval;
+  logic [1:0]  ub_ssyn_by;
   logic        mem_done, mem_error;
   logic        sintr;   // -XBUS.INTR, the machine's own; read by nothing here
   logic [31:0] mem_rdata;
@@ -137,6 +145,12 @@ module cadr_mem_count_harness #(
       .con_gnt(con_gnt), .con_ssyn(con_ssyn), .con_rdata(con_rdata),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
       .device_ack(1'b0), .device_rdata(32'd0),
+      .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'd0),
+      .ser_ready(1'b0), .chaos_intr(1'b0), .ser_reset(ser_reset),
+      .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
+      .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
+      .clock_ready(clock_ready), .interval(interval),
+      .ub_ssyn_by(ub_ssyn_by),
       .boards(7'd32),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -238,7 +252,9 @@ module cadr_mem_count_harness #(
                     vmaok, jcond, nop, pcs1, pcs0, iwrited, wrcyc, device,
                     dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn,
                     n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc, nxm,
-                    unibus, memstart, mbusy, mbusy_sync, mem_error, sintr};
+                    unibus, memstart, mbusy, mbusy_sync, mem_error, sintr,
+                    ser_reset, iob_intr, iob_vector, audio, csr_face,
+                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule
