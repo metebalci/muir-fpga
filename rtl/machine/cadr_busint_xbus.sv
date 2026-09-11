@@ -55,7 +55,7 @@
 `default_nettype none
 
 module cadr_busint_xbus (
-    input  var logic clk,          // 200 MHz, one tick = 5 ns
+    input  var logic clk,          // 160 MHz, one tick = 6.25 ns
     input  var logic rst,          // synchronous, active high
 
     // MCLK7 across the cables, one tick wide: the microcycle boundary, which
@@ -152,7 +152,7 @@ module cadr_busint_xbus (
   // that ends at `-MEMACK`, which leaves this module, crosses to the
   // processor and lands on `mfinish_t` and `rdfinish_t` --- counters, so
   // genuinely tick-rate and rightly outside the multicycle exception.  On the
-  // board flow, where 200 MHz comes through an MMCM and carries its
+  // board flow, where the machine's clock comes through an MMCM and carries its
   // uncertainty, that cost 198 ps:
   //
   //     busint/ssyn_at_reg[3]/C -> processor/mfinish_t_reg[3]/D

@@ -80,7 +80,7 @@
 //
 // THE CLOCK CROSSING IS QUASI-STATIC AND THAT IS ON PURPOSE.  `rd_addr` lives
 // in the DRCK domain and moves once per scan --- 454 TCKs, tens of
-// microseconds --- while `mem_q` is read in the 200 MHz domain through a
+// microseconds --- while `mem_q` is read in the 160 MHz domain through a
 // two-flop synchroniser on the address.  By the time the JTAG side loads
 // `mem_q` at the next CAPTURE, the address has been stable for thousands of
 // ticks and the word for very nearly as many.  It is the same argument
@@ -93,7 +93,7 @@ module cadr_probe #(
     // Samples.  A power of two, because the read pointer wraps on it.
     parameter int unsigned DEPTH = 1024
 ) (
-    input  var logic             clk,      // 200 MHz, the machine's own
+    input  var logic             clk,      // 160 MHz, the machine's own
     input  var logic             rst,
     input  var logic             qualify,  // `clock_edge`: one tick a microcycle
 
@@ -190,7 +190,7 @@ module cadr_probe #(
   // buses, the ALU, R, OB, the four sequencing flags --- and the machine's
   // own consumers of those take a microcycle to settle in, which is what
   // `rtl/plumbing/xilinx7/cadr_machine.xdc` grants them.  A register outside the machine
-  // taking the same nets in one 5 ns tick asks for something nothing in the
+  // taking the same nets in ONE TICK asks for something nothing in the
   // design has ever met: measured, `memstart_reg` reaching this register
   // through 24 levels of the dispatch memory is 18.048 ns, and the
   // instrumented board came out at **-13.156 ns on 2,400 endpoints** before
@@ -202,7 +202,8 @@ module cadr_probe #(
   // the four columns that can move *inside* a microcycle --- `lpc`, `md`,
   // `vma` and `promdis` --- and `md` is the one CLAUDE.md's entry about
   // sampling before a stall is about: `-LOADMD` strobes it while the clock is
-  // held off, and a register given 75 ns to notice might not have.  All four
+  // held off, and a register given a whole microcycle to notice might not
+  // have.  All four
   // come straight off registers in the machine, so one tick is what they can
   // have and what they do not need help meeting.
   //

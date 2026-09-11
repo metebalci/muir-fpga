@@ -93,8 +93,9 @@
 
 module cadr_prove #(
     // Ticks between the address settling and the request going up.  Sixteen
-    // is `cadr_busint_xbus.sv`'s `SETUP_T`, which is the 80 ns the bus
-    // specification puts on the master at a 5 ns tick.
+    // is `cadr_busint_xbus.sv`'s `SETUP_T`: the 80 ns the bus specification
+    // puts on the master, on MIT's own five-nanosecond grid.  It is a COUNT,
+    // so it is sixteen ticks whatever the board clocks a tick at.
     parameter int unsigned SETUP_T = 16
 ) (
     input  var logic        clk,

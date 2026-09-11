@@ -9,10 +9,20 @@
 // models it behind a trait rather than as parts, and so does this: the delay
 // line becomes a counter.
 //
-// Every instant the generator names is a multiple of five nanoseconds, so a
-// 200 MHz master clock resolves all of them exactly and `phase` counts in
-// five-nanosecond ticks.  The four read taps (75, 85, 100, 160 ns) and their
-// ILONG variants (115, 125, 140) are 15, 17, 20, 32, 23, 25 and 28 ticks.
+// Every instant the generator names is a multiple of five nanoseconds ON THE
+// DRAWINGS, so `TICK_NS` below is 5 and every tap divides out exactly: the
+// four read taps (75, 85, 100, 160 ns) and their ILONG variants (115, 125,
+// 140) are 15, 17, 20, 32, 23, 25 and 28 ticks.  `phase` counts those ticks.
+//
+// **`TICK_NS` IS THE CONVERSION FROM MIT'S DRAWINGS AND NOT THE LENGTH OF A
+// TICK.**  It is 5 for ever, because the drawings' grid is 5 ns and dividing
+// by anything else rounds an instant --- at 10 the first tap collapses to
+// zero ticks and SELECT lands on top of another tap.  How long a tick then
+// LASTS is the board's business and nobody's here: `boards/arty-z7-20/cadr_arty.sv`
+// makes it 6.25 ns, so this generator's cycle is 29 ticks of 6.25 rather
+// than of 5 and every instant keeps its exact ratio to every other.  The
+// machine cannot tell, and neither can any check --- they all compare tick
+// counts.
 //
 // MACHRUN is deliberately not a port.  `-CLK0` is `-TPCLK AND MACHRUN` at
 // CLOCK2 1D10, which is on the board and not in the generator; `clock.rs`
@@ -30,7 +40,7 @@
 `default_nettype none
 
 module cadr_phase_gen (
-    input  var logic       clk,        // 200 MHz, one tick = 5 ns
+    input  var logic       clk,        // 160 MHz, one tick = 6.25 ns
     input  var logic       rst,        // RESET, synchronous, active high
     input  var logic       hang,       // -HANG from VCTL1, true = stalling
     input  var logic       ilong,      // -ILONG from FLAG, true = stretch
@@ -86,6 +96,10 @@ module cadr_phase_gen (
   // {SSPEED1, SSPEED0, -ILONG}.  ILONG adds forty nanoseconds --- eight ticks
   // --- except at extra slow, where 160 is already the longest tap the chain
   // provides.  `Speed::read_phase_ns` has the same table.
+  //
+  // FIVE, FOR EVER: this is MIT's grid and not the board's clock.  See the
+  // header --- `cadr_arty.sv` makes a tick 6.25 ns and nothing below moves
+  // for it, because what is written below is tick COUNTS.
   localparam int unsigned TICK_NS = 5;
 
   // The fixed instants, all measured from -TPR0 at phase zero.
@@ -116,7 +130,7 @@ module cadr_phase_gen (
   //
   // Written the obvious way, each tap is `phase_next == read_t + offset`, and
   // the path out of the counter is an increment, then an add, then a compare,
-  // then the register: measured out of context at 5 ns, that missed by
+  // then the register: measured out of context at a 5 ns tick, that missed by
   // 0.244 ns with seven failing endpoints, three quarters of it routing.
   // Holding `read_t + offset - 1` in registers of their own leaves the
   // counter driving a comparator and nothing else.  The subtraction of one is

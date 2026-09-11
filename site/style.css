@@ -307,13 +307,17 @@ figure.screen img {
    too faint to tell one colour from another, which is the one place the
    colour itself is the whole content. */
 .d-key { fill-opacity: 1; }
-/* The two lamps that blink on the board blink here, at the board's own rates:
-   LD0 is bit 25 of a counter clocked at 200 MHz, 2.98 Hz; LD1 was measured
-   toggling every 0.14 s. The ring around each says so as well, for anyone who
-   has asked for less motion and gets none. */
+/* The two lamps that blink on the board blink here, at the board's own rates,
+   and both derive from the machine's clock: LD0 is bit 25 of a counter clocked
+   at 160 MHz, so it toggles every 2^25 ticks of 6.25 ns --- 0.210 s, a 0.419 s
+   period, 2.39 Hz; LD1 was measured toggling every 0.14 s when a tick was 5 ns,
+   which is 0.175 s and a 0.35 s period at 6.25. Both moved by exactly the
+   factor the tick did, the machine being scaled and not otherwise changed. The
+   ring around each says so as well, for anyone who has asked for less motion
+   and gets none. */
 @keyframes d-blink { 0%, 49.9% { opacity: 1 } 50%, 100% { opacity: 0.12 } }
-.d-lamp-fast { animation: d-blink 0.28s steps(1, end) infinite; }
-.d-lamp-slow { animation: d-blink 0.335s steps(1, end) infinite; }
+.d-lamp-fast { animation: d-blink 0.35s steps(1, end) infinite; }
+.d-lamp-slow { animation: d-blink 0.419s steps(1, end) infinite; }
 /* The disk light is not periodic on the board --- it follows the blocks the
    machine asks for --- so it flickers here on an uneven schedule of its own
    rather than on a duty cycle. */

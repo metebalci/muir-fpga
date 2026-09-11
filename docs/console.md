@@ -8,6 +8,16 @@ Written at the console slice, 2026-09-10, against `rtl/plumbing/cadr_console.sv`
 stands at this slice. Numbers and line ranges below are measured at that
 point; read the date on anything that looks like a fact about the fabric.
 
+**And every slack figure and every timing requirement in this file was
+measured at a 5 ns tick**, which is what the fabric ran at until 2026-09-11.
+A requirement printed as `5.000 ns` is one tick and one printed as `75.000 ns`
+is fifteen; at the 6.25 ns tick built since, the same two read 6.250 and
+93.750, and the tick counts and logic levels are unchanged. Both boards close
+at that tick --- +0.375 ns with memory off and +0.362 ns with `DDR=1`, zero
+failing endpoints on either --- so where this file says a board does not close
+it is describing the build it names. `docs/tv.md` has the decision and its
+reasons.
+
 **The machine goes quiet and nothing built can say why.** On the board the
 CADR loads its microcode from its pack, does a fixed amount of disk work and
 stops moving. The lamps say a beat is running and the probe sees only the
@@ -97,7 +107,9 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
      2  CYCLES   microcycles retired since reset, bits 31:0.  This is muir's
                  `Machine::cycles`
      3  CYCLESH  bits 63:32, LATCHED when CYCLES was read
-     4  TICKS    200 MHz ticks since reset, bits 31:0 --- `Rtl::ns()` / 5
+     4  TICKS    fabric ticks since reset, bits 31:0 --- `Rtl::ns()` / 5.
+                 A tick is 6.25 ns of real time, so `cadr-console.c` divides
+                 by `CONS_TICKS_PER_US` = 160 and not by 200
      5  TICKSH   bits 63:32, latched when TICKS was read
      6  RESET    **the one word of page 0 that is written.**  A write of
                  `RESET_KEY` and of nothing else pulses the machine's reset
@@ -527,10 +539,11 @@ flops, 32 at the capture and 32 at the latch.
 
 ### The bound
 
-`LOST_T` (line 167) is 4,096 ticks, 20.48 us. That much after the request the
+`LOST_T` (line 167) is 4,096 ticks --- 20.48 us of the machine's own time, and
+25.6 us of real time at the 6.25 ns tick. That much after the request the
 engine gives up, drops `dbg_req`, sets STAT's `lost` and answers the read
 with bit 16 set. A grant that never comes, or a register block that never
-answers, therefore costs the Arm 20 us and not its uptime. `LOST_T` is
+answers, therefore costs the Arm 26 us and not its uptime. `LOST_T` is
 checked as a *number* and not merely as "the read came back": the mutation
 `console-bound-is-not-a-bound` stretches it to 8,000 and is caught at "a lost
 read took longer than the bound". That is `RD_FINISH_T`'s lesson one file
@@ -846,8 +859,9 @@ time, since it is the same register block and one line.
 
 ## The timing, and the -12.837 ns
 
-**The console's first bitstream missed 200 MHz by two and a half ticks**, and
-the way it did is worth more than the fix. At `37711fe`, `DDR=1`, board flow:
+**The console's first bitstream missed its own clock by two and a half
+ticks**, and the way it did is worth more than the fix. At `37711fe`, `DDR=1`,
+board flow, the fabric then at 200 MHz and a tick then 5 ns:
 
     Slack (VIOLATED) : -12.837 ns
     Source:            u_machine/processor/md_reg[15]/C
@@ -963,8 +977,9 @@ flow, `boards/arty-z7-20/vivado/bitstream.tcl`, both configurations, zero critic
            failing          0 of 16,028       0 of 16,028
            LUTs / regs      3,025 / 1,566     3,032 / 1,566
 
-**The memory-on board did not close before this change and does not close
-after it, and the 0.16 ns between them is not the reset.** `grep -c mach_rst`
+**The memory-on board did not close before this change and did not close
+after it --- both at the 5 ns tick they were built at --- and the 0.16 ns
+between them is not the reset.** `grep -c mach_rst`
 on both `timing.rpt` files is **0**: the reset appears in neither report. Every
 failing path in both is the disk controller's, and the three builds name three
 different ones ---

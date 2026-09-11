@@ -151,7 +151,7 @@ a run reproducible."* Concretely, four things on this card are functions of
 **None of them is derived from the CADR's clock generator.** On `micro`, the
 engine with no clock at all, `ns` is microcycles multiplied by 145, and these
 keep worse time than the board would. On `rtl`, `ns` is the machine's own
-nanoseconds, so a fabric counting its 200 MHz ticks agrees. That is the engine
+nanoseconds, so a fabric counting its own ticks agrees. That is the engine
 this trace is taken from, and the one the fabric is held to.
 
 That is a reference with time in it in four places. Each of them lands on the
@@ -243,6 +243,23 @@ instead reloads a down-counter with 3,333,333 ticks loses a nanosecond a
 period, and the trace reads the register at fourteen boundaries on alternating
 sides to catch it.
 
+**A tick is 6.25 ns, so this card's two clocks no longer agree with the wall.**
+Everything above is the machine's own time, where a tick is five nanoseconds
+because that is what MIT's drawings are drawn on, and every tick count in the
+design is unchanged. What changed on 2026-09-11 is how long a tick lasts: the
+fabric runs at 160 MHz, so the machine runs at 80% of the speed the hardware
+ran. `USEC_PERIOD_T` is 200 ticks, which is now 1.25 real microseconds, and a
+CADR wall clock run off this counter loses 4 h 48 m a day. The sixty-cycle
+counter is the same family and slows in the same proportion, its mains edges
+arriving at 48 Hz. **Mete's decision is that both keep agreeing with muir for
+now**, because the checks are the backbone of this project and nothing built
+yet needs the time of day --- this card is not composed into `cadr_machine` at
+all, so nothing on the board reads either of them. **And 6.25 was chosen partly
+so that undoing it is one constant.** A real microsecond is exactly 160 ticks,
+a whole number, so restoring real time here means changing `USEC_PERIOD_T` and
+nothing else, rather than a rewrite or a second clock domain. Doing it would
+put this module out of agreement with muir, which is why it has not been done.
+
 **A write lands at `-UB SSYN`, because that is where muir puts it.**
 `busint.rs`'s `Responder::Unibus` arm makes `answered` equal to `ssyn` for
 every register of this card. `Responder::Interface`, the diagnostic block,
@@ -285,9 +302,9 @@ posed, and why the second was declined.
 muir puts the encoders in `terminal::mouse`, the far end rather than the card,
 and what crosses the card's edge is seven lines: four quadrature and three
 switches. A USB mouse gives deltas, and turning a delta into quadrature phases
-16 us apart in software over `M_AXI_GP0` is 62,500 writes a second, so the
-phase generator cannot be in `cadr-usb-input`. There are two shapes, and the
-trace supports either:
+16 us apart --- 20 real microseconds, the tick being 6.25 ns --- in software
+over `M_AXI_GP0` is 50,000 writes a second, so the phase generator cannot be in
+`cadr-usb-input`. There are two shapes, and the trace supports either:
 
 - **The card takes the seven lines**, and something in fabric beside it turns
   Linux's deltas into phases. This is the card MIT built, and the trace's
@@ -540,8 +557,8 @@ have had to compute it.
 Written the obvious way, as `mains_acc + 5 >= SIXTY_CYCLE_NS` and then that
 sum less the period, it puts an adder, a 24-bit compare and a subtraction
 in series on the accumulator's own data pins. That is eleven logic levels and
-**-0.702 ns** out of context, measured, the worst path in the module by a
-mile and the only one that missed. The remedy is the one
+**-0.702 ns** out of context, measured at a 5 ns tick, the worst path in the
+module by a mile and the only one that missed. The remedy is the one
 `cadr_disk_controller.sv` already uses for its spindle and
 `cadr_phase_gen.sv` for its taps: compare a tick early into a register, and
 make the two candidates adders in parallel with the mux after them. The check

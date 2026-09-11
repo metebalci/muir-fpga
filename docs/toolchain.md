@@ -109,11 +109,24 @@ environment:
     BIT         default build/bitstream/cadr_arty.bit
 
 **`fit.tcl` is out of context and `bitstream.tcl` is the board.** They will not
-agree, and the difference is not a fault. The fit uses an ideal 5 ns clock. The
-board derives 200 MHz through an MMCM from the board's 125, and an MMCM costs
-on the order of two hundred picoseconds in jitter and uncertainty. A design can
-meet out of context and miss on the board by that much. **The board run is the
-one that decides.**
+agree, and the difference is not a fault. The fit uses an ideal clock of the
+machine's own period; the board makes that clock with an MMCM from the board's
+125 MHz pin, and an MMCM costs on the order of two hundred picoseconds in
+jitter and uncertainty. A design can meet out of context and miss on the board
+by that much. **The board run is the one that decides.**
+
+**Neither flow holds a clock period of its own.** The machine's tick is 6.25 ns
+--- 160 MHz --- and the only place that is decided is `CLKOUT0_DIVIDE_F` in
+`boards/arty-z7-20/cadr_arty.sv`. `boards/arty-z7-20/vivado/tick.tcl` parses
+the MMCM's four parameters out of that file --- the crystal's period, the input
+divider, the feedback multiplier and the output divider --- and returns the
+tick they make; `fit.tcl` writes its `create_clock` from what it returns, and
+both flows hand the same number to `constraints_check.tcl`'s assertions. If the
+parse cannot find exactly one of each parameter the run stops and names the
+file. It fails rather than defaulting on purpose: a period written a second
+time in a Tcl script is a period that can disagree with the fabric, and a
+default that is right today leaves the flow working after the RTL moves while
+it reports a design nobody meant to build.
 
 ### Over ssh
 

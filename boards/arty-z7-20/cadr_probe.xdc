@@ -20,13 +20,13 @@
 # measurement.  Nothing here needs it to be tight; it needs it to exist.
 #
 # AND WHY THE TWO DOMAINS ARE ASYNCHRONOUS.  They are: TCK comes off a cable
-# and the fabric's 200 MHz comes off an MMCM.  What crosses between them is
+# and the fabric's 160 MHz comes off an MMCM.  What crosses between them is
 # `rd_addr` --- through a two-flop synchroniser --- and `mem_q`, which is
 # quasi-static by construction: the pointer moves once a scan, 454 TCKs apart,
-# and the 200 MHz side re-reads the word every 5 ns, so it has been standing
-# for thousands of ticks before the JTAG side loads it.  Saying "asynchronous"
-# is what keeps the placer from spending itself on a path that has tens of
-# microseconds and is reported as if it had five nanoseconds.
+# and the 160 MHz side re-reads the word every 6.25 ns, so it has been
+# standing for thousands of ticks before the JTAG side loads it.  Saying
+# "asynchronous" is what keeps the placer from spending itself on a path that
+# has tens of microseconds and is reported as if it had one tick.
 #
 # The cell is found by what it is rather than by where it is: the probe is
 # inside a generate block, and a hierarchical name is the thing that goes
@@ -47,7 +47,7 @@ set_clock_groups -asynchronous \
 # registers. The A and M buses, the ALU, R, OB and the four sequencing flags
 # are not registers: they are the read phase, settling somewhere inside a
 # 145 ns microcycle and read at the end of it. A register outside the machine
-# taking those nets in one 5 ns tick asks for something no path in this design
+# taking those nets in ONE TICK asks for something no path in this design
 # has ever met --- 18.048 ns from `memstart_reg` through 24 levels of the
 # dispatch memory, measured --- and the first instrumented board came out at
 # **-13.156 ns on 2,400 endpoints of 16,053** for exactly that reason, against
@@ -63,7 +63,8 @@ set_clock_groups -asynchronous \
 # boundary to the next, which is this project's own test for what may be
 # relaxed. `late_q` --- `lpc`, `md`, `vma`, `promdis` --- deliberately may not.
 # `md` is the column CLAUDE.md's entry about sampling before a stall is about:
-# `-LOADMD` strobes it while the clock is held off, and a register given 75 ns
+# `-LOADMD` strobes it while the clock is held off, and a register given a
+# whole microcycle
 # to notice might not have. All four come straight off registers in the
 # machine and meet one tick without help.
 #

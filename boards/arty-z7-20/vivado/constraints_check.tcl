@@ -39,7 +39,7 @@
 # IT BECAME A LIST WHEN THE PROBE ARRIVED, and the alternative would have
 # been worse. `rtl/plumbing/xilinx7/cadr_probe.sv` holds the machine's *combinational*
 # outputs --- the A and M buses, the ALU, the sequencing flags --- for a tick,
-# and those settle inside a microcycle and not inside a 5 ns tick: the first
+# and those settle inside a microcycle and not inside one tick: the first
 # instrumented board came out at -13.156 ns on 2,400 endpoints because of it.
 # So `boards/arty-z7-20/cadr_probe.xdc` relaxes that one register, on the same argument
 # the machine makes for its own, and the invariant here is unchanged: nothing
@@ -88,8 +88,8 @@ proc assert_constraints_scoped {inside period} {
     puts "XDC: FAILED --- [llength $caught] register(s) outside [join $inside {, }]"
     puts "XDC: are taking a microcycle exception that was written for the"
     puts "XDC: machine's datapath. A reset synchroniser or a free-running"
-    puts "XDC: counter given 75 ns to settle is the one thing that file's own"
-    puts "XDC: prose says must not happen."
+    puts "XDC: counter given a whole microcycle to settle is the one thing"
+    puts "XDC: that file's own prose says must not happen."
     foreach c [lrange $caught 0 9] { puts "XDC:   $c" }
     if {[llength $caught] > 10} {
         puts "XDC:   ... and [expr {[llength $caught] - 10}] more"

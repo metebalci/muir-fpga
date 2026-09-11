@@ -128,7 +128,10 @@ Two consequences, both deliberate in `boards/arty-z7-20/cadr_arty.sv`:
 
 - **The fabric clock comes from an MMCM off the board's 125 MHz pin, not from
   the PS.** It runs the moment the bitstream loads. A bring-up where nothing
-  moves until a second thing works has two unknowns in it.
+  moves until a second thing works has two unknowns in it. The MMCM makes
+  160 MHz --- 125 x 8 at the VCO, divided by 6.25 --- so a tick is 6.25 ns.
+  Every tick count in the machine is unchanged by that; `cadr_arty.sv`'s
+  header is the whole argument.
 - **Anything needing DDR is a debugger test and not a program-and-look one.**
   From XSDB the sequence is `connect`, `targets -set -filter {name =~ "APU*"}`,
   `source ps7_init.tcl`, `ps7_init`, `ps7_post_config`. **The order of those
@@ -256,8 +259,9 @@ exactly like a fabric that cannot write. It cost one run at `700b98a`.
 
 The machine, `DDR=1`, has no such trigger. `boards/arty-z7-20/cadr_arty.sv`
 resets it on the MMCM's lock or BTN0. It therefore starts the instant the part
-configures, and reaches its memory cycles 118 ms later whether or not anybody
-has brought the port up. Poisoning 256 words over JTAG takes longer than that.
+configures, and reaches its memory cycles 118 ms of machine time later --- 148
+ms of real time, the tick being 6.25 ns --- whether or not anybody has brought
+the port up. Poisoning 256 words over JTAG takes longer than either.
 So the port must be **live before the bitstream loads**:
 
     ps7_init -> clear LVL_SHFTR_EN -> poison -> ps7_post_config -> program
@@ -393,8 +397,8 @@ port comes live. Check `BIT=`.
 `DDR=1` puts the processing system behind the machine's own memory port. The
 boot PROM's whole main-memory traffic is `PAGE-0-PARITY-FIX`. It reads each of
 the 256 words of physical page 0 and writes the same word straight back. That
-is 512 bus cycles, between 118.0 and 118.4 ms after reset, and the PROM never
-touches memory again.
+is 512 bus cycles, between 118.0 and 118.4 ms of machine time after reset, and
+the PROM never touches memory again.
 
 **An identity copy leaves nothing behind.** Page 0 reading back unchanged says
 the path did no harm. It cannot say the path was used, because a board whose
@@ -486,13 +490,21 @@ at which error it was.
 
 ## What the LEDs say
 
-    LD0   the fabric is clocked           free-running, about 3 Hz at 200 MHz
-    LD1   microcycles are retiring        beat[19], ~0.6 Hz with no memory
+    LD0   the fabric is clocked           free-running, about 2.4 Hz at 160 MHz
+    LD1   microcycles are retiring        beat[19], ~0.5 Hz with no memory
     LD2   NXM timeouts, at their rate     nxm_count[16], not the flag itself
     LD3   the datapath is moving          witness, a ~700-bit fold
     LD4   where the boot has got to       red not running, blue PROM, green PROMDISABLE
     LD5   was the last cycle answered     red the timer ended it, green a slave did,
                                           blue if S_AXI_HP0 refused it
+
+**Every rate below LD0 is in the machine's own time, and a wristwatch reads a
+quarter longer.** The tick is 6.25 ns rather than 5, so the machine runs at 80%
+of the speed the hardware ran; every tick count in it is unchanged, which is
+why none of the simulations these figures come from moved. A period given here
+as 0.78 s is 0.98 s at the board, and 118 ms after reset is 148 ms. LD0 is the
+exception because it counts fabric ticks and not microcycles, and its line
+above is already real time.
 
 **LD0 and LD1 are the two that earn their place.** Between them they say
 whether the fabric is clocked and whether the machine is executing. That is the

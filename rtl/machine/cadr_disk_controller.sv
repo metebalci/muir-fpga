@@ -181,8 +181,8 @@
 // word and the register number; the second DECODES, from registers only, into
 // one flag a decision; the third acts on the flags, two logic levels from a
 // data pin.
-// Nothing on the bus can see 5 ns in a register: the next bus cycle is 145 ns
-// away.  What CAN see it is the trace, which samples every timer a START
+// Nothing on the bus can see one tick in a register: the next bus cycle is a
+// whole microcycle, 29 ticks, away.  What CAN see it is the trace, which samples every timer a START
 // loads either side of its expiry to the tick --- so each such load is made
 // with `STORE_HOLD_NS` less, written at the load and not hidden in the
 // constant, the way `RD_FINISH_T` carries its "two ticks short of 140 ns" in
@@ -218,7 +218,7 @@ module cadr_disk_controller #(
     // against it rather than assuming.
     parameter int unsigned SLOTS = 24
 ) (
-    input  var logic        clk,        // 200 MHz, one tick = 5 ns
+    input  var logic        clk,        // 160 MHz, one tick = 6.25 ns
     input  var logic        rst,
 
     // `-XBUS INIT` on the backplane, which is not a bus cycle on these four
@@ -1276,7 +1276,8 @@ module cadr_disk_controller #(
   // makes every `ch_state == C_X` a five-input LUT standing in front of
   // whatever else a clock enable tests, and on the DDR=1 board at 5b03a4e
   // `ch_state_reg[2]` carried 169 loads and reached `ps_w_reg[*]/CE` over
-  // three LUTs and 3.872 ns of routing --- 4.920 ns of a 5 ns tick, and 61
+  // three LUTs and 3.872 ns of routing --- 4.920 ns of the 5 ns tick that
+  // board was clocked at, and 61
   // of that board's 278 failing endpoints sat behind that decode.  One hot
   // is the obvious answer and the attribute was written, fitted and read
   // back: Vivado 2026.1 reports `inferred FSM for state register` for
