@@ -261,6 +261,40 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # THE MAP, WRITTEN AND THEN READ THROUGH, AGAINST A REAL MEMORY.  Same
+    # module list and same reference as `machine`, and one thing different:
+    # there `mem_rdata` is muir's own MD column keyed by the ROW, so the word
+    # is right whatever address the map produced and a mistranslation is
+    # invisible; here it is fetched from a store keyed by `mem_addr`, with
+    # page 0 holding what muir's memory holds and every other address holding
+    # a poison injective in it.  `ddr_boot` is the same claim from the other
+    # side and cannot make it either, having no muir reference at all.
+    #
+    # `sources` is the two files a map fault can live in --- the map itself in
+    # `cadr_microcycle.sv`, and `cadr_ddr_map::main_byte_address`, the last
+    # step from the physical word to the byte address on `mem_*` --- and the
+    # rest of the machine is `extra`, having `machine`'s own records aimed at
+    # it.  A record aimed here should be run against `machine` too and the
+    # difference reported: a mutation both catch says nothing new, and one
+    # only this catches is the hole it was written for.  Measured at this
+    # slice: four of the five are caught both ways and
+    # `the-memory-address-loses-its-page-bit` is caught only here.
+    "map_boot": {
+        "sources": ["rtl/cadr_microcycle.sv", "rtl/cadr_ddr_map.sv"],
+        "extra": [
+            "rtl/cadr_phase_gen.sv",
+            "rtl/cadr_xbus_decode.sv",
+            "rtl/cadr_busint_xbus.sv", "rtl/cadr_xbus_ddr.sv",
+            "rtl/cadr_disk_controller.sv", "rtl/cadr_tv.sv",
+            "rtl/cadr_console_bus.sv", "rtl/cadr_memory_path.sv",
+            "rtl/cadr_machine.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_map_boot_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl"],
+        "golden": "rtl.golden",
+        "gprom": True,
+    },
     # The memory port's tally, which is the board's only positive witness that
     # the machine's memory cycles were ANSWERED.  The boot PROM's traffic is an
     # identity copy, so page 0 reading back unchanged says the same thing
