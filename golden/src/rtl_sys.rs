@@ -34,21 +34,26 @@
 //!
 //! **The shape of the run, measured.**  The machine leaves the boot PROM at
 //! microcycle 1,410,035 and has first touched everything reachable by
-//! 2,084,537, so the trace runs from zero to 2,200,000 --- 297 MB, ten
-//! seconds to write.  A *window* into the middle would be a fifth of that
-//! and was tried first; it cannot be checked at all, because a fabric that
+//! 2,084,537, so the trace runs from zero to 2,800,000 --- 392 MB, eleven
+//! seconds to write.  A *window* into the middle was a fifth of the size and
+//! was tried first; it cannot be checked at all, because a fabric that
 //! boots from reset does not have the machine's state at microcycle three
 //! million and no column of the trace carries it.  Against `rtl.golden`'s
-//! whole 600,000:
+//! whole 600,000, in the two checks' own printed figures:
 //!
-//!   MAP as the M bus source                1  ->    1,125
-//!   the dispatch memory read               0  ->   14,323
-//!   Q shifted                              0  ->   26,765
-//!   PROMDISABLE set                        0  ->  789,965
-//!   -ILONG                                 0  ->   18,419
+//!   MAP as the M bus source                    1  ->       8,814
+//!   the dispatch memory read                   0  ->      69,135
+//!   Q shifted                                  0  ->      39,056
+//!   fetches out of the control store      16,384  ->   1,418,798
+//!   ILONG instructions                     2,048  ->      73,231
 //!
-//! The testbench asserts every one of them, so a trace that stops reaching
-//! them stops earning its 297 MB.
+//! Neither of the boot PROM's two nonzero figures is what it looks like: it
+//! runs at extra slow throughout, where `-ILONG` changes a cycle's length by
+//! nothing, and every fetch it makes above the PROM is a `WRITE-I-MEM`
+//! reading back the word its own write pulse has just put there.  The
+//! testbench asserts all five, and `PROMDISABLE` and microcode actually run
+//! out of the control store besides, so a trace that stops reaching them
+//! stops earning its 392 MB.
 //!
 //! **What no trace reaches.**  `IR<46>`, the statistics counter, and
 //! `MACHRUN` down: neither occurs in a hundred million microcycles here or
@@ -76,17 +81,27 @@
 /// The alternative was to ship the window with the state it starts from ---
 /// seven memories and every register, as files and elaboration parameters ---
 /// which is a second format to keep in step with the RTL and a backdoor into
-/// the registers besides.  Running from zero costs 297 MB and ten seconds and
-/// needs neither.
+/// the registers besides.  Running from zero costs 392 MB and eleven seconds
+/// and needs neither.
 const SKIP: u64 = 0;
 
 /// Microcycles written.
 ///
 /// The machine leaves the boot PROM at 1,410,035 and has first touched
-/// everything reachable by 2,084,537, so this is that with room after it.
-/// From zero the trace is a superset of `rtl.golden`'s coverage rather than a
-/// disjoint window: it boots the PROM too.
-const CYCLES: u64 = 2_200_000;
+/// everything reachable by 2,084,537.  From zero the trace is a superset of
+/// `rtl.golden`'s coverage rather than a disjoint window: it boots the PROM
+/// too.
+///
+/// **It was 2,200,000 and the extra 600,000 are the page-fault path.**
+/// `PDL-BUFFER-REFILL` --- the routine the board halts in, `0o25034`
+/// to `0o25041` in `ucadr/uc-page-fault.lisp` --- is first *executed* at
+/// microcycle 2,196,660, so 2,200,000 caught fifteen executed microcycles of
+/// it where 2,800,000 carries 1,317.  The rest of the path comes with it:
+/// microcycles whose access the map denies go from 6,911 to 71,614, and reads
+/// of the dispatch memory from 13,918 to 69,135.  The extension also found
+/// the one row in this file's history where the `md` column was wrong;
+/// `trace.rs` has that account.
+const CYCLES: u64 = 2_800_000;
 
 mod trace;
 
