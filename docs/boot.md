@@ -283,8 +283,14 @@ no reason to size it more tightly: the space costs nothing to ship and a user
 who fills all eight units and keeps six spare bands beside them never has to
 rewrite the card.
 
-    BOOT_MB=64 PACKS_MB=3584 BIT=<the released bitstream> STANDALONE=1 \
-        boards/arty-z7-20/linux/mksd-buildroot.sh
+    BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
+
+`mksd-release.sh` holds those decisions so that a release is a command rather
+than a set of variables somebody has to remember. It refuses to run if `PACKS`
+is set. It does not trust its own standalone flag either: it greps the staged
+card for anything address-shaped afterwards and stops if it finds any, because
+a flag can be wrong and a private address on a public artefact cannot be taken
+back.
 
 **The image is 3.83 GB and the download is 7.4 MB**, measured, because
 everything the bay does not hold is zeros and the kernel and the bitstream
@@ -302,11 +308,18 @@ minutes and is fine. **`STANDALONE=1` matters**: without it the card would
 carry this project's own TFTP server address and boot over a network the user
 has not got.
 
-**The card this project builds for itself is a different one, and that is the
-point of the parameters.** It names packs, so it carries the machine's current
-world and boots straight into it, and it leaves out `STANDALONE=1` so the
-board fetches its files over the network and the card is written once. Neither
-of those belongs in a release.
+**The card this project builds for itself is a different one, and it has a
+script of its own.**
+
+    BIT=<a bitstream> boards/arty-z7-20/linux/mksd-dev.sh [PACKS="a.img 3=b.img"]
+
+`mksd-dev.sh` names the server, so the loader fetches the bitstream, the
+kernel, the tree and the root filesystem over the network and the card is
+written once. It carries packs, so the machine boots straight into its own
+world. And it stops if `local.conf` is missing, rather than quietly building a
+card that boots from itself, because somebody who forgot to write that file
+should be told. Neither of those belongs in a release, which is why there are
+two scripts over one staging tool rather than one script with a mode.
 
 ## The drive bay
 
