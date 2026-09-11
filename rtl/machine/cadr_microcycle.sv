@@ -46,7 +46,7 @@
 // microcycle boundary with `NPC` as its address and complete ONE TICK later
 // --- one tick of the 29 a microcycle is at normal speed, or of the 44 at the
 // extra slow the boot PROM runs at.  (145 ns and 220 ns on MIT's drawings;
-// 181.25 and 275 of real time at this board's 6.25 ns tick.  The COUNT is
+// 290 and 440 of real time at this board's 10 ns tick.  The COUNT is
 // what matters and the count does not move with the tick.)
 //
 // **The scratchpads are read while CLK is high, and the 74S373s are what
@@ -96,7 +96,7 @@ module cadr_microcycle #(
     // twelve hex digits.  Generated into build/, never committed.
     parameter string PROM_HEX = "build/boot_prom.hex"
 ) (
-    input  var logic        clk,          // 160 MHz, one tick = 6.25 ns
+    input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,          // RESET, synchronous, active high
 
     // --- the console's registers: OLORD1 1A09 and 1A10.  The fabric has no

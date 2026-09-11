@@ -35,38 +35,43 @@
 //
 // THREE THINGS THIS FILE HAS TO GET RIGHT THAT ARE NOT OBVIOUS.
 //
-// **THE TICK IS 6.25 ns, AND EVERY TICK COUNT IN THE MACHINE IS UNCHANGED.**
+// **THE TICK IS 10 ns, AND EVERY TICK COUNT IN THE MACHINE IS UNCHANGED.**
 // `CLKOUT0_DIVIDE_F` below is the only place the length of a tick is decided,
 // and it is the only thing that moved when Mete decided on 2026-09-11 to stop
-// treating timing closure as something to chase.  Nothing under `rtl/machine/`
-// changed: `cadr_phase_gen.sv`'s `TICK_NS` is still 5, because that constant
+// treating timing closure as something to chase.  It went from 5 to 6.25 that
+// morning and from 6.25 to 10 that afternoon, when a one-character change to
+// a multiplexer cost a third of a nanosecond and the memory-on board stopped
+// closing again: Mete's words were "if you have timing concern, we can even
+// increase the tick to 10ns".  Nothing under `rtl/machine/` changed:
+// `cadr_phase_gen.sv`'s `TICK_NS` is still 5, because that constant
 // is the conversion from MIT's drawings --- whose instants are five
 // nanoseconds apart --- into tick counts, and the seven read taps are still
 // 15, 17, 20, 23, 25, 28 and 32 ticks of whatever a tick costs.
 //
 // **SO THE MACHINE IS SCALED AND NOT DISTORTED**, and that distinction is the
-// whole argument.  What must never happen is rounding an INDIVIDUAL instant:
-// at a 10 ns tick the 5, 25, 45, 65, 85 and 145 ns instants become half-ticks
-// and six of the machine's own edges, the microcycle's length among them,
-// simply cannot be expressed --- the "different machine that still lights
-// LEDs" this project keeps meeting.  Making every tick longer by the same
-// factor is a different operation: every instant keeps its exact ratio to
-// every other, a microcycle is 29 ticks whatever a tick costs, and the
-// machine's own clock is the only clock it has.  The machine therefore runs
-// at 80% of the speed the hardware ran and **nothing inside it can tell**.
-// Every check in this repository compares tick counts on both sides, so not
-// one of them moves either.
+// whole argument.  It is also the one this file has to state carefully, now
+// that the tick is 10 ns, because an old note in these sources argued against
+// exactly that number and meant something else.  What must never happen is
+// REDESCRIBING MIT's instants on a 10 ns grid: the 5, 25, 45, 65, 85 and
+// 145 ns instants would become half-ticks and six of the machine's own edges,
+// the microcycle's length among them, simply could not be expressed --- the
+// "different machine that still lights LEDs" this project keeps meeting.
+// That is a property of `cadr_phase_gen.sv`'s `TICK_NS`, which is 5 for ever.
+// Making every tick LONGER by the same factor is a different operation: the
+// counts are untouched, so every instant keeps its exact ratio to every other,
+// a microcycle is 29 ticks whatever a tick costs, and the machine's own clock
+// is the only clock it has.  The machine therefore runs at 50% of the speed
+// the hardware ran and **nothing inside it can tell**.  Every check in this
+// repository compares tick counts on both sides, so not one of them moves
+// either.
 //
 // The two places where that is visible from outside are recorded, not fixed:
 // see "THE TWO CLOCKS THAT NOW DISAGREE WITH THE WALL" below.
 //
-// **The board's clock is 125 MHz and the machine's is 160.**  Run the fabric
-// from the 125 MHz pin instead and the seven taps land 8 ns apart, which is
-// not a scaling --- 8 ns is not 5 ns times anything that keeps the counts ---
-// so it would be that different machine again.  The 160 MHz therefore comes
-// from an MMCM: 125 x 8 = 1000 MHz at the VCO, divided by 6.25.  **The VCO is
-// 1000 MHz exactly, so the output divider reads literally as the tick in
-// nanoseconds**, which is what lets `boards/arty-z7-20/vivado/tick.tcl` read
+// **The board's clock is 125 MHz and the machine's is 100.**  The 100 MHz
+// comes from an MMCM: 125 x 8 = 1000 MHz at the VCO, divided by 10.  **The
+// VCO is 1000 MHz exactly, so the output divider reads literally as the tick
+// in nanoseconds**, which is what lets `boards/arty-z7-20/vivado/tick.tcl` read
 // the number back out of this file and hand it to `create_clock` and to the
 // constraint assertions --- so no constraint can describe a different machine
 // from the one being built.  A primitive rather than a generated IP core,
@@ -81,21 +86,23 @@
 // and nothing built yet needs the time of day:
 //
 //   - `rtl/machine/cadr_io_board.sv`'s microsecond clock is 200 ticks, so it
-//     counts one per 1.25 real microseconds and a CADR wall clock run off it
-//     loses 4 h 48 m a day.  The card is not composed into `cadr_machine`
-//     yet, so nothing on this board reads it.
+//     counts one per 2.0 real microseconds and a CADR wall clock run off it
+//     loses half a day in a day.  The card is not composed into
+//     `cadr_machine` yet, so nothing on this board reads it.
 //   - `rtl/machine/cadr_tv.sv`'s frame is 3,091,200 ticks, so the vertical
-//     interrupt arrives every 19.32 real ms --- 51.76 Hz where the display
+//     interrupt arrives every 30.912 real ms --- 32.35 Hz where the display
 //     board scanned at 64.70.  MIT's microcode uses that interrupt as its
 //     roughly-sixty-cycle clock for mouse tracking and the scheduler's
-//     sequence break, so the machine's idea of a second is 80% of one.
+//     sequence break, so the machine's idea of a second is 50% of one.
 //
-// **6.25 was chosen partly so that undoing this is one constant each.**  A
-// real microsecond is exactly 160 ticks and a real frame is exactly
-// 2,472,960, both whole numbers, so restoring real time later means changing
-// `USEC_PERIOD_T` and `FRAME_T` and nothing else --- not a rewrite, and not a
-// second clock domain.  Doing it would put those two modules out of agreement
-// with muir, which is why it has not been done.
+// **10 ns keeps the property 6.25 was partly chosen for: undoing this is one
+// constant each.**  A real microsecond is exactly 100 ticks and a real frame
+// exactly 1,545,600, both whole numbers, so restoring real time later means
+// changing `USEC_PERIOD_T` and `FRAME_T` and nothing else --- not a rewrite,
+// and not a second clock domain.  The argument that chose 6.25 was that
+// 1,000 / 6.25 is 160 exactly; at 10 ns it is 100 exactly, so the argument
+// survives the number moving.  Doing it would put those two modules out of
+// agreement with muir, which is why it has not been done.
 //
 // **Every output has to reach a pin or synthesis will delete the machine.**
 // `cadr_machine` brings out the whole datapath for the testbenches to compare
@@ -145,8 +152,8 @@ module cadr_arty #(
 
   // ------------------------------------------------------------ the clock
   //
-  // 125 MHz in, 160 MHz out. The VCO must sit between 600 and 1200 MHz on a
-  // -1 part: 125 x 8 is 1000, comfortably inside, and 1000 / 6.25 is the tick.
+  // 125 MHz in, 100 MHz out. The VCO must sit between 600 and 1200 MHz on a
+  // -1 part: 125 x 8 is 1000, comfortably inside, and 1000 / 10 is the tick.
   logic clk_fb, clk_raw, clk, mmcm_locked;
 
   // The eleven clock outputs this design does not take are left empty on
@@ -159,13 +166,13 @@ module cadr_arty #(
       .DIVCLK_DIVIDE  (1),
       .CLKFBOUT_MULT_F(8.000),   // 1000 MHz at the VCO
       // THE TICK, AND THE ONLY PLACE IT IS DECIDED.  The VCO is 1000 MHz
-      // exactly, so this number IS the tick in nanoseconds: 6.250 ns, which
-      // is 160 MHz.  `boards/arty-z7-20/vivado/tick.tcl` parses these four
+      // exactly, so this number IS the tick in nanoseconds: 10.000 ns, which
+      // is 100 MHz.  `boards/arty-z7-20/vivado/tick.tcl` parses these four
       // parameters out of this file and computes the period the constraints
       // are written against, so the fabric and its timing cannot describe
       // two different machines.  See the header for why every tick COUNT in
       // the design stays exactly as it was.
-      .CLKOUT0_DIVIDE_F(6.250)   // 160 MHz, one tick = 6.25 ns
+      .CLKOUT0_DIVIDE_F(10.000)   // 100 MHz, one tick = 10 ns
   ) u_mmcm (
       .CLKIN1  (sysclk),
       .CLKFBIN (clk_fb),
@@ -183,7 +190,7 @@ module cadr_arty #(
   BUFG u_bufg (.I(clk_raw), .O(clk));
 
   // Reset while the MMCM has not locked, and on BTN0. Synchronised out of
-  // the 160 MHz domain: `locked` is asynchronous to it by construction.
+  // the 100 MHz domain: `locked` is asynchronous to it by construction.
   logic [3:0] rst_sync;
   logic       rst;
   always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked || btn[0]};
@@ -578,7 +585,7 @@ module cadr_arty #(
   // Linux is up it does not. Nobody has to arm anything.
   //
   // THE FABRIC CLOCK STAYS ON THE PIN. `hp0_aclk` is a PS7 *input* and takes
-  // the MMCM's 160 MHz: the fabric clocks the port rather than the other way
+  // the MMCM's 100 MHz: the fabric clocks the port rather than the other way
   // round. Driving the fabric from `FCLK_CLK0` is the obvious move now that
   // the PS is in the design and it is wrong --- programming a `.bit` over
   // JTAG does not start the PS, so the board would be dark until somebody
@@ -1201,7 +1208,7 @@ module cadr_arty #(
         // did, and which is the same instrument either way.
         .clk(clk), .rst(mach_rst),
         // ONE SAMPLE A MICROCYCLE, on the machine's own boundary. A
-        // free-running probe at 160 MHz would mostly record a machine
+        // free-running probe at 100 MHz would mostly record a machine
         // standing still and would line up with no row of anything.
         .qualify(clock_edge),
         .pc(pc), .ir(ir), .q(q), .a(a), .m(m), .alu(alu), .r(r), .ob(ob),
@@ -1254,10 +1261,10 @@ module cadr_arty #(
   end
 
   // A microcycle is 29 ticks at normal speed and 44 at extra slow, which is
-  // what the boot PROM runs at: 275 ns of real time at a 6.25 ns tick. Bit 23
-  // of a count of them is 2.31 s a half-period --- a 4.6 s cycle, which reads
+  // what the boot PROM runs at: 440 ns of real time at a 10 ns tick. Bit 23
+  // of a count of them is 3.7 s a half-period --- a 7.4 s cycle, which reads
   // as a light that is on or off rather than one that blinks. Bit 19 is
-  // 524,288 microcycles, 144 ms, about 3.5 Hz: fast enough to be obviously
+  // 524,288 microcycles, 231 ms, about 2.2 Hz: fast enough to be obviously
   // alive and slow enough to count.
   logic [23:0] beat;
   always_ff @(posedge clk) begin
@@ -1269,7 +1276,7 @@ module cadr_arty #(
   // board means "not programmed", "the MMCM never locked" or "the machine
   // stalled", and those are three different problems that look the same. This
   // counts the master clock and nothing else, so it blinks whenever the
-  // fabric is clocked at all --- about 2.4 times a second at 160 MHz --- and
+  // fabric is clocked at all --- about 1.5 times a second at 100 MHz --- and
   // it is deliberately not reset by `rst`, because `rst` is held while the
   // MMCM is unlocked and a heartbeat that stopped during reset would lose the
   // one case it exists to distinguish.
@@ -1287,8 +1294,8 @@ module cadr_arty #(
   // end of each 4.25 us timeout --- so at the measured rate it integrates
   // to a light too faint to read, which is what the board showed. Counting the
   // rising edges and lighting a bit of the count turns it into a rate: the
-  // 168 kHz measured at a 5 ns tick is 134 kHz at 6.25, and bit 16 is 65,536
-  // timeouts, about 0.49 s a half-period at that rate.
+  // 168 kHz measured at a 5 ns tick is 84 kHz at 10, and bit 16 is 65,536
+  // timeouts, about 0.78 s a half-period at that rate.
   //
   // The rate is the point. Faster means cycles are timing out more often.
   // An earlier version of this comment said dark would mean memory is

@@ -7,19 +7,22 @@
 # drawings place five nanoseconds apart and which this design therefore holds
 # as tick COUNTS --- 15, 17, 20, 23, 25, 28 and 32 of them.  Netlist logic
 # settles *between* phases, where the fast read tap at fifteen ticks is the
-# real constraint.  (The board clocks a tick at 6.25 ns, so that tap is
-# 93.75 ns of real time; `boards/arty-z7-20/cadr_arty.sv` decides the length
+# real constraint.  (The board clocks a tick at 10 ns, so that tap is
+# 150 ns of real time; `boards/arty-z7-20/cadr_arty.sv` decides the length
 # of a tick and is the only thing that does.  Every exception in this file is
 # written in CYCLES and rescales with it by itself.)
 #
-# **EVERY NANOSECOND FIGURE BELOW WAS MEASURED WHEN A TICK WAS 5 ns**, which
-# it was until 2026-09-11, and none of them has been rewritten: a measurement
-# is worth its provenance and not worth being multiplied by 1.25 in a text
-# editor.  So where a report excerpt below says a path "asks for 5.000 ns" it
-# is one tick and asks for 6.250 today, and where it says "75.000" it is
-# fifteen ticks and asks for 93.750.  The RATIOS --- which path is relaxed and
-# which is not, and by how much a slack figure moved when something changed
-# --- are what those excerpts were quoted for, and they are unaffected.  The
+# **EVERY NANOSECOND FIGURE BELOW IS DATED BY THE TICK IT WAS MEASURED AT,
+# AND NONE OF THEM HAS BEEN REWRITTEN**: a measurement is worth its provenance
+# and not worth being multiplied in a text editor.  A tick was 5 ns until
+# 2026-09-11, then 6.25 ns for part of that day, and is 10 ns now.  So where a
+# report excerpt below says a path "asks for 5.000 ns" it is one tick and asks
+# for 10.000 today, where it says "75.000" it is fifteen ticks and asks for
+# 150.000, and the one excerpt quoting 6.250 and 93.750 was taken at the
+# 6.25 ns tick and is the same two requirements.  The RATIOS --- which path is
+# relaxed and which is not, and by how much a slack figure moved when
+# something changed --- are what those excerpts were quoted for, and they are
+# unaffected.  The
 # current figures are in `boards/arty-z7-20/vivado/bitstream.tcl`'s header. Hold all 1,821 registers to the tick and the routed report says
 # WNS -17.265 ns on the map lookup rippling into the control store's address,
 # 21.615 ns over 26 logic levels --- a path that has a phase to happen in.
@@ -160,7 +163,8 @@
 # REGISTER BLOCK's is the same signal on the same wired-OR --- both pull
 # `-UB SSYN`, which `cadr_busint_xbus.sv` watches every tick for its rise ---
 # and it is named nowhere, so it falls into `slow` by default.  Synthesised at
-# this slice with this file read scoped, on the memory-off board:
+# this slice with this file read scoped, on the memory-off board, at the
+# 6.25 ns tick of that afternoon (one tick and fifteen, as everywhere else):
 #
 #     memory/spy_registers/ub_ssyn_reg   54 of 54 paths ask for 93.750 ns
 #     memory/iob/ub_ssyn_reg            138 of 138 paths ask for  6.250 ns

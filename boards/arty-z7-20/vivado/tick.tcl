@@ -15,7 +15,7 @@
 # script is a period that can disagree with the fabric, and every failure of
 # that shape this project has met has been silent.  `assert_multicycle_applied`
 # matches the relaxed setup requirement **as a formatted string**: a script
-# still asking for 75.000 ns against a design timed at 6.25 ns finds no path at
+# still asking for 75.000 ns against a design timed at 10 ns finds no path at
 # that requirement and fails saying the constraints applied to NOTHING --- a
 # false accusation of the exact bug (the `foreach` an XDC rejects) that
 # assertion exists to catch, and the reader would go looking at `cadr_machine.xdc`.

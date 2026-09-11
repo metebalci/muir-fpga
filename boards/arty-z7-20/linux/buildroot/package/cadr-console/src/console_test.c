@@ -71,7 +71,7 @@ static void fail(int line, const char *fmt, ...)
 // ---- the model of the slave --------------------------------------------
 
 // A microcycle is 29 ticks at normal speed: 145 ns on MIT's drawings, which
-// this board spends 181.25 ns of real time on at its 6.25 ns tick.  The COUNT
+// this board spends 290 ns of real time on at its 10 ns tick.  The COUNT
 // is what the model needs and the count does not move with the tick.
 #define TICKS_PER_MICROCYCLE 29u
 // A diagnostic cycle is DIAGNOSTIC_NS = 250 ns = 50 ticks; the module holds
@@ -224,7 +224,7 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 
 // The wall clock, modelled: a real microsecond of waiting is that many ticks
 // of the fabric.  `CONS_TICKS_PER_US` rather than a literal, so this and the
-// program's own printing cannot come apart --- 160 at the 6.25 ns tick, 200
+// program's own printing cannot come apart --- 100 at the 10 ns tick, 200
 // while it was 5 ns.
 static void model_pause(struct console *c, unsigned us)
 {

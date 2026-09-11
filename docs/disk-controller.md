@@ -214,7 +214,7 @@ This was written at the slice that replaced the block store's seam, so read
 the "before building" prose above as history. The drive has its channel and
 its pack side now. What follows is what was decided here, and what was
 measured. **Every slack figure below was measured at a 5 ns tick**, which is
-what this fabric ran at until 2026-09-11; a tick is 6.25 ns now and both boards
+what this fabric ran at until 2026-09-11; a tick is 10 ns now and both boards
 close, so the figures below name the arcs their remedies were written for and
 not the state of any board today. The remedies stand whatever a tick costs,
 because each of them is a register and not a margin.
@@ -425,9 +425,9 @@ and the hand moves on without a clear and without a pause. While the walk
 waits (`CTL` bit 6) every slot is anyone's. After the request, every slot
 DIRTY says a transfer wrote is written back at leisure, and the walk's own is
 left for the next pass. Such a write-back is deferred, counted, and said once
-if a slot is refused a hundred passes in a row (25 ms of real time; a Read All
-holds a slot for a revolution, 16.7 ms of the machine's own time and 20.8 ms of
-real).
+if a slot is refused a hundred passes in a row (25 ms of real time, the poll
+being a `usleep` and not a tick count; a Read All holds a slot for a
+revolution, 16.7 ms of the machine's own time and 33.4 ms of real).
 
 **The refusal read back with WAITING up, found on the board.** Once in
 48,879 moves the disk pack program failed a write-back with `refused while the walk

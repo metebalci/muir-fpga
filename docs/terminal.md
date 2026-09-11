@@ -141,12 +141,12 @@ program that quoted RRE only where RRE won would be quoting the win.
 A whole screen is 2.9 MB in Raw whatever is on it. A viewer asking for one at
 every poll would have this program encode 739,584 pixels instead of sleeping.
 So **a whole screen goes to a viewer at most once a frame**, which is
-`SCREEN_FULL_UPDATE_NS`, 19.32 ms. That is a frame for muir's reason --- the
+`SCREEN_FULL_UPDATE_NS`, 30.912 ms. That is a frame for muir's reason --- the
 machine cannot produce a new picture faster than the display board scans one
 --- but it is the **real** frame and not the machine's own. `screen_geom.h`
 carries both: `SCREEN_FRAME_NS` is 15.456 ms, muir's figure and the machine's
-own time, and `SCREEN_FRAME_REAL_NS` is 19.32 ms, which is the same
-3,091,200 ticks at the 6.25 ns tick this fabric has run at since 2026-09-11.
+own time, and `SCREEN_FRAME_REAL_NS` is 30.912 ms, which is the same
+3,091,200 ticks at the 10 ns tick this fabric has run at since 2026-09-11.
 This interval is compared against `CLOCK_MONOTONIC`, so it is the real one that
 belongs here; `docs/tv.md` records why the machine's frame is the slower of the
 two and what it would take to change that.

@@ -194,21 +194,23 @@ half is still a claim nothing exercises**, since neither reference program
 enables the display's interrupt, and this paragraph is where that is
 written down.
 
-**The frame is 3,091,200 ticks, and since 2026-09-11 that is 19.32 real
-milliseconds and not 15.456.** Mete decided that day to make a tick 6.25 ns
-rather than 5, so the fabric runs at 160 MHz and the machine at 80% of the
-speed the hardware ran. Every tick count in the design is unchanged --- this
-module's `FRAME_T` among them --- so the machine's own time is exactly what it
-was and not one golden trace moved. What it costs is that the vertical
-interrupt arrives at **51.76 Hz where the display board scanned at 64.70**, and
-MIT's microcode uses that interrupt as its roughly-sixty-cycle clock for mouse
-tracking and the scheduler's sequence break. So the machine's idea of a second
-is 80% of one. **Mete's decision is that this keeps agreeing with muir for
-now**, because the checks are the backbone of this project and nothing built
-yet needs the time of day. **And 6.25 was chosen partly so that undoing it is
-one constant.** A real frame is exactly 2,472,960 ticks, a whole number, so
-restoring real time here means changing `FRAME_T` and nothing else, rather than
-a rewrite or a second clock domain. Doing it would put this module out of
+**The frame is 3,091,200 ticks, and since 2026-09-11 that is 30.912 real
+milliseconds and not 15.456.** Mete decided that day to stop chasing timing
+closure and make a tick longer instead: 6.25 ns that morning and 10 ns the
+same afternoon, when a one-character change to a multiplexer cost a third of a
+nanosecond and the memory-on board stopped closing again. So the fabric runs
+at 100 MHz and the machine at 50% of the speed the hardware ran. Every tick
+count in the design is unchanged --- this module's `FRAME_T` among them --- so
+the machine's own time is exactly what it was and not one golden trace moved.
+What it costs is that the vertical interrupt arrives at **32.35 Hz where the
+display board scanned at 64.70**, and MIT's microcode uses that interrupt as
+its roughly-sixty-cycle clock for mouse tracking and the scheduler's sequence
+break. So the machine's idea of a second is 50% of one. **Mete's decision is
+that this keeps agreeing with muir for now**, because the checks are the
+backbone of this project and nothing built yet needs the time of day. **And
+undoing it is still one constant.** A real frame is exactly 1,545,600 ticks, a
+whole number, so restoring real time here means changing `FRAME_T` and nothing
+else, rather than a rewrite or a second clock domain. Doing it would put this module out of
 agreement with muir, which is why it has not been done.
 `boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src/screen_geom.h`
 carries both numbers for the same reason, `SCREEN_FRAME_NS` and
@@ -398,7 +400,7 @@ both configurations and in isolated copies of two trees. The trees are HEAD at
 figures reproduce that commit message's exactly, so the flow is deterministic.
 
 **Every figure in this section was measured at a 5 ns tick**, which is what
-this fabric ran at until 2026-09-11. The tick is 6.25 ns now and both boards
+this fabric ran at until 2026-09-11. The tick is 10 ns now and both boards
 close; the last paragraph of the section says so with the numbers. The
 analysis is kept as it was taken, because a path's logic levels and its share
 of routing do not move when the clock does.
@@ -458,21 +460,23 @@ checkpoint, every path OUT of the display's three held decodes asks for
 5.000 ns, paths INTO them ask for 5.000 and 75.000 (the map arriving,
 relaxed), and every path into the frame counter, the flag, the mode
 register and the cycle's latch asks for 5.000. Those are one tick and fifteen
-ticks, so at the 6.25 ns tick built today the same requirements read 6.250 and
-93.750; the assertion matches the string it is handed by
+ticks, so at the 10 ns tick built today the same requirements read 10.000 and
+150.000; the assertion matches the string it is handed by
 `boards/arty-z7-20/vivado/tick.tcl` and so moved with the tick.
 `rtl/plumbing/xilinx7/cadr_machine.xdc`'s new clause did exactly what its
 comment says.
 
-**Both boards close at the 6.25 ns tick.** Mete decided on 2026-09-11 to stop
+**Both boards close at the 10 ns tick.** Mete decided on 2026-09-11 to stop
 treating timing closure as something to chase and divide the MMCM's 1000 MHz
-VCO by 6.25 rather than 5 --- one parameter in
-`boards/arty-z7-20/cadr_arty.sv`, nothing under `rtl/`. Measured on the tree
-whose parent is `7eb6846`, the whole design reads **+0.375 ns** with memory off
-and **+0.362 ns** with `DDR=1`, **zero failing endpoints on either**, which is
+VCO by 10 rather than 5 --- one parameter in
+`boards/arty-z7-20/cadr_arty.sv`, nothing under `rtl/`. It went to 6.25 first
+and to 10 the same afternoon, when a one-character change to a multiplexer
+cost a third of a nanosecond and the memory-on board stopped closing again.
+Measured at `822535c`, the whole design reads **+1.537 ns** with memory off
+and **+0.657 ns** with `DDR=1`, **zero failing endpoints on either**, which is
 the largest margin any build of this design has had. The display's paths were
 never the question and they are further from it now; the adder that took three
-quarters of a tick takes three fifths of one.
+quarters of a tick takes three eighths of one.
 
 ## What is not built
 
