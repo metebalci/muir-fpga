@@ -276,16 +276,20 @@ either from a PC with the card in a reader, since that partition is plain
 FAT32, or over the network to the running board. Either way the drive comes
 ready within a quarter second and nothing restarts.
 
-**The bay is still sized for a full set of eight**, which is why the image is
-2,112 MiB of pack partition and not nothing. Somebody who fills every unit
-must never have to rewrite the card. That is what fixes the floor at 4 GB.
+**The bay fills the card rather than being sized to a set of packs.** It is
+3,584 MiB, which is everything a 4 GB card has after the boot partition and a
+margin, and it leaves 138 MB spare on the smallest card of that name. There is
+no reason to size it more tightly: the space costs nothing to ship and a user
+who fills all eight units and keeps six spare bands beside them never has to
+rewrite the card.
 
-    BOOT_MB=64 PACKS_MB=2112 BIT=<the released bitstream> STANDALONE=1 \
+    BOOT_MB=64 PACKS_MB=3584 BIT=<the released bitstream> STANDALONE=1 \
         boards/arty-z7-20/linux/mksd-buildroot.sh
 
-**The image is 2.28 GB and the download is 7.1 MB**, measured, because
+**The image is 3.83 GB and the download is 7.4 MB**, measured, because
 everything the bay does not hold is zeros and the kernel and the bitstream
-compress well. Ship it compressed.
+compress well. Ship it compressed. Filling the card rather than sizing the bay
+to eight packs cost 0.3 MB of download.
 
 Writing it costs far less than 2.28 GB of I/O. On Linux and macOS,
 `conv=sparse` skips the runs of zeros and writes only the twelve megabytes
@@ -293,7 +297,7 @@ that are real, which takes seconds:
 
     xz -dc cadr-sdcard.img.xz | sudo dd of=/dev/sdX bs=4M conv=sparse status=progress
 
-Windows tools write the whole decompressed image, which is a couple of
+Windows tools write the whole decompressed image, which is three or four
 minutes and is fine. **`STANDALONE=1` matters**: without it the card would
 carry this project's own TFTP server address and boot over a network the user
 has not got.
