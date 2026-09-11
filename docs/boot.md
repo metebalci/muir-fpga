@@ -264,6 +264,46 @@ read-only by default. A power cut with the loader writable is a board that
 needs a card reader again, and this project's whole point is that it does
 not.
 
+## The released card, and the card this project builds for itself
+
+There is one released image and it is built for a card of **4 GB or more**.
+That is the only size anybody needs to know.
+
+**It carries no disk pack.** The bay is empty, the program says so on the
+console, and the CADR waits for a drive exactly as the real machine did with
+no pack loaded. A band is the user's own to supply. It goes on partition 2
+either from a PC with the card in a reader, since that partition is plain
+FAT32, or over the network to the running board. Either way the drive comes
+ready within a quarter second and nothing restarts.
+
+**The bay is still sized for a full set of eight**, which is why the image is
+2,112 MiB of pack partition and not nothing. Somebody who fills every unit
+must never have to rewrite the card. That is what fixes the floor at 4 GB.
+
+    BOOT_MB=64 PACKS_MB=2112 BIT=<the released bitstream> STANDALONE=1 \
+        boards/arty-z7-20/linux/mksd-buildroot.sh
+
+**The image is 2.28 GB and the download is 7.1 MB**, measured, because
+everything the bay does not hold is zeros and the kernel and the bitstream
+compress well. Ship it compressed.
+
+Writing it costs far less than 2.28 GB of I/O. On Linux and macOS,
+`conv=sparse` skips the runs of zeros and writes only the twelve megabytes
+that are real, which takes seconds:
+
+    xz -dc cadr-sdcard.img.xz | sudo dd of=/dev/sdX bs=4M conv=sparse status=progress
+
+Windows tools write the whole decompressed image, which is a couple of
+minutes and is fine. **`STANDALONE=1` matters**: without it the card would
+carry this project's own TFTP server address and boot over a network the user
+has not got.
+
+**The card this project builds for itself is a different one, and that is the
+point of the parameters.** It names packs, so it carries the machine's current
+world and boots straight into it, and it leaves out `STANDALONE=1` so the
+board fetches its files over the network and the card is written once. Neither
+of those belongs in a release.
+
 ## The drive bay
 
 **Partition 2 holds disk packs and nothing else, and the eight names are the
