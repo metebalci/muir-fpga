@@ -321,7 +321,8 @@ $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
 MACHINE := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv rtl/cadr_ddr_map.sv \
            rtl/cadr_xbus_decode.sv rtl/cadr_busint_xbus.sv rtl/cadr_xbus_ddr.sv \
            rtl/cadr_spy_registers.sv rtl/cadr_disk_controller.sv rtl/cadr_tv.sv \
-           rtl/cadr_console_bus.sv rtl/cadr_memory_path.sv rtl/cadr_machine.sv
+           rtl/cadr_console_bus.sv rtl/cadr_console_state.sv \
+           rtl/cadr_memory_path.sv rtl/cadr_machine.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl -Mdir $(BUILD)/obj_machine \
@@ -905,7 +906,8 @@ $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 # It takes about seven seconds.
 CONSOLE_SRC := rtl/cadr_phase_gen.sv rtl/cadr_microcycle.sv \
                rtl/cadr_spy_registers.sv rtl/cadr_console_bus.sv \
-               rtl/cadr_console.sv tb/cadr_console_harness.sv
+               rtl/cadr_console_state.sv rtl/cadr_console.sv \
+               tb/cadr_console_harness.sv
 
 $(BUILD)/obj_console/Vcadr_console_harness: $(CONSOLE_SRC) \
                                             tb/cadr_console_tb.cpp | $(BUILD)

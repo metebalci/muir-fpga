@@ -146,7 +146,8 @@ constexpr uint32_t kLostT    = 4096u;
 uint32_t Con(unsigned i) { return kBase + 4u * i; }
 uint32_t Spy(unsigned e) { return kBase + 0x40u + 4u * e; }
 enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
-              kRegTicks = 4, kRegTicksH = 5, kRegReset = 6 };
+              kRegTicks = 4, kRegTicksH = 5, kRegReset = 6, kRegVma = 7,
+              kRegQ = 8 };
 
 // The reset register's key and the pulse it makes, as `rtl/cadr_console.sv`
 // parameterises them.  `RESET_KEY` is "RSET" --- four distinct bytes, none of
@@ -684,6 +685,26 @@ int main(int argc, char **argv) {
   // disagreement is the console's or the wiring's.
   const bool no_halts = std::getenv("CADR_CONSOLE_NO_HALTS") != nullptr;
   long visits = 0, regs_compared = 0, regs_hunted = 0;
+  // **THE VIRTUAL ADDRESS REGISTER AND `Q`, page 0's words 7 and 8.**  They
+  // are not on the diagnostic bus --- MIT's sixteen carry `IR`, `OPC`, `PC`,
+  // `OB`, the two flag words, `M`, `A` and `ST` and nothing else, so a console
+  // on that bus alone cannot see either --- and they are here because the
+  // board's halt inside `PDL-BUFFER-REFILL` is decided by their DIFFERENCE:
+  // three faults injected into muir give the same PC, the same OPC, the same
+  // two flag words, the same `IR`, `A`, `M` and `OB`, and differ only in
+  // whether `VMA` and `Q` are equal or a page apart.
+  //
+  // `vq_distinct` is the count that makes the comparison evidence: a halt
+  // where the two read alike cannot tell a console that reads `Q` where the
+  // virtual address should be from one that does not, which is the PC lag
+  // sweep's own lesson --- a sample whose candidates read alike is not a
+  // sample.  `vq_latch_moving` is the same for the latch: a read of word 8
+  // alone must hand back what the LAST read of word 7 latched beside it, and
+  // that says nothing at a halt where the latched `Q` and the live one agree.
+  long vq_compared = 0, vq_distinct = 0;
+  long vq_latch_samples = 0, vq_latch_moving = 0;
+  bool vq_have_prev = false;
+  uint32_t vq_prev_q = 0;
   long flag2_wmapd = 0, flag2_destspcd = 0, flag2_imodd = 0;
   long flag2_pdlwrited = 0, flag2_spushd = 0, flag2_iwrited = 0;
   long distinct_pc = 0;
@@ -869,6 +890,54 @@ int main(int argc, char **argv) {
     const uint16_t f1 = SpyRead(8) & 0xffffu;
     if (f1 != kFlag1Halted) Fail("FLAG-1 while halted", f1, kFlag1Halted);
 
+    // ---- VMA AND Q, against the reference's own columns for this row.
+    //
+    // **THE LATCH FIRST, AND BEFORE ANYTHING RE-ARMS IT.**  Word 8 read on
+    // its own must hand back the `Q` that the LAST read of word 7 latched
+    // beside it --- the rule is VMA then Q, as it is CYCLES then CYCLESH ---
+    // so the value here belongs to the previous halt and not to this one.  A
+    // word 8 that read the machine live would give this row's `Q`, and the
+    // two differ wherever `Q` moved in between.
+    {
+      const uint32_t q_alone = ReadWord(Con(kRegQ));
+      if (vq_have_prev) {
+        ++vq_latch_samples;
+        if (vq_prev_q != static_cast<uint32_t>(cur.v[kQ])) ++vq_latch_moving;
+        if (q_alone != vq_prev_q) {
+          std::fprintf(stderr,
+                       "microcycle %zu (PC %" PRIo64 "): Q read alone is "
+                       "%08x, the last read of VMA latched %08x --- word 8 is "
+                       "a latch armed by word 7, not the machine live\n",
+                       at, cur.v[kPc], q_alone, vq_prev_q);
+          ++bad;
+        }
+      }
+      // And now the pair, in one burst, which is the way a program reads it:
+      // beat one is VMA and arms the latch, beat two is the `Q` that was
+      // standing beside it at that same instant.
+      const std::vector<uint32_t> vq = DoRead(Con(kRegVma), 1);
+      const uint32_t vma_w = vq.at(0), q_w = vq.at(1);
+      if (vma_w != static_cast<uint32_t>(cur.v[kVma])) {
+        std::fprintf(stderr,
+                     "microcycle %zu (PC %" PRIo64 "): VMA reads %08x, the "
+                     "reference says %08x\n",
+                     at, cur.v[kPc], vma_w,
+                     static_cast<uint32_t>(cur.v[kVma]));
+        ++bad;
+      }
+      if (q_w != static_cast<uint32_t>(cur.v[kQ])) {
+        std::fprintf(stderr,
+                     "microcycle %zu (PC %" PRIo64 "): Q reads %08x, the "
+                     "reference says %08x\n",
+                     at, cur.v[kPc], q_w, static_cast<uint32_t>(cur.v[kQ]));
+        ++bad;
+      }
+      ++vq_compared;
+      if (cur.v[kVma] != cur.v[kQ]) ++vq_distinct;
+      vq_prev_q = q_w;
+      vq_have_prev = true;
+    }
+
     // ---- and the machine did not move under all that reading.
     if (k != at) Fail("the machine ran while the console read it", k, at);
     const std::vector<uint32_t> c2 = DoRead(Con(kRegCycles), 1);
@@ -930,7 +999,9 @@ int main(int argc, char **argv) {
 
   // Every word of page 0, and the ten that are not registers.
   long unmapped_seen = 0;
-  for (unsigned i = 7; i < 16; ++i) {   // 6 is RESET; see the reset section
+  // 6 is RESET --- see the reset section --- and 7 and 8 are VMA and Q, read
+  // and compared at every halt above.
+  for (unsigned i = 9; i < 16; ++i) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("an unused page-0 word", w, kUnmapped);
     ++unmapped_seen;
@@ -1337,6 +1408,31 @@ int main(int argc, char **argv) {
                  lag_moving, lag_samples);
     ++thin;
   }
+  // **VMA AND Q ARE EVIDENCE ONLY WHERE THEY DIFFER.**  These two words exist
+  // to tell one fault from another BY THEIR DIFFERENCE, so a check made where
+  // they read alike cannot tell a console that crosses them from one that does
+  // not.  The same floor the PC lag sweep puts on its own discriminating
+  // samples, for the same reason, and a reference that stopped carrying a
+  // moving VMA would re-open it rather than quietly narrowing the claim.
+  if (vq_compared != visits) {
+    std::fprintf(stderr, "FAIL: VMA and Q read at %ld of %ld halts\n",
+                 vq_compared, visits);
+    ++thin;
+  }
+  if (vq_distinct < 8) {
+    std::fprintf(stderr,
+                 "FAIL: VMA and Q differed at only %ld of %ld halts, so a "
+                 "console that read one where the other was wanted would pass "
+                 "here on no evidence\n", vq_distinct, vq_compared);
+    ++thin;
+  }
+  if (vq_latch_moving < 1) {
+    std::fprintf(stderr,
+                 "FAIL: none of the %ld reads of Q alone was taken at a halt "
+                 "where the latched Q and the live one differ, so the latch is "
+                 "untested\n", vq_latch_samples);
+    ++thin;
+  }
   if (distinct_pc < 8) {
     std::fprintf(stderr,
                  "FAIL: the console stopped the machine at %ld distinct PCs; a "
@@ -1381,6 +1477,20 @@ int main(int argc, char **argv) {
       "      THIS REPOSITORY**, `cadr_microcycle.sv` bringing out only\n"
       "      IWRITED: WMAPD up at %ld of them, DESTSPCD %ld, IMODD %ld,\n"
       "      PDLWRITED %ld, SPUSHD %ld, IWRITED %ld\n"
+      "    VMA and Q --- page 0's words 7 and 8, which are NOT on the\n"
+      "      diagnostic bus and which MIT's sixteen have no register for ---\n"
+      "      read at %ld halts and compared against the reference's own vma\n"
+      "      and q columns for the row the console says it stopped at.  %ld of\n"
+      "      them carry VMA != Q and so can tell one from the other; the rest\n"
+      "      are not evidence and are not counted.  Word 8 read ALONE gave the\n"
+      "      Q that the last read of word 7 latched beside it at %ld halts, of\n"
+      "      which %ld were taken where that latched Q and the live one differ\n"
+      "    NOT TESTED: that the PAIR is one instant rather than two reads a\n"
+      "      few ticks apart.  Q is 0xfffffffe on all but the first thousand\n"
+      "      rows of MIT's boot PROM, so a pair taken at two instants reads\n"
+      "      exactly like a pair taken at one, and no arrangement of this\n"
+      "      reference can tell them apart.  What IS held is that both name\n"
+      "      the row the console stopped at\n"
       "    FLAG-1 read 0xe800 halted and 0xe900 running, which are muir's own\n"
       "      HALTED and RUNNING; CYCLES named the reference's own row every time\n"
       "    the face: %ld reads and %ld writes, %ld beats, %ld held until taken,\n"
@@ -1429,7 +1539,9 @@ int main(int argc, char **argv) {
       "      landed %ld times (muir's write_strobe is `eadr & 7`, so: once)\n",
       visits, total_rows, distinct_pc, lengths_checked, arb_skipped, sub_tick,
       resume_skipped, regs_compared, regs_hunted, flag2_wmapd, flag2_destspcd,
-      flag2_imodd, flag2_pdlwrited, flag2_spushd, flag2_iwrited, axi_reads, axi_writes,
+      flag2_imodd, flag2_pdlwrited, flag2_spushd, flag2_iwrited,
+      vq_compared, vq_distinct, vq_latch_samples, vq_latch_moving,
+      axi_reads, axi_writes,
       axi_beats, axi_stalls, unmapped_seen, kUnmapped, cpu_waited,
       lag_seen, lag_samples, lag_moving,
       wrong_writes, pulse, pulse2, replay_rows,

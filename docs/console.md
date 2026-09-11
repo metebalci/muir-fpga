@@ -106,7 +106,10 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                    bits 15:8   console resets since the CONSOLE came up,
                                saturating at 255
                    bit 0       a pulse is up now
-     7-15        read UNMAPPED; writes dropped
+     7  VMA      the virtual address register, all 32 bits, as of the last
+                 microcycle boundary.  **Reading it LATCHES Q beside it**
+     8  Q        the Q register, all 32 bits, latched when VMA was read
+     9-15        read UNMAPPED; writes dropped
 
     page 1, REG_BASE + 0x40, the sixteen diagnostic registers, word k
     being EADR k:
@@ -299,6 +302,97 @@ the read and write channels never overlap. On the board they do: the two
 Cortex-A9s can have a read and a write outstanding on GP1 at once. A testbench
 with two independent channel drivers is what would exercise it, and there is
 no mutation record aimed at it for that reason.
+
+### The virtual address register and Q, page 0's words 7 and 8
+
+**Why there are any.** `../muir/src/spy.rs` is the whole vocabulary of MIT's
+sixteen --- `IR` in three halves, `OPC`, `PC`, `OB`, the two flag words, `M`,
+`A` and `ST`, and the open bus at register 3 --- and neither the virtual
+address register nor `Q` is among them, so a console on that bus alone cannot
+see either and MIT's own never could. On 2026-09-10 the board halted inside
+`PDL-BUFFER-REFILL`, where the microcode reads a second-level map entry,
+writes it back with read/write access ORed in, and then reads through the
+entry it has just hacked; **three faults injected into muir reproduce the
+board's readout bit for bit** --- same `PC`, `OPC`, `FLAG-1`, `FLAG-2`, `IR`,
+`A`, `M` and `OB` --- and are told apart only by these two: the map-side
+faults leave them equal, the wrong-address fault leaves them one page apart.
+
+**Where they went and why.** Page 0, words 7 and 8, beside CYCLES and TICKS,
+which are also the machine's and are also not on that bus. Page 1 is MIT's
+sixteen and is untouched word for word: `EADR<3:0>` names sixteen things and
+all sixteen are theirs, so a seventeenth would mean renumbering
+`cadr_spy_registers.sv` out of step with `Engine::spy_read` for ever.
+
+**Neither is split into halves.** The sixteen are sixteen bits because
+`SPY<15:0>` is sixteen wires, which is why MIT reads `OB`, `M`, `A` and `ST`
+as two registers each. Page 0 is not on that bus and its words are 32 bits,
+as IDENT, CYCLES and TICKS already are. Four sixteen-bit words would mean four
+reads where two do, four latch rules where one does, and a 32-bit comparison
+assembled out of four separately-timed reads.
+
+**The split that is made is between the two words, and it carries a latch.**
+The read of word 7 latches BOTH, and word 8 reads that latch: **the rule is
+VMA then Q**, as it is CYCLES then CYCLESH and for the same reason --- the
+question asked of them is whether they are equal, so a pair read as two
+independent loads of a running machine is two instants and the answer would be
+an artefact of the gap. A burst of two beats over words 7 and 8 is how a
+program should ask.
+
+**They arrive already captured**, at the microcycle boundary, by
+`rtl/cadr_console_state.sv` inside `cadr_machine` --- the same module
+`tb/cadr_console_harness.sv` instantiates, not a copy of it. Inside, because
+`rtl/cadr_machine.xdc` is read `-ref cadr_machine` and cannot relax a register
+outside it: that is the wall the console's own read-back met at -12.837 ns.
+`mclk` and not `clock_edge`, because `MCLK` runs whether or not `MACHRUN`
+does, so a machine the console has stopped goes on refreshing them and the
+console reads the state it actually stopped in.
+
+**What the check holds.** `build/console.pass` reads the pair at all sixteen
+halts and compares both against `build/rtl.golden`'s own `vma` and `q` columns
+for the row the console says it stopped at. **15 of the 16 carry VMA != Q**
+and so can tell one from the other; a halt where they read alike is not
+evidence and is counted separately, which is the PC lag sweep's own lesson.
+Word 8 is read ALONE first at every halt and must give the `Q` the last read
+of word 7 latched --- the previous halt's --- of which 2 of 15 were taken
+where that latched `Q` and the live one differ.
+
+**And what it does not hold, said rather than assumed:** that the pair is one
+instant rather than two reads a few ticks apart. `Q` is `0xfffffffe` on all
+but the first thousand rows of MIT's boot PROM, so a pair taken at two
+instants reads exactly like a pair taken at one. Measured rather than
+reasoned: capturing every tick instead of at the boundary --- `mclk || !mclk`,
+which is what catches the same fault in `cadr_console_bus.sv` --- **survives**,
+and it is an equivalence under this reference rather than a hole.
+
+**WHERE THE ARCS LAND WAS ASKED OF THE ROUTED DESIGN, AND THE FIRST ANSWER WAS
+A FAULT.** `DDR=1`, board flow, routed:
+
+    into the capture, con_*_reg   64 D pins at 75.000 ns --- the relaxed set,
+                                  which is the whole reason it is inside
+                                  cadr_machine --- and 128 more at 5.000 ns,
+                                  the 64 mclk clock enables and the 64 resets
+    out of the capture            64 paths, all 5.000 ns, ZERO logic levels,
+                                  worst +2.798 ns: con_vma_reg[14]/C ->
+                                  g_ddr.u_console/held_vma_reg[14]/D
+    into the console's latch      192 paths, all 5.000 ns, 64 of them clock
+                                  enables, worst +0.559 ns
+
+**The middle group is the one that was wrong.** Written first with the latch
+armed straight off `r_in` and `r_idx` --- five logic levels off `r_at` --- the
+routed board put that cone into **sixty-four clock enables** and read
+**-0.145 ns** at `r_at_reg[19]/C -> held_q_reg[0]/CE`. That is CLAUDE.md's
+`elapsed -> md/CE` in a new place, and it is exactly what a slack figure
+cannot tell you. The remedy is the one this repository already prescribes:
+**hold the match, do not compute it.** `vq_arm` takes the decision at
+`R_START` and registers it, the latch happens a state later at `R_PREP` ---
+still before `R_PREP2` takes `r_word` --- and what reaches the sixty-four
+enables is one flop and no logic. +0.559 ns after.
+
+Neither `held_*` nor `con_vma`/`con_q` appears among the routed board's worst
+paths now; those are the disk controller at -0.242 ns and the console's own
+reset counter off `MAXIGP1ACLK` at -0.225 and -0.197, all of which predate
+this change. **The memory-off board was not fitted for this**, and its cost is
+64 flip flops that fold into `witness` with every other output.
 
 ### The bound
 

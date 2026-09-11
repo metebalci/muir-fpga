@@ -81,6 +81,10 @@ struct model {
 	int run;			/* the clock control register's bit 0 */
 	uint64_t cycles, ticks;
 	uint16_t ir[3], opc, pc, ob[2], m[2], a[2], st[2];
+	// Page 0's words 7 and 8, which are not on the diagnostic bus at all.
+	// `q_latch` is the model of the RTL's own: the read of word 7 takes
+	// both, and word 8 reads what it took.
+	uint32_t vma, q, q_latch;
 	struct cons_flag1 f1;
 	struct cons_flag2 f2;
 	uint16_t mode, opc_control;	/* what the write strobes loaded */
@@ -180,7 +184,20 @@ static uint32_t model_read(struct console *c, unsigned word)
 		m->ticks_hi_latch = (uint32_t)(m->ticks >> 32);
 		return (uint32_t)m->ticks;
 	case CONS_TICKSH: return m->ticks_hi_latch;
-	default: return CONS_UNMAPPED;	/* words 6-15 */
+	// The machine's reset.  This program does not write it; what it reads
+	// is the key's own top half as a marker and the count of resets, and
+	// the model carries it so that the sweep below can say which page-0
+	// words really are UNMAPPED and which are registers.
+	case CONS_RESET: return 0x52530000u;
+	// **THE READ OF WORD 7 LATCHES Q BESIDE IT**, exactly as CONS_CYCLES
+	// latches CONS_CYCLESH, so the pair a program reads names one
+	// microcycle of the machine.  Word 8 does not arm it, or a read of 7
+	// then 8 would be two instants.
+	case CONS_VMA:
+		m->q_latch = m->q;
+		return m->vma;
+	case CONS_Q: return m->q_latch;
+	default: return CONS_UNMAPPED;	/* words 9-15 */
 	}
 }
 
@@ -229,6 +246,14 @@ static void model_init(struct model *m)
 	m->m[0] = 0xAAAA; m->m[1] = 0xBBBB;
 	m->a[0] = 0xCCCC; m->a[1] = 0xDDDD;
 	m->st[0] = 0xEEEE; m->st[1] = 0xFFF0;
+	// A virtual address and a `Q` that are neither equal nor the same
+	// page, so that the pair is evidence from the start: page 0o2467 and
+	// page 0o1234, which differ in more than their low eight bits.  The
+	// low byte differs too, so a word taken for a page or a page for a
+	// word cannot read right by accident.
+	m->vma = 0x00152735u;		/* page 0x1527 = 0o12447 */
+	m->q = 0x00129C42u;		/* page 0x129C = 0o11234 */
+	m->q_latch = 0;
 }
 
 // ---- capturing what the program says ------------------------------------
@@ -285,8 +310,13 @@ static void check_ident(void)
 	CHECK(CONS_UNMAPPED == ~CONS_IDENT_WORD, "UNMAPPED is not the complement of IDENT");
 	CHECK(CONS_UNMAPPED != 0 && CONS_UNMAPPED != 0xFFFFFFFFu,
 	      "UNMAPPED is a value a dead or undriven bus could produce");
-	for (unsigned k = 6; k < 16; ++k)
+	// 6 is the machine's reset, 7 and 8 are VMA and Q; the rest of page 0
+	// names nothing.
+	for (unsigned k = 9; k < 16; ++k)
 		CHECK(c.read(&c, k) == CONS_UNMAPPED, "page 0 word %u is not UNMAPPED", k);
+	for (unsigned k = 6; k < 9; ++k)
+		CHECK(c.read(&c, k) != CONS_UNMAPPED,
+		      "page 0 word %u reads UNMAPPED, and it is a register", k);
 	CHECK(c.read(&c, 40) == CONS_UNMAPPED, "an address past the window is not UNMAPPED");
 }
 
@@ -646,6 +676,139 @@ static void check_lost(void)
 	}
 }
 
+// --- the virtual address register and Q, page 0's words 7 and 8 ----------
+//
+// **THE PAIR IS THE WHOLE POINT AND THE LATCH IS WHAT MAKES IT A PAIR.**  The
+// read of word 7 takes Q beside it, so what a program compares is one
+// microcycle of the machine; a word 8 read on its own is the last read of
+// word 7's Q and must be, or the two values would be two instants and the
+// difference between them could be the gap rather than the machine.
+static void check_vmaq(void)
+{
+	struct model m;
+	struct console c;
+	struct cons_vmaq v;
+	model_init(&m);
+	attach(&c, &m);
+
+	cons_read_vmaq(&c, &v);
+	CHECK(v.vma == m.vma, "VMA reads 0x%08x, the model holds 0x%08x", v.vma, m.vma);
+	CHECK(v.q == m.q, "Q reads 0x%08x, the model holds 0x%08x", v.q, m.q);
+	CHECK(!v.unmapped, "a face that answered both words called them unmapped");
+	// Bits 23:8, which is what the two levels of the map are indexed by:
+	// a CADR page is 256 words.
+	CHECK(v.vma_page == ((m.vma >> 8) & 0xFFFFu), "VMA's page is 0%o, wanting 0%o",
+	      v.vma_page, (m.vma >> 8) & 0xFFFFu);
+	CHECK(v.q_page == ((m.q >> 8) & 0xFFFFu), "Q's page is 0%o, wanting 0%o",
+	      v.q_page, (m.q >> 8) & 0xFFFFu);
+	// **AND THEY ARE NOT CROSSED**, which is the one mistake that would
+	// make this instrument answer the question it exists for with the two
+	// sides swapped.  The model holds two words that differ, so this is
+	// evidence and not an accident; a check made where they read alike
+	// would pass either way, which is `tb/cadr_console_tb.cpp`'s own
+	// lesson about counting the discriminating samples.
+	CHECK(m.vma != m.q, "the model's VMA and Q read alike, so nothing here can tell one from the other");
+	CHECK(v.vma != v.q, "VMA and Q came back equal from a model holding two different words");
+
+	// **THE LATCH.**  Move Q under the program without reading word 7:
+	// word 8 alone must still be what the last read of word 7 took.
+	const uint32_t was = v.q;
+	m.q = 0x00077777u;
+	CHECK(c.read(&c, CONS_Q) == was,
+	      "word 8 read alone gave 0x%08x and not the 0x%08x the last read of word 7 latched",
+	      c.read(&c, CONS_Q), was);
+	cons_read_vmaq(&c, &v);
+	CHECK(v.q == 0x00077777u, "reading VMA did not re-arm the latch: Q reads 0x%08x", v.q);
+
+	// **AND THE ORDER IS THE RULE AND NOT THE ADVICE**: the wrong order
+	// pairs a Q from the last read of word 7 with a VMA from now, and this
+	// is what that looks like when it happens.
+	{
+		m.q = 0x00011111u;
+		const uint32_t stale = c.read(&c, CONS_Q);
+		const uint32_t now = c.read(&c, CONS_VMA);
+		CHECK(stale == 0x00077777u && now == m.vma,
+		      "Q then VMA did not give a stale Q with a fresh VMA: 0x%08x, 0x%08x", stale, now);
+	}
+
+	// What it says, which is part of the contract: the two values, what
+	// each is, and what each reading points at.  No name for the
+	// comparison --- the numbers and the sentence.
+	m.q = m.vma;
+	capture_start();
+	cons_read_vmaq(&c, &v);
+	cons_say_vmaq(&v);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "VMA") && strstr(out, "Q ") , "the pair was not printed by name");
+		CHECK(strstr(out, "same word") != NULL,
+		      "an equal pair was not reported as equal");
+		CHECK(strstr(out, "map write not having taken") != NULL,
+		      "an equal pair did not say what it points at");
+		CHECK(strstr(out, "halt") != NULL,
+		      "the output did not say the answer means nothing on a machine that was not halted");
+	}
+	m.q = 0x00129C42u;
+	capture_start();
+	cons_read_vmaq(&c, &v);
+	cons_say_vmaq(&v);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "DIFFERENT pages") != NULL,
+		      "a pair a page apart was not reported as naming different pages");
+		CHECK(strstr(out, "not the page the map was hacked for") != NULL,
+		      "a pair a page apart did not say what it points at");
+	}
+	// Two words of one page: neither reading, and it must not be reported
+	// as either.
+	m.q = m.vma + 4u;
+	capture_start();
+	cons_read_vmaq(&c, &v);
+	cons_say_vmaq(&v);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "same page") != NULL, "two words of one page were not reported as such");
+		CHECK(strstr(out, "same word") == NULL, "two different words were called the same word");
+		CHECK(strstr(out, "DIFFERENT pages") == NULL, "two words of one page were called different pages");
+	}
+
+	// **AND A FABRIC WITHOUT THESE WORDS MUST NOT READ AS A VIRTUAL
+	// ADDRESS.**  An older bitstream answers UNMAPPED at both, and
+	// UNMAPPED is a value that means nothing: the rule this project keeps
+	// meeting is that it must not be a value the instrument can mean.
+	m.vma = CONS_UNMAPPED;
+	m.q = CONS_UNMAPPED;
+	capture_start();
+	cons_read_vmaq(&c, &v);
+	cons_say_vmaq(&v);
+	CHECK(v.unmapped, "both words reading UNMAPPED was taken for a machine's state");
+	CHECK(strstr(capture_end(), "not in this bitstream") != NULL,
+	      "a fabric without these words was not named as one");
+
+	// They come back through `regs` and through `status` too, which is
+	// where a person actually meets them.
+	model_init(&m);
+	{
+		struct cons_regs r;
+		capture_start();
+		cons_read_regs(&c, &r);
+		cons_say_regs(&r);
+		const char *out = capture_end();
+		CHECK(r.vq.vma == m.vma && r.vq.q == m.q, "`regs` did not read the pair");
+		CHECK(strstr(out, "on no diagnostic register") != NULL,
+		      "`regs` printed the pair as though it were a seventeenth register");
+	}
+	{
+		struct cons_status st;
+		capture_start();
+		cons_status(&c, 0, &st);
+		cons_say_status(&st);
+		CHECK(st.vq.vma == m.vma && st.vq.q == m.q, "`status` did not read the pair");
+		CHECK(strstr(capture_end(), "virtual address register") != NULL,
+		      "`status` did not print the pair");
+	}
+}
+
 // The address arithmetic examine and deposit use, which is
 // cadr_ddr_map::main_byte_address and not a second description of it.
 static void check_main_address(void)
@@ -673,6 +836,7 @@ int main(void)
 	check_counters();
 	check_regs();
 	check_lost();
+	check_vmaq();
 	check_main_address();
 	fflush(cap);
 
@@ -697,6 +861,15 @@ int main(void)
 	       "      alone is a stale latch, and the other order is measurably wrong\n"
 	       "    all sixteen registers read back as the model holds them, register 3 the\n"
 	       "      open bus, a write aliasing onto EADR<2:0> as spy::write_strobe says\n"
-	       "    a lost cycle reported lost and never mistaken for data\n", checks);
+	       "    a lost cycle reported lost and never mistaken for data\n"
+	       "    page 0's words 7 and 8 --- the virtual address register and Q, which are on\n"
+	       "      NO diagnostic register and which MIT's sixteen have no room for: read in\n"
+	       "      that order because word 7's read latches Q beside it, so the pair names\n"
+	       "      one microcycle; word 8 alone is a stale latch and the wrong order is\n"
+	       "      measurably wrong; the page numbers are VMA<23:8> and Q<23:8>, a CADR page\n"
+	       "      being 256 words; and the three readings each say what they point at ---\n"
+	       "      the same word, two words of one page, or two pages --- with both values\n"
+	       "      printed and no name given to the comparison.  Both reading UNMAPPED is a\n"
+	       "      bitstream without these words and is refused as a virtual address\n", checks);
 	return 0;
 }
