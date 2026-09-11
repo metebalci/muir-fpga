@@ -1876,6 +1876,61 @@
 @end
 
 
+# ============================== MD holds what its instruction put there ===
+#
+# `md_hold` is the property `tb/cadr_md_hold_tb.cpp` measures every tick over
+# both programs: MD has two writers, and a word strobed by `-LOADMD` before
+# the `cpu_edge` at which `DESTMDR` writes MD may not land after it.  The map
+# is indexed by `MD<23:8>` whenever `MEMSTART` is down and `wmapd` is
+# registered at the boundary, so an instruction that puts a virtual address in
+# MD and writes the map through it needs MD to stand for several microcycles;
+# a stale word committing inside that span writes a map entry nobody asked
+# for, silently.
+#
+# `docs/md-hold.md` carries the measurement, and one thing worth knowing
+# before writing another record here: the mutation the check was written for
+# --- suppressing the clear only for a boundary that carries a `DESTMDR`,
+# which is the defect written out as one term --- SURVIVES every check in this
+# repository, because `md_pending` is never set at a `cpu_edge` on either
+# program.  It is not in the list, having no issue and no `@hole` to stand on.
+
+@mutation the-held-word-is-never-let-go
+@check md_hold
+@file rtl/machine/cadr_microcycle.sv
+@note MD's two writers are one `always_ff`: the held word committed at a
+@note master clock edge or at once under `-HANG`, and `DESTMDR` at
+@note `cpu_edge`.  `md_pending` is what says a word is still owed, and
+@note clearing it at the commit is what stops the same word landing again.
+@note Left set, every later master clock edge writes `md_held` over MD ---
+@note including the boundary after an instruction has just put its own word
+@note there, which is a word strobed before that instruction landing after
+@note it.
+@note
+@note THAT IS THE SHAPE THE PROPERTY IS ABOUT.  The map is indexed by
+@note `MD<23:8>` whenever `MEMSTART` is down and `wmapd` is registered at
+@note the boundary, so an instruction that puts a virtual address in MD and
+@note writes the map through it needs MD to stand for two to five
+@note microcycles on the boot PROM and up to nineteen on the band.  A stale
+@note word committing in there writes a map entry nobody asked for, and the
+@note machine then reads through a translation of its own invention.
+@note
+@note Deleting the clear rather than negating a term, because that is the
+@note whole of what the line does and every signal stays read either way.
+@note
+@note MEASURED AGAINST THE OTHER CHECKS RATHER THAN ASSUMED, as `map_boot`'s
+@note records are: `md_hold` catches it at microcycle 536,303, the boot
+@note PROM's first bus cycle, on the `md_pending` invariant, and `microcycle`
+@note catches it too, at 537,844, on MD disagreeing with muir 1,541
+@note microcycles later.  One names the flag at the instant it leaks and the
+@note other reports a wrong word somewhere downstream.
+@old
+        md         <= md_held;
+        md_pending <= 1'b0;
+@new
+        md         <= md_held;
+@end
+
+
 # ================================================== the machine, composed ===
 #
 # The processor with the memory path under it and nothing driven nearer than
