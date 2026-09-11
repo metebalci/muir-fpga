@@ -11,11 +11,11 @@ point; read the date on anything that looks like a fact about the fabric.
 **And every slack figure and every timing requirement in this file was
 measured at a 5 ns tick**, which is what the fabric ran at until 2026-09-11.
 A requirement printed as `5.000 ns` is one tick and one printed as `75.000 ns`
-is fifteen; at the 6.25 ns tick built since, the same two read 6.250 and
-93.750, and the tick counts and logic levels are unchanged. Both boards close
-at that tick --- +0.375 ns with memory off and +0.362 ns with `DDR=1`, zero
-failing endpoints on either --- so where this file says a board does not close
-it is describing the build it names. `docs/tv.md` has the decision and its
+is fifteen; at the 10 ns tick built since, the same two read 10.000 and
+150.000, and the tick counts and logic levels are unchanged. Both boards close
+at that tick --- +1.537 ns with memory off and +0.657 ns with `DDR=1`, zero
+failing endpoints on either, measured at `822535c` --- so where this file says
+a board does not close it is describing the build it names. `docs/tv.md` has the decision and its
 reasons.
 
 **The machine goes quiet and nothing built can say why.** On the board the
@@ -108,8 +108,8 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  `Machine::cycles`
      3  CYCLESH  bits 63:32, LATCHED when CYCLES was read
      4  TICKS    fabric ticks since reset, bits 31:0 --- `Rtl::ns()` / 5.
-                 A tick is 6.25 ns of real time, so `cadr-console.c` divides
-                 by `CONS_TICKS_PER_US` = 160 and not by 200
+                 A tick is 10 ns of real time, so `cadr-console.c` divides
+                 by `CONS_TICKS_PER_US` = 100 and not by 200
      5  TICKSH   bits 63:32, latched when TICKS was read
      6  RESET    **the one word of page 0 that is written.**  A write of
                  `RESET_KEY` and of nothing else pulses the machine's reset
@@ -653,10 +653,10 @@ flops, 32 at the capture and 32 at the latch.
 ### The bound
 
 `LOST_T` (line 167) is 4,096 ticks --- 20.48 us of the machine's own time, and
-25.6 us of real time at the 6.25 ns tick. That much after the request the
+40.96 us of real time at the 10 ns tick. That much after the request the
 engine gives up, drops `dbg_req`, sets STAT's `lost` and answers the read
 with bit 16 set. A grant that never comes, or a register block that never
-answers, therefore costs the Arm 26 us and not its uptime. `LOST_T` is
+answers, therefore costs the Arm 41 us and not its uptime. `LOST_T` is
 checked as a *number* and not merely as "the read came back": the mutation
 `console-bound-is-not-a-bound` stretches it to 8,000 and is caught at "a lost
 read took longer than the bound". That is `RD_FINISH_T`'s lesson one file
@@ -1277,9 +1277,19 @@ three words are read in the order that latches them together, that the machine
 is halted first and started again, and that a word whose echo is not the
 address asked for is refused. The fabric is `build/readout.pass`'s to hold.
 
-**A checkpoint is not built.** muir's own checkpoint format would take the
-whole machine, and the window reaches the processor's memories and registers
-and nothing else: the disk controller, the I/O board with its microsecond
-clock, the bus interface's own registers and the display's control side are
-all outside it. Anything CC can read can be written into that format later,
-through a path that is the machine rather than beside it.
+**A checkpoint is built now, and `docs/checkpoint.md` is it.** This paragraph
+used to say it was not, and the reason it gave still stands: the window
+reaches the processor's memories and registers and nothing else, so the disk
+controller, the I/O board with its microsecond clock, the bus interface's own
+registers and the display's control side are all outside it. What changed is
+that this turned out not to be a reason to refuse. A netlist checkpoint muir
+itself takes is taken "between cycles with nothing in flight", and a machine
+the console has halted at a microcycle boundary is such a point, so every
+in-flight field is at the value a machine that has never issued a cycle has.
+The rest is written at the value the fabric BEHAVES as, and **every field that
+is a decision rather than a reading is named** --- on the program's own output
+every time it runs, by `cadr-checkpoint --what-it-cannot-read`, and in
+`docs/checkpoint.md`'s table with what each costs a resume. The two that
+change what a resumed machine does are the disk controller, whole, and the
+microsecond clock. Anything CC can read can still be written into that format
+later, through a path that is the machine rather than beside it.
