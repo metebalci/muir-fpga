@@ -147,7 +147,16 @@ uint32_t Con(unsigned i) { return kBase + 4u * i; }
 uint32_t Spy(unsigned e) { return kBase + 0x40u + 4u * e; }
 enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
               kRegTicks = 4, kRegTicksH = 5, kRegReset = 6, kRegVma = 7,
-              kRegQ = 8 };
+              kRegQ = 8, kRegMd = 9 };
+
+// What `rtl/plumbing/xilinx7/cadr_machine.xdc`'s relaxed set asks of the three
+// registers `rtl/machine/cadr_console_state.sv` holds: fifteen ticks, 75 ns.
+// The file relaxes `-from $slow -to $slow` and every register of that module
+// is in `slow`, so the claim being made about each of them is that its input
+// is stable for a microcycle and its capture is at the end of one.  A claim
+// nothing exercises is not a claim: the loop measures the shortest arc each
+// of the three actually has and fails below this.
+constexpr long kRelaxedT = 15;
 
 // The reset register's key and the pulse it makes, as `rtl/plumbing/cadr_console.sv`
 // parameterises them.  `RESET_KEY` is "RSET" --- four distinct bytes, none of
@@ -423,6 +432,33 @@ int main(int argc, char **argv) {
   long mrst_ticks = 0, mrst_runs = 0;
   bool mrst_prev = false;
 
+  // **THE CAPTURE'S OWN ARC, MEASURED EVERY TICK RATHER THAN DERIVED.**
+  // `rtl/machine/cadr_console_state.sv` loads `con_vma`, `con_q` and `con_md`
+  // at `mclk` and nowhere else, and being registers of `cadr_machine` with no
+  // name in the fast list they are in `cadr_machine.xdc`'s relaxed set --- so
+  // the FABRIC is told each of those three arcs has fifteen ticks.  That is a
+  // claim about this machine's own behaviour and this is where it can be
+  // checked: the tick of the last change of each source, the tick of each
+  // capture, and the shortest distance between them over the whole run.
+  //
+  // It matters most for MD and that is why it is here rather than in anyone's
+  // reasoning.  `vma` and `q` are written inside `if (mclk_edge)` in
+  // `cadr_microcycle.sv` and nowhere else, so they cannot move between
+  // boundaries at all; **MD can**, through `md_pending && hang` --- the word
+  // `-LOADMD` deskewed, taken in the middle of a parked generator.  Whether
+  // that leaves fifteen ticks before the boundary is a fact about
+  // `RD_FINISH_T` and the generator's restart, not about anybody's intent.
+  //
+  // The convention, stated because a tick either way is the whole question:
+  // a value settled at the end of tick t was launched by tick t's edge; an
+  // `mclk` standing at the end of tick t is what a `posedge clk` sees at tick
+  // t+1, so the capture edge is t+1 and the arc is t + 1 - t_launch.
+  uint64_t cap_was[3] = {0, 0, 0};
+  long cap_at[3] = {-1, -1, -1};
+  long cap_min[3] = {-1, -1, -1};
+  long cap_edges = 0;
+  static const char *kCapName[3] = {"VMA", "Q", "MD"};
+
   // One tick, in `tb/cadr_microcycle_tb.cpp`'s own order: one evaluation with
   // the clock high, which is the edge, and one with it low, which settles the
   // combinational network for the next.  **THE ORDER IS NOT A DETAIL.**  The
@@ -586,6 +622,24 @@ int main(int argc, char **argv) {
     dut->eval();
     prev = take();
 
+    // The three sources as they stand at the end of this tick, and the
+    // boundary that will capture them at the next edge.  See the declaration
+    // for the convention; `cap_at` is the launching edge and `tick + 1` the
+    // capturing one.
+    {
+      const uint64_t now[3] = {dut->vma, dut->q, dut->md};
+      for (int i = 0; i < 3; ++i)
+        if (now[i] != cap_was[i]) { cap_was[i] = now[i]; cap_at[i] = tick; }
+      if (dut->mclk_o) {
+        ++cap_edges;
+        for (int i = 0; i < 3; ++i) {
+          if (cap_at[i] < 0) continue;
+          const long arc = tick + 1 - cap_at[i];
+          if (cap_min[i] < 0 || arc < cap_min[i]) cap_min[i] = arc;
+        }
+      }
+    }
+
     const bool mrst_now = dut->mach_rst_o != 0;
     if (mrst_now) {
       ++mrst_ticks;
@@ -701,10 +755,23 @@ int main(int argc, char **argv) {
   // sample.  `vq_latch_moving` is the same for the latch: a read of word 8
   // alone must hand back what the LAST read of word 7 latched beside it, and
   // that says nothing at a halt where the latched `Q` and the live one agree.
+  //
+  // **AND MD BESIDE THEM, page 0's word 9.**  It is the third value from the
+  // same instant and it is what the faulting read RETURNED: at the board's
+  // halt it holds either the map word the microcode wrote back or the word
+  // that came through the entry it had just hacked.  It is not on the
+  // diagnostic bus either --- `../muir/src/spy.rs` names the sixteen and MD
+  // is not among them --- and it joins the pair's latch rather than standing
+  // beside it, so the three name ONE microcycle.  `md_off_vma` and `md_off_q`
+  // are what make the crossing records evidence: a halt where MD reads alike
+  // with the register it might be crossed with cannot tell a console that
+  // crosses them from one that does not.
   long vq_compared = 0, vq_distinct = 0;
   long vq_latch_samples = 0, vq_latch_moving = 0;
+  long md_off_vma = 0, md_off_q = 0;
+  long md_latch_samples = 0, md_latch_moving = 0;
   bool vq_have_prev = false;
-  uint32_t vq_prev_q = 0;
+  uint32_t vq_prev_q = 0, vq_prev_md = 0;
   long flag2_wmapd = 0, flag2_destspcd = 0, flag2_imodd = 0;
   long flag2_pdlwrited = 0, flag2_spushd = 0, flag2_iwrited = 0;
   long distinct_pc = 0;
@@ -912,11 +979,30 @@ int main(int argc, char **argv) {
           ++bad;
         }
       }
-      // And now the pair, in one burst, which is the way a program reads it:
-      // beat one is VMA and arms the latch, beat two is the `Q` that was
-      // standing beside it at that same instant.
-      const std::vector<uint32_t> vq = DoRead(Con(kRegVma), 1);
-      const uint32_t vma_w = vq.at(0), q_w = vq.at(1);
+      // **AND MD ALONE, FOR THE SAME REASON AND BEFORE ANYTHING RE-ARMS.**
+      // Word 9 joins word 7's latch rather than reading the machine live, so
+      // read on its own it must hand back the MD that the LAST read of word 7
+      // took --- the previous halt's.  MD moves far more than `Q` does over
+      // MIT's boot PROM, so this is evidence at nearly every halt where the
+      // Q-alone test is evidence at two.
+      const uint32_t md_alone = ReadWord(Con(kRegMd));
+      if (vq_have_prev) {
+        ++md_latch_samples;
+        if (vq_prev_md != static_cast<uint32_t>(cur.v[kMd])) ++md_latch_moving;
+        if (md_alone != vq_prev_md) {
+          std::fprintf(stderr,
+                       "microcycle %zu (PC %" PRIo64 "): MD read alone is "
+                       "%08x, the last read of VMA latched %08x --- word 9 is "
+                       "on word 7's latch, not the machine live\n",
+                       at, cur.v[kPc], md_alone, vq_prev_md);
+          ++bad;
+        }
+      }
+      // And now the three, in one burst, which is the way a program reads
+      // them: beat one is VMA and arms the latch, beats two and three are the
+      // `Q` and the MD that were standing beside it at that same instant.
+      const std::vector<uint32_t> vq = DoRead(Con(kRegVma), 2);
+      const uint32_t vma_w = vq.at(0), q_w = vq.at(1), md_w = vq.at(2);
       if (vma_w != static_cast<uint32_t>(cur.v[kVma])) {
         std::fprintf(stderr,
                      "microcycle %zu (PC %" PRIo64 "): VMA reads %08x, the "
@@ -932,9 +1018,19 @@ int main(int argc, char **argv) {
                      at, cur.v[kPc], q_w, static_cast<uint32_t>(cur.v[kQ]));
         ++bad;
       }
+      if (md_w != static_cast<uint32_t>(cur.v[kMd])) {
+        std::fprintf(stderr,
+                     "microcycle %zu (PC %" PRIo64 "): MD reads %08x, the "
+                     "reference says %08x\n",
+                     at, cur.v[kPc], md_w, static_cast<uint32_t>(cur.v[kMd]));
+        ++bad;
+      }
       ++vq_compared;
       if (cur.v[kVma] != cur.v[kQ]) ++vq_distinct;
+      if (cur.v[kMd] != cur.v[kVma]) ++md_off_vma;
+      if (cur.v[kMd] != cur.v[kQ]) ++md_off_q;
       vq_prev_q = q_w;
+      vq_prev_md = md_w;
       vq_have_prev = true;
     }
 
@@ -999,9 +1095,9 @@ int main(int argc, char **argv) {
 
   // Every word of page 0, and the ten that are not registers.
   long unmapped_seen = 0;
-  // 6 is RESET --- see the reset section --- and 7 and 8 are VMA and Q, read
-  // and compared at every halt above.
-  for (unsigned i = 9; i < 16; ++i) {
+  // 6 is RESET --- see the reset section --- and 7, 8 and 9 are VMA, Q and
+  // MD, read and compared at every halt above.
+  for (unsigned i = 10; i < 16; ++i) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("an unused page-0 word", w, kUnmapped);
     ++unmapped_seen;
@@ -1433,6 +1529,54 @@ int main(int argc, char **argv) {
                  "untested\n", vq_latch_samples);
     ++thin;
   }
+  // **AND MD IS EVIDENCE ONLY WHERE IT DIFFERS FROM WHAT IT MIGHT BE CROSSED
+  // WITH.**  The mistake this word exists to be safe from is being handed
+  // back where VMA or `Q` was asked for, and a halt where two of the three
+  // read alike cannot tell a console that crosses them from one that does
+  // not.  Two floors and not one, because a crossing is with one register at
+  // a time.
+  if (md_off_vma < 8) {
+    std::fprintf(stderr,
+                 "FAIL: MD differed from VMA at only %ld of %ld halts, so a "
+                 "console that read one where the other was wanted would pass "
+                 "here on no evidence\n", md_off_vma, vq_compared);
+    ++thin;
+  }
+  if (md_off_q < 8) {
+    std::fprintf(stderr,
+                 "FAIL: MD differed from Q at only %ld of %ld halts, so a "
+                 "console that read one where the other was wanted would pass "
+                 "here on no evidence\n", md_off_q, vq_compared);
+    ++thin;
+  }
+  if (md_latch_moving < 1) {
+    std::fprintf(stderr,
+                 "FAIL: none of the %ld reads of MD alone was taken at a halt "
+                 "where the latched MD and the live one differ, so the latch "
+                 "is untested\n", md_latch_samples);
+    ++thin;
+  }
+  // **AND THE ARC THE CONSTRAINTS CLAIM, WHICH IS THE ONE THING HERE THAT IS
+  // ABOUT THE BOARD AND NOT ABOUT THE FACE.**  `cadr_machine.xdc` gives each
+  // of the three captures fifteen ticks because every register of
+  // `cadr_console_state.sv` falls in its relaxed set.  An exemption too wide
+  // tests nothing and looks exactly like one that is right, so the shortest
+  // arc each source actually has is measured here and this is where it fails.
+  for (int i = 0; i < 3; ++i) {
+    if (cap_min[i] < 0) {
+      std::fprintf(stderr,
+                   "FAIL: %s never moved, so nothing here says what arc the "
+                   "capture of it has\n", kCapName[i]);
+      ++thin;
+    } else if (cap_min[i] < kRelaxedT) {
+      std::fprintf(stderr,
+                   "FAIL: the shortest arc from a change of %s to the boundary "
+                   "that captures it is %ld ticks, and cadr_machine.xdc's "
+                   "relaxed set asks the fabric for %ld\n",
+                   kCapName[i], cap_min[i], kRelaxedT);
+      ++thin;
+    }
+  }
   if (distinct_pc < 8) {
     std::fprintf(stderr,
                  "FAIL: the console stopped the machine at %ld distinct PCs; a "
@@ -1477,20 +1621,35 @@ int main(int argc, char **argv) {
       "      THIS REPOSITORY**, `cadr_microcycle.sv` bringing out only\n"
       "      IWRITED: WMAPD up at %ld of them, DESTSPCD %ld, IMODD %ld,\n"
       "      PDLWRITED %ld, SPUSHD %ld, IWRITED %ld\n"
-      "    VMA and Q --- page 0's words 7 and 8, which are NOT on the\n"
+      "    VMA, Q and MD --- page 0's words 7, 8 and 9, which are NOT on the\n"
       "      diagnostic bus and which MIT's sixteen have no register for ---\n"
-      "      read at %ld halts and compared against the reference's own vma\n"
-      "      and q columns for the row the console says it stopped at.  %ld of\n"
-      "      them carry VMA != Q and so can tell one from the other; the rest\n"
-      "      are not evidence and are not counted.  Word 8 read ALONE gave the\n"
-      "      Q that the last read of word 7 latched beside it at %ld halts, of\n"
-      "      which %ld were taken where that latched Q and the live one differ\n"
-      "    NOT TESTED: that the PAIR is one instant rather than two reads a\n"
-      "      few ticks apart.  Q is 0xfffffffe on all but the first thousand\n"
-      "      rows of MIT's boot PROM, so a pair taken at two instants reads\n"
-      "      exactly like a pair taken at one, and no arrangement of this\n"
-      "      reference can tell them apart.  What IS held is that both name\n"
-      "      the row the console stopped at\n"
+      "      read at %ld halts and compared against the reference's own vma, q\n"
+      "      and md columns for the row the console says it stopped at.  %ld\n"
+      "      of them carry VMA != Q and so can tell one from the other; %ld\n"
+      "      carry MD != VMA and %ld carry MD != Q, which is what makes a\n"
+      "      console that handed MD back where one of the others was asked\n"
+      "      for visible here.  The rest are not evidence and are not counted\n"
+      "    the latch, which is what makes the THREE one microcycle: words 8\n"
+      "      and 9 are read ALONE first at every halt and must give the Q and\n"
+      "      the MD that the LAST read of word 7 took --- the previous halt's.\n"
+      "      Q: %ld reads, of which %ld where that latched Q and the live one\n"
+      "      differ.  MD: %ld reads, of which %ld --- MD moves over MIT's boot\n"
+      "      PROM where Q barely does, so the same test is evidence at nearly\n"
+      "      every halt for one word and at a handful for the other\n"
+      "    NOT TESTED: that the THREE are one instant rather than three reads\n"
+      "      a few ticks apart.  Every read here is made at a HALT, where none\n"
+      "      of the three is moving, so three instants and one read alike; and\n"
+      "      Q is 0xfffffffe on all but the first thousand rows besides.  No\n"
+      "      arrangement of this reference can tell them apart.  What IS held\n"
+      "      is that all three name the row the console stopped at\n"
+      "    the arc cadr_machine.xdc relaxes, MEASURED over %ld boundaries: the\n"
+      "      shortest distance from a change of the source to the boundary\n"
+      "      that captures it --- VMA %ld ticks, Q %ld, MD %ld, against the\n"
+      "      fifteen that file's relaxed set asks the fabric for.  vma and q\n"
+      "      are written only inside `if (mclk_edge)` and cannot move between\n"
+      "      boundaries at all; **MD can**, through `md_pending && hang` ---\n"
+      "      the word -LOADMD deskewed, taken under a parked generator --- so\n"
+      "      the third of these three numbers is the one that had to be asked\n"
       "    FLAG-1 read 0xe800 halted and 0xe900 running, which are muir's own\n"
       "      HALTED and RUNNING; CYCLES named the reference's own row every time\n"
       "    the face: %ld reads and %ld writes, %ld beats, %ld held until taken,\n"
@@ -1540,7 +1699,9 @@ int main(int argc, char **argv) {
       visits, total_rows, distinct_pc, lengths_checked, arb_skipped, sub_tick,
       resume_skipped, regs_compared, regs_hunted, flag2_wmapd, flag2_destspcd,
       flag2_imodd, flag2_pdlwrited, flag2_spushd, flag2_iwrited,
-      vq_compared, vq_distinct, vq_latch_samples, vq_latch_moving,
+      vq_compared, vq_distinct, md_off_vma, md_off_q,
+      vq_latch_samples, vq_latch_moving, md_latch_samples, md_latch_moving,
+      cap_edges, cap_min[0], cap_min[1], cap_min[2],
       axi_reads, axi_writes,
       axi_beats, axi_stalls, unmapped_seen, kUnmapped, cpu_waited,
       lag_seen, lag_samples, lag_moving,

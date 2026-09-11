@@ -214,17 +214,25 @@ module cadr_machine #(
     input  var logic [15:0] con_wdata,
     output var logic        con_ssyn,
     output var logic [15:0] con_rdata,
-    // **AND THE TWO REGISTERS THAT ARE NOT ON THAT BUS.**  MIT's sixteen
+    // **AND THE THREE REGISTERS THAT ARE NOT ON THAT BUS.**  MIT's sixteen
     // carry `IR`, `OPC`, `PC`, `OB`, the two flag words, `M`, `A` and `ST`
-    // and nothing else, so neither the virtual address register nor `Q` can
-    // be read through `cadr_spy_registers` at all.  They leave here already
-    // captured at the microcycle boundary --- `rtl/machine/cadr_console_state.sv`
+    // and nothing else, so neither the virtual address register nor `Q` nor
+    // `MD` can be read through `cadr_spy_registers` at all.  They leave here
+    // already captured at the microcycle boundary ---
+    // `rtl/machine/cadr_console_state.sv`
     // below, instantiated inside this module ON PURPOSE, because a register
     // sampling `vma` from outside `cadr_machine` is outside the reach of
     // `rtl/plumbing/xilinx7/cadr_machine.xdc` and gets one tick for a path the file relaxes to
     // fifteen.  That is the -12.837 ns the console's own read-back met.
+    //
+    // **`md` IS ALSO A PLAIN OUTPUT OF THIS MODULE, AND `con_md` IS NOT THAT
+    // PORT.**  `md` above is the datapath wire a check watches; `con_md` is
+    // the same register captured at the boundary for a console that is a
+    // level up and outside the constraints.  A console reading the port would
+    // be the -12.837 ns shape again, which is the whole reason there are two.
     output var logic [31:0] con_vma,
     output var logic [31:0] con_q,
+    output var logic [31:0] con_md,
 
     // --- PS DDR3, behind the AXI adapter
     output var logic        mem_req,
@@ -337,8 +345,8 @@ module cadr_machine #(
       .clock_edge  (clock_edge)
   );
 
-  // The virtual address register and `Q` for the console, captured at the
-  // microcycle boundary.  It is four lines and it is still a module of its
+  // The virtual address register, `Q` and `MD` for the console, captured at
+  // the microcycle boundary.  It is four lines and it is still a module of its
   // own, for the reason `rtl/machine/cadr_console_bus.sv` gives at the same shape:
   // `tb/cadr_console_harness.sv` instantiates THIS module and not a copy of
   // it, so the check holds what the board has.
@@ -348,8 +356,10 @@ module cadr_machine #(
       .mclk    (mclk),
       .vma     (vma),
       .q       (q),
+      .md      (md),
       .con_vma (con_vma),
-      .con_q   (con_q)
+      .con_q   (con_q),
+      .con_md  (con_md)
   );
 
   cadr_memory_path memory (

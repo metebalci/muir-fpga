@@ -138,38 +138,48 @@ uint64_t cons_ticks(struct console *c)
 }
 
 // **VMA FIRST, ALWAYS**, for the reason CYCLES goes before CYCLESH: the read
-// of word 7 latches Q beside it, so the pair names one microcycle of the
-// machine.  Reading word 8 first would pair a Q the last read of word 7
-// latched with a VMA from now.
-void cons_read_vmaq(struct console *c, struct cons_vmaq *v)
+// of word 7 latches Q and MD beside it, so the three name one microcycle of
+// the machine.  Reading word 8 or word 9 first would pair a value the last
+// read of word 7 latched with a VMA from now.  There is deliberately no
+// function here that reads one of the three on its own.
+void cons_read_machine_words(struct console *c, struct cons_machine_words *v)
 {
 	v->vma = c->read(c, CONS_VMA);
 	v->q = c->read(c, CONS_Q);
+	v->md = c->read(c, CONS_MD);
 	// VMA<23:8> is the page number, which is what the two levels of the
 	// map are indexed by: a CADR page is 256 words.  The bits above 24
 	// are not address --- a map write carries its data there --- so the
 	// page numbers are given beside the raw words and not instead of
-	// them.
+	// them.  MD<23:8> is a page number in exactly the same sense and for
+	// a sharper reason: `cadr_microcycle.sv:1006` makes MAPI VMA<23:8>
+	// while MEMSTART is up and MD<23:8> otherwise, so this is the entry a
+	// SRCMAP read looks at.
 	v->vma_page = (v->vma >> 8) & 0xFFFFu;
 	v->q_page = (v->q >> 8) & 0xFFFFu;
-	// A fabric older than these two words answers UNMAPPED at both, and
-	// UNMAPPED is a value that means nothing: it must not be read as a
-	// virtual address.  Both, because either alone could in principle be
-	// a word the machine really holds.
-	v->unmapped = v->vma == CONS_UNMAPPED && v->q == CONS_UNMAPPED;
+	v->md_page = (v->md >> 8) & 0xFFFFu;
+	// A fabric older than these words answers UNMAPPED at all of them,
+	// and UNMAPPED is a value that means nothing: it must not be read as
+	// a virtual address or as a word out of memory.  All three, because
+	// any one alone could in principle be a word the machine really
+	// holds.
+	v->unmapped = v->vma == CONS_UNMAPPED && v->q == CONS_UNMAPPED &&
+		      v->md == CONS_UNMAPPED;
 }
 
-void cons_say_vmaq(const struct cons_vmaq *v)
+void cons_say_machine_words(const struct cons_machine_words *v)
 {
 	if (v->unmapped) {
-		say("  VMA and Q both read 0x%08x, which is this face's own UNMAPPED: page 0's words 7 and 8 "
-		    "are not in this bitstream", CONS_UNMAPPED);
+		say("  VMA, Q and MD all read 0x%08x, which is this face's own UNMAPPED: page 0's words 7, 8 "
+		    "and 9 are not in this bitstream", CONS_UNMAPPED);
 		return;
 	}
 	say("  VMA 0x%08x  %o   the virtual address register, page 0 word 7 --- NOT a diagnostic register: "
 	    "MIT's sixteen have none for it.  Page VMA<23:8> = %o", v->vma, v->vma, v->vma_page);
-	say("  Q   0x%08x  %o   the Q register, page 0 word 8, latched when VMA was read so the two name "
+	say("  Q   0x%08x  %o   the Q register, page 0 word 8, latched when VMA was read so the three name "
 	    "one microcycle.  Page Q<23:8> = %o", v->q, v->q, v->q_page);
+	say("  MD  0x%08x  %o   the memory data register, page 0 word 9, latched when VMA was read.  "
+	    "Page MD<23:8> = %o", v->md, v->md, v->md_page);
 	// **THE TWO VALUES AND WHAT EACH MEANS, AND NO NAME FOR THE
 	// COMPARISON.**  In PDL-BUFFER-REFILL the microcode reads a
 	// second-level map entry, writes it back with read/write access ORed
@@ -192,8 +202,32 @@ void cons_say_vmaq(const struct cons_vmaq *v)
 		    "map was hacked for", v->vma_page, v->q_page,
 		    (unsigned long)(v->vma_page > v->q_page ? v->vma_page - v->q_page
 							    : v->q_page - v->vma_page));
-	say("  both are as of the last microcycle boundary, which is exact on a halted machine --- halt "
-	    "first if the answer is to mean anything");
+	// **WHAT MD IS AND WHAT ITS READING MEANS HERE**, in two sentences and
+	// no name for either comparison.  The first is what the word is: a
+	// reference the map refuses starts no bus cycle at all --- the cycle
+	// is armed by MEMSTART AND VMAOK --- so the faulting read never
+	// strobed -LOADMD, and what stands in MD is the word the last
+	// COMPLETED read left.  The second is the sharper one and it is a
+	// fact about this machine's wiring rather than about the microcode:
+	// the map is indexed by VMA<23:8> on a memory reference and by
+	// MD<23:8> otherwise, so those two page numbers are the entry the
+	// machine read THROUGH and the entry a SRCMAP read LOOKED AT.  In
+	// PDL-BUFFER-REFILL the microcode does one of each.
+	say("  MD is the word the last COMPLETED read left: a reference the map refuses starts no bus "
+	    "cycle at all, so a read that page-faulted never strobed -LOADMD and what stands here is "
+	    "the word before it.  Compare it with muir's md at the same microcycle");
+	if (v->md_page == v->vma_page)
+		say("  MD and VMA name the same page %o.  The map is indexed by VMA<23:8> on a memory "
+		    "reference and by MD<23:8> otherwise (cadr_microcycle.sv:1006, the 74S258s at VMAS "
+		    "1C20), so a SRCMAP read here looks at the entry the machine also reads through",
+		    v->md_page);
+	else
+		say("  MD and VMA name DIFFERENT pages, %o and %o.  The map is indexed by VMA<23:8> on a "
+		    "memory reference and by MD<23:8> otherwise (cadr_microcycle.sv:1006, the 74S258s at "
+		    "VMAS 1C20), so a SRCMAP read here looks at a DIFFERENT entry from the one the "
+		    "machine reads through", v->md_page, v->vma_page);
+	say("  all three are as of the last microcycle boundary, which is exact on a halted machine --- "
+	    "halt first if the answer is to mean anything");
 }
 
 int cons_spy_read(struct console *c, unsigned eadr, uint16_t *v)
@@ -282,7 +316,7 @@ void cons_read_regs(struct console *c, struct cons_regs *r)
 	// And the two that are not on that bus.  No diagnostic cycle is run
 	// for these, so they cannot be lost and there is no bit for them in
 	// `lost`; they are two loads of page 0.
-	cons_read_vmaq(c, &r->vq);
+	cons_read_machine_words(c, &r->mw);
 }
 
 int cons_status(struct console *c, unsigned settle_us, struct cons_status *st)
@@ -304,7 +338,7 @@ int cons_status(struct console *c, unsigned settle_us, struct cons_status *st)
 	// The virtual address register and Q, which no diagnostic cycle can
 	// reach: two loads of page 0, taken inside the bracket with
 	// everything else so that they belong to the same look at the machine.
-	cons_read_vmaq(c, &st->vq);
+	cons_read_machine_words(c, &st->mw);
 	if (c->pause)
 		c->pause(c, settle_us);
 	st->cycles_second = cons_cycles(c);
@@ -380,7 +414,7 @@ void cons_say_status(const struct cons_status *st)
 	    (unsigned long long)st->cycles_second, st->settle_us,
 	    (unsigned long long)(st->cycles_second - st->cycles_first), (unsigned long long)st->ticks);
 	say("status: PC %o (0x%04x), OPC %o", st->pc, st->pc, st->opc);
-	cons_say_vmaq(&st->vq);
+	cons_say_machine_words(&st->mw);
 	say("status: FLAG-1 0x%04x: SRUN %s, SSDONE %s, ERR %s, -STATHALT %s, -WAIT %s, PROMDISABLE %s",
 	    st->flag1_word, st->f1.srun ? "up" : "down", st->f1.ssdone ? "up" : "down",
 	    st->f1.err ? "up" : "down", st->f1.stathalt ? "halted" : "clear",
@@ -430,6 +464,6 @@ void cons_say_regs(const struct cons_regs *r)
 	// **AND THE TWO THAT ARE NOT AMONG THEM**, said so rather than
 	// printed as though they were a seventeenth and eighteenth register:
 	// `EADR<3:0>` names sixteen things and all sixteen are MIT's.
-	say("and page 0's words 7 and 8, which are the machine's own and are on no diagnostic register:");
-	cons_say_vmaq(&r->vq);
+	say("and page 0's words 7, 8 and 9, which are the machine's own and are on no diagnostic register:");
+	cons_say_machine_words(&r->mw);
 }
