@@ -270,6 +270,26 @@ module cadr_machine #(
     output var logic [31:0] con_q,
     output var logic [31:0] con_md,
 
+    // --- **AND THE READOUT, WHICH IS NOT A REGISTER BUT A WINDOW.**  The
+    // machine's memories --- the control store, the boot PROM, the A and M
+    // scratchpads, the pushdown buffer, the micro-stack, the dispatch
+    // memory, both levels of the map, the OPC shift register --- and a
+    // table of the processor's own registers that the diagnostic bus has no
+    // register for.  `con_ro_addr` names a word, `con_ro_data` is that word
+    // three ticks later and `con_ro_echo` is the address it was read at.
+    //
+    // The readout itself is the last section of `cadr_microcycle.sv`, where
+    // the memories are; the whole argument for a second read port rather
+    // than a borrowed one is there.  What matters here is that the address
+    // is registered INSIDE that module and the data and the echo leave it
+    // as registers, which is `cadr_console_state.sv`'s rule and the reason
+    // this port is three wires and not a memory interface: a register in
+    // `rtl/plumbing/cadr_console.sv` reaching an array in here would be the
+    // -12.837 ns that module's header records, with a deeper cone.
+    input  var logic [17:0] con_ro_addr,
+    output var logic [47:0] con_ro_data,
+    output var logic [17:0] con_ro_echo,
+
     // --- PS DDR3, behind the AXI adapter
     output var logic        mem_req,
     output var logic        mem_write,
@@ -378,7 +398,10 @@ module cadr_machine #(
       .memstart    (memstart),
       .rdcyc       (rdcyc),
       .wrcyc       (wrcyc),
-      .clock_edge  (clock_edge)
+      .clock_edge  (clock_edge),
+      .ro_addr     (con_ro_addr),
+      .ro_data     (con_ro_data),
+      .ro_echo     (con_ro_echo)
   );
 
   // The virtual address register, `Q` and `MD` for the console, captured at

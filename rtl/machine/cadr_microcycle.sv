@@ -159,7 +159,16 @@ module cadr_microcycle #(
 
     // --- one tick per microcycle, at the boundary: the edge every register
     // --- above takes.  What stands before it is that microcycle's.
-    output var logic        clock_edge
+    output var logic        clock_edge,
+
+    // --- THE READOUT, which is the one way anything outside this module can
+    // --- see a memory inside it.  `ro_addr` is `{sel<3:0>, word<13:0>}`,
+    // --- `ro_data` is the word three ticks later and `ro_echo` is the
+    // --- address that word was read at.  The section at the end of this
+    // --- file is the whole of it and says why each piece is as it is.
+    input  var logic [17:0] ro_addr,
+    output var logic [47:0] ro_data,
+    output var logic [17:0] ro_echo
 );
 
   localparam int unsigned IMEM_WORDS = 16384;
@@ -1568,6 +1577,265 @@ module cadr_microcycle #(
         // the new IR here is a cycle early.
         if (irdisp) dc <= ir[41:32];
       end
+    end
+  end
+
+  // ---------------------------------------------------------- the readout
+  //
+  // **THE ONE WAY ANYTHING OUTSIDE THIS MODULE CAN SEE A MEMORY INSIDE IT.**
+  // Eight arrays and the OPC shift register hold nearly everything a CADR
+  // is, and until now not one word of any of them left here: the sixteen
+  // diagnostic registers are `Engine::spy_read`, which is `IR`, `PC`, `OPC`,
+  // `OB`, the two buses, `ST` and the two flag words and nothing else, and
+  // `cadr_console_state.sv` adds `VMA`, `Q` and `MD`.  So an investigation
+  // has been conducted through a keyhole.  **This is not the debugger and is
+  // not meant to become one** --- that is CC over the debug cable, which
+  // reads the scratchpads by forcing a microinstruction into the instruction
+  // register and so tests a piece of the CADR rather than adding a piece that
+  // is not the CADR.  This is the crude thing beside it.
+  //
+  // **IT IS A SECOND READ PORT AND NOT A BORROWED ONE, AND THAT IS THE
+  // DECISION.**  The cheap way to read a memory is to mux the readout's
+  // address onto the address the machine already drives --- about seventy
+  // LUTs for the lot.  It was refused, for two reasons and not one:
+  //
+  //   - **a write pulse with the address muxed writes the readout's
+  //     address.**  `dmem[dadr]`, `l1_map[adr0]` and `l2_map[adr1]` are
+  //     written under `wp` at an address that is *the same expression* as
+  //     the read's, so a mux on it moves the write with the read.  A
+  //     readout that can corrupt the dispatch memory is not an instrument.
+  //   - **`dadr`, `adr0` and `adr1` are the machine's own longest
+  //     combinational chains** --- the map ripple into the control store's
+  //     address is what `rtl/plumbing/xilinx7/cadr_machine.xdc` measures at
+  //     21.6 ns over 26 logic levels --- and a mux there is a logic level
+  //     added to the worst path in the design to buy a debugging aid.
+  //
+  // A second read port cannot do either.  It costs block RAM ports where
+  // there are spare ones and duplicated LUT storage where there are not,
+  // and the fit either side is what says how much.  **The figure belongs in
+  // the commit, where it can rot loudly; what belongs here is WHICH MEMORY
+  // PAID WHAT, which is a fact about the design and not about a build.**
+  // Vivado's own mapping report, either side, on the `DDR=1` board:
+  //
+  //   - **the control store's second port was free.**  It was 24 RAMB36
+  //     using port A alone --- its read and its write are at the same net,
+  //     `pc` --- and it is 24 RAMB36 in true dual port now.
+  //   - **the boot PROM took a whole second copy**, 1024x41 of block RAM,
+  //     rather than the spare port of the one it had.
+  //   - **THE A MEMORY, THE PUSHDOWN BUFFER AND THE M MEMORY LEFT BLOCK RAM
+  //     ALTOGETHER**, and that is most of the lookup tables this costs.  Each
+  //     was a block RAM with BOTH ports spent, port A writing at `wadr` and
+  //     port B reading at `aadr`; a third port is one more than a block RAM
+  //     has, so Vivado moved all three to distributed RAM.
+  //   - the dispatch memory, both map levels and the micro-stack were
+  //     distributed already and doubled --- `RAM256X1S` became `RAM128X1D`,
+  //     twice as many.
+  //
+  // **The memory-off board measures none of this**, and that is worth saying
+  // where somebody might quote its figure: with no console there, `ro_addr`
+  // is tied to the reserved selector and much of the window folds.  It is
+  // the `DDR=1` board that tests this, exactly as it is the machine board
+  // and not a prove board that tests the memory port's own exception.
+  //
+  // **AND IT CANNOT DISTURB THE MACHINE, BY CONSTRUCTION AND NOT BY
+  // CONVENTION.**  Nothing here drives an address, an enable or a word that
+  // the machine reads; every signal in this section is downstream of the
+  // memories and of registers that stand still between boundaries.  A read
+  // taken while the machine RUNS is therefore harmless to it --- and is
+  // still a torn sample of a moving machine, which is the honest half: the
+  // word comes from whatever the array held three ticks ago, the register
+  // table from three different boundaries if three reads straddle them, and
+  // `docs/console.md` says so where somebody will read it.  The intended
+  // use is a halted machine, where MCLK still runs, every array stands and
+  // the readout is exact.
+  //
+  // **THE ADDRESS IS `{sel<3:0>, word<13:0>}` AND THE ECHO IS WHAT MAKES IT
+  // AN INSTRUMENT.**  `ro_echo` is the address the word in `ro_data` was
+  // read at, carried down the same pipeline, so a reader compares it with
+  // what it asked and cannot mistake a word still in flight for the one it
+  // wanted.  Out of reset both are `RO_NONE`, which names the reserved
+  // selector and is an address nobody may legitimately ask for --- a value
+  // that means nothing must not be a value the instrument can mean.
+  //
+  // **THREE TICKS, AND WHERE EACH GOES.**  `ro_addr` arrives from
+  // `rtl/plumbing/cadr_console.sv`, which is a level above `cadr_machine`
+  // and outside `cadr_machine.xdc`'s reach, so it is registered HERE first
+  // and the memories are addressed from `ro_a0`: that arc is
+  // `cadr_machine`'s at both ends and takes the fifteen-tick relaxation the
+  // control store's own address pins take, and the arc from the console is
+  // a bare flop-to-flop wire at one tick.  The same rule sends `ro_data`
+  // and `ro_echo` out as registers.  It is `cadr_console_state.sv`'s
+  // argument exactly, and the -12.837 ns that module's header records is
+  // what it is arguing from.
+  //
+  // **EVERY SOURCE OF THE REGISTER TABLE IS A REGISTER THIS FILE WRITES AT
+  // A BOUNDARY**, which is deliberate: `phase_t`, `mfinish_t`, `rdfinish_t`
+  // and `elapsed` are named FAST in `cadr_machine.xdc` and an arc out of one
+  // of them into a register here would be timed at a single tick through a
+  // twenty-one-way mux.  They are left out, and what that costs is that this
+  // window has no reading for the bus cycle's own deadlines --- muir's
+  // `rd_finish_at`, `mbusy_clear_at` and `loadmd_at` --- which on a halted
+  // machine at a boundary are idle anyway.  `wait_`, `hang`, `machrun`, `errhalt` and
+  // `stathalt` are left out for the same reason one level down: they are
+  // gates, and a gate's cone is whatever drives it.
+
+  localparam logic [17:0] RO_NONE = 18'h3FFFF;
+  // What a selector this fabric does not map reads.  Not zero and not all
+  // ones, because both are words a memory can legitimately hold; the halves
+  // differ and neither is a rotation of the other.
+  localparam logic [47:0] RO_NO_MEMORY = 48'hA5A5_5A5A_A5A5;
+
+  localparam logic [3:0] RO_IMEM = 4'd0;   // the control store, 16384 x 48
+  localparam logic [3:0] RO_PROM = 4'd1;   // the boot PROM, 1024 x 48
+  localparam logic [3:0] RO_AMEM = 4'd2;   // the A memory, 1024 x 32
+  localparam logic [3:0] RO_MMEM = 4'd3;   // the M memory, 32 x 32
+  localparam logic [3:0] RO_PDL  = 4'd4;   // the pushdown buffer, 1024 x 32
+  localparam logic [3:0] RO_SPC  = 4'd5;   // the micro-stack, 32 x 21
+  localparam logic [3:0] RO_DMEM = 4'd6;   // the dispatch memory, 2048 x 17
+  localparam logic [3:0] RO_MAP1 = 4'd7;   // the level-1 map, 2048 x 5
+  localparam logic [3:0] RO_MAP2 = 4'd8;   // the level-2 map, 1024 x 24
+  localparam logic [3:0] RO_OPCS = 4'd9;   // the OPC shift register, 8 x 14
+  localparam logic [3:0] RO_REGS = 4'd10;  // the register table below, 21 x 48
+
+  logic [17:0] ro_a0, ro_a1;
+
+  // The words each memory's second port gives, one tick behind `ro_a0`.
+  logic [47:0] ro_imem_q, ro_prom_q;
+  logic [31:0] ro_amem_q, ro_mmem_q, ro_pdl_q;
+  logic [20:0] ro_spc_q;
+  logic [16:0] ro_dmem_q;
+  logic [4:0]  ro_map1_q;
+  logic [23:0] ro_map2_q;
+  logic [13:0] ro_opcs_q;
+  logic [47:0] ro_regs_q;
+
+  // **THE REGISTER TABLE.**  The processor's own registers that MIT's
+  // sixteen have no register for.  The entries are named by
+  // `../muir/src/machine.rs`'s `Machine` and `../muir/src/rtl.rs`'s `Rtl`,
+  // which is the vocabulary both engines share, and the Linux side prints
+  // them under those names; an entry this fabric does not have is absent
+  // rather than zero, because a zero somebody has to be told to disbelieve is
+  // the trap this repository keeps meeting.
+  localparam logic [13:0] RG_PC     = 14'd0;
+  localparam logic [13:0] RG_LPC    = 14'd1;
+  localparam logic [13:0] RG_IR     = 14'd2;
+  localparam logic [13:0] RG_IWR    = 14'd3;
+  localparam logic [13:0] RG_L      = 14'd4;
+  localparam logic [13:0] RG_Q      = 14'd5;
+  localparam logic [13:0] RG_VMA    = 14'd6;
+  localparam logic [13:0] RG_MD     = 14'd7;
+  localparam logic [13:0] RG_ST     = 14'd8;
+  localparam logic [13:0] RG_LC     = 14'd9;
+  localparam logic [13:0] RG_WADR   = 14'd10;
+  localparam logic [13:0] RG_PDLPTR = 14'd11;
+  localparam logic [13:0] RG_PDLIDX = 14'd12;
+  localparam logic [13:0] RG_SPCPTR = 14'd13;
+  localparam logic [13:0] RG_RETA   = 14'd14;
+  localparam logic [13:0] RG_DC     = 14'd15;
+  localparam logic [13:0] RG_LVMO   = 14'd16;
+  localparam logic [13:0] RG_MDHELD = 14'd17;
+  localparam logic [13:0] RG_PHYS   = 14'd18;
+  localparam logic [13:0] RG_SPEED  = 14'd19;
+  localparam logic [13:0] RG_FLAGS  = 14'd20;
+
+  // The flags, one bit each, in the order `Rtl` and `Machine` declare them
+  // as nearly as the fabric's own names allow.  **Every one of these is a
+  // register written in the two `always_ff` blocks above**, or --- the last
+  // three --- an input port whose far end is a register of
+  // `cadr_spy_registers` inside `cadr_machine`; not one is a gate, for the
+  // reason the header gives.
+  //
+  // `run`, `errstop` and `stathenb` are the console's own mode and clock
+  // control registers arriving here, and they are in the table because the
+  // diagnostic bus cannot read them back: `Engine::spy_read` carries
+  // `PROMDISABLE` in FLAG-1 and not one of the other five bits, the registers
+  // being write-only on the board.
+  logic [47:0] ro_flags;
+  assign ro_flags = {15'd0,
+                     stathenb, errstop, run,
+                     md_pending, vmaok, imodd, destspcd, spushd, wmapd,
+                     rd_in_progress, mbusy_sync, wrcyc, rdcyc, mbusy,
+                     memstart, halted, statstop, srun, promdisabled, trap,
+                     prog_unibus_reset, sequence_break, int_enable,
+                     lc_byte_mode, next_instrd, sintr_d, newlc, iwrited,
+                     inop, pdlwrited, pwidx, destmd, destd};
+
+  logic [47:0] ro_regs;
+  always_comb begin
+    unique case (ro_a0[13:0])
+      RG_PC:     ro_regs = {34'd0, pc};
+      RG_LPC:    ro_regs = {34'd0, lpc};
+      RG_IR:     ro_regs = ir;
+      RG_IWR:    ro_regs = iwr;
+      RG_L:      ro_regs = {16'd0, l};
+      RG_Q:      ro_regs = {16'd0, q};
+      RG_VMA:    ro_regs = {16'd0, vma};
+      RG_MD:     ro_regs = {16'd0, md};
+      RG_ST:     ro_regs = {16'd0, st};
+      RG_LC:     ro_regs = {22'd0, lc};
+      RG_WADR:   ro_regs = {38'd0, wadr};
+      RG_PDLPTR: ro_regs = {38'd0, pdl_ptr};
+      RG_PDLIDX: ro_regs = {38'd0, pdl_idx};
+      RG_SPCPTR: ro_regs = {43'd0, spcptr};
+      RG_RETA:   ro_regs = {34'd0, reta};
+      RG_DC:     ro_regs = {38'd0, dc};
+      RG_LVMO:   ro_regs = {24'd0, lvmo};
+      RG_MDHELD: ro_regs = {16'd0, md_held};
+      RG_PHYS:   ro_regs = {26'd0, phys_r};
+      RG_SPEED:  ro_regs = {42'd0, mode_speed, speed_a, speed};
+      RG_FLAGS:  ro_regs = ro_flags;
+      default:   ro_regs = RO_NO_MEMORY;
+    endcase
+  end
+
+  // **THE SECOND PORTS, IN A PROCESS OF THEIR OWN AND ALWAYS ENABLED.**  The
+  // machine's own reads of the scratchpads are enabled by TPCLK, which is
+  // the 74S373s at ALATCH and the rest; these are not, because a latch that
+  // follows the bus while the clock is high is a thing about the CADR and
+  // this is a thing about the console.
+  always_ff @(posedge clk) begin
+    ro_imem_q <= imem[ro_a0[13:0]];
+    ro_prom_q <= prom_mem[ro_a0[9:0]];
+    ro_amem_q <= amem[ro_a0[9:0]];
+    ro_mmem_q <= mmem[ro_a0[4:0]];
+    ro_pdl_q  <= pdl[ro_a0[9:0]];
+    ro_spc_q  <= spcm[ro_a0[4:0]];
+    ro_dmem_q <= dmem[ro_a0[10:0]];
+    ro_map1_q <= l1_map[ro_a0[10:0]];
+    ro_map2_q <= l2_map[ro_a0[9:0]];
+    ro_opcs_q <= opcs[ro_a0[2:0]];
+    ro_regs_q <= ro_regs;
+  end
+
+  logic [47:0] ro_word;
+  always_comb begin
+    unique case (ro_a1[17:14])
+      RO_IMEM: ro_word = ro_imem_q;
+      RO_PROM: ro_word = ro_prom_q;
+      RO_AMEM: ro_word = {16'd0, ro_amem_q};
+      RO_MMEM: ro_word = {16'd0, ro_mmem_q};
+      RO_PDL:  ro_word = {16'd0, ro_pdl_q};
+      RO_SPC:  ro_word = {27'd0, ro_spc_q};
+      RO_DMEM: ro_word = {31'd0, ro_dmem_q};
+      RO_MAP1: ro_word = {43'd0, ro_map1_q};
+      RO_MAP2: ro_word = {24'd0, ro_map2_q};
+      RO_OPCS: ro_word = {34'd0, ro_opcs_q};
+      RO_REGS: ro_word = ro_regs_q;
+      default: ro_word = RO_NO_MEMORY;
+    endcase
+  end
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      ro_a0   <= RO_NONE;
+      ro_a1   <= RO_NONE;
+      ro_echo <= RO_NONE;
+      ro_data <= RO_NO_MEMORY;
+    end else begin
+      ro_a0   <= ro_addr;
+      ro_a1   <= ro_a0;
+      ro_echo <= ro_a1;
+      ro_data <= ro_word;
     end
   end
 

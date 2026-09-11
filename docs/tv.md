@@ -221,6 +221,16 @@ are not there. The enable bit does have one.
 
 ## What the check holds to
 
+**A READ of the window is checked, and has been since the slice.** It is
+worth saying outright, because the question was asked again on 2026-09-11 and
+the answer was assumed to be no: the frame buffer is the one thing in the
+window a program reads *back*, and 23 of the trace's 43 window cycles are
+reads, compared against muir's own word at -MEMACK's rise, from a modelled DDR
+poisoned injectively in the address so that a read of the wrong word cannot
+come back right. The window's first word, its last, the word each side of it
+and one offset rewritten are all among them. Configuration B, below, adds the
+one thing the trace cannot reach.
+
 In `build/tv.pass`, `tb/cadr_tv_tb.cpp` drives `cadr_memory_path` from
 `build/tv.golden`. There is one row a tick wherever anything moves, and every
 gap is stepped a tick at a time with the inputs held and every output required
@@ -245,6 +255,15 @@ to hold. The run is 77,290,001 ticks, twenty-five frames and 247 bus cycles:
   and poisoned injectively where nothing wrote.
 - **The counts are checked.** The run sees exactly the cycles of each kind,
   the interrupt edges and the inits the generator's header says it made.
+- **The window's reads are counted and required to carry a word.** Of the 102
+  answered reads, 23 are reads of the frame buffer, and the run requires one
+  comparison per window read the header says the program made and requires
+  every word it compared them against to have a bit set. Without that, a
+  reference that started answering zero in the window, or a program that
+  stopped reading it, would leave a check a bridge stuck at zero walks
+  straight through. It also counts the window cycles that reached the
+  display's region of DDR --- all 43 of them --- and requires that none
+  reached main memory's.
 
 The program runs the face at power-on. It writes the mode register's four bits
 and its flag and reads them back, with everything above bit 4 dropped. It takes
@@ -259,9 +278,54 @@ It toggles the flag by writes alone with the enable off. And it lands a write a
 tick before, a tick after and exactly on a boundary. Three main-memory words
 are in there too, so the bridge's other base is in the same trace.
 
-**What it cannot hold to.** It cannot hold the frame buffer's timing on the
-board, where DDR answers in its own time, which is main memory's parting,
-inherited. It cannot hold the gate between `tv_intr` and the processor's
+## What configuration B holds to
+
+The trace is muir's, and muir's TV answers a buffer word in no time of its
+own, so the modelled DDR has to answer in the same tick for the
+acknowledgement to land where the reference puts it. That leaves one thing
+unexercised: `build/tv.pass` is the only check in the tree that ever puts the
+display's base on the memory port, and it was also the only one whose memory
+answered at once. `tb/cadr_memory_path_tb.cpp` waits six ticks and
+`tb/cadr_ddr_boot_tb.cpp` four to twenty-six, but neither ever addresses the
+window. So a bridge that acknowledged a window cycle **before** DDR had
+answered it --- which strobes MD before the word is there, and gives a machine
+that writes the screen correctly and reads it back black --- had nothing
+looking at it, where the same bug at main memory's base is caught twice.
+
+So after the trace the run builds a second machine and drives window cycles at
+it directly, with a modelled DDR 37 ticks behind every request. It is held to a
+property and not to muir, because muir's TV has no DDR behind it to be late:
+**a word written into the window is the word read back out of it, at the
+display's base, however long the memory takes.** Twelve cycles to the window:
+
+- a word written and read back at the window's first word, at the last word of
+  the picture (23,111 --- 768 x 963 bits at one bit a pixel is 23,112 words of
+  the 32,768), at the first word past the picture, and at the last word of the
+  window;
+- the reads taken in the reverse order of the writes, so a read giving the word
+  before it cannot come back right, and every word a read is held to is
+  required to be non-zero and different from the word before;
+- a word of the window the program never wrote, which must come back as the
+  modelled DDR's poison rather than as zero --- a bridge answering out of its
+  own idea of an unwritten word passes a check that only ever reads words it
+  has written;
+- one offset written twice and read back, so a bridge that kept the word it
+  gave last time cannot pass;
+- one word above the window and one below it, which nothing answers: the NXM
+  timer ends both, MD is zero, and neither reaches the port at all;
+- and the window's first word once more at the end.
+
+Every window cycle's byte address is asserted at the port against
+`DISPLAY_BASE + 4 * offset`, the port is required to hold the address and the
+direction still for the whole of the memory's wait, and the run fails if one of
+them lands in main memory's region instead.
+
+
+**What neither configuration can hold to.** They cannot hold the frame
+buffer's timing on the board *against muir*, where DDR answers in its own time, which is main memory's
+parting, inherited --- configuration B holds the window's read-back against a
+memory that takes time, but the instant the answer lands is then the memory's
+and not the reference's. It cannot hold the gate between `tv_intr` and the processor's
 `sintr_o`, for want of a program that enables the DISPLAY's interrupt. The
 disk's half of the same gate is held by `disk.pass` and `machine.pass` since
 `f8c6d25`. And it cannot say what the boot PROM and the band would show.
@@ -271,8 +335,8 @@ the band's run-light writes.
 
 ## The mutations
 
-Twenty records are aimed at `tv` in `mutations/list.txt`, and each is caught on
-a line of its own. They are the frame a tick long and a tick short (caught at
+Twenty-four records are aimed at `tv` in `mutations/list.txt`, and each is
+caught on a line of its own. They are the frame a tick long and a tick short (caught at
 the first frame boundary the enable is up for), the enable ignored (the first
 frame, whose preset comes with the enable off), the window's base a word
 off and the window's select dropped in the path (the first frame-buffer
@@ -289,6 +353,24 @@ the store repeating while the request stands (visible only at frame 6,
 where a repeated store overrides the preset one tick later), frame-buffer
 reads taken from the main base, and the register word not selected in the
 path.
+
+**Four of the twenty-four are the window READ**, which is the half of the
+display nothing outside this check exercises: a run light is a blind write,
+while a character is drawn by `BITBLT-INNER-4` and `XTVCHO3`, which read the
+frame-buffer word back, merge the glyph's bits into it and write it again. So a
+display that could be written and not read would paint the microcode's run
+lights and never a character. The four are `tv-display-answers-a-window-read`
+(the display board driving MEM<31:0> for the window as well as for a control
+word, so that the mux in `cadr_memory_path.sv` gives a control word where the
+screen should be), `tv-window-read-ignores-the-word-ddr-returned` (the bridge
+never taking DDR's word for a window read, so the screen reads back black),
+`tv-window-base-a-page-off`, and `tv-window-answered-before-ddr-does`. The
+first three are caught by the trace, the first two at tick 24,731,141 --- the
+first read-back of the window, the last word of the buffer --- and the third at
+tick 24,730,404, at the port, on the first write. **The fourth is caught by
+configuration B and by nothing else, measured:** with it applied the trace
+prints its own `ok` and configuration B fails on all seven of its reads, each
+reading back zero. That is the record that configuration B exists for.
 
 One of the twenty was an equivalence first and a finding second.
 `tv-answers-its-neighbours` was written as a wider match *gated by `sel`* and
