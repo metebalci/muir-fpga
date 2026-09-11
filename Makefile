@@ -420,6 +420,51 @@ $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
 	$(BUILD)/obj_map_boot/Vcadr_machine $(BUILD)/rtl.golden
 	@touch $@
 
+# ------------------------------ the whole machine on a band, with a real pack
+
+# `cadr_machine` from reset against the SYSTEM trace rather than the boot
+# PROM's, with a real memory keyed by `mem_addr`, a drive on the cable and a
+# real System 100 pack behind the block store's seam.  1,062,507 microcycles
+# agree exactly, the two clocks the same to the nanosecond throughout, and
+# 524,650 of them are past the point where this trace and the boot PROM's part
+# company --- a program no other check runs on the whole machine, with the disk
+# controller answering out of a real drive instead of the no-drive constant.
+#
+# **IT STOPS AT THE MACHINE'S FIRST DISK TRANSFER AND IT CANNOT BE MADE NOT
+# TO.**  muir's channel writes main memory directly and finishes at the instant
+# it starts; the fabric's is a second Xbus master.  `tb/cadr_band_tb.cpp`'s
+# header has the three ways round it that were built and measured, and
+# `docs/band.md` has the account and what would close it.  The run asserts the
+# floor, the clocks and the pack's seam, and prints where it ends and why.
+#
+# **PHONY, AND NOT YET IN `check`.**  A `.pass` file here would make
+# `mutations/run.py`'s `check_makefile` report a check that nothing mutates,
+# and aiming a record at it first needs an entry in that runner's `CHECKS` ---
+# which is the booby trap CLAUDE.md records, a record naming a check the runner
+# has no entry for killing the whole run at parse.  Promoting this is those two
+# changes together, and `docs/band.md` writes both of them out.
+#
+# It skips, and says so, when the System 100 release is not here, as its
+# neighbours do; the sum is checked before the archive is used and the pack is
+# decompressed fresh for the run and removed after.  Twenty-five seconds.
+$(BUILD)/obj_band/Vcadr_machine: $(MACHINE) tb/cadr_band_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_band_tb.cpp)
+
+.PHONY: band
+band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
+	@if [ ! -f $(SYS100_GZ) ]; then \
+	    echo "band: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	else \
+	    set -e; \
+	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
+	        || { echo "band: $(SYS100_GZ) is not the release this trace was measured against"; exit 1; }; \
+	    trap 'rm -f $(BUILD)/band-pack.img' EXIT; \
+	    gunzip -c $(SYS100_GZ) > $(BUILD)/band-pack.img; \
+	    $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden --pack $(BUILD)/band-pack.img; \
+	fi
+
 # ------------------------------------------------- the memory port's tally
 
 # `rtl/plumbing/cadr_mem_count.sv` is the board's only positive witness that the
