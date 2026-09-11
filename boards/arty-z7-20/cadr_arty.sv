@@ -260,6 +260,61 @@ module cadr_arty #(
   // reader outside the machine's constraints.
   logic [31:0] con_vma, con_q, con_md;
 
+  // ------------------------------------------------- the I/O board's cables
+  //
+  // The card is a Unibus slave inside `cadr_machine` and these are the things
+  // MIT plugged into it.  **All four are tied off here, and each names the
+  // slice that will drive it**, which is the shape `drive_present` had for a
+  // day and the reason a seam is a port rather than a constant inside: the
+  // day the far end exists, one line in this file changes and nothing in the
+  // machine does.
+  //
+  //   the keyboard    `cadr-usb-input`, last in the order of work.  The kernel
+  //                   side is done --- `evtest` printed Mete's name off a USB
+  //                   keyboard on this board on 10 Sep --- and what is missing
+  //                   is the program that carries those events across and the
+  //                   register face it writes them through.  No strobe means
+  //                   no scan code and `KBD READY` never rises.
+  //   the mouse       the same program.  Seven lines and not two deltas: the
+  //                   card takes quadrature as MIT's mouse drives it, so
+  //                   whatever turns a USB mouse's movement into phases is
+  //                   fabric beside the card and is not built.  Held at zero
+  //                   the card's latches agree with the lines from reset and
+  //                   nothing is ever a change, so the two counters and the
+  //                   comparator constant-fold --- which is the drive seam's
+  //                   own lesson and means the FITTER DOES NOT TEST THE MOUSE
+  //                   on this board.
+  //   the serial port `cadr-serial`, its own slice and its own Buildroot
+  //                   package.  There is no 2651 in the fabric, so its
+  //                   `-RxRDY`/`-TxRDY` is held not-ready: the card's own
+  //                   `ser_reset` goes out to it regardless, because
+  //                   `-INIT*` into the 8837 at IOBXCV 0F06 IS that chip's
+  //                   reset pin.
+  //   the Chaosnet    its own slice.  `CHAOS.IREQ` on page IOBINT is an input
+  //                   of the priority encoder whether or not the LMU chips
+  //                   are fitted, which is why the card has the port at all.
+  logic        kbd_strobe;
+  logic [23:0] kbd_code;
+  logic [6:0]  mouse_lines;
+  logic        ser_ready, chaos_intr;
+  assign kbd_strobe  = 1'b0;
+  assign kbd_code    = 24'd0;
+  assign mouse_lines = 7'd0;
+  assign ser_ready   = 1'b0;
+  assign chaos_intr  = 1'b0;
+  // What the card gives back.  Nothing on this board reads any of it: the
+  // speaker has no pin, the 2651 is not fitted, and there is no Unibus
+  // interrupt cycle to take `iob_intr` --- `cadr_memory_path.sv` says at the
+  // instance why that request is not joined into `-XBUS.INTR` instead.  They
+  // fold into `witness` with every other output of the machine.
+  // Which slave is pulling `-UB SSYN`: bit 0 the register block, bit 1 the
+  // card.  An observation output, folded like the rest.
+  logic [1:0]  ub_ssyn_by;
+  logic        ser_reset, iob_intr, audio, clock_ready;
+  logic [7:0]  iob_vector, csr_face;
+  logic [11:0] mouse_x, mouse_y;
+  logic [15:0] interval;
+
   // ------------------------------------------------------ the machine's reset
   //
   // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN0 RATHER THAN
@@ -479,6 +534,15 @@ module cadr_arty #(
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
+      // The I/O board's cables, tied off above with the slice that will
+      // drive each, and what the card shows.
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
+      .mouse_lines(mouse_lines), .ser_ready(ser_ready),
+      .chaos_intr(chaos_intr), .ser_reset(ser_reset),
+      .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
+      .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
+      .clock_ready(clock_ready), .interval(interval),
+      .ub_ssyn_by(ub_ssyn_by),
       .mem_req(mem_req), .mem_write(mem_write),
       .mem_addr(mem_addr), .mem_wdata(mem_wdata)
   );
@@ -1142,7 +1206,7 @@ module cadr_arty #(
   // It is not meant to be readable --- it is a load, and what it shows is
   // that the datapath is moving at all.
   //
-  // **All sixty-five of them, including the ones something else already
+  // **All seventy-six of them, including the ones something else already
   // reads** --- `clock_edge`, `promdisable`, `timed_out`, `n_memack` drive
   // LEDs as well and are still here, because the rule the comment states is
   // the whole specification and a fold with exceptions in it is not a rule
@@ -1166,6 +1230,8 @@ module cadr_arty #(
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md,
+                   ser_reset, iob_intr, iob_vector, audio, csr_face,
+                   mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
     end
   end

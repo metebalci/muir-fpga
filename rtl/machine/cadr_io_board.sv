@@ -44,9 +44,13 @@
 // **THE SEAM IS THE UNIBUS AND NOT `-MEMRQ`.**  `cadr_busint_xbus.sv` already
 // drives `-UB MSYN`, `ub_write` and `ub_addr` and takes `-UB SSYN` back, and
 // `cadr_spy_registers.sv` is the slave that answers today at `0o766000`.  This
-// is the second slave on that seam.  Composing it under
-// `cadr_memory_path.sv` is the next slice; nothing here knows about `phys`,
-// the map or the microcycle.
+// is the second slave on that seam, and it is composed under
+// `cadr_memory_path.sv` now --- both slaves hang off the seam
+// `cadr_console_bus.sv` presents, `-UB SSYN` is the OR of theirs and the word
+// is a mux on which answered.  Nothing here knows about `phys`, the map or the
+// microcycle even so: `build/iob.pass` still drives this module alone and is
+// the only thing that holds it to muir, and `build/unibus.pass` holds the
+// composition.
 //
 // **THE MATCH IS HELD, NEVER COMPUTED, AND IT COSTS NOTHING HERE.**  The disk
 // controller's first draft matched `phys` combinationally and carried the
@@ -357,13 +361,19 @@ module cadr_io_board (
   // direction into the 74LS569s' `U/-D`, and the enable is low --- counting ---
   // when exactly one line of the pair changed.  Both moving, or neither, counts
   // nothing, and a mouse stepping faster than the clock loses counts.
-  function automatic logic [11:0] step_count(input logic [11:0] q,
-                                            input logic [1:0]  o,
-                                            input logic [1:0]  n);
+  //
+  // **THE COUNT IS `count` AND NOT `q`**, which it was until this card was
+  // composed under `cadr_machine`: `q` is the machine's own Q register and an
+  // argument of that name hides it, which Verilator reports as VARHIDDEN and
+  // `make build/arty.pass` stops on.  A name that is free in one module is not
+  // free in the machine.
+  function automatic logic [11:0] step_count(input logic [11:0] count,
+                                             input logic [1:0]  o,
+                                             input logic [1:0]  n);
     logic moved, up;
     moved = (o[0] ^ n[0]) ^ (o[1] ^ n[1]);
     up    = o[0] ^ n[1];
-    step_count = moved ? (up ? q + 12'd1 : q - 12'd1) : q;
+    step_count = moved ? (up ? count + 12'd1 : count - 12'd1) : count;
   endfunction
 
   // ------------------------------------------------------- the status register

@@ -113,6 +113,12 @@ module cadr_probe_harness #(
       .con_gnt(con_gnt), .con_ssyn(con_ssyn), .con_rdata(con_rdata),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
       .device_ack(1'b0), .device_rdata(32'd0),
+      .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'd0),
+      .ser_ready(1'b0), .chaos_intr(1'b0), .ser_reset(ser_reset),
+      .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
+      .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
+      .clock_ready(clock_ready), .interval(interval),
+      .ub_ssyn_by(ub_ssyn_by),
       .boards(7'd32),
       .mem_done(1'b0), .mem_rdata(32'd0),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -172,6 +178,14 @@ module cadr_probe_harness #(
   logic        req_valid, req_post, ch_waiting, ch_wrote, ch_hit;
   logic [30:0] req_tag;
   logic [4:0]  ch_slot;
+  // The I/O board's cables, tied off: no keyboard, no mouse, no serial chip
+  // and no Chaosnet interface, each its own slice.  What the card gives back
+  // is folded below with every other output of `cadr_machine`.
+  logic        ser_reset, iob_intr, audio, clock_ready;
+  logic [7:0]  iob_vector, csr_face;
+  logic [11:0] mouse_x, mouse_y;
+  logic [15:0] interval;
+  logic [1:0]  ub_ssyn_by;
   logic        con_gnt, con_ssyn;
   logic [15:0] con_rdata;
   // Page 0's words 7 and 8, which no console on this harness reads: folded
@@ -187,7 +201,9 @@ module cadr_probe_harness #(
                     mem_wdata, dev_wdata, wrcyc, device, dev_rq, dev_write,
                     ub_msyn, ub_ssyn, n_memrq, n_memack, n_memgrant,
                     n_loadmd, rdcyc, nxm, unibus, memstart, timed_out,
-                    mbusy, mbusy_sync, mem_req, mem_write, sintr};
+                    mbusy, mbusy_sync, mem_req, mem_write, sintr,
+                    ser_reset, iob_intr, iob_vector, audio, csr_face,
+                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule
