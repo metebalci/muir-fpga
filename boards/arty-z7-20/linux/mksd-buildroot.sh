@@ -40,11 +40,14 @@
 #     card    BOOT_MB  PACKS_MB   holds
 #     1 GB         64       832   three T-300 packs
 #     2 GB         64      1856   seven
-#     4 GB        512      2560   nine          <-- the defaults
+#     4 GB         64      2560   nine          <-- the defaults
 #
 # So **1 GB is the absolute minimum** and one pack fits on far less than
 # that, while **4 GB takes a full bay of eight**, which is 2,056 MiB of
-# packs.  Nobody runs eight.  A bigger card leaves the rest of itself
+# packs.  Nobody runs eight.  64 MiB of boot partition is Mete's decision
+# and it is the default on every card: the seven files are 11.3 MiB, so it
+# is six times what they need and leaves room for a second bitstream and a
+# second kernel beside them.  The whole default image is 2,625 MiB.  A bigger card leaves the rest of itself
 # unused, which costs nothing and is not worth a resize step at first boot;
 # set PACKS_MB to the card you have if you want all of it, and remember that
 # `dd` writes every byte of whatever size you ask for.
@@ -75,7 +78,7 @@ OUT=${OUT:-build/sd/buildroot}
 BOARD=boards/arty-z7-20/linux/buildroot/board/arty-z7-20
 BIT=${BIT:-}
 PACKS=${PACKS:-}
-BOOT_MB=${BOOT_MB:-512}
+BOOT_MB=${BOOT_MB:-64}
 PACKS_MB=${PACKS_MB:-2560}
 STANDALONE=${STANDALONE:-}
 DTC=${DTC:-$HOSTBIN/dtc}
