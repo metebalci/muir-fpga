@@ -8,11 +8,10 @@
 #
 # **AND AN INIT SCRIPT.**  The argument is cadr-terminal's: what it holds
 # while nothing is happening is a mapping and a socket, so it costs a process,
-# and it is there when the machine wants it.  A file host that has to be
-# started by hand is a file host the band finds missing at exactly the moment
-# it looks.  S87, after S86cadr-serial, so the console log reads in the order
-# a person reading it wants: the drive, the screen, the serial line, then the
-# network.
+# and it is there when the machine wants it.  A cable that has to be plugged
+# in by hand is a cable the band finds missing at exactly the moment it looks.
+# S87, after S86cadr-serial, so the console log reads in the order a person
+# reading it wants: the drive, the screen, the serial line, then the network.
 #
 # The shared transport --- /dev/mem, the EMIO tally guard, the logging --- is
 # cadr-common's, a static library in the staging tree.  Not a relative include
@@ -21,10 +20,9 @@
 # argument in full.
 #
 # And `make -C src check` on the build host, which needs nothing but a C
-# compiler and python3: the packet, the transport, the four services against a
-# real directory, CHUDP on a loopback socket, and the register face against a
-# model of the RTL --- then every record in src/chaos_mutations.txt, each of
-# which the check must fail on.
+# compiler and python3: the packet and its check word, CHUDP on a loopback
+# socket, and the register face against a model of the RTL --- then every
+# record in src/chaos_mutations.txt, each of which the check must fail on.
 
 CADR_CHAOSNET_VERSION = 0
 CADR_CHAOSNET_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-chaosnet/src

@@ -1,57 +1,60 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// cadr-chaosnet: the Chaosnet as the CADR reaches it, and the services on the
-// other end of the cable.
+// cadr-chaosnet: the cable the CADR's Chaosnet interface is plugged into.
 //
-//     cadr-chaosnet [--address <this>[,<server>]] [--server-name <name>]
-//                   [--file-root <dir>] [--file-peers <addresses>]
-//                   [--udp [<endpoint>]] [--udp-peer <address>@<host>[:<port>]]
-//                   [--udp-dynamic] [--time <universal>] [--trace]
+//     cadr-chaosnet [--chaos-address <octal>] [--chaos-udp [<endpoint>]]
+//                   [--chaos-udp-peer <address>@<host>[:<port>]]
+//                   [--chaos-udp-dynamic] [--chaos-trace]
 //                   [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]
 //
-// **WHAT THIS PROGRAM IS: THE ETHER.**  The CADR's Chaosnet interface is in
-// fabric --- the registers at `0o764140`-`0o764156` on the I/O board, held to
-// `muir::chaos::interface` --- and this is the cable it is plugged into,
-// together with everything else on that cable.  muir models the same split
-// inside one process: `chaos::ether` carries `ether::Node`s, and the machine's
-// interface, the Chaosnet server and the CHUDP link are three of them.  Here
-// the first is in fabric and the other two are in this program, so the ether
-// is the loop at the bottom of this file.
+// **WHAT THIS PROGRAM IS: THE ETHER, AND NOTHING ABOVE IT.**  The CADR's
+// Chaosnet interface is in fabric --- the registers at `0o764140`-`0o764156`
+// on the I/O board, held to `muir::chaos::interface` --- and this is the
+// cable it is plugged into.  A frame the machine transmits comes off the
+// fabric whole, with its hardware trailer and its check word on it, and goes
+// out over CHUDP; a frame that arrives over CHUDP for this machine goes back
+// into the fabric the same way.  That is the whole job.
+//
+// **THERE ARE NO SERVICES IN HERE, BECAUSE THERE ARE NONE IN A CADR.**  A
+// Lisp Machine calls its **associated machine** --- MIT's term for the file
+// and time server it talks to, the one the boot banner names --- for its
+// files and for the date.  That server was another machine on the network and
+// was never inside the CADR, so it is not inside this program either.  muir
+// carried STATUS, TIME, UPTIME and FILE for a while and removed them at its
+// own `79c7590`, for this reason and in these words: "A CADR has no file or
+// time server in it, so muir has none either."  This program was ported from
+// muir before that commit and carried them across; they are gone now, and so
+// are `--chaos-file-root`, `--chaos-file-peers` and `--server-name`, which
+// are refused BY NAME rather than ignored, with a line saying where the host
+// went.  `metebalci/ozd` is a host that boots a band.
 //
 // **AND IT IS A LEAF, NOT A ROUTER**, exactly as muir is.  A packet whose
-// destination is neither the machine, nor the Chaosnet server beside it, nor
-// a broadcast is dropped and counted rather than forwarded; AIM-628 chapter
+// destination is neither the machine nor a broadcast is handed to CHUDP if a
+// peer claims that address, and dropped and counted otherwise; a frame that
+// arrived over UDP for a third party is not sent back out.  AIM-628 chapter
 // 6's routing is a bridge's job, and `cbridge` is the thing to put beside
 // this.
 //
-// **WHY IT MATTERS.**  A board running this fabric boots MIT's Lisp Machine
-// system and paints the window system, a Lisp Listener and the who-line, and
-// the one error on that screen is `#<ZWEI::ZWEI-FILE-HOST "ED-FILE"> is not a
-// known host`: a file host lookup with nothing to answer it.  `--file-root`
-// is what answers it.  A machine that boots Lisp and cannot reach a file host
-// is one you can look at but not use.
-//
 // ## The vocabulary is muir's
 //
-// muir's own flags are `--chaos-address`, `--chaos-file-root`,
-// `--chaos-file-peers`, `--chaos-udp`, `--chaos-udp-peer`,
+// muir's own flags are `--chaos-address`, `--chaos-udp`, `--chaos-udp-peer`,
 // `--chaos-udp-dynamic` and `--chaos-trace`.  This program IS the Chaosnet,
-// so the prefix is dropped --- but **every one of muir's spellings is
-// accepted as well**, and costs three lines, so that somebody who knows one
-// knows the other.  The console already takes muir's spy names for the same
-// reason and its own header says so.
+// so the prefix is optional here --- `--address`, `--udp` and the rest are
+// accepted as well, and cost three lines --- but muir's spellings are the
+// ones `S87cadr-chaosnet` passes and the ones to write down.  The console
+// already takes muir's spy names for the same reason and its own header says
+// so.
 //
-// **Which addresses a run wants is the BAND's, and the band is asked.**  A
-// band holds a host table and calls its file and time host at the address
-// that table gives; a server answering anywhere else is a server it never
-// calls, and the machine then boots but stops to ask for the date and reaches
-// no files.  System 100's band is `MIT-LISPM-1` at 3050 and calls its file
-// and time host `MIT-OZ` at 3060, so a run with that pack is given
-// `--address 3050,3060`.  System 304's band answers `AMS-LISPM-1` at 4401 and
-// `OZ` at 4403.  The defaults here are muir's and are deliberately no real
-// host's: 177001 and 177002, on subnet 376, which no host table in either
-// release names.  `muir::chaos`'s own header has the whole argument.
+// **Which address a run wants is the BAND's, and the band is asked.**  A band
+// holds a host table and calls its file and time host at the address that
+// table gives.  System 100's band is `MIT-LISPM-1` at 3050 and calls its file
+// and time host `MIT-OZ` at 3060, so a run with that pack is
+// `--chaos-address 3050` with `--chaos-udp-peer 3060@<where the host is>`.
+// System 304's band is `AMS-LISPM-1` at 4401 calling 4403.  The default here
+// is muir's and is deliberately no real host's: 177001, on subnet 376, which
+// no host table in either release names.  `muir::chaos`'s own header has the
+// whole argument.
 
 #include <errno.h>
 #include <signal.h>
@@ -66,16 +69,14 @@
 #include <cadr/cadr_mem.h>
 
 #include "chaos_face.h"
-#include "chaos_file.h"
-#include "chaos_ncp.h"
 #include "chaos_packet.h"
 #include "chaos_udp.h"
 
 // How long the loop sleeps when nothing happened.  A packet at a time is the
-// whole traffic and the transport acknowledges every one, so the round trip
-// this bounds is what a file transfer moves at: muir measures "some three
-// milliseconds a packet" at the other end's acknowledgement rate, and a
-// millisecond of polling under that is not what limits it.  A turn that did
+// whole traffic and the transport at the far end acknowledges every one, so
+// the round trip this bounds is what a file transfer moves at: muir measures
+// "some three milliseconds a packet" at that end's acknowledgement rate, and
+// a millisecond of polling under that is not what limits it.  A turn that did
 // something does not sleep at all, so a burst drains at the speed of the
 // fabric.
 #define IDLE_SLEEP_US 1000u
@@ -155,24 +156,51 @@ struct ether {
 	int have_face;
 	struct chudp udp;
 	int have_udp;
-	struct chaos_server *server;
 	uint16_t machine;		// the CADR's own address
-	uint16_t server_address;
 	int trace;
 	// What has gone by, for the report line and for a person wondering
 	// whether anything is happening at all.
-	unsigned long from_machine, to_machine, from_udp, to_udp, to_server;
+	unsigned long from_machine, to_machine, from_udp, to_udp;
 	unsigned long dropped_no_route, dropped_bad_frame, refused_busy;
 };
+
+// One frame printed as it goes by: muir's `--chaos-trace`.  This is the only
+// place in the program that looks INSIDE a frame --- routing is by the cable
+// destination alone, which is the hardware's own addressing --- so a frame
+// that will not parse is said to be unparseable and carried anyway, exactly
+// as a real cable carries it.
+static void trace_frame(struct ether *e, const char *way, const uint16_t *words, unsigned n)
+{
+	struct chaos_frame f;
+	const char *why = NULL;
+	char buf[8];
+	if (!e->trace)
+		return;
+	if (chaos_frame_parse(words, n, &f, &why) != 0) {
+		say("%s: %u words that are not a packet: %s", way, n,
+		    why ? why : "no reason given");
+		return;
+	}
+	say("%s: %s %o -> %o, %u bytes, check %s", way,
+	    chaos_op_name(f.packet.opcode, buf, sizeof buf),
+	    f.cable_source, f.cable_dest, f.packet.len,
+	    f.check_ok ? "good" : "BAD");
+}
 
 // A frame onto the machine's incoming buffer, if the fabric is there.  A
 // refusal is not a failure: the machine has not read the last packet out, the
 // interface's own Lost Count records it (AIM-628 §7), and the sender will
 // retransmit.  That is what the real cable did when a host was slow.
+//
+// **A BAD CHECK WORD IS NOT FILTERED HERE.**  The cable carries what it
+// carries and the interface has a CRC Error bit for exactly this; muir's
+// ether does not filter either.  A program that dropped such a frame would be
+// hiding the one symptom AIM-628 §5.1 meters.
 static void to_machine(struct ether *e, const uint16_t *words, unsigned n)
 {
 	if (!e->have_face)
 		return;
+	trace_frame(e, "to the machine", words, n);
 	const int r = chaos_face_give(&e->face, words, n);
 	if (r == 1)
 		++e->to_machine;
@@ -180,65 +208,36 @@ static void to_machine(struct ether *e, const uint16_t *words, unsigned n)
 		++e->refused_busy;
 }
 
-static void to_server(struct ether *e, const uint16_t *words, unsigned n)
-{
-	struct chaos_frame f;
-	const char *why = NULL;
-	if (chaos_frame_parse(words, n, &f, &why) != 0) {
-		++e->dropped_bad_frame;
-		if (e->trace)
-			say("a frame of %u words is not a packet: %s", n,
-			    why ? why : "no reason given");
-		return;
-	}
-	// **A frame whose check word is wrong is dropped and not answered.**
-	// muir's `Server::receive` does the same, and the reason is the one
-	// the interface's own CRC Error bit exists for: a packet that did not
-	// arrive whole says nothing about what was sent.
-	if (!f.check_ok) {
-		++e->dropped_bad_frame;
-		if (e->trace)
-			say("a frame from %o arrived with a bad check word", f.packet.source);
-		return;
-	}
-	++e->to_server;
-	chaos_server_handle(e->server, now_ns(), &f.packet);
-}
-
 // One frame off the cable, from whichever station put it there, routed by its
 // CABLE destination --- which is the last word the software wrote and is the
 // hardware's own addressing, not the packet header's.  A broadcast reaches
 // everybody but the station it came from.
-enum from { FROM_MACHINE, FROM_SERVER, FROM_UDP };
+enum from { FROM_MACHINE, FROM_UDP };
 
 static void carry(struct ether *e, enum from who, const uint16_t *words, unsigned n,
 		  uint16_t cable_dest)
 {
 	const int broadcast = cable_dest == 0;
 	const int mine = cable_dest == e->machine;
-	const int servers = cable_dest == e->server_address;
 
-	// The two stations that are on this cable.  A station never hears its
+	// The one station that is on this cable.  A station never hears its
 	// own frame, which is what `who` is for: the interface's receiver does
-	// not store what its own transmitter put on the wire, and a server
-	// that took its own packets back would answer itself.
+	// not store what its own transmitter put on the wire.
 	if ((broadcast || mine) && who != FROM_MACHINE)
 		to_machine(e, words, n);
-	if ((broadcast || servers) && who != FROM_SERVER)
-		to_server(e, words, n);
 
 	// And everything else, which is off the board.  **A LEAF, NOT A
 	// ROUTER**: an address no peer claims is dropped and counted rather
 	// than forwarded, and a frame that arrived over UDP for a third party
-	// is not sent back out --- AIM-628 chapter 6's routing is a bridge's
-	// job, and `cbridge` is the thing to put beside this.
-	if (!broadcast && (mine || servers))
+	// is not sent back out.
+	if (!broadcast && mine)
 		return;
 	if (who == FROM_UDP) {
 		if (!broadcast)
 			++e->dropped_no_route;
 		return;
 	}
+	trace_frame(e, "onto the network", words, n);
 	const int sent = e->have_udp ? chudp_send(&e->udp, words, n, cable_dest) : 0;
 	if (sent > 0)
 		e->to_udp += (unsigned long)sent;
@@ -265,40 +264,49 @@ static void from_udp(void *ctx, const uint16_t *words, unsigned n)
 static void usage(void)
 {
 	fprintf(stderr,
-"usage: cadr-chaosnet [--address <this>[,<server>]] [--server-name <name>]\n"
-"                     [--file-root <dir>] [--file-peers <addresses>]\n"
-"                     [--udp [<endpoint>]] [--udp-peer <address>@<host>[:<port>]]\n"
-"                     [--udp-dynamic] [--time <universal>] [--trace]\n"
+"usage: cadr-chaosnet [--chaos-address <octal>] [--chaos-udp [<endpoint>]]\n"
+"                     [--chaos-udp-peer <address>@<host>[:<port>]]\n"
+"                     [--chaos-udp-dynamic] [--chaos-trace]\n"
 "                     [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]\n"
 "\n"
-"  --address <this>[,<server>]  this machine's Chaosnet address and the\n"
-"                               associated machine's, in octal or subnet:host.\n"
-"                               System 100's band wants 3050,3060; System\n"
-"                               304's wants 4401,4403.  The default pair,\n"
-"                               177001,177002, is deliberately no real host's\n"
-"  --server-name <name>         what STATUS answers with; MIT-OZ by default\n"
-"  --file-root <dir>            the directory served as the file host's `/`.\n"
-"                               Without it there is no FILE service and a band\n"
-"                               looking for its files finds none\n"
-"  --file-peers <addresses>     which other Chaosnet addresses may have files,\n"
-"                               comma-separated.  Reachability is not\n"
-"                               authorisation: a peer a packet arrived from can\n"
-"                               be answered without being allowed a real\n"
-"                               directory\n"
-"  --udp [<endpoint>]           put the cable on the network as Chaosnet over\n"
+"  --chaos-address <octal>      this machine's Chaosnet address, in octal or\n"
+"                               subnet:host.  System 100's band wants 3050 and\n"
+"                               System 304's 4401.  The default, 177001, is\n"
+"                               deliberately no real host's\n"
+"  --chaos-udp [<endpoint>]     put the cable on the network as Chaosnet over\n"
 "                               UDP: [<address>:]<port>, 42042 by default\n"
-"  --udp-peer <a>@<host>[:<p>]  a station on the cable that is not on this board\n"
-"  --udp-dynamic                learn where a peer is from what it sends\n"
-"  --time <universal>           answer TIME with this fixed universal time\n"
-"                               instead of the board's clock\n"
-"  --trace                      every packet, as it goes by\n"
+"  --chaos-udp-peer <a>@<h>[:<p>]  a station on the cable that is not on this\n"
+"                               board.  The band's file and time host is one:\n"
+"                               System 100 calls 3060, System 304 calls 4403\n"
+"  --chaos-udp-dynamic          learn where a peer is from what it sends\n"
+"  --chaos-trace                every frame, as it goes by\n"
 "  --base <hex>                 the register face's address; 0x%08x by default\n"
 "  --no-guard                   skip the EMIO tally guard.  Only for a board\n"
 "                               somebody knows: see <cadr/cadr_mem.h>\n"
-"  --no-fabric                  no board at all --- the server and CHUDP alone,\n"
-"                               which is how this is exercised off the board\n"
-"  --log <file>                 where lines go; /dev/console for the init script\n",
+"  --no-fabric                  no board at all --- CHUDP alone, which is how\n"
+"                               this is exercised off the board\n"
+"  --log <file>                 where lines go; /dev/console for the init script\n"
+"\n"
+"The prefix is optional: --address, --udp, --udp-peer, --udp-dynamic and\n"
+"--trace are the same flags.\n",
 		CHAOS_REG_BASE);
+}
+
+// A flag that was here when this program had services in it.  Refused by name
+// rather than ignored, because a boot that silently dropped `--file-root`
+// would look exactly like a boot that served it.
+static int gone(const char *flag)
+{
+	fprintf(stderr,
+"cadr-chaosnet: %s is gone, and so is the service it configured.\n"
+"cadr-chaosnet: A CADR has no file or time server in it, so this program has\n"
+"cadr-chaosnet: none either --- muir removed its own at 79c7590 for the same\n"
+"cadr-chaosnet: reason.  The host is ON THE NETWORK: give it its own Chaosnet\n"
+"cadr-chaosnet: address and reach it with --chaos-udp-peer <address>@<host>.\n"
+"cadr-chaosnet: A band calls the address its own host table names --- 3060 for\n"
+"cadr-chaosnet: System 100, 4403 for System 304.  metebalci/ozd is a host that\n"
+"cadr-chaosnet: boots a band.\n", flag);
+	return 2;
 }
 
 int main(int argc, char **argv)
@@ -306,17 +314,11 @@ int main(int argc, char **argv)
 	struct ether e;
 	memset(&e, 0, sizeof e);
 	e.machine = 0177001;
-	e.server_address = 0177002;
 
-	const char *server_name = "MIT-OZ";
-	const char *file_root = NULL;
 	const char *log_path = NULL;
 	const char *udp_endpoint = NULL;
 	uint32_t base = CHAOS_REG_BASE;
-	uint32_t fixed_time = 0;
 	int guard = 1, fabric = 1, want_udp = 0, udp_dynamic = 0;
-	uint16_t file_peers[CHUDP_MAX_PEERS];
-	unsigned nfile_peers = 0;
 	const char *udp_peers[CHUDP_MAX_PEERS];
 	unsigned nudp_peers = 0;
 
@@ -329,36 +331,19 @@ int main(int argc, char **argv)
 		const char *a = argv[i];
 		const char *v = i + 1 < argc ? argv[i + 1] : NULL;
 		if (SAME("--address", "--chaos-address") && v) {
-			++i;
-			char buf[64];
-			snprintf(buf, sizeof buf, "%s", v);
-			char *comma = strchr(buf, ',');
-			if (comma)
-				*comma++ = '\0';
-			if (parse_address(buf, &e.machine) != 0) {
-				fprintf(stderr, "cadr-chaosnet: %s is not a Chaosnet address\n", buf);
-				return 2;
+			// ONE address.  It used to take `<this>,<server>`,
+			// and the second half was the server inside this
+			// program; there is no such thing now, so a comma is
+			// an error and says why rather than being ignored.
+			if (strchr(argv[++i], ',')) {
+				fprintf(stderr, "cadr-chaosnet: --chaos-address takes ONE "
+					"address, this machine's.\n");
+				return gone("the server address after the comma");
 			}
-			if (comma && parse_address(comma, &e.server_address) != 0) {
-				fprintf(stderr, "cadr-chaosnet: %s is not a Chaosnet address\n", comma);
+			if (parse_address(argv[i], &e.machine) != 0) {
+				fprintf(stderr, "cadr-chaosnet: %s is not a Chaosnet address\n",
+					argv[i]);
 				return 2;
-			}
-		} else if (!strcmp(a, "--server-name") && v) {
-			server_name = argv[++i];
-		} else if (SAME("--file-root", "--chaos-file-root") && v) {
-			file_root = argv[++i];
-		} else if (SAME("--file-peers", "--chaos-file-peers") && v) {
-			char buf[256];
-			snprintf(buf, sizeof buf, "%s", argv[++i]);
-			for (char *p = strtok(buf, ","); p; p = strtok(NULL, ",")) {
-				if (nfile_peers == CHUDP_MAX_PEERS) {
-					fprintf(stderr, "cadr-chaosnet: too many file peers\n");
-					return 2;
-				}
-				if (parse_address(p, &file_peers[nfile_peers++]) != 0) {
-					fprintf(stderr, "cadr-chaosnet: %s is not a Chaosnet address\n", p);
-					return 2;
-				}
 			}
 		} else if (SAME("--udp", "--chaos-udp")) {
 			want_udp = 1;
@@ -378,8 +363,14 @@ int main(int argc, char **argv)
 			want_udp = 1;
 		} else if (SAME("--trace", "--chaos-trace")) {
 			e.trace = 1;
-		} else if (!strcmp(a, "--time") && v) {
-			fixed_time = (uint32_t)strtoul(argv[++i], NULL, 10);
+		} else if (SAME("--file-root", "--chaos-file-root")) {
+			return gone(a);
+		} else if (SAME("--file-peers", "--chaos-file-peers")) {
+			return gone(a);
+		} else if (!strcmp(a, "--server-name")) {
+			return gone(a);
+		} else if (!strcmp(a, "--time")) {
+			return gone(a);
 		} else if (!strcmp(a, "--base") && v) {
 			base = (uint32_t)strtoul(argv[++i], NULL, 0);
 		} else if (!strcmp(a, "--no-guard")) {
@@ -411,7 +402,7 @@ int main(int argc, char **argv)
 	// paths; the program says so rather than dying of it.
 	signal(SIGPIPE, SIG_IGN);
 
-	say("this machine is %o, the Chaosnet server is %o", e.machine, e.server_address);
+	say("this machine is %o", e.machine);
 
 	// ---- the fabric ----
 	//
@@ -446,7 +437,7 @@ int main(int argc, char **argv)
 		else
 			say("the interface is at 0x%08x and holds address %o", base, e.machine);
 	} else {
-		say("no fabric: the server and CHUDP alone, and the machine is not on this cable");
+		say("no fabric: CHUDP alone, and the machine is not on this cable");
 	}
 
 	// ---- the cable's other stations ----
@@ -475,43 +466,14 @@ int main(int argc, char **argv)
 				return 1;
 		}
 		e.have_udp = 1;
-	}
-
-	// ---- the Chaosnet server ----
-	e.server = chaos_server_new(e.server_address);
-	if (!e.server)
-		return 1;
-	chaos_server_trace(e.server, e.trace);
-	chaos_server_serve(e.server, chaos_time_new(fixed_time));
-	chaos_server_serve(e.server, chaos_uptime_new(now_ns()));
-	// STATUS, so that `(hostat)` on the machine sees the server at all:
-	// the name is the band's for this address, and the subnet its high
-	// byte.
-	chaos_server_serve(e.server,
-			   chaos_status_new(server_name, (uint8_t)(e.server_address >> 8)));
-	if (file_root) {
-		// Who may have files: this machine, always, and whoever
-		// --file-peers names.  A CHUDP peer that was only learned is
-		// reachable and not authorised.
-		uint16_t hosts[CHUDP_MAX_PEERS + 1];
-		unsigned n = 0;
-		hosts[n++] = e.machine;
-		for (unsigned k = 0; k < nfile_peers && n < CHUDP_MAX_PEERS + 1; ++k)
-			hosts[n++] = file_peers[k];
-		struct chaos_service *f = chaos_file_new(file_root, fixed_time, hosts, n);
-		if (!f)
-			return 1;
-		chaos_server_serve(e.server, f);
-		say("serving %s as the file host's /", file_root);
 	} else {
-		say("no --file-root, so there is no FILE service: a band looking "
-		    "for its files will not find them here");
+		// Not an error: a board on a bench with no network is a
+		// machine whose band will say its file host is not answering,
+		// which is true and is better than a guess.
+		say("no --chaos-udp, so this cable reaches nothing off the board");
 	}
 
 	// ---- the ether ----
-	say("TIME, UPTIME and STATUS%s are answered at %o",
-	    file_root ? " and FILE" : "", e.server_address);
-
 	uint64_t last_report = now_ns();
 	unsigned long reported = 0;
 	while (!stopping) {
@@ -537,28 +499,6 @@ int main(int argc, char **argv)
 			}
 		}
 
-		// What the server wants said.  Asking it also lets every
-		// session send what it has and retransmits what has gone
-		// unreceipted too long, which is muir's `Node::transmit`.
-		{
-			struct chaos_packet p;
-			uint16_t cable_dest;
-			for (unsigned k = 0; k < DRAIN; ++k) {
-				if (!chaos_server_transmit(e.server, now, &p, &cable_dest))
-					break;
-				uint16_t words[CHAOS_MAX_WORDS];
-				const unsigned n = chaos_packet_frame(&p, cable_dest,
-								      e.server_address,
-								      words, CHAOS_MAX_WORDS);
-				if (n == 0) {
-					++e.dropped_bad_frame;
-					continue;
-				}
-				did = 1;
-				carry(&e, FROM_SERVER, words, n, cable_dest);
-			}
-		}
-
 		// What came in off the network.
 		if (e.have_udp) {
 			const int n = chudp_poll(&e.udp, DRAIN, from_udp, &e);
@@ -570,11 +510,11 @@ int main(int argc, char **argv)
 			const unsigned long moved = e.from_machine + e.to_machine
 						  + e.from_udp + e.to_udp;
 			if (moved != reported) {
-				say("%lu from the machine, %lu to it, %lu in and %lu out over UDP, "
-				    "%lu to the server; %lu with nowhere to go, %lu malformed, "
+				say("%lu from the machine, %lu to it, %lu in and %lu out over UDP; "
+				    "%lu with nowhere to go, %lu malformed, "
 				    "%lu refused because the machine had not emptied its buffer",
 				    e.from_machine, e.to_machine, e.from_udp, e.to_udp,
-				    e.to_server, e.dropped_no_route, e.dropped_bad_frame,
+				    e.dropped_no_route, e.dropped_bad_frame,
 				    e.refused_busy);
 				reported = moved;
 			}
@@ -586,7 +526,6 @@ int main(int argc, char **argv)
 	}
 
 	say("stopping: %lu packets from the machine, %lu to it", e.from_machine, e.to_machine);
-	chaos_server_free(e.server);
 	if (e.have_udp)
 		chudp_close(&e.udp);
 	if (e.have_face)

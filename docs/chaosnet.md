@@ -26,9 +26,13 @@ interface's five registers from AIM-628 section 7, its two packet buffers of
 2651 registers with their mode pointer and status byte. Nothing above that is
 in fabric.
 
-Linux has the rest: the cable, the frame, the check word, routing, the TIME
-and FILE services, the turn timer, the baud-rate generator and the line. What
-crosses the boundary is a buffer and a status register, and nothing more.
+Linux has the rest: the cable, the frame, the check word, routing, the turn
+timer, the baud-rate generator and the line. What crosses the boundary is a
+buffer and a status register, and nothing more.
+
+**Nothing on either side of that boundary answers a service.** A CADR has no
+file or time server in it. The section on `ED-FILE` below says where that
+server is instead.
 
 ## What the machine sees
 
@@ -76,7 +80,9 @@ What each program must do at the face is written in the two headers. The
 shapes are worth knowing here: the Chaosnet program takes a frame off the
 transmit window a word at a time after the machine starts a transmission, and
 streams a received frame in and then reports its length in bits and whether
-the check word was good. The serial program holds the modem-control lines
+the check word was good. It does nothing else with the frame. Routing is by
+the cable destination alone, which is the hardware's own addressing, and the
+program never looks inside a packet except to print a trace line. The serial program holds the modem-control lines
 while a client is connected, reads the character frame and the rate out of the
 mode registers, and **paces the transmitter at the rate those registers
 name**. Without that pacing the transmitter never empties.
@@ -126,12 +132,53 @@ before a single packet is sent. The band's whole host table is two lines:
 to and the restorers' trimmed table no longer contains, so making it resolve
 is a change on the pack.
 
-What the Chaosnet program does buy is better than silencing that line. As
-`MIT-OZ` at 3060 it is what the band resolves `SYS:` to, so the TIME lookup is
-answered and the machine has a date instead of stopping to ask for one,
-`(hostat)` sees the server, and anything loading through the system host
-reaches the FILE service. That last is how CC is loaded in muir's own tests,
-which is what the debug cable needs.
+**The host the band wants is `MIT-OZ` at 3060, and it is a machine on the
+network.** It is not `cadr-chaosnet` and it never should have been. A CADR has
+no file or time server inside it, and the Lisp Machine's own word for the
+machine that holds those is the **associated machine**, which the boot banner
+names. muir carried such a server for a while and removed it at its own
+`79c7590`, in these words: "A CADR has no file or time server in it, so muir
+has none either." This program was ported from muir before that commit and
+carried the same services across. They are gone.
+
+So what `cadr-chaosnet` buys is the cable, and the cable is what the band
+needs. Give the host its own Chaosnet address on the network and name it with
+`--chaos-udp-peer 3060@<where the host is>`. The band then resolves `SYS:` to
+it, the TIME lookup is answered and the machine has a date instead of stopping
+to ask for one, `(hostat)` sees it, and anything loading through the system
+host reaches its FILE service. That last is how CC is loaded in muir's own
+tests, which is what the debug cable needs. `metebalci/ozd` is a host that
+boots a band.
+
+**The three flags that used to configure those services are refused by name.**
+`--chaos-file-root`, `--chaos-file-peers` and `--server-name` each print where
+the host went and exit, rather than being ignored. A boot that silently
+dropped `--file-root` would look exactly like a boot that served it.
+`--chaos-address` now takes one address, this machine's, and a comma in it is
+refused the same way.
+
+## How the board tells the program its address
+
+`S87cadr-chaosnet` reads three files off the pack partition, one value each,
+and passes what it finds on the command line. Each is a plain text file where
+blank lines and `#` comments are ignored, so it can say what its number is
+for. They are `.txt` because that partition is FAT32 and the point of putting
+them there is that a laptop with a card reader can edit them.
+
+    chaosnet.addr.txt            this machine's Chaosnet address, in octal.
+                                 It is the DIP switches on MIT's card, so it
+                                 is not configuration: it is what the hardware
+                                 is. System 100 is 3050 and System 304 is
+                                 4401.
+    chaosnet.over.udp.port.txt   where CHUDP listens. 42042 is the protocol's
+                                 own port and this machine takes it.
+    chaosnet.over.udp.peers.txt  the other stations, one a line, in muir's own
+                                 syntax: `<address>@<host or IP>:<port>`. The
+                                 band's file and time host goes here.
+
+No peers is legal. A board on a network with no other station is a machine
+whose band will say its file host is not answering, which is true and is
+better than a guess.
 
 ## What the checks hold to
 
@@ -150,7 +197,17 @@ address space in both directions, read out of muir's two traces rather than
 transcribed.
 
 `chaosnet` and `serial` hold the two programs on the build host with no board:
-772 checks and 61 mutation records for the first, 115 and 19 for the second.
+308 checks and 12 mutation records for the first, 115 and 19 for the second.
+The first figures were 772 and 61 while the program carried services. The
+checks and records that went are the ones written for the connection protocol
+and for STATUS, TIME, UPTIME and FILE. A check for code that should not exist
+is not a check, so they went with the code.
+
+What is left is the whole of what the program does: the packet's word layout
+and its check word, the register face's handshake with the fabric, and CHUDP's
+frame against a datagram's literal bytes. The check touches no filesystem any
+more.
+
 **The check word is held to silicon rather than to itself.** muir pins
 `0o135771` as the word the netlist board produced for twelve given words, so a
 wrong polynomial or bit order disagrees with a measurement off hardware and
