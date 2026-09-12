@@ -4354,15 +4354,37 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the other side.  The sixth move is this slice's own: `ub_ssyn_by`
 @note widened to three bits when the bus interface's registers became the
 @note third Unibus slave, which does not touch the anchor's text.
+@note
+@note **AND A SEVENTH TIME, ALSO FOUND UNAPPLIED AT HEAD**, at `66570da`:
+@note the I/O board's two chips brought fourteen more outputs into the fold
+@note --- the 2651's four registers, its strobe and its character, and the
+@note Chaosnet interface's eight --- and this record was not re-run, so `make
+@note mutants` was DEAD AT THE TOP OF THE LIST for that commit: an `@old`
+@note that matches nothing stops the whole run at that record with no
+@note summary, which is not a survivor and not a hole but a gate that
+@note cannot answer.  Found by the slice that split `M_AXI_GP0`, which ran
+@note `--only arty` because it had touched the file --- the rule five notes
+@note up, followed, and the second time in this record's life that following
+@note it caught somebody else's rot rather than the slice's own.  **The
+@note anchor is the whole fold now**, from the request path's pulses to
+@note `sintr`, so that a line added anywhere in it rots this loudly again.
 @old
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
+                   ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
+                   ser_status, chaos_tx_go, chaos_tx_len, chaos_tx_valid,
+                   chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
+                   chaos_bits,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
 @new
                    ch_wrote, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
+                   ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
+                   ser_status, chaos_tx_go, chaos_tx_len, chaos_tx_valid,
+                   chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
+                   chaos_bits,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
@@ -4371,13 +4393,15 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation the-interrupt-reaches-no-pin
 @check arty
 @file boards/arty-z7-20/cadr_arty.sv
-@note `IRQ_F2P` is the one pin the pack side's interrupt has, and the PS7's
-@note twenty lines are an input the wrapper names because an unconnected
-@note PS7 input produces no warning of any kind.  Tied low here, the pack
-@note side's `irq` is a wire nothing reads inside `g_pack`: UNUSEDSIGNAL on
-@note the `DDR=1` lint pass, the only pass that elaborates it.
+@note `IRQ_F2P` is the one pin the three interrupts have --- the disk's on
+@note bit 0, the Chaosnet cable's on bit 1 and the serial line's on bit 2 ---
+@note and the PS7's twenty lines are an input the wrapper names because an
+@note unconnected PS7 input produces no warning of any kind.  Tied low here,
+@note all three become wires nothing reads: UNUSEDSIGNAL on the `DDR=1` lint
+@note pass, the only pass that elaborates the pack side, and on the two
+@note proving boards for the other two.
 @old
-        .irqf2p({19'b0, pack_irq})
+        .irqf2p({17'b0, ser_irq, chaos_irq, pack_irq})
 @new
         .irqf2p(20'b0)
 @end
@@ -4388,14 +4412,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note A read nothing answers on `M_AXI_GP0` hangs both Arm cores, measured
 @note on the board with the pack feeder reading the register face on a
 @note bitstream without the pack side.  The two proving boards bring GP0 out
-@note without the pack side and answer it with `rtl/plumbing/cadr_gp0_default.sv`;
-@note that module's own check holds that it answers, and what lint can hold
-@note is that it is wired: its read-address valid left unconnected is a
-@note PINMISSING on the `PROVE=1` pass, the first that elaborates it.
+@note without the pack side and answer its first page with
+@note `rtl/plumbing/cadr_gp0_default.sv`; that module's own check holds that
+@note it answers, and what lint can hold is that it is wired: its
+@note read-address valid left unconnected is a PINMISSING on the `PROVE=1`
+@note pass, the first that elaborates it.  **The wires are the splitter's
+@note first port now**, `gp0p_*` and not `gp0_*`, because a page nothing is
+@note behind is the whole reason that module exists.
 @old
-          .s_arlen(gp0_arlen), .s_arid(gp0_arid), .s_arvalid(gp0_arvalid),
+          .s_arlen(gp0p_arlen), .s_arid(gp0p_arid), .s_arvalid(gp0p_arvalid),
 @new
-          .s_arlen(gp0_arlen), .s_arid(gp0_arid),
+          .s_arlen(gp0p_arlen), .s_arid(gp0p_arid),
 @end
 
 # ----------------------------------------------------------------------------
@@ -9133,4 +9160,304 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
   assign ch_reset_now =
       (land && chgrp && wr && (which[1:0] == 2'd0) && ub_wdata[13]);
+@end
+
+# ----------------------------------------------------------------------------
+# `M_AXI_GP0` SPLIT FOUR WAYS.  `rtl/plumbing/cadr_gp0_split.sv` is the decode
+# that lets the pack side, the Chaosnet cable and the serial line share one
+# general purpose port, and the property the whole arrangement exists for is
+# that EVERY address on it is answered in both directions: a read nothing
+# answers there does not fault the Arm, it hangs both cores at one PC each,
+# measured on the board, and no software guard can catch it.
+#
+# The check demonstrates that rather than asserting it --- each of the four
+# slaves answers with something only it can answer, so the sweep reads the
+# routing off the reply --- and it puts `rtl/machine/cadr_io_board.sv` on the
+# far side of the two new faces' seams, so a frame and a character cross in
+# both directions.  These are the ways to break each of the four files.
+
+@mutation split-one-selection-for-both-channels
+@check gp0_split
+@file rtl/plumbing/cadr_gp0_split.sv
+@note THE RECORD THIS MODULE'S SHAPE EXISTS FOR.  AXI's write and read
+@note channels are independent and the interconnect drives them
+@note independently, so a splitter with ONE held selection routes a read to
+@note whichever slave a write in flight at the same moment chose.  That is
+@note `cadr_memory_path.sv`'s "two decode instances, not one muxed decode" in
+@note a second place, and the stimulus that sees it is a write and a read to
+@note DIFFERENT pages at once --- which the check runs thirty-two rounds of
+@note for exactly this reason, and which a check with only one channel busy
+@note would have passed.  `target()` stays used, on the write side.
+@old
+          r_sel <= target(s_araddr[31:12]);
+@new
+          r_sel <= w_sel;
+@end
+
+@mutation split-matches-the-pack-a-page-too-wide
+@check gp0_split
+@file rtl/plumbing/cadr_gp0_split.sv
+@note A decode one bit short swallows the neighbouring page: the pack side
+@note would answer the Chaosnet cable's page as well as its own, and a
+@note program reading IDENT at 0x4000_1000 would get the pack's first
+@note register instead of "CHAO".  Caught at the Chaosnet cable's IDENT,
+@note which is what the four distinguishable replies are for --- an address
+@note routed to the wrong slave gives the wrong word, and the check reads
+@note which slave answered rather than assuming.
+@old
+    if (page == PACK_BASE[31:12]) return SEL_PACK;
+@new
+    if (page[31:13] == PACK_BASE[31:13]) return SEL_PACK;
+@end
+
+@mutation split-reads-the-address-rather-than-the-one-it-held
+@check gp0_split
+@file rtl/plumbing/cadr_gp0_split.sv
+@note The match is held and never computed, for the reason the disk
+@note controller's first draft measured: a combinational match carries the
+@note ripple in front of it into every clock enable downstream, -6.195 ns on
+@note 1,065 endpoints.  A fabric that handed a slave the LIVE address instead
+@note of the captured one is also wrong functionally, and only a stimulus that
+@note changes the address once its handshake is done can say so --- AXI allows
+@note that and a real interconnect does it.  The testbench poisons every
+@note address, length and ID the tick its handshake completes, which is this
+@note project's "a stimulus more polite than the real consumer tests less".
+@note Caught at the Chaosnet cable's IDENT.
+@old
+  assign chaos_araddr  = r_at[11:0];
+@new
+  assign chaos_araddr  = s_araddr[11:0];
+@end
+
+@mutation split-lets-go-of-a-write-before-its-answer
+@check gp0_split
+@file rtl/plumbing/cadr_gp0_split.sv
+@note A response is carried through while the splitter is in `W_RESP`, so
+@note leaving that state on the slave's BVALID rather than on the master
+@note TAKING it drops BVALID before the master ever sees it --- and a write
+@note with no response on a general purpose port is the frozen cores again.
+@note Both signals stay read, so lint has nothing to say.  Caught at "a write
+@note that never completed --- the board's frozen cores".
+@old
+        W_RESP:  if (sel_bvalid && s_bready) wst <= W_ADDR;
+@new
+        W_RESP:  if (sel_bvalid || s_bready) wst <= W_ADDR;
+@end
+
+@mutation gp-regs-rlast-a-beat-early
+@check gp0_split
+@file rtl/plumbing/cadr_gp_regs.sv
+@note RLAST on the last beat and on no other.  A master that sees it early
+@note stops taking beats and the slave stands with one owed, which on this
+@note port is a read that never completes.  Caught at "RLAST on a beat that
+@note is not the last", on the nine-beat burst across the Chaosnet cable's
+@note registers.
+@old
+  assign s_rlast   = (r_left == 4'd0);
+@new
+  assign s_rlast   = (r_left == 4'd1);
+@end
+
+@mutation gp-regs-samples-the-word-a-tick-early
+@check gp0_split
+@file rtl/plumbing/cadr_gp_regs.sv
+@note The read is two ticks behind the selector on purpose: one for the
+@note register block to see `r_word` and `rd`, one for its answer to be
+@note sampled, so that a block may answer combinationally OR out of a
+@note synchronous RAM.  Sampling on the first tick gives the RAM's previous
+@note word --- the Chaosnet cable's two 256-word buffers are exactly that ---
+@note while every plain register still reads right, which is why a check that
+@note only ever read a register could not see this.  Caught on the word the
+@note machine transmitted, out of the transmit window.
+@old
+        R_PREP: rst_r <= R_PREP2;
+@new
+        R_PREP: begin
+          rdata_q <= rd_data;
+          rst_r   <= R_DATA;
+        end
+@end
+
+@mutation gp-regs-walks-a-write-backwards
+@check gp0_split
+@file rtl/plumbing/cadr_gp_regs.sv
+@note A burst writes consecutive words, so the address walks UP a word a
+@note beat.  Walking down puts a sixteen-beat write into the sixteen words
+@note below the one it named --- and written backwards it is even
+@note self-consistent for a one-beat write, which is every register access
+@note Linux makes.  Caught on the sixteen beats into the Chaosnet cable's
+@note receive window and read back.
+@old
+            w_word <= w_word + 10'd1;
+@new
+            w_word <= w_word - 10'd1;
+@end
+
+@mutation chaos-cable-leaves-the-source-out-of-the-check-word
+@check gp0_split
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The Fairchild 9401 at LMTBUF C09 divides over the buffer's words AND
+@note the source the hardware adds --- `packet::frame` pushes the source
+@note before it calls `check_word` --- so a check word over the buffer alone
+@note is a frame every peer rejects and nothing on this board would notice.
+@note Caught against the same eight lines `chaos_test_packet.c` holds to the
+@note board's own 0135771.
+@old
+          tx_check <= crc_word(crc, r_myaddr);
+@new
+          tx_check <= crc;
+@end
+
+@mutation chaos-cable-reports-the-length-without-the-trailer
+@check gp0_split
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note `TXLEN` is the frame's words WITH the source and the check word, which
+@note is what the seam carries: reporting the buffer's own length hands the
+@note program a frame two words short, and the two words it drops are exactly
+@note the ones the peer checks.  The `+ 10'd0` keeps every bit of `tx_held`
+@note used, so lint has nothing to say.  Caught at "TXLEN, the frame's words
+@note with the trailer".
+@old
+        10'd3:   rd_data = tx_valid ? {22'd0, {1'b0, tx_held} + 10'd2} : 32'd0;
+@new
+        10'd3:   rd_data = tx_valid ? {22'd0, {1'b0, tx_held} + 10'd0} : 32'd0;
+@end
+
+@mutation chaos-cable-counts-the-frame-it-took-and-not-the-one-it-refused
+@check gp0_split
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note `chaos_face_give` tells a stored frame from a refused one by `LOST`
+@note moving and by NOTHING ELSE, because `RX_BUSY` is up either way --- the
+@note machine holds the frame just stored, or the one it had not read out.
+@note So a count that moves on the wrong one makes the program drop every
+@note frame it successfully gave and retry every frame that was refused, for
+@note ever.  Caught at "LOST moved for a frame the machine's buffer was empty
+@note for".
+@old
+        if (wr_data[1] && wr_mask[1] && !commit_ok && lost != 32'hFFFF_FFFF) begin
+@new
+        if (wr_data[1] && wr_mask[1] && commit_ok && lost != 32'hFFFF_FFFF) begin
+@end
+
+@mutation chaos-cable-clears-the-lost-count-on-a-reset
+@check gp0_split
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The card's own four-bit Lost Count IS cleared by Reset, so clearing
+@note this one beside it is the reading a careful person would take --- and it
+@note is wrong, because this counter is not a diagnostic but the one answer
+@note `chaos_face_give` has: it compares the count before a commit with the
+@note count after and treats ANY change as a refusal.  A counter that went
+@note backwards makes the program read a frame the machine took as one it
+@note refused.  Caught at "LOST across a reset, which must not go backwards".
+@old
+        if (resets != 24'hFFFFFF) resets <= resets + 24'd1;
+@new
+        if (resets != 24'hFFFFFF) resets <= resets + 24'd1;
+        lost <= 32'd0;
+@end
+
+@mutation chaos-cable-streams-one-word-short
+@check gp0_split
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The stream is `RXLEN` words and the bit count the card loads is
+@note `RXLEN * 16`, so a stream a word short leaves the two disagreeing: the
+@note card stores one fewer word than its own bit counter says it has, and
+@note the machine reads the last word out of a slot nothing wrote.  The bit
+@note counter still reads right --- the card works it out from what it
+@note stored --- so only comparing the WORDS the machine reads back catches
+@note this.  Caught at "a word the machine read out of the receive buffer".
+@old
+          if (sent + 9'd1 == r_rxlen) xst <= X_GAP;
+@new
+          if (sent + 9'd2 == r_rxlen) xst <= X_GAP;
+@end
+
+@mutation serial-line-forgets-local-loop-back
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note THE RECORD THAT HOLDS THE TRANSCRIPTION.  The line side recomputes
+@note `tx_on`, `rx_on`, `-CTS` and `-DCD` from the card's four registers,
+@note because the card brings out the registers and not the conclusions ---
+@note `docs/io-board.md` states the contract in those words.  Nine lines of
+@note `cadr_io_board.sv` are copied, and nothing but this record would say
+@note that a change to them on the card has to be made here too.  In local
+@note loop back `-CTS` is the command register's own RTS, so the chip runs
+@note with no cable at all; taking it from the cable instead stops the
+@note transmitter dead the moment the software asks for a maintenance mode.
+@note Caught at "the machine's own receiver in local loop back".
+@old
+  assign s_cts    = s_local ? ser_cmd[5] : ser_plugged;
+@new
+  assign s_cts    = ser_plugged;
+@end
+
+@mutation serial-line-counts-the-frame-in-crystal-periods
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note A character's frame is `half_bits * 8` SIXTEEN-X CLOCKS, each
+@note `DIVISORS[rate]` crystal periods --- `Framing::frame_ns` with the
+@note nanoseconds cancelled.  Counting the crystal instead makes every frame
+@note sixteen times short, so the machine's serial line runs at sixteen times
+@note the rate its software programmed and `serial_face.h`'s claim that "the
+@note chip is the fabric's and its timing stays there" becomes false.  `x16`
+@note stays used, at the take.  Caught at "the ticks a character's frame
+@note took", which is measured against the arithmetic and not merely
+@note exercised: a derivation and a check on it are what settle a number.
+@old
+      if (tx_busy) begin
+        if (x16) begin
+@new
+      if (tx_busy) begin
+        if (xtal) begin
+@end
+
+@mutation serial-line-paces-the-frame-a-half-bit-short
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note And the smallest magnitude that is still caught, which is what the
+@note sweep of a magnitude is for: one half bit out of twenty is five per
+@note cent, and the check's bound on a frame is tight enough to see it.  A
+@note frame one half bit short is the kind of off-by-one a stop-bit table
+@note invites --- `Framing::half_bits` counts the start bit as two halves and
+@note the stops as two, three or four --- and it is invisible to anything
+@note that only asks whether a character arrived.
+@old
+  assign frame_x16 = {half_bits, 3'b000};
+@new
+  assign frame_x16 = {(half_bits - 6'd1), 3'b000};
+@end
+
+@mutation serial-line-offers-room-with-a-character-on-its-way
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note A character into the machine takes its frame time, and `TX_ROOM` is
+@note down while one is on its way: that is what makes `serial_face.h`'s
+@note "a burst read off the socket in one turn is still received one frame at
+@note a time by the machine" true, and it is why the program's own
+@note `serial_face_put` gates on the bit.  Offering room anyway means a
+@note program that reads a socket in bursts silently loses all but the last
+@note character of each burst --- and loses them in the FABRIC, where no
+@note program can count them.  `in_busy` stays used.  Caught at "TX_ROOM
+@note while a character is on its way in".
+@old
+  assign tx_room = card_room && !in_busy;
+@new
+  assign tx_room = card_room;
+@end
+
+@mutation serial-line-reads-rdata-without-taking-the-character
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note `RDATA` is the one register in either face whose read has an effect,
+@note and it is why `cadr_gp_regs` gives a block a tick to register its
+@note answer: the character is consumed at `rd` and the word that outlives
+@note the consuming is what RVALID offers.  A read that does not consume
+@note leaves the same character waiting for ever, so the machine's serial
+@note output is one character repeated.  Caught at "STAT's RX_VALID after
+@note RDATA was read".
+@old
+        rdata_hold <= {23'd0, rx_valid, rx_char};
+        rx_valid   <= 1'b0;
+@new
+        rdata_hold <= {23'd0, rx_valid, rx_char};
 @end

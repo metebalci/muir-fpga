@@ -38,7 +38,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
-       $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
+       $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass $(BUILD)/tv.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass \
        $(BUILD)/readout_face.pass $(BUILD)/checkpoint.pass \
@@ -402,6 +402,13 @@ MACHINE := rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plum
            rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
            rtl/plumbing/cadr_bus_audit.sv \
            rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
+
+# `M_AXI_GP0` split four ways: the decode, the AXI3 register face the two new
+# slaves share, and the two cables' far ends.  Named once, because it goes on
+# every board that brings the port out --- the disk board and both proving
+# boards --- and a list that is not named once is a list that drifts.
+GP0 := rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_gp_regs.sv \
+       rtl/plumbing/cadr_chaos_cable.sv rtl/plumbing/cadr_serial_line.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
@@ -1021,6 +1028,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
                     rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
                     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
+                    $(GP0) \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -1036,21 +1044,21 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
-	    rtl/plumbing/cadr_console.sv
+	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
-	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv
+	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=2 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
-	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv
+	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0)
 # AND THE DEBUG CABLE'S TWO, AT THEIR OWN DEFAULT PARAMETERS. They are not
 # under `cadr_machine` yet --- which general-purpose port the window sits on
 # is not decided, `docs/debug-cable.md` --- so no board configuration above
@@ -1497,6 +1505,35 @@ $(BUILD)/obj_gp0_default/Vcadr_gp0_default: rtl/plumbing/cadr_gp0_default.sv \
 
 $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 	$(BUILD)/obj_gp0_default/Vcadr_gp0_default
+	@touch $@
+
+# ----------------------------------------------------- `M_AXI_GP0`, split
+#
+# `rtl/plumbing/cadr_gp0_split.sv` is the decode that lets the pack side, the
+# Chaosnet cable and the serial line share the port, and the property the
+# whole arrangement exists for is that EVERY address on it is answered in
+# both directions: a read nothing answers there hangs both Arm cores at one
+# PC each, measured on the board, and no software guard can catch it.
+#
+# THE HARNESS IS THE ATTACHMENT.  `tb/cadr_gp0_split_harness.sv` wires the
+# real four slaves behind the splitter exactly as `boards/arty-z7-20/
+# cadr_arty.sv` does, each answering with something only it can answer, and
+# puts `rtl/machine/cadr_io_board.sv` on the far side of the two new faces'
+# seams --- so the check sweeps the window AND carries a frame and a character
+# across in both directions.  `build/iob.pass` is what holds the card itself
+# to muir; this holds the two halves meeting, which nothing did before.
+GP0_SPLIT_SRC := tb/cadr_gp0_split_harness.sv $(GP0) \
+                 rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_disk_pack.sv \
+                 rtl/machine/cadr_io_board.sv
+
+$(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness: $(GP0_SPLIT_SRC) \
+                                                tb/cadr_gp0_split_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 \
+	    -Mdir $(BUILD)/obj_gp0_split --top-module cadr_gp0_split_harness \
+	    $(GP0_SPLIT_SRC) $(abspath tb/cadr_gp0_split_tb.cpp)
+
+$(BUILD)/gp0_split.pass: $(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness
+	$(BUILD)/obj_gp0_split/Vcadr_gp0_split_harness
 	@touch $@
 
 # --------------------------------------------------------------- the console
