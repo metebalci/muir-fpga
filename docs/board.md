@@ -629,3 +629,28 @@ measures is the microcycle rate. Which bit of the beat reaches the pin is
 that no memory means no progress. The fabric's answer is that no memory means
 *slow* progress. That is the first behaviour anyone here observed on silicon
 that was predicted wrongly, and it was predicted wrongly in this file.
+
+## The machine booted Lisp, 12 September
+
+![The CADR's screen on the board: the window system, a Lisp Listener and the
+who-line](images/first-lisp-boot.png)
+
+That is the CADR's own screen, read off the board over the network. It shows
+MIT's Lisp Machine system running on the fabric. There is the window system, a
+Lisp Listener, the error handler with a live backtrace, and the who-line
+reading `USER: Keyboard Cold-booted`.
+
+The error on the screen is a Chaosnet host lookup that found no server. That
+is expected on a board with no Chaosnet, and it is not a fault of the machine.
+
+The screen holds 20,741 lit pixels of 739,584. muir produces the same figure
+for the same band booted to the same place, so the two agree.
+
+The machine ran past 2,425,000,000 microcycles with its error flag down. Before
+this it halted at 169,107,829 microcycles with the flag up.
+
+What fixed it was the bus interface's own Unibus registers. The interrupt
+handler reads bit 1 of `0o766040`, which is a jumper that comes up set. Nothing
+answered that address, so the bit read clear and the handler took a branch that
+never reaches the code which clears an Xbus interrupt level. The machine lived
+inside that handler until it fell over.
