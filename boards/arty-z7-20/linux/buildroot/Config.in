@@ -8,3 +8,6 @@ source "$BR2_EXTERNAL_CADR_PATH/package/cadr-disk-packs/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-terminal/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-serial/Config.in"
 source "$BR2_EXTERNAL_CADR_PATH/package/cadr-chaosnet/Config.in"
+# muir itself, last because it is the one program here that is not ours: it is
+# built from upstream muir's source at the commit muir.commit pins.
+source "$BR2_EXTERNAL_CADR_PATH/package/muir/Config.in"

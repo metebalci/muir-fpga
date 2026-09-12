@@ -60,13 +60,19 @@
 #      from the image, and then checks 1 and 2 agree about a smaller machine
 #      than the one that was asked for.
 #
-# **What it does not reach.**  A ghost whose name carries no `cadr` --- a
-# program of ours renamed out of that namespace, or a stale file from an
-# upstream Buildroot package --- is invisible to check 1, because nothing in
+# **What it does not reach.**  A ghost whose name is in neither namespace check
+# 1 looks at --- a program of ours renamed out of `cadr`, or a stale file from
+# an upstream Buildroot package --- is invisible to it, because nothing in
 # Buildroot records what an upstream package installed in a way that survives
 # the package going away (see the paragraph above).  Check 2 still catches our
 # own side of that: the new name is expected and missing.  Say so rather than
 # claim more.
+#
+# **And a program's settings file is not covered at all.**  /root/.muirrc is a
+# symlink the muir package installs, and nothing here asserts it: the
+# derivation reads install paths under usr/bin and S-numbered init scripts, and
+# a symlink into /mnt/packs is neither.  It is named here so that its absence
+# from the checks is a known absence rather than an assumed presence.
 
 set -eu
 
@@ -94,11 +100,15 @@ die()  { echo "the image and the packages: $*" >&2; exit 1; }
 #
 #   usr/bin/<p>         for every word of `PROGRAMS :=` in <pkg>/src/Makefile,
 #                       which is the list its `install` rule copies there
+#   usr/bin/<p>         for a package with no src/Makefile of ours, every
+#                       $(TARGET_DIR)/usr/bin/<p> its own .mk names --- which
+#                       is how muir, built from upstream source, states what it
+#                       installs
 #   etc/init.d/<S..>    for every S-numbered file beside <pkg>/<pkg>.mk, which
 #                       is what its INSTALL_INIT_SYSV copies there
 #
-# Both are what the package's own rules use, so the derivation cannot drift
-# from the build without check 2 failing.
+# All three are what the package's own rules use, so the derivation cannot
+# drift from the build without check 2 failing.
 
 expected=
 declared=
@@ -125,6 +135,14 @@ for pkg in "$PKGDIR"/*/; do
 		for p in $(sed -n 's/^PROGRAMS[[:space:]]*:*=[[:space:]]*//p' "$pkg/src/Makefile"); do
 			expected="$expected usr/bin/$p"
 		done
+	else
+		# A package with no src/ of ours --- one built from upstream
+		# source, as muir is --- states what it installs in its own
+		# .mk, so the derivation still comes from the source tree and
+		# not from anything Buildroot wrote.
+		for p in $(sed -n 's|.*$(TARGET_DIR)/usr/bin/\([A-Za-z0-9._-]*\).*|\1|p' "$pkg/$name.mk"); do
+			expected="$expected usr/bin/$p"
+		done
 	fi
 	for s in "$pkg"S[0-9][0-9]*; do
 		[ -f "$s" ] || continue
@@ -134,10 +152,20 @@ done
 
 [ "$packages" -gt 0 ] || die "no package under $PKGDIR is enabled; the check would be vacuous"
 
-# check 3b: no defconfig turns on a symbol no package declares any more
+# check 3b: no defconfig turns on a symbol no package declares any more.
+#
+# It has to know which symbols are this tree's, because a defconfig is full of
+# upstream Buildroot ones that no package here declares and must not.  There is
+# no way to tell the two apart from inside this script --- Buildroot's own
+# source is not reachable from here --- so the namespaces are enumerated:
+# BR2_PACKAGE_CADR_* for our own programs, and BR2_PACKAGE_MUIR, which is
+# outside that namespace because muir is not one of our programs but muir.
+# Anything added here in a third namespace wants a third expression.
 for dc in "$EXT"/configs/*_defconfig; do
 	[ -f "$dc" ] || continue
-	for sym in $(sed -n 's/^\(BR2_PACKAGE_CADR_[A-Z0-9_]*\)=y$/\1/p' "$dc"); do
+	for sym in $(sed -n \
+			-e 's/^\(BR2_PACKAGE_CADR_[A-Z0-9_]*\)=y$/\1/p' \
+			-e 's/^\(BR2_PACKAGE_MUIR\)=y$/\1/p' "$dc"); do
 		case " $declared " in
 			*" $sym "*) ;;
 			*) die "$(basename -- "$dc") sets $sym=y and no package declares it:
@@ -158,9 +186,15 @@ for path in $expected; do
     what was asked for."
 done
 
-# check 1: nothing else of ours is there
+# check 1: nothing else of ours is there.
+#
+# The names it looks at are the same two namespaces check 3b enumerates, and
+# for the same reason: a find over every file in the target would flag every
+# BusyBox applet.  `muir` is matched exactly --- it is one program, not a
+# family --- and it is here so that the day the muir package is renamed or
+# dropped, the /usr/bin/muir it leaves behind is caught rather than shipped.
 stale=
-for path in $(cd "$TARGET" && find . \( -type f -o -type l \) -name '*cadr*' | sed 's|^\./||' | LC_ALL=C sort); do
+for path in $(cd "$TARGET" && find . \( -type f -o -type l \) \( -name '*cadr*' -o -name 'muir' \) | sed 's|^\./||' | LC_ALL=C sort); do
 	case " $expected " in
 		*" $path "*) ;;
 		*) stale="$stale $path" ;;
