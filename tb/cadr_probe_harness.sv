@@ -140,7 +140,12 @@ module cadr_probe_harness #(
       .ub_rdata_o(ub_rdata), .n_loadmd_o(n_loadmd), .rdcyc_o(rdcyc),
       .nxm(nxm), .unibus(unibus), .memstart(memstart),
       .timed_out(timed_out), .mem_req(mem_req), .mem_write(mem_write),
-      .mem_addr(mem_addr), .mem_wdata(mem_wdata)
+      .mem_addr(mem_addr), .mem_wdata(mem_wdata),
+      // The port's own answers, for the transaction audit inside the machine.
+      // Nothing answers this harness's memory port at all --- `mem_done` is
+      // tied low above --- so there is nothing to hand it and the audit's
+      // seventh clause has nothing to say here.
+      .port_read_ack(1'b0), .port_write_ack(1'b0)
   );
 
   // WIRED AS `cadr_arty.sv` WIRES IT, including the inversion --- the two

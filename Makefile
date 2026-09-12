@@ -33,6 +33,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
+       $(BUILD)/audit_window.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
@@ -397,6 +398,7 @@ MACHINE := rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plum
            rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv rtl/machine/cadr_tv.sv \
            rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
            rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
+           rtl/plumbing/cadr_bus_audit.sv \
            rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
@@ -820,6 +822,39 @@ $(BUILD)/obj_bus_audit_unit/Vcadr_bus_audit: $(BUS_AUDIT_UNIT_SRC) \
 
 $(BUILD)/bus_audit_unit.pass: $(BUILD)/obj_bus_audit_unit/Vcadr_bus_audit
 	$(BUILD)/obj_bus_audit_unit/Vcadr_bus_audit
+	@touch $@
+
+# --------------------------------------------- and the audit through the window
+
+# THE JOIN, WHICH NOTHING HELD UNTIL THIS CHECK.  The two above hold the audit
+# --- one clause by clause on the module alone, one as a property of the
+# composed machine over MIT's boot PROM --- and `readout.pass` holds the
+# console's window against the processor's own arrays.  What sits between them
+# is `cadr_machine.sv` putting the audit ON that window at a selector of its
+# own, and that is where a board reads it: over `M_AXI_GP1`, by `cadr-readout`,
+# hours after the machine has stopped, with nobody at the board.
+#
+# The DUT is `cadr_machine` and the reference is the audit's own registers,
+# reached by name --- `--public-flat-rw` for the same reason `readout.pass`
+# takes it, that holding the window to itself would hold nothing.  What is
+# asserted is the word, field by field; the marker on all sixteen; that the
+# eleven selectors below it still come from the processor and the four above
+# it still read `RO_NO_MEMORY`; and that a transaction the PORT answered which
+# nobody asked for is latched, named and readable.  That last one is injected
+# through `port_write_ack`, which is an input of `cadr_machine`: the boot
+# PROM's first main-memory cycle is at microcycle 536,303 and a program cannot
+# be made to fault on demand.
+#
+# It runs about 30,000 ticks and takes under a second.
+$(BUILD)/obj_audit_window/Vcadr_machine: $(MACHINE) tb/cadr_audit_window_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $(BUILD)/obj_audit_window \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) \
+	    $(abspath tb/cadr_audit_window_tb.cpp)
+
+$(BUILD)/audit_window.pass: $(BUILD)/obj_audit_window/Vcadr_machine \
+                            $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_audit_window/Vcadr_machine
 	@touch $@
 
 # ------------------------------------------------- the machine with no memory

@@ -173,6 +173,36 @@ module cadr_memory_path (
     // would show as two bits up and show as nothing at all on the line.
     output var logic [2:0]  ub_ssyn_by,
 
+    // --- WHAT THE TRANSACTION AUDIT IS ANCHORED ON.  Four registers and an
+    // observation: `rtl/plumbing/cadr_bus_audit.sv` is instantiated a level up
+    // in `rtl/machine/cadr_machine.sv`, watches one transaction per bus cycle
+    // at the memory port, and nothing it produces reaches the datapath.
+    //
+    // **THEY ARE THE ARBITER'S STATE AND EACH MASTER'S OWN HELD DECODE, AND
+    // NOT `bus_rq`, `bus_write` OR `bus_sel`.**  That module's header carries
+    // the argument, and it is CLAUDE.md's shadow-memory rule: a check keyed by
+    // the thing under test moves with the bug, and the thing under test is the
+    // path from a bus cycle to the AXI port --- so a fault in the mux those
+    // three come out of must not also move what the audit compares against.
+    // The request and the direction are therefore taken at each master, which
+    // is why `mbusy` and `wrcyc` are not here: the processor's are the
+    // processor's and `cadr_machine.sv` reads them where they are made.
+    //
+    // `cpu_memory_o` is `is_memory || tv_fb` and NOT `is_memory` alone,
+    // because the display's frame buffer is this bridge at a second base: a
+    // frame-buffer cycle decodes as `device` and issues a transaction anyway,
+    // and an audit that did not know that would fault on the first pixel the
+    // machine ever painted.
+    //
+    // `bus_changing_o` is the idle tick this module already inserts at every
+    // change of owner.  The audit uses it to close one cycle and open the
+    // next, because MBUSY and `ch_own` genuinely overlap --- see the note at
+    // the arbiter below.
+    output var logic        ch_own_o,       // the channel has the bus
+    output var logic        bus_changing_o, // the idle tick at a handover
+    output var logic        cpu_memory_o,   // the bridge answers the processor
+    output var logic        ch_memory_o,    // the bridge answers the channel
+
     // --- THE I/O BOARD'S OWN CABLES, which cross this boundary and every one
     // above it until something drives them.
     //
@@ -438,6 +468,13 @@ module cadr_memory_path (
   assign ch_done  = ch_own && ch_ack_q;
   assign ch_nxm   = ch_own && !ch_memory;
   assign ch_rdata = memory_rdata;
+
+  // The audit's anchor, brought out: see the port list.  Four registers and a
+  // gate, read by an instrument a level up and by nothing else.
+  assign ch_own_o       = ch_own;
+  assign bus_changing_o = changing;
+  assign cpu_memory_o   = is_memory || tv_fb;
+  assign ch_memory_o    = ch_memory;
 
   always_ff @(posedge clk) begin
     if (rst) begin

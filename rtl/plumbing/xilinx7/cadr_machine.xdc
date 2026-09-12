@@ -301,6 +301,42 @@
 # one of 400 paths into `con_rdata_reg[*]/D` asks for 75.000, worst
 # `vma_reg[14]/C` at 24 logic levels with 57.148 ns of slack --- so the
 # naming took, which a slack figure alone could never have said.
+#
+# **AND THE TRANSACTION AUDIT IS THE FIRST MODULE TO ARRIVE WITH ITS TIMING
+# SET ANSWERED BEFORE ITS FIT.**  `rtl/plumbing/cadr_bus_audit.sv` is an
+# instrument: it watches one transaction per bus cycle at the memory port and
+# reports through the console's readout window, and its 347 registers would
+# ALL have landed in `slow` by default --- which is exactly the trap
+# `cadr_disk_controller.sv` fell into, where 3,904 of 4,000 paths carried the
+# exception and three slices quoted fit figures for a disk nobody was timing.
+#
+# It is not one set for the whole module and the split is the one its header
+# argues for.  THE EDGE DETECTORS AND THE PER-CYCLE STATE ARE READ EVERY TICK:
+# `req_q`, `done_q` and `cycle_q` make the three edges the whole instrument is
+# built on, and a relaxed edge detector misses an edge or invents one, which is
+# an instrument that lies.  `owed_reads` and `owed_writes` are read by the
+# fault term on every tick and `port_reads`/`port_writes` are enabled by a
+# handshake that can arrive on any tick, so they are in that half too, and so
+# are `faults`, `stalled` and `seen`, which are counters.  WHAT IS RELAXED IS
+# WHAT A CONSOLE READS FROM A HALTED MACHINE: `first_*`, the record, written
+# once and read once; `micro`, incremented at a microcycle boundary, which is
+# twenty-nine ticks at normal speed; and `word`, the readout register, whose
+# address stands still between one console write and the next.
+#
+# The `fast -> slow` arc that remains is the fault term into the capture
+# registers' clock enable, which this clause times at ONE tick and which is
+# what it must be: a capture whose enable is relaxed can fire at a tick where
+# its own data has not settled.  That is the arc the module's own
+# out-of-context figure names --- `req_q_reg/C -> first_addr_reg[0]/CE` at
+# +5.790 ns --- and it is the `elapsed -> md/CE` shape with the right answer
+# already applied.
+#
+# **THE CLAUSE NAMES THE INSTANCE**, so `cadr_machine.sv`'s instantiation must
+# stay `cadr_bus_audit audit (...)`: a rename empties it in silence, which is
+# the `foreach` trap in a new place and has the same tell --- ask
+# `report_exceptions`, or `get_timing_paths -through [get_cells */audit/*]`,
+# which of its paths carry the fifteen-cycle requirement, and expect only the
+# record, the microcycle counter and the readout word to.
 
 set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *mfinish_t_reg*    && \
@@ -319,6 +355,9 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   NAME !~ *tpclk_q_reg*      && \
                                   (NAME !~ *disk/* || NAME =~ *disk/mine_reg* || \
                                                       NAME =~ *disk/which_reg*) && \
+                                  (NAME !~ *audit/* || NAME =~ *audit/first_* || \
+                                                       NAME =~ *audit/micro_reg* || \
+                                                       NAME =~ *audit/word_reg*) && \
                                   (NAME !~ *memory/tv/* || NAME =~ *memory/tv/ctl_reg* || \
                                                            NAME =~ *memory/tv/fb_reg* || \
                                                            NAME =~ *memory/tv/which_reg*) && \

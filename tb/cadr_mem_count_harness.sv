@@ -172,7 +172,14 @@ module cadr_mem_count_harness #(
       .ub_rdata_o(ub_rdata), .n_loadmd_o(n_loadmd), .rdcyc_o(rdcyc),
       .nxm(nxm), .unibus(unibus), .memstart(memstart),
       .timed_out(timed_out), .mem_req(mem_req), .mem_write(mem_write),
-      .mem_addr(mem_addr), .mem_wdata(mem_wdata)
+      .mem_addr(mem_addr), .mem_wdata(mem_wdata),
+      // The port's own answers, for the transaction audit inside the machine.
+      // Tied off here: this harness's question is how many transactions the
+      // processing system ANSWERED, and one of its configurations drives
+      // `hp0_aresetn` to make a dead port, which is the one arrangement an
+      // audit of transactions per cycle has nothing to say about.
+      // `tb/cadr_bus_audit_harness.sv` is where they are wired for real.
+      .port_read_ack(1'b0), .port_write_ack(1'b0)
   );
 
   // The port's reset, synchronised in as the top level synchronises it.

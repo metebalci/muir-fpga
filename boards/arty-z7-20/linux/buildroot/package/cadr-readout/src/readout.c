@@ -162,6 +162,42 @@ int ro_read_machine(struct readout *r, struct cadr_image *img)
 	return 0;
 }
 
+int ro_audit(struct readout *r, struct cadr_audit *a, unsigned *mark)
+{
+	uint64_t w[IMG_AUDIT_WORDS];
+	if (mark)
+		*mark = 0;
+	for (unsigned i = 0; i < IMG_AUDIT_WORDS; ++i) {
+		if (ro_word(r, IMG_SEL_AUDIT, i, &w[i]) != 0)
+			return -1;
+		// **THE MARKER IS CHECKED BEFORE ANYTHING IS BELIEVED.**  A
+		// bitstream with no audit in it answers the window's own
+		// `A5A5_5A5A_A5A5` here, and an undriven path answers all
+		// ones or all zeros; each of the three would otherwise read
+		// as a clean instrument.
+		if (((w[i] >> 32) & 0xFFFFu) != IMG_AUDIT_MARK) {
+			if (mark)
+				*mark = (unsigned)((w[i] >> 32) & 0xFFFFu);
+			return -1;
+		}
+	}
+	a->faults = (unsigned)(w[0] & 0x7FFFu);
+	a->stalled = (unsigned)((w[0] >> 16) & 0x7FFFu);
+	a->phys = (uint32_t)(w[1] & 0x3FFFFFu);
+	a->clause = (unsigned)((w[1] >> 22) & 7u);
+	a->seen = (unsigned)((w[1] >> 25) & 0x7Fu);
+	a->addr = (uint32_t)w[2];
+	a->data = (uint32_t)w[3];
+	a->vma = (uint32_t)w[4];
+	a->md = (uint32_t)w[5];
+	a->micro = (uint32_t)w[6];
+	a->opc = (unsigned)(w[7] & 0x3FFFu);
+	a->pc = (unsigned)((w[7] >> 16) & 0x3FFFu);
+	a->port_reads = (unsigned)(w[8] & 0x7FFFu);
+	a->port_writes = (unsigned)((w[8] >> 16) & 0x7FFFu);
+	return 0;
+}
+
 int img_alloc(struct cadr_image *img, unsigned boards)
 {
 	memset(img, 0, sizeof *img);

@@ -220,6 +220,9 @@ module cadr_arty #(
   // The answer, from whatever is behind the memory port. Driven in one of the
   // two arms of the `DDR` generate below and nowhere else.
   logic mem_done;
+  // The port's own answers, for the transaction audit inside the machine:
+  // driven from `g_ddr` where the `PS7` is and tied low where there is none.
+  logic port_read_ack, port_write_ack;
   logic [31:0] mem_rdata;
   // The disk's two seams, likewise driven from one arm or the other: the
   // drive --- which units have a pack, the read-only switch, whether the
@@ -564,7 +567,16 @@ module cadr_arty #(
       .clock_ready(clock_ready), .interval(interval),
       .ub_ssyn_by(ub_ssyn_by),
       .mem_req(mem_req), .mem_write(mem_write),
-      .mem_addr(mem_addr), .mem_wdata(mem_wdata)
+      .mem_addr(mem_addr), .mem_wdata(mem_wdata),
+      // WHAT THE PROCESSING SYSTEM ITSELF ANSWERED, for the transaction audit
+      // inside the machine. `rtl/plumbing/cadr_bus_audit.sv` sits under
+      // `cadr_machine` and `rtl/plumbing/cadr_axi_master.sv` sits out here, so
+      // a transaction born in the adapter raises no second `mem_req` and every
+      // clause anchored on one is blind to it. These two are not: they are the
+      // port's own handshakes, at the same boundary and off the same
+      // registered copies `rtl/plumbing/cadr_mem_count.sv` counts, so the two
+      // instruments cannot disagree about what the port did.
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
   );
 
   // ----------------------------------------------------------- the memory
@@ -831,6 +843,21 @@ module cadr_arty #(
         .rvalid(count_rvalid), .rready(count_rready), .rlast(count_rlast),
         .gpio(gpio_i)
     );
+
+    // AND THE SAME TWO HANDSHAKES INTO THE MACHINE'S OWN AUDIT, off the same
+    // registered copies so that the tally on EMIO and the record in the
+    // console's window cannot disagree about what the port did.
+    //
+    // **NOT ON A `PROVE` BOARD.** There the witness owns the port and the
+    // machine's `mem_done` is tied low, so every transaction the port answers
+    // is the witness's and none of them is the machine's: fed in, they would
+    // read as the port answering what the machine never asked, which is
+    // exactly the fault this clause exists to name. The whole point of a
+    // `PROVE` board is that the machine is not driving the port, and the audit
+    // is told so by being given nothing.
+    assign port_read_ack  = (PROVE == 0) && count_rvalid && count_rready &&
+                            count_rlast;
+    assign port_write_ack = (PROVE == 0) && count_bvalid && count_bready;
 
     // ------------------------------------------------------ the pack side
     //
@@ -1132,6 +1159,10 @@ module cadr_arty #(
     assign mem_done  = 1'b0;
     assign mem_rdata = 32'd0;
     assign ddr_error = 1'b0;
+    // And no port to answer anything, so the audit's port clause is silent by
+    // construction. Its word 8 reads zero, which on this board is the truth.
+    assign port_read_ack  = 1'b0;
+    assign port_write_ack = 1'b0;
     // And no drive and no pack: see the machine's instantiation.
     assign drive_present = 8'd0;
     assign drive_read_only = 8'd0;
