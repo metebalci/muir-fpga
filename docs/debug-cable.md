@@ -311,14 +311,17 @@ Three ways to fit the window in.
 
 **One: the adapter takes `M_AXI_GP1` and the console moves to `M_AXI_GP0`.**
 The adapter is then a whole-port slave, which is what it already is, and its
-attachment is one line. The cost is all on the console's side. `M_AXI_GP0` is
-answered end to end by the disk pack side, so the console needs an address
-decode and a two-way mux in front of a face that already works. That decode
-carries the disk's traffic: every boot moves 42,967 blocks whose addresses
-cross `M_AXI_GP0`, and the one hang this project has measured was measured
-there. It also means the pack side's `SLVERR`-outside rule and the console's
-`OKAY`-everywhere rule have to be reconciled, because a port can only have one
-answer for an address neither of them claims.
+attachment is one line. The cost is on the console's side, and it is smaller
+than it was when this was written. `M_AXI_GP0` already carries three faces
+behind `rtl/plumbing/cadr_gp0_split.sv`, so the console would be a fourth
+page rather than a decode somebody has to write. Two of the objections this
+paragraph used to raise are answered by that module. The decode does carry
+the disk's traffic, but it is a held match and a registered selection, and
+the exception count says the constraints still reach it. And the `SLVERR`
+rule and the `OKAY` rule no longer have to be reconciled: each page answers
+in its own way and the splitter's fourth port answers everything neither
+claims. What is left of the cost is a page of address space and the console's
+own wiring.
 
 **Two: the adapter shares `M_AXI_GP1` behind a split.** A new module owns the
 port, routes a transaction to the console or to the adapter by address, and

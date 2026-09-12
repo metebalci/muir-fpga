@@ -282,11 +282,11 @@ module cadr_arty #(
   // ------------------------------------------------- the I/O board's cables
   //
   // The card is a Unibus slave inside `cadr_machine` and these are the things
-  // MIT plugged into it.  **All four are tied off here, and each names the
-  // slice that will drive it**, which is the shape `drive_present` had for a
-  // day and the reason a seam is a port rather than a constant inside: the
-  // day the far end exists, one line in this file changes and nothing in the
-  // machine does.
+  // MIT plugged into it.  **TWO OF THE FOUR HAVE FAR ENDS NOW**, and the day
+  // they arrived one line in this file changed and nothing in the machine
+  // did, which is the reason a seam is a port rather than a constant inside.
+  // The keyboard and the mouse are still tied off, and each names the slice
+  // that will drive it.
   //
   //   the keyboard    `cadr-usb-input`, last in the order of work.  The kernel
   //                   side is done --- `evtest` printed Mete's name off a USB
@@ -303,22 +303,35 @@ module cadr_arty #(
   //                   comparator constant-fold --- which is the drive seam's
   //                   own lesson and means the FITTER DOES NOT TEST THE MOUSE
   //                   on this board.
-  //   the serial port `cadr-serial`, its own slice and its own Buildroot
-  //                   package.  **THE 2651 ITSELF IS IN THE FABRIC NOW**: its
-  //                   four registers, its two pointers and its status byte
-  //                   are on the card, and what is tied off here is the LINE
-  //                   --- the shift register's two edges and a character
-  //                   coming in, which the baud-rate generator would make and
-  //                   which a TCP socket paces instead.  With the cable out
-  //                   the sheet's own `V_OH` row keeps both halves stopped,
-  //                   so the whole chip constant-folds, which is the drive
-  //                   seam's lesson again.
-  //   the Chaosnet    its own slice.  **THE INTERFACE IS IN THE FABRIC NOW**
-  //                   too: AIM-628's five registers, both 256-word packet
-  //                   buffers, the bit counter and the lost count.  What is
-  //                   tied off is the CABLE --- the turn timer, the frame and
-  //                   the check word are `cadr-chaosnet`'s, and the address
-  //                   switches at LMMYNM read zero until it sets them.
+  //   the serial port the 2651 is on the card and its LINE is
+  //                   `rtl/plumbing/cadr_serial_line.sv`, a page of
+  //                   `M_AXI_GP0` below.  That module runs the baud-rate
+  //                   generator the card leaves out and paces the shift
+  //                   register's two edges; `cadr-serial` puts the line on a
+  //                   TCP socket.  **ON A BOARD WITH NO PROCESSING SYSTEM it
+  //                   is still tied off**, in the `PORT` generate's other
+  //                   arm, and with the cable out the sheet's own `V_OH` row
+  //                   keeps both halves stopped, so the whole chip
+  //                   constant-folds --- which is the drive seam's lesson and
+  //                   means the fitter does not test the 2651 on that board.
+  //   the Chaosnet    the interface is on the card --- AIM-628's five
+  //                   registers, both 256-word packet buffers, the bit
+  //                   counter and the lost count --- and its CABLE is
+  //                   `rtl/plumbing/cadr_chaos_cable.sv`, the page below it.
+  //                   That module holds one frame each way and appends the
+  //                   source address and the check word the 9401 would have;
+  //                   the turn timer, the transceiver and the ether are
+  //                   `cadr-chaosnet`'s.  Tied off on a board with no
+  //                   processing system, where the address switches read zero
+  //                   and the card's receive buffer constant-folds with them.
+  // **AND THE TWO CABLES ARE NO LONGER TIED OFF WHEREVER THERE IS A
+  // PROCESSING SYSTEM.**  `rtl/plumbing/cadr_chaos_cable.sv` and
+  // `rtl/plumbing/cadr_serial_line.sv` are the far ends of them, on
+  // `M_AXI_GP0` behind `rtl/plumbing/cadr_gp0_split.sv`, and they are driven
+  // from the `PORT` generate below --- so this file's tie-off is now only
+  // for the board that has no PS at all, where there is no port for a
+  // program to reach them on.  The keyboard and the mouse stay tied off
+  // everywhere: `cadr-usb-input` is last in the order of work.
   logic        kbd_strobe;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
@@ -331,20 +344,6 @@ module cadr_arty #(
   assign kbd_strobe     = 1'b0;
   assign kbd_code       = 24'd0;
   assign mouse_lines    = 7'd0;
-  assign ser_tx_take    = 1'b0;
-  assign ser_tx_done    = 1'b0;
-  assign ser_rx_strobe  = 1'b0;
-  assign ser_rx_data    = 8'd0;
-  assign ser_plugged    = 1'b0;
-  assign chaos_address  = 16'd0;
-  assign chaos_rx_valid = 1'b0;
-  assign chaos_rx_word  = 16'd0;
-  assign chaos_rx_done  = 1'b0;
-  assign chaos_rx_bits  = 13'd0;
-  assign chaos_rx_crc   = 1'b0;
-  assign chaos_tx_done  = 1'b0;
-  assign chaos_tx_abort = 1'b0;
-  assign chaos_cbl_busy = 1'b0;
   // What the card gives back.  Nothing on this board reads any of it: the
   // speaker has no pin, the 2651 is not fitted, and `iob_intr` and
   // `iob_vector` leave the machine as observations, the request itself going
@@ -943,8 +942,10 @@ module cadr_arty #(
     // `M_AXI_GP1`, the console's own port.  A second `M_AXI_GP` and not a
     // share of GP0's window, because the slave that owns a GP port must
     // answer the WHOLE of it --- a read nothing answers hangs both Arm cores
-    // at one PC each, measured --- and GP0 is already answered end to end by
-    // `cadr_disk_pack.sv` or `cadr_gp0_default.sv`.  `0x8000_0000` to
+    // at one PC each, measured --- and GP0 is already answered end to end,
+    // by `rtl/plumbing/cadr_gp0_split.sv` and the four slaves behind it.
+    // (A fifth page would take the console too, and `docs/debug-cable.md`
+    // is where that decision is written down.)  `0x8000_0000` to
     // `0xBFFF_FFFF` is its window, which Vivado states itself in
     // `data/ip/xilinx/processing_system7_v5_5/bd/bd.tcl` at lines 125 and 135.
     logic        gp1_aresetn;
@@ -958,6 +959,49 @@ module cadr_arty #(
     // The disk's interrupt into the processing system, `IRQ_F2P` bit 0:
     // the pack side's, or nothing on a board without one.
     logic        pack_irq;
+
+    // ------------------------------------------- what GP0 is split four ways
+    //
+    // `rtl/plumbing/cadr_gp0_split.sv` decodes the port into three 4 KB
+    // pages and a fourth port for the rest of the gigabyte.  **THE FOURTH
+    // PORT IS WHAT KEEPS THE RULE**: a read nothing answers on GP0 does not
+    // fault the Arm, it hangs both cores at one PC each, measured on this
+    // board, so every address in the window reaches a slave that completes
+    // it.  The pack side keeps `0x4000_0000` --- its own `REG_BASE` default,
+    // so the disk pack program does not move --- and the two new faces take
+    // the pages `chaos_face.h` and `serial_face.h` already assume.
+    logic [31:0] gp0p_awaddr, gp0p_araddr, gp0p_wdata, gp0p_rdata;
+    logic [3:0]  gp0p_awlen, gp0p_arlen, gp0p_wstrb;
+    logic [11:0] gp0p_awid, gp0p_arid, gp0p_bid, gp0p_rid;
+    logic        gp0p_awvalid, gp0p_awready, gp0p_wlast, gp0p_wvalid, gp0p_wready;
+    logic        gp0p_bvalid, gp0p_bready, gp0p_arvalid, gp0p_arready;
+    logic        gp0p_rlast, gp0p_rvalid, gp0p_rready;
+    logic [1:0]  gp0p_bresp, gp0p_rresp;
+    logic [11:0] gp0c_awaddr, gp0c_araddr;
+    logic [31:0] gp0c_wdata, gp0c_rdata;
+    logic [3:0]  gp0c_awlen, gp0c_arlen, gp0c_wstrb;
+    logic [11:0] gp0c_awid, gp0c_arid, gp0c_bid, gp0c_rid;
+    logic        gp0c_awvalid, gp0c_awready, gp0c_wlast, gp0c_wvalid, gp0c_wready;
+    logic        gp0c_bvalid, gp0c_bready, gp0c_arvalid, gp0c_arready;
+    logic        gp0c_rlast, gp0c_rvalid, gp0c_rready;
+    logic [1:0]  gp0c_bresp, gp0c_rresp;
+    logic [11:0] gp0s_awaddr, gp0s_araddr;
+    logic [31:0] gp0s_wdata, gp0s_rdata;
+    logic [3:0]  gp0s_awlen, gp0s_arlen, gp0s_wstrb;
+    logic [11:0] gp0s_awid, gp0s_arid, gp0s_bid, gp0s_rid;
+    logic        gp0s_awvalid, gp0s_awready, gp0s_wlast, gp0s_wvalid, gp0s_wready;
+    logic        gp0s_bvalid, gp0s_bready, gp0s_arvalid, gp0s_arready;
+    logic        gp0s_rlast, gp0s_rvalid, gp0s_rready;
+    logic [1:0]  gp0s_bresp, gp0s_rresp;
+    logic [31:0] gp0d_rdata;
+    logic [3:0]  gp0d_arlen;
+    logic [11:0] gp0d_awid, gp0d_arid, gp0d_bid, gp0d_rid;
+    logic        gp0d_awvalid, gp0d_awready, gp0d_wlast, gp0d_wvalid, gp0d_wready;
+    logic        gp0d_bvalid, gp0d_bready, gp0d_arvalid, gp0d_arready;
+    logic        gp0d_rlast, gp0d_rvalid, gp0d_rready;
+    logic [1:0]  gp0d_bresp, gp0d_rresp;
+    // The two cables' interrupts into the processing system.
+    logic        chaos_irq, ser_irq;
 
     if (DDR != 0) begin : g_pack
 
@@ -975,16 +1019,16 @@ module cadr_arty #(
 
       cadr_disk_pack u_pack (
           .clk(clk), .rst(pack_rst),
-          .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
-          .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
-          .s_wdata(gp0_wdata), .s_wstrb(gp0_wstrb), .s_wlast(gp0_wlast),
-          .s_wvalid(gp0_wvalid), .s_wready(gp0_wready),
-          .s_bresp(gp0_bresp), .s_bid(gp0_bid), .s_bvalid(gp0_bvalid),
-          .s_bready(gp0_bready),
-          .s_araddr(gp0_araddr), .s_arlen(gp0_arlen), .s_arid(gp0_arid),
-          .s_arvalid(gp0_arvalid), .s_arready(gp0_arready),
-          .s_rdata(gp0_rdata), .s_rresp(gp0_rresp), .s_rid(gp0_rid),
-          .s_rlast(gp0_rlast), .s_rvalid(gp0_rvalid), .s_rready(gp0_rready),
+          .s_awaddr(gp0p_awaddr), .s_awlen(gp0p_awlen), .s_awid(gp0p_awid),
+          .s_awvalid(gp0p_awvalid), .s_awready(gp0p_awready),
+          .s_wdata(gp0p_wdata), .s_wstrb(gp0p_wstrb), .s_wlast(gp0p_wlast),
+          .s_wvalid(gp0p_wvalid), .s_wready(gp0p_wready),
+          .s_bresp(gp0p_bresp), .s_bid(gp0p_bid), .s_bvalid(gp0p_bvalid),
+          .s_bready(gp0p_bready),
+          .s_araddr(gp0p_araddr), .s_arlen(gp0p_arlen), .s_arid(gp0p_arid),
+          .s_arvalid(gp0p_arvalid), .s_arready(gp0p_arready),
+          .s_rdata(gp0p_rdata), .s_rresp(gp0p_rresp), .s_rid(gp0p_rid),
+          .s_rlast(gp0p_rlast), .s_rvalid(gp0p_rvalid), .s_rready(gp0p_rready),
           .m_awaddr(hp2_awaddr), .m_awlen(hp2_awlen), .m_awsize(hp2_awsize),
           .m_awburst(hp2_awburst), .m_awvalid(hp2_awvalid),
           .m_awready(hp2_awready),
@@ -1045,39 +1089,175 @@ module cadr_arty #(
       assign hp2_arvalid = 1'b0;
       assign hp2_rready = 1'b0;
 
-      // Reset as the pack side is: by the port's own reset, synchronised,
-      // so that the slave answers from the moment the PS says the port is
-      // live.
-      logic [2:0] gp0_rst_sync;
-      logic gp0_rst;
-      always_ff @(posedge clk) begin
-        gp0_rst_sync <= {gp0_rst_sync[1:0], gp0_aresetn};
-        gp0_rst      <= rst || !gp0_rst_sync[2];
-      end
-
+      // The splitter's first page, which is the pack side's on every other
+      // board, still has to be answered: a read nothing answers there hangs
+      // both Arm cores at one PC each and there is no software guard for it.
+      // `gp0_rst_s` is the port's own reset synchronised, made once in the
+      // enclosing scope where the splitter and the other three slaves take
+      // it --- a second one here would shadow the name.
       cadr_gp0_default u_gp0_default (
-          .clk(clk), .rst(gp0_rst),
-          .s_awvalid(gp0_awvalid), .s_awid(gp0_awid), .s_awready(gp0_awready),
-          .s_wlast(gp0_wlast), .s_wvalid(gp0_wvalid), .s_wready(gp0_wready),
-          .s_bresp(gp0_bresp), .s_bid(gp0_bid), .s_bvalid(gp0_bvalid),
-          .s_bready(gp0_bready),
-          .s_arlen(gp0_arlen), .s_arid(gp0_arid), .s_arvalid(gp0_arvalid),
-          .s_arready(gp0_arready),
-          .s_rdata(gp0_rdata), .s_rresp(gp0_rresp), .s_rid(gp0_rid),
-          .s_rlast(gp0_rlast), .s_rvalid(gp0_rvalid), .s_rready(gp0_rready)
+          .clk(clk), .rst(gp0_rst_s),
+          .s_awvalid(gp0p_awvalid), .s_awid(gp0p_awid), .s_awready(gp0p_awready),
+          .s_wlast(gp0p_wlast), .s_wvalid(gp0p_wvalid), .s_wready(gp0p_wready),
+          .s_bresp(gp0p_bresp), .s_bid(gp0p_bid), .s_bvalid(gp0p_bvalid),
+          .s_bready(gp0p_bready),
+          .s_arlen(gp0p_arlen), .s_arid(gp0p_arid), .s_arvalid(gp0p_arvalid),
+          .s_arready(gp0p_arready),
+          .s_rdata(gp0p_rdata), .s_rresp(gp0p_rresp), .s_rid(gp0p_rid),
+          .s_rlast(gp0p_rlast), .s_rvalid(gp0p_rvalid), .s_rready(gp0p_rready)
       );
 
       // Read here, so that a board without the pack side leaves nothing of
       // the PS7's disk pins unread: the address, length, data and strobes
-      // of GP0, which the default slave answers without looking at.
+      // the splitter hands the first page, which the default slave answers
+      // without looking at.
       logic unused_pack;
       assign unused_pack = ^{hp2_aresetn, hp2_awready,
                              hp2_wready, hp2_bresp, hp2_bvalid, hp2_arready,
                              hp2_rdata, hp2_rresp, hp2_rlast, hp2_rvalid,
-                             gp0_awaddr, gp0_awlen, gp0_wdata, gp0_wstrb,
-                             gp0_araddr, store_rdata, store_miss, ch_active};
+                             gp0p_awaddr, gp0p_awlen, gp0p_wdata, gp0p_wstrb,
+                             gp0p_araddr, store_rdata, store_miss, ch_active};
 
     end
+
+    // ------------------------------------------- the splitter and two cables
+    //
+    // Outside `g_pack` for the reason the console is: every board with a PS7
+    // has a GP0 to answer and an I/O board whose two cables have far ends.
+    // On a `PROVE` board the first page is the default slave (see
+    // `g_nopack`); the other three are the same here as on the disk board.
+    //
+    // **THIS BLOCK AND THE TIE-OFFS ABOVE GOING ARE ONE CHANGE**, because a
+    // seam with two drivers does not elaborate and a seam with none is a
+    // cable that is never plugged in.  `build/gp0_split.pass` is what holds
+    // the arrangement; `build/arty.pass` holds the wiring, and an
+    // unconnected port here is a PINMISSING on the passes that elaborate it
+    // --- which is the only thing standing between "the default port is
+    // connected" and the frozen cores.
+    //
+    // Reset by the port's own reset, synchronised, as the pack side and the
+    // console are: before Linux is up the faces read zero, so the serial
+    // port's `CTL` is zero and its cable is out, and the Chaosnet's address
+    // switches read zero --- which is exactly what the tie-off did.
+    logic [2:0] gp0_rst_sync;
+    logic gp0_rst_s;
+    always_ff @(posedge clk) begin
+      gp0_rst_sync <= {gp0_rst_sync[1:0], gp0_aresetn};
+      gp0_rst_s    <= rst || !gp0_rst_sync[2];
+    end
+
+    cadr_gp0_split u_gp0_split (
+        .clk(clk), .rst(gp0_rst_s),
+        .s_awaddr(gp0_awaddr), .s_awlen(gp0_awlen), .s_awid(gp0_awid),
+        .s_awvalid(gp0_awvalid), .s_awready(gp0_awready),
+        .s_wdata(gp0_wdata), .s_wstrb(gp0_wstrb), .s_wlast(gp0_wlast),
+        .s_wvalid(gp0_wvalid), .s_wready(gp0_wready),
+        .s_bresp(gp0_bresp), .s_bid(gp0_bid), .s_bvalid(gp0_bvalid),
+        .s_bready(gp0_bready),
+        .s_araddr(gp0_araddr), .s_arlen(gp0_arlen), .s_arid(gp0_arid),
+        .s_arvalid(gp0_arvalid), .s_arready(gp0_arready),
+        .s_rdata(gp0_rdata), .s_rresp(gp0_rresp), .s_rid(gp0_rid),
+        .s_rlast(gp0_rlast), .s_rvalid(gp0_rvalid), .s_rready(gp0_rready),
+        .pack_awaddr(gp0p_awaddr), .pack_awlen(gp0p_awlen), .pack_awid(gp0p_awid),
+        .pack_awvalid(gp0p_awvalid), .pack_awready(gp0p_awready),
+        .pack_wdata(gp0p_wdata), .pack_wstrb(gp0p_wstrb), .pack_wlast(gp0p_wlast),
+        .pack_wvalid(gp0p_wvalid), .pack_wready(gp0p_wready),
+        .pack_bresp(gp0p_bresp), .pack_bid(gp0p_bid), .pack_bvalid(gp0p_bvalid),
+        .pack_bready(gp0p_bready),
+        .pack_araddr(gp0p_araddr), .pack_arlen(gp0p_arlen), .pack_arid(gp0p_arid),
+        .pack_arvalid(gp0p_arvalid), .pack_arready(gp0p_arready),
+        .pack_rdata(gp0p_rdata), .pack_rresp(gp0p_rresp), .pack_rid(gp0p_rid),
+        .pack_rlast(gp0p_rlast), .pack_rvalid(gp0p_rvalid), .pack_rready(gp0p_rready),
+        .chaos_awaddr(gp0c_awaddr), .chaos_awlen(gp0c_awlen), .chaos_awid(gp0c_awid),
+        .chaos_awvalid(gp0c_awvalid), .chaos_awready(gp0c_awready),
+        .chaos_wdata(gp0c_wdata), .chaos_wstrb(gp0c_wstrb), .chaos_wlast(gp0c_wlast),
+        .chaos_wvalid(gp0c_wvalid), .chaos_wready(gp0c_wready),
+        .chaos_bresp(gp0c_bresp), .chaos_bid(gp0c_bid), .chaos_bvalid(gp0c_bvalid),
+        .chaos_bready(gp0c_bready),
+        .chaos_araddr(gp0c_araddr), .chaos_arlen(gp0c_arlen), .chaos_arid(gp0c_arid),
+        .chaos_arvalid(gp0c_arvalid), .chaos_arready(gp0c_arready),
+        .chaos_rdata(gp0c_rdata), .chaos_rresp(gp0c_rresp), .chaos_rid(gp0c_rid),
+        .chaos_rlast(gp0c_rlast), .chaos_rvalid(gp0c_rvalid), .chaos_rready(gp0c_rready),
+        .ser_awaddr(gp0s_awaddr), .ser_awlen(gp0s_awlen), .ser_awid(gp0s_awid),
+        .ser_awvalid(gp0s_awvalid), .ser_awready(gp0s_awready),
+        .ser_wdata(gp0s_wdata), .ser_wstrb(gp0s_wstrb), .ser_wlast(gp0s_wlast),
+        .ser_wvalid(gp0s_wvalid), .ser_wready(gp0s_wready),
+        .ser_bresp(gp0s_bresp), .ser_bid(gp0s_bid), .ser_bvalid(gp0s_bvalid),
+        .ser_bready(gp0s_bready),
+        .ser_araddr(gp0s_araddr), .ser_arlen(gp0s_arlen), .ser_arid(gp0s_arid),
+        .ser_arvalid(gp0s_arvalid), .ser_arready(gp0s_arready),
+        .ser_rdata(gp0s_rdata), .ser_rresp(gp0s_rresp), .ser_rid(gp0s_rid),
+        .ser_rlast(gp0s_rlast), .ser_rvalid(gp0s_rvalid), .ser_rready(gp0s_rready),
+        .dflt_awid(gp0d_awid), .dflt_awvalid(gp0d_awvalid),
+        .dflt_awready(gp0d_awready),
+        .dflt_wlast(gp0d_wlast), .dflt_wvalid(gp0d_wvalid),
+        .dflt_wready(gp0d_wready),
+        .dflt_bresp(gp0d_bresp), .dflt_bid(gp0d_bid), .dflt_bvalid(gp0d_bvalid),
+        .dflt_bready(gp0d_bready),
+        .dflt_arlen(gp0d_arlen), .dflt_arid(gp0d_arid),
+        .dflt_arvalid(gp0d_arvalid), .dflt_arready(gp0d_arready),
+        .dflt_rdata(gp0d_rdata), .dflt_rresp(gp0d_rresp), .dflt_rid(gp0d_rid),
+        .dflt_rlast(gp0d_rlast), .dflt_rvalid(gp0d_rvalid),
+        .dflt_rready(gp0d_rready)
+    );
+
+    cadr_chaos_cable u_chaos (
+        .clk(clk), .rst(gp0_rst_s),
+        .s_awaddr(gp0c_awaddr), .s_awlen(gp0c_awlen), .s_awid(gp0c_awid),
+        .s_awvalid(gp0c_awvalid), .s_awready(gp0c_awready),
+        .s_wdata(gp0c_wdata), .s_wstrb(gp0c_wstrb), .s_wlast(gp0c_wlast),
+        .s_wvalid(gp0c_wvalid), .s_wready(gp0c_wready),
+        .s_bresp(gp0c_bresp), .s_bid(gp0c_bid), .s_bvalid(gp0c_bvalid),
+        .s_bready(gp0c_bready),
+        .s_araddr(gp0c_araddr), .s_arlen(gp0c_arlen), .s_arid(gp0c_arid),
+        .s_arvalid(gp0c_arvalid), .s_arready(gp0c_arready),
+        .s_rdata(gp0c_rdata), .s_rresp(gp0c_rresp), .s_rid(gp0c_rid),
+        .s_rlast(gp0c_rlast), .s_rvalid(gp0c_rvalid), .s_rready(gp0c_rready),
+        .chaos_address(chaos_address),
+        .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+        .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
+        .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset),
+        .chaos_csr(chaos_csr),
+        .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word),
+        .chaos_rx_done(chaos_rx_done), .chaos_rx_bits(chaos_rx_bits),
+        .chaos_rx_crc(chaos_rx_crc),
+        .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
+        .chaos_cbl_busy(chaos_cbl_busy),
+        .irq(chaos_irq)
+    );
+
+    cadr_serial_line u_serial (
+        .clk(clk), .rst(gp0_rst_s),
+        .s_awaddr(gp0s_awaddr), .s_awlen(gp0s_awlen), .s_awid(gp0s_awid),
+        .s_awvalid(gp0s_awvalid), .s_awready(gp0s_awready),
+        .s_wdata(gp0s_wdata), .s_wstrb(gp0s_wstrb), .s_wlast(gp0s_wlast),
+        .s_wvalid(gp0s_wvalid), .s_wready(gp0s_wready),
+        .s_bresp(gp0s_bresp), .s_bid(gp0s_bid), .s_bvalid(gp0s_bvalid),
+        .s_bready(gp0s_bready),
+        .s_araddr(gp0s_araddr), .s_arlen(gp0s_arlen), .s_arid(gp0s_arid),
+        .s_arvalid(gp0s_arvalid), .s_arready(gp0s_arready),
+        .s_rdata(gp0s_rdata), .s_rresp(gp0s_rresp), .s_rid(gp0s_rid),
+        .s_rlast(gp0s_rlast), .s_rvalid(gp0s_rvalid), .s_rready(gp0s_rready),
+        .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
+        .ser_cmd(ser_cmd), .ser_status(ser_status),
+        .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
+        .ser_tx_take(ser_tx_take), .ser_tx_done(ser_tx_done),
+        .ser_rx_strobe(ser_rx_strobe), .ser_rx_data(ser_rx_data),
+        .ser_plugged(ser_plugged),
+        .irq(ser_irq)
+    );
+
+    cadr_gp0_default u_gp0_rest (
+        .clk(clk), .rst(gp0_rst_s),
+        .s_awvalid(gp0d_awvalid), .s_awid(gp0d_awid), .s_awready(gp0d_awready),
+        .s_wlast(gp0d_wlast), .s_wvalid(gp0d_wvalid), .s_wready(gp0d_wready),
+        .s_bresp(gp0d_bresp), .s_bid(gp0d_bid), .s_bvalid(gp0d_bvalid),
+        .s_bready(gp0d_bready),
+        .s_arlen(gp0d_arlen), .s_arid(gp0d_arid), .s_arvalid(gp0d_arvalid),
+        .s_arready(gp0d_arready),
+        .s_rdata(gp0d_rdata), .s_rresp(gp0d_rresp), .s_rid(gp0d_rid),
+        .s_rlast(gp0d_rlast), .s_rvalid(gp0d_rvalid), .s_rready(gp0d_rready)
+    );
 
     // ------------------------------------------------------- the console
     //
@@ -1182,7 +1362,12 @@ module cadr_arty #(
         .gp0_rdata(gp0_rdata), .gp0_rresp(gp0_rresp), .gp0_rid(gp0_rid),
         .gp0_rlast(gp0_rlast), .gp0_rvalid(gp0_rvalid), .gp0_rready(gp0_rready),
         // The disk's interrupt on bit 0, the other nineteen lines low.
-        .irqf2p({19'b0, pack_irq})
+        // `IRQ_F2P` bit 0 the disk's, bit 1 the Chaosnet cable's, bit 2 the
+        // serial line's.  Neither program uses its interrupt yet --- both
+        // poll, and each face's own `IRQ` register says why a program
+        // without one can --- so this is the wire being there before it is
+        // wanted, which costs no pin: `IRQF2P` is already connected.
+        .irqf2p({17'b0, ser_irq, chaos_irq, pack_irq})
     );
 
     // Held once it has ever happened: an error is a fault to find, not a
@@ -1235,6 +1420,27 @@ module cadr_arty #(
     // And no console reset either, so `mach_rst` is `rst` a tick late on
     // this board and the whole of the OR folds away.
     assign con_mach_rst = 1'b0;
+    // And no port for the I/O board's two cables, so their far ends are
+    // tied off: this is the board that has no processing system at all, and
+    // a program is what is on the other end of either cable.  With
+    // `ser_plugged` down the 2651's sheet holds both halves stopped, and
+    // with the Chaosnet's address switches at zero and nothing giving it a
+    // frame the interface has no cable --- which is what the whole of this
+    // file did until the splitter landed.
+    assign ser_tx_take    = 1'b0;
+    assign ser_tx_done    = 1'b0;
+    assign ser_rx_strobe  = 1'b0;
+    assign ser_rx_data    = 8'd0;
+    assign ser_plugged    = 1'b0;
+    assign chaos_address  = 16'd0;
+    assign chaos_rx_valid = 1'b0;
+    assign chaos_rx_word  = 16'd0;
+    assign chaos_rx_done  = 1'b0;
+    assign chaos_rx_bits  = 13'd0;
+    assign chaos_rx_crc   = 1'b0;
+    assign chaos_tx_done  = 1'b0;
+    assign chaos_tx_abort = 1'b0;
+    assign chaos_cbl_busy = 1'b0;
 
   end
 

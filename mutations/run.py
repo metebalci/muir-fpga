@@ -80,6 +80,11 @@ LIST = os.path.join(HERE, "list.txt")
 #
 # `microcycle` is deliberately absent.  Stage 4 is being written right now and
 # is not frozen; it gets mutations when a slice lands.
+# `M_AXI_GP0` split four ways, named once because it goes on every board that
+# brings the port out.  The Makefile's own `GP0` is the same list.
+GP0 = ["rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
+       "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv"]
+
 CHECKS = {
     "phase_gen": {
         "sources": ["rtl/machine/cadr_phase_gen.sv"],
@@ -770,6 +775,33 @@ CHECKS = {
         "flags": [],
         "golden": None,
     },
+    # `M_AXI_GP0` with four slaves on it: the decode, the AXI3 register face
+    # the two new ones share, and the far ends of the I/O board's two cables.
+    # The property is that EVERY address on the port is answered in both
+    # directions --- a read nothing answers there hangs both Arm cores at one
+    # PC each, measured on the board --- and it is demonstrated rather than
+    # asserted: each of the four answers with something only it can answer, so
+    # the sweep reads the routing off the reply.
+    #
+    # The harness, the default slave, the pack side and the card are `extra`
+    # rather than `sources`: each of the last three has a check of its own and
+    # records aimed at it there, and the harness is wiring.  What is aimed
+    # here is the four files nothing else builds.
+    "gp0_split": {
+        "sources": [
+            "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
+            "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
+        ],
+        "extra": ["tb/cadr_gp0_split_harness.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv",
+                  "rtl/plumbing/cadr_disk_pack.sv",
+                  "rtl/machine/cadr_io_board.sv"],
+        "top": "cadr_gp0_split_harness",
+        "tb": "tb/cadr_gp0_split_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7"],
+        "golden": None,
+    },
     # The console: the sixteen diagnostic registers on `M_AXI_GP1`, held to
     # `Engine::spy_read` over MIT's boot PROM.  The harness is the console,
     # `cadr_spy_registers.sv` and the REAL processor, with the arbiter that
@@ -1422,7 +1454,8 @@ def arty_check(args, work, build_fails=False):
         (["-GDDR=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["boards/arty-z7-20/cadr_ps7.sv", "rtl/plumbing/cadr_axi_master.sv",
           "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
-          "rtl/plumbing/cadr_disk_pack.sv", "rtl/plumbing/cadr_console.sv"]),
+          "rtl/plumbing/cadr_disk_pack.sv", "rtl/plumbing/cadr_console.sv",
+          "rtl/plumbing/cadr_gp0_default.sv"] + GP0),
         # And the two the witness builds, which are branches only they
         # reach: nothing else elaborates `cadr_prove.sv` at all, and neither
         # of them elaborates the machine's own drive of the port.
@@ -1432,12 +1465,12 @@ def arty_check(args, work, build_fails=False):
          ["boards/arty-z7-20/cadr_ps7.sv", "rtl/plumbing/cadr_axi_master.sv",
           "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
           "rtl/plumbing/cadr_prove.sv", "rtl/plumbing/cadr_gp0_default.sv",
-          "rtl/plumbing/cadr_console.sv"]),
+          "rtl/plumbing/cadr_console.sv"] + GP0),
         (["-GPROVE=2"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
          ["boards/arty-z7-20/cadr_ps7.sv", "rtl/plumbing/cadr_axi_master.sv",
           "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
           "rtl/plumbing/cadr_prove.sv", "rtl/plumbing/cadr_gp0_default.sv",
-          "rtl/plumbing/cadr_console.sv"]),
+          "rtl/plumbing/cadr_console.sv"] + GP0),
     ]
     ran = 0
     for generics, stubs, extra_sources in boards:

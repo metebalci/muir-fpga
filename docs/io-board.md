@@ -859,28 +859,44 @@ tick from the tick after. A frame comes in the same way, with
 `chaos_rx_done` committing it.
 
 The serial port's line is the `cadr-serial` program's, offered on a TCP socket
-as muir's `--serial` does. **The baud-rate generator is deliberately not in
-fabric.** The 5.0688 MHz can at IOBSER 0A15 divides to instants that are not
-multiples of five --- one bit at 9,600 baud is 104,166 ns and a frame
-1,041,666 --- so the 5 ns grid cannot carry them, and a TCP socket has no baud
-rate to carry anyway. What the card has instead is two seam pulses.
+as muir's `--serial` does. **The baud-rate generator is deliberately not on
+this card.** The 5.0688 MHz can at IOBSER 0A15 divides to instants that are
+not multiples of five. One bit at 9,600 baud is 104,166 ns and a frame
+1,041,666, so the 5 ns grid cannot carry them. What the card has instead is
+two seam pulses. The generator itself is in fabric all the same, on the far
+side of that seam in `rtl/plumbing/cadr_serial_line.sv`: the card refuses it
+because of the grid and the program refuses it because a second model of one
+chip is the failure this project keeps meeting, so it has nowhere else to
+live.
 `ser_tx_take` is the shift register taking the holding register's character at
 the first 16X clock, and `ser_tx_done` is its frame ending; `ser_rx_strobe` is
 a character arriving. The trace records muir's own instants for all three.
 
-**What the two Linux programs owe the card, at the register face.** The
-Chaosnet program reads `chaos_csr` for Loop Back and Spy, takes the words on
-`chaos_tx_valid` after a `chaos_tx_go`, drops a frame on `chaos_tx_clear` or
-`chaos_reset`, and pulses `chaos_tx_done` (with `chaos_tx_abort` if a
-collision took it) when the frame is away. Coming back it streams the packet's
-words on `chaos_rx_valid` and then pulses `chaos_rx_done` with `chaos_rx_bits`
-and `chaos_rx_crc`. It also holds `chaos_cbl_busy` while the cable is busy,
-because bit 14 of the CSR is one net for the CRC error and `-CBLBSY`, and it
-sets `chaos_address` from the switches at LMMYNM. The serial program holds
-`ser_plugged` for `-DSR`, `-DCD` and `-CTS`, reads the frame out of
-`ser_mode1` and the rate out of `ser_mode2`, takes a character on
-`ser_tx_strobe`, and paces `ser_tx_take` and `ser_tx_done` at the rate those
-registers name.
+**What answers the two seams, and what the two programs owe it.** Both seams
+are answered in fabric now, one page each on `M_AXI_GP0` behind
+`rtl/plumbing/cadr_gp0_split.sv`. The burst is why: a frame leaves the card at
+one word a tick for up to 256 ticks with no backpressure at all, which is not
+something a program can be handed.
+
+`rtl/plumbing/cadr_chaos_cable.sv` holds one frame each way. It takes the
+words on `chaos_tx_valid` after a `chaos_tx_go`, appends the source address
+and the check word as the Fairchild 9401 at LMTBUF C09 does, and offers the
+frame in a window; it drops a frame on `chaos_tx_clear` or `chaos_reset`, and
+pulses `chaos_tx_done` when the program says it has taken one. Coming back it
+streams the program's words on `chaos_rx_valid` and pulses `chaos_rx_done`
+with the bit count. It holds `chaos_address` from what the program wrote,
+there being no switch on this board. Its own header records the three levels
+it holds low and why: `chaos_cbl_busy`, `chaos_rx_crc` and `chaos_tx_abort`.
+
+`rtl/plumbing/cadr_serial_line.sv` holds one character each way and paces
+both. It recomputes `tx_on`, `rx_on`, `-CTS` and `-DCD` from `ser_mode1`,
+`ser_mode2`, `ser_cmd` and `ser_status`, which is what this seam asks for, and
+runs the baud-rate generator off `ser_mode2`'s rate so that a character takes
+its own frame time either way.
+
+What the programs owe is therefore frames and characters, and no seam pulse at
+all. The Chaosnet program reads `chaos_csr` --- which its own face carries in
+the top half of a status word --- for Loop Back and Spy.
 
 ### What the trace does, and what it could not do before
 
@@ -971,7 +987,9 @@ processing system and is not worth taking twice.
 
 ### What is still not built
 
-- **The baud-rate generator and the 2651's line.** See the seam above.
+- **The baud-rate generator and the 2651's line, on this card.** Both are on
+  the far side of the seam, in `rtl/plumbing/cadr_serial_line.sv`. See the
+  seam above.
 - **The SYN1, SYN2 and DLE registers and their pointer.** A write of the
   status address is answered and stores nothing. Nothing on this board or in
   muir ever reads those registers back, and the pointer that walks them is
@@ -1002,14 +1020,11 @@ processing system and is not worth taking twice.
 
 ## What is not built
 
-- **The two Linux programs, `cadr-serial` and `cadr-chaosnet`.** The fabric
-  half of both is built; what is above says what each owes the card at the
-  register face, and neither program exists yet.
-- **The attachment of the two seams to the processing system.** Nothing
-  carries `chaos_tx_*`, `chaos_rx_*` or the 2651's characters across
-  `M_AXI_GP1` yet. `boards/arty-z7-20/cadr_arty.sv` ties every one of them off
-  and names the program that will drive it, which is what it already does for
-  the keyboard and the mouse.
+- **Nothing of either cable, on either side.** Both halves are built. The two
+  programs are `cadr-chaosnet` and `cadr-serial`, and the fabric they reach is
+  `rtl/plumbing/cadr_chaos_cable.sv` and `rtl/plumbing/cadr_serial_line.sv`,
+  one 4 KB page each on `M_AXI_GP0` behind `rtl/plumbing/cadr_gp0_split.sv`.
+  What has not happened is a run on the board.
 - **The keyboard's and mouse's far end.** That is `cadr-usb-input`, last in
   the order of work. The kernel side is done, and `evtest` printed Mete's name
   off a USB keyboard on the board on 10 Sep.
