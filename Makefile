@@ -504,6 +504,60 @@ band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom
 	    $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden --pack $(BUILD)/band-pack.img; \
 	fi
 
+# ------------------------------- the whole machine, run at the board's fault
+
+# `hash-watch` is `band` run free rather than compared, with four instruments
+# on it: a watchpoint on one physical word, a transaction counter per bus
+# cycle, an invariant that no write goes out that the processor did not ask
+# for, and a count of the lit pixels on the screen.  It exists because the
+# board halts at about 169 million microcycles with one word of MIT's page
+# hash table holding the faulting virtual address instead of a page table
+# word, and the question was whether the fabric does that in simulation.
+#
+# **IT DOES NOT, and that is the result.**  Measured 12 Sep at `efeccac`: the
+# machine boots to a painted screen at about 8 million microcycles, runs past
+# 170,000,000 with no halt, `PC 0o23555` with `OPC 0o23560` occurs zero times,
+# and `map2[777]` reads `000000` rather than `0x4FC9F9`.  The watchpoint sees
+# `PGF-RWF` write the very word the board gets wrong, at the address the
+# board's own arithmetic named, and get it right.  Over 12,039,354 bus cycles
+# not one carried more than one transaction and not one write went out with
+# WRCYC down.
+#
+# So the defect is NOT in `rtl/machine/`, and what this harness replaces with
+# a model is where it must be: `cadr_axi_master`, `cadr_axi_widen`, the PS7
+# and the DDR3 controller on one side, and `cadr_disk_pack.sv` with
+# `S_AXI_HP2` and the Linux program on the other.
+#
+# Not in `make check`: a run to the board's own fault is an hour of Verilator.
+# `make band` is the check; this is the instrument.  `WATCH=<physical word in
+# OCTAL>` names a word to report every transaction against, `STOP=<microcycles>`
+# gives it a length, and `FREE=1` runs it without comparing --- which is what a
+# run past the band trace's 2,800,000 rows needs.  The testbench's own header
+# lists the rest of its flags.  A SHORT run needs `FLOOR=0`: the harness holds
+# itself to the band's own 1,062,507-microcycle floor and to having fetched a
+# block, and a run stopped before either is a failure by design rather than an
+# instrument that quietly did nothing.
+$(BUILD)/obj_hash_watch/Vcadr_machine: $(MACHINE) tb/cadr_hash_watch_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_hash_watch \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_hash_watch_tb.cpp)
+
+.PHONY: hash-watch
+hash-watch: $(BUILD)/obj_hash_watch/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
+	@if [ ! -f $(SYS100_GZ) ]; then \
+	    echo "hash-watch: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	else \
+	    set -e; \
+	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
+	        || { echo "hash-watch: $(SYS100_GZ) is not the release this was measured against"; exit 1; }; \
+	    trap 'rm -f $(BUILD)/hash-watch-pack.img' EXIT; \
+	    gunzip -c $(SYS100_GZ) > $(BUILD)/hash-watch-pack.img; \
+	    $(BUILD)/obj_hash_watch/Vcadr_machine $(BUILD)/rtl_sys.golden \
+	        --pack $(BUILD)/hash-watch-pack.img \
+	        $${WATCH:+--watch $$WATCH} $${STOP:+--stop-at $$STOP} \
+	        $${FREE:+--free} $${FLOOR:+--floor $$FLOOR}; \
+	fi
+
 # ------------------------------------- the map's two access bits, told apart
 
 # `map_boot.pass` compares a map entry written and then read through, and its
