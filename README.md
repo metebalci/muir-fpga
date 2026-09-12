@@ -148,8 +148,10 @@ one comes back (`DEBUG IN ACK`). `DBD<15:0>` goes both ways. It is one bus on
 each board with both connectors on it, and its direction follows `WR`. So 21
 wires are 20 signals out and 17 back. They are carried the way the processor
 cables carry their 48 both-ends wires, as a value and an enable out with the
-resolved wire back in. The enables are byte-wise, since `DBD` is driven by two
-octal Am8304s at DBGOUT 0B21 and 0B22.
+resolved wire back in. The two octal Am8304s at DBGOUT 0B21 and 0B22 drive
+`DBD` together. They share one enable and one direction, `-DBD ENB` on pin 9
+and `-DEBUG > UD` on pin 11, so there is one enable for the whole bus rather
+than one a byte.
 
 What crosses is levels rather than pulses. The wires are held for the whole
 request, as the debugger's own Unibus cycle holds them. Two figures constrain
@@ -171,11 +173,12 @@ muir already runs the lashup, so the debugger is software that works before the
 fabric it is pointed at does.
 
 A second board is the same cable on two Pmods, one clock and seven data each
-way. Outgoing there are 22 things: `DBD<15:0>`, the two byte-wise enables, and
-the four control signals. Coming back there are 17, since there are no enables
-on the return path. That is four beats and three, tens of nanoseconds against
-those 11.05 us. Whoever builds the adapter confirms this arithmetic rather than
-inheriting it.
+way. Outgoing there are the sixteen data values, the bus enable, its direction
+and the four control signals. Coming back there are seventeen, since the
+return path carries no enable. The cable's 11.05 us budget makes the beats
+free, so the count is not the constraint. Whoever builds the adapter settles
+the exact beats rather than inheriting them, and a beat count goes on the
+drawing only then.
 
 **The console is not this, and the difference is worth keeping.** It masters
 the machine's own Unibus to reach the diagnostic registers. No CADR had that

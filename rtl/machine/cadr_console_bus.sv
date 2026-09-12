@@ -3,11 +3,12 @@
 //
 // The diagnostic bus's arbiter, and the seam the console reaches it through.
 //
-// `0o766000` has two masters: the CADR itself, whose microcode writes the
-// mode register there through `cadr_busint_xbus`, and `rtl/plumbing/cadr_console.sv`,
-// which is an AXI slave on `M_AXI_GP1` outside the machine altogether.  This
-// keeps them apart, and it does one more thing that turns out to matter far
-// more: **it puts the console's side of the bus inside `cadr_machine`, where
+// `0o766000` has three masters: the CADR itself, whose microcode writes the
+// mode register there through `cadr_busint_xbus`; `rtl/plumbing/cadr_console.sv`,
+// which is an AXI slave on `M_AXI_GP1` outside the machine altogether; and
+// `rtl/machine/cadr_dbgin.sv`, the debug cable's debuggee end, which is a
+// master of MIT's own.  This keeps them apart, and it does one more thing
+// that turns out to matter far more: **it puts the console's side of the bus inside `cadr_machine`, where
 // `rtl/plumbing/xilinx7/cadr_machine.xdc` can reach it.**
 //
 // **THE 12.837 ns THAT MADE THIS A MODULE.**  With the console's read-back
@@ -95,6 +96,33 @@
 // and it is the argument `cadr_memory_path.sv`'s per-word channel arbiter is
 // held to, one bus along.
 //
+// **THE DEBUG MASTER IS THE THIRD, AND IT BEATS THE CONSOLE.**  On MIT's
+// board the 74LS74 at UBMAST 0D02 is FIRST on the `NPG1 IN` chain, so the
+// debug cable's master is the highest priority master the Unibus has.  The
+// console has no counterpart on MIT's board at all --- no CADR had a path
+// from a processing system to the diagnostic registers --- so its priority
+// against the debug master is a decision and not a reading, and this is the
+// way to take it: the debug master is the machine's own, the console is
+// ours.
+//
+// What that costs is bounded on the side that matters and unbounded on the
+// side that does not.  A debug master waiting behind the console waits the
+// console's own 260 ns.  A console waiting behind the debug master waits as
+// long as the debugger holds its request, which is unbounded in real time
+// because the debugger's clock and the fabric's are decoupled --- and the
+// console already has the only bound on that bus, giving up after `LOST_T`
+// ticks and reporting `lost`.  So the console degrades and says so, where a
+// debug cycle truncated would be a debugger told the wrong thing.
+//
+// **AND THE DEBUG MASTER'S HOLD IS NOT BOUNDED AT ALL, WHICH IS FAITHFUL.**
+// `-DB NEED UB` down keeps it on the bus with `-UB BBSY` asserted and the
+// machine's own cycles waiting, so a debug cycle left standing turns a
+// legitimate reference into an NXM 4,250 ns later.  That is what the real
+// board does and it is why CC halts the debuggee before it does anything
+// else.  `cadr_debug_window.sv`'s watchdog recovers a wedged bus; nothing
+// can protect the machine from a debugger that holds its request, and
+// nothing should pretend to.
+//
 // `-UB SSYN` goes back to whoever asked and to nobody else: a slave
 // answering a master that is not there is what a shared bus must not do.
 //
@@ -121,6 +149,18 @@ module cadr_console_bus (
     input  var logic [15:0] cpu_wdata,
     output var logic        cpu_ssyn,
 
+    // --- the debug cable's master, `rtl/machine/cadr_dbgin.sv`.  First on
+    // --- MIT's grant chain, so it beats the console; it waits for the
+    // --- processor's own strobe like everything else on this bus.
+    input  var logic        dbg_req,
+    output var logic        dbg_gnt,
+    input  var logic        dbg_msyn,
+    input  var logic        dbg_write,
+    input  var logic [17:0] dbg_addr,
+    input  var logic [15:0] dbg_wdata,
+    output var logic        dbg_ssyn,
+    output var logic [15:0] dbg_rdata,
+
     // --- the console, `rtl/plumbing/cadr_console.sv`, a level above this one
     input  var logic        con_req,
     output var logic        con_gnt,
@@ -140,7 +180,7 @@ module cadr_console_bus (
     input  var logic [15:0] sr_rdata
 );
 
-  logic        con_own;
+  logic        con_own, dbg_own;
   logic        con_msyn_q, con_write_q;
   logic [17:0] con_addr_q;
   logic [15:0] con_wdata_q;
@@ -148,14 +188,21 @@ module cadr_console_bus (
   always_ff @(posedge clk) begin
     if (rst) begin
       con_own     <= 1'b0;
+      dbg_own     <= 1'b0;
       con_msyn_q  <= 1'b0;
       con_write_q <= 1'b0;
       con_addr_q  <= 18'd0;
       con_wdata_q <= 16'd0;
       con_rdata   <= 16'd0;
     end else begin
+      // The debug master takes the bus with the processor's strobe down and
+      // the console not already on it, and holds it while it asks.
+      if (dbg_own) dbg_own <= dbg_req;
+      else dbg_own <= dbg_req && !cpu_msyn && !con_own;
+      // The console the same, and behind the debug master: first on the
+      // grant chain means first here too.
       if (con_own) con_own <= con_req;
-      else con_own <= con_req && !cpu_msyn;
+      else con_own <= con_req && !cpu_msyn && !dbg_req && !dbg_own;
       con_msyn_q  <= con_msyn;
       con_write_q <= con_write;
       con_addr_q  <= con_addr;
@@ -165,13 +212,30 @@ module cadr_console_bus (
     end
   end
 
+  // **THE DEBUG MASTER'S REQUEST SIDE IS NOT REGISTERED HERE**, where the
+  // console's is, and the difference is where the two masters live.  The
+  // console is a level above `cadr_machine`, so `eng_eadr` reaching the
+  // sixteen-way mux's select would be a long arc with one tick to run in;
+  // `cadr_dbgin.sv` is inside `cadr_machine` and its registers fall into
+  // `cadr_machine.xdc`'s relaxed set on that file's own test, so its address
+  // arrives with the microcycle to settle that the exception gives it.  A
+  // register here would cost the debug master a tick and buy nothing.
+  assign dbg_gnt  = dbg_own;
   assign con_gnt  = con_own;
-  assign sr_msyn  = con_own ? con_msyn_q  : cpu_msyn;
-  assign sr_write = con_own ? con_write_q : cpu_write;
-  assign sr_addr  = con_own ? con_addr_q  : cpu_addr;
-  assign sr_wdata = con_own ? con_wdata_q : cpu_wdata;
-  assign cpu_ssyn = con_own ? 1'b0 : sr_ssyn;
-  assign con_ssyn = con_own ? sr_ssyn : 1'b0;
+  assign sr_msyn  = dbg_own ? dbg_msyn  : con_own ? con_msyn_q  : cpu_msyn;
+  assign sr_write = dbg_own ? dbg_write : con_own ? con_write_q : cpu_write;
+  assign sr_addr  = dbg_own ? dbg_addr  : con_own ? con_addr_q  : cpu_addr;
+  assign sr_wdata = dbg_own ? dbg_wdata : con_own ? con_wdata_q : cpu_wdata;
+  // `-UB SSYN` goes back to whoever asked and to nobody else.
+  assign cpu_ssyn = (dbg_own || con_own) ? 1'b0 : sr_ssyn;
+  assign con_ssyn = (con_own && !dbg_own) ? sr_ssyn : 1'b0;
+  assign dbg_ssyn = dbg_own ? sr_ssyn : 1'b0;
+  // The debug master takes the word at `-UB SSYN`, not at the boundary: MIT's
+  // `DEBUG ACK` is `DBUB MASTER AND SSYN T0` and the word is "as of that
+  // instant".  The mux has had the whole cycle to settle by then --- the
+  // address is out at the grant and `-UB SSYN` is 350 ns later --- so this
+  // needs none of the boundary capture the console's read-back needs.
+  assign dbg_rdata = sr_rdata;
 
 endmodule
 
