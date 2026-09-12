@@ -31,7 +31,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/md_compose.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
-       $(BUILD)/mem_count.pass \
+       $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
+       $(BUILD)/bus_audit_unit.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
@@ -570,6 +571,80 @@ $(BUILD)/obj_mem_count/Vcadr_mem_count_harness: $(MEM_COUNT_SRC) \
 $(BUILD)/mem_count.pass: $(BUILD)/obj_mem_count/Vcadr_mem_count_harness \
                          $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_mem_count/Vcadr_mem_count_harness
+	@touch $@
+
+# ------------------------------------------- one transaction per bus cycle
+
+# THE CHECK THE BOARD'S OWN BUG HAS BEEN LIVING BEHIND.  CLAUDE.md's account
+# establishes that a word in MIT's page hash table is the faulting virtual
+# address rather than a page table word, that MD is exonerated by measurement,
+# and therefore that main memory already held the wrong word --- so the
+# corruption is a WRITE that should not have happened.  And
+# `rtl/machine/cadr_microcycle.sv` loads `wdata` from MD at MEMGO regardless of
+# direction, so on every read the whole of MD stands on `mem_wdata`: one
+# unwanted write replaces a memory word with MD, at the read's own address.
+#
+# Nothing in this repository counted transactions per bus cycle.
+# `axi_master.pass` counts handshakes per transaction, one level down, its
+# stimulus being the transactions themselves; `mem_count.pass` counts
+# transactions over a whole run and holds them to 256 and 256, which is the
+# boot PROM's own arithmetic rather than a property.
+#
+# THE HARNESS AND NOT THE MODULE, and a harness of its own rather than the
+# tally's: `tb/cadr_mem_count_harness.sv` brings `hp0_aresetn` out so that its
+# check can make a DEAD port, and a dead port issues no transactions at all,
+# which is the one configuration an audit of transactions per cycle has nothing
+# to say about.
+#
+# It runs the machine once, 200 ms of machine time, about seventeen seconds.
+BUS_AUDIT_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+                 rtl/plumbing/cadr_axi_widen.sv tb/cadr_bus_audit_harness.sv
+
+$(BUILD)/obj_bus_audit/Vcadr_bus_audit_harness: $(BUS_AUDIT_SRC) \
+                                                tb/cadr_bus_audit_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_bus_audit \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_bus_audit_harness $(BUS_AUDIT_SRC) \
+	    $(abspath tb/cadr_bus_audit_tb.cpp)
+
+$(BUILD)/bus_audit.pass: $(BUILD)/obj_bus_audit/Vcadr_bus_audit_harness \
+                         $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_bus_audit/Vcadr_bus_audit_harness
+	@touch $@
+
+# ------------------------------------------- the same property, in fabric
+
+# `rtl/plumbing/cadr_bus_audit.sv` is the property above carried onto the
+# board: the check next door says it holds for MIT's boot PROM, which is the
+# only program `cadr_machine` can run under Verilator and makes 512
+# main-memory cycles, and the board's event is one in about a hundred and
+# seventy-six million microcycles. So the same clauses are watched in fabric,
+# for as long as the board runs, and reported through the console's readout
+# window --- which is how anything inside `cadr_machine` is read on a halted
+# board, over `M_AXI_GP1`, by `cadr-readout`, with nobody at the board.
+#
+# AN INSTRUMENT NOTHING CHECKS IS WORSE THAN NO INSTRUMENT: it will be read on
+# a board, once, and believed. `mem_count.pass` carries that sentence and this
+# is the same argument. The stimulus is DIRECTED and the DUT is the module
+# alone, which is the opposite of the check above: a program cannot be made to
+# fault on demand, so what each clause catches, which wins when two are true,
+# what is captured and what the word reads have no stimulus there at all.
+#
+# **NOT WIRED INTO `cadr_machine` YET.** The module, its check and its
+# mutations are one commit; the instantiation touches `cadr_machine.sv`,
+# `cadr_memory_path.sv` and `rtl/plumbing/xilinx7/cadr_machine.xdc` and is
+# another. The header of the module says exactly what that second commit has
+# to do, the naming of three edge detectors as FAST among it.
+BUS_AUDIT_UNIT_SRC := rtl/plumbing/cadr_bus_audit.sv
+
+$(BUILD)/obj_bus_audit_unit/Vcadr_bus_audit: $(BUS_AUDIT_UNIT_SRC) \
+                                             tb/cadr_bus_audit_unit_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_bus_audit_unit \
+	    --top-module cadr_bus_audit $(BUS_AUDIT_UNIT_SRC) \
+	    $(abspath tb/cadr_bus_audit_unit_tb.cpp)
+
+$(BUILD)/bus_audit_unit.pass: $(BUILD)/obj_bus_audit_unit/Vcadr_bus_audit
+	$(BUILD)/obj_bus_audit_unit/Vcadr_bus_audit
 	@touch $@
 
 # ------------------------------------------------- the machine with no memory
