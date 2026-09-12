@@ -8,7 +8,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 The I/O BOARD is MIT's own name for the card, and `iob.wls` is its section
 census. It is the keyboard, the mouse, the two clocks and the status register
 they share, on the Unibus. It also carries the serial port and the Chaosnet
-interface, and those are two other slices. This document is the first three.
+interface, and the whole card is now in fabric.
 
 **`IOB` in this repository is not this card.** `IOB<47:0>` on IREG is the bus
 that merges `I` with `OB` into the instruction register, and it stays that.
@@ -24,7 +24,8 @@ what is deliberately not built.
 **Slice one is the reference and the model. Slice two is the card. Slice
 three puts the card under the machine. Slice four is the bus interface's own
 Unibus registers, which is what let the card's interrupt reach the
-processor.**
+processor. Slice five is the Chaosnet interface and the serial port, which
+are the last two address groups.**
 `golden/src/iob.rs` writes `build/iob.golden`, and `make iob-golden` makes it.
 A throwaway Python model was run against it until the two agreed row for row.
 What that model found is near the end, because it is the part of slice one
@@ -39,6 +40,9 @@ is near the end. Slice four is `golden/src/busint_regs.rs`,
 `0o766040`--`0o766076` and the Unibus map at `0o766140`--`0o766176`. Those
 thirty-two addresses used to time out where muir answers, and the section
 "The third slave, and what the sweep used to show" says what changed.
+Slice five adds the Chaosnet interface and the serial port to the same three
+files and the same two checks; the section "What slice five built" is at the
+end and says where its seam is drawn.
 
 ## What muir says the card is
 
@@ -291,14 +295,15 @@ on the netlist than a count taken at the answer. Every other register is read
 or written at `-SSYN`. The trace carries both instants on every row, so this is
 a column and not a convention.
 
-**The serial port's ready line is an input to this card, not a 2651.** The
-priority encoder on page IOBINT takes four requests and only one of them is
-made here. `SER.IREQ` is the 2651's `-RxRDY` and, by ECO 10 of
-`cadrio/iob.eco`, its `-TxRDY` on the same net, through the 74LS02 at IOBSER
-0E11 with `SER INT ENABLE`. So `cadr_io_board.sv` takes `ser_ready` as a port,
-the trace drives it with a `SER` row, and the 2651 itself is the serial
-slice's. **`-UB INIT` must reach it**, because `-INIT*` is the chip's own
-`RESET` pin. The trace shows `serrdy` falling at every init.
+**The serial port's ready line was an input to this card and slice five made
+it the card's own.** The priority encoder on page IOBINT takes four requests.
+`SER.IREQ` is the 2651's `-RxRDY` and, by ECO 10 of `cadrio/iob.eco`, its
+`-TxRDY` on the same net, through the 74LS02 at IOBSER 0E11 with `SER INT
+ENABLE`. Slice two took `ser_ready` as a port and let the trace drive it,
+because the chip was another slice's; the chip is on the card now, so the port
+is gone and the trace moves that line through the chip's own registers.
+**`-UB INIT` must reach it**, because `-INIT*` is the chip's own `RESET` pin.
+The trace shows `serrdy` falling at every init, as it always did.
 
 **THE MOUSE'S SEAM IS DECIDED AND IT IS MIT'S CARD: the card takes the seven
 lines.** Slice one posed it as an open question and slice two answered it, at
@@ -395,25 +400,16 @@ reads and writes alike at MIT's own half-wavelength.
 
 These are said here rather than given a column, per CLAUDE.md's rule.
 
-- **The Chaosnet's vector, `0o270`.** `interrupt_request` consults
-  `self.chaos`, which is `None` unless an interface is plugged in, and
-  plugging one in drags the whole Chaosnet board into this trace. The
-  priority chain is exercised clock over serial over keyboard-and-mouse. The
-  Chaosnet's place in it, between the first two, is the Chaosnet slice's to
-  check. **The fabric's priority encoder needs the input regardless**, and a
-  card built without it will pass this check.
-- **The Chaosnet and serial register groups.** `DEC` carries what the decode
-  makes of them, because the decode is one sheet. No `CYC` goes near them,
-  because the parts behind them are two other slices. A card that answers
-  `0o764140`--`0o764176` with nothing behind it would fail on the real
-  machine and passes here. **Slice two therefore made this an exemption with
-  a number on it.** `rtl/machine/cadr_io_board.sv` decodes the whole block and
-  answers only the two groups it implements, the check requires that it does
-  not answer the other fifteen addresses, and it prints how many answering
-  directions that covers, twenty-seven of the fifty-five the decode names.
-  Whoever builds either slice makes the card answer its group, with
-  `busint::IOB_CHAOS_BUFFER_NS`, `IOB_RBUF_SETUP_NS` and `IOB_SERIAL_NS` for
-  the instants, and moves that line.
+- **Both of these were closed by slice five and the paragraphs are kept
+  because they say what was wrong.** The Chaosnet's vector `0o270` could not
+  be reached, because `interrupt_request` consults `self.chaos`, which is
+  `None` unless an interface is plugged in. The trace plugs one in now and
+  all four vectors are compared against muir. And the Chaosnet and serial
+  register groups carried only `DEC` rows, because the decode is one sheet
+  and the parts behind it were two other slices; the check required that the
+  card did not answer those fifteen addresses and printed the count,
+  twenty-seven answering directions of fifty-five. The card answers all
+  fifty-five now and nothing is exempt.
 - **The latch on the mouse's seven lines, from the lines themselves.** This
   was measured at slice two, as a mutation on both mouse registers: reading
   `lines` where the card reads `NEW` survives. muir's snap puts every step of
@@ -538,7 +534,7 @@ catalogues.
 1. **`rtl/machine/cadr_io_board.sv`** is a Unibus slave in
    `cadr_spy_registers.sv`'s shape. In go `clk`, `rst`, `ub_msyn`,
    `ub_write`, `ub_addr` and `ub_wdata`, and out come `ub_ssyn` and
-   `ub_rdata`. In also go `ub_init`, `ser_ready`, `chaos_intr`, the mouse's
+   `ub_rdata`. In also go `ub_init`, the mouse's
    seven lines and the keyboard's word, and out also come `ser_reset`, the
    interrupt request and its vector, `AUDIO` and the card's own state.
    Inside are the decode, the answer machine off a free-running microsecond
@@ -836,14 +832,184 @@ card. It is the same fact as the bus idling for a tick at every change of owner
 in this module's channel arbiter, and the discipline lives in the console
 rather than in the arbiter.
 
+## What slice five built
+
+Slice five is the last two address groups of the card: the Chaosnet interface
+at `0o764140`--`0o764156` and the serial port at `0o764160`--`0o764176`. It
+touches the same three files as slice two and moves both exemption lines to
+zero.
+
+**The card now answers fifty-five of the block's directions and exempts
+none.** `build/iob.pass` and `build/unibus.pass` both said twenty-seven were
+exempt and both say nothing is.
+
+### The seam, and why it is where it is
+
+**What is in fabric is the register face and not the protocol.** For the
+Chaosnet that means AIM-628 section 7's five registers, both 256-word packet
+buffers, the bit counter's arithmetic, the lost count and the priority chain.
+For the serial port it means the 2651's four registers, its two pointers, its
+status byte and its holding registers. Everything else crosses a seam.
+
+The Chaosnet's cable is the `cadr-chaosnet` program's. So are the turn timer
+at LMTURN, the frame, the check word, the transceiver and the collision that
+makes a transmit abort. A frame goes out as a burst: a read of START pulses
+`chaos_tx_go` with the word count, and the card streams the buffer a word a
+tick from the tick after. A frame comes in the same way, with
+`chaos_rx_done` committing it.
+
+The serial port's line is the `cadr-serial` program's, offered on a TCP socket
+as muir's `--serial` does. **The baud-rate generator is deliberately not in
+fabric.** The 5.0688 MHz can at IOBSER 0A15 divides to instants that are not
+multiples of five --- one bit at 9,600 baud is 104,166 ns and a frame
+1,041,666 --- so the 5 ns grid cannot carry them, and a TCP socket has no baud
+rate to carry anyway. What the card has instead is two seam pulses.
+`ser_tx_take` is the shift register taking the holding register's character at
+the first 16X clock, and `ser_tx_done` is its frame ending; `ser_rx_strobe` is
+a character arriving. The trace records muir's own instants for all three.
+
+**What the two Linux programs owe the card, at the register face.** The
+Chaosnet program reads `chaos_csr` for Loop Back and Spy, takes the words on
+`chaos_tx_valid` after a `chaos_tx_go`, drops a frame on `chaos_tx_clear` or
+`chaos_reset`, and pulses `chaos_tx_done` (with `chaos_tx_abort` if a
+collision took it) when the frame is away. Coming back it streams the packet's
+words on `chaos_rx_valid` and then pulses `chaos_rx_done` with `chaos_rx_bits`
+and `chaos_rx_crc`. It also holds `chaos_cbl_busy` while the cable is busy,
+because bit 14 of the CSR is one net for the CRC error and `-CBLBSY`, and it
+sets `chaos_address` from the switches at LMMYNM. The serial program holds
+`ser_plugged` for `-DSR`, `-DCD` and `-CTS`, reads the frame out of
+`ser_mode1` and the rate out of `ser_mode2`, takes a character on
+`ser_tx_strobe`, and paces `ser_tx_take` and `ser_tx_done` at the rate those
+registers name.
+
+### What the trace does, and what it could not do before
+
+The Chaosnet interface is plugged into muir's own `IoBoard` from power-on,
+with no cable. **Loop Back is what makes the register face checkable against
+muir at all**: a packet written into the outgoing buffer and started comes
+back to the same interface's receiver, so muir plays the far end and the
+instants it acts at go into the trace as `CBL`, `CTD` and `CRX` rows. The
+program then writes and reads every register of both groups, runs the five
+directions of the Chaosnet's group that answer nothing, wraps the lost count
+three times on a buffer nobody emptied, writes three hundred words into a
+buffer that holds 256, and takes a `-UB INIT` through both chips.
+
+**It reads the incoming buffer 520 times past the end of a packet, and the
+number is the point.** The 25LS193s at LMRBUF stop where the packet does. A
+pointer that ran on instead reads zero for a while and then WRAPS, and from
+there it is inside the packet again, handing the software words it has already
+read. That wrap is the only thing which separates a pointer that stops from
+one that does not, so the program goes past 512 of them.
+
+The serial port's side sends characters at two frames, eight bits and five, so
+that the mask mode register 1 selects is exercised rather than assumed: a
+character of all ones through a five-bit frame reaches the far end as `0o37`.
+It overruns the receiver, clears the error with `RESET ERROR` and shows that
+the command register does not store that bit. It turns the receiver off with a
+character waiting and shows `SR1` falling with it. It plugs and unplugs the
+RS-232 cable, and it runs a character round local loop back.
+
+**Every instant the far end acts at is rounded up to the 5 ns grid**, which is
+the argument `IOB_USEC_LOW_NS` already makes on this card: a register can only
+be read at a grid instant, so nothing falls between muir's instant and the
+tick the fabric acts at.
+
+**And the serial port's answer is off the grid on every cycle of its group.**
+`busint::IOB_HALF_USEC_PHASE_NS` is 203 and `IOB_SERIAL_NS` is 750, so the
+answer is at 953 + 500k, which is 3 modulo 5. The trace's `slip` column says
+so on all fifty-one of them. The fabric counts the same edges at 205 + 500k,
+and that is exact rather than close: no multiple of five lies between 203 and
+205 modulo 500, so an edge is strictly after `-UB MSYN` on the grid exactly
+where it is strictly after it on the netlist.
+
+### What changed in the trace, and what did not
+
+**The trace grew and it did not move.** All 1,532 event rows of the old trace
+are byte-identical in their old columns, and so are all 94 decode rows.
+
+Three things are new. Every row's face gains six columns: the Chaosnet's CSR
+as a read assembles it, its bit counter, and the 2651's three registers and
+status byte. `CBUF` rows carry the two buffers' words ahead of the rows, as
+the decode is carried. And nine new row kinds carry the two far ends.
+
+**One existing thing did change and it had to.** The old `SER` rows moved the
+2651 by writing the chip directly, because the chip was another slice's and
+`ser_ready` was a port of this card. The chip is on the card now, so the only
+way to move that line is the way a program moves it, and those rows run bus
+cycles instead. Rows from the first `SER` row on are therefore a different
+program. What the row itself says is unchanged: it is what the card's own
+`SER.IREQ` must be.
+
+### Two ports stopped being stimulus
+
+`ser_ready` and `chaos_intr` were inputs of `cadr_io_board`, tied low by the
+board and by every harness. The card makes both itself now, so both ports are
+gone rather than left unused. CLAUDE.md records why that matters: Verilator
+lets a testbench write an output, and a conditionally assigned signal then
+fails silently while every check goes green with the thing unchecked. A line
+left driving either of these fails to compile.
+
+### What the two groups cost, measured out of context
+
+Synthesised alone at `xc7z020clg400-1`, `-mode out_of_context`, so that every
+seam is live and nothing constant-folds: **624 LUTs, 470 flip-flops and two
+RAMB18E1**, with no critical warning and no unsupported template.
+
+**The two packet buffers are inferred as block RAM**, 256 by 16 each, which is
+what they should be and was not free. Vivado rejects a RAM process with a mux
+on its read (`Synth 8-2914`, a hard stop this project met once at the disk's
+block store) and it rejects two writes at two addresses the same way. So the
+read buffer's `ch_rat < ch_rlen` test is outside the process and the outgoing
+buffer's "a read of START starts the next packet at word zero" is a mux on the
+write ADDRESS rather than a second store. Both are written that way for
+synthesis and say so at the line.
+
+This figure is not the card's cost on the board, where the seams are tied off
+and much of it folds; it is what the two groups are when something drives
+them. The board figure moves when `cadr-chaosnet` and `cadr-serial` reach the
+processing system and is not worth taking twice.
+
+### What is still not built
+
+- **The baud-rate generator and the 2651's line.** See the seam above.
+- **The SYN1, SYN2 and DLE registers and their pointer.** A write of the
+  status address is answered and stores nothing. Nothing on this board or in
+  muir ever reads those registers back, and the pointer that walks them is
+  reset by a read of the command register and is otherwise invisible, so a
+  fabric holding them could not be told from one that does not. Synchronous
+  mode is what they are for and this board never enters it.
+- **The parity and framing error flags.** muir's 2651 raises neither: the
+  overrun is the only error it sets, and the netlist chip is where the other
+  two live. The card's `SR5` and `SR3` therefore read zero always.
+- **Auto echo and remote loop back, as far as the echo itself goes.** Both put
+  the received character back on the line, and muir does it at the END of the
+  received frame. `Pci::rx_times` gives two instants, the middle of the stop
+  bit and the frame's end, and only the first reaches the card, so an echoing
+  card could not be told from one that does not. Nothing in System 100 sets
+  either mode. What is built and held is `tx_on`'s refusal to run the
+  transmitter in both of them, which is the half a driver meets first, and the
+  trace sets each mode and reads `SR0` down.
+- **The Chaosnet's timer interrupt.** Bit 0 of the CSR is "for the interval
+  timer present in SOME VERSIONS of the interface", AIM-628's own words. It
+  stores and reads back, as muir has it, and reaches no gate.
+- **A packet whose top word is partial.** The bit counter's first step is that
+  word's own length and every step after it sixteen, which is what the netlist
+  board reads. Under Loop Back a frame is always a whole number of words, so
+  the trace cannot tell that step from a constant sixteen. The equivalence is
+  recorded in `mutations/list.txt` rather than left for somebody to file as a
+  hole; only wreckage off a real cable separates them, and the cable is
+  `cadr-chaosnet`'s.
+
 ## What is not built
 
-- **The serial port.** It is `0o764160`--`0o764176`, the 2651 at IOBSER 0A12,
-  and it has its own slice and its own Linux program (`cadr-serial`). What
-  this slice leaves it is a ready line into the priority encoder and a vector,
-  `0o264`.
-- **The Chaosnet interface.** It is `0o764140`--`0o764156` and `0o270`, and it
-  has its own slice.
+- **The two Linux programs, `cadr-serial` and `cadr-chaosnet`.** The fabric
+  half of both is built; what is above says what each owes the card at the
+  register face, and neither program exists yet.
+- **The attachment of the two seams to the processing system.** Nothing
+  carries `chaos_tx_*`, `chaos_rx_*` or the 2651's characters across
+  `M_AXI_GP1` yet. `boards/arty-z7-20/cadr_arty.sv` ties every one of them off
+  and names the program that will drive it, which is what it already does for
+  the keyboard and the mouse.
 - **The keyboard's and mouse's far end.** That is `cadr-usb-input`, last in
   the order of work. The kernel side is done, and `evtest` printed Mete's name
   off a USB keyboard on the board on 10 Sep.

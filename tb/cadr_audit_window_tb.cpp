@@ -139,8 +139,6 @@ int main(int argc, char **argv) {
   dut->kbd_strobe = 0;
   dut->kbd_code = 0;
   dut->mouse_lines = 0;
-  dut->ser_ready = 0;
-  dut->chaos_intr = 0;
   dut->eval();
   for (int i = 0; i < 8; ++i) Tick();
   dut->rst = 0;

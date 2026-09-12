@@ -544,8 +544,6 @@ int main(int argc, char **argv) {
   dut->kbd_strobe = 0;
   dut->kbd_code = 0;
   dut->mouse_lines = 0;
-  dut->ser_ready = 0;
-  dut->chaos_intr = 0;
   dut->con_req = 0;
   dut->con_msyn = 0;
   dut->con_write = 0;

@@ -120,16 +120,19 @@
 # match --- read at the tick, so its D from the cpu's word is timed at the
 # tick too, as the disk's registers are.
 #
-# **AND THE I/O BOARD IS OUT OF THE SET THE SAME WAY, BUT FOR ITS FIVE HELD
-# DECODES**, `sel`, `kbm`, `clkgrp`, `wr` and `which` in
-# `rtl/machine/cadr_io_board.sv`.  The card landed under `cadr_machine` with
+# **AND THE I/O BOARD IS OUT OF THE SET THE SAME WAY, BUT FOR ITS SEVEN HELD
+# DECODES**, `sel`, `kbm`, `clkgrp`, `chgrp`, `sergrp`, `wr` and `which` in
+# `rtl/machine/cadr_io_board.sv`.  It was five until the Chaosnet interface
+# and the serial port landed; `chgrp` and `sergrp` are the same register as
+# the other three, one group of the 74LS138 at IOBADR 0E20 each, and they gate
+# the same answer machine at the same instant.  The card landed under `cadr_machine` with
 # the composition of 2026-09-11 and `all_registers` would have taken every one
 # of its registers, which is the trap this file records one module up: a
 # relaxed set defined as every register minus a name list swallows every module
 # written after it, and the disk controller cost three slices' fit figures that
 # way.
 #
-# The five that stay are the held match, for the disk's `mine`/`which` reason
+# The seven that stay are the held match, for the disk's `mine`/`which` reason
 # exactly: they are taken from `ub_addr`, which is `phys` with a subtraction on
 # it and is constant for the microcycle, and nothing reads them until the
 # card's own answer machine decides --- and **the earliest answer this card can
@@ -364,6 +367,8 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                   (NAME !~ *memory/iob/* || NAME =~ *memory/iob/sel_reg* || \
                                                             NAME =~ *memory/iob/kbm_reg* || \
                                                             NAME =~ *memory/iob/clkgrp_reg* || \
+                                                            NAME =~ *memory/iob/chgrp_reg* || \
+                                                            NAME =~ *memory/iob/sergrp_reg* || \
                                                             NAME =~ *memory/iob/wr_reg* || \
                                                             NAME =~ *memory/iob/which_reg*) && \
                                   (NAME !~ *memory/busint_regs/* || \

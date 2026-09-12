@@ -220,12 +220,43 @@ module cadr_memory_path (
     input  var logic        kbd_strobe,
     input  var logic [23:0] kbd_code,
     input  var logic [6:0]  mouse_lines,
-    input  var logic        ser_ready,
-    input  var logic        chaos_intr,
 
-    // `-INIT*` into the 8837 at IOBXCV 0F06 is the 2651's own reset pin, so
-    // the card owes the serial slice this whether or not the chip is fitted.
+    // --- THE SERIAL PORT'S LINE AND THE CHAOSNET'S CABLE, which the two
+    // Linux programs own: `cadr-serial` offers the 2651's line on a TCP
+    // socket as muir's `--serial` does, and `cadr-chaosnet` frames what the
+    // interface hands it.  **`ser_ready` AND `chaos_intr` USED TO BE INPUTS
+    // HERE AND ARE GONE**: both chips are on the card now, so the card makes
+    // its own `SER.IREQ` and `CHAOS.IREQ`, and a line left driving either
+    // fails to compile rather than quietly supplying the answer.
     output var logic        ser_reset,
+    output var logic [7:0]  ser_mode1,
+    output var logic [7:0]  ser_mode2,
+    output var logic [7:0]  ser_cmd,
+    output var logic        ser_tx_strobe,
+    output var logic [7:0]  ser_tx_data,
+    input  var logic        ser_tx_take,
+    input  var logic        ser_tx_done,
+    input  var logic        ser_rx_strobe,
+    input  var logic [7:0]  ser_rx_data,
+    input  var logic        ser_plugged,
+    output var logic [7:0]  ser_status,
+    input  var logic [15:0] chaos_address,
+    output var logic        chaos_tx_go,
+    output var logic [8:0]  chaos_tx_len,
+    output var logic        chaos_tx_valid,
+    output var logic [15:0] chaos_tx_word,
+    output var logic        chaos_tx_clear,
+    output var logic        chaos_reset,
+    output var logic [15:0] chaos_csr,
+    input  var logic        chaos_rx_valid,
+    input  var logic [15:0] chaos_rx_word,
+    input  var logic        chaos_rx_done,
+    input  var logic [12:0] chaos_rx_bits,
+    input  var logic        chaos_rx_crc,
+    input  var logic        chaos_tx_done,
+    input  var logic        chaos_tx_abort,
+    input  var logic        chaos_cbl_busy,
+    output var logic [11:0] chaos_bits,
     // `-UB INTR` and `-UB BR5`: the card's `intr_request` and `intr_vector`.
     // Nothing in `rtl/` runs a Unibus interrupt cycle, and the note at the
     // instance below says what that costs and what would close it.
@@ -628,9 +659,35 @@ module cadr_memory_path (
       .kbd_strobe (kbd_strobe),
       .kbd_code   (kbd_code),
       .mouse_lines(mouse_lines),
-      .ser_ready  (ser_ready),
       .ser_reset  (ser_reset),
-      .chaos_intr (chaos_intr),
+      .ser_mode1  (ser_mode1),
+      .ser_mode2  (ser_mode2),
+      .ser_cmd    (ser_cmd),
+      .ser_tx_strobe(ser_tx_strobe),
+      .ser_tx_data(ser_tx_data),
+      .ser_tx_take(ser_tx_take),
+      .ser_tx_done(ser_tx_done),
+      .ser_rx_strobe(ser_rx_strobe),
+      .ser_rx_data(ser_rx_data),
+      .ser_plugged(ser_plugged),
+      .ser_status (ser_status),
+      .chaos_address(chaos_address),
+      .chaos_tx_go(chaos_tx_go),
+      .chaos_tx_len(chaos_tx_len),
+      .chaos_tx_valid(chaos_tx_valid),
+      .chaos_tx_word(chaos_tx_word),
+      .chaos_tx_clear(chaos_tx_clear),
+      .chaos_reset(chaos_reset),
+      .chaos_csr  (chaos_csr),
+      .chaos_rx_valid(chaos_rx_valid),
+      .chaos_rx_word(chaos_rx_word),
+      .chaos_rx_done(chaos_rx_done),
+      .chaos_rx_bits(chaos_rx_bits),
+      .chaos_rx_crc(chaos_rx_crc),
+      .chaos_tx_done(chaos_tx_done),
+      .chaos_tx_abort(chaos_tx_abort),
+      .chaos_cbl_busy(chaos_cbl_busy),
+      .chaos_bits (chaos_bits),
       // **THE REQUEST GOES TO THE BUS INTERFACE AND NOT STRAIGHT TO THE
       // PROCESSOR**, which is what `0o766040` closed.  `LM INT` is `UB INT
       // OR XBUS INTR IN` at UBINTC 0E04, and muir's
