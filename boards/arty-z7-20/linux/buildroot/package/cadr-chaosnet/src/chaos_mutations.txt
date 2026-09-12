@@ -1,0 +1,815 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for cadr-chaosnet: bugs `chaos_test` has to catch.
+#
+# `mutate.py` applies each record to a copy of this package's sources, builds
+# the check against it, and runs it.  A mutation the check FAILS on is a check
+# doing its job; one the check passes is reported as SURVIVED and the run is
+# red.  A record whose `@old` no longer matches its file exactly once, or that
+# does not compile, is BROKEN and also fails the run --- CLAUDE.md records two
+# fabric mutations reported as surviving that had never been built.
+#
+# THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
+# can read this one:
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @file      which of this package's core sources to mutate
+#   @why       what the check is supposed to notice, printed when it does not
+#   @note      prose, repeatable; printed with @why on a survivor
+#   @old       the source to replace, exactly as it stands
+#   @new       what to put there; empty deletes
+#   @end
+#
+# WHERE THE LIST CAME FROM.  One record for every decision this program makes
+# that a reader would otherwise have to take on trust, grouped by the layer it
+# is in: the packet's own arithmetic, the transport of AIM-628 chapters 3 and
+# 4, the services' answer formats, CHUDP's frame, and the register face's
+# handshake with the fabric.
+#
+# **THE CHECK WORD HAS A REAL ANCHOR AND THAT IS WHY ITS RECORDS ARE WORTH
+# HAVING.**  muir's `tests/chaos.rs` pins `135771` as the word the NETLIST
+# BOARD itself produced for a particular twelve words, and says that of the
+# 9401's polynomials, its two bit orders and its two seeds, only one
+# arrangement gives it.  `chaos_test_packet` holds this C to that number.  So
+# a mutation of the polynomial is not caught by a round trip agreeing with
+# itself --- which it would, both ends being wrong together --- but by
+# disagreeing with a measurement off real hardware.
+
+@mutation the-check-word-polynomial-loses-a-tap
+@file chaos_packet.c
+@why the check word against 135771, which is what the netlist board produced for muir's twelve words
+@note The 9401's CRC-16 is x^16 + x^15 + x^2 + 1.  Dropping the x^2 term
+@note leaves a polynomial that is still a CRC and still round-trips against
+@note itself, so only the board's own figure catches it.
+@old
+				next ^= 1u | (1u << 2) | (1u << 15);
+@new
+				next ^= 1u | (1u << 15);
+@end
+
+@mutation the-check-word-shifts-least-significant-bit-first
+@file chaos_packet.c
+@why the check word against 135771: the two 74165s at LMTBUF B12 and B13 shift a word out most-significant bit first, and the other order gives a different word
+@note muir's packet.rs says this bit order is not read off a document --- it
+@note is the one arrangement of the orders, seeds and polynomials the 9401
+@note offers that reproduces the board's own output.
+@old
+		for (int k = 15; k >= 0; --k) {
+@new
+		for (int k = 0; k <= 15; ++k) {
+@end
+
+@mutation the-data-bytes-go-high-half-first
+@file chaos_packet.c
+@why the packet's words against muir's own literals: AIM-628 section 3.6 puts the first byte of a pair in the arithmetically LEAST significant position
+@note "TIME" is 044524 044515 in muir's test and would be 052104 015515
+@note swapped.  A round trip alone would not see it, because the reader here
+@note would unswap what the writer swapped.
+@old
+			(uint16_t)(p->data[lo] |
+				   ((hi < p->len ? (unsigned)p->data[hi] : 0u) << 8));
+@new
+			(uint16_t)(((unsigned)p->data[lo] << 8) |
+				   (hi < p->len ? (unsigned)p->data[hi] : 0u));
+@end
+
+@mutation an-odd-byte-count-loses-its-last-byte
+@file chaos_packet.c
+@why a packet of five bytes: the data is a whole number of WORDS on the cable, so an odd count rounds UP and the spare half is padding
+@note AIM-628 section 7: an odd last byte "sits in the low half with a
+@note garbage padding byte in its high half".  Rounding down silently drops
+@note the last byte of every odd-length packet, which is most text.
+@old
+	const unsigned data_words = ((unsigned)p->len + 1u) / 2u;
+@new
+	const unsigned data_words = (unsigned)p->len / 2u;
+@end
+
+@mutation the-check-word-is-computed-over-itself
+@file chaos_packet.c
+@why the frame's check word against 135771: the word covers the buffer and the source the hardware adds, and stops there
+@old
+	out[n + 2] = chaos_check_word(out, n + 2);
+@new
+	out[n + 2] = chaos_check_word(out, n + 1);
+@end
+
+@mutation a-frame-with-a-wrong-check-word-is-called-good
+@file chaos_packet.c
+@why a frame whose check word does not match must come back with check_ok clear, because that is the only thing between a corrupted packet and the transport acting on it
+@note The interface has a CRC Error bit for exactly this and AIM-628 section
+@note 5.1 meters it.  A parser that always says the frame is good turns every
+@note line error into a packet the NCP believes.
+@old
+	out->check_ok = chaos_check_word(words, body + 2) == out->check;
+@new
+	out->check_ok = 1;
+@end
+
+@mutation the-data-count-is-not-held-against-the-frames-length
+@file chaos_packet.c
+@why a frame whose 12-bit count disagrees with the number of words it actually carries must be refused, not read past its end
+@note AIM-628 section 5.1 meters incoming packets "rejected for a length that
+@note is not a multiple of 16 bits" and its neighbours.  Without this the
+@note parser reads the trailer as data, or data as the trailer.
+@old
+	if (body != CHAOS_PKT_HEADER_WORDS + (count + 1u) / 2u) {
+@new
+	if (body < CHAOS_PKT_HEADER_WORDS) {
+@end
+
+@mutation the-forwarding-count-eats-the-byte-count
+@file chaos_packet.c
+@why the count word is the forwarding count in bits 15:12 and the byte count in 11:0, and a mask of 017777 lets a forwarding count of 1 read as 4096 bytes
+@old
+	const unsigned count = words[1] & 07777u;
+@new
+	const unsigned count = words[1] & 017777u;
+@end
+
+# ---- the transport, AIM-628 chapters 3 and 4 ----
+
+@mutation an-out-of-order-packet-is-taken-anyway
+@file chaos_ncp.c
+@why a controlled packet out of its turn must be DROPPED, not delivered: section 3.8's sequencing is the whole of what makes a stream a stream
+@note The sender retransmits it, so dropping costs a round trip and taking it
+@note costs the file its order.  A check that only ever sends packets in
+@note order would not see this, which is why the suite sends one ahead.
+@old
+	if (p->number == expected) {
+@new
+	if (p->number != 0) {
+@end
+
+@mutation a-duplicate-controlled-packet-is-delivered-a-second-time
+@file chaos_ncp.c
+@why a packet number already taken is "evidence of unnecessary retransmission, and an STS is generated to carry a receipt" --- it is not data
+@note This is the failure that silently doubles bytes in a file, and it needs
+@note no line error to happen: a receipt lost on the way back makes the other
+@note end send the packet again, which is normal.
+@old
+	} else if ((int16_t)(uint16_t)(p->number - expected) < 0) {
+@new
+	} else if ((int16_t)(uint16_t)(p->number - expected) > 0) {
+@end
+
+@mutation the-retransmission-interval-is-twice-what-the-memo-says
+@file chaos_ncp.c
+@why AIM-628 section 3.8: "Retransmission occurs every 1/2 second", and a check that cannot tell the constant from twice it cannot tell it from anything
+@note The same shape as RD_FINISH_T in the fabric, which CLAUDE.md records
+@note being wrong twice over on one night: a correct derivation with a blind
+@note check still drifts.
+@old
+			if (now >= u->last && now - u->last >= CHAOS_RETRANSMIT_NS) {
+@new
+			if (now >= u->last && now - u->last >= 2 * CHAOS_RETRANSMIT_NS) {
+@end
+
+@mutation a-silent-connection-is-never-given-up
+@file chaos_ncp.c
+@why a connection whose peer has stopped answering must be given up after the band's own HOST-DOWN-INTERVAL, or its index shadows the RFC a rebooted band sends on the same index
+@note muir's rfc() expires first for exactly this reason: a reboot of the
+@note same band reuses the index while the old connection is still in the
+@note table, and the fresh RFC is then taken for a duplicate and dropped.
+@old
+		if (c && now > c->last_heard && now - c->last_heard > CHAOS_HOST_DOWN_NS)
+@new
+		if (c && now > c->last_heard && now - c->last_heard > 1000 * CHAOS_HOST_DOWN_NS)
+@end
+
+# ---- the services' answer formats ----
+
+@mutation the-time-answer-is-big-endian
+@file chaos_services.c
+@why TIME answers "a 32-bit number in four 8-bit bytes, least-significant byte first", and DECODE-CANONICAL-TIME-PACKET reads the two words low word first
+@note A band given the bytes the other way round sets its clock to some year
+@note in the far future or the far past and then times everything off it.
+@old
+	r->answer[0] = (uint8_t)v;
+	r->answer[1] = (uint8_t)(v >> 8);
+	r->answer[2] = (uint8_t)(v >> 16);
+	r->answer[3] = (uint8_t)(v >> 24);
+@new
+	r->answer[0] = (uint8_t)(v >> 24);
+	r->answer[1] = (uint8_t)(v >> 16);
+	r->answer[2] = (uint8_t)(v >> 8);
+	r->answer[3] = (uint8_t)v;
+@end
+
+@mutation the-status-count-is-meters-and-not-words
+@file chaos_services.c
+@why AIM-628 section 5.1's count field is the number of 16-bit WORDS to follow, "usually 16" for the eight meters, and HOSTAT steps (+ I 2 CT) by it
+@note Eight where sixteen is meant makes HOSTAT read the second half of the
+@note meters as another subnet block.
+@old
+	d[at++] = (uint8_t)(STATUS_METERS * 2u);
+	d[at++] = (uint8_t)((STATUS_METERS * 2u) >> 8);
+@new
+	d[at++] = (uint8_t)STATUS_METERS;
+	d[at++] = (uint8_t)(STATUS_METERS >> 8);
+@end
+
+@mutation the-status-subnet-block-loses-its-400
+@file chaos_services.c
+@why the identifier is "400 plus a subnet number", and 0 to 377 is the obsolete form whose meters are 16 bits --- the memo says that form "should no longer be sent by any hosts"
+@old
+	const unsigned id = STATUS_SUBNET_BLOCK + st->subnet;
+@new
+	const unsigned id = st->subnet;
+@end
+
+# ---- the FILE service ----
+#
+# **THE CONTAINMENT RECORDS ARE THE ONES THAT MATTER MOST HERE.**  This
+# service reads, writes, renames and deletes a real directory on the board at
+# the asking of whatever is on the Chaosnet, so the rule that a pathname
+# cannot leave the tree is the whole of what makes that safe.  It is also the
+# kind of rule that keeps working by accident after it has been broken --- a
+# `..` that goes nowhere because the root happens to be deep --- so it is
+# mutated in both of the two ways it can fail.
+
+@mutation the-containment-follows-dot-dot
+@file chaos_file.c
+@why `..` and `.` in a pathname are REFUSED and not followed, so that no client on the cable can walk out of the tree the board serves
+@note muir's resolve() says why refusing beats following: "following them is
+@note how a containment rule is got wrong, and a client with a legitimate use
+@note for either can spell the place it means".
+@old
+		if ((len == 2 && s[0] == '.' && s[1] == '.') ||
+		    (len == 1 && s[0] == '.'))
+			return -1;
+@new
+		if (len == 1 && s[0] == '.')
+			return -1;
+@end
+
+@mutation a-link-that-leads-out-of-the-tree-is-followed
+@file chaos_file.c
+@why a resolved path must lie under the root or under what one of the ROOT'S OWN entries links to; a link made deeper that leads out is refused
+@note The root's own links are how a release tree is served --- `sys` for
+@note System 304 and `tree` for System 100 --- so the rule cannot be "under
+@note the root" alone, and the part that is easy to lose is the part that
+@note stops a CREATE-LINK widening the tree.
+@old
+		if (under(real, tree.paths[i])) {
+@new
+		if (real != NULL) {
+@end
+
+@mutation the-lisp-machines-newline-is-not-translated-on-the-way-out
+@file chaos_file.c
+@why a file read off the board arrives at the band with 0215 where Unix has a newline; leaving 012 alone hands the band a character it does not use as a line break
+@note `#/NEWLINE` is 0215 and the Lisp Machine's own carriage return is a
+@note real 015, which is why this is a translation and not a pass-through.
+@old
+		case '\n':
+			out[i] = CHAOS_FILE_NEWLINE;
+			break;
+@new
+		case '\n':
+			out[i] = '\n';
+			break;
+@end
+
+# ---- the register face ----
+
+@mutation the-frame-is-taken-without-telling-the-interface
+@file chaos_face.c
+@why CTL_TX_TAKE is what lets the machine's Transmit Done come up and its next packet go; without it the interface holds one frame for ever and the machine's Chaosnet stops after a single packet
+@old
+	f->write(f, CHAOS_CTL, CHAOS_CTL_TX_TAKE);
+	return (int)len;
+@new
+	return (int)len;
+@end
+
+@mutation a-frame-the-interface-refused-is-reported-as-stored
+@file chaos_face.c
+@why a commit the fabric refused --- the machine had not emptied its incoming buffer --- must come back as 0 so the sender retransmits, and LOST moving is what says it was refused
+@note STAT cannot tell the two apart: RX_BUSY is up either way, because a
+@note stored frame leaves it up too.  So the test is the counter, which is
+@note the interface's own four-bit Lost Count from AIM-628 section 7.
+@old
+	if (lost_after != lost_before)
+@new
+	if (lost_after == lost_before)
+@end
+
+# ---- Chaosnet over UDP ----
+
+@mutation the-chudp-trailer-is-read-in-the-packets-own-order
+@file chaos_udp.c
+@why CHUDP is a MIXED frame: the packet's own words are little-endian and the hardware trailer's three are network order, and reading the trailer the other way puts the destination and source addresses byte-swapped
+@note muir marks both orders unverified and says what would settle them, and
+@note says the wrong order fails loudly rather than quietly.  This record is
+@note what makes that true here: the byte-for-byte datagram in the check is
+@note the one thing that would have to change with them.
+@old
+			get_word(CHUDP_TRAILER_ORDER, datagram + len - CHUDP_TRAILER + 2u * k);
+@new
+			get_word(CHUDP_PACKET_ORDER, datagram + len - CHUDP_TRAILER + 2u * k);
+@end
+
+@mutation an-unknown-chudp-version-is-read-as-this-one
+@file chaos_udp.c
+@why a datagram carrying a version this does not speak is refused WITH ITS NUMBER, not parsed as version 1
+@note The protocol's author has said a version 2 may differ from version 1 in
+@note nothing but byte order, so a version 2 peer read as a version 1 one
+@note would exchange nonsense rather than fail --- which is the one failure
+@note mode a wire protocol must not have.
+@old
+	if (datagram[0] != CHUDP_VERSION) {
+@new
+	if (datagram[0] == 0xFFu) {
+@end
+
+# ---- the FILE service, in depth ----
+#
+# **THESE THIRTY-NINE CAME FROM A SWEEP, NOT FROM A LIST WRITTEN IN ADVANCE,
+# AND SEVEN OF THEM SURVIVED THE FIRST TIME.**  The FILE check passed every
+# one of its own assertions on its first run, which this project distrusts on
+# principle, so every decision `chaos_file.c` makes was mutated and the check
+# re-run.  Seven survived, and each was a real hole rather than an equivalent
+# mutant: a containment test written as a string prefix where muir's is
+# component-wise (the trap the C port creates and the Rust cannot have); a
+# read that drains another handle's bytes, which is muir's own afternoon-long
+# bug and only shows with a turn of the server between the data and the CLOSE;
+# a FILEPOS that keeps what is already in flight, which only shows with NO
+# turn between the OPEN and the FILEPOS, because that is what the client
+# sends; the home directory's case; the blank line between directory records;
+# a reused file handle; and the asynchronous mark's `R` severity, which had no
+# check at all until this and made the whole stalled-write path get one.
+#
+# So the list below is what the check was WEAK at, written down, and the
+# check is stronger by exactly those seven.  That is the argument for sweeping
+# rather than for listing: a list written in advance holds what its author
+# already thought of.
+
+@mutation single-dot-followed-not-refused
+@file chaos_file.c
+@why a single `.` component is refused too, not just `..`
+@note muir refuses both in one test.  Refusing `..` alone leaves `.` as a way
+@note to spell a path the resolver then canonicalises differently from the way
+@note it was checked.
+@old
+		if ((len == 2 && s[0] == '.' && s[1] == '.') ||
+		    (len == 1 && s[0] == '.'))
+			return -1;
+@new
+		if (len == 2 && s[0] == '.' && s[1] == '.')
+			return -1;
+@end
+
+@mutation the-roots-own-links-are-not-followed
+@file chaos_file.c
+@why a symlink AT THE ROOT must be followed, because that is how a release tree is served
+@note Each release's fetch script puts its sources under the root by such a
+@note link --- `sys` for System 304 and `tree` for System 100 --- so a
+@note containment rule that refuses them serves an empty tree.
+@old
+			char *real = realpath(entry, NULL);
+			if (real)
+				tree_push(&tree, real);
+@new
+			char *real = realpath(entry, NULL);
+			free(real);
+@end
+
+@mutation a-prefix-match-instead-of-a-component-match
+@file chaos_file.c
+@why the tree test is COMPONENT-WISE, and a plain string prefix lets a directory whose name merely starts with the root's pass
+@note Rust's `Path::starts_with` is component-wise and C's `strncmp` is not,
+@note so this is the trap the port itself creates and muir cannot have.  A
+@note sibling called `servedmore` beside a root called `served` is the case.
+@old
+	if (strncmp(real, t, n) != 0)
+		return 0;
+	return real[n] == '\0' || real[n] == '/';
+@new
+	return strncmp(real, t, n) == 0;
+@end
+
+@mutation the-root-itself-may-be-written
+@file chaos_file.c
+@why the root is not a file: it may not be written, renamed, deleted or created
+@note muir's `resolve_for_writing` exists only for this, and the reason it is
+@note a separate entry point is that a read of the root is legitimate.
+@old
+	return strcmp(out, c->root) == 0 ? -1 : 0;
+@new
+	return 0;
+@end
+
+@mutation the-newline-is-not-translated-coming-in
+@file chaos_file.c
+@why a file the band WRITES arrives with 0215 where a Unix file wants a newline
+@note The half nobody notices until a file written from the machine is read
+@note on the build host and every line runs together.
+@old
+		case CHAOS_FILE_NEWLINE:
+			out[i] = '\n';
+			break;
+@new
+		case CHAOS_FILE_NEWLINE:
+			out[i] = CHAOS_FILE_NEWLINE;
+			break;
+@end
+
+@mutation the-carriage-return-and-the-newline-are-confused
+@file chaos_file.c
+@why the Lisp Machine's own carriage return is a real 015 and `#/NEWLINE` is 0215; they are two characters and not one
+@note `FILE.c`'s own note: 0212 maps to 015 since 0215 must map to newline.
+@old
+		case 015:
+			out[i] = 0212;
+			break;
+@new
+		case 015:
+			out[i] = CHAOS_FILE_NEWLINE;
+			break;
+@end
+
+@mutation no-eof-after-a-read
+@file chaos_file.c
+@why a read ends with EOF down the data connection, which is what tells the user end the file is whole
+@old
+	channel_send(h->ch, op, contents, len);
+	chaos_out_eof(&h->ch->out);
+@new
+	channel_send(h->ch, op, contents, len);
+@end
+
+@mutation an-empty-file-sends-one-empty-packet
+@file chaos_file.c
+@why a file of no bytes is still a transfer: the EOF and the mark come, and the user end is not left waiting
+@old
+			 size_t len)
+{
+	for (size_t off = 0; off < len; off += CHAOS_PKT_MAX_DATA) {
+@new
+			 size_t len)
+{
+	for (size_t off = 0; off <= len; off += CHAOS_PKT_MAX_DATA) {
+@end
+
+@mutation a-write-does-not-translate-what-arrives
+@file chaos_file.c
+@why what the band writes is translated out of its character set before it reaches the host's file, as what it reads is translated into it
+@old
+	if (h->t.characters && op != CHAOS_FILE_BINARY_OP)
+		chaos_file_from_lispm(bytes, len, out);
+@new
+	if (0)
+		chaos_file_from_lispm(bytes, len, out);
+@end
+
+@mutation the-open-reply-loses-the-length
+@file chaos_file.c
+@why an OPEN's reply carries the file's length, which is what the user end sizes its array from
+@old
+	const size_t length = (characters || byte_size <= 8) ? len : (len + 1) / 2;
+@new
+	const size_t length = 0 * ((characters || byte_size <= 8) ? len : (len + 1) / 2);
+@end
+
+@mutation the-open-reply-loses-the-truename
+@file chaos_file.c
+@why an OPEN's reply carries the TRUENAME, and the CLOSE repeats it; that is how the band learns what it actually opened
+@old
+	buf_addf(&b, "%s" NLS "%s" NLS, properties, tn);
+@new
+	buf_addf(&b, "%s" NLS NLS, properties);
+@end
+
+@mutation the-home-directory-is-not-lowercased
+@file chaos_file.c
+@why LOGIN answers a home directory in the case the protocol's own server gives it
+@old
+		char lower = (*p >= 'A' && *p <= 'Z') ? (char)(*p + 32) : *p;
+@new
+		char lower = *p;
+@end
+
+@mutation the-listing-has-no-blank-line-between-files
+@file chaos_file.c
+@why a DIRECTORY listing separates its records with a blank line, which is what the reader splits on
+@old
+		file_properties(c, &st, &b);
+		buf_add(&b, NLS, 1);
+@new
+		file_properties(c, &st, &b);
+@end
+
+@mutation the-listing-forgets-who-the-author-is
+@file chaos_file.c
+@why a listing record carries the properties the protocol names, the author among them, not a subset of them
+@old
+	buf_addf(b, "AUTHOR %s" NLS, c->have_user ? c->user : "nobody");
+@new
+	buf_addf(b, "AUTHOR %s" NLS, "nobody");
+@end
+
+@mutation a-second-data-connection-may-reuse-a-handle
+@file chaos_file.c
+@why a file handle names one channel: a second DATA-CONNECTION offering a handle already in use is refused, not silently rebound
+@note Rebinding loses the first transfer's channel with no error anywhere,
+@note which is the quiet half of a lost file.
+@old
+	if (handle_find(c, input) || handle_find(c, output)) {
+@new
+	if (0) {
+@end
+
+@mutation the-async-mark-loses-its-recoverable-severity
+@file chaos_file.c
+@why an asynchronous mark carries severity `R`, which is what says a CONTINUE may retry it rather than that the transfer is dead
+@note The severities are `C` for an error in the command, `F` fatal to a
+@note transfer and `R` recoverable, and only `R` makes CONTINUE meaningful.
+@old
+	buf_addf(&b, "TIDNO %s ERROR %s R %s", h->name, code, message);
+@new
+	buf_addf(&b, "TIDNO %s ERROR %s F %s", h->name, code, message);
+@end
+
+@mutation expunge-claims-it-recovered-a-block
+@file chaos_file.c
+@why EXPUNGE answers 0, because nothing here keeps deleted versions and a server that claims it freed blocks is lying to the band
+@old
+		reply(c, tid, handle, "EXPUNGE", "0");
+@new
+		reply(c, tid, handle, "EXPUNGE", "1");
+@end
+
+@mutation the-close-does-not-wait-for-the-mark
+@file chaos_file.c
+@why a write's CLOSE is answered only once the synchronous mark has come up the data connection, or the reply promises a file that is not all there
+@old
+	if (h && h->t.kind == T_WRITE && !h->t.marked && !h->t.stalled) {
+		h->t.closing = 1;
+@new
+	if (0 && h && h->t.kind == T_WRITE && !h->t.marked && !h->t.stalled) {
+		h->t.closing = 1;
+@end
+
+@mutation no-synchronous-mark-after-a-reads-close
+@file chaos_file.c
+@why the synchronous mark follows the CLOSE reply on a read, and is what the user end reads until
+@note Without it `qfile.lisp` waits for a mark that never comes and the
+@note transfer hangs rather than failing.
+@old
+		reply(c, tid, handle, "CLOSE", buf_str(&b));
+		buf_free(&b);
+		channel_mark(h->ch, CHAOS_FILE_SYNC_MARK_OP);
+		return;
+@new
+		reply(c, tid, handle, "CLOSE", buf_str(&b));
+		buf_free(&b);
+		return;
+@end
+
+@mutation the-temporary-is-not-used-at-all
+@file chaos_file.c
+@why a write goes into a temporary and is renamed on close, so a transfer that dies leaves the old file whole
+@old
+	if (rename(temp, real) != 0) {
+@new
+	if (0 && rename(temp, real) != 0) {
+@end
+
+@mutation the-write-goes-straight-at-the-real-name
+@file chaos_file.c
+@why the same, seen from the other side: the real name must not exist until the close
+@old
+		snprintf(temp, sizeof temp, "%s", dir);
+		if (path_push(temp, sizeof temp, leaf) < 0) {
+@new
+		snprintf(temp, sizeof temp, "%s", path);
+		if (0 && path_push(temp, sizeof temp, leaf) < 0) {
+@end
+
+@mutation the-handles-are-kept-in-the-order-they-arrived
+@file chaos_file.c
+@why the handles are walked in sorted order, and muir's comment says why: an unordered walk made a bug appear in some runs and not others
+@note Ordering does more than take the variation away --- it makes the order
+@note that used to lose data the only order there is, so a test can hold it
+@note and fails every time rather than half of them.
+@old
+	struct handle **link = &c->handles;
+	while (*link && strcmp((*link)->name, h->name) < 0)
+		link = &(*link)->next;
+@new
+	struct handle **link = &c->handles;
+	while (*link)
+		link = &(*link)->next;
+@end
+
+@mutation a-read-drains-the-writes-bytes
+@file chaos_file.c
+@why one handle's transfer must not take what came up another's data connection
+@note This is the bug the ordered map exists for and it cost muir an
+@note afternoon.  It only shows with a turn of the server between the data
+@note and the CLOSE, because a CLOSE drains its own handle.
+@old
+	for (struct handle *h = c->handles; h; h = h->next)
+		if (h->t.kind == T_WRITE)
+			drain_incoming(c, h);
+@new
+	for (struct handle *h = c->handles; h; h = h->next)
+		if (h->t.kind != T_NONE)
+			drain_incoming(c, h);
+@end
+
+@mutation undata-takes-only-the-handle-it-was-given
+@file chaos_file.c
+@why UNDATA-CONNECTION closes the channel both handles share, not one end of it
+@old
+			if (h->ch == ch) {
+@new
+			if (h == named) {
+@end
+
+@mutation a-dropped-control-connection-leaves-its-temporary
+@file chaos_file.c
+@why a control connection that goes away takes its unfinished temporaries with it, or the served tree fills with them
+@old
+	for (struct handle *h = c->handles; h; h = h->next)
+		if (h->t.kind == T_WRITE)
+			unlink(h->t.temp);
+@new
+	for (struct handle *h = c->handles; h; h = h->next)
+		if (h->t.kind == T_NONE)
+			unlink(h->t.temp);
+@end
+
+@mutation everyone-is-served-files
+@file chaos_file.c
+@why REACHABILITY IS NOT AUTHORISATION: an address the service was not told to serve is refused at the RFC
+@note A peer a packet arrived from can be answered; being answerable is not
+@note being allowed to read and write a real directory.  TIME, UPTIME and
+@note STATUS answer anyone, because they give nothing away.
+@old
+	if (f->nhosts) {
+@new
+	if (0 && f->nhosts) {
+@end
+
+@mutation the-listing-is-not-sorted
+@file chaos_file.c
+@why a DIRECTORY listing is in a settled order, so that two runs of the same command give the same answer
+@old
+		while (j > 0 && strcmp(names[j - 1], v) > 0) {
+@new
+		while (0 && j > 0 && strcmp(names[j - 1], v) > 0) {
+@end
+
+@mutation the-wildcard-matches-nothing-wild
+@file chaos_file.c
+@why `*` and `#` in a DIRECTORY pattern are wildcards and not literal characters
+@old
+		if (pi < pl && (p[pi] == '?' || p[pi] == '#' || p[pi] == n[ni])) {
+@new
+		if (pi < pl && (p[pi] == '?' || p[pi] == n[ni])) {
+@end
+
+@mutation a-star-matches-one-and-not-a-run
+@file chaos_file.c
+@why `*` matches a run of any length, including none; `#` is the one that matches a single character
+@old
+		} else if (have_star) {
+@new
+		} else if (0 && have_star) {
+@end
+
+@mutation the-date-is-a-day-out
+@file chaos_file.c
+@why a file's date is the date the host gives it, and the check computes it independently from stat rather than from this code
+@note A date one day out is the shape of an off-by-one in the civil-calendar
+@note arithmetic, which is the part of this that is arithmetic and not
+@note protocol.
+@old
+	const uint64_t days = secs / 86400u, rem = secs % 86400u;
+@new
+	const uint64_t days = secs / 86400u + 1, rem = secs % 86400u;
+@end
+
+@mutation a-qfasl-is-taken-for-characters
+@file chaos_file.c
+@why a compiled file is recognised by its first two words and sent as BINARY, not translated as text
+@note `QBIN1` 0143150 and `QBIN2` 071660, each low byte first, which is what
+@note `sys/sys/cadrlp.qfasl` begins with.  Translating a QFASL is how a band
+@note loads a file that will not load.
+@old
+	const int characters = with_default ? !qfasl : !binary;
+@new
+	const int characters = with_default ? 1 : !binary;
+@end
+
+@mutation filepos-does-not-throw-away-what-is-in-flight
+@file chaos_file.c
+@why a FILEPOS discards what is already queued for the data connection, or the file arrives with the old position's bytes in front of the new
+@note It only shows with no turn of the server between the OPEN and the
+@note FILEPOS, which is what the client actually sends.
+@old
+	channel_drop_data(h->ch);
+	channel_mark(h->ch, CHAOS_FILE_SYNC_MARK_OP);
+@new
+	channel_mark(h->ch, CHAOS_FILE_SYNC_MARK_OP);
+@end
+
+@mutation an-append-starts-from-nothing
+@file chaos_file.c
+@why an OPEN WRITE that appends starts from what the file already holds
+@old
+	if (exists && (!strcmp(if_exists, "APPEND") || !strcmp(if_exists, "OVERWRITE")))
+		start = read_whole(path, &start_len);
+@new
+	if (0)
+		start = read_whole(path, &start_len);
+@end
+
+@mutation a-delete-on-a-writing-handle-removes-the-real-file
+@file chaos_file.c
+@why a DELETE on a handle that is writing throws away the TEMPORARY, and leaves whatever the real name already held
+@old
+		if (h && h->t.kind == T_WRITE) {
+			unlink(h->t.temp);
+@new
+		if (h && h->t.kind == T_WRITE) {
+			unlink(h->t.real);
+@end
+
+@mutation the-command-is-cut-on-the-unix-newline
+@file chaos_file.c
+@why a command's lines are separated by the Lisp Machine's 0215, not by 012
+@note A parser cutting on 012 sees one long line and answers the first
+@note command with the rest of the packet stuck to it.
+@old
+		if ((unsigned char)c->text[i] == CHAOS_FILE_NEWLINE) {
+@new
+		if ((unsigned char)c->text[i] == '\n') {
+@end
+
+@mutation no-handle-means-one-space-and-not-two
+@file chaos_file.c
+@why a command with no file handle carries TWO spaces after the transaction id, and that is how the absent handle is spelled
+@note muir's `parse` strips the second space to get an empty handle; reading
+@note one space instead takes the command name for the handle.
+@old
+	buf_addf(&b, "%s %s %s", tid, handle, name);
+@new
+	buf_addf(&b, "%s %s%s", tid, handle, name);
+@end
+
+@mutation the-chunks-are-not-a-packets-worth
+@file chaos_file.c
+@why a file goes down the data connection in packets of the most a packet carries, and a chunk larger than that cannot be sent at all
+@note Nothing under 488 bytes is wrong, only slow --- but the check holds the
+@note count, because a chunk size that drifted would be invisible on any file
+@note small enough to fit in one packet, which every file in an unwary test is.
+@old
+			 size_t len)
+{
+	for (size_t off = 0; off < len; off += CHAOS_PKT_MAX_DATA) {
+		size_t take = len - off;
+		if (take > CHAOS_PKT_MAX_DATA)
+@new
+			 size_t len)
+{
+	for (size_t off = 0; off < len; off += CHAOS_PKT_MAX_DATA / 2) {
+		size_t take = len - off;
+		if (take > CHAOS_PKT_MAX_DATA / 2)
+@end
+
+@mutation a-long-reply-is-cut-off-at-one-packet
+@file chaos_file.c
+@why a reply longer than one packet goes in as many as it takes: the control connection is a stream, and a LOGIN quoting a long home directory overruns one packet
+@old
+	for (size_t off = 0; off < len; off += CHAOS_PKT_MAX_DATA) {
+		size_t take = len - off;
+		if (take > CHAOS_PKT_MAX_DATA)
+			take = CHAOS_PKT_MAX_DATA;
+		chaos_out_data(&c->out, CHAOS_DAT, line + off, (unsigned)take);
+@new
+	for (size_t off = 0; off < len && off == 0; off += CHAOS_PKT_MAX_DATA) {
+		size_t take = len - off;
+		if (take > CHAOS_PKT_MAX_DATA)
+			take = CHAOS_PKT_MAX_DATA;
+		chaos_out_data(&c->out, CHAOS_DAT, line + off, (unsigned)take);
+@end
+
+@mutation the-file-is-read-back-to-front
+@file chaos_file.c
+@why the bytes arrive in the file's own order, and the check compares all of a multi-packet file in order rather than sampling it
+@old
+	channel_send(h->ch, op, contents, len);
+	chaos_out_eof(&h->ch->out);
+@new
+	for (size_t z = 0; z < len / 2; ++z) {
+		uint8_t t = contents[z];
+		contents[z] = contents[len - 1 - z];
+		contents[len - 1 - z] = t;
+	}
+	channel_send(h->ch, op, contents, len);
+	chaos_out_eof(&h->ch->out);
+@end

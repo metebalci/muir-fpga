@@ -42,6 +42,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass \
        $(BUILD)/readout_face.pass $(BUILD)/checkpoint.pass \
+       $(BUILD)/chaosnet.pass $(BUILD)/serial.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -1734,6 +1735,56 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	 done
 	@touch $@
 
+# ------------------------------------ the I/O board's two Linux programs
+#
+# The Chaosnet and the serial line are one card in the fabric --- the
+# interface at `0o764140`-`0o764156` and the 2651 at `0o764160`-`0o764176` on
+# `rtl/machine/cadr_io_board.sv` --- and two programs on the processing
+# system, because this project's rule is one package per program.  These are
+# their host checks: everything about them that is NOT the fabric, on the
+# build host, with no board, no Verilator and no network.
+#
+# **WHAT EACH HOLDS, AND WHAT IT CANNOT.**  `cadr_io_board.sv`'s own checks
+# hold the registers against muir.  These hold the other side of the same
+# registers: for the Chaosnet, the packet's word layout and its check word,
+# the transport of AIM-628 chapters 3 and 4, the TIME, UPTIME, STATUS and FILE
+# services against a real scratch directory, and CHUDP's frame against a
+# datagram's literal bytes; for the serial line, the TCP endpoint against a
+# real client on the loopback address.  Neither can hold the SEAM between the
+# two halves, because only one half exists in each check --- which is why the
+# register face is behind one header in each program and why that header says
+# what it assumed.
+#
+# Both run their own mutation lists, so a check that stops biting says so.
+#
+# The prerequisites are a wildcard where the readout's and the checkpoint's
+# are named one by one, and the difference is deliberate: those have four or
+# five sources and this has nineteen, so an explicit list would be a list
+# somebody forgets to add to --- and a source added to the check but not to
+# the rule is a check that does not re-run when it changes, which is the
+# quiet half of a stale-artefact failure this project has met three times.
+CHAOSNET_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/src
+SERIAL_SRC   := boards/arty-z7-20/linux/buildroot/package/cadr-serial/src
+
+$(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
+                        $(wildcard $(CHAOSNET_SRC)/*.h) \
+                        $(CHAOSNET_SRC)/chaos_mutations.txt \
+                        $(CHAOSNET_SRC)/mutate.py | $(BUILD)
+	$(MAKE) -C $(CHAOSNET_SRC) check
+	$(MAKE) -C $(CHAOSNET_SRC) all COMMON=host
+	$(MAKE) -C $(CHAOSNET_SRC) clean
+	@echo "chaosnet: the program builds, and its packet, transport, services and CHUDP agree with muir"
+	@touch $@
+
+$(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h) \
+                      $(SERIAL_SRC)/serial_mutations.txt \
+                      $(SERIAL_SRC)/mutate.py | $(BUILD)
+	$(MAKE) -C $(SERIAL_SRC) check
+	$(MAKE) -C $(SERIAL_SRC) all COMMON=host
+	$(MAKE) -C $(SERIAL_SRC) clean
+	@echo "serial: the program builds, and the cable's far end agrees with muir's endpoint"
+	@touch $@
+
 $(BUILD):
 	@mkdir -p $(BUILD)
 
@@ -1824,7 +1875,8 @@ buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) \
 	    uboot-reconfigure linux-reconfigure cadr-common-reconfigure \
 	    cadr-console-reconfigure cadr-readout-reconfigure \
-	    cadr-disk-packs-reconfigure cadr-terminal-reconfigure
+	    cadr-disk-packs-reconfigure cadr-terminal-reconfigure \
+	    cadr-serial-reconfigure cadr-chaosnet-reconfigure
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
