@@ -605,6 +605,37 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The debug cable's debuggee end: `rtl/machine/cadr_dbgin.sv` is MIT's own
+    # DBGIN page and `rtl/plumbing/cadr_debug_window.sv` is the carrier muir
+    # reaches with loads and stores.
+    #
+    # **`cadr_console_bus.sv` IS IN `sources` HERE AND IN `console`'s, AND
+    # THAT IS THE SPLIT ON PURPOSE.**  It is one arbiter with three masters,
+    # and each check can only see its own: `console` reaches the console's arm
+    # and the processor's, and nothing there raises `dbg_req` at all, so the
+    # arm this slice added is aimed at from here.  A record aimed at either
+    # file is re-run against the other check that builds it, which is what
+    # `--since` and the cross-check are for.
+    #
+    # The processor and the register block are in `extra` for the reason
+    # `console` has them there: they are what the cable reaches, they are held
+    # to muir by their own checks, and a mutation of either belongs where a
+    # reference trace can see it.
+    "dbgin": {
+        "sources": ["rtl/machine/cadr_dbgin.sv",
+                    "rtl/plumbing/cadr_debug_window.sv",
+                    "rtl/machine/cadr_console_bus.sv"],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "tb/cadr_dbgin_harness.sv",
+        ],
+        "top": "cadr_dbgin_harness",
+        "tb": "tb/cadr_dbgin_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": "rtl.golden",
+        "gprom": True,
+    },
     # The readout of the machine's memories, page 0's words 10, 11 and 12 ---
     # the same harness as `console`, with a different testbench.  What is
     # aimed here is the window: the address register in `cadr_console.sv`, the

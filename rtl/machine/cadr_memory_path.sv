@@ -293,7 +293,29 @@ module cadr_memory_path (
   assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? bir_rdata : blk_rdata;
   assign ub_ssyn_by = {bir_ssyn, iob_ssyn, blk_ssyn};
 
+  // The third master's answers, folded: see the tie-off below.
+  logic        dbg_gnt_unused, dbg_ssyn_unused;
+  logic [15:0] dbg_rdata_unused;
+  logic        unused_dbg;
+  assign unused_dbg = ^{dbg_gnt_unused, dbg_ssyn_unused, dbg_rdata_unused};
+
   cadr_console_bus console_bus (
+      // --- the debug cable's master, `rtl/machine/cadr_dbgin.sv`, which is
+      // --- NOT COMPOSED HERE YET.  `rtl/machine/cadr_console_bus.sv` carries
+      // --- the third master because the arbiter must be one description of
+      // --- one thing, and `tb/cadr_dbgin_harness.sv` is where it is driven
+      // --- and held.  Tied off, the whole arm folds --- `dbg_own` is
+      // --- constant false --- exactly as `con_req` was tied off in
+      // --- `boards/arty-z7-20/cadr_arty.sv` before the console landed.
+      // --- `docs/debug-cable.md` has the patch that brings it up.
+      .dbg_req   (1'b0),
+      .dbg_gnt   (dbg_gnt_unused),
+      .dbg_msyn  (1'b0),
+      .dbg_write (1'b0),
+      .dbg_addr  (18'd0),
+      .dbg_wdata (16'd0),
+      .dbg_ssyn  (dbg_ssyn_unused),
+      .dbg_rdata (dbg_rdata_unused),
       .clk       (clk),
       .rst       (rst),
       .mclk      (mclk),
