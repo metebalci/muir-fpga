@@ -1,0 +1,56 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The serial line at boot: cadr-serial offering the far end of the CADR's
+# RS-232 cable on TCP port 7641, which `nc <board> 7641` or telnet attaches to.
+#
+# **THE PORT IS THE UNIBUS ADDRESS.**  muir gives `--serial` no default on
+# purpose, because a number it invented would be one nobody knows.  A daemon
+# has to have one, so it is taken the way the debug cable's 7661 is taken from
+# DBGOUT's Unibus address: the 2651's first register is `0o764160`
+# (sys/doc/unaddr.text), so the port is 7641.  `--port` changes it.
+#
+# S86, after S85cadr-terminal and S80cadr-disk-packs: the drive comes present
+# first, then the screen, then the line.  Nothing here depends on that order
+# --- the register face is there whether or not a pack is --- but a log that
+# reads in the wrong order gets read in the wrong order.
+#
+# **IT LISTENS ON EVERY INTERFACE AND HAS NO PASSWORD.**  Anybody who can
+# reach port 7641 on this board is the device on the CADR's null-modem cable
+# and can type at the machine.  That is deliberate and is the same decision
+# the rest of this image already makes --- root logs in with the password
+# `root` over Dropbear
+# (boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig) --- because
+# the board is on a private LAN and the line has to be reached from another
+# machine.  `--bind 127.0.0.1` is how that is changed, and then the line is
+# reached over an SSH tunnel.
+#
+# The log goes to the console, which is where the board is watched from
+# (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
+# program is told where to write instead.
+
+PORT=7641
+PIDFILE=/var/run/cadr-serial.pid
+
+start() {
+	printf "Starting cadr-serial: "
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
+		--exec /usr/bin/cadr-serial -- --port "$PORT" --log /dev/console
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+	printf "Stopping cadr-serial: "
+	start-stop-daemon -K -q -p "$PIDFILE"
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?

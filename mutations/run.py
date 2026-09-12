@@ -1605,7 +1605,20 @@ def check_makefile():
     # machinery against the same file, and this runner has no way to build a
     # C program three times over and put muir behind it.  So it is named
     # here, which is the one of CLAUDE.md's two ways that stands alone.
-    known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint"}
+    # `chaosnet` and `serial` are the Linux halves of the I/O board's other
+    # two devices, and they are closed the third way --- which is neither of
+    # CLAUDE.md's two, and is worth saying so rather than filing under one of
+    # them.  Each carries a mutation list OF ITS OWN, in its own package, run
+    # by its own `mutate.py` from its own `make check`: the same machinery
+    # cadr-terminal and cadr-disk-packs already use, and the same record
+    # format as `mutations/list.txt`.  So something does mutate them and this
+    # runner is not it, because this runner verilates SystemVerilog and those
+    # checks are C programs with a socket and a scratch directory behind them.
+    # A record aimed here would have to build a C program a second way; the
+    # package's own runner already builds each mutant in a directory of its
+    # own and calls a build failure BROKEN, which is the property that matters.
+    known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
+                           "chaosnet", "serial"}
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

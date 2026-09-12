@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_CADR_SERIAL
+	bool "cadr-serial"
+	select BR2_PACKAGE_CADR_COMMON
+	help
+	  The CADR's serial line on a TCP socket, as muir's --serial
+	  does.  The Signetics 2651 at IOBSER 0A12 is in the fabric and
+	  keeps its own time; this program is the other end of the
+	  RS-232 cable on J9.  A connection is the device plugging in,
+	  which raises DSR, DCD and CTS, and hanging up drops them.
+
+	  ONE DEVICE AT A TIME.  One thing is on the far end of a
+	  null-modem cable, so a second connection is closed as it
+	  arrives rather than shouting over the first.
+
+	  NO RATE IS CHOSEN HERE.  The rate and the character frame are
+	  whatever the machine has programmed into the 2651, and the far
+	  end of a null-modem cable has no say in either.
+
+	  It has an init script, as cadr-terminal does and unlike
+	  cadr-console: somebody attaches when they want the line, and
+	  nothing is on the bus while nobody is connected.

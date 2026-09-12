@@ -67,6 +67,8 @@ BR2_PACKAGE_CADR_READOUT=y
 BR2_PACKAGE_CADR_CHECKPOINT=y
 BR2_PACKAGE_CADR_DISK_PACKS=y
 BR2_PACKAGE_CADR_TERMINAL=y
+BR2_PACKAGE_CADR_SERIAL=y
+BR2_PACKAGE_CADR_CHAOSNET=y
 # Buildroot builds output/target/ up and never removes what a package stopped
 # installing, so a renamed package leaves its old program and its old init
 # script in the image beside the new ones.  That happened once and two disk
