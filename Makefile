@@ -20,7 +20,7 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 VFLAGS := --cc --exe --build -Wall
 
 .PHONY: check cables ps7 ps7-init current mutants mutants-selftest probe-selftest \
-        disk-golden disk-boot-golden iob-golden muir-pin clean
+        disk-golden disk-boot-golden iob-golden busint-regs-golden muir-pin clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/xbus_decode.pass $(BUILD)/ddr_map.pass \
@@ -37,7 +37,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/readout_face.pass $(BUILD)/checkpoint.pass \
-       $(BUILD)/iob.pass $(BUILD)/unibus.pass \
+       $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
 # ----------------------------------------------------------------- muir's pin
@@ -169,7 +169,8 @@ $(BUILD)/prove.pass: $(BUILD)/obj_prove/Vcadr_prove_harness
 # returns the word an earlier write put there.
 MEMPATH := rtl/plumbing/cadr_ddr_map.sv rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv \
            rtl/plumbing/cadr_xbus_ddr.sv rtl/machine/cadr_tv.sv rtl/machine/cadr_console_bus.sv \
-           rtl/machine/cadr_io_board.sv rtl/machine/cadr_memory_path.sv
+           rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
+           rtl/machine/cadr_memory_path.sv
 
 $(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_memory_path \
@@ -252,6 +253,40 @@ $(BUILD)/iob.pass: $(BUILD)/obj_iob/Vcadr_io_board $(BUILD)/iob.golden
 	$(BUILD)/obj_iob/Vcadr_io_board $(BUILD)/iob.golden
 	@touch $@
 
+# ----------------------------------- the bus interface's own Unibus registers
+
+# The interrupt block at `0o766040`-`0o766076` and the Unibus map at
+# `0o766140`-`0o766176`, against muir's own `busint::register` and
+# `Machine::interface_read` and `interface_write`.  `golden/src/busint_regs.rs`
+# is a scripted program for `iob.rs`'s reason: MIT's boot PROM reaches this
+# block once in 600,000 microcycles and that once is the mode register in the
+# DIAGNOSTIC group, which is `cadr_spy_registers.sv`; a System 100 band
+# reaches `0o766040` 240 times and neither `0o766044` nor any map register at
+# all, and the band trace runs against `Vcadr_microcycle`, where the memory
+# path is stimulus.
+#
+# `rtl/machine/cadr_busint_regs.sv` says what each register is and what is
+# deliberately not built --- the map's read and write buffers, `UB MAP ERROR`
+# and the debug block, all three of which have the debug cable as their one
+# master.
+#
+# The run is a few seconds: 251 rows replayed with two face reads each, and
+# then a real bus cycle at every one of the 524,288 addresses and directions
+# an eighteen-bit `ub_addr` can carry.
+.PHONY: busint-regs-golden
+busint-regs-golden: $(BUILD)/busint_regs.golden
+
+$(BUILD)/busint_regs.golden: golden/src/busint_regs.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin busint_regs > $@
+
+$(BUILD)/obj_busint_regs/Vcadr_busint_regs: rtl/machine/cadr_busint_regs.sv tb/cadr_busint_regs_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_busint_regs \
+	    --top-module cadr_busint_regs rtl/machine/cadr_busint_regs.sv $(abspath tb/cadr_busint_regs_tb.cpp)
+
+$(BUILD)/busint_regs.pass: $(BUILD)/obj_busint_regs/Vcadr_busint_regs $(BUILD)/busint_regs.golden
+	$(BUILD)/obj_busint_regs/Vcadr_busint_regs $(BUILD)/busint_regs.golden
+	@touch $@
+
 # ------------------------------------------- the Unibus, with both its slaves
 
 # Slice three: the card under the machine.  `iob.pass` above holds the card at
@@ -280,8 +315,9 @@ $(BUILD)/obj_unibus/Vcadr_memory_path: $(MEMPATH) tb/cadr_unibus_tb.cpp | $(BUIL
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_unibus \
 	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_unibus_tb.cpp)
 
-$(BUILD)/unibus.pass: $(BUILD)/obj_unibus/Vcadr_memory_path $(BUILD)/iob.golden
-	$(BUILD)/obj_unibus/Vcadr_memory_path $(BUILD)/iob.golden
+$(BUILD)/unibus.pass: $(BUILD)/obj_unibus/Vcadr_memory_path $(BUILD)/iob.golden \
+                      $(BUILD)/busint_regs.golden
+	$(BUILD)/obj_unibus/Vcadr_memory_path $(BUILD)/iob.golden $(BUILD)/busint_regs.golden
 	@touch $@
 
 # ------------------------------------------------------------------ DDR map
@@ -356,7 +392,7 @@ $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
 MACHINE := rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plumbing/cadr_ddr_map.sv \
            rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv rtl/plumbing/cadr_xbus_ddr.sv \
            rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_disk_controller.sv rtl/machine/cadr_tv.sv \
-           rtl/machine/cadr_io_board.sv \
+           rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
            rtl/machine/cadr_console_bus.sv rtl/machine/cadr_console_state.sv \
            rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
 
@@ -786,7 +822,7 @@ MUTREV ?= HEAD
 mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
          $(BUILD)/disk.golden $(BUILD)/disk_boot.golden $(BUILD)/tv.golden \
-         $(BUILD)/iob.golden \
+         $(BUILD)/iob.golden $(BUILD)/busint_regs.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \

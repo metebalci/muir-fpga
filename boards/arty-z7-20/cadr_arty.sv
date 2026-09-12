@@ -319,13 +319,15 @@ module cadr_arty #(
   assign ser_ready   = 1'b0;
   assign chaos_intr  = 1'b0;
   // What the card gives back.  Nothing on this board reads any of it: the
-  // speaker has no pin, the 2651 is not fitted, and there is no Unibus
-  // interrupt cycle to take `iob_intr` --- `cadr_memory_path.sv` says at the
-  // instance why that request is not joined into `-XBUS.INTR` instead.  They
-  // fold into `witness` with every other output of the machine.
+  // speaker has no pin, the 2651 is not fitted, and `iob_intr` and
+  // `iob_vector` leave the machine as observations, the request itself going
+  // to `cadr_busint_regs.sv` INSIDE the machine, where `ENABLE UB INTS`
+  // decides whether the interface takes it.  They fold into `witness` with
+  // every other output of the machine.
   // Which slave is pulling `-UB SSYN`: bit 0 the register block, bit 1 the
-  // card.  An observation output, folded like the rest.
-  logic [1:0]  ub_ssyn_by;
+  // card, bit 2 the bus interface's own registers.  An observation output,
+  // folded like the rest.
+  logic [2:0]  ub_ssyn_by;
   logic        ser_reset, iob_intr, audio, clock_ready;
   logic [7:0]  iob_vector, csr_face;
   logic [11:0] mouse_x, mouse_y;

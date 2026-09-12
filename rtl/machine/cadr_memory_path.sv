@@ -59,10 +59,12 @@
 // channel's address goes through a decode of its own into a register, and
 // what reaches the bridge's `sel` is a mux on two registered bits.
 //
-// **AND THE UNIBUS HAS TWO SLAVES ON IT NOW.**  `cadr_spy_registers.sv` is
-// the diagnostic register block at `0o766000` and `cadr_io_board.sv` is the
-// I/O board at `0o764100`-`0o764126`: the keyboard, the mouse, the two clocks
-// and the status register they share.  Both hang off the seam
+// **AND THE UNIBUS HAS THREE SLAVES ON IT NOW.**  `cadr_spy_registers.sv` is
+// the diagnostic register block at `0o766000`, `cadr_io_board.sv` is the I/O
+// board at `0o764100`-`0o764126` --- the keyboard, the mouse, the two clocks
+// and the status register they share --- and `cadr_busint_regs.sv` is the bus
+// interface's own two groups, the interrupt block at `0o766040`-`0o766076`
+// and the Unibus map at `0o766140`-`0o766176`.  All three hang off the seam
 // `cadr_console_bus.sv` presents, `-UB SSYN` is the OR of theirs as the
 // open-collector line on the backplane is, and the word is a mux on which of
 // them answered.
@@ -127,6 +129,19 @@ module cadr_memory_path (
     // The display's `SEND INTR`, onto -XBUS.INTR: see the instance below.
     output var logic        tv_intr,
 
+    // `XBUS INTR IN`, the backplane's one interrupt line as it arrives at the
+    // bus interface: the disk controller's request ORed with the display's.
+    // The display's is made here and the disk's in `cadr_machine.sv`, so the
+    // OR is made there and comes back in --- which is what the backplane is.
+    // `rtl/machine/cadr_busint_regs.sv` reads it in bit 14 of the interrupt
+    // status register and does not store it.
+    input  var logic        xbus_intr,
+    // `UB INT`: the Unibus interrupt the interface has taken, or one
+    // simulated by writing the bit.  `cadr_machine.sv` ORs it with the line
+    // above into `SINTR`, as `LM INT` is `UB INT OR XBUS INTR IN` at
+    // UBINTC 0E04.
+    output var logic        ub_int,
+
     // The disk controller's memory channel, the second master on this bus.
     // One word a cycle, the request standing until `ch_done`; `ch_nxm` says
     // main memory does not answer for that address.
@@ -150,13 +165,13 @@ module cadr_memory_path (
     output var logic [17:0] ub_addr_o,
     output var logic [15:0] ub_rdata_o,
     // **WHICH SLAVE IS PULLING `-UB SSYN`**: bit 0 the diagnostic register
-    // block, bit 1 the I/O board.  `ub_ssyn_o` is the line itself, which is
-    // the OR of these and cannot tell them apart --- and "at most one of them
-    // answers any address" is the whole claim the composition makes, so it is
-    // measured here rather than inferred from the word that came back.  Two
-    // slaves answering one cycle would show as `2'b11` and show as nothing at
-    // all on the line.
-    output var logic [1:0]  ub_ssyn_by,
+    // block, bit 1 the I/O board, bit 2 the bus interface's own registers.
+    // `ub_ssyn_o` is the line itself, which is the OR of these and cannot tell
+    // them apart --- and "at most one of them answers any address" is the
+    // whole claim the composition makes, so it is measured here rather than
+    // inferred from the word that came back.  Two slaves answering one cycle
+    // would show as two bits up and show as nothing at all on the line.
+    output var logic [2:0]  ub_ssyn_by,
 
     // --- THE I/O BOARD'S OWN CABLES, which cross this boundary and every one
     // above it until something drives them.
@@ -272,11 +287,11 @@ module cadr_memory_path (
   // slave is answering.  The mux is on `iob_ssyn` and not on the card's own
   // select, so a card that answers nothing shows nothing, which is the rule
   // the DDR bridge broke by holding its word past its cycle.
-  logic        blk_ssyn, iob_ssyn;
-  logic [15:0] blk_rdata, iob_rdata;
-  assign sr_ssyn    = blk_ssyn || iob_ssyn;
-  assign ub_rdata   = iob_ssyn ? iob_rdata : blk_rdata;
-  assign ub_ssyn_by = {iob_ssyn, blk_ssyn};
+  logic        blk_ssyn, iob_ssyn, bir_ssyn;
+  logic [15:0] blk_rdata, iob_rdata, bir_rdata;
+  assign sr_ssyn    = blk_ssyn || iob_ssyn || bir_ssyn;
+  assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? bir_rdata : blk_rdata;
+  assign ub_ssyn_by = {bir_ssyn, iob_ssyn, blk_ssyn};
 
   cadr_console_bus console_bus (
       .clk       (clk),
@@ -533,13 +548,14 @@ module cadr_memory_path (
   //
   // **`-UB INIT` IS TIED TO THE POWER-ON RESET.**  It clears the 74LS175's
   // four interrupt enables and the 74LS74's serial enable and reaches nothing
-  // else.  Nothing in this fabric pulls it: the bus interface's own registers
-  // at `0o766040`-`0o766076`, which are where a program would, are not built
-  // --- `cadr_spy_registers.sv` answers `0o766000`-`0o766036` and no more ---
-  // and there is no console button on the line.  So the one thing that
-  // asserts it here is `rst`, which is `xbus_init`'s argument one bus along.
-  // It is tied rather than made a port because a port carrying nothing but
-  // `rst` at every level up to the top level says less than this comment.
+  // else.  Nothing in this fabric pulls it: MIT's own source is
+  // `-LM UNIBUS RESET`, which is the console's reset and the debug cable's
+  // `-DEBUGEE RESET`, and neither is built --- the bus interface's own
+  // registers below answer `0o766040`-`0o766076` but none of their bits
+  // reaches this line.  So the one thing that asserts it here is `rst`, which
+  // is `xbus_init`'s argument one bus along.  It is tied rather than made a
+  // port because a port carrying nothing but `rst` at every level up to the
+  // top level says less than this comment.
   cadr_io_board iob (
       .clk        (clk),
       .rst        (rst),
@@ -556,20 +572,16 @@ module cadr_memory_path (
       .ser_ready  (ser_ready),
       .ser_reset  (ser_reset),
       .chaos_intr (chaos_intr),
-      // **THE REQUEST GOES OUT AND IS NOT ORed INTO `-XBUS.INTR`, AND THAT IS
-      // A DECISION RATHER THAN AN OMISSION.**  `LM INT` is `UB INT OR XBUS
-      // INTR IN` at UBINTC 0E04, so on the board the card's interrupt does
-      // reach the processor --- but not as a level.  muir's
-      // `Machine::unibus_interrupt` takes it only while `ENABLE UB INTS` is
-      // set, which is bit 10 of the bus interface's own interrupt control
-      // register at Unibus `0o766040`, and that register is one of the ones
-      // this fabric does not have.  Joining the request straight into
-      // `sintr_o` would therefore raise the processor's interrupt where muir
-      // raises it only under a bit no program here can set, which is a
-      // divergence and not a wire.  So it leaves as an observation output,
-      // the top level folds it, and what closes it is `0o766040` --- the
-      // register, `ENABLE UB INTS`, `UB INT` and the vector field a handler
-      // reads back --- and not a gate.
+      // **THE REQUEST GOES TO THE BUS INTERFACE AND NOT STRAIGHT TO THE
+      // PROCESSOR**, which is what `0o766040` closed.  `LM INT` is `UB INT
+      // OR XBUS INTR IN` at UBINTC 0E04, and muir's
+      // `Machine::unibus_interrupt` takes a device's request only while
+      // `ENABLE UB INTS` is set --- bit 10 of the interrupt control register.
+      // That register had nowhere to live until `cadr_busint_regs.sv`, so
+      // this pair used to leave the machine as observation outputs with a
+      // note saying a gate here would raise an interrupt muir raises only
+      // under a bit no program could set.  They go to that module now, and
+      // out of the machine as well, where the top level still folds them.
       .intr_request(iob_intr),
       .intr_vector (iob_vector),
       .audio      (audio),
@@ -578,6 +590,43 @@ module cadr_memory_path (
       .mouse_y    (mouse_y),
       .clock_ready(clock_ready),
       .interval   (interval)
+  );
+
+  // --- the bus interface's own registers, the third Unibus slave ----------
+  //
+  // The interrupt block at `0o766040`-`0o766076` and the Unibus map at
+  // `0o766140`-`0o766176`: `Responder::Interface` in muir, as the diagnostic
+  // block is, and `rtl/machine/cadr_busint_regs.sv` says which pages of the
+  // drawings each is and what is deliberately not built.  `build/
+  // busint_regs.pass` holds it to `busint::register` and
+  // `Machine::interface_read` at its own seam and sweeps the decode over all
+  // 262,144 addresses; what is new HERE is that a cycle of the machine's own
+  // reaches it and that the three slaves never answer one address.
+  //
+  // **THE ERROR STATUS REGISTER IS WIRED TO THIS MODULE'S OWN TIMEOUT.**
+  // `timed_out` is `NXM TIMEOUT` as `cadr_busint_xbus.sv` gives it, a level
+  // standing for the cycle it belongs to, and `unibus` is the held decode
+  // beside it: together they say which of the register's two NXM bits a
+  // cycle nothing answered sets.  muir sets the bit at the decode, where it
+  // can see there is no responder; the board sets it when the timer runs
+  // out, and the two agree because a cycle nothing answers always runs the
+  // timer out --- the same shape as the timeout race `cadr_busint_xbus.sv`
+  // already records.
+  cadr_busint_regs busint_regs (
+      .clk       (clk),
+      .rst       (rst),
+      .ub_msyn   (sr_msyn),
+      .ub_write  (sr_write),
+      .ub_addr   (sr_addr),
+      .ub_wdata  (sr_wdata),
+      .ub_ssyn   (bir_ssyn),
+      .ub_rdata  (bir_rdata),
+      .xbus_intr (xbus_intr),
+      .iob_intr  (iob_intr),
+      .iob_vector(iob_vector),
+      .timed_out (timed_out),
+      .unibus    (unibus),
+      .ub_int    (ub_int)
   );
 
   cadr_xbus_ddr main_memory (

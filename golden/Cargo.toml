@@ -55,3 +55,7 @@ path = "src/tv.rs"
 [[bin]]
 name = "iob"
 path = "src/iob.rs"
+
+[[bin]]
+name = "busint_regs"
+path = "src/busint_regs.rs"
