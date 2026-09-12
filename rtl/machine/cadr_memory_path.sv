@@ -238,8 +238,19 @@ module cadr_memory_path (
     input  var logic        ser_tx_done,
     input  var logic        ser_rx_strobe,
     input  var logic [7:0]  ser_rx_data,
+    // The received frame's own end, and the two errors only a far end
+    // counting bits can see.  `cadr_io_board.sv`'s header says what each is
+    // for: `ser_rx_end` is what lets the card place the echo auto echo and
+    // remote loop back owe the line, and the two flags are `SR3` and `SR5`.
+    input  var logic        ser_rx_end,
+    input  var logic        ser_rx_parity,
+    input  var logic        ser_rx_framing,
     input  var logic        ser_plugged,
     output var logic [7:0]  ser_status,
+    // The 2651's SYN1, SYN2 and DLE registers and their pointer, out for the
+    // check: nothing reads them back, so without a reader synthesis trims
+    // them and the fabric would not have the registers at all.
+    output var logic [25:0] ser_syn_face,
     input  var logic [15:0] chaos_address,
     output var logic        chaos_tx_go,
     output var logic [8:0]  chaos_tx_len,
@@ -669,8 +680,12 @@ module cadr_memory_path (
       .ser_tx_done(ser_tx_done),
       .ser_rx_strobe(ser_rx_strobe),
       .ser_rx_data(ser_rx_data),
+      .ser_rx_end (ser_rx_end),
+      .ser_rx_parity(ser_rx_parity),
+      .ser_rx_framing(ser_rx_framing),
       .ser_plugged(ser_plugged),
       .ser_status (ser_status),
+      .ser_syn_face(ser_syn_face),
       .chaos_address(chaos_address),
       .chaos_tx_go(chaos_tx_go),
       .chaos_tx_len(chaos_tx_len),

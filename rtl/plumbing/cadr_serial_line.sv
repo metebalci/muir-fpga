@@ -183,11 +183,38 @@ module cadr_serial_line #(
     output var logic        ser_tx_done,   // one tick: its frame ends
     output var logic        ser_rx_strobe, // one tick: a character reaches the receive path
     output var logic [7:0]  ser_rx_data,
+    // **THE SAME TICK, ON THIS SIDE OF THE SEAM.**  The card wants two
+    // instants of the receiver's, because `muir::serial::Pci::rx_times`
+    // gives two --- the middle of the stop bit, where the character is in
+    // the holding register, and the end of the frame, where the echoing
+    // modes put the echoed character on the cable.  This module already
+    // waits the WHOLE frame before `ser_rx_strobe`, which its header calls
+    // out as coarser than muir by under one bit time, so the two instants
+    // coincide here and this is that one tick again.  A line that placed
+    // the strobe at the stop bit's middle would delay this by the rest of
+    // the frame and nothing else would change.
+    output var logic        ser_rx_end,
+    // `SR3` and `SR5`: a parity bit that did not agree and a stop bit that
+    // was low.  **HELD LOW, AND THE REASON IS THE FACE AND NOT THIS
+    // MODULE.**  Both are properties of the frame's BITS, and what is on
+    // the other end of this seam is a TCP socket carrying bytes: neither
+    // this module nor `cadr-serial` has a bit to look at, so neither has
+    // anything to report.  The card has the flags all the same, because the
+    // 2651 has them.  What would make them live is one bit pair in the
+    // character-in word of `serial_face.h` --- there is room in it --- and
+    // passing them through here; nothing else on either side changes.
+    output var logic        ser_rx_parity,
+    output var logic        ser_rx_framing,
     output var logic        ser_plugged,   // `-DSR`, `-DCD` and `-CTS` together
 
     // --- to the processing system's `IRQ_F2P` -----------------------------
     output var logic        irq
 );
+
+  // The two error flags, held low: the note at the port says why, and it is
+  // about what is on the far end of the socket and not about this module.
+  assign ser_rx_parity  = 1'b0;
+  assign ser_rx_framing = 1'b0;
 
   // ------------------------------------------------------------------------
   // The crystal at IOBSER 0A15, `muir::serial::BRCLK_HZ`, and Table 1's
@@ -386,6 +413,7 @@ module cadr_serial_line #(
       ser_tx_take   <= 1'b0;
       ser_tx_done   <= 1'b0;
       ser_rx_strobe <= 1'b0;
+      ser_rx_end    <= 1'b0;
     end else begin
       // Every edge on the seam is one tick: the card samples each of them
       // level-high every tick with no gate of its own, so a level held two
@@ -395,6 +423,7 @@ module cadr_serial_line #(
       ser_tx_take   <= 1'b0;
       ser_tx_done   <= 1'b0;
       ser_rx_strobe <= 1'b0;
+      ser_rx_end    <= 1'b0;
 
       // --- the crystal and the 16X clock
       if (!gen_on) begin
@@ -454,6 +483,7 @@ module cadr_serial_line #(
         end else if (x16) begin
           if (in_left == 9'd1) begin
             ser_rx_strobe <= 1'b1;
+            ser_rx_end    <= 1'b1;
             in_busy       <= 1'b0;
           end else begin
             in_left <= in_left - 9'd1;

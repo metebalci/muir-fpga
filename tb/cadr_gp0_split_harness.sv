@@ -255,6 +255,8 @@ module cadr_gp0_split_harness (
   // ------------------------------------------------ the serial line, page 2
   logic        ser_reset, ser_tx_strobe, ser_tx_take, ser_tx_done;
   logic        ser_rx_strobe, ser_plugged;
+  logic        ser_rx_end, ser_rx_parity, ser_rx_framing;
+  logic [25:0] ser_syn_face;
   logic [7:0]  ser_mode1, ser_mode2, ser_cmd, ser_status;
   logic [7:0]  ser_tx_data, ser_rx_data;
 
@@ -274,6 +276,8 @@ module cadr_gp0_split_harness (
       .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
       .ser_tx_take(ser_tx_take), .ser_tx_done(ser_tx_done),
       .ser_rx_strobe(ser_rx_strobe), .ser_rx_data(ser_rx_data),
+      .ser_rx_end(ser_rx_end), .ser_rx_parity(ser_rx_parity),
+      .ser_rx_framing(ser_rx_framing),
       .ser_plugged(ser_plugged),
       .irq(ser_irq)
   );
@@ -308,8 +312,10 @@ module cadr_gp0_split_harness (
       .ser_cmd(ser_cmd), .ser_tx_strobe(ser_tx_strobe),
       .ser_tx_data(ser_tx_data), .ser_tx_take(ser_tx_take),
       .ser_tx_done(ser_tx_done), .ser_rx_strobe(ser_rx_strobe),
-      .ser_rx_data(ser_rx_data), .ser_plugged(ser_plugged),
-      .ser_status(ser_status),
+      .ser_rx_data(ser_rx_data), .ser_rx_end(ser_rx_end),
+      .ser_rx_parity(ser_rx_parity), .ser_rx_framing(ser_rx_framing),
+      .ser_plugged(ser_plugged),
+      .ser_status(ser_status), .ser_syn_face(ser_syn_face),
       .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go),
       .chaos_tx_len(chaos_tx_len), .chaos_tx_valid(chaos_tx_valid),
       .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
@@ -336,7 +342,8 @@ module cadr_gp0_split_harness (
                       pk_store_we, pk_store_slot, pk_store_addr,
                       pk_store_wdata, pk_moving, pk_moving_slot, pk_deny,
                       pk_irq, pk_present, pk_read_only, pk_timed,
-                      chaos_bits, iob_vector, iob_csr_face, iob_mouse_x,
+                      chaos_bits, ser_syn_face,
+                      iob_vector, iob_csr_face, iob_mouse_x,
                       iob_mouse_y, iob_interval, iob_intr, iob_audio,
                       iob_clock_ready};
 
