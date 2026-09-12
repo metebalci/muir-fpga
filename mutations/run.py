@@ -479,6 +479,45 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # A PACK BLOCK INTO MAIN MEMORY THROUGH THE ADAPTER AND THE WIDENING.
+    # `bus_audit` above is MIT's boot PROM with no drive on the cable --- 512
+    # identity memory cycles and no channel at all, its own testbench asserting
+    # that the disk channel never took the bus.  This is the same three modules
+    # with a DRIVE on the cable and a synthetic pack behind the block store's
+    # seam, so the second Xbus master crosses the widening 256 words a page and
+    # the machine reads back through it what the channel wrote.
+    #
+    # The pack is generated a block at a time and its words are poison
+    # injective in the disk address AND DECODABLE, so a page of main memory is
+    # read back and decoded rather than compared against a shadow.  Nothing is
+    # copied into the mutant's work directory: there is no file.
+    "axi_channel": {
+        # THE ORDER IS THE MAKEFILE'S, because `cadr_ddr_map` is a package and
+        # `cadr_xbus_ddr` reads it: verilated out of order it is PKGNODECL.
+        "sources": [
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
+            "rtl/machine/cadr_memory_path.sv",
+        ],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_disk_controller.sv",
+            "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_machine.sv",
+            "tb/cadr_band_axi_harness.sv",
+        ],
+        "top": "cadr_band_axi_harness",
+        "tb": "tb/cadr_axi_channel_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
     # THE SAME PROPERTY IN FABRIC, and the same name for it on purpose: the
     # check above holds it for the one program `cadr_machine` can run under
     # Verilator, and `rtl/plumbing/cadr_bus_audit.sv` carries it onto the board
