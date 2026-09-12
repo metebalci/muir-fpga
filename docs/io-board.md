@@ -22,7 +22,9 @@ actually ask of it, the decisions, what the check will hold to and cannot, and
 what is deliberately not built.
 
 **Slice one is the reference and the model. Slice two is the card. Slice
-three puts the card under the machine.**
+three puts the card under the machine. Slice four is the bus interface's own
+Unibus registers, which is what let the card's interrupt reach the
+processor.**
 `golden/src/iob.rs` writes `build/iob.golden`, and `make iob-golden` makes it.
 A throwaway Python model was run against it until the two agreed row for row.
 What that model found is near the end, because it is the part of slice one
@@ -31,7 +33,12 @@ worth reading before anything else. `rtl/machine/cadr_io_board.sv` and
 check. What it holds to and what it cannot is the last section but one.
 Slice three is the composition under `rtl/machine/cadr_memory_path.sv` and
 `make build/unibus.pass` is its check; the section "What slice three built"
-is near the end.
+is near the end. Slice four is `golden/src/busint_regs.rs`,
+`rtl/machine/cadr_busint_regs.sv` and `tb/cadr_busint_regs_tb.cpp`, with
+`make build/busint_regs.pass` as its check: the interrupt block at
+`0o766040`--`0o766076` and the Unibus map at `0o766140`--`0o766176`. Those
+thirty-two addresses used to time out where muir answers, and the section
+"The third slave, and what the sweep used to show" says what changed.
 
 ## What muir says the card is
 
@@ -701,29 +708,63 @@ The mouse's counting is not exercised here and is not meant to be. The lines
 are held still, so the two counters stay where reset left them and the two
 mouse registers carry the switch and quadrature lines the testbench drove.
 
-### What the sweep shows that is not a fault
+### The third slave, and what the sweep used to show
 
 muir's `busint::register` answers `0o766040`--`0o766076`, the bus interface's
 own interrupt control and error status registers, and `0o766140`--`0o766176`,
-the Unibus map. This fabric builds none of them. `cadr_spy_registers.sv`
-answers `0o766000`--`0o766036` and no more, so those thirty-two addresses time
-out here where muir would answer. The run prints the count rather than hiding
-it.
+the Unibus map. This fabric built none of them until
+`rtl/machine/cadr_busint_regs.sv`, so those thirty-two word addresses timed out
+here where muir answers, and the run printed the count. They are answered now.
 
-### The interrupt request goes out and is not joined into `-XBUS.INTR`
+`build/busint_regs.pass` holds that module to muir at its own seam and sweeps
+`busint::register` over all 262,144 addresses. `build/unibus.pass` holds the
+composition: three slaves on one bus, `-UB SSYN` the OR of theirs, the word a
+mux on which answered, and never two at once.
 
-This is a decision rather than an omission, and the reason is precise. `LM INT`
-is `UB INT OR XBUS INTR IN` at UBINTC 0E04, so on the board the card's
+The decode for all three now comes out of muir as well. This check used to
+carry `cadr_spy_registers.sv`'s base as two constants of its own, so the one
+block whose address set was nobody's reference was the one the machine cannot
+start without. `busint_regs.golden` carries `busint::register` over the same
+eighteen bits, the diagnostic block included, and it is the second trace the
+check is handed.
+
+**`0o766040` is also the first of the two defects behind the interrupt
+storm.** Microcode 323's handler reads it four instructions in and branches on
+bit 1, `LOCAL ENABLE`, which is a jumper pulled up on the board. MIT's own
+comment on the branch is "jump on no local-enable, ie, PDP11 arbritrating
+UNIBUS". Unanswered, that read gave MD zero and the bit read clear, so the
+handler took the path written for a machine that does not arbitrate its own
+Unibus. That path falls through `INNL0` and `INND0` to `XB-INTR-RET` and never
+reaches `INTRX0`, which is the only code that clears an Xbus level. Answered,
+the bit reads set and the handler takes the branch MIT wrote for this machine.
+
+### The interrupt request reaches the processor, and what took so long
+
+`LM INT` is `UB INT OR XBUS INTR IN` at UBINTC 0E04, so on the board the card's
 interrupt does reach the processor. But muir's `Machine::unibus_interrupt`
 takes it only while `ENABLE UB INTS` is set, and that is bit 10 of the bus
 interface's own interrupt control register at Unibus `0o766040`. That register
-is one of the ones this fabric does not have.
+did not exist here.
 
-Joining the request straight into `sintr_o` would therefore raise the
-processor's interrupt where muir raises it only under a bit no program here can
-set. What closes this is `0o766040` itself: the register, `ENABLE UB INTS`,
-`UB INT` and the vector field a handler reads back. Until then `iob_intr` and
-`iob_vector` are observation outputs and the top level folds them.
+Joining the request straight into `sintr_o` would therefore have raised the
+processor's interrupt where muir raises it only under a bit no program could
+set. So the request left the machine as an observation output and the top level
+folded it, and the note said what would close it: `0o766040` itself, the
+register, `ENABLE UB INTS`, `UB INT` and the vector field a handler reads back.
+
+That is what closed it. `cadr_busint_regs.sv` takes the card's `intr_request`
+and `intr_vector`, `Machine::unibus_interrupt` is its `ub_int` output, and
+`cadr_machine.sv` makes `sintr_o` the OR of that with the Xbus line.
+`iob_intr` and `iob_vector` still leave the machine, where the top level goes
+on folding them.
+
+**The wire between the two modules is visible to one check alone.**
+`build/iob.pass` compares the card's request where it is an output;
+`build/busint_regs.pass` drives it where it is an input; only in
+`build/unibus.pass` are they the same wire, so only there can a crossed or
+dropped connection show. That is CLAUDE.md's worst case written out --- a
+crossing that leaves every signal read is caught by nothing, anywhere, by any
+tool --- and two records are aimed at it.
 
 ### What the card costs the board
 
@@ -807,12 +848,26 @@ rather than in the arbiter.
   the order of work. The kernel side is done, and `evtest` printed Mete's name
   off a USB keyboard on the board on 10 Sep.
 - **The Unibus interrupt cycle.** Nothing in `rtl/` puts a vector on the bus
-  or arbitrates `BR5`, and the bus interface's own interrupt control register
-  at `0o766040` does not exist either. The card's request leaves the machine as
-  an observation output and is not joined into `-XBUS.INTR`; the section above
-  says why that is a decision.
-- **The Unibus map and the bus interface's own registers.**
-  `0o766040`--`0o766076` and `0o766140`--`0o766176` are `Responder::Interface`
-  in muir and are answered by nothing here. `build/unibus.pass` counts them.
+  or arbitrates `BR5`. The interrupt itself is built: the card's request
+  reaches the bus interface's own register at `0o766040`, is taken under
+  `ENABLE UB INTS`, and joins `-XBUS.INTR` into `SINTR`. What is missing is
+  the grant cycle the vector would arrive on, so the vector comes to the
+  register on a wire. muir does the same and says why: "The model has no grant
+  cycle to latch at, so the vector is read off the requesting board at the
+  time of the read."
+- **The mapped Unibus window, the map's read and write buffers, and
+  `UB MAP ERROR`.** The sixteen map registers store and read back. What walks
+  them is the debug cable's master, `Machine::mapped_read` and
+  `mapped_write`, and the processor's own Unibus cycles are not mapped. So no
+  slave answers `0o140000`--`0o177777`, the 29701s at RBUF and WBUF that make
+  a word out of two Unibus cycles are not here, and neither is the error bit
+  only a mapped cycle can set. That is the half of CC's route to main memory
+  that is still missing, and `docs/console.md` says what it costs.
+- **The debug block at `0o766100`--`0o766136`.** It is a cycle on the other
+  machine's Unibus, answered over the cable. `busint::register` decodes it to
+  nothing and so does this fabric; in the composed machine those four
+  addresses therefore time out, where muir's `Responder::Debug` with no cable
+  answers at `-UB MSYN` off the pull-up. That is a divergence of the cable's
+  absence and goes when the cable's side is built.
 - **`-BOOT*`.** The keyboard's boot key runs to the processor board past the
   bus interface and nothing presses it, in muir or here.

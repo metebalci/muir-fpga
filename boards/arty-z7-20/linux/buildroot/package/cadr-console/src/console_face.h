@@ -368,16 +368,25 @@ void cons_say_flag2(uint16_t w);
 // --- main memory, which does NOT come through the machine -----------------
 //
 // **CC REACHES MAIN MEMORY THROUGH THE DEBUGGEE'S UNIBUS MAP AND THIS FABRIC
-// HAS NO UNIBUS MAP.**  muir's route is `DBG-SETUP-UNIBUS-MAP`: a map
-// register at `0o766140`-`0o766176` loaded with the Xbus page, then the word
-// read or written half at a time through the mapped window at
-// `0o140000`-`0o177777`, low half then high (../muir/src/lashup.rs:262-284,
-// ../muir/src/machine.rs:518-580, ../muir/tests/lashup.rs:712-769).  On the
-// board `rtl/machine/cadr_memory_path.sv` answers only `0o766xxx` on its Unibus ---
-// its `unused_page` fold says exactly that --- and the only thing behind it
-// is `cadr_spy_registers.sv`, which decodes `0o766000`-`0o766036`.  So both
-// halves of CC's route are absent: the map registers are not there and the
-// window is not there.
+// HAS HALF OF ONE.**  muir's route is `DBG-SETUP-UNIBUS-MAP`: a map register
+// at `0o766140`-`0o766176` loaded with the Xbus page, then the word read or
+// written half at a time through the mapped window at `0o140000`-`0o177777`,
+// low half then high (../muir/src/lashup.rs:262-284,
+// ../muir/src/machine.rs:518-580, ../muir/tests/lashup.rs:712-769).
+//
+// **The registers are there now** --- `rtl/machine/cadr_busint_regs.sv`
+// answers `0o766140`-`0o766176` and the sixteen store and read back --- and
+// **the window is not**.  Nothing on this Unibus answers
+// `0o140000`-`0o177777`, and the 29701s at RBUF and WBUF that make a mapped
+// cycle out of two Unibus words are not built either, because their one
+// master is the debug cable's and that cable has no side here.  So the
+// register half of CC's route exists and the cycle half does not, which is
+// still not a route.
+//
+// **This paragraph said BOTH halves were absent and was made wrong by
+// somebody else's correct change**, which is exactly the rot CLAUDE.md
+// records: the `@old` of a mutation rots loudly and prose rots silently.  It
+// is cited to the commit that fixed it rather than left to read as true.
 //
 // The other route, CC's `CC-EXECUTE-R`, loads a microinstruction into the
 // debug IR and clocks it --- and clocking it is `SSTEP`, the same two hunks

@@ -190,7 +190,7 @@ module cadr_probe_harness #(
   logic [7:0]  iob_vector, csr_face;
   logic [11:0] mouse_x, mouse_y;
   logic [15:0] interval;
-  logic [1:0]  ub_ssyn_by;
+  logic [2:0]  ub_ssyn_by;
   logic        con_gnt, con_ssyn;
   logic [15:0] con_rdata;
   // Page 0's words 7 and 8, which no console on this harness reads: folded

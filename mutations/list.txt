@@ -4341,15 +4341,28 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note taken at the microcycle boundary for a reader outside the machine's
 @note constraints.  The slice that moved it re-ran this record rather than
 @note only its own, which is the rule the third note above already states.
+@note
+@note **AND A FIFTH TIME, and this one was found UNAPPLIED AT HEAD rather
+@note than by the slice that broke it.**  `con_ro_data` and `con_ro_echo`
+@note joined the fold with the readout window and this record was not re-run,
+@note so `make mutants` had a dead record in it for however long that stood.
+@note Found by the slice that built `cadr_busint_regs.sv`, which validated
+@note every record's `@old` against the tree before writing its own and got
+@note this one for nothing.  The rule three notes up is the one that would
+@note have caught it at the time; what caught it here is running the whole
+@note list rather than `--only` the slice's own, which is the same rule from
+@note the other side.  The sixth move is this slice's own: `ub_ssyn_by`
+@note widened to three bits when the bus interface's registers became the
+@note third Unibus slave, which does not touch the anchor's text.
 @old
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
-                   con_vma, con_q, con_md,
+                   con_vma, con_q, con_md, con_ro_data, con_ro_echo,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
 @new
                    ch_wrote, con_gnt, con_ssyn, con_rdata,
-                   con_vma, con_q, con_md,
+                   con_vma, con_q, con_md, con_ro_data, con_ro_echo,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
@@ -6110,10 +6123,16 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note it says reaches the processor --- the thing the board found missing on
 @note 2026-09-10.  Caught on microcycle 0, `-XBUS.INTR is 1, reference says
 @note 0`.  Measured.
+@note
+@note **The anchor moved when the Unibus half of `LM INT` landed.**  This
+@note line was `sintr_o` until `cadr_busint_regs.sv` gave `UB INT` a register
+@note to live in; it is the Xbus half of the gate now and `sintr_o` is that
+@note ORed with the Unibus half one line below.  The mutation is the same one
+@note and is caught in the same place.
 @old
-  assign sintr_o = disk_intr || tv_intr;
+  assign xbus_intr = disk_intr || tv_intr;
 @new
-  assign sintr_o = !disk_intr || tv_intr;
+  assign xbus_intr = !disk_intr || tv_intr;
 @end
 
 @mutation the-display-half-of-the-interrupt-gate-inverted
@@ -6125,10 +6144,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note wire is one level up.  This is the record for that half, and it is
 @note inverted for the same reason as the one above.  Caught on microcycle 0,
 @note `-XBUS.INTR is 1, reference says 0`.  Measured.
+@note
+@note The anchor moved with the record above and for the same reason.
 @old
-  assign sintr_o = disk_intr || tv_intr;
+  assign xbus_intr = disk_intr || tv_intr;
 @new
-  assign sintr_o = disk_intr || !tv_intr;
+  assign xbus_intr = disk_intr || !tv_intr;
 @end
 
 # ---------------------------------------------------------------------------
@@ -6644,10 +6665,15 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note block read that does not are both named at the word.
 @note
 @note Both signals stay read, so lint does no catching here.
+@note
+@note **The anchor grew a third arm** when `cadr_busint_regs.sv` became the
+@note third slave on this bus.  The crossing is the same one --- the card's
+@note word and the register block's, swapped --- and the interface's arm is
+@note left alone so that this record still names one fault.
 @old
-  assign ub_rdata   = iob_ssyn ? iob_rdata : blk_rdata;
+  assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? bir_rdata : blk_rdata;
 @new
-  assign ub_rdata   = iob_ssyn ? blk_rdata : iob_rdata;
+  assign ub_rdata   = iob_ssyn ? blk_rdata : bir_ssyn ? bir_rdata : iob_rdata;
 @end
 
 @mutation unibus-the-two-slaves-ssyn-is-anded
@@ -6661,10 +6687,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note dropping one leaves the other slave's answer read nowhere and Verilator
 @note stops the build, which is lint doing the catching instead of the check.
 @note CLAUDE.md's rule about bit granularity, one bus along.
+@note
+@note **Three slaves pull it now**, `cadr_busint_regs.sv` having joined them,
+@note and the AND is over all three for the same reason: no address is any
+@note two of theirs, so nothing is ever answered.
 @old
-  assign sr_ssyn    = blk_ssyn || iob_ssyn;
+  assign sr_ssyn    = blk_ssyn || iob_ssyn || bir_ssyn;
 @new
-  assign sr_ssyn    = blk_ssyn && iob_ssyn;
+  assign sr_ssyn    = blk_ssyn && iob_ssyn && bir_ssyn;
 @end
 
 @mutation unibus-the-register-block-reaches-down-into-the-cards-page
@@ -7029,4 +7059,441 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
         if (vma[25]) l2_map[adr1] <= vma[23:0];
 @new
         if (vma[25]) l2_map[vma[26] ? {vma[31:27], mapi[4:0]} : adr1] <= vma[23:0];
+@end
+
+# ---------------------------------------------------------------------------
+# The bus interface's own Unibus registers: the interrupt block at
+# `0o766040`-`0o766076` and the Unibus map at `0o766140`-`0o766176`.
+# `rtl/machine/cadr_busint_regs.sv` against `build/busint_regs.golden`, which
+# `golden/src/busint_regs.rs` writes out of muir's own `busint::register` and
+# `Machine::interface_read` and `interface_write`.
+#
+# THIS IS THE ONLY CHECK THAT CAN TELL THIS MODULE FROM A WIRE, for the same
+# reason the card's is.  Measured: MIT's boot PROM reaches the whole interface
+# block once in 600,000 microcycles and that once is the mode register, which
+# is the DIAGNOSTIC group and `cadr_spy_registers.sv`; a System 100 band
+# reaches `0o766040` 240 times and neither `0o766044` nor any map register at
+# all, and the band trace runs against `Vcadr_microcycle`, where the memory
+# path is stimulus.  So every record aimed at the registers themselves carries
+# `@check busint_regs`; what belongs in `unibus` is the wiring --- the third
+# slave joining `-UB SSYN`, the mux on the word, and the two wires that are
+# only the same wire once the modules are composed.
+#
+# WHAT CANNOT BE MUTATED HERE, said once so nobody hunts for it.
+#
+#   - **The held match.**  `sel`, `in_int`, `in_map`, `which`, `mapk` and `wr`
+#     are registers off `ub_addr` because a combinational match carries the
+#     map's ripple into the countdowns' clock enables --- the disk
+#     controller's -6.195 ns, which CLAUDE.md records.  Computing them instead
+#     is a TIMING fault and not a behavioural one: the earliest answer is
+#     fifty ticks after `-UB MSYN` and the address is up before the strobe in
+#     every master this repository has.  **Measured, not reasoned**: the six
+#     rewritten as `assign`s off `ub_addr` pass `busint_regs` over all
+#     38,319,186 of its ticks and `unibus` over all 13,192,237 of its, with
+#     both summaries byte-identical to the held design's.  So it is an
+#     equivalence and is recorded here rather than filed as a hole.
+#   - **`UB MAP ERROR`, the map's read and write buffers, and write-through's
+#     effect.**  All three have the debug cable's master as their only
+#     consumer and none of it is built; the module's header says so.  A
+#     mutation of a constant zero is not a mutation.
+#
+# AND ONE MEASURED EQUIVALENCE at the other end of the same wire: with
+# `t_msyn` made to wrap at `T_MAX` rather than saturate there, the block still
+# answers at the same tick, `ub_ssyn` latching the first time `answer_now` is
+# true and nothing clearing it while `-UB MSYN` stands.  Built and run: the
+# `busint_regs` summary is byte-identical to the saturating design's.  That is
+# `cadr_io_board.sv`'s own recorded equivalence in the second module to be
+# written this way.
+
+@mutation busint-regs-a-write-can-clear-local-enable
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`CONTROL_MASK` widened by one bit, so a write of `766040` reaches
+@note `LOCAL ENABLE`.**  MIT's own note is that writing `766040` "writes into
+@note bits 0 and 10-13 (mask 36001)", and bit 1 is not in it because it is a
+@note JUMPER, pulled up on the board: this machine arbitrates its own Unibus.
+@note
+@note **This is the bit the interrupt storm turns on.**  Microcode 323's
+@note handler reads `766040` and branches on it --- `(JUMP-EQUAL
+@note A-INTR-LOCAL-UNIBUS-MODE M-ZERO INNL0)`, "jump on no local-enable, ie,
+@note PDP11 arbritrating UNIBUS" --- and the path it takes when the bit is
+@note clear falls through `INND0` to `XB-INTR-RET` without ever reaching
+@note `INTRX0`, which is the only code that clears an Xbus level.  A machine
+@note whose microcode ever wrote a zero over this bit would take that path
+@note for ever after.
+@note
+@note Caught on the bit walk, where a write of `2` to `766040` is read back.
+@old
+  localparam logic [15:0] CONTROL_MASK  = 16'o036001;
+@new
+  localparam logic [15:0] CONTROL_MASK  = 16'o036003;
+@end
+
+@mutation busint-regs-the-vector-reads-back-with-no-interrupt
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The stored vector field shown without an interrupt taken.**  The
+@note 74LS374 at UBINTC 0D17 holds the vector and is ENABLED by `UB INT`, so
+@note `Machine::interface_read` takes `VECTOR_MASK` out of what the stored
+@note register shows of itself and puts back the vector of the interrupt
+@note taken.  Without that, a write of `766042` --- `CLEAR-INTERRUPT`, which
+@note the microcode uses to dismiss --- would leave the last vector readable
+@note for ever.
+@note
+@note Every bit stays read: `VECTOR_MASK` is still in the mask below it and
+@note in `taken_vector`.
+@old
+  assign ctl_word = (int_status & ~(XBUS_INTR | UB_INT | VECTOR_MASK))
+@new
+  assign ctl_word = (int_status & ~(XBUS_INTR | UB_INT))
+@end
+
+@mutation busint-regs-a-request-is-taken-without-the-enable
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`ENABLE UB INTS` dropped, so a device's request is taken whether or
+@note not the interface has been told to take one.**  Bit 10 of the 25LS2519
+@note at UBINTC 0D16 is the grant, and `Machine::unibus_interrupt` reads the
+@note requesting board only while it is set: the microcode writes `6000` here
+@note "at the end of the cold boot" and again "Enable one more Unibus
+@note interrupt" at the end of every interrupt, and before the first of those
+@note no Unibus channel exists and an interrupt taken would `ILLOP`.
+@note
+@note This is the reason `cadr_memory_path.sv` refused to join the card's
+@note request into `-XBUS.INTR` until this module existed, written as a bug.
+@note
+@note **The obvious way to write it does not build**, and it was measured
+@note rather than guessed: deleting the term outright leaves `ENABLE_UB_INTS`
+@note the parameter of nothing and Verilator stops on UNUSEDPARAM, which is
+@note lint doing the catching instead of the check.  The comparison is made
+@note against a value the masked field can never take instead --- it is zero
+@note or `2000` and never all ones --- so the gate is always true, the
+@note parameter stays read, and the fault is the same one.
+@old
+  assign taken_card   = ((int_status & ENABLE_UB_INTS) != 16'd0) && iob_intr;
+@new
+  assign taken_card   = ((int_status & ENABLE_UB_INTS) != 16'o177777) && iob_intr;
+@end
+
+@mutation busint-regs-a-hand-written-interrupt-does-not-win
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The live request's vector shown where the stored one should be.**
+@note `Machine::unibus_interrupt` takes the stored `UB INT` FIRST and reads
+@note its own vector field back; only if that bit is clear does it look at the
+@note requesting board.  A microcode simulating an interrupt by writing
+@note `766042` depends on the order: it writes the bit and the vector
+@note together and expects to read both back.
+@note
+@note The trace has a row for exactly that --- a hand-written `UB INT` with
+@note vector `300` while the card is asking with `274` --- and the mutation
+@note reads `274` there.
+@old
+  assign taken_vector = taken_hand ? (int_status & VECTOR_MASK)
+                                   : ({8'd0, iob_vector} & VECTOR_MASK);
+@new
+  assign taken_vector = taken_card ? ({8'd0, iob_vector} & VECTOR_MASK)
+                                   : (int_status & VECTOR_MASK);
+@end
+
+@mutation busint-regs-reset-err-cannot-clear-write-through
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`WRITE THROUGH ENB` set by a write and never cleared by one.**  The
+@note 74S74 at UBCYC 0B08 is CLOCKED from data bit 7 by `-RESET ERR`, so a
+@note write of zero turns write-through off as surely as a write of `200`
+@note turns it on.  ORed instead, the flop is a latch that only ever sets.
+@note
+@note The trace writes `200` and then zero and reads the register back after
+@note each, which is the one pair of rows that tells a clock from a set.
+@old
+                write_through <= ub_wdata[7];
+@new
+                write_through <= write_through || ub_wdata[7];
+@end
+
+@mutation busint-regs-a-timeout-sets-the-other-buss-bit
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The two NXM bits crossed**, so an Xbus cycle that timed out reads as
+@note a Unibus one and the other way about.  MIT: bit 0 is "Xbus NXM Error.
+@note Set when an Xbus cycle times out for lack of response" and bit 3 the
+@note same for the Unibus; muir sets them in `Machine::bus_read` off
+@note `Responder::NoXbus` and `NoUnibus`.  A diagnostic reading this register
+@note to find out which bus is broken is told the wrong one.
+@note
+@note Written as a crossing rather than as a dropped term so that both flops
+@note stay driven and both stay read.
+@old
+        if (unibus) err_unibus <= 1'b1;
+        else err_xbus <= 1'b1;
+@new
+        if (unibus) err_xbus <= 1'b1;
+        else err_unibus <= 1'b1;
+@end
+
+@mutation busint-regs-the-map-is-read-a-register-along
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The map's READ index rotated, and the read alone.**  CLAUDE.md's
+@note second class of equivalent mutant is exactly this memory: `mapk`
+@note addresses the write as well as the read, so a bijection on it relabels
+@note the storage consistently --- written to the wrong entry, read from the
+@note same wrong entry --- and survives a check that only ever goes through
+@note the bus.  The map's two map mutations rotate at the READ for the same
+@note reason the level-1 and level-2 map's do.
+@note
+@note Caught at the aliasing pass, where each of the thirty-one addresses is
+@note read back against the register muir's own `Register::Map(n)` names.
+@old
+      word = ub_map[mapk];
+@new
+      word = ub_map[mapk ^ 4'd1];
+@end
+
+@mutation busint-regs-the-interrupt-block-reaches-the-debug-block
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The interrupt block's match widened past `0o766076` into the debug
+@note block.**  `0o766100`-`0o766136` is a cycle on the OTHER machine's
+@note Unibus, answered over the cable by that machine: `busint::register`
+@note gives it `None` and a slave here that answered it would be answering
+@note for a machine that is not there.  Whoever builds the cable's side finds
+@note the address already taken.
+@note
+@note Caught by the decode sweep at `0o766100`, which the trace's `IFACENONE`
+@note runs say is nobody's.
+@old
+  localparam logic [17:0] INT_HIGH = 18'o766076;
+@new
+  localparam logic [17:0] INT_HIGH = 18'o766106;
+@end
+
+@mutation busint-regs-the-block-answers-the-diagnostic-registers
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The interrupt block's match reaching down over the diagnostic
+@note block**, which is the collision the composition must not have: those
+@note sixteen registers are `cadr_spy_registers.sv`'s and are how this machine
+@note is started at all.  On the bus both slaves would pull `-UB SSYN` and the
+@note word would be a mux on which, so a mode-register read would come back as
+@note the interrupt status register.
+@note
+@note Caught twice over, which is the point of having both checks: here by the
+@note decode sweep, which holds this block to answering NOTHING at a kind-0
+@note address, and in `build/unibus.pass` by `ub_ssyn_by` reading 5 where the
+@note sweep wants 1.
+@old
+  localparam logic [17:0] INT_LOW  = 18'o766040;
+@new
+  localparam logic [17:0] INT_LOW  = 18'o766000;
+@end
+
+@mutation busint-regs-ssyn-a-tick-early
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`-UB SSYN` one tick before `busint::DIAGNOSTIC_NS`.**  250 ns is the
+@note TD250 the block select runs through, and it is the same constant
+@note `cadr_spy_registers.sv` answers on --- one register cycle on the board,
+@note one block select.  One tick in fifty, on a documented constant, which is
+@note `disk-seek-settle-a-tick-short`'s shape and is here so that a tolerance
+@note widening on this check reddens the run.
+@old
+  localparam int unsigned SSYN_T   = 250 / 5;
+@new
+  localparam int unsigned SSYN_T   = 245 / 5;
+@end
+
+@mutation busint-regs-the-write-lands-at-the-answer
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The write taken at `-UB SSYN` rather than at the register strobe.**
+@note muir's `Busint` gives the interface's own registers `answered = msyn +
+@note REGISTER_STROBE_NS` for a write and `msyn + DIAGNOSTIC_NS` for a read:
+@note "A Unibus slave gives the word with `-UB SSYN` and takes one at `-UB
+@note MSYN`; the board's own registers take one at the register strobe."
+@note Twenty ticks apart, and a check that compared only the read-back could
+@note not tell them apart at all --- which is `RD_FINISH_T` again.
+@note
+@note Caught by the one section of the testbench written for it: the same
+@note write run with the strobe dropped a tick before the strobe instant must
+@note not take, and run to that instant must.  `STROBE_T` stays read.
+@old
+  assign land = ub_msyn && sel && wr && (t_msyn == 7'(STROBE_T));
+@new
+  assign land = ub_msyn && sel && wr && (t_msyn == 7'(SSYN_T)) && (STROBE_T != 0);
+@end
+
+@mutation busint-regs-the-bus-reads-free
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`-FREE` in bit 6 of the error status register read clear.**  The
+@note interface is busy with the very read that is fetching the register, so
+@note a processor's read always finds it set --- muir's `interface_read` ORs
+@note `error_status::NOT_FREE` in unconditionally and says why.  The bit means
+@note something else to the DEBUGGER, which reads the same eight lines over
+@note the cable under `-DB READ STATUS` and finds the bus as it stands; that
+@note is `Machine::debug_status(busy)` and is not this path.
+@old
+  assign err_word = {8'hFF, write_through, 1'b1, 2'b00, err_unibus, 2'b00, err_xbus};
+@new
+  assign err_word = {8'hFF, write_through, 1'b0, 2'b00, err_unibus, 2'b00, err_xbus};
+@end
+
+@mutation busint-regs-the-error-registers-high-byte-is-zero
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The error status register's high byte read as zero.**  The 74LS244 at
+@note REQERR 0C16 drives eight bits of `UDO` and no more, so the top half is
+@note the Unibus pulled up and reads as ones --- **measured on the netlist
+@note board**, muir's own comment on the line.  This is the one register in
+@note the block whose read is not sixteen bits of somebody's flip-flops, and
+@note it is the sort of thing a fabric gets wrong by writing the obvious
+@note thing.
+@note
+@note And it is the same family as the Unibus read whose top half CLAUDE.md
+@note records as a live disagreement, one level down: what nothing drives is
+@note not zero because zero is convenient.
+@old
+  assign err_word = {8'hFF, write_through, 1'b1, 2'b00, err_unibus, 2'b00, err_xbus};
+@new
+  assign err_word = {8'h00, write_through, 1'b1, 2'b00, err_unibus, 2'b00, err_xbus};
+@end
+
+@mutation busint-regs-766042-reads-the-register-back
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`766042` given a read select it does not have.**  It is `-LOAD INT
+@note CTL2 REG`, a write strobe: `Machine::interface_read` answers zero for it
+@note and for `766046`, which is decoded and wired to nothing.  A fabric that
+@note answered the interrupt status register at both addresses would look
+@note right to anything that only ever read `766040`.
+@note
+@note `unique case` with a `default` makes this one line; the `2'd2` arm stays
+@note where it is, so the error status register is untouched.
+@old
+        2'd0: word = ctl_word;
+        2'd2: word = err_word;
+@new
+        2'd0, 2'd1: word = ctl_word;
+        2'd2: word = err_word;
+@end
+
+# ---------------------------------------------------------------------------
+# The bus interface's registers UNDER THE MACHINE, which is the composition
+# and not the module: the third slave joining `-UB SSYN`, the mux on the word,
+# and the two pairs of wires that only become one wire once the modules are
+# composed.  `build/unibus.pass` is the only thing that can see any of it.
+#
+# AND ONE MEASURED EQUIVALENCE at the interrupt gate, recorded rather than
+# left for somebody to file as a hole: `sintr_o = xbus_intr && ub_int` in
+# place of the OR survives `machine`, `ddr_boot` and `probe`, for the reason
+# the AND of the gate's other two operands already survives --- neither
+# reference program ever raises a Unibus request, the boot PROM never enabling
+# an interrupt and the band's card being unread, so `0 || 0` and `0 && 0` are
+# the same zero.  What holds `ub_int` itself is `build/busint_regs.pass`, over
+# a program written to move it, and what holds the wire between the two is the
+# record below.
+
+@mutation unibus-the-cards-request-does-not-reach-the-interface
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **The card's `-UB INTR` tied off at the bus interface's own register.**
+@note `iob_intr` is still an output of this module and the top level still
+@note folds it, so nothing is left unread and lint says nothing at all --- and
+@note nothing else in the tree looks at this wire: `build/iob.pass` compares
+@note the card's request where it is an OUTPUT, `build/busint_regs.pass`
+@note drives it where it is an INPUT, and only here are they the same wire.
+@note
+@note That is CLAUDE.md's own worst case written out: a crossing that leaves
+@note every signal read is caught by nothing, anywhere, by any tool, and the
+@note only cure is a check that drives one end and looks at the other.
+@note Caught at "UB INT once ENABLE UB INTS is set over a request is 0x0".
+@old
+      .iob_intr  (iob_intr),
+      .iob_vector(iob_vector),
+@new
+      .iob_intr  (1'b0),
+      .iob_vector(iob_vector),
+@end
+
+@mutation unibus-the-interfaces-vector-is-the-cards-swapped
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **The vector's two nibbles crossed on the way from the card to the
+@note interface.**  The same wire as the record above and the same blindness
+@note everywhere else; a swap rather than a tie so that the request still
+@note arrives and only the number is wrong, which is the failure a handler
+@note would see as an interrupt from a device that does not exist.
+@note
+@note The clock's vector is `0o274`; swapped it reads `0o313`, and through
+@note `VECTOR_MASK` the check sees `0o310` where it wants `0o274`.
+@old
+      .iob_vector(iob_vector),
+      .timed_out (timed_out),
+@new
+      .iob_vector({iob_vector[3:0], iob_vector[7:4]}),
+      .timed_out (timed_out),
+@end
+
+@mutation unibus-every-timeout-is-called-an-xbus-one
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **The held decode not reaching the error status register**, so every
+@note cycle that times out sets `XBUS NXM` whatever bus it was on.  `unibus`
+@note is still an output of this module and is read by the arbiter besides, so
+@note lint is silent; the bit is the one a diagnostic reads to find out which
+@note bus is broken.
+@note
+@note The sweep runs 2,948 cycles nothing answers and every one of them is a
+@note Unibus address, so the register must read `UNIBUS NXM` and not
+@note `XBUS NXM` after it.  Caught at "the error status register after the
+@note sweep's timeouts is 0xff41, wanting 0xff48".
+@old
+      .timed_out (timed_out),
+      .unibus    (unibus),
+@new
+      .timed_out (timed_out),
+      .unibus    (1'b0),
+@end
+
+@mutation unibus-the-interfaces-word-comes-from-the-register-block
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **The third arm of the mux crossed with the first**, which is the
+@note `unibus-the-word-comes-from-the-other-slave` record one slave along: a
+@note read of the bus interface's own registers comes back as the diagnostic
+@note register block's word and a read of the block comes back as whatever the
+@note interface is not driving, which is zero.
+@note
+@note Both are named at the word.  `tb/cadr_unibus_tb.cpp` drives the block's
+@note answer as a poison injective in the register number from the address it
+@note is itself driving, and asserts on the way out of the sweep that no
+@note interface read came back as that poison; the block's own sixteen reads
+@note then come back zero rather than as the poison.  Every signal stays read.
+@old
+  assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? bir_rdata : blk_rdata;
+@new
+  assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? blk_rdata : bir_rdata;
+@end
+
+@mutation the-unibus-half-of-the-interrupt-gate-inverted
+@check machine
+@file rtl/machine/cadr_machine.sv
+@note **`LM INT` is `UB INT OR XBUS INTR IN` at UBINTC 0E04**, and this is the
+@note half that arrived with `cadr_busint_regs.sv`: until that module there
+@note was nowhere for `UB INT` to live, so `sintr_o` WAS the Xbus line and
+@note this gate did not exist.
+@note
+@note Inverted, `SINTR` is up for the whole of both reference programs where
+@note muir's `Machine::interrupt()` is down throughout --- neither ever takes
+@note a Unibus interrupt --- so it is caught on microcycle 0.  **Dropping the
+@note operand instead is what the section note above records as an
+@note equivalence**, and the difference between the two is the whole reason
+@note this one is written as an inversion: a zero that is always zero cannot
+@note tell an AND from an OR, but it can tell a zero from a one.
+@old
+  assign sintr_o   = xbus_intr || ub_int;
+@new
+  assign sintr_o   = xbus_intr || !ub_int;
 @end

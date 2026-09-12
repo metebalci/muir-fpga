@@ -49,16 +49,26 @@
 //     driving and never from `spy_eadr`, for the same reason.  So a mux that
 //     returned the other slave's word is caught in both directions: a card
 //     read that comes back as the poison, and a block read that does not.
-//   - **The decode is muir's, read out of `build/iob.golden`.**  That trace
-//     carries `ioboard::answers` for all 262,144 Unibus addresses in both
-//     directions as `DEC` and `DECNONE` rows, which is the same table
-//     `iob.pass` sweeps the card against.  Here it says which cycles of the
-//     machine's must be answered and which must end on the NXM timer.
-//   - **The two slaves' sets are disjoint over the whole eighteen-bit
-//     address**, checked against that table and the register block's own
-//     base with no simulation at all, and `ub_ssyn_by` says which slave
-//     pulled `-UB SSYN` on every cycle the sweep runs so that two answering
-//     at once is measured and not inferred.
+//   - **The decode is muir's, read out of TWO traces.**
+//     `build/iob.golden` carries `ioboard::answers` for all 262,144 Unibus
+//     addresses in both directions as `DEC` and `DECNONE` rows, and
+//     `build/busint_regs.golden` carries `busint::register` over the same
+//     eighteen bits as `IFACE` and `IFACENONE` rows --- the diagnostic block
+//     included, which this file used to carry as a base of its own.  Between
+//     them they say which cycles of the machine's must be answered, by which
+//     slave, and which must end on the NXM timer.
+//   - **The bus interface's own registers, where they are the composition
+//     and not the module.**  `build/busint_regs.pass` holds every word they
+//     give and take; what is here is the card's request arriving at
+//     `0o766040` through a cycle of the machine's own --- `UB INT` and the
+//     vector read back once `ENABLE UB INTS` is written, and gone when it is
+//     cleared --- and the sweep's own timeouts setting `UNIBUS NXM` and not
+//     `XBUS NXM` in the error status register, with `-RESET ERR` clearing
+//     it.  Both are wires that exist only once the modules are composed.
+//   - **The three slaves' sets are disjoint over the whole eighteen-bit
+//     address**, checked against muir's two tables with no simulation at all,
+//     and `ub_ssyn_by` says which slave pulled `-UB SSYN` on every cycle the
+//     sweep runs so that two answering at once is measured and not inferred.
 //   - **The bus interface's two Unibus instants.**  `-LOADMD` is
 //     `unibus_strobe_ns` after `-UB SSYN`, which the trace's own header
 //     carries, and `-MEMACK` is `busint::UNIBUS_ACK_NS` --- 150 ns --- which
@@ -88,19 +98,27 @@
 // THE SWEEP'S WINDOW, and why it is not the whole bus.  Every one of the
 // 131,072 word addresses would be 262,144 cycles and most of them a full NXM
 // timeout, which is nine hundred and thirty-odd ticks each.  The window is
-// `0o763000`-`0o770776`, which holds both slaves' blocks, the pages between
-// them and a page either side: any widening of either match that escapes its
-// own block lands inside it, because both matches are on the top eleven bits
+// `0o763000`-`0o770776`, which holds all three slaves' blocks, the pages
+// between them and a page either side: any widening of any match that escapes
+// its own block lands inside it, because every match is on the top eleven bits
 // of the address or more.  The DISJOINTNESS half is exhaustive over the whole
-// eighteen bits, because it costs nothing.
+// eighteen bits, because it costs nothing --- and a sweep of the whole bus at
+// the bus interface's own registers is `build/busint_regs.pass`'s, where a
+// cycle is fifty ticks rather than nine hundred.
 //
-// A NOTE ON WHAT THE SWEEP SHOWS THAT IS NOT A FAULT.  muir's
-// `busint::register` answers `0o766040`-`0o766076` --- the bus interface's own
-// interrupt control and error status registers --- and `0o766140`-`0o766176`,
-// the Unibus map.  This fabric builds none of them: `cadr_spy_registers.sv`
-// answers `0o766000`-`0o766036` and no more.  So those addresses time out
-// here where muir would answer, and the run prints the count rather than
-// hiding it.
+// THE THIRD SLAVE, AND WHAT IT CLOSED.  `rtl/machine/cadr_busint_regs.sv` is
+// the bus interface's own two groups --- the interrupt block at
+// `0o766040`-`0o766076` and the Unibus map at `0o766140`-`0o766176` --- and
+// until it existed those thirty-two word addresses timed out here where muir
+// answers, with this file counting them and printing the count.  They are
+// answered now, and the count is of what the third slave took.
+//
+// **And the decode for all three is muir's**, which it was not: this file
+// used to carry `cadr_spy_registers.sv`'s base as two constants of its own,
+// so the one block whose address set was nobody's reference was the one this
+// machine cannot start without.  `busint_regs.golden` carries
+// `busint::register` over the same eighteen bits, the diagnostic block
+// included, and it is the second trace this check is handed.
 
 #include <cstdio>
 #include <cstdlib>
@@ -136,8 +154,11 @@ const unsigned kBeep = 0764110, kCsr = 0764112;
 const unsigned kUsecLow = 0764120, kUsecHigh = 0764122;
 const unsigned kClock = 0764124, kGpio = 0764126;
 
-// `cadr_spy_registers.sv`'s own BASE and the sixteen registers above it.
-const unsigned kSpyBase = 0766000, kSpyTop = 0766040;
+// The six kinds `busint_regs.golden`'s `IFACE` rows carry, in the trace's own
+// numbering, and the seventh for an address `busint::register` answers
+// nothing at.  Kind 0, the DIAGNOSTIC block, is `cadr_spy_registers.sv`; the
+// other five are `cadr_busint_regs.sv`.
+enum IfaceKind { kDiagnostic = 0, kIntCtl, kIntCtl2, kErrStatus, kUnwired, kMap, kNoIface };
 
 // The sweep's window: both blocks, what is between them and a page either side.
 const unsigned kSweepFirst = 0763000, kSweepLast = 0770776;
@@ -269,6 +290,58 @@ int main(int argc, char **argv) {
     }
   }
   std::fclose(f);
+
+  // ---- and the bus interface's own decode, out of its trace --------------
+  //
+  // `busint_regs.golden`'s `IFACE` and `IFACENONE` rows are
+  // `busint::register` over the same eighteen bits: the diagnostic block, the
+  // interrupt block and the Unibus map, with the debug block decoded to
+  // nothing because it is answered over a cable.  **This file used to carry
+  // `cadr_spy_registers.sv`'s base as two constants of its own and count the
+  // other two groups as addresses muir answers and this fabric does not.**
+  // Both are gone: the table below is muir's, the register block's thirty-two
+  // addresses are the kind-0 rows of it, and the two groups that used to be
+  // counted are answered.
+  const char *ipath = (argc > 2) ? argv[2] : "build/busint_regs.golden";
+  std::FILE *g = std::fopen(ipath, "r");
+  if (!g) {
+    std::fprintf(stderr, "FAIL: cannot read %s\n", ipath);
+    return 2;
+  }
+  std::vector<uint8_t> iface(kAddrs, kNoIface);
+  std::vector<uint8_t> icovered(kAddrs, 0);
+  long iface_rows = 0, iface_none_runs = 0;
+  while (std::fgets(line, sizeof line, g)) {
+    unsigned a, b, k, n;
+    if (std::sscanf(line, "IFACENONE %x %x", &a, &b) == 2) {
+      if (b >= kAddrs) {
+        std::fprintf(stderr, "FAIL: %s: an IFACENONE run ends at 0x%x\n", ipath, b);
+        return 2;
+      }
+      for (unsigned u = a; u <= b; ++u) icovered[u] = 1;
+      ++iface_none_runs;
+    } else if (std::sscanf(line, "IFACE %x %x %x", &a, &k, &n) == 3) {
+      if (a >= kAddrs || k > kMap) {
+        std::fprintf(stderr, "FAIL: %s: an IFACE row names 0x%x kind %u\n", ipath, a, k);
+        return 2;
+      }
+      iface[a] = (uint8_t)k;
+      icovered[a] = 1;
+      ++iface_rows;
+    }
+  }
+  std::fclose(g);
+  for (size_t u = 0; u < kAddrs; ++u)
+    if (!icovered[u]) {
+      std::fprintf(stderr, "FAIL: %s leaves 0x%zx undecided\n", ipath, u);
+      return 2;
+    }
+  if (iface_rows < 90) {
+    std::fprintf(stderr, "FAIL: %s carries %ld IFACE rows; the block has more than that\n", ipath,
+                 iface_rows);
+    return 2;
+  }
+
   if (want_tick_ns != kTickNs || want_bits != 18) {
     std::fprintf(stderr, "FAIL: %s says tick_ns %ld and ub_address_bits %ld; this file is written for %ld and 18\n",
                  path, want_tick_ns, want_bits, kTickNs);
@@ -299,18 +372,24 @@ int main(int argc, char **argv) {
   // the backplane does --- so it is checked here against muir's own table and
   // the register block's own base, and the sweep below then measures it on the
   // bus over the window where it could be false.
-  long overlaps = 0, block_addrs = 0;
+  long overlaps = 0, block_addrs = 0, iface_addrs = 0;
   for (size_t u = 0; u < kAddrs; ++u) {
-    const bool block = (u >= kSpyBase && u < kSpyTop);
+    const bool block = (iface[u] == kDiagnostic);
+    const bool bir = (iface[u] != kDiagnostic && iface[u] != kNoIface);
     if (block) ++block_addrs;
-    if (block && card[u]) ++overlaps;
+    if (bir) ++iface_addrs;
+    // Three sets, three ways: no address may be claimed by two of them.
+    if ((block && card[u]) || (bir && card[u]) || (block && bir)) ++overlaps;
   }
   if (overlaps) {
-    std::fprintf(stderr, "FAIL: %ld addresses are claimed by both the I/O board and the register block\n", overlaps);
+    std::fprintf(stderr, "FAIL: %ld addresses are claimed by two of the three Unibus slaves\n", overlaps);
     return 1;
   }
-  if (block_addrs != 32) {
-    std::fprintf(stderr, "FAIL: the register block covers %ld addresses, wanting 32\n", block_addrs);
+  if (block_addrs != 32 || iface_addrs != 62) {
+    std::fprintf(stderr,
+                 "FAIL: the register block covers %ld addresses and the bus interface's own %ld,\n"
+                 "      wanting 32 and 62\n",
+                 block_addrs, iface_addrs);
     return 1;
   }
 
@@ -441,6 +520,7 @@ int main(int argc, char **argv) {
   // A read of the card: answered by the card alone, the word on MEM<15:0> and
   // ones above it, and not the register block's poison.
   long card_reads = 0, card_writes = 0, block_reads = 0, block_writes = 0;
+  long iface_reads = 0, iface_writes = 0;
   // Which of the card's twelve register addresses were read BY NAME --- with
   // the word compared against what this file put in, rather than merely
   // answered in the sweep.  A check that swept everything and named nothing
@@ -478,8 +558,8 @@ int main(int argc, char **argv) {
   // nothing else on this bus.
   for (unsigned e = 0; e < 16 && failures < kMaxFailures; ++e) {
     char where[64];
-    std::snprintf(where, sizeof where, "diagnostic register %u at 0%o", e, kSpyBase + 2 * e);
-    const Cycle c = Run(kSpyBase + 2 * e, false, 0);
+    std::snprintf(where, sizeof where, "diagnostic register %u at 0%o", e, 0766000 + 2 * e);
+    const Cycle c = Run(0766000 + 2 * e, false, 0);
     CheckTiming(c, where);
     if (!c.answered()) continue;
     if (c.by != 1) failures += Fail("which slave pulled -UB SSYN", (unsigned)c.by, 1, where);
@@ -583,6 +663,72 @@ int main(int argc, char **argv) {
     ReadCard(kCsr, want, "KBD CSR at 0764112");
   }
 
+  // ---- THE CARD'S REQUEST REACHING THE INTERFACE'S OWN REGISTER ----------
+  //
+  // **This is the wire the composition exists to test, and no other check can
+  // see it.**  `build/busint_regs.pass` drives `iob_intr` and `iob_vector`
+  // from a trace, because at that seam they are inputs; `build/iob.pass`
+  // compares the card's `intr_request` against muir, because at that seam
+  // they are outputs.  Only here are they the same wire, so only here can a
+  // crossed or dropped connection between the two modules show --- and
+  // `.m_awaddr` swapped with `.m_araddr` is the crossing CLAUDE.md records
+  // as caught by nothing, anywhere, by any tool.
+  //
+  // The CSR write above set all five writable bits, `CLOCK INT ENABLE` among
+  // them, and `CLOCK READY` has been up since reset with no interval loaded.
+  // So the card is asking, with the clock's vector, and `ENABLE UB INTS` is
+  // what decides whether the interface takes it.
+  {
+    const unsigned kClockVector = 0274;   // `ioboard::CLOCK_VECTOR`
+    if (!dut->iob_intr)
+      failures += Fail("the card's request with CLOCK INT ENABLE set", 0, 1, "the interrupt");
+    if (dut->iob_vector != kClockVector)
+      failures += Fail("the vector the card is asking with", dut->iob_vector, kClockVector,
+                       "the interrupt");
+    // With `ENABLE UB INTS` clear the interface does not take it: the request
+    // is on the bus and this bit is the grant.
+    if (dut->ub_int) failures += Fail("UB INT with ENABLE UB INTS clear", 1, 0, "the interrupt");
+    Cycle c = Run(0766040, false, 0);
+    CheckTiming(c, "the interrupt status register at 0766040");
+    if (c.by != 4)
+      failures += Fail("which slave pulled -UB SSYN", (unsigned)c.by, 4, "the interrupt status register");
+    if ((c.word & 0xFFFFu) != 0000002u)
+      failures += Fail("the interrupt status register before anything is written", c.word & 0xFFFFu,
+                       0000002u, "the interrupt status register");
+    ++iface_reads;
+    // "Enable one more Unibus interrupt" --- `uc-interrupt.lisp` writes 6000
+    // here at the end of the cold boot and at the end of every interrupt.
+    c = Run(0766040, true, 06000);
+    CheckTiming(c, "a write of 6000 to 0766040");
+    if (c.by != 4) failures += Fail("which slave pulled -UB SSYN", (unsigned)c.by, 4, "ENABLE UB INTS");
+    ++iface_writes;
+    Idle(4);
+    if (!dut->ub_int)
+      failures += Fail("UB INT once ENABLE UB INTS is set over a request", 0, 1, "the interrupt");
+    c = Run(0766040, false, 0);
+    CheckTiming(c, "the interrupt status register with an interrupt taken");
+    ++iface_reads;
+    // `UB INT` in bit 15, the vector in bits 2 to 9 in place, `LOCAL ENABLE`
+    // and `ENABLE UB INTS` still standing.  `uc-interrupt.lisp` reads the
+    // vector back with `(BYTE-FIELD 8 2)`.
+    const unsigned want = 0100000u | 06000u | 02u | kClockVector;
+    if ((c.word & 0xFFFFu) != want)
+      failures += Fail("the interrupt status register with the card asking", c.word & 0xFFFFu, want,
+                       "the interrupt status register");
+    // And dismissed, as `UB-INTR-RET-0` dismisses it.
+    c = Run(0766040, true, 0);
+    CheckTiming(c, "a write of zero to 0766040");
+    ++iface_writes;
+    Idle(4);
+    if (dut->ub_int) failures += Fail("UB INT once ENABLE UB INTS is cleared", 1, 0, "the interrupt");
+    c = Run(0766040, false, 0);
+    CheckTiming(c, "the interrupt status register once the interrupt is dismissed");
+    ++iface_reads;
+    if ((c.word & 0xFFFFu) != 0000002u)
+      failures += Fail("the interrupt status register after the dismissal", c.word & 0xFFFFu,
+                       0000002u, "the interrupt status register");
+  }
+
   // ---- the interval timer and the sixty-cycle clock -----------------------
   //
   // `-LOAD INTERVAL` loads the four 74LS193s and clears the 74LS279's latch at
@@ -680,9 +826,27 @@ int main(int argc, char **argv) {
   // decode for the card and `cadr_spy_registers.sv`'s base for the block.
   // What each cycle must do: be answered by exactly one of them, or end on the
   // NXM timer with MD zero.
-  long swept = 0, answered_by_card = 0, answered_by_block = 0, unanswered = 0;
+  //
+  // **AND THE ERROR STATUS REGISTER IS READ EITHER SIDE OF IT**, which is the
+  // second wire only the composition can see: `timed_out` and the held
+  // `unibus` reach `cadr_busint_regs.sv` from `cadr_busint_xbus.sv` and the
+  // decode, and every one of the sweep's unanswered cycles is a Unibus one.
+  // So `UNIBUS NXM` must be clear before and set after, and `XBUS NXM` clear
+  // throughout: nothing in this run ever addresses the Xbus.
+  {
+    const Cycle c = Run(0766044, false, 0);
+    CheckTiming(c, "the error status register before the sweep");
+    if (c.by != 4) failures += Fail("which slave pulled -UB SSYN", (unsigned)c.by, 4, "0766044");
+    ++iface_reads;
+    // The high byte pulled up, `-FREE` set, and neither NXM bit: nothing has
+    // timed out yet, every cycle so far having been answered.
+    if ((c.word & 0xFFFFu) != 0177500u)
+      failures += Fail("the error status register before the sweep", c.word & 0xFFFFu, 0177500u,
+                       "0766044");
+  }
+
+  long swept = 0, answered_by_card = 0, answered_by_block = 0, answered_by_iface = 0, unanswered = 0;
   long exempt = 0;
-  long muir_answers_and_we_do_not = 0;
   for (unsigned u = kSweepFirst; u <= kSweepLast && failures < kMaxFailures; u += 2) {
     for (int w = 0; w < 2; ++w) {
       char where[64];
@@ -692,10 +856,11 @@ int main(int argc, char **argv) {
         want_card = false;
         ++exempt;
       }
-      const bool want_block = (u >= kSpyBase && u < kSpyTop);
+      const bool want_block = (iface[u] == kDiagnostic);
+      const bool want_iface = (iface[u] != kDiagnostic && iface[u] != kNoIface);
       const Cycle c = Run(u, w != 0, 0x5A5Au);
       ++swept;
-      const int want_by = (want_card ? 2 : 0) | (want_block ? 1 : 0);
+      const int want_by = (want_card ? 2 : 0) | (want_block ? 1 : 0) | (want_iface ? 4 : 0);
       if (!want_by) {
         if (c.answered()) {
           failures += Fail("a slave answered an address nothing is at", (unsigned)c.by, 0, where);
@@ -712,7 +877,17 @@ int main(int argc, char **argv) {
       }
       if (c.by != want_by) failures += Fail("which slave pulled -UB SSYN", (unsigned)c.by, (unsigned)want_by, where);
       if (c.timed_out) failures += Fail("NXM TIMEOUT on an answered cycle", 1, 0, where);
-      if (want_block) {
+      if (want_iface) {
+        ++answered_by_iface;
+        // The words are `build/busint_regs.pass`'s, at that block's own seam
+        // and against muir.  What is checked here is that the word did not
+        // come from the OTHER two slaves: the register block's poison is
+        // driven from this address on every cycle, and a card read is
+        // impossible at these addresses by the disjointness above.
+        if (!w && (c.word & 0xFFFFu) == Poison(SpyEadr(u)))
+          failures += Fail("a bus interface register read came back as the block's word",
+                           c.word & 0xFFFFu, 0, where);
+      } else if (want_block) {
         ++answered_by_block;
         if (!w && (c.word & 0xFFFFu) != Poison(SpyEadr(u)))
           failures += Fail("the register block's word", c.word & 0xFFFFu, Poison(SpyEadr(u)), where);
@@ -723,11 +898,29 @@ int main(int argc, char **argv) {
       }
     }
   }
-  // muir's `busint::register` answers `0o766040`-`0o766076` and
-  // `0o766140`-`0o766176` as well: the bus interface's own interrupt control
-  // and error status registers, and the Unibus map.  None of them is built.
-  for (unsigned u = 0766040; u <= 0766176; u += 2)
-    if (u <= 0766076 || u >= 0766140) ++muir_answers_and_we_do_not;
+
+  // The sweep's unanswered cycles, in the register MIT put them in.
+  {
+    const Cycle c = Run(0766044, false, 0);
+    CheckTiming(c, "the error status register after the sweep");
+    ++iface_reads;
+    // `UNIBUS NXM` is bit 3, `XBUS NXM` bit 0, and every cycle this run has
+    // given up on was on the Unibus.
+    if ((c.word & 0xFFFFu) != (0177500u | 010u))
+      failures += Fail("the error status register after the sweep's timeouts", c.word & 0xFFFFu,
+                       0177500u | 010u, "0766044");
+    // `-RESET ERR`: "Writing this location ignores the data written and
+    // clears the status bits".
+    const Cycle w = Run(0766044, true, 0);
+    CheckTiming(w, "a write of 0766044");
+    ++iface_writes;
+    const Cycle a = Run(0766044, false, 0);
+    CheckTiming(a, "the error status register after -RESET ERR");
+    ++iface_reads;
+    if ((a.word & 0xFFFFu) != 0177500u)
+      failures += Fail("the error status register after -RESET ERR", a.word & 0xFFFFu, 0177500u,
+                       "0766044");
+  }
 
   // ---- the arbiter covers both slaves -------------------------------------
   //
@@ -757,7 +950,7 @@ int main(int argc, char **argv) {
     // that the second condition was actually met, so that a window too short
     // to test anything fails here rather than passing quietly.
     dut->con_req = 1;
-    dut->con_addr = kSpyBase + 2 * 5;
+    dut->con_addr = 0766000 + 2 * 5;   // `spy::BASE`, which is the console's whole vocabulary
     dut->con_write = 0;
     dut->spy_rdata = Poison(5);
     for (long g = 0; g < 200 && !dut->con_gnt; ++g) Tick();
@@ -948,6 +1141,8 @@ int main(int argc, char **argv) {
   }
   least("writes answered by the card", card_writes, 3);
   least("reads answered by the register block", block_reads, 16);
+  least("reads answered by the bus interface's own registers", iface_reads, 6);
+  least("writes answered by the bus interface's own registers", iface_writes, 3);
   least("cycles nothing answered", unanswered, 100);
   least("addresses swept", swept, 3000);
   least("console cycles run while a card cycle stood behind them", console_cycles, 4);
@@ -959,28 +1154,34 @@ int main(int argc, char **argv) {
   if (thin) return 1;
 
   std::printf(
-      "ok: %ld ticks --- the machine's own bus cycle reaches BOTH Unibus slaves, and no other check\n"
-      "    runs a Unibus read at all (MIT's boot PROM runs one Unibus cycle in 17,466 and it is the\n"
-      "    write of the mode register).  %ld reads and %ld writes answered by the I/O board, %ld and %ld\n"
-      "    by the diagnostic register block, each with -LOADMD %ld ticks after -UB SSYN and -MEMACK %ld,\n"
-      "    the word on MEM<15:0> and ones above it.\n"
+      "ok: %ld ticks --- the machine's own bus cycle reaches ALL THREE Unibus slaves, and no other\n"
+      "    check runs a Unibus read at all (MIT's boot PROM runs one Unibus cycle in 17,466 and it is\n"
+      "    the write of the mode register).  %ld reads and %ld writes answered by the I/O board, %ld and\n"
+      "    %ld by the diagnostic register block, %ld and %ld by the bus interface's own registers, each\n"
+      "    with -LOADMD %ld ticks after -UB SSYN and -MEMACK %ld, the word on MEM<15:0> and zero above.\n"
+      "    The card's request reached 0766040 through the machine's own bus cycle: UB INT and the\n"
+      "    clock's vector 0274 read back once ENABLE UB INTS was written, and gone when it was\n"
+      "    cleared --- the one place iob_intr and iob_vector are the same wire at both ends.  And\n"
+      "    the sweep's timeouts set UNIBUS NXM in the error status register and not XBUS NXM,\n"
+      "    with -RESET ERR clearing it.\n"
       "    The keyboard's scan code, the mouse's seven lines, the interval and the interrupt enables\n"
       "    came back as this testbench put them in; the microsecond counter advanced by exactly the\n"
       "    number of its own microseconds between two measured strobes, across its 65,536 carry, and\n"
       "    the sixty-cycle clock went from zero to not zero over %ld ticks of standing still.\n"
       "    The sweep: %ld cycles over 0%o-0%o read and written, %ld answered by the card, %ld by the\n"
-      "    block, %ld by nothing --- each ending on the NXM timer with MD zero --- and NEVER BOTH,\n"
-      "    which is measured at ub_ssyn_by and not inferred from the word.  EXEMPT: %ld directions in\n"
-      "    the Chaosnet interface's and the serial port's groups (0764140-0764176), which\n"
-      "    ioboard::answers decodes and this card does not answer, those being two other slices.\n"
-      "    The two slaves' sets are disjoint over all %zu addresses in both directions, against\n"
-      "    muir's own ioboard::answers (%ld DEC rows and %ld DECNONE runs out of %s) and the block's\n"
-      "    own base.\n"
-      "    NOT ANSWERED HERE AND ANSWERED BY muir: %ld addresses, the bus interface's own interrupt\n"
-      "    control and error status registers at 0766040-0766076 and the Unibus map at\n"
-      "    0766140-0766176, none of which is built.\n",
-      tick, card_reads, card_writes, block_reads, block_writes, kStrobeT, kAckT, carry_ticks, swept,
+      "    block, %ld by nothing --- each ending on the NXM timer with MD zero --- and NEVER TWO AT\n"
+      "    ONCE, which is measured at ub_ssyn_by and not inferred from the word.  EXEMPT: %ld\n"
+      "    directions in the Chaosnet interface's and the serial port's groups\n"
+      "    (0764140-0764176), which ioboard::answers decodes and this card does not answer,\n"
+      "    those being two other slices.\n"
+      "    The three slaves' sets are disjoint over all %zu addresses in both directions, against\n"
+      "    muir's own ioboard::answers (%ld DEC rows and %ld DECNONE runs out of %s) and its\n"
+      "    busint::register (%ld IFACE rows out of %s) --- no transcription of either.\n"
+      "    The bus interface's own registers answered %ld of the sweep's directions: the interrupt\n"
+      "    block at 0766040-0766076 and the Unibus map at 0766140-0766176.\n",
+      tick, card_reads, card_writes, block_reads, block_writes, iface_reads, iface_writes, kStrobeT,
+      kAckT, carry_ticks, swept,
       kSweepFirst, kSweepLast, answered_by_card, answered_by_block, unanswered, exempt, kAddrs, dec_rows,
-      dec_none_runs, path, muir_answers_and_we_do_not);
+      dec_none_runs, path, iface_rows, ipath, answered_by_iface);
   return 0;
 }

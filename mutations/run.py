@@ -359,7 +359,7 @@ CHECKS = {
             "rtl/machine/cadr_xbus_decode.sv",
             "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
             "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
-            "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
             "rtl/machine/cadr_spy_registers.sv",
             "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
             "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
@@ -623,6 +623,29 @@ CHECKS = {
         "flags": ["-O2", "-CFLAGS", "-O2"],
         "golden": "iob.golden",
     },
+    # The bus interface's own Unibus registers at their own seam: the
+    # interrupt block at `0o766040`-`0o766076` and the Unibus map at
+    # `0o766140`-`0o766176`, against muir's `busint::register` and
+    # `Machine::interface_read` and `interface_write`.
+    #
+    # WHAT BELONGS HERE AND NOT IN `unibus`.  This one drives the block alone
+    # and is the only thing that can tell the module from a wire: every word
+    # a register gives or takes, the two write masks, `-RESET ERR`, the
+    # aliasing of the interrupt block's four every eight bytes and of the
+    # map's sixteen across their odd addresses, and the decode at all 262,144
+    # addresses.  `unibus` drives a cycle of the MACHINE'S and holds the
+    # three slaves apart on one bus; records aimed at the join or at the mux
+    # belong there.
+    #
+    # The run is a few seconds: 251 rows with two face reads each, then a
+    # real bus cycle at every one of the 524,288 addresses and directions.
+    "busint_regs": {
+        "sources": ["rtl/machine/cadr_busint_regs.sv"],
+        "top": "cadr_busint_regs",
+        "tb": "tb/cadr_busint_regs_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "busint_regs.golden",
+    },
     # The I/O board UNDER THE MACHINE: the composition of slice three, which
     # put the card on the Unibus beside the diagnostic register block.  Same
     # module list as `memory_path` with the card added, because the card is
@@ -649,13 +672,18 @@ CHECKS = {
             "rtl/machine/cadr_console_bus.sv",
             "rtl/machine/cadr_spy_registers.sv",
             "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_busint_regs.sv",
             "rtl/machine/cadr_memory_path.sv",
         ],
         "top": "cadr_memory_path",
         "tb": "tb/cadr_unibus_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
                   "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
-        "golden": "iob.golden",
+        # TWO traces, and the second is what made the first honest: the card's
+        # decode comes out of `iob.golden` and the bus interface's out of
+        # `busint_regs.golden`, so neither block's address set is this
+        # testbench's own transcription.
+        "golden": ["iob.golden", "busint_regs.golden"],
     },
     # The two generators that check themselves.  Nothing downstream of these
     # can catch a bad one: `cables` is the only authority on the port list,
@@ -1076,8 +1104,8 @@ def build_and_run(args, work, check, build_fails=False):
         return BROKEN, first_problem(out)
 
     cmd = [os.path.join(obj, "V" + spec["top"])]
-    if spec["golden"]:
-        cmd.append(os.path.join(args.goldens, spec["golden"]))
+    for g in goldens_of(check):
+        cmd.append(os.path.join(args.goldens, g))
     # The Makefile hands such a check two more paths: where to write its
     # patched PROM, and the unaltered one to build it from.
     if spec.get("gprom_path"):
@@ -1254,6 +1282,21 @@ def cables_check(args, work, build_fails=False):
                            os.path.join(mutated, base), shallow=False):
             return CAUGHT, "`current`: %s is not what the generator writes" % base
     return SURVIVED, "lint passes and the generator writes it unchanged"
+
+
+def goldens_of(check):
+    """The reference traces a check is handed, in the order it takes them.
+
+    A check's `golden` is one file, a list of them, or `None`.  `unibus`
+    takes two --- the card's decode and the bus interface's --- so that
+    neither block's address set is its testbench's own transcription, and
+    everything that looks a trace up goes through here rather than reading
+    the key three different ways.
+    """
+    golden = CHECKS[check]["golden"]
+    if not golden:
+        return []
+    return [golden] if isinstance(golden, str) else list(golden)
 
 
 def check_coverage(mutations):
@@ -1663,10 +1706,10 @@ def main():
     # pay for the rest.
     wanted = sorted(set(m.check for m in mutations))
     for check in wanted:
-        golden = CHECKS[check]["golden"]
-        if golden and not os.path.exists(os.path.join(args.goldens, golden)):
-            die("%s: no such trace; `make %s/%s` first"
-                % (os.path.join(args.goldens, golden), args.goldens, golden))
+        for golden in goldens_of(check):
+            if not os.path.exists(os.path.join(args.goldens, golden)):
+                die("%s: no such trace; `make %s/%s` first"
+                    % (os.path.join(args.goldens, golden), args.goldens, golden))
 
     if not os.path.exists(args.work):
         os.makedirs(args.work)
@@ -1725,9 +1768,8 @@ def main():
             for other in sorted(CHECKS):
                 if other == m.check or m.path not in CHECKS[other]["sources"]:
                     continue
-                golden = CHECKS[other]["golden"]
-                if golden and not os.path.exists(
-                        os.path.join(args.goldens, golden)):
+                if any(not os.path.exists(os.path.join(args.goldens, g))
+                       for g in goldens_of(other)):
                     continue
                 verdict, _ = build_and_run(args, work, other)
                 if verdict == SURVIVED:

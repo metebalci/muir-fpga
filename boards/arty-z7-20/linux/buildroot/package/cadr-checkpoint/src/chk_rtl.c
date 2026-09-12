@@ -424,12 +424,18 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u32s(w, img->l2_map, IMG_L2_WORDS);		/* READ */
 	chk_u32(w, img->boards);			/* the count, again */
 	chk_u32s(w, img->main, (size_t)img->boards * IMG_BOARD_WORDS);	/* READ */
-	// The bus interface's own registers.  **NONE of these is in the
-	// fabric**: the Unibus map, its read and write buffers, the error
-	// register and the interrupt status are `Machine::interface_write`'s,
-	// and nothing under `rtl/` implements them --- measured, not assumed.
-	// The machine reaches them only through `0o766140`-`0o766176`, which
-	// the boot PROM never touches; a band that did would find them clear.
+	// The bus interface's own registers.  **THE READOUT WINDOW DOES NOT
+	// REACH THEM**, which is not the same as their not existing and used
+	// to be: `rtl/machine/cadr_busint_regs.sv` holds the interrupt status
+	// register, the error status register, WRITE-THROUGH and the sixteen
+	// Unibus map entries, checked against muir's own
+	// `Machine::interface_read` and `interface_write`.  What is still
+	// absent is the map's read and write buffers, whose one master is the
+	// debug cable's.  The window reaches the processor's memories and
+	// registers and nothing else, so these are written at the value a
+	// machine that has never been asked for them has --- which is right
+	// for a board halted out of a boot the PROM drove, the PROM touching
+	// none of them, and is a decision anywhere else.
 	chk_u16(w, 0);					/* NONE bus_error */
 	chk_u16(w, MUIR_LOCAL_ENABLE);			/* NONE interrupt_status */
 	chk_bool(w, 0);					/* NONE write_through */
@@ -564,9 +570,11 @@ static const char *const kMissing[] = {
 	"    and nothing that would look at it.",
 	"the bus interface's own registers --- the sixteen Unibus map entries,",
 	"    their read and write buffers, the error register, the interrupt",
-	"    status and WRITE-THROUGH.  None is in the fabric; measured, not",
-	"    assumed.  The interrupt status is written at its power-on value,",
-	"    LOCAL-ENABLE, and the rest clear.",
+	"    status and WRITE-THROUGH.  All but the read and write buffers ARE",
+	"    in the fabric; what cannot reach them is this window, which reads",
+	"    the processor's memories and registers and nothing else.  The",
+	"    interrupt status is written at its power-on value, LOCAL-ENABLE,",
+	"    and the rest clear.",
 	"the disk controller, whole: its command, command-list pointer, disk",
 	"    address, eight error flops, the channel and the eight drives'",
 	"    heads and attention timers.  A transfer in flight when the board",

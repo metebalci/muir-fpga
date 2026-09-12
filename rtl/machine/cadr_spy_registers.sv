@@ -28,9 +28,14 @@
 // microcycle, and the speed synchroniser samples the register sixty
 // nanoseconds into every generator cycle.
 //
-// WHAT IS NOT HERE.  The other Unibus slaves: the I/O board, the Chaosnet
-// interface, the Unibus map and the debug block.  `Responder::Interface` is
-// the one this machine cannot start without.
+// WHAT IS NOT HERE.  The other Unibus slaves.  Two of them are modules beside
+// this one now --- `cadr_io_board.sv` is the card and `cadr_busint_regs.sv`
+// the bus interface's own interrupt block and Unibus map, which are
+// `Responder::Interface` as these sixteen are --- and two are not built: the
+// Chaosnet interface, which is the card's own group and a slice of its own,
+// and the debug block, which is a cycle on the other machine's Unibus and is
+// answered over a cable.  These sixteen are the ones this machine cannot
+// start without.
 
 `default_nettype none
 
