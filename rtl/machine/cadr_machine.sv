@@ -298,7 +298,26 @@ module cadr_machine #(
     output var logic [31:0] mem_addr,
     output var logic [31:0] mem_wdata,
     input  var logic        mem_done,
-    input  var logic [31:0] mem_rdata
+    input  var logic [31:0] mem_rdata,
+
+    // --- AND WHAT THE PROCESSING SYSTEM ITSELF ANSWERED, which is for the
+    // transaction audit below and reaches nothing else in this module.
+    //
+    // **WHY AN INSTRUMENT INSIDE THE MACHINE NEEDS TWO WIRES FROM OUTSIDE
+    // IT.**  `rtl/plumbing/cadr_axi_master.sv` is a level ABOVE this module,
+    // in `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr`, so a transaction born in
+    // the adapter raises no second `mem_req` and every clause anchored on one
+    // is blind to it.  The port's own handshakes are not blind to it: these
+    // are `rvalid && rready && rlast` and `bvalid && bready` at the `PS7`
+    // boundary, which is exactly where `rtl/plumbing/cadr_mem_count.sv` counts
+    // them and for the same reason --- a fabric that never issued a
+    // transaction cannot fabricate a `B` or an `R`.
+    //
+    // Tied low on every board that has no `S_AXI_HP0` behind the machine, and
+    // the audit's word 8 is what tells that silence from a port answering
+    // correctly.
+    input  var logic        port_read_ack,
+    input  var logic        port_write_ack
 );
 
   // The cables, named at both ends as `cadr_cables.map` has them.
@@ -422,7 +441,7 @@ module cadr_machine #(
       .wrcyc       (wrcyc),
       .clock_edge  (clock_edge),
       .ro_addr     (con_ro_addr),
-      .ro_data     (con_ro_data),
+      .ro_data     (proc_ro_data),
       .ro_echo     (con_ro_echo)
   );
 
@@ -474,6 +493,10 @@ module cadr_machine #(
       .ch_rdata   (ch_rdata),
       .nxm        (nxm),
       .unibus     (unibus),
+      .ch_own_o      (aud_ch_own),
+      .bus_changing_o(aud_changing),
+      .cpu_memory_o  (aud_cpu_memory),
+      .ch_memory_o   (aud_ch_memory),
       .ub_msyn_o  (ub_msyn),
       .ub_ssyn_o  (ub_ssyn_o),
       .arb_stage  (arb_stage),
@@ -608,6 +631,109 @@ module cadr_machine #(
 
   assign dev_ack_joined   = disk_ack || device_ack;
   assign dev_rdata_joined = disk_drives ? disk_rdata : device_rdata;
+
+  // ------------------------------------------------- the transaction audit
+  //
+  // ONE TRANSACTION PER BUS CYCLE, IN THE DIRECTION THE CYCLE NAMES, AND NONE
+  // ANYWHERE ELSE --- watched in fabric, for as long as the board runs.
+  // `rtl/plumbing/cadr_bus_audit.sv` is the whole of it and its header is the
+  // argument; `build/bus_audit.pass` holds the same property in simulation
+  // over MIT's boot PROM.  That is the only program this module can run in
+  // simulation and it makes 512 main-memory cycles, against the board's event
+  // of one in about a hundred and seventy-six million microcycles.
+  //
+  // **THE INSTANCE IS NAMED `audit` BECAUSE THE CONSTRAINT NAMES THE
+  // INSTANCE.**  `rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes every
+  // register under this module that is not named fast, and a relaxed edge
+  // detector misses an edge or invents one --- an instrument that lies.  Its
+  // clause is `NAME !~ *audit/*` with the capture registers added back, so a
+  // rename here empties the clause in silence and the tell is
+  // `report_exceptions` counting fewer than were written.
+  //
+  // **AND THE BUNDLE BELOW IS THE MASTER'S OWN SIGNALS AND NEVER THE
+  // BRIDGE'S.**  A check keyed by the thing under test moves with the bug, and
+  // the thing under test is the path from a bus cycle to the AXI port.  So the
+  // processor's cycle is MBUSY --- the 74S175 at 1C23 for its direction, the
+  // held decode for what answers it --- and the channel's is its own
+  // ownership, direction and decode, and neither is `bus_rq`, `bus_write` or
+  // `bus_sel`, which are the mux a fault would move with.
+  //
+  // **THE IDLE TICK IS WHAT SEPARATES THE TWO MASTERS.**  MBUSY is up from
+  // MEMGO until MFINISHD_T ticks after -MEMACK and the channel may take the
+  // bus inside either end of that window, so the two cycles overlap; the
+  // arbiter already leaves the bus idle for one tick at every change of owner,
+  // and forcing `aud_cycle` low on that tick turns a handover into a fall and
+  // a rise, which re-samples the attributes and resets the per-cycle request
+  // count.  Nothing in flight is chopped: the channel cannot take the bus
+  // while the processor's -XBUS.RQ is up, and `mem_req` cannot stand without
+  // it.
+  logic aud_ch_own, aud_changing, aud_cpu_memory, aud_ch_memory;
+  logic        aud_cycle, aud_write, aud_memory;
+  logic [21:0] aud_phys;
+  assign aud_cycle  = aud_changing ? 1'b0 : (aud_ch_own ? 1'b1 : mbusy_o);
+  assign aud_write  = aud_ch_own ? ch_write      : wrcyc;
+  assign aud_memory = aud_ch_own ? aud_ch_memory : aud_cpu_memory;
+  assign aud_phys   = aud_ch_own ? ch_addr       : phys;
+
+  // **THE READOUT, JOINED INTO THE CONSOLE'S WINDOW AT A SELECTOR OF ITS
+  // OWN.**  `cadr_microcycle.sv` maps 0 to 10 and answers `RO_NO_MEMORY` for
+  // anything else; 11 is the audit's and 12 to 15 are still free.  That is
+  // how anything inside this module is read on a HALTED board, over
+  // `M_AXI_GP1`, by `cadr-readout`, from anywhere, with nobody at the board
+  // --- and the board's own event is hours in the past by the time anybody
+  // looks.
+  //
+  // **THE PIPELINE IS THE WINDOW'S AND THE AUDIT IS PUT ON IT RATHER THAN
+  // BESIDE IT.**  `ro_addr` reaches `ro_data` and `ro_echo` three ticks later
+  // inside the processor: `ro_a0` at one, the memories' second ports at two,
+  // the word register at three.  The audit's own `word` is one tick behind its
+  // `sel`, so `sel` is the address delayed by TWO and the word lands on the
+  // same tick as the memories' --- and the mux is on `con_ro_echo`, which is
+  // the address that word was read at, so the three wires stay one instant.
+  // Out of reset the echo is the reserved selector, which is not this one, so
+  // the window answers exactly as it did before this module was joined to it.
+  //
+  // Only four bits of the address are carried: the audit has sixteen words and
+  // the other ten bits would be a signal nothing reads.
+  localparam logic [3:0] RO_AUDIT = 4'd11;
+
+  logic [47:0] proc_ro_data, aud_word;
+  logic [3:0]  ro_sel_d1, ro_sel_d2;
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      ro_sel_d1 <= 4'd0;
+      ro_sel_d2 <= 4'd0;
+    end else begin
+      ro_sel_d1 <= con_ro_addr[3:0];
+      ro_sel_d2 <= ro_sel_d1;
+    end
+  end
+
+  assign con_ro_data = (con_ro_echo[17:14] == RO_AUDIT) ? aud_word : proc_ro_data;
+
+  cadr_bus_audit audit (
+      .clk         (clk),
+      .rst         (rst),
+      .cycle       (aud_cycle),
+      .cycle_write (aud_write),
+      .cycle_memory(aud_memory),
+      .cycle_phys  (aud_phys),
+      .mem_req     (mem_req),
+      .mem_write   (mem_write),
+      .mem_done    (mem_done),
+      .mem_addr    (mem_addr),
+      .mem_wdata   (mem_wdata),
+      .port_read_ack (port_read_ack),
+      .port_write_ack(port_write_ack),
+      .boundary    (clock_edge),
+      .vma         (vma),
+      .md          (md),
+      .pc          (pc),
+      .opc         (opc),
+      .sel         (ro_sel_d2),
+      .word        (aud_word)
+  );
 
   // RDCYC leaves the processor for the check's sake: a write must not move
   // MD, and that is the thing this composition makes visible.

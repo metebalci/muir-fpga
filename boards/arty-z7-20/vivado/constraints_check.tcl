@@ -123,6 +123,20 @@ proc assert_constraints_scoped {inside period} {
 # `-nworst 1` is one path per endpoint, which is what makes this affordable:
 # 14,135 paths came back in 2.7 s on the board's post-route design, and their
 # requirements in 43 ms more.
+#
+# **AND THE LIMIT IS NOT A TUNING KNOB, IT IS A CORRECTNESS HAZARD, MEASURED.**
+# `get_timing_paths` hands back the WORST slack first and a relaxed path has
+# fifteen periods of slack, so a query that hits its limit drops exactly the
+# paths this counts.  At 40,000 that stopped being theoretical the moment the
+# transaction audit was instantiated: the `DDR=1` board went from 39,397
+# endpoints to over 40,000, the query truncated, and
+# `assert_multicycle_applied $tick 16` --- the memory port's own 160 ns
+# contract, whose paths have the most slack of all --- reported that
+# `cadr_machine.xdc` had "applied to NO PATH" on a design where it had applied
+# perfectly.  That is a false accusation of the `foreach` bug this check exists
+# to catch, which is the one failure a check must never make.  The limit is
+# 100,000 now, and the truncated case is a failure of its own with its own
+# words rather than a note above somebody else's.
 proc relaxed_path_histogram {limit} {
     set hist {}
     foreach req [get_property -quiet REQUIREMENT \
@@ -132,25 +146,139 @@ proc relaxed_path_histogram {limit} {
     return $hist
 }
 
+# **AND THE QUESTION THE AGGREGATE COUNT CANNOT ANSWER: WHICH SET DID A NEW
+# MODULE'S REGISTERS FALL INTO?**
+#
+# `rtl/plumbing/xilinx7/cadr_machine.xdc` defines `slow` as every register
+# under `cadr_machine` less a name list, so ANY module instantiated there is
+# relaxed to fifteen ticks by default and nothing says so.  That is not a
+# hypothetical: `cadr_disk_controller.sv` landed with none of its registers
+# named and **3,904 of its 4,000 internal paths carried the exception**, the
+# longest 20.1 ns, and three slices quoted fit figures for a disk nobody was
+# timing.  It was found by asking the routed checkpoint which paths carried the
+# exception, not by any report reading red --- and that question is what this
+# proc is.
+#
+# The assertion is deliberately the ONE DIRECTION THAT IS TRUE.  A relaxed
+# register's paths are relaxed only when BOTH ends are in `slow`, so "every
+# path to a named capture register asks for fifteen ticks" is FALSE by
+# construction --- a capture register's data comes from fast counters as well
+# --- and a check written that way would fail on a healthy design.  What holds
+# is the other way round:
+#
+#   no path ending at a register the clause meant to keep FAST may ask for the
+#   relaxed requirement, which is the swallowing above; and
+#
+#   at least one path ending at a register the clause meant to RELAX must ask
+#   for it, which is the `foreach` trap --- a clause that matched nothing
+#   leaves every figure looking plausible.
+#
+# `fast` and `relaxed` are lists of name patterns under the instance.  An
+# instance that has no registers at all fails: a module optimised away is a
+# finding and not a pass.
+proc assert_instance_timing {period cycles instance relaxed} {
+    set want [format %.3f [expr {$period * $cycles}]]
+    set all [get_cells -quiet -hier -filter \
+                 "NAME =~ $instance && PRIMITIVE_GROUP == FLOP_LATCH"]
+    if {[llength $all] == 0} {
+        puts "XDC: FAILED --- no registers matched $instance."
+        puts "XDC: Either the instance was renamed, in which case the clause"
+        puts "XDC: in cadr_machine.xdc that names it is empty and every"
+        puts "XDC: register under it is relaxed in silence, or the module was"
+        puts "XDC: optimised away, which is a finding of its own."
+        exit 1
+    }
+    set fast {}
+    set slow {}
+    foreach cell $all {
+        set name [get_property NAME $cell]
+        set is_slow 0
+        foreach pat $relaxed {
+            if {[string match $pat $name]} { set is_slow 1 }
+        }
+        if {$is_slow} { lappend slow $cell } else { lappend fast $cell }
+    }
+    puts "XDC: $instance --- [llength $all] registers,\
+          [llength $fast] meant fast, [llength $slow] meant relaxed"
+
+    # THE SWALLOWING.  Every path ending at a register meant to be fast, one
+    # per endpoint, and not one of them may carry the relaxed requirement.
+    set swallowed 0
+    if {[llength $fast] > 0} {
+        set pins [get_pins -quiet -of_objects $fast -filter {REF_PIN_NAME == D}]
+        foreach req [get_property -quiet REQUIREMENT \
+                         [get_timing_paths -quiet -setup -to $pins \
+                              -max_paths 100000 -nworst 1]] {
+            if {[format %.3f $req] eq $want} { incr swallowed }
+        }
+    }
+    if {$swallowed > 0} {
+        puts "XDC: FAILED --- $swallowed paths into registers of $instance"
+        puts "XDC: that must be timed at one tick ask for $want ns instead."
+        puts "XDC: They were swallowed by cadr_machine.xdc's relaxed set,"
+        puts "XDC: which is every register under the machine less a name"
+        puts "XDC: list --- the disk controller's 3,904 of 4,000, met again."
+        puts "XDC: Every slack figure this run would print is of a design"
+        puts "XDC: that is not the one being built."
+        exit 1
+    }
+
+    # THE EMPTY CLAUSE.  At least one path into the registers that were meant
+    # to be relaxed must actually be.
+    set kept 0
+    if {[llength $slow] > 0} {
+        set pins [get_pins -quiet -of_objects $slow -filter {REF_PIN_NAME == D}]
+        foreach req [get_property -quiet REQUIREMENT \
+                         [get_timing_paths -quiet -setup -to $pins \
+                              -max_paths 100000 -nworst 1]] {
+            if {[format %.3f $req] eq $want} { incr kept }
+        }
+        if {$kept == 0} {
+            puts "XDC: FAILED --- not one path into the capture registers of"
+            puts "XDC: $instance asks for $want ns, so the clause that names"
+            puts "XDC: them reached nothing. Look for a renamed instance or a"
+            puts "XDC: name pattern that stopped matching."
+            exit 1
+        }
+    }
+    puts "XDC: $instance --- 0 fast paths relaxed, $kept capture paths at\
+          $want ns: the split took"
+}
+
 # Fails the run when no path carries the relaxed requirement.
-proc assert_multicycle_applied {period cycles {limit 40000}} {
+proc assert_multicycle_applied {period cycles {limit 100000}} {
     set want [format %.3f [expr {$period * $cycles}]]
     set hist [relaxed_path_histogram $limit]
     set total 0
     dict for {k n} $hist { incr total $n }
     set relaxed [expr {[dict exists $hist $want] ? [dict get $hist $want] : 0}]
-    # `get_timing_paths` hands back the worst slack first, and a relaxed path
-    # has fifteen periods of slack --- so a query that hit its limit drops
-    # exactly the paths this is counting, and would redden a healthy design
-    # rather than pass a broken one. The safe direction, but say so.
-    if {$total >= $limit} {
-        puts "XDC: NOTE --- the query returned its $limit-path limit, so what"
-        puts "XDC: follows is the worst $limit paths and not the whole design."
-    }
     if {$relaxed > 0} {
+        if {$total >= $limit} {
+            puts "XDC: NOTE --- the query returned its $limit-path limit, so"
+            puts "XDC: the count below is of the worst $limit paths and not of"
+            puts "XDC: the whole design. It is a floor and not a total."
+        }
         puts "XDC: $relaxed of $total setup paths ask for $want ns --- the"
         puts "XDC: microcycle exception reached the design"
         return
+    }
+    # **THE TRUNCATED CASE IS A DIFFERENT FAILURE AND SAYS SO.**  The paths
+    # this counts have the most slack in the design, so they are the first the
+    # limit drops; reporting that as "the constraints reached no path" is the
+    # false accusation the header above records.  An exit code cannot tell two
+    # failures apart, so the words have to.
+    if {$total >= $limit} {
+        puts "XDC: FAILED --- the query returned its $limit-path limit and"
+        puts "XDC: none of those $limit paths asks for $want ns. THIS IS MOST"
+        puts "XDC: LIKELY THE LIMIT AND NOT THE CONSTRAINTS: relaxed paths"
+        puts "XDC: carry the most slack in the design and are exactly the ones"
+        puts "XDC: a truncated worst-first query drops. Raise the limit above"
+        puts "XDC: the design's endpoint count and run again before believing"
+        puts "XDC: anything else. Requirements seen, path count by requirement:"
+        foreach k [lsort -real [dict keys $hist]] {
+            puts "XDC:   $k ns : [dict get $hist $k]"
+        }
+        exit 1
     }
     puts "XDC: FAILED --- not one of $total setup paths asks for $want ns."
     puts "XDC: cadr_machine.xdc's multicycle set applied to NO PATH, so this"

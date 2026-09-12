@@ -42,6 +42,14 @@ struct model {
 	uint32_t dmem[IMG_DMEM_WORDS], l1[IMG_L1_WORDS], l2[IMG_L2_WORDS];
 	uint16_t opcs[IMG_OPCS];
 	uint64_t regs[21];
+	// The transaction audit's nine words, packed as the fabric packs them.
+	uint64_t audit[IMG_AUDIT_WORDS];
+	// **AND A WAY TO TAKE THE MARKER OFF THEM**, because the property that
+	// matters about this selector is that the program refuses a word which
+	// does not say who wrote it: a bitstream older than the audit answers
+	// the window's own `A5A5_5A5A_A5A5` here and a reader that believed it
+	// would report a clean instrument off a board that has none.
+	int audit_unmarked;
 	uint32_t ro_addr;
 	uint32_t hi_latch_cycles, hi_latch_ticks;
 	uint64_t cycles, ticks;
@@ -70,8 +78,32 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 	case IMG_SEL_MAP2: return a < IMG_L2_WORDS ? m->l2[a] : 0;
 	case IMG_SEL_OPCS: return a < IMG_OPCS ? m->opcs[a] : 0;
 	case IMG_SEL_REGS: return a < 21 ? m->regs[a] : RO_NO_MEMORY;
+	case IMG_SEL_AUDIT:
+		if (m->audit_unmarked)
+			return RO_NO_MEMORY;
+		return a < IMG_AUDIT_WORDS ? m->audit[a]
+					   : ((uint64_t)IMG_AUDIT_MARK << 32);
 	default: return RO_NO_MEMORY;
 	}
+}
+
+// The audit's record as the fabric lays it out, with every field distinct so
+// that a field taken out of the wrong word shows.  The numbers are the board's
+// own: CLAUDE.md's page hash table word at physical 0o103757, which turned out
+// to be the faulting virtual address rather than a page table word.
+#define AUD_MARK ((uint64_t)IMG_AUDIT_MARK << 32)
+static void fill_audit(struct model *m)
+{
+	m->audit[0] = AUD_MARK | ((uint64_t)9u << 16) | (1ull << 15) | 5ull;
+	m->audit[1] = AUD_MARK | ((uint64_t)0x48u << 25) |
+		      ((uint64_t)IMG_AUD_PORT_EXTRA << 22) | 0103757ull;
+	m->audit[2] = AUD_MARK | 0x1810FDF4ull;
+	m->audit[3] = AUD_MARK | 0x261FC9F9ull;
+	m->audit[4] = AUD_MARK | 0x261FC9F9ull;
+	m->audit[5] = AUD_MARK | 0x0A1FC941ull;
+	m->audit[6] = AUD_MARK | 176119628ull;
+	m->audit[7] = AUD_MARK | ((uint64_t)012345u << 16) | 023555ull;
+	m->audit[8] = AUD_MARK | ((uint64_t)77u << 16) | (1ull << 15) | 1234ull;
 }
 
 static uint32_t model_read(struct readout *r, unsigned word)
@@ -155,6 +187,7 @@ static void fill(struct model *m)
 	m->cycles = 0x1234567890ull;
 	m->ticks = 0x9876543210ull;
 	m->running = 1;
+	fill_audit(m);
 }
 
 int main(void)
@@ -263,13 +296,67 @@ int main(void)
 		fail("the last level-2 map entry", img.l2_map[1023], m->l2[1023]);
 	img_free(&img);
 
+	// ---- the transaction audit, at its own selector ------------------------
+	//
+	// **THE MARKER IS THE PROPERTY AND IT IS TESTED BOTH WAYS.**  A reading
+	// of "no faults" off a bitstream with no audit in it would be the worst
+	// thing this window could do, and the only thing separating the two is
+	// `B05A` in the top sixteen bits of every word.  So the unmarked case is
+	// run FIRST, and it must be refused.
+	{
+		struct cadr_audit a;
+		unsigned mark = 0;
+		m->audit_unmarked = 1;
+		if (ro_audit(&r, &a, &mark) == 0)
+			fail("a window with no audit behind it was read as an "
+			     "audit", 1, 0);
+		if (mark != 0xA5A5u)
+			fail("the refused marker", mark, 0xA5A5u);
+		m->audit_unmarked = 0;
+
+		memset(&a, 0, sizeof a);
+		if (ro_audit(&r, &a, &mark) != 0)
+			fail("an honest audit was refused", 1, 0);
+		if (a.faults != 5)
+			fail("the fault count", a.faults, 5);
+		if (a.stalled != 9)
+			fail("the stall count", a.stalled, 9);
+		if (a.clause != IMG_AUD_PORT_EXTRA)
+			fail("the first clause", a.clause, IMG_AUD_PORT_EXTRA);
+		if (a.seen != 0x48u)
+			fail("the clause bitmap", a.seen, 0x48u);
+		if (a.phys != 0103757u)
+			fail("the physical address", a.phys, 0103757u);
+		if (a.addr != 0x1810FDF4u)
+			fail("the byte address", a.addr, 0x1810FDF4u);
+		if (a.data != 0x261FC9F9u)
+			fail("the word on the write-data lines", a.data,
+			     0x261FC9F9u);
+		if (a.vma != 0x261FC9F9u)
+			fail("VMA", a.vma, 0x261FC9F9u);
+		if (a.md != 0x0A1FC941u)
+			fail("MD", a.md, 0x0A1FC941u);
+		if (a.micro != 176119628u)
+			fail("the microcycle", a.micro, 176119628u);
+		if (a.pc != 012345u)
+			fail("PC", a.pc, 012345u);
+		if (a.opc != 023555u)
+			fail("OPC", a.opc, 023555u);
+		if (a.port_reads != 1234u)
+			fail("the port's answered reads", a.port_reads, 1234u);
+		if (a.port_writes != 77u)
+			fail("the port's answered writes", a.port_writes, 77u);
+	}
+
 	// ---- and the machine is started again ---------------------------------
 	ro_start(&r);
 	if (!m->running)
 		fail("the machine was not started again", 0, 1);
 
 	printf("readout: %ld words compared through a modelled window, %lu reads "
-	       "and %lu writes, %lu refused for a stale echo\n",
+	       "and %lu writes, %lu refused for a stale echo, and the "
+	       "transaction audit read back field for field with an unmarked "
+	       "one refused\n",
 	       words, r.reads, r.writes, r.stale);
 	free(m);
 	if (bad) {

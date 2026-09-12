@@ -119,6 +119,14 @@
 // --- the `foreach` trap in a new place, and the tell is the same one:
 // `report_exceptions` counting fewer than were written.
 //
+// **THE COUNTERS THAT CAME WITH THE PORT CLAUSE BELONG TO THE FAST HALF AND
+// THE CLAUSE ABOVE ALREADY PUTS THEM THERE**, which is worth saying because
+// they look like capture registers and are not: `owed_reads` and `owed_writes`
+// are read by the fault term every tick, and `port_reads` and `port_writes`
+// are enabled by a handshake that can arrive on any tick.  The clause names
+// only `first_*`, `micro_reg` and `word_reg`, so everything else under the
+// instance is timed at one tick and no name has to be added for them.
+//
 // WHAT THE OWNER BUNDLE IS, AND WHY IT IS AN INPUT RATHER THAN DECODED HERE.
 // CLAUDE.md's shadow-memory rule says a check keyed by the thing under test
 // moves with the bug, and the thing under test here is the path from the bus
@@ -129,6 +137,28 @@
 // `bus_write` and `bus_sel`, which are the bridge's inputs and would move with
 // a fault in the mux that makes them.  The instantiation owns that choice and
 // the module says so here because a later reader cannot see it from inside.
+//
+// **AND `cycle_memory` IS NOT THE ADDRESS DECODE'S `memory` OUTPUT.**  The
+// display's frame buffer is main memory's own bridge at a second base, so a
+// frame-buffer cycle decodes as `device` and issues a transaction anyway.
+// What this input wants is "the bridge answers this cycle", which in
+// `rtl/machine/cadr_memory_path.sv` is `is_memory || tv_fb` for the processor
+// and `ch_memory` for the channel.  An audit given the decode alone would
+// fault on the first pixel the machine ever painted --- and would have been
+// green in simulation, MIT's boot PROM never touching the display.
+//
+// **AND THE TWO MASTERS OVERLAP IN TIME, SO THE INSTANTIATION HAS TO SAY WHO
+// OWNS THE BUS.**  MBUSY is up from MEMGO until MFINISHD_T ticks after
+// -MEMACK, and the channel may take the bus inside either end of that window
+// --- `ch_own <= ch_req && !cpu_rq`, and `cpu_rq` is up only from the grant to
+// the acknowledgement.  A `cycle` that were simply `mbusy || ch_own` would run
+// the two cycles together, carry the processor's direction into the channel's
+// word and never reset the per-cycle request count.  What makes it exact is
+// the idle tick `cadr_memory_path.sv` already inserts at every change of owner
+// for the bridge's own sake: `cycle` is forced low on it, so a handover is a
+// fall and a rise and the attributes are re-sampled.  No request in flight is
+// ever chopped by that, because the channel cannot take the bus while `cpu_rq`
+// is up and `mem_req` cannot stand without it.
 
 `default_nettype none
 
@@ -150,6 +180,22 @@ module cadr_bus_audit (
     input  var logic [31:0] mem_addr,
     input  var logic [31:0] mem_wdata,
 
+    // --- THE PORT'S OWN ANSWERS, WHICH ARE THE ONLY THING HERE THAT COMES
+    // FROM OUTSIDE `cadr_machine`.  `rtl/plumbing/cadr_mem_count.sv` counts
+    // these two handshakes at the `PS7` boundary and its header says why they
+    // are the right place: a fabric that never issued a transaction cannot
+    // fabricate a `B` or an `R`.  One tick behind the port, as that tally
+    // takes them, so that both halves of each handshake are copied on the
+    // same edge and the count is the same count.
+    //
+    // **THEY ARE WHAT CLOSES THE HOLE `C_LOOSE_ANS` ONLY HALF CLOSES**, and
+    // the clause below says how.  On a board with no `S_AXI_HP0` --- `DDR`
+    // off, or a `PROVE` board where the witness owns the port --- both are
+    // tied low, the owed counts only ever rise, and word 8 is what says which
+    // of the two silences it is.
+    input  var logic        port_read_ack,   // rvalid && rready && rlast
+    input  var logic        port_write_ack,  // bvalid && bready
+
     // --- THE COORDINATES A FAULT IS NAMED BY.  The microcycle is the one
     // this project's whole board narrative is written in, so it is counted
     // here rather than left to be worked out from anything else.
@@ -161,8 +207,10 @@ module cadr_bus_audit (
 
     // --- THE READOUT.  `sel` names a word and `word` is that word one tick
     // later, which is the discipline `cadr_microcycle.sv`'s readout memories
-    // keep and the reason this is three wires and not a bus.
-    input  var logic [2:0]  sel,
+    // keep and the reason this is three wires and not a bus.  Four bits and
+    // nine words: the ninth is the port's own answers, and the seven above it
+    // read the marker with nothing beside it.
+    input  var logic [3:0]  sel,
     output var logic [47:0] word
 );
 
@@ -193,6 +241,16 @@ module cadr_bus_audit (
   // itself.  One clause, no new ports, and it is the difference between an
   // instrument that watches the bridge and one that watches the port.
   localparam logic [2:0] C_LOOSE_ANS  = 3'd6;  // an answer with no request standing
+  // AND THE ONE THAT REACHES PAST IT PROPERLY.  `C_LOOSE_ANS` above sees an
+  // adapter-born transaction only if the adapter hands the extra ANSWER back
+  // as `mem_done`; one that issues a write beside a read and consumes its own
+  // `B` hands back nothing at all and is invisible to every clause anchored on
+  // `mem_req`.  The port's own handshakes are not: `port_write_ack` rises for
+  // a write the machine never asked for, and the count of requests BY
+  // DIRECTION is what says so.  This is the clause the board's own suspect
+  // would fire, and the reason this module has two inputs from outside
+  // `cadr_machine`.
+  localparam logic [2:0] C_PORT_EXTRA = 3'd7;  // the port answered what nobody asked
 
   // --------------------------------------------------------- what is watched
   //
@@ -216,10 +274,14 @@ module cadr_bus_audit (
   // each and saturating: what matters is "more than one", and a counter that
   // wrapped back to one would be the false negative this whole module is
   // about.
+  //
+  // **THE CYCLE'S ADDRESS IS NOT AMONG THEM AND THE REASON IS MEASURED**: see
+  // the capture below.  `cycle_phys` is the far end of the map and a register
+  // in the fast half cannot take it, so the record takes it live at the fault
+  // instead and the long arc lands where it is relaxed.
   logic       in_req;
   logic [1:0] answers, reqs;
   logic       cyc_open, cyc_write, cyc_memory;
-  logic [21:0] cyc_phys;
 
   // --------------------------------------------------------- what is faulted
   logic [2:0] fault_clause;
@@ -229,8 +291,13 @@ module cadr_bus_audit (
     fault_clause = C_NONE;
     // In the order of what a spurious write looks like, most specific first:
     // the direction being wrong is the board's own suspect and must not be
-    // reported as a mere duplicate.
-    if (req_rise && !cyc_open)                    fault_clause = C_NO_CYCLE;
+    // reported as a mere duplicate.  The port's own clause is ahead of all of
+    // them because it is the only one that can see a transaction born BELOW
+    // `mem_req`, which is where everything in `rtl/machine/` has been
+    // exonerated and the defect therefore is.
+    if (port_write_ack && owed_writes == 4'd0)    fault_clause = C_PORT_EXTRA;
+    else if (port_read_ack && owed_reads == 4'd0) fault_clause = C_PORT_EXTRA;
+    else if (req_rise && !cyc_open)               fault_clause = C_NO_CYCLE;
     else if (req_rise && !cyc_memory)             fault_clause = C_NOT_MEMORY;
     else if (req_rise && (mem_write != cyc_write)) fault_clause = C_DIRECTION;
     else if (req_rise && (reqs != 2'd0))          fault_clause = C_TWO_REQS;
@@ -239,14 +306,51 @@ module cadr_bus_audit (
     fault = fault_clause != C_NONE;
   end
 
+  // ------------------------------------------- what the port itself answered
+  //
+  // THE MACHINE'S REQUESTS BY DIRECTION AGAINST THE PORT'S ANSWERS BY
+  // DIRECTION, kept as the DIFFERENCE rather than as two totals.  Two totals
+  // is what `rtl/plumbing/cadr_mem_count.sv` keeps and it is right for what
+  // that is for; it cannot answer this, and there is a number on that:
+  // `build/rtl_sys.golden` carries 193,851 bus cycles in 2,800,000
+  // microcycles, so fifteen-bit totals pass 32,767 at about microcycle
+  // 473,000 and are saturated for roughly 99.7% of the run the board's bug
+  // happened in.  A saturated total cannot show a discrepancy of one; an owed
+  // count is 0 or 1 in a correct design and the FIRST disagreement is latched.
+  //
+  // FOUR BITS AND SATURATING, and what saturation costs is worth stating: on
+  // a board whose port answers nothing --- `ps7_post_config` not run --- the
+  // owed count climbs to 15 and stays, and the clause then sees nothing.  It
+  // has nothing to see there, the port answering nothing at all, and
+  // releasing the count on an unanswered request would be the false positive
+  // instead: the adapter is still mid-transaction when the interface times
+  // the cycle out, and its answer is owed.
+  logic [3:0] owed_reads, owed_writes;
+  logic       inc_read, inc_write, dec_read, dec_write;
+  assign inc_read  = req_rise && !mem_write;
+  assign inc_write = req_rise &&  mem_write;
+  assign dec_read  = port_read_ack  && (owed_reads  != 4'd0);
+  assign dec_write = port_write_ack && (owed_writes != 4'd0);
+
+  // AND THE TOTALS TOO, BECAUSE A SILENT CLAUSE MUST NOT BE ABLE TO MEAN TWO
+  // THINGS.  With `port_read_ack` and `port_write_ack` tied low --- a `DDR=0`
+  // board, a `PROVE` board, or a wire nobody connected --- the clause is
+  // silent for ever and reads exactly like a port that answered every
+  // transaction correctly.  Word 8 is the difference: two saturating counts of
+  // the port's own handshakes, in `cadr_mem_count.sv`'s own layout and with
+  // its marker bits, so that zero says the wires are dead rather than that all
+  // was well.  Saturating is right for these for the reason it is wrong above:
+  // the only question asked of them is whether they are moving.
+  logic [14:0] port_reads, port_writes;
+
   // ------------------------------------------------------------ the record
   logic [14:0] faults;      // saturating; any reading but zero is the finding
   logic [14:0] stalled;     // requests that fell with no answer at all
   // Which clauses ever fired, one bit each, indexed by the clause code less
-  // one --- so six bits for six clauses and no spare.  A field with a bit in
-  // it that nothing can ever set is a bit somebody has to be told to
-  // disbelieve, and the pad in word 1 is a pad and says so.
-  logic [5:0]  seen;
+  // one --- so seven bits for seven clauses and no spare.  A field with a bit
+  // in it that nothing can ever set is a bit somebody has to be told to
+  // disbelieve, and word 1's pad went when the seventh clause landed.
+  logic [6:0]  seen;
   // AND THE LATCH IS THE CLAUSE ITSELF.  There is no separate valid bit: a
   // clause of zero says nothing was latched, so no two fields of the record
   // can disagree about whether there is one.
@@ -267,10 +371,13 @@ module cadr_bus_audit (
       cyc_open       <= 1'b0;
       cyc_write      <= 1'b0;
       cyc_memory     <= 1'b0;
-      cyc_phys       <= 22'd0;
       faults         <= 15'd0;
       stalled        <= 15'd0;
-      seen           <= 6'd0;
+      seen           <= 7'd0;
+      owed_reads     <= 4'd0;
+      owed_writes    <= 4'd0;
+      port_reads     <= 15'd0;
+      port_writes    <= 15'd0;
       first_clause   <= C_NONE;
       first_phys     <= 22'd0;
       first_addr     <= 32'd0;
@@ -300,7 +407,6 @@ module cadr_bus_audit (
         cyc_open   <= 1'b1;
         cyc_write  <= cycle_write;
         cyc_memory <= cycle_memory;
-        cyc_phys   <= cycle_phys;
         reqs       <= 2'd0;
       end else if (cycle_fall) begin
         cyc_open <= 1'b0;
@@ -322,6 +428,25 @@ module cadr_bus_audit (
       end
       if (done_rise && in_req && answers != 2'd3) answers <= answers + 2'd1;
 
+      // WHAT IS OWED AT THE PORT, one counter a direction.  A request and the
+      // answer to the one before it can land on the same tick, so the two
+      // terms are resolved together rather than in two statements: an
+      // increment and a decrement at once is no change.
+      if (inc_read && !dec_read) begin
+        if (owed_reads != 4'd15) owed_reads <= owed_reads + 4'd1;
+      end else if (dec_read && !inc_read) begin
+        owed_reads <= owed_reads - 4'd1;
+      end
+      if (inc_write && !dec_write) begin
+        if (owed_writes != 4'd15) owed_writes <= owed_writes + 4'd1;
+      end else if (dec_write && !inc_write) begin
+        owed_writes <= owed_writes - 4'd1;
+      end
+
+      // And the totals, which are what say the two wires are alive at all.
+      if (port_read_ack  && !(&port_reads))  port_reads  <= port_reads  + 15'd1;
+      if (port_write_ack && !(&port_writes)) port_writes <= port_writes + 15'd1;
+
       // THE FAULT.  Counted always, latched once.
       if (fault) begin
         if (!(&faults)) faults <= faults + 15'd1;
@@ -330,9 +455,31 @@ module cadr_bus_audit (
           first_clause <= fault_clause;
           // The address twice over, because a mistranslation between the
           // CADR's word address and the byte address on the port is itself
-          // one of the things this can catch: `cyc_phys` is what the master
-          // asked for and `mem_addr` is what went out.
-          first_phys   <= cyc_phys;
+          // one of the things this can catch: `cycle_phys` is what the master
+          // is asking about and `mem_addr` is what went out.
+          //
+          // **TAKEN LIVE AT THE FAULT AND NOT HELD AT THE CYCLE'S RISE, AND
+          // THAT IS A TIMING ANSWER RATHER THAN A PREFERENCE.**  It used to be
+          // a `cyc_phys` register loaded with the rest of the cycle's
+          // attributes, and on the memory-on board every one of its 22 bits
+          // failed: `md_reg[15]/C -> cyc_phys_reg[20]/D`, eleven logic levels
+          // through the level-2 map's distributed RAM, **-0.622 ns on 11
+          // endpoints, and all eleven were that one register**.  `phys` is the
+          // far end of the map and arrives late in the microcycle it belongs
+          // to --- the same -6.5 ns family `cadr_memory_path.sv` registered
+          // its decode to cut off and the disk controller met again one slave
+          // along --- so a register in the FAST half cannot take it.
+          //
+          // Here it lands on `first_phys`, which is in the relaxed half for
+          // the reason the whole record is: written once and read once, by a
+          // console, on a halted machine.  Nothing is lost, because `phys` is
+          // constant for the whole microcycle and every fault a bus cycle can
+          // raise happens in the microcycle that opened it --- MEMGO and the
+          // request are in one microcycle, the machine stalling until the word
+          // comes back.  For a fault with no cycle open, `phys` is where the
+          // machine is now, which is more use than the last cycle's address
+          // would have been.
+          first_phys   <= cycle_phys;
           first_addr   <= mem_addr;
           // WHAT STOOD ON THE WRITE-DATA LINES, which on a read is the whole
           // of MD and is therefore the word a spurious write would have put
@@ -355,14 +502,21 @@ module cadr_bus_audit (
   logic [47:0] word_c;
   always_comb begin
     unique case (sel)
-      3'd0:    word_c = {MARK, 1'b0, stalled, 1'b1, faults};
-      3'd1:    word_c = {MARK, 1'b0, seen, first_clause, first_phys};
-      3'd2:    word_c = {MARK, first_addr};
-      3'd3:    word_c = {MARK, first_data};
-      3'd4:    word_c = {MARK, first_vma};
-      3'd5:    word_c = {MARK, first_md};
-      3'd6:    word_c = {MARK, first_micro};
-      3'd7:    word_c = {MARK, 2'd0, first_pc, 2'd0, first_opc};
+      4'd0:    word_c = {MARK, 1'b0, stalled, 1'b1, faults};
+      4'd1:    word_c = {MARK, seen, first_clause, first_phys};
+      4'd2:    word_c = {MARK, first_addr};
+      4'd3:    word_c = {MARK, first_data};
+      4'd4:    word_c = {MARK, first_vma};
+      4'd5:    word_c = {MARK, first_md};
+      4'd6:    word_c = {MARK, first_micro};
+      4'd7:    word_c = {MARK, 2'd0, first_pc, 2'd0, first_opc};
+      // THE PORT'S OWN ANSWERS, in `rtl/plumbing/cadr_mem_count.sv`'s layout
+      // and with its marker bits, so that `(w & 0x80008000) == 0x00008000`
+      // holds of the low thirty-two and a reading of nothing is not a reading
+      // of no instrument.  Zero here with the fault count zero says the two
+      // wires are dead, which on a `DDR=0` or `PROVE` board is the truth and
+      // on a memory-on board is a finding.
+      4'd8:    word_c = {MARK, 1'b0, port_writes, 1'b1, port_reads};
       default: word_c = {MARK, 32'd0};
     endcase
   end

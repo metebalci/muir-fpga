@@ -34,10 +34,20 @@
 //             the word a spurious write would have put into memory.
 //   TWO REQS  one bus cycle that asks the port twice.
 //   TWICE     one request answered twice.
-//   LOOSE ANS an answer with no request standing, which is the only shape in
-//             which a transaction the AXI adapter ran by itself is visible
-//             from inside `cadr_machine` --- the adapter being outside it, so
-//             its address channels are not.
+//   LOOSE ANS an answer with no request standing, which is one of the two
+//             shapes in which a transaction the AXI adapter ran by itself is
+//             visible from inside `cadr_machine` --- the adapter being outside
+//             it, so its address channels are not.
+//   PORT EXTRA the other, and the one that does not depend on the adapter
+//             handing anything back: the PORT answered a transaction in a
+//             direction nothing was owed in.  An adapter that issues a write
+//             beside a read and consumes its own `B` raises no second
+//             `mem_req` and returns no second `mem_done`, so every other
+//             clause here is blind to it and this one is not.  Both
+//             directions, both ways round, and the owed count is checked not
+//             to fire on correct traffic --- a request and the previous
+//             transaction's answer on the SAME TICK among it, which is the
+//             case a naive counter gets wrong.
 //   STALLED   a request that falls with no answer at all.  It must count in
 //             its OWN counter and must NOT take the first-fault latch: on a
 //             board where `ps7_post_config` has not run every request falls
@@ -69,7 +79,7 @@ constexpr uint16_t kMark = 0xB05A;
 
 // The clause codes, as the module names them.
 constexpr int kNone = 0, kTwice = 1, kTwoReqs = 2, kDirection = 3,
-              kNoCycle = 4, kNotMemory = 5, kLooseAns = 6;
+              kNoCycle = 4, kNotMemory = 5, kLooseAns = 6, kPortExtra = 7;
 
 int fails = 0;
 
@@ -118,6 +128,8 @@ struct Dut {
     m->md = 0;
     m->pc = 0;
     m->opc = 0;
+    m->port_read_ack = 0;
+    m->port_write_ack = 0;
     m->sel = 0;
     m->eval();
     for (int i = 0; i < 4; ++i) tick();
@@ -135,20 +147,35 @@ struct Dut {
   // A well-formed bus cycle: open it, raise the request, answer it once, drop
   // the request, close it.  `reqs` says how many requests to raise inside it
   // and `answers` how many answers to give each --- both 1 for a clean cycle.
+  //
+  // **AND THE PORT ANSWERS IT TOO WHEN `port` IS SET**, in the direction the
+  // request went out in, one tick before the bridge's own `mem_done`.  That is
+  // the order the board has --- the adapter cannot say `mem_done` before its
+  // `B` or its last `R` --- and a clean cycle must leave the seventh clause
+  // silent.
   void cycle(bool write, bool memory, uint32_t phys, uint32_t addr,
              uint32_t wdata, int reqs = 1, int answers = 1,
-             bool req_write = false, bool use_req_write = false) {
+             bool req_write = false, bool use_req_write = false,
+             bool port = false) {
     m->cycle = 1;
     m->cycle_write = write;
     m->cycle_memory = memory;
     m->cycle_phys = phys;
     tick();
     for (int r = 0; r < reqs; ++r) {
+      const bool w = use_req_write ? req_write : write;
       m->mem_req = 1;
-      m->mem_write = use_req_write ? req_write : write;
+      m->mem_write = w;
       m->mem_addr = addr;
       m->mem_wdata = wdata;
       tick();
+      if (port) {
+        m->port_write_ack = w;
+        m->port_read_ack = !w;
+        tick();
+        m->port_write_ack = 0;
+        m->port_read_ack = 0;
+      }
       for (int a = 0; a < answers; ++a) {
         m->mem_done = 1;
         tick();
@@ -159,6 +186,17 @@ struct Dut {
       tick();
     }
     m->cycle = 0;
+    tick();
+  }
+
+  // The port answering in one direction with nothing owed in it: the shape of
+  // a transaction born inside the adapter.
+  void port_answer(bool write) {
+    m->port_write_ack = write;
+    m->port_read_ack = !write;
+    tick();
+    m->port_write_ack = 0;
+    m->port_read_ack = 0;
     tick();
   }
 
@@ -192,8 +230,10 @@ struct Dut {
   // separate valid bit for it to disagree with.
   int clause() { return static_cast<int>((word(1) >> 22) & 7u); }
   bool valid() { return clause() != kNone; }
-  int seen() { return static_cast<int>((word(1) >> 25) & 0x3Fu); }
+  int seen() { return static_cast<int>((word(1) >> 25) & 0x7Fu); }
   uint32_t phys() { return word(1) & 0x3FFFFFu; }
+  long port_reads() { return word(8) & 0x7FFFu; }
+  long port_writes() { return (word(8) >> 16) & 0x7FFFu; }
 };
 
 void RunClean(Dut &d) {
@@ -226,6 +266,70 @@ void RunClean(Dut &d) {
   Check(d.seen() == 0, "clean traffic set the clause bitmap to %#x", d.seen());
 }
 
+// THE SAME TRAFFIC WITH THE PORT ANSWERING IT, which is the board's own
+// arrangement and the one the seventh clause runs in.  Every request is
+// answered at the port in its own direction, and the instrument must stay
+// silent --- a false positive here would report a board bug that is not there,
+// which is the failure that wastes a person's week.
+void RunCleanWithPort(Dut &d) {
+  d.reset();
+  for (int i = 0; i < 20; ++i) {
+    d.boundary();
+    const bool write = (i % 3) == 0;
+    d.cycle(write, true, 0x200 + i, 0x18000000 + 4 * i, Poison(i), 1, 1, false,
+            false, true);
+  }
+  Check(d.faults() == 0,
+        "clean traffic with the port answering produced %ld faults",
+        d.faults());
+  Check(!d.valid(), "clean traffic with the port answering latched a fault");
+  Check(d.port_reads() + d.port_writes() == 20,
+        "the port's tally reads %ld answers over 20 cycles",
+        d.port_reads() + d.port_writes());
+  Check(d.port_writes() == 7, "the port's tally reads %ld writes, wanting 7",
+        d.port_writes());
+
+  // AND THE CASE A NAIVE COUNTER GETS WRONG: a request rising on the SAME TICK
+  // as the answer to the one before it.  The owed count must resolve both at
+  // once, or the new request looks like an answer nobody asked for.
+  //
+  // ONE REQUEST A BUS CYCLE, spelled out rather than looped inside one cycle.
+  // The first draft put all eight requests in a single cycle and the check
+  // reported seven faults --- which were TWO_REQS and had nothing to do with
+  // the port at all.  A stimulus that exercises a different clause from the
+  // one it is named for is this repository's oldest trap and it caught this.
+  d.reset();
+  for (int i = 0; i < 8; ++i) {
+    d.boundary();
+    d.m->cycle = 1;
+    d.m->cycle_write = 0;
+    d.m->cycle_memory = 1;
+    d.m->cycle_phys = 0x300 + i;
+    d.tick();
+    d.m->mem_req = 1;
+    d.m->mem_addr = 0x18001000 + 4 * i;
+    d.m->port_read_ack = (i > 0);   // the previous transaction's answer
+    d.tick();                        // ... on the tick this one is raised
+    d.m->port_read_ack = 0;
+    d.m->mem_done = 1;
+    d.tick();
+    d.m->mem_done = 0;
+    d.m->mem_req = 0;
+    d.tick();
+    d.m->cycle = 0;
+    d.tick();
+  }
+  d.m->port_read_ack = 1;
+  d.tick();
+  d.m->port_read_ack = 0;
+  d.tick();
+  Check(d.faults() == 0,
+        "a request raised on the same tick as the previous answer produced "
+        "%ld faults", d.faults());
+  Check(d.port_reads() == 8, "the port's tally reads %ld, wanting 8",
+        d.port_reads());
+}
+
 void RunClause(const char *name, int want, void (*drive)(Dut &)) {
   Dut d;
   d.reset();
@@ -248,6 +352,12 @@ int main(int argc, char **argv) {
   {
     Dut d;
     RunClean(d);
+    delete d.m;
+  }
+
+  {
+    Dut d;
+    RunCleanWithPort(d);
     delete d.m;
   }
 
@@ -295,6 +405,49 @@ int main(int argc, char **argv) {
     d.m->mem_done = 0;
     d.tick();
   });
+
+  // THE CLAUSE THAT SEES PAST `cadr_machine` WITHOUT THE ADAPTER'S HELP.  An
+  // adapter that issues a write beside a read and consumes its own `B` raises
+  // no second `mem_req` and returns no second `mem_done`; what it cannot hide
+  // is that the processing system answered a write.  Both directions, because
+  // a crossed pair of wires is a fault this is the only thing that can see.
+  RunClause("the port answered a write nobody asked for", kPortExtra,
+            [](Dut &d) {
+              d.boundary();
+              d.cycle(false, true, 0x80, 0x18000200, Poison(13), 1, 1, false,
+                      false, true);
+              d.port_answer(true);
+            });
+
+  RunClause("the port answered a read nobody asked for", kPortExtra,
+            [](Dut &d) {
+              d.boundary();
+              d.cycle(true, true, 0x88, 0x18000220, Poison(14), 1, 1, false,
+                      false, true);
+              d.port_answer(false);
+            });
+
+  // AND THE TALLY IS WHAT SAYS THE TWO WIRES ARE ALIVE.  A clause that is
+  // silent because the port answered everything correctly and one that is
+  // silent because nobody connected it read exactly alike, and word 8 is the
+  // only thing between them.
+  {
+    Dut d;
+    d.reset();
+    d.boundary();
+    d.cycle(false, true, 0x90, 0x18000240, Poison(15));  // no port answers
+    Check(d.faults() == 0, "a cycle with no port answer produced %ld faults",
+          d.faults());
+    Check(d.port_reads() == 0 && d.port_writes() == 0,
+          "the port's tally reads %ld and %ld with the wires dead, which must "
+          "be zero or a dead wire cannot be told from a quiet one",
+          d.port_reads(), d.port_writes());
+    Check((d.word(8) & 0xFFFFFFFFull) == 0x00008000ull,
+          "word 8 reads %08llx with both counts zero, wanting the two marker "
+          "bits alone",
+          static_cast<unsigned long long>(d.word(8) & 0xFFFFFFFFull));
+    delete d.m;
+  }
 
   // WHAT THE INSTRUMENT IS FOR: the word a spurious write would have put into
   // memory, at the address it would have put it.  Asserted in full, because a
@@ -406,7 +559,7 @@ int main(int argc, char **argv) {
   {
     Dut d;
     d.reset();
-    for (int s = 0; s < 8; ++s) {
+    for (int s = 0; s < 16; ++s) {
       const uint64_t w = d.word(s);
       Check(d.mark(s) == kMark,
             "word %d of a clean instrument reads %012" PRIx64 ": its top "
@@ -419,10 +572,17 @@ int main(int argc, char **argv) {
       Check((w >> 32) != 0xA5A5u,
             "word %d collides with the readout window's own answer for a "
             "selector the fabric does not map", s);
+      // The seven above the nine that are defined are the marker and nothing
+      // else: a word with something in it there would be a field nobody has
+      // been told how to read.
+      if (s >= 9) {
+        Check((w & 0xFFFFFFFFull) == 0,
+              "word %d is not a word: it reads %012" PRIx64, s, w);
+      }
     }
     d.boundary();
     d.loose_request(true, 0x18000600, Poison(12));
-    for (int s = 0; s < 8; ++s) {
+    for (int s = 0; s < 16; ++s) {
       Check(d.mark(s) == kMark, "word %d of a faulted instrument reads mark "
             "%04x", s, d.mark(s));
     }
