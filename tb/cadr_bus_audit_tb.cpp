@@ -205,6 +205,18 @@ struct Run {
   std::map<long, long> reqs_per_cycle;   // histogram, for the report
   std::vector<uint32_t> mem;
   std::vector<uint32_t> page0_at_end;
+
+  // **AND WHAT THE FABRIC'S OWN AUDIT MADE OF THE SAME RUN.**  Everything
+  // above is this testbench watching the port; `rtl/plumbing/cadr_bus_audit.sv`
+  // is inside `cadr_machine` watching it too, and the two must agree that
+  // nothing happened.  Read the way a board reads it --- through the console's
+  // window, at selector 11, with the echo compared --- so that what is
+  // exercised here is the arrangement the board has and not a shortcut to the
+  // registers.
+  long audit_faults = -1, audit_stalled = -1, audit_clause = -1;
+  long audit_port_reads = -1, audit_port_writes = -1;
+  long audit_words_unmarked = 0;
+  long audit_echo_wrong = 0;
 };
 
 Run Simulate() {
@@ -215,6 +227,8 @@ Run Simulate() {
   auto *dut = new Vcadr_bus_audit_harness;
   dut->clk = 0;
   dut->rst = 1;
+  // The reserved selector, which is what the harness used to tie this to.
+  dut->ro_addr = 0x3FFFF;
   dut->hp0_awready = 0;
   dut->hp0_wready = 0;
   dut->hp0_bvalid = 0;
@@ -545,6 +559,36 @@ Run Simulate() {
 
   out.final_pc = dut->pc;
   out.page0_at_end.assign(out.mem.begin(), out.mem.begin() + kPageWords);
+
+  // ---- and what the fabric's own audit made of it ---------------------------
+  //
+  // Nine words at selector 11, taken the way `cadr-readout` takes them: write
+  // the address, wait the pipeline out, and REFUSE a word whose echo is not
+  // what was asked.  The marker is checked on every one of them before a
+  // single number is read, because a window with no audit behind it answers
+  // `A5A5_5A5A_A5A5` here and that must not read as a clean instrument.
+  {
+    uint64_t w[9] = {0};
+    for (unsigned i = 0; i < 9; ++i) {
+      const unsigned asked = (11u << 14) | i;
+      dut->ro_addr = asked;
+      for (int k = 0; k < 4; ++k) {
+        dut->clk = 1;
+        dut->eval();
+        dut->clk = 0;
+        dut->eval();
+      }
+      if (dut->ro_echo != asked) ++out.audit_echo_wrong;
+      w[i] = dut->ro_data;
+      if (((w[i] >> 32) & 0xFFFFu) != 0xB05Au) ++out.audit_words_unmarked;
+    }
+    out.audit_faults = static_cast<long>(w[0] & 0x7FFFu);
+    out.audit_stalled = static_cast<long>((w[0] >> 16) & 0x7FFFu);
+    out.audit_clause = static_cast<long>((w[1] >> 22) & 7u);
+    out.audit_port_reads = static_cast<long>(w[8] & 0x7FFFu);
+    out.audit_port_writes = static_cast<long>((w[8] >> 16) & 0x7FFFu);
+  }
+
   dut->final();
   delete dut;
   return out;
@@ -568,6 +612,10 @@ void Report(const Run &r) {
               "committed\n", r.reads_fetched, r.writes_committed);
   std::printf("  reads whose write-data lines carried MD: %ld of %ld\n",
               r.read_carried_md, r.req_read_rises);
+  std::printf("  the fabric's own audit  %ld faults, %ld stalled, clause %ld; "
+              "the port answered %ld reads and %ld writes\n",
+              r.audit_faults, r.audit_stalled, r.audit_clause,
+              r.audit_port_reads, r.audit_port_writes);
   std::printf("  requests per bus cycle:");
   for (const auto &kv : r.reqs_per_cycle)
     std::printf(" %ld:%ld", kv.first, kv.second);
@@ -627,6 +675,38 @@ void CheckRun(const Run &r) {
   Check(r.transactions_on_a_non_memory_cycle == 0,
         "%ld AXI transactions went out on a bus cycle the decode did not call "
         "main memory", r.transactions_on_a_non_memory_cycle);
+
+  // **AND THE FABRIC'S OWN AUDIT AGREES, READ THE WAY A BOARD READS IT.**
+  // Everything above is this testbench watching the port from outside;
+  // `rtl/plumbing/cadr_bus_audit.sv` watched the same run from inside
+  // `cadr_machine` and reported through the console's window.  A false
+  // positive there is the failure that would waste somebody's week on a board
+  // bug that is not there, and it can only be seen by running the instrument
+  // against real traffic --- which is this, 512 main-memory cycles of it.
+  Check(r.audit_echo_wrong == 0,
+        "%ld of the audit's nine words came back for an address that was not "
+        "the one asked for", r.audit_echo_wrong);
+  Check(r.audit_words_unmarked == 0,
+        "%ld of the audit's nine words did not carry B05A in their top "
+        "sixteen bits, so a reading of no faults from them would mean nothing",
+        r.audit_words_unmarked);
+  Check(r.audit_faults == 0,
+        "the fabric's own audit latched %ld faults over the same run this "
+        "testbench found none in", r.audit_faults);
+  Check(r.audit_clause == 0,
+        "the fabric's own audit latched clause %ld", r.audit_clause);
+  Check(r.audit_stalled == 0,
+        "the fabric's own audit counted %ld requests that fell with no answer",
+        r.audit_stalled);
+  // AND THE PORT CLAUSE HAD SOMETHING TO WATCH, which is the guard that makes
+  // the zero above worth anything: with the two wires dead it would read zero
+  // whatever the fabric did.
+  Check(r.audit_port_reads == r.r_handshakes,
+        "the audit counted %ld read answers at the port and this testbench "
+        "counted %ld", r.audit_port_reads, r.r_handshakes);
+  Check(r.audit_port_writes == r.b_handshakes,
+        "the audit counted %ld write answers at the port and this testbench "
+        "counted %ld", r.audit_port_writes, r.b_handshakes);
 
   // THE TOTALS RECONCILE, which is the same property read from the other end.
   Check(r.ar_handshakes == r.req_read_rises,

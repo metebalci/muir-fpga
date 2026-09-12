@@ -8044,9 +8044,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note Written as a term that is never true rather than by deleting the arm, so
 @note that `cyc_open` stays read and lint does not do the catching.
 @old
-    if (req_rise && !cyc_open)                    fault_clause = C_NO_CYCLE;
+    else if (req_rise && !cyc_open)               fault_clause = C_NO_CYCLE;
 @new
-    if (req_rise && !cyc_open && !req_rise)       fault_clause = C_NO_CYCLE;
+    else if (req_rise && !cyc_open && !req_rise)  fault_clause = C_NO_CYCLE;
 @end
 
 @mutation the-audit-does-not-mind-the-direction
@@ -8099,9 +8099,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note gone, a clean instrument's word 0 reads as plain zero --- and so does a
 @note word that arrived from nowhere at all.
 @old
-      3'd0:    word_c = {MARK, 1'b0, stalled, 1'b1, faults};
+      4'd0:    word_c = {MARK, 1'b0, stalled, 1'b1, faults};
 @new
-      3'd0:    word_c = {16'd0, 1'b0, stalled, 1'b1, faults};
+      4'd0:    word_c = {16'd0, 1'b0, stalled, 1'b1, faults};
 @end
 
 @mutation the-audit-faults-on-a-cycle-that-is-doing-nothing-wrong
@@ -8304,4 +8304,247 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign bus_phys  = ch_own ? ch_addr  : phys;
 @new
   assign bus_phys  = ch_own ? {ch_addr[21:1], ~ch_addr[0]} : phys;
+@end
+
+# ------------------------------------------- the audit wired into the machine
+#
+# THE INSTRUMENT STOPPED BEING A MODULE NOBODY INSTANTIATED.  `bus_audit_unit`
+# above holds `rtl/plumbing/cadr_bus_audit.sv` clause by clause on the module
+# alone and `bus_audit` holds the property through the composed machine; these
+# are aimed at the THREE WIRINGS between them, each of which could be wrong
+# while every one of those checks stayed green:
+#
+#   the owner bundle --- whose bus cycle is open, its direction, its held
+#   decode --- which `cadr_machine.sv` and `cadr_memory_path.sv` make and the
+#   module cannot see the provenance of;
+#
+#   the port's own two handshakes, which come from a level ABOVE
+#   `cadr_machine` and are the only thing that can see a transaction born
+#   inside `cadr_axi_master`; and
+#
+#   the readout window's selector 11, which is how a halted board is asked
+#   about any of it, hours later, by somebody not in the room.
+
+@mutation the-audit-is-told-the-wrong-direction
+@check bus_audit
+@file rtl/machine/cadr_machine.sv
+@note THE OWNER BUNDLE, WHICH IS WHAT THE INSTRUMENT IS ANCHORED ON.  The
+@note audit inside `cadr_machine` compares the direction a transaction went out
+@note in against the direction the BUS CYCLE names, and the cycle's direction
+@note is WRCYC --- the 74S175 at 1C23, which holds the starting instruction's
+@note direction for the whole cycle.  Handed the complement, every one of the
+@note boot PROM's 512 main-memory cycles is a transaction in the wrong
+@note direction, which is the board's own suspected fault reported on traffic
+@note that is perfectly correct.
+@note
+@note It is here rather than in `bus_audit_unit` because that check drives the
+@note module and this is about the WIRING of it, which only the composed
+@note machine has.  What catches it is the assertion added to
+@note `tb/cadr_bus_audit_tb.cpp` when the audit was wired in: the fabric's own
+@note fault count, read back through the console's window at selector 11, must
+@note be zero over a run this testbench independently found nothing wrong in.
+@old
+  assign aud_write  = aud_ch_own ? ch_write      : wrcyc;
+@new
+  assign aud_write  = aud_ch_own ? ch_write      : !wrcyc;
+@end
+
+@mutation the-audit-is-not-told-when-a-bus-cycle-is-open
+@check bus_audit
+@file rtl/machine/cadr_machine.sv
+@note THE OTHER HALF OF THE ANCHOR.  A memory-port request with no bus cycle
+@note open is the transaction the fabric invented, and it is the clause the
+@note board's suspect would fire; an audit that is never told a cycle is open
+@note reports every legitimate request as one.
+@note
+@note This is the FALSE POSITIVE direction, which is the shape that wastes a
+@note person's week --- and the reason the wiring needs a record of its own is
+@note that `bus_audit_unit` drives `cycle` itself and can say nothing about
+@note where it comes from.
+@old
+  assign aud_cycle  = aud_changing ? 1'b0 : (aud_ch_own ? 1'b1 : mbusy_o);
+@new
+  assign aud_cycle  = aud_changing ? 1'b0 : (aud_ch_own ? 1'b1 : 1'b0);
+@end
+
+@mutation the-audit-is-told-the-wrong-decode
+@check bus_audit
+@file rtl/machine/cadr_memory_path.sv
+@note THE HELD DECODE, AND WHY IT IS `is_memory || tv_fb` AND NOT `is_memory`.
+@note The display's frame buffer is main memory's own bridge at a second base,
+@note so a frame-buffer cycle decodes as `device` and issues a transaction
+@note anyway; the audit's fourth clause says a cycle the decode did not call
+@note main memory must issue none, and it has to be told which cycles the
+@note BRIDGE answers rather than which the decode called memory.
+@note
+@note Written as an AND so that both terms stay read --- lint catches a
+@note mutation that leaves a signal unread, and the catching belongs in the
+@note check.  With it false for every cycle, all 512 main-memory cycles are
+@note reported as cycles that should have been silent.
+@note
+@note **AND THE OTHER DIRECTION IS A MEASURED HOLE RATHER THAN A RECORD**:
+@note dropping `tv_fb` alone survives everything, because MIT's boot PROM ---
+@note the only program `cadr_machine` runs in simulation --- never writes a
+@note pixel.  On the board it would fault on the first one.  That is the same
+@note family as `a-device-write-is-also-written-to-main-memory` above and is
+@note written down here rather than filed as a hole against a check doing its
+@note job.
+@old
+  assign cpu_memory_o   = is_memory || tv_fb;
+@new
+  assign cpu_memory_o   = is_memory && tv_fb;
+@end
+
+@mutation the-audit-stops-watching-the-port
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE CLAUSE THAT REACHES PAST `cadr_machine` WITHOUT THE ADAPTER'S HELP,
+@note and the only one that can see the shape the board's bug now has.
+@note `cadr_axi_master` is a level above this module's parent, so a transaction
+@note born in it raises no second `mem_req`; `C_LOOSE_ANS` catches one only if
+@note the adapter hands the extra ANSWER back as `mem_done`, and an adapter
+@note that issues a write beside a read and consumes its own `B` hands back
+@note nothing at all.  What it cannot hide is that the processing system
+@note answered a write, and this is the clause that reads it.
+@note
+@note Written as a term that is never true rather than by deleting the arms, so
+@note that both handshakes stay read and lint does not do the catching.
+@old
+    if (port_write_ack && owed_writes == 4'd0)    fault_clause = C_PORT_EXTRA;
+    else if (port_read_ack && owed_reads == 4'd0) fault_clause = C_PORT_EXTRA;
+@new
+    if (port_write_ack && owed_writes == 4'd0 && !port_write_ack)
+                                                  fault_clause = C_PORT_EXTRA;
+    else if (port_read_ack && owed_reads == 4'd0 && !port_read_ack)
+                                                  fault_clause = C_PORT_EXTRA;
+@end
+
+@mutation the-owed-count-is-not-kept-by-direction
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note DIRECTION IS THE WHOLE POINT OF THIS CLAUSE.  A duplicate transaction in
+@note the same direction as the request leaves memory unchanged and nothing
+@note downstream can see it; one in the WRONG direction replaces a memory word
+@note with MD, because `cadr_microcycle.sv` loads `wdata` from MD at MEMGO
+@note whatever the direction.  An audit that counted answers without minding
+@note which direction they were in would take a legitimate write's `B` against
+@note a read that was owed and say nothing, and would fault on every
+@note legitimate write besides.
+@note
+@note Caught on the clean traffic case, which is where it belongs: a detector
+@note that fires on correct traffic is useless and every other record here
+@note would still be caught if it did.
+@old
+    if (port_write_ack && owed_writes == 4'd0)    fault_clause = C_PORT_EXTRA;
+@new
+    if (port_write_ack && owed_reads == 4'd0)     fault_clause = C_PORT_EXTRA;
+@end
+
+@mutation an-answer-and-a-request-on-one-tick-lose-the-request
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE CASE A NAIVE COUNTER GETS WRONG, and it is not hypothetical: the
+@note bridge holds `mem_req` up until it has taken the word, so the next
+@note request can rise on the same tick the previous transaction's answer comes
+@note back at the port.  Resolved together, an increment and a decrement at
+@note once is no change; resolved with the decrement winning, the request is
+@note lost and the NEXT answer looks like one nobody asked for --- a false
+@note positive on traffic that is entirely correct.
+@note
+@note The mutation gives the decrement priority, which is the obvious way to
+@note write it and is the one that is wrong.
+@old
+      if (inc_read && !dec_read) begin
+        if (owed_reads != 4'd15) owed_reads <= owed_reads + 4'd1;
+      end else if (dec_read && !inc_read) begin
+        owed_reads <= owed_reads - 4'd1;
+      end
+@new
+      if (dec_read) begin
+        owed_reads <= owed_reads - 4'd1;
+      end else if (inc_read) begin
+        if (owed_reads != 4'd15) owed_reads <= owed_reads + 4'd1;
+      end
+@end
+
+@mutation the-port-tally-swaps-its-two-directions
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note WORD 8 IS WHAT SEPARATES TWO SILENCES, and it is the whole reason the
+@note module keeps totals as well as a difference.  A port clause that never
+@note fires because the port answered everything correctly and one that never
+@note fires because nobody connected the two wires read exactly alike ---
+@note "a value that means nothing must not be a value the instrument can
+@note mean", which this repository learned twice by measurement.
+@note
+@note Swapped rather than zeroed, so that both counters stay read and lint does
+@note not do the catching.  On MIT's boot PROM the two totals are 256 and 256
+@note and a swap is invisible, which is the control-store-all-zeros shape and
+@note is why the case that catches this is a directed one with seven writes
+@note against thirteen reads.
+@old
+      4'd8:    word_c = {MARK, 1'b0, port_writes, 1'b1, port_reads};
+@new
+      4'd8:    word_c = {MARK, 1'b0, port_reads, 1'b1, port_writes};
+@end
+
+@mutation the-audit-answers-a-selector-of-its-own-choosing
+@check audit_window
+@file rtl/machine/cadr_machine.sv
+@note THE JOIN.  The audit is read on a halted board through the console's
+@note readout window at selector 11, hours after the machine stopped; a
+@note bitstream that put it anywhere else would answer `A5A5_5A5A_A5A5` there
+@note --- the window's own word for a selector the fabric does not map --- and
+@note `cadr-readout` would say the bitstream has no audit in it.  Which is the
+@note honest failure, and it is only honest because the marker is checked
+@note before any number is read.
+@note
+@note Caught on the marker, which is the property the whole window is built
+@note around.
+@old
+  localparam logic [3:0] RO_AUDIT = 4'd11;
+@new
+  localparam logic [3:0] RO_AUDIT = 4'd12;
+@end
+
+@mutation the-audit-swallows-the-selectors-above-it
+@check audit_window
+@file rtl/machine/cadr_machine.sv
+@note A MUX WRITTEN AS "11 OR ABOVE" RATHER THAN "11".  Selectors 12 to 15 are
+@note free and must go on reading the window's own `A5A5_5A5A_A5A5`: that is
+@note what tells a bitstream WITHOUT an instrument at a selector from one with
+@note a clean instrument there, and the next thing joined to this window will
+@note take one of them.
+@note
+@note The obvious way to write a range comparison, and it is wrong in the
+@note direction that makes a value which means nothing into a value the
+@note instrument can mean.
+@old
+  assign con_ro_data = (con_ro_echo[17:14] == RO_AUDIT) ? aud_word : proc_ro_data;
+@new
+  assign con_ro_data = (con_ro_echo[17:14] >= RO_AUDIT) ? aud_word : proc_ro_data;
+@end
+
+@mutation the-window-reads-the-audit-at-the-wrong-index
+@check audit_window
+@file rtl/machine/cadr_machine.sv
+@note THE ADDRESS INSIDE THE SELECTOR.  Nine words, each a different field of
+@note one record, and a window that handed back word 1 for word 0 would report
+@note a fault count that is a physical address.  Every field would look like a
+@note number and the whole record would be believed.
+@note
+@note Swapped in pairs rather than shifted, so that no read falls off the end
+@note into the default arm and is caught by the marker instead --- the catching
+@note belongs on the field, which is what this is about.
+@note
+@note **AND THE PIPELINE DEPTH ITSELF IS A MEASURED EQUIVALENCE**, written
+@note here rather than filed as a hole: feeding `sel` from `ro_sel_d1` instead
+@note of `ro_sel_d2` survives, because the console writes the address and reads
+@note the word a whole AXI round trip later, so the address stands still for
+@note thousands of ticks and a word that arrives a tick early is the same word.
+@note The depth matters to the ECHO and the echo is the processor's.
+@old
+      .sel         (ro_sel_d2),
+@new
+      .sel         (ro_sel_d2 ^ 4'd1),
 @end

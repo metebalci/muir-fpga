@@ -4,6 +4,7 @@
 // The readout program: the machine's own memories, printed.
 //
 //     cadr-readout                       the register table
+//     cadr-readout --audit               the transaction audit, decoded
 //     cadr-readout --dump NAME [FILE]    a whole memory, a word a line
 //     cadr-readout --word NAME:ADDR      one word
 //     cadr-readout --list                what the window can reach
@@ -68,6 +69,8 @@ static const struct mem kMems[] = {
 	{ "map2",  IMG_SEL_MAP2, IMG_L2_WORDS,   24, "the level-2 map" },
 	{ "opcs",  IMG_SEL_OPCS, IMG_OPCS,       14, "the OPC shift register" },
 	{ "regs",  IMG_SEL_REGS, 21,             48, "the register table below" },
+	{ "audit", IMG_SEL_AUDIT, IMG_AUDIT_WORDS, 48,
+	  "the transaction audit; --audit decodes it" },
 };
 static const unsigned kMemCount = sizeof(kMems) / sizeof(kMems[0]);
 
@@ -128,9 +131,88 @@ static void list(void)
 static void usage(void)
 {
 	fprintf(stderr,
-		"usage: cadr-readout [--dump NAME [FILE]] [--word NAME:ADDR] [--list]\n"
-		"                    [--leave-halted] [--no-guard]\n");
+		"usage: cadr-readout [--audit] [--dump NAME [FILE]] [--word NAME:ADDR]\n"
+		"                    [--list] [--leave-halted] [--no-guard]\n");
 	exit(2);
+}
+
+// The audit's clauses, in the module's own order.  Zero is "nothing was
+// latched" and is the latch's own valid bit.
+static const char *const kAuditClause[8] = {
+	"nothing was latched",
+	"one request, two answers",
+	"one bus cycle, two requests",
+	"a transaction in the direction the cycle does not name",
+	"a transaction with no bus cycle open",
+	"a transaction on a cycle the decode did not call main memory",
+	"an answer with no request standing",
+	"the port answered a transaction nobody asked for"
+};
+
+// **THE INSTRUMENT THE BOARD'S OWN BUG WOULD SHOW UP IN**, printed.  What it
+// says and why each field is here is `rtl/plumbing/cadr_bus_audit.sv`'s
+// header; what belongs here is that the marker is checked before a single
+// number is believed.
+static int print_audit(struct readout *r)
+{
+	struct cadr_audit a;
+	unsigned mark = 0;
+	if (ro_audit(r, &a, &mark) != 0) {
+		if (mark)
+			say("the audit's words carry marker 0x%04x and not 0x%04x: "
+			    "this bitstream has no transaction audit in it, and "
+			    "a reading of \"no faults\" from it would have meant "
+			    "nothing at all", mark, IMG_AUDIT_MARK);
+		else
+			say("the readout gave back a word for an address that "
+			    "was not the one asked for: the window is not "
+			    "answering");
+		return -1;
+	}
+	say("the transaction audit: one transaction per bus cycle, in the "
+	    "direction the cycle names");
+	say("  %-14s %u", "faults", a.faults);
+	say("  %-14s %u   (requests that fell with no answer at all)",
+	    "stalled", a.stalled);
+	say("  %-14s %u reads, %u writes   (the port's own handshakes)",
+	    "answered", a.port_reads, a.port_writes);
+	if (a.clause == IMG_AUD_NONE) {
+		say("  nothing has been latched: no bus cycle has issued more "
+		    "than one transaction, none has issued one in the wrong "
+		    "direction, and none has issued one at all that the decode "
+		    "did not call main memory");
+		if (a.port_reads == 0 && a.port_writes == 0)
+			say("  BUT THE PORT HAS ANSWERED NOTHING, so the clause "
+			    "that watches it has had nothing to watch: this is "
+			    "a board with no S_AXI_HP0 behind the machine, or "
+			    "one where ps7_post_config has not run");
+		return 0;
+	}
+	say("  %-14s %u, %s", "first fault", a.clause,
+	    kAuditClause[a.clause & 7u]);
+	say("  %-14s 0o%o   (what the master asked for)", "physical", a.phys);
+	say("  %-14s 0x%08x   (what went out on the port)", "byte address",
+	    a.addr);
+	say("  %-14s 0x%08x   (what stood on the write-data lines)",
+	    "write data", a.data);
+	say("  %-14s 0x%08x", "VMA", a.vma);
+	say("  %-14s 0x%08x", "MD", a.md);
+	say("  %-14s %u", "microcycle", a.micro);
+	say("  %-14s 0o%o, OPC 0o%o", "PC", a.pc, a.opc);
+	char line[256];
+	size_t at = 0;
+	line[0] = '\0';
+	for (unsigned b = 0; b < 7; ++b) {
+		if (!((a.seen >> b) & 1u))
+			continue;
+		const int n = snprintf(line + at, sizeof line - at, "%s%u",
+				       at ? " " : "", b + 1);
+		if (n < 0 || (size_t)n >= sizeof line - at)
+			break;
+		at += (size_t)n;
+	}
+	say("  %-14s %s", "clauses seen", at ? line : "(none)");
+	return 0;
 }
 
 // The register table, printed.  Octal as well as hex, because MIT's own
@@ -174,11 +256,13 @@ int main(int argc, char **argv)
 	cadr_log_init("cadr-readout: ", NULL);
 
 	const char *dump = NULL, *dump_file = NULL, *word = NULL;
-	int leave_halted = 0, guard = 1;
+	int leave_halted = 0, guard = 1, audit = 0;
 
 	for (int i = 1; i < argc; ++i) {
 		const char *a = argv[i];
-		if (!strcmp(a, "--list")) {
+		if (!strcmp(a, "--audit")) {
+			audit = 1;
+		} else if (!strcmp(a, "--list")) {
 			list();
 			return 0;
 		} else if (!strcmp(a, "--dump") && i + 1 < argc) {
@@ -255,7 +339,9 @@ int main(int argc, char **argv)
 	    (unsigned long long)ro_cycles(&r), (unsigned long long)ro_ticks(&r));
 
 	int rc = 0;
-	if (word) {
+	if (audit) {
+		rc = print_audit(&r) == 0 ? 0 : 1;
+	} else if (word) {
 		char name[16];
 		unsigned addr = 0;
 		if (sscanf(word, "%15[^:]:%u", name, &addr) != 2)

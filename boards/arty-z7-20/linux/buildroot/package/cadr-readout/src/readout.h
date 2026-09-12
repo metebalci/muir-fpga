@@ -94,4 +94,12 @@ uint64_t ro_ticks(struct readout *r);
 // not here --- they are DDR and come through /dev/mem.  Returns 0, or -1.
 int ro_read_machine(struct readout *r, struct cadr_image *img);
 
+// The transaction audit at selector 11, unpacked.  **Every one of its nine
+// words must carry `B05A` in its top sixteen bits or this returns -1 with
+// nothing written**: a bitstream older than the audit answers
+// `RO_NO_MEMORY` at that selector, an undriven path answers all ones or all
+// zeros, and none of the three may be read as "no faults".  Returns 0, or -1
+// with `*mark` set to the marker of the first word that was wrong.
+int ro_audit(struct readout *r, struct cadr_audit *a, unsigned *mark);
+
 #endif

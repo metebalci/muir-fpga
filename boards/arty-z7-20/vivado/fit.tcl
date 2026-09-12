@@ -97,6 +97,11 @@ read_xdc rtl/plumbing/xilinx7/cadr_machine.xdc
 # the reader at `cadr_machine.xdc`, which would be blameless.
 source boards/arty-z7-20/vivado/constraints_check.tcl
 assert_multicycle_applied $tick 15
+# And the transaction audit's own two halves: see `bitstream.tcl`'s note at the
+# same call. Out of context the instance is one level shallower, `cadr_machine`
+# being the top here rather than `u_machine` inside `cadr_arty`.
+assert_instance_timing $tick 15 *audit/* \
+    {*audit/first_* *audit/micro_reg* *audit/word_reg*}
 # And the other half of the same policy: nothing outside the machine may take
 # the relaxation. Out of context the machine IS the top, so this can only pass
 # --- which is the point of running it here. If it ever fails, a top level has

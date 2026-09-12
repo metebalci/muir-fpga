@@ -280,6 +280,19 @@ if {$clocks < 2} {
 # is the setup requirement the paths ask for. The count still earns its place:
 # it is the half that says a setup exception has a hold exception beside it.
 assert_multicycle_applied $tick 15
+# **AND WHICH SET THE TRANSACTION AUDIT'S REGISTERS FELL INTO, ASKED DIRECTLY
+# RATHER THAN INFERRED FROM A COUNT.** `rtl/plumbing/cadr_bus_audit.sv` is 347
+# registers under `cadr_machine`, which relaxes everything it does not name ---
+# so without a clause they would all have been relaxed and nothing would have
+# said so. Its three edge detectors and its counters are read every tick and a
+# relaxed edge detector misses an edge or invents one; its record, its
+# microcycle counter and its readout word are written once and read by a
+# console on a halted machine. `assert_instance_timing` holds both halves, and
+# the reason it is here rather than left to a reader is the disk controller's
+# 3,904 of 4,000: that was found by asking the checkpoint, and nothing in the
+# repository had been asking.
+assert_instance_timing $tick 15 *u_machine/audit/* \
+    {*audit/first_* *audit/micro_reg* *audit/word_reg*}
 # And the memory port's own deadline, which has a destination only on this
 # board: with `DDR` off, `mem_addr` reaches nothing but a false-pathed fold
 # and the exception is real, legal and connected to nothing. Asserting it

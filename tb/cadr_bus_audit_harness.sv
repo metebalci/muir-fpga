@@ -64,6 +64,15 @@ module cadr_bus_audit_harness #(
     input  var logic clk,
     input  var logic rst,
 
+    // --- THE CONSOLE'S READOUT WINDOW, which is how the audit inside the
+    // machine is read on a halted board and is therefore how it is read here.
+    // It used to be tied to the reserved selector on this harness; the audit
+    // answers selector 11 of it, so the testbench asks for its words the way
+    // `cadr-readout` does --- write the address, wait, compare the echo.
+    input  var logic [17:0] ro_addr,
+    output var logic [47:0] ro_data,
+    output var logic [17:0] ro_echo,
+
     // --- what the machine is doing
     output var logic        clock_edge,
     output var logic [13:0] pc,
@@ -156,8 +165,6 @@ module cadr_bus_audit_harness #(
   logic        con_gnt, con_ssyn;
   logic [15:0] con_rdata;
   logic [31:0] con_vma, con_q, con_md;
-  logic [47:0] con_ro_data;
-  logic [17:0] con_ro_echo;
 
   // The DDR=1 board's configuration exactly: no interrupt, no Xbus device
   // outside, no drive on the disk's cable, 32 boards of memory declared.
@@ -177,8 +184,8 @@ module cadr_bus_audit_harness #(
       .con_addr(18'd0), .con_wdata(16'd0),
       .con_gnt(con_gnt), .con_ssyn(con_ssyn), .con_rdata(con_rdata),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
-      .con_ro_addr(18'h3FFFF), .con_ro_data(con_ro_data),
-      .con_ro_echo(con_ro_echo),
+      .con_ro_addr(ro_addr), .con_ro_data(ro_data),
+      .con_ro_echo(ro_echo),
       .device_ack(1'b0), .device_rdata(32'd0),
       .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'd0),
       .ser_ready(1'b0), .chaos_intr(1'b0), .ser_reset(ser_reset),
@@ -202,8 +209,29 @@ module cadr_bus_audit_harness #(
       .ub_rdata_o(ub_rdata), .n_loadmd_o(n_loadmd), .rdcyc_o(rdcyc),
       .nxm(nxm), .unibus(unibus), .memstart(memstart),
       .timed_out(timed_out), .mem_req(mem_req), .mem_write(mem_write),
-      .mem_addr(mem_addr), .mem_wdata(mem_wdata)
+      .mem_addr(mem_addr), .mem_wdata(mem_wdata),
+      // THE PORT'S OWN ANSWERS, WIRED AS THE BOARD WIRES THEM.  The audit is
+      // inside `cadr_machine` now and one of its clauses compares the port's
+      // handshakes against the machine's own requests by direction; feeding it
+      // zero here would leave that clause with no stimulus at all over the
+      // whole run, which is the "a check that lints one configuration says
+      // nothing about the others" shape.  Registered on the way in exactly as
+      // `boards/arty-z7-20/cadr_arty.sv` registers them, so that what this
+      // check exercises is the arrangement the board has.
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
   );
+
+  logic port_read_ack, port_write_ack;
+  logic ack_rvalid, ack_rready, ack_rlast, ack_bvalid, ack_bready;
+  always_ff @(posedge clk) begin
+    ack_rvalid <= hp0_rvalid;
+    ack_rready <= hp0_rready;
+    ack_rlast  <= hp0_rlast;
+    ack_bvalid <= hp0_bvalid;
+    ack_bready <= hp0_bready;
+  end
+  assign port_read_ack  = ack_rvalid && ack_rready && ack_rlast;
+  assign port_write_ack = ack_bvalid && ack_bready;
 
   // The adapter's AXI4 side, 32 bits wide.  No port reset here and that is
   // deliberate: `tb/cadr_mem_count_harness.sv` brings `hp0_aresetn` out
@@ -254,7 +282,6 @@ module cadr_bus_audit_harness #(
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,
                     con_gnt, con_ssyn, con_rdata, con_vma, con_q, con_md,
-                    con_ro_data, con_ro_echo,
                     ub_addr, ub_rdata, arb_stage, dev_wdata,
                     vmaok, jcond, nop, pcs1, pcs0, iwrited,
                     dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn,

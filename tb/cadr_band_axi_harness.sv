@@ -197,6 +197,22 @@ module cadr_band_axi_harness #(
   logic [31:0] con_vma, con_q, con_md;
   logic [17:0] con_ro_echo;
 
+  // The PS7 boundary's own acknowledgements: `rvalid && rready && rlast` and
+  // `bvalid && bready`, registered, which is where `cadr_mem_count.sv` counts
+  // them and for the same reason --- a fabric that never issued a transaction
+  // cannot fabricate a B or an R beat.
+  logic port_read_ack, port_write_ack;
+  logic ack_rvalid, ack_rready, ack_rlast, ack_bvalid, ack_bready;
+  always_ff @(posedge clk) begin
+    ack_rvalid <= hp0_rvalid;
+    ack_rready <= hp0_rready;
+    ack_rlast  <= hp0_rlast;
+    ack_bvalid <= hp0_bvalid;
+    ack_bready <= hp0_bready;
+  end
+  assign port_read_ack  = ack_rvalid && ack_rready && ack_rlast;
+  assign port_write_ack = ack_bvalid && ack_bready;
+
   cadr_machine #(
       .PROM_HEX(PROM_HEX)
   ) u_machine (
@@ -232,6 +248,11 @@ module cadr_band_axi_harness #(
       .clock_ready(clock_ready), .interval(interval),
       .ub_ssyn_by(ub_ssyn_by),
       .boards(7'd32),
+      // The port's own handshakes, which `cadr_bus_audit` compares against
+      // the machine's own count of what it asked for.  This harness HAS a
+      // real port, so they are the real thing rather than tied low, and
+      // registered as `boards/arty-z7-20/cadr_arty.sv` registers them.
+      .port_read_ack(port_read_ack), .port_write_ack(port_write_ack),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),

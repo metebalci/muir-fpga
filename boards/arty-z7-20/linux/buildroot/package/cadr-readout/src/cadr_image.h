@@ -40,11 +40,48 @@
 // `boards/arty-z7-20/cadr_arty.sv` gives the machine.
 #define IMG_BOARD_WORDS 65536u
 
-// The readout's selectors, `cadr_microcycle.sv`'s `RO_*`.
+// The readout's selectors, `cadr_microcycle.sv`'s `RO_*`, and the one
+// `cadr_machine.sv` joins into the same window beside them.
 enum img_sel {
 	IMG_SEL_IMEM = 0, IMG_SEL_PROM = 1, IMG_SEL_AMEM = 2, IMG_SEL_MMEM = 3,
 	IMG_SEL_PDL = 4, IMG_SEL_SPC = 5, IMG_SEL_DMEM = 6, IMG_SEL_MAP1 = 7,
-	IMG_SEL_MAP2 = 8, IMG_SEL_OPCS = 9, IMG_SEL_REGS = 10
+	IMG_SEL_MAP2 = 8, IMG_SEL_OPCS = 9, IMG_SEL_REGS = 10,
+	IMG_SEL_AUDIT = 11
+};
+
+// --- THE TRANSACTION AUDIT, `rtl/plumbing/cadr_bus_audit.sv`.
+//
+// Nine words at selector 11, each carrying `B05A` in its top sixteen bits.
+// The marker is not decoration: with the level shifters on, an undriven path
+// reads all ones and with them off it reads all zeros, and the readout window
+// answers `A5A5_5A5A_A5A5` for a selector the fabric does not map --- so
+// without it a reading of "no faults" and a reading of "no instrument" would
+// be the same word.  This program refuses a word whose marker is not this.
+#define IMG_AUDIT_WORDS 9u
+#define IMG_AUDIT_MARK  0xB05Au
+
+// The clause codes, as the module names them.  Zero IS "nothing was latched":
+// there is no separate valid bit for it to disagree with.
+enum img_audit_clause {
+	IMG_AUD_NONE = 0, IMG_AUD_TWICE = 1, IMG_AUD_TWO_REQS = 2,
+	IMG_AUD_DIRECTION = 3, IMG_AUD_NO_CYCLE = 4, IMG_AUD_NOT_MEMORY = 5,
+	IMG_AUD_LOOSE_ANS = 6, IMG_AUD_PORT_EXTRA = 7
+};
+
+struct cadr_audit {
+	unsigned faults;	/* saturating at 32,767; any reading but zero is the finding */
+	unsigned stalled;	/* requests that fell with no answer at all */
+	unsigned seen;		/* which clauses ever fired, bit (clause - 1) */
+	unsigned clause;	/* the FIRST fault's, and the latch's own valid bit */
+	uint32_t phys;		/* what the master asked for, 22 bits */
+	uint32_t addr;		/* what went out on the port, a byte address */
+	uint32_t data;		/* what stood on the write-data lines: the corruption */
+	uint32_t vma, md, micro;
+	unsigned pc, opc;
+	// The port's own answers, `cadr_mem_count.sv`'s layout.  Zero with the
+	// fault count zero says the two wires are dead rather than that all was
+	// well, which is the one thing the clause alone cannot say.
+	unsigned port_reads, port_writes;
 };
 
 // The register table's entries, `cadr_microcycle.sv`'s `RG_*`.

@@ -457,11 +457,17 @@ CHECKS = {
     # order it is given them and a package has to be declared before the
     # module that imports it, and `sources` is passed before `extra`.  It is
     # not what these records are aimed at; `map_boot`'s are.
+    # `cadr_machine.sv` JOINED `sources` WHEN THE AUDIT WAS WIRED IN.  The
+    # owner bundle the instrument is anchored on --- whose cycle is open, its
+    # direction, its held decode --- is written there, and a record aimed at it
+    # has to name a check that BUILDS it in `sources` rather than in `extra`.
+    # This is the check whose business that bundle is: it is the one that runs
+    # the whole path against a real program.
     "bus_audit": {
         "sources": [
             "rtl/plumbing/cadr_ddr_map.sv",
             "rtl/plumbing/cadr_xbus_ddr.sv", "rtl/plumbing/cadr_axi_master.sv",
-            "rtl/machine/cadr_memory_path.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
         ],
         "extra": [
             "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
@@ -469,8 +475,9 @@ CHECKS = {
             "rtl/machine/cadr_busint_xbus.sv",
             "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
             "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_busint_regs.sv",
             "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
-            "rtl/machine/cadr_machine.sv", "rtl/plumbing/cadr_axi_widen.sv",
+            "rtl/plumbing/cadr_bus_audit.sv", "rtl/plumbing/cadr_axi_widen.sv",
             "tb/cadr_bus_audit_harness.sv",
         ],
         "top": "cadr_bus_audit_harness",
@@ -534,6 +541,44 @@ CHECKS = {
         "tb": "tb/cadr_bus_audit_unit_tb.cpp",
         "flags": [],
         "golden": None,
+    },
+    # THE JOIN: the audit on the console's readout window, which is how a board
+    # is asked about it hours after it has stopped.  `bus_audit_unit` holds the
+    # module, `bus_audit` holds the property through the composed machine and
+    # `readout` holds the window against the processor's arrays; NOTHING held
+    # the three wires between them until this check, and a mux on
+    # `con_ro_data` that selected the wrong arm, a `sel` off by a tick or a
+    # selector that swallowed its neighbours would each have been silent.
+    #
+    # `sources` is the two files the join is written in.  The rest of the
+    # machine is `extra`, having its own checks' records aimed at it, and
+    # `cadr_ddr_map.sv` heads the list for the reason `memory_path`'s entry
+    # puts it there: a package has to be declared before the module that
+    # imports it and `sources` is passed before `extra`.
+    "audit_window": {
+        "sources": [
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/plumbing/cadr_bus_audit.sv",
+            "rtl/machine/cadr_machine.sv",
+        ],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv",
+            "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_memory_path.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_audit_window_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
     },
     # The probe the board will be read through. `tb/cadr_probe_harness.sv`
     # wires it to `cadr_machine` exactly as `boards/arty-z7-20/cadr_arty.sv` does and the
