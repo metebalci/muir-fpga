@@ -525,6 +525,45 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # THE SAME COMPOSITION WITH THE PACK SIDE IN IT.  `axi_channel` above runs
+    # the boot PROM with a drive on the cable and a pack behind the block
+    # store's seam --- but its feeder IS the testbench, writing 259 words into
+    # a slot a word at a time.  `rtl/plumbing/cadr_disk_pack.sv`, its
+    # `S_AXI_HP2` master and its `M_AXI_GP0` register face had never been
+    # instantiated in a whole-machine check anywhere in this tree, so this is
+    # the same eight clauses with one more module and two more ports under
+    # them, plus four of its own.  Nothing is copied into the mutant's work
+    # directory: the pack is generated a block at a time and there is no file.
+    #
+    # `sources` is the pack side ALONE.  Everything below it has `axi_channel`
+    # aimed at it already, and a record aimed at two checks would be caught
+    # twice and say nothing new the second time.
+    "pack_channel": {
+        "sources": ["rtl/plumbing/cadr_disk_pack.sv"],
+        # THE ORDER IS THE MAKEFILE'S, because `cadr_ddr_map` is a package and
+        # `cadr_xbus_ddr` reads it: verilated out of order it is PKGNODECL.
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_disk_controller.sv",
+            "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+            "rtl/plumbing/cadr_axi_master.sv", "rtl/plumbing/cadr_axi_widen.sv",
+            "tb/cadr_pack_axi_harness.sv",
+        ],
+        "top": "cadr_pack_axi_harness",
+        "tb": "tb/cadr_pack_channel_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
     # THE SAME PROPERTY IN FABRIC, and the same name for it on purpose: the
     # check above holds it for the one program `cadr_machine` can run under
     # Verilator, and `rtl/plumbing/cadr_bus_audit.sv` carries it onto the board
