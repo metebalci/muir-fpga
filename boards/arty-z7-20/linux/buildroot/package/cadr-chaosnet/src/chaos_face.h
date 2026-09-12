@@ -15,10 +15,9 @@
 //
 // ## What the seam IS, which is the thing to agree on first
 //
-// muir puts the CADR's interface on a modelled `ether` and hangs the
-// Chaosnet server, the CHUDP link and every other station off that ether as
-// `ether::Node`s.  On this board the interface is in fabric and the ether is
-// this program.  So the seam is a **mailbox for whole frames**, not a copy of
+// muir puts the CADR's interface on a modelled `ether` and hangs the CHUDP
+// link and every other station off that ether as `ether::Node`s.  On this
+// board the interface is in fabric and the ether is this program.  So the seam is a **mailbox for whole frames**, not a copy of
 // the interface's registers:
 //
 //   - the machine writes a packet into its outgoing buffer and reads `START`

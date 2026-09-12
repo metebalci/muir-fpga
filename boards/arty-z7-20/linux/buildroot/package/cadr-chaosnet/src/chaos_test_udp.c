@@ -34,12 +34,13 @@
 #include "chaos_packet.h"
 #include "chaos_udp.h"
 
-// This machine, and the Chaosnet server on its cable: System 100's band's
-// pair.  A peer over UDP, and one this machine was never told about.  muir's
-// `tests/chudp.rs` names the same four, so a reader can put the two files
-// side by side.
+// This machine, and the file and time host its band calls: System 100's
+// band's pair.  That host is OFF this board --- a CADR has none inside it ---
+// so here it is just another address reached over UDP.  A peer over UDP, and
+// one this machine was never told about.  muir's `tests/chudp.rs` names the
+// same four, so a reader can put the two files side by side.
 #define ME		03050u
-#define SERVER		03060u
+#define HOST		03060u
 #define PEER		03040u
 #define STRANGER	03041u
 
@@ -469,9 +470,9 @@ static void check_the_links(void)
 	memset(&p, 0, sizeof p);
 	p.opcode = CHAOS_RFC;
 	p.dest = PEER;
-	p.source = SERVER;
+	p.source = HOST;
 	p.len = 0;
-	const unsigned fn = chaos_packet_frame(&p, PEER, SERVER, forward, CHAOS_PKT_MAX_WORDS);
+	const unsigned fn = chaos_packet_frame(&p, PEER, HOST, forward, CHAOS_PKT_MAX_WORDS);
 	send_raw(b.fd, &a_at, forward, fn);
 	const unsigned mn = status_rfc(mine, "STATUS", 6);
 	send_raw(b.fd, &a_at, mine, mn);

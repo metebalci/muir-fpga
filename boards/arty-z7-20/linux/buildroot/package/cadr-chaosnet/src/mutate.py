@@ -34,13 +34,10 @@ import shutil
 import subprocess
 import sys
 
-CORE = ["chaos_packet.c", "chaos_outq.c", "chaos_ncp.c", "chaos_services.c",
-        "chaos_file.c", "chaos_udp.c", "chaos_face.c"]
-HEADERS = ["chaos_face.h", "chaos_packet.h", "chaos_ncp.h", "chaos_file.h",
-           "chaos_udp.h"]
-TESTS = ["chaos_test.c", "chaos_test_packet.c", "chaos_test_ncp.c",
-         "chaos_test_file.c", "chaos_test_udp.c", "chaos_test_face.c",
-         "chaos_test.h"]
+CORE = ["chaos_packet.c", "chaos_udp.c", "chaos_face.c"]
+HEADERS = ["chaos_face.h", "chaos_packet.h", "chaos_udp.h"]
+TESTS = ["chaos_test.c", "chaos_test_packet.c", "chaos_test_udp.c",
+         "chaos_test_face.c", "chaos_test.h"]
 COMMON = ["cadr_log.c", "cadr_mem.c"]
 MUTABLE = set(CORE) | set(HEADERS)
 
@@ -131,21 +128,21 @@ def build_and_run(here, cc, cflags):
            + [os.path.join(src, f) for f in TESTS if f.endswith(".c")]
            + [os.path.join(src, f) for f in CORE]
            + [os.path.join(common, f) for f in COMMON])
-    # `errors="replace"` on BOTH, and it is not fussiness.  The FILE protocol's
-    # own line separator is the Lisp Machine's `#/NEWLINE`, 0215, and a failing
-    # check prints the bytes it was given --- so a mutant of the character
-    # translation writes 0215 to stderr, which is not UTF-8.  Without this the
-    # runner dies of a UnicodeDecodeError in the middle of a record and reports
-    # NOTHING: not caught, not survived, no summary line.  CLAUDE.md's rule is
-    # that a gate's output must end in the runner's own summary line or it did
-    # not finish, and this is the failure that rule is about, met from inside.
+    # `errors="replace"` on BOTH, and it is not fussiness.  A failing check
+    # prints the bytes it was given, and a mutant of the packet's own byte
+    # order writes whatever those bytes are to stderr, which need not be
+    # UTF-8.  Without this the runner dies of a UnicodeDecodeError in the
+    # middle of a record and reports NOTHING: not caught, not survived, no
+    # summary line.  CLAUDE.md's rule is that a gate's output must end in the
+    # runner's own summary line or it did not finish, and this is the failure
+    # that rule is about, met from inside.  It was the FILE service's 0215
+    # line separator that found it; the rule outlives the service.
     build = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
     if build.returncode != 0:
         return None, build.stderr.strip().splitlines()[:6]
     try:
-        run = subprocess.run([binary, "--work", os.path.join(here, "scratch")],
-                             capture_output=True, text=True, errors="replace",
-                             timeout=900)
+        run = subprocess.run([binary], capture_output=True, text=True,
+                             errors="replace", timeout=900)
     except subprocess.TimeoutExpired:
         # A check that hangs is a check that did not run.  It is not a catch:
         # an exit code nobody saw says nothing.
