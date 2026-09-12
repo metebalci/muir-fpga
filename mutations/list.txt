@@ -8548,3 +8548,163 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
       .sel         (ro_sel_d2 ^ 4'd1),
 @end
+
+# ============================================================================
+# THE PACK SIDE IN THE DESIGN, AND A BLOCK OUT OF DDR INTO MAIN MEMORY
+# ============================================================================
+#
+# `axi_channel` above runs MIT's boot PROM with a drive on the cable and a pack
+# behind the block store's seam --- but ITS FEEDER IS THE TESTBENCH, writing
+# 259 words into a slot a word at a time.  `rtl/plumbing/cadr_disk_pack.sv`,
+# the module that does that on the board, had never been INSTANTIATED in a
+# whole-machine check anywhere in this tree.  `disk_pack.pass` holds it to
+# properties on a directed stimulus with no machine behind it, and `S_AXI_HP2`
+# and the `cadr-disk-packs` program were outside every check there was.
+#
+# `pack_channel` is `axi_channel` with that module in the design and the
+# testbench moved back to the two faces the board's own processing system
+# drives: `M_AXI_GP0`, where Linux writes ADDR, TAG, SLOT and CTL, and
+# `S_AXI_HP2`, where the records live in DDR.  The record now travels
+# testbench -> DDR -> HP2 -> the block store -> the CADR's channel -> HP0 ->
+# DDR, and the pack is still poison injective in the disk address AND
+# DECODABLE, so a page of main memory is decoded rather than compared against
+# a shadow.
+#
+# **HP0 AND HP2 ARE ONE ARRAY HERE**, as they are one DRAM on the board, and
+# that is deliberate: a pack-side master that wandered into the machine's own
+# region is then VISIBLE rather than excluded by construction.  Two clauses
+# live on it, and the first record below is aimed at them.
+#
+# `sources` is the pack side ALONE.  Everything below it in the composition ---
+# the adapter, the widening, the memory path --- has `axi_channel`'s own
+# records aimed at it, and a record caught by two checks says nothing new the
+# second time.
+
+@mutation pack-fetches-the-record-out-of-the-machines-own-memory
+@check pack_channel
+@file rtl/plumbing/cadr_disk_pack.sv
+@note THE BOARD'S OWN FAULT SHAPE, ON THE ONE MASTER NOTHING HAD EVER WATCHED.
+@note CLAUDE.md's page hash table word is one word of the machine's memory
+@note replaced by something that had no business being written there.  The
+@note pack side is a 64-bit master on the same DRAM, moving 1,036 bytes at a
+@note time, and until this check existed NOTHING in this tree could see where
+@note it put them: `disk_pack.pass` gives it a DDR of its own, keyed by the
+@note address it asks for, so an address computed wrongly reads back
+@note consistently wrong and the machine is not there to be damaged by it.
+@note
+@note Here the two ports are ONE ARRAY, as they are one DRAM on the board.
+@note `0x1C80_0000 ^ 0x0480_0000` is `0x1800_0000`, which is
+@note `cadr_ddr_map::MAIN_BASE` --- so every burst of every record lands on
+@note PAGE 0 of the machine's own main memory, which is where the boot PROM's
+@note parity loop has just been.  A fetch reads the machine's words as though
+@note they were a block; a write-back would overwrite them.
+@note
+@note Written as an XOR so that every bit of `base` stays used, which is
+@note CLAUDE.md's rule that lint catches a mutation at BIT granularity: a
+@note constant substituted for the top byte leaves `base[31:24]` read nowhere.
+@old
+    return (burst == 4'(DATA_BURSTS)) ? base + META_OFFSET
+                                      : base + {21'd0, burst[2:0], 7'd0};   // + 128 * burst
+@new
+    return (burst == 4'(DATA_BURSTS)) ? (base ^ 32'h0480_0000) + META_OFFSET
+                                      : (base ^ 32'h0480_0000) + {21'd0, burst[2:0], 7'd0};
+@end
+
+@mutation pack-numbers-the-blocks-words-by-the-wrong-bit
+@check pack_channel
+@file rtl/plumbing/cadr_disk_pack.sv
+@note WHERE IN THE SLOT EACH BEAT'S TWO WORDS GO.  `word_lo` is the store's
+@note own numbering of the record --- `2 * (16 * burst + beat)` for the data
+@note --- and the block RAM it addresses is read back by the CADR's own CCW
+@note walk, which numbers the words itself.  So this is NOT the shared address
+@note expression CLAUDE.md records as an equivalent mutant: the write is the
+@note pack side's and the read is the controller's, and a permutation of one
+@note is not a relabelling of the other.
+@note
+@note Bit 2 of the store index swaps the words of the block in fours ---
+@note (0,1) with (4,5), (2,3) with (6,7), and so on --- inside the right slot,
+@note from the right record, with the right number of bursts and beats.  Every
+@note AXI rule holds, the tag is right, the block's header and both checkwords
+@note are untouched and the header compare passes, so the transfer completes
+@note with a clean status and the page is the right length in the right place.
+@note What sees it is the page being DECODED against the block the feeder
+@note served, words 0 to 255 IN ORDER.
+@note
+@note The meta words are left alone on purpose: `ST_HEADER ^ 4` is 260, past
+@note the tag at 259, which is out of the slot rather than in the wrong part
+@note of it and would be a different bug.
+@old
+  assign word_lo = meta ? ST_HEADER + {7'd0, p_beat[0], 1'b0}
+                        : {1'b0, p_burst[2:0], p_beat[3:0], 1'b0};
+@new
+  assign word_lo = meta ? ST_HEADER + {7'd0, p_beat[0], 1'b0}
+                        : ({1'b0, p_burst[2:0], p_beat[3:0], 1'b0} ^ 9'd4);
+@end
+
+@mutation pack-fetches-one-burst-short-of-the-block
+@check pack_channel
+@file rtl/plumbing/cadr_disk_pack.sv
+@note NINE BURSTS: EIGHT OF SIXTEEN BEATS AND ONE OF TWO, which is the
+@note module's own header.  Seven of sixteen is 224 words of a 256-word block,
+@note and the last 32 words of the slot keep whatever the slot held before ---
+@note which, on a slot that has just been taken away, is the previous block's
+@note words.
+@note
+@note **THAT IS EXACTLY THE BOARD'S OWN FIRST BUG IN MINIATURE.** CLAUDE.md
+@note records the cold boot arriving with block 0 present and blocks 1 and 2
+@note absent, physical `0o400`-`0o1177` zero where muir has 348 non-zero
+@note words, and a halt eleven microcycles later in a routine that touches no
+@note device at all.  A block that is seven-eighths there is the same failure
+@note with nothing to say so.
+@note
+@note The meta burst still runs, so the header, its checkword and the data
+@note checkword all arrive and the CONTROLLER'S OWN HEADER COMPARE PASSES: the
+@note header is about the disk address and not about the data.  The data
+@note checkword is wrong, and `Ecc::trap` does not fire on a read the way it
+@note might be expected to --- CLAUDE.md's own note that a denied block raises
+@note no error the CADR can read is the same family.  Two clauses see it: the
+@note page decode, and the count of nine read bursts a record.
+@old
+  localparam int unsigned DATA_BURSTS = 8;            // of 16 beats
+@new
+  localparam int unsigned DATA_BURSTS = 7;            // of 16 beats
+@end
+
+@mutation pack-leaves-the-slots-block-valid-while-it-refills-it
+@check pack_channel
+@file rtl/plumbing/cadr_disk_pack.sv
+@note **THE TAG IS WRITTEN LAST AND THE SLOT IS TAKEN AWAY FIRST**, which is
+@note the module's own header, and the reason it gives is a race: "a fetch
+@note into a slot the store already holds a block in would otherwise leave a
+@note valid tag over words half from the old block and half from the new for
+@note the ~300 ticks the fill takes --- and the CADR can START a transfer at
+@note any tick of them."
+@note
+@note Here P_TAKE writes the NEW tag instead of the invalid one, so the slot
+@note claims to hold the block from the first tick of the fill.  The walk is
+@note standing in `C_LOOK` waiting for exactly that block, so it takes the
+@note slot at once and reads 256 words while they are still arriving --- a
+@note page half the block and half whatever the slot held, with a clean
+@note status and the right length in the right place.
+@note
+@note `disk_pack.pass` holds the same property with a DIRECTED stimulus: its
+@note testbench STARTs a transfer during a fill and requires the miss.  What
+@note is different here is that the racing walk is the CADR's own, at the
+@note moment its own microcode chose, and what is compared is the PAGE OF MAIN
+@note MEMORY at the far end of the channel rather than the store.  So the
+@note record is aimed here, and a reader who finds it caught in both places
+@note should read that as the property being held twice rather than as a
+@note record in the wrong file.
+@old
+      P_TAKE: begin
+        seam_we    = 1'b1;
+        seam_addr  = ST_TAG;
+        seam_wdata = {1'b1, 31'd0};
+      end
+@new
+      P_TAKE: begin
+        seam_we    = 1'b1;
+        seam_addr  = ST_TAG;
+        seam_wdata = {1'b0, p_tag};
+      end
+@end
