@@ -32,7 +32,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
-       $(BUILD)/bus_audit_unit.pass \
+       $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
@@ -556,6 +556,127 @@ hash-watch: $(BUILD)/obj_hash_watch/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUIL
 	        --pack $(BUILD)/hash-watch-pack.img \
 	        $${WATCH:+--watch $$WATCH} $${STOP:+--stop-at $$STOP} \
 	        $${FREE:+--free} $${FLOOR:+--floor $$FLOOR}; \
+	fi
+
+# ------------------ a pack block into main memory, through the whole path
+
+# THE CHECK THE COMPOSITION HAD NEVER HAD.  `axi_master.pass` and
+# `axi_widen.pass` hold each module alone; `mem_count.pass` and
+# `bus_audit.pass` compose them over MIT's boot PROM with no drive on the
+# cable, which is 512 identity memory cycles and no channel at all ---
+# `tb/cadr_bus_audit_tb.cpp` asserts outright that the disk channel never took
+# the bus.  So the second Xbus master had never crossed the widening, and
+# nothing had ever read back through it what it wrote.
+#
+# This runs the boot PROM from reset WITH A DRIVE ON THE CABLE and a pack
+# behind the block store's seam, so the cold boot's own `COLD-DISK-READ`
+# happens: a CCW list, blocks into consecutive physical pages, 256 bus cycles
+# a page, every word crossing `cadr_axi_master` and `cadr_axi_widen` into a
+# 64-bit AXI3 slave.  The pack is synthetic, generated a block at a time, and
+# its words are POISON INJECTIVE IN THE DISK ADDRESS AND DECODABLE --- so a
+# page of main memory can be read back and decoded without the testbench being
+# told where the walk put it.
+#
+# The strongest of its seven clauses is that one: a page the channel filled
+# must decode as one block of the pack, words 0 to 255 in order, whose disk
+# address the feeder actually served.  A dropped address bit, a half-select
+# that went the wrong way, a duplicated word and a reordered word are all
+# visible there and in no other check here.
+#
+# It stops as soon as three transfers have been made, so nothing in it depends
+# on what the machine does with a microcode band that is poison.  About half a
+# million microcycles.
+AXI_CHANNEL_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+                   rtl/plumbing/cadr_axi_widen.sv tb/cadr_band_axi_harness.sv
+
+$(BUILD)/obj_axi_channel/Vcadr_band_axi_harness: $(AXI_CHANNEL_SRC) \
+                                                 tb/cadr_axi_channel_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_axi_channel \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_band_axi_harness $(AXI_CHANNEL_SRC) \
+	    $(abspath tb/cadr_axi_channel_tb.cpp)
+
+$(BUILD)/axi_channel.pass: $(BUILD)/obj_axi_channel/Vcadr_band_axi_harness \
+                           $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_axi_channel/Vcadr_band_axi_harness
+	@touch $@
+
+# ------------------- the same run, with the adapter and the widening in it
+
+# `band-axi` is `hash-watch` with the memory model moved one boundary further
+# out.  There the word store answers `mem_done`/`mem_rdata` directly, so
+# `cadr_axi_master`, `cadr_axi_widen` and everything the 64-bit beat's byte
+# strobes decide are OUTSIDE the DUT; here they are inside it and the model is
+# `S_AXI_HP0`'s own AXI3 slave.
+#
+# WHY IT EXISTS.  `hash-watch` established that the board's page-hash-table
+# defect is not in `rtl/machine/`: 171,000,000 microcycles, the fingerprint
+# zero times, `PGF-RWF` writing the very word correctly.  What that harness
+# replaces with a model is the only place left, and **no check in this tree had
+# ever run a real program through it** --- `axi_master.pass` and
+# `axi_widen.pass` hold each module alone, and `mem_count.pass` and
+# `bus_audit.pass` compose them over MIT's boot PROM, which is 512 identity
+# cycles with no drive on the cable and no channel at all.
+#
+# So `tb/cadr_band_axi_harness.sv` is those three modules wired as
+# `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` wires them, WITH THE DISK SEAM
+# BROUGHT OUT, and the band boots through it off a real pack.  The watchpoint
+# is on the 64-BIT PORT: it reports the beat, its byte strobes, its 64 bits of
+# data and the direction, so a half-select that went the wrong way is seen
+# rather than inferred.
+#
+# Not in `make check`: a run to the board's own fault is an hour of Verilator.
+# `$(BUILD)/axi_channel.pass` is the check this leaves behind.  `WATCH=<physical
+# word in OCTAL>` names a word --- and `WATCH=100` is the calibration: physical
+# `0o100` is READ at microcycle 536,687 and WRITTEN at 536,689 by the boot
+# PROM's own parity loop, on the beat `0x18000100` that holds words `0o100` and
+# `0o101`, with strobes `0f` for the even word and `f0` for the odd one.  The
+# write lands two microcycles before the word store put it, and that difference
+# is the instrument working rather than a discrepancy: the word store recorded
+# a write at muir's own acknowledgement instant, while the AXI address channel
+# takes the address as soon as the request rises and only the RESPONSE is held
+# to that instant.  `STOP=<microcycles>` bounds the comparison,
+# `OBSERVE=<microcycles>` runs that many past it, `FLOOR=0` is needed by any
+# run stopped before the band's own 1,062,507-microcycle floor, and
+# `PROGRESS=<n>` says where the machine is every n microcycles, `DELAY=<ticks>`
+# charges the memory that much past the comparison, and `UNWRITTEN=<word>` is
+# what a word of DDR nobody has written reads as there.
+#
+# **A SHORT RUN EXITS 1 AND THAT IS BY DESIGN**, as it is for `hash-watch`: the
+# harness holds itself to the band's own 1,062,507-microcycle floor AND to
+# having fetched a block from the pack at a disk address the controller posted.
+# `FLOOR=0` waives the first; nothing waives the second, because a run that
+# never reached the disk has not used the seam this harness exists to carry.
+# The calibration run above is one of those, and its watch lines are the point
+# of it rather than its exit code.
+BAND_AXI_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+                rtl/plumbing/cadr_axi_widen.sv tb/cadr_band_axi_harness.sv
+
+$(BUILD)/obj_band_axi/Vcadr_band_axi_harness: $(BAND_AXI_SRC) \
+                                              tb/cadr_band_axi_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band_axi \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_band_axi_harness $(BAND_AXI_SRC) \
+	    $(abspath tb/cadr_band_axi_tb.cpp)
+
+.PHONY: band-axi
+band-axi: $(BUILD)/obj_band_axi/Vcadr_band_axi_harness $(BUILD)/rtl_sys.golden \
+          $(BUILD)/boot_prom.hex
+	@if [ ! -f $(SYS100_GZ) ]; then \
+	    echo "band-axi: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	else \
+	    set -e; \
+	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
+	        || { echo "band-axi: $(SYS100_GZ) is not the release this was measured against"; exit 1; }; \
+	    trap 'rm -f $(BUILD)/band-axi-pack.img' EXIT; \
+	    gunzip -c $(SYS100_GZ) > $(BUILD)/band-axi-pack.img; \
+	    $(BUILD)/obj_band_axi/Vcadr_band_axi_harness $(BUILD)/rtl_sys.golden \
+	        --pack $(BUILD)/band-axi-pack.img \
+	        $${WATCH:+--watch $$WATCH} $${STOP:+--stop-at $$STOP} \
+	        $${OBSERVE:+--observe $$OBSERVE} $${PROGRESS:+--progress $$PROGRESS} \
+	        $${UNWRITTEN:+--unwritten $$UNWRITTEN} \
+	        $${DELAY:+--mem-delay $$DELAY} \
+	        $${FLOOR:+--floor $$FLOOR}; \
 	fi
 
 # ------------------------------------- the map's two access bits, told apart

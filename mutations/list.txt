@@ -8163,3 +8163,145 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
     else if (done_rise && !in_req && in_req)      fault_clause = C_LOOSE_ANS;
 @end
+
+# ============================================================================
+# A PACK BLOCK INTO MAIN MEMORY, THROUGH THE ADAPTER AND THE WIDENING
+# ============================================================================
+#
+# `axi_channel` is the composition `bus_audit` above holds, run with a DRIVE
+# ON THE CABLE.  The difference is not a longer program: it is a SECOND MASTER
+# on the same bridge, 256 words a page through a per-word arbiter, and a
+# machine that reads back through the widening what the channel wrote.
+# `tb/cadr_bus_audit_tb.cpp` asserts outright that the disk channel never took
+# the bus, and `tb/cadr_axi_widen_tb.cpp` has no processor at all.
+#
+# WHAT IS MEASURED AND NOT HERE, because a record that says nothing new is
+# worth knowing about.  Deleting the idle tick `cadr_memory_path.sv` leaves at
+# every change of bus owner --- `bus_rq = ch_own ? ch_req : cpu_rq` --- was
+# written as a record here and SURVIVES this check, and `bus_audit`,
+# `ddr_boot`, `machine`, `md_compose`, `probe`, `tv` and `unibus` with it.
+# **`memory_path` catches it**, whose configuration B streams the channel
+# beside the processor on purpose; so the property is held, one module down,
+# and the record belongs there and not here.
+#
+# It survives this check because the boot PROM never reaches the hazard: its
+# 512 main-memory cycles all run before the first transfer, and during a
+# transfer it polls the disk's registers rather than memory, so the bus is
+# never handed over with the other master's request already standing.  A clause
+# written for it --- clause 8 of `tb/cadr_axi_channel_tb.cpp`, a main-memory
+# cycle that asked the port for nothing --- reports the identical 517 and 0
+# either way, and its comment carries both figures.
+#
+# AND ITS STORE IS ANCHORED DIFFERENTLY, which is what the first two records
+# below are about.  `tb/cadr_bus_audit_tb.cpp` keys its model memory by the
+# SLAVE'S OWN address and never compares a word that comes back; so a mutation
+# of the widening that is a BIJECTION on the address relabels that model
+# consistently and is invisible to it.  `tb/cadr_axi_channel_tb.cpp` compares
+# every word the bridge takes back against the store at the address THE BRIDGE
+# ASKED FOR, and decodes every page the channel filled against the block the
+# feeder served --- neither of which the widening can relabel.
+
+@mutation the-widening-takes-the-read-lane-from-the-write-address
+@check axi_channel
+@file rtl/plumbing/cadr_axi_widen.sv
+@note THE BUG THE MODULE'S OWN HEADER WARNS ABOUT.  "`A[2]` IS THE ADAPTER'S
+@note REGISTERED ADDRESS AND NOT THE BRIDGE'S.  Each direction takes its own:
+@note the write strobes are placed by `s_awaddr` and the read lane is selected
+@note by `s_araddr`, because those are the addresses the transactions are
+@note actually at.  The adapter holds each until the next transaction of that
+@note kind replaces it, so on a write `s_araddr` is the previous read's address
+@note and vice versa --- and a lane selected from the wrong one of the two is a
+@note bug that only shows when they disagree."
+@note
+@note Here the lane is the AND of the two, so it is the write channel's
+@note whenever they disagree.  Every read whose last write was at the other
+@note half of a beat comes back with the NEIGHBOURING word --- a real and
+@note plausible word of the machine's memory, not zero, not poison, nothing a
+@note program would notice at once.
+@note
+@note **WRITTEN AS AN AND BECAUSE THE PURE FORM DOES NOT BUILD**, which is
+@note CLAUDE.md's own rule that lint catches a mutation at BIT granularity:
+@note `assign s_rdata = s_awaddr[2] ? ...` leaves `s_araddr[2]` read nowhere,
+@note the module's `unused` fold covers only `s_araddr[1:0]`, and Verilator
+@note reports UNUSEDSIGNAL.  Measured: that form is BROKEN.  The AND keeps
+@note every bit used and is wrong in exactly the case the header names.
+@old
+  assign s_rdata = s_araddr[2] ? m_rdata[63:32] : m_rdata[31:0];
+@new
+  assign s_rdata = (s_araddr[2] & s_awaddr[2]) ? m_rdata[63:32]
+                                              : m_rdata[31:0];
+@end
+
+@mutation the-widening-swaps-two-bits-of-the-beat-address
+@check axi_channel
+@file rtl/plumbing/cadr_axi_widen.sv
+@note A BIJECTION ON THE ADDRESS, WHICH IS THE SHAPE CLAUDE.md RECORDS AS
+@note SURVIVING A CHECK THAT KEYS ITS MEMORY OFF THE DUT.  "Mutating a shared
+@note address expression is a no-op by construction ... written to the wrong
+@note entry, read from the same wrong entry."  Both directions are swapped
+@note together here on purpose, so a model memory keyed by the slave's own
+@note address is relabelled consistently and reads back everything it wrote.
+@note
+@note What is NOT invariant is where a 256-word page lands: bits 3 and 4 of the
+@note beat address permute the words of every eight in a way that no
+@note relabelling of the store can hide, because the page has to decode as the
+@note BLOCK the feeder served, words 0 to 255 in order.  And a word the bridge
+@note takes back is compared against the store at the address the BRIDGE asked
+@note for, which the widening does not get to choose.
+@note
+@note Every bit stays used, so lint does not do the catching.
+@old
+  assign m_awaddr = {s_awaddr[31:3], 3'b000};
+  assign m_araddr = {s_araddr[31:3], 3'b000};
+@new
+  assign m_awaddr = {s_awaddr[31:5], s_awaddr[3], s_awaddr[4], 3'b000};
+  assign m_araddr = {s_araddr[31:5], s_araddr[3], s_araddr[4], 3'b000};
+@end
+
+@mutation the-widening-strobes-both-halves-of-the-beat
+@check axi_channel
+@file rtl/plumbing/cadr_axi_widen.sv
+@note THE WORD IS OFFERED IN BOTH HALVES OF THE BEAT ON PURPOSE --- `m_wdata`
+@note is `{s_wdata, s_wdata}` --- and the ONLY thing that keeps the other half
+@note of memory alive is that the strobes name one of them.  Strobe both and
+@note every write destroys its neighbour silently, with the right word landing
+@note at the right address every time.
+@note
+@note That is the board's own symptom one module along: a word of main memory
+@note replaced by a word that had no business being written, at an address
+@note nobody asked about, with nothing downstream able to tell.  The page hash
+@note table entry at physical 0o103757 is the EVEN word of its beat, so a
+@note strobe pattern like this is written by every write to its odd neighbour.
+@old
+  assign m_wstrb = s_awaddr[2] ? {s_wstrb, 4'b0000} : {4'b0000, s_wstrb};
+@new
+  assign m_wstrb = s_awaddr[2] ? {s_wstrb, s_wstrb} : {s_wstrb, s_wstrb};
+@end
+
+@mutation the-channel-writes-each-word-to-its-neighbour
+@check axi_channel
+@file rtl/machine/cadr_memory_path.sv
+@note THE SECOND MASTER'S ADDRESS, ONE BIT WRONG --- and it is the bit that
+@note decides WHICH HALF OF THE BEAT the word lands in, because bit 0 of a CADR
+@note word address is bit 2 of the byte address and `cadr_axi_widen` places the
+@note strobes by `s_awaddr[2]`.  So every word of every block the channel moves
+@note is written to its neighbour, swapped in pairs, inside the page the CCW
+@note walk named.
+@note
+@note Nothing about the transfer looks wrong from anywhere else: the right
+@note number of words go to the right page, each beat is aligned, each carries
+@note one half's strobes, and no neighbour of a beat is disturbed --- every one
+@note of the other clauses passes.  What sees it is the page being DECODED
+@note against the block the feeder served, words 0 to 255 in order, which is
+@note this check's own clause 5 and is in no other check in this tree.
+@note
+@note IT NEEDS TWO MASTERS.  `bus_audit` and `mem_count` run the boot PROM with
+@note the cable empty; their own testbenches assert that the channel never took
+@note the bus, so `ch_own` is false for the whole of both runs and this line
+@note cannot be reached.  Every bit stays used, so lint does not do the
+@note catching.
+@old
+  assign bus_phys  = ch_own ? ch_addr  : phys;
+@new
+  assign bus_phys  = ch_own ? {ch_addr[21:1], ~ch_addr[0]} : phys;
+@end
