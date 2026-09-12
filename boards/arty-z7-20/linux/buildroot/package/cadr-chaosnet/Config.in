@@ -6,18 +6,16 @@ config BR2_PACKAGE_CADR_CHAOSNET
 	help
 	  The Chaosnet: the program on the processing system that carries
 	  packets between the CADR's Chaosnet interface in the fabric and
-	  the outside world, and that answers the services the band looks
-	  for.  It is the cable the interface is plugged into, and every
-	  other station on that cable.
+	  the outside world.  It is the cable the interface is plugged
+	  into, and nothing above that.
 
-	  It serves TIME, UPTIME and STATUS always, and FILE when it is
-	  given a directory to serve.  FILE is the one the machine asks
-	  for first: a band that boots without it paints the window system
-	  and then says its file host is not a known host.
+	  It answers no services, because a CADR holds none.  The file and
+	  time host a band calls is another machine on the network, which
+	  this program reaches like any other station.
 
 	  Chaosnet over UDP puts the cable on the board's Ethernet, so
-	  another Chaosnet host or a bridge can be a station on it.
+	  that host or a bridge can be a station on it.
 
 	  It has an init script, as cadr-disk-packs and cadr-terminal do:
-	  a machine that is up wants its file host to be up too, and
-	  nothing is on the bus while no packet is moving.
+	  a machine that is up wants its cable up too, and nothing is on
+	  the bus while no packet is moving.

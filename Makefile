@@ -1784,10 +1784,11 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # **WHAT EACH HOLDS, AND WHAT IT CANNOT.**  `cadr_io_board.sv`'s own checks
 # hold the registers against muir.  These hold the other side of the same
 # registers: for the Chaosnet, the packet's word layout and its check word,
-# the transport of AIM-628 chapters 3 and 4, the TIME, UPTIME, STATUS and FILE
-# services against a real scratch directory, and CHUDP's frame against a
+# the register face's handshake with the fabric, and CHUDP's frame against a
 # datagram's literal bytes; for the serial line, the TCP endpoint against a
-# real client on the loopback address.  Neither can hold the SEAM between the
+# real client on the loopback address.  The Chaosnet program answers no
+# services --- a CADR has none in it, and muir removed its own at `79c7590`
+# --- so there are none to check.  Neither can hold the SEAM between the
 # two halves, because only one half exists in each check --- which is why the
 # register face is behind one header in each program and why that header says
 # what it assumed.
@@ -1796,7 +1797,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 #
 # The prerequisites are a wildcard where the readout's and the checkpoint's
 # are named one by one, and the difference is deliberate: those have four or
-# five sources and this has nineteen, so an explicit list would be a list
+# five sources and this has twelve, so an explicit list would be a list
 # somebody forgets to add to --- and a source added to the check but not to
 # the rule is a check that does not re-run when it changes, which is the
 # quiet half of a stale-artefact failure this project has met three times.
@@ -1810,7 +1811,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
 	$(MAKE) -C $(CHAOSNET_SRC) check
 	$(MAKE) -C $(CHAOSNET_SRC) all COMMON=host
 	$(MAKE) -C $(CHAOSNET_SRC) clean
-	@echo "chaosnet: the program builds, and its packet, transport, services and CHUDP agree with muir"
+	@echo "chaosnet: the program builds, and its packet, its register face and CHUDP agree with muir"
 	@touch $@
 
 $(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h) \

@@ -42,9 +42,9 @@
 // Two halves of that rule are here and the third is the caller's:
 // `chudp_send` drops a frame no peer claims rather than flooding it;
 // `chudp_poll` drops a datagram addressed on the cable to another peer; and
-// whether a destination is one of the addresses THIS cable carries --- the
-// machine's and the Chaosnet server's --- only the caller knows, since
-// `struct chudp` holds no list of them.
+// whether a destination is one of the addresses THIS cable carries --- which
+// is the machine's alone --- only the caller knows, since `struct chudp`
+// holds no list of them.
 
 #include "chaos_udp.h"
 
@@ -576,10 +576,10 @@ int chudp_poll(struct chudp *u, unsigned max,
 		// on the cable to another station that is reached over UDP is
 		// for that station and not for this cable, and forwarding it is
 		// a bridge's job.  Whether the destination is one of the
-		// addresses THIS cable carries --- the machine's and the
-		// Chaosnet server's --- is the caller's to judge: `struct
-		// chudp` holds no list of them, and muir's node is given one
-		// (`Chudp::local`) because it is attached to the cable itself.
+		// addresses THIS cable carries --- which is the machine's
+		// alone --- is the caller's to judge: `struct chudp` holds no
+		// list of them, and muir's node is given one (`Chudp::local`)
+		// because it is attached to the cable itself.
 		if (cable_dest != 0 && peer_for(u, cable_dest) >= 0) {
 			if (u->trace)
 				say("udp: from %s: %o is another peer's, not this cable's",

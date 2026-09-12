@@ -293,6 +293,52 @@ done
   printf 'put packs there; nothing looks for them there.\r\n'
 } > "$OUT/packs/README.TXT"
 
+# ------------------------------------------------- the Chaosnet's three files
+#
+# One value a file, each named for what it holds, on the partition a card
+# reader can edit; `.txt` so a laptop opens them rather than asking what
+# should.  `S87cadr-chaosnet` is the account of why there is no
+# `chaosnet.conf`: since muir at `79c7590` a CADR has no file or time server
+# in it, so neither program has one, and what is left is two numbers and a
+# list of peers.
+#
+# **THE NUMBERS ARE THE SAME ON EVERY CARD, RELEASE INCLUDED** (Mete, 12 Sep:
+# "we can keep the port numbers same, actually we can also keep addresses
+# same, since it is a private subnet").  Subnet 0o376 is private in the way
+# 192.168 is, so two boards out of the box do not collide with anybody.
+# **ONLY THE PEER IS PRIVATE**, because it names a real host on a real
+# network: it comes from `local.conf`, the same rule and the same file as
+# SERVERIP, and a card built without one gets an empty peers file that says
+# what to put in it.
+CHAOS_ADDR=${CHAOS_ADDR_FPGA:-177101}
+CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
+{
+  printf "# The DIP switches on the Chaosnet card: this machine own address,\r\n"
+  printf "# in octal.  Not a preference --- it is what the hardware IS.\r\n"
+  printf "#\r\n"
+  printf "# A band calls the host ITS OWN table names, so a band other than\r\n"
+  printf "# the one this card ships with may want another number here.\r\n"
+  printf "%s\r\n" "$CHAOS_ADDR"
+} > "$OUT/packs/chaosnet.addr.txt"
+{
+  printf "# Where Chaosnet-over-UDP listens.  42042 is the protocol own port\r\n"
+  printf "# and the CADR in fabric takes it.  The CADR inside muir, when it\r\n"
+  printf "# runs as the debugger, takes another in its own .muirrc: two\r\n"
+  printf "# stations on one port is a collision, not a network.\r\n"
+  printf "%s\r\n" "$CHAOS_PORT"
+} > "$OUT/packs/chaosnet.over.udp.port.txt"
+{
+  printf "# Where the OTHER stations are, one a line, in muir own syntax:\r\n"
+  printf "#\r\n"
+  printf "#     <chaosnet address>@<host or IP>:<port>\r\n"
+  printf "#\r\n"
+  printf "# The host your band calls goes here.  The host is ON THE NET and\r\n"
+  printf "# not inside any of these programs, so a machine with no peers says\r\n"
+  printf "# its file host is not answering --- which is true.\r\n"
+  if [ -n "${CHAOS_PEER:-}" ]; then printf "%s\r\n" "$CHAOS_PEER"; fi
+} > "$OUT/packs/chaosnet.over.udp.peers.txt"
+echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -n "${CHAOS_PEER:-}" ] && echo "one peer from local.conf" || echo "no peers --- the network is the user's")"
+
 # The server: the same five files and the command that fetches them.
 cp "$BIT" "$OUT/server/cadr.bit"
 cp "$IMAGES/zynq-arty-z7-20.dtb" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/"
@@ -389,6 +435,7 @@ if [ -x "$HOSTBIN/genimage" ]; then
     for n in $("$HOSTBIN/mdir" -b -i "$OUT/sdcard.img@@$P2_OFF" :: 2>/dev/null | sed 's,^::/,,'); do
       case "$n" in
         disk-pack-[0-7].img|README.TXT) ;;
+        chaosnet.addr.txt|chaosnet.over.udp.port.txt|chaosnet.over.udp.peers.txt) ;;
         *) die "partition 2 carries '$n', which is neither one of the eight pack names nor the README" ;;
       esac
     done

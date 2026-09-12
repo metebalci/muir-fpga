@@ -3,65 +3,106 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # The Chaosnet at boot: cadr-chaosnet carrying packets between the CADR's
-# Chaosnet interface in the fabric and the network, and answering TIME,
-# UPTIME, STATUS and FILE.
+# Chaosnet interface in the fabric and the network.  It answers nothing
+# itself: a CADR has no file or time server in it, so neither has this.
 #
 # S87, after S80cadr-disk-packs and S86cadr-serial.  The order matters twice
 # over here, and only the second is a real dependency: the console log reads
-# in the order a person wants it, and the file root lives on the pack
-# partition that S80 mounts.  A boot where that mount failed still starts this
-# --- it says the root is missing and serves the other three services, which
-# is better than a machine with no time and no STATUS.
+# in the order a person wants it, and the three settings below live on the
+# pack partition that S80 mounts.  A boot where that mount failed still starts
+# this --- it takes the defaults and says so, which is better than a machine
+# with no cable at all.
 #
 # **THE ADDRESSES ARE THE BAND'S AND NOT THIS PROGRAM'S.**  A band holds a
 # host table and calls its file and time host at the address that table gives.
-# A server answering anywhere else is a server the band never calls, and the
+# A host answering anywhere else is a host the band never calls, and the
 # machine then boots, paints the window system and says its file host is not a
-# known host --- which is exactly the symptom this program exists to remove.
-# System 100, which is the band on this board's pack, is MIT-LISPM-1 at 3050
-# and calls MIT-OZ at 3060; System 304 is AMS-LISPM-1 at 4401 calling 4403.
-# So the default here is System 100's pair, and a board running another band
-# puts its own in the configuration file below rather than editing this
-# script.
+# known host.  That host is somewhere on the network and this program's job is
+# only to reach it.  System 100, which is the band on this board's pack, is
+# MIT-LISPM-1 at 3050 and calls MIT-OZ at 3060; System 304 is AMS-LISPM-1 at
+# 4401 calling 4403.  So the default below is System 100's own address, its
+# host goes in the peers file, and a board running another band puts both
+# there rather than editing this script.
 #
 # The log goes to the console, which is where the board is watched from
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
 # program is told where to write instead.
 
 PACKS=/mnt/packs
-CONF="$PACKS/chaosnet.conf"
 PIDFILE=/var/run/cadr-chaosnet.pid
 
-# What the band on this board's pack wants.  Overridden, one line at a time,
-# by $CONF: it is a shell fragment on the pack partition, so it is changed
-# from the board or from a card reader without rebuilding the image.
-ADDRESS=3050,3060
-SERVER_NAME=MIT-OZ
-FILE_ROOT="$PACKS/files"
-EXTRA=
+# **THREE FILES, EACH NAMED FOR WHAT IT HOLDS.**  Mete chose
+# these on 12 Sep.  There is no `chaosnet.conf` and there should not be: a
+# CADR has no file or time server in it, muir has none either since its own
+# `79c7590`, and neither do we --- so once the services are gone this program
+# has two numbers and a list of peers, and a file called "conf" would be a
+# file with nothing in it.
+#
+#   chaosnet.addr.txt            the DIP switches on the Chaosnet card, in octal.
+#                            Not configuration: it is what the hardware IS.
+#                            System 100 is 3050, System 304 is 4401.
+#   chaosnet.over.udp.port.txt   where CHUDP listens.  42042 is the protocol's own
+#                            port and this machine takes it; the CADR inside
+#                            muir takes another in its `.muirrc`, because two
+#                            stations bound to one port is the collision the
+#                            two RFB screens would have had on 5900.
+#   chaosnet.over.udp.peers.txt  where the OTHER stations are, one a line, in
+#                            muir's own syntax and not one invented here:
+#
+#                                <chaosnet address>@<host or IP>:<port>
+#
+#                            muir's manual gives the pairs: a System 100 band
+#                            is `--chaos-address 3050` with
+#                            `--chaos-udp-peer 3060@<where the host is>`, and
+#                            System 304 is 4401 with 4403@... .  So the host
+#                            the band calls goes here, because since muir's
+#                            `79c7590` the host is ON THE NET and not inside
+#                            any of these programs.
+#
+# Both live on the pack partition, so they are changed from the board or from
+# a card reader without rebuilding the image.  Blank lines and `#` comments
+# are ignored, so each file can say what its number is for.
+#
+# **The `.txt` is for the card reader and not for us.**  That partition is
+# FAT32 and the point of putting these there is that a laptop can edit them,
+# where a suffixless file prompts for what should open it.  `README.TXT` on
+# the same partition is there for the same reason.
+ADDR_FILE="$PACKS/chaosnet.addr.txt"
+PORT_FILE="$PACKS/chaosnet.over.udp.port.txt"
+PEERS_FILE="$PACKS/chaosnet.over.udp.peers.txt"
+
+ADDRESS=3050
+UDP_PORT=42042
+
+# The first number in a file, or nothing at all if the file is not there.
+value_in() {
+	[ -f "$1" ] || return 0
+	sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$1" | head -1 | tr -d '[:space:]'
+}
 
 start() {
-	[ -f "$CONF" ] && . "$CONF"
+	v=$(value_in "$ADDR_FILE"); [ -n "$v" ] && ADDRESS="$v"
+	v=$(value_in "$PORT_FILE"); [ -n "$v" ] && UDP_PORT="$v"
 
-	if [ -n "$FILE_ROOT" ]; then
-		mkdir -p "$FILE_ROOT" 2>/dev/null
-		if [ -d "$FILE_ROOT" ]; then
-			set -- --file-root "$FILE_ROOT"
-		else
-			echo "cadr-chaosnet: no $FILE_ROOT, so there is no file host;"
-			echo "cadr-chaosnet: the pack partition is probably not mounted"
-			set --
-		fi
-	else
-		set --
+	# Every peer in the file becomes one --chaos-udp-peer, in the order
+	# the file gives them.  No peers is legal: a board on a network with
+	# no other station is a machine whose band will say its file host is
+	# not answering, which is true and is better than a guess.
+	set --
+	if [ -f "$PEERS_FILE" ]; then
+		for peer in $(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PEERS_FILE"); do
+			set -- "$@" --chaos-udp-peer "$peer"
+		done
 	fi
 
 	printf "Starting cadr-chaosnet: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
 		--exec /usr/bin/cadr-chaosnet -- \
-		--address "$ADDRESS" --server-name "$SERVER_NAME" \
-		"$@" $EXTRA --log /dev/console
+		--chaos-address "$ADDRESS" \
+		--chaos-udp "0.0.0.0:$UDP_PORT" \
+		"$@" --log /dev/console
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
+
 }
 
 stop() {

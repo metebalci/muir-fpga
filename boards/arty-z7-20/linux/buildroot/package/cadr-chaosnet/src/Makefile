@@ -6,11 +6,10 @@
 # The target build: Buildroot passes CC, CFLAGS and LDFLAGS for the ARM and
 # DESTDIR for install, and `all` makes the program that goes on the board.
 #
-# The host build, `make check`: the whole Chaosnet stack except the fabric,
-# driven on the build host --- the packet and its check word, the transport of
-# AIM-628 chapters 3 and 4, the four services against a real scratch
-# directory, CHUDP on a loopback socket, and the register face against a model
-# of the RTL.  No board, no fabric, nothing but a C compiler and python3.
+# The host build, `make check`: the whole program except the fabric, driven on
+# the build host --- the packet and its check word, CHUDP on a loopback
+# socket, and the register face against a model of the RTL.  No board, no
+# fabric, nothing but a C compiler and python3.
 # Then every record in chaos_mutations.txt applied to a copy of the sources,
 # each of which the check must FAIL on; a mutation that survives is reported
 # and the run is red.
@@ -26,15 +25,13 @@
 # a real directory here.  `make all COMMON=host` builds the program itself
 # that way, which is how it is compiled here without Buildroot.
 #
-# Scratch goes under ~/.cache, never /tmp, which is a RAM disk on the build
-# host.
+# Its object directory goes under ~/.cache, never /tmp, which is a RAM disk on
+# the build host.
 
 PROGRAMS := cadr-chaosnet
-CORE     := chaos_packet.c chaos_outq.c chaos_ncp.c chaos_services.c \
-            chaos_file.c chaos_udp.c chaos_face.c
-HEADERS  := chaos_face.h chaos_packet.h chaos_ncp.h chaos_file.h chaos_udp.h
-TESTS    := chaos_test.c chaos_test_packet.c chaos_test_ncp.c \
-            chaos_test_file.c chaos_test_udp.c chaos_test_face.c
+CORE     := chaos_packet.c chaos_udp.c chaos_face.c
+HEADERS  := chaos_face.h chaos_packet.h chaos_udp.h
+TESTS    := chaos_test.c chaos_test_packet.c chaos_test_udp.c chaos_test_face.c
 
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src
@@ -66,13 +63,13 @@ install: all
 # never share a binary --- and a build artefact that outlived a machine move
 # would name a home directory that no longer exists.
 check: $(WORK)/chaos_test
-	$(WORK)/chaos_test --work $(WORK)/scratch
+	$(WORK)/chaos_test
 	@python3 mutate.py --list chaos_mutations.txt --work $(WORK)/mutants \
 	    --cc "$(HOSTCC)" --cflags "$(HOSTCFLAGS)"
 
 # The check alone, without the mutations: what a failing mutant runs.
 check-only: $(WORK)/chaos_test
-	$(WORK)/chaos_test --work $(WORK)/scratch
+	$(WORK)/chaos_test
 
 $(WORK)/chaos_test: $(TESTS) $(CORE) $(HEADERS) chaos_test.h $(COMMON_SRC)
 	@mkdir -p $(WORK)

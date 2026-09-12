@@ -12,10 +12,9 @@
 // reach further than the card it is on.
 //
 // **THIS BOARD IS A LEAF, NOT A ROUTER**, as muir is.  A datagram whose
-// hardware destination is neither the machine, nor the Chaosnet server this
-// program runs beside it, nor the broadcast address is dropped rather than
-// forwarded; AIM-628 chapter 6's routing is a bridge's job and `cbridge` is
-// the thing to put beside this.
+// hardware destination is neither the machine nor the broadcast address is
+// dropped rather than forwarded; AIM-628 chapter 6's routing is a bridge's
+// job and `cbridge` is the thing to put beside this.
 //
 // ## The frame
 //
