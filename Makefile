@@ -34,6 +34,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
+       $(BUILD)/pack_channel.pass \
        $(BUILD)/arty.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
@@ -674,6 +675,107 @@ band-axi: $(BUILD)/obj_band_axi/Vcadr_band_axi_harness $(BUILD)/rtl_sys.golden \
 	    gunzip -c $(SYS100_GZ) > $(BUILD)/band-axi-pack.img; \
 	    $(BUILD)/obj_band_axi/Vcadr_band_axi_harness $(BUILD)/rtl_sys.golden \
 	        --pack $(BUILD)/band-axi-pack.img \
+	        $${WATCH:+--watch $$WATCH} $${STOP:+--stop-at $$STOP} \
+	        $${OBSERVE:+--observe $$OBSERVE} $${PROGRESS:+--progress $$PROGRESS} \
+	        $${UNWRITTEN:+--unwritten $$UNWRITTEN} \
+	        $${DELAY:+--mem-delay $$DELAY} \
+	        $${FLOOR:+--floor $$FLOOR}; \
+	fi
+
+# ----------------- a pack block through the pack side and into main memory
+
+# THE CHECK THE PACK SIDE HAD NEVER HAD.  `axi_channel.pass` runs MIT's boot
+# PROM with a drive on the cable and a pack behind the block store's seam, and
+# holds that a page the channel filled decodes as a block the feeder served.
+# But its feeder IS a testbench, writing 259 words into a slot a word at a
+# time.  `rtl/plumbing/cadr_disk_pack.sv` --- the module that does that on the
+# board, its `S_AXI_HP2` master and its `M_AXI_GP0` register face --- has never
+# been INSTANTIATED in a whole-machine check anywhere in this tree;
+# `disk_pack.pass` holds it to properties on a directed stimulus with no
+# machine behind it.
+#
+# This is `axi_channel` with that module in the design.  The record now
+# travels testbench -> DDR -> HP2 -> the block store -> the channel -> HP0 ->
+# DDR, and the pack is still poison injective in the disk address and
+# DECODABLE, so a page is decoded rather than compared against a shadow.  All
+# eight of `axi_channel`'s clauses survive word for word, because they state
+# properties of the words and not of who moved them; four more are added about
+# the module itself, of which the one this was built for is that no beat of
+# the pack side lands inside the machine's own main memory.  HP0 and HP2 are
+# two doors into ONE array here, as they are into one DRAM on the board, so
+# that fault is reachable rather than excluded by construction.
+#
+# It stops at three transfers for `axi_channel`'s reason: the label is poison
+# and the PROM halts at `PC 0o26`, and a machine running poison as
+# microinstructions is not a stimulus anybody can reason about.
+PACK_CHANNEL_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+                    rtl/plumbing/cadr_axi_widen.sv \
+                    rtl/plumbing/cadr_disk_pack.sv tb/cadr_pack_axi_harness.sv
+
+$(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness: $(PACK_CHANNEL_SRC) \
+                                                  tb/cadr_pack_channel_tb.cpp \
+                                                  tb/cadr_pack_linux.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -CFLAGS -I$(abspath tb) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_pack_channel \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_pack_axi_harness $(PACK_CHANNEL_SRC) \
+	    $(abspath tb/cadr_pack_channel_tb.cpp)
+
+$(BUILD)/pack_channel.pass: $(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness \
+                            $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness
+	@touch $@
+
+# ------------------- the same run again, with the pack side as fabric
+
+# THE LAST SIMULATABLE SEAM.  `hash-watch` cleared `rtl/machine/` over
+# 171,000,000 microcycles and `band-axi` cleared the adapter and the widening
+# over 13,000,000, and both of them PLAY the pack side: the block store's seam
+# comes out of the harness and a testbench writes 259 words into a slot.
+# `rtl/plumbing/cadr_disk_pack.sv` has never been INSTANTIATED in a
+# whole-machine check anywhere in this tree --- `disk_pack.pass` holds it to
+# properties on a directed stimulus with no machine behind it --- and
+# `S_AXI_HP2` and the `cadr-disk-packs` program are outside all of it.
+#
+# `tb/cadr_pack_axi_harness.sv` is the band harness with that module between
+# the machine and the testbench, wired as `boards/arty-z7-20/cadr_arty.sv`
+# wires it, and `tb/cadr_pack_band_tb.cpp` is `tb/cadr_band_axi_tb.cpp` with
+# the feeder replaced by Linux on `M_AXI_GP0` and an AXI3 slave on
+# `S_AXI_HP2`.  Everything else about the two files is the same, so a
+# difference between the two runs is about the pack side and nothing else.
+#
+# **THE TWO PORTS SHARE ONE MEMORY**, because on the board HP0 and HP2 are two
+# doors into one DRAM: a pack-side master that wandered into the machine's own
+# region therefore lands where the watchpoint can see it, rather than in a
+# second array where the fault would be unreachable by construction.
+#
+# Not in `make check`, for `band-axi`'s reason: a run to the board's own fault
+# is an hour of Verilator.  `$(BUILD)/pack_channel.pass` is the check this
+# leaves behind.  The flags are `band-axi`'s, name for name.
+PACK_BAND_SRC := $(MACHINE) rtl/plumbing/cadr_axi_master.sv \
+                 rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_disk_pack.sv \
+                 tb/cadr_pack_axi_harness.sv
+
+$(BUILD)/obj_pack_band/Vcadr_pack_axi_harness: $(PACK_BAND_SRC) \
+                                               tb/cadr_pack_band_tb.cpp \
+                                               tb/cadr_pack_linux.h | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -CFLAGS -I$(abspath tb) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_pack_band \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_pack_axi_harness $(PACK_BAND_SRC) \
+	    $(abspath tb/cadr_pack_band_tb.cpp)
+
+.PHONY: pack-band
+pack-band: $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness $(BUILD)/rtl_sys.golden \
+           $(BUILD)/boot_prom.hex
+	@if [ ! -f $(SYS100_GZ) ]; then \
+	    echo "pack-band: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
+	else \
+	    set -e; \
+	    echo "$(SYS100_SHA)  $(SYS100_GZ)" | sha256sum -c --quiet - \
+	        || { echo "pack-band: $(SYS100_GZ) is not the release this was measured against"; exit 1; }; \
+	    trap 'rm -f $(BUILD)/pack-band-pack$${TAG:-}.img' EXIT; \
+	    gunzip -c $(SYS100_GZ) > $(BUILD)/pack-band-pack$${TAG:-}.img; \
+	    $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness $(BUILD)/rtl_sys.golden \
+	        --pack $(BUILD)/pack-band-pack$${TAG:-}.img \
 	        $${WATCH:+--watch $$WATCH} $${STOP:+--stop-at $$STOP} \
 	        $${OBSERVE:+--observe $$OBSERVE} $${PROGRESS:+--progress $$PROGRESS} \
 	        $${UNWRITTEN:+--unwritten $$UNWRITTEN} \
