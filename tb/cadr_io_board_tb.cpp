@@ -64,14 +64,22 @@
 // and 27 read-backs disagree, the counters one behind muir for the length of
 // every move.  That is a contract, not a tolerance.
 //
-// **THE DECODE'S ONE EXEMPTION, BOUNDED AND COUNTED.**  `ioboard::answers`
-// decodes the whole block, because the decode is one sheet, so the trace's
-// `DEC` rows say the card answers the Chaosnet interface's group
-// (`0o764140`-`0o764156`) and the serial port's (`0o764160`-`0o764176`).
-// Those are two other slices and `rtl/machine/cadr_io_board.sv` does not answer them;
-// this check requires that it does not, names the fifteen addresses, and
-// prints how many answering directions it let through --- so the day either
-// slice lands, this line is what says so.  No `CYC` row goes near them.
+// **THE DECODE HAS NO EXEMPTION LEFT.**  This file used to require that the
+// card did NOT answer the Chaosnet interface's group (`0o764140`-`0o764156`)
+// or the serial port's (`0o764160`-`0o764176`), and printed how many
+// answering directions that let through: twenty-seven of fifty-five.  Both
+// groups are built, so all fifty-five are held, at three answer timings the
+// rest of the card does not use --- `IOB_CHAOS_BUFFER_NS` through the
+// transmitter, `IOB_RBUF_SETUP_NS` on `FCLK^`, and `IOB_SERIAL_NS` past a
+// half-microsecond clock whose phase is 203 ns.
+//
+// **AND THE TWO FAR ENDS ARE STIMULUS, NOT MODELS.**  The Chaosnet's cable
+// and the 2651's line are the `cadr-chaosnet` and `cadr-serial` programs' on
+// the board, and muir's own interface plays both here: the trace records the
+// instants they act at as `CRX`, `CTD`, `CBL`, `STK`, `SDN` and `SRX` rows
+// and this file replays them at the card's seam.  What the card hands back
+// --- the transmit buffer at a read of START, a character on the cable --- is
+// compared and never driven.
 //
 // AND THE COUNTS ARE THE GENERATOR'S.  The header says how many cycles of
 // each kind the program made, how many answers fell off the 5 ns grid, and
@@ -106,14 +114,34 @@ constexpr long kMouseStep = 16000;
 // busint::IOB_STRAIGHT_NS and IOB_USEC_LOW_NS.
 constexpr long kStraight = 250;
 constexpr long kUsecLow = 313;
+// busint::IOB_CHAOS_BUFFER_NS, IOB_FCLK_NS, IOB_RBUF_SETUP_NS,
+// IOB_HALF_USEC_NS, IOB_HALF_USEC_PHASE_NS and IOB_SERIAL_NS: the three
+// timings the Chaosnet interface and the serial port answer on.
+constexpr long kChaosBuf = 350;
+constexpr long kFclk = 125;
+constexpr long kRbufSetup = 33;
+constexpr long kHalfUsec = 500;
+constexpr long kHalfUsecPhase = 203;
+constexpr long kSerialNs = 750;
 
 // The registers this file names, by their own Unibus address.
 constexpr unsigned kKbdLow = 0764100u, kCsr = 0764112u;
 constexpr unsigned kUsecLowReg = 0764120u, kUsecHighReg = 0764122u;
 constexpr unsigned kClock = 0764124u, kGpio = 0764126u;
-// The two groups this card does not answer: the Chaosnet interface's and the
-// serial port's.  See the header.
-constexpr unsigned kOtherFirst = 0764140u, kOtherLast = 0764176u;
+// The Chaosnet interface's group and the serial port's, and the registers
+// inside them whose answer is not the plain TD250.
+constexpr unsigned kChaosFirst = 0764140u, kChaosLast = 0764156u;
+constexpr unsigned kSerialFirst = 0764160u, kSerialLast = 0764176u;
+constexpr unsigned kChaosWbuf = 0764142u;   // written; read it is MY ADDRESS
+constexpr unsigned kChaosRbuf = 0764144u;
+constexpr unsigned kChaosStart = 0764152u;
+constexpr unsigned kChaosCsr = 0764140u;
+constexpr unsigned kSerialMode = 0764164u, kSerialCommand = 0764166u;
+
+// How many rows this check's placement has to push one tick.  The two rules
+// are in the header; the number is this file's own and not the trace's, so it
+// is written here and asserted rather than read out of the header.
+constexpr long kPushedRows = 8;
 
 // How long a cycle nothing should answer is held in the decode sweep.  The
 // longest answer the card can give is the keyboard-and-mouse group at its
@@ -128,13 +156,33 @@ long UsecEdgeAfter(long t) {
   return kFirstEdge + ((t - kFirstEdge) / kUsecPeriod + 1) * kUsecPeriod;
 }
 
-// `IoBoardTiming::answer`, rounded up to the 5 ns grid --- which is a rounding
-// only for the counter's low half, and that is the trace's `slip`.
-long AnswerNs(unsigned reg, long msyn) {
+// `IoBoardTiming::fclk_edge_at_or_after` and `half_usec_edge_after`.
+long FclkEdgeAtOrAfter(long t) { return (t + kFclk - 1) / kFclk * kFclk; }
+long HalfUsecEdgeAfter(long t) {
+  long k = (t < kHalfUsecPhase ? 0 : (t - kHalfUsecPhase) / kHalfUsec) + 1;
+  return kHalfUsecPhase + k * kHalfUsec;
+}
+
+// `IoBoardTiming::answer`, rounded up to the 5 ns grid.  TWO REGISTERS ANSWER
+// OFF IT: the counter's low half at 313 ns past its edge, and EVERY address
+// of the serial port's group, whose half-microsecond clock has a phase of
+// 203 --- so 953 + 500k, which is 3 modulo 5 and two nanoseconds short of a
+// tick on every cycle of the group.  That is the trace's `slip`.
+long AnswerNs(unsigned reg, int write, long msyn) {
   long exact;
   if (reg == kUsecLowReg) {
     exact = UsecEdgeAfter(msyn) + kUsecLow;
   } else if (reg == kUsecHighReg || reg == kClock || reg == kGpio) {
+    exact = msyn + kStraight;
+  } else if (reg >= kSerialFirst && reg <= kSerialLast) {
+    exact = HalfUsecEdgeAfter(msyn) + kSerialNs;
+  } else if (reg == kChaosStart || (reg == kChaosWbuf && write)) {
+    // Through the transmitter's `-TSR.SSYN`.
+    exact = msyn + kChaosBuf;
+  } else if (reg == kChaosRbuf) {
+    // The receive buffer's RAM on `FCLK^`, and then a TD250.
+    exact = FclkEdgeAtOrAfter(msyn + kRbufSetup) + kStraight;
+  } else if (reg >= kChaosFirst && reg <= kChaosLast) {
     exact = msyn + kStraight;
   } else {
     // The keyboard, mouse, status and beep registers select through two
@@ -142,10 +190,6 @@ long AnswerNs(unsigned reg, long msyn) {
     exact = UsecEdgeAfter(msyn) + kUsecPeriod + kStraight;
   }
   return (exact + kTick - 1) / kTick * kTick;
-}
-
-bool ThisCardAnswers(unsigned reg) {
-  return reg != kNoReg && !(reg >= kOtherFirst && reg <= kOtherLast);
 }
 
 // The mouse's two encoders, muir's `terminal::mouse::Encoders` with
@@ -201,7 +245,21 @@ struct Encoders {
   }
 };
 
-enum Tag { kCyc, kKey, kMove, kBtn, kSer, kInit, kFace };
+enum Tag {
+  kCyc, kKey, kMove, kBtn, kSer, kInit, kFace,
+  // The two far ends, which are Linux's on the board: stimulus but for `kCtx`
+  // and `kSout`, which are assertions about what the card hands over.
+  kCtx, kCrx, kCtd, kCbl, kStk, kSdn, kSrx, kSout, kSpl
+};
+
+// Every row ends with the same face.  Six columns are new to this slice: the
+// Chaosnet interface's CSR as a read assembles it, its bit counter, and the
+// 2651's three registers and status byte.
+#define FACE_FMT " %x %x %x %x %d %x %x %d %d %x %x %x %x %x %x"
+#define FACE_ARGS                                                              \
+  &r.csr, &r.x, &r.y, &r.held, &r.clkrdy, &r.interval, &r.intr, &r.audio,      \
+      &r.serrdy, &r.ccsr, &r.cbits, &r.sm1, &r.sm2, &r.scmd, &r.sstat
+constexpr int kFaceCols = 15;
 
 struct Row {
   Tag tag;
@@ -214,11 +272,16 @@ struct Row {
   long dx, dy;               // MOVE
   unsigned mask;             // BTN
   int ready;                 // SER
+  long seq, len, bits;       // CTX, CRX
+  int crc, busy, abort;      // CRX, CTD, CBL
+  unsigned data;             // SRX, SOUT
+  int plugged;               // SPL
   // the face, in the trace's own order
   unsigned csr, x, y, held;
   int clkrdy;
   unsigned interval, intr;
   int audio, serrdy;
+  unsigned ccsr, cbits, sm1, sm2, scmd, sstat;
   // where this row lands on the 5 ns grid
   long face_tick, cmp_tick, act_tick;
 };
@@ -252,8 +315,24 @@ struct Dut {
     d->kbd_strobe = 0;
     d->kbd_code = 0;
     d->mouse_lines = 0x7F;  // a mouse at rest, nothing pressed
-    d->ser_ready = 0;
-    d->chaos_intr = 0;
+    // The two far ends, which are `cadr-serial`'s and `cadr-chaosnet`'s on
+    // the board.  **`ser_ready` AND `chaos_intr` ARE GONE**: the card
+    // computes both now, so a line left driving them fails to compile rather
+    // than quietly supplying the answer.
+    d->ser_tx_take = 0;
+    d->ser_tx_done = 0;
+    d->ser_rx_strobe = 0;
+    d->ser_rx_data = 0;
+    d->ser_plugged = 0;
+    d->chaos_address = 0;
+    d->chaos_rx_valid = 0;
+    d->chaos_rx_word = 0;
+    d->chaos_rx_done = 0;
+    d->chaos_rx_bits = 0;
+    d->chaos_rx_crc = 0;
+    d->chaos_tx_done = 0;
+    d->chaos_tx_abort = 0;
+    d->chaos_cbl_busy = 0;
     d->eval();
   }
   ~Dut() {
@@ -299,6 +378,9 @@ int main(int argc, char **argv) {
   dec[0].assign(kUbAddresses, 0);
   dec[1].assign(kUbAddresses, 0);
   std::vector<char> covered(kUbAddresses, 0);
+  // The two buffers, by direction and sequence: 0 a packet a `CRX` row lands,
+  // 1 a buffer a `CTX` row says the card handed over.
+  std::map<std::pair<int, long>, std::vector<unsigned>> bufs;
   long dec_rows = 0, dec_none_runs = 0, trace_answers = 0;
 
   char line[512];
@@ -332,6 +414,22 @@ int main(int argc, char **argv) {
       ++dec_none_runs;
       continue;
     }
+    if (!std::strncmp(line, "CBUF ", 5)) {
+      int dir;
+      long seq, k;
+      unsigned w;
+      if (std::sscanf(line + 5, "%d %ld %lx %x", &dir, &seq, &k, &w) != 4) {
+        std::fprintf(stderr, "%s: cannot parse: %s", path, line);
+        return 2;
+      }
+      std::vector<unsigned> &v = bufs[std::make_pair(dir, seq)];
+      if ((long)v.size() != k) {
+        std::fprintf(stderr, "%s: buffer %d/%ld is out of order at %ld\n", path, dir, seq, k);
+        return 2;
+      }
+      v.push_back(w);
+      continue;
+    }
     if (!std::strncmp(line, "DEC ", 4)) {
       unsigned u, r;
       int w;
@@ -357,16 +455,14 @@ int main(int argc, char **argv) {
     int got = 0;
     if (!std::strcmp(tag, "CYC")) {
       r.tag = kCyc;
-      got = std::sscanf(p, "%ld %ld %ld %ld %ld %x %x %d %x %x %x %x %x %x %d %x %x %d %d", &r.n,
-                        &r.ns, &r.ssyn, &r.slip, &r.off, &r.uaddr, &r.reg_, &r.write, &r.wdata,
-                        &r.rdata, &r.csr, &r.x, &r.y, &r.held, &r.clkrdy, &r.interval, &r.intr,
-                        &r.audio, &r.serrdy);
-      if (got != 19) got = 0;
+      got = std::sscanf(p, "%ld %ld %ld %ld %ld %x %x %d %x %x" FACE_FMT, &r.n, &r.ns, &r.ssyn,
+                        &r.slip, &r.off, &r.uaddr, &r.reg_, &r.write, &r.wdata, &r.rdata,
+                        FACE_ARGS);
+      if (got != 10 + kFaceCols) got = 0;
     } else if (!std::strcmp(tag, "KEY") || !std::strcmp(tag, "BTN")) {
       unsigned v;
-      got = std::sscanf(p, "%ld %ld %x %x %x %x %x %d %x %x %d %d", &r.n, &r.ns, &v, &r.csr, &r.x,
-                        &r.y, &r.held, &r.clkrdy, &r.interval, &r.intr, &r.audio, &r.serrdy);
-      if (got != 12) got = 0;
+      got = std::sscanf(p, "%ld %ld %x" FACE_FMT, &r.n, &r.ns, &v, FACE_ARGS);
+      if (got != 3 + kFaceCols) got = 0;
       if (!std::strcmp(tag, "KEY")) {
         r.tag = kKey;
         r.code = v;
@@ -376,20 +472,45 @@ int main(int argc, char **argv) {
       }
     } else if (!std::strcmp(tag, "MOVE")) {
       r.tag = kMove;
-      got = std::sscanf(p, "%ld %ld %ld %ld %x %x %x %x %d %x %x %d %d", &r.n, &r.ns, &r.dx, &r.dy,
-                        &r.csr, &r.x, &r.y, &r.held, &r.clkrdy, &r.interval, &r.intr, &r.audio,
-                        &r.serrdy);
-      if (got != 13) got = 0;
+      got = std::sscanf(p, "%ld %ld %ld %ld" FACE_FMT, &r.n, &r.ns, &r.dx, &r.dy, FACE_ARGS);
+      if (got != 4 + kFaceCols) got = 0;
     } else if (!std::strcmp(tag, "SER")) {
       r.tag = kSer;
-      got = std::sscanf(p, "%ld %ld %d %x %x %x %x %d %x %x %d %d", &r.n, &r.ns, &r.ready, &r.csr,
-                        &r.x, &r.y, &r.held, &r.clkrdy, &r.interval, &r.intr, &r.audio, &r.serrdy);
-      if (got != 12) got = 0;
+      got = std::sscanf(p, "%ld %ld %d" FACE_FMT, &r.n, &r.ns, &r.ready, FACE_ARGS);
+      if (got != 3 + kFaceCols) got = 0;
     } else if (!std::strcmp(tag, "INIT") || !std::strcmp(tag, "FACE")) {
       r.tag = !std::strcmp(tag, "INIT") ? kInit : kFace;
-      got = std::sscanf(p, "%ld %ld %x %x %x %x %d %x %x %d %d", &r.n, &r.ns, &r.csr, &r.x, &r.y,
-                        &r.held, &r.clkrdy, &r.interval, &r.intr, &r.audio, &r.serrdy);
-      if (got != 11) got = 0;
+      got = std::sscanf(p, "%ld %ld" FACE_FMT, &r.n, &r.ns, FACE_ARGS);
+      if (got != 2 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "CTX")) {
+      r.tag = kCtx;
+      got = std::sscanf(p, "%ld %ld %ld %ld" FACE_FMT, &r.n, &r.ns, &r.seq, &r.len, FACE_ARGS);
+      if (got != 4 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "CRX")) {
+      r.tag = kCrx;
+      got = std::sscanf(p, "%ld %ld %ld %lx %ld %d %d" FACE_FMT, &r.n, &r.ns, &r.seq, &r.bits,
+                        &r.len, &r.crc, &r.busy, FACE_ARGS);
+      if (got != 7 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "CTD")) {
+      r.tag = kCtd;
+      got = std::sscanf(p, "%ld %ld %d" FACE_FMT, &r.n, &r.ns, &r.abort, FACE_ARGS);
+      if (got != 3 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "CBL")) {
+      r.tag = kCbl;
+      got = std::sscanf(p, "%ld %ld %d" FACE_FMT, &r.n, &r.ns, &r.busy, FACE_ARGS);
+      if (got != 3 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "STK") || !std::strcmp(tag, "SDN")) {
+      r.tag = !std::strcmp(tag, "STK") ? kStk : kSdn;
+      got = std::sscanf(p, "%ld %ld" FACE_FMT, &r.n, &r.ns, FACE_ARGS);
+      if (got != 2 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "SRX") || !std::strcmp(tag, "SOUT")) {
+      r.tag = !std::strcmp(tag, "SRX") ? kSrx : kSout;
+      got = std::sscanf(p, "%ld %ld %x" FACE_FMT, &r.n, &r.ns, &r.data, FACE_ARGS);
+      if (got != 3 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "SPL")) {
+      r.tag = kSpl;
+      got = std::sscanf(p, "%ld %ld %d" FACE_FMT, &r.n, &r.ns, &r.plugged, FACE_ARGS);
+      if (got != 3 + kFaceCols) got = 0;
     } else {
       std::fprintf(stderr, "%s: unknown row: %s", path, line);
       return 2;
@@ -433,6 +554,13 @@ int main(int argc, char **argv) {
       {"kbd_vector", want_h("kbd_vector"), 260},
       {"serial_vector", want_h("serial_vector"), 264},
       {"clock_vector", want_h("clock_vector"), 274},
+      {"chaos_vector", want_h("chaos_vector"), 270},
+      {"chaos_first", want_h("chaos_first"), 764140},
+      {"chaos_last", want_h("chaos_last"), 764156},
+      {"serial_first", want_h("serial_first"), 764160},
+      {"serial_last", want_h("serial_last"), 764176},
+      {"chaos_writable", want_h("chaos_writable"), 67},
+      {"chaos_buffer_words", want_h("chaos_buffer_words"), 256},
       {"rows", want_h("rows"), (long)rows.size()},
       {"dec_rows", want_h("dec_rows"), dec_rows},
       {"dec_none_runs", want_h("dec_none_runs"), dec_none_runs},
@@ -466,16 +594,29 @@ int main(int argc, char **argv) {
     r.face_tick = (r.tag == kCyc ? r.off : r.ns) / kTick;
     long want = r.face_tick;
     if (want < prev_cmp) want = prev_cmp;
-    const bool visible = (r.tag == kKey || r.tag == kSer || r.tag == kInit);
-    if (visible && want == prev_cmp) {
+    // **WHAT IS PUSHED AND WHAT IS NOT, AND THE RULE IS THE GENERATOR'S OWN
+    // SHAPE.**  A row is pushed only where the generator MUTATES the board
+    // between two rows at one nanosecond --- a press, `-UB INIT`, the RS-232
+    // cable going in or out --- because then muir has two different faces at
+    // that instant and a clocked fabric needs two ticks for them.
+    //
+    // The far end's rows mutate nothing: muir's `advance` applies them from
+    // the clock, so EVERY row at that instant carries the state with them
+    // already in it, and they belong on one tick with all of their inputs
+    // sampled by the same edge.  Pushing them apart is what made the second
+    // of two at one instant a tick late.
+    const bool mutates = (r.tag == kKey || r.tag == kInit || r.tag == kSpl);
+    const bool from_outside = mutates || r.tag == kCrx || r.tag == kCtd || r.tag == kCbl ||
+                              r.tag == kStk || r.tag == kSdn || r.tag == kSrx;
+    if (mutates && want == prev_cmp) {
       want = prev_cmp + 1;
       ++pushed;
     }
     r.cmp_tick = want;
-    // A press, the serial line and `-UB INIT` land where they are compared; a
-    // move and a switch land at their own instant, because what they change is
-    // an input the card samples on its own clock.
-    r.act_tick = visible ? want : r.ns / kTick;
+    // What reaches the card from outside lands where it is compared; a move
+    // and a switch land at their own instant, because what they change is an
+    // input the card samples on its own clock.
+    r.act_tick = from_outside ? want : r.ns / kTick;
     prev_cmp = want;
   }
 
@@ -506,9 +647,9 @@ int main(int argc, char **argv) {
     }
     // The testbench's own model of `IoBoardTiming` against the trace: if these
     // ever part, the decode sweep below would be checking the wrong instant.
-    if (c.answered && AnswerNs(r.reg_, r.ns) != r.ssyn) {
+    if (c.answered && AnswerNs(r.reg_, r.write, r.ns) != r.ssyn) {
       std::fprintf(stderr, "FAIL: row %ld: this check computes -UB SSYN at %ld and muir says %ld\n",
-                   r.n, AnswerNs(r.reg_, r.ns), r.ssyn);
+                   r.n, AnswerNs(r.reg_, r.write, r.ns), r.ssyn);
       return 1;
     }
     cycs.push_back(c);
@@ -524,26 +665,75 @@ int main(int argc, char **argv) {
   // are kept apart rather than walked with one pointer.
   std::vector<size_t> strobes;
   for (size_t i = 0; i < rows.size(); ++i) {
-    if (rows[i].tag == kKey || rows[i].tag == kSer || rows[i].tag == kInit) strobes.push_back(i);
+    const Tag t = rows[i].tag;
+    if (t == kKey || t == kInit || t == kSpl || t == kCrx || t == kCtd || t == kCbl || t == kStk ||
+        t == kSdn || t == kSrx)
+      strobes.push_back(i);
+  }
+
+  // **A PACKET IS STREAMED IN BEFORE IT LANDS.**  muir's interface takes a
+  // frame whole at one instant; the card's receive buffer is filled a word a
+  // tick off the seam and committed by `chaos_rx_done`, which is where the
+  // trace puts the instant.  So the words go in on the ticks before the
+  // `CRX` row and nothing of them is visible until it: `ch_rlen` is the
+  // committed length and the fill counter is separate.
+  std::vector<std::pair<long, unsigned>> rx_stream;
+  {
+    long prev = -1;
+    for (const auto &r : rows) {
+      if (r.tag != kCrx) {
+        if (r.cmp_tick > prev) prev = r.cmp_tick;
+        continue;
+      }
+      const std::vector<unsigned> &w = bufs[std::make_pair(0, r.seq)];
+      if ((long)w.size() != r.len) {
+        std::fprintf(stderr, "FAIL: row %ld says %ld words and the trace carries %zu\n", r.n,
+                     r.len, w.size());
+        return 1;
+      }
+      const long from = r.cmp_tick - (long)w.size() - 1;
+      if (from <= prev) {
+        std::fprintf(stderr, "FAIL: row %ld leaves no room to stream %zu words in\n", r.n,
+                     w.size());
+        return 1;
+      }
+      for (size_t k = 0; k < w.size(); ++k) rx_stream.push_back({from + (long)k, w[k]});
+      prev = r.cmp_tick;
+    }
+  }
+
+  // Where the card must strobe a character onto the cable, and where it must
+  // say a frame is to go: at those ticks and at no others.
+  std::set<long> sout_ticks, txgo_ticks;
+  for (const auto &r : rows) {
+    if (r.tag == kSout) sout_ticks.insert(r.cmp_tick);
+    if (r.tag == kCyc && !r.write && r.reg_ == kChaosStart) txgo_ticks.insert(r.ssyn / kTick);
   }
 
   Dut b;
   Encoders enc;
+  b.d->chaos_address = (unsigned)want_h("chaos_address");
   int switches = 0;
-  int ser_model = 0;
-  size_t ci = 0, ri = 0, si = 0;
+  int plugged = 0, cbl_busy = 0;
+  size_t ci = 0, ri = 0, si = 0, xi = 0;
+  // What the card has handed over since the last `CTX` row.
+  std::vector<unsigned> tx_seen;
+  long tx_go_seen = 0, tx_words = 0, sout_seen = 0, rx_words = 0;
   unsigned addr_held = 0, wdata_held = 0;
   int write_held = 0;
 
-  long answered = 0, unanswered = 0, reads = 0, writes = 0, slips = 0;
-  long presses = 0, moves = 0, inits = 0, faces = 0, sers = 0, btns = 0;
+  long answered = 0, unanswered = 0, reads = 0, writes = 0, slips = 0, serial_slips = 0;
+  long presses = 0, moves = 0, inits = 0, faces = 0, sers = 0, btns = 0, ctxs = 0;
   long compared_rdata = 0, compared_faces = 0;
   std::set<long> phases;
   std::map<unsigned, long> saw_reads, saw_writes, saw_vectors;
   Row nowhere;
   std::memset(&nowhere, 0, sizeof nowhere);
 
-  for (long t = 0; t <= last_tick && bad < 25; ++t) {
+  // The placement can push a row one tick past the trace's own last instant,
+  // so the run goes on until every row has been compared --- bounded, so that
+  // a row that can never be reached is a failure and not a hang.
+  for (long t = 0; (t <= last_tick || ri < rows.size()) && t <= last_tick + 64 && bad < 25; ++t) {
     // The mouse's own clock, and the encoders' step on it, BEFORE anything
     // this tick's rows do: muir advances the board to the instant and then
     // applies what happens there.
@@ -567,25 +757,95 @@ int main(int argc, char **argv) {
     b.d->kbd_strobe = 0;
     b.d->kbd_code = 0;
     b.d->ub_init = 0;
+    b.d->chaos_rx_done = 0;
+    b.d->chaos_tx_done = 0;
+    b.d->chaos_tx_abort = 0;
+    b.d->ser_tx_take = 0;
+    b.d->ser_tx_done = 0;
+    b.d->ser_rx_strobe = 0;
+    b.d->chaos_rx_valid = 0;
+    if (xi < rx_stream.size() && rx_stream[xi].first == t) {
+      b.d->chaos_rx_valid = 1;
+      b.d->chaos_rx_word = rx_stream[xi].second;
+      ++xi;
+      ++rx_words;
+    }
     while (si < strobes.size() && rows[strobes[si]].act_tick == t) {
       const Row &r = rows[strobes[si]];
-      if (r.tag == kKey) {
-        b.d->kbd_strobe = 1;
-        b.d->kbd_code = r.code;
-      } else if (r.tag == kInit) {
-        b.d->ub_init = 1;
-      } else {
-        ser_model = r.ready;
+      switch (r.tag) {
+        case kKey:
+          b.d->kbd_strobe = 1;
+          b.d->kbd_code = r.code;
+          break;
+        case kInit:
+          b.d->ub_init = 1;
+          break;
+        case kSer:
+          // The old `SER` rows moved the 2651 directly, before the chip was
+          // on this card.  They move it through its own registers now, so
+          // there is nothing for this row to drive: what it still says is
+          // what the card's ready line must be, and the face below holds it.
+          break;
+        case kCrx:
+          b.d->chaos_rx_done = 1;
+          b.d->chaos_rx_bits = (unsigned)r.bits;
+          b.d->chaos_rx_crc = r.crc;
+          cbl_busy = r.busy;
+          break;
+        case kCtd:
+          b.d->chaos_tx_done = 1;
+          b.d->chaos_tx_abort = r.abort;
+          break;
+        case kCbl:
+          cbl_busy = r.busy;
+          break;
+        case kStk:
+          b.d->ser_tx_take = 1;
+          break;
+        case kSdn:
+          b.d->ser_tx_done = 1;
+          break;
+        case kSrx:
+          b.d->ser_rx_strobe = 1;
+          b.d->ser_rx_data = r.data;
+          break;
+        case kSpl:
+          plugged = r.plugged;
+          break;
+        default:
+          break;
       }
       ++si;
     }
-    b.d->ser_ready = ser_model;
+    b.d->chaos_cbl_busy = cbl_busy;
+    b.d->ser_plugged = plugged;
 
     b.Rise();
 
-    // `-INIT*` into the 8837 at IOBXCV 0F06 IS the 2651's RESET pin, so the
-    // serial port's ready line falls because THE CARD carried the pulse to it.
-    if (b.d->ser_reset) ser_model = 0;
+    // What the card hands the two far ends.  The transmit buffer streams out
+    // from the tick after START; a character reaches the cable exactly where
+    // a `SOUT` row says and nowhere else, and a frame is offered exactly
+    // where START was read.
+    if (b.d->chaos_tx_valid) {
+      tx_seen.push_back(b.d->chaos_tx_word);
+      ++tx_words;
+    }
+    if (b.d->chaos_tx_go) {
+      ++tx_go_seen;
+      if (!txgo_ticks.count(t)) {
+        nowhere.n = -1;
+        nowhere.ns = t * kTick;
+        Fail(t, nowhere, "chaos_tx_go with no read of START", 1, 0);
+      }
+    }
+    if (b.d->ser_tx_strobe) {
+      ++sout_seen;
+      if (!sout_ticks.count(t)) {
+        nowhere.n = -1;
+        nowhere.ns = t * kTick;
+        Fail(t, nowhere, "a character on the cable that muir did not send", b.d->ser_tx_data, 0);
+      }
+    }
 
     // --- `-UB SSYN`, at the instant the trace names and at no other
     if (in_cycle) {
@@ -597,7 +857,11 @@ int main(int argc, char **argv) {
         ++answered;
         if (r.slip != 0) {
           ++slips;
-          if (r.reg_ != kUsecLowReg) {
+          if (r.reg_ >= kSerialFirst && r.reg_ <= kSerialLast) {
+            ++serial_slips;
+            if (r.slip != 2)
+              Fail(t, r, "the serial port's answer is not two short of a tick", r.slip, 2);
+          } else if (r.reg_ != kUsecLowReg) {
             Fail(t, r, "an answer off the 5 ns grid at a register that should be on it", r.reg_,
                  kUsecLowReg);
           }
@@ -646,13 +910,49 @@ int main(int argc, char **argv) {
       if ((b.d->intr_request != 0) != (r.intr != 0))
         Fail(t, r, "the interrupt request", b.d->intr_request, r.intr != 0);
       if (b.d->audio != r.audio) Fail(t, r, "AUDIO", b.d->audio, r.audio);
-      if (ser_model != r.serrdy) Fail(t, r, "the serial port's ready line", ser_model, r.serrdy);
+      // `SER.IREQ` is the card's own now: the 2651's `-RxRDY` or `-TxRDY`,
+      // which are `SR1` and `SR0` of the status byte it assembles.
+      const int serrdy = (b.d->ser_status & 0x3) != 0;
+      if (serrdy != r.serrdy) Fail(t, r, "the serial port's ready line", serrdy, r.serrdy);
+      if (b.d->chaos_csr != r.ccsr) Fail(t, r, "the Chaosnet CSR", b.d->chaos_csr, r.ccsr);
+      if (b.d->chaos_bits != r.cbits) Fail(t, r, "the Chaosnet bit counter", b.d->chaos_bits, r.cbits);
+      if (b.d->ser_mode1 != r.sm1) Fail(t, r, "the 2651's mode register 1", b.d->ser_mode1, r.sm1);
+      if (b.d->ser_mode2 != r.sm2) Fail(t, r, "the 2651's mode register 2", b.d->ser_mode2, r.sm2);
+      if (b.d->ser_cmd != r.scmd) Fail(t, r, "the 2651's command register", b.d->ser_cmd, r.scmd);
+      if (b.d->ser_status != r.sstat) Fail(t, r, "the 2651's status register", b.d->ser_status, r.sstat);
       if (r.intr != 0) saw_vectors[r.intr]++;
       switch (r.tag) {
         case kKey: ++presses; break;
         case kInit: ++inits; break;
         case kSer: ++sers; break;
         case kFace: ++faces; break;
+        case kSout:
+          // The character the card put on the cable, at the instant muir's
+          // shift register delivered it.
+          if (!b.d->ser_tx_strobe)
+            Fail(t, r, "no character on the cable", 0, r.data);
+          else if (b.d->ser_tx_data != r.data)
+            Fail(t, r, "the character on the cable", b.d->ser_tx_data, r.data);
+          break;
+        case kCtx: {
+          // The transmit buffer the card handed over since the last such
+          // row: the words came over the bus and it must give them back, in
+          // order and with nothing else.
+          const std::vector<unsigned> &w = bufs[std::make_pair(1, r.seq)];
+          if ((long)tx_seen.size() != r.len) {
+            Fail(t, r, "words handed over for the frame", tx_seen.size(), r.len);
+          } else {
+            for (size_t k = 0; k < w.size(); ++k) {
+              if (tx_seen[k] != w[k]) {
+                Fail(t, r, "a word of the transmit buffer", tx_seen[k], w[k]);
+                break;
+              }
+            }
+          }
+          tx_seen.clear();
+          ++ctxs;
+          break;
+        }
         default: break;
       }
       ++compared_faces;
@@ -679,13 +979,14 @@ int main(int argc, char **argv) {
   // answer, and WHEN.  The instant is what tells the three timing groups
   // apart, and so tells `0o764130` from `0o764120`'s neighbours.
   Dut s;
-  long dec_answers = 0, dec_silent = 0, dec_other = 0;
+  s.d->chaos_address = (unsigned)want_h("chaos_address");
+  long dec_answers = 0, dec_silent = 0;
   for (long u = 0; u < kUbAddresses && bad < 25; ++u) {
     for (int w = 0; w < 2; ++w) {
       const unsigned reg = dec[w][u];
       const long msyn_t = s.tick;
-      const bool ours = ThisCardAnswers(reg);
-      const long ssyn_t = ours ? AnswerNs(reg, msyn_t * kTick) / kTick : 0;
+      const bool ours = (reg != kNoReg);
+      const long ssyn_t = ours ? AnswerNs(reg, w, msyn_t * kTick) / kTick : 0;
       const long last_t = ours ? ssyn_t + 3 : msyn_t + kSweepHold;
 
       s.d->ub_msyn = 1;
@@ -701,8 +1002,7 @@ int main(int argc, char **argv) {
                          "tick %ld: the decode at 0%lo %s: -UB SSYN is %d and should be %d\n"
                          "  muir's answers() says %s; -UB MSYN rose at %ld ns\n",
                          t, (unsigned long)u, w ? "written" : "read", s.d->ub_ssyn, want,
-                         reg == kNoReg ? "nothing answers"
-                                       : (ours ? "this card answers" : "another slice answers"),
+                         reg == kNoReg ? "nothing answers" : "this card answers",
                          msyn_t * kTick);
           }
           ++bad;
@@ -710,8 +1010,7 @@ int main(int argc, char **argv) {
         s.Fall();
       }
       if (ours) ++dec_answers;
-      else if (reg == kNoReg) ++dec_silent;
-      else ++dec_other;   // the Chaosnet interface's group and the serial port's
+      else ++dec_silent;
       s.d->ub_msyn = 0;
       s.Idle(1);
     }
@@ -721,14 +1020,16 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // ---- the priority chain, including the input nothing drives yet ----------
+  // ---- the priority chain, driven through the cards' own registers --------
   //
-  // NOT A COMPARISON WITH muir: `interrupt_request` consults `self.chaos`,
-  // which is `None` unless an interface is plugged in, and plugging one in
-  // drags the whole Chaosnet board into the trace.  So `0o270` and its place
-  // in the chain are held to page IOBINT's own two equations --- `V2 = (SER
-  // AND NOT CHAOS) OR CLOCK` and `V3 = CLOCK OR CHAOS` --- and this says so.
-  // The other three vectors are compared against muir above, on every row.
+  // **ALL FOUR VECTORS ARE COMPARED AGAINST muir ABOVE NOW**, `0o270`
+  // included: the trace plugs a Chaosnet interface in, which is what no
+  // trace against this model could do before.  What this block adds is the
+  // CONTENTION, which the trace does not reach --- the Chaosnet asking while
+  // the serial port and the keyboard are, and the clock over all three ---
+  // held to page IOBINT's own two equations, `V2 = (SER AND NOT CHAOS) OR
+  // CLOCK` and `V3 = CLOCK OR CHAOS`.  Every request here is raised through
+  // a register a program writes and not through a wire this check drives.
   {
     Dut p;
     p.Idle(4);
@@ -764,21 +1065,25 @@ int main(int argc, char **argv) {
     p.Fall();
     p.d->kbd_strobe = 0;
     want_vector("the keyboard alone", 0260);
-    p.d->ser_ready = 1;
-    p.Idle(1);
+    // The 2651 asynchronous at eight bits, 19,200 baud on its internal
+    // clock, transmitter and receiver enabled with the cable in: `SR0` comes
+    // up and `SER.IREQ` with it.
+    p.d->ser_plugged = 1;
+    cycle(kSerialMode, 1, 0116);
+    cycle(kSerialMode, 1, 0177);
+    cycle(kSerialCommand, 1, 0047);
     want_vector("the serial port over the keyboard", 0264);
-    p.d->chaos_intr = 1;
-    p.Idle(1);
+    // The Chaosnet interface's Transmit Done is up from power-up, so its own
+    // enable is all it takes.
+    cycle(kChaosCsr, 1, 0040);
     want_vector("the Chaosnet over the serial port", 0270);
     cycle(kClock, 1, 0);               // an interval of zero is over at once
     want_vector("the clock over everything", 0274);
     cycle(kCsr, 1, 0207);              // the clock's enable away
     want_vector("the Chaosnet again", 0270);
-    p.d->chaos_intr = 0;
-    p.Idle(1);
+    cycle(kChaosCsr, 1, 0);
     want_vector("the serial port again", 0264);
-    p.d->ser_ready = 0;
-    p.Idle(1);
+    cycle(kSerialCommand, 1, 0);
     want_vector("the keyboard again", 0260);
     cycle(kKbdLow, 0, 0);              // the low half's read clears KBD READY
     want_vector("nothing waiting", 0);
@@ -804,7 +1109,13 @@ int main(int argc, char **argv) {
   same("moves", moves, want_h("moves"));
   same("-UB INIT pulses", inits, want_h("inits"));
   same("faces between cycles", faces, want_h("faces"));
-  same("directions the decode answers", dec_answers + dec_other, trace_answers);
+  same("directions the decode answers", dec_answers, trace_answers);
+  same("transmit buffers handed over", ctxs, want_h("ctx_rows"));
+  same("words of them", tx_words, want_h("ctx_words"));
+  same("frames offered to the far end", tx_go_seen, want_h("ctx_rows"));
+  same("characters put on the cable", sout_seen, want_h("sout_rows"));
+  same("words streamed into the receive buffer", rx_words, want_h("crx_words"));
+  same("answers off the grid at the serial port", serial_slips, want_h("offgrid_serial"));
   same("directions nothing answers", dec_silent, 2 * kUbAddresses - trace_answers);
   for (const auto &kv : hdr_reads) same("reads of a register", saw_reads[kv.first], kv.second);
   for (const auto &kv : hdr_writes) same("writes of a register", saw_writes[kv.first], kv.second);
@@ -815,13 +1126,13 @@ int main(int argc, char **argv) {
     }
   }
   if (thin) return 1;
-  if (pushed != 7 || slips == 0 || presses < 10 || moves < 10 || btns < 8 || sers < 2 ||
-      dec_other == 0) {
+  if (pushed != kPushedRows || slips == 0 || presses < 10 || moves < 10 || btns < 8 ||
+      sers < 2 || ctxs < 5) {
     std::fprintf(stderr,
                  "FAIL: the placement or the trace is not what this check was written against: "
                  "%ld rows pushed, %ld off-grid answers, %ld presses, %ld moves, %ld switch masks, "
-                 "%ld serial rows, %ld exempt\n",
-                 pushed, slips, presses, moves, btns, sers, dec_other);
+                 "%ld serial rows, %ld buffers handed over\n",
+                 pushed, slips, presses, moves, btns, sers, ctxs);
     return 1;
   }
 
@@ -833,17 +1144,23 @@ int main(int argc, char **argv) {
       "    at one nanosecond.\n"
       "    %ld cycles: %ld reads and %ld writes answered at -UB SSYN to the tick and at no earlier\n"
       "    tick, %ld read words compared there, %ld that nothing answered held 6,000 ns each.\n"
-      "    %ld of the answers fall off the 5 ns grid and every one is the microsecond counter's\n"
-      "    low half; %ld of the 200 phases of -UB MSYN inside the card's microsecond were used.\n"
+      "    %ld of the answers fall off the 5 ns grid: %ld are the microsecond counter's low half\n"
+      "    and the rest EVERY cycle of the serial port's group, whose half-microsecond clock has\n"
+      "    a phase of 203 ns; %ld of the 200 phases of -UB MSYN in the card's microsecond were used.\n"
       "    %ld presses, %ld moves, %ld switch masks, %ld -UB INIT pulses, %ld faces between cycles.\n"
       "    The decode: %ld directions answered and %ld silent over all %ld directions of an\n"
-      "    eighteen-bit ub_addr, read and written, a real bus cycle each.  EXEMPT: %ld answering\n"
-      "    directions in the Chaosnet interface's and the serial port's groups (0%o-0%o), which\n"
-      "    ioboard::answers decodes and this card does not answer, those being two other slices.\n"
-      "    The priority chain is held to page IOBINT's equations, 0o270 included, which no trace\n"
-      "    against this model can reach.\n",
+      "    eighteen-bit ub_addr, read and written, a real bus cycle each.  NOTHING IS EXEMPT: the\n"
+      "    Chaosnet interface's group (0%o-0%o) and the serial port's (0%o-0%o) are answered here\n"
+      "    now, and every direction ioboard::answers decodes is compared.\n"
+      "    The Chaosnet: %ld frames offered at a read of START carrying %ld words, compared against\n"
+      "    what the bus wrote; %ld words streamed back into the receive buffer.  The serial port:\n"
+      "    %ld characters put on the cable at the instant muir's shift register delivered them.\n"
+      "    All four vectors are compared against muir, 0o270 included; the contention no trace\n"
+      "    reaches is held to page IOBINT's equations, through the cards' own registers.\n",
       b.tick, want_h("last_ns"), rows.size(), pushed, (long)cycs.size(), reads, writes, compared_rdata,
-      unanswered, slips, (long)phases.size(), presses, moves, btns, inits, faces, dec_answers,
-      dec_silent, (long)kUbAddresses * 2, dec_other, kOtherFirst, kOtherLast);
+      unanswered, slips, slips - serial_slips, (long)phases.size(), presses, moves, btns, inits,
+      faces, dec_answers,
+      dec_silent, (long)kUbAddresses * 2, kChaosFirst, kChaosLast, kSerialFirst, kSerialLast,
+      ctxs, tx_words, rx_words, sout_seen);
   return 0;
 }
