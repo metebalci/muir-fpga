@@ -291,8 +291,31 @@ assert_multicycle_applied $tick 15
 # the reason it is here rather than left to a reader is the disk controller's
 # 3,904 of 4,000: that was found by asking the checkpoint, and nothing in the
 # repository had been asking.
-assert_instance_timing $tick 15 *u_machine/audit/* \
-    {*audit/first_* *audit/micro_reg* *audit/word_reg*}
+#
+# **AND IT IS ASKED ONLY WHERE THE AUDIT HAS REGISTERS, WHICH IS NOT
+# EVERYWHERE.** Measured 2026-09-12: on the memory-off board `*u_machine/
+# audit/*` matches NO flip-flop at all and this assertion stopped the flow.
+# The reason is the audit's only consumer: its record leaves the machine by
+# the console's readout window, and a board with no processing system has no
+# console --- `g_nomem` holds `con_req` and `con_ro_addr` at their idle
+# values --- so the whole module constant-folds. That is the same fact as
+# `mem_addr` having no timing while its only consumer was a false-pathed
+# fold, and the assertion's own message could not tell it from the renamed
+# instance it exists to catch. The guard is `$port`, as the memory
+# contract's assertion below already is.
+#
+# THE FLOW HAD BEEN BROKEN THERE SINCE `559f749`, when the assertion landed,
+# and nobody had run the memory-off board since: the control run at that
+# board's own HEAD fails identically, 18,796 of 26,803 setup paths at
+# 150.000 ns and the same refusal. A flow nobody runs is a flow that says
+# nothing, which is this project's oldest lesson in a new place.
+if {$port > 0} {
+    assert_instance_timing $tick 15 *u_machine/audit/* \
+        {*audit/first_* *audit/micro_reg* *audit/word_reg*}
+} else {
+    puts "XDC: the audit has no registers on a board with no console to read\
+          it, so its split is not asked about here"
+}
 # And the memory port's own deadline, which has a destination only on this
 # board: with `DDR` off, `mem_addr` reaches nothing but a false-pathed fold
 # and the exception is real, legal and connected to nothing. Asserting it
