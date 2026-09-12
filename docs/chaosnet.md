@@ -87,13 +87,20 @@ name**. Without that pacing the transmitter never empties.
 translate through does not. So a Chaosnet or serial cycle reaches the card,
 and a debug cycle cannot reach main memory.
 
-**The SYN and DLE registers and their pointer**, the parity and framing flags,
-and the Chaosnet's timer interrupt. Each is unfalsifiable at this seam, and
-the module's header says so at each one.
+**All four of the things this document used to list here are built.** The SYN
+and DLE registers and their pointer, the parity and framing flags, both
+echoing modes and the Chaosnet's timer interrupt. Mete reversed the usual
+default for them on 12 September: a register the fabric does not have is a way
+this is not the CADR, whether or not today's seam can observe it.
+`docs/io-board.md`'s "What slice six built" says what holds each. Two are held
+to muir, one to the Signetics sheet, and the fourth turned out to be nothing to
+build at all, because MIT's own netlist says this version of the interface has
+no interval timer.
 
-**Auto echo and remote loop back's echo.** muir puts the echoed character back
-at the end of the received frame, which is a second instant this seam does not
-carry. The transmitter's refusal to run in both modes is built and held.
+**A far end that raises a parity or framing error.** The card has `SR3` and
+`SR5` and the seam carries both. Nothing on this board drives either, because
+what is behind `cadr-serial` is a TCP socket carrying bytes rather than bits.
+One bit pair in the character-in word of `serial_face.h` would make them live.
 
 **Reassembly of a control command split across two packets.** muir does not do
 it either. If a band ever sends one longer than 488 bytes, both are wrong
@@ -129,9 +136,13 @@ which is what the debug cable needs.
 ## What the checks hold to
 
 `iob` compares the card against muir's model over a scripted trace at the
-Unibus: 82,305,913 ticks, 1,874 bus cycles, 55 directions answered and 524,233
+Unibus: 82,509,813 ticks, 1,885 bus cycles, 55 directions answered and 524,233
 silent over all 524,288 directions of an eighteen-bit address, read and
-written, a real bus cycle each. 52 mutation records, all caught.
+written, a real bus cycle each. 63 mutation records, all caught.
+
+It has a second configuration now. The 2651's parity and framing flags cannot
+be held to muir at all, because muir's behavioural chip raises neither, so that
+configuration drives the two seam inputs itself and holds the Signetics sheet.
 
 `unibus` holds the composed claim, that the machine's own bus cycle reaches
 the card and that the three slaves' address sets are disjoint over the whole

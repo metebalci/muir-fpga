@@ -273,6 +273,7 @@ struct Gen {
     stk_rows: u64,
     sdn_rows: u64,
     srx_rows: u64,
+    sre_rows: u64,
     sout_rows: u64,
     spl_rows: u64,
     /// Instants of the far end's own that the 5 ns grid cannot reach: the
@@ -327,6 +328,7 @@ impl Gen {
             stk_rows: 0,
             sdn_rows: 0,
             srx_rows: 0,
+            sre_rows: 0,
             sout_rows: 0,
             spl_rows: 0,
             far_slips: 0,
@@ -725,6 +727,22 @@ impl Gen {
         self.row("SRX", format!(" {data:x}"));
     }
 
+    /// The received frame's own end --- `Pci::rx_times`' SECOND instant,
+    /// the last stop bit over --- where the first is the `SRX` row.  It is
+    /// what the echoing modes put the echoed character on the cable at, so
+    /// a seam carrying only `SRX` could not place the echo and the card
+    /// could not have the two modes.  Stimulus.
+    ///
+    /// **The instant is read off the cable rather than computed**, because
+    /// `Pci::rx_times` is muir's own and private: the character the echo
+    /// puts on the cable carries exactly this time, so `Gen::taken` is where
+    /// it comes from and there is no second arithmetic to get wrong.
+    fn sre(&mut self, at: u64) {
+        self.far_at(at);
+        self.sre_rows += 1;
+        self.row("SRE", String::new());
+    }
+
     /// A character reaches the far end's cable: the transmitter's, or the
     /// receiver's own in auto echo and remote loop back.  An assertion.
     fn sout(&mut self, at: u64, data: u8) {
@@ -754,27 +772,42 @@ impl Gen {
     /// row would sometimes fall INSIDE the cycle that loaded it and the
     /// trace could not place it.  The clock's instants are the crystal's and
     /// do not move, so stepping finds one.
+    /// **It steps to just past the offending clock rather than by a fixed
+    /// amount.**  Stepping by 500 ns and giving up after sixteen tries was a
+    /// search for a window about 150 ns wide in a period of about 3,150, and
+    /// whether it found one depended on the phase the rest of the program
+    /// happened to leave: adding four bus cycles anywhere earlier made it
+    /// fail.  The next clock after a clock is a whole period away, which is
+    /// wider than any `room` this program asks for, so one step is enough
+    /// and the bound is there to fail rather than hang.
     fn before_16x(&mut self, room: u64) {
-        for _ in 0..16 {
+        for _ in 0..4 {
             let now = self.now;
-            if self.b.serial.clock_at_or_after(now) >= now + room {
+            let c = self.b.serial.clock_at_or_after(now);
+            if c >= now + room {
                 return;
             }
-            self.wait(500);
+            self.at(grid_at(c + TICK_NS));
         }
         panic!("no gap in the 2651's 16X clock");
     }
 
-    /// Whatever the port has put on the cable by now, each as a `SOUT` row
-    /// at the instant its last stop bit ended.  `Cable::take` is the far
-    /// end taking them, which is what a far end does.
-    fn drain_serial(&mut self) {
+    /// Whatever the port has put on the cable by now, taken off it in the
+    /// order it arrived: each character and the instant its last stop bit
+    /// ended.  `Cable::take` is the far end taking them, which is what a far
+    /// end does.
+    fn taken(&mut self) -> Vec<(u64, u8)> {
         let mut got: Vec<(u64, u8)> = Vec::new();
         while let Some(p) = self.b.serial.cable.take() {
             got.push(p);
         }
         got.sort_by_key(|&(t, _)| t);
-        for (t, byte) in got {
+        got
+    }
+
+    /// The same, each as a `SOUT` row where it ended.
+    fn drain_serial(&mut self) {
+        for (t, byte) in self.taken() {
             self.sout(t, byte);
         }
     }
@@ -1642,6 +1675,42 @@ fn main() {
     // not disturb it.  The pointer is past the end, so the count is `7777`.
     assert_eq!(g.read(chaos::BIT_COUNT), 0o7777, "a lost frame moved the buffer's pointer");
 
+    // --- Timer Interrupt Enable reaches no gate, and this is the check --
+    //
+    // AIM-628 calls bit 0 "Timer Interrupt Enable ... for the interval timer
+    // present in SOME VERSIONS of the interface", and `data/CADRIO.netlist`
+    // says this is not one of them: `TIMER.IEN` has exactly two pins on the
+    // whole board, the Q of the 74LS174 at LMUCON 0B20 a CSR write loads and
+    // the input of the 74LS244 at LMDATP 0D16 that reads it back, and
+    // `CHAOS.IREQ` is the 74S51 at LMUCON 0E05 computing `(RDONE AND RIEN)
+    // OR (TDONE AND TIEN)` with no third term.  muir's
+    // `Interface::interrupt_request` is those two terms and no more.
+    //
+    // So the bit is set here with **both done bits up and both interrupt
+    // enables clear**, which is the one arrangement in which a card that let
+    // the timer enable reach the gate asks for `0o270` where this one asks
+    // for nothing.  Without it, "the bit reaches no gate" would be an
+    // absence rather than a claim.
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & ccsr::RECEIVE_DONE, ccsr::RECEIVE_DONE, "Receive Done is down for the timer");
+    assert_eq!(v & ccsr::TRANSMIT_DONE, ccsr::TRANSMIT_DONE, "Transmit Done is down for the timer");
+    g.write(chaos::CSR, ccsr::TIMER_INT_ENABLE | ccsr::LOOP_BACK);
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & C_WRITABLE, ccsr::TIMER_INT_ENABLE | ccsr::LOOP_BACK,
+               "the timer enable did not store");
+    assert_eq!(v & (ccsr::RECEIVE_DONE | ccsr::TRANSMIT_DONE),
+               ccsr::RECEIVE_DONE | ccsr::TRANSMIT_DONE, "a done bit fell");
+    g.look();
+    assert_eq!(g.b.interrupt_request(g.now), None,
+               "the Chaosnet's timer enable asked for an interrupt");
+    // And the same arrangement with Receive Interrupt Enable set instead,
+    // which MUST ask, so that "nothing asks" above is not a card whose
+    // request is broken altogether.
+    g.write(chaos::CSR, ccsr::RECEIVE_INT_ENABLE | ccsr::LOOP_BACK);
+    g.look();
+    assert_eq!(g.b.interrupt_request(g.now), Some(0o270),
+               "Receive Done with its own enable asked for nothing");
+
     // Clear Receiver takes the packet, the lost count and the CRC verdict
     // away, and leaves the five writable bits where the same word puts them.
     g.write(chaos::CSR, ccsr::CLEAR_RECEIVER | ccsr::SPY | ccsr::LOOP_BACK);
@@ -1750,12 +1819,21 @@ fn main() {
 
     // The three SYN registers behind the status address, three deep and
     // wrapping, with the same read of the command register putting the
-    // pointer back.  Nothing on this board uses synchronous mode; what is
-    // checked is that a write goes somewhere and the pointer counts.
+    // pointer back.  Nothing on this board uses synchronous mode and nothing
+    // anywhere reads these three back, so **muir has no column for them and
+    // this trace carries none**: what holds them is the check's own model of
+    // Table 4, compared against `ser_syn_face`, and the module's header says
+    // so.  What the program owes that model is the exercise --- four writes,
+    // so the pointer wraps at three and lands somewhere other than where it
+    // started; then a read of the command register; then a fifth write,
+    // which must land in SYN1 and nowhere else.  Without the fifth, a card
+    // that never put the pointer back would differ only in the pointer and
+    // not in any register.
     for v in [0o252u16, 0o125, 0o377, 0o001] {
         g.write(serial::STATUS, v);
     }
     g.read(serial::COMMAND);
+    g.write(serial::STATUS, 0o316);
 
     // --- the cable, and a character out ---------------------------------
     g.wait(2_000);
@@ -1946,20 +2024,72 @@ fn main() {
     g.sdn(take5 + frame5);
     g.drain_serial();
 
-    // --- the two modes that cut the CPU off from the transmitter ---------
+    // --- the two echoing modes, and the echo itself ----------------------
     //
     // "Auto echo mode ... the CPU to transmitter link is disabled", and the
     // same for remote loop back: `SR0` is down in both however `CR0` stands,
     // so a driver that set either and went on writing characters would be
-    // writing into a register nothing empties.  **The echo itself is not
-    // built and the module's header says why**, so nothing is sent here.
-    for m in [serial::command::AUTO_ECHO, serial::command::REMOTE_LOOP_BACK] {
+    // writing into a register nothing empties.
+    //
+    // **AND THE ECHO IS BUILT NOW.**  Both modes put the received character
+    // back on the line, and muir puts it there at the END of the received
+    // frame rather than at the middle of the stop bit where the CPU gets it
+    // --- `Pci::rx_times`' two instants.  The seam carries both now, `SRX`
+    // and `SRE`, so the card can place it.  What separates the two modes at
+    // the register face is `SR1`: auto echo gives the character to the CPU
+    // as well and remote loop back keeps it, "received data is not sent to
+    // the local CPU".
+    //
+    // **The echo's instant is read off the cable and not computed.**
+    // `Pci::rx_times` is private and the character muir echoes carries
+    // exactly that time, so `Gen::taken` is the only arithmetic here.
+    g.wait(2_000);
+    g.spl(true);
+    g.read(serial::COMMAND);
+    g.write(serial::MODE, 0o116);
+    g.write(serial::MODE, 0o177);
+    let frame_e = g.b.serial.framing().frame_ns(g.b.serial.rate());
+    for (m, sent) in [
+        (serial::command::AUTO_ECHO, 0o265u8),
+        (serial::command::REMOTE_LOOP_BACK, 0o152u8),
+    ] {
         g.write(serial::COMMAND, u16::from(m | on));
         let v = g.read(serial::STATUS);
         assert_eq!(v & u16::from(serial::status::TX_READY), 0,
                    "the transmitter runs in mode {m:o}");
+        assert_eq!(v & u16::from(serial::status::RX_READY), 0,
+                   "a character is left over from before mode {m:o}");
         assert_eq!(g.read(serial::COMMAND), FLOATING | u16::from(m | on),
                    "the command register did not take the mode");
+        // The far end sends one character.  The instant the receiver is
+        // done with it is the instant the echo is pushed, which is visible
+        // on a copy through `Cable::sent` in BOTH modes --- `SR1` is not,
+        // because remote loop back never raises it, and a predicate that
+        // worked for one mode and not the other would need two programs.
+        g.wait(2_000);
+        let started = g.now;
+        g.b.serial.cable.send(sent, started);
+        let done = when(&g.b, started, 4 * frame_e, &|b| b.serial.cable.sent().count() > 0);
+        g.srx(done, sent);
+        let got = g.taken();
+        assert_eq!(got.len(), 1, "mode {m:o} put {} characters on the cable", got.len());
+        let (ends, back) = got[0];
+        assert_eq!(back, sent, "mode {m:o} echoed the wrong character");
+        assert!(ends > done, "mode {m:o} ended the frame at or before the character arrived");
+        g.sre(ends);
+        g.sout(ends, back);
+        // The one thing that tells the two modes apart at the register face.
+        let v = g.read(serial::STATUS);
+        if m == serial::command::AUTO_ECHO {
+            assert_eq!(v & u16::from(serial::status::RX_READY),
+                       u16::from(serial::status::RX_READY),
+                       "auto echo did not give the character to the CPU");
+            assert_eq!(g.read(serial::DATA), FLOATING | u16::from(sent),
+                       "auto echo's receive holding register");
+        } else {
+            assert_eq!(v & u16::from(serial::status::RX_READY), 0,
+                       "remote loop back gave the character to the CPU");
+        }
     }
     g.write(serial::COMMAND, u16::from(on));
 
@@ -2066,6 +2196,9 @@ fn main() {
     assert!(g.crx_rows >= 4, "too few packets landed: {}", g.crx_rows);
     assert!(g.stk_rows >= 4 && g.sdn_rows >= 4, "the 2651 sent too little");
     assert!(g.srx_rows >= 3, "the 2651 received too little");
+    // One a mode: a card that echoed in one and not the other would pass a
+    // trace that only ever set one of them.
+    assert!(g.sre_rows >= 2, "neither echoing mode ran a character through");
     assert!(g.sout_rows >= 3, "too few characters reached the cable");
     assert!(g.spl_rows >= 4, "the RS-232 cable never moved both ways");
     assert!(g.serial_slips > 0, "no answer of the serial port's fell off the grid, and all do");
@@ -2110,6 +2243,8 @@ fn main() {
     println!("# STK      n ns <face>               the shift register takes the holding register");
     println!("# SDN      n ns <face>               the shift register finishes its frame");
     println!("# SRX      n ns data <face>          a character reaches the receive path");
+    println!("# SRE      n ns <face>               ...and its frame ends, which is where");
+    println!("#     the two echoing modes put the echoed character on the cable");
     println!("# SOUT     n ns data <face>          a character reaches the cable: an ASSERTION");
     println!("# SPL      n ns plugged <face>       something on the far end of the RS-232 cable");
     println!("#");
@@ -2164,6 +2299,7 @@ fn main() {
     println!("# stk_rows {}", g.stk_rows);
     println!("# sdn_rows {}", g.sdn_rows);
     println!("# srx_rows {}", g.srx_rows);
+    println!("# sre_rows {}", g.sre_rows);
     println!("# sout_rows {}", g.sout_rows);
     println!("# spl_rows {}", g.spl_rows);
     println!("# far_offgrid {}", g.far_slips);

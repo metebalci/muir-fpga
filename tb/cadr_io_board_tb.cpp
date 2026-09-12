@@ -136,6 +136,7 @@ constexpr unsigned kChaosWbuf = 0764142u;   // written; read it is MY ADDRESS
 constexpr unsigned kChaosRbuf = 0764144u;
 constexpr unsigned kChaosStart = 0764152u;
 constexpr unsigned kChaosCsr = 0764140u;
+constexpr unsigned kSerialStatus = 0764162u;
 constexpr unsigned kSerialMode = 0764164u, kSerialCommand = 0764166u;
 
 // How many rows this check's placement has to push one tick.  The two rules
@@ -249,7 +250,7 @@ enum Tag {
   kCyc, kKey, kMove, kBtn, kSer, kInit, kFace,
   // The two far ends, which are Linux's on the board: stimulus but for `kCtx`
   // and `kSout`, which are assertions about what the card hands over.
-  kCtx, kCrx, kCtd, kCbl, kStk, kSdn, kSrx, kSout, kSpl
+  kCtx, kCrx, kCtd, kCbl, kStk, kSdn, kSrx, kSre, kSout, kSpl
 };
 
 // Every row ends with the same face.  Six columns are new to this slice: the
@@ -323,6 +324,9 @@ struct Dut {
     d->ser_tx_done = 0;
     d->ser_rx_strobe = 0;
     d->ser_rx_data = 0;
+    d->ser_rx_end = 0;
+    d->ser_rx_parity = 0;
+    d->ser_rx_framing = 0;
     d->ser_plugged = 0;
     d->chaos_address = 0;
     d->chaos_rx_valid = 0;
@@ -499,8 +503,12 @@ int main(int argc, char **argv) {
       r.tag = kCbl;
       got = std::sscanf(p, "%ld %ld %d" FACE_FMT, &r.n, &r.ns, &r.busy, FACE_ARGS);
       if (got != 3 + kFaceCols) got = 0;
-    } else if (!std::strcmp(tag, "STK") || !std::strcmp(tag, "SDN")) {
-      r.tag = !std::strcmp(tag, "STK") ? kStk : kSdn;
+    } else if (!std::strcmp(tag, "STK") || !std::strcmp(tag, "SDN") ||
+               !std::strcmp(tag, "SRE")) {
+      // `SRE` is the received frame's own end, `Pci::rx_times`' second
+      // instant: the echoing modes put the echoed character on the cable
+      // there, and a seam carrying only `SRX` could not place it.
+      r.tag = !std::strcmp(tag, "STK") ? kStk : !std::strcmp(tag, "SDN") ? kSdn : kSre;
       got = std::sscanf(p, "%ld %ld" FACE_FMT, &r.n, &r.ns, FACE_ARGS);
       if (got != 2 + kFaceCols) got = 0;
     } else if (!std::strcmp(tag, "SRX") || !std::strcmp(tag, "SOUT")) {
@@ -667,7 +675,7 @@ int main(int argc, char **argv) {
   for (size_t i = 0; i < rows.size(); ++i) {
     const Tag t = rows[i].tag;
     if (t == kKey || t == kInit || t == kSpl || t == kCrx || t == kCtd || t == kCbl || t == kStk ||
-        t == kSdn || t == kSrx)
+        t == kSdn || t == kSrx || t == kSre)
       strobes.push_back(i);
   }
 
@@ -722,9 +730,32 @@ int main(int argc, char **argv) {
   unsigned addr_held = 0, wdata_held = 0;
   int write_held = 0;
 
+  // **THE 2651'S SYN1, SYN2 AND DLE REGISTERS, AND WHAT HOLDS THEM.**  The
+  // trace has no column for them and cannot have one: muir keeps them
+  // (`Pci::syn`, `Pci::next_syn`) and exposes no accessor, and nothing on the
+  // chip or the board reads them back --- synchronous mode is what they are
+  // for and this board never enters it.  So this is the one thing in this run
+  // held to the Signetics sheet rather than to muir, and it is a model of
+  // Table 4 fed BY THE TRACE'S OWN CYCLES: a write of the status address goes
+  // to the register the pointer names and the pointer counts 0, 1, 2, 0; a
+  // read of the command register puts it back, "the pointers are reset ... by
+  // performing a Read Command Register operation"; and `RESET` clears all
+  // four.  Nothing here reads the DUT, which is the shadow-memory rule.
+  struct Syn {
+    unsigned syn1 = 0, syn2 = 0, dle = 0, ptr = 0;
+    unsigned face() const { return syn1 | (syn2 << 8) | (dle << 16) | (ptr << 24); }
+    void wrote(unsigned v) {
+      if (ptr == 0) syn1 = v & 0xFFu;
+      else if (ptr == 1) syn2 = v & 0xFFu;
+      else dle = v & 0xFFu;
+      ptr = (ptr == 2) ? 0 : ptr + 1;
+    }
+  } syn;
+  long syn_writes = 0, syn_resets = 0, syn_wraps = 0;
+
   long answered = 0, unanswered = 0, reads = 0, writes = 0, slips = 0, serial_slips = 0;
-  long presses = 0, moves = 0, inits = 0, faces = 0, sers = 0, btns = 0, ctxs = 0;
-  long compared_rdata = 0, compared_faces = 0;
+  long presses = 0, moves = 0, inits = 0, faces = 0, sers = 0, btns = 0, ctxs = 0, sres = 0;
+  long compared_rdata = 0, compared_faces = 0, compared_syn = 0;
   std::set<long> phases;
   std::map<unsigned, long> saw_reads, saw_writes, saw_vectors;
   Row nowhere;
@@ -763,6 +794,12 @@ int main(int argc, char **argv) {
     b.d->ser_tx_take = 0;
     b.d->ser_tx_done = 0;
     b.d->ser_rx_strobe = 0;
+    b.d->ser_rx_end = 0;
+    // Nothing in the trace raises either: muir's behavioural 2651 does not
+    // model them and says so, so the run holds them at zero over the whole
+    // trace and the second configuration below is what raises them.
+    b.d->ser_rx_parity = 0;
+    b.d->ser_rx_framing = 0;
     b.d->chaos_rx_valid = 0;
     if (xi < rx_stream.size() && rx_stream[xi].first == t) {
       b.d->chaos_rx_valid = 1;
@@ -809,6 +846,9 @@ int main(int argc, char **argv) {
           b.d->ser_rx_strobe = 1;
           b.d->ser_rx_data = r.data;
           break;
+        case kSre:
+          b.d->ser_rx_end = 1;
+          break;
         case kSpl:
           plugged = r.plugged;
           break;
@@ -821,6 +861,11 @@ int main(int argc, char **argv) {
     b.d->ser_plugged = plugged;
 
     b.Rise();
+
+    // `RESET` --- `-INIT*` into the 8837 at IOBXCV 0F06 is the 2651's own
+    // reset pin --- takes the chip back to its default, the SYN registers and
+    // their pointer with it.
+    if (b.d->ub_init) syn = Syn();
 
     // What the card hands the two far ends.  The transmit buffer streams out
     // from the tick after START; a character reaches the cable exactly where
@@ -865,6 +910,16 @@ int main(int argc, char **argv) {
             Fail(t, r, "an answer off the 5 ns grid at a register that should be on it", r.reg_,
                  kUsecLowReg);
           }
+        }
+        // The SYN model moves where the word crosses, which is this tick:
+        // `land` in the card is the edge `-UB SSYN` rises at.
+        if (c.write && r.reg_ == kSerialStatus) {
+          if (syn.ptr == 2) ++syn_wraps;
+          syn.wrote(r.wdata);
+          ++syn_writes;
+        } else if (!c.write && r.reg_ == kSerialCommand) {
+          if (syn.ptr != 0) ++syn_resets;
+          syn.ptr = 0;
         }
         if (c.write) {
           ++writes;
@@ -920,12 +975,16 @@ int main(int argc, char **argv) {
       if (b.d->ser_mode2 != r.sm2) Fail(t, r, "the 2651's mode register 2", b.d->ser_mode2, r.sm2);
       if (b.d->ser_cmd != r.scmd) Fail(t, r, "the 2651's command register", b.d->ser_cmd, r.scmd);
       if (b.d->ser_status != r.sstat) Fail(t, r, "the 2651's status register", b.d->ser_status, r.sstat);
+      if (b.d->ser_syn_face != syn.face())
+        Fail(t, r, "the 2651's SYN registers and their pointer", b.d->ser_syn_face, syn.face());
+      else ++compared_syn;
       if (r.intr != 0) saw_vectors[r.intr]++;
       switch (r.tag) {
         case kKey: ++presses; break;
         case kInit: ++inits; break;
         case kSer: ++sers; break;
         case kFace: ++faces; break;
+        case kSre: ++sres; break;
         case kSout:
           // The character the card put on the cable, at the instant muir's
           // shift register delivered it.
@@ -1090,6 +1149,117 @@ int main(int argc, char **argv) {
     if (bad) return 1;
   }
 
+  // ---- the parity and framing flags, which no trace against muir can reach -
+  //
+  // **muir'S BEHAVIOURAL 2651 RAISES NEITHER AND SAYS SO**: "the break the
+  // transmitter can force and the framing and parity errors the receiver can
+  // raise ... need a far end that sends bits rather than characters --- the
+  // netlist board has one".  So `SR3` and `SR5` are zero on every row of the
+  // trace above, and a check that only ever compares against zero passes a
+  // card whose flags are stuck there --- the DDR bridge's lesson, at a status
+  // byte.  This configuration raises them, and what it holds is the Signetics
+  // sheet rather than muir: the receiver latches each with the character it
+  // belongs to, a later character does not clear one, `CR4` clears all three
+  // error bits together and is not itself stored, and the receiver's own gate
+  // decides whether anything is latched at all.
+  //
+  // Both flags arrive on the seam, `ser_rx_parity` and `ser_rx_framing`,
+  // because a parity bit that did not agree and a stop bit that was low are
+  // properties of the FRAME and this card has nothing bit-wise in it.
+  // Nothing on the board drives either today: `cadr_serial_line.sv` holds
+  // both low, a TCP socket carrying bytes and not bits.
+  {
+    Dut q;
+    q.Idle(4);
+    auto cycle = [&](unsigned addr, int write, unsigned wdata) {
+      q.d->ub_msyn = 1;
+      q.d->ub_addr = addr;
+      q.d->ub_write = write;
+      q.d->ub_wdata = wdata;
+      long waited = 0;
+      do {
+        q.Rise();
+        q.Fall();
+        ++waited;
+      } while (!q.d->ub_ssyn && waited < 600);
+      const unsigned got = q.d->ub_rdata;
+      q.d->ub_msyn = 0;
+      q.Idle(2);
+      return got;
+    };
+    // One character off the seam, with the two flags its frame carried.
+    auto rx = [&](unsigned data, int par, int frm) {
+      q.d->ser_rx_strobe = 1;
+      q.d->ser_rx_data = data;
+      q.d->ser_rx_parity = par;
+      q.d->ser_rx_framing = frm;
+      q.Rise();
+      q.Fall();
+      q.d->ser_rx_strobe = 0;
+      q.d->ser_rx_parity = 0;
+      q.d->ser_rx_framing = 0;
+      q.Idle(2);
+    };
+    auto want_status = [&](const char *when, unsigned mask, unsigned want) {
+      if ((q.d->ser_status & mask) != want) {
+        std::fprintf(stderr,
+                     "FAIL: the 2651's error flags, %s: the status byte is 0%o and under mask "
+                     "0%o that is 0%o, where the sheet says 0%o\n",
+                     when, q.d->ser_status, mask, q.d->ser_status & mask, want);
+        ++bad;
+      }
+    };
+    // `SR5 SR4 SR3`, framing, overrun and parity: what `CR4` clears.
+    constexpr unsigned kErrors = 0070u;
+    constexpr unsigned kParity = 0010u, kOverrun = 0020u, kFraming = 0040u;
+    constexpr unsigned kRxReady = 0002u;
+    // Asynchronous 16X, eight bits, one stop; 19,200 baud on the internal
+    // clock both ways; the receiver and transmitter on with the cable in.
+    q.d->ser_plugged = 1;
+    cycle(kSerialMode, 1, 0116);
+    cycle(kSerialMode, 1, 0177);
+    cycle(kSerialCommand, 1, 0047);
+    rx(0125, 0, 0);
+    want_status("a clean character", kErrors | kRxReady, kRxReady);
+    if (cycle(kSerialFirst, 0, 0) != (0177400u | 0125u)) {
+      std::fprintf(stderr, "FAIL: the clean character did not reach the holding register\n");
+      ++bad;
+    }
+    // A parity error, then a framing error one character later: each is
+    // latched with its own character and NEITHER clears the other.
+    rx(0252, 1, 0);
+    want_status("a character whose parity was wrong", kErrors, kParity);
+    cycle(kSerialFirst, 0, 0);
+    rx(0063, 0, 1);
+    want_status("a framing error after a parity error", kErrors, kParity | kFraming);
+    cycle(kSerialFirst, 0, 0);
+    // A clean one does not clear what stands.
+    rx(0007, 0, 0);
+    want_status("a clean character after two bad ones", kErrors, kParity | kFraming);
+    // An overrun on top, so that all three stand together and `CR4` is shown
+    // clearing the set and not one bit of it.
+    rx(0011, 0, 0);
+    want_status("a character on a full holding register", kErrors, kParity | kFraming | kOverrun);
+    // `CR4` is a command and not a bit: it clears the three and is not
+    // stored, which the command register's read-back says.
+    cycle(kSerialCommand, 1, 0047 | 0020);
+    want_status("RESET ERROR", kErrors, 0);
+    if (cycle(kSerialCommand, 0, 0) != (0177400u | 0047u)) {
+      std::fprintf(stderr, "FAIL: RESET ERROR was stored in the command register\n");
+      ++bad;
+    }
+    // And the gate: with the receiver not running --- the cable out, so
+    // `-DCD` is up --- a frame with both errors is not this receiver's and
+    // nothing is latched.  `Pci::receive` breaks on `rx_runs` before it
+    // looks at a character at all.
+    cycle(kSerialFirst, 0, 0);
+    q.d->ser_plugged = 0;
+    q.Idle(2);
+    rx(0377, 1, 1);
+    want_status("a frame arriving with the receiver stopped", kErrors | kRxReady, 0);
+    if (bad) return 1;
+  }
+
   // ---- what the run saw, against what the generator says it made -----------
   int thin = 0;
   auto same = [&](const char *what, long got, long want) {
@@ -1114,6 +1284,7 @@ int main(int argc, char **argv) {
   same("words of them", tx_words, want_h("ctx_words"));
   same("frames offered to the far end", tx_go_seen, want_h("ctx_rows"));
   same("characters put on the cable", sout_seen, want_h("sout_rows"));
+  same("received frames ended", sres, want_h("sre_rows"));
   same("words streamed into the receive buffer", rx_words, want_h("crx_words"));
   same("answers off the grid at the serial port", serial_slips, want_h("offgrid_serial"));
   same("directions nothing answers", dec_silent, 2 * kUbAddresses - trace_answers);
@@ -1126,6 +1297,16 @@ int main(int argc, char **argv) {
     }
   }
   if (thin) return 1;
+  // The SYN model is fed by the trace and is worth nothing if the trace
+  // stopped feeding it: four writes so the pointer wraps at three, and a read
+  // of the command register that actually had a pointer to put back.
+  if (syn_writes < 4 || syn_wraps < 1 || syn_resets < 1) {
+    std::fprintf(stderr,
+                 "FAIL: the trace no longer exercises the SYN registers: %ld writes, %ld wraps of "
+                 "the pointer, %ld reads of the command register that moved it\n",
+                 syn_writes, syn_wraps, syn_resets);
+    return 1;
+  }
   if (pushed != kPushedRows || slips == 0 || presses < 10 || moves < 10 || btns < 8 ||
       sers < 2 || ctxs < 5) {
     std::fprintf(stderr,
@@ -1156,11 +1337,19 @@ int main(int argc, char **argv) {
       "    what the bus wrote; %ld words streamed back into the receive buffer.  The serial port:\n"
       "    %ld characters put on the cable at the instant muir's shift register delivered them.\n"
       "    All four vectors are compared against muir, 0o270 included; the contention no trace\n"
-      "    reaches is held to page IOBINT's equations, through the cards' own registers.\n",
+      "    reaches is held to page IOBINT's equations, through the cards' own registers.\n"
+      "    The two echoing modes put %ld characters back on the line at the end of the received\n"
+      "    frame, which is what the SRE rows are and what the card could not place before.\n"
+      "    The 2651's SYN1, SYN2 and DLE registers and their pointer are compared on all %ld rows\n"
+      "    against Table 4 rather than against muir, which keeps them and has no accessor: %ld\n"
+      "    writes, %ld wraps of the pointer, %ld reads of the command register that moved it.\n"
+      "    A second configuration raises the parity and framing flags, which muir's own 2651\n"
+      "    never does, and holds CR4 clearing all three errors together and storing none of them.\n",
       b.tick, want_h("last_ns"), rows.size(), pushed, (long)cycs.size(), reads, writes, compared_rdata,
       unanswered, slips, slips - serial_slips, (long)phases.size(), presses, moves, btns, inits,
       faces, dec_answers,
       dec_silent, (long)kUbAddresses * 2, kChaosFirst, kChaosLast, kSerialFirst, kSerialLast,
-      ctxs, tx_words, rx_words, sout_seen);
+      ctxs, tx_words, rx_words, sout_seen, sres, compared_syn, syn_writes, syn_wraps,
+      syn_resets);
   return 0;
 }
