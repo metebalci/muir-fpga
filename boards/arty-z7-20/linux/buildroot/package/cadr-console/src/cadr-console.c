@@ -54,11 +54,12 @@
 //
 //   examine  **READS DDR DIRECTLY AND NOT THROUGH THE MACHINE**, and says so
 //   deposit  on every line it prints.  CC reaches main memory through the
-//            debuggee's Unibus map, and this fabric has no Unibus map:
-//            `rtl/machine/cadr_memory_path.sv` answers only `0o766xxx` on its Unibus
-//            and the only thing behind it is the register block at
-//            `0o766000`-`0o766036`.  `console_face.h` has the whole finding
-//            and the muir line numbers.  So these go through /dev/mem on the
+//            debuggee's Unibus map, and this fabric has half of one: the
+//            sixteen map registers at `0o766140`-`0o766176` are in
+//            `rtl/machine/cadr_busint_regs.sv` and store and read back, and
+//            the mapped window at `0o140000`-`0o177777` that a cycle would
+//            go through is answered by nothing.  `console_face.h` has the
+//            whole finding and the muir line numbers.  So these go through /dev/mem on the
 //            machine's reserved region, at `rtl/plumbing/cadr_ddr_map.sv`'s base and
 //            with its own `main_byte_address` arithmetic; the address is the
 //            CADR's 22-bit physical WORD address.  What that reads is the
@@ -136,8 +137,8 @@ static int probe_face(struct console *c, uint32_t regs_phys)
 // command would be a stale view of a region the machine is writing.
 
 static const char *ddr_note =
-	"read straight out of DDR over /dev/mem, NOT through the machine: this fabric has no Unibus map, "
-	"so nothing was halted and nothing was synchronised";
+	"read straight out of DDR over /dev/mem, NOT through the machine: this fabric answers no mapped "
+	"Unibus window, so nothing was halted and nothing was synchronised";
 
 static int ddr_word(int mem, uint32_t phys, uint32_t *out, const uint32_t *in)
 {
@@ -187,8 +188,9 @@ static void do_deposit(int mem, uint32_t phys, uint32_t v)
 	uint32_t back = 0;
 	if (!in_range(phys))
 		return;
-	say("deposit: written straight into DDR over /dev/mem, NOT through the machine: this fabric has no "
-	    "Unibus map, so nothing was halted and the machine may overwrite this at its next bus cycle");
+	say("deposit: written straight into DDR over /dev/mem, NOT through the machine: this fabric answers "
+	    "no mapped Unibus window, so nothing was halted and the machine may overwrite this at its next "
+	    "bus cycle");
 	if (ddr_word(mem, phys, NULL, &v) < 0)
 		return;
 	if (ddr_word(mem, phys, &back, NULL) < 0)

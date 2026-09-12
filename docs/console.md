@@ -774,10 +774,14 @@ registers but through the debuggee's Unibus map: map register 17 at
 `0o140000 + 17*0o2000 + 4*(loc & 0o377)`, low half then high, with a write
 buffer on the write side and a read buffer on the read side
 (`../muir/src/lashup.rs:262-284`, `../muir/src/machine.rs:518-580`,
-`../muir/tests/lashup.rs:712-769`). **That Unibus map is not in the fabric.**
-`rtl/machine/cadr_memory_path.sv` says so at its own fold: "Above the register block
-there is nothing on this Unibus yet, so the top of the page number goes
-nowhere: only `0o766xxx` is answered." So `cadr-console` examines and deposits
+`../muir/tests/lashup.rs:712-769`). **Half of that route is in the fabric
+now and the other half is not.**
+`rtl/machine/cadr_busint_regs.sv` answers `0o766140`--`0o766176`, so the
+sixteen map registers store and read back. What no slave answers is the
+mapped window at `0o140000`--`0o177777`, and the read and write buffers a
+mapped cycle makes a word out of are not built either. Their one master is
+the debug cable's and that cable has no side here. A route with registers and
+no cycle is still not a route, so `cadr-console` examines and deposits
 through `/dev/mem` on the machine's reserved DDR region instead, at
 `rtl/plumbing/cadr_ddr_map.sv`'s own address arithmetic, and says in its own output
 that it is reading DDR directly and not through the machine. The two are not
@@ -1247,7 +1251,9 @@ stale binary.
 - The OPC history, `CC-SAVE-OPCS`: eight `OPCCLK` pulses on a halted machine
   read the eight PCs out oldest first (`../muir/tests/spy.rs:831`). The OPC
   control register is register 4 and `cadr_spy_registers.sv` drops it.
-- The Unibus map, and with it examine and deposit *through the machine*.
+- The mapped Unibus window at `0o140000`--`0o177777` and its read and write
+  buffers, and with them examine and deposit *through the machine*. The
+  map's sixteen registers themselves are built.
 - The debug cable, which is a different instrument on a different port and
   has a section of its own in `README.md`.
 - **Writing a memory through the readout window.** The window reads and does

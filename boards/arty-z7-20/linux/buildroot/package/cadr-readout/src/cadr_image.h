@@ -9,9 +9,10 @@
 // pointer and its eight drives; the I/O board, whole, including the
 // microsecond clock that is the CADR's timebase; the bus interface's own
 // registers --- the Unibus map, its read and write buffers, the error
-// register and the interrupt status --- none of which is in the fabric at
-// all; and the display's mode register and sync generator, though the picture
-// is in DDR where Linux can read it.  None of that is a defect of this
+// register and the interrupt status, of which only the read and write
+// buffers are absent from the fabric, the rest being
+// `rtl/machine/cadr_busint_regs.sv`; and the display's mode register and sync
+// generator, though the picture is in DDR where Linux can read it.  None of that is a defect of this
 // struct: it is the shape of what the window can say, and the debugger that
 // will say the rest is CC over the debug cable, which reads the scratchpads
 // by forcing a microinstruction into the instruction register rather than by

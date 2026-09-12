@@ -146,10 +146,12 @@ module cadr_machine #(
     input  var logic        ser_ready,
     input  var logic        chaos_intr,
     output var logic        ser_reset,
-    // `-UB INTR` and `-UB BR5`.  Not joined into `sintr_o` below, and the
-    // note at the instance in `cadr_memory_path.sv` says why: muir takes a
-    // Unibus interrupt only under `ENABLE UB INTS`, which lives in the bus
-    // interface's own register at `0o766040` and is not built.
+    // `-UB INTR` and `-UB BR5`.  They go to `cadr_busint_regs.sv` inside the
+    // machine, where `ENABLE UB INTS` decides whether the interface takes the
+    // request, and the taken interrupt is the Unibus half of `sintr_o` below.
+    // They leave as observations besides, which is what the top level folds;
+    // the note at the card's instance in `cadr_memory_path.sv` says what that
+    // used to cost.
     output var logic        iob_intr,
     output var logic [7:0]  iob_vector,
     output var logic        audio,
@@ -224,7 +226,7 @@ module cadr_machine #(
     output var logic [15:0] ub_rdata_o,
     // Which slave is pulling `-UB SSYN`: bit 0 the diagnostic register block,
     // bit 1 the I/O board.  See the port in `cadr_memory_path.sv`.
-    output var logic [1:0]  ub_ssyn_by,
+    output var logic [2:0]  ub_ssyn_by,
     output var logic        n_loadmd_o,
     output var logic        rdcyc_o,
     output var logic        nxm,          // Xbus space with nothing in it
@@ -347,9 +349,29 @@ module cadr_machine #(
   // The section note in `mutations/list.txt` carries both measurements and
   // what would close them, which is a machine-level reference whose program
   // enables an interrupt and is not the band.
+  //
+  // **AND THE UNIBUS HALF OF `LM INT` IS HERE NOW TOO.**  Until
+  // `cadr_busint_regs.sv` the Xbus line WAS `sintr_o`, because the other
+  // operand of MIT's gate --- `UB INT`, a Unibus interrupt taken --- is
+  // taken only under `ENABLE UB INTS`, bit 10 of a register this fabric did
+  // not have.  It has it now, so this is the whole of `LM INT` at last:
+  // `Machine::interrupt()` is `xbus_interrupt() || unibus_interrupt().
+  // is_some()` and this line is that expression.  `xbus_intr` goes back INTO
+  // `cadr_memory_path` because the interface reads it in bit 14 of the
+  // interrupt status register, which is what the backplane's one wire does.
+  //
+  // **Neither reference program raises either Unibus request**, the boot PROM
+  // never enabling an interrupt and the band's card being unread, so
+  // `ub_int` is zero throughout both traces and `sintr_o` is what it was.
+  // That is the same shape as the AND equivalence above and is recorded with
+  // it rather than filed as a hole: `build/busint_regs.pass` is what holds
+  // `ub_int` itself, over a program written to move it.
   logic tv_intr;
   logic disk_intr;
-  assign sintr_o = disk_intr || tv_intr;
+  logic xbus_intr;
+  logic ub_int;
+  assign xbus_intr = disk_intr || tv_intr;
+  assign sintr_o   = xbus_intr || ub_int;
 
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
@@ -458,6 +480,8 @@ module cadr_machine #(
       .ub_addr_o  (ub_addr_o),
       .ub_rdata_o (ub_rdata_o),
       .ub_ssyn_by (ub_ssyn_by),
+      .xbus_intr  (xbus_intr),
+      .ub_int     (ub_int),
       .kbd_strobe (kbd_strobe),
       .kbd_code   (kbd_code),
       .mouse_lines(mouse_lines),

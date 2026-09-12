@@ -157,6 +157,44 @@
 #     one-tick arc;
 #   - `busy`, `first` and `edges` are the cycle's own state, one tick deep.
 #
+# **AND THE THIRD SLAVE IS OUT THE SAME WAY, BUT FOR ITS SIX HELD DECODES.**
+# `rtl/machine/cadr_busint_regs.sv` is the bus interface's own interrupt block
+# and Unibus map, and it landed under `cadr_machine` after this file was
+# written, which is exactly the trap the paragraphs above record: a relaxed set
+# defined as every register minus a name list swallows every module written
+# after it.  So `memory/busint_regs/*` is excluded whole, and six registers are
+# put back.
+#
+# The six are the held match --- `sel`, `in_int`, `in_map`, `wr`, `which` and
+# `mapk` --- and they qualify for the card's reason exactly: they are taken
+# from `ub_addr`, which is `phys` with a subtraction on it and is constant for
+# the microcycle, and **the earliest answer this block can give is fifty ticks
+# after `-UB MSYN`**, `busint::DIAGNOSTIC_NS` through the block select's TD250.
+# A tick of holding cannot reach across fifty.
+#
+# Nothing else there qualifies, and the list is short enough to write out:
+#
+#   - `t_msyn` counts ticks since the strobe and is what decides when the
+#     block answers, which is the card's `t_msyn` one slave along;
+#   - `ub_ssyn` IS the answer, read every tick by `cadr_busint_xbus` watching
+#     for its rise, so it is the same register as the card's and is refused
+#     for the same reason;
+#   - `timed_out_q` is one tick deep by construction: it exists to turn a
+#     level into an edge, and a held edge detector detects nothing;
+#   - `int_status`, `ub_map`, `err_xbus`, `err_unibus` and `write_through`
+#     would all pass this file's test read literally --- each is loaded at the
+#     register strobe and read at `-LOADMD`, seventy ticks later at the
+#     earliest --- and they are left timed at the tick for the reason the
+#     card's read side is: naming registers to buy slack nothing has asked for
+#     is an exemption written before the question was.
+#
+# **NO FIT HAS BEEN RUN AT THE COMMIT THAT ADDED THIS CLAUSE.**  The argument
+# above is derived and not measured, and this file's own history says what
+# that is worth: a correct derivation with a blind check still drifts.  Before
+# any timing figure is quoted for this module, ask `report_exceptions` or
+# `get_timing_paths -through` which of its paths carry the fifteen-cycle
+# requirement, the way the disk controller's 3,904 of 4,000 were found.
+#
 # **AND ASKING THE SAME QUESTION OF THE OTHER SLAVE FOUND SOMETHING THIS FILE
 # HAS BEEN WRONG ABOUT SINCE THE REGISTER BLOCK LANDED.**  The card's
 # `ub_ssyn` is out of the set by the module clause above.  The DIAGNOSTIC
@@ -288,7 +326,14 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
                                                             NAME =~ *memory/iob/kbm_reg* || \
                                                             NAME =~ *memory/iob/clkgrp_reg* || \
                                                             NAME =~ *memory/iob/wr_reg* || \
-                                                            NAME =~ *memory/iob/which_reg*)}]
+                                                            NAME =~ *memory/iob/which_reg*) && \
+                                  (NAME !~ *memory/busint_regs/* || \
+                                       NAME =~ *memory/busint_regs/sel_reg*    || \
+                                       NAME =~ *memory/busint_regs/in_int_reg* || \
+                                       NAME =~ *memory/busint_regs/in_map_reg* || \
+                                       NAME =~ *memory/busint_regs/wr_reg*     || \
+                                       NAME =~ *memory/busint_regs/which_reg*  || \
+                                       NAME =~ *memory/busint_regs/mapk_reg*)}]
 
 # 15 ticks, not 29: the tightest instant a datapath register is read at is the
 # fast read tap.

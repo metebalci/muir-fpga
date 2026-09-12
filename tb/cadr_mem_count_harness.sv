@@ -109,7 +109,7 @@ module cadr_mem_count_harness #(
   logic [7:0]  iob_vector, csr_face;
   logic [11:0] mouse_x, mouse_y;
   logic [15:0] interval;
-  logic [1:0]  ub_ssyn_by;
+  logic [2:0]  ub_ssyn_by;
   logic        mem_done, mem_error;
   logic        sintr;   // -XBUS.INTR, the machine's own; read by nothing here
   logic [31:0] mem_rdata;
