@@ -174,10 +174,21 @@ use muir::busint::{IoBoardTiming, UNIBUS_STROBE_NS};
 use muir::ioboard::{
     self, BEEP, CLOCK, CLOCK_VECTOR, CSR, FIRST_USEC_EDGE_NS, GPIO, INTERVAL_TICK_NS, IoBoard,
     KB_CLK_NS, KBD_HIGH, KBD_LOW, KBD_VECTOR, MOUSE_X, MOUSE_Y, SERIAL_VECTOR, SIXTY_CYCLE_NS,
-    USEC_HIGH, USEC_LOW, answers, csr, mouse, usec_at,
+    SERIAL_FIRST, SERIAL_LAST, USEC_HIGH, USEC_LOW, answers, csr, mouse, usec_at,
 };
+use muir::chaos::board::Interface as ChaosInterface;
+use muir::chaos::interface::{self as chaos, csr as ccsr};
 use muir::serial;
 use muir::terminal::mouse::MOUSE_STEP_NS;
+
+/// The two switch bodies at LMMYNM D10 and D12, as this trace sets them.
+/// `chaos::interface::switches` is how they are closed; what the fabric
+/// takes is the word they read back, and it is a PORT of the card and not
+/// a constant inside it, so a module ignoring it fails here.  Subnet 6,
+/// host 0o101: a legal address --- CLAUDE.md records what muir's own
+/// default 0o177001 costs, subnet 255 trapping in `RESET-ROUTING-TABLE`
+/// --- with both bytes different and neither 0 nor 0o377.
+const CHAOS_ADDRESS: u16 = 0o003101;
 
 /// Five nanoseconds, the master clock's period. Every instant the trace
 /// hands the fabric is a multiple of this; `slip` says where muir's own
@@ -248,6 +259,32 @@ struct Gen {
     moves: u64,
     inits: u64,
     faces: u64,
+    // --- the Chaosnet interface and the serial port
+    ccsr_seen: BTreeSet<u16>,
+    sstat_seen: BTreeSet<u8>,
+    /// The buffers, printed ahead of the rows as the decode is: `(dir, seq,
+    /// words)` with dir 0 the receive buffer a `CRX` row lands and 1 the
+    /// transmit buffer a `CTX` row hands over.
+    bufs: Vec<(u8, u64, Vec<u16>)>,
+    ctx_rows: u64,
+    crx_rows: u64,
+    ctd_rows: u64,
+    cbl_rows: u64,
+    stk_rows: u64,
+    sdn_rows: u64,
+    srx_rows: u64,
+    sout_rows: u64,
+    spl_rows: u64,
+    /// Instants of the far end's own that the 5 ns grid cannot reach: the
+    /// 2651's baud-rate crystal is 5.0688 MHz and the Chaosnet's turn timer
+    /// runs on the I/O board's own 8 MHz, so neither lands on fives.
+    far_slips: u64,
+    /// Of [`Gen::slips`], the ones at the serial port's group.
+    serial_slips: u64,
+    /// Every Unibus ADDRESS a cycle was run at, which is not the same set as
+    /// [`Gen::reads`]'s keys: those are the REGISTERS `answers` takes them
+    /// to, and this card's two new groups have four aliases between them.
+    addrs: BTreeSet<u32>,
 }
 
 impl Gen {
@@ -280,6 +317,21 @@ impl Gen {
             moves: 0,
             inits: 0,
             faces: 0,
+            ccsr_seen: BTreeSet::new(),
+            sstat_seen: BTreeSet::new(),
+            bufs: Vec::new(),
+            ctx_rows: 0,
+            crx_rows: 0,
+            ctd_rows: 0,
+            cbl_rows: 0,
+            stk_rows: 0,
+            sdn_rows: 0,
+            srx_rows: 0,
+            sout_rows: 0,
+            spl_rows: 0,
+            far_slips: 0,
+            serial_slips: 0,
+            addrs: BTreeSet::new(),
         }
     }
 
@@ -330,6 +382,18 @@ impl Gen {
         let intr = self.b.interrupt_request(now);
         let audio = self.b.audio();
         let ser = self.b.serial.rx_ready_at(now) || self.b.serial.tx_ready_at(now);
+        // The Chaosnet interface's own face: the CSR as `csr()` assembles it,
+        // read-only bits and all, and the bit count the receive buffer's
+        // pointer makes.  Both are what the software sees; the buffers
+        // themselves are compared word for word where they move.
+        let ci = self.b.chaos.as_ref().expect("no Chaosnet interface is plugged in");
+        let cc = ci.csr();
+        let cb = ci.bit_count();
+        // The 2651's three registers and the status byte it assembles.
+        let sm1 = self.b.serial.mode1();
+        let sm2 = self.b.serial.mode2();
+        let scmd = self.b.serial.command();
+        let sst = self.b.serial.status();
 
         self.csr_seen.insert(c);
         self.x_seen.insert(x);
@@ -340,8 +404,11 @@ impl Gen {
         if let Some(v) = intr {
             *self.vectors.entry(v).or_default() += 1;
         }
+        self.ccsr_seen.insert(cc);
+        self.sstat_seen.insert(sst);
         format!(
-            "{c:x} {x:x} {y:x} {held:x} {} {interval:x} {:x} {} {}",
+            "{c:x} {x:x} {y:x} {held:x} {} {interval:x} {:x} {} {} \
+             {cc:x} {cb:x} {sm1:x} {sm2:x} {scmd:x} {sst:x}",
             u8::from(ready),
             intr.unwrap_or(0),
             u8::from(audio),
@@ -373,6 +440,7 @@ impl Gen {
     fn cyc(&mut self, uaddr: u32, write: bool, wdata: u16) -> u16 {
         let msyn = self.now;
         self.phases.insert(msyn % 1_000);
+        self.addrs.insert(uaddr);
         let mut rdata = 0u16;
         let (ssyn, slip, off, reg) = match answers(uaddr, write) {
             None => {
@@ -385,11 +453,25 @@ impl Gen {
                 let ssyn = grid_at(exact);
                 let slip = ssyn - exact;
                 if slip != 0 {
+                    // **TWO REGISTERS ANSWER OFF THE GRID AND NO OTHERS.**  The
+                    // microsecond counter's low half takes `IOB_USEC_LOW_NS` =
+                    // 313 past its edge, and EVERY address of the serial port's
+                    // group answers 750 ns after a half-microsecond clock whose
+                    // phase `busint::IOB_HALF_USEC_PHASE_NS` measures at 203 ---
+                    // so 953 + 500k, which is 3 modulo 5.  Both are counted
+                    // apart, and rounding UP is the same argument in both
+                    // places: a register can only be read at a grid instant, so
+                    // nothing falls between muir's answer and the tick.
                     self.slips += 1;
-                    assert_eq!(
-                        r, USEC_LOW,
-                        "an answer off the 5 ns grid at a register the module does not expect: {r:o}"
-                    );
+                    if (SERIAL_FIRST..=SERIAL_LAST).contains(&r) {
+                        self.serial_slips += 1;
+                        assert_eq!(slip, 2, "the serial port's answer is not two short of a tick");
+                    } else {
+                        assert_eq!(
+                            r, USEC_LOW,
+                            "an answer off the 5 ns grid at a register the module does not expect: {r:o}"
+                        );
+                    }
                 }
                 // The counter's low half is the count as it stood at
                 // `-MSYN`; everything else is read or written at `-SSYN`.
@@ -481,22 +563,31 @@ impl Gen {
     }
 
     /// The serial port's ready line at the card's priority encoder, moved
-    /// by writing the 2651 directly rather than over the bus: the chip is
-    /// the serial slice's and only its `-RxRDY`/`-TxRDY` reaches this card.
+    /// THROUGH THE 2651'S OWN REGISTERS.
+    ///
+    /// It used to be moved by writing the chip directly, because the chip
+    /// was another slice's and `ser_ready` was a port of this card; the chip
+    /// is on the card now, so the only way to move that line is the way a
+    /// program moves it, and a trace that reached past the registers would
+    /// be testing nothing. The row itself stays, and what it says is what
+    /// the card's own `SER.IREQ` must then be.
     fn ser(&mut self, on: bool) {
+        if on {
+            // The pointers first: a read of the command register puts the
+            // mode pointer back to register 1 whatever it was.
+            self.read(serial::COMMAND);
+            // Asynchronous 16X, eight bits, one stop; the internal transmit
+            // clock at rate 14, the receiver's left external so that only
+            // `-TxRDY` moves; and the transmitter enabled in normal mode.
+            // With nothing in the holding register `SR0` is up.
+            self.write(serial::MODE, 0o116);
+            self.write(serial::MODE, 0o56);
+            self.write(serial::COMMAND, u16::from(serial::command::TX_ENABLE));
+        } else {
+            self.write(serial::COMMAND, 0);
+        }
         let now = self.now;
         self.b.advance(now);
-        if on {
-            // Asynchronous 16X, eight bits, one stop; the internal
-            // transmit clock at rate 14; and the transmitter enabled in
-            // normal mode. With nothing in the holding register `SR0` is
-            // up, which is `-TxRDY`.
-            self.b.serial.write(serial::MODE, 0o116, now);
-            self.b.serial.write(serial::MODE, 0o56, now);
-            self.b.serial.write(serial::COMMAND, serial::command::TX_ENABLE, now);
-        } else {
-            self.b.serial.write(serial::COMMAND, 0, now);
-        }
         let got = self.b.serial.rx_ready_at(now) || self.b.serial.tx_ready_at(now);
         assert_eq!(got, on, "the serial port's ready line did not move to {on}");
         self.row("SER", format!(" {}", u8::from(on)));
@@ -537,6 +628,214 @@ impl Gen {
         self.faces += 1;
         self.row("FACE", String::new());
     }
+
+    // --- the two far ends, which are Linux's -----------------------------
+    //
+    // **THE FABRIC HOLDS THE REGISTERS AND NOT THE PROTOCOL.**  The
+    // Chaosnet's cable, its turn timer, the frame and the check word are the
+    // `cadr-chaosnet` program's, and the 2651's baud-rate generator and its
+    // line are `cadr-serial`'s.  What the card has instead is a seam, and
+    // what this trace records is the instants the far end acts at --- so
+    // every register the software reads is the fabric's own and every
+    // instant it depends on is stimulus.  Under Loop Back muir's own
+    // interface IS that far end, which is what makes the register face
+    // checkable against muir at all rather than against a property.
+
+    /// An instant of the far end's, brought onto the fabric's grid: the
+    /// first tick at or after it.  The 2651's crystal is 5.0688 MHz and the
+    /// Chaosnet's turn timer counts the I/O board's 8 MHz, so neither lands
+    /// on a multiple of five.  Rounding UP is the argument
+    /// `IOB_USEC_LOW_NS` already makes on this card: a register can only be
+    /// read at a grid instant, so no read falls between muir's instant and
+    /// the tick the fabric acts at.
+    fn far_at(&mut self, t: u64) {
+        let g = grid_at(t);
+        if g != t {
+            self.far_slips += 1;
+        }
+        self.at(g);
+    }
+
+    /// The transmit buffer the card has handed over since the last such row:
+    /// `seq` names the word list printed ahead of the rows.  An assertion and
+    /// not a stimulus --- the words came over the bus and the card must give
+    /// them back.
+    fn ctx(&mut self, words: &[u16]) {
+        // The card hands the buffer over a word a tick from the tick after
+        // START, and 256 words is 1.28 us, so the assertion waits for the
+        // longest one there is rather than for this one.
+        self.wait(2_000);
+        let seq = self.ctx_rows;
+        self.ctx_rows += 1;
+        self.bufs.push((1, seq, words.to_vec()));
+        self.row("CTX", format!(" {seq} {}", words.len()));
+    }
+
+    /// A packet lands in the receive buffer at this instant: `bits` is what
+    /// the bit counter is loaded with, `crc` the check word's verdict, and
+    /// `seq` names the words.  Stimulus.
+    fn crx(&mut self, at: u64, bits: u64, crc: bool, busy: bool, words: &[u16]) {
+        self.far_at(at);
+        let seq = self.crx_rows;
+        self.crx_rows += 1;
+        self.bufs.push((0, seq, words.to_vec()));
+        self.row(
+            "CRX",
+            format!(" {seq} {bits:x} {} {} {}", words.len(), u8::from(crc), u8::from(busy)),
+        );
+    }
+
+    /// Transmit Done off the far end, with or without an abort.  Stimulus.
+    fn ctd(&mut self, at: u64, abort: bool) {
+        self.far_at(at);
+        self.ctd_rows += 1;
+        self.row("CTD", format!(" {}", u8::from(abort)));
+    }
+
+    /// `-CBLBSY`, the cable's own busy line, which `Interface::csr` reads
+    /// out on bit 14 beside the CRC error.  Stimulus, and a level.
+    fn cbl(&mut self, at: u64, busy: bool) {
+        self.far_at(at);
+        self.cbl_rows += 1;
+        self.row("CBL", format!(" {}", u8::from(busy)));
+    }
+
+    /// The 2651's shift register takes the holding register's character:
+    /// the first 16X clock at or after it was loaded and the transmitter
+    /// could take it (`Pci::thr_start`).  Stimulus.
+    fn stk(&mut self, at: u64) {
+        self.far_at(at);
+        self.stk_rows += 1;
+        self.row("STK", String::new());
+    }
+
+    /// The shift register finishes its frame.  Stimulus; what it delivers
+    /// is the `SOUT` row at the same instant.
+    fn sdn(&mut self, at: u64) {
+        self.far_at(at);
+        self.sdn_rows += 1;
+        self.row("SDN", String::new());
+    }
+
+    /// A character is in the receive path at this instant --- the middle of
+    /// its stop bit, `Pci::rx_times` --- carrying `data`.  Stimulus.
+    fn srx(&mut self, at: u64, data: u8) {
+        self.far_at(at);
+        self.srx_rows += 1;
+        self.row("SRX", format!(" {data:x}"));
+    }
+
+    /// A character reaches the far end's cable: the transmitter's, or the
+    /// receiver's own in auto echo and remote loop back.  An assertion.
+    fn sout(&mut self, at: u64, data: u8) {
+        self.far_at(at);
+        self.sout_rows += 1;
+        self.row("SOUT", format!(" {data:x}"));
+    }
+
+    /// Something is on the far end of the RS-232 cable, or is not: `-DSR`,
+    /// `-DCD` and `-CTS`.  Stimulus.
+    fn spl(&mut self, on: bool) {
+        let now = self.now;
+        self.b.advance(now);
+        if on {
+            self.b.serial.cable.plug(now);
+        } else {
+            self.b.serial.cable.unplug();
+        }
+        self.spl_rows += 1;
+        self.row("SPL", format!(" {}", u8::from(on)));
+    }
+
+    /// To an instant at which the 2651's next 16X clock is at least `room`
+    /// nanoseconds off.  The shift register takes the holding register's
+    /// character at the first such clock (`Pci::thr_start`), and a write's
+    /// own bus cycle is about a microsecond long, so without this the `STK`
+    /// row would sometimes fall INSIDE the cycle that loaded it and the
+    /// trace could not place it.  The clock's instants are the crystal's and
+    /// do not move, so stepping finds one.
+    fn before_16x(&mut self, room: u64) {
+        for _ in 0..16 {
+            let now = self.now;
+            if self.b.serial.clock_at_or_after(now) >= now + room {
+                return;
+            }
+            self.wait(500);
+        }
+        panic!("no gap in the 2651's 16X clock");
+    }
+
+    /// Whatever the port has put on the cable by now, each as a `SOUT` row
+    /// at the instant its last stop bit ended.  `Cable::take` is the far
+    /// end taking them, which is what a far end does.
+    fn drain_serial(&mut self) {
+        let mut got: Vec<(u64, u8)> = Vec::new();
+        while let Some(p) = self.b.serial.cable.take() {
+            got.push(p);
+        }
+        got.sort_by_key(|&(t, _)| t);
+        for (t, byte) in got {
+            self.sout(t, byte);
+        }
+    }
+}
+
+/// When the far end next does something, found on a COPY: `IoBoard::advance`
+/// mutates, and `chaos::board::Interface` copies its registers and not its
+/// cable, which is exactly what a probe wants.  Coarse to 500 ns and then to
+/// the nanosecond, because the predicate is not monotone over a whole run and
+/// a bisection would land on the wrong edge.
+fn when(b: &IoBoard, from: u64, limit: u64, f: &dyn Fn(&IoBoard) -> bool) -> u64 {
+    const STEP: u64 = 500;
+    let mut t = from;
+    while t <= from + limit {
+        let mut c = b.clone();
+        c.advance(t);
+        if f(&c) {
+            let mut u = if t > from + STEP { t - STEP } else { from };
+            while u < t {
+                let mut c2 = b.clone();
+                c2.advance(u);
+                if f(&c2) {
+                    return u;
+                }
+                u += 1;
+            }
+            return t;
+        }
+        t += STEP;
+    }
+    panic!("the far end did nothing within {limit} ns of {from}");
+}
+
+/// The Chaosnet interface's CSR as the software reads it.
+fn cs(b: &IoBoard) -> u16 {
+    b.chaos.as_ref().expect("no Chaosnet interface is plugged in").csr()
+}
+
+/// The words a packet will give back, read out of a COPY so that the
+/// program's own board keeps its packet: what the fabric's receive buffer is
+/// to be filled with, and what the reads below must give.
+fn read_out(b: &IoBoard, at: u64, n: usize) -> Vec<u16> {
+    let mut c = b.clone();
+    c.advance(at);
+    (0..n).map(|_| c.read(chaos::READ_BUFFER, at)).collect()
+}
+
+/// The first instant in `[from, from + limit]` at which a monotone predicate
+/// of the 2651's own --- `tx_ready_at`, `rx_ready_at`, both pure --- is true.
+fn first_true(from: u64, limit: u64, f: &dyn Fn(u64) -> bool) -> u64 {
+    assert!(f(from + limit), "the 2651 did nothing within {limit} ns of {from}");
+    let (mut lo, mut hi) = (from, from + limit);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if f(mid) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    lo
 }
 
 fn main() {
@@ -554,6 +853,12 @@ fn main() {
     assert_eq!(SIXTY_CYCLE_NS % TICK_NS, 1);
 
     let mut g = Gen::new();
+    // The Chaosnet interface, plugged in with its address switches set and
+    // NO CABLE: the cable is `cadr-chaosnet`'s and Loop Back is how this
+    // trace makes a frame come back without one.  It is plugged in from
+    // power-on so that every row of the run carries its face, which is what
+    // says the keyboard, the mouse and the clocks reach none of it.
+    g.b.chaos = Some(ChaosInterface::new(CHAOS_ADDRESS, None, 0, false));
 
     // ------------------------------------------------------------------
     // The decode, over the whole of the Unibus address the interface can
@@ -1150,6 +1455,555 @@ fn main() {
     g.look();
 
     // ------------------------------------------------------------------
+    // THE CHAOSNET INTERFACE, `0o764140`-`0o764156`.  AIM-628 section 7 and
+    // `chaos::interface`: the decode is the 74LS138 at LMUCON 0C18 on
+    // `A<2:1>` AND ON READ AGAINST WRITE, so the same address is a different
+    // register in the two directions.  `A3` is decoded for exactly two
+    // things --- a read of `764152` is START where `764142` is MY ADDRESS,
+    // and the receive buffer's read is disabled at `764154` --- and for
+    // nothing else, so `764150` and `764152` written reach the CSR and the
+    // transmit buffer as `764140` and `764142` do.
+    //
+    // **WHAT IS CHECKED HERE IS THE REGISTER FACE AND NOT THE PROTOCOL.**
+    // The cable, the turn timer, the frame and the check word are the
+    // `cadr-chaosnet` program's; under Loop Back muir's own interface plays
+    // that far end and its instants are recorded as `CBL`, `CTD` and `CRX`
+    // rows for the fabric's seam.  Everything the software reads --- the
+    // CSR's ten made-up bits, the bit counter's arithmetic, the read
+    // buffer's pointer, the lost count, the 256-word cap --- is the card's
+    // own and is compared.
+    // ------------------------------------------------------------------
+    g.wait(5_000);
+
+    // Every register of the group read once before anything is written.
+    // NOT `764152`, which is START and would launch the empty buffer.
+    assert_eq!(g.read(chaos::CSR), ccsr::TRANSMIT_DONE, "the Chaosnet CSR at power-on");
+    assert_eq!(g.read(chaos::MY_ADDRESS), CHAOS_ADDRESS, "the address switches at LMMYNM");
+    assert_eq!(g.read(chaos::READ_BUFFER), 0, "the read buffer with no packet in it");
+    assert_eq!(g.read(chaos::BIT_COUNT), 0, "the bit count with no packet in it");
+    // The aliases `A3` does not separate: `764150` is the CSR again and
+    // `764156` the bit count again.
+    assert_eq!(g.read(0o764150), ccsr::TRANSMIT_DONE, "0o764150 is not the CSR");
+    assert_eq!(g.read(0o764156), 0, "0o764156 is not the bit count");
+    // And the five directions of the group the decoder takes nowhere: the
+    // read buffer and the bit count take no write, and `764154` --- the
+    // receive buffer with `A3` up --- answers neither way.
+    for (a, w) in [
+        (chaos::READ_BUFFER, true),
+        (chaos::BIT_COUNT, true),
+        (0o764154u32, false),
+        (0o764154, true),
+        (0o764156, true),
+    ] {
+        g.cyc(a, w, 0x5A5A);
+    }
+
+    // The five bits of the CSR a write reaches and a read gives back, each
+    // alone: `chaos::board::WRITABLE`.  The other eleven are read-only, or
+    // are the three write-only commands below.
+    const C_WRITABLE: u16 = ccsr::TIMER_INT_ENABLE
+        | ccsr::LOOP_BACK
+        | ccsr::SPY
+        | ccsr::RECEIVE_INT_ENABLE
+        | ccsr::TRANSMIT_INT_ENABLE;
+    for bit in [
+        ccsr::TIMER_INT_ENABLE,
+        ccsr::LOOP_BACK,
+        ccsr::SPY,
+        ccsr::RECEIVE_INT_ENABLE,
+        ccsr::TRANSMIT_INT_ENABLE,
+    ] {
+        g.write(chaos::CSR, bit);
+        let v = g.read(chaos::CSR);
+        assert_eq!(v & C_WRITABLE, bit, "writing one bit of the Chaosnet CSR set another");
+        assert_eq!(v & ccsr::TRANSMIT_DONE, ccsr::TRANSMIT_DONE, "Transmit Done fell on a write");
+    }
+    // A write of all sixteen: the five stand, then Reset takes them away
+    // again, then Clear Receiver and Clear Transmitter run.  muir's order,
+    // and the board's, is exactly that.
+    g.write(chaos::CSR, 0xFFFF);
+    assert_eq!(g.read(chaos::CSR), ccsr::TRANSMIT_DONE, "a write of all ones did not reset");
+    // The alias takes a write as the CSR does.
+    g.write(0o764150, ccsr::SPY);
+    assert_eq!(g.read(chaos::CSR) & C_WRITABLE, ccsr::SPY, "0o764150 written is not the CSR");
+    g.write(chaos::CSR, ccsr::RESET);
+
+    // --- a packet out and, under Loop Back, the same packet in ----------
+    //
+    // The words are injective and cover the sixteen bits between them; the
+    // last written is the destination, which is this interface's own
+    // address so that the frame comes back to it.
+    g.wait(2_000);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::RECEIVE_INT_ENABLE | ccsr::TRANSMIT_INT_ENABLE);
+    // Transmit Done is up and its enable is now on, so the card is asking
+    // for `0o270` --- the vector no trace could reach before this slice.
+    g.look();
+    assert_eq!(g.b.interrupt_request(g.now), Some(0o270), "the Chaosnet is not asking");
+    let packet: Vec<u16> = vec![0o125252, 0o052525, 0o177400, 0o000377, 0o007417, CHAOS_ADDRESS];
+    for (k, w) in packet.iter().enumerate() {
+        // The transmit buffer takes a write at `764142` and at `764152`
+        // alike; alternate, so that both are exercised on the same buffer.
+        let a = if k % 2 == 0 { chaos::WRITE_BUFFER } else { 0o764152 };
+        g.write(a, *w);
+        assert_eq!(g.read(chaos::CSR) & ccsr::TRANSMIT_DONE, 0, "a buffer write left Transmit Done");
+    }
+    g.look();
+    assert_eq!(g.b.interrupt_request(g.now), None, "the Chaosnet asked with Transmit Done down");
+
+    let t0 = g.now;
+    assert_eq!(g.read(chaos::START), CHAOS_ADDRESS, "START does not read the address back");
+    // What the card must have handed the far end: the words that were
+    // written, in order, and nothing else.  The check collects them off the
+    // seam and compares here.
+    g.ctx(&packet);
+    let busy_on = when(&g.b, t0, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
+    let tdone = when(&g.b, t0, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+    let landed = when(&g.b, t0, 1_000_000, &|b| cs(b) & ccsr::RECEIVE_DONE != 0);
+    assert!(busy_on < tdone && tdone < landed, "the far end's three instants are out of order");
+    // The cable goes busy: bit 14 is the CRC error OR `-CBLBSY`, which is
+    // one net on the board and two things to the software.  Read the CSR
+    // while it stands, so that the seam's own input is live here.
+    g.cbl(busy_on, true);
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & ccsr::CRC_ERROR, ccsr::CRC_ERROR, "bit 14 is down while the cable is busy");
+    assert_eq!(v & ccsr::RECEIVE_DONE, 0, "the packet landed before the cable was idle");
+    g.ctd(tdone, false);
+    g.look();
+    assert_eq!(g.b.interrupt_request(g.now), Some(0o270), "Transmit Done asked for nothing");
+    // The packet lands, and `RDONE` rises with `-CBLBSY` lifting: muir's
+    // `land` is `end + CBLBSY_OFF_NS`, so the two are one instant by
+    // construction and the row carries the cable's level.
+    let words = read_out(&g.b, landed, packet.len() + 2);
+    let bits = ((packet.len() + 2) * 16) as u64;
+    g.crx(landed, bits, false, false, &words);
+    assert_eq!(words[packet.len()], CHAOS_ADDRESS, "the source word is not this interface");
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & ccsr::RECEIVE_DONE, ccsr::RECEIVE_DONE, "the packet did not land");
+    assert_eq!(v & ccsr::CRC_ERROR, 0, "the check word failed on a frame this interface sent");
+    // The bit count is the packet's bits less one, and comes down by a word
+    // at every read of the buffer until the whole packet is out, where it
+    // reads `7777` --- AIM-628's "a 12-bit minus-one".
+    assert_eq!(u64::from(g.read(chaos::BIT_COUNT)), bits - 1, "the bit count on arrival");
+    for (k, want) in words.iter().enumerate() {
+        // The buffer at `764144`; `764154` is the same address with `A3` up
+        // and is not answered, which the cycles above showed.
+        assert_eq!(g.read(chaos::READ_BUFFER), *want, "word {k} of the packet");
+        let left = bits - ((k as u64 + 1) * 16);
+        let want_count = if left == 0 { 0o7777 } else { (left - 1) as u16 & 0o7777 };
+        assert_eq!(g.read(0o764156), want_count, "the bit count after word {k}");
+    }
+    // Past the end: the buffer reads zero, the pointer STANDS and the count
+    // stays at `7777`.
+    //
+    // **AND IT IS READ PAST THE END MORE TIMES THAN ITS POINTER IS WIDE.**
+    // The 25LS193s at LMRBUF stop where the packet does; a pointer that ran on
+    // instead reads zero for a while and then WRAPS, and from there it is
+    // inside the packet again and hands the software words it has read. That
+    // wrap is the only thing that tells a pointer which stops from one which
+    // does not, so the program goes round it: 520 reads past a packet of
+    // eight words, which is past 512 whatever the pointer's width up to nine
+    // bits.
+    for k in 0..520u32 {
+        assert_eq!(g.read(chaos::READ_BUFFER), 0, "the buffer {k} reads past the packet");
+    }
+    assert_eq!(g.read(chaos::BIT_COUNT), 0o7777, "the bit count past the end of the packet");
+
+    // --- a second packet on a buffer nobody emptied: the lost count -----
+    //
+    // Receive Done still stands, so the next frame is counted lost and
+    // dropped whole.  Four bits of it, at `0o17000`.
+    g.wait(2_000);
+    for k in 0..3u16 {
+        let one: Vec<u16> = vec![0o070707 ^ u16::from(k), CHAOS_ADDRESS];
+        let t = g.now;
+        for w in &one {
+            g.write(chaos::WRITE_BUFFER, *w);
+        }
+        assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+        g.ctx(&one);
+        let busy = when(&g.b, t, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR != 0);
+        g.cbl(busy, true);
+        let td = when(&g.b, busy, 1_000_000, &|b| cs(b) & ccsr::TRANSMIT_DONE != 0);
+        g.ctd(td, false);
+        // The frame lands and is dropped; `RDONE` still rises with the
+        // cable going idle, so the row is where the busy level falls.
+        let land = when(&g.b, td, 1_000_000, &|b| cs(b) & ccsr::CRC_ERROR == 0);
+        let lost_words = read_out(&g.b, land, one.len() + 2);
+        g.crx(land, ((one.len() + 2) * 16) as u64, false, false, &lost_words);
+        let v = g.read(chaos::CSR);
+        assert_eq!(
+            (v & ccsr::LOST_COUNT) >> 9,
+            k + 1,
+            "the lost count did not go up on a frame the buffer had no room for"
+        );
+        assert_eq!(v & ccsr::RECEIVE_DONE, ccsr::RECEIVE_DONE);
+    }
+    // The first packet is still what the buffer holds: a dropped frame does
+    // not disturb it.  The pointer is past the end, so the count is `7777`.
+    assert_eq!(g.read(chaos::BIT_COUNT), 0o7777, "a lost frame moved the buffer's pointer");
+
+    // Clear Receiver takes the packet, the lost count and the CRC verdict
+    // away, and leaves the five writable bits where the same word puts them.
+    g.write(chaos::CSR, ccsr::CLEAR_RECEIVER | ccsr::SPY | ccsr::LOOP_BACK);
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & ccsr::RECEIVE_DONE, 0, "Clear Receiver left Receive Done up");
+    assert_eq!(v & ccsr::LOST_COUNT, 0, "Clear Receiver left the lost count");
+    assert_eq!(v & C_WRITABLE, ccsr::SPY | ccsr::LOOP_BACK, "Clear Receiver took the enables too");
+    assert_eq!(g.read(chaos::BIT_COUNT), 0, "the bit count after Clear Receiver");
+    assert_eq!(g.read(chaos::READ_BUFFER), 0, "the buffer after Clear Receiver");
+
+    // --- the buffer's own size, which is 256 words ----------------------
+    //
+    // The 2147 at LMTBUF 0C10 is 4,096 bits on `TBCT<11:0>`, so a 257th
+    // word has nowhere to go and is dropped.  Written 300 and handed 256.
+    g.wait(2_000);
+    g.write(chaos::CSR, ccsr::LOOP_BACK | ccsr::CLEAR_TRANSMITTER);
+    let long: Vec<u16> = (0..300u16).map(|k| k.wrapping_mul(0o2731) ^ 0o52525).collect();
+    for w in &long {
+        g.write(chaos::WRITE_BUFFER, *w);
+    }
+    assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+    g.ctx(&long[..256]);
+    // Clear Transmitter stops it before the turn ever comes: the buffer
+    // goes, Transmit Done comes back up and no frame is ever launched.
+    g.wait(20_000);
+    g.write(chaos::CSR, ccsr::CLEAR_TRANSMITTER | ccsr::LOOP_BACK);
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & ccsr::TRANSMIT_DONE, ccsr::TRANSMIT_DONE, "Clear Transmitter left it down");
+    g.wait(400_000);
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & ccsr::RECEIVE_DONE, 0, "a cleared transmitter still sent its frame");
+    // And an empty buffer started: there is nothing to send, so nothing
+    // comes back, and Transmit Done stands throughout.
+    g.write(chaos::CSR, ccsr::LOOP_BACK);
+    assert_eq!(g.read(chaos::START), CHAOS_ADDRESS);
+    g.ctx(&[]);
+    g.wait(400_000);
+    assert_eq!(g.read(chaos::CSR) & ccsr::RECEIVE_DONE, 0, "an empty buffer arrived as a packet");
+
+    // --- `-UB INIT` reaches the interface -------------------------------
+    //
+    // `-INIT*` is AIM-628's "just as at power up and Unibus Initialize":
+    // `Interface::reset` in muir, the 74LS174 at LMUCON 0B20's clear and the
+    // 74S08s at LMMODU 0B10 and LMRCTL 0E10 on the board.
+    g.wait(2_000);
+    g.write(chaos::CSR, C_WRITABLE);
+    assert_eq!(g.read(chaos::CSR) & C_WRITABLE, C_WRITABLE);
+    g.init();
+    let v = g.read(chaos::CSR);
+    assert_eq!(v & C_WRITABLE, 0, "-UB INIT left a Chaosnet enable up");
+    assert_eq!(v & ccsr::TRANSMIT_DONE, ccsr::TRANSMIT_DONE, "-UB INIT left Transmit Done down");
+    assert_eq!(v & ccsr::RECEIVE_DONE, 0);
+
+    // ------------------------------------------------------------------
+    // THE SERIAL PORT, `0o764160`-`0o764176`: the Signetics 2651 at IOBSER
+    // 0A12 on `A<2:1>` under `-SELECT.764160`, with `A3` NOT DECODED, so
+    // `764170`-`764176` are the same four registers again.  Every address
+    // of the group is answered, read and written, which is why the group
+    // has no unanswered direction where the Chaosnet's has five.
+    //
+    // **THE BAUD-RATE GENERATOR IS NOT IN THE FABRIC AND THIS IS WHERE
+    // THAT IS SAID.**  The 5.0688 MHz can at IOBSER 0A15 divides to a 16X
+    // clock at instants that are not multiples of five --- one bit at 9,600
+    // baud is 104,166 ns and a frame 1,041,666 --- so the grid cannot carry
+    // them, and the line itself is a TCP socket that `cadr-serial` paces.
+    // What the card has instead is a seam: `STK` is the shift register
+    // taking the holding register's character, `SDN` is the frame ending
+    // and `SRX` is a character arriving, each at muir's own instant rounded
+    // up to the grid.  Every register the software reads is still the
+    // card's --- the two pointers, the status byte, the overrun, the
+    // command register's own bits --- and every one of them is compared.
+    // ------------------------------------------------------------------
+    g.wait(5_000);
+    // The upper byte nothing drives, which a serial read carries over the
+    // 2651's own eight bits.
+    const FLOATING: u16 = csr::FLOATING;
+
+    // Every register of the group read once, out of the reset `-UB INIT`
+    // above left.  The upper byte floats, the 2651 driving `UBO0`..`UBO7`
+    // alone through the 74LS244 at IOBSER 0E29.
+    assert_eq!(g.read(serial::DATA), FLOATING, "the receive holding register after a reset");
+    assert_eq!(g.read(serial::STATUS), FLOATING, "the status register with nothing plugged in");
+    // The mode pointer: the first read is mode register 1 and the second
+    // mode register 2, and a read of the command register puts it back.
+    assert_eq!(g.read(serial::MODE), FLOATING, "mode register 1 after a reset");
+    assert_eq!(g.read(serial::MODE), FLOATING, "mode register 2 after a reset");
+    assert_eq!(g.read(serial::COMMAND), FLOATING, "the command register after a reset");
+
+    // The mode registers, written and read back, with the pointer walked
+    // both ways.  `0o116` is asynchronous 16X, eight bits, no parity, one
+    // stop bit; `0o177` is 19,200 baud with both halves on the internal
+    // clock.
+    g.write(serial::MODE, 0o116);
+    g.write(serial::MODE, 0o177);
+    assert_eq!(g.b.serial.mode1(), 0o116, "mode register 1 did not take the first write");
+    assert_eq!(g.b.serial.mode2(), 0o177, "mode register 2 did not take the second");
+    // A read of the command register resets the pointer, so the next read
+    // of the mode address is register 1 again.
+    g.read(serial::COMMAND);
+    assert_eq!(g.read(serial::MODE), FLOATING | 0o116, "the pointer did not go back to mode 1");
+    assert_eq!(g.read(serial::MODE), FLOATING | 0o177, "the second read is not mode 2");
+    // And the aliases `A3` does not decode: `764174` is the mode address
+    // again, and `764176` the command address.
+    g.read(0o764176);
+    assert_eq!(g.read(0o764174), FLOATING | 0o116, "0o764174 is not the mode address");
+
+    // The three SYN registers behind the status address, three deep and
+    // wrapping, with the same read of the command register putting the
+    // pointer back.  Nothing on this board uses synchronous mode; what is
+    // checked is that a write goes somewhere and the pointer counts.
+    for v in [0o252u16, 0o125, 0o377, 0o001] {
+        g.write(serial::STATUS, v);
+    }
+    g.read(serial::COMMAND);
+
+    // --- the cable, and a character out ---------------------------------
+    g.wait(2_000);
+    g.spl(true);
+    let v = g.read(serial::STATUS);
+    assert_eq!(
+        v & u16::from(serial::status::DSR | serial::status::DCD),
+        u16::from(serial::status::DSR | serial::status::DCD),
+        "plugging the cable in did not raise -DSR and -DCD"
+    );
+    assert_eq!(
+        v & u16::from(serial::status::TX_EMPTY_OR_DSCHG),
+        u16::from(serial::status::TX_EMPTY_OR_DSCHG),
+        "the modem lines moved and SR2 did not say so"
+    );
+    // Reading the status register clears the data-set-change latch.
+    assert_eq!(
+        g.read(serial::STATUS) & u16::from(serial::status::TX_EMPTY_OR_DSCHG),
+        0,
+        "a read of the status register left the data-set-change latch up"
+    );
+    // The transmitter and the receiver on, in normal mode.
+    let on = serial::command::TX_ENABLE | serial::command::RX_ENABLE | serial::command::DTR
+        | serial::command::RTS;
+    g.write(serial::COMMAND, u16::from(on));
+    assert_eq!(g.read(serial::COMMAND), FLOATING | u16::from(on), "the command register");
+    let v = g.read(serial::STATUS);
+    assert_eq!(v & u16::from(serial::status::TX_READY), u16::from(serial::status::TX_READY),
+               "the transmitter is enabled and the holding register empty");
+
+    // A character into the holding register.  `SR0` falls at once and comes
+    // back at the first 16X clock the shift register can take it on, which
+    // is the `STK` row; the frame ends a `frame_ns` later, which is `SDN`,
+    // and the byte reaches the far end there.
+    let frame = g.b.serial.framing().frame_ns(g.b.serial.rate());
+    assert!(frame > 400_000 && frame < 600_000, "the frame at 19,200 baud is {frame} ns");
+    g.before_16x(3_000);
+    g.write(serial::DATA, 0o325);
+    let loaded = g.landed;
+    assert!(!g.b.serial.tx_ready_at(loaded), "the holding register is full and SR0 is still up");
+    let take = first_true(loaded, 4 * frame, &|t| g.b.serial.tx_ready_at(t));
+    assert!(take >= g.now, "the 16X clock came inside the cycle that loaded the character");
+    g.stk(take);
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::TX_READY),
+               u16::from(serial::status::TX_READY), "SR0 did not come back when the shifter took it");
+    g.sdn(take + frame);
+    g.drain_serial();
+    let v = g.read(serial::STATUS);
+    assert_eq!(v & u16::from(serial::status::TX_EMPTY_OR_DSCHG),
+               u16::from(serial::status::TX_EMPTY_OR_DSCHG), "SR2 is down with both registers empty");
+
+    // Two characters back to back: the second is loaded while the first is
+    // still shifting, so the holding register is full through the frame and
+    // the shift register takes it the moment the frame ends.
+    g.before_16x(3_000);
+    g.write(serial::DATA, 0o101);
+    let take1 = first_true(g.landed, 4 * frame, &|t| g.b.serial.tx_ready_at(t));
+    assert!(take1 >= g.now, "the 16X clock came inside the cycle that loaded the character");
+    g.stk(take1);
+    g.write(serial::DATA, 0o102);
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::TX_READY), 0,
+               "the holding register took a second character and still says ready");
+    // The first frame ends and the second starts at that instant, with no
+    // 16X clock in between: muir's `transmit` hands it straight over.
+    g.sdn(take1 + frame);
+    g.stk(take1 + frame);
+    g.drain_serial();
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::TX_READY),
+               u16::from(serial::status::TX_READY), "the second character did not leave the holding register");
+    g.sdn(take1 + 2 * frame);
+    g.drain_serial();
+
+    // --- a character in, and the overrun --------------------------------
+    g.wait(2_000);
+    {
+        let now = g.now;
+        g.b.serial.cable.send(0o252, now);
+    }
+    let got = first_true(g.now, 4 * frame, &|t| g.b.serial.rx_ready_at(t));
+    g.srx(got, 0o252);
+    let v = g.read(serial::STATUS);
+    assert_eq!(v & u16::from(serial::status::RX_READY), u16::from(serial::status::RX_READY),
+               "the character arrived and SR1 is down");
+    assert_eq!(g.read(serial::DATA), FLOATING | 0o252, "the receive holding register");
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::RX_READY), 0,
+               "a read of the holding register left SR1 up");
+    // A second character on one nobody read: the overrun bit, which is the
+    // only error muir's 2651 ever sets.
+    {
+        let now = g.now;
+        g.b.serial.cable.send(0o146, now);
+        g.b.serial.cable.send(0o271, now + frame);
+    }
+    let a = first_true(g.now, 4 * frame, &|t| g.b.serial.rx_ready_at(t));
+    g.srx(a, 0o146);
+    // The second lands where the overrun appears, which is a probe on a copy:
+    // `rx_ready_at` is already true and cannot tell the two apart.
+    let b2 = when(&g.b, a + 1, 4 * frame, &|b| b.serial.status() & serial::status::OVERRUN != 0);
+    g.srx(b2, 0o271);
+    let v = g.read(serial::STATUS);
+    assert_eq!(v & u16::from(serial::status::OVERRUN), u16::from(serial::status::OVERRUN),
+               "a character landed on one nobody read and there is no overrun");
+    assert_eq!(g.read(serial::DATA), FLOATING | 0o271, "the overrun leaves the LATER character");
+    // `RESET ERROR` in the command register takes it away, and is not
+    // stored: the register reads back without it.
+    g.write(serial::COMMAND, u16::from(on | serial::command::RESET_ERROR));
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::OVERRUN), 0,
+               "RESET ERROR left the overrun bit up");
+    assert_eq!(g.read(serial::COMMAND), FLOATING | u16::from(on),
+               "RESET ERROR is stored in the command register");
+
+    // --- the card's own interrupt off the 2651's ready lines -------------
+    //
+    // `SER.IREQ` is `-RxRDY` and, by ECO 10 of `cadrio/iob.eco`, `-TxRDY`
+    // on the same net, through the 74LS02 at IOBSER 0E11 with `SER INT
+    // ENABLE`.  The I/O board's own status register carries that enable.
+    g.write(CSR, csr::SER_INT_ENABLE);
+    g.look();
+    assert_eq!(g.b.interrupt_request(g.now), Some(SERIAL_VECTOR),
+               "the transmitter is ready and the card is not asking");
+    g.write(serial::COMMAND, 0);
+    g.look();
+    assert_eq!(g.b.interrupt_request(g.now), None, "the port is off and the card is still asking");
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::TX_READY), 0);
+    g.write(serial::COMMAND, u16::from(on));
+    g.look();
+    assert_eq!(g.b.interrupt_request(g.now), Some(SERIAL_VECTOR));
+    g.write(CSR, 0);
+
+    // --- the cable pulled out -------------------------------------------
+    //
+    // "The 2651 is conditioned to transmit data when the -CTS input is
+    // low"; open, the MC1489 gives the chip all three high and the port
+    // stops.  The data-set-change latch says the lines moved.
+    g.wait(2_000);
+    g.spl(false);
+    let v = g.read(serial::STATUS);
+    assert_eq!(v & u16::from(serial::status::DSR | serial::status::DCD), 0,
+               "the cable is out and the modem lines are still up");
+    assert_eq!(v & u16::from(serial::status::TX_EMPTY_OR_DSCHG),
+               u16::from(serial::status::TX_EMPTY_OR_DSCHG), "the lines moved and SR2 is down");
+
+    // --- local loop back -------------------------------------------------
+    //
+    // "CR2 (RxEN) is ignored" and the chip's own `-DTR` and `-RTS` become
+    // its `-DCD` and `-CTS`, so the port runs with nothing on the cable and
+    // a character transmitted arrives at its own receiver.
+    g.wait(2_000);
+    let loopb = serial::command::LOCAL_LOOP_BACK | serial::command::TX_ENABLE
+        | serial::command::DTR | serial::command::RTS;
+    g.write(serial::COMMAND, u16::from(loopb));
+    let v = g.read(serial::STATUS);
+    assert_eq!(v & u16::from(serial::status::DCD), u16::from(serial::status::DCD),
+               "local loop back does not make -DTR the chip's own -DCD");
+    assert_eq!(v & u16::from(serial::status::DSR), 0, "-DSR is the cable's and the cable is out");
+    g.before_16x(3_000);
+    g.write(serial::DATA, 0o063);
+    let take2 = first_true(g.landed, 4 * frame, &|t| g.b.serial.tx_ready_at(t));
+    assert!(take2 >= g.now, "the 16X clock came inside the cycle that loaded the character");
+    g.stk(take2);
+    g.sdn(take2 + frame);
+    g.drain_serial();
+    let v = g.read(serial::STATUS);
+    assert_eq!(v & u16::from(serial::status::RX_READY), u16::from(serial::status::RX_READY),
+               "local loop back did not put the character into the receiver");
+    assert_eq!(g.read(serial::DATA), FLOATING | 0o063, "the character that came back round");
+    g.write(serial::COMMAND, 0);
+
+    // --- a frame shorter than eight bits ---------------------------------
+    //
+    // "If the character length is less than 8 bits, the high order unused
+    // bits in the Holding Register are set to zero."  `0o102` is asynchronous
+    // 16X with FIVE data bits and one stop bit, so a character of all ones
+    // reaches the far end as `0o37`.
+    g.wait(2_000);
+    g.spl(true);
+    g.read(serial::COMMAND);
+    g.write(serial::MODE, 0o102);
+    g.write(serial::MODE, 0o177);
+    g.write(serial::COMMAND, u16::from(on));
+    let frame5 = g.b.serial.framing().frame_ns(g.b.serial.rate());
+    assert!(frame5 < frame, "a five-bit frame is not shorter than an eight-bit one");
+    g.before_16x(3_000);
+    g.write(serial::DATA, 0o377);
+    let take5 = first_true(g.landed, 4 * frame5, &|t| g.b.serial.tx_ready_at(t));
+    assert!(take5 >= g.now, "the 16X clock came inside the cycle that loaded the character");
+    g.stk(take5);
+    g.sdn(take5 + frame5);
+    g.drain_serial();
+
+    // --- the two modes that cut the CPU off from the transmitter ---------
+    //
+    // "Auto echo mode ... the CPU to transmitter link is disabled", and the
+    // same for remote loop back: `SR0` is down in both however `CR0` stands,
+    // so a driver that set either and went on writing characters would be
+    // writing into a register nothing empties.  **The echo itself is not
+    // built and the module's header says why**, so nothing is sent here.
+    for m in [serial::command::AUTO_ECHO, serial::command::REMOTE_LOOP_BACK] {
+        g.write(serial::COMMAND, u16::from(m | on));
+        let v = g.read(serial::STATUS);
+        assert_eq!(v & u16::from(serial::status::TX_READY), 0,
+                   "the transmitter runs in mode {m:o}");
+        assert_eq!(g.read(serial::COMMAND), FLOATING | u16::from(m | on),
+                   "the command register did not take the mode");
+    }
+    g.write(serial::COMMAND, u16::from(on));
+
+    // --- a character waiting when the receiver is turned off --------------
+    //
+    // "`RxRDY` ... is cleared when the receiver is disabled by CR2", and the
+    // test is against the word being STORED and not the one already there.
+    g.wait(2_000);
+    g.read(serial::COMMAND);
+    g.write(serial::MODE, 0o116);
+    g.write(serial::MODE, 0o177);
+    g.write(serial::COMMAND, u16::from(on));
+    {
+        let now = g.now;
+        g.b.serial.cable.send(0o317, now);
+    }
+    let waiting = first_true(g.now, 4 * frame, &|t| g.b.serial.rx_ready_at(t));
+    g.srx(waiting, 0o317);
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::RX_READY),
+               u16::from(serial::status::RX_READY), "the character did not arrive");
+    // The transmitter left on, so that what falls is the receiver's own bit
+    // and not everything at once.
+    g.write(serial::COMMAND, u16::from(serial::command::TX_ENABLE | serial::command::DTR
+                                       | serial::command::RTS));
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::RX_READY), 0,
+               "turning the receiver off left SR1 up");
+    assert_eq!(g.read(serial::STATUS) & u16::from(serial::status::TX_READY),
+               u16::from(serial::status::TX_READY), "the transmitter went off with it");
+    g.write(serial::COMMAND, u16::from(on));
+
+    // --- `-UB INIT` is the 2651's own RESET pin --------------------------
+    g.wait(2_000);
+    g.spl(true);
+    g.write(serial::MODE, 0o116);
+    g.write(serial::MODE, 0o177);
+    g.write(serial::COMMAND, u16::from(on));
+    g.init();
+    assert_eq!(g.b.serial.mode1(), 0, "-UB INIT left mode register 1");
+    assert_eq!(g.b.serial.mode2(), 0, "-UB INIT left mode register 2");
+    assert_eq!(g.b.serial.command(), 0, "-UB INIT left the command register");
+    assert_eq!(g.read(serial::MODE), FLOATING, "-UB INIT did not put the mode pointer back");
+    g.spl(false);
+
+    // ------------------------------------------------------------------
     // What the program covered.
     // ------------------------------------------------------------------
     let end = g.now;
@@ -1175,8 +2029,13 @@ fn main() {
         0x00FF_FFFF,
         "the scan codes do not cover all twenty-four bits"
     );
-    assert_eq!(g.vectors.len(), 3, "not every reachable vector was asked for");
-    for v in [KBD_VECTOR, SERIAL_VECTOR, CLOCK_VECTOR] {
+    // **ALL FOUR VECTORS ARE REACHABLE NOW.**  `0o270` was the one no trace
+    // against this model could ask for, because `interrupt_request` consults
+    // `self.chaos` and nothing was plugged in; the Chaosnet slice plugs one
+    // in, so the priority chain is compared against muir end to end rather
+    // than held to page IOBINT's equations in the testbench.
+    assert_eq!(g.vectors.len(), 4, "not every reachable vector was asked for");
+    for v in [KBD_VECTOR, SERIAL_VECTOR, 0o270u16, CLOCK_VECTOR] {
         assert!(g.vectors.contains_key(&v), "{v:o} was never asked for");
     }
     assert!(g.usec_high.len() >= 2, "the microsecond counter's high half never moved");
@@ -1185,7 +2044,34 @@ fn main() {
     assert!(g.audio_both[0] > 0 && g.audio_both[1] > 0, "AUDIO never moved");
     assert!(g.unanswered >= 9, "too few cycles nothing answered");
     assert!(g.slips > 0, "no read landed off the grid, which the low half always does");
-    assert_eq!(g.inits, 3, "the program made a different number of -UB INIT pulses");
+    assert_eq!(g.inits, 5, "the program made a different number of -UB INIT pulses");
+    // The two groups this slice added, and what they were asked to do.
+    for r in [chaos::CSR, chaos::MY_ADDRESS, chaos::READ_BUFFER, chaos::BIT_COUNT, chaos::START] {
+        assert!(g.reads.contains_key(&r), "the Chaosnet register {r:o} was never read");
+    }
+    for r in [chaos::CSR, chaos::WRITE_BUFFER] {
+        assert!(g.writes.contains_key(&r), "the Chaosnet register {r:o} was never written");
+    }
+    for r in [serial::DATA, serial::STATUS, serial::MODE, serial::COMMAND] {
+        assert!(g.reads.contains_key(&r), "the serial register {r:o} was never read");
+        assert!(g.writes.contains_key(&r), "the serial register {r:o} was never written");
+    }
+    // The aliases `A3` does not separate are cycles of their own, so that a
+    // decode that took `A3` where it must not is caught by a read and not
+    // only by the sweep.
+    for a in [0o764150u32, 0o764152, 0o764154, 0o764156, 0o764174, 0o764176] {
+        assert!(g.addrs.contains(&a), "{a:o} was never used");
+    }
+    assert!(g.ctx_rows >= 5, "too few transmit buffers handed over: {}", g.ctx_rows);
+    assert!(g.crx_rows >= 4, "too few packets landed: {}", g.crx_rows);
+    assert!(g.stk_rows >= 4 && g.sdn_rows >= 4, "the 2651 sent too little");
+    assert!(g.srx_rows >= 3, "the 2651 received too little");
+    assert!(g.sout_rows >= 3, "too few characters reached the cable");
+    assert!(g.spl_rows >= 4, "the RS-232 cable never moved both ways");
+    assert!(g.serial_slips > 0, "no answer of the serial port's fell off the grid, and all do");
+    assert!(g.far_slips > 0, "no far-end instant fell off the grid");
+    assert!(g.ccsr_seen.len() >= 12, "the Chaosnet CSR took {} values", g.ccsr_seen.len());
+    assert!(g.sstat_seen.len() >= 8, "the 2651's status took {} values", g.sstat_seen.len());
 
     let total_reads: u64 = g.reads.values().sum();
     let total_writes: u64 = g.writes.values().sum();
@@ -1209,7 +2095,25 @@ fn main() {
     println!("# INIT     n ns <face>                   -UB INIT");
     println!("# FACE     n ns <face>                   a sample with no cycle");
     println!("#");
-    println!("# <face> = csr x y held clkrdy interval intr audio serrdy");
+    println!("# The Chaosnet interface's far end and the serial port's, which are the");
+    println!("# `cadr-chaosnet` and `cadr-serial` programs' on the board and muir's own");
+    println!("# models here.  Every instant is rounded UP to the 5 ns grid, as the");
+    println!("# microsecond counter's low half is, and `far_offgrid` counts how many.");
+    println!("#");
+    println!("# CBUF     dir seq k word            dir 0 a packet landing, 1 a buffer handed over");
+    println!("# CTX      n ns seq len <face>       the transmit buffer the card handed over");
+    println!("#     since the last such row: an ASSERTION, the words having come over the bus");
+    println!("# CRX      n ns seq bits len crc busy <face>  a packet lands in the receive buffer");
+    println!("#     stimulus; -CBLBSY lifts with RDONE, so the row is the cable going idle too");
+    println!("# CTD      n ns abort <face>         Transmit Done off the far end");
+    println!("# CBL      n ns busy <face>          -CBLBSY, which bit 14 reads out");
+    println!("# STK      n ns <face>               the shift register takes the holding register");
+    println!("# SDN      n ns <face>               the shift register finishes its frame");
+    println!("# SRX      n ns data <face>          a character reaches the receive path");
+    println!("# SOUT     n ns data <face>          a character reaches the cable: an ASSERTION");
+    println!("# SPL      n ns plugged <face>       something on the far end of the RS-232 cable");
+    println!("#");
+    println!("# <face> = csr x y held clkrdy interval intr audio serrdy ccsr cbits sm1 sm2 scmd sstat");
     println!("#     csr       the status register's flip-flops, before the floating byte");
     println!("#               and CLOCK READY are made up on a read");
     println!("#     x y       the two twelve-bit counters");
@@ -1219,6 +2123,11 @@ fn main() {
     println!("#     intr      the Unibus vector the card is requesting, or 0");
     println!("#     audio     AUDIO, the beep's flip-flop");
     println!("#     serrdy    the serial port's -RxRDY or -TxRDY");
+    println!("#     ccsr      the Chaosnet interface's CSR as a read assembles it");
+    println!("#     cbits     its bit counter, the RBCT 25LS193s at LMRBUF");
+    println!("#     sm1 sm2   the 2651's two mode registers");
+    println!("#     scmd      its command register");
+    println!("#     sstat     its status register");
     println!("#");
     println!("# n and every instant are decimal nanoseconds; every other value hexadecimal");
     println!("# except dx and dy, which are signed decimal");
@@ -1238,6 +2147,29 @@ fn main() {
     println!("# kbd_vector {KBD_VECTOR:o}");
     println!("# serial_vector {SERIAL_VECTOR:o}");
     println!("# clock_vector {CLOCK_VECTOR:o}");
+    println!("# chaos_address {CHAOS_ADDRESS}");   // decimal, as the fabric takes it
+    println!("# chaos_first {:o}", chaos::CSR);
+    println!("# chaos_last {:o}", 0o764156u32);
+    println!("# serial_first {:o}", serial::DATA);
+    println!("# serial_last {:o}", 0o764176u32);
+    println!("# chaos_writable {:o}", 0o67u16);
+    println!("# chaos_vector {:o}", 0o270u16);
+    println!("# chaos_buffer_words {}", 256);
+    println!("# ctx_rows {}", g.ctx_rows);
+    println!("# ctx_words {}", g.bufs.iter().filter(|b| b.0 == 1).map(|b| b.2.len()).sum::<usize>());
+    println!("# crx_words {}", g.bufs.iter().filter(|b| b.0 == 0).map(|b| b.2.len()).sum::<usize>());
+    println!("# crx_rows {}", g.crx_rows);
+    println!("# ctd_rows {}", g.ctd_rows);
+    println!("# cbl_rows {}", g.cbl_rows);
+    println!("# stk_rows {}", g.stk_rows);
+    println!("# sdn_rows {}", g.sdn_rows);
+    println!("# srx_rows {}", g.srx_rows);
+    println!("# sout_rows {}", g.sout_rows);
+    println!("# spl_rows {}", g.spl_rows);
+    println!("# far_offgrid {}", g.far_slips);
+    println!("# offgrid_serial {}", g.serial_slips);
+    println!("# ccsr_values {}", g.ccsr_seen.len());
+    println!("# sstat_values {}", g.sstat_seen.len());
     println!("# last_ns {end}");
     println!("# last_tick {}", end / TICK_NS);
     println!("# rows {}", g.line);
@@ -1268,6 +2200,11 @@ fn main() {
     }
     for l in &dec {
         println!("{l}");
+    }
+    for (dir, seq, words) in &g.bufs {
+        for (k, w) in words.iter().enumerate() {
+            println!("CBUF {dir} {seq} {k:x} {w:x}");
+        }
     }
     for l in &g.out {
         println!("{l}");

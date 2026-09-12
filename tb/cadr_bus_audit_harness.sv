@@ -151,6 +151,15 @@ module cadr_bus_audit_harness #(
   // The I/O board's cables, tied off: no keyboard, no mouse, no serial chip
   // and no Chaosnet interface, each its own slice.
   logic        ser_reset, iob_intr, audio, clock_ready;
+  // What the two chips on the card give their far ends, which are the
+  // `cadr-serial` and `cadr-chaosnet` programs': folded below with every
+  // other output of `cadr_machine`.
+  logic [7:0]  ser_mode1, ser_mode2, ser_cmd, ser_tx_data, ser_status;
+  logic        ser_tx_strobe;
+  logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
+  logic [8:0]  chaos_tx_len;
+  logic [15:0] chaos_tx_word, chaos_csr;
+  logic [11:0] chaos_bits;
   logic [7:0]  iob_vector, csr_face;
   logic [11:0] mouse_x, mouse_y;
   logic [15:0] interval;
@@ -188,7 +197,17 @@ module cadr_bus_audit_harness #(
       .con_ro_echo(ro_echo),
       .device_ack(1'b0), .device_rdata(32'd0),
       .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'd0),
-      .ser_ready(1'b0), .chaos_intr(1'b0), .ser_reset(ser_reset),
+      .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
+      .ser_cmd(ser_cmd), .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
+      .ser_tx_take(1'b0), .ser_tx_done(1'b0), .ser_rx_strobe(1'b0),
+      .ser_rx_data(8'd0), .ser_plugged(1'b0), .ser_status(ser_status),
+      .chaos_address(16'd0), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+      .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
+      .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset),
+      .chaos_csr(chaos_csr), .chaos_rx_valid(1'b0), .chaos_rx_word(16'd0),
+      .chaos_rx_done(1'b0), .chaos_rx_bits(13'd0), .chaos_rx_crc(1'b0),
+      .chaos_tx_done(1'b0), .chaos_tx_abort(1'b0), .chaos_cbl_busy(1'b0),
+      .chaos_bits(chaos_bits),
       .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
       .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
       .clock_ready(clock_ready), .interval(interval),
@@ -286,6 +305,10 @@ module cadr_bus_audit_harness #(
                     vmaok, jcond, nop, pcs1, pcs0, iwrited,
                     dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn,
                     n_memrq, n_loadmd, mem_error, sintr,
+                    ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
+                    ser_status, chaos_tx_go, chaos_tx_len, chaos_tx_valid,
+                    chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
+                    chaos_bits, 
                     ser_reset, iob_intr, iob_vector, audio, csr_face,
                     mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by};
   /* verilator lint_on UNUSEDSIGNAL */

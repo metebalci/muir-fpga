@@ -27,19 +27,34 @@
 // `A3` is not decoded in the clock group, so `0o76413x` is `0o76412x`; the
 // microsecond counter's two halves take no write.
 //
-// **WHAT IS NOT HERE, AND WHY THE CARD DOES NOT ANSWER IT.**  The Chaosnet
-// interface (`0o764140`-`0o764156`) and the serial port (`0o764160`-`0o764176`)
-// are two other slices.  `ioboard::answers` decodes them, because the decode
-// is one sheet, and the card as MIT built it answers them whether or not the
-// LMU chips and the 2651 are fitted --- their `-SSYN` comes from this card's
-// own synchronisers, not from the parts.  **This module decodes the whole
-// block and answers only the two groups it implements**, rather than invent
-// the transmitter's, the receive buffer's and the half-microsecond clock's
-// timings (`busint::IOB_CHAOS_BUFFER_NS`, `IOB_RBUF_SETUP_NS`,
-// `IOB_SERIAL_NS`) for parts nothing can exercise.  `tb/cadr_io_board_tb.cpp`
-// exempts exactly those fifteen addresses from the exhaustive decode sweep,
-// counts them, and prints the count; whoever builds either slice makes the
-// card answer its group and moves that line.
+//   0o764140  CHAOS CSR   AIM-628 section 7's command and status register
+//   0o764142  read MY ADDRESS, written a word into the outgoing packet buffer
+//   0o764144  READ BUFFER a word out of the incoming packet buffer, read only
+//   0o764146  BIT COUNT   its bits less one, read only
+//   0o764152  read START, which is MY ADDRESS again and sends the buffer
+//   0o764154  the one address of the whole block that answers NEITHER way
+//   0o764160  the 2651: received data read, transmit data written
+//   0o764162  read the status register, written the SYN and DLE registers
+//   0o764164  mode register 1, then mode register 2
+//   0o764166  the command register; a read of it puts the pointers back
+//
+// `A3` is decoded in the Chaosnet's group for exactly two things --- START
+// against MY ADDRESS, and disabling the receive buffer's read --- and NOT AT
+// ALL at the 2651, so `0o76417x` is `0o76416x`.
+//
+// **WHAT IS NOT HERE: THE PROTOCOL, WHICH IS LINUX'S.**  The Chaosnet's
+// cable, its turn timer at LMTURN, the frame, the check word and the
+// transceiver are the `cadr-chaosnet` program's; the 2651's baud-rate
+// generator at IOBSER 0A15 and its line are `cadr-serial`'s, the line being a
+// TCP socket as muir's `--serial` offers it.  **The generator is left out
+// deliberately**: it divides the 5.0688 MHz can to instants that are not
+// multiples of five --- one bit at 9,600 baud is 104,166 ns --- so the 5 ns
+// grid cannot carry them, and what the card has instead is a seam.
+// `docs/io-board.md`'s "What slice five built" says what each program owes
+// the card at the register face.  The SYN registers, the parity and framing
+// flags, the two echoing modes and the Chaosnet's timer interrupt are not
+// built either, and it says why: nothing in muir or on this board can tell a
+// card that has them from one that does not.
 //
 // **THE SEAM IS THE UNIBUS AND NOT `-MEMRQ`.**  `cadr_busint_xbus.sv` already
 // drives `-UB MSYN`, `ub_write` and `ub_addr` and takes `-UB SSYN` back, and
@@ -156,23 +171,63 @@ module cadr_io_board (
     // seven on their way to the 74LS374 at IOBMSE 0A24.
     input  var logic [6:0]  mouse_lines,
 
-    // --- the serial port.  `ser_ready` is the 2651's `-RxRDY` and, by ECO 10
-    // of `cadrio/iob.eco`, its `-TxRDY` on the same net, at the priority
-    // encoder through the 74LS02 at IOBSER 0E11.  The chip is the serial
-    // slice's; what this card owes it is its reset pin.
-    input  var logic        ser_ready,
-    output var logic        ser_reset,
+    // --- THE SERIAL PORT, the Signetics 2651 at IOBSER 0A12.
+    //
+    // **THE REGISTERS ARE THIS CARD'S AND THE LINE IS NOT.**  The chip's
+    // four registers, its two pointers, its status byte and its holding
+    // registers are here; the baud-rate generator at 0A15 is not, because
+    // the 5.0688 MHz can divides to instants that are not multiples of five
+    // --- one bit at 9,600 baud is 104,166 ns --- and because the line on
+    // this board is a TCP socket `cadr-serial` paces.  So the shift
+    // register's two edges come in on the seam: `ser_tx_take` is the
+    // character leaving the holding register at the first 16X clock, and
+    // `ser_tx_done` is its frame ending.  `docs/io-board.md` says what the
+    // program owes the card.
+    output var logic        ser_reset,    // `-INIT*` IS the chip's RESET pin
+    output var logic [7:0]  ser_mode1,    // what the software set: the frame
+    output var logic [7:0]  ser_mode2,    // ...and the baud rate, `MR23`-`MR20`
+    output var logic [7:0]  ser_cmd,      // the command register, `-DTR` and `-RTS` in it
+    output var logic        ser_tx_strobe,// a character reaches the cable
+    output var logic [7:0]  ser_tx_data,
+    input  var logic        ser_tx_take,  // the shift register takes the holding register
+    input  var logic        ser_tx_done,  // its frame ends
+    input  var logic        ser_rx_strobe,// a character reaches the receive path
+    input  var logic [7:0]  ser_rx_data,
+    // `-DSR`, `-DCD` and `-CTS` off the MC1489 at IOBSER 0B16.  Open, the
+    // sheet's `V_OH` row gives the chip all three high and it stops.
+    input  var logic        ser_plugged,
+    output var logic [7:0]  ser_status,   // `SR7`-`SR0` as a read assembles them
 
-    // --- the Chaosnet interface's request, `CHAOS.IREQ` on page IOBINT.  The
-    // interface is its own slice and nothing drives this yet; the priority
-    // encoder needs the input regardless, and a card built without it would
-    // have to have these equations derived a second time.
-    input  var logic        chaos_intr,
+    // --- THE CHAOSNET INTERFACE, the `lm*` pages of `data/CADRIO.netlist`.
+    //
+    // **THE REGISTERS AND THE TWO BUFFERS ARE THIS CARD'S AND THE CABLE IS
+    // NOT.**  AIM-628 section 7's five registers, the 2147s at LMTBUF 0C10
+    // and LMRBUF 0C04 as 256 words each, the bit counter's arithmetic, the
+    // lost count and the priority chain are here; the turn timer at LMTURN,
+    // the frame, the check word and the transceiver are the `cadr-chaosnet`
+    // program's.  A frame goes out as a burst on `chaos_tx_*` when START is
+    // read and comes in as a burst on `chaos_rx_*`.
+    input  var logic [15:0] chaos_address,  // the switches at LMMYNM D10 and D12
+    output var logic        chaos_tx_go,    // START was read: this frame is to go
+    output var logic [8:0]  chaos_tx_len,   // how many words of it, 0 to 256
+    output var logic        chaos_tx_valid, // one word of it, in order, from the tick after
+    output var logic [15:0] chaos_tx_word,
+    output var logic        chaos_tx_clear, // Clear Transmitter: drop a frame not yet away
+    output var logic        chaos_reset,    // Reset, or `-UB INIT`
+    output var logic [15:0] chaos_csr,      // the CSR as a read assembles it
+    input  var logic        chaos_rx_valid, // one word into the receive buffer
+    input  var logic [15:0] chaos_rx_word,
+    input  var logic        chaos_rx_done,  // that was the packet
+    input  var logic [12:0] chaos_rx_bits,  // its length, what the bit counter loads
+    input  var logic        chaos_rx_crc,   // its check word failed
+    input  var logic        chaos_tx_done,  // the frame is away
+    input  var logic        chaos_tx_abort, // ...or a collision took it
+    input  var logic        chaos_cbl_busy, // `-CBLBSY`, which bit 14 reads out beside the CRC
+    output var logic [11:0] chaos_bits,     // the bit counter, for the check
 
     // --- the Unibus interrupt: `-UB INTR` and `-UB BR5` on the backplane.
-    // Nothing in `rtl/` runs a Unibus interrupt cycle yet, so this is a port
-    // with nothing on the other end --- the shape `tv_intr` had before
-    // `f8c6d25`.
+    // Nothing in `rtl/` runs a Unibus interrupt cycle yet, so the vector
+    // goes to `cadr_busint_regs.sv` on a wire, as muir's does.
     output var logic        intr_request,
     output var logic [7:0]  intr_vector,
 
@@ -259,6 +314,38 @@ module cadr_io_board (
   localparam logic [10:0] BLOCK          = 11'd2000;   // 0o764000 >> 7
   localparam logic [2:0]  GROUP_KBM      = 3'd4;
   localparam logic [2:0]  GROUP_CLOCK    = 3'd5;
+  localparam logic [2:0]  GROUP_CHAOS    = 3'd6;
+  localparam logic [2:0]  GROUP_SERIAL   = 3'd7;
+
+  // `busint::IOB_CHAOS_BUFFER_NS` = 350: the transmit buffer's write and
+  // START, through the transmitter's `-TSR.SSYN`, measured at every phase of
+  // the board's clocks.
+  localparam int unsigned CHAOS_BUF_T    = 350 / 5;
+
+  // The Chaosnet receive buffer's read: `-MSYN` taken at the first `FCLK^`
+  // edge AT LEAST `busint::IOB_RBUF_SETUP_NS` = 33 ns after it, the word out
+  // of the buffer's RAM and `-SSYN` a TD250 later.  `FCLK^` is 8 MHz off the
+  // 74S163 at LMTCLK 0B03, an edge every 125 ns at multiples of 125 from
+  // power-on --- 25 ticks --- so the condition is the first edge at a tick
+  // at or after `-UB MSYN` plus 33 ns, which on the grid is seven ticks.
+  localparam int unsigned FCLK_T         = 125 / 5;
+  localparam int unsigned RBUF_SETUP_T   = (33 + 4) / 5;
+
+  // The serial port's select is synchronised to a half-microsecond clock
+  // whose phase `busint::IOB_HALF_USEC_PHASE_NS` measures at 203 ns on the
+  // netlist board, through the two 74LS74s at IOBSER 0F29; the answer is
+  // `busint::IOB_SERIAL_NS` = 750 after the first edge STRICTLY after
+  // `-MSYN`.  **THIS IS THE SECOND PLACE THIS CARD IS OFF THE 5 ns GRID AND
+  // THE ONLY ONE THAT IS ALWAYS OFF IT**: 203 + 500k + 750 is 953 + 500k,
+  // which is 3 modulo 5, so the answer is two nanoseconds past a tick on
+  // EVERY cycle of the group and the trace carries a `slip` of 2 on all of
+  // them.  Rounding up is exact, and the edges are counted on the grid at
+  // 205 + 500k for the same reason: no multiple of five lies between 203 and
+  // 205 modulo 500, so an edge is strictly after `-MSYN` on the grid exactly
+  // where it is strictly after it on the netlist.
+  localparam int unsigned HU_PERIOD_T    = 500 / 5;
+  localparam int unsigned HU_FIRST_T     = (203 + 4) / 5;
+  localparam int unsigned SERIAL_T       = 750 / 5;
 
   // The keyboard-and-mouse group's eight registers, `A<3:1>`.
   localparam logic [2:0]  R_KBD_LOW      = 3'd0;
@@ -288,17 +375,35 @@ module cadr_io_board (
   logic in_block_c, kbm_c, clkgrp_c, sel_c;
   assign in_block_c = (ub_addr[17:7] == BLOCK) && !ub_addr[0];
   assign kbm_c      = in_block_c && (ub_addr[6:4] == GROUP_KBM);
+  assign clkgrp_c   = in_block_c && (ub_addr[6:4] == GROUP_CLOCK);
+
+  // The Chaosnet's group, the 74LS138 at LMUCON 0C18: `A<2:1>` AND READ
+  // AGAINST WRITE.  `0o764140` is the CSR both ways; `0o764142` is MY
+  // ADDRESS read and the transmit buffer written, and with `A3` up START
+  // read and the transmit buffer written again; `0o764144` is the receive
+  // buffer READ ONLY and `0o764154` is nothing at all, `A3` disabling it;
+  // `0o764146` is the bit count read only.  Five of the group's sixteen
+  // directions are answered by nothing, where the serial port's sixteen are
+  // all answered.
+  logic chgrp_c, sergrp_c, ch_sel_c;
+  assign chgrp_c  = in_block_c && (ub_addr[6:4] == GROUP_CHAOS);
+  assign sergrp_c = in_block_c && (ub_addr[6:4] == GROUP_SERIAL);
+  assign ch_sel_c = chgrp_c && ((ub_addr[2:1] == 2'd0)
+                                || (ub_addr[2:1] == 2'd1)
+                                || (ub_addr[2:1] == 2'd2 && !ub_write && !ub_addr[3])
+                                || (ub_addr[2:1] == 2'd3 && !ub_write));
+
   // `answers` refuses a WRITE of the microsecond counter's two halves, which
   // are `A<2:1>` 0 and 1; the interval timer and the GPIO take one.
-  assign clkgrp_c   = in_block_c && (ub_addr[6:4] == GROUP_CLOCK);
-  assign sel_c      = kbm_c || (clkgrp_c && (!ub_write || ub_addr[2]));
+  assign sel_c      = kbm_c || (clkgrp_c && (!ub_write || ub_addr[2]))
+                      || ch_sel_c || sergrp_c;
 
   // **HELD, NOT COMPUTED**: see the header.  These follow `ub_addr` a tick
   // behind, always, and every use of them below is at least fifty ticks after
   // `-UB MSYN` rose, so the tick is free.  They are the registers a scoped
   // XDC would name if this card ever needed one; nothing else here is more
   // than a tick deep.
-  logic       sel, kbm, clkgrp, wr;
+  logic       sel, kbm, clkgrp, chgrp, sergrp, wr;
   logic [2:0] which;
 
   // --------------------------------------------------------- the clocks
@@ -310,6 +415,14 @@ module cadr_io_board (
   assign usec_now = (usec_t == 8'd0);
   logic [31:0] usec_next;
   assign usec_next = usec_now ? usec + 32'd1 : usec;
+
+  logic [6:0]  hu_t;        // ticks to the next edge of the half-microsecond clock
+  logic        hu_now;
+  assign hu_now = (hu_t == 7'd0);
+
+  logic [4:0]  fclk_t;      // ticks to the next edge of `FCLK^`
+  logic        fclk_now;
+  assign fclk_now = (fclk_t == 5'd0);
 
   logic [10:0] kb_t;        // ticks to the next edge of `KB CLK^`
   logic        kb_now;
@@ -387,6 +500,172 @@ module cadr_io_board (
 
   assign csr_face = {ser_en, 1'b0, kbd_ready, mouse_ready, en175};
 
+  // ============================ THE SERIAL PORT ============================
+  //
+  // The Signetics 2651 at IOBSER 0A12 as `serial::Pci` has it: `A1` and `A0`
+  // are `UBADDR2` and `UBADDR1`, so `which[1:0]` picks the register, and `A3`
+  // IS NOT DECODED --- `764170`-`764176` are the same four again.  The chip
+  // drives `D0`..`D7` alone, so the upper byte floats.
+
+  logic [7:0] s_mode1, s_mode2, s_cmd;
+  logic       s_second;      // the mode pointer: register 2 next
+  logic [7:0] s_rhr, s_thr, s_shift;
+  logic       s_rx_ready, s_thr_full, s_shifting, s_tx_empty, s_dschg;
+  logic [2:0] s_errors;      // framing, overrun, parity: `SR5`-`SR3`
+  logic       s_dsr_was, s_dcd_was;
+
+  // Table 5 and Table 6, and the command register's own four modes.
+  logic [1:0] s_mode;
+  logic       s_local, s_dsr, s_dcd, s_cts, s_txclk, s_rxclk;
+  logic       s_tx_on, s_rx_on, s_rx_runs, s_tx_ready, s_tx_empty_vis;
+  assign s_mode   = s_cmd[7:6];        // 0 normal, 1 auto echo, 2 local, 3 remote
+  assign s_local  = (s_mode == 2'd2);
+  assign s_dsr    = ser_plugged;
+  assign s_dcd    = s_local ? s_cmd[1] : ser_plugged;   // `-DTR`'s in local loop back
+  assign s_cts    = s_local ? s_cmd[5] : ser_plugged;   // `-RTS`'s in local loop back
+  // Asynchronous, on the internal clock, which on this board is the only one
+  // the chip can have: `-TxC` and `-RxC` are not connected.
+  assign s_txclk  = (s_mode1[1:0] != 2'd0) && s_mode2[5];
+  assign s_rxclk  = (s_mode1[1:0] != 2'd0) && s_mode2[4];
+  // Auto echo and remote loop back cut "the CPU to transmitter link".
+  assign s_tx_on  = s_cmd[0] && s_txclk && (s_mode == 2'd0 || s_mode == 2'd2);
+  // "CR2 (RxEN) is ignored" in local loop back.
+  assign s_rx_on  = (s_cmd[2] || s_local) && s_rxclk;
+  assign s_rx_runs = s_rx_on && s_dcd;
+  assign s_tx_ready = s_tx_on && !s_thr_full;
+  assign s_tx_empty_vis = s_cmd[0] && s_tx_empty;
+
+  assign ser_status = {s_dsr, s_dcd, s_errors, s_tx_empty_vis || s_dschg, s_rx_ready, s_tx_ready};
+  assign ser_mode1 = s_mode1;
+  assign ser_mode2 = s_mode2;
+  assign ser_cmd   = s_cmd;
+
+  // "If the character length is less than 8 bits, the high order unused bits
+  // in the Holding Register are set to zero": `Framing::mask`, `MR13 MR12`
+  // choosing 5 to 8.
+  logic [7:0] s_mask;
+  assign s_mask = 8'hff >> (2'd3 - s_mode1[3:2]);
+
+  // What a read of the group gives, before the floating byte.
+  logic [7:0] s_byte;
+  always_comb begin
+    unique case (which[1:0])
+      2'd0:    s_byte = s_rhr;
+      2'd1:    s_byte = ser_status;
+      2'd2:    s_byte = s_second ? s_mode2 : s_mode1;
+      default: s_byte = s_cmd;
+    endcase
+  end
+
+  // ========================= THE CHAOSNET INTERFACE =========================
+  //
+  // The 74LS138 at LMUCON 0C18 decodes `A<2:1>` AND READ AGAINST WRITE, so
+  // the same address is a different register in the two directions, and `A3`
+  // is decoded for exactly two things: a read of `764152` is START where
+  // `764142` is MY ADDRESS, and the receive buffer's read is disabled at
+  // `764154`, which then answers nothing.  `which[1:0]` is `A<2:1>` and
+  // `which[2]` is `A3`.
+
+  localparam int unsigned CH_WORDS = 256;
+  // The 2147 at LMTBUF 0C10 and its twin at LMRBUF 0C04: 4,096 bits each on
+  // `TBCT<11:0>` and `RBCT<11:0>`, so 256 sixteen-bit words and a word past
+  // that has nowhere to go.
+  logic [15:0] ch_xmit [CH_WORDS];
+  logic [15:0] ch_rcv  [CH_WORDS];
+  logic [8:0]  ch_xn;        // words in the transmit buffer, 0 to 256
+  logic        ch_taken;     // START took it: the next write starts again at 0
+  logic [8:0]  ch_fill;      // words the far end has put in for the next packet
+  logic [8:0]  ch_rlen;      // words the packet in the buffer has
+  logic [8:0]  ch_rat;       // the read pointer, the 25LS193s at LMRBUF
+  logic [12:0] ch_rbits;     // what the bit counter was loaded with
+  logic [12:0] ch_left;      // bits not yet read out
+  logic [5:0]  ch_wbits;     // the five bits a write reaches, `chaos::board::WRITABLE`
+  logic        ch_tdone, ch_tabort, ch_rdone, ch_crc;
+  logic [3:0]  ch_lost;
+  logic [15:0] ch_rd;        // the buffer's word at `ch_rat`, a tick behind
+  logic [8:0]  ch_out, ch_send;
+  logic        ch_sending;
+
+  // Where the next word of a packet goes.  **ONE WRITE PORT, AND THE MUX IS
+  // ON ITS ADDRESS RATHER THAN IN THE PROCESS.**  A read of START takes the
+  // buffer (`Interface::start`'s `mem::take`), so the next word written
+  // starts a new packet at word zero; written as two stores at two addresses
+  // that is two write ports on one array, which Vivado refuses the way it
+  // refuses a mux on a RAM's read --- `Synth 8-2914`, a hard stop this
+  // project has already met once at the disk's block store.
+  logic [8:0] ch_wn;
+  assign ch_wn = ch_taken ? 9'd0 : ch_xn;
+
+  // "All read/write bits are initialized to zero on power-up", and the ten
+  // the hardware makes up: Receive Done, the CRC error --- which is one net
+  // with `-CBLBSY` on the board and two things to the software --- the lost
+  // count, Transmit Done and Transmit Abort.  Bits 13, 8 and 3 are the three
+  // write-only commands and read as zero.
+  assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+                      ch_tdone, ch_tabort, ch_wbits};
+
+  // "The number of bits in the incoming packet buffer, minus one.  After the
+  // whole packet has been read out, it will contain 7777."  `ch_left` is
+  // `rcv_bits - read` kept incrementally, so the subtraction never lands in
+  // the read path: the first read takes the partial word wreckage puts at
+  // the top and every one after it takes sixteen.
+  logic [12:0] ch_top, ch_step;
+  logic [11:0] ch_less;
+  assign ch_top  = ch_rbits - {(ch_rlen - 9'd1), 4'd0};
+  assign ch_step = (ch_rat == 9'd0) ? ch_top : 13'd16;
+  // `(left - 1) & 0o7777` in twelve bits: the subtraction wraps the same way.
+  assign ch_less = ch_left[11:0] - 12'd1;
+  assign chaos_bits = !ch_rdone          ? 12'd0
+                    : (ch_left == 13'd0) ? 12'o7777
+                                         : ch_less;
+
+  logic ch_buf, ch_rbuf;
+  // The transmit buffer's write and START go through the transmitter's
+  // `-TSR.SSYN`; the receive buffer's read comes off its RAM on `FCLK^`.
+  // **GATED ON THE GROUP.**  `which` is `A<3:1>` and says nothing about which
+  // of the eight groups the 74LS138 at IOBADR 0E20 picked, so an ungated
+  // match here reaches the clock group's own registers --- `0o764124` has
+  // `A<2:1>` = 2 and read it is the sixty-cycle clock, not a packet buffer.
+  assign ch_buf  = chgrp && (which[1:0] == 2'd1) && (wr || which[2]);
+  assign ch_rbuf = chgrp && (which[1:0] == 2'd2) && !wr && !which[2];
+
+  logic [15:0] ch_now;
+  always_comb begin
+    unique case (which[1:0])
+      2'd0:    ch_now = chaos_csr;
+      // MY ADDRESS, and START, which "the value read is the network address
+      // of this interface ... makes it easier for the hardware to get the
+      // source address into the packet".
+      2'd1:    ch_now = chaos_address;
+      // "The last three words read are the destination address, the source
+      // address, and the checksum", and past them the buffer reads zero:
+      // `self.rcv.get(self.rcv_at).copied().unwrap_or(0)`.  A slave that gave
+      // back the word its RAM still held would hand the software the last
+      // packet again --- the DDR bridge's lesson at a second buffer.
+      2'd2:    ch_now = (ch_rat < ch_rlen) ? ch_rd : 16'd0;
+      default: ch_now = {4'd0, chaos_bits};
+    endcase
+  end
+
+  // **THE WORD IS HELD FOR THE WHOLE CYCLE ONCE `-UB SSYN` IS UP.**  Both of
+  // these groups have reads that change what the next read of the same
+  // address gives --- the buffer's pointer, the mode pointer, the
+  // data-set-change latch --- and `cadr_busint_xbus.sv` strobes MD
+  // `UNIBUS_STROBE_NS` = 100 ns AFTER `-UB SSYN`, twenty ticks later.  A
+  // slave whose lines moved in between would hand the machine the next word.
+  logic [15:0] new_now, new_held;
+  assign new_now = chgrp ? ch_now : (FLOATING | {8'd0, s_byte});
+
+  logic ch_req;
+  assign ch_req = (ch_rdone && ch_wbits[4]) || (ch_tdone && ch_wbits[5]);
+
+  // Whether the receiver would still be on under the word being stored into
+  // the command register: `RxRDY` clears "when the receiver is disabled by
+  // CR2", and the test is against the NEW command and not the old one.
+  logic cmd_rx_on;
+  assign cmd_rx_on = (ub_wdata[2] || (ub_wdata[7:6] == 2'd2)) && s_rxclk;
+
+
   // ------------------------------------------------------- the interval timer
 
   logic [15:0] iv_count;   // counts the loaded interval down
@@ -400,6 +679,10 @@ module cadr_io_board (
   logic [1:0] edges;     // edges of `1 USEC CLK` STRICTLY after `-UB MSYN`
   logic [6:0] t_msyn;    // ticks since `-UB MSYN`, saturating
   logic [6:0] t_edge;    // ticks since the last counted edge, saturating
+  logic       hu_edge1;  // a half-microsecond edge has fallen strictly after `-UB MSYN`
+  logic [7:0] t_hu;      // ticks since it, saturating
+  logic       fc_edge1;  // an `FCLK^` edge has fallen at or after `-MSYN` + 33 ns
+  logic [6:0] t_fclk;    // ticks since it, saturating
 
   // **SATURATING, NEVER WRAPPING.**  `elapsed` in `cadr_busint_xbus.sv` was ten
   // bits and wrapped, and `-XBUS.RQ` fell for sixteen ticks in the middle of
@@ -419,9 +702,18 @@ module cadr_io_board (
     end else if (kbm) begin
       // Two stages of the microsecond clock, then the TD250.
       answer_now = (edges >= 2'd2) && (t_edge >= 7'(STRAIGHT_T));
-    end else if (which[1:0] == C_USEC_LOW) begin
+    end else if (clkgrp && which[1:0] == C_USEC_LOW) begin
       // One edge, and 313 ns rounded up to the grid.
       answer_now = (edges >= 2'd1) && (t_edge >= 7'(USEC_LOW_T));
+    end else if (sergrp) begin
+      // The first half-microsecond edge strictly after `-MSYN`, then 750 ns.
+      answer_now = hu_edge1 && (t_hu >= 8'(SERIAL_T));
+    end else if (ch_rbuf) begin
+      // The first `FCLK^` edge at or after `-MSYN` plus 33 ns, then a TD250.
+      answer_now = fc_edge1 && (t_fclk >= 7'(STRAIGHT_T));
+    end else if (ch_buf) begin
+      // Through the transmitter's `-TSR.SSYN`.
+      answer_now = (t_msyn >= 7'(CHAOS_BUF_T));
     end else begin
       answer_now = (t_msyn >= 7'(STRAIGHT_T));
     end
@@ -432,6 +724,15 @@ module cadr_io_board (
   // the cycle.
   logic land;
   assign land = ub_msyn && answer_now && !ub_ssyn;
+
+  // Reset: AIM-628's "completely resets the interface, just as at power up
+  // and Unibus Initialize", which is the write-only bit 13 of the CSR and
+  // `-INIT*` into the 8837 at IOBXCV 0F06 alike.  It subsumes Clear Receiver
+  // and Clear Transmitter, so it is applied at the foot of the block where
+  // `-UB INIT` already is and the order inside a store costs nothing.
+  logic ch_reset_now;
+  assign ch_reset_now = ub_init
+      || (land && chgrp && wr && (which[1:0] == 2'd0) && ub_wdata[13]);
 
   // ------------------------------------------------------------ the read side
 
@@ -451,13 +752,15 @@ module cadr_io_board (
         // `0o764116`: nothing drives the lines and they read as ones.
         default:    word = OPEN_BUS;
       endcase
-    end else begin
+    end else if (clkgrp) begin
       unique case (which[1:0])
         C_USEC_LOW:  word = usec_latch[15:0];
         C_USEC_HIGH: word = usec_latch[31:16];
         C_CLOCK:     word = mains;
         default:     word = OPEN_BUS;   // the GPIO: nothing is wired to it
       endcase
+    end else begin
+      word = ub_ssyn ? new_held : new_now;
     end
   end
 
@@ -468,17 +771,24 @@ module cadr_io_board (
 
   // ------------------------------------------------------------- the interrupt
 
+  // `SER.IREQ` is the 2651's `-RxRDY` and, by ECO 10 of `cadrio/iob.eco`,
+  // its `-TxRDY` on the same net, through the 74LS02 at IOBSER 0E11 ---
+  // which is why System 100's `sys/io1/serial.lisp` runs an output channel
+  // and an input channel on one vector.  **IT IS NO LONGER A PORT**: the
+  // chip is on this card now, so a testbench line left driving it fails to
+  // compile rather than quietly supplying the answer, which is the `md` trap
+  // this project records.  `CHAOS.IREQ` went the same way.
   logic clock_req, ser_req, kbm_req;
   assign clock_req = en175[3] && clock_ready;
-  assign ser_req   = ser_en && ser_ready;
+  assign ser_req   = ser_en && (s_rx_ready || s_tx_ready);
   assign kbm_req   = (kbd_ready && en175[2]) || (mouse_ready && en175[1]);
 
-  assign intr_request = clock_req || chaos_intr || ser_req || kbm_req;
-  assign intr_vector  = clock_req  ? CLOCK_VECTOR
-                      : chaos_intr ? CHAOS_VECTOR
-                      : ser_req    ? SERIAL_VECTOR
-                      : kbm_req    ? KBD_VECTOR
-                                   : 8'd0;
+  assign intr_request = clock_req || ch_req || ser_req || kbm_req;
+  assign intr_vector  = clock_req ? CLOCK_VECTOR
+                      : ch_req    ? CHAOS_VECTOR
+                      : ser_req   ? SERIAL_VECTOR
+                      : kbm_req   ? KBD_VECTOR
+                                  : 8'd0;
 
   // `-INIT*` into the 8837 at IOBXCV 0F06 IS the 2651's `RESET` pin.
   assign ser_reset = ub_init;
@@ -490,12 +800,17 @@ module cadr_io_board (
       sel         <= 1'b0;
       kbm         <= 1'b0;
       clkgrp      <= 1'b0;
+      chgrp       <= 1'b0;
+      sergrp      <= 1'b0;
       wr          <= 1'b0;
       which       <= 3'd0;
+      new_held    <= 16'd0;
 
       usec        <= 32'd0;
       usec_latch  <= 32'd0;
       usec_t      <= 8'(FIRST_EDGE_T - 1);
+      hu_t        <= 7'(HU_FIRST_T - 1);
+      fclk_t      <= 5'(FCLK_T - 1);
       kb_t        <= 11'(KB_CLK_T - 1);
       mains_acc   <= 24'd0;
       mains_wrap  <= 1'b0;
@@ -530,17 +845,175 @@ module cadr_io_board (
       edges       <= 2'd0;
       t_msyn      <= 7'd0;
       t_edge      <= 7'd0;
+      hu_edge1    <= 1'b0;
+      t_hu        <= 8'd0;
+      fc_edge1    <= 1'b0;
+      t_fclk      <= 7'd0;
+
+      // The Chaosnet interface as at power-up: "all read/write bits are
+      // initialized to zero", Transmit Done up so that the first
+      // transmission may start --- `CHAOS-XMT-INTR` waits for it --- and the
+      // receiver ready for a packet.
+      ch_wbits    <= 6'd0;
+      ch_tdone    <= 1'b1;
+      ch_tabort   <= 1'b0;
+      ch_rdone    <= 1'b0;
+      ch_crc      <= 1'b0;
+      ch_lost     <= 4'd0;
+      ch_xn       <= 9'd0;
+      ch_taken    <= 1'b0;
+      ch_fill     <= 9'd0;
+      ch_rlen     <= 9'd0;
+      ch_rat      <= 9'd0;
+      ch_rbits    <= 13'd0;
+      ch_left     <= 13'd0;
+      ch_rd       <= 16'd0;
+      ch_out      <= 9'd0;
+      ch_send     <= 9'd0;
+      ch_sending  <= 1'b0;
+      chaos_tx_go    <= 1'b0;
+      chaos_tx_len   <= 9'd0;
+      chaos_tx_valid <= 1'b0;
+      chaos_tx_word  <= 16'd0;
+      chaos_tx_clear <= 1'b0;
+      chaos_reset    <= 1'b0;
+
+      // The 2651 as its `RESET` pin leaves it: every register zero, which is
+      // synchronous mode and so both halves stopped.
+      s_mode1     <= 8'd0;
+      s_mode2     <= 8'd0;
+      s_cmd       <= 8'd0;
+      s_second    <= 1'b0;
+      s_rhr       <= 8'd0;
+      s_thr       <= 8'd0;
+      s_shift     <= 8'd0;
+      s_rx_ready  <= 1'b0;
+      s_thr_full  <= 1'b0;
+      s_shifting  <= 1'b0;
+      s_tx_empty  <= 1'b0;
+      s_dschg     <= 1'b0;
+      s_errors    <= 3'd0;
+      // `Pci::reset` takes the modem lines as they stand, so a reset is not
+      // itself a data-set change.
+      s_dsr_was   <= ser_plugged;
+      s_dcd_was   <= ser_plugged;
+      ser_tx_strobe <= 1'b0;
+      ser_tx_data   <= 8'd0;
     end else begin
       // --- the held match ------------------------------------------------
       sel    <= sel_c;
       kbm    <= kbm_c;
       clkgrp <= clkgrp_c;
+      chgrp  <= chgrp_c;
+      sergrp <= sergrp_c;
       wr     <= ub_write;
       which  <= ub_addr[3:1];
+
+      // --- the two far ends, which are Linux's ---------------------------
+      //
+      // BEFORE the bus cycle's own work, because muir's `Interface::write`
+      // and `Pci::write` both advance to the instant FIRST and apply the
+      // store after: with non-blocking assignments the later statement is
+      // the one that stands, so a store landing on the same tick as
+      // something off the cable wins, as it does there.
+      chaos_tx_go    <= 1'b0;
+      chaos_tx_clear <= 1'b0;
+      chaos_reset    <= 1'b0;
+      chaos_tx_valid <= 1'b0;
+      ser_tx_strobe  <= 1'b0;
+
+      // The transmit buffer streams out from the tick after START, a word a
+      // tick, and `cadr-chaosnet` frames it.
+      if (ch_sending) begin
+        chaos_tx_valid <= 1'b1;
+        chaos_tx_word  <= ch_xmit[ch_out[7:0]];
+        ch_out         <= ch_out + 9'd1;
+        if (ch_out + 9'd1 == ch_send) ch_sending <= 1'b0;
+      end
+
+      // The receive buffer fills a word at a time and commits whole.  A
+      // packet arriving on a buffer nobody emptied is DROPPED WHOLE and
+      // counted, which is what the four bits of `LOST COUNT` are for; muir's
+      // `arrive` does the same and says so.
+      if (chaos_rx_valid && !ch_rdone && ch_fill != 9'd256) begin
+        ch_rcv[ch_fill[7:0]] <= chaos_rx_word;
+        ch_fill              <= ch_fill + 9'd1;
+      end
+      if (chaos_rx_done) begin
+        ch_fill <= 9'd0;
+        if (ch_rdone) begin
+          if (ch_lost != 4'd15) ch_lost <= ch_lost + 4'd1;
+        end else begin
+          ch_rlen  <= ch_fill;
+          ch_rbits <= chaos_rx_bits;
+          ch_left  <= chaos_rx_bits;
+          ch_rat   <= 9'd0;
+          ch_crc   <= chaos_rx_crc;
+          ch_rdone <= 1'b1;
+        end
+      end
+      if (chaos_tx_done) begin
+        ch_tdone  <= 1'b1;
+        ch_tabort <= chaos_tx_abort;
+      end
+      // The buffer's word at the pointer, a tick behind it.  The pointer
+      // moves only at `-UB SSYN`, so this is a synchronous read of an
+      // address constant for the whole cycle --- the same fact that makes
+      // the control store and the scratchpads legitimate.
+      ch_rd <= ch_rcv[ch_rat[7:0]];
+
+      // The 2651's modem lines.  `Pci::advance` raises the data-set-change
+      // latch wherever `-DSR` or `-DCD` is not where it was, and in local
+      // loop back `-DCD` is the chip's own `-DTR`, so a store into the
+      // command register can move it.
+      if (s_dsr != s_dsr_was || s_dcd != s_dcd_was) begin
+        s_dschg   <= 1'b1;
+        s_dsr_was <= s_dsr;
+        s_dcd_was <= s_dcd;
+      end
+      // Its shift register's two edges, which are the baud-rate generator's
+      // and so the far end's.  `Pci::transmit`, written out.
+      if (ser_tx_done && s_shifting) begin
+        s_shifting <= 1'b0;
+        if (s_local) begin
+          if (s_rx_ready) s_errors[1] <= 1'b1;
+          s_rhr      <= s_shift & s_mask;
+          s_rx_ready <= 1'b1;
+        end else begin
+          ser_tx_strobe <= 1'b1;
+          ser_tx_data   <= s_shift & s_mask;
+        end
+        if (!(s_thr_full && s_tx_on && s_cts)) s_tx_empty <= 1'b1;
+      end
+      if (ser_tx_take && s_thr_full && s_tx_on && s_cts && (!s_shifting || ser_tx_done)) begin
+        s_shifting <= 1'b1;
+        s_shift    <= s_thr;
+        s_thr_full <= 1'b0;
+      end
+      // A character in, `Pci::receive`.  **THE TWO ECHOING MODES ARE NOT
+      // BUILT**: auto echo and remote loop back put the character back on the
+      // line, and muir does it at the END of the received frame, which is a
+      // second instant this seam does not carry --- `Pci::rx_times` gives
+      // two, the middle of the stop bit and the frame's end, and only the
+      // first reaches the card.  Nothing in System 100 sets either mode, and
+      // a card that echoed where no check could look would be a claim nothing
+      // exercises.  What IS built and held is `tx_on`'s refusal to run the
+      // transmitter in both of them, which is what a driver meets first.
+      if (ser_rx_strobe && s_rx_runs) begin
+        // "An overrun if the last is still there."
+        if (s_rx_ready) s_errors[1] <= 1'b1;
+        s_rhr      <= ser_rx_data & s_mask;
+        s_rx_ready <= 1'b1;
+      end
 
       // --- the microsecond clock, which no reset moves --------------------
       usec <= usec_next;
       usec_t <= usec_now ? 8'(USEC_PERIOD_T - 1) : usec_t - 8'd1;
+      // The half-microsecond clock the serial port's select waits on and
+      // `FCLK^` the Chaosnet's receive buffer reads on, both free-running
+      // off the same 32 MHz crystal and neither moved by a reset.
+      hu_t   <= hu_now   ? 7'(HU_PERIOD_T - 1) : hu_t - 7'd1;
+      fclk_t <= fclk_now ? 5'(FCLK_T - 1)      : fclk_t - 5'd1;
 
       // --- the sixty-cycle clock ------------------------------------------
       mains_wrap <= !mains_wrap && (mains_acc >= SIXTY_CYCLE_NS - 24'd10);
@@ -581,12 +1054,16 @@ module cadr_io_board (
 
       // --- the bus cycle ---------------------------------------------------
       if (!ub_msyn) begin
-        ub_ssyn <= 1'b0;
-        busy    <= 1'b0;
-        first   <= 1'b0;
-        edges   <= 2'd0;
-        t_msyn  <= 7'd0;
-        t_edge  <= 7'd0;
+        ub_ssyn  <= 1'b0;
+        busy     <= 1'b0;
+        first    <= 1'b0;
+        edges    <= 2'd0;
+        t_msyn   <= 7'd0;
+        t_edge   <= 7'd0;
+        hu_edge1 <= 1'b0;
+        t_hu     <= 8'd0;
+        fc_edge1 <= 1'b0;
+        t_fclk   <= 7'd0;
       end else begin
         busy  <= 1'b1;
         first <= !busy;
@@ -600,6 +1077,23 @@ module cadr_io_board (
           t_edge <= t_edge + 7'd1;
         end
 
+        // The half-microsecond clock, STRICTLY after `-UB MSYN` as the
+        // microsecond clock is, and `FCLK^` AT OR AFTER `-MSYN` plus 33 ns,
+        // which is seven ticks.  Each counts only its first edge: what
+        // follows is a delay line and not a second synchroniser.
+        if (busy && hu_now && !hu_edge1) begin
+          hu_edge1 <= 1'b1;
+          t_hu     <= 8'd1;
+        end else if (t_hu != 8'd0 && t_hu != 8'd255) begin
+          t_hu <= t_hu + 8'd1;
+        end
+        if (fclk_now && !fc_edge1 && t_msyn >= 7'(RBUF_SETUP_T)) begin
+          fc_edge1 <= 1'b1;
+          t_fclk   <= 7'd1;
+        end else if (t_fclk != 7'd0 && t_fclk != T_MAX) begin
+          t_fclk <= t_fclk + 7'd1;
+        end
+
         // **THE COUNTER'S LOW HALF IS THE COUNT AS IT STOOD AT `-UB MSYN`**,
         // and it latches the whole thirty-two bits on its way to answering.
         // Taken a tick after the strobe, which is where the held match first
@@ -610,6 +1104,10 @@ module cadr_io_board (
         end
 
         if (answer_now) ub_ssyn <= 1'b1;
+        // See the note at `new_now`: the two new groups have reads that move
+        // what the next read of the same address gives, and the MD strobe is
+        // twenty ticks past `-UB SSYN`.
+        if (land && (chgrp || sergrp)) new_held <= new_now;
 
         // --- what the cycle does, at `-UB SSYN` ---------------------------
         if (land) begin
@@ -637,7 +1135,7 @@ module cadr_io_board (
               end
               default: ;
             endcase
-          end else if (wr && which[1:0] == C_CLOCK) begin
+          end else if (clkgrp && wr && which[1:0] == C_CLOCK) begin
             // `-LOAD INTERVAL` loads the four 74LS193s from `UBI0`..`UBI15` and
             // clears the 74LS279's latch.  An interval of zero is over the
             // moment it is loaded.
@@ -646,6 +1144,106 @@ module cadr_io_board (
             iv_t        <= 12'(INTERVAL_T);
             iv_run      <= (ub_wdata != 16'd0);
             clock_ready <= (ub_wdata == 16'd0);
+          end else if (chgrp) begin
+            // --- the Chaosnet interface --------------------------------
+            if (wr) begin
+              unique case (which[1:0])
+                2'd0: begin
+                  // "All read/write bits are initialized to zero on
+                  // power-up", and the three write-only commands above them.
+                  // Reset is handled at the foot of this block, where
+                  // `-UB INIT`'s is: AIM-628 makes them the same thing, and
+                  // a Reset subsumes both clears, so the order costs nothing.
+                  ch_wbits <= {ub_wdata[5:4], 1'b0, ub_wdata[2:0]};
+                  if (ub_wdata[3]) begin   // Clear Receiver
+                    ch_rdone <= 1'b0;
+                    ch_crc   <= 1'b0;
+                    ch_rlen  <= 9'd0;
+                    ch_rat   <= 9'd0;
+                    ch_left  <= 13'd0;
+                    ch_rbits <= 13'd0;
+                    ch_fill  <= 9'd0;
+                    ch_lost  <= 4'd0;
+                  end
+                  if (ub_wdata[8]) begin   // Clear Transmitter
+                    ch_xn          <= 9'd0;
+                    ch_taken       <= 1'b0;
+                    ch_sending     <= 1'b0;
+                    ch_tdone       <= 1'b1;
+                    ch_tabort      <= 1'b0;
+                    chaos_tx_clear <= 1'b1;
+                  end
+                end
+                2'd1: begin
+                  // "A word into the outgoing packet buffer.  The last word
+                  // written is the destination address."  A 257th has
+                  // nowhere to go: the 2147 at LMTBUF 0C10 is 4,096 bits.
+                  if (ch_wn != 9'd256) begin
+                    ch_xmit[ch_wn[7:0]] <= ub_wdata;
+                    ch_xn               <= ch_wn + 9'd1;
+                  end else begin
+                    ch_xn <= ch_wn;
+                  end
+                  ch_taken  <= 1'b0;
+                  ch_tdone  <= 1'b0;
+                  ch_tabort <= 1'b0;
+                end
+                default: ;   // the read buffer and the bit count take none
+              endcase
+            end else if (which[1:0] == 2'd1 && which[2]) begin
+              // START: "initiates transmission of the packet in the outgoing
+              // packet buffer", and the buffer goes with it.
+              chaos_tx_go  <= 1'b1;
+              chaos_tx_len <= ch_xn;
+              ch_send      <= ch_xn;
+              ch_out       <= 9'd0;
+              ch_sending   <= (ch_xn != 9'd0);
+              ch_taken     <= 1'b1;
+            end else if (ch_rbuf && ch_rat != ch_rlen) begin
+              // A word out of the incoming packet buffer, and the bit
+              // counter down by what the read took.
+              ch_rat  <= ch_rat + 9'd1;
+              ch_left <= (ch_left > ch_step) ? (ch_left - ch_step) : 13'd0;
+            end
+          end else if (sergrp) begin
+            // --- the serial port, `serial::Pci`'s own four registers -----
+            if (wr) begin
+              unique case (which[1:0])
+                2'd0: begin
+                  s_thr      <= ub_wdata[7:0];
+                  s_thr_full <= 1'b1;
+                  s_tx_empty <= 1'b0;
+                end
+                // The SYN1, SYN2 and DLE registers are answered and nothing
+                // more; see the header for why they are not built.
+                2'd1: ;
+                2'd2: begin
+                  if (s_second) s_mode2 <= ub_wdata[7:0];
+                  else          s_mode1 <= ub_wdata[7:0];
+                  s_second <= !s_second;
+                end
+                default: begin
+                  // `RESET ERROR` is a command and not a bit: it clears the
+                  // three error flags and is not stored.
+                  if (ub_wdata[4]) s_errors <= 3'd0;
+                  s_cmd <= ub_wdata[7:0] & 8'hef;
+                  // "The receiver will terminate operation immediately",
+                  // and `RxRDY` clears "when the receiver is disabled by
+                  // CR2".
+                  if (!cmd_rx_on) s_rx_ready <= 1'b0;
+                  if (!ub_wdata[0]) s_tx_empty <= 1'b0;
+                end
+              endcase
+            end else begin
+              unique case (which[1:0])
+                2'd0: s_rx_ready <= 1'b0;
+                2'd1: s_dschg    <= 1'b0;
+                2'd2: s_second   <= !s_second;
+                // "The pointers are reset ... by performing a `Read Command
+                // Register` operation."
+                default: s_second <= 1'b0;
+              endcase
+            end
           end
         end
       end
@@ -654,6 +1252,45 @@ module cadr_io_board (
       if (ub_init) begin
         en175  <= 4'd0;
         ser_en <= 1'b0;
+        // `-INIT*` into the 8837 at IOBXCV 0F06 IS the 2651's `RESET` pin.
+        // `Pci::reset` takes the modem lines as they stand, so the reset is
+        // not itself a data-set change --- and the lines it takes are the
+        // ones the CLEARED command register makes, which is the cable's.
+        s_mode1     <= 8'd0;
+        s_mode2     <= 8'd0;
+        s_cmd       <= 8'd0;
+        s_second    <= 1'b0;
+        s_rhr       <= 8'd0;
+        s_thr       <= 8'd0;
+        s_shift     <= 8'd0;
+        s_rx_ready  <= 1'b0;
+        s_thr_full  <= 1'b0;
+        s_shifting  <= 1'b0;
+        s_tx_empty  <= 1'b0;
+        s_dschg     <= 1'b0;
+        s_errors    <= 3'd0;
+        s_dsr_was   <= ser_plugged;
+        s_dcd_was   <= ser_plugged;
+      end
+
+      // Reset, which AIM-628 makes the same thing for the Chaosnet
+      // interface: the write-only bit 13 of the CSR, and `-UB INIT`.
+      if (ch_reset_now) begin
+        ch_wbits    <= 6'd0;
+        ch_tdone    <= 1'b1;
+        ch_tabort   <= 1'b0;
+        ch_rdone    <= 1'b0;
+        ch_crc      <= 1'b0;
+        ch_lost     <= 4'd0;
+        ch_xn       <= 9'd0;
+        ch_taken    <= 1'b0;
+        ch_fill     <= 9'd0;
+        ch_rlen     <= 9'd0;
+        ch_rat      <= 9'd0;
+        ch_rbits    <= 13'd0;
+        ch_left     <= 13'd0;
+        ch_sending  <= 1'b0;
+        chaos_reset <= 1'b1;
       end
     end
   end

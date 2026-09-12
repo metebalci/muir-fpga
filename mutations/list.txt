@@ -6420,18 +6420,24 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation iob-init-leaves-the-serial-port-alone
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note **`ser_ready` is a port and not a 2651, and `-UB INIT` must reach it.**
-@note `-INIT*` into the 8837 at IOBXCV 0F06 IS the chip's own `RESET` pin, so
-@note the card owes the serial slice the pulse; the trace shows `serrdy`
-@note falling at every one of its three `-UB INIT` rows, and the testbench's
-@note stand-in for the 2651 drops its ready line on `ser_reset` and on nothing
-@note else --- so what this holds is that the CARD carried the pulse across.
-@note `ub_init` stays read at the enables below, so lint is not what catches
-@note this.
+@note **`-INIT*` INTO THE 8837 AT IOBXCV 0F06 IS THE 2651'S OWN `RESET` PIN.**
+@note This record used to break `ser_reset`, the output the card owed a chip
+@note that was somebody else's slice; the chip is on the card now, so what
+@note `-UB INIT` must reach is the command register --- `Pci::reset` puts
+@note every register back and both halves stop with them, and the trace shows
+@note `serrdy` falling at every one of its `-UB INIT` rows.
+@note
+@note The record was moved rather than deleted because the property did not
+@note change, only where it lives; it SURVIVED at the slice that moved the
+@note chip, which is the list's own rule about re-running every record aimed
+@note at a file somebody has been in.
 @old
-  assign ser_reset = ub_init;
+        s_mode1     <= 8'd0;
+        s_mode2     <= 8'd0;
+        s_cmd       <= 8'd0;
 @new
-  assign ser_reset = 1'b0;
+        s_mode1     <= 8'd0;
+        s_mode2     <= 8'd0;
 @end
 
 @mutation iob-init-clears-the-keyboard
@@ -6446,13 +6452,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
       if (ub_init) begin
         en175  <= 4'd0;
         ser_en <= 1'b0;
-      end
 @new
       if (ub_init) begin
         en175     <= 4'd0;
         ser_en    <= 1'b0;
         kbd_ready <= 1'b0;
-      end
 @end
 
 @mutation iob-init-reloads-the-interval-timer
@@ -6463,16 +6467,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note loads an interval, pulses `-UB INIT` while it is still running, and looks
 @note at `CLOCK READY`.
 @old
-      if (ub_init) begin
         en175  <= 4'd0;
         ser_en <= 1'b0;
-      end
 @new
-      if (ub_init) begin
         en175       <= 4'd0;
         ser_en      <= 1'b0;
         clock_ready <= 1'b1;
-      end
 @end
 
 @mutation iob-the-clock-group-decodes-a3
@@ -8707,4 +8707,430 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
         seam_addr  = ST_TAG;
         seam_wdata = {1'b0, p_tag};
       end
+@end
+
+# --- the Chaosnet interface and the serial port -----------------------------
+#
+# THE TWO GROUPS THE CARD DID NOT ANSWER UNTIL THIS SLICE, `0o764140`-`0o764176`.
+# What is in fabric is the REGISTER FACE and not the protocol: AIM-628 section
+# 7's five registers, both 256-word packet buffers, the bit counter and the
+# lost count; the 2651's four registers, its two pointers and its status byte.
+# The cable, the turn timer, the frame, the check word, the baud-rate
+# generator and the line are the `cadr-chaosnet` and `cadr-serial` programs',
+# and reach the card on a seam whose instants the trace records.
+#
+# WHAT CANNOT BE MUTATED HERE.  Nothing behind that seam: a record that made
+# the turn timer wrong, or a frame a bit long, would be mutating a testbench.
+# What the records below reach is every register a program can read, the
+# decode's two `A3` quirks, the three answer timings and the priority chain.
+#
+# AND ONE MEASURED EQUIVALENCE, so nobody files it as a hole.  The bit
+# counter's first step is `ch_top` --- the PARTIAL word wreckage puts at the
+# top of the incoming buffer --- and every step after it sixteen; the netlist
+# board reads 15 with one whole word left of 222 bits (`tests/chaos_rtl.rs`).
+# Under Loop Back a frame is always a whole number of words, so `ch_top` IS
+# sixteen and `assign ch_step = ch_top` agrees everywhere.  Only wreckage off
+# a real cable tells them apart, and the cable is `cadr-chaosnet`'s: the
+# partial length reaches the card on `chaos_rx_bits`, which this trace can
+# only give whole words.
+
+@mutation iob-the-chaosnet-group-decodes-a3
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **`A3` IS DECODED FOR EXACTLY TWO THINGS IN THE CHAOSNET'S GROUP AND
+@note NOTHING ELSE.**  The 74LS138 at LMUCON 0C18 takes `A<2:1>` and read
+@note against write; `A3` only makes a read of `764152` START where `764142`
+@note is MY ADDRESS, and only disables the receive buffer's read at `764154`.
+@note So `764150` and `764152` written reach the CSR and the transmit buffer
+@note exactly as `764140` and `764142` do.  A card that split the group on
+@note `A3` the way the keyboard's is split leaves eight addresses unanswered
+@note that MIT's answers.
+@old
+  assign ch_sel_c = chgrp_c && ((ub_addr[2:1] == 2'd0)
+@new
+  assign ch_sel_c = chgrp_c && !ub_addr[3] && ((ub_addr[2:1] == 2'd0)
+@end
+
+@mutation iob-the-receive-buffer-answers-with-a3-up
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `0o764154` is the one address of the card's whole block that answers
+@note NEITHER way: `A3` disables the incoming buffer's read, and a write of
+@note the buffer was never decoded.  A card answering it hands the software a
+@note word off a buffer the hardware never enabled, and on the real backplane
+@note it would be a slave pulling `-SSYN` at an address nothing is at.
+@old
+                                || (ub_addr[2:1] == 2'd2 && !ub_write && !ub_addr[3])
+@new
+                                || (ub_addr[2:1] == 2'd2 && !ub_write)
+@end
+
+@mutation iob-the-serial-group-decodes-a3
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **`A3` IS NOT DECODED AT THE 2651 AT ALL.**  `-CE` is
+@note `-SELECT.764160` and only `A1` and `A0` --- `UBADDR2` and `UBADDR1` ---
+@note reach the chip, so `764170`-`764176` are the same four registers again.
+@note `sys/doc/unaddr.text` names the first four and the aliases are the
+@note board's.  Eight addresses go dead if `A3` is taken.
+@old
+  assign sergrp_c = in_block_c && (ub_addr[6:4] == GROUP_SERIAL);
+@new
+  assign sergrp_c = in_block_c && (ub_addr[6:4] == GROUP_SERIAL) && !ub_addr[3];
+@end
+
+@mutation iob-the-transmit-buffer-answers-like-the-rest
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `busint::IOB_CHAOS_BUFFER_NS` is 350 and not 250: a write of the
+@note outgoing packet buffer and a read of START go through the
+@note transmitter's own `-TSR.SSYN`, where MY ADDRESS, the CSR and the bit
+@note count come straight off the TD250 at IOBADR 0E09.  Measured on the
+@note netlist board at every phase of the board's clocks, which is why it is
+@note one number and not a range.
+@old
+  localparam int unsigned CHAOS_BUF_T    = 350 / 5;
+@new
+  localparam int unsigned CHAOS_BUF_T    = 250 / 5;
+@end
+
+@mutation iob-the-receive-buffers-read-waits-no-clock
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The incoming buffer is a 2147 at LMRBUF 0C04 and its word comes out on
+@note `FCLK^`, the 8 MHz off the 74S163 at LMTCLK 0B03: `-MSYN` is taken at
+@note the first edge at least `IOB_RBUF_SETUP_NS` = 33 ns after it and
+@note `-SSYN` is a TD250 later, so the answer steps between 289 and 400 ns as
+@note `-MSYN` moves through the 125 ns period.  A card answering it straight
+@note off `-MSYN` is right one phase in twenty-five.
+@old
+    end else if (ch_rbuf) begin
+      // The first `FCLK^` edge at or after `-MSYN` plus 33 ns, then a TD250.
+      answer_now = fc_edge1 && (t_fclk >= 7'(STRAIGHT_T));
+@new
+    end else if (ch_rbuf) begin
+      answer_now = (t_msyn >= 7'(STRAIGHT_T));
+@end
+
+@mutation iob-the-serial-ports-select-has-no-phase
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The half-microsecond clock the 2651's select is synchronised to through
+@note the two 74LS74s at IOBSER 0F29 is at 203 modulo 500 from power-on,
+@note measured on the netlist board --- not at zero.  Every cycle of the
+@note group answers 750 ns after the first edge strictly past `-MSYN`, so
+@note moving the phase moves EVERY answer of the group, by as much as half a
+@note microsecond at the wrong side of an edge.
+@old
+  localparam int unsigned HU_FIRST_T     = (203 + 4) / 5;
+@new
+  localparam int unsigned HU_FIRST_T     = HU_PERIOD_T;
+@end
+
+@mutation iob-the-bit-count-is-not-minus-one
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note AIM-628: "the number of bits in the incoming packet buffer, MINUS ONE.
+@note After the whole packet has been read out, it will contain 7777 (a
+@note 12-bit minus-one)."  The driver divides it to get a word count, so a
+@note card off by one hands `uc-chaos.lisp` a packet a word long or a word
+@note short.
+@old
+                                         : ch_less;
+@new
+                                         : ch_less + 12'd1;
+@end
+
+@mutation iob-the-read-buffer-keeps-its-word-past-the-packet
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `self.rcv.get(self.rcv_at).copied().unwrap_or(0)`: past the end of the
+@note packet, and after Clear Receiver, the buffer reads ZERO.  A card giving
+@note back whatever its RAM still held hands the software the last packet's
+@note words again --- the DDR bridge's `rdata` lesson at a second buffer, and
+@note the trace reads exactly there.
+@old
+      2'd2:    ch_now = (ch_rat < ch_rlen) ? ch_rd : 16'd0;
+@new
+      2'd2:    ch_now = ch_rd;
+@end
+
+@mutation iob-the-read-pointer-runs-past-the-packet
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The 25LS193s at LMRBUF stop where the packet does: a read past the end
+@note takes nothing and moves nothing, so the bit counter stays at `7777` and
+@note the next packet starts where it should.  A pointer that ran on would
+@note put the following packet's first read somewhere in the middle of it.
+@old
+            end else if (ch_rbuf && ch_rat != ch_rlen) begin
+@new
+            end else if (ch_rbuf) begin
+@end
+
+@mutation iob-a-write-of-the-chaosnet-csr-reaches-every-bit
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note "All read/write bits are initialized to zero on power-up", and there
+@note are five of them: the timer's interrupt enable, Loop Back, Spy and the
+@note receive and transmit interrupt enables.  The other eleven are read-only
+@note or the three write-only commands, and a card storing them reads back
+@note Receive Done, Transmit Done, the lost count and the CRC error as
+@note whatever was last written --- which is the driver's own state machine
+@note fed its own last word.
+@old
+                  ch_wbits <= {ub_wdata[5:4], 1'b0, ub_wdata[2:0]};
+@new
+                  ch_wbits <= ub_wdata[5:0];
+@end
+
+@mutation iob-clear-receiver-leaves-the-lost-count
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Clear Receiver "clears Receive Done and enables the receiver to receive
+@note another packet", and muir's `write` clears the lost count with it: the
+@note four bits count packets the buffer had no room for SINCE it was last
+@note emptied, so a count that survived the emptying would grow to fifteen
+@note and stay there.
+@old
+                    ch_lost  <= 4'd0;
+@new
+                    ch_lost  <= ch_lost;
+@end
+
+@mutation iob-a-lost-frame-lands-in-the-buffer
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note A frame arriving on a buffer nobody emptied is DROPPED WHOLE and
+@note counted; muir's `arrive` says so and the four bits of `LOST COUNT` are
+@note what it is counted into.  A card that took it instead would replace a
+@note packet the driver has not finished reading, which is the one thing the
+@note lost count exists to say did not happen.
+@old
+        if (ch_rdone) begin
+          if (ch_lost != 4'd15) ch_lost <= ch_lost + 4'd1;
+        end else begin
+@new
+        if (1'b0) begin
+          if (ch_lost != 4'd15) ch_lost <= ch_lost + 4'd1;
+        end else begin
+@end
+
+@mutation iob-the-transmit-buffer-is-twice-its-size
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The 2147 at LMTBUF 0C10 is 4,096 bits on `TBCT<11:0>`: 256 sixteen-bit
+@note words, and a word past that has nowhere to go.  The trace writes three
+@note hundred and the card must hand over two hundred and fifty-six.
+@old
+                  if (ch_wn != 9'd256) begin
+@new
+                  if (ch_wn != 9'd511) begin
+@end
+
+@mutation iob-start-does-not-take-the-buffer
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `Interface::start` takes the outgoing buffer with the frame
+@note (`mem::take`), so the next word written starts a new packet at word
+@note zero.  A card that left the count standing appends the next packet to
+@note the last one and hands the cable both.
+@old
+              ch_taken     <= 1'b1;
+@new
+              ch_taken     <= 1'b0;
+@end
+
+@mutation iob-the-cable-busy-line-is-not-the-crc-bit
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Bit 14 is one net on the board and two things to the software: the CRC
+@note error, "only valid at two times", and `-CBLBSY` while the cable is
+@note busy.  muir's `csr()` ors `turn.busy_at(now)` into it and the driver
+@note reads the register while its own frame is going out, so a card that
+@note showed only the CRC verdict reads the bit down where the hardware reads
+@note it up.
+@old
+  assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+@new
+  assign chaos_csr = {ch_rdone, ch_crc && chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
+@end
+
+@mutation iob-transmit-done-survives-a-buffer-write
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Transmit Done is "set to 1 when a transmission is completed or aborted,
+@note and CLEARED TO 0 WHEN A WORD IS WRITTEN INTO THE OUTGOING PACKET
+@note BUFFER".  `CHAOS-XMT-INTR` waits on it, so a card that left it up while
+@note a packet is being written tells the driver the frame it has not sent
+@note yet is already away.
+@old
+                  ch_tdone  <= 1'b0;
+                  ch_tabort <= 1'b0;
+@new
+                  ch_tabort <= 1'b0;
+@end
+
+@mutation iob-the-chaosnet-outranks-the-clock
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Page IOBINT's 74LS00s at 0E12 make `V2 = (SER AND NOT CHAOS) OR CLOCK`
+@note and `V3 = CLOCK OR CHAOS`, so with more than one request latched the
+@note clock is named before the Chaosnet before the serial port before the
+@note keyboard and mouse.  **`0o270` IS COMPARED AGAINST muir NOW**: the
+@note trace plugs an interface in, which is what no trace against this model
+@note could do before this slice.
+@old
+  assign intr_vector  = clock_req ? CLOCK_VECTOR
+                      : ch_req    ? CHAOS_VECTOR
+@new
+  assign intr_vector  = ch_req    ? CHAOS_VECTOR
+                      : clock_req ? CLOCK_VECTOR
+@end
+
+@mutation iob-the-mode-pointer-does-not-flip-on-a-read
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The 2651 has one address for two mode registers and a pointer that
+@note alternates on every reference, read or written; "the pointers are reset
+@note ... by performing a Read Command Register operation" and by nothing
+@note else.  A card whose pointer moved only on a write gives mode register 1
+@note twice and never shows the software the baud rate it set.
+@old
+                2'd2: s_second   <= !s_second;
+@new
+                2'd2: ;
+@end
+
+@mutation iob-a-read-of-the-command-register-leaves-the-pointer
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The sheet's own sentence: "The pointers are reset ... by performing a
+@note `Read Command Register` operation."  It is the only way back, and
+@note `sys/io1/serial.lisp` uses it before every mode load; a card without it
+@note writes the two mode registers in whichever order the last reference
+@note left the pointer in.
+@old
+                default: s_second <= 1'b0;
+@new
+                default: ;
+@end
+
+@mutation iob-the-status-register-is-read-after-its-own-side-effect
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **A SLAVE'S LINES MUST NOT MOVE BETWEEN `-UB SSYN` AND THE MD STROBE.**
+@note `cadr_busint_xbus.sv` strobes MD `UNIBUS_STROBE_NS` = 100 ns after
+@note `-UB SSYN`, twenty ticks later, and both of these groups have reads
+@note that change what the same address gives next: the buffer's pointer, the
+@note mode pointer and the data-set-change latch.  A card driving the lines
+@note from its own state through the cycle hands the machine the NEXT word.
+@old
+      word = ub_ssyn ? new_held : new_now;
+@new
+      word = ub_ssyn ? new_now : new_held;
+@end
+
+@mutation iob-the-overrun-is-not-set
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note "An overrun if the last is still there": `SR4` is the ONLY error muir's
+@note 2651 ever sets --- the parity and framing flags beside it are the real
+@note chip's and no engine here raises them --- and the driver reads it to
+@note know it has lost a character rather than a line.  `RESET ERROR` in the
+@note command register is what clears it.
+@old
+        // "An overrun if the last is still there."
+        if (s_rx_ready) s_errors[1] <= 1'b1;
+@new
+        if (1'b0) s_errors[1] <= 1'b1;
+@end
+
+@mutation iob-the-transmitter-runs-in-auto-echo
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Auto echo and remote loop back cut "the CPU to transmitter link", so
+@note `SR0` is down in both however the command register's enable stands: a
+@note character written in those modes has nowhere to go.  A card that ran
+@note the transmitter anyway says ready to a driver whose characters are
+@note being thrown away.  **The echo itself is not built** --- muir puts the
+@note character back on the line at the END of the received frame, a second
+@note instant this card's seam does not carry --- so what stands here is the
+@note half a driver meets first, and the module's header says so.
+@old
+  assign s_tx_on  = s_cmd[0] && s_txclk && (s_mode == 2'd0 || s_mode == 2'd2);
+@new
+  assign s_tx_on  = s_cmd[0] && s_txclk;
+@end
+
+@mutation iob-local-loop-back-does-not-make-dtr-the-dcd
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note In local loop back the chip's own `-DTR` and `-RTS` become its `-DCD`
+@note and `-CTS`, which is how the port runs with nothing on the cable ---
+@note and `rx_runs` is `rx_on` with `-DCD` down, so without it the receiver
+@note never takes the character the transmitter just looped back to it.
+@old
+  assign s_dcd    = s_local ? s_cmd[1] : ser_plugged;   // `-DTR`'s in local loop back
+@new
+  assign s_dcd    = ser_plugged;
+@end
+
+@mutation iob-a-command-write-that-stops-the-receiver-leaves-rxrdy
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note "The receiver ... will terminate operation immediately.  Any character
+@note being assembled will be neglected", and `RxRDY` clears "when the
+@note receiver is disabled by CR2".  The test is against the word being
+@note stored and not the one already there, which is the second half of what
+@note this record holds.
+@old
+                  if (!cmd_rx_on) s_rx_ready <= 1'b0;
+@new
+                  if (cmd_rx_on) s_rx_ready <= 1'b0;
+@end
+
+@mutation iob-reset-error-is-stored-in-the-command-register
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `CR4` is a command and not a bit: it clears the three error flags and
+@note is not stored, so a read of the command register gives back what was
+@note written WITHOUT it.  `sys/io1/serial.lisp` writes the register with the
+@note bit set on every error it clears and reads it back to find its own
+@note enables.
+@old
+                  s_cmd <= ub_wdata[7:0] & 8'hef;
+@new
+                  s_cmd <= ub_wdata[7:0];
+@end
+
+@mutation iob-the-character-is-not-masked-to-the-frame
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note "If the character length is less than 8 bits, the high order unused
+@note bits in the Holding Register are set to zero": the frame mode register
+@note 1 selects masks what the shift register delivers and what the receiver
+@note loads.  A card that carried all eight bits through a five-bit frame
+@note hands the far end three bits the wire never had.
+@old
+          ser_tx_data   <= s_shift & s_mask;
+@new
+          ser_tx_data   <= s_shift;
+@end
+
+@mutation iob-the-chaosnet-reset-is-not-the-unibus-init
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note AIM-628's Reset "completely resets the interface, JUST AS AT POWER UP
+@note AND UNIBUS INITIALIZE": `-INIT*` into the 8837 at IOBXCV 0F06 reaches
+@note the 74LS174 at LMUCON 0B20's clear, the 74S08 at LMMODU 0B10 setting
+@note Transmit Done and the 74S08 at LMRCTL 0E10 clearing the receiver's
+@note busy.  A card whose interface ignored `-UB INIT` comes out of a bus
+@note reset with the driver's old enables still up.
+@old
+  assign ch_reset_now = ub_init
+      || (land && chgrp && wr && (which[1:0] == 2'd0) && ub_wdata[13]);
+@new
+  assign ch_reset_now =
+      (land && chgrp && wr && (which[1:0] == 2'd0) && ub_wdata[13]);
 @end

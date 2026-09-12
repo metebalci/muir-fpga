@@ -304,23 +304,47 @@ module cadr_arty #(
   //                   own lesson and means the FITTER DOES NOT TEST THE MOUSE
   //                   on this board.
   //   the serial port `cadr-serial`, its own slice and its own Buildroot
-  //                   package.  There is no 2651 in the fabric, so its
-  //                   `-RxRDY`/`-TxRDY` is held not-ready: the card's own
-  //                   `ser_reset` goes out to it regardless, because
-  //                   `-INIT*` into the 8837 at IOBXCV 0F06 IS that chip's
-  //                   reset pin.
-  //   the Chaosnet    its own slice.  `CHAOS.IREQ` on page IOBINT is an input
-  //                   of the priority encoder whether or not the LMU chips
-  //                   are fitted, which is why the card has the port at all.
+  //                   package.  **THE 2651 ITSELF IS IN THE FABRIC NOW**: its
+  //                   four registers, its two pointers and its status byte
+  //                   are on the card, and what is tied off here is the LINE
+  //                   --- the shift register's two edges and a character
+  //                   coming in, which the baud-rate generator would make and
+  //                   which a TCP socket paces instead.  With the cable out
+  //                   the sheet's own `V_OH` row keeps both halves stopped,
+  //                   so the whole chip constant-folds, which is the drive
+  //                   seam's lesson again.
+  //   the Chaosnet    its own slice.  **THE INTERFACE IS IN THE FABRIC NOW**
+  //                   too: AIM-628's five registers, both 256-word packet
+  //                   buffers, the bit counter and the lost count.  What is
+  //                   tied off is the CABLE --- the turn timer, the frame and
+  //                   the check word are `cadr-chaosnet`'s, and the address
+  //                   switches at LMMYNM read zero until it sets them.
   logic        kbd_strobe;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
-  logic        ser_ready, chaos_intr;
-  assign kbd_strobe  = 1'b0;
-  assign kbd_code    = 24'd0;
-  assign mouse_lines = 7'd0;
-  assign ser_ready   = 1'b0;
-  assign chaos_intr  = 1'b0;
+  logic        ser_tx_take, ser_tx_done, ser_rx_strobe, ser_plugged;
+  logic [7:0]  ser_rx_data;
+  logic [15:0] chaos_address, chaos_rx_word;
+  logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc;
+  logic [12:0] chaos_rx_bits;
+  logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
+  assign kbd_strobe     = 1'b0;
+  assign kbd_code       = 24'd0;
+  assign mouse_lines    = 7'd0;
+  assign ser_tx_take    = 1'b0;
+  assign ser_tx_done    = 1'b0;
+  assign ser_rx_strobe  = 1'b0;
+  assign ser_rx_data    = 8'd0;
+  assign ser_plugged    = 1'b0;
+  assign chaos_address  = 16'd0;
+  assign chaos_rx_valid = 1'b0;
+  assign chaos_rx_word  = 16'd0;
+  assign chaos_rx_done  = 1'b0;
+  assign chaos_rx_bits  = 13'd0;
+  assign chaos_rx_crc   = 1'b0;
+  assign chaos_tx_done  = 1'b0;
+  assign chaos_tx_abort = 1'b0;
+  assign chaos_cbl_busy = 1'b0;
   // What the card gives back.  Nothing on this board reads any of it: the
   // speaker has no pin, the 2651 is not fitted, and `iob_intr` and
   // `iob_vector` leave the machine as observations, the request itself going
@@ -332,6 +356,14 @@ module cadr_arty #(
   // folded like the rest.
   logic [2:0]  ub_ssyn_by;
   logic        ser_reset, iob_intr, audio, clock_ready;
+  // What the two chips on the card hand their far ends.  Nothing on this
+  // board takes any of it yet, so it folds into `witness` with the rest.
+  logic [7:0]  ser_mode1, ser_mode2, ser_cmd, ser_tx_data, ser_status;
+  logic        ser_tx_strobe;
+  logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
+  logic [8:0]  chaos_tx_len;
+  logic [15:0] chaos_tx_word, chaos_csr;
+  logic [11:0] chaos_bits;
   logic [7:0]  iob_vector, csr_face;
   logic [11:0] mouse_x, mouse_y;
   logic [15:0] interval;
@@ -560,8 +592,21 @@ module cadr_arty #(
       // The I/O board's cables, tied off above with the slice that will
       // drive each, and what the card shows.
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
-      .mouse_lines(mouse_lines), .ser_ready(ser_ready),
-      .chaos_intr(chaos_intr), .ser_reset(ser_reset),
+      .mouse_lines(mouse_lines), .ser_reset(ser_reset),
+      .ser_mode1(ser_mode1), .ser_mode2(ser_mode2), .ser_cmd(ser_cmd),
+      .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
+      .ser_tx_take(ser_tx_take), .ser_tx_done(ser_tx_done),
+      .ser_rx_strobe(ser_rx_strobe), .ser_rx_data(ser_rx_data),
+      .ser_plugged(ser_plugged), .ser_status(ser_status),
+      .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go),
+      .chaos_tx_len(chaos_tx_len), .chaos_tx_valid(chaos_tx_valid),
+      .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
+      .chaos_reset(chaos_reset), .chaos_csr(chaos_csr),
+      .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word),
+      .chaos_rx_done(chaos_rx_done), .chaos_rx_bits(chaos_rx_bits),
+      .chaos_rx_crc(chaos_rx_crc), .chaos_tx_done(chaos_tx_done),
+      .chaos_tx_abort(chaos_tx_abort), .chaos_cbl_busy(chaos_cbl_busy),
+      .chaos_bits(chaos_bits),
       .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),
       .csr_face(csr_face), .mouse_x(mouse_x), .mouse_y(mouse_y),
       .clock_ready(clock_ready), .interval(interval),
@@ -1287,6 +1332,10 @@ module cadr_arty #(
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
+                   ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
+                   ser_status, chaos_tx_go, chaos_tx_len, chaos_tx_valid,
+                   chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
+                   chaos_bits,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};

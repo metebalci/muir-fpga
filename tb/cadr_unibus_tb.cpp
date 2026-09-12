@@ -163,18 +163,14 @@ enum IfaceKind { kDiagnostic = 0, kIntCtl, kIntCtl2, kErrStatus, kUnwired, kMap,
 // The sweep's window: both blocks, what is between them and a page either side.
 const unsigned kSweepFirst = 0763000, kSweepLast = 0770776;
 
-// **THE CHAOSNET INTERFACE'S AND THE SERIAL PORT'S GROUPS, WHICH THE CARD
-// DECODES AND DOES NOT ANSWER.**  `0o764140`-`0o764176` is `ioboard::answers`'
-// groups 6 and 7, and the card as MIT built it answers them whether or not the
-// LMU chips and the 2651 are fitted, their `-SSYN` coming from the card's own
-// synchronisers.  `rtl/machine/cadr_io_board.sv` decodes the whole block and
-// answers only the two groups it implements, rather than invent the
-// transmitter's, the receive buffer's and the half-microsecond clock's timings
-// for parts nothing can exercise; `tb/cadr_io_board_tb.cpp` exempts exactly
-// these from its own sweep and prints the count, and so does this.  Whoever
-// builds either slice makes the card answer its group and moves both lines.
-const unsigned kUnbuiltFirst = 0764140, kUnbuiltLast = 0764176;
-bool Unbuilt(unsigned uaddr) { return uaddr >= kUnbuiltFirst && uaddr <= kUnbuiltLast; }
+// **NOTHING IN THE CARD'S BLOCK IS EXEMPT ANY MORE.**  This file used to
+// exempt `0o764140`-`0o764176` --- `ioboard::answers`' groups 6 and 7, the
+// Chaosnet interface and the serial port --- because the card decoded them
+// and answered neither, those being two other slices.  Both are built: the
+// AIM-628 registers and both packet buffers, and the 2651's four registers,
+// are on the card, with the cable and the line on a seam the two Linux
+// programs own.  So every direction `ioboard::answers` decodes is answered
+// here and the sweep holds all of them.
 
 // Nothing drives UBO8..UBO15 on a read of the status register, the two unnamed
 // slots of the keyboard group, the beep or the GPIO.
@@ -426,8 +422,6 @@ int main(int argc, char **argv) {
   dut->kbd_strobe = 0;
   dut->kbd_code = 0;
   dut->mouse_lines = kMouseIdle;
-  dut->ser_ready = 0;
-  dut->chaos_intr = 0;
   dut->eval();
 
   // One tick.  Nothing is behind the memory port on a Unibus cycle --- the
@@ -846,16 +840,11 @@ int main(int argc, char **argv) {
   }
 
   long swept = 0, answered_by_card = 0, answered_by_block = 0, answered_by_iface = 0, unanswered = 0;
-  long exempt = 0;
   for (unsigned u = kSweepFirst; u <= kSweepLast && failures < kMaxFailures; u += 2) {
     for (int w = 0; w < 2; ++w) {
       char where[64];
       std::snprintf(where, sizeof where, "0%o %s", u, w ? "written" : "read");
-      bool want_card = (card[u] & (w ? 2 : 1)) != 0;
-      if (want_card && Unbuilt(u)) {
-        want_card = false;
-        ++exempt;
-      }
+      const bool want_card = (card[u] & (w ? 2 : 1)) != 0;
       const bool want_block = (iface[u] == kDiagnostic);
       const bool want_iface = (iface[u] != kDiagnostic && iface[u] != kNoIface);
       const Cycle c = Run(u, w != 0, 0x5A5Au);
@@ -1170,10 +1159,10 @@ int main(int argc, char **argv) {
       "    the sixty-cycle clock went from zero to not zero over %ld ticks of standing still.\n"
       "    The sweep: %ld cycles over 0%o-0%o read and written, %ld answered by the card, %ld by the\n"
       "    block, %ld by nothing --- each ending on the NXM timer with MD zero --- and NEVER TWO AT\n"
-      "    ONCE, which is measured at ub_ssyn_by and not inferred from the word.  EXEMPT: %ld\n"
-      "    directions in the Chaosnet interface's and the serial port's groups\n"
-      "    (0764140-0764176), which ioboard::answers decodes and this card does not answer,\n"
-      "    those being two other slices.\n"
+      "    ONCE, which is measured at ub_ssyn_by and not inferred from the word.  NOTHING IS\n"
+      "    EXEMPT: the Chaosnet interface's group (0764140-0764156) and the serial port's\n"
+      "    (0764160-0764176) are answered by the card now, so every direction\n"
+      "    ioboard::answers decodes is held here.\n"
       "    The three slaves' sets are disjoint over all %zu addresses in both directions, against\n"
       "    muir's own ioboard::answers (%ld DEC rows and %ld DECNONE runs out of %s) and its\n"
       "    busint::register (%ld IFACE rows out of %s) --- no transcription of either.\n"
@@ -1181,7 +1170,7 @@ int main(int argc, char **argv) {
       "    block at 0766040-0766076 and the Unibus map at 0766140-0766176.\n",
       tick, card_reads, card_writes, block_reads, block_writes, iface_reads, iface_writes, kStrobeT,
       kAckT, carry_ticks, swept,
-      kSweepFirst, kSweepLast, answered_by_card, answered_by_block, unanswered, exempt, kAddrs, dec_rows,
+      kSweepFirst, kSweepLast, answered_by_card, answered_by_block, unanswered, kAddrs, dec_rows,
       dec_none_runs, path, iface_rows, ipath, answered_by_iface);
   return 0;
 }
