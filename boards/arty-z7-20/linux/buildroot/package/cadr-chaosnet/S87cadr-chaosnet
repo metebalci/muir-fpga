@@ -1,0 +1,80 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The Chaosnet at boot: cadr-chaosnet carrying packets between the CADR's
+# Chaosnet interface in the fabric and the network, and answering TIME,
+# UPTIME, STATUS and FILE.
+#
+# S87, after S80cadr-disk-packs and S86cadr-serial.  The order matters twice
+# over here, and only the second is a real dependency: the console log reads
+# in the order a person wants it, and the file root lives on the pack
+# partition that S80 mounts.  A boot where that mount failed still starts this
+# --- it says the root is missing and serves the other three services, which
+# is better than a machine with no time and no STATUS.
+#
+# **THE ADDRESSES ARE THE BAND'S AND NOT THIS PROGRAM'S.**  A band holds a
+# host table and calls its file and time host at the address that table gives.
+# A server answering anywhere else is a server the band never calls, and the
+# machine then boots, paints the window system and says its file host is not a
+# known host --- which is exactly the symptom this program exists to remove.
+# System 100, which is the band on this board's pack, is MIT-LISPM-1 at 3050
+# and calls MIT-OZ at 3060; System 304 is AMS-LISPM-1 at 4401 calling 4403.
+# So the default here is System 100's pair, and a board running another band
+# puts its own in the configuration file below rather than editing this
+# script.
+#
+# The log goes to the console, which is where the board is watched from
+# (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
+# program is told where to write instead.
+
+PACKS=/mnt/packs
+CONF="$PACKS/chaosnet.conf"
+PIDFILE=/var/run/cadr-chaosnet.pid
+
+# What the band on this board's pack wants.  Overridden, one line at a time,
+# by $CONF: it is a shell fragment on the pack partition, so it is changed
+# from the board or from a card reader without rebuilding the image.
+ADDRESS=3050,3060
+SERVER_NAME=MIT-OZ
+FILE_ROOT="$PACKS/files"
+EXTRA=
+
+start() {
+	[ -f "$CONF" ] && . "$CONF"
+
+	if [ -n "$FILE_ROOT" ]; then
+		mkdir -p "$FILE_ROOT" 2>/dev/null
+		if [ -d "$FILE_ROOT" ]; then
+			set -- --file-root "$FILE_ROOT"
+		else
+			echo "cadr-chaosnet: no $FILE_ROOT, so there is no file host;"
+			echo "cadr-chaosnet: the pack partition is probably not mounted"
+			set --
+		fi
+	else
+		set --
+	fi
+
+	printf "Starting cadr-chaosnet: "
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
+		--exec /usr/bin/cadr-chaosnet -- \
+		--address "$ADDRESS" --server-name "$SERVER_NAME" \
+		"$@" $EXTRA --log /dev/console
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+	printf "Stopping cadr-chaosnet: "
+	start-stop-daemon -K -q -p "$PIDFILE"
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?

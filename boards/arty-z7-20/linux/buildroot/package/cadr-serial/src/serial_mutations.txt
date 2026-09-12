@@ -1,0 +1,328 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for cadr-serial: bugs `serial_test.c` has to catch.
+#
+# `mutate.py` applies each record to a copy of this package's sources, builds
+# the check against it, and runs it.  A mutation the check FAILS on is a check
+# doing its job; one the check passes is reported as SURVIVED and the run is
+# red.  A record whose `@old` no longer matches its file exactly once, or that
+# does not compile, is BROKEN and also fails the run --- CLAUDE.md records two
+# fabric mutations reported as surviving that had never been built.
+#
+# THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
+# can read this one:
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @file      which of this package's sources to mutate
+#   @why       what the check is supposed to notice, printed when it does not
+#   @note      prose, repeatable; printed with @why on a survivor
+#   @old       the source to replace, exactly as it stands
+#   @new       what to put there; empty deletes
+#   @end
+#
+# WHERE THE LIST CAME FROM.  Every decision muir's `serial::Endpoint` makes
+# that this program repeats --- the two directions of the cable, the
+# modem-control lines following whoever is on it, one device at a time, the
+# device that is there served before a new one is accepted, a hang-up dropping
+# what was on the wire --- and then every rule `serial_face.h` states about
+# the register face, because a rule nothing exercises is not a rule.
+#
+# **THE MUTATIONS KEEP EVERY SIGNAL USED.**  CLAUDE.md's lint lesson, one
+# language along: a mutation that leaves a variable unread is caught by the
+# compiler and not by the check, and a record caught by its own build failure
+# is a record that tests nothing.  So a guard is disabled by weakening its
+# condition rather than by deleting the code that reads the guarded thing, and
+# a value is changed rather than a call removed.
+
+@mutation the-cable-is-crossed-machine-to-client
+@file serial_endpoint.c
+@why a character the machine sent must reach the client, not the machine's own receiver
+@note The classic failure of a program like this one, and the reason muir's
+@note `poll_cable` is worth porting line for line rather than rewriting: the
+@note two queues are one statement apart and each is a plausible name for the
+@note other.  A check that only counted characters would pass this.
+@old
+			q_push(&e->outbox, (uint8_t)c);
+@new
+			q_push(&e->inbox, (uint8_t)c);
+@end
+
+@mutation the-cable-is-crossed-client-to-machine
+@file serial_endpoint.c
+@why a character typed at the client must reach the machine's receiver, not go back out of the socket
+@note The other half of the record above.  This one echoes: the far end sees
+@note what it typed and could easily be read as the machine acknowledging it.
+@old
+	for (size_t k = 0; k < ntyped; ++k)
+		q_push(&e->inbox, typed[k]);
+@new
+	for (size_t k = 0; k < ntyped; ++k)
+		q_push(&e->outbox, typed[k]);
+@end
+
+@mutation the-lines-are-not-dropped-when-a-device-hangs-up
+@file serial_endpoint.c
+@why a cable pulled out drops DSR, DCD and CTS, and MIT's own driver watches them
+@note muir: "hanging up drops all three".  The Signetics sheet has the chip
+@note "conditioned to transmit data when the -CTS input is low", so a machine
+@note left believing a device is there goes on transmitting into nothing ---
+@note which the port then counts in DROPPED and nobody reads.
+@old
+	} else if (change == SER_CHANGE_HUNG_UP) {
+		serial_face_set_lines(f, 0);
+		e->lines_up = 0;
+@new
+	} else if (change == SER_CHANGE_HUNG_UP) {
+		serial_face_set_lines(f, SER_CTL_PLUGGED);
+		e->lines_up = 0;
+@end
+
+@mutation the-cable-is-not-put-down-at-start
+@file serial_endpoint.c
+@why the fabric's CTL at power-on is not this program's, and a stale one says a device is there
+@note The check that catches this is the cheapest in the file and the easiest
+@note to leave out: nothing is connected yet, so there is nothing to observe
+@note except the write itself.  On a board it is the difference between a
+@note machine that waits for a carrier and one that has always had it.
+@old
+	serial_face_set_lines(f, 0);
+	e->lines_up = 0;
+}
+@new
+	serial_face_set_lines(f, SER_CTL_PLUGGED);
+	e->lines_up = 0;
+}
+@end
+
+@mutation the-endpoints-record-of-the-cable-disagrees-with-what-it-put-on-it
+@file serial_endpoint.c
+@why the endpoint keeps its own record of the lines, and a record that disagrees with the register is worse than none
+@note It is what says whether there is anything to take down when the program
+@note stops, so a record stuck low leaves the machine believing a device is
+@note on a cable that has gone --- and MIT's driver waits on exactly that.
+@note Two records of one fact are only worth keeping if something compares
+@note them, which is why the check does rather than reading either alone.
+@old
+		serial_face_set_lines(f, SER_CTL_PLUGGED);
+		e->lines_up = 1;
+@new
+		serial_face_set_lines(f, SER_CTL_PLUGGED);
+		e->lines_up = 0;
+@end
+
+@mutation a-second-device-is-accepted-rather-than-turned-away
+@file serial_endpoint.c
+@why one thing is on the far end of a null-modem cable, so a second connection is closed as it arrives
+@note muir's rule and muir's reason: a second device would shout over the
+@note first.  Accepted instead, the first one's socket is left open and
+@note nobody ever tells it that it has been replaced --- so the symptom is a
+@note terminal that has simply gone quiet.
+@old
+		if (e->device >= 0) {
+			if (e->trace)
+				say("%s turned away: a device is on the cable", who);
+@new
+		if (0) {
+			if (e->trace)
+				say("%s turned away: a device is on the cable", who);
+@end
+
+@mutation a-new-device-is-turned-away-by-the-connection-just-dropped
+@file serial_endpoint.c
+@why the device that is there is served BEFORE a new one is accepted, so a reconnection in the same turn is not refused
+@note This is what the ordering inside `service` buys, written as the bug it
+@note prevents: `was` is the cable as the turn STARTED, so turning a newcomer
+@note away on it is exactly what accepting before serving would do.  muir
+@note states the property in its own words --- "someone who hangs up and
+@note attaches again is not turned away by the connection they have just
+@note dropped" --- and it is invisible to any check that lets the two events
+@note arrive in different passes, which is why the check makes both wait.
+@old
+		if (e->device >= 0) {
+			if (e->trace)
+				say("%s turned away: a device is on the cable", who);
+			++e->refused;
+@new
+		if (was) {
+			if (e->trace)
+				say("%s turned away: a device is on the cable", who);
+			++e->refused;
+@end
+
+@mutation the-cable-flickers-when-one-device-replaces-another
+@file serial_endpoint.c
+@why a device that went and another that came in one turn leaves the port plugged in throughout
+@note muir computes the change by comparing the two ENDS of the turn, not by
+@note reporting each event: "one device on the cable rather than none".
+@note Reported per event, the lines drop and the new device's plugging in is
+@note never seen, so the cable ends up down with somebody attached to it ---
+@note worse than a flicker, and a fault that would be read as the fabric's.
+@old
+	if (was && !is)
+		return SER_CHANGE_HUNG_UP;
+@new
+	if (was && (!is || gone))
+		return SER_CHANGE_HUNG_UP;
+@end
+
+@mutation the-outbox-is-not-cleared-when-the-cable-goes
+@file serial_endpoint.c
+@why a cable pulled out drops whatever was on the wire, so the next device is not handed the last one's characters
+@note muir clears the outbox in the same branch that drops the device, and
+@note says why.  Kept, the characters are delivered to whoever attaches next,
+@note which reads as the machine having said something it said minutes ago to
+@note somebody else.
+@old
+		e->dropped_on_hangup += e->outbox.len;
+		q_clear(&e->outbox);
+@new
+		e->dropped_on_hangup += e->outbox.len;
+@end
+
+@mutation what-went-with-the-cable-is-not-counted
+@file serial_endpoint.c
+@why the characters a hang-up threw away are the one record that they were lost at all
+@note The port's own DROPPED counts what the PORT dropped; what this program
+@note held and then let go is counted nowhere else.  A line that loses
+@note characters at every hang-up and says so is a line somebody can debug; a
+@note silent one is the never-written-DDR trap again.
+@old
+		e->dropped_on_hangup += e->outbox.len;
+@new
+		e->dropped_on_hangup += 0 * e->outbox.len;
+@end
+
+@mutation the-port-is-drained-with-nobody-on-the-cable
+@file serial_endpoint.c
+@why reading RDATA CONSUMES, so a character taken with nobody to give it to is lost where DROPPED cannot count it
+@note This is where the program parts from muir, so it is where a reader is
+@note most likely to "simplify" it back.  muir's `Cable::take` yields nothing
+@note unplugged because the chip it models will not transmit without CTS; the
+@note fabric's face promises no such thing.  Drained anyway, the characters
+@note queue here for a device that is not there and the port's counter stays
+@note at zero, so the one number that says how much the line lost reads clean.
+@old
+	if (e->device >= 0) {
+		while (e->outbox.len < SER_QUEUE_CAP) {
+@new
+	if (e->device >= 0 || 1) {
+		while (e->outbox.len < SER_QUEUE_CAP) {
+@end
+
+@mutation a-character-the-receiver-refused-is-thrown-away
+@file serial_endpoint.c
+@why the face says a refused write is lost, so a refusal must leave the character to be offered again
+@note `serial_face_put` returning 0 means nothing was written, which is the
+@note whole point of asking TX_ROOM first.  Dropping the character as well
+@note turns a receiver that is merely busy into a line that eats what is
+@note typed at it, and it does so only under load --- which is the shape of
+@note bug this project has met before and calls an exemption that tests
+@note nothing.
+@old
+			++e->refused_by_receiver;
+			break;
+@new
+			++e->refused_by_receiver;
+			q_drop(&e->inbox, 1);
+			break;
+@end
+
+@mutation the-socket-is-read-past-the-room-the-machine-has
+@file serial_endpoint.c
+@why what already waits for the receiver counts against what may be read off the socket, or the queue grows without bound
+@note muir's `BACKLOG.saturating_sub(cable.pending())`, and its reason: past
+@note the backlog "the socket is left unread and TCP's own window holds the
+@note rest back at whoever is typing --- which is what a far end that cannot
+@note keep up does".  Without it a far end that pastes a file into the socket
+@note is answered by memory here rather than by back pressure there.
+@old
+	const size_t room = e->inbox.len >= SER_BACKLOG ? 0 : SER_BACKLOG - e->inbox.len;
+@new
+	const size_t room = SER_BACKLOG;
+@end
+
+@mutation the-nagle-delay-is-left-on
+@file serial_endpoint.c
+@why a character at a time is the whole traffic here, and coalescing it only adds latency
+@note muir sets TCP_NODELAY on every device it accepts and says so at the
+@note line.  Left on, a person typing at the far end waits for the delayed
+@note acknowledgement of what they typed before, which reads as the machine
+@note being slow.  The option is swapped rather than removed so that every
+@note variable stays used and lint does not catch this instead of the check.
+@old
+		setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+@new
+		setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof one);
+@end
+
+@mutation rdata-is-read-without-asking-stat-first
+@file serial_face.c
+@why reading RDATA is the one read in this face with an effect, so an empty port must never be read
+@note `serial_face.h` states the rule and the reason in one sentence.  The
+@note valid bit in RDATA makes the mutant work against a model that has one,
+@note which is exactly why the check counts the blind READS rather than the
+@note characters that came back: a fabric that answered RX_VALID from a queue
+@note and handed the character over on any read would lose one per idle pass,
+@note and nothing downstream would ever see it.
+@old
+	if (!(f->read(f, SER_STAT) & SER_ST_RX_VALID))
+		return -1;
+@new
+	if (0)
+		return -1;
+@end
+
+@mutation the-transmitter-is-written-without-asking-for-room
+@file serial_face.c
+@why WDATA is refused, and lost, unless TX_ROOM is up, so the room is asked for before the character is written
+@note `serial_face.h`'s own words at the register.  Written blind, the
+@note character is gone and the caller is told it was taken, so the loss is
+@note silent and happens only when the machine is slow to read --- which is
+@note when the far end is typing fastest.
+@old
+	if (!(f->read(f, SER_STAT) & SER_ST_TX_ROOM))
+		return 0;
+@new
+	if (0 && !(f->read(f, SER_STAT) & SER_ST_TX_ROOM))
+		return 0;
+@end
+
+@mutation the-character-comes-out-of-the-wrong-bits-of-rdata
+@file serial_face.c
+@why RDATA carries the character in bits 7:0 and its valid bit at 8
+@note A shift here is the same class as the screen served mirrored: every
+@note character arrives, in order, at the right times, and every one of them
+@note is the wrong character.  Only a check that compares the bytes against
+@note what was sent can see it.
+@old
+	return (int)(w & 0xFFu);
+@new
+	return (int)((w >> 1) & 0xFFu);
+@end
+
+@mutation more-than-the-three-lines-are-put-on-the-cable
+@file serial_face.c
+@why only DSR, DCD and CTS are this end's to assert
+@note The mask is what keeps a caller's stray bit off the register, and CTL's
+@note undefined bits are the fabric's to define later.  A program that writes
+@note them now is a program that breaks when they mean something.
+@old
+	f->write(f, SER_CTL, lines & SER_CTL_PLUGGED);
+@new
+	f->write(f, SER_CTL, lines);
+@end
+
+@mutation the-rate-is-read-out-of-mode-register-1
+@file serial_face.c
+@why the rate is MR2's low four bits, and MODE carries MR1 in bits 7:0 and MR2 in bits 15:8
+@note muir `src/serial.rs`, `mode2::RATE_MASK`, which is the Signetics
+@note sheet's Table 6.  Nothing in this program acts on the rate, so this is
+@note a mutation of what it SAYS --- and a status line that names a rate the
+@note machine did not choose is worse than one that names none, because
+@note somebody will set their terminal to it.
+@old
+	return (f->read(f, SER_MODE) >> 8) & 0xFu;
+@new
+	return f->read(f, SER_MODE) & 0xFu;
+@end
