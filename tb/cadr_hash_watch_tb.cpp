@@ -394,7 +394,77 @@ int main(int argc, char **argv) {
   // charged would --- passes and prints the new figure, and whoever makes it
   // raises this.
   uint64_t floor = 1062507;
+
+  // ============================= THE WATCHPOINT ==============================
+  //
+  // CLAUDE.md's "THE BOARD PUT A STALE MEMORY DATA WORD INTO THE PAGE HASH
+  // TABLE" says the corruption is a WRITE that should not have happened, and
+  // that `cadr_memory_path.sv` loads `wdata <= md` at MEMGO REGARDLESS OF
+  // DIRECTION --- so on every read the whole of MD stands on `mem_wdata` at
+  // the bridge and one wrong bit of `mem_write` replaces the word being read.
+  // Three instruments, all of them free:
+  //
+  //   1. `--watch <octal physical word>`, repeatable: every transaction that
+  //      touches the word, with the microcycle, the direction, the data, the
+  //      processor's own WRCYC and whether the channel owned the bus.
+  //   2. ONE TRANSACTION PER BUS CYCLE, over the whole run.  CLAUDE.md:
+  //      "nothing in the tree counts transactions per bus cycle ... That is
+  //      the next check to build, and it is the one this bug has been living
+  //      behind."  `mem_req` stands until the bridge has taken the word, so
+  //      re-serving inside one `mem_req` is a duplicated transaction.
+  //   3. A WRITE NOBODY ASKED FOR: `mem_write` up while the processor's own
+  //      `dev_write` (which is `cpu_write`, off the WRCYC flip flop) is down
+  //      and the channel is not running.  That is the defect written as an
+  //      invariant rather than as an address.
+  std::vector<uint32_t> watch_words;      // CADR physical WORD addresses
+  uint64_t halt_quiet = 100000;           // ticks with no microcycle = stopped
+  uint64_t mem_delay = 0;                 // ticks the memory takes past the trace
+  uint64_t progress = 0;                  // say where the machine is, this often
+  // WHAT AN UNWRITTEN WORD OF DDR READS AS.  CLAUDE.md, measured on the board
+  // before anything was written: "Uninitialised DDR reads as alternating bands
+  // of zeros and ones, not as zero ... So an unwritten word reads 0x00000000
+  // in some places and 0xFFFFFFFF in others, and anything taking either as
+  // evidence a write happened is testing nothing."  muir's memory is zero and
+  // so is this model's, so the two machines differ wherever the CADR reads a
+  // word nothing has written --- which is a difference the board has and no
+  // check in this repository has ever had.  Applied PAST THE COMPARISON only,
+  // so the 1,062,507 microcycles against muir still mean what they meant.
+  uint32_t unwritten = 0u;
+  bool free_run = false;                  // no trace at all, straight from reset
+
   for (int i = 1; i < argc; ++i) {
+    if (!std::strcmp(argv[i], "--watch") && i + 1 < argc) {
+      watch_words.push_back(
+          static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 8)));
+      continue;
+    }
+    if (!std::strcmp(argv[i], "--halt-quiet") && i + 1 < argc) {
+      halt_quiet = std::strtoull(argv[++i], nullptr, 0);
+      continue;
+    }
+    if (!std::strcmp(argv[i], "--free")) { free_run = true; continue; }
+    if (!std::strcmp(argv[i], "--unwritten") && i + 1 < argc) {
+      unwritten = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 0));
+      continue;
+    }
+    if (!std::strcmp(argv[i], "--progress") && i + 1 < argc) {
+      progress = std::strtoull(argv[++i], nullptr, 0);
+      continue;
+    }
+    // WHAT THE MEMORY COSTS PAST THE COMPARISON.  Inside the comparison the
+    // answer is placed where muir placed it, out of the trace's `ack` column.
+    // Past it there is no column, and the default is to answer as soon as
+    // asked --- which is NOT the board, where the word crosses
+    // `cadr_axi_master`, `cadr_axi_widen`, a PS7 and a DDR3 controller.
+    // CLAUDE.md's own note that "a DDR round trip takes FEWER ticks at a
+    // longer tick and the acknowledgement lands on a different tick entirely"
+    // says the instant matters, so the delay is a knob and a run says which
+    // one it used.  muir's own `Responder::Memory` answers 573 to 608 ns
+    // after the grant, which is about 115 of these ticks.
+    if (!std::strcmp(argv[i], "--mem-delay") && i + 1 < argc) {
+      mem_delay = std::strtoull(argv[++i], nullptr, 0);
+      continue;
+    }
     if (!std::strcmp(argv[i], "--pack") && i + 1 < argc) pack_path = argv[++i];
     else if (!std::strcmp(argv[i], "--absorb") && i + 1 < argc)
       absorb_cap = std::atol(argv[++i]);
@@ -577,6 +647,7 @@ int main(int argc, char **argv) {
   std::vector<uint32_t> evict_buf(kBlockWords, 0);
   int next_slot = 0;
   long fills = 0, evictions = 0, denials = 0, deny_pending = 0;
+  long refill_declined = 0;
   long fill_ticks = 0;
   uint64_t fill_started = 0;
   long longest_wait = 0;
@@ -643,6 +714,38 @@ int main(int argc, char **argv) {
   bool bus_outstanding = false;
   int64_t ack_at_tick = 0;
   long mem_unkeyed = 0;     // cycles muir has no column for: the channel's
+  // When `mem_req` last rose, so a delay past the trace can be measured.
+  uint64_t req_rose_at = 0;
+  bool req_was = false;
+
+  // ---- the watchpoint's own state ----------------------------------------
+  // A word is watched by its CADR physical word address; `mem_addr` is a byte
+  // address in the reserved region, so the two differ by the base and a shift.
+  std::vector<uint8_t> watched(kMainWords, 0u);
+  for (uint32_t wd : watch_words)
+    if (wd < kMainWords) watched[wd] = 1;
+  long watch_hits = 0;
+  long watch_reads = 0, watch_writes = 0;
+  // One transaction per `mem_req`, and a write nobody asked for.
+  int txn_in_cycle = 0;
+  long cycles_counted = 0, cycles_multi = 0, multi_worst = 0;
+  long writes_unasked = 0, writes_unasked_shown = 0;
+  long multi_shown = 0;
+  // The halt, and the fingerprint at it.
+  uint64_t quiet_since = 0;
+  bool halted = false;
+  uint64_t halt_cycle = 0;
+  long fingerprint_hits = 0;
+  // DOES THE MODEL EXERCISE THE SUSPECT PATH AT ALL?  CLAUDE.md names three
+  // places: `PGF-RL` at 0o24074, whose `((MD) A-PGF-VMA)` puts the faulting
+  // VMA in MD and whose `((VMA-START-READ) ADD VMA (A-CONSTANT 1))` two
+  // instructions later runs a bus cycle at the page hash table's second word
+  // carrying that VMA on the write-data lines; `PGF-RWF` at 0o24047, which
+  // reads that word and deposits 4 into its status field; and `PGF-W-1` at
+  // 0o23551, where the board halts.  A run that never reaches them has not
+  // tested the thing, however long it is.
+  long visits_pgf_rl = 0, visits_pgf_rl_read = 0, visits_pgf_rwf = 0,
+       visits_pgf_w1 = 0;
 
   // ------------------------------------------------------------- the clock
   //
@@ -694,7 +797,11 @@ int main(int argc, char **argv) {
         bus_outstanding &&
         static_cast<int64_t>(t) >=
             ack_at_tick - (dut->mem_write ? 0 : kXbusAckNs / kTickNs);
-    if (dut->mem_req && (at_muirs_instant || !bus_outstanding)) {
+    if (dut->mem_req && !req_was) req_rose_at = t;
+    req_was = dut->mem_req;
+    // Past the trace: the delay this run was told to charge, from the rise.
+    const bool past_the_trace = !bus_outstanding && t >= req_rose_at + mem_delay;
+    if (dut->mem_req && (at_muirs_instant || past_the_trace)) {
       if (!bus_outstanding) ++mem_unkeyed;
       if (!served || served_addr != dut->mem_addr || served_write != dut->mem_write) {
         served = true;
@@ -704,6 +811,69 @@ int main(int argc, char **argv) {
         if ((a & 3u) != 0) ++mem_misaligned;
         const bool in_main = a >= kMainBase && a < kMainBase + 4u * kMainWords;
         const size_t w = (a - kMainBase) >> 2;
+
+        // ---------------------------------------------- the three instruments
+        ++txn_in_cycle;
+        // A WRITE NOBODY ASKED FOR.  `dev_write` is `cpu_write` straight off
+        // the WRCYC flip flop, and `ch_active` is the channel's interlock; a
+        // write at the bridge with neither up is a direction that was invented
+        // between the processor and the memory.
+        if (dut->mem_write && !dut->dev_write && !dut->ch_active) {
+          ++writes_unasked;
+          if (writes_unasked_shown < 40) {
+            ++writes_unasked_shown;
+            std::printf(
+                "WRITE NOBODY ASKED FOR  microcycle %" PRIu64 " tick %" PRIu64 "\n"
+                "    physical %o (word %zu)  data %08x\n"
+                "    PC %o  OPC %o  VMA %o (%08x)  MD %08x\n"
+                "    WRCYC %d  dev_write %d  dev_rq %d  phys %o"
+                "  ch_active %d ch_waiting %d\n",
+                fabric_cycles, t,
+                static_cast<unsigned>(w), w, dut->mem_wdata,
+                dut->pc, dut->opc, dut->vma, dut->vma, dut->md,
+                dut->wrcyc, dut->dev_write, dut->dev_rq,
+                static_cast<unsigned>(dut->phys),
+                dut->ch_active, dut->ch_waiting);
+            std::fflush(stdout);
+          }
+        }
+        // THE TRIPWIRE: the board's own word, by its VALUE.  The damage is a
+        // value and not only a mechanism --- the raw faulting VMA
+        // `0x261FC9F9`, whose top byte `0x26` is the Lisp data type 0o23
+        // where every one of the table's 8,019 other valid entries carries
+        // `0x0A`.  Catching it by its value catches it however it got there.
+        if (in_main && watched[w] && dut->mem_write &&
+            (dut->mem_wdata >> 24) != 0x0Au) {
+          std::printf(
+              "*** A WORD THAT IS NOT A PAGE HASH TABLE WORD: %08x into "
+              "physical %o, top byte %02x where the table's is 0a ***\n",
+              dut->mem_wdata, static_cast<unsigned>(w), dut->mem_wdata >> 24);
+          std::fflush(stdout);
+        }
+        // THE WATCHPOINT.
+        if (in_main && watched[w]) {
+          ++watch_hits;
+          if (dut->mem_write) ++watch_writes; else ++watch_reads;
+          std::printf(
+              "WATCH %s  physical %o  microcycle %" PRIu64 "  tick %" PRIu64 "\n"
+              "    data %08x   the word there was %08x%s\n"
+              "    PC %o  OPC %o  LPC %o  IR %012" PRIx64 "\n"
+              "    VMA %o (%08x)   MD %08x   OB %08x\n"
+              "    WRCYC %d  dev_write %d  dev_rq %d  device %d"
+              "  phys %o  ch_active %d ch_waiting %d  txn#%d\n",
+              dut->mem_write ? "WRITE" : "read ",
+              static_cast<unsigned>(w), fabric_cycles, t,
+              dut->mem_write ? dut->mem_wdata : main_mem[w],
+              main_mem[w], touched[w] ? "" : "  (nothing had written it)",
+              dut->pc, dut->opc, dut->lpc,
+              static_cast<uint64_t>(dut->ir),
+              dut->vma, dut->vma, dut->md, dut->ob,
+              dut->wrcyc, dut->dev_write, dut->dev_rq, dut->device,
+              static_cast<unsigned>(dut->phys),
+              dut->ch_active, dut->ch_waiting, txn_in_cycle);
+          std::fflush(stdout);
+        }
+
         if (dut->mem_write) {
           ++mem_writes;
           if (in_main) { main_mem[w] = dut->mem_wdata; touched[w] = 1; }
@@ -712,7 +882,11 @@ int main(int argc, char **argv) {
           ++mem_reads;
           if (in_main) {
             held_rdata = main_mem[w];
-            if (!touched[w]) ++mem_untouched_reads;
+            if (!touched[w]) {
+              ++mem_untouched_reads;
+              // Past the comparison the board's own answer, not muir's zero.
+              if (observing) held_rdata = unwritten;
+            }
           } else {
             ++mem_outside;
             auto it = elsewhere.find(a);
@@ -723,7 +897,28 @@ int main(int argc, char **argv) {
       if (!dut->mem_write) dut->mem_rdata = held_rdata;
       dut->mem_done = 1;
     }
-    if (!dut->mem_req) served = false;
+    if (!dut->mem_req) {
+      // ONE TRANSACTION PER BUS CYCLE.  The cycle is over; say so if the
+      // bridge was asked more than once inside it.
+      if (txn_in_cycle) {
+        ++cycles_counted;
+        if (txn_in_cycle != 1) {
+          ++cycles_multi;
+          if (txn_in_cycle > multi_worst) multi_worst = txn_in_cycle;
+          if (multi_shown < 40) {
+            ++multi_shown;
+            std::printf(
+                "MORE THAN ONE TRANSACTION IN ONE BUS CYCLE: %d, "
+                "microcycle %" PRIu64 " tick %" PRIu64 "  PC %o  phys %o\n",
+                txn_in_cycle, fabric_cycles, t, dut->pc,
+                static_cast<unsigned>(dut->phys));
+            std::fflush(stdout);
+          }
+        }
+        txn_in_cycle = 0;
+      }
+      served = false;
+    }
 
     // ---- the Xbus seam: nothing out there answers ---------------------
     dut->device_rdata = Poison(static_cast<uint32_t>(dut->phys) << 2);
@@ -742,19 +937,26 @@ int main(int argc, char **argv) {
         const uint32_t c = (tag >> 16) & 0xFFFu;
         const uint32_t h = (tag >> 8) & 0xFFu;
         const uint32_t b = tag & 0xFFu;
-        // THE REQUEST IS A LEVEL, NOT A PULSE, so a block already in a slot
-        // must not be fetched again.  Without this the feeder refilled one
-        // block 13,645 times per 100,000 microcycles past the comparison
-        // point, `store_busy` never fell for a whole tick, the walk in
-        // `C_LOOK` could never look, and the machine spun in
-        // `DISK-RECALIBRATE-WAIT` for ever from about microcycle 1,450,000.
-        // Nothing had ever run this harness past 1,062,507, so nothing had
-        // seen it.  Linux fills once per post and does not have the bug.
+        // WHAT THE REAL PROGRAM KNOWS AND THIS DID NOT.  `req_valid` is a
+        // LEVEL that stands from the post until the store's tag is written
+        // with the block, and `cadr-disk-pack` on the board acts on the POST
+        // and on what it has already served --- so it fills a slot once.  A
+        // feeder that fills on the level refills the same block for ever if
+        // the walk does not take it, and `store_busy` then never falls for a
+        // whole tick, which is the interlock the walk reads.  Measured: the
+        // band harness livelocks at about microcycle 1,420,000 doing exactly
+        // that, 34,000 fills of one block per 250,000 microcycles.
         bool already = false;
-        for (int s2 = 0; s2 < kSlots && !already; ++s2)
+        for (int s2 = 0; s2 < kSlots; ++s2)
           if (slot_valid[s2] && slot_tag[s2] == (tag & 0x7FFFFFFFu)) already = true;
         if (already) {
-          // The store has it; the walk has only to look.
+          ++refill_declined;
+          if (refill_declined <= 20)
+            std::printf("the store already holds %08x and the walk has not "
+                        "taken it: microcycle %" PRIu64 " tick %" PRIu64
+                        "  ch_active %d ch_waiting %d ch_slot %d\n",
+                        tag & 0x7FFFFFFFu, fabric_cycles, t,
+                        dut->ch_active, dut->ch_waiting, dut->ch_slot);
         } else if (unit != 0 || !pack.OnPack(c, h, b)) {
           // Linux cannot serve it.  A one-tick pulse, and only while the walk
           // is standing in `C_LOOK`: delivered anywhere else it drops the
@@ -883,6 +1085,95 @@ int main(int argc, char **argv) {
       }
     }
     ch_was = dut->ch_active;
+
+    // ------------------------------------------- the halt, and its fingerprint
+    //
+    // THE BOARD'S OWN FINGERPRINT, from CLAUDE.md: `PC 0o23555` with
+    // `OPC 0o23560` is `PGF-W-1+7` having returned into the `DISPATCH-XCT-NEXT
+    // MAP-STATUS-CODE` at `0o23553` and landed on case 4, which `D-PGF` sends
+    // to `ILLOP`.  A write fault whose map says the page is writable.
+    if (dut->clock_edge) {
+      if (dut->pc == 0023555u && dut->opc == 0023560u) {
+        ++fingerprint_hits;
+        if (fingerprint_hits <= 4) {
+          std::printf(
+              "THE BOARD'S FINGERPRINT: PC %o OPC %o at microcycle %" PRIu64
+              " (tick %" PRIu64 ")\n    VMA %o (%08x)  MD %08x  Q %08x\n",
+              dut->pc, dut->opc, fabric_cycles, t,
+              dut->vma, dut->vma, dut->md, dut->q);
+          std::fflush(stdout);
+        }
+      }
+      if (dut->pc == 0024074u) ++visits_pgf_rl;
+      if (dut->pc == 0024077u) ++visits_pgf_rl_read;
+      if (dut->pc == 0024047u) ++visits_pgf_rwf;
+      if (dut->pc == 0023551u) ++visits_pgf_w1;
+      quiet_since = t;
+      if (progress && fabric_cycles % progress == 0) {
+        std::printf("... microcycle %" PRIu64 "  tick %" PRIu64 "  PC %o  MD %08x\n"
+                    "      %ld served, %ld transfers, %ld bus cycles, "
+                    "%ld unasked writes, %ld multi-txn, %ld denials, %ld evictions\n"
+                    "      req_valid %d req_tag %08x (unit %u  c %u h %u b %u)"
+                    "  ch_active %d ch_waiting %d ch_slot %d store_miss %d  feeder %d\n",
+                    fabric_cycles, t, dut->pc, dut->md, fills, transfers,
+                    cycles_counted, writes_unasked, cycles_multi, denials, evictions,
+                    dut->req_valid, dut->req_tag,
+                    (dut->req_tag >> 28) & 7u, (dut->req_tag >> 16) & 0xFFFu,
+                    (dut->req_tag >> 8) & 0xFFu, dut->req_tag & 0xFFu,
+                    dut->ch_active, dut->ch_waiting, dut->ch_slot,
+                    dut->store_miss, static_cast<int>(feeder));
+        std::printf("      %ld reads of words nothing had written, answered "
+                    "%08x\n", mem_untouched_reads, unwritten);
+        for (uint32_t wd : watch_words)
+          if (wd < kMainWords)
+            std::printf("      physical %o holds %08x%s\n", wd, main_mem[wd],
+                        (main_mem[wd] >> 24) == 0x26u
+                            ? "   *** TOP BYTE 26: THE BOARD'S SIGNATURE ***"
+                            : "");
+        {
+          // THE SCREEN.  `cadr_xbus_ddr` answers the display's window at
+          // `DISPLAY_BASE`, so every frame-buffer word the machine writes is
+          // in `elsewhere`.  CLAUDE.md dates muir's painting: the first pixel
+          // at microcycle 1,422,167, the first CHARACTER at 4,441,390, the
+          // picture complete at about 6,880,000 --- and the BOARD, at its
+          // halt 169 million microcycles in, has never painted a character.
+          // So this number is the instrument that says whether the fabric is
+          // following muir's program or the board's.
+          long lit_words = 0, lit_bits = 0;
+          for (const auto &kv : elsewhere) {
+            if (kv.second) {
+              ++lit_words;
+              lit_bits += __builtin_popcount(kv.second);
+            }
+          }
+          std::printf("      the screen: %ld words written, %ld of them "
+                      "non-zero, %ld lit pixels\n",
+                      static_cast<long>(elsewhere.size()), lit_words, lit_bits);
+        }
+        if (refill_declined)
+          std::printf("      %ld refills declined (the store already had the "
+                      "block)\n", refill_declined);
+        std::fflush(stdout);
+      }
+    }
+    // A machine that retires no microcycle for a long time has stopped.  A
+    // memory stall is tens of ticks and a disk wait is a wait for an
+    // interrupt, which still runs microcycles, so this only fires on a halt.
+    if (!halted && quiet_since && t - quiet_since > halt_quiet) {
+      halted = true;
+      halt_cycle = fabric_cycles;
+      stopped_because = "the machine stopped retiring microcycles";
+      std::printf(
+          "THE MACHINE STOPPED: no microcycle for %" PRIu64 " ticks, at "
+          "microcycle %" PRIu64 " (tick %" PRIu64 ")\n"
+          "    PC %o  OPC %o  LPC %o  IR %012" PRIx64 "\n"
+          "    VMA %o (%08x)  MD %08x  Q %08x  OB %08x  -VMAOK %d\n",
+          halt_quiet, halt_cycle, t, dut->pc, dut->opc, dut->lpc,
+          static_cast<uint64_t>(dut->ir), dut->vma, dut->vma,
+          dut->md, dut->q, dut->ob, !dut->vmaok);
+      std::fflush(stdout);
+      break;
+    }
 
     if (dut->clock_edge && observing) {
       ++fabric_cycles;
@@ -1132,6 +1423,57 @@ int main(int argc, char **argv) {
     prev = take();
   }
   if (!stopped_because && t >= max_ticks) stopped_because = "the tick budget ran out";
+
+  // ===================== THE READOUT, AT WHATEVER STATE IT STOPPED IN =======
+  //
+  // `cadr_microcycle.sv`'s readout window: `ro_addr` is `{sel<3:0>,
+  // word<13:0>}` and the answer is three ticks behind.  The machine is
+  // halted here, so nothing moves under it.
+  {
+    auto ro = [&](unsigned sel, unsigned word) -> uint64_t {
+      dut->con_ro_addr = (sel << 14) | (word & 0x3FFFu);
+      for (int i = 0; i < 8; ++i) {
+        dut->clk = 1; dut->eval();
+        dut->clk = 0; dut->eval();
+      }
+      return static_cast<uint64_t>(dut->con_ro_data);
+    };
+    constexpr unsigned kRoMap1 = 7, kRoMap2 = 8, kRoOpcs = 9;
+    std::printf("\n---- the machine's own memories, read back through the console window\n");
+    std::printf("    map2[777] = %06" PRIx64 "        (the board reads 4FC9F9)\n",
+                ro(kRoMap2, 0777) & 0xFFFFFFull);
+    std::printf("    the OPC stack, newest first:");
+    for (unsigned i = 0; i < 8; ++i)
+      std::printf(" %o", static_cast<unsigned>(ro(kRoOpcs, i) & 0x3FFFull));
+    std::printf("\n");
+    // The page the board faults on, for whoever comes after: VMA 0o2640010 is
+    // page 2880, whose level-1 block is VMA<23:13>.
+    std::printf("    map1[%o] = %02" PRIx64 "   map1[%o] = %02" PRIx64 "\n",
+                (dut->vma >> 13) & 0x7FFu,
+                ro(kRoMap1, (dut->vma >> 13) & 0x7FFu) & 0x1Full,
+                0x131u, ro(kRoMap1, 0x131) & 0x1Full);
+  }
+
+  // ===================== WHAT THE THREE INSTRUMENTS SAW =====================
+  std::printf(
+      "\n---- the watchpoint\n"
+      "    %ld watched words; %ld transactions touched one, %ld reads and %ld writes\n"
+      "---- one transaction per bus cycle\n"
+      "    %ld bus cycles at the bridge, %ld of them with more than one "
+      "transaction (worst %ld)\n"
+      "---- a write nobody asked for\n"
+      "    %ld writes at the bridge with the processor's WRCYC down and the "
+      "channel idle\n"
+      "---- the suspect path\n"
+      "    PGF-RL (0o24074) %ld visits, its read at 0o24077 %ld, "
+      "PGF-RWF (0o24047) %ld, PGF-W-1 (0o23551) %ld\n"
+      "---- the fingerprint\n"
+      "    PC 23555 with OPC 23560 reached %ld times; the machine %s\n",
+      static_cast<long>(watch_words.size()), watch_hits, watch_reads, watch_writes,
+      cycles_counted, cycles_multi, multi_worst,
+      writes_unasked,
+      visits_pgf_rl, visits_pgf_rl_read, visits_pgf_rwf, visits_pgf_w1,
+      fingerprint_hits, halted ? "stopped" : "was still running");
 
   dut->final();
   delete dut;
