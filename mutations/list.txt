@@ -7824,3 +7824,342 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
       else dbg_own <= dbg_req && (cpu_msyn || !cpu_msyn) && !con_own;
 @end
+
+# ---------------------------------------------------------------- bus_audit
+#
+# ONE TRANSACTION PER BUS CYCLE, IN THE DIRECTION WRCYC NAMES, AND NONE
+# ANYWHERE ELSE.
+#
+# These are aimed at the property CLAUDE.md's page-hash-table corruption has
+# been narrowed to.  Its chain, in one paragraph: a word in MIT's page hash
+# table is the faulting virtual address rather than a page table word; MD is
+# exonerated by measurement, so main memory already held it; so the corruption
+# is a WRITE that should not have happened.  And `cadr_microcycle.sv` loads
+# `wdata` from MD at MEMGO regardless of direction --- measured on every one of
+# the boot PROM's 256 reads --- so one unwanted write replaces a memory word
+# with MD, at the read's own address, and neither the machine nor the microcode
+# can tell afterwards.
+#
+# WHAT EACH OF THE FOUR IS FOR.  The first is the board's own suspected fault
+# written down: an extra write beside a correct read, at the read's address,
+# carrying what stands on the write-data lines.  The second is the same shape
+# with the duplicate in the SAME direction, which is the silent one --- the
+# word does not change, so nothing downstream of the port can see it at all.
+# The third puts the duplicate in the bridge rather than in the adapter, where
+# `axi_master` structurally cannot reach it.  The fourth is the other half of
+# the property: a bus cycle the decode did not call main memory must leave the
+# memory port silent, and on this program that clause applies 88,698 times
+# against the memory clause's 512.
+#
+# MEASURED AGAINST THE NEIGHBOURING CHECKS, because a record that says nothing
+# new is worth knowing about.  Every one of the five was aimed at every other
+# check that carries the same file in its `sources`, and the table is this:
+#
+#   a-read-issues-a-write-beside-it                caught by axi_master too
+#   the-read-is-issued-a-second-time               caught by axi_master too
+#   the-bridge-asks-again-when-the-answer-has-gone SURVIVES machine;
+#                                                  caught by memory_path, tv,
+#                                                  ddr_boot
+#   the-bridge-answers-an-address-that-is-not-its-own  caught by all four
+#   a-device-write-is-also-written-to-main-memory  SURVIVES memory_path,
+#                                                  machine and ddr_boot;
+#                                                  caught by tv alone, and by
+#                                                  accident of its stimulus
+#
+# So two of the five are already covered one module down, and what is new is
+# the last three: a duplicate the composed machine check cannot see, and a
+# spurious write into real memory that the three checks whose business main
+# memory is all pass over.
+
+@mutation a-read-issues-a-write-beside-it
+@check bus_audit
+@file rtl/plumbing/cadr_axi_master.sv
+@note THE BOARD'S SUSPECTED FAULT, WRITTEN DOWN.  A read completes, and the
+@note adapter then issues a write at the read's own address carrying whatever
+@note stands on `mem_wdata` --- which `cadr_microcycle.sv` loads from MD at
+@note MEMGO whatever the direction, so it is the memory data register.  That
+@note is exactly the transaction `PGF-RL` would need for the page hash table
+@note word at physical 0o103757 to become the faulting VMA.
+@note
+@note The machine does not notice: `mem_rdata` still carries the right word,
+@note the bridge still acknowledges once, and the program runs on.  What sees
+@note it is the count of transactions inside one request and the direction the
+@note transaction went out in.
+@note
+@note Caught at microcycle 536,303 --- the boot PROM's FIRST main-memory cycle
+@note --- on three clauses at once: the write went out on a cycle whose WRCYC
+@note is clear, the request was answered twice, and the read issued one write
+@note transaction where it should have issued none.
+@old
+        RDATA: begin
+          if (m_axi_rvalid) begin
+            mem_rdata <= m_axi_rdata;
+            if (m_axi_rresp[1]) mem_error <= 1'b1;
+            state <= DONE;
+          end
+        end
+@new
+        RDATA: begin
+          if (m_axi_rvalid) begin
+            mem_rdata <= m_axi_rdata;
+            if (m_axi_rresp[1]) mem_error <= 1'b1;
+            m_axi_awaddr <= m_axi_araddr;
+            m_axi_wdata  <= mem_wdata;
+            aw_sent      <= 1'b0;
+            w_sent       <= 1'b0;
+            state        <= WRITE;
+          end
+        end
+@end
+
+@mutation the-read-is-issued-a-second-time
+@check bus_audit
+@file rtl/plumbing/cadr_axi_master.sv
+@note THE SILENT DUPLICATE.  The same read goes out twice, at the same
+@note address, and the second answer is the same word --- so no memory, no
+@note register and no program can tell.  Only a count of transactions per bus
+@note cycle can, which is why it is here.
+@note
+@note `mem_error` is used as the one-shot that makes it terminate.  That is
+@note contrived and is said rather than hidden: the register is cleared at
+@note every request in IDLE, so every read duplicates exactly once, and
+@note nothing in this check reads `mem_error` --- the harness folds it.  The
+@note alternative, `aw_sent`, is cleared only on the write path and would have
+@note duplicated the FIRST read alone.  CLAUDE.md's rule about mutations that
+@note lint would otherwise reject is the same rule: the bug is the extra
+@note transaction, and the flag is only what stops it repeating for ever.
+@note
+@note Caught at the second transaction going out with no request standing at
+@note the memory port, which is the clause a transaction invented downstream
+@note of the bridge falls over --- and the one that matters for the board.
+@old
+        DONE: begin
+          if (!mem_req) state <= IDLE;
+        end
+@new
+        DONE: begin
+          if (!mem_req) state <= IDLE;
+          else if (!mem_write && !mem_error) begin
+            mem_error <= 1'b1;
+            state     <= READ;
+          end
+        end
+@end
+
+@mutation the-bridge-asks-again-when-the-answer-has-gone
+@check bus_audit
+@file rtl/plumbing/cadr_xbus_ddr.sv
+@note THE DUPLICATE ONE MODULE HIGHER, where `axi_master` cannot reach it: its
+@note DUT is the adapter alone and its stimulus IS the requests, so a bridge
+@note that raises `mem_req` twice inside one Xbus cycle is outside what that
+@note check is able to be about.
+@note
+@note `done` is this slave's record that the cycle has been answered, and the
+@note header says it is cleared when the cycle ends because "a slave drives
+@note MEM<31:0> only while it is answering".  Clearing it as soon as the
+@note adapter has taken its answer away instead leaves `asked` still up, so
+@note `mem_req` rises again inside the same Xbus cycle and the whole
+@note transaction is repeated.
+@old
+    end else if (!asked) begin
+@new
+    end else if (!asked || (done && !mem_done)) begin
+@end
+
+@mutation the-bridge-answers-an-address-that-is-not-its-own
+@check bus_audit
+@file rtl/plumbing/cadr_xbus_ddr.sv
+@note THE OTHER HALF OF THE PROPERTY: a bus cycle the decode did not call main
+@note memory must leave the memory port silent.  On the boot PROM that clause
+@note applies 88,698 times --- 88,695 disk-controller polls, one Unibus write
+@note and two cycles to empty Xbus space --- against the memory clause's 512,
+@note so what the program does MOST of is what a spurious transaction would
+@note most likely ride on.
+@note
+@note Written as an OR rather than by deleting `sel`, so that both terms stay
+@note read and lint does not do the catching.  It is the ungated form on
+@note purpose: CLAUDE.md's `tv-answers-its-neighbours` records that a widened
+@note match which still honours the decode's own `device` tests the decode
+@note and not the slave, and a board on the backplane has no such wire.
+@old
+  assign asked = sel && dev_rq;
+@new
+  assign asked = sel || dev_rq;
+@end
+
+@mutation a-device-write-is-also-written-to-main-memory
+@check bus_audit
+@file rtl/machine/cadr_memory_path.sv
+@note THE CLOSEST THING IN THE TREE TO THE BOARD'S OWN SYMPTOM: a cycle that
+@note belongs to another slave ALSO reaches main memory, as a write, carrying
+@note what stands on the data lines.
+@note
+@note It is silent to every check that watches main memory.  The disk
+@note controller still answers its own cycle and still drives the word back,
+@note so the machine runs on unchanged; the two acknowledgements join as the
+@note open-collector line joins them.  And the address is the DEVICE'S ---
+@note physical 0o17377776, the disk's DA register --- which in DDR is millions
+@note of words past anything the boot PROM reads, so no memory check can see
+@note the word land.
+@note
+@note MEASURED AGAINST THE NEIGHBOURS, and the measurement is the point of the
+@note record: it SURVIVES `memory_path`, `machine` and `ddr_boot`, the three
+@note checks whose business this file is, and it survives `probe`.  It is
+@note caught by `tv` --- not for anything about transactions, but because that
+@note trace addresses the display's own registers on this seam and a write
+@note answered twice disturbs what the display returns.  So the three checks
+@note that would be asked about a spurious write into main memory all say
+@note nothing, and the one that catches it does so by accident of its
+@note stimulus.
+@note
+@note Caught here on the clause that says a bus cycle the decode did not call
+@note main memory must leave the memory port silent, which on this program
+@note applies 88,698 times against the memory clause's 512.
+@old
+  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb);
+@new
+  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb
+                                             || (device && cpu_write));
+@end
+
+# ----------------------------------------------------------- bus_audit_unit
+#
+# THE INSTRUMENT ITSELF.  An instrument nothing checks is worse than no
+# instrument --- it will be read on a board, once, and believed --- and these
+# are aimed at the ways this one could read wrong while looking right.
+#
+# The shapes that matter are the false negative and the false positive, and
+# both are here: a clause that stops firing, a counter that wraps, a latch that
+# moves off the first fault, a marker that stops separating "no faults" from
+# "no instrument", and a detector that fires on correct traffic.
+
+@mutation the-audit-stops-seeing-a-transaction-with-no-cycle
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE CLAUSE THE BOARD'S OWN SUSPECT WOULD FIRE.  A transaction the fabric
+@note invented --- one that goes out with no bus cycle open --- is the shape a
+@note spurious write has, and an instrument that had stopped watching for it
+@note would go on reading zero faults for ever and be believed.
+@note
+@note Written as a term that is never true rather than by deleting the arm, so
+@note that `cyc_open` stays read and lint does not do the catching.
+@old
+    if (req_rise && !cyc_open)                    fault_clause = C_NO_CYCLE;
+@new
+    if (req_rise && !cyc_open && !req_rise)       fault_clause = C_NO_CYCLE;
+@end
+
+@mutation the-audit-does-not-mind-the-direction
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note The clause that separates a write from a read at the port.  A duplicate
+@note in the same direction is silent to memory; one in the WRONG direction
+@note replaces a word with MD, and this is the only thing watching for it.
+@old
+    else if (req_rise && (mem_write != cyc_write)) fault_clause = C_DIRECTION;
+@new
+    else if (req_rise && (mem_write && cyc_write)) fault_clause = C_DIRECTION;
+@end
+
+@mutation the-fault-count-wraps-instead-of-saturating
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note A counter that wraps reads a small number after a large one, which is
+@note the false negative this whole module exists to rule out --- CLAUDE.md's
+@note `-XBUS.RQ` entry is the same fact one module along, and
+@note `cadr_mem_count.sv` carries its own record for it.  Here it is worse than
+@note there: a fault count that wrapped to zero reads exactly like a clean run.
+@old
+        if (!(&faults)) faults <= faults + 15'd1;
+@new
+        faults <= faults + 15'd1;
+@end
+
+@mutation the-record-is-the-last-fault-and-not-the-first
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note The first fault is the one with a clean neighbourhood around it; every
+@note one after it is downstream of a machine that has already been corrupted.
+@note A latch that kept moving would hand back the address of whatever went
+@note wrong last, which on a machine that has lost a page table word is
+@note anything at all.
+@old
+        if (first_clause == C_NONE) begin
+@new
+        if (first_clause == C_NONE || first_clause != C_NONE) begin
+@end
+
+@mutation the-marker-is-not-in-the-word
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note "A VALUE THAT MEANS NOTHING MUST NOT BE A VALUE THE INSTRUMENT CAN MEAN",
+@note which this repository learned twice by measurement: undriven EMIO reads
+@note all ones and looks exactly like four saturated counters, and
+@note never-written DDR reads as bands of zeros and ones.  With the marker
+@note gone, a clean instrument's word 0 reads as plain zero --- and so does a
+@note word that arrived from nowhere at all.
+@old
+      3'd0:    word_c = {MARK, 1'b0, stalled, 1'b1, faults};
+@new
+      3'd0:    word_c = {16'd0, 1'b0, stalled, 1'b1, faults};
+@end
+
+@mutation the-audit-faults-on-a-cycle-that-is-doing-nothing-wrong
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE FALSE POSITIVE, which is the other way an instrument fails and the
+@note one that wastes a person's week.  A detector that fires on correct
+@note traffic reports a board bug that is not there, and every other record
+@note here would still be caught if it did --- so the clean-traffic case is the
+@note first thing the check runs and this is what holds it.
+@note
+@note One request per bus cycle is right; making the count fault on the FIRST
+@note request rather than the second means every memory cycle the machine ever
+@note makes is reported as a duplicate.
+@old
+    else if (req_rise && (reqs != 2'd0))          fault_clause = C_TWO_REQS;
+@new
+    else if (req_rise && (reqs == 2'd0))          fault_clause = C_TWO_REQS;
+@end
+
+@mutation a-dead-port-erases-the-record
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note A request that falls with no answer is a different fault and has a
+@note counter of its own, because on a board where `ps7_post_config` has not
+@note run EVERY request falls that way.  Letting it take the first-fault latch
+@note means the instrument spends its one record on a fault anybody can
+@note already see four other ways, and destroys its own evidence in the
+@note process.
+@note
+@note The stall is made to take the latch here rather than keeping its own
+@note counter.  It is caught on the case where the port answers nothing: the
+@note latch must still be empty there and the fault count still zero.
+@old
+        if (answers == 2'd0 && !(&stalled)) stalled <= stalled + 15'd1;
+@new
+        if (answers == 2'd0 && !(&stalled)) begin
+          stalled <= stalled + 15'd1;
+          if (first_clause == C_NONE) first_clause <= C_TWICE;
+        end
+@end
+
+@mutation the-audit-does-not-see-an-answer-nobody-asked-for
+@check bus_audit_unit
+@file rtl/plumbing/cadr_bus_audit.sv
+@note THE ONE CLAUSE THAT REACHES PAST `cadr_machine`.  This module sits inside
+@note the machine and `cadr_axi_master` sits outside it, in `cadr_arty.sv`'s
+@note `g_ddr`, so the AXI address channels are not visible here at all: an
+@note adapter that ran a transaction of its own would raise no second
+@note `mem_req` and every other clause would stay silent.  What it cannot hide
+@note is the answer: the adapter holds `mem_done` until the bridge lets go, so
+@note a rise of it with no request standing cannot happen in a correct design.
+@note
+@note Without this clause the instrument watches the bridge; with it, the port.
+@note `mutations/list.txt`'s `the-read-is-issued-a-second-time` is the fault it
+@note is aimed at, one level out and on a board rather than in simulation.
+@old
+    else if (done_rise && !in_req)                fault_clause = C_LOOSE_ANS;
+@new
+    else if (done_rise && !in_req && in_req)      fault_clause = C_LOOSE_ANS;
+@end

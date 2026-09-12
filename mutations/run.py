@@ -433,6 +433,69 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # ONE TRANSACTION PER BUS CYCLE, IN THE DIRECTION WRCYC NAMES, AND NONE
+    # ANYWHERE ELSE.  The property a spurious write at a read's own address
+    # falls over, which is the shape CLAUDE.md's page-hash-table corruption has
+    # been narrowed to.  `axi_master` is one level down and cannot see it --- a
+    # check whose stimulus IS the transactions cannot count how many a bus
+    # cycle issued --- and `mem_count` holds the run's totals to 256 and 256,
+    # which is the boot PROM's arithmetic and not a property.
+    #
+    # `sources` is the three modules a spurious transaction can be born in:
+    # the bridge that raises `mem_req`, the adapter that turns it into AXI, and
+    # the memory path that decides which cycles reach the bridge at all.  The
+    # rest of the machine is `extra`, having `machine`'s own records aimed at
+    # it, and `tb/cadr_bus_audit_harness.sv` is the wiring rather than the
+    # thing checked.
+    #
+    # A record aimed here should be run against `axi_master`, `ddr_boot`,
+    # `machine` and `mem_count` too and the difference reported: a mutation
+    # they all catch says nothing new, and one only this catches is the hole it
+    # was written for.
+    # `cadr_ddr_map.sv` heads `sources` for the reason `memory_path`'s and
+    # `map_boot`'s entries put it there: Verilator reads the files in the
+    # order it is given them and a package has to be declared before the
+    # module that imports it, and `sources` is passed before `extra`.  It is
+    # not what these records are aimed at; `map_boot`'s are.
+    "bus_audit": {
+        "sources": [
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv", "rtl/plumbing/cadr_axi_master.sv",
+            "rtl/machine/cadr_memory_path.sv",
+        ],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/machine/cadr_spy_registers.sv", "rtl/machine/cadr_disk_controller.sv",
+            "rtl/machine/cadr_tv.sv", "rtl/machine/cadr_io_board.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_machine.sv", "rtl/plumbing/cadr_axi_widen.sv",
+            "tb/cadr_bus_audit_harness.sv",
+        ],
+        "top": "cadr_bus_audit_harness",
+        "tb": "tb/cadr_bus_audit_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
+    # THE SAME PROPERTY IN FABRIC, and the same name for it on purpose: the
+    # check above holds it for the one program `cadr_machine` can run under
+    # Verilator, and `rtl/plumbing/cadr_bus_audit.sv` carries it onto the board
+    # for the program the board runs.  Two implementations of one concept, so
+    # one term, which is what CLAUDE.md's first inherited rule asks for.
+    #
+    # The DUT is the module alone and the stimulus is directed.  That is not a
+    # smaller version of the check above; it is the only way the clauses
+    # themselves get exercised at all, a program not being something you can
+    # make fault on demand.
+    "bus_audit_unit": {
+        "sources": ["rtl/plumbing/cadr_bus_audit.sv"],
+        "top": "cadr_bus_audit",
+        "tb": "tb/cadr_bus_audit_unit_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
     # The probe the board will be read through. `tb/cadr_probe_harness.sv`
     # wires it to `cadr_machine` exactly as `boards/arty-z7-20/cadr_arty.sv` does and the
     # testbench shifts all 1,024 samples out through the probe's own JTAG shift
