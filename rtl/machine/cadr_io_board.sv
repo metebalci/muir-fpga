@@ -51,10 +51,45 @@
 // multiples of five --- one bit at 9,600 baud is 104,166 ns --- so the 5 ns
 // grid cannot carry them, and what the card has instead is a seam.
 // `docs/io-board.md`'s "What slice five built" says what each program owes
-// the card at the register face.  The SYN registers, the parity and framing
-// flags, the two echoing modes and the Chaosnet's timer interrupt are not
-// built either, and it says why: nothing in muir or on this board can tell a
-// card that has them from one that does not.
+// the card at the register face.
+//
+// **THE FOUR THINGS THAT USED TO BE LEFT OUT HERE ARE IN, AND WHAT HOLDS
+// EACH IS DIFFERENT.**  They were left out on the argument that nothing in
+// muir or on this board could tell a card that has them from one that does
+// not, and Mete reversed that on 12 Sep: "we need to add the above things i
+// guess, even if they are no testable or usable at the moment".  The rule
+// that stands is about CHECKS and not about the machine --- a register the
+// fabric does not have is a way this is not the CADR.  So:
+//
+//   - **The SYN1, SYN2 and DLE registers and their pointer.**  Built, and
+//     held by `build/iob.pass` against the Signetics sheet rather than
+//     against muir: muir keeps them (`Pci::syn`, `Pci::next_syn`) and
+//     exposes no accessor, and nothing on the chip or the board reads them
+//     back, so the trace has no column for them.  They leave the card on
+//     `ser_syn_face`, which is what keeps synthesis from trimming them.
+//   - **The parity and framing flags, `SR3` and `SR5`.**  Built, and held by
+//     the check's second configuration.  They cannot be held to muir at all:
+//     muir's behavioural 2651 raises neither, saying so in its own header,
+//     and the netlist chip that does is a different engine.  What raises
+//     them here is the seam, `ser_rx_parity` and `ser_rx_framing`, and
+//     nothing on this board drives either --- a TCP socket carries bytes and
+//     not bits.
+//   - **Auto echo and remote loop back.**  Built, and held to muir on the
+//     trace: the echoed character reaches the cable at the end of the
+//     RECEIVED frame, which `ser_rx_end` is, and the trace's `SOUT` rows are
+//     muir's own `Cable::outbound`.
+//   - **The Chaosnet's timer interrupt.**  There is nothing to build, and
+//     this is measured rather than argued.  AIM-628 calls bit 0 "Timer
+//     Interrupt Enable ... for the interval timer present in SOME VERSIONS
+//     of the interface", and `data/CADRIO.netlist` says this is not one of
+//     them: `TIMER.IEN` has exactly TWO pins in the whole board, the Q of
+//     the 74LS174 at LMUCON 0B20 that a CSR write loads and the input of the
+//     74LS244 at LMDATP 0D16 that reads it back, and `CHAOS.IREQ` is the
+//     74S51 at LMUCON 0E05 computing `(RDONE AND RIEN) OR (TDONE AND TIEN)`
+//     with no third term.  The bit stores and reads back, as it does here
+//     and in muir, and reaches no gate.  That is now a CHECKED claim rather
+//     than an absence: `iob-the-chaos-timer-enable-reaches-the-interrupt`
+//     ORs it into `ch_req` and the trace catches it.
 //
 // **THE SEAM IS THE UNIBUS AND NOT `-MEMRQ`.**  `cadr_busint_xbus.sv` already
 // drives `-UB MSYN`, `ub_write` and `ub_addr` and takes `-UB SSYN` back, and
@@ -193,10 +228,36 @@ module cadr_io_board (
     input  var logic        ser_tx_done,  // its frame ends
     input  var logic        ser_rx_strobe,// a character reaches the receive path
     input  var logic [7:0]  ser_rx_data,
+    // **THE RECEIVED FRAME'S OWN END, WHICH IS A SECOND INSTANT**, and the
+    // two errors only a far end counting bits can see.  `Pci::rx_times`
+    // gives both of the receiver's instants --- the middle of the stop bit,
+    // where the character is in the holding register, and the end of the
+    // frame --- and the echoing modes put the echoed character on the cable
+    // at the SECOND.  `ser_rx_strobe` was the only one this seam carried and
+    // that is why the echo was not built; it carries both now.
+    input  var logic        ser_rx_end,   // that character's last stop bit ends
+    // `SR3` and `SR5`.  A parity bit that did not agree and a stop bit that
+    // was low are properties of the FRAME, so they belong to whatever counts
+    // the bits, which on this board is past the seam: muir's behavioural
+    // 2651 raises neither and says so, and the netlist chip in `part.rs` is
+    // where they live there.  The card latches what it is handed, which is
+    // what the chip does with what its own receiver hands it.
+    input  var logic        ser_rx_parity, // that character's parity was wrong
+    input  var logic        ser_rx_framing,// ...or its stop bit was low
     // `-DSR`, `-DCD` and `-CTS` off the MC1489 at IOBSER 0B16.  Open, the
     // sheet's `V_OH` row gives the chip all three high and it stops.
     input  var logic        ser_plugged,
     output var logic [7:0]  ser_status,   // `SR7`-`SR0` as a read assembles them
+    // The SYN1, SYN2 and DLE registers and the pointer that walks them,
+    // brought out as `csr_face` and `interval` are and for a sharper reason:
+    // **nothing reads them back, so without a reader synthesis trims them
+    // and the fabric would not have the registers at all.**  The chip's own
+    // readers are the synchronous receiver's sync detection and the
+    // transmitter's idle fill, and this card has neither --- no synchronous
+    // mode, and nothing bit-wise on this side of the seam.  So this port is
+    // what makes them exist, and it is what `build/iob.pass` compares them
+    // at.  `{ptr, DLE, SYN2, SYN1}`.
+    output var logic [25:0] ser_syn_face,
 
     // --- THE CHAOSNET INTERFACE, the `lm*` pages of `data/CADRIO.netlist`.
     //
@@ -509,10 +570,25 @@ module cadr_io_board (
 
   logic [7:0] s_mode1, s_mode2, s_cmd;
   logic       s_second;      // the mode pointer: register 2 next
+  // Table 4's other pointer: a write of the status address is SYN1, then
+  // SYN2, then DLE, then SYN1 again, and a read of the command register puts
+  // it back with the mode pointer.  Three registers and a counter that
+  // wraps at three, exactly as `Pci::write`'s `(next_syn + 1) % 3` has it.
+  logic [7:0] s_syn1, s_syn2, s_dle;
+  logic [1:0] s_next_syn;
   logic [7:0] s_rhr, s_thr, s_shift;
   logic       s_rx_ready, s_thr_full, s_shifting, s_tx_empty, s_dschg;
   logic [2:0] s_errors;      // framing, overrun, parity: `SR5`-`SR3`
   logic       s_dsr_was, s_dcd_was;
+  // A character the receiver has finished and the echo has committed to,
+  // whose frame has not ended yet.  `Pci::receive` pushes it onto the cable
+  // the moment the receiver is done with it --- at the middle of the stop
+  // bit --- but stamps it with the frame's END, so this is a character
+  // already on the wire and not a decision still to be taken.  That is why
+  // no later command store can call it back and why `-UB INIT` does not
+  // clear it: a reset does not take a character off a cable.
+  logic       s_echo_due;
+  logic [7:0] s_echo_byte;
 
   // Table 5 and Table 6, and the command register's own four modes.
   logic [1:0] s_mode;
@@ -539,6 +615,15 @@ module cadr_io_board (
   assign ser_mode1 = s_mode1;
   assign ser_mode2 = s_mode2;
   assign ser_cmd   = s_cmd;
+  assign ser_syn_face = {s_next_syn, s_dle, s_syn2, s_syn1};
+
+  // The two modes that echo, Table 7's `CR7 CR6` = `01` and `11`.  Auto echo
+  // puts the received character back on the line AND gives it to the CPU;
+  // remote loop back puts it back and keeps it from the CPU --- "received
+  // data ... is not sent to the local CPU".  Both also cut the CPU's own
+  // transmit path, which `s_tx_on` above already refuses.
+  logic s_echoes;
+  assign s_echoes = (s_mode == 2'd1) || (s_mode == 2'd3);
 
   // "If the character length is less than 8 bits, the high order unused bits
   // in the Holding Register are set to zero": `Framing::mask`, `MR13 MR12`
@@ -893,6 +978,13 @@ module cadr_io_board (
       s_tx_empty  <= 1'b0;
       s_dschg     <= 1'b0;
       s_errors    <= 3'd0;
+      s_syn1      <= 8'd0;
+      s_syn2      <= 8'd0;
+      s_dle       <= 8'd0;
+      s_next_syn  <= 2'd0;
+      // At power-on there is no cable and nothing on it.
+      s_echo_due  <= 1'b0;
+      s_echo_byte <= 8'd0;
       // `Pci::reset` takes the modem lines as they stand, so a reset is not
       // itself a data-set change.
       s_dsr_was   <= ser_plugged;
@@ -990,20 +1082,45 @@ module cadr_io_board (
         s_shift    <= s_thr;
         s_thr_full <= 1'b0;
       end
-      // A character in, `Pci::receive`.  **THE TWO ECHOING MODES ARE NOT
-      // BUILT**: auto echo and remote loop back put the character back on the
-      // line, and muir does it at the END of the received frame, which is a
-      // second instant this seam does not carry --- `Pci::rx_times` gives
-      // two, the middle of the stop bit and the frame's end, and only the
-      // first reaches the card.  Nothing in System 100 sets either mode, and
-      // a card that echoed where no check could look would be a claim nothing
-      // exercises.  What IS built and held is `tx_on`'s refusal to run the
-      // transmitter in both of them, which is what a driver meets first.
+      // A character in, `Pci::receive`.  **THE TWO ECHOING MODES ARE BUILT
+      // NOW, AND WHAT MADE THEM BUILDABLE IS `ser_rx_end`.**  muir puts the
+      // echoed character on the cable at the END of the received frame while
+      // handing it to the CPU at the middle of the stop bit, so a seam
+      // carrying only `ser_rx_strobe` could not place it; the seam carries
+      // both instants and the card acts at each.  Remote loop back is the
+      // one mode in which the receive holding register is NOT loaded ---
+      // "received data is not sent to the local CPU" --- so it raises no
+      // overrun either, and auto echo does both.
       if (ser_rx_strobe && s_rx_runs) begin
-        // "An overrun if the last is still there."
-        if (s_rx_ready) s_errors[1] <= 1'b1;
-        s_rhr      <= ser_rx_data & s_mask;
-        s_rx_ready <= 1'b1;
+        // `SR3` and `SR5`, latched whatever the mode: the receiver assembles
+        // the character in all four of them and the errors are the frame's.
+        // `CR4` is what clears them, with the overrun, and that is the
+        // command register's business below.
+        if (ser_rx_parity)  s_errors[0] <= 1'b1;
+        if (ser_rx_framing) s_errors[2] <= 1'b1;
+        if (s_echoes) begin
+          s_echo_due  <= 1'b1;
+          s_echo_byte <= ser_rx_data & s_mask;
+        end
+        if (s_mode != 2'd3) begin
+          // "An overrun if the last is still there."
+          if (s_rx_ready) s_errors[1] <= 1'b1;
+          s_rhr      <= ser_rx_data & s_mask;
+          s_rx_ready <= 1'b1;
+        end
+      end
+      // The echoed character reaches the cable when its own frame ends.
+      // **THIS ASSIGNMENT IS AFTER THE SHIFT REGISTER'S ABOVE ON PURPOSE**:
+      // if a frame the transmitter began before the mode changed were to end
+      // on the very tick an echoed one does, muir would put both characters
+      // on the cable and a seam with one strobe can carry one, so the later
+      // non-blocking assignment stands and the echo is it.  Nothing in
+      // either reference brings the two together; said here rather than
+      // claimed impossible.
+      if (ser_rx_end && s_echo_due) begin
+        s_echo_due    <= 1'b0;
+        ser_tx_strobe <= 1'b1;
+        ser_tx_data   <= s_echo_byte;
       end
 
       // --- the microsecond clock, which no reset moves --------------------
@@ -1214,9 +1331,21 @@ module cadr_io_board (
                   s_thr_full <= 1'b1;
                   s_tx_empty <= 1'b0;
                 end
-                // The SYN1, SYN2 and DLE registers are answered and nothing
-                // more; see the header for why they are not built.
-                2'd1: ;
+                // SYN1, then SYN2, then DLE, then SYN1 again: Table 4's
+                // second pointer, `Pci::write`'s `(next_syn + 1) % 3`.  The
+                // three registers are the chip's and are built here for that
+                // reason alone --- nothing on this board reads them and
+                // nothing ever will, synchronous mode being the only thing
+                // they are for.  `ser_syn_face` is what makes them survive
+                // synthesis and what the check compares.
+                2'd1: begin
+                  unique case (s_next_syn)
+                    2'd0:    s_syn1 <= ub_wdata[7:0];
+                    2'd1:    s_syn2 <= ub_wdata[7:0];
+                    default: s_dle  <= ub_wdata[7:0];
+                  endcase
+                  s_next_syn <= (s_next_syn == 2'd2) ? 2'd0 : s_next_syn + 2'd1;
+                end
                 2'd2: begin
                   if (s_second) s_mode2 <= ub_wdata[7:0];
                   else          s_mode1 <= ub_wdata[7:0];
@@ -1240,8 +1369,13 @@ module cadr_io_board (
                 2'd1: s_dschg    <= 1'b0;
                 2'd2: s_second   <= !s_second;
                 // "The pointers are reset ... by performing a `Read Command
-                // Register` operation."
-                default: s_second <= 1'b0;
+                // Register` operation."  BOTH of them: the mode pointer and
+                // the SYN pointer, which is the only thing outside a write
+                // of the status address that moves the second one.
+                default: begin
+                  s_second   <= 1'b0;
+                  s_next_syn <= 2'd0;
+                end
               endcase
             end
           end
@@ -1269,6 +1403,16 @@ module cadr_io_board (
         s_tx_empty  <= 1'b0;
         s_dschg     <= 1'b0;
         s_errors    <= 3'd0;
+        // `RESET` "clears the Mode, Command and Status registers"; `Pci`
+        // takes the whole of itself back to its default, the SYN registers
+        // and their pointer with it, and its header argues that reading.
+        // **`s_echo_due` IS NOT IN THIS LIST**, and the note at its
+        // declaration is why: it stands for a character already on the
+        // cable, which a reset of the chip does not recall.
+        s_syn1      <= 8'd0;
+        s_syn2      <= 8'd0;
+        s_dle       <= 8'd0;
+        s_next_syn  <= 2'd0;
         s_dsr_was   <= ser_plugged;
         s_dcd_was   <= ser_plugged;
       end

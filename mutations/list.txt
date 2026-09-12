@@ -4368,6 +4368,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note it caught somebody else's rot rather than the slice's own.  **The
 @note anchor is the whole fold now**, from the request path's pulses to
 @note `sintr`, so that a line added anywhere in it rots this loudly again.
+@note
+@note **AND AN EIGHTH TIME**, when the 2651's SYN registers and their pointer
+@note joined the fold as `ser_syn_face`.  That output exists for the fold:
+@note nothing reads those three registers back, on the chip or on the board,
+@note so without a reader synthesis trims them and the fabric would not have
+@note them at all.  Caught by this slice running every record aimed at the
+@note files it touched before trusting any run --- the rule above, followed
+@note a third time, and the third time it was the rule and not luck.
 @old
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
@@ -4375,6 +4383,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    ser_status, chaos_tx_go, chaos_tx_len, chaos_tx_valid,
                    chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
                    chaos_bits,
+                   ser_syn_face,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
@@ -4385,6 +4394,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    ser_status, chaos_tx_go, chaos_tx_len, chaos_tx_valid,
                    chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
                    chaos_bits,
+                   ser_syn_face,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};
@@ -9038,9 +9048,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note writes the two mode registers in whichever order the last reference
 @note left the pointer in.
 @old
-                default: s_second <= 1'b0;
+                  s_second   <= 1'b0;
+                  s_next_syn <= 2'd0;
 @new
-                default: ;
+                  s_next_syn <= 2'd0;
 @end
 
 @mutation iob-the-status-register-is-read-after-its-own-side-effect
@@ -9067,10 +9078,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note know it has lost a character rather than a line.  `RESET ERROR` in the
 @note command register is what clears it.
 @old
-        // "An overrun if the last is still there."
-        if (s_rx_ready) s_errors[1] <= 1'b1;
+          // "An overrun if the last is still there."
+          if (s_rx_ready) s_errors[1] <= 1'b1;
 @new
-        if (1'b0) s_errors[1] <= 1'b1;
+          if (1'b0) s_errors[1] <= 1'b1;
 @end
 
 @mutation iob-the-transmitter-runs-in-auto-echo
@@ -9160,6 +9171,245 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
   assign ch_reset_now =
       (land && chgrp && wr && (which[1:0] == 2'd0) && ub_wdata[13]);
+@end
+
+@mutation iob-the-chaos-timer-enable-reaches-the-interrupt
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **THE RECORD THAT TURNS AN ABSENCE INTO A CLAIM.**  AIM-628 calls bit 0
+@note of the Chaosnet CSR "Timer Interrupt Enable (read/write), for the
+@note interval timer present in SOME VERSIONS of the interface", and this
+@note board is not one of them.  That is measured off MIT's own netlist and
+@note not argued: `TIMER.IEN` has exactly TWO pins in the whole of
+@note `data/CADRIO.netlist` --- the Q of the 74LS174 at LMUCON 0B20 that a
+@note CSR write loads, and the input of the 74LS244 at LMDATP 0D16 that reads
+@note it back --- and `CHAOS.IREQ` comes off the 74S51 at LMUCON 0E05 as
+@note `(RDONE AND RIEN) OR (TDONE AND TIEN)`, with no third term.
+@note `Interface::interrupt_request` in muir is those two terms and no more.
+@note
+@note So the bit stores and reads back and reaches no gate, and until this
+@note record that was an absence rather than something a check held.  The
+@note trace sets it with BOTH done bits up and BOTH interrupt enables clear,
+@note which is the one arrangement in which a card that let it through asks
+@note for `0o270` where this one asks for nothing, and follows it with
+@note Receive Interrupt Enable in the same arrangement so that "nothing asks"
+@note is not a card whose request is broken altogether.
+@old
+  assign ch_req = (ch_rdone && ch_wbits[4]) || (ch_tdone && ch_wbits[5]);
+@new
+  assign ch_req = (ch_rdone && ch_wbits[4]) || (ch_tdone && ch_wbits[5])
+                  || ch_wbits[0];
+@end
+
+@mutation iob-the-syn-pointer-does-not-wrap
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note Table 4's second pointer is three deep and wraps: `Pci::write`'s
+@note `(next_syn + 1) % 3`.  A counter that ran to three instead leaves the
+@note fourth write of the status address in the DLE register a second time
+@note and the fifth nowhere the sheet names, so a driver loading SYN1, SYN2
+@note and DLE in one breath --- which is how every 2651 driver loads them ---
+@note gets two of the three.
+@note
+@note **Nothing reads these registers back, on the chip or on the board**, so
+@note there is no column of muir's to compare and `ser_syn_face` is what
+@note carries them out; the check's own model of Table 4, fed by the trace's
+@note cycles, is what holds them.  That is the one thing in `iob` held to the
+@note Signetics sheet rather than to muir, and `cadr_io_board.sv`'s header
+@note says so.
+@old
+                  s_next_syn <= (s_next_syn == 2'd2) ? 2'd0 : s_next_syn + 2'd1;
+@new
+                  s_next_syn <= s_next_syn + 2'd1;
+@end
+
+@mutation iob-a-command-read-leaves-the-syn-pointer
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note "The pointers are reset ... by performing a Read Command Register
+@note operation" --- BOTH of them.  A card that put only the mode pointer
+@note back leaves the SYN pointer wherever the last write left it, so a
+@note driver that re-initialises the chip the way the sheet prescribes loads
+@note its three SYN registers rotated.  `Pci::read`'s command arm sets
+@note `second_mode` and `next_syn` together.
+@note
+@note The trace walks the pointer off zero and then reads the command
+@note register twice with it there, which the run counts.
+@old
+                default: begin
+                  s_second   <= 1'b0;
+                  s_next_syn <= 2'd0;
+                end
+@new
+                default: s_second <= 1'b0;
+@end
+
+@mutation iob-the-syn-registers-are-loaded-in-the-wrong-order
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The pointer names SYN1, then SYN2, then DLE.  Swapping the first two
+@note keeps every register written and every bit used --- so lint cannot be
+@note the thing that catches it, which is what this record is written to
+@note avoid --- and hands a synchronous driver its two sync characters the
+@note wrong way round.
+@old
+                    2'd0:    s_syn1 <= ub_wdata[7:0];
+                    2'd1:    s_syn2 <= ub_wdata[7:0];
+@new
+                    2'd0:    s_syn2 <= ub_wdata[7:0];
+                    2'd1:    s_syn1 <= ub_wdata[7:0];
+@end
+
+@mutation iob-unibus-init-leaves-the-syn-registers
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `RESET` "clears the Mode, Command and Status registers.  The device
+@note assumes the idle state", and `Pci::reset` takes the whole of itself
+@note back to its default --- the SYN registers and their pointer with it.
+@note A card that left them comes out of a bus reset with the last driver's
+@note sync characters still in the chip.
+@old
+        s_syn1      <= 8'd0;
+        s_syn2      <= 8'd0;
+        s_dle       <= 8'd0;
+        s_next_syn  <= 2'd0;
+@new
+        s_next_syn  <= 2'd0;
+@end
+
+@mutation iob-auto-echo-does-not-echo
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note "Auto echo mode ... received data is retransmitted", and remote loop
+@note back the same.  A card that echoed in one mode and not the other would
+@note pass a trace that only ever set one of them, which is why the program
+@note runs a character through BOTH and the run requires two `SRE` rows.
+@note Caught as a character the card never put on the cable.
+@old
+  assign s_echoes = (s_mode == 2'd1) || (s_mode == 2'd3);
+@new
+  assign s_echoes = (s_mode == 2'd3);
+@end
+
+@mutation iob-the-echo-goes-at-the-stop-bit-not-the-frames-end
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **THE RECORD THE WHOLE `ser_rx_end` SEAM EXISTS FOR.**  `Pci::rx_times`
+@note gives the receiver TWO instants --- the middle of the stop bit, where
+@note the character reaches the holding register, and the end of the frame,
+@note where `Pci::receive` stamps the echoed character onto the cable.  The
+@note seam carried only the first until now, and that is the whole reason
+@note the two echoing modes were not built: a card cannot place an instant
+@note nothing hands it.
+@note
+@note Echoing at the strobe puts the character on the line half a bit time
+@note early --- 25,250 ns of the trace's own 19,200 baud --- and the check
+@note sees it twice over: a character on the cable where muir put none, and
+@note then no character where muir put one.  A mutation that survived would
+@note say the new seam wire bought nothing.
+@note
+@note **WRITTEN AS A MOVE OF THE ECHO AND NOT AS A CHANGE OF ITS TRIGGER,
+@note BECAUSE LINT WOULD OTHERWISE BE THE THING THAT CAUGHT IT.**  The
+@note obvious form --- `if (ser_rx_strobe && s_echo_due)` at the frame's end
+@note --- leaves `ser_rx_end` read nowhere, and Verilator stops the build
+@note with UNUSEDSIGNAL.  Measured: the runner reported it BROKEN and said
+@note so in those words.  This form keeps the port read, keeps `s_echo_due`
+@note and `s_echo_byte` both written and read, and puts the echo where a
+@note card built before the second seam pulse existed would have put it.
+@old
+        if (s_echoes) begin
+          s_echo_due  <= 1'b1;
+          s_echo_byte <= ser_rx_data & s_mask;
+        end
+@new
+        if (s_echoes) begin
+          ser_tx_strobe <= 1'b1;
+          ser_tx_data   <= ser_rx_data & s_mask;
+        end
+@end
+
+@mutation iob-remote-loop-back-gives-the-character-to-the-cpu
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The one thing that separates the two echoing modes at the register
+@note face: auto echo gives the character to the CPU as well and remote loop
+@note back does not, "received data ... is not sent to the local CPU".  Both
+@note put it back on the line, so a card that got this wrong echoes
+@note perfectly and still hands a driver characters the sheet says it will
+@note never see --- and raises an overrun on a receiver nobody is reading.
+@note `Pci::receive`'s three arms are exactly this.
+@old
+        if (s_mode != 2'd3) begin
+@new
+        if (s_mode != 2'd2) begin
+@end
+
+@mutation iob-the-parity-and-framing-flags-are-crossed
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `SR3` is the parity error and `SR5` the framing error, Table 8.
+@note Crossed, every bit stays used and every signal stays read --- lint
+@note cannot be the thing that catches it, which is this list's own rule ---
+@note and a driver reading the status byte diagnoses a wrong baud rate where
+@note the line is noisy and the other way round.
+@note
+@note **NOTHING IN THE TRACE RAISES EITHER FLAG AND NOTHING CAN**: muir's
+@note behavioural 2651 raises neither and says so in its own header, the
+@note netlist chip in `part.rs` being where they live there.  So the check's
+@note SECOND CONFIGURATION is what catches this --- the one that drives the
+@note two seam inputs itself and holds the Signetics sheet --- and a check
+@note that only ever compared them against zero would pass a card whose
+@note flags were stuck there, which is the DDR bridge's lesson at a status
+@note byte.
+@old
+        if (ser_rx_parity)  s_errors[0] <= 1'b1;
+        if (ser_rx_framing) s_errors[2] <= 1'b1;
+@new
+        if (ser_rx_parity)  s_errors[2] <= 1'b1;
+        if (ser_rx_framing) s_errors[0] <= 1'b1;
+@end
+
+@mutation iob-reset-error-clears-only-the-overrun
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `CR4` "resets the error flags in the status register (`SR3`, `SR4`,
+@note `SR5`)" --- all three, together.  A card clearing only the overrun
+@note leaves a parity or framing error standing for the life of the
+@note connection, and a driver that reads the status byte before every
+@note character then sees an error on every one of them.  The three had one
+@note source between them until this slice, so this record could not have
+@note been written before: with only the overrun ever set, clearing only the
+@note overrun is the same card.
+@old
+                  if (ub_wdata[4]) s_errors <= 3'd0;
+@new
+                  if (ub_wdata[4]) s_errors[1] <= 1'b0;
+@end
+
+@mutation iob-the-errors-latch-with-the-receiver-stopped
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `Pci::receive` breaks on `rx_runs` before it looks at a character at
+@note all, so a frame arriving while the receiver is off or `-DCD` is up is
+@note not this receiver's and leaves nothing behind.  A card latching the
+@note errors outside that gate reports a parity error on a line it is not
+@note listening to --- and, worse, on the character that arrives in the
+@note instant between a driver turning the receiver off and the far end
+@note noticing.
+@note
+@note Written as a second, ungated latch in front of the real block rather
+@note than as a widened gate: `if (ser_rx_parity || !s_rx_runs)` INSIDE the
+@note block is an equivalence by construction, the outer gate already having
+@note required `s_rx_runs`, and it would have been filed as a hole against a
+@note check doing its job.
+@old
+      if (ser_rx_strobe && s_rx_runs) begin
+@new
+      if (ser_rx_strobe) begin
+        if (ser_rx_parity)  s_errors[0] <= 1'b1;
+        if (ser_rx_framing) s_errors[2] <= 1'b1;
+      end
+      if (ser_rx_strobe && s_rx_runs) begin
 @end
 
 # ----------------------------------------------------------------------------

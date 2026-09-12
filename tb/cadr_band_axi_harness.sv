@@ -185,6 +185,7 @@ module cadr_band_axi_harness #(
   // `cadr-serial` and `cadr-chaosnet` programs': folded below with every
   // other output of `cadr_machine`.
   logic [7:0]  ser_mode1, ser_mode2, ser_cmd, ser_tx_data, ser_status;
+  logic [25:0] ser_syn_face;
   logic        ser_tx_strobe;
   logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
   logic [8:0]  chaos_tx_len;
@@ -254,7 +255,9 @@ module cadr_band_axi_harness #(
       .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
       .ser_cmd(ser_cmd), .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
       .ser_tx_take(1'b0), .ser_tx_done(1'b0), .ser_rx_strobe(1'b0),
+      .ser_rx_end(1'b0), .ser_rx_parity(1'b0), .ser_rx_framing(1'b0),
       .ser_rx_data(8'd0), .ser_plugged(1'b0), .ser_status(ser_status),
+      .ser_syn_face(ser_syn_face),
       .chaos_address(16'd0), .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
       .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
       .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset),
@@ -332,7 +335,8 @@ module cadr_band_axi_harness #(
   logic unused;
   assign unused = &{1'b0,
                     ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
-                    ser_status, chaos_tx_go, chaos_tx_len, chaos_tx_valid,
+                    ser_status, ser_syn_face,
+                    chaos_tx_go, chaos_tx_len, chaos_tx_valid,
                     chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
                     chaos_bits, 
                     ser_reset, iob_intr, iob_vector, audio, csr_face,

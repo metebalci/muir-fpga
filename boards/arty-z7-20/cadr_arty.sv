@@ -337,6 +337,7 @@ module cadr_arty #(
   logic [6:0]  mouse_lines;
   logic        ser_tx_take, ser_tx_done, ser_rx_strobe, ser_plugged;
   logic [7:0]  ser_rx_data;
+  logic        ser_rx_end, ser_rx_parity, ser_rx_framing;
   logic [15:0] chaos_address, chaos_rx_word;
   logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc;
   logic [12:0] chaos_rx_bits;
@@ -358,6 +359,10 @@ module cadr_arty #(
   // What the two chips on the card hand their far ends.  Nothing on this
   // board takes any of it yet, so it folds into `witness` with the rest.
   logic [7:0]  ser_mode1, ser_mode2, ser_cmd, ser_tx_data, ser_status;
+  // The 2651's SYN1, SYN2 and DLE registers and their pointer: nothing
+  // reads them back, so the fold below is what keeps synthesis from
+  // trimming the registers away.
+  logic [25:0] ser_syn_face;
   logic        ser_tx_strobe;
   logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
   logic [8:0]  chaos_tx_len;
@@ -596,7 +601,10 @@ module cadr_arty #(
       .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
       .ser_tx_take(ser_tx_take), .ser_tx_done(ser_tx_done),
       .ser_rx_strobe(ser_rx_strobe), .ser_rx_data(ser_rx_data),
+      .ser_rx_end(ser_rx_end), .ser_rx_parity(ser_rx_parity),
+      .ser_rx_framing(ser_rx_framing),
       .ser_plugged(ser_plugged), .ser_status(ser_status),
+      .ser_syn_face(ser_syn_face),
       .chaos_address(chaos_address), .chaos_tx_go(chaos_tx_go),
       .chaos_tx_len(chaos_tx_len), .chaos_tx_valid(chaos_tx_valid),
       .chaos_tx_word(chaos_tx_word), .chaos_tx_clear(chaos_tx_clear),
@@ -1243,6 +1251,8 @@ module cadr_arty #(
         .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
         .ser_tx_take(ser_tx_take), .ser_tx_done(ser_tx_done),
         .ser_rx_strobe(ser_rx_strobe), .ser_rx_data(ser_rx_data),
+        .ser_rx_end(ser_rx_end), .ser_rx_parity(ser_rx_parity),
+        .ser_rx_framing(ser_rx_framing),
         .ser_plugged(ser_plugged),
         .irq(ser_irq)
     );
@@ -1431,6 +1441,9 @@ module cadr_arty #(
     assign ser_tx_done    = 1'b0;
     assign ser_rx_strobe  = 1'b0;
     assign ser_rx_data    = 8'd0;
+    assign ser_rx_end     = 1'b0;
+    assign ser_rx_parity  = 1'b0;
+    assign ser_rx_framing = 1'b0;
     assign ser_plugged    = 1'b0;
     assign chaos_address  = 16'd0;
     assign chaos_rx_valid = 1'b0;
@@ -1542,6 +1555,7 @@ module cadr_arty #(
                    ser_status, chaos_tx_go, chaos_tx_len, chaos_tx_valid,
                    chaos_tx_word, chaos_tx_clear, chaos_reset, chaos_csr,
                    chaos_bits,
+                   ser_syn_face,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr};

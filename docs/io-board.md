@@ -25,7 +25,8 @@ what is deliberately not built.
 three puts the card under the machine. Slice four is the bus interface's own
 Unibus registers, which is what let the card's interrupt reach the
 processor. Slice five is the Chaosnet interface and the serial port, which
-are the last two address groups.**
+are the last two address groups. Slice six is the four things slice five
+left out of those two chips.**
 `golden/src/iob.rs` writes `build/iob.golden`, and `make iob-golden` makes it.
 A throwaway Python model was run against it until the two agreed row for row.
 What that model found is near the end, because it is the part of slice one
@@ -43,6 +44,11 @@ thirty-two addresses used to time out where muir answers, and the section
 Slice five adds the Chaosnet interface and the serial port to the same three
 files and the same two checks; the section "What slice five built" is at the
 end and says where its seam is drawn.
+Slice six is the four things slice five left out: the 2651's SYN and DLE
+registers and their pointer, its parity and framing flags, its two echoing
+modes, and the Chaosnet's timer interrupt. The section "What slice six built"
+says what holds each, and it opens with the rule Mete set for that slice,
+which reverses this project's usual default.
 
 ## What muir says the card is
 
@@ -347,8 +353,8 @@ the same shape the display's `tv_intr` had before `f8c6d25`.
 
 ## What the trace is
 
-`build/iob.golden` is 100 KB, 1,532 event rows and 94 decode rows over 404.7 ms
-= 80,949,318 ticks. `make iob-golden` writes it in 0.85 s, and two runs are
+`build/iob.golden` is 223 KB, 2,591 event rows and 94 decode rows over 412.5 ms
+= 82,509,811 ticks. `make iob-golden` writes it in 1.4 s, and two runs are
 byte-identical. There is no wall-clock time in it and no randomness.
 
     DECNONE  first last                    answers() is None over this run
@@ -361,14 +367,38 @@ byte-identical. There is no wall-clock time in it and no randomness.
     INIT     n ns                          <face>
     FACE     n ns                          <face>
 
+    CBUF     dir seq k word                a buffer's words, ahead of the rows
+    CTX      n ns seq len                  <face>   the transmit buffer given up
+    CRX      n ns seq bits len crc busy    <face>   a packet lands
+    CTD      n ns abort                    <face>   Transmit Done off the cable
+    CBL      n ns busy                     <face>   -CBLBSY
+    STK      n ns                          <face>   the shift register takes it
+    SDN      n ns                          <face>   its frame ends
+    SRX      n ns data                     <face>   a character is received
+    SRE      n ns                          <face>   ...and its frame ends
+    SOUT     n ns data                     <face>   a character reaches the cable
+    SPL      n ns plugged                  <face>   the RS-232 cable
+
     <face> = csr x y held clkrdy interval intr audio serrdy
+             ccsr cbits sm1 sm2 scmd sstat
+
+The first nine kinds are slice two's and the eleven after them belong to the
+two far ends, which slice five added and slice six finished. `CTX` and `SOUT`
+are assertions and every other kind is stimulus. The trace's own header
+carries this table, and it is the copy to trust if the two ever disagree.
 
 Every row ends with the same face, sampled after whatever the row did. It
 holds the status register's flip-flops before the floating byte and `CLOCK
 READY` are made up on a read, the two mouse counters, the switches as the
 mouse holds them, `CLOCK READY`, the interval last loaded, the vector the card
-is asking for, `AUDIO`, and the serial port's ready line. **Each is a register
-or a wire on the card**, so none is a column invented for the trace.
+is asking for, `AUDIO`, the serial port's ready line, the Chaosnet's CSR and
+bit counter, and the 2651's three registers and status byte. **Each is a
+register or a wire on the card**, so none is a column invented for the trace.
+
+**One thing the card holds has no column here and cannot have one.** The
+2651's SYN1, SYN2 and DLE registers are never read back, on the chip or in
+muir, so the check models Table 4 of the Signetics sheet instead and feeds
+that model from the trace's own cycles. See "What slice six built" below.
 
 The decode is exhaustive over all 262,144 addresses an eighteen-bit `ub_addr`
 can carry, in both directions. There are 32 runs where nothing answers and 31
@@ -410,6 +440,18 @@ These are said here rather than given a column, per CLAUDE.md's rule.
   card did not answer those fifteen addresses and printed the count,
   twenty-seven answering directions of fifty-five. The card answers all
   fifty-five now and nothing is exempt.
+- **The 2651's SYN1, SYN2 and DLE registers and their pointer.** muir keeps
+  them and exposes no accessor, and nothing on the chip or the board reads
+  them back. Slice six builds them anyway and holds them to Table 4 of the
+  Signetics sheet instead, in a model the check feeds from the trace's own
+  cycles. That is the only thing on this card held to something other than
+  muir.
+- **The 2651's parity and framing flags.** muir's behavioural chip raises
+  neither and says so in its own header, because both are properties of the
+  frame's bits and it is handed whole characters. The trace therefore holds
+  `SR3` and `SR5` at zero over its whole length, which catches a card whose
+  flags are stuck up and nothing else. The check's second configuration
+  raises them itself and holds the sheet.
 - **The latch on the mouse's seven lines, from the lines themselves.** This
   was measured at slice two, as a mutation on both mouse registers: reading
   `lines` where the card reads `NEW` survives. muir's snap puts every step of
@@ -933,7 +975,9 @@ tick the fabric acts at.
 **And the serial port's answer is off the grid on every cycle of its group.**
 `busint::IOB_HALF_USEC_PHASE_NS` is 203 and `IOB_SERIAL_NS` is 750, so the
 answer is at 953 + 500k, which is 3 modulo 5. The trace's `slip` column says
-so on all fifty-one of them. The fabric counts the same edges at 205 + 500k,
+so on every one of them, which was fifty-one when this slice landed and is
+eighty-seven since slice six added its cycles. The fabric counts the same
+edges at 205 + 500k,
 and that is exact rather than close: no multiple of five lies between 203 and
 205 modulo 500, so an edge is strictly after `-UB MSYN` on the grid exactly
 where it is strictly after it on the netlist.
@@ -985,31 +1029,142 @@ and much of it folds; it is what the two groups are when something drives
 them. The board figure moves when `cadr-chaosnet` and `cadr-serial` reach the
 processing system and is not worth taking twice.
 
+## What slice six built, and the rule it followed
+
+Slice six is the four things slice five left out of the 2651 and the Chaosnet
+interface. It follows a rule Mete set on 12 September, and the rule is worth
+stating because it reverses this project's usual default.
+
+Told that the four were unfalsifiable at this seam, he said: "we need to add
+the above things i guess, even if they are no testable or usable at the
+moment." The usual default stands for checks. A claim nothing exercises is not
+a claim, and a check written to confirm rather than to compare is worse than
+none. But that is about checks and not about the machine. The CADR is a real
+machine MIT built whole, and a register the fabric does not have is a way this
+is not the CADR.
+
+So all four are built, and what holds each is stated rather than assumed.
+
+### The SYN1, SYN2 and DLE registers and their pointer
+
+A write of the status address goes to the register the pointer names, and the
+pointer counts SYN1, SYN2, DLE and round again. A read of the command register
+puts it back, alongside the mode pointer. A reset clears all four. That is
+Table 4 of the Signetics sheet and `Pci::write`'s own `(next_syn + 1) % 3`.
+
+**Nothing reads these three registers back.** Not on the chip, where their
+readers are the synchronous receiver's sync detection and the transmitter's
+idle fill, and this card has neither. Not in muir, which keeps them and
+exposes no accessor. So the trace has no column for them and cannot have one.
+
+Two things follow. The registers leave the card on a new output,
+`ser_syn_face`, because a register no reader has is trimmed by synthesis and
+the fabric would not have had them at all. And they are the one thing in
+`build/iob.pass` held to the Signetics sheet rather than to muir: the check
+models Table 4, feeds that model from the trace's own bus cycles, and compares
+it against the port on every row. Five mutation records are aimed at it.
+
+### The parity and framing flags
+
+`SR3` and `SR5` are latched with the character they belong to, whatever the
+mode, and `CR4` clears them with the overrun.
+
+**muir's behavioural 2651 raises neither, and says so in its own header.** A
+parity bit that did not agree and a stop bit that was low are properties of the
+frame's bits, and the behavioural chip is handed whole characters. The netlist
+chip in `src/part.rs` is where the two live there. So the trace holds them at
+zero over its whole length, which catches a card whose flags are stuck up and
+nothing else.
+
+What catches the rest is a second configuration in the check. It drives the
+two new seam inputs itself and holds the sheet: each flag is latched with its
+own character, a later character does not clear one, `CR4` clears all three
+error bits together and is not stored, and a frame arriving while the receiver
+is not running leaves nothing behind. Three records are aimed at it.
+
+**Nothing on the board raises either flag today.**
+`rtl/plumbing/cadr_serial_line.sv` holds both low, because what is on the far
+side of it is a TCP socket carrying bytes rather than bits. Making them live
+would take one bit pair in the character-in word of `serial_face.h`, which has
+room, and passing them through that module. Nothing else on either side would
+change.
+
+### Auto echo and remote loop back
+
+Both modes put the received character back on the line. Auto echo gives it to
+the CPU as well and remote loop back does not, which is the one thing that
+tells the two apart at the register face.
+
+**The echo is why the other three waited.** muir puts the echoed character on
+the cable at the end of the received frame, while the CPU gets it at the middle
+of the stop bit. `Pci::rx_times` gives both instants and this seam carried only
+the first, so the card could not place the echo.
+
+The seam carries both now. `ser_rx_end` is the new input, and the trace's new
+`SRE` rows are muir's own instant for it. The trace runs a character through
+each mode and the echo comes back as a `SOUT` row, which is `Cable::outbound`
+and is compared against the card rather than driven. So the echo is held to
+muir like everything else on this card.
+
+The instant is read off the cable rather than computed. `Pci::rx_times` is
+private, and the character muir echoes carries exactly that time, so there is
+no second arithmetic in the generator to get wrong.
+
+On the board `cadr_serial_line.sv` drives `ser_rx_end` on the same tick as
+`ser_rx_strobe`. That module already waits the whole frame before the strobe,
+which its header calls out as coarser than muir by under one bit time, so the
+two instants coincide there.
+
+### The Chaosnet's timer interrupt
+
+**There is nothing to build, and that is measured rather than argued.**
+
+AIM-628 calls bit 0 of the CSR "Timer Interrupt Enable (read/write), for the
+interval timer present in some versions of the interface". This board is not
+one of them. `TIMER.IEN` has exactly two pins in the whole of
+`data/CADRIO.netlist`. One is the Q of the 74LS174 at LMUCON 0B20, which a CSR
+write loads. The other is an input of the 74LS244 at LMDATP 0D16, which reads
+it back. `CHAOS.IREQ` comes off the 74S51 at LMUCON 0E05 as `(RDONE AND RIEN)
+OR (TDONE AND TIEN)`, with no third term. muir's `interrupt_request` is those
+two terms and no more.
+
+So the bit stores and reads back and reaches no gate, which is what the fabric
+already did. What is new is that this is now a checked claim rather than an
+absence. The trace sets the bit with both done bits up and both interrupt
+enables clear, which is the one arrangement in which a card that let it through
+asks for `0o270` where this one asks for nothing. It then sets Receive
+Interrupt Enable in the same arrangement, so that "nothing asks" is not a card
+whose request is broken altogether.
+
+### What the trace gained
+
+The generator is `golden/src/iob.rs` and the trace grew by twenty rows. Two of
+them are the new `SRE` kind. The rest are bus cycles: the four the Chaosnet's
+timer block runs, the fifth write of the SYN registers, and the cycles the two
+echoing modes need.
+
+**The trace also moved, which is the more interesting half.** The timer block
+runs four cycles before the serial section, so every instant after it is
+later. Row numbers, instants and the `-UB MSYN` phases of the serial port's own
+cycles all change from that point on. No column changed meaning and no
+existing assertion was weakened.
+
+One helper had to be made robust for that. `Gen::before_16x` stepped by 500
+nanoseconds up to sixteen times, looking for a window about 150 nanoseconds
+wide in a period of about 3,150, and whether it found one depended on the phase
+the rest of the program happened to leave. Adding four bus cycles anywhere
+earlier made it fail. It steps to just past the offending clock now, which
+takes one step, and the bound is there to fail rather than to hang.
+
 ### What is still not built
 
 - **The baud-rate generator and the 2651's line, on this card.** Both are on
   the far side of the seam, in `rtl/plumbing/cadr_serial_line.sv`. See the
   seam above.
-- **The SYN1, SYN2 and DLE registers and their pointer.** A write of the
-  status address is answered and stores nothing. Nothing on this board or in
-  muir ever reads those registers back, and the pointer that walks them is
-  reset by a read of the command register and is otherwise invisible, so a
-  fabric holding them could not be told from one that does not. Synchronous
-  mode is what they are for and this board never enters it.
-- **The parity and framing error flags.** muir's 2651 raises neither: the
-  overrun is the only error it sets, and the netlist chip is where the other
-  two live. The card's `SR5` and `SR3` therefore read zero always.
-- **Auto echo and remote loop back, as far as the echo itself goes.** Both put
-  the received character back on the line, and muir does it at the END of the
-  received frame. `Pci::rx_times` gives two instants, the middle of the stop
-  bit and the frame's end, and only the first reaches the card, so an echoing
-  card could not be told from one that does not. Nothing in System 100 sets
-  either mode. What is built and held is `tx_on`'s refusal to run the
-  transmitter in both of them, which is the half a driver meets first, and the
-  trace sets each mode and reads `SR0` down.
-- **The Chaosnet's timer interrupt.** Bit 0 of the CSR is "for the interval
-  timer present in SOME VERSIONS of the interface", AIM-628's own words. It
-  stores and reads back, as muir has it, and reaches no gate.
+- **A far end that raises a parity or framing error.** The card has the flags
+  and the seam carries them. What would make them live is described above.
+- **Synchronous mode.** The SYN and DLE registers are what it is for, and
+  nothing on this board enters it. muir does not model it either.
 - **A packet whose top word is partial.** The bit counter's first step is that
   word's own length and every step after it sixteen, which is what the netlist
   board reads. Under Loop Back a frame is always a whole number of words, so
