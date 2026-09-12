@@ -228,20 +228,32 @@ BITLINE=$(bitinfo "$BIT") || die "$BIT does not carry a Xilinx bitstream header"
 echo "mksd-buildroot: bitstream $BIT"
 echo "mksd-buildroot:   $BITLINE"
 
-# The address and the MAC, from the file the repository does not carry.
-SERVERIP=; ETHADDR=
+# The address, the MAC and the Chaosnet peer, from the file the repository does
+# not carry.  Those three are everything private a card can hold: an IP, a MAC
+# and a host on somebody's network.
+SERVERIP=; ETHADDR=; CHAOS_PEER=
 if [ -r boards/arty-z7-20/linux/local.conf ]; then
   . boards/arty-z7-20/linux/local.conf
 fi
+# **STANDALONE MEANS THE CARD CARRIES NOTHING FROM local.conf**, and that is
+# wider than it used to be on purpose.  It cleared SERVERIP alone, which was
+# right while the only private value on a card was the TFTP server's address.
+# It is not any more: uEnv.txt carries ETHADDR, and the Chaosnet's peers file
+# and muir's own file of flags carry CHAOS_PEER, and a release card is built by
+# setting exactly this flag.  Clearing one of the three and shipping the other
+# two is the failure this flag exists to prevent, so it clears all three and
+# mksd-release.sh's guard is the check on it rather than the whole of it.
 if [ -n "$STANDALONE" ]; then
-  SERVERIP=
+  SERVERIP=; ETHADDR=; CHAOS_PEER=
 fi
 if [ -n "${SERVERIP:-}" ]; then
   MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp"
 else
   MODE="the card path: uEnv.txt names no server, the five files come from the card, no network is used"
 fi
-if [ -z "${ETHADDR:-}" ]; then
+if [ -n "$STANDALONE" ]; then
+  echo "mksd-buildroot: STANDALONE: no server, no MAC and no Chaosnet peer --- this card carries nothing from local.conf"
+elif [ -z "${ETHADDR:-}" ]; then
   echo "mksd-buildroot: WARNING: no ETHADDR in boards/arty-z7-20/linux/local.conf; the board will use a random MAC and U-Boot will say so" >&2
 fi
 
@@ -275,7 +287,12 @@ done
 # case.  CRLF, because the reader is Notepad.
 {
   printf 'The CADR disk pack drive bay.\r\n\r\n'
-  printf 'This partition holds disk packs and nothing else.  Name a pack\r\n'
+  printf 'This partition holds the disk packs, and the few settings files that\r\n'
+  printf 'have to survive a reboot.  Everything else on the board runs from a\r\n'
+  printf 'RAM disk unpacked at every boot, so a file edited there is lost; a\r\n'
+  printf 'file edited here is not.  The settings files are the three named\r\n'
+  printf 'chaosnet.* and muirrc, and each one says at its top what it is for.\r\n\r\n'
+  printf 'Name a pack\r\n'
   printf 'disk-pack-0.img to disk-pack-7.img: the number is the disk unit the\r\n'
   printf 'machine sees it on, and whichever of the eight files exist are the\r\n'
   printf 'drives that are present.  A pack must be exactly 269,562,880 bytes\r\n'
@@ -338,6 +355,90 @@ CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
   if [ -n "${CHAOS_PEER:-}" ]; then printf "%s\r\n" "$CHAOS_PEER"; fi
 } > "$OUT/packs/chaosnet.over.udp.peers.txt"
 echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -n "${CHAOS_PEER:-}" ] && echo "one peer from local.conf" || echo "no peers --- the network is the user's")"
+
+# --------------------------------------------------------- muir's file of flags
+#
+# The debugger is the word `muir` and nothing else (Mete, 12 Sep).  muir reads
+# --config if it is given, else `.muirrc` in the directory it was run from,
+# else `.muirrc` in the home directory --- the FIRST of those and not all of
+# them --- and a flag typed on the command line still wins over the file.  So
+# this is a default and never a cage.
+#
+# **IT IS HERE AND NOT IN THE ROOT FILESYSTEM**, which is a RAM disk unpacked
+# at every boot: an edit made to a file in there is lost at the next reset.
+# The muir package installs /root/.muirrc as a symlink to this file, so a `muir`
+# typed anywhere on the board finds it and somebody who changes a port changes
+# it once.
+#
+# The format, out of muir's own main.rs: one flag a line, the flag then a space
+# then the rest of the line as its argument --- so a path with a space in it
+# needs no quoting --- and a line that is blank or starts with `#` is a comment.
+# The file is called `muirrc` and not `.muirrc` because this partition is what
+# a laptop shows somebody who puts the card in, and a dotfile is hidden there.
+#
+# **THE PORTS ARE muir'S OWN AND NOT THE FABRIC CADR'S.**  5900 is
+# cadr-terminal's, 7641 cadr-serial's and 42042 cadr-chaosnet's, all serving
+# the machine in the fabric.  The machine INSIDE muir is a second CADR and two
+# stations on one port is a collision, not a network, so it takes 5901, 7642
+# and 42043 --- which a VNC viewer reads as display 1 beside display 0, and
+# which leave the fabric machine's numbers meaning what they meant.  A named
+# port that cannot be bound stops the run, which is the failure worth having:
+# an unnamed one goes looking for the first free display and would move under
+# you between boots.
+CHAOS_ADDR_M=${CHAOS_ADDR_MUIR:-177102}
+CHAOS_PORT_M=${CHAOS_UDP_PORT_MUIR:-42043}
+VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
+{
+  printf "# muir's flags on this board: the debugger, so that it is the word\r\n"
+  printf "# \`muir\` and nothing else.  One flag a line, the flag then a space\r\n"
+  printf "# then the rest of the line as its argument; # is a comment.  A flag\r\n"
+  printf "# typed on the command line wins over this file.\r\n"
+  printf "#\r\n"
+  printf "# /root/.muirrc on the board is a symlink to this file.  Edit it here,\r\n"
+  printf "# on the card, where it survives a reboot.\r\n"
+  printf "\r\n"
+  printf "# The engine.  The debug cable is rtl's; micro has no timing model and\r\n"
+  printf "# no end of the cable, and on chip the cable is the DBGIN end only.\r\n"
+  printf -- "--rtl\r\n"
+  printf "\r\n"
+  printf "# The screen, on every interface rather than the loopback, so that a\r\n"
+  printf "# VNC viewer on another machine can reach it.  RFB's None security is\r\n"
+  printf "# the only type offered and a viewer needs no password.\r\n"
+  printf -- "--terminal 0.0.0.0:%s\r\n" "$VNC_PORT_M"
+  printf "\r\n"
+  printf "# The Chaosnet.  muir is its own station on the cable, one address\r\n"
+  printf "# along from the CADR in the fabric, on a port of its own.\r\n"
+  printf -- "--chaos-address %s\r\n" "$CHAOS_ADDR_M"
+  printf -- "--chaos-udp 0.0.0.0:%s\r\n" "$CHAOS_PORT_M"
+  if [ -n "${CHAOS_PEER:-}" ]; then printf -- "--chaos-udp-peer %s\r\n" "$CHAOS_PEER"; fi
+  printf "\r\n"
+  printf "# NOT BUILT YET, AND THE TWO LINES THAT FINISH THIS FILE.\r\n"
+  printf "#\r\n"
+  printf "# The pack.  The debugger is not muir; it is CC running on a CADR that\r\n"
+  printf "# muir simulates, so muir needs a band with CC already loaded.  That\r\n"
+  printf "# pack does not exist yet.  Until it does, a \`muir\` typed here boots\r\n"
+  printf "# the PROM and waits on a drive that never answers, which is what a\r\n"
+  printf "# CADR with no pack loaded did.  The name must not be\r\n"
+  printf "# disk-pack-0.img to disk-pack-7.img: those eight are the fabric\r\n"
+  printf "# machine's drive bay and this pack is muir's own.\r\n"
+  printf "#--disk-pack /mnt/packs/muir-cc.img\r\n"
+  printf "#\r\n"
+  printf "# The cable.  An argument beginning 0x is no endpoint but the physical\r\n"
+  printf "# address where this project's CADR presents its DBGIN as a register\r\n"
+  printf "# window, reached through /dev/mem.  Where that window sits is not\r\n"
+  printf "# decided: it waits on which GP port the adapter takes.  muir refuses\r\n"
+  printf "# a window that does not say it is this project's, and has no default\r\n"
+  printf "# for where one sits.\r\n"
+  printf "#--debug-cable-connect 0x????????\r\n"
+  printf "#\r\n"
+  printf "# The serial line would be --serial 0.0.0.0:7642, one above the fabric\r\n"
+  printf "# machine's 7641.  It is NOT here, and not by oversight: muir refuses\r\n"
+  printf "# --serial together with any of the debug cable flags --- the serial\r\n"
+  printf "# port is one machine's and a lashup runs two --- so the line above\r\n"
+  printf "# and a --serial line cannot both be in this file.  The cable is what\r\n"
+  printf "# this muir is for.\r\n"
+} > "$OUT/packs/muirrc"
+echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "one peer from local.conf" || echo "no peer"); no pack and no cable yet"
 
 # The server: the same five files and the command that fetches them.
 cp "$BIT" "$OUT/server/cadr.bit"
@@ -436,7 +537,8 @@ if [ -x "$HOSTBIN/genimage" ]; then
       case "$n" in
         disk-pack-[0-7].img|README.TXT) ;;
         chaosnet.addr.txt|chaosnet.over.udp.port.txt|chaosnet.over.udp.peers.txt) ;;
-        *) die "partition 2 carries '$n', which is neither one of the eight pack names nor the README" ;;
+        muirrc) ;;
+        *) die "partition 2 carries '$n', which is none of the eight pack names, the README, or a settings file" ;;
       esac
     done
     rm -f "$TMP/readback"
@@ -453,7 +555,7 @@ echo "  $MODE"
 [ -f "$OUT/sdcard.img" ] && printf '  %-31s %10d  %s\n' sdcard.img "$(stat -c %s "$OUT/sdcard.img")" "$(sha256sum "$OUT/sdcard.img" | cut -c1-16)"
 if [ -f "$OUT/sdcard.img" ]; then
   echo "  partition 1 at byte $P1_OFF, $P1_MB MiB, FAT32 BOOT   --- the loader and the boot files; Linux mounts it read-only"
-  echo "  partition 2 at byte $P2_OFF, $P2_MB MiB, FAT32 PACKS  --- nothing but disk packs, at /mnt/packs, read-write"
+  echo "  partition 2 at byte $P2_OFF, $P2_MB MiB, FAT32 PACKS  --- the disk packs and the settings files, at /mnt/packs, read-write"
 fi
 if [ -z "$PACKS" ]; then
   echo "  (no PACKS given: the bay is empty.  Copy a pack to the running board as"

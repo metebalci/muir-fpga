@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_MUIR
+	bool "muir"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	select BR2_PACKAGE_HOST_RUSTC
+	help
+	  muir itself, on the board's own Arm cores, beside the CADR in
+	  the fabric.  It is built from muir's own source at the commit
+	  muir.commit pins, so the board runs the muir this repository is
+	  held to.  No binary is carried in this repository.
+
+	  It is here to be the debugger.  MIT debugged a CADR with a
+	  second CADR over the debug cable, running CC.  This fabric has
+	  the debuggee end of that cable, and muir on the Arm cores is
+	  the machine at the other end of it.  It reaches the fabric
+	  through a register window over /dev/mem rather than over a
+	  wire.
+
+	  Every other program in this tree has an init script and this
+	  one has none.  muir is started by hand when it is wanted.  The
+	  reason is the cable and not the cost: a debugger that dies
+	  mid-request leaves the debuggee's own bus cycle waiting.
+	  Running muir costs the fabric CADR nothing, measured with both
+	  cores saturated and the machine's rate read off the fabric's
+	  own tick counter.
+
+	  /root/.muirrc is a symlink to muirrc on the pack partition, so
+	  that the debugger is the word `muir` and its settings survive a
+	  reboot.  The root filesystem is a RAM disk unpacked at every
+	  boot, so an edit made to a file in it is lost.
+
+comment "muir needs a toolchain the Rust compiler supports"
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
