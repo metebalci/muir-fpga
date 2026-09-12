@@ -28,6 +28,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
+       $(BUILD)/md_compose.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass \
@@ -1390,3 +1391,26 @@ buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
+
+# ------------------------------------------------------- MD on the composed
+# machine
+#
+# `md_hold` and `md_inject` ask whether MD can be left holding a stale word,
+# of `cadr_microcycle`, where the bus is muir's stimulus.  This asks it of the
+# WHOLE machine with only DDR modelled, and walks the acknowledgement across
+# the microcycle so the strobe lands at every phase.  It answers the question
+# CLAUDE.md left open --- whether the DESTMDR/-LOADMD coincidence can be
+# placed at all --- and the answer is no, with the reason named: -LOADMD
+# cannot fall before -MEMACK on either bus, and MBUSY clears six ticks after
+# it.
+#
+# It also compares the direction of every DDR transaction against the
+# processor's own WRCYC, which nothing else in `make check` does.
+$(BUILD)/obj_md_compose/Vcadr_machine: $(MACHINE) tb/cadr_md_compose_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_md_compose \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_md_compose_tb.cpp)
+
+$(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_md_compose/Vcadr_machine
+	@touch $@

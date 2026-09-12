@@ -290,6 +290,37 @@ CHECKS = {
     # No `golden`: there is no trace to hand it.  The testbench runs the
     # machine twice from reset, 200 ms of machine time each way, and takes
     # about fifteen seconds --- the slowest check here that is not a trace.
+    # CAN THE COMPOSED MACHINE LEAVE MD STALE ACROSS A READ?  `md_hold` and
+    # `md_inject` ask that of `cadr_microcycle`, where the bus is muir's
+    # stimulus; this asks it of the whole machine with only DDR modelled, and
+    # it answers the question CLAUDE.md left open about whether the
+    # DESTMDR/-LOADMD coincidence can be placed at all.  It also compares the
+    # direction of every DDR transaction against the processor's own WRCYC,
+    # which nothing else in `make check` does.
+    #
+    # No `golden`: there is no trace to hand it.  Everything with a check of
+    # its own is in `extra`.
+    "md_compose": {
+        "sources": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        "extra": [
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_md_compose_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
     "ddr_boot": {
         "sources": [
             "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
