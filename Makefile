@@ -37,6 +37,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/tv.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
+       $(BUILD)/dbgin.pass \
        $(BUILD)/readout_face.pass $(BUILD)/checkpoint.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
@@ -662,6 +663,17 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv
+# AND THE DEBUG CABLE'S TWO, AT THEIR OWN DEFAULT PARAMETERS. They are not
+# under `cadr_machine` yet --- which general-purpose port the window sits on
+# is not decided, `docs/debug-cable.md` --- so no board configuration above
+# reaches them. But BOTH VIVADO SCRIPTS READ `[glob rtl/*/*.sv]`, so a file
+# there that does not elaborate breaks the bitstream, and the `dbgin` check
+# elaborates them only with the harness's own overrides. `WATCHDOG_T` is
+# 100,000,000 there and 4,096 here, which is a different `$clog2`.
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
+	    --top-module cadr_dbgin rtl/machine/cadr_dbgin.sv
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
+	    --top-module cadr_debug_window rtl/plumbing/cadr_debug_window.sv
 	@touch $@
 
 # --------------------------------------------------------------- the probe
@@ -1136,6 +1148,44 @@ $(BUILD)/obj_console/Vcadr_console_harness: $(CONSOLE_SRC) \
 $(BUILD)/console.pass: $(BUILD)/obj_console/Vcadr_console_harness \
                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_console/Vcadr_console_harness $(BUILD)/rtl.golden
+	@touch $@
+
+# --------------------------------------------------- the debug cable's DBGIN
+#
+# `rtl/machine/cadr_dbgin.sv` is the debuggee's end of MIT's debug cable --- the
+# 74S139 at DBGIN 0A15, the modifier register, the two address latches, the
+# error-status driver and the debug master's place on the Unibus --- and
+# `rtl/plumbing/cadr_debug_window.sv` is the carrier, sixteen registers on a
+# general-purpose AXI port that muir reaches with ordinary loads and stores.
+# muir's half is built: `src/fabric.rs` at `e4d8aeb`, to the specification in
+# muir issue #95.
+#
+# THE HARNESS AND NOT THE MODULES, and the harness is the attachment, for the
+# reason the console's is: joining a third master to the diagnostic bus means
+# the arm `rtl/machine/cadr_console_bus.sv` now carries, and the window's own
+# attachment waits on a decision nobody has taken --- which general-purpose
+# port it sits on.  `docs/debug-cable.md` poses that question with the
+# numbers and carries the wiring as a patch.
+#
+# The processor in it is the real one, running MIT's boot PROM out of
+# `build/rtl.golden`, and the register block is the real one.  So the claim is
+# muir's own: a debugger over MIT's own cable halts this machine and reads a
+# program counter whose value muir wrote down.
+DBGIN_SRC := rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv \
+             rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_console_bus.sv \
+             rtl/machine/cadr_dbgin.sv rtl/plumbing/cadr_debug_window.sv \
+             tb/cadr_dbgin_harness.sv
+
+$(BUILD)/obj_dbgin/Vcadr_dbgin_harness: $(DBGIN_SRC) \
+                                        tb/cadr_dbgin_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_dbgin \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_dbgin_harness $(DBGIN_SRC) \
+	    $(abspath tb/cadr_dbgin_tb.cpp)
+
+$(BUILD)/dbgin.pass: $(BUILD)/obj_dbgin/Vcadr_dbgin_harness \
+                     $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_dbgin/Vcadr_dbgin_harness $(BUILD)/rtl.golden
 	@touch $@
 
 # ------------------------------------------------------------- the readout

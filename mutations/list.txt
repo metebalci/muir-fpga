@@ -7497,3 +7497,330 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
   assign sintr_o   = xbus_intr || !ub_int;
 @end
+
+@mutation dbgin-request-arrives-with-its-levels
+@check dbgin
+@file rtl/plumbing/cadr_debug_window.sv
+@note **THE HUNDRED NANOSECONDS, AND THE HAZARD THEY EXIST FOR.**  On the
+@note board the data, the address bits and the write flag are on the cable one
+@note delay-line section before the request: `-DEBUG OUT REQ` is `NAND(SELECT
+@note DEBUG, SELECT DEBUG DLYD)` at DBGOUT 0A11 and the delay is the MTD100 at
+@note 0A10, so the request falls after everything else is standing.  That is
+@note `busint::DEBUG_OUT_REQUEST_NS` and the adapter reproduces it.  Dropped,
+@note the 74S139 at DBGIN 0A15 would be given `DEBUG IN A<1:0>` and
+@note `-DEBUG IN REQ` on the same instant --- which on the real cable decodes
+@note whatever happens to be on the address bits, fires `-DB NEED UB` instead
+@note of the address latch, and runs a Unibus cycle on the debuggee at
+@note whatever address was last latched.  Not a corrupt read: a write to a
+@note register nobody asked for.
+@note
+@note `tb/cadr_dbgin_tb.cpp` watches the cable every tick and measures the
+@note shortest lead over the run, so this is caught as a number and not as a
+@note symptom: "the shortest lead from the levels to -DEBUG IN REQ is 0x0, the
+@note reference says 0x14".
+@old
+            leading    <= 1'b1;
+            lead_t     <= LEAD_W'(LEAD_T - 1);
+@new
+            leading    <= 1'b0;
+            dbg_in_req <= 1'b1;
+            lead_t     <= LEAD_W'(LEAD_T - 1);
+@end
+
+@mutation dbgin-takes-a-byte-store
+@check dbgin
+@file rtl/plumbing/cadr_debug_window.sv
+@note **THE SPLIT-STORE HAZARD BY ANOTHER DOOR.**  The whole point of the
+@note layout is that a request is one 32-bit store, so that there is no
+@note ordering for a carrier to get wrong.  A store that strobes fewer than
+@note four byte lanes breaks that from inside: `REQ` would be set beside
+@note whatever `DBD`, `WR` and `A<1:0>` the last store left, which is exactly
+@note the request-made-of-two-halves the cable cannot detect.
+@note
+@note Written as a tautology rather than a deletion, because deleting the test
+@note leaves `s_wstrb` unread and Verilator rejects the build --- lint must not
+@note do the catching.  Caught at "a byte store made a request on the cable".
+@old
+  assign w_whole = (s_wstrb == 4'b1111);
+@new
+  assign w_whole = (s_wstrb == 4'b1111) || (s_wstrb != 4'b1111);
+@end
+
+@mutation dbgin-reports-the-lines-at-the-load
+@check dbgin
+@file rtl/plumbing/cadr_debug_window.sv
+@note **THE ANSWER IS LATCHED AT THE ACKNOWLEDGEMENT AND NOT READ AT THE
+@note LOAD.**  `cadr_dbgin.sv` drives a read cycle's word LIVE, as the
+@note transceivers do --- MIT's own note about the diagnostic registers is
+@note that "read and write at the same address are uncorrelated", the 74LS244s
+@note driving `SPY<15:0>` asynchronously --- so with the machine running the
+@note lines move under a standing acknowledgement.  By the time the Arm gets
+@note round to loading `STS`, the word the debuggee drove is long gone.
+@note `cable::DebugIn::observe` records the same instant on the simulated side.
+@note
+@note This is why the latch is here and not one module along: two latches in
+@note one path would be two places a mutation could be made and neither
+@note caught.  The check's phase 4b reads `PC` with the machine RUNNING and
+@note requires the run to have moved the lines, so it cannot pass by nothing
+@note happening.  Caught at "the word STS gives against the word on DBD at the
+@note acknowledgement".
+@note
+@note **THE OBVIOUS WAY TO WRITE IT DIES ON LINT**, which is why it is written
+@note as the latch losing its hold rather than as the read going round it.
+@note Reading `dbd_seen` in `STS` leaves `sts_dbd` written and never used and
+@note Verilator refuses the build --- lint doing the catching, and the check
+@note never seeing it.  Dropping `!sts_ack` reloads the latch on every tick the
+@note acknowledgement stands, which is the same defect from the other end and
+@note leaves every signal read.
+@old
+      if (dbg_in_req && dbg_in_ack && !sts_ack) begin
+@new
+      if (dbg_in_req && dbg_in_ack) begin
+@end
+
+@mutation dbgin-the-marker-reads-zero
+@check dbgin
+@file rtl/plumbing/cadr_debug_window.sv
+@note **A VALUE THAT MEANS NOTHING MUST NOT BE A VALUE THE INSTRUMENT CAN
+@note MEAN**, one register face along from the EMIO counters that taught it
+@note here.  `MARK` reads `01` in bits 15 and 14 of `STS` and `FAULTS`: a word
+@note of all zeros gives `00` and one of all ones gives `11`, so neither a
+@note dead window nor an undriven one can be mistaken for an answer.  It has
+@note to live outside `DBD`, because all ones there is what an open cable
+@note reads and is a perfectly legal answer.
+@note
+@note muir applies the guard to every load and not only the first
+@note (`fabric::Fabric::debug_ack`), and so does the check.  Caught at "STS's
+@note MARK is 0x0, the reference says 0x4000".
+@old
+  localparam logic [1:0] MARK = 2'b01;
+@new
+  localparam logic [1:0] MARK = 2'b00;
+@end
+
+@mutation dbgin-the-sequence-never-moves
+@check dbgin
+@file rtl/plumbing/cadr_debug_window.sv
+@note **WHAT MAKES A TRANSACTION UNAMBIGUOUS.**  muir increments the sequence
+@note on every request and the adapter reports the sequence of the request it
+@note is holding, so an acknowledgement left standing from a previous
+@note transaction --- which reads exactly like an answer to the present one ---
+@note is caught.  `cable::DebugIn::observe` guards the same hazard on the
+@note simulated side and its comment says why.  Reported as a constant, every
+@note reply looks like muir's own and the watchdog stops being safe to have:
+@note muir could no longer tell that the adapter had let its request go.
+@note Caught at "STS's sequence is 0x0, the reference says 0x1".
+@old
+            seq        <= s_wdata[11:8];
+@new
+            seq        <= 4'd0;
+@end
+
+@mutation dbgin-the-watchdog-never-fires
+@check dbgin
+@file rtl/plumbing/cadr_debug_window.sv
+@note **A BOUND NOTHING EXERCISES IS NOT A BOUND**, and this is the record
+@note that says the check exercises it.  A request left standing holds
+@note `-DB NEED UB` down, keeps the debug master on the debuggee's Unibus with
+@note `-UB BBSY` asserted, and the machine's own cycles wait for ever; on a
+@note real lashup unplugging the cable ends that, the SIP at DBGIN 0A22
+@note pulling `-DEBUG IN REQ` up, and in fabric there is nothing to unplug.
+@note
+@note Written as a reversed condition rather than a deletion, so that `dog_t`
+@note stays read and lint does not do the catching.  The harness shrinks
+@note `WATCHDOG_T` from the module's own one second to 4,096 ticks, because a
+@note second is 100,000,000 of them.  Caught at "the watchdog did not lift a
+@note standing request".
+@old
+      if (standing && dog_t != '0) dog_t <= dog_t - 1'b1;
+@new
+      if (standing && dog_t == '0) dog_t <= dog_t - 1'b1;
+@end
+
+@mutation dbgin-acknowledges-a-cycle-at-once
+@check dbgin
+@file rtl/machine/cadr_dbgin.sv
+@note **THE ONE THAT SEPARATES A GATE FROM A BUS CYCLE.**  `DEBUG ACK` is
+@note `(DBUB MASTER AND SSYN T0) OR NAND(-DB ADR1 CLK, -DB ADR0 CLK, -DB READ
+@note STATUS)`, the 74S08, 74S10 and 74S32 at DBGIN 0A12, 0A14 and 0A09: the
+@note three register strobes are acknowledged the instant they are made and a
+@note cycle only when its slave answers.  Acknowledged at once, a debug cycle
+@note at an address nothing answers would come back as an answer --- and
+@note `Rtl::debug_ack` is explicit that "a cycle at an address nothing answers
+@note is never acknowledged, there being no timeout for this master".
+@note
+@note The check measures the lag at the CABLE and not through a load, because
+@note an AXI round trip is several ticks either way and a poll cannot tell the
+@note two apart.  Caught at "the quickest -DB NEED UB acknowledgement is 0x0,
+@note the reference says 0x47", and again at "a cycle at an address nothing
+@note answers was acknowledged".
+@old
+  assign dbg_in_ack = strobe_status || strobe_modifier || strobe_address
+                      || (strobe_cycle && acked);
+@new
+  assign dbg_in_ack = strobe_status || strobe_modifier || strobe_address
+                      || (strobe_cycle && (acked || !acked));
+@end
+
+@mutation dbgin-the-status-drives-the-high-byte
+@check dbgin
+@file rtl/machine/cadr_dbgin.sv
+@note **`-DB READ STATUS` DRIVES `DBD<7:0>` AND NOTHING ABOVE IT.**  The
+@note Am8304 at REQERR 0B15 is an octal driver onto the low byte; the high
+@note byte is undriven and the cable's own pull-ups carry it, which is why
+@note `Rtl::try_debug_request` writes the answer as `0xff00 | status`.  muir
+@note compares against that word, so an adapter that drove the high byte ---
+@note with zeros, since this board has nothing to put there --- would hand
+@note muir `0x005a` where it expects `0xff5a`, and every status read would be
+@note read as a different machine's.
+@note
+@note The split is kept where it belongs: this module says which BYTES it
+@note drives and `cadr_debug_window.sv` resolves an undriven one as ones,
+@note because the pull-ups are the cable's and not the board's.  Caught at
+@note "the status word on DBD is 0x5a, the reference says 0xff5a".
+@old
+      dbd_oe  = 2'b01;
+@new
+      dbd_oe  = 2'b11;
+@end
+
+@mutation dbgin-latches-on-the-strobe-not-its-edge
+@check dbgin
+@file rtl/machine/cadr_dbgin.sv
+@note **THE LATCHES ARE CLOCKED ON THE WAY OUT.**  `-DB ADR0 CLK` and
+@note `-DB ADR1 CLK` reach pin 11 of the two 74LS374s and the 25LS2519, so the
+@note address and modifier registers take `DBD` at the strobe's TRAILING edge,
+@note which is when the request lifts.  `Busint::debug_latch` is called from
+@note `Busint::debug_release` and from the `Strobe { until }` arm of
+@note `debug_advance`, and from nowhere else.
+@note
+@note Loaded while the strobe stands instead, a debugger that changed `DBD`
+@note during a request --- or an adapter that let it change --- would write the
+@note wrong word, and a modifier register that takes a stray one in bit 1
+@note resets the debuggee and halts it.  `lift` stays read, so lint does not do
+@note the catching.  Caught at "the modifier register took its word before the
+@note request lifted".
+@old
+      if (lift) begin
+@new
+      if (lift || strobe_address || strobe_modifier) begin
+@end
+
+@mutation dbgin-msyn-a-tick-short
+@check dbgin
+@file rtl/machine/cadr_dbgin.sv
+@note **THE RECORD THAT SAYS THE CHECK SEES TIME.**  `busint::DEBUG_MSYN_NS`
+@note is a hundred nanoseconds from `DBUB MASTER` to `-UB MSYN`: "MSYN OUT at
+@note DATCTL 0D08 follows the master a delay-line section on".  One tick out
+@note of twenty is five nanoseconds on MIT's grid, and nothing about what the
+@note machine computes changes --- the register block answers whenever the
+@note strobe reaches it.  The check measures the arc at the bus and not
+@note through a load.
+@note
+@note The constant it mutates is itself a correction: loaded one short rather
+@note than two, the arc measured 21 ticks against muir's 20, because the edge
+@note that takes the grant is the first tick of the section and not the tick
+@note before it.  Caught at "the grant to -UB MSYN is 0x13, the reference says
+@note 0x14".
+@old
+            wait_t <= WAIT_W'(MSYN_T - 2);
+@new
+            wait_t <= WAIT_W'(MSYN_T - 3);
+@end
+
+@mutation dbgin-drops-the-bus-at-the-lift
+@check dbgin
+@file rtl/machine/cadr_dbgin.sv
+@note **`DBUB MASTER` OUTLIVES THE REQUEST BY A DELAY-LINE SECTION.**
+@note `busint::DEBUG_RELEASE_NS` is a hundred nanoseconds from `-DEBUG IN REQ`
+@note rising to `DBUB MASTER` clearing, the 74S74 at UBMAST 0D02, and
+@note `Busint::debug_release` takes a master to `Releasing { until: at +
+@note DEBUG_RELEASE_NS }` and not to `Idle`.  Dropped, `-UB BBSY` would go with
+@note the request and another master could take the bus inside the section the
+@note board holds it.
+@note
+@note This is the arm a request in the ARBITRATION takes, which is different:
+@note muir's `debug_release` sends `NeedUb` straight to `Idle`, because
+@note `-DB RESET` at UBMAST 0B16 is `DB NEED UB AND -DBUB MASTER` and resets
+@note the two flops at 0D02 with nothing held.  Only the mastered arm pays the
+@note section, and only that one is mutated here.  Caught at "the lift to DBUB
+@note MASTER clearing is 0x0, the reference says 0x14".
+@old
+        C_XFER: begin
+          if (ub_ssyn && !acked) acked <= 1'b1;
+          if (!dbg_in_req) begin
+            cst    <= C_REL;
+            wait_t <= WAIT_W'(RELEASE_T - 1);
+          end
+        end
+@new
+        C_XFER: begin
+          if (ub_ssyn && !acked) acked <= 1'b1;
+          if (!dbg_in_req) begin
+            cst    <= C_IDLE;
+            wait_t <= WAIT_W'(RELEASE_T - 1);
+          end
+        end
+@end
+
+@mutation dbgin-address-forgets-bit-17
+@check dbgin
+@file rtl/machine/cadr_dbgin.sv
+@note **THE MODIFIER REGISTER'S BIT 0 IS THE TOP ADDRESS BIT**, and every
+@note Unibus address this fabric answers needs it: the diagnostic block is at
+@note `0o766000` and the I/O board at `0o764100`, both above `0o400000`.
+@note `Busint::debug_unibus_address` assembles `UAO<16:1>` from the two
+@note 74LS374s with `UAO17` from the 25LS2519 and bit 0 always zero --- MIT's
+@note own note, "Bit 0 of the address is not sent over the cable".
+@note
+@note Forgotten, every debug cycle lands 128K words below where CC asked and
+@note nothing answers it.  `modifier[0]` stays read through `modifier_o`, so
+@note lint does not do the catching.  Caught at "a cycle at a slave's own
+@note address was not acknowledged".
+@old
+  assign ub_addr = {modifier[0], address, 1'b0};
+@new
+  assign ub_addr = {1'b0, address, 1'b0};
+@end
+
+@mutation dbgin-console-goes-in-front-of-the-debug-master
+@check dbgin
+@file rtl/machine/cadr_console_bus.sv
+@note **THE DEBUG MASTER IS FIRST ON MIT'S GRANT CHAIN.**  The 74LS74 at
+@note UBMAST 0D02 is first on `NPG1 IN`, so the debug cable's master is the
+@note highest priority master the Unibus has.  The console has no counterpart
+@note on MIT's board at all, so its priority against the debug master is a
+@note decision rather than a reading, and it is taken the only way that keeps
+@note both bounded where it matters: a debug master waiting behind the console
+@note waits the console's own 260 ns, and a console waiting behind the debug
+@note master gives up after `LOST_T` ticks and says `lost`.  Reversed, a
+@note debugger's cycle would wait on a console with no bound at all.
+@note
+@note Caught at "the console took the bus in front of the debug master".
+@old
+      else con_own <= con_req && !cpu_msyn && !dbg_req && !dbg_own;
+@new
+      else con_own <= con_req && !cpu_msyn && (dbg_req || !dbg_req) && !dbg_own;
+@end
+
+@mutation dbgin-master-takes-the-bus-mid-cycle
+@check dbgin
+@file rtl/machine/cadr_console_bus.sv
+@note **A STROBE MASKED IN THE MIDDLE IS A CYCLE THAT NEVER ANSWERS**, which
+@note is the rule this arbiter was written to and which the console's arm
+@note already obeys.  `cadr_spy_registers.sv` starts its count at the strobe
+@note and clears it when the strobe falls, so a processor cycle whose
+@note `-UB MSYN` is taken away mid-flight simply stops, and the processor's own
+@note NXM timer finds it 4,250 ns later.  On MIT's board the same thing is
+@note `BUS READY` waiting for the processor to let go of `-UB BBSY` before
+@note `-DB UB SET MASTER` at 0E01.
+@note
+@note The other way round is bounded and safe: while the debug master has the
+@note bus a processor strobe is masked and its cycle starts late.  Caught at
+@note "the debug master took the bus with the processor's strobe down", and
+@note again at "the processor's cycle was truncated by the debug master".
+@old
+      else dbg_own <= dbg_req && !cpu_msyn && !con_own;
+@new
+      else dbg_own <= dbg_req && (cpu_msyn || !cpu_msyn) && !con_own;
+@end
