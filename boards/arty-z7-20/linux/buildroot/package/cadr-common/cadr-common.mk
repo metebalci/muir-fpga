@@ -3,7 +3,11 @@
 #
 # What our programs on the processing system share below the fabric: the
 # /dev/mem mapping, the EMIO tally guard that must run before ANY access to
-# a GP port, and the logging one line at a time.  It arrived when the second
+# a GP port, the logging one line at a time, and the local input link --- the
+# socket a program with a keyboard on it sends keys along to the one program
+# that writes the keyboard's registers.  That last one is here for a second
+# reason as well as sharing: it is a WIRE FORMAT, and a wire format with two
+# definitions is two formats.  It arrived when the second
 # program did, which is what cadr-disk-pack/Config.in said in September would
 # happen: "what they share goes into a cadr-common package when the second
 # arrives".  The second is cadr-console.

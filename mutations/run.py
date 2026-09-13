@@ -1748,7 +1748,8 @@ def check_makefile():
     # without the name here warns, and a name here without the `.pass` says
     # nothing about a check nobody runs.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
-                           "chaosnet", "serial", "terminal", "console_face"}
+                           "chaosnet", "serial", "terminal", "console_face",
+                           "usb_input"}
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

@@ -74,9 +74,9 @@
 // `IN_CTL_FLUSH` before you can receive a keystroke.**  `cadr-terminal` does
 // it after the guard and before it binds its socket, so a viewer cannot have
 // sent anything yet.  A program taking keys from a device the KERNEL has
-// been buffering --- `cadr-usb-input`, when it is built --- must ALSO drain
-// that device, because the buffering is on the far side of this seam and no
-// register here can see it.
+// been buffering must ALSO drain that device, because the buffering is on the
+// far side of this seam and no register here can see it: `cadr-usb-input`
+// does, at every device it opens, and `usb_devices.h` says so at the drain.
 
 #ifndef INPUT_FACE_H
 #define INPUT_FACE_H

@@ -1,0 +1,368 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for cadr-usb-input: bugs `usb_test.c` has to catch.
+#
+# `mutate.py` applies each record to a copy of the sources, builds the check
+# against it, and runs it.  A mutation the check FAILS on is a check doing its
+# job; one the check passes is reported as SURVIVED and the run is red.  A
+# record whose `@old` no longer matches its file exactly once, or that does not
+# compile, is BROKEN and also fails the run --- CLAUDE.md records two fabric
+# mutations reported as surviving that had never been built.
+#
+# THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
+# can read this one:
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @file      which source to mutate.  A bare name is this package's;
+#              `cadr-terminal/src/...` and `cadr-common/src/...` are the other
+#              two the check builds
+#   @why       what the check is supposed to notice, printed when it does not
+#   @note      prose, repeatable; printed with @why on a survivor
+#   @old       the source to replace, exactly as it stands
+#   @new       what to put there; empty deletes
+#   @end
+#
+# WHERE THE LIST CAME FROM.  Every decision this program makes that could have
+# gone the other way: the level chosen here rather than at the far end, the
+# release carrying the press's keysym, the keypad following Num Lock and not
+# Shift, the mouse's axes and signs, a whole report being one record, the
+# switches being a level and being ORed across sources, and what a device or a
+# source owes when it goes away.
+#
+# **THE MUTATIONS KEEP EVERY SIGNAL USED.**  CLAUDE.md's lint lesson, one
+# language along: a mutation that leaves a variable unread is caught by the
+# compiler and not by the check, and a record caught by its own build failure
+# is a record that tests nothing.  So a guard is weakened rather than deleted,
+# and a value is changed rather than a call removed.
+#
+# AND TWO EQUIVALENCES MEASURED AND NOT FILED, so that nobody files them as
+# holes.  In `buttons_or`, `mask |= ...` written as `mask = ...` is invisible
+# to this check, which attaches one client: the OR that this check does see is
+# the one between a viewer and the link, and it has a record of its own below.
+# And `usb_mouse_report`'s saturation at 32,767 cannot be reached by any
+# device: a mouse would have to report more than a screen's width of motion
+# inside one report.
+
+@mutation the-level-is-chosen-at-the-far-end-instead
+@file usb_keys.c
+@why Shift and 1 must reach the machine as the shifted position with Shift still down
+@note **THE RECORD THIS PROGRAM EXISTS FOR.**  The far end's state machine is
+@note written for a viewer, which sends a keysym already shifted; hand it the
+@note unshifted one with Shift held and it works the Shift key AROUND the key,
+@note so the user types `!` and the machine is given `1` with Shift lifted and
+@note put back.  Four words become six and one of them is wrong.  This is
+@note what `cadr/cadr_input_link.h` states as the link's contract.
+@old
+	const int level2 = e->keypad ? (k->numlock != 0)
+				     : (k->shift_l || k->shift_r);
+@new
+	const int level2 = e->keypad ? (k->numlock != 0)
+				     : (k->shift_l && k->shift_r);
+@end
+
+@mutation the-keypad-follows-shift-and-the-letters-follow-num-lock
+@file usb_keys.c
+@why the keypad's level is Num Lock's and every other key's is Shift's
+@note The two locks are one line apart and each is a plausible name for the
+@note other.  Crossed, a keyboard with Num Lock on --- which is how this
+@note program starts --- types capitals with no Shift held.
+@old
+	const int level2 = e->keypad ? (k->numlock != 0)
+				     : (k->shift_l || k->shift_r);
+@new
+	const int level2 = e->keypad ? (k->shift_l || k->shift_r)
+				     : (k->numlock != 0);
+@end
+
+@mutation the-release-carries-the-level-it-has-now
+@file usb_keys.c
+@why a key must come up with the keysym it went down with
+@note Press Shift, press 1, let Shift go, let 1 go.  Recomputed at the
+@note release the keysym is `1` where the press was `exclam`, so the far end
+@note releases a position that is not down and holds the shifted one for ever
+@note --- and every character after it is wrong.  There are no modifier bits
+@note in a word for the machine to notice with.
+@old
+	const uint32_t sym = k->sent[code];
+	if (!sym)
+		return 0;   // an up for a key this never sent down
+@new
+	const uint32_t sym = k->sent[code] ? usb_kbd_keysym(k, code) : 0;
+	if (!sym)
+		return 0;   // an up for a key this never sent down
+@end
+
+@mutation the-kernels-repeat-is-passed-on-as-a-press
+@file usb_keys.c
+@why evdev's value 2 is the kernel's auto-repeat and must go nowhere
+@note The Lisp Machine keyboard has a Repeat key of its own and sends no
+@note position twice with no release between.  A repeat let through is a
+@note press for a key the far end may not have down, and then a release is
+@note owed that nobody will send.
+@old
+	if (value == 2) {
+@new
+	if (value == 3) {
+@end
+
+@mutation a-device-that-goes-keeps-its-keys-down
+@file usb_devices.c
+@why a keyboard unplugged with Control held must not leave the machine holding Control
+@note There are no modifier bits in a word, so the machine follows the stream
+@note of positions and has no way to notice that the keyboard is gone.  Every
+@note character after it would be a control character.
+@old
+	const unsigned n = usb_kbd_release_all(&d->kbd, owed, USB_KBD_MAX_DOWN);
+	for (unsigned i = 0; i < n; ++i)
+		emit(out, &owed[i]);
+@new
+	const unsigned n = usb_kbd_release_all(&d->kbd, owed, USB_KBD_MAX_DOWN);
+	for (unsigned i = 0; i < n && i > n; ++i)
+		emit(out, &owed[i]);
+@end
+
+@mutation a-mouses-report-is-not-a-boundary
+@file usb_devices.c
+@why SYN_REPORT ends a report, and a report is one record
+@note Without it the deltas pile up in the mouse's own state and nothing is
+@note ever sent, so the machine's cursor never moves however far the mouse is
+@note pushed.
+@old
+		if (ev.type == EV_SYN && ev.code == SYN_REPORT) {
+@new
+		if (ev.type == EV_SYN && ev.code == SYN_DROPPED) {
+@end
+
+@mutation a-keyboards-events-are-read-as-a-mouses
+@file usb_devices.c
+@why which of the two a device is decides how its events are read
+@note One line, and the two kinds are the only two.  A keyboard read as a
+@note mouse sends nothing at all, because no key code it reports is one of
+@note the three buttons.
+@old
+		if (d->kind == USB_KIND_KEYBOARD) {
+@new
+		if (d->kind == USB_KIND_MOUSE) {
+@end
+
+@mutation the-scan-does-not-put-the-nodes-in-order
+@file usb_devices.c
+@why the devices are opened in one order at every boot
+@note readdir gives no order at all, so without the sort a board with two
+@note keyboards opens them in whatever order the filesystem happens to answer
+@note in, and a log read against another boot's says something different.
+@old
+		while (j && strcmp(names[j - 1], tmp) > 0) {
+@new
+		while (j && strcmp(names[j - 1], tmp) < 0) {
+@end
+
+@mutation the-mouse-axes-are-crossed
+@file usb_keys.c
+@why REL_X is the mouse's x and REL_Y its y
+@note The classic failure of a file like this one: the two are one statement
+@note apart and each is a plausible name for the other.  A check that counted
+@note movements would pass this.
+@old
+		if (code == REL_X_C) {
+			m->dx += value;
+			m->moved = 1;
+		} else if (code == REL_Y_C) {
+			m->dy += value;
+@new
+		if (code == REL_X_C) {
+			m->dy += value;
+			m->moved = 1;
+		} else if (code == REL_Y_C) {
+			m->dx += value;
+@end
+
+@mutation down-is-up-on-the-mouse
+@file usb_keys.c
+@why right and down are positive, which is the cable's convention and the machine's
+@note `muir::terminal::mouse`'s own, and the way `tv:mouse-x` and `tv:mouse-y`
+@note grow.  Negated here, the machine's cursor goes the other way from the
+@note hand, which is the kind of thing somebody would "fix" at the far end.
+@old
+		} else if (code == REL_Y_C) {
+			m->dy += value;
+@new
+		} else if (code == REL_Y_C) {
+			m->dy -= value;
+@end
+
+@mutation the-report-does-not-take-the-motion
+@file usb_keys.c
+@why what a report carried must not be carried again by the next one
+@note The fabric ADDS what it is given to what it still owes, so a delta sent
+@note twice moves the machine's cursor twice as far, and a mouse pushed
+@note steadily runs away.
+@old
+	m->dx = 0;
+	m->dy = 0;
+	m->moved = 0;
+	m->switched = 0;
+	return 1;
+@new
+	m->dy = 0;
+	m->moved = 0;
+	m->switched = 0;
+	return 1;
+@end
+
+@mutation the-switches-are-an-edge-and-not-a-level
+@file usb_keys.c
+@why the three switches cross as a level and stand until they change
+@note The card's own comparator decides whether anything happened, and the
+@note register is what the machine reads.  Cleared after every report, a
+@note button held goes down and comes up again a hundredth of a second later.
+@old
+	out->buttons = m->buttons;
+@new
+	out->buttons = m->buttons;
+	m->buttons = 0;
+@end
+
+@mutation the-left-and-right-buttons-are-crossed
+@file usb_keys.c
+@why left is bit 0 and right is bit 2, which is MIT's buttons-down-mask in MIT's order
+@note RFB's mask needs no translation and neither does evdev's; crossed here,
+@note the machine's menus come up on the wrong button and nothing says so.
+@old
+	if (code == BTN_LEFT_C)
+		bit = 1u;
+	else if (code == BTN_MIDDLE_C)
+		bit = 2u;
+	else if (code == BTN_RIGHT_C)
+		bit = 4u;
+@new
+	if (code == BTN_LEFT_C)
+		bit = 4u;
+	else if (code == BTN_MIDDLE_C)
+		bit = 2u;
+	else if (code == BTN_RIGHT_C)
+		bit = 1u;
+@end
+
+@mutation the-wheel-is-a-switch
+@file usb_keys.c
+@why the cable has three switches and no wheel
+@note A wheel turned is nothing the CADR's mouse can carry.  Counted as
+@note movement it would send a record with no motion and no change of switch
+@note in it, which is a write to the fabric for nothing.
+@old
+		} else if (code == REL_WHEEL_C || code == REL_HWHEEL_C) {
+			// The cable has three switches and no wheel.  Counted
+			// so that a status line can say a wheel was turned and
+			// went nowhere, rather than leaving somebody to wonder.
+			++m->wheels;
+		}
+@new
+		} else if (code == REL_WHEEL_C || code == REL_HWHEEL_C) {
+			++m->wheels;
+			m->moved = 1;
+		}
+@end
+
+@mutation the-link-forgets-what-a-source-held
+@file cadr-common/src/cadr_input_link.c
+@why a source that dies with keys down owes those releases and the server owes them for it
+@note A program that exits tidily sends its own; this is the one that does
+@note not.  Without it a Control held by a program that crashed is a Control
+@note held for the rest of the machine's run.
+@old
+	if (sink && sink->key)
+		for (unsigned i = 0; i < c->downs; ++i)
+			sink->key(sink->ctx, c->down[i], 0);
+@new
+	if (sink && !sink->key)
+		for (unsigned i = 0; i < c->downs; ++i)
+			sink->key(sink->ctx, c->down[i], 0);
+@end
+
+@mutation a-key-going-down-is-not-remembered
+@file cadr-common/src/cadr_input_link.c
+@why what a client holds is what it owes, so a press must be remembered
+@note The other half of the record above, and the more likely mistake: the
+@note releases are sent faithfully and there is nothing in the set to send.
+@old
+		if (!holds(c, keysym) && c->downs < CADR_INPUT_LINK_DOWN_MAX)
+@new
+		if (holds(c, keysym) && c->downs < CADR_INPUT_LINK_DOWN_MAX)
+@end
+
+@mutation a-record-of-an-unknown-kind-is-guessed-at
+@file cadr-common/src/cadr_input_link.c
+@why a record whose type is neither of the two means the far end is not this link
+@note Guessed at, whatever is at the other end of that socket is read as
+@note keystrokes: a program that connected by mistake would type into the
+@note machine.  The answer is to drop the client and say so.
+@old
+	if (e->type != CADR_INPUT_KEY && e->type != CADR_INPUT_POINTER)
+		return -1;
+@new
+	if (e->type != CADR_INPUT_KEY && e->type != CADR_INPUT_POINTER)
+		e->type = CADR_INPUT_KEY;
+@end
+
+@mutation the-switches-are-the-links-alone
+@file cadr-terminal/src/screen_server.c
+@why there is one mouse, and a switch held at the board must not be lifted by a viewer
+@note The machine has one mouse with three switches and two sources may be
+@note holding them.  Taking one source's mask over the other's makes whichever
+@note moved last the only one that counts.
+@old
+	input_face_buttons(s->input, (uint32_t)(s->buttons | s->link_buttons));
+@new
+	input_face_buttons(s->input, (uint32_t)(s->link_buttons));
+@end
+
+@mutation a-viewer-leaving-lifts-the-keys-somebody-is-holding-at-the-board
+@file cadr-terminal/src/screen_server.c
+@why what a link client holds is its own and a viewer closing a window must not release it
+@note The last viewer leaving releases every key that is down, which is right
+@note when a viewer was the only source and wrong when somebody is standing at
+@note the board with a finger on Shift.  What a client holds is released when
+@note that client goes, which is the same rule one source along.
+@old
+	if (s->input && s->viewers == 1
+	    && !(s->link_ready && cadr_input_link_clients(&s->link))) {
+@new
+	if (s->input && s->viewers == 1) {
+@end
+
+@mutation the-pacing-rule-is-dropped-for-a-key-from-the-board
+@file cadr-terminal/src/screen_server.c
+@why words may go no closer together than the interval, whichever source they came from
+@note The board proved the rule: the fabric offers the card its next word
+@note about two ticks after the machine's read clears KBD READY, and a machine
+@note fed that fast reads every word and digests some of them --- twenty
+@note characters arrived as nineteen with the fabric's LOST at zero.  A second
+@note source does not get its own allowance.
+@old
+			if (s->key_ever && now_ns - s->key_at_ns < interval)
+				break;
+@new
+			if (s->key_ever && now_ns - s->key_at_ns < interval / 4)
+				break;
+@end
+
+@mutation half-an-event-is-thrown-away
+@file usb_devices.c
+@why a read gives whole events and may give part of one, and the part is kept
+@note A device's descriptor is a stream, so the last event of a read can be
+@note half there.  Thrown away, the key it carried is lost and --- worse --- the
+@note bytes after it are read as the middle of an event, so every event after
+@note that one is nonsense until the stream happens to realign.  Nothing in a
+@note socket pair splits a write by itself, so the check splits one on purpose.
+@old
+	if (at) {
+		memmove(d->in, d->in + at, d->in_len - at);
+		d->in_len -= at;
+	}
+@new
+	if (at) {
+		d->in_len = 0;
+	}
+@end
