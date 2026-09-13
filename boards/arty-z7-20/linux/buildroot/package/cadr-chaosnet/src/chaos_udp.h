@@ -16,6 +16,28 @@
 // dropped rather than forwarded; AIM-628 chapter 6's routing is a bridge's
 // job and `cbridge` is the thing to put beside this.
 //
+// **THE BRIDGE IS REACHED AS THE DEFAULT PEER.**  A peer entry says that one
+// Chaosnet address lives at one endpoint, so naming a bridge as a peer does
+// not let this board talk THROUGH it: a frame for any other address has
+// nowhere to go.  `chudp_set_default_peer` is where such a frame goes
+// instead, which is the route of last resort and the whole of the routing
+// here --- nothing reads a routing packet.  The frame carries the real
+// destination in its hardware trailer for the bridge to route on, which is
+// why the default peer is an endpoint and carries no Chaosnet address.  A
+// broadcast is NOT sent there: the named peers are stations on this machine's
+// own cable and a broadcast is theirs, while the default peer is the way out
+// to a wider network.  muir's `--chaos-udp-default-peer`, and its own
+// `chaos::udp` has the same paragraph.
+//
+// **NOTHING IS LEARNED FROM A PACKET.**  An endpoint typed on the command
+// line is a statement; a table filled in from what arrives is state nobody
+// wrote down, and it puts the naming in the hands of whoever can reach the
+// port.  muir removed its `--chaos-udp-dynamic` for those two reasons and so
+// has this.  A datagram is therefore judged by what is IN it --- its cable
+// source and its cable destination --- and never by the socket it came off,
+// so a host no flag named is heard exactly as a named peer is and the answer
+// to it goes out only when a flag said where that host is.
+//
 // ## The frame
 //
 //     offset  width  field
@@ -93,16 +115,25 @@ enum chudp_order { CHUDP_LITTLE, CHUDP_BIG };
 struct chudp_peer {
 	uint16_t address;
 	struct sockaddr_in where;
-	// Whether this endpoint was learned from a datagram rather than named
-	// by a flag.  `--udp-dynamic` allows it; without the flag a datagram
-	// from an unknown endpoint is dropped.
-	int learned;
 };
 
 struct chudp {
 	int fd;
-	int dynamic;
 	int trace;
+	// The one address this cable carries in this process: the machine's,
+	// which the fabric's interface answers to.  muir's node is handed the
+	// same thing as `Chudp::local` and a list, having a modelled cable
+	// with more than one station on it; here there is one.  A datagram
+	// claiming to be FROM it is a forgery and is dropped, because the
+	// interface would take the frame for its own --- Transmit Done and
+	// all.  0 says nobody has said, which is what a link bound and not yet
+	// told is.
+	uint16_t local;
+	// Where a frame goes whose destination no peer entry names: the route
+	// of last resort, an endpoint and no Chaosnet address.  `have_default`
+	// rather than a zero address, since every endpoint is a real one.
+	struct sockaddr_in default_peer;
+	int have_default;
 	unsigned npeers;
 	struct chudp_peer peers[CHUDP_MAX_PEERS];
 };
@@ -117,10 +148,33 @@ void chudp_close(struct chudp *u);
 // having said why.
 int chudp_add_peer(struct chudp *u, const char *spec);
 
-// A frame out to whoever should have it: the peer whose address is
-// `cable_dest`, or every peer for a broadcast (`cable_dest` 0).  Returns how
-// many datagrams went.  A destination no peer claims is dropped and counted,
-// not forwarded: this is a leaf.
+// `<host>[:<port>]`, which is muir's `--chaos-udp-default-peer`.  0, or -1
+// having said why.  **It takes no Chaosnet address**, and that is what tells
+// it from a peer: it is not a host at an address, it is where what is not
+// named goes.  A bare port is on the loopback, an address alone takes
+// CHUDP's own port, and a name is resolved here and once.  Twice is refused,
+// as a second endpoint for one peer is.
+int chudp_set_default_peer(struct chudp *u, const char *spec);
+
+// **WHICH FLAG ASKS FOR A LINK THAT IS NOT THERE**, or NULL when the flags
+// agree.  muir's rule: `--chaos-address` sets the sixteen address switches
+// and nothing else, and `--chaos-udp` is the cable --- on the board the
+// switches are set whether or not anything is plugged in, and a cable can be
+// unplugged.  So a flag that says who is ON the cable needs the cable, and a
+// run that names a peer without one is asking for a link that does not exist.
+// The peer is reported before the default peer, as muir reports them.
+//
+// It is a function rather than three lines in `main` so that the rule is
+// checkable: `cadr-chaosnet.c` is in neither the check's binary nor the
+// mutation runner's, and a rule nothing exercises is not a rule.
+const char *chudp_flag_without_cable(int have_cable, unsigned npeers, int have_default);
+
+// A frame out to whoever should have it, which is muir's `Chudp::addressed`:
+// every peer for a broadcast (`cable_dest` 0), since they are stations on
+// this cable; nobody at all for this cable's own address; the peer whose
+// address is `cable_dest`; and failing that the default peer.  Returns how
+// many datagrams went.  A destination no entry names and no default peer
+// covers is dropped and counted, not forwarded: this is a leaf.
 int chudp_send(struct chudp *u, const uint16_t *words, unsigned n, uint16_t cable_dest);
 
 // One turn at the socket, never blocking: up to `max` frames taken.  Each is

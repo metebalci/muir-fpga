@@ -228,23 +228,25 @@ BITLINE=$(bitinfo "$BIT") || die "$BIT does not carry a Xilinx bitstream header"
 echo "mksd-buildroot: bitstream $BIT"
 echo "mksd-buildroot:   $BITLINE"
 
-# The address, the MAC and the Chaosnet peer, from the file the repository does
-# not carry.  Those three are everything private a card can hold: an IP, a MAC
-# and a host on somebody's network.
-SERVERIP=; ETHADDR=; CHAOS_PEER=
+# The address, the MAC and the Chaosnet peers, from the file the repository
+# does not carry.  Those are everything private a card can hold: an IP, a MAC
+# and hosts on somebody's network.  CHAOS_DEFAULT_PEER is one of them: it is
+# the bridge, and a bridge is a machine on a real network like any other.
+SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=
 if [ -r boards/arty-z7-20/linux/local.conf ]; then
   . boards/arty-z7-20/linux/local.conf
 fi
 # **STANDALONE MEANS THE CARD CARRIES NOTHING FROM local.conf**, and that is
 # wider than it used to be on purpose.  It cleared SERVERIP alone, which was
 # right while the only private value on a card was the TFTP server's address.
-# It is not any more: uEnv.txt carries ETHADDR, and the Chaosnet's peers file
-# and muir's own file of flags carry CHAOS_PEER, and a release card is built by
-# setting exactly this flag.  Clearing one of the three and shipping the other
-# two is the failure this flag exists to prevent, so it clears all three and
+# It is not any more: uEnv.txt carries ETHADDR, and both files of flags ---
+# fpgarc for the CADR in the fabric and muirrc for the CADR inside muir ---
+# carry CHAOS_PEER and CHAOS_DEFAULT_PEER, and a release card is built by
+# setting exactly this flag.  Clearing one of the four and shipping the others
+# is the failure this flag exists to prevent, so it clears all four and
 # mksd-release.sh's guard is the check on it rather than the whole of it.
 if [ -n "$STANDALONE" ]; then
-  SERVERIP=; ETHADDR=; CHAOS_PEER=
+  SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=
 fi
 if [ -n "${SERVERIP:-}" ]; then
   MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp"
@@ -252,7 +254,7 @@ else
   MODE="the card path: uEnv.txt names no server, the five files come from the card, no network is used"
 fi
 if [ -n "$STANDALONE" ]; then
-  echo "mksd-buildroot: STANDALONE: no server, no MAC and no Chaosnet peer --- this card carries nothing from local.conf"
+  echo "mksd-buildroot: STANDALONE: no server, no MAC and no Chaosnet peers --- this card carries nothing from local.conf"
 elif [ -z "${ETHADDR:-}" ]; then
   echo "mksd-buildroot: WARNING: no ETHADDR in boards/arty-z7-20/linux/local.conf; the board will use a random MAC and U-Boot will say so" >&2
 fi
@@ -290,8 +292,11 @@ done
   printf 'This partition holds the disk packs, and the few settings files that\r\n'
   printf 'have to survive a reboot.  Everything else on the board runs from a\r\n'
   printf 'RAM disk unpacked at every boot, so a file edited there is lost; a\r\n'
-  printf 'file edited here is not.  The settings files are the three named\r\n'
-  printf 'chaosnet.* and muirrc, and each one says at its top what it is for.\r\n\r\n'
+  printf 'file edited here is not.  The settings files are fpgarc and muirrc,\r\n'
+  printf 'one for each of the two CADRs this board runs: fpgarc configures the\r\n'
+  printf 'machine in the fabric and muirrc the machine inside muir, which is\r\n'
+  printf 'the debugger.  Both are lists of flags, one a line, and each says at\r\n'
+  printf 'its top what it is for.\r\n\r\n'
   printf 'Name a pack\r\n'
   printf 'disk-pack-0.img to disk-pack-7.img: the number is the disk unit the\r\n'
   printf 'machine sees it on, and whichever of the eight files exist are the\r\n'
@@ -310,54 +315,84 @@ done
   printf 'put packs there; nothing looks for them there.\r\n'
 } > "$OUT/packs/README.TXT"
 
-# ------------------------------------------------- the Chaosnet's three files
+# ------------------------------------------------- the fabric CADR's flags
 #
-# One value a file, each named for what it holds, on the partition a card
-# reader can edit; `.txt` so a laptop opens them rather than asking what
-# should.  `S87cadr-chaosnet` is the account of why there is no
-# `chaosnet.conf`: since muir at `79c7590` a CADR has no file or time server
-# in it, so neither program has one, and what is left is two numbers and a
-# list of peers.
+# **ONE FILE A STATION, IN muir'S OWN rc FORMAT.**  `fpgarc` configures the
+# CADR in the fabric and `muirrc` beside it configures the CADR inside muir,
+# so the two machines on this board are configured the same way with the same
+# flag names.  One flag a line, the flag then a space then the rest of the
+# line as its argument, `#` a comment, CRLF because the reader is Notepad.
+#
+# It replaced three files of one value each --- an address, a port and a list
+# of peers --- and the reason is worth keeping: each was read by a little
+# shell in the init script, one of those readers stripped a carriage return
+# and the other did not, and every peer reached the program with a `\r` on
+# the end of its port.  A file of flags has no values for a shell to get
+# wrong, and it is the same file the program would have been given on a
+# command line.
 #
 # **THE NUMBERS ARE THE SAME ON EVERY CARD, RELEASE INCLUDED**: the port
 # numbers and the addresses alike, since it is a private subnet.  Subnet
 # 0o376 is private in the way 192.168 is, so two boards out of the box do not
 # collide with anybody.
-# **ONLY THE PEER IS PRIVATE**, because it names a real host on a real
-# network: it comes from `local.conf`, the same rule and the same file as
-# SERVERIP, and a card built without one gets an empty peers file that says
-# what to put in it.
+# **ONLY THE PEERS ARE PRIVATE**, because they name real hosts on a real
+# network: they come from `local.conf`, the same rule and the same file as
+# SERVERIP, and a card built without them gets a file that says what to put
+# in it.
 CHAOS_ADDR=${CHAOS_ADDR_FPGA:-177101}
 CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
 {
-  printf "# The DIP switches on the Chaosnet card: this machine own address,\r\n"
-  printf "# in octal.  Not a preference --- it is what the hardware IS.\r\n"
+  printf "# The flags for the CADR in the fabric, so that its programs are\r\n"
+  printf "# configured the way muir is: one flag a line, the flag then a space\r\n"
+  printf "# then the rest of the line as its argument, and a line that is blank\r\n"
+  printf "# or starts with # is a comment.  muirrc beside this file is the same\r\n"
+  printf "# format for the CADR inside muir.\r\n"
   printf "#\r\n"
-  printf "# A band calls the host ITS OWN table names, so a band other than\r\n"
-  printf "# the one this card ships with may want another number here.\r\n"
-  printf "%s\r\n" "$CHAOS_ADDR"
-} > "$OUT/packs/chaosnet.addr.txt"
-{
-  printf "# Where Chaosnet-over-UDP listens.  42042 is the protocol own port\r\n"
-  printf "# and the CADR in fabric takes it.  The CADR inside muir, when it\r\n"
-  printf "# runs as the debugger, takes another in its own .muirrc: two\r\n"
-  printf "# stations on one port is a collision, not a network.\r\n"
-  printf "%s\r\n" "$CHAOS_PORT"
-} > "$OUT/packs/chaosnet.over.udp.port.txt"
-{
-  printf "# Where the OTHER stations are, one a line, in muir own syntax:\r\n"
+  printf "# Today every line here goes to cadr-chaosnet, which serves the\r\n"
+  printf "# machine's Chaosnet interface, so only its flags belong in it.  The\r\n"
+  printf "# screen and the serial line will move their own flags in later.\r\n"
+  printf "\r\n"
+  printf "# The sixteen address switches on the Chaosnet card: this machine's\r\n"
+  printf "# own address, in octal.  Not a preference --- it is what the\r\n"
+  printf "# hardware IS.  A band calls the host ITS OWN table names, so a band\r\n"
+  printf "# other than the one this card ships with may want another number.\r\n"
+  printf -- "--chaos-address %s\r\n" "$CHAOS_ADDR"
+  printf "\r\n"
+  printf "# The cable, plugged in: Chaosnet over UDP, on every interface so\r\n"
+  printf "# that another machine can reach it.  42042 is the protocol's own\r\n"
+  printf "# port and the CADR in fabric takes it; the CADR inside muir takes\r\n"
+  printf "# another in muirrc, two stations on one port being a collision\r\n"
+  printf "# rather than a network.  Without this line nothing is sent, and the\r\n"
+  printf "# peer lines below are refused: the address switches are one flag and\r\n"
+  printf "# the cable is another, as they are two things on the board.\r\n"
+  printf -- "--chaos-udp 0.0.0.0:%s\r\n" "$CHAOS_PORT"
+  printf "\r\n"
+  printf "# The other stations, one a line, in muir's own syntax:\r\n"
   printf "#\r\n"
-  printf "#     <chaosnet address>@<host or IP>:<port>\r\n"
+  printf "#     --chaos-udp-peer <chaosnet address>@<host or IP>:<port>\r\n"
   printf "#\r\n"
-  printf "# The host your band calls goes here.  The host is ON THE NET and\r\n"
+  printf "# The host your band calls goes here.  That host is ON THE NET and\r\n"
   printf "# not inside any of these programs, so a machine with no peers says\r\n"
   printf "# its file host is not answering --- which is true.\r\n"
-  # CHAOS_PEER may name more than one station, separated by whitespace,
-  # because a machine on a cable usually has more than one neighbour and
-  # the file has always been one a line.
-  for peer in ${CHAOS_PEER:-}; do printf "%s\r\n" "$peer"; done
-} > "$OUT/packs/chaosnet.over.udp.peers.txt"
-echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peers --- the network is the user's")"
+  for peer in ${CHAOS_PEER:-}; do printf -- "--chaos-udp-peer %s\r\n" "$peer"; done
+  printf "\r\n"
+  printf "# The way out, if there is one:\r\n"
+  printf "#\r\n"
+  printf "#     --chaos-udp-default-peer <host or IP>:<port>\r\n"
+  printf "#\r\n"
+  printf "# A frame whose destination no peer line above names goes there\r\n"
+  printf "# rather than nowhere, which is what lets a bridge carry this\r\n"
+  printf "# machine's traffic on to the wider Chaosnet.  Naming that bridge as\r\n"
+  printf "# a peer does not do it: a peer line places ONE address.  So this\r\n"
+  printf "# takes an endpoint and no Chaosnet address, the frame carrying the\r\n"
+  printf "# real destination for the bridge to route on.  A broadcast is not\r\n"
+  printf "# sent here; it goes to the peers above, who are stations on this\r\n"
+  printf "# machine's own cable.\r\n"
+  if [ -n "${CHAOS_DEFAULT_PEER:-}" ]; then
+    printf -- "--chaos-udp-default-peer %s\r\n" "$CHAOS_DEFAULT_PEER"
+  fi
+} > "$OUT/packs/fpgarc"
+echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
 
 # --------------------------------------------------------- muir's file of flags
 #
@@ -414,6 +449,13 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
   printf -- "--chaos-address %s\r\n" "$CHAOS_ADDR_M"
   printf -- "--chaos-udp 0.0.0.0:%s\r\n" "$CHAOS_PORT_M"
   for peer in ${CHAOS_PEER:-}; do printf -- "--chaos-udp-peer %s\r\n" "$peer"; done
+  # The way out for everything no peer line names, which is the bridge.  An
+  # endpoint and no Chaosnet address, because it is not a host at an address:
+  # it is the route of last resort, and the frame carries its real destination
+  # for the bridge to route on.  A broadcast is not sent there.
+  if [ -n "${CHAOS_DEFAULT_PEER:-}" ]; then
+    printf -- "--chaos-udp-default-peer %s\r\n" "$CHAOS_DEFAULT_PEER"
+  fi
   printf "\r\n"
   printf "# NOT BUILT YET, AND THE TWO LINES THAT FINISH THIS FILE.\r\n"
   printf "#\r\n"
@@ -447,7 +489,7 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
   printf "# and a --serial line cannot both be in this file.  The cable is what\r\n"
   printf "# this muir is for.\r\n"
 } > "$OUT/packs/muirrc"
-echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "one peer from local.conf" || echo "no peer"); the cable is at 0x80001000 and waits on the CC pack"
+echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at 0x80001000 and waits on the CC pack"
 
 # The server: the same five files and the command that fetches them.
 cp "$BIT" "$OUT/server/cadr.bit"
@@ -545,8 +587,7 @@ if [ -x "$HOSTBIN/genimage" ]; then
     for n in $("$HOSTBIN/mdir" -b -i "$OUT/sdcard.img@@$P2_OFF" :: 2>/dev/null | sed 's,^::/,,'); do
       case "$n" in
         disk-pack-[0-7].img|README.TXT) ;;
-        chaosnet.addr.txt|chaosnet.over.udp.port.txt|chaosnet.over.udp.peers.txt) ;;
-        muirrc) ;;
+        fpgarc|muirrc) ;;
         *) die "partition 2 carries '$n', which is none of the eight pack names, the README, or a settings file" ;;
       esac
     done
