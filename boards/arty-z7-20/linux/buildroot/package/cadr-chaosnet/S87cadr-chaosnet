@@ -8,7 +8,7 @@
 #
 # S87, after S80cadr-disk-packs and S86cadr-serial.  The order matters twice
 # over here, and only the second is a real dependency: the console log reads
-# in the order a person wants it, and the three settings below live on the
+# in the order a person wants it, and the settings file below lives on the
 # pack partition that S80 mounts.  A boot where that mount failed still starts
 # this --- it takes the defaults and says so, which is better than a machine
 # with no cable at all.
@@ -20,9 +20,9 @@
 # known host.  That host is somewhere on the network and this program's job is
 # only to reach it.  System 100, which is the band on this board's pack, is
 # MIT-LISPM-1 at 3050 and calls MIT-OZ at 3060; System 304 is AMS-LISPM-1 at
-# 4401 calling 4403.  So the default below is System 100's own address, its
-# host goes in the peers file, and a board running another band puts both
-# there rather than editing this script.
+# 4401 calling 4403.  So the default below is System 100's own address and a
+# board running another band says so in the settings file rather than editing
+# this script.
 #
 # The log goes to the console, which is where the board is watched from
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
@@ -31,74 +31,69 @@
 PACKS=/mnt/packs
 PIDFILE=/var/run/cadr-chaosnet.pid
 
-# **THREE FILES, EACH NAMED FOR WHAT IT HOLDS.**  There is no
-# `chaosnet.conf` and there should not be: a CADR has no file or time server
-# in it, muir has none either since its own `79c7590`, and neither do we ---
-# so once the services are gone this program has two numbers and a list of
-# peers, and a file called "conf" would be a file with nothing in it.
+# **ONE FILE, IN muir'S OWN rc FORMAT, AND IT IS THE PROGRAM'S OWN FLAGS.**
+# `fpgarc` configures the CADR in the fabric and `muirrc` beside it configures
+# the CADR inside muir, so the two stations on this board are configured the
+# same way with the same flag names and somebody who has read one can read the
+# other.  Every line is passed to the program as it stands, so the file is the
+# command line and there is nothing here that parses a value.
 #
-#   chaosnet.addr.txt            the DIP switches on the Chaosnet card, in octal.
-#                            Not configuration: it is what the hardware IS.
-#                            System 100 is 3050, System 304 is 4401.
-#   chaosnet.over.udp.port.txt   where CHUDP listens.  42042 is the protocol's own
-#                            port and this machine takes it; the CADR inside
-#                            muir takes another in its `.muirrc`, because two
-#                            stations bound to one port is the collision the
-#                            two RFB screens would have had on 5900.
-#   chaosnet.over.udp.peers.txt  where the OTHER stations are, one a line, in
-#                            muir's own syntax and not one invented here:
+# The format, which is muir's: one flag a line, the flag then a space then the
+# rest of the line as its argument --- so an argument with a space in it needs
+# no quoting --- and a line that is blank or starts with `#` is a comment.
+# Carriage returns are stripped, because the partition is FAT32 and the point
+# of putting the file there is that a laptop with a card reader can edit it.
 #
-#                                <chaosnet address>@<host or IP>:<port>
+# **THE SHELL NO LONGER READS A VALUE OUT OF ANYTHING, AND THAT IS THE POINT.**
+# What stood here was three files of one value each, each read by a little
+# shell that stripped comments and whitespace.  One of those readers stripped
+# a carriage return and the other did not, so every peer reached the program
+# with a `\r` on the end of its port and was refused by name --- measured on
+# the board.  A file of flags has no values for a shell to get wrong.
 #
-#                            muir's manual gives the pairs: a System 100 band
-#                            is `--chaos-address 3050` with
-#                            `--chaos-udp-peer 3060@<where the host is>`, and
-#                            System 304 is 4401 with 4403@... .  So the host
-#                            the band calls goes here, because since muir's
-#                            `79c7590` the host is ON THE NET and not inside
-#                            any of these programs.
-#
-# Both live on the pack partition, so they are changed from the board or from
-# a card reader without rebuilding the image.  Blank lines and `#` comments
-# are ignored, so each file can say what its number is for.
-#
-# **The `.txt` is for the card reader and not for us.**  That partition is
-# FAT32 and the point of putting these there is that a laptop can edit them,
-# where a suffixless file prompts for what should open it.  `README.TXT` on
-# the same partition is there for the same reason.
-ADDR_FILE="$PACKS/chaosnet.addr.txt"
-PORT_FILE="$PACKS/chaosnet.over.udp.port.txt"
-PEERS_FILE="$PACKS/chaosnet.over.udp.peers.txt"
+# The whole file is passed to `cadr-chaosnet` today, so only its flags belong
+# in it; the screen and the serial line will move theirs into it later.
+RC="$PACKS/fpgarc"
 
-ADDRESS=3050
-UDP_PORT=42042
-
-# The first number in a file, or nothing at all if the file is not there.
-value_in() {
-	[ -f "$1" ] || return 0
-	sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$1" | head -1 | tr -d '[:space:]'
-}
+# What a board with no settings file runs: System 100's own address, and
+# CHUDP's own port on every interface.  A cable and no peers, which is a
+# machine whose band will say its file host is not answering --- true, and
+# better than a guess.
+DEFAULT_ADDRESS=3050
+DEFAULT_PORT=42042
 
 start() {
-	v=$(value_in "$ADDR_FILE"); [ -n "$v" ] && ADDRESS="$v"
-	v=$(value_in "$PORT_FILE"); [ -n "$v" ] && UDP_PORT="$v"
-
-	# Every peer in the file becomes one --chaos-udp-peer, in the order
-	# the file gives them.  No peers is legal: a board on a network with
-	# no other station is a machine whose band will say its file host is
-	# not answering, which is true and is better than a guess.
 	set --
-	if [ -f "$PEERS_FILE" ]; then
-		for peer in $(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$PEERS_FILE"); do
-			set -- "$@" --chaos-udp-peer "$peer"
-		done
+	if [ -f "$RC" ]; then
+		# Strip carriage returns, drop comments and blank lines, trim
+		# each line and reduce the gap between a flag and its argument
+		# to one space, so that the two can be split apart below with
+		# no word-splitting of the argument itself.
+		while IFS= read -r line; do
+			[ -n "$line" ] || continue
+			flag=${line%% *}
+			value=${line#* }
+			if [ "$value" = "$flag" ]; then
+				set -- "$@" "$flag"
+			else
+				set -- "$@" "$flag" "$value"
+			fi
+		done <<-EOF
+		$(tr -d '\r' < "$RC" | sed \
+			-e '/^[[:space:]]*#/d' \
+			-e 's/^[[:space:]]*//' \
+			-e 's/[[:space:]]*$//' \
+			-e '/^$/d' \
+			-e 's/^\([^[:space:]][^[:space:]]*\)[[:space:]][[:space:]]*/\1 /')
+		EOF
+	else
+		echo "cadr-chaosnet: no $RC; the defaults"
+		set -- --chaos-address "$DEFAULT_ADDRESS" --chaos-udp "0.0.0.0:$DEFAULT_PORT"
 	fi
 
 	printf "Starting cadr-chaosnet: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
 		--exec /usr/bin/cadr-chaosnet -- \
-		--chaos-address "$ADDRESS" \
-		--chaos-udp "0.0.0.0:$UDP_PORT" \
 		"$@" --log /dev/console
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 

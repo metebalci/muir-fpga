@@ -43,6 +43,9 @@
 #define HOST		03060u
 #define PEER		03040u
 #define STRANGER	03041u
+// A host beyond the bridge: no peer entry names it, so a frame for it goes to
+// the default peer.  muir's `tests/chudp.rs` names the same one.
+#define BEYOND		03042u
 
 // --- one known packet -----------------------------------------------------
 
@@ -410,6 +413,11 @@ static void check_the_links(void)
 		chudp_close(&c);
 		return;
 	}
+	// The one station this cable carries, which is what the program sets
+	// from `--chaos-address`: a datagram claiming to come from it is a
+	// forgery, and a frame addressed to it is reached on the cable rather
+	// than over UDP.
+	a.local = ME;
 	snprintf(spec, sizeof spec, "%o@127.0.0.1:%u", PEER, (unsigned)ntohs(b_at.sin_port));
 	CHECK(chudp_add_peer(&a, spec) == 0, "%s was refused", spec);
 	snprintf(spec, sizeof spec, "%o@127.0.0.1:%u", ME, (unsigned)ntohs(a_at.sin_port));
@@ -500,10 +508,11 @@ static void check_the_links(void)
 	CHECK(at_a.n == 2u, "the board heard %u frames, wanting 2 --- a frame with no cable "
 	      "source reached the cable", at_a.n);
 
-	// **An endpoint is learned only when the run asked for it.**  Off by
-	// default, because otherwise whatever can reach the port installs
-	// itself in the address table under whatever Chaosnet address it
-	// claims.  `c` is a link at an endpoint no flag named.
+	// **A DATAGRAM FROM AN ENDPOINT NO FLAG NAMED IS HEARD.**  `c` is a
+	// link at an endpoint the board was never told about, and what decides
+	// is the frame and not the socket it came off: muir's `Chudp::arrived`
+	// never looks at the sender either.  What such a host cannot get is an
+	// answer, which the check after this one is about.
 	uint16_t strange[CHAOS_PKT_MAX_WORDS];
 	memset(&p, 0, sizeof p);
 	p.opcode = CHAOS_RFC;
@@ -512,55 +521,115 @@ static void check_the_links(void)
 	p.len = 0;
 	const unsigned xn = chaos_packet_frame(&p, ME, STRANGER, strange, CHAOS_PKT_MAX_WORDS);
 	send_raw(c.fd, &a_at, strange, xn);
-	send_raw(b.fd, &a_at, mine, mn);
-	CHECK(wait_for(&a, &at_a, 3), "the board never heard the frame after the stranger's");
-	CHECK(at_a.n == 3u, "the board heard %u frames, wanting 3 --- a stranger was heard "
-	      "with no endpoint learned", at_a.n);
-	CHECK(a.npeers == 1u, "the board learned an endpoint with learning off");
+	CHECK(wait_for(&a, &at_a, 3), "a datagram from an endpoint no flag named was not heard");
+	CHECK(at_a.n == 3u, "the board heard %u frames, wanting 3", at_a.n);
+	CHECK(a.npeers == 1u, "the board has %u peers after hearing a stranger, wanting 1 --- "
+	      "an endpoint was learned", a.npeers);
 
-	// With learning on, the same stranger is heard and its endpoint is
-	// taken from the packet's own source, which is where an answer would be
-	// addressed.
-	a.dynamic = 1;
-	send_raw(c.fd, &a_at, strange, xn);
-	CHECK(wait_for(&a, &at_a, 4), "the stranger was not heard with learning on");
-	CHECK(a.npeers == 2u, "the board has %u peers, wanting 2", a.npeers);
-	CHECK(a.npeers == 2u && a.peers[1].address == STRANGER && a.peers[1].learned,
-	      "the endpoint learned is not the stranger's own source address");
-	// And an answer to it goes where it was learned.
+	// **A DATAGRAM CLAIMING A CABLE SOURCE THIS CABLE ALREADY CARRIES IS
+	// DROPPED.**  The machine is on this cable, so a frame saying it came
+	// FROM the machine is one the interface would take for its own ---
+	// Transmit Done and all.  muir refuses it in the same place.  This is
+	// the guard that has to hold now that a stranger is not turned away at
+	// the door: before, no datagram from an unnamed endpoint got this far.
+	// A good frame follows it, so the check waits on something happening.
+	uint16_t forgery[CHAOS_PKT_MAX_WORDS];
+	memset(&p, 0, sizeof p);
+	p.opcode = CHAOS_RFC;
+	p.dest = ME;
+	p.source = ME;
+	p.len = 0;
+	const unsigned gn = chaos_packet_frame(&p, ME, ME, forgery, CHAOS_PKT_MAX_WORDS);
+	send_raw(c.fd, &a_at, forgery, gn);
+	send_raw(b.fd, &a_at, mine, mn);
+	CHECK(wait_for(&a, &at_a, 4), "the board never heard the frame after the forgery");
+	CHECK(at_a.n == 4u, "the board heard %u frames, wanting 4 --- a datagram claiming "
+	      "this machine's own address reached the cable", at_a.n);
+
+	// **NOTHING IS LEARNED, SO THE ANSWER TO A HOST NO FLAG NAMED HAS
+	// NOWHERE TO GO.**  `--chaos-udp-dynamic` used to put the sender in
+	// the table; a table filled in from what arrives is state nobody wrote
+	// down, and it puts the naming in the hands of whoever can reach the
+	// port.  muir removed it and so has this.
 	uint16_t answer[CHAOS_PKT_MAX_WORDS];
 	const unsigned an = frame_to(answer, STRANGER, CHAOS_CLS, "", 0);
-	CHECK(chudp_send(&a, answer, an, STRANGER) == 1, "the answer did not go to the stranger");
+	CHECK(chudp_send(&a, answer, an, STRANGER) == 0,
+	      "an answer went out to a host no flag named");
 	static struct heard at_c;
-	CHECK(wait_for(&c, &at_c, 1), "the stranger never got its answer");
+	chudp_poll(&c, 8, heard_deliver, &at_c);
+	CHECK(at_c.n == 0u, "the answer went back where the packet came from; "
+	      "an endpoint was learned");
+
+	// **AND WITH A DEFAULT PEER IT GOES THERE.**  A peer entry says that
+	// one address lives at one endpoint, so a frame for any other address
+	// had nowhere to go; the default peer is the route of last resort, and
+	// the frame carries the real destination in its hardware trailer for
+	// the bridge there to route on.
+	struct chudp bridge;
+	static struct heard at_bridge;
+	struct sockaddr_in bridge_at;
+	CHECK(chudp_bind(&bridge, "127.0.0.1", 0) == 0, "the bridge's link would not bind");
+	CHECK(bound_at(&bridge, &bridge_at) == 0, "the host will not say where the bridge is");
+	snprintf(spec, sizeof spec, "127.0.0.1:%u", (unsigned)ntohs(bridge_at.sin_port));
+	CHECK(chudp_set_default_peer(&a, spec) == 0, "%s was refused as a default peer", spec);
+	CHECK(chudp_send(&a, answer, an, STRANGER) == 1,
+	      "the answer to a host no entry names did not go to the default peer");
+	CHECK(wait_for(&bridge, &at_bridge, 1), "the bridge never got the frame");
+	CHECK(at_bridge.n == 1u && at_bridge.len[0] == an &&
+		      memcmp(at_bridge.words[0], answer, (size_t)an * sizeof answer[0]) == 0,
+	      "what the bridge got is not the frame, with its destination in its trailer");
+	// A frame for an address NO entry names at all goes there too, which
+	// is the case the flag exists for: 3042 is beyond the bridge.
+	uint16_t far_off[CHAOS_PKT_MAX_WORDS];
+	const unsigned yn = frame_to(far_off, BEYOND, CHAOS_RFC, "STATUS", 6);
+	CHECK(chudp_send(&a, far_off, yn, BEYOND) == 1,
+	      "a frame for an address beyond the bridge did not go to the default peer");
+	CHECK(wait_for(&bridge, &at_bridge, 2), "the bridge never got the second frame");
+	CHECK(at_bridge.n >= 2u && at_bridge.words[1][at_bridge.len[1] - 3] == BEYOND,
+	      "the frame the bridge got does not carry its real destination");
+
+	// **A FRAME FOR A NAMED PEER STILL GOES TO THAT PEER AND NOT TO THE
+	// DEFAULT.**  The default peer is where what is not named goes, not a
+	// route standing in front of the names.
+	CHECK(chudp_send(&a, frame, n, PEER) == 1, "the frame to the named peer did not go");
+	CHECK(wait_for(&b, &at_b, 4), "the named peer never heard it");
+	chudp_poll(&bridge, 8, heard_deliver, &at_bridge);
+	CHECK(at_bridge.n == 2u, "the bridge was given a frame a peer entry names");
+
+	// **A BROADCAST GOES TO THE NAMED PEERS AND NOT TO THE DEFAULT
+	// PEER.**  The named peers are stations on this machine's own cable so
+	// a broadcast is theirs; the default peer is the way out to a wider
+	// network, and handing it a broadcast would put this cable's on a
+	// network the broadcast was never meant to reach.  Decided in muir,
+	// and not an oversight.
+	CHECK(chudp_send(&a, bcast, bn, 0) == 1, "the broadcast did not reach the one peer");
+	CHECK(wait_for(&b, &at_b, 5), "the peer never heard the second broadcast");
+	chudp_poll(&bridge, 8, heard_deliver, &at_bridge);
+	CHECK(at_bridge.n == 2u, "the bridge was handed a broadcast");
+
+	// **AND A FRAME FOR THIS CABLE'S OWN ADDRESS GOES NOWHERE.**  The
+	// machine is reached on the cable and not over UDP, and it is not the
+	// bridge's business either.
+	uint16_t selfward[CHAOS_PKT_MAX_WORDS];
+	const unsigned sfn = frame_to(selfward, ME, CHAOS_RFC, "STATUS", 6);
+	CHECK(chudp_send(&a, selfward, sfn, ME) == 0,
+	      "a frame for this cable's own address went out over UDP");
+	chudp_poll(&bridge, 8, heard_deliver, &at_bridge);
+	CHECK(at_bridge.n == 2u, "the bridge was given a frame for this machine itself");
 
 	// **A packet does not move an endpoint a flag named.**  An endpoint
 	// typed on the command line is a statement about where a host is;
 	// letting a packet redirect it would put the naming back in the hands
-	// of whoever can reach the port, which is what leaving learning off by
-	// default is for.  `d` is an endpoint the board has never seen, and it
-	// claims to be 3040 --- the address `--udp-peer` put at `b`.
+	// of whoever can reach the port.  Nothing moves an entry now because
+	// nothing writes one: the table is what the flags said and nothing
+	// else, which is what this check holds.  `d` is an endpoint the board
+	// has never seen, and it claims to be 3040 --- the address
+	// `--chaos-udp-peer` put at `b`.
 	struct chudp d;
 	static struct heard at_d;
 	CHECK(chudp_bind(&d, "127.0.0.1", 0) == 0, "the impostor's link would not bind");
+	snprintf(spec, sizeof spec, "%o@127.0.0.1:%u", ME, (unsigned)ntohs(a_at.sin_port));
 	CHECK(chudp_add_peer(&d, spec) == 0, "%s was refused for the impostor", spec);
-	// **The frame that follows a crafted one must teach the table
-	// nothing.**  Every check below waits on something happening rather
-	// than on nothing happening, which means a good frame behind the
-	// crafted one --- and with learning ON, a good frame from 3040's own
-	// endpoint claiming 3040 would put the table back where it was and
-	// hide the very thing being tested.  This one's PACKET source is 0,
-	// which is no station's address and so is never learned, while its
-	// cable source is a real station so that it is still delivered.
-	// Measured, not reasoned: with `mine` here instead, a `chudp_poll` that
-	// moved a named endpoint went unnoticed.
-	uint16_t quiet[CHAOS_PKT_MAX_WORDS];
-	memset(&p, 0, sizeof p);
-	p.opcode = CHAOS_RFC;
-	p.dest = ME;
-	p.source = 0;
-	p.len = 0;
-	const unsigned qn = chaos_packet_frame(&p, ME, PEER, quiet, CHAOS_PKT_MAX_WORDS);
 	uint16_t impostor[CHAOS_PKT_MAX_WORDS];
 	memset(&p, 0, sizeof p);
 	p.opcode = CHAOS_RFC;
@@ -569,9 +638,8 @@ static void check_the_links(void)
 	p.len = 0;
 	const unsigned in = chaos_packet_frame(&p, ME, PEER, impostor, CHAOS_PKT_MAX_WORDS);
 	send_raw(d.fd, &a_at, impostor, in);
-	send_raw(b.fd, &a_at, quiet, qn);
-	CHECK(wait_for(&a, &at_a, 6), "the board never heard the frame after the impostor's");
-	CHECK(a.npeers == 2u, "the board has %u peers after an impostor claimed 3040, wanting 2",
+	CHECK(wait_for(&a, &at_a, 5), "the board never heard the impostor's frame");
+	CHECK(a.npeers == 1u, "the board has %u peers after an impostor claimed 3040, wanting 1",
 	      a.npeers);
 	CHECK(a.peers[0].address == PEER && a.peers[0].where.sin_port == b_at.sin_port,
 	      "a packet moved the endpoint a flag named");
@@ -581,30 +649,155 @@ static void check_the_links(void)
 	uint16_t reply[CHAOS_PKT_MAX_WORDS];
 	const unsigned rn = frame_to(reply, PEER, CHAOS_CLS, "", 0);
 	CHECK(chudp_send(&a, reply, rn, PEER) == 1, "the answer to 3040 did not go");
-	CHECK(wait_for(&b, &at_b, 4), "the answer did not go where the flag said 3040 was");
+	CHECK(wait_for(&b, &at_b, 6), "the answer did not go where the flag said 3040 was");
 	chudp_poll(&d, 8, heard_deliver, &at_d);
 	CHECK(at_d.n == 0u, "the answer went to whoever claimed the address");
 
-	// **A LEARNED endpoint, on the other hand, moves.**  It is only ever
-	// the last packet's word for where a host is, so the newest packet has
-	// it: a host that moves is followed, and a host that is impersonated is
-	// the price of having asked to learn.  3041 was learned at `c`; `d`
-	// claims it, and the next answer goes to `d`.
-	send_raw(d.fd, &a_at, strange, xn);
-	send_raw(b.fd, &a_at, quiet, qn);
-	CHECK(wait_for(&a, &at_a, 8), "the board never heard the frame after the move");
-	CHECK(a.npeers == 2u, "the board has %u peers after 3041 moved, wanting 2", a.npeers);
-	CHECK(chudp_send(&a, answer, an, STRANGER) == 1, "the answer to 3041 did not go");
-	CHECK(wait_for(&d, &at_d, 1), "the answer did not follow 3041 to where it moved");
-	chudp_poll(&c, 8, heard_deliver, &at_c);
-	CHECK(at_c.n == 1u, "the answer still went to where 3041 used to be");
+	// **THE DEFAULT PEER IS AN ENDPOINT AND NO CHAOSNET ADDRESS**, which
+	// is what tells it from a peer, and there is one route of last resort.
+	CHECK(chudp_set_default_peer(&a, spec) == -1,
+	      "<address>@<host> was taken for a default peer");
+	CHECK(chudp_set_default_peer(&a, "127.0.0.1:42043") == -1,
+	      "a second default peer was taken");
+	struct chudp forms;
+	CHECK(chudp_bind(&forms, "127.0.0.1", 0) == 0, "the forms link would not bind");
+	// A bare port is on the loopback, which is what every endpoint here
+	// means by one, and CHUDP's own port stands in when none is given.
+	CHECK(chudp_set_default_peer(&forms, "42043") == 0, "a bare port was refused");
+	CHECK(ntohs(forms.default_peer.sin_port) == 42043u &&
+		      forms.default_peer.sin_addr.s_addr == htonl(INADDR_LOOPBACK),
+	      "a bare port is not the loopback at that port");
+	forms.have_default = 0;
+	CHECK(chudp_set_default_peer(&forms, "127.0.0.1") == 0, "a bare address was refused");
+	CHECK(ntohs(forms.default_peer.sin_port) == (unsigned)CHUDP_PORT,
+	      "an address with no port did not take the protocol's own");
+	forms.have_default = 0;
+	CHECK(chudp_set_default_peer(&forms, "127.0.0.1:not-a-port") == -1,
+	      "127.0.0.1:not-a-port was taken");
+	CHECK(forms.have_default == 0, "a refused default peer was kept all the same");
+	chudp_close(&forms);
 
 	chudp_close(&a);
 	chudp_close(&b);
 	chudp_close(&c);
 	chudp_close(&d);
+	chudp_close(&bridge);
 	CHECK(a.fd == -1 && b.fd == -1 && c.fd == -1 && d.fd == -1,
 	      "a closed link still holds its socket");
+}
+
+// **A DATAGRAM FROM AN ENDPOINT NO FLAG NAMED IS HEARD, AND NOTHING IS
+// LEARNED FROM IT.**  muir's `Chudp::arrived` looks at the frame and never at
+// the socket it came off: what decides is the cable source and the cable
+// destination, so a host this program was never told about is heard exactly
+// as a named peer is.  What it does NOT do is write down where that host was,
+// which is what `--chaos-udp-dynamic` used to do and what went with it: a
+// table learned from packets is state nobody wrote down, and it puts the
+// naming in the hands of whoever can reach the port.
+//
+// So the answer to such a host has nowhere to go unless a flag said where ---
+// its own `--chaos-udp-peer`, or `--chaos-udp-default-peer` --- and with
+// neither it is dropped.  That is `an_answer_goes_out_only_when_the_node_
+// knows_where_to_send_it` in muir's `tests/chudp.rs`, in C.
+static void check_a_stranger_is_heard_and_nothing_is_learned(void)
+{
+	struct chudp a, b, c;
+	struct sockaddr_in a_at, b_at;
+	char spec[64];
+	static struct heard at_a, at_c;
+	struct chaos_packet p;
+	uint16_t strange[CHAOS_PKT_MAX_WORDS], answer[CHAOS_PKT_MAX_WORDS];
+
+	CHECK(chudp_bind(&a, "127.0.0.1", 0) == 0, "the board's link would not bind");
+	CHECK(chudp_bind(&b, "127.0.0.1", 0) == 0, "the peer's link would not bind");
+	CHECK(chudp_bind(&c, "127.0.0.1", 0) == 0, "the stranger's link would not bind");
+	if (bound_at(&a, &a_at) < 0 || bound_at(&b, &b_at) < 0) {
+		CHECK(0, "the host will not say where the links are bound");
+		chudp_close(&a);
+		chudp_close(&b);
+		chudp_close(&c);
+		return;
+	}
+	a.local = ME;
+	snprintf(spec, sizeof spec, "%o@127.0.0.1:%u", PEER, (unsigned)ntohs(b_at.sin_port));
+	CHECK(chudp_add_peer(&a, spec) == 0, "%s was refused", spec);
+
+	// `c` is at an endpoint no flag named, and its frame is addressed on
+	// the cable to this machine, which is the only thing that decides.
+	memset(&p, 0, sizeof p);
+	p.opcode = CHAOS_RFC;
+	p.dest = ME;
+	p.source = STRANGER;
+	p.len = 0;
+	const unsigned xn = chaos_packet_frame(&p, ME, STRANGER, strange, CHAOS_PKT_MAX_WORDS);
+	send_raw(c.fd, &a_at, strange, xn);
+	CHECK(wait_for(&a, &at_a, 1), "a datagram from an endpoint no flag named was not heard");
+	CHECK(at_a.n == 1u && at_a.len[0] == xn &&
+		      memcmp(at_a.words[0], strange, (size_t)xn * sizeof strange[0]) == 0,
+	      "what the board heard is not the stranger's frame");
+
+	// **And the table is what the flags said.**  Not one entry more, and
+	// the answer to that host therefore has nowhere to go.
+	CHECK(a.npeers == 1u, "the board has %u peers after hearing a stranger, wanting 1",
+	      a.npeers);
+	const unsigned an = frame_to(answer, STRANGER, CHAOS_CLS, "", 0);
+	CHECK(chudp_send(&a, answer, an, STRANGER) == 0,
+	      "an answer went out to a host no flag named");
+	chudp_poll(&c, 8, heard_deliver, &at_c);
+	CHECK(at_c.n == 0u, "the answer went back where the packet came from; "
+	      "an endpoint was learned");
+
+	chudp_close(&a);
+	chudp_close(&b);
+	chudp_close(&c);
+}
+
+// **A FLAG THAT SAYS WHO IS ON THE CABLE NEEDS THE CABLE.**  muir's rule at
+// `0851fa7`: `--chaos-address` sets the sixteen address switches and nothing
+// else, `--chaos-udp` is the cable, and without it nothing is sent.  A peer
+// and a route of last resort are each a statement about a link, so each is
+// refused when there is no link --- rather than bringing a cable of its own,
+// which is what this program did and which put a run that named its file host
+// on a network it had not asked for, listening on a port nobody had named.
+//
+// The peer is named before the default peer, in muir's own order, so that a
+// run giving both is told about the one a person is likelier to have meant.
+static void check_a_flag_that_says_who_is_on_the_cable_needs_the_cable(void)
+{
+	struct {
+		int cable;
+		unsigned peers;
+		int dflt;
+		const char *want;
+	} cases[] = {
+		// With the cable, every combination is a run that makes sense.
+		{ 1, 0, 0, NULL },
+		{ 1, 2, 0, NULL },
+		{ 1, 0, 1, NULL },
+		{ 1, 2, 1, NULL },
+		// Without it, the switches alone are a machine with no cable ---
+		// legal, and it talks to nobody.
+		{ 0, 0, 0, NULL },
+		// And a flag that says who is on the cable is refused by name.
+		{ 0, 1, 0, "--chaos-udp-peer" },
+		{ 0, 0, 1, "--chaos-udp-default-peer" },
+		{ 0, 1, 1, "--chaos-udp-peer" },
+	};
+	for (unsigned k = 0; k < sizeof cases / sizeof cases[0]; ++k) {
+		const char *got = chudp_flag_without_cable(cases[k].cable, cases[k].peers,
+							   cases[k].dflt);
+		if (cases[k].want == NULL) {
+			CHECK(got == NULL,
+			      "cable %d, %u peers, default %d: %s was called a flag "
+			      "without a cable",
+			      cases[k].cable, cases[k].peers, cases[k].dflt, got ? got : "");
+		} else {
+			CHECK(got != NULL && strcmp(got, cases[k].want) == 0,
+			      "cable %d, %u peers, default %d: %s, wanting %s",
+			      cases[k].cable, cases[k].peers, cases[k].dflt,
+			      got ? got : "nothing was refused", cases[k].want);
+		}
+	}
 }
 
 // --- the suite ------------------------------------------------------------
@@ -618,4 +811,6 @@ void chaos_test_udp(void)
 	check_a_datagram_that_is_not_one_is_refused();
 	chaos_test_note("udp: two links on the loopback");
 	check_the_links();
+	check_a_stranger_is_heard_and_nothing_is_learned();
+	check_a_flag_that_says_who_is_on_the_cable_needs_the_cable();
 }

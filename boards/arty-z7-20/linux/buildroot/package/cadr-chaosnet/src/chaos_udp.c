@@ -40,11 +40,20 @@
 // **THIS BOARD IS A LEAF, NOT A ROUTER**, as muir is.  AIM-628 chapter 6's
 // routing is a bridge's job and `cbridge` is the thing to put beside this.
 // Two halves of that rule are here and the third is the caller's:
-// `chudp_send` drops a frame no peer claims rather than flooding it;
-// `chudp_poll` drops a datagram addressed on the cable to another peer; and
-// whether a destination is one of the addresses THIS cable carries --- which
-// is the machine's alone --- only the caller knows, since `struct chudp`
-// holds no list of them.
+// `chudp_send` drops a frame no peer claims and no default peer covers,
+// rather than flooding it; `chudp_poll` drops a datagram addressed on the
+// cable to another peer; and whether a destination is one of the addresses
+// THIS cable carries only the caller knows, since `carry` in
+// `cadr-chaosnet.c` is what hands a frame to the machine.
+//
+// **THE WAY OUT IS THE DEFAULT PEER, AND NOTHING IS LEARNED.**  Both are
+// muir's at `d6eac6d` and `chaos_udp.h` has the argument for each.  The one
+// consequence worth repeating at the code: a datagram is judged by what is IN
+// it and never by the socket it came off, so `chudp_poll` does not ask who
+// sent a datagram --- it asks what the frame says.  The guard that is left is
+// the one muir keeps, that a datagram claiming a cable source this process
+// already carries is a forgery: the interface would take such a frame for its
+// own.
 
 #include "chaos_udp.h"
 
@@ -226,8 +235,8 @@ int chudp_bind(struct chudp *u, const char *bind_addr, uint16_t port)
 {
 	// **This is the initialiser.**  There is no `chudp_init`, and the
 	// header's own rule is that the socket is bound before anything else
-	// runs --- so `dynamic`, `trace` and the peers are set AFTER this call,
-	// never before it.
+	// runs --- so `local`, `trace`, the peers and the default peer are set
+	// AFTER this call, never before it.
 	memset(u, 0, sizeof *u);
 	u->fd = -1;
 	struct sockaddr_in at;
@@ -283,6 +292,7 @@ void chudp_close(struct chudp *u)
 		close(u->fd);
 	u->fd = -1;
 	u->npeers = 0;
+	u->have_default = 0;
 }
 
 // --- who is on the other end ----------------------------------------------
@@ -321,6 +331,55 @@ static uint16_t parse_address(const char *s)
 	return (uint16_t)a;
 }
 
+// `<host>[:<port>]` as the one endpoint it names, the port left off taking
+// CHUDP's own.  The last colon is the port's; a peer's `subnet:host` colon is
+// before the `@` and never reaches here, so the two cannot be confused.  IPv4
+// only: every endpoint here is a `sockaddr_in`, which is the whole of what
+// CHUDP has ever been spoken over here.
+//
+// **Resolved here, once, before anything runs**, so that a name with no
+// address is a refusal at the start rather than an endpoint that is never
+// reached.  A name that moves afterwards is not followed; naming the address
+// instead is what covers that, nothing here being learned from a packet.
+// `spec` is what the person typed, for the message alone.
+static int resolve_endpoint(const char *lives, const char *spec, struct sockaddr_in *out)
+{
+	char host[128];
+	unsigned long port = CHUDP_PORT;
+	const char *colon = strrchr(lives, ':');
+	if (colon) {
+		char *end = NULL;
+		port = strtoul(colon + 1, &end, 10);
+		if (end == colon + 1 || *end || port == 0 || port > 65535u) {
+			say("udp: %s is not a port", colon + 1);
+			return -1;
+		}
+	}
+	const size_t hlen = colon ? (size_t)(colon - lives) : strlen(lives);
+	if (hlen == 0 || hlen >= sizeof host) {
+		say("udp: %s names no host", spec);
+		return -1;
+	}
+	memcpy(host, lives, hlen);
+	host[hlen] = '\0';
+	struct addrinfo hints;
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_DGRAM;
+	struct addrinfo *found = NULL;
+	const int e = getaddrinfo(host, NULL, &hints, &found);
+	if (e != 0 || !found) {
+		say("udp: %s has no address this host can reach: %s", host, gai_strerror(e));
+		if (found)
+			freeaddrinfo(found);
+		return -1;
+	}
+	memcpy(out, found->ai_addr, sizeof *out);
+	freeaddrinfo(found);
+	out->sin_port = htons((uint16_t)port);
+	return 0;
+}
+
 int chudp_add_peer(struct chudp *u, const char *spec)
 {
 	const char *at = strchr(spec, '@');
@@ -341,50 +400,9 @@ int chudp_add_peer(struct chudp *u, const char *spec)
 		say("udp: %s is not an address in octal or subnet:host", address);
 		return -1;
 	}
-	// `<host>[:<port>]`.  The last colon is the port's, and the address
-	// before the `@` is where a `subnet:host` colon can appear, so the two
-	// cannot be confused.  IPv4 only: `struct chudp_peer` holds a
-	// `sockaddr_in`, which is the whole of what CHUDP has ever been spoken
-	// over here.
-	char host[128];
-	unsigned long port = CHUDP_PORT;
-	const char *lives = at + 1;
-	const char *colon = strrchr(lives, ':');
-	if (colon) {
-		char *end = NULL;
-		port = strtoul(colon + 1, &end, 10);
-		if (end == colon + 1 || *end || port == 0 || port > 65535u) {
-			say("udp: %s is not a port", colon + 1);
-			return -1;
-		}
-	}
-	const size_t hlen = colon ? (size_t)(colon - lives) : strlen(lives);
-	if (hlen == 0 || hlen >= sizeof host) {
-		say("udp: %s names no host", spec);
-		return -1;
-	}
-	memcpy(host, lives, hlen);
-	host[hlen] = '\0';
-	// **Resolved here, once, before anything runs**, so that a name with no
-	// address is a refusal at the start rather than a peer that is never
-	// reached.  A name that moves afterwards is not followed; naming the
-	// address instead, or `dynamic`, is what covers that.
-	struct addrinfo hints;
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_INET;
-	hints.ai_socktype = SOCK_DGRAM;
-	struct addrinfo *found = NULL;
-	const int e = getaddrinfo(host, NULL, &hints, &found);
-	if (e != 0 || !found) {
-		say("udp: %s has no address this host can reach: %s", host, gai_strerror(e));
-		if (found)
-			freeaddrinfo(found);
-		return -1;
-	}
 	struct sockaddr_in lands;
-	memcpy(&lands, found->ai_addr, sizeof lands);
-	freeaddrinfo(found);
-	lands.sin_port = htons((uint16_t)port);
+	if (resolve_endpoint(at + 1, spec, &lands) != 0)
+		return -1;
 	// One endpoint an address: a second `--udp-peer` for the same address
 	// is a typed statement contradicting a typed statement, and guessing
 	// which was meant is worse than refusing.
@@ -400,21 +418,53 @@ int chudp_add_peer(struct chudp *u, const char *spec)
 	}
 	u->peers[u->npeers].address = a;
 	u->peers[u->npeers].where = lands;
-	u->peers[u->npeers].learned = 0;
 	++u->npeers;
 	say("udp: %o is at %s", (unsigned)a, where(&lands));
 	return 0;
 }
 
-// Which peer lives at this endpoint, or -1.
-static int peer_at(const struct chudp *u, const struct sockaddr_in *from)
+// muir's `--chaos-udp-default-peer`: `<host>[:<port>]`, a bare port on the
+// loopback, an address, address:port, or a name.  **No Chaosnet address**,
+// which is what tells this from `chudp_add_peer` --- and an `@` is therefore
+// refused by name rather than resolved as part of a host, because somebody
+// who writes one has confused the two flags and a lookup failure would not
+// tell them which.
+int chudp_set_default_peer(struct chudp *u, const char *spec)
 {
-	for (unsigned k = 0; k < u->npeers; ++k) {
-		if (u->peers[k].where.sin_addr.s_addr == from->sin_addr.s_addr &&
-		    u->peers[k].where.sin_port == from->sin_port)
-			return (int)k;
+	if (strchr(spec, '@')) {
+		say("udp: %s: the default peer is an endpoint and no Chaosnet "
+		    "address --- <address>@<host> is what a peer takes", spec);
+		return -1;
 	}
-	return -1;
+	// One default peer.  A second is a typed statement contradicting a
+	// typed statement, exactly as a second endpoint for one address is,
+	// and guessing which was meant is worse than refusing.
+	if (u->have_default) {
+		say("udp: a default peer twice; there is one route of last resort");
+		return -1;
+	}
+	struct sockaddr_in lands;
+	// A bare port is the loopback's, which is what every endpoint flag
+	// here means by one.  Tried first, since `getaddrinfo` would take
+	// "42043" for a host name and go asking the resolver about it.
+	char *end = NULL;
+	const unsigned long only = strtoul(spec, &end, 10);
+	if (*spec && end && *end == '\0') {
+		if (only == 0 || only > 65535u) {
+			say("udp: %s is not a port", spec);
+			return -1;
+		}
+		memset(&lands, 0, sizeof lands);
+		lands.sin_family = AF_INET;
+		lands.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		lands.sin_port = htons((uint16_t)only);
+	} else if (resolve_endpoint(spec, spec, &lands) != 0) {
+		return -1;
+	}
+	u->default_peer = lands;
+	u->have_default = 1;
+	say("udp: anything no peer names goes to %s", where(&lands));
+	return 0;
 }
 
 // Which peer claims this Chaosnet address, or -1.
@@ -427,6 +477,17 @@ static int peer_for(const struct chudp *u, uint16_t address)
 	return -1;
 }
 
+const char *chudp_flag_without_cable(int have_cable, unsigned npeers, int have_default)
+{
+	if (have_cable)
+		return NULL;
+	if (npeers > 0)
+		return "--chaos-udp-peer";
+	if (have_default)
+		return "--chaos-udp-default-peer";
+	return NULL;
+}
+
 // --- a frame out ----------------------------------------------------------
 
 int chudp_send(struct chudp *u, const uint16_t *words, unsigned n, uint16_t cable_dest)
@@ -437,10 +498,25 @@ int chudp_send(struct chudp *u, const uint16_t *words, unsigned n, uint16_t cabl
 		say("udp: %u words is not a frame CHUDP carries", n);
 		return 0;
 	}
+	// Where it goes, which is muir's `Chudp::addressed` in the same four
+	// cases and the same order.
+	//
+	// **A BROADCAST GOES TO THE NAMED PEERS AND NOT TO THE DEFAULT
+	// PEER.**  The named peers are stations on this machine's own cable,
+	// so a broadcast is as much theirs as the machine's; the default peer
+	// is the way out to a wider network, and handing it a broadcast would
+	// put this cable's on a network the broadcast was never meant to
+	// reach.  Decided in muir, and not an oversight.
+	//
+	// **AND A DESTINATION THIS CABLE ALREADY CARRIES GOES NOWHERE.**  The
+	// machine is reached on the cable and not over UDP, and it is not the
+	// bridge's business either; `carry` never asks for this, and the guard
+	// is here so that the rule is true of the function rather than of one
+	// caller.
 	int sent = 0;
+	if (cable_dest != 0 && cable_dest == u->local)
+		return 0;
 	for (unsigned k = 0; k < u->npeers; ++k) {
-		// A cable destination of 0 is a broadcast, and every peer is a
-		// station on this machine's cable, so every peer gets it.
 		if (cable_dest != 0 && u->peers[k].address != cable_dest)
 			continue;
 		if (sendto(u->fd, datagram, len, 0, (const struct sockaddr *)&u->peers[k].where,
@@ -450,15 +526,27 @@ int chudp_send(struct chudp *u, const uint16_t *words, unsigned n, uint16_t cabl
 		}
 		++sent;
 	}
-	// **A destination no peer claims is DROPPED, not forwarded.**  This
-	// board is a leaf: it has no routing table, it is on nobody's path, and
-	// flooding a packet at every peer in the hope that one of them is a
-	// bridge would put traffic on cables that never asked for it.  Traced
-	// rather than said, because a machine talking to somebody unreachable
-	// would otherwise fill the log with one line a packet.
+	// **A DESTINATION NO PEER ENTRY NAMES GOES TO THE DEFAULT PEER, AND
+	// WITH NO DEFAULT PEER IT IS DROPPED.**  A peer entry says that one
+	// address lives at one endpoint, so naming a bridge as a peer does not
+	// let this board talk through it; the default peer is where such a
+	// frame goes instead, and the frame carries the real destination in
+	// its hardware trailer for the bridge there to route on.  This board
+	// is still a leaf: it reads no routing packet and keeps no routing
+	// table, and with no default peer the frame is dropped rather than
+	// flooded at every peer in the hope that one of them is a bridge.
+	if (sent == 0 && cable_dest != 0 && u->have_default) {
+		if (sendto(u->fd, datagram, len, 0, (const struct sockaddr *)&u->default_peer,
+			   sizeof u->default_peer) < 0)
+			say("udp: to %s: %s", where(&u->default_peer), strerror(errno));
+		else
+			++sent;
+	}
+	// Traced rather than said, because a machine talking to somebody
+	// unreachable would otherwise fill the log with one line a packet.
 	if (sent == 0 && cable_dest != 0 && u->trace)
-		say("udp: %o is no peer of ours; the frame is dropped and not forwarded",
-		    (unsigned)cable_dest);
+		say("udp: %o is no peer of ours and there is no default peer; "
+		    "the frame is dropped and not forwarded", (unsigned)cable_dest);
 	return sent;
 }
 
@@ -494,92 +582,52 @@ int chudp_poll(struct chudp *u, unsigned max,
 				say("udp: from %s: %s", where(&from), why ? why : "not a frame");
 			continue;
 		}
-		const int known = peer_at(u, &from);
-		// The packet's own source, which is where an answer would be
-		// addressed, and the cable source the far side's hardware put
-		// in.  `chaos_face.h`'s layout: words 0 to 7 are the software
-		// header and the last three are the trailer.
-		const uint16_t packet_source = words[4];
+		// The cable destination and the cable source the far side's
+		// hardware put in.  `chaos_face.h`'s layout: words 0 to 7 are
+		// the software header and the last three are the trailer.
+		//
+		// **WHO SENT THE DATAGRAM IS NOT ASKED, AND THAT IS THE WHOLE
+		// OF WHAT WENT WITH THE LEARNING.**  A datagram is judged by
+		// what is in the frame, as muir's `Chudp::arrived` judges one:
+		// a host no flag named is heard exactly as a named peer is,
+		// and what it cannot do is get an answer, because nothing here
+		// writes down where it was.
 		const uint16_t cable_dest = words[n - 3];
 		const uint16_t cable_source = words[n - 2];
-		// **An endpoint is learned only when the run asked for it.**  Off
-		// by default, because otherwise whatever can reach the port
-		// installs itself in the address table under whatever Chaosnet
-		// address it claims.  A datagram from an endpoint no peer is at
-		// is dropped at the door, which is `chaos_udp.h`'s own rule.
-		// **muir differs here and the difference is worth knowing**: its
-		// link hears such a datagram and simply cannot answer it,
-		// because its node sits on a modelled cable that hears
-		// everything.  This one sits in front of a real machine, so the
-		// door is where the drop belongs.
-		if (known < 0 && !u->dynamic) {
-			if (u->trace)
-				say("udp: from %s: no peer is there, and endpoints are not "
-				    "learned", where(&from));
-			continue;
-		}
-		// What is learned is the PACKET's own source, since that is
-		// where an answer would be addressed.  Reachability, which is
-		// not authorisation: this says where a peer can be reached and
-		// nothing about what it may ask for.
-		if (u->dynamic && packet_source != 0) {
-			const int claims = peer_for(u, packet_source);
-			const int moved =
-				claims >= 0 &&
-				(u->peers[claims].where.sin_addr.s_addr != from.sin_addr.s_addr ||
-				 u->peers[claims].where.sin_port != from.sin_port);
-			if (claims < 0 && u->npeers == CHUDP_MAX_PEERS) {
-				if (u->trace)
-					say("udp: %o is at %s and there is no room to learn it",
-					    (unsigned)packet_source, where(&from));
-			} else if (claims < 0) {
-				u->peers[u->npeers].address = packet_source;
-				u->peers[u->npeers].where = from;
-				u->peers[u->npeers].learned = 1;
-				++u->npeers;
-				if (u->trace)
-					say("udp: %o is at %s", (unsigned)packet_source,
-					    where(&from));
-			} else if (moved && u->peers[claims].learned) {
-				// A learned endpoint is only ever the last
-				// packet's word for where a host is, so the
-				// newest packet has it.  A host that moves is
-				// followed; a host that is impersonated is the
-				// price of having asked to learn, which is why
-				// learning is off unless the run asks.
-				u->peers[claims].where = from;
-				if (u->trace)
-					say("udp: %o has moved to %s", (unsigned)packet_source,
-					    where(&from));
-			} else if (moved) {
-				// **A packet does not move an endpoint a flag
-				// named.**  An endpoint typed on the command
-				// line is a statement about where a host is;
-				// letting a packet redirect it would put the
-				// naming back in the hands of whoever can reach
-				// the port.
-				if (u->trace)
-					say("udp: from %s: %o is where a flag put it, and "
-					    "stays there", where(&from),
-					    (unsigned)packet_source);
-			}
-		}
 		// A frame with no cable source is a frame no station sent: the
 		// hardware inserts that word itself and 0 is no station's
 		// address.  muir drops it, and so does this.
-		if (cable_source == 0) {
+		//
+		// **AND SO IS ONE CLAIMING A SOURCE THIS CABLE ALREADY
+		// CARRIES.**  The machine is on this cable, in this process,
+		// so a datagram saying it came FROM the machine would put a
+		// frame on the cable that the interface takes for its own ---
+		// Transmit Done and all.  muir refuses it in the same place
+		// and for the same words.  This is the guard that has to be
+		// here now that a datagram is not judged by the socket it came
+		// off: before, a stranger was turned away at the door and this
+		// case could not arise from one.
+		if (cable_source == 0 || cable_source == u->local) {
 			if (u->trace)
-				say("udp: from %s: a frame with no cable source", where(&from));
+				say("udp: from %s: %o is on this cable", where(&from),
+				    (unsigned)cable_source);
 			continue;
 		}
 		// **The leaf rule, the half this can see.**  A frame addressed
 		// on the cable to another station that is reached over UDP is
 		// for that station and not for this cable, and forwarding it is
-		// a bridge's job.  Whether the destination is one of the
-		// addresses THIS cable carries --- which is the machine's
-		// alone --- is the caller's to judge: `struct chudp` holds no
-		// list of them, and muir's node is given one (`Chudp::local`)
-		// because it is attached to the cable itself.
+		// a bridge's job.
+		//
+		// **THIS IS SAID OF THE PEERS WHERE muir SAYS IT OF THE LOCAL
+		// ADDRESSES**, and the two agree on every frame.  muir drops a
+		// destination that is not on its cable; this drops one that
+		// belongs to a named peer, and leaves the rest to `carry` in
+		// `cadr-chaosnet.c`, which hands a frame to the machine only
+		// when the destination is the machine's or a broadcast and
+		// never sends one back out that came in over UDP.  So a frame
+		// for an address that is neither --- one beyond the bridge,
+		// say --- is dropped there rather than here, counted rather
+		// than traced, and goes no further either way.
 		if (cable_dest != 0 && peer_for(u, cable_dest) >= 0) {
 			if (u->trace)
 				say("udp: from %s: %o is another peer's, not this cable's",

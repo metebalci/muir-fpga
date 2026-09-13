@@ -48,8 +48,9 @@ OUT="$OUT" BIT="$BIT" BOOT_MB=64 PACKS_MB=${PACKS_MB:-3584} STANDALONE=1 \
 # **IT READS BOTH PARTITIONS, AND IT USED TO READ ONE.**  When the only private
 # value a card could hold was the TFTP server's address, card/uEnv.txt was the
 # only place it could land and grepping card/ was the whole of it.  It is not
-# any more: the Chaosnet's peers file and muir's file of flags are on the PACK
-# partition and both can name a host on somebody's network.  A guard that reads
+# any more: the two files of flags, fpgarc for the CADR in the fabric and
+# muirrc for the CADR inside muir, are on the PACK partition and both can name
+# a host on somebody's network.  A guard that reads
 # the partition where the value cannot be and not the one where it can is a
 # guard that passes for the wrong reason.
 #
@@ -78,26 +79,26 @@ echo "mksd-release: no address of any kind on either partition --- no IP, no MAC
 
 # **AND A PEER CAN BE A NAME, WHICH NO REGEX ABOVE CAN SEE.**  CHAOS_PEER is
 # written `<address>@<host>:<port>` and the host may be a name as easily as an
-# address: `chua.example.org` is as private as the number it resolves to and is
-# not address-shaped.  Measured on this project's own development card, where
-# the peer is a name --- the guard above passes it, and only STANDALONE
-# clearing CHAOS_PEER keeps it off a release.  A flag can be wrong, which is
-# the whole reason this file has a guard, so the two files that can carry a
-# peer are asserted to carry none: the Chaosnet's peers file down to its
-# comments, and muir's file of flags with no --chaos-udp-peer line in it.
-peers=$OUT/packs/chaosnet.over.udp.peers.txt
-if [ -f "$peers" ] && grep -qEv '^[[:space:]]*(#|$)' "$peers"; then
-	echo "mksd-release: STOP --- the Chaosnet peers file names a peer:" >&2
-	grep -nEv '^[[:space:]]*(#|$)' "$peers" >&2
-	exit 1
-fi
-muirrc=$OUT/packs/muirrc
-if [ -f "$muirrc" ] && grep -qE '^[[:space:]]*--chaos-udp-peer' "$muirrc"; then
-	echo "mksd-release: STOP --- muir's file of flags names a Chaosnet peer:" >&2
-	grep -nE '^[[:space:]]*--chaos-udp-peer' "$muirrc" >&2
-	exit 1
-fi
-echo "mksd-release: and no Chaosnet peer in either file that can carry one --- the network is the user's"
+# address: a host name is as private as the number it resolves to and is not
+# address-shaped.  Measured on this project's own development card, where the
+# peer is a name --- the guard above passes it, and only STANDALONE clearing
+# CHAOS_PEER keeps it off a release.  A flag can be wrong, which is the whole
+# reason this file has a guard, so the two files of flags are asserted to name
+# no station off this board.
+#
+# **THE BRIDGE IS A PEER FOR THIS PURPOSE.**  --chaos-udp-default-peer names
+# no Chaosnet address, so it does not look like a peer line; it names a host
+# on somebody's network all the same, which is the only thing this guard is
+# about.  Both flags are looked for in both files.
+for rc in "$OUT/packs/fpgarc" "$OUT/packs/muirrc"; do
+	[ -f "$rc" ] || continue
+	if grep -qE '^[[:space:]]*--chaos-udp-(default-)?peer' "$rc"; then
+		echo "mksd-release: STOP --- $(basename "$rc") names a station off this board:" >&2
+		grep -nE '^[[:space:]]*--chaos-udp-(default-)?peer' "$rc" >&2
+		exit 1
+	fi
+done
+echo "mksd-release: and no Chaosnet peer or bridge in either file of flags --- the network is the user's"
 
 img="$OUT/sdcard.img"
 xz -T0 -6 -c "$img" > "$img.xz"

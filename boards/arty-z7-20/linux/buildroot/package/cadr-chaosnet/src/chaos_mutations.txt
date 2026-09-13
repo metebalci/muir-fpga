@@ -186,3 +186,154 @@
 @new
 	if (datagram[0] == 0xFFu) {
 @end
+
+# ---- the route of last resort, and the table nobody writes ----
+#
+# muir removed `--chaos-udp-dynamic` and added `--chaos-udp-default-peer` at
+# its own `d6eac6d`, and these records hold this program to the same six
+# decisions.  Each is one the reader would otherwise have to take on trust:
+# where a frame goes that no peer entry names, where a broadcast does not go,
+# that the default peer does not stand in front of a named one, that a frame
+# for this cable's own address goes nowhere, that a datagram is judged by what
+# is in it and not by the socket it came off, and that nothing on this cable
+# can be impersonated by a datagram claiming its address.
+
+@mutation the-default-peer-is-never-reached
+@file chaos_udp.c
+@why a frame whose destination no peer entry names goes to the default peer, which is the route of last resort and the only routing this program has
+@note A peer entry says that ONE address lives at ONE endpoint, so naming a
+@note bridge as a peer does not let this board talk through it: before the
+@note default peer, a frame for any other address was dropped.  Delete the
+@note fallback and the board is back to talking only to hosts it was told
+@note about by name, which is the fault the flag exists to fix.
+@old
+	if (sent == 0 && cable_dest != 0 && u->have_default) {
+@new
+	if (0 && cable_dest != 0 && u->have_default) {
+@end
+
+@mutation the-default-peer-is-handed-a-broadcast
+@file chaos_udp.c
+@why a broadcast goes to the named peers alone: they are stations on this machine's own cable, and the default peer is the way out to a wider network
+@note Handing a bridge a broadcast would put this cable's broadcast on a
+@note network it was never meant to reach.  muir decided this deliberately and
+@note says so at the function; a record is what stops somebody deciding the
+@note other way by accident, since the peers still get it either way and
+@note nothing else would show.
+@old
+	if (sent == 0 && cable_dest != 0 && u->have_default) {
+@new
+	if (u->have_default && (cable_dest == 0 || sent == 0)) {
+@end
+
+@mutation the-default-peer-stands-in-front-of-a-named-one
+@file chaos_udp.c
+@why the default peer is where what is NOT named goes, not a route in front of the names: an endpoint a flag gave is where that address is reached, bridge or no bridge
+@note The frame still reaches the peer, so the peer's end of the check sees
+@note nothing wrong; what this catches is the copy the bridge should never
+@note have been given.  A board that sent every frame to the bridge as well
+@note would work and would leak every packet onto the wider network.
+@old
+	if (sent == 0 && cable_dest != 0 && u->have_default) {
+@new
+	if (cable_dest != 0 && u->have_default) {
+@end
+
+@mutation a-frame-for-this-cable-goes-out-over-udp
+@file chaos_udp.c
+@why a destination this cable already carries is reached on the cable and not over UDP, and it is not the bridge's business either
+@note Without the default peer this was harmless: no peer entry claims the
+@note machine's own address, so such a frame was dropped for want of anywhere
+@note to go.  With a default peer there is always somewhere to go, so the
+@note guard has to be real --- the bridge would otherwise be told about every
+@note packet the machine addressed to itself.
+@old
+	if (cable_dest != 0 && cable_dest == u->local)
+		return 0;
+@new
+	if (cable_dest != 0 && cable_dest == 0xFFFFu)
+		return 0;
+@end
+
+@mutation a-datagram-from-an-endpoint-no-flag-named-is-turned-away
+@file chaos_udp.c
+@why a datagram is judged by what is IN the frame and never by the socket it came off, so a host no flag named is heard exactly as a named peer is
+@note This is the door this program used to have and muir never did.  It was
+@note defensible only while an endpoint could be learned, because then a host
+@note that got in could also be answered; with nothing learned it refuses
+@note traffic the machine's own transport would have to answer through a
+@note bridge, whose datagrams come from the bridge and not from the host.
+@old
+		// The cable destination and the cable source the far side's
+@new
+		int named = 0;
+		for (unsigned k = 0; k < u->npeers; ++k) {
+			if (u->peers[k].where.sin_addr.s_addr == from.sin_addr.s_addr &&
+			    u->peers[k].where.sin_port == from.sin_port)
+				named = 1;
+		}
+		if (!named)
+			continue;
+		// The cable destination and the cable source the far side's
+@end
+
+@mutation a-datagram-may-claim-this-cables-own-address
+@file chaos_udp.c
+@why a datagram whose cable source is an address this process already carries is a forgery: the interface would take the frame for its own, Transmit Done and all
+@note muir refuses it in the same place and for the same words.  This guard
+@note did not have to bite while a stranger was turned away at the door,
+@note because no datagram from an unnamed endpoint got this far; it is what
+@note has to hold now that one does.
+@old
+		if (cable_source == 0 || cable_source == u->local) {
+@new
+		if (cable_source == 0) {
+@end
+
+@mutation a-bare-port-for-the-default-peer-is-not-the-loopback
+@file chaos_udp.c
+@why a bare port names the loopback at that port, which is what every endpoint flag here means by one
+@note muir's own endpoint parser has the same rule and the same reason: a
+@note bare port is a port on this host.  Binding the wildcard address as a
+@note DESTINATION is not a destination at all, and a sendto against it goes
+@note somewhere the person who typed the port did not name.
+@old
+		lands.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+@new
+		lands.sin_addr.s_addr = htonl(INADDR_ANY);
+@end
+
+@mutation a-second-default-peer-is-taken
+@file chaos_udp.c
+@why there is one route of last resort, and a second endpoint for it is a typed statement contradicting a typed statement
+@note The same rule as a second endpoint for one peer address, and the same
+@note reason: guessing which was meant is worse than refusing.  Taking the
+@note second silently would make the order of two lines in a file decide
+@note where every unnamed frame goes.
+@old
+	if (u->have_default) {
+		say("udp: a default peer twice; there is one route of last resort");
+		return -1;
+	}
+@new
+	if (0) {
+		say("udp: a default peer twice; there is one route of last resort");
+		return -1;
+	}
+@end
+
+@mutation a-peer-flag-brings-its-own-cable
+@file chaos_udp.c
+@why the switches and the cable are two flags: a peer says who is ON the cable and is refused when there is no cable, rather than bringing one of its own
+@note This is exactly what this program did before muir split the two at
+@note `0851fa7`, and the fault it makes is quiet rather than loud: a run that
+@note said who its file and time host was found itself on a network it had
+@note not asked for, bound to a port nobody had named.  The default peer's
+@note leg is left alone, so what this catches is the peer's alone.
+@old
+	if (have_cable)
+		return NULL;
+@new
+	if (have_cable || npeers > 0)
+		return NULL;
+@end

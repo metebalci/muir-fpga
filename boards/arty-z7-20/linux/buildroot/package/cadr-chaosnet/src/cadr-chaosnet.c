@@ -5,7 +5,7 @@
 //
 //     cadr-chaosnet [--chaos-address <octal>] [--chaos-udp [<endpoint>]]
 //                   [--chaos-udp-peer <address>@<host>[:<port>]]
-//                   [--chaos-udp-dynamic] [--chaos-trace]
+//                   [--chaos-udp-default-peer <host>[:<port>]] [--chaos-trace]
 //                   [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]
 //
 // **WHAT THIS PROGRAM IS: THE ETHER, AND NOTHING ABOVE IT.**  The CADR's
@@ -30,21 +30,43 @@
 // went.  `metebalci/ozd` is a host that boots a band.
 //
 // **AND IT IS A LEAF, NOT A ROUTER**, exactly as muir is.  A packet whose
-// destination is neither the machine nor a broadcast is handed to CHUDP if a
-// peer claims that address, and dropped and counted otherwise; a frame that
-// arrived over UDP for a third party is not sent back out.  AIM-628 chapter
-// 6's routing is a bridge's job, and `cbridge` is the thing to put beside
-// this.
+// destination is neither the machine nor a broadcast is handed to CHUDP, and
+// a frame that arrived over UDP for a third party is not sent back out.
+// AIM-628 chapter 6's routing is a bridge's job, and `cbridge` is the thing
+// to put beside this.  **The bridge is reached as the default peer**: a peer
+// entry says that one address lives at one endpoint, so naming a bridge as a
+// peer does not let this board talk through it, and
+// `--chaos-udp-default-peer` is where a frame goes whose destination no peer
+// entry names.  A broadcast is not handed to it.  With no default peer such a
+// frame is dropped and counted, which is what this program did with every one
+// of them before the flag existed.
 //
 // ## The vocabulary is muir's
 //
+// **`--chaos-address` IS THE SWITCHES AND `--chaos-udp` IS THE CABLE**, which
+// are two things on the board and were one flag here.  On MIT's card the
+// sixteen address switches are set whether or not anything is plugged in, and
+// a cable can be unplugged; so an address alone sends nothing, and the flags
+// that say who is on the cable --- `--chaos-udp-peer` and
+// `--chaos-udp-default-peer` --- are refused without it rather than quietly
+// bringing a cable of their own.  muir split them at its `0851fa7` and the
+// wording of the refusal is muir's.
+//
 // muir's own flags are `--chaos-address`, `--chaos-udp`, `--chaos-udp-peer`,
-// `--chaos-udp-dynamic` and `--chaos-trace`.  This program IS the Chaosnet,
-// so the prefix is optional here --- `--address`, `--udp` and the rest are
-// accepted as well, and cost three lines --- but muir's spellings are the
-// ones `S87cadr-chaosnet` passes and the ones to write down.  The console
-// already takes muir's spy names for the same reason and its own header says
-// so.
+// `--chaos-udp-default-peer` and `--chaos-trace`.  This program IS the
+// Chaosnet, so the prefix is optional here --- `--address`, `--udp` and the
+// rest are accepted as well, and cost three lines --- but muir's spellings
+// are the ones the card's `fpgarc` carries and the ones to write down.  The
+// console already takes muir's spy names for the same reason and its own
+// header says so.
+//
+// **`--chaos-udp-dynamic` IS GONE, as it is gone from muir.**  It learned
+// where a host was from the packets it sent, which is a table nobody wrote
+// down and which put the naming in the hands of whoever could reach the port.
+// It is not refused by name, unlike the three file-server flags below: those
+// configured a SERVICE whose silent absence would look exactly like its
+// presence, and this one configured a table that is simply not kept.  An
+// unknown flag prints the usage, which is muir's answer to it too.
 //
 // **Which address a run wants is the BAND's, and the band is asked.**  A band
 // holds a host table and calls its file and time host at the address that
@@ -266,19 +288,30 @@ static void usage(void)
 	fprintf(stderr,
 "usage: cadr-chaosnet [--chaos-address <octal>] [--chaos-udp [<endpoint>]]\n"
 "                     [--chaos-udp-peer <address>@<host>[:<port>]]\n"
-"                     [--chaos-udp-dynamic] [--chaos-trace]\n"
+"                     [--chaos-udp-default-peer <host>[:<port>]] [--chaos-trace]\n"
 "                     [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]\n"
 "\n"
 "  --chaos-address <octal>      this machine's Chaosnet address, in octal or\n"
 "                               subnet:host.  System 100's band wants 3050 and\n"
 "                               System 304's 4401.  The default, 177001, is\n"
 "                               deliberately no real host's\n"
-"  --chaos-udp [<endpoint>]     put the cable on the network as Chaosnet over\n"
-"                               UDP: [<address>:]<port>, 42042 by default\n"
+"  --chaos-udp [<endpoint>]     the cable, plugged in: Chaosnet over UDP at\n"
+"                               [<address>:]<port>, 42042 by default.  WITHOUT\n"
+"                               THIS NOTHING IS SENT, whatever the address\n"
+"                               switches read, as a machine with no cable\n"
+"                               talks to nobody\n"
 "  --chaos-udp-peer <a>@<h>[:<p>]  a station on the cable that is not on this\n"
 "                               board.  The band's file and time host is one:\n"
-"                               System 100 calls 3060, System 304 calls 4403\n"
-"  --chaos-udp-dynamic          learn where a peer is from what it sends\n"
+"                               System 100 calls 3060, System 304 calls 4403.\n"
+"                               It needs the cable, --chaos-udp\n"
+"  --chaos-udp-default-peer <h>[:<p>]  where a frame goes whose destination no\n"
+"                               --chaos-udp-peer named: the route of last\n"
+"                               resort, which is what lets a cbridge beside\n"
+"                               this board carry the traffic on.  An endpoint\n"
+"                               and NO Chaosnet address, the frame carrying\n"
+"                               the destination in its trailer for the bridge\n"
+"                               to route on.  A broadcast is not sent here.\n"
+"                               It needs the cable, --chaos-udp\n"
 "  --chaos-trace                every frame, as it goes by\n"
 "  --base <hex>                 the register face's address; 0x%08x by default\n"
 "  --no-guard                   skip the EMIO tally guard.  Only for a board\n"
@@ -287,7 +320,7 @@ static void usage(void)
 "                               this is exercised off the board\n"
 "  --log <file>                 where lines go; /dev/console for the init script\n"
 "\n"
-"The prefix is optional: --address, --udp, --udp-peer, --udp-dynamic and\n"
+"The prefix is optional: --address, --udp, --udp-peer, --udp-default-peer and\n"
 "--trace are the same flags.\n",
 		CHAOS_REG_BASE);
 }
@@ -318,9 +351,10 @@ int main(int argc, char **argv)
 	const char *log_path = NULL;
 	const char *udp_endpoint = NULL;
 	uint32_t base = CHAOS_REG_BASE;
-	int guard = 1, fabric = 1, want_udp = 0, udp_dynamic = 0;
+	int guard = 1, fabric = 1, want_udp = 0;
 	const char *udp_peers[CHUDP_MAX_PEERS];
 	unsigned nudp_peers = 0;
+	const char *udp_default_peer = NULL;
 
 	// muir's spellings are taken as well as the short ones.  `same` folds
 	// the two so that the table below reads once.
@@ -357,10 +391,8 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			udp_peers[nudp_peers++] = argv[++i];
-			want_udp = 1;
-		} else if (SAME("--udp-dynamic", "--chaos-udp-dynamic")) {
-			udp_dynamic = 1;
-			want_udp = 1;
+		} else if (SAME("--udp-default-peer", "--chaos-udp-default-peer") && v) {
+			udp_default_peer = argv[++i];
 		} else if (SAME("--trace", "--chaos-trace")) {
 			e.trace = 1;
 		} else if (SAME("--file-root", "--chaos-file-root")) {
@@ -385,6 +417,23 @@ int main(int argc, char **argv)
 		}
 	}
 	#undef SAME
+
+	// **THE FLAGS THAT DESCRIBE WHAT IS ON THE CABLE DESCRIBE ONE THAT HAS
+	// TO BE THERE.**  They used to ask for the cable themselves, so a run
+	// that said who its file host was found itself on a network it had not
+	// asked for, listening on a port nobody had named.  muir separated the
+	// two at `0851fa7` and this follows: the switches are one flag and the
+	// cable is another.  `chudp_flag_without_cable` is the rule and the
+	// check holds it; this is where it is said out loud.
+	{
+		const char *stray = chudp_flag_without_cable(want_udp, nudp_peers,
+							     udp_default_peer != NULL);
+		if (stray) {
+			fprintf(stderr, "cadr-chaosnet: %s is part of the CHUDP link: "
+				"it needs --chaos-udp, which is the cable\n", stray);
+			return 2;
+		}
+	}
 
 	FILE *dest = NULL;
 	if (log_path) {
@@ -457,14 +506,19 @@ int main(int argc, char **argv)
 				port = (uint16_t)strtoul(udp_endpoint, NULL, 10);
 			}
 		}
-		e.udp.dynamic = udp_dynamic;
-		e.udp.trace = e.trace;
 		if (chudp_bind(&e.udp, host[0] ? host : NULL, port) != 0)
 			return 1;
+		e.udp.trace = e.trace;
+		// The one station this cable carries in this process, so that
+		// a datagram claiming to come FROM it is refused rather than
+		// put on the cable for the interface to take as its own.
+		e.udp.local = e.machine;
 		for (unsigned k = 0; k < nudp_peers; ++k) {
 			if (chudp_add_peer(&e.udp, udp_peers[k]) != 0)
 				return 1;
 		}
+		if (udp_default_peer && chudp_set_default_peer(&e.udp, udp_default_peer) != 0)
+			return 1;
 		e.have_udp = 1;
 	} else {
 		// Not an error: a board on a bench with no network is a
