@@ -364,16 +364,17 @@
 @note behind it becomes the plain key.  Caught at "Scroll_Lock then '1',
 @note which is Roman I", where '1' comes out as '1'.
 @old
-static int is_prefix(uint32_t keysym)
+static int is_prefix(const struct key_map *m, uint32_t keysym)
 {
-	for (unsigned i = 0; i < KEY_PREFIX_COUNT; ++i)
-		if (KEY_PREFIX[i].first == keysym)
+	for (unsigned i = 0; i < m->afters; ++i)
+		if (m->after[i].first == keysym)
 			return 1;
 	return 0;
 }
 @new
-static int is_prefix(uint32_t keysym)
+static int is_prefix(const struct key_map *m, uint32_t keysym)
 {
+	(void)m;
 	(void)keysym;
 	return 0;
 }
@@ -514,4 +515,185 @@ static int is_prefix(uint32_t keysym)
 		v = -2048;
 @new
 	(void)v;
+@end
+
+# --- the keyboard mapping ------------------------------------------------
+#
+# `--keyboard-mapping` resolves names at run time, where the built-in map
+# resolved them in Python at generator time, so these are aimed at the
+# parser and at the rule that a file goes OVER the built-in mapping rather
+# than replacing it.  Each is the shape of a real transcription mistake
+# against `muir::terminal::keyboard`, and each keeps every name in the
+# hunk used --- a mutation lint rejects is a mutation the check never sees,
+# which this list's header already records.
+
+@mutation mapping-the-file-replaces-the-built-in-instead-of-going-over-it
+@file input_mapping.c
+@why a file of one line must change one key: every keysym it says nothing about keeps what it had
+@note This is the whole point of the file and the thing a reader would
+@note otherwise take on trust.  muir's `Mapping::read` starts from
+@note `built_in()` and reads over it; starting from nothing gives a viewer
+@note a keyboard with one key on it.
+@old
+	struct key_map trial = *m;
+	if (read_into(&trial, text, err, errlen) != 0)
+@new
+	struct key_map trial;
+	memset(&trial, 0, sizeof trial);
+	if (read_into(&trial, text, err, errlen) != 0)
+@end
+
+@mutation mapping-a-refused-file-keeps-the-lines-before-the-bad-one
+@file input_mapping.c
+@why a file that is refused must leave the mapping exactly as it was, not half applied
+@note muir gets this from building a fresh `Mapping` and dropping it on an
+@note error.  Half a file is a mapping that is neither the file's nor the
+@note built-in one, and nothing would say which keys were in force ---
+@note which matters here more than in muir, because this program carries on
+@note with the built-in mapping rather than stopping.
+@old
+	struct key_map trial = *m;
+	if (read_into(&trial, text, err, errlen) != 0)
+		return -1;
+	*m = trial;
+	return 0;
+@new
+	struct key_map trial = *m;
+	const int bad = read_into(&trial, text, err, errlen);
+	*m = trial;
+	return bad;
+@end
+
+@mutation mapping-a-key-line-adds-a-binding-instead-of-replacing-one
+@file input_mapping.c
+@why a second line for one keysym must replace the first, and a file's line must replace the built-in one
+@note The field slip a transcription of `BTreeMap::insert` actually makes:
+@note the loop looks for the entry to replace and compares the wrong thing.
+@note Caught by the binding count as well as by the binding, which is what
+@note says the count is worth asserting.
+@old
+		if (m->bound[i].keysym == keysym) {
+@new
+		if (m->bound[i].position == position) {
+@end
+
+@mutation mapping-a-comment-is-taken-anywhere-on-a-line
+@file input_mapping.c
+@why a `#` is a comment only where a trimmed line starts with one, so `key 0x23 #` binds the number sign
+@note muir's `read_into` tests `starts_with('#')` and nothing else, and a
+@note line with a `#` in the middle of it is refused rather than trimmed.
+@note `keymap_from_muir.py` is the more lenient of the two and it does not
+@note matter there, `default.keys` having no such line; here it would be a
+@note real disagreement, and a line somebody meant as a binding would go
+@note silently missing.
+@old
+		if (line[0] && line[0] != '#') {
+@new
+		if (line[0] && !strchr(line, '#')) {
+@end
+
+@mutation mapping-a-position-is-read-in-decimal
+@file input_mapping.c
+@why `position 22` is MIT's own octal and is position 18, and `position 99` is no position at all
+@note Every position in this project is octal --- MIT's table, muir's
+@note `TABLE`, `input_keymap.h` --- so a decimal one is wrong quietly: it
+@note names a real key, just not the one that was asked for.
+@old
+	if (rust_int(number, 8u, 0xFFul, &v) != 0) {
+@new
+	if (rust_int(number, 10u, 0xFFul, &v) != 0) {
+@end
+
+@mutation mapping-left-and-right-are-swapped
+@file input_mapping.c
+@why Left Control is 0o020 and Right Control 0o026, and a mapping that swapped them would put every modifier on the wrong key
+@old
+		side = ci_eq(first, "left") ? 0u : 1u;
+@new
+		side = ci_eq(first, "left") ? 1u : 0u;
+@end
+
+@mutation mapping-a-shifting-keys-positions-are-not-in-order
+@file input_mapping.c
+@why muir's `Left` is the LOWER position of a pair, which is what makes Left Greek 0o035 where MIT's table labels that one Right
+@note The one place MIT's sides and muir's disagree, recorded in
+@note `input_keys.h` so that nobody corrects it.  Walking the table the
+@note other way reverses every pair at once and is exactly what a
+@note "correction" would look like.
+@old
+	for (unsigned p = 0; p < 128u && n < max; ++p)
+		if (KEY_TABLE[p].kind == KEY_SHIFT && KEY_TABLE[p].shift == s)
+@new
+	for (unsigned p = 128u; p-- > 0 && n < max; )
+		if (KEY_TABLE[p].kind == KEY_SHIFT && KEY_TABLE[p].shift == s)
+@end
+
+@mutation mapping-a-keysym-may-be-a-key-and-a-prefix-at-once
+@file input_mapping.c
+@why a keysym bound as a key and used as a prefix must be refused: the first press would have to be two things at once
+@note The check runs over the WHOLE mapping after the file, so it catches a
+@note file's `key Scroll_Lock ...` against the built-in prefixes and a
+@note file's `prefix Escape ...` against the built-in key.  Comparing the
+@note second of a pair instead of the first leaves both of those taken.
+@old
+			if (m->after[i].first == m->bound[j].keysym) {
+@new
+			if (m->after[i].second == m->bound[j].keysym) {
+@end
+
+@mutation mapping-the-line-number-is-one-too-few
+@file input_mapping.c
+@why a file is edited by hand and the line number is how its author finds the line; muir counts from one
+@note An off-by-one here is the difference between a message that helps and
+@note one that sends somebody to the line above the mistake.  Both places
+@note the number is printed are mutated together, because a list that
+@note mutated one would be caught by the other and say nothing.
+@old
+					snprintf(err, errlen, "line %u: %s", n, what);
+					return -1;
+				}
+			} else if (strcmp(word, "prefix") == 0) {
+@new
+					snprintf(err, errlen, "line %u: %s", n - 1, what);
+					return -1;
+				}
+			} else if (strcmp(word, "prefix") == 0) {
+@end
+
+@mutation mapping-0x-is-read-case-insensitively
+@file input_mapping.c
+@why muir's `strip_prefix("0x")` is case-SENSITIVE, so `0X41` is no keysym and must be refused
+@note The helpful thing a C programmer adds without being asked.  It is a
+@note divergence rather than an improvement: a file muir refuses would be
+@note taken here, and the two programs would disagree about a file rather
+@note than about a key.
+@old
+	if (word[0] == '0' && word[1] == 'x') {
+@new
+	if (word[0] == '0' && (word[1] == 'x' || word[1] == 'X')) {
+@end
+
+@mutation mapping-a-number-past-32-bits-is-truncated-rather-than-refused
+@file input_mapping.c
+@why Rust's own parse refuses what does not fit, and a truncating one would bind keysym 0 and say nothing
+@note The guard has to be made BEFORE the multiply, which is the part a
+@note transcription gets wrong: checking the accumulated value against the
+@note limit afterwards catches nothing, because the multiply has already
+@note happened in a wider type.
+@old
+		if (v > (max - d) / base)
+@new
+		if (v > max)
+@end
+
+@mutation mapping-the-key-is-the-first-word-and-not-the-rest-of-the-line
+@file input_mapping.c
+@why `Alt Mode` and `Left Control` need no quoting because the key is the REST of the line, and there is no quoting to be had
+@note muir's `two` returns the remainder trimmed, not the next word.  A
+@note parser that split again would refuse every two-word key name in
+@note `default.keys` --- which is most of the interesting ones.
+@old
+	if (trimmed(rest, tail, taillen) == 0) {
+@new
+	if (split_once(rest, tail, taillen, &rest), *tail == '\0') {
 @end

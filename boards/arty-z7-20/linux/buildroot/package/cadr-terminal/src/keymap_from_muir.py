@@ -78,11 +78,21 @@ def read_table(src):
 
 
 def read_keysym_names(src):
+    """`KEYSYM_NAMES`, in muir's own order.  The order is carried into C
+    because `keysym_name` takes the FIRST name with a given value, so a list
+    sorted here would be a different function there."""
     body = src.split("const KEYSYM_NAMES: &[(&str, u32)] = &[", 1)[1].split("\n];", 1)[0]
-    out = {}
-    for name, val in re.findall(r'\("([^"]+)",\s*(0x[0-9a-fA-F]+|\d+)\)', body):
-        out[name.lower()] = int(val, 0)
-    return out
+    return [(name, int(val, 0))
+            for name, val in re.findall(r'\("([^"]+)",\s*(0x[0-9a-fA-F]+|\d+)\)', body)]
+
+
+def c_string(text):
+    """A Rust `include_str!` as a C string literal, a line at a time."""
+    out = []
+    for line in text.split("\n"):
+        body = line.replace("\\", "\\\\").replace('"', '\\"')
+        out.append('\t"%s\\n"' % body)
+    return "\n".join(out)
 
 
 def shifting(table, s):
@@ -179,8 +189,12 @@ def main():
     dk = os.path.join(a.muir, "src/terminal/default.keys")
     src = open(kb).read()
     table = read_table(src)
-    names = read_keysym_names(src)
-    single, prefixed = read_bindings(open(dk).read(), table, names)
+    sym_names = read_keysym_names(src)
+    names = {n.lower(): v for n, v in sym_names}
+    if len(names) != len(sym_names):
+        raise SystemExit("KEYSYM_NAMES has two names differing only in case")
+    default_keys = open(dk).read()
+    single, prefixed = read_bindings(default_keys, table, names)
     try:
         commit = subprocess.check_output(
             ["git", "-C", a.muir, "rev-parse", "HEAD"], text=True).strip()
@@ -206,6 +220,23 @@ def main():
     w("// are `default.keys` resolved: every `key` and `prefix` line with its")
     w("// name looked up exactly as `key_of` looks it up, so a binding is a")
     w("// position and a plane and no name survives into C.")
+    w("//")
+    w("// THE OTHER THREE ARE FOR `--keyboard-mapping`, which resolves names at")
+    w("// RUN time and so needs in C what the four above threw away.")
+    w("// `KEY_SYM_NAMES` is `keyboard.rs`'s `KEYSYM_NAMES` in its own order,")
+    w("// `KEY_SHIFT_NAMES` is `shift_name` as a table, and")
+    w("// `KEY_DEFAULT_MAPPING` is `default.keys` itself, the text muir's")
+    w("// `include_str!` compiles in.")
+    w("//")
+    w("// **`KEY_DEFAULT_MAPPING` IS THE CHECK'S REFERENCE AND NOT THE")
+    w("// PROGRAM'S BUILT-IN MAP.**  muir builds its own map by parsing that")
+    w("// text; this program's built-in map is `KEY_BOUND` and `KEY_PREFIX`")
+    w("// above, resolved here in Python.  Keeping them apart is what makes")
+    w("// the comparison worth making: the check parses the text with the C")
+    w("// parser and requires the result to equal the tables, so two")
+    w("// independent resolutions of one reference file are held to each")
+    w("// other.  A program that parsed the text to build its own map would")
+    w("// be compared against itself.")
     w("")
     w("#ifndef INPUT_KEYMAP_H")
     w("#define INPUT_KEYMAP_H")
@@ -263,12 +294,39 @@ def main():
     w("};")
     w("#define KEY_PREFIX_COUNT %d" % len(prefixed))
     w("")
+    w("struct key_sym_name { const char *name; uint32_t keysym; };")
+    w("")
+    w("// `keyboard.rs`'s `KEYSYM_NAMES`, in its own order: the X11 names a")
+    w("// mapping file may write a keysym by.  A keysym with no name here is")
+    w("// still written as a number.")
+    w("static const struct key_sym_name KEY_SYM_NAMES[] = {")
+    for name, val in sym_names:
+        w('\t{ "%s", 0x%08xu },' % (name, val))
+    w("};")
+    w("#define KEY_SYM_NAME_COUNT %d" % len(sym_names))
+    w("")
+    w("// `shift_name`, by the Shift number above: what a mapping file calls a")
+    w("// shifting key, with `Left` or `Right` before it where there are two.")
+    w("static const char *const KEY_SHIFT_NAMES[] = {")
+    for rust, name in SHIFTS:
+        w('\t"%s",' % name)
+    w("};")
+    w("#define KEY_SHIFT_NAME_COUNT %d" % len(SHIFTS))
+    w("")
+    w("// muir's `default.keys` verbatim --- the text its `include_str!`")
+    w("// compiles in and its built-in mapping is parsed from.  Here it is the")
+    w("// CHECK's reference and nothing reads it at run time: see the header.")
+    w("static const char KEY_DEFAULT_MAPPING[] =")
+    w(c_string(default_keys.rstrip("\n")) + ";")
+    w("")
     w("#endif")
     w("")
     open(a.out, "w").write("\n".join(o))
-    print("%s: %d table entries, %d bindings, %d prefixed, from muir %s"
+    print("%s: %d table entries, %d bindings, %d prefixed, %d keysym names, "
+          "%d bytes of default.keys, from muir %s"
           % (a.out, sum(1 for e in table if e[0] != "NONE"),
-             len(single), len(prefixed), commit[:12]))
+             len(single), len(prefixed), len(sym_names),
+             len(default_keys), commit[:12]))
 
 
 def describe(table, p, shifted):

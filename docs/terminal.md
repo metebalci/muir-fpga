@@ -24,20 +24,23 @@ keyboard and mouse later, when the I/O board exists.
 
     cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
                   [--window ADDR] [--interval-ms N] [--no-rre]
-                  [--no-guard] [--no-input] [--input ADDR] [--once]
+                  [--no-guard] [--no-input] [--input ADDR]
+                  [--keyboard-mapping FILE] [--once]
 
 It maps 128 KB at `0x1C00_0000` through `/dev/mem`. It copies the visible
 23,112 words out of that once a frame while anybody is watching. It serves them
 over RFB on port 5900, which is display `:0`. RFB is RFC 6143, which is what a
 VNC viewer speaks. `S85cadr-terminal` starts it at boot.
 
-**It carries the keyboard and the mouse.** It did not at first, because there
-was no I/O board in the fabric to put a keystroke into. There is one now.
+**It carries the keyboard and the mouse, and a file may say what its keys
+mean.** It did not carry them at first, because there was no I/O board in the
+fabric to put a keystroke into. There is one now.
 `rtl/plumbing/cadr_input_cables.sv` is the far end of the card's keyboard
 cable and its mouse, on the fourth page of `M_AXI_GP0` at `0x4000_3000`. A
 viewer's `KeyEvent` becomes a stream of twenty-four-bit words and its
 `PointerEvent` becomes deltas and a button mask. The mapping is muir's own,
-and the section below says what it could not map.
+and so is the file that may replace a line of it: the section below says what
+the file looks like and what could not be mapped without one.
 
 **It is read-only where the fabric has no input cables.** A bitstream without
 them answers `IDENT` with something other than "INPT", and the program says so
@@ -61,12 +64,30 @@ Nothing carries them to the processing system. `M_AXI_GP0` is the disk's and
 default is the fabric's own power-on state and muir's, which is zero, and a
 one bit is white. That is also the mode both reference programs leave the
 register in (`docs/tv.md`: "the mode register stays 0 ... for the whole run"),
-and `--bow` swaps it. **Reading it instead of assuming it would take one of two
-things**: a word on the console's register face carrying `mode[3:0]`, which is
-one register and one line in `rtl/plumbing/cadr_console.sv`, or an EMIO GPIO
-bit beside the memory tally. Neither is built, and the assumption is right for
-every program this project has run. It is written down here so that a screen
-that comes out inverted is diagnosed in one step.
+and `--bow` swaps it. The assumption is right for every program this project
+has run. It is written down here so that a screen that comes out inverted is
+diagnosed in one step.
+
+**Reading it is fabric work and not program work, which is why it is still
+not built.** The flops are inside `cadr_tv`, and a program on the processing
+system can reach a fabric register only through one of the two general-purpose
+ports. So the change is three files and one commit, none of them this
+program's:
+
+1. `rtl/machine/cadr_tv.sv` gives `mode` an output port. The register already
+   exists and is already read back over the Xbus, so this adds no state.
+2. `rtl/machine/cadr_machine.sv` carries that port up. The machine's outputs
+   are checked mechanically against its port list, so a port added here and
+   not folded is caught.
+3. `rtl/plumbing/cadr_console.sv` puts `mode[3:0]` in a word of its register
+   face, which is where the processing system can read it over `M_AXI_GP1`.
+
+An EMIO GPIO bit beside the memory tally is the other shape, and it is worse
+for one reason: the tally's own bits are already spoken for, and a fifth
+instrument on a port with no decode is harder to extend than a word on a face
+that has thirty-two of them. Once the word exists, this program drops
+`--bow`'s guess and reads it, which is one call and one line of the start-up
+message.
 
 **It does not stop the machine to read a frame.** The CADR writes the window
 while the copy is being made, so a copy can hold the top of the screen from
@@ -169,6 +190,18 @@ Buildroot nor CI has. The output is committed and its header names the muir
 commit it came from. `muir.commit` at the top of this repository is the pin
 every reference here is held to.
 
+**It writes three more tables for the file the section below describes**, which
+resolves names at run time and so needs in C what the four above threw away.
+`KEY_SYM_NAMES` is muir's own list of X11 keysym names, in its order.
+`KEY_SHIFT_NAMES` is what a file calls each of the eleven shifting keys.
+`KEY_DEFAULT_MAPPING` is `default.keys` itself, byte for byte, which is the
+text muir compiles in. **That last one is the check's reference and is not the
+program's built-in map**, and keeping them apart is the point: the check parses
+the text with the C parser and requires the result to equal the tables the
+generator resolved, so two independent readings of one reference file are held
+to each other. A program that built its map by parsing that text would be
+compared against itself.
+
 The state machine over the table is written out by hand in `src/input_keys.c`,
 function for function against `Keyboard::resolve`, `tap`, `press` and
 `release`. A translation of behaviour is not a translation of data, and
@@ -202,6 +235,81 @@ Right. So `ISO_Level3_Shift` reaches the right-hand key and MIT's left-hand one
 cannot be named by side. It is harmless, both positions being the same shift to
 a machine that decodes from the stream, and it is pinned in the check so that
 nobody corrects it into a disagreement with muir.
+
+### A file may say something else: `--keyboard-mapping`
+
+**The built-in mapping is a default and not a cage.** A host keyboard has
+fewer keys than this one, and which of its keys a viewer can spare differs
+from desk to desk. A Mac keyboard has no Scroll Lock at all, and a desktop
+that takes Scroll Lock for itself leaves the twenty-two prefixed keys
+unreachable. So a file may say what a keysym means, and one line changes the
+prefix.
+
+    key    <keysym> <key>            one host key
+    prefix <keysym> <keysym> <key>   press the first, then the second
+
+The grammar is muir's and so are the names, the order the forms are tried in,
+and the words of every error the parser gives. `src/input_mapping.h` is the
+whole of it beside the code. The rules worth having here:
+
+- **A file goes over the built-in mapping rather than replacing it.** A `key`
+  line replaces the binding for that keysym and a `prefix` line the binding
+  for that pair. Every keysym the file says nothing about keeps what it had.
+  So a file of one line changes one key.
+- **There is no way to unbind.** A binding can be pointed somewhere else and
+  not removed.
+- **A keysym is an X11 name, a single printable character, or a number in
+  decimal or `0x` hexadecimal.** A key is one of MIT's own names such as `Alt
+  Mode`, a shifting key such as `Greek` with an optional `Left` or `Right`,
+  the character a character key gives, or `position <octal>` with `shifted`
+  after it for the shifted plane. The last field is the rest of the line,
+  which is why the two-word names need no quoting.
+- **A line whose first character is `#` is a comment and a `#` anywhere else
+  is not.** So `key 0x23 #` binds the number sign.
+- **`key` and `prefix` are the only case-sensitive words.** Every name after
+  them folds ASCII case.
+- **A keysym is a key or a prefix and never both**, which is checked over the
+  whole mapping after the file rather than a line at a time.
+
+**The file to start from is muir's own dump**, which is not written twice.
+muir is in this board's image, built from the commit `muir.commit` pins, and
+that is the same commit `src/input_keymap.h` is generated from. So what it
+prints is the mapping this program already carries:
+
+    muir --keyboard-mapping-dump > /mnt/packs/terminal.keyboard.mapping.txt
+
+**Where the file lives on the board.** `/mnt/packs/terminal.keyboard.mapping.txt`,
+which is the pack partition that `S80cadr-disk-packs` mounts. The name ends in
+`.txt` for the reason the Chaosnet program's three settings files do: the
+partition is FAT32, so a laptop with a card reader can edit what is on it, and
+a suffixless file asks a laptop what should open it. `S85cadr-terminal` passes
+`--keyboard-mapping` only when the file is there.
+
+**The file is read only where there is a keyboard to map onto.** It is read
+beside the flush, after `IDENT` has answered and before the socket is bound,
+so on a bitstream without the input cables it is not read at all and nothing
+is said about it. That is the right way round --- a mapping with no keyboard
+behind it is moot --- and the line about the screen being served read-only is
+already the answer to why a key did nothing.
+
+**A file that does not parse is reported and the built-in mapping stands.**
+This is the one place the program parts from muir deliberately. muir stops the
+run, on the argument that a keyboard which is quietly not the one you wrote is
+worse than no run. That is right for a program somebody has just typed the
+name of. This one is started at boot and is the only way to see the machine at
+all, and the file is optional and lives on a card. Stopping would mean that a
+typo in a file nobody needs costs the screen as well as the keyboard,
+discoverable only over the serial console. So the whole file is discarded, not
+the lines before the bad one, and one line on the console names the line and
+what was wrong with it. The Chaosnet program takes its defaults and says so
+for the same reason.
+
+Two smaller differences, both of them limits this program has and muir has
+not. The two tables are arrays of 256 entries each, against a built-in mapping
+of 39 and 22, and a file past either is refused by name rather than losing the
+rest. A line longer than 200 characters is refused rather than cut, because a
+buffer that keeps the front of a line can turn a line that would have been
+refused into one that binds something.
 
 ### And one thing that is not a mapping limit
 
@@ -306,8 +414,8 @@ channel's, and nothing in the fabric has to know a viewer exists.
 `make -C boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src check`
 runs on the build host, with no board. The server is driven from screens made
 in the check, and a viewer written for the purpose sits on a real loopback
-socket. **617 checks, 0 failures**, then **30 mutations, 30 caught, 0 survived,
-0 broken.** The whole thing takes about a minute.
+socket. **736 checks, 0 failures**, then **42 mutations, 42 caught, 0 survived,
+0 broken.** The whole thing takes a few minutes.
 
 **And `make check` at the repository root runs it now**, as `terminal.pass`,
 beside `chaosnet.pass` and `serial.pass`. It did not before. That was a hole
@@ -384,6 +492,35 @@ program that was wrong the same way.
   bits held rather than wrapped, and a word refused rather than written when
   the queue is full.
 
+And, for the mapping file:
+
+- **The built-in mapping is muir's own `default.keys`, resolved twice.**
+  `src/input_keymap.h` carries that file two ways: `KEY_BOUND` and
+  `KEY_PREFIX`, which the generator resolved in Python, and
+  `KEY_DEFAULT_MAPPING`, which is the file itself byte for byte. The check
+  parses the text with the C parser and requires the result to equal the
+  tables, entry for entry, so two independent resolutions of one reference
+  file are held to each other. **This is why the program does not build its
+  own map by parsing that text**, which would be the same code compared
+  against itself.
+- **A file goes over the built-in mapping.** One line changes one key, the
+  count does not move, and every keysym the file said nothing about keeps what
+  it had. A new keysym and a new prefix pair each add one.
+- **A file that is refused changes nothing**, not even the lines before the
+  bad one.
+- **The grammar**, on comments that are comments and a `#` that is a key,
+  blank lines, tabs, CRLF, a case-sensitive verb and case-insensitive names.
+- **Octal positions**, and the two different messages for a number past a byte
+  and a number past the table.
+- **Left and Right**, including Greek, where muir's sides are the lower and
+  higher position and MIT's table labels them the other way round.
+- **Every error, word for word.** The literals came from muir and are pinned
+  here so that a change to any of them is a failure.
+- **And the mapping reaches the machine.** A viewer presses one key under the
+  built-in mapping and again under a file that rebinds it, and the two give
+  different positions on the wire. Without this pair the mapping could be read
+  correctly and then not used.
+
 **And two real screens, when they are there.** `vendor/screen/` is gitignored
 like the rest of `vendor/`. So a fresh clone runs the anchors and the check's
 own patterns, and says the real ones are absent. That is the same shape as
@@ -404,6 +541,19 @@ picture and not the frame buffer. So the check turns each back into
 frame-buffer words and compares the viewer's pixels against the PNG's. The
 decoder is thirty lines, because muir writes stored deflate blocks and says so.
 
+**The measurement that says the errors are muir's was made against muir and
+not transcribed.** Thirty-seven files were fed to this parser and to
+`muir --keyboard-mapping <file> --keyboard-mapping-dump` built at the commit
+`muir.commit` pins, and every message came out character for character the
+same, the Rust quoting of a line that ran out included. Ten mappings were
+merged from a file over the built-in one and compared against muir's own dump
+of the same merge, and all ten agreed entry for entry. The one message that is
+not muir's is for a file that cannot be opened at all: muir spells that with
+Rust's own error type, which appends `(os error 2)`, and this uses `strerror`,
+which stops at `No such file or directory`. That measurement needs muir beside
+the tree and so cannot be part of the check; what the check carries is the
+result, pinned.
+
 **The mutations** are in `src/screen_mutations.txt`, in `mutations/list.txt`'s
 own format, and are run by `src/mutate.py`. They are the bit order reversed
 within a word, the line stride a word short in each of the two places the rule
@@ -413,7 +563,15 @@ a diff that sends the rows that did not change, an RRE subrectangle placed
 absolutely, the encoding guessed rather than measured, a viewer's encoding list
 read backwards, the byte order a viewer asked for ignored, the whole-screen
 interval inverted, a security type that is not offered taken, and an all-ones
-screen not called blank. The unjoined rows are the one **whose pixels come out
+screen not called blank. Twelve more are aimed at the mapping file: the file
+replacing the built-in map instead of going over it, a refused file keeping the
+lines before the bad one, a `key` line adding a binding instead of replacing
+one, a comment taken anywhere on a line, a position read in decimal, Left and
+Right swapped, a shifting key's positions walked the other way, a keysym
+allowed to be a key and a prefix at once, a line number one too few, `0x` read
+case-insensitively, a number past thirty-two bits truncated rather than
+refused, and the key taken as the first word instead of the rest of the line.
+The unjoined rows are the one **whose pixels come out
 right**, so only the check's comparison of the rectangle list can see it. A
 build that fails is BROKEN and fails the run, which is CLAUDE.md's lesson about
 two fabric mutations reported as surviving that had never been built.
@@ -468,6 +626,18 @@ lines:
       this socket was bound, so nothing was waiting at the machine's cold-boot
       test
 
+With no `terminal.keyboard.mapping.txt` on the pack partition there is no line
+about the mapping, the built-in one being the default. With one there is a
+line saying what was read, and with a file that does not parse there is a line
+saying which line of it was wrong and that the built-in mapping stands:
+
+    cadr-terminal: the keyboard mapping is /mnt/packs/terminal.keyboard.mapping.txt
+      over the built-in one: 39 keysyms bound and 22 behind a prefix
+    cadr-terminal: the keyboard mapping /mnt/packs/terminal.keyboard.mapping.txt
+      was NOT read and the built-in one stands:
+      /mnt/packs/terminal.keyboard.mapping.txt: line 4: Nosuchkey is no key of
+      this keyboard
+
 The blank line is expected at boot, and it is the point of it. **An unwritten
 word of this board's DDR reads zero in some places and all ones in others**
 (CLAUDE.md, measured on the first bring-up). So a viewer shown 739,584
@@ -504,36 +674,77 @@ of the pixels lit.
 `/srv/tftp` on the network path, and the card's own copy on the card path
 (`docs/boot.md`).
 
+**The keyboard mapping file is the one thing here that lives on the card**, and
+no package installs it. It is written by hand on the pack partition, the way
+the Chaosnet program's three settings files are, and it is optional. Two
+things the card's own tooling does not know about it yet: the staging script
+that writes a card checks partition 2 against a list of names it expects and
+would refuse a card carrying this one, and the `README.TXT` it writes there
+names the settings files one by one. Both are a line each and neither is this
+package's file.
+
 ## What is not built
 
-- **`--keyboard-mapping`.** muir reads a file of `key` and `prefix` lines over
-  its built-in map, and this carries the built-in one and nothing else. The
-  parser is the larger half of muir's keyboard, and the board has nowhere to
-  put a file that survives a reboot except the card, so it waits for somebody
-  to want it. `muir --keyboard-mapping-dump` prints the map this one has.
-- **Reading `MODE BOW`**, which is described above.
+- **Reading `MODE BOW`**, which is described above. It is fabric work in three
+  files, none of them this program's, and the section above says which.
 - **Encodings past Raw and RRE.** Hextile and ZRLE would both beat RRE on a
   screen of text. ZRLE needs zlib on the board, Hextile is a real amount of
   code, and RRE at fifty times is enough for a screen that changes a cursor.
   A rectangular decomposition that joined runs ACROSS rows inside one RRE
   rectangle would also be smaller, and it is one pass more.
-- **`CopyRect`.** A window system dragging a window would make very good
-  use of it, and it needs the program to know what moved.
+- **`CopyRect`**, and the case for it is weaker than it looks. A window system
+  dragging a window would make very good use of it, and it needs the program
+  to know what moved. This program is not told what moved: it sees the words
+  in DDR and nothing else, so it would have to find the move by searching.
+  Measured on the only real incremental update this project has, the two
+  screens muir drew of MIT's System 100 band twenty-five million microcycles
+  apart: the change is the blinking cursor, **84 pixels in a 7 by 12 block**,
+  sent today as one full-width rectangle of 12 rows. The same 7 by 12 block of
+  pixels appears in **667,165** other places on that screen, almost all of them
+  blank background. So a search would find a source at once, the `CopyRect` it
+  sent would be a copy of empty space, and it would save nothing that RRE does
+  not already save. The encoding wants a workload with real motion in it, and
+  this project has no sample of one. Building it against no sample and no
+  reference is the shape of a claim nothing exercises.
 - **A trigger for the probe.** That is a different instrument and is not this.
 
-## What this slice left for whoever owns the Makefile
+## The Makefile does not name the packages any more, it derives them
 
-**One line in the top-level `Makefile`.** `buildroot-rebuild` names each of our
-packages so that a change to its sources is noticed, because "Buildroot does
-not watch our files". It names `cadr-common`, `cadr-console` and
-`cadr-disk-pack`. `cadr-terminal-reconfigure` belongs beside them. The first
-build after this slice works without it, because a new package has no stamp.
-**The second one, after an edit under `package/cadr-terminal/src/`, silently
-builds the old sources.** That was measured rather than argued from the
-comment. A marker string added to `cadr-terminal.c` and a plain `make` in the
-Buildroot tree left the marker out of the binary on the target, and
-`cadr-terminal-reconfigure` first put it in. That file was another session's
-while this slice ran, and it was deliberately not touched.
+**`buildroot-rebuild` used to carry a hand-written list and it had gone
+stale.** Buildroot does not watch our files, so a change under a package's
+`src/` is not seen by a plain `make buildroot` once that package has a build
+stamp. The first build after a new package works without forcing, because a
+new package has no stamp; the second one silently builds the old sources. That
+was measured rather than argued: a marker string added to `cadr-terminal.c`
+and a plain build left the marker out of the binary on the target.
+
+`cadr-terminal-reconfigure` has since been added to that list. **The list was
+still wrong, and a hand-written list beside a directory will go wrong again.**
+`cadr-checkpoint` was missing from it. That package builds from its own `src/`
+by Buildroot's `local` site method and is enabled in the image, and it has had
+a build stamp for a long time, so **every** `make buildroot-rebuild` since then
+has left it alone and shipped whatever was built first. It is the program that
+reads the board's main memory into a muir checkpoint, which is the only way
+that memory can be read at all, so a stale one is a stale instrument in the
+middle of a diagnosis.
+
+**So the list is derived and no longer typed.** The packages that need forcing
+are exactly those whose `.mk` declares `_SITE_METHOD = local`, which is the
+property that makes them built from files in this tree, and `BR_RECONFIGURE`
+reads that off the `.mk` files. A package added under `package/` joins the list
+by existing. `muir` falls out of the derivation and should: its version is the
+commit in `muir.commit`, so a new pin is a new build directory and Buildroot
+rebuilds it unasked. U-Boot and the kernel stay named, because they are
+Buildroot's own packages reading our files through external options and hooks.
+
+**And the two ways the derivation could come out short are refused rather than
+silently omitted.** `buildroot-check` fails if any `.mk` declares no site
+method at all, which is what a package written differently or a line rewritten
+without its spaces would look like, and it fails if the derived list is empty.
+The first guard was tested by removing the spaces around one package's
+`SITE_METHOD`: the build stops and names the file. Without it that package
+would simply have left the list, which is the silent-omission shape this
+repository keeps meeting.
 
 **The image cost.** `rootfs.cpio` goes 6,251,520 -> 6,279,680, which is
 **+28,160 bytes exactly**. `rootfs.cpio.uboot` goes 2,813,397 -> 2,824,2xx,
@@ -544,3 +755,12 @@ the last digits of that number are not a measurement of anything. The program
 is 25,956 bytes on the target, stripped, and the init script is 1,962. Nothing
 else in the image changes: no new library, no kernel option, no device-tree
 node, nothing on the card.
+
+**The mapping file added about eight kilobytes to the program and nothing
+else.** Built for the board with the Buildroot toolchain's `arm-linux-gcc` and
+stripped, the program goes from 34,244 bytes to 42,436, which is **+8,192**.
+Those two are the same compiler with the same flags either side of the change,
+so the difference is a measurement; neither is comparable with the 25,956
+above, which is Buildroot's own build with Buildroot's own flags. There is
+still no new library, no kernel option and no device-tree node, and the only
+new thing on the card is a file nobody has to write.

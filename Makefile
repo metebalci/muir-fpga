@@ -1943,6 +1943,27 @@ BR_SRC      := $(BR_WORK)/buildroot-$(BR_VERSION)
 BR_OUT      := $(BR_WORK)/out
 BR_EXTERNAL := $(abspath boards/arty-z7-20/linux/buildroot)
 BR_GEN_PS7  := boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/gen_ps7_init_gpl.py
+# The packages `buildroot-rebuild` has to force are exactly those Buildroot's
+# `local` site method builds out of a src/ directory in this tree, so the list
+# is derived from the .mk files rather than typed out.  A package added under
+# package/ joins it by existing.  A typed list rots silently, and this one had:
+# cadr-checkpoint was missing from it, so the second build after an edit to
+# that program built the old sources without saying so.
+#
+# muir falls out of the derivation and should.  Its version IS the pin in
+# muir.commit, so a new pin is a new build directory and Buildroot rebuilds it
+# unasked; package/muir/muir.mk's header says the same thing from the other
+# side.  uboot and linux are Buildroot's own packages reading our files through
+# BR2_EXTERNAL options and external.mk's hooks, so they are named.  cadr-common
+# is named ahead of the derived list and filtered out of it, because its
+# consumers link the library it puts in the staging tree and a stale one would
+# be linked into every program.
+#
+# `=` rather than `:=`, so the grep runs only when a buildroot target does.
+BR_LOCAL_PKGS = $(sort $(notdir $(patsubst %/,%,$(dir $(shell \
+    grep -l '_SITE_METHOD = local' $(BR_EXTERNAL)/package/*/*.mk)))))
+BR_RECONFIGURE = uboot-reconfigure linux-reconfigure cadr-common-reconfigure \
+    $(patsubst %,%-reconfigure,$(filter-out cadr-common,$(BR_LOCAL_PKGS)))
 # Not written as $(MAKE) in the recipe: GNU make runs any recipe line that
 # names $(MAKE) even under -n, so `make -n buildroot` would start the build.
 # The inner make gets a clean MAKEFLAGS anyway (see above), so nothing the
@@ -1956,6 +1977,20 @@ BR_MAKE     := $(MAKE)
 # Vivado, so it runs anywhere the repository does.
 buildroot-check:
 	@python3 $(BR_GEN_PS7) --check
+# Both ways the derivation above can come out short are failures here rather
+# than quiet omissions.  A .mk that declares no site method at all cannot be
+# classified, and a grep that matched nothing would leave the list empty and
+# force no package of ours --- which is the shape of every silent-omission bug
+# this repository has recorded, from an XDC foreach that applied to nothing to
+# a package that went on building its old sources.
+	@for mk in $(BR_EXTERNAL)/package/*/*.mk; do \
+	    grep -q '_SITE_METHOD = ' $$mk || { \
+	        echo "$$mk declares no _SITE_METHOD, so buildroot-rebuild cannot tell"; \
+	        echo "whether this package is built from files in this tree"; exit 1; }; \
+	done
+	@test -n "$(BR_LOCAL_PKGS)" || { \
+	    echo "no package under $(BR_EXTERNAL)/package declares _SITE_METHOD = local;"; \
+	    echo "buildroot-rebuild would force nothing of ours"; exit 1; }
 
 buildroot: buildroot-check
 	@test -f $(BR_TARBALL) || { \
@@ -1975,16 +2010,13 @@ buildroot: buildroot-check
 # U-Boot's environment, its fragment, the kernel config, the tree or the
 # sources of our own programs is not seen by a plain `make buildroot` once the
 # package has a build stamp.  This forces every package that reads them to
-# reconfigure and rebuild, then finishes the image as `buildroot` does.
-# cadr-common is named before its consumers: they link the library it puts in
-# the staging tree, so a stale one would be linked into both programs.
+# reconfigure and rebuild, then finishes the image as `buildroot` does.  Which
+# packages those are is derived at BR_RECONFIGURE above rather than named here,
+# so that a package cannot be left out of it.
 buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) \
-	    uboot-reconfigure linux-reconfigure cadr-common-reconfigure \
-	    cadr-console-reconfigure cadr-readout-reconfigure \
-	    cadr-disk-packs-reconfigure cadr-terminal-reconfigure \
-	    cadr-serial-reconfigure cadr-chaosnet-reconfigure
+	    $(BR_RECONFIGURE)
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
