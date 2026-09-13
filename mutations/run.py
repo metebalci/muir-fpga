@@ -82,6 +82,12 @@ LIST = os.path.join(HERE, "list.txt")
 # is not frozen; it gets mutations when a slice lands.
 # `M_AXI_GP0` split five ways, named once because it goes on every board that
 # brings the port out.  The Makefile's own `GP0` is the same list.
+# The display output, as `arty.pass`'s sixth board lints it: the two plain
+# modules, the encoder under them, and the Xilinx-specific phy last because
+# it is the only one that needs the primitive stubs.
+DISPLAY = ["rtl/plumbing/cadr_display_out.sv", "rtl/plumbing/cadr_tmds_encode.sv",
+           "rtl/plumbing/cadr_hdmi_tx.sv", "rtl/plumbing/xilinx7/cadr_hdmi_phy.sv"]
+
 GP0 = ["rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
        "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
        "rtl/plumbing/cadr_input_cables.sv"]
@@ -788,6 +794,20 @@ CHECKS = {
     # Arm cores --- measured on the board --- so the board that brings GP0 out
     # without the pack side answers with this; `arty` holds that it is wired,
     # and this holds that it answers.
+    "display_out": {
+        "sources": ["rtl/plumbing/cadr_display_out.sv"],
+        "top": "cadr_display_out",
+        "tb": "tb/cadr_display_out_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": None,
+    },
+    "hdmi_tx": {
+        "sources": ["rtl/plumbing/cadr_hdmi_tx.sv", "rtl/plumbing/cadr_tmds_encode.sv"],
+        "top": "cadr_hdmi_tx",
+        "tb": "tb/cadr_hdmi_tx_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
     "gp0_default": {
         "sources": ["rtl/plumbing/cadr_gp0_default.sv"],
         "top": "cadr_gp0_default",
@@ -1510,7 +1530,7 @@ def tcl_check(args, work, spec):
 def arty_check(args, work, build_fails=False):
     """The top level, linted. Lint failing is the mutation being caught.
 
-    FIVE TIMES, BECAUSE THERE ARE FIVE BOARDS, exactly as `build/arty.pass`
+    SIX TIMES, BECAUSE THERE ARE SIX BOARDS, exactly as `build/arty.pass`
     runs it. `PROBE_DEPTH` and `DDR` are both zero by default and the generate
     blocks that instantiate `cadr_probe.sv`, `cadr_ps7.sv`, `cadr_axi_master.sv`,
     `cadr_axi_widen.sv` and `cadr_disk_pack.sv` are then not elaborated at all, so a lint of the
@@ -1558,6 +1578,19 @@ def arty_check(args, work, build_fails=False):
           "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
           "rtl/plumbing/cadr_prove.sv", "rtl/plumbing/cadr_gp0_default.sv",
           "rtl/plumbing/cadr_console.sv"] + GP0),
+        # And the sixth: the machine with the display output beside it,
+        # which is the board a bitstream is actually built as.  `HDMI`
+        # turns the port on by itself.  It is here rather than only in the
+        # Makefile because `check_coverage` compares source LISTS, so a
+        # runner exercising fewer configurations than the Makefile is
+        # invisible to it --- which this project has already been through
+        # once, with nothing between `cadr_axi_master` and `cadr_ps7`
+        # checked by any tool while `make check` was green.
+        (["-GDDR=1", "-GHDMI=1"], ["tb/cadr_arty_stubs.sv", "tb/cadr_ps7_stub.sv"],
+         ["boards/arty-z7-20/cadr_ps7.sv", "rtl/plumbing/cadr_axi_master.sv",
+          "rtl/plumbing/cadr_axi_widen.sv", "rtl/plumbing/cadr_mem_count.sv",
+          "rtl/plumbing/cadr_disk_pack.sv", "rtl/plumbing/cadr_console.sv",
+          "rtl/plumbing/cadr_gp0_default.sv"] + GP0 + DISPLAY),
     ]
     ran = 0
     for generics, stubs, extra_sources in boards:

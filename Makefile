@@ -41,6 +41,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass \
+       $(BUILD)/display_out.pass $(BUILD)/hdmi_tx.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass \
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
@@ -476,6 +477,13 @@ GP1 := rtl/plumbing/cadr_gp1_split.sv
 # `cadr_machine` does not instantiate either of them, and a check that builds
 # a module nothing in it reaches is a check with a source it cannot mutate.
 DBGPMOD := rtl/plumbing/cadr_dbg_pmod.sv rtl/plumbing/cadr_dbg_join.sv
+
+# The display output, named here beside the others for the same reason the
+# note above gives: `:=` is expanded where it is read and `arty.pass`'s
+# prerequisites are read before the rules further down.  The phy is last
+# because it is the only one of the three that needs the primitive stubs.
+DISPLAY := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_tmds_encode.sv \
+           rtl/plumbing/cadr_hdmi_tx.sv rtl/plumbing/xilinx7/cadr_hdmi_phy.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
@@ -1096,7 +1104,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
                     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
                     $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
-                    $(DBGPMOD) \
+                    $(DBGPMOD) $(DISPLAY) \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -1130,6 +1138,21 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
+# A SIXTH BOARD, and it is the one that catches a display pin brought out and
+# not connected.  `HDMI=1` turns the port on by itself --- the display needs
+# `S_AXI_HP3` and so needs the processing system --- and `DDR=1` beside it is
+# the board a bitstream is actually built with, the machine and the display
+# together.  Without this pass nothing between `cadr_display_out` and
+# `cadr_ps7` would be linted by any tool, which is the drift `make check` was
+# green through once already.
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GDDR=1 -GHDMI=1 \
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
+	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
+	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY)
 # AND THE DEBUG CABLE'S TWO, AT THEIR OWN DEFAULT PARAMETERS, WHICH IS STILL
 # WORTH A PASS OF ITS OWN. Both are composed now --- `cadr_dbgin.sv` is in
 # `$(MACHINE)`, so every pass above elaborates it, and
@@ -1590,6 +1613,63 @@ $(BUILD)/obj_gp0_default/Vcadr_gp0_default: rtl/plumbing/cadr_gp0_default.sv \
 
 $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 	$(BUILD)/obj_gp0_default/Vcadr_gp0_default
+	@touch $@
+
+# ------------------------------------------------------- the display output
+
+# `rtl/plumbing/cadr_display_out.sv` reads the CADR's bitmap out of the
+# display's region of DDR over `S_AXI_HP3` and puts it on a raster. There is
+# no muir reference and there could not be: muir's TV is a frame buffer and a
+# frame clock with no raster at all, and this drives a monitor. So it is held
+# to VESA's figures for the mode and to the bitmap, and `docs/display-output.md`
+# is the design.
+#
+# `tb/cadr_display_out_tb.cpp` runs both clocks at their real and deliberately
+# incommensurate periods against a modelled DDR poisoned injectively in the
+# address, and reads the result the way a monitor does --- recovering the
+# raster position from the syncs rather than from any counter inside the
+# module. A whole frame is compared pixel for pixel, the picture against the
+# words it comes from and the border black; the mode's figures are counted
+# rather than sampled; every read burst is held to AXI, including the split at
+# a 4 KB boundary that a 96-byte line forces; and a second configuration slows
+# the port until it loses the race, because a stimulus fast enough hides the
+# race it exists to show.
+$(BUILD)/obj_display_out/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
+                                            tb/cadr_display_out_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_display_out \
+	    --top-module cadr_display_out \
+	    rtl/plumbing/cadr_display_out.sv $(abspath tb/cadr_display_out_tb.cpp)
+
+$(BUILD)/display_out.pass: $(BUILD)/obj_display_out/Vcadr_display_out
+	$(BUILD)/obj_display_out/Vcadr_display_out
+	@touch $@
+
+# The DVI transmitter: three TMDS channels and the clock channel.
+#
+# `tb/cadr_hdmi_tx_tb.cpp` carries a second encoder written from DVI 1.0's own
+# pseudocode rather than from the RTL --- with N0 and N1 both present in every
+# branch, which is the shape the fabric deliberately does not use --- and
+# compares all three channels against it. The sweep is exhaustive over the
+# encoder's whole state: every disparity value reachable from a control period
+# is found by breadth-first search over the reference model, and all 256 byte
+# values are tested in every one of them.
+#
+# WHAT IT DOES NOT HOLD is the serialiser. `OSERDESE2` and `OBUFDS` are
+# primitives, their stubs in `tb/cadr_arty_stubs.sv` tie their outputs low, and
+# a check built on a stub confirms rather than compares. `build/arty.pass`
+# lints `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` and the fitter is what stands
+# behind it; `docs/display-output.md` says so rather than covering it with a
+# model that could only agree with itself.
+$(BUILD)/obj_hdmi_tx/Vcadr_hdmi_tx: rtl/plumbing/cadr_hdmi_tx.sv \
+                                    rtl/plumbing/cadr_tmds_encode.sv \
+                                    tb/cadr_hdmi_tx_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_hdmi_tx \
+	    --top-module cadr_hdmi_tx \
+	    rtl/plumbing/cadr_hdmi_tx.sv rtl/plumbing/cadr_tmds_encode.sv \
+	    $(abspath tb/cadr_hdmi_tx_tb.cpp)
+
+$(BUILD)/hdmi_tx.pass: $(BUILD)/obj_hdmi_tx/Vcadr_hdmi_tx
+	$(BUILD)/obj_hdmi_tx/Vcadr_hdmi_tx
 	@touch $@
 
 # ----------------------------------------------------- `M_AXI_GP0`, split
