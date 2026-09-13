@@ -217,14 +217,25 @@ int main(int argc, char **argv)
 	signal(SIGPIPE, SIG_IGN);
 	time_t last_said = time(NULL);
 	unsigned long long said_from = 0, said_to = 0;
-	unsigned long said_connects = 0;
+	unsigned long said_connects = 0, said_refused = 0;
 	while (!stopping) {
 		serial_endpoint_wait(&e, poll_us);
 		serial_endpoint_pump(&e, &face);
 		const time_t t = time(NULL);
+		// **A LINE PRINTED ONLY WHEN SOMETHING MOVED CANNOT REPORT A
+		// STALL, AND THAT IS THE ONE THING WORTH REPORTING.**  The three
+		// counters this used to watch all stand still when the machine
+		// stops taking characters, so the run went quiet exactly when it
+		// had something to say: a wedged machine never reads its receive
+		// holding register, the card's TX_ROOM stays down behind it, and
+		// this program refuses everything typed at it -- with the last
+		// line on the console still reading "the receiver had no room 0
+		// times", minutes old and looking current.  The refusal count is
+		// therefore one of the things that makes a line worth printing.
 		if (t - last_said >= 60
 		    && (e.from_machine != said_from || e.to_machine != said_to
-			|| e.connects != said_connects)) {
+			|| e.connects != said_connects
+			|| e.refused_by_receiver != said_refused)) {
 			say("%s; %llu characters from the machine, %llu to it; %lu attached, "
 			    "%lu gone, %lu turned away; the port dropped %u of its own, %llu more "
 			    "went with a cable, the receiver had no room %lu times and the far end "
@@ -236,6 +247,7 @@ int main(int argc, char **argv)
 			said_from = e.from_machine;
 			said_to = e.to_machine;
 			said_connects = e.connects;
+			said_refused = e.refused_by_receiver;
 			last_said = t;
 		}
 	}

@@ -10164,6 +10164,114 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @end
 
 # ---------------------------------------------------------------------------
+# `TxEMT` ACROSS A TURN-OFF, WHICH IS THE CARD'S OWN FLAG AND IS CHECKED HERE
+# RATHER THAN BY `iob`.
+#
+# The two records below are aimed at `rtl/machine/cadr_io_board.sv`, which
+# `build/iob.pass` holds to muir tick for tick over 82,509,813 of them --- and
+# `iob` catches ONE of them and not the other, measured, which is the whole
+# shape of this fault.  The turn-off's clear is muir's behaviour too, so
+# breaking it disagrees with the trace at once: five rows, the first at tick
+# 82,027,311, where the status register reads `0xc5` against muir's `0xc1`.
+# The drain's gate is NOT muir's behaviour --- `Pci::transmit` raises the flag
+# whatever the transmitter is doing --- so a trace generated from muir cannot
+# object to a card that does the same, and `iob` stays green over all
+# 82,509,813 ticks with that term deleted.  What the trace lacks is the
+# sequence: `sys/io1/serial.lisp`'s `INTR-OUTDEV` ends a burst by writing the
+# command register with `TxEN` cleared while the last character is still in
+# the shift register, and nothing in the trace does that and then enables the
+# transmitter again.  The board does it at the end of every burst, and stopped
+# at the second one --- with the status register reading `0o305`, which is the
+# same `0xc5` the mismatch above names.
+#
+# The sheet, SCN2661/SCN68661 on the command register: "If the transmitter is
+# disabled, it will complete the transmission of the character in the transmit
+# shift register (if any) prior to terminating operation.  The TxD output will
+# then remain in the marking state (High) while TxRDY and TxEMT will go High
+# (inactive)."  High is inactive on both.  So a disable puts TxEMT down and
+# the drain that follows it does not put it back up, and at the next enable it
+# is still down --- "TxEMT will not go active until at least one character has
+# been transmitted".  muir's own netlist-level 2651 in `src/part.rs` raises the
+# flag only inside `if tx_on` and so agrees; its behavioural `Pci::transmit`
+# raises it whatever the transmitter is doing and does not.  The fabric takes
+# the sheet and `src/part.rs`, and `docs/io-board.md` carries the reading.
+#
+# AND ONE MEASURED EQUIVALENCE, so that nobody files it as a hole.  With both
+# terms below in place, `s_tx_empty` can no longer be set while `CR0` is
+# clear: the only setter is gated by `s_tx_on`, which implies `s_cmd[0]`, and
+# every path that clears `CR0` clears the flag with it.  So the `s_cmd[0] &&`
+# in `s_tx_empty_vis` is now unreachable-true and a mutation dropping it
+# SURVIVES.  It is kept because it is what both of muir's models do ---
+# `Pci::status` and `pci_sr2` each mask the flag with `CR0` --- and because
+# the sheet says the neighbouring bit that way in so many words: SR0 "and its
+# corresponding output are valid only when the transmitter is enabled".
+
+@mutation iob-a-drain-after-the-turnoff-raises-txemt
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note THE DEFECT THE BOARD HAD, AND `@new` IS THE LINE IT HAD.  A shift
+@note register that runs out while the transmitter is disabled raises TxEMT
+@note here, where the sheet has the transmitter "terminating operation" with
+@note the bit inactive.  The flag is invisible while `CR0` is clear, so
+@note nothing shows until the next `(format zz ...)` writes `CR0` back: SR2
+@note is then presented with the holding register empty, MIT's RANDOM channel
+@note --- first in the walk on vector `0o264`, matching on SR2 --- absorbs
+@note every interrupt, OUTPUT never loads a character, and nothing can ever
+@note clear the flag again.  One burst a boot, the machine spinning in the
+@note Unibus channel interrupt service with the keyboard starved behind it.
+@note Caught at "SR2 at the transmitter's enable, before it has sent
+@note anything" and then at "the characters the SECOND burst put on the
+@note cable", at 9600 baud and at 300, with RANDOM absorbing eight in a row
+@note in each --- which is the board's own symptom.
+@note **AND `iob` DOES NOT CATCH IT, MEASURED**: the card alone against
+@note muir's `ioboard::IoBoard` is green over all 82,509,813 ticks with this
+@note term deleted, because muir's own `Pci::transmit` raises the flag the
+@note same way.  A trace cannot object to what its own model does, which is
+@note why this record names the check that runs MIT's driver instead.
+@note `unibus`, the third check that builds this file, survives it too ---
+@note 16,496,033 ticks, green --- so `gp0_split` is the only thing in the
+@note tree that sees it.
+@old
+        if (s_tx_on && !(s_thr_full && s_cts)) s_tx_empty <= 1'b1;
+@new
+        if (!(s_thr_full && s_tx_on && s_cts)) s_tx_empty <= 1'b1;
+@end
+
+@mutation iob-the-turnoff-leaves-txemt-standing
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note THE OTHER HALF OF THE SAME SENTENCE, and the drain's gate does not
+@note cover it.  A handler slower than the frame reaches the empty buffer
+@note AFTER the shift register has run out, so TxEMT is already up when
+@note `INTR-OUTDEV` writes the turn-off; the sheet takes it down there ---
+@note "TxRDY and TxEMT will go High (inactive)" --- and without this the flag
+@note stands, masked, until the next enable presents it and the walk wedges
+@note exactly as the record above makes it wedge.  Which of the two terms a
+@note given burst needs depends on where the handler lands in the frame, so
+@note neither is the rule on its own.  Caught at "SR2 at an enable whose
+@note turn-off had found TxEMT already up", the one leg that puts the flag up
+@note before the turn-off rather than after it.
+@note **AND `iob` CATCHES THIS ONE TOO, MEASURED** --- unlike the record
+@note above, because clearing at the disable IS muir's behaviour: five rows,
+@note the first at tick 82,027,311, the status register `0xc5` against muir's
+@note `0xc1`, SR2 set where muir has it clear.  `0xc5` is the value the board
+@note read while it was wedged.  The record stays aimed here, where the reason
+@note the term exists is stated in the driver's own terms; the second witness
+@note is worth knowing and is the cross-table this project asks for.
+@note `unibus` survives it, 16,496,033 ticks green, as it survives the
+@note record above: it drives the 2651's addresses but never this sequence.
+@note **THE ANCHOR IS THE STATEMENT AND NOT THE COMMENT ABOVE IT**, which
+@note this record learned the hard way one edit after it was written: prose
+@note rots and a two-line anchor that reached into it matched nothing.  The
+@note `@new` writes the bit back where it already is, so every signal in the
+@note line stays read and lint has nothing to say.
+@old
+                  if (!ub_wdata[0]) s_tx_empty <= 1'b0;
+@new
+                  if (!ub_wdata[0]) s_tx_empty <= s_tx_empty;
+@end
+
+# ---------------------------------------------------------------------------
 # The keyboard's cable and the mouse's, `rtl/plumbing/cadr_input_cables.sv`:
 # the fourth page of `M_AXI_GP0` and the far end of the I/O board's other two
 # cables.  These break the six things this module does that nothing else can

@@ -1318,6 +1318,233 @@ int main(int argc, char **argv) {
   }
 
   // ======================================================================
+  // AND THE SECOND TRANSMISSION, WHICH IS WHERE THE BOARD STOPPED
+  // ======================================================================
+  //
+  // The section above ends where `serial.lisp` ends a burst: the buffer is
+  // empty, `INTR-OUTDEV` writes the command register with `TxEN` cleared ---
+  // `(LOGAND UART-COMMAND 376)` --- and the last character is still in the
+  // shift register.  The next `format` turns the transmitter back on and the
+  // walk is supposed to start again.  On the board it did not: the machine
+  // wedged in the interrupt service with the status register reading `0o305`
+  // --- DSR, DCD, TxRDY and SR2 --- and the command register `0o47`, so the
+  // transmitter was enabled, the holding register was empty, and SR2 was up.
+  // With SR2 up the RANDOM channel matches first at every interrupt and
+  // OUTPUT never loads the holding register, so nothing is ever sent and
+  // nothing ever clears SR2.  One burst a boot, for ever.
+  //
+  // **WHAT THE SHEET SAYS, AND IT IS ABOUT THE DISABLE.**  SCN2661/SCN68661,
+  // the command register: "If the transmitter is disabled, it will complete
+  // the transmission of the character in the transmit shift register (if any)
+  // prior to terminating operation.  The TxD output will then remain in the
+  // marking state (High) while TxRDY and TxEMT will go High (inactive)."
+  // High is inactive on both.  So the drain that follows a disable does NOT
+  // raise TxEMT: the transmitter terminates operation with the bit down, and
+  // it is down again at the next enable --- "TxEMT will not go active until
+  // at least one character has been transmitted", SR0 being "initially set
+  // when the transmitter is enabled by CR0".
+  //
+  // Two rates, because the board showed the fault at both and the property is
+  // not a frame length: 9600, and 300, where a whole `(format zz "HELLO
+  // CADR")` came out on the wire and the next one did not.
+  long second_streamed = 0;
+  {
+    // --- THE TWO WAYS SR2 CAN STAND AT A TURN-OFF, AND THE SHEET'S ONE
+    // ANSWER.  The driver's turn-off lands either side of the drain.  A
+    // handler that reloads inside the frame writes it while the last
+    // character is still in the shift register, which is what the two legs
+    // below run.  A slower one writes it after the shift register has
+    // already run out and raised TxEMT.  One sentence answers both --- at a
+    // disable "TxRDY and TxEMT will go High (inactive)" --- and in this card
+    // they are two different terms: the drain's own `s_tx_on`, and the
+    // command register's clear.  Neither alone is the rule.
+    const unsigned kRate = 14;
+    const double frame0 = FrameTicks(kMr1, kRate);
+    b.Write(SER_PAGE + 4 * 4, 0u);
+    b.Idle(8);
+    (void)b.UbRead(UB_SER_CMD);
+    b.UbWrite(UB_SER_MODE, kMr1);
+    b.UbWrite(UB_SER_MODE, 0x30u | kRate);
+    b.UbWrite(UB_SER_CMD, 0x27);
+    b.Write(SER_PAGE + 4 * 4, 7u);
+    b.Idle(64);
+    (void)b.UbRead(UB_SER_STAT);              // the plug's DSCHG
+    // One character out with the transmitter left ON, which is the state a
+    // handler slower than the frame finds: TxEMT up and visible.
+    b.UbWrite(UB_SER_DATA, 'Z');
+    b.Idle((long)(frame0 * 3.0));
+    if (b.Read(SER_PAGE + 4) & 1u) (void)b.Read(SER_PAGE + 4 * 2);
+    if (!(b.UbRead(UB_SER_STAT) & 4u))
+      Fail("SR2 once the shift register ran out with the transmitter on", 0, 1);
+    // The turn-off now finds it up, and the next enable must still not
+    // present it: nothing has been transmitted since that enable.
+    b.UbWrite(UB_SER_CMD, 0x26);
+    b.Idle((long)(frame0 * 2.0));
+    b.UbWrite(UB_SER_CMD, 0x27);
+    if (b.UbRead(UB_SER_STAT) & 4u)
+      Fail("SR2 at an enable whose turn-off had found TxEMT already up", 1, 0);
+    if (!(b.UbRead(UB_SER_STAT) & 1u))
+      Fail("TxRDY at that enable", 0, 1);
+    b.UbWrite(UB_SER_CMD, 0x26);
+
+    struct Leg { unsigned rate; const char *first; const char *second; };
+    const Leg legs[2] = {{14, "HELLO", "TWO"}, {5, "HI", "GO"}};
+
+    for (int li = 0; li < 2 && bad < 25; ++li) {
+      const Leg &L = legs[li];
+      const double frame = FrameTicks(kMr1, L.rate);
+      const long latency = (long)(frame / 32.0);   // a handler in microseconds
+
+      // --- the chip, programmed as `serial.lisp` programs it, and the
+      // command register as the board read it before any transmission:
+      // `0o46`, the receiver on and the TRANSMITTER OFF.
+      b.Write(SER_PAGE + 4 * 4, 0u);
+      b.Idle(8);
+      (void)b.UbRead(UB_SER_CMD);
+      b.UbWrite(UB_SER_MODE, kMr1);
+      b.UbWrite(UB_SER_MODE, 0x30u | L.rate);
+      b.UbWrite(UB_SER_CMD, 0x26);
+      b.Write(SER_PAGE + 4 * 4, 7u);
+      b.Idle(8);
+      b.UbWrite(UB_IOB_CSR, (b.UbRead(UB_IOB_CSR) & 017u) | 0200u);
+      b.Idle(64);
+      (void)b.UbRead(UB_SER_STAT);       // the plug's DSCHG, RANDOM's real job
+
+      std::string arrived, taken_in;
+      long absorbed = 0;
+
+      // One burst: the foreground turns the transmitter on, and MIT's walk
+      // does the rest until the buffer empties and OUTPUT turns it off.
+      // Returns false if the walk wedged --- eight absorbed in a row with no
+      // character moving, which is what the board did.
+      auto burst = [&](const char *out, long *got, long *abs, bool *off) {
+        const size_t out_len = std::strlen(out);
+        size_t op = 0;
+        long run_absorbed = 0, armed = -1;
+        const size_t before = arrived.size();
+        const long abs_before = absorbed;
+        *off = false;
+        b.UbWrite(UB_SER_CMD, 0x27);     // the turn-on
+        // The sheet's two sentences about an enable, read at the register
+        // the driver reads: the holding register is empty so TxRDY is set,
+        // and TxEMT has not gone active because this transmitter has not
+        // transmitted anything since it was enabled.
+        const unsigned at_on = b.UbRead(UB_SER_STAT) & 0377u;
+        if (at_on & 4u)
+          Fail("SR2 at the transmitter's enable, before it has sent anything",
+               1, 0);
+        if (!(at_on & 1u))
+          Fail("TxRDY at the transmitter's enable, the holding register empty",
+               0, 1);
+        const long began = tick;
+        const long budget = (long)(frame * (double)(out_len + 6)) + latency * 24;
+        while (tick - began < budget && run_absorbed < 8) {
+          if (arrived.size() - before >= out_len && *off) break;
+          if (b.d->intr_request && b.d->intr_vector == 0264u) {
+            if (armed < 0) armed = tick;
+          } else {
+            armed = -1;
+          }
+          if (armed >= 0 && tick - armed >= latency) {
+            const unsigned st = b.UbRead(UB_SER_STAT) & 0377u;
+            if (st & 4u) {                      // RANDOM: SR2
+              (void)b.UbRead(UB_SER_STAT);
+              ++absorbed;
+              ++run_absorbed;
+            } else if (st & 1u) {               // OUTPUT: SR0 TxRDY
+              run_absorbed = 0;
+              if (op < out_len) {
+                b.UbWrite(UB_SER_DATA, (unsigned char)out[op++]);
+              } else {
+                b.UbWrite(UB_SER_CMD, 0x27u & 0376u);   // INTR-OUTDEV's turnoff
+                *off = true;
+              }
+            } else if (st & 2u) {               // INPUT: SR1 RxRDY
+              run_absorbed = 0;
+              taken_in.push_back((char)(b.UbRead(UB_SER_DATA) & 0xFFu));
+            }
+            armed = -1;
+            continue;
+          }
+          if (b.Read(SER_PAGE + 4) & 1u) {
+            const uint32_t rd = b.Read(SER_PAGE + 4 * 2);
+            if (rd & 0x100u) arrived.push_back((char)(rd & 0xFFu));
+          }
+          b.Idle(1);
+        }
+        *got = (long)(arrived.size() - before);
+        *abs = absorbed - abs_before;
+        return run_absorbed < 8;
+      };
+
+      long got1 = 0, abs1 = 0, got2 = 0, abs2 = 0;
+      bool off1 = false, off2 = false;
+      (void)burst(L.first, &got1, &abs1, &off1);
+      if (arrived != std::string(L.first))
+        Fail("the characters the FIRST burst put on the cable", got1,
+             (long)std::strlen(L.first));
+      if (!off1) Fail("INTR-OUTDEV's turnoff at the end of the first burst", 0, 1);
+      // The turn-off really did reach the command register: `TxEN` down in
+      // the register the driver would read back, which is the other way this
+      // could have gone wrong and did not.
+      if (b.UbRead(UB_SER_CMD) & 1u)
+        Fail("TxEN in the command register after INTR-OUTDEV's turnoff", 1, 0);
+
+      // The gap between two `format`s.  The last character is still in the
+      // shift register when the turn-off lands, and the sheet has the
+      // transmitter complete it and then terminate operation; two frames is
+      // long enough for both, and the far end takes the character.
+      const long gap_until = tick + (long)(frame * 2.0);
+      while (tick < gap_until) {
+        if (b.Read(SER_PAGE + 4) & 1u) {
+          const uint32_t rd = b.Read(SER_PAGE + 4 * 2);
+          if (rd & 0x100u) arrived.push_back((char)(rd & 0xFFu));
+        }
+        b.Idle(1);
+      }
+      // With the transmitter disabled the bit is not visible whatever it
+      // holds, which is why the board's own readout between the two `format`s
+      // said nothing: `0o300` here and `0o305` one command write later.
+      if (b.UbRead(UB_SER_STAT) & 4u)
+        Fail("SR2 with the transmitter disabled", 1, 0);
+
+      // AND THE RECEIVER, WHICH THE WEDGE STARVED TOO.  With RANDOM matching
+      // every interrupt the INPUT channel is never reached either, so the
+      // character sits in the receive holding register unread, the line's
+      // `TX_ROOM` goes down behind it --- `card_room` is `s_rx_runs &&
+      // !RxRDY` --- and `cadr-serial` stops offering.  One character put in
+      // as the second burst starts says that road is open: MIT's walk
+      // reaches INPUT, which it cannot do while SR2 stands.
+      if (b.Read(SER_PAGE + 4 * 1) & 2u) b.Write(SER_PAGE + 4 * 3, 0x6Bu);
+      const bool ok2 = burst(L.second, &got2, &abs2, &off2);
+      const std::string want = std::string(L.first) + std::string(L.second);
+      if (!ok2 || arrived != want) {
+        Fail("the characters the SECOND burst put on the cable", got2,
+             (long)std::strlen(L.second));
+        std::fprintf(stderr,
+                     "  at %s baud the far end got \"%s\", wanting \"%s\"; "
+                     "RANDOM absorbed %ld in the second burst\n",
+                     L.rate == 14 ? "9600" : "300", arrived.c_str(),
+                     want.c_str(), abs2);
+      }
+      if (abs1 != 0)
+        Fail("interrupts RANDOM absorbed during the first burst", abs1, 0);
+      if (abs2 != 0)
+        Fail("interrupts RANDOM absorbed during the second burst", abs2, 0);
+      if (!off2)
+        Fail("INTR-OUTDEV's turnoff at the end of the second burst, which is "
+             "what a THIRD burst needs", 0, 1);
+      if (taken_in != "k")
+        Fail("the characters MIT's INPUT channel took while the second burst "
+             "was on the wire", taken_in.size(), 1);
+      if (bad == 0) ++second_streamed;
+
+      b.UbWrite(UB_SER_CMD, 0x27);
+      b.UbWrite(UB_IOB_CSR, b.UbRead(UB_IOB_CSR) & 017u);
+    }
+  }
+
+  // ======================================================================
   // AND THE INTERRUPTS THE TWO FACES RAISE
   // ======================================================================
   {
@@ -1957,7 +2184,12 @@ int main(int argc, char **argv) {
       "      that keep a board out of the warm boot at (LOC 6)\n"
       "    every address, length and ID poisoned the tick its handshake was\n"
       "      done, so a match that is read rather than held routes elsewhere\n"
-      "    %ld responses and read beats held until they were taken\n",
+      "    %ld responses and read beats held until they were taken\n"
+      "    %ld rates at which a SECOND transmission started after the driver\n"
+      "      had turned the transmitter off, which is one `format` and then\n"
+      "      another: the sheet has TxEMT go inactive at a disable and stay\n"
+      "      there until the enabled transmitter has sent something, with a\n"
+      "      character taken IN on each, which the same wedge stopped\n",
       pages, reads, writes, by[kPack], by[kChaos], by[kSer], by[kInput], by[kDflt],
       crossed, bursts,
       frames_out, frames_in, chars_out, chars_in, measured[0], measured[1],
@@ -1965,6 +2197,6 @@ int main(int argc, char **argv) {
       FrameTicks(kMr1, 15), looped,
       walk_streamed, walk_wedged,
       keys_typed, keys_lost, keys_swept, mouse_moved, step_span,
-      (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls);
+      (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls, second_streamed);
   return 0;
 }
