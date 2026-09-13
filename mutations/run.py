@@ -878,6 +878,31 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
+    # The debug cable on two Pmod connectors: the carrier that puts MIT's
+    # twenty-one wires on eight pins, and the join that lets the connector and
+    # the window share one DBGIN page.  Neither has a muir reference --- muir
+    # has the cable and no wires --- so what holds them is a property, which
+    # is the footing `axi_master` is on.
+    #
+    # THE TESTBENCH IS THE CABLE: the harness brings the eight wires of each
+    # connector out as ports, so a record that drops a line or crosses two has
+    # something watching that is not the DUT's own arithmetic.  The composed
+    # half of it runs a real debug cycle through the carrier into
+    # `cadr_dbgin.sv` and the real register block, so a carrier fault shows as
+    # a debugger that cannot read a register rather than as a bit.
+    "dbg_pmod": {
+        "sources": ["rtl/plumbing/cadr_dbg_pmod.sv",
+                    "rtl/plumbing/cadr_dbg_join.sv"],
+        "extra": ["tb/cadr_dbg_pmod_harness.sv",
+                  "rtl/plumbing/cadr_debug_window.sv",
+                  "rtl/machine/cadr_dbgin.sv",
+                  "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_spy_registers.sv"],
+        "top": "cadr_dbg_pmod_harness",
+        "tb": "tb/cadr_dbg_pmod_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+    },
     # The readout of the machine's memories, page 0's words 10, 11 and 12 ---
     # the same harness as `console`, with a different testbench.  What is
     # aimed here is the window: the address register in `cadr_console.sv`, the

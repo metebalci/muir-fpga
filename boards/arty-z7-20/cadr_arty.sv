@@ -148,7 +148,24 @@ module cadr_arty #(
     output var logic [3:0] led,
     // The two tricolour LEDs. Driven high to light, one pin a colour.
     output var logic       led4_r, led4_g, led4_b,
-    output var logic       led5_r, led5_g, led5_b
+    output var logic       led5_r, led5_g, led5_b,
+    // MIT's debug cable on the two Pmod headers, JA carrying DBGOUT and JB
+    // DBGIN. Eight pins a connector, four each way: one strobe and three data
+    // lines, `rtl/plumbing/cadr_dbg_pmod.sv`. A cable joins one board's JA to
+    // another's JB, and the pin roles are mirrored between the two headers so
+    // that a straight Pmod cable maps pin one to pin one --- which also makes
+    // a cable from this board's JA to its own JB a loopback of the whole
+    // carrier. The eighth wire is a STROBE and not a clock: nothing on either
+    // side is clocked by it, which is just as well, because JB has no
+    // clock-capable pin. `boards/arty-z7-20/cadr_arty.xdc` has the pins.
+    output var logic       dbgout_stb,
+    output var logic [2:0] dbgout_d,
+    input  var logic       dbgout_ret_stb,
+    input  var logic [2:0] dbgout_ret_d,
+    input  var logic       dbgin_stb,
+    input  var logic [2:0] dbgin_d,
+    output var logic       dbgin_ret_stb,
+    output var logic [2:0] dbgin_ret_d
 );
 
   // ------------------------------------------------------------ the clock
@@ -268,6 +285,17 @@ module cadr_arty #(
   logic        dbg_in_req, dbg_in_wr, dbg_in_ack;
   logic [1:0]  dbg_in_a, dbd_oe;
   logic [15:0] dbd_to_machine, dbd_from_machine;
+  // And the same cable again, as the two Pmod connectors carry it. `jb_req`
+  // is a second board's debugger arriving at this machine's DBGIN page and
+  // joins the window's at `rtl/plumbing/cadr_dbg_join.sv`; `ja_back` is what
+  // a second board answers this board's own debugger with, and is folded ---
+  // see the instantiation. The packing is the carrier's twenty bits and is
+  // the same packing `tb/cadr_dbg_pmod_harness.sv` uses.
+  logic [19:0] jb_req, ja_back;
+  logic        ja_live, jb_live, dbg_holder;
+  logic        mdbg_req, mdbg_wr;
+  logic [1:0]  mdbg_a;
+  logic [15:0] mdbg_dbd;
   // The modifier register's two effects.  `debuggee_reset` is bit 1 and is
   // this processor's power-on reset, so it joins the OR below; MIT's own note
   // is "write a 1 here then write a 0", which makes it a LEVEL.
@@ -625,13 +653,15 @@ module cadr_arty #(
       .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
-      // MIT's debug cable, out of the machine as twenty-one wires.  What
-      // is on the other end of them is `rtl/plumbing/cadr_debug_window.sv`
-      // in `g_ddr`, a whole-port AXI3 slave behind the GP1 split; on a board
-      // with no processing system `dbg_in_req` is held low below and the
-      // DBGIN page folds.
-      .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-      .dbd_in(dbd_to_machine),
+      // MIT's debug cable, out of the machine as twenty-one wires.  What is
+      // on the other end of them is two debuggers joined by
+      // `rtl/plumbing/cadr_dbg_join.sv`: `rtl/plumbing/cadr_debug_window.sv`
+      // in `g_ddr`, a whole-port AXI3 slave behind the GP1 split, and the
+      // Pmod connector JB.  On a board with no processing system
+      // `dbg_in_req` is held low below, and with nothing in JB the connector
+      // presents zeros too, so the DBGIN page folds.
+      .dbg_in_req(mdbg_req), .dbg_in_wr(mdbg_wr), .dbg_in_a(mdbg_a),
+      .dbd_in(mdbg_dbd),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
       // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN0 ---
@@ -680,6 +710,78 @@ module cadr_arty #(
       // registered copies `rtl/plumbing/cadr_mem_count.sv` counts, so the two
       // instruments cannot disagree about what the port did.
       .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
+  );
+
+  // ------------------------------------------ the debug cable's two Pmods
+  //
+  // MIT's cable on eight pins a connector, four each way.
+  // `rtl/plumbing/cadr_dbg_pmod.sv` says why four and four rather than the
+  // "one clock and seven data" this was drawn as: one Pmod cable joins one
+  // DBGOUT to one DBGIN and so carries both directions, the half-duplex
+  // arrangement that would share seven data lines needs a clocked receiver
+  // and JB has no clock-capable pin, and a shared line turned around is two
+  // sets of drivers that must agree with no back channel to agree on. The
+  // frame is eight beats, which is twenty signals and the two-bit marker over
+  // three lines.
+  //
+  // **BOTH ARE INSTANTIATED ON EVERY BOARD, NOT ONLY A `DDR` ONE.** The pins
+  // are the top level's and a top-level output nothing drives is a
+  // PINMISSING, so the carrier cannot live inside `g_ddr` with the window.
+  // Without a window the cable it carries is the tie-off below, which is the
+  // idle connector, and the fitter folds the sender to a frame of zeros ---
+  // which is what a board with a connector and no debugger is.
+  //
+  // JA, DBGOUT: this board as somebody else's debugger. What goes out is the
+  // window's own twenty, so a second board plugged in here sees the requests
+  // muir makes. **What comes back is folded and not consumed**, and that is a
+  // decision rather than an oversight: this board's window already has a
+  // debuggee --- its own machine, on the near arm of the join below --- and
+  // taking a second one's answer as well would mean deciding which of two
+  // debuggees on one debugger's cable an acknowledgement came from. MIT's
+  // `DBD<15:0>` is an open-collector bus and would simply give the OR of
+  // them; that is a lashup and not a design, and the decision is not the
+  // carrier's to take. Building the connector whole and saying what is not
+  // consumed is this project's own rule about a register the fabric does not
+  // have, one level out.
+  cadr_dbg_pmod u_dbgout_pmod (
+      .clk(clk), .rst(rst),
+      .tx_levels({dbg_in_req, dbg_in_wr, dbg_in_a, dbd_to_machine}),
+      .rx_levels(ja_back), .rx_live(ja_live),
+      .tx_stb(dbgout_stb), .tx_d(dbgout_d),
+      .rx_stb(dbgout_ret_stb), .rx_d(dbgout_ret_d)
+  );
+
+  // JB, DBGIN: this board as somebody else's debuggee. What arrives is a
+  // second board's debugger and it joins the window's cable at the page; what
+  // goes back is what `cadr_dbgin.sv` answers, the acknowledgement, the lines
+  // and which bytes of them this board drives.
+  //
+  // **IT TAKES THE BOARD'S RESET AND NOT THE MACHINE'S**, for the reason the
+  // window and the DBGIN page give about theirs: modifier bit 1 resets this
+  // machine over this very cable, and a carrier reset by it would forget the
+  // request that asked for it.
+  cadr_dbg_pmod u_dbgin_pmod (
+      .clk(clk), .rst(rst),
+      .tx_levels({1'b0, dbg_in_ack, dbd_oe, dbd_from_machine}),
+      .rx_levels(jb_req), .rx_live(jb_live),
+      .tx_stb(dbgin_ret_stb), .tx_d(dbgin_ret_d),
+      .rx_stb(dbgin_stb), .rx_d(dbgin_d)
+  );
+
+  // Two debuggers at one DBGIN page, which MIT's board cannot have and this
+  // one can. The near arm is the window and the far arm the connector, the
+  // first to assert holds until it lifts, and a tie goes to the window ---
+  // `rtl/plumbing/cadr_dbg_join.sv` has the argument. An unplugged connector
+  // presents zeros, so with nothing in JB this is the window's cable
+  // unchanged.
+  cadr_dbg_join u_dbg_join (
+      .clk(clk), .rst(rst),
+      .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
+      .a_dbd(dbd_to_machine),
+      .b_req(jb_req[19]), .b_wr(jb_req[18]), .b_a(jb_req[17:16]),
+      .b_dbd(jb_req[15:0]),
+      .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
+      .holder(dbg_holder)
   );
 
   // ----------------------------------------------------------- the memory
@@ -1791,6 +1893,12 @@ module cadr_arty #(
   // anybody can check. What checks it is `make build/arty.pass`: an output
   // left off the instantiation is a Verilator PINMISSING, which is how
   // `dev_wdata` was found missing from both.
+  //
+  // The two Pmod connectors put four more in it: what a second board answers
+  // this board's own debugger with, whether either connector has anything
+  // talking on it, and which of the two debuggers has the DBGIN page. None of
+  // the four is consumed --- the instantiations say why the answer on JA is
+  // not --- and a fold with exceptions in it is not a rule anybody can check.
   logic witness;
   always_ff @(posedge clk) begin
     if (mach_rst) begin
@@ -1816,7 +1924,8 @@ module cadr_arty #(
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr,
-                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit};
+                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit,
+                   ja_back, ja_live, jb_live, dbg_holder};
     end
   end
 
