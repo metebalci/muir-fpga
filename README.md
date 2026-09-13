@@ -220,6 +220,67 @@ netlists or part tables.
 
     make check
 
+### Vivado on Ubuntu 26.04
+
+Vivado 2026.1 does not list Ubuntu 26.04 as a supported operating system. It
+runs here anyway, and this section says what that takes. It should go away
+when the release notes catch up.
+
+The problem is the prerequisite libraries rather than the tool, and it comes
+in two halves. Some package names have changed, and two libraries are gone
+from the distribution altogether.
+
+**The names first.** AMD ships a script named `installLibs.sh` beside the
+installer, and its Ubuntu branch asks for `libtinfo5`, `libncurses5`,
+`libncurses5-dev`, `libgdk-pixbuf2.0-dev` and `libasound2`. The same list with
+the current names works:
+
+    sudo apt-get install libc6-dev-i386 net-tools graphviz make unzip \
+        zip g++ libtinfo6 xvfb git libtool libyaml-dev libncurses6 \
+        libncurses-dev libnss3-dev libgdk-pixbuf2.0-bin libgtk-3-dev \
+        libxss-dev libasound2-dev openssl fdisk libsecret-1-dev
+
+**The script cannot tell you any of this.** Each library is a separate
+`apt-get` command piped into `tee`, and the script sets no error handling, so
+a package that does not exist prints a message and the run carries on. It
+reaches the end and reports success with the libraries missing.
+
+**The second half is the one that needs a workaround.** Vivado loads
+`libncurses.so.5` and `libtinfo.so.5` at run time, and 26.04 ships neither and
+offers no compatibility package for them. Installing the version 6 packages is
+not enough, because the tool asks for the old file names. Without them Vivado
+does not start, and the message names the file:
+
+    application-specific initialization failed: couldn't load file
+    "libxv_commontasks.so": libncurses.so.5: cannot open shared object file
+
+The fix is a directory of symlinks under the old names, pointing at the
+installed version 6 libraries, placed on the library search path:
+
+    mkdir -p ~/lib5
+    cd /usr/lib/x86_64-linux-gnu
+    ln -s $PWD/libncurses.so.6  ~/lib5/libncurses.so.5
+    ln -s $PWD/libncursesw.so.6 ~/lib5/libncursesw.so.5
+    ln -s $PWD/libtinfo.so.6    ~/lib5/libtinfo.so.5
+
+Then add `~/lib5` to `LD_LIBRARY_PATH` in your shell's start-up file, after
+sourcing Vivado's own `settings64.sh`. Guard the addition so that re-sourcing
+the file does not lengthen the path. Undoing all of it is deleting the
+directory and the two lines.
+
+Nothing about the tool is patched and it is not told a different operating
+system is underneath it. The libraries are the real ones under their previous
+names, in one directory outside any system path, visible only to shells that
+opt in.
+
+The installer's graphical mode also wants `x11-apps`. The JTAG cable needs the
+udev rules copied out of the install, which `docs/board.md` covers, and
+without them the hardware server connects and offers no targets.
+
+Synthesis, place and route, and bitstream generation all run on this, and the
+most recent build of this repository's own design finished with no critical
+warnings.
+
 ## Layout
 
     rtl/machine/           the CADR, held to muir tick for tick
