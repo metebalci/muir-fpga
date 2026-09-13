@@ -624,9 +624,20 @@ address behind `cadr_gp1_split.sv`, and that is not the carrier's decision to
 take.
 
 The pin roles are mirrored between the two headers, so a straight Pmod cable
-maps pin one to pin one. That also makes a cable from one board's JA to its
-own JB a loopback of the whole carrier, which is the cheapest way to exercise
-it on silicon with one board.
+maps pin one to pin one.
+
+**A cable from one board's JA to its own JB is not a loopback test, and it is
+worse than useless.** JA carries what the window is asking, and the window is
+already asking it at the join directly, so the returning copy arrives about a
+frame late at an arm that is not preferred and contributes nothing. Then the
+window lifts, the join sees no request from the near arm, and the echo is
+still standing for the rest of a frame: it is taken as a new request from the
+far arm and performed a second time. The join is right and the cable is the
+problem. Every request would happen twice.
+
+So the carrier's silicon test needs a second board, and until there is one
+what stands behind it is the check, where both ends have their own clock and
+every wire can be delayed, shorted or crossed.
 
 ### The cable's own requirement on a debugger
 
