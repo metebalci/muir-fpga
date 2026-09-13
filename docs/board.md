@@ -698,7 +698,127 @@ its rate reads back, but characters do not flow, because the line's frame end
 is presented early in `rtl/plumbing/cadr_serial_line.sv`. And nothing has
 driven the debug cable from the board. So the terminal and Chaosnet blocks on
 the drawing go green, and the I/O board keeps the colour that says checked here
-and not yet on silicon.
+and not yet on silicon. Both of those were shown later the same day, and the
+section below supersedes this paragraph.
+
+## The serial line and the debugger, 13 September
+
+Two fixes in the fabric had to land before any of this. The baud-rate divider
+counted the board's real 100 MHz, where every other timed thing in the machine
+counts MIT's 5 ns grid, so every frame came out half as long as the chip's own
+(`rtl/plumbing/cadr_serial_line.sv`). And the transmitter's empty flag rose on
+the drain that follows the transmitter being turned off, which let the wrong
+interrupt channel take the character (`rtl/machine/cadr_io_board.sv`).
+`docs/io-board.md` states the contract the two halves hold to.
+
+### Characters out of the machine, and back into it
+
+The CADR's serial line works on the board. Three bursts at 300 baud arrived
+whole and in order, with nothing lost and nothing extra. They arrived at 15.0
+characters a second. A 10-bit frame at 300 baud is 30 characters a second of
+real time, and the machine runs at half real time at a 10 ns tick, so 15.0 is
+the rate the fabric says it should be.
+
+Every rate the chip offers was swept, with two bursts at each:
+
+| baud | characters a second | at full real time |
+|---|---|---|
+| 300 | 15.0 | 30 |
+| 600 | 30.1 | 60 |
+| 1200 | 59.9 | 120 |
+| 2400 | 118.6 | 240 |
+| 4800 | 236.2 | 480 |
+| 9600 | 353.6 | 960 |
+
+Every burst was whole at every rate. Up to 4800 baud each gap between
+characters is the frame time exactly. At 9600 the gaps alternate between the
+frame time and twice it, so about a quarter of the characters wait one extra
+frame and the rate comes out at 354 a second rather than 480. Nothing is lost
+and nothing stalls. That is the machine's interrupt latency showing at the rate
+where a frame is shortest, and it is a slowdown rather than a failure.
+
+A hundred characters written in one go arrived whole and in order. Characters
+written to the program's socket are read by the machine: five characters
+written came back from the Lisp side as their five character codes. The machine
+stayed healthy throughout, running at its normal rate after every burst.
+
+The status register says the fix is in. At rest after a burst the command
+register reads the transmitter off, and the status byte reads transmit-empty
+clear. Before the fix the same reading was the transmitter still enabled with
+transmit-empty set, which is what let the wrong interrupt channel absorb the
+transmit-ready interrupt.
+
+### The debugger over the cable
+
+muir runs on the board's own Arm cores and reaches the fabric CADR through the
+register window that `docs/debug-cable.md` describes. The window's identity word
+reads `DBUG`. The debugger's own band boots from the card as this board's muir
+station, and takes its date from the network with nobody typing.
+
+MIT's own CC, running on the machine muir simulates, halted the fabric CADR and
+read it back. Every reading below is octal, and each was compared with the
+console reading the same halted machine.
+
+| register | over the cable | the console |
+|---|---|---|
+| `PC` | `0o3055` | `0o3055` |
+| `IR` | `0o600132400251640` | `0o600132400251640` |
+| `STATUS` | `0o37000140307` | `0o37000140307` |
+
+The instruction register is all 48 bits of it and the status word all 32.
+
+CC read main memory through the mapped Unibus window, which is the path only a
+master that is not the board itself can take. Four physical words were compared
+against the console reading the same addresses straight out of DDR. Word `0o0`
+is `0o31001440000`, word `0o3` is `0o33427234015`, word `0o4` is
+`0o34204140020`, and word `0o10` is `0o33427231333`. Each pair is equal.
+
+With the machine single-stepped, CC read the scratchpad memories, which it does
+by forcing a microinstruction and clocking the machine once. Six words were
+compared against the readout program's second read port. `amem[1]` and
+`mmem[1]` are both `0o74`, `amem[2]` and `mmem[0]` are both zero, `amem[36]` is
+`0o34012223407` and `mmem[12]` is `0o3202045742`. Each pair is equal.
+
+Every microcycle is accounted for. The machine's cycle counter moved by 16 over
+those reads: five for CC's full save of the machine, one debug clock for each
+of the six scratchpad reads, and five for the pushdown buffer read. The
+window's own request count and muir's count of the debug cycles it drove agree
+exactly, and the watchdog never fired.
+
+### What the board has not shown yet
+
+Nobody has put a monitor on the board's HDMI connector. The display output
+block is built and checked and a bitstream with it in has been made.
+`docs/display-output.md` and the section below say what should appear.
+
+Nobody has typed at a keyboard plugged into the board. The USB input program is
+built and checked. `docs/usb-input.md` says how it is arranged, and the section
+below says what has to be in place first.
+
+### One fault still open
+
+The machine can deadlock when a debugger halts it while a memory read is
+outstanding. The clock ring parks on `-HANG`, which stops the master clock;
+with no master clock the bus interface never grants the cycle, so the read is
+never acknowledged and `-HANG` never lifts. The sources are
+`rtl/machine/cadr_microcycle.sv`, `rtl/machine/cadr_phase_gen.sv` and
+`rtl/machine/cadr_busint_xbus.sv`.
+
+The signature is that every one of the sixteen diagnostic registers reads the
+same constant, including the one that has no read select of its own, while the
+cycle counter stands still and the tick counter goes on. Nothing outside a
+reset breaks the loop, which is why run, step, the console and the cable all
+have no effect on it.
+
+What frees it is the debuggee's own reset, pulsed through the window as four
+stores. The cycle counter starts moving again and the machine runs on. Linux is
+not disturbed and the Lisp world survives, with its who-line ticking at the
+correct time afterwards. `boards/arty-z7-20/cadr_arty.sv` is where that reset
+joins the machine's own.
+
+It is a race rather than a consequence: the same halt wedged about one entry in
+three, with the cable in the same state after each. The exact race is not
+established.
 
 ## A keyboard at the board
 
