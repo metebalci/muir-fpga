@@ -1,7 +1,7 @@
 # Cora Z7-07S
 
 The Digilent Cora Z7 is a small Zynq-7000 board. This directory is for the
-XC7Z007S variant of it, which is the one Mete has and the one to target.
+XC7Z007S variant of it, which is the one this project targets.
 
 **Nothing here builds anything.** This directory holds Digilent's published pin
 file and this note. There is no top level, no constraint file of ours, no
@@ -46,7 +46,7 @@ because the XC7Z007S is a different part with a different MIO map and a
 different DDR device, so `ps7_init` must be derived for this board rather than
 copied. A device tree and a Buildroot configuration.
 
-The lamps have to be re-decided with Mete, because this board does not have the
+The lamp assignment has to be re-decided, because this board does not have the
 lights the assignment was written for. Digilent's file shows **two RGB LEDs and
 nothing else**, where the Arty Z7-20 has four plain LEDs and two tricolour ones.
 `docs/board.md` spends six lamps on the clock, microcycles, the boot state,
@@ -94,9 +94,9 @@ Arty A7-100's block RAM and 55.3% of the Arty S7-50's, and 29.6% of the Arty
 Z7-20's. So the small Zynq is the hard board, and the Artix and the Spartan are
 not, which is the opposite of what the part numbers suggest.
 
-That 83% also inverts the obvious plan for making room. Mete's own fallback was "we can also remove debug cable adapter
-and axi gp1 and muir and pmod debugging options also, but i dont prefer it to
-run cc". Those free LUTs, and LUTs are not the problem. The memory is the
+That 83% also inverts the obvious plan for making room. Dropping the debug
+cable adapter, the second general-purpose port, muir and the Pmod debugging
+frees lookup tables, and lookup tables are not the problem. The memory is the
 control store, the scratchpads, the disk's block store and the Chaosnet's
 packet buffers, so the honest lever if it ever comes to it is the block store,
 which is measured in whole block RAMs.
@@ -107,8 +107,8 @@ Removing HDMI and USB input saves nothing, because neither is built. The 83% is
 the floor and not a starting point to trim from.
 
 The display output block is a scan-out path and is memory-hungry. It is exactly
-what a board with no HDMI does not need, which is why Mete wants to look at
-this board before that work starts.
+what a board with no HDMI does not need, which is why this board is worth
+settling before that work starts.
 
 The XC7Z007S has **one Cortex-A9 where the XC7Z020 has two**. muir on the board
 was measured to cost the fabric machine nothing with both cores saturated. On
@@ -150,9 +150,8 @@ The same Cora board exists with an XC7Z010. Vivado's database gives that part
 as 17,600 LUTs, 35,200 flip-flops, 60 block RAMs and 80 DSP slices, which would
 turn 75.8% and 83.0% into 62.0% and 69.2% and bring a second Cortex-A9 with it.
 
-**Mete has ruled it out.** His words on 13 September 2026 were "Z7-10 is not
-sold anymore so better to target z7-07s". A project meant to be reproducible by
-somebody else cannot target a part they cannot buy. Nobody should rediscover
+**It is ruled out because it is no longer sold.** A project meant to be
+reproducible by somebody else cannot target a part they cannot buy. Nobody should rediscover
 the Z7-10 and think it solves this.
 
 ## The pin file
