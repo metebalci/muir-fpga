@@ -143,7 +143,9 @@ carried the same services across. They are gone.
 
 So what `cadr-chaosnet` buys is the cable, and the cable is what the band
 needs. Give the host its own Chaosnet address on the network and name it with
-`--chaos-udp-peer 3060@<where the host is>`. The band then resolves `SYS:` to
+`--chaos-udp-peer 3060@<where the host is>`. A host beyond a bridge is reached
+with `--chaos-udp-default-peer <where the bridge is>` instead. The band then
+resolves `SYS:` to
 it, the TIME lookup is answered and the machine has a date instead of stopping
 to ask for one, `(hostat)` sees it, and anything loading through the system
 host reaches its FILE service. That last is how CC is loaded in muir's own
@@ -159,26 +161,102 @@ refused the same way.
 
 ## How the board tells the program its address
 
-`S87cadr-chaosnet` reads three files off the pack partition, one value each,
-and passes what it finds on the command line. Each is a plain text file where
-blank lines and `#` comments are ignored, so it can say what its number is
-for. They are `.txt` because that partition is FAT32 and the point of putting
-them there is that a laptop with a card reader can edit them.
+The pack partition carries one file of flags for each of the two CADRs this
+board runs. `fpgarc` configures the machine in the fabric and `muirrc`
+configures the machine inside muir, which is the debugger. Both are in muir's
+own rc format, so the two stations are configured the same way with the same
+flag names.
 
-    chaosnet.addr.txt            this machine's Chaosnet address, in octal.
+The format is one flag a line. The flag comes first, then a space, then the
+rest of the line as its argument, so an argument with a space in it needs no
+quoting. A line that is blank or starts with `#` is a comment. Carriage
+returns are stripped, because the partition is FAT32 and the point of putting
+the file there is that a laptop with a card reader can edit it.
+
+`S87cadr-chaosnet` passes every line of `fpgarc` to `cadr-chaosnet` as it
+stands. The whole file goes to that one program today, so only its flags
+belong in it; the screen and the serial line will move their own flags into it
+later. A board with no `fpgarc` runs the defaults, which are System 100's own
+address and CHUDP's own port.
+
+    --chaos-address 3050         this machine's Chaosnet address, in octal.
                                  It is the DIP switches on MIT's card, so it
                                  is not configuration: it is what the hardware
                                  is. System 100 is 3050 and System 304 is
                                  4401.
-    chaosnet.over.udp.port.txt   where CHUDP listens. 42042 is the protocol's
-                                 own port and this machine takes it.
-    chaosnet.over.udp.peers.txt  the other stations, one a line, in muir's own
-                                 syntax: `<address>@<host or IP>:<port>`. The
-                                 band's file and time host goes here.
+    --chaos-udp 0.0.0.0:42042    the cable, plugged in. Without this line the
+                                 program sends nothing, whatever the address
+                                 switches read. 42042 is the protocol's own
+                                 port and this machine takes it.
+    --chaos-udp-peer 3060@<host>:<port>
+                                 another station on this machine's cable, once
+                                 a line. The band's file and time host goes
+                                 here. It needs the cable.
+    --chaos-udp-default-peer <host>:<port>
+                                 where a frame goes whose destination no peer
+                                 line names. This is a bridge, and it is what
+                                 carries the machine's traffic on to the wider
+                                 Chaosnet. It needs the cable.
 
 No peers is legal. A board on a network with no other station is a machine
 whose band will say its file host is not answering, which is true and is
 better than a guess.
+
+**The switches are one flag and the cable is another.** On MIT's card the
+sixteen address switches are set whether or not anything is plugged in, and a
+cable can be unplugged. So `--chaos-address` sets the switches and nothing
+else, and `--chaos-udp` is the cable. A file with peer lines and no
+`--chaos-udp` line is refused rather than quietly given a cable of its own,
+because a run that only said who its file host was would otherwise find itself
+on a network it had not asked for, listening on a port nobody had named. muir
+separated the two at `0851fa7` and the refusal here is in muir's own words:
+`--chaos-udp-peer is part of the CHUDP link: it needs --chaos-udp, which is
+the cable`.
+
+**The three files this replaced were one value each, and a shell read each of
+them.** They were `chaosnet.addr.txt`, `chaosnet.over.udp.port.txt` and
+`chaosnet.over.udp.peers.txt`. One of those readers stripped a carriage return
+and the other did not, so every peer reached the program with a `\r` on the
+end of its port and was refused by name. That was measured on the board. A
+file of flags has no values for a shell to get wrong, and it is the same text
+the program would have been given on a command line.
+
+## The default peer is the way out, and nothing is learned
+
+A peer line says that one Chaosnet address lives at one endpoint. A frame for
+any other address therefore has nowhere to go, and naming a bridge as a peer
+does not help: that only says the bridge's own address lives there.
+`--chaos-udp-default-peer` is where such a frame goes instead. It is the route
+of last resort and it is the whole of this program's routing, which reads no
+routing packet and keeps no routing table.
+
+It takes an endpoint and no Chaosnet address, and that is what tells it from a
+peer. The CHUDP frame carries the real destination in its hardware trailer,
+and the bridge at the far end routes on that. With no default peer a frame no
+peer line names is dropped, which is what this program did with every one of
+them before the flag existed.
+
+**A broadcast is not sent to the default peer.** The named peers are stations
+on this machine's own cable, so a broadcast is theirs. The default peer is the
+way out to a wider network, and handing it a broadcast would put this cable's
+broadcast on a network it was never meant to reach.
+
+**Nothing is learned from a packet.** An endpoint typed in a file is a
+statement about where a host is. A table filled in from what arrives is state
+nobody wrote down, and it puts the naming in the hands of whoever can reach
+the port. muir removed its own `--chaos-udp-dynamic` for those two reasons at
+`d6eac6d`, and this program has none either.
+
+So a datagram is judged by what is in the frame and never by the socket it
+came off. A host no flag named is heard exactly as a named peer is, which is
+what lets a bridge relay for hosts this machine was never told about. What
+such a host cannot get is an answer, unless a peer line or the default peer
+says where to send one.
+
+The one thing a datagram may not claim is a Chaosnet address this cable
+already carries. A frame saying it came from the machine itself is one the
+interface would take for its own, so it is dropped. muir refuses it in the
+same place.
 
 ## What the checks hold to
 
@@ -197,7 +275,7 @@ address space in both directions, read out of muir's two traces rather than
 transcribed.
 
 `chaosnet` and `serial` hold the two programs on the build host with no board:
-308 checks and 12 mutation records for the first, 115 and 19 for the second.
+341 checks and 21 mutation records for the first, 115 and 19 for the second.
 The first figures were 772 and 61 while the program carried services. The
 checks and records that went are the ones written for the connection protocol
 and for STATUS, TIME, UPTIME and FILE. A check for code that should not exist
