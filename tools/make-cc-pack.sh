@@ -23,9 +23,18 @@
 # who-line saying it cold-booted. muir opens a pack read-write, so every block
 # the save writes goes to the file.
 #
-# WHAT THIS PRODUCES. A T-300 pack, 269,562,880 bytes, which is the System 304
-# release pack with a new band in one of its spare partitions and the label's
-# current band pointing at it. Every pack this project makes is a T-300.
+# WHAT THIS PRODUCES. A T-300 pack, 269,562,880 bytes, which is the base pack
+# with a new band in one of its spare partitions and the label's current band
+# pointing at it. Every pack this project makes is a T-300.
+#
+# THE BASE PACK NEED NOT BE THE RELEASE'S, AND WHICH ONE IT IS DECIDES THE REST.
+# A band identifies itself, finds its associated machine and gets its date from
+# the site files its file host serves, so a base pack whose band belongs to
+# another network wants that network's site files under the file service's root
+# and that network's Chaosnet numbers on the cable. `BASE` says which pack to
+# start from, `SITE` says whose site files to serve, and `CC_PACK_CHAOS`,
+# `CC_PACK_SERVER` and `CC_PACK_SERVER_NAME` say where the machine and its file
+# host answer. Left alone, all five are the System 304 release's own.
 #
 # IT IS NOT BYTE-REPRODUCIBLE, AND THAT IS A PROPERTY OF THE THING. A band is
 # a dump of a running Lisp world, and the world carries the date, the random
@@ -49,7 +58,20 @@
 #   MUIR        the muir checkout to build from. Default ../muir.
 #   WORK        where the build tree, the pack and the file service's root go.
 #               Default $HOME/.cache/muir-fpga-cc-pack. It needs about 1 GB.
-#   BAND        the partition the world is saved into. Default LOD3.
+#   BASE        the pack to start from, copied and never written to itself.
+#               Default the System 304 release pack the fetch script brings in.
+#   SITE        a directory of site files copied over the release's own
+#               `sys/site` under the file service's root, so that the band
+#               reads the host table, the machine locations and the logical
+#               pathname translations of the network it belongs to. Default
+#               none, which leaves the release's site files in place.
+#   BAND        the partition the world is saved into. Default LOD3. It must
+#               be an empty one: the release pack has LOD3 free and a base
+#               pack with a band of its own in LOD3 wants the next.
+#   CC_PACK_CHAOS, CC_PACK_SERVER, CC_PACK_SERVER_NAME
+#               the machine's own Chaosnet address, its file and time host's
+#               address, and that host's name. Octal, octal and a name.
+#               Default 4401, 4403 and OZ, which are the release band's.
 #   KEEP_WORK   set to anything to leave the work directory behind.
 #
 # It takes about an hour, nearly all of it the sixteen files of CC being
@@ -62,6 +84,10 @@ out=${1:-$here/build/muir-cc-304.img}
 muir=${MUIR:-$(cd "$here/../muir" 2>/dev/null && pwd || echo "")}
 work=${WORK:-$HOME/.cache/muir-fpga-cc-pack}
 band=${BAND:-LOD3}
+site=${SITE:-}
+chaos=${CC_PACK_CHAOS:-4401}
+server=${CC_PACK_SERVER:-4403}
+server_name=${CC_PACK_SERVER_NAME:-OZ}
 
 if [ -z "$muir" ] || [ ! -f "$muir/Cargo.toml" ]; then
     echo "make-cc-pack: no muir checkout; set MUIR to one" >&2
@@ -72,8 +98,14 @@ if [ -e "$out" ]; then
     exit 2
 fi
 
+if [ -n "$site" ] && [ ! -d "$site" ]; then
+    echo "make-cc-pack: SITE is $site and there is no directory there" >&2
+    exit 2
+fi
+
 commit=$(git -C "$muir" rev-parse HEAD 2>/dev/null || echo unknown)
 echo "make-cc-pack: muir at $commit, band $band, work $work"
+echo "make-cc-pack: the machine at $chaos, $server_name at $server"
 
 # A build tree of our own, so that the muir checkout is never written to: the
 # fetched release goes under it, the compiled QFASLs go under it, and the test
@@ -94,11 +126,21 @@ ln -s ../vendor "$tree/vendor"
 # The release: muir's own fetch script, checking every file against its SHA-256.
 sh "$tree/tools/fetch-system-304.sh"
 
-# The pack is a copy. Fetched material stays as fetched, and the machine writes
-# to the copy from its first cold boot onward.
+# The pack is a copy. Fetched material stays as fetched, a base pack given by
+# name is left alone in the same way, and the machine writes to the copy from
+# its first cold boot onward.
+base=${BASE:-$tree/vendor/run/disk-sys-304-0.img}
+if [ ! -f "$base" ]; then
+    echo "make-cc-pack: BASE is $base and there is no pack there" >&2
+    exit 2
+fi
+echo "make-cc-pack: the base pack is $base"
 pack=$work/pack.img
 rm -f "$pack"
-cp "$tree/vendor/run/disk-sys-304-0.img" "$pack"
+cp "$base" "$pack"
+# A base pack kept read-only so that nothing can run against it by accident
+# copies to a read-only file, and the machine has to write to this one.
+chmod u+w "$pack"
 
 # The FILE service's root, with the release's sources under `sys` as this
 # band's own translations ask for them. A COPY and not muir's link, because
@@ -109,9 +151,23 @@ rm -rf "$root"
 mkdir -p "$root/tmp"
 cp -a "$tree/vendor/system-304-0/sys-304-0" "$root/sys"
 
+# And the site files of the network the band belongs to, over the release's
+# own. A band asks its file host for the host table, the machine locations,
+# the site definition and the logical pathname translations every time it cold
+# boots, so these are what decide the name it calls itself, the associated
+# machine its herald names and the host it asks for the date. A base pack from
+# another network boots as nobody at all without them.
+if [ -n "$site" ]; then
+    echo "make-cc-pack: the site files come from $site"
+    cp -a "$site"/. "$root/sys/site/"
+fi
+
 export CC_PACK=$pack
 export CC_PACK_ROOT=$root
 export CC_PACK_BAND=$band
+export CC_PACK_CHAOS=$chaos
+export CC_PACK_SERVER=$server
+export CC_PACK_SERVER_NAME=$server_name
 export CARGO_TARGET_DIR=$work/target
 
 run() {
@@ -164,3 +220,4 @@ echo "make-cc-pack: $out"
 ls -l "$out"
 sha256sum "$out" 2>/dev/null || shasum -a 256 "$out"
 echo "made from muir $commit, System 304, CC saved in $band"
+echo "base $base, the machine at $chaos with $server_name at $server"
