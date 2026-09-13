@@ -94,7 +94,17 @@ module cadr_gp0_split_harness (
 
     // --- what the two faces raise into `IRQ_F2P` --------------------------
     output var logic        chaos_irq,
-    output var logic        ser_irq
+    output var logic        ser_irq,
+
+    // --- and what the CARD raises at the machine, which is a different
+    // thing entirely: `IRQ_F2P` is the processing system's, this is the
+    // Unibus interrupt request MIT's own driver is written around.  Brought
+    // out so that a check can model `sys/io1/serial.lisp`'s channel walk ---
+    // the walk cannot be modelled off the status register, because reading
+    // that register clears DSCHG and a model that polled it would be
+    // clearing the very bit the walk exists to absorb.
+    output var logic        intr_request,
+    output var logic [7:0]  intr_vector
 );
 
   // ------------------------------------------------------- the four ports
@@ -406,9 +416,13 @@ module cadr_gp0_split_harness (
                       pk_store_wdata, pk_moving, pk_moving_slot, pk_deny,
                       pk_irq, pk_present, pk_read_only, pk_timed,
                       chaos_bits, ser_syn_face,
-                      iob_vector, iob_mouse_x,
-                      iob_mouse_y, iob_interval, iob_intr, iob_audio,
+                      iob_mouse_x,
+                      iob_mouse_y, iob_interval, iob_audio,
                       iob_clock_ready};
+
+  // The card's own request at the machine, out of the harness.
+  assign intr_request = iob_intr;
+  assign intr_vector  = iob_vector;
 
 endmodule
 
