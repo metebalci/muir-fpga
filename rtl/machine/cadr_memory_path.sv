@@ -69,6 +69,27 @@
 // open-collector line on the backplane is, and the word is a mux on which of
 // them answered.
 //
+// **AND THE XBUS HAS THREE MASTERS ON IT NOW.**  The third is the Unibus
+// map's window, `0o140000`-`0o177777`, which `cadr_busint_regs.sv` answers
+// for a foreign Unibus master and half of which is an Xbus cycle at the
+// translated address --- `Responder::MapXbus`, `Machine::mapped_read` and
+// `mapped_write`.  It is arbitrated exactly as the channel is, per word and
+// behind the processor, and behind the channel as well; the section that
+// builds it says why, and says which page never takes the bus at all.  The
+// window is what makes the map's sixteen registers worth having: they landed
+// first, so the debugger could program a map and then had nothing to send
+// through it.
+//
+// **NOTHING IN THE COMPOSED MACHINE MAKES A MAPPED CYCLE YET, and that is
+// said here rather than found.**  The only master muir has for one is the
+// debug cable's, `cadr_dbgin.sv`, whose request is still tied off below; the
+// console is a master but cannot address anything outside
+// `0o766000`-`0o766036`; and the processor's own cycles are not mapped by
+// `busint::decode` and must not be.  So this arm is the debuggee's half of a
+// route waiting for its master, and what drives it is `build/
+// busint_regs.pass` at the block's own seam and `build/unibus.pass` through
+// this arbiter with a master of the testbench's own.
+//
 // **THERE IS NO DECODE IN FRONT OF THEM, AND THAT IS DELIBERATE.**  The
 // obvious composition is one decode that hands the cycle to a slave, and it
 // would make both of the mutations that matter here untestable.  CLAUDE.md
@@ -365,11 +386,33 @@ module cadr_memory_path (
   assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? bir_rdata : blk_rdata;
   assign ub_ssyn_by = {bir_ssyn, iob_ssyn, blk_ssyn};
 
-  // The third master's answers, folded: see the tie-off below.
-  logic        dbg_gnt_unused, dbg_ssyn_unused;
+  // The third master's answers, folded: see the tie-off below.  Its GRANT is
+  // not folded --- it is half of `ub_foreign`, which is what says a Unibus
+  // cycle is somebody else's and so whether the mapped window answers it.
+  logic        dbg_gnt, dbg_ssyn_unused;
   logic [15:0] dbg_rdata_unused;
   logic        unused_dbg;
-  assign unused_dbg = ^{dbg_gnt_unused, dbg_ssyn_unused, dbg_rdata_unused};
+  assign unused_dbg = ^{dbg_ssyn_unused, dbg_rdata_unused};
+
+  // **WHOSE CYCLE IS ON THE BUS**, which is `MSYN IN` rather than `MSYN OUT`
+  // and is the one thing the mapped window at `0o140000`-`0o177777` needs
+  // that the two register groups do not.  `busint::decode`, which is what the
+  // PROCESSOR's own Unibus cycle goes through, answers `Responder::NoUnibus`
+  // at every address of that window; the map responders are made in
+  // `Rtl::try_debug_request` and nowhere else.  So the board's own cycle must
+  // NOT be mapped and a foreign master's must be, and this is that
+  // distinction: the arbiter already knows it and nothing else has to.
+  //
+  // **The console is counted and cannot reach the window**, which is worth
+  // saying rather than leaving as an apparent oversight: a slave decodes the
+  // address and not the master, so a board on MIT's backplane would map the
+  // console's cycle exactly as it maps the cable's --- but
+  // `rtl/plumbing/cadr_console.sv` builds its address as `SPY_BASE |
+  // eadr<<1`, four bits of `eadr`, and can put nothing but
+  // `0o766000`-`0o766036` on the bus.  With `dbg_req` tied off below, NOTHING
+  // IN THE COMPOSED MACHINE MAKES A MAPPED CYCLE TODAY.
+  logic ub_foreign;
+  assign ub_foreign = dbg_gnt || con_gnt;
 
   cadr_console_bus console_bus (
       // --- the debug cable's master, `rtl/machine/cadr_dbgin.sv`, which is
@@ -381,7 +424,7 @@ module cadr_memory_path (
       // --- `boards/arty-z7-20/cadr_arty.sv` before the console landed.
       // --- `docs/debug-cable.md` has the patch that brings it up.
       .dbg_req   (1'b0),
-      .dbg_gnt   (dbg_gnt_unused),
+      .dbg_gnt   (dbg_gnt),
       .dbg_msyn  (1'b0),
       .dbg_write (1'b0),
       .dbg_addr  (18'd0),
@@ -468,6 +511,47 @@ module cadr_memory_path (
       .unibus(ch_unibus_c)
   );
 
+  // --- the third master, the Unibus map's window --------------------------
+  //
+  // `rtl/machine/cadr_busint_regs.sv` answers `0o140000`-`0o177777` for a
+  // foreign Unibus master, and the half of that which is an Xbus cycle
+  // --- `Responder::MapXbus` --- comes out here.  It gets a decode of its own
+  // for the channel's reason one line up: one decode with the address muxed
+  // in front of it would put this master's page into `device`, `nxm` and
+  // `unibus`, and `unibus` is what `cadr_busint_xbus` arbitrates on.
+  //
+  // **ONLY A MAIN-MEMORY PAGE TAKES THE BUS, BY muir'S OWN WORDS.**
+  // `Busint::debug_xbus_edge`: "The processor asking for the Xbus meanwhile,
+  // and a mapped page nothing answers, are **not modelled**: the debuggee CC
+  // works on is halted, and its map points at memory."  So a mapped page that
+  // is a device, the Unibus or nothing never asks for the bus at all: the
+  // cycle is never acknowledged and stands until its master gives up, which
+  // is what `cadr_dbgin.sv` says happens to any cycle nothing answers ---
+  // "there being no timeout for this master".  Refusing the GRANT rather than
+  // the acknowledgement is what keeps the machine's own Xbus cycles running
+  // meanwhile.
+  logic        map_req, map_write, map_done, map_md;
+  logic [21:0] map_addr;
+  logic [31:0] map_wdata;
+  logic        mp_own, mp_ack_q, mp_memory, mp_memory_c;
+  logic        mp_device_c, mp_nxm_c, mp_unibus_c;
+
+  cadr_xbus_decode mp_decode (
+      .phys  (map_addr),
+      .boards(boards),
+      .memory(mp_memory_c),
+      .device(mp_device_c),
+      .nxm   (mp_nxm_c),
+      .unibus(mp_unibus_c)
+  );
+
+  // `-UB TO MD` is decoded in the block and built nowhere, because `-LOADMD`
+  // is gated by `RDCYC` inside `cadr_microcycle.sv` and a foreign master's
+  // `MD` load would have to go through that gate.  That file's own header
+  // carries the argument; this is where the wire ends today.
+  logic unused_map;
+  assign unused_map = ^{map_md, mp_device_c, mp_nxm_c, mp_unibus_c};
+
   // **THE CHANNEL MAY BEGIN A WORD ONLY WHILE THE PROCESSOR IS NOT ASKING**,
   // and it gives the bus back at the end of every one.  `ch_own` is a
   // register, so it comes up a tick after `ch_req` --- which is the tick
@@ -486,21 +570,30 @@ module cadr_memory_path (
   // scenario comes back zero where the same read with the channel idle brings
   // back its word.  It is the same fact as the bridge holding a word past its
   // cycle, met from the other side.
-  logic ch_own, ch_own_d, ch_ack_q, changing;
-  assign changing = ch_own ^ ch_own_d;
+  //
+  // **AND THE MAP'S WINDOW IS A THIRD OWNER, BEHIND BOTH.**  `owner` is two
+  // bits rather than one flag, and `changing` is a comparison rather than an
+  // exclusive-or, so that the idle tick below is taken at EVERY change of
+  // owner and not only at the channel's.  The processor wins over both and
+  // the channel wins over the map: the channel is a disk moving a block under
+  // a rotational deadline and the map is a debugger, so the debugger waits.
+  logic ch_own, ch_ack_q, changing;
+  logic [1:0] owner, owner_d;
+  assign owner    = {mp_own, ch_own};
+  assign changing = owner != owner_d;
 
   logic [21:0] bus_phys;
   logic [31:0] bus_wdata;
   logic        bus_write, bus_rq, bus_sel, bus_display;
-  assign bus_phys  = ch_own ? ch_addr  : phys;
-  assign bus_wdata = ch_own ? ch_wdata : wdata;
-  assign bus_write = ch_own ? ch_write : cpu_write;
-  assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : cpu_rq);
+  assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : phys;
+  assign bus_wdata = ch_own ? ch_wdata : mp_own ? map_wdata : wdata;
+  assign bus_write = ch_own ? ch_write : mp_own ? map_write : cpu_write;
+  assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : cpu_rq);
   // The bridge answers main memory and the display's frame buffer, at two
   // bases; the channel reaches only the first.  `tv_fb` is held in
   // `cadr_tv`, as `is_memory` is held here, so this is a mux on registers.
-  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb);
-  assign bus_display = !ch_own && tv_fb;
+  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb);
+  assign bus_display = !ch_own && !mp_own && tv_fb;
 
   // The channel's answer comes a tick after main memory's, because the
   // bridge's `rdata` is a register: `dev_ack` is a gate on `mem_done` and the
@@ -510,6 +603,12 @@ module cadr_memory_path (
   assign ch_done  = ch_own && ch_ack_q;
   assign ch_nxm   = ch_own && !ch_memory;
   assign ch_rdata = memory_rdata;
+
+  // The map's window, the same shape and for the same reason: its word is a
+  // tick behind main memory's acknowledgement because the bridge's `rdata` is
+  // a register.  There is no `nxm` here, a page that is not main memory never
+  // having taken the bus at all.
+  assign map_done = mp_own && mp_ack_q;
 
   // The audit's anchor, brought out: see the port list.  Four registers and a
   // gate, read by an instrument a level up and by nothing else.
@@ -521,15 +620,40 @@ module cadr_memory_path (
   always_ff @(posedge clk) begin
     if (rst) begin
       ch_own     <= 1'b0;
-      ch_own_d   <= 1'b0;
+      owner_d    <= 2'd0;
       ch_ack_q   <= 1'b0;
       ch_memory  <= 1'b0;
+      mp_own     <= 1'b0;
+      mp_ack_q   <= 1'b0;
+      mp_memory  <= 1'b0;
     end else begin
       ch_memory <= ch_memory_c;
-      ch_own_d  <= ch_own;
+      mp_memory <= mp_memory_c;
+      owner_d   <= owner;
       ch_ack_q  <= ch_own && !changing && (memory_ack || !ch_memory);
-      if (!ch_own) ch_own <= ch_req && !cpu_rq;
+      mp_ack_q  <= mp_own && !changing && memory_ack;
+      if (!ch_own) ch_own <= ch_req && !cpu_rq && !mp_own;
       else if (ch_done) ch_own <= 1'b0;
+      // The map's window waits for the processor AND for the channel, and it
+      // lets go at the end of its word like the channel --- or at once if its
+      // master dropped the request, which is a Unibus cycle abandoned
+      // mid-flight and must not leave the Xbus held.
+      //
+      // **THE TAKE READS THE DECODE COMBINATIONALLY AND `bus_sel` READS IT
+      // HELD, and the difference is a tick that would otherwise be a
+      // hazard.**  `cadr_busint_regs.sv` puts `map_addr` up at the same edge
+      // as `map_req`, where the channel's controller has its address up
+      // first --- so `mp_memory`, a register off the decode, still holds the
+      // PREVIOUS mapped cycle's answer on the tick the request arrives.
+      // Taking the bus on that would give a non-memory page the grant with
+      // `bus_sel` then falling under it, and the arm would stand until its
+      // master gave up with the processor's own cycles waiting behind it.
+      // Reading `mp_memory_c` here decides on this cycle's address; reading
+      // the register in `bus_sel` keeps that held for the cycle, which is
+      // what the channel does one line up.  `map_addr` is itself a register,
+      // so this is a decode between two registers and not the map's ripple.
+      if (!mp_own) mp_own <= map_req && mp_memory_c && !cpu_rq && !ch_own && !ch_req;
+      else if (map_done || !map_req) mp_own <= 1'b0;
     end
   end
 
@@ -752,6 +876,14 @@ module cadr_memory_path (
       .ub_wdata  (sr_wdata),
       .ub_ssyn   (bir_ssyn),
       .ub_rdata  (bir_rdata),
+      .ub_foreign(ub_foreign),
+      .map_req   (map_req),
+      .map_addr  (map_addr),
+      .map_write (map_write),
+      .map_wdata (map_wdata),
+      .map_done  (map_done),
+      .map_rdata (memory_rdata),
+      .map_md    (map_md),
       .xbus_intr (xbus_intr),
       .iob_intr  (iob_intr),
       .iob_vector(iob_vector),
@@ -823,7 +955,7 @@ module cadr_memory_path (
   // them, and the word from whichever slave answered.  Nothing answers the
   // processor while the channel has the bus: its cycle simply waits, which is
   // what the per-word arbitration bounds.
-  assign dev_ack = !ch_own && (memory_ack || tv_ack || device_ack);
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || device_ack);
   // The word from whichever slave answered. A Unibus register is sixteen bits
   // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.  The
   // display drives the lines only while answering a READ of a control word
