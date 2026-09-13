@@ -15,6 +15,23 @@
 // are `default.keys` resolved: every `key` and `prefix` line with its
 // name looked up exactly as `key_of` looks it up, so a binding is a
 // position and a plane and no name survives into C.
+//
+// THE OTHER THREE ARE FOR `--keyboard-mapping`, which resolves names at
+// RUN time and so needs in C what the four above threw away.
+// `KEY_SYM_NAMES` is `keyboard.rs`'s `KEYSYM_NAMES` in its own order,
+// `KEY_SHIFT_NAMES` is `shift_name` as a table, and
+// `KEY_DEFAULT_MAPPING` is `default.keys` itself, the text muir's
+// `include_str!` compiles in.
+//
+// **`KEY_DEFAULT_MAPPING` IS THE CHECK'S REFERENCE AND NOT THE
+// PROGRAM'S BUILT-IN MAP.**  muir builds its own map by parsing that
+// text; this program's built-in map is `KEY_BOUND` and `KEY_PREFIX`
+// above, resolved here in Python.  Keeping them apart is what makes
+// the comparison worth making: the check parses the text with the C
+// parser and requires the result to equal the tables, so two
+// independent resolutions of one reference file are held to each
+// other.  A program that parsed the text to build its own map would
+// be compared against itself.
 
 #ifndef INPUT_KEYMAP_H
 #define INPUT_KEYMAP_H
@@ -250,5 +267,210 @@ static const struct key_prefix KEY_PREFIX[] = {
 	{ 0x0000ff14u, 0x0000ff54u, 0176, 0 },   /* Down Thumb */
 };
 #define KEY_PREFIX_COUNT 22
+
+struct key_sym_name { const char *name; uint32_t keysym; };
+
+// `keyboard.rs`'s `KEYSYM_NAMES`, in its own order: the X11 names a
+// mapping file may write a keysym by.  A keysym with no name here is
+// still written as a number.
+static const struct key_sym_name KEY_SYM_NAMES[] = {
+	{ "space", 0x00000020u },
+	{ "BackSpace", 0x0000ff08u },
+	{ "Tab", 0x0000ff09u },
+	{ "Linefeed", 0x0000ff0au },
+	{ "Return", 0x0000ff0du },
+	{ "Pause", 0x0000ff13u },
+	{ "Scroll_Lock", 0x0000ff14u },
+	{ "Escape", 0x0000ff1bu },
+	{ "Home", 0x0000ff50u },
+	{ "Left", 0x0000ff51u },
+	{ "Up", 0x0000ff52u },
+	{ "Right", 0x0000ff53u },
+	{ "Down", 0x0000ff54u },
+	{ "Prior", 0x0000ff55u },
+	{ "Next", 0x0000ff56u },
+	{ "End", 0x0000ff57u },
+	{ "Begin", 0x0000ff58u },
+	{ "Print", 0x0000ff61u },
+	{ "Insert", 0x0000ff63u },
+	{ "Menu", 0x0000ff67u },
+	{ "Cancel", 0x0000ff69u },
+	{ "Help", 0x0000ff6au },
+	{ "Break", 0x0000ff6bu },
+	{ "Mode_switch", 0x0000ff7eu },
+	{ "Num_Lock", 0x0000ff7fu },
+	{ "KP_Enter", 0x0000ff8du },
+	{ "F1", 0x0000ffbeu },
+	{ "F2", 0x0000ffbfu },
+	{ "F3", 0x0000ffc0u },
+	{ "F4", 0x0000ffc1u },
+	{ "F5", 0x0000ffc2u },
+	{ "F6", 0x0000ffc3u },
+	{ "F7", 0x0000ffc4u },
+	{ "F8", 0x0000ffc5u },
+	{ "F9", 0x0000ffc6u },
+	{ "F10", 0x0000ffc7u },
+	{ "F11", 0x0000ffc8u },
+	{ "F12", 0x0000ffc9u },
+	{ "F13", 0x0000ffcau },
+	{ "F14", 0x0000ffcbu },
+	{ "F15", 0x0000ffccu },
+	{ "Shift_L", 0x0000ffe1u },
+	{ "Shift_R", 0x0000ffe2u },
+	{ "Control_L", 0x0000ffe3u },
+	{ "Control_R", 0x0000ffe4u },
+	{ "Caps_Lock", 0x0000ffe5u },
+	{ "Meta_L", 0x0000ffe7u },
+	{ "Meta_R", 0x0000ffe8u },
+	{ "Alt_L", 0x0000ffe9u },
+	{ "Alt_R", 0x0000ffeau },
+	{ "Super_L", 0x0000ffebu },
+	{ "Super_R", 0x0000ffecu },
+	{ "Hyper_L", 0x0000ffedu },
+	{ "Hyper_R", 0x0000ffeeu },
+	{ "ISO_Level3_Shift", 0x0000fe03u },
+	{ "Delete", 0x0000ffffu },
+};
+#define KEY_SYM_NAME_COUNT 56
+
+// `shift_name`, by the Shift number above: what a mapping file calls a
+// shifting key, with `Left` or `Right` before it where there are two.
+static const char *const KEY_SHIFT_NAMES[] = {
+	"Shift",
+	"Greek",
+	"Top",
+	"Caps Lock",
+	"Control",
+	"Meta",
+	"Super",
+	"Hyper",
+	"Alt Lock",
+	"Mode Lock",
+	"Repeat",
+};
+#define KEY_SHIFT_NAME_COUNT 11
+
+// muir's `default.keys` verbatim --- the text its `include_str!`
+// compiles in and its built-in mapping is parsed from.  Here it is the
+// CHECK's reference and nothing reads it at run time: see the header.
+static const char KEY_DEFAULT_MAPPING[] =
+	"# muir's built-in keyboard mapping: what a viewer's X11 keysym means on\n"
+	"# the Lisp Machine keyboard.  This file is compiled into muir and is the\n"
+	"# whole of the default; a file of the same form replaces any line of it.\n"
+	"#\n"
+	"#   muir --keyboard-mapping <file>\n"
+	"#   .muirkeys in the directory muir was run from, or in the home one\n"
+	"#\n"
+	"# `keys` at muir's prompt prints the mapping a run is using, and\n"
+	"# `muir --keyboard-mapping-dump` writes it in this form, to edit.\n"
+	"#\n"
+	"# Two kinds of line:\n"
+	"#\n"
+	"#   key    <keysym> <key>            one host key\n"
+	"#   prefix <keysym> <keysym> <key>   press the first, then the second\n"
+	"#\n"
+	"# A keysym is an X11 name from keysymdef.h, a single printable character,\n"
+	"# or a number in decimal or 0x hexadecimal.  A key is one of MIT's own\n"
+	"# names for a key on the CADR keyboard --- a named key such as `Alt Mode`,\n"
+	"# a shifting key such as `Greek`, either of a pair as `Left Control` or\n"
+	"# `Right Control` --- or the character a character key gives.\n"
+	"#\n"
+	"# Nothing binds the letters, digits and punctuation: a printable keysym\n"
+	"# no line names is looked for on MIT's own key table by the character it\n"
+	"# is, on the unshifted plane and the shifted one both.\n"
+	"\n"
+	"# The keys a host keyboard has a key for.\n"
+	"key Return              Return\n"
+	"key KP_Enter            Return\n"
+	"key Tab                 Tab\n"
+	"key BackSpace           Rubout\n"
+	"key Delete              Rubout\n"
+	"key Linefeed            Line\n"
+	"key Escape              Alt Mode\n"
+	"key Help                Help\n"
+	"key Break               Break\n"
+	"key Cancel              Abort\n"
+	"key End                 End\n"
+	"key Pause               Hold Output\n"
+	"\n"
+	"# The CADR has no function keys.  These are twelve of the keys on its top\n"
+	"# row that a host keyboard has no name for, and the order is muir's own:\n"
+	"# nothing in MIT's sources says it.\n"
+	"key F1                  Terminal\n"
+	"key F2                  System\n"
+	"key F3                  Network\n"
+	"key F4                  Status\n"
+	"key F5                  Resume\n"
+	"key F6                  Abort\n"
+	"key F7                  Call\n"
+	"key F8                  Help\n"
+	"key F9                  Clear Input\n"
+	"key F10                 Clear Screen\n"
+	"key F11                 Break\n"
+	"key F12                 Quote\n"
+	"\n"
+	"# The shifting keys a viewer sends as modifiers.  A host keyboard's Alt is\n"
+	"# where a Lisp Machine's Meta is, and every viewer sends that key as Alt.\n"
+	"key Shift_L             Left Shift\n"
+	"key Shift_R             Right Shift\n"
+	"key Control_L           Left Control\n"
+	"key Control_R           Right Control\n"
+	"key Meta_L              Left Meta\n"
+	"key Alt_L               Left Meta\n"
+	"key Meta_R              Right Meta\n"
+	"key Alt_R               Right Meta\n"
+	"key Super_L             Left Super\n"
+	"key Super_R             Right Super\n"
+	"key Hyper_L             Left Hyper\n"
+	"key Hyper_R             Right Hyper\n"
+	"key Caps_Lock           Caps Lock\n"
+	"\n"
+	"# Greek and Top are how the Lisp Machine character set is entered --- the\n"
+	"# Greek letters, the arrows and the mathematical symbols --- and no host\n"
+	"# keyboard has a key with either name.  AltGr is the nearest thing a host\n"
+	"# has to Greek, being the key that gives the other character set, and the\n"
+	"# Menu key, which nothing else wants, is Top.\n"
+	"key ISO_Level3_Shift    Left Greek\n"
+	"key Menu                Left Top\n"
+	"\n"
+	"# Everything else, behind a prefix.  There are more keys on this keyboard\n"
+	"# than a host has spare, so Scroll Lock sends nothing of its own and the\n"
+	"# key after it says which key is meant.  A shifting key reached this way\n"
+	"# is held for the one key that follows it, which is what holding Greek and\n"
+	"# typing a letter does on the real keyboard; any other key is tapped.\n"
+	"#\n"
+	"# A Mac keyboard has no Scroll Lock, and a desktop that takes Scroll Lock\n"
+	"# for itself leaves none of this reachable.  That is what this file is\n"
+	"# for: one line changes the prefix.\n"
+	"prefix Scroll_Lock g    Greek\n"
+	"prefix Scroll_Lock t    Top\n"
+	"prefix Scroll_Lock a    Alt Lock\n"
+	"prefix Scroll_Lock m    Mode Lock\n"
+	"prefix Scroll_Lock r    Repeat\n"
+	"prefix Scroll_Lock c    Caps Lock\n"
+	"prefix Scroll_Lock h    Hyper\n"
+	"prefix Scroll_Lock e    Meta\n"
+	"prefix Scroll_Lock l    Control\n"
+	"\n"
+	"# Super with them, because booting to a usable listener starts with\n"
+	"# Super-B and a desktop environment usually takes the Windows or Command\n"
+	"# key before a viewer ever sees it.\n"
+	"prefix Scroll_Lock s    Super\n"
+	"\n"
+	"# The named keys no host key is spare for.  The letters are muir's own\n"
+	"# and arbitrary; the four hands and thumbs are on the four arrows, which\n"
+	"# is roughly where they sit on the real keyboard.\n"
+	"prefix Scroll_Lock d    Delete\n"
+	"prefix Scroll_Lock x    Macro\n"
+	"prefix Scroll_Lock o    Overstrike\n"
+	"prefix Scroll_Lock p    Stop Output\n"
+	"prefix Scroll_Lock 1    Roman I\n"
+	"prefix Scroll_Lock 2    Roman II\n"
+	"prefix Scroll_Lock 3    Roman III\n"
+	"prefix Scroll_Lock 4    Roman IV\n"
+	"prefix Scroll_Lock Left  Hand Left\n"
+	"prefix Scroll_Lock Right Hand Right\n"
+	"prefix Scroll_Lock Up    Up Thumb\n"
+	"prefix Scroll_Lock Down  Down Thumb\n";
 
 #endif

@@ -78,6 +78,7 @@
 
 #include "input_face.h"
 #include "input_keys.h"
+#include "input_mapping.h"
 #include "screen_frame.h"
 #include "screen_geom.h"
 #include "screen_rfb.h"
@@ -1263,12 +1264,17 @@ static void want_keys(const char *what, const uint32_t *w, unsigned n)
 	}
 }
 
-// One viewer, with the input face attached, and the model emptied.
-static int open_typist(struct client *c)
+// One viewer, with the input face attached, the model emptied, and the
+// mapping it is to resolve against --- the built-in one unless a check hands
+// over another.
+static int open_typist_with(struct client *c, const struct key_map *map)
 {
 	model_reset();
 	srv.input = &face;
-	key_state_init(&srv.keys);
+	if (map)
+		key_state_init_with(&srv.keys, map);
+	else
+		key_state_init(&srv.keys);
 	srv.have_ptr = 0;
 	srv.buttons = 0;
 	if (open_viewer(c, "RFB 003.008\n", NULL, NULL, 0) < 0)
@@ -1276,6 +1282,11 @@ static int open_typist(struct client *c)
 	pump(4);
 	model.nkeys = 0;
 	return 0;
+}
+
+static int open_typist(struct client *c)
+{
+	return open_typist_with(c, NULL);
 }
 
 static void send_key(struct client *c, uint32_t keysym, int down)
@@ -1711,6 +1722,352 @@ static uint8_t pic_dither[SCREEN_HEIGHT][SCREEN_WIDTH];
 // mirrored screen, an upside-down one and a reversed bit order each come out
 // different from it.  It is not a substitute for the anchors, which are what
 // actually pin the mapping; it is a screen with something on every line.
+// ---- the keyboard mapping -----------------------------------------------
+//
+// **THE BUILT-IN MAPPING IS CHECKED AGAINST muir's OWN `default.keys`, WHICH
+// IS IN THIS DIRECTORY AS TEXT AND WAS NOT RESOLVED HERE.**  `input_keymap.h`
+// carries two things that came out of muir by different routes:
+// `KEY_BOUND`/`KEY_PREFIX`, which `keymap_from_muir.py` resolved in Python,
+// and `KEY_DEFAULT_MAPPING`, which is the file itself, byte for byte.  So
+// parsing the text with the C parser and requiring the result to equal the
+// tables holds two independent resolutions of one reference to each other.
+// A program that built its own map by parsing that text would instead be
+// compared against itself, which is the check-written-to-confirm trap; the
+// two are kept apart for exactly that reason and `keymap_from_muir.py`'s
+// header says so.
+//
+// **AND THE ERROR TEXTS ARE muir's, MEASURED AND NOT TRANSCRIBED.**  Each
+// literal below was compared against `muir --keyboard-mapping <file>
+// --keyboard-mapping-dump` built at `muir.commit`, thirty files, and every
+// one came out character for character the same; ten merged mappings were
+// compared against muir's own dump of the same merge and agreed entry for
+// entry.  That measurement needs muir beside the tree and so cannot live in
+// this check; `docs/terminal.md` records it with its commit.  What lives
+// here is the result, pinned, so that a change to any of it is a failure.
+
+static void want_binding(const struct key_map *m, const char *what, uint32_t keysym,
+			 unsigned position, unsigned shifted)
+{
+	for (unsigned i = 0; i < m->bounds; ++i) {
+		if (m->bound[i].keysym != keysym)
+			continue;
+		CHECK(m->bound[i].position == position && m->bound[i].shifted == shifted,
+		      "%s: keysym 0x%x is position 0%o plane %u, wanting 0%o plane %u",
+		      what, keysym, m->bound[i].position, m->bound[i].shifted,
+		      position, shifted);
+		return;
+	}
+	CHECK(0, "%s: keysym 0x%x is bound to nothing", what, keysym);
+}
+
+static void want_prefixed(const struct key_map *m, const char *what, uint32_t first,
+			  uint32_t second, unsigned position)
+{
+	for (unsigned i = 0; i < m->afters; ++i) {
+		if (m->after[i].first != first || m->after[i].second != second)
+			continue;
+		CHECK(m->after[i].position == position,
+		      "%s: 0x%x then 0x%x is position 0%o, wanting 0%o",
+		      what, first, second, m->after[i].position, position);
+		return;
+	}
+	CHECK(0, "%s: 0x%x then 0x%x is bound to nothing", what, first, second);
+}
+
+// A file's text over the built-in mapping, which must be taken.
+static void want_read(struct key_map *m, const char *what, const char *text)
+{
+	char err[KEY_MAP_ERR_MAX];
+	key_map_built_in(m);
+	++checks;
+	if (key_map_read(m, text, err, sizeof err) != 0)
+		fail(__LINE__, "%s: refused, saying %s", what, err);
+}
+
+// ...and one that must be refused, with muir's own words for it.
+static void want_refused(const char *what, const char *text, const char *message)
+{
+	struct key_map m, before;
+	char err[KEY_MAP_ERR_MAX];
+	key_map_built_in(&m);
+	before = m;
+	err[0] = '\0';
+	++checks;
+	if (key_map_read(&m, text, err, sizeof err) == 0) {
+		fail(__LINE__, "%s: taken, and it should not be", what);
+		return;
+	}
+	CHECK(strcmp(err, message) == 0, "%s: said\n        %s\n      wanting\n        %s",
+	      what, err, message);
+	// **THE WHOLE FILE OR NONE OF IT.**  muir builds a fresh mapping and
+	// drops it on an error, so nothing a refused file said is kept; here
+	// the trial copy is what does that, and this is the assertion that
+	// says it works.  Without it a file whose second line is wrong would
+	// leave the first line's binding in force, which is a mapping that is
+	// neither the file's nor the built-in one.
+	CHECK(memcmp(&m, &before, sizeof m) == 0,
+	      "%s: the mapping was changed by a file that was refused", what);
+}
+
+static void check_keyboard_mapping(const char *work_dir)
+{
+	struct key_map m, built;
+	char err[KEY_MAP_ERR_MAX];
+
+	// --- the built-in mapping IS muir's default.keys, resolved twice by
+	// two programs that share no code.
+	key_map_built_in(&built);
+	memset(&m, 0, sizeof m);
+	++checks;
+	if (key_map_read(&m, KEY_DEFAULT_MAPPING, err, sizeof err) != 0) {
+		fail(__LINE__, "muir's own default.keys does not parse: %s", err);
+	} else {
+		CHECK(m.bounds == built.bounds && m.afters == built.afters,
+		      "default.keys parses to %u bindings and %u prefixed, where the generated "
+		      "tables have %u and %u", m.bounds, m.afters, built.bounds, built.afters);
+		unsigned differ = 0;
+		for (unsigned i = 0; i < built.bounds; ++i) {
+			int found = 0;
+			for (unsigned j = 0; j < m.bounds; ++j)
+				if (m.bound[j].keysym == built.bound[i].keysym) {
+					found = m.bound[j].position == built.bound[i].position
+						&& m.bound[j].shifted == built.bound[i].shifted;
+					break;
+				}
+			differ += !found;
+		}
+		for (unsigned i = 0; i < built.afters; ++i) {
+			int found = 0;
+			for (unsigned j = 0; j < m.afters; ++j)
+				if (m.after[j].first == built.after[i].first
+				    && m.after[j].second == built.after[i].second) {
+					found = m.after[j].position == built.after[i].position
+						&& m.after[j].shifted == built.after[i].shifted;
+					break;
+				}
+			differ += !found;
+		}
+		CHECK(differ == 0,
+		      "%u of muir's own bindings come out differently from the parser than from "
+		      "the generator", differ);
+		printf("    muir's default.keys, %u bindings and %u prefixed, parsed here and "
+		       "resolved in Python by the generator: identical\n", m.bounds, m.afters);
+	}
+
+	// --- the built-in mapping itself, on hand-computed positions.  These
+	// are MIT's own octal, read off `keyboard.rs`'s TABLE, and they are
+	// what says the tables above are not two copies of one mistake.
+	want_binding(&built, "the built-in mapping", 0xff1bu, 0143, 0);   // Escape -> Alt Mode
+	want_binding(&built, "the built-in mapping", 0xffe3u, 0020, 0);   // Control_L -> Left Control
+	want_binding(&built, "the built-in mapping", 0xffe4u, 0026, 0);   // Control_R -> Right Control
+	want_binding(&built, "the built-in mapping", 0xfe03u, 0035, 0);   // ISO_Level3_Shift -> Greek
+	want_prefixed(&built, "the built-in mapping", 0xff14u, 'g', 0035);
+	want_prefixed(&built, "the built-in mapping", 0xff14u, 0xff51u, 0117);  // Left -> Hand Left
+
+	// --- A FILE GOES OVER THE BUILT-IN MAPPING, IT DOES NOT REPLACE IT.
+	// One line changes one key and every other keysym keeps what it had,
+	// which is the whole point of the file and the thing a reader would
+	// otherwise have to take on trust.
+	want_read(&m, "one line over the built-in mapping", "key F1 Line\n");
+	want_binding(&m, "F1 rebound", 0xffbeu, 0036, 0);
+	want_binding(&m, "Escape, which the file said nothing about", 0xff1bu, 0143, 0);
+	want_prefixed(&m, "a prefix the file said nothing about", 0xff14u, 'x', 0100);
+	CHECK(m.bounds == built.bounds && m.afters == built.afters,
+	      "rebinding one keysym changed the count: %u and %u, wanting %u and %u",
+	      m.bounds, m.afters, built.bounds, built.afters);
+
+	// A keysym the built-in mapping never named is added, not swapped in.
+	want_read(&m, "a keysym the built-in mapping does not name", "key Insert Macro\n");
+	want_binding(&m, "Insert", 0xff63u, 0100, 0);
+	CHECK(m.bounds == built.bounds + 1, "a new keysym gave %u bindings, wanting %u",
+	      m.bounds, built.bounds + 1);
+
+	// ...and so is a prefix pair, with a prefix keysym of its own.
+	want_read(&m, "a second prefix key", "prefix Num_Lock g Greek\n");
+	want_prefixed(&m, "the new prefix", 0xff7fu, 'g', 0035);
+	want_prefixed(&m, "the built-in prefix beside it", 0xff14u, 'g', 0035);
+	CHECK(m.afters == built.afters + 1, "a new prefix pair gave %u, wanting %u",
+	      m.afters, built.afters + 1);
+
+	// The last line wins, silently, as `BTreeMap::insert` does.
+	want_read(&m, "one keysym on two lines", "key Escape Return\nkey Escape Tab\n");
+	want_binding(&m, "the second line", 0xff1bu, 0022, 0);
+
+	// --- the grammar.  A `#` is a comment only where a trimmed line
+	// STARTS with one, so `key 0x23 #` binds the number sign and is not a
+	// line somebody truncated.  The generator's Python is more lenient
+	// than this and it does not matter there, `default.keys` having no
+	// such line; here it would be a real difference from muir.
+	want_read(&m, "a `#` that is a key and not a comment", "key 0x23 #\n");
+	want_binding(&m, "the number sign", 0x23u, 0161, 1);
+	want_refused("a `#` after a key, which is no comment", "key Escape Return # why\n",
+		     "line 1: Return # why is no key of this keyboard");
+
+	// Blank lines, whitespace-only lines, comment lines, tabs, leading and
+	// trailing space, and CRLF --- which is what a file edited on a laptop
+	// over the card's FAT32 partition arrives as.
+	want_read(&m, "comments, blanks, tabs and CRLF",
+		  "# a comment\r\n\r\n   \t \r\n\tkey\tF1\tLine\t\r\n   key F2 Tab   \r\n");
+	want_binding(&m, "a tabbed line", 0xffbeu, 0036, 0);
+	want_binding(&m, "a line with spaces round it", 0xffbfu, 0022, 0);
+
+	// `key` and `prefix` are the only case-sensitive words here; every
+	// name after them folds ASCII case.
+	want_refused("an upper-case verb", "KEY Escape Return\n",
+		     "line 1: KEY is not `key` or `prefix`");
+	want_read(&m, "names in any case", "key escape ALT MODE\n");
+	want_binding(&m, "a lower-case keysym and an upper-case key", 0xff1bu, 0143, 0);
+
+	// --- `position <octal> [shifted]`, which is the only spelling that
+	// reaches every key: position 0 and the second key giving a character
+	// have no other name.
+	want_read(&m, "a position", "key F1 position 22\n");
+	want_binding(&m, "position 22, in OCTAL", 0xffbeu, 022, 0);
+	want_read(&m, "a position on the shifted plane", "key F1 position 121 shifted\n");
+	want_binding(&m, "position 121 shifted", 0xffbeu, 0121, 1);
+	want_refused("a position that is not octal", "key F1 position 99\n",
+		     "line 1: position 99: the number is in octal");
+	// Two ways to be out of range and muir says them differently: 0o777
+	// does not fit the byte a position is, 0o200 does and is past the
+	// table.  A parser that reported one for both would pass a check that
+	// only tried one of them.
+	want_refused("a position past a byte", "key F1 position 777\n",
+		     "line 1: position 777: the number is in octal");
+	want_refused("a position past the table", "key F1 position 200\n",
+		     "line 1: position 200: the table is 128 positions");
+	want_refused("a word after a position that is not `shifted`",
+		     "key F1 position 5 wobble\n",
+		     "line 1: position 5 wobble: `shifted` or nothing after the number");
+
+	// --- LEFT AND RIGHT ARE THE LOWER AND HIGHER POSITION, NOT MIT'S OWN
+	// SIDES, and Greek is the one shifting key where those disagree ---
+	// MIT's table calls 0o035 Right Greek and muir's `shifting` returns it
+	// first.  `input_keys.h` records why; this is what stops somebody
+	// correcting it into a disagreement with muir.
+	want_read(&m, "both sides of Control and of Greek",
+		  "key F1 Left Control\nkey F2 Right Control\n"
+		  "key F3 Left Greek\nkey F4 Right Greek\n");
+	want_binding(&m, "Left Control", 0xffbeu, 0020, 0);
+	want_binding(&m, "Right Control", 0xffbfu, 0026, 0);
+	want_binding(&m, "Left Greek, which MIT's table labels Right", 0xffc0u, 0035, 0);
+	want_binding(&m, "Right Greek, which MIT's table labels Left", 0xffc1u, 0044, 0);
+	// A shifting key with one position answers to either side.
+	want_read(&m, "the right of a shifting key that has one position",
+		  "key F1 Right Caps Lock\nkey F2 Caps Lock\n");
+	want_binding(&m, "Right Caps Lock", 0xffbeu, 0125, 0);
+	want_binding(&m, "Caps Lock", 0xffbfu, 0125, 0);
+
+	// --- a keysym is a name, a character, decimal or `0x` hexadecimal,
+	// and `0X` is none of them.
+	want_read(&m, "a keysym as hexadecimal and as decimal",
+		  "key 0x41 Tab\nkey 66 Line\nkey +67 Help\n");
+	want_binding(&m, "0x41", 0x41u, 0022, 0);
+	want_binding(&m, "66", 66u, 0036, 0);
+	want_binding(&m, "+67, which Rust's own parse takes", 67u, 0116, 0);
+	want_refused("an upper-case 0X", "key 0X41 Tab\n", "line 1: 0X41 is no keysym");
+	want_refused("a keysym past 32 bits", "key 4294967296 Tab\n",
+		     "line 1: 4294967296 is no keysym");
+	want_refused("a name nothing knows", "key Nosuchsym Tab\n",
+		     "line 1: Nosuchsym is no keysym");
+	want_refused("a key nothing knows", "key Escape Nosuchkey\n",
+		     "line 1: Nosuchkey is no key of this keyboard");
+	// `space` is a NAME for a keysym and is no key: the one keysym whose
+	// single-character spelling is the separator.
+	want_read(&m, "the space keysym by name", "key space Quote\n");
+	want_binding(&m, "space", 0x20u, 0120, 0);
+	want_refused("space as a key, which it is not", "key F1 space\n",
+		     "line 1: space is no key of this keyboard");
+
+	// --- a line that runs out, on both kinds.
+	want_refused("a key line with no key", "key Escape\n",
+		     "line 1: wants a keysym and what it means, not \"Escape\"");
+	want_refused("a bare key line", "key\n",
+		     "line 1: wants a keysym and what it means, not \"\"");
+	want_refused("a prefix line with no key", "prefix Scroll_Lock g\n",
+		     "line 1: wants a keysym and what it means, not \"g\"");
+	want_refused("a word that is neither", "bind Escape Return\n",
+		     "line 1: bind is not `key` or `prefix`");
+
+	// --- A KEYSYM IS A KEY OR A PREFIX AND NEVER BOTH, checked over the
+	// whole mapping after the file rather than a line at a time --- so a
+	// file's `key` line collides with a built-in PREFIX and a file's
+	// `prefix` line with a built-in KEY.  Neither error carries a line
+	// number, the two halves not having to be on one line or in one file.
+	want_refused("a key line on the built-in prefix", "key Scroll_Lock Return\n",
+		     "Scroll_Lock is bound as a key and used as a prefix");
+	want_refused("a prefix line on a built-in key", "prefix Escape g Greek\n",
+		     "Escape is bound as a key and used as a prefix");
+
+	// --- the line number is the line, counted from one, whatever came
+	// before it.  A file that fails on its fourth line must say four.
+	want_refused("the line a file fails on",
+		     "# a comment\n\nkey F1 Line\nkey F2 Nosuchkey\n",
+		     "line 4: Nosuchkey is no key of this keyboard");
+
+	// --- and a file this program reads off the card, which is the path
+	// `S85cadr-terminal` uses.  An absent file is reported by name.
+	if (work_dir) {
+		char path[512];
+		snprintf(path, sizeof path, "%s/terminal.keyboard.mapping.txt", work_dir);
+		FILE *f = fopen(path, "w");
+		if (f) {
+			fputs("# a mapping of this check's own\r\n", f);
+			fputs("key F1 Macro\r\n", f);
+			fclose(f);
+			key_map_built_in(&m);
+			++checks;
+			if (key_map_read_file(&m, path, err, sizeof err) != 0)
+				fail(__LINE__, "%s: refused, saying %s", path, err);
+			else
+				want_binding(&m, "a file off the disk", 0xffbeu, 0100, 0);
+			remove(path);
+		}
+		snprintf(path, sizeof path, "%s/there-is-no-such-file.txt", work_dir);
+		key_map_built_in(&m);
+		++checks;
+		if (key_map_read_file(&m, path, err, sizeof err) == 0)
+			fail(__LINE__, "a file that is not there was read");
+		else
+			CHECK(strstr(err, path) != NULL && strstr(err, "No such file") != NULL,
+			      "an absent mapping file said %s", err);
+	}
+
+	// --- AND THE MAPPING REACHES THE MACHINE.  Everything above is about
+	// the table; this is the one that says a viewer's key goes through it.
+	// F1 is Terminal, 0o040, in the built-in mapping and Return, 0o136,
+	// after the file --- so a mapping that was read and then not used
+	// would send 0o040 here and be caught.
+	struct client c;
+	struct key_map rebound;
+	key_map_built_in(&rebound);
+	++checks;
+	if (key_map_read(&rebound, "key F1 Return\n", err, sizeof err) != 0) {
+		fail(__LINE__, "the rebinding for the typist was refused: %s", err);
+		return;
+	}
+	if (open_typist_with(&c, &rebound) == 0) {
+		send_key(&c, 0xffbeu, 1);
+		send_key(&c, 0xffbeu, 0);
+		pump(40);
+		const uint32_t w[] = { word_of(0136, 0), word_of(0136, 1) };
+		want_keys("F1 rebound to Return, through the whole program", w, 2);
+		client_close(&c);
+		settle();
+	}
+	// ...and the built-in mapping still gives Terminal to the same key,
+	// which is what says the line above measured the FILE and not a
+	// program that happens to send 0o136 for everything.
+	if (open_typist(&c) == 0) {
+		send_key(&c, 0xffbeu, 1);
+		send_key(&c, 0xffbeu, 0);
+		pump(40);
+		const uint32_t w[] = { word_of(0040, 0), word_of(0040, 1) };
+		want_keys("F1 under the built-in mapping: Terminal", w, 2);
+		client_close(&c);
+		settle();
+	}
+}
+
 static void make_synthetic(uint8_t pic[SCREEN_HEIGHT][SCREEN_WIDTH], unsigned salt)
 {
 	for (unsigned y = 0; y < SCREEN_HEIGHT; ++y)
@@ -1757,6 +2114,22 @@ int main(int argc, char **argv)
 		}
 	}
 	cadr_log_init("  server: ", logf);
+
+	// Where a check may write a file of its own: beside the server's log,
+	// which the Makefile puts under ~/.cache.  No option of its own,
+	// because there is nothing to choose --- a second path to pass would
+	// be a second thing to get wrong.  Without `--server-log` the mapping
+	// checks that need a real file are skipped and the rest still run.
+	char work[512];
+	const char *work_dir = NULL;
+	if (server_log) {
+		snprintf(work, sizeof work, "%s", server_log);
+		char *slash = strrchr(work, '/');
+		if (slash) {
+			*slash = '\0';
+			work_dir = work;
+		}
+	}
 
 	if (screen_server_bind(&srv, "127.0.0.1", 0) < 0) {
 		fprintf(stderr, "screen_test: no socket\n");
@@ -1810,6 +2183,9 @@ int main(int argc, char **argv)
 
 	printf("--- the mouse\n");
 	check_mouse();
+
+	printf("--- the keyboard mapping, and a file over it\n");
+	check_keyboard_mapping(work_dir);
 
 	// Back to read-only for the screen checks that follow, which have no
 	// business with a keyboard.

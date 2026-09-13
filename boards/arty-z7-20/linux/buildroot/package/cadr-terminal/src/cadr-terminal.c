@@ -78,7 +78,7 @@
 //
 //     cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
 //                   [--interval-ms N] [--no-rre] [--no-guard] [--no-input]
-//                   [--input ADDR] [--once]
+//                   [--input ADDR] [--keyboard-mapping FILE] [--once]
 
 #include <errno.h>
 #include <getopt.h>
@@ -94,6 +94,7 @@
 
 #include "input_face.h"
 #include "input_keys.h"
+#include "input_mapping.h"
 #include "screen_frame.h"
 #include "screen_geom.h"
 #include "screen_server.h"
@@ -126,6 +127,9 @@ static void usage(void)
 		"  --no-guard        do not check the EMIO tally first\n"
 		"  --no-input        do not carry the keyboard and mouse; drop what a viewer sends\n"
 		"  --input ADDR      the keyboard and mouse registers (default 0x40003000)\n"
+		"  --keyboard-mapping FILE   what a viewer's keysyms mean, over the built-in map\n"
+		"                            (muir's own `key` and `prefix` lines; `muir\n"
+		"                            --keyboard-mapping-dump` writes a starting file)\n"
 		"  --once            do the checks, read one frame, say what is on it, and exit\n");
 }
 
@@ -141,7 +145,7 @@ static const char *blank_word(int blank)
 
 int main(int argc, char **argv)
 {
-	const char *log_path = NULL, *bind_addr = NULL;
+	const char *log_path = NULL, *bind_addr = NULL, *keymap_path = NULL;
 	unsigned port = 5900, interval_ms = 16;
 	uint32_t window_phys = SCREEN_BASE;
 	uint32_t input_phys = IN_REG_BASE;
@@ -157,12 +161,13 @@ int main(int argc, char **argv)
 		{ "no-guard", no_argument, NULL, 'G' },
 		{ "no-input", no_argument, NULL, 'I' },
 		{ "input", required_argument, NULL, 'n' },
+		{ "keyboard-mapping", required_argument, NULL, 'k' },
 		{ "once", no_argument, NULL, 'o' },
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGIn:oh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGIn:k:oh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'p': port = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'b': bind_addr = optarg; break;
@@ -174,6 +179,7 @@ int main(int argc, char **argv)
 		case 'G': no_guard = 1; break;
 		case 'I': no_input = 1; break;
 		case 'n': input_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
+		case 'k': keymap_path = optarg; break;
 		case 'o': once = 1; break;
 		default: usage(); return 2;
 		}
@@ -263,7 +269,27 @@ int main(int argc, char **argv)
 	srv.rre_offered = !no_rre;
 	if (have_input) {
 		srv.input = &input;
-		key_state_init(&srv.keys);
+		// The mapping, if a file says one.  **A FILE THAT DOES NOT
+		// PARSE LEAVES THE BUILT-IN MAPPING STANDING AND DOES NOT STOP
+		// THE PROGRAM**, where muir stops the run: this one is started
+		// at boot and is the only way to see the machine at all, and
+		// the file is optional and lives on a card a laptop edits.  A
+		// typo in it must not cost the screen as well as the keyboard.
+		// `input_mapping.h` has the argument; the line below is what
+		// makes the fall-back visible, on the console, naming the line.
+		struct key_map map;
+		char err[KEY_MAP_ERR_MAX];
+		key_map_built_in(&map);
+		if (keymap_path && key_map_read_file(&map, keymap_path, err, sizeof err) != 0) {
+			say("the keyboard mapping %s was NOT read and the built-in one stands: %s",
+			    keymap_path, err);
+			key_map_built_in(&map);
+		} else if (keymap_path) {
+			say("the keyboard mapping is %s over the built-in one: %u keysyms bound "
+			    "and %u behind a prefix",
+			    keymap_path, map.bounds, map.afters);
+		}
+		key_state_init_with(&srv.keys, &map);
 		say("the keyboard and mouse are at 0x%08x; a viewer's keys go to the machine "
 		    "as MIT's own key positions, muir's mapping, and its pointer as the "
 		    "mouse's own counts. The fabric's queue was flushed before this socket "

@@ -41,9 +41,10 @@
 # not there.  docs/terminal.md has the three commands that make them.
 
 PROGRAMS := cadr-terminal
-CORE     := screen_frame.c screen_rfb.c screen_server.c input_face.c input_keys.c
+CORE     := screen_frame.c screen_rfb.c screen_server.c input_face.c input_keys.c \
+            input_mapping.c
 HEADERS  := screen_geom.h screen_frame.h screen_rfb.h screen_server.h \
-            input_face.h input_keys.h input_keymap.h
+            input_face.h input_keys.h input_keymap.h input_mapping.h
 
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src
