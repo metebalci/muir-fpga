@@ -245,6 +245,15 @@ module cadr_pack_axi_harness #(
   logic        mem_error;
   logic        con_gnt, con_ssyn;
   logic [15:0] con_rdata;
+  // MIT's debug cable out of the machine, tied off at the far end: with
+  // `-DEBUG IN REQ` UP --- which is `dbg_in_req` LOW, the sense the whole
+  // transport uses --- `cadr_dbgin.sv` makes no strobe, never asks for the
+  // diagnostic bus, and its whole arm of the arbiter folds.  That is what an
+  // unplugged DBGIN connector is: the SIP at 0A22 pulling the line up.
+  // `build/dbgin.pass` is where the cable is driven and held.
+  logic        dbg_in_ack, debuggee_reset, timeout_inhibit;
+  logic [15:0] dbd_out;
+  logic [1:0]  dbd_oe;
   logic [31:0] con_vma, con_q, con_md;
   logic [17:0] con_ro_echo;
 
@@ -294,6 +303,10 @@ module cadr_pack_axi_harness #(
       .con_req(1'b0), .con_msyn(1'b0), .con_write(1'b0),
       .con_addr(18'd0), .con_wdata(16'd0),
       .con_gnt(con_gnt), .con_ssyn(con_ssyn), .con_rdata(con_rdata),
+      .dbg_in_req(1'b0), .dbg_in_wr(1'b0), .dbg_in_a(2'd0), .dbd_in(16'd0),
+      .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_out), .dbd_oe(dbd_oe),
+      .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
+      .dbg_rst(rst),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
       .con_ro_addr(con_ro_addr), .con_ro_data(con_ro_data),
       .con_ro_echo(con_ro_echo),
@@ -437,6 +450,8 @@ module cadr_pack_axi_harness #(
                     ub_msyn, ub_ssyn, n_memrq, n_memack, n_memgrant,
                     n_loadmd, rdcyc, mbusy_sync, mem_error,
                     con_gnt, con_ssyn, con_rdata, con_vma, con_q, con_md,
+                    dbg_in_ack, dbd_out, dbd_oe, debuggee_reset,
+                    timeout_inhibit,
                     con_ro_echo};
   /* verilator lint_on UNUSEDSIGNAL */
 

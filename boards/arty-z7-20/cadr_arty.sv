@@ -257,6 +257,23 @@ module cadr_arty #(
   logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
+  // MIT's debug cable, the twenty-one wires of the DBGIN connector.
+  // `rtl/plumbing/cadr_debug_window.sv` in `g_ddr` is the carrier that puts
+  // them on `M_AXI_GP1` beside the console, behind
+  // `rtl/plumbing/cadr_gp1_split.sv`; with no carrier `dbg_in_req` is held
+  // low and `rtl/machine/cadr_dbgin.sv` inside the machine folds to its idle
+  // state, which is the board this file builds by default.  `docs/debug-
+  // cable.md` is the whole of it.
+  logic        dbg_in_req, dbg_in_wr, dbg_in_ack;
+  logic [1:0]  dbg_in_a, dbd_oe;
+  logic [15:0] dbd_to_machine, dbd_from_machine;
+  // The modifier register's two effects.  `debuggee_reset` is bit 1 and is
+  // this processor's power-on reset, so it joins the OR below; MIT's own note
+  // is "write a 1 here then write a 0", which makes it a LEVEL.
+  // `timeout_inhibit` is bit 2 and nothing consumes it yet, so it folds ---
+  // `rtl/machine/cadr_memory_path.sv` says at the instance why it exists
+  // anyway.
+  logic        debuggee_reset, timeout_inhibit;
   // The virtual address register, `Q` and `MD` on their own wires, page 0's
   // words 7, 8 and 9.  They are NOT on the diagnostic bus --- MIT's sixteen
   // have no register for any of them --- and they leave `cadr_machine`
@@ -429,9 +446,23 @@ module cadr_arty #(
   // board.  So its counts are cumulative across a console reset, which is
   // stated rather than fixed --- an instrument a program can clear from Linux
   // is an instrument whose reading depends on who has been at the console.
+  //
+  // **AND THE DEBUG CABLE'S MODIFIER BIT 1 IS THE THIRD TERM**, for the same
+  // reason and with the same rule.  MIT calls it "Resets the debuggee's
+  // Unibus and bus interface"; it crosses the debuggee's own cables to OLORD2
+  // and is that processor's power-on reset, so CC's reset of a debuggee goes
+  // down the cable and needs nothing else.  It is a LEVEL, not a pulse ---
+  // "write a 1 here then write a 0" --- and it must NOT reach the DBGIN page
+  // that makes it: a modifier register cleared by its own bit 1 clears the
+  // bit that is clearing it, and MIT's sequence could not be written at all.
+  // `tb/cadr_dbgin_harness.sv` measured that before it was understood, and
+  // the page therefore takes `rst` inside `cadr_machine`, one level below
+  // this.  Nor does it reach the carrier, for the reason the console gives
+  // about its own: a carrier reset by the machine's reset would abandon the
+  // request that asked for it.
   logic con_mach_rst;
   logic mach_rst;
-  always_ff @(posedge clk) mach_rst <= rst || con_mach_rst;
+  always_ff @(posedge clk) mach_rst <= rst || con_mach_rst || debuggee_reset;
   // A write or read that came back SLVERR or DECERR, held. Zero when there is
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
@@ -593,6 +624,22 @@ module cadr_arty #(
       .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
+      // MIT's debug cable, out of the machine as twenty-one wires.  What
+      // is on the other end of them is `rtl/plumbing/cadr_debug_window.sv`
+      // in `g_ddr`, a whole-port AXI3 slave behind the GP1 split; on a board
+      // with no processing system `dbg_in_req` is held low below and the
+      // DBGIN page folds.
+      .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
+      .dbd_in(dbd_to_machine),
+      .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
+      .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
+      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN0 ---
+      // and not `mach_rst`, which `debuggee_reset` is one term of.  A
+      // modifier register cleared by its own bit 1 clears the bit that is
+      // clearing it, and MIT's "write a 1 here then write a 0" could not be
+      // written.  The carrier a level up takes the port's reset for the
+      // neighbouring reason.
+      .dbg_rst(rst),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
       .con_ro_addr(con_ro_addr), .con_ro_data(con_ro_data),
       .con_ro_echo(con_ro_echo),
@@ -967,6 +1014,51 @@ module cadr_arty #(
     logic        gp1_bvalid, gp1_bready, gp1_arvalid, gp1_arready;
     logic        gp1_rlast, gp1_rvalid, gp1_rready;
     logic [1:0]  gp1_bresp, gp1_rresp;
+    // ---------------------------------------- and what GP1 is split three ways
+    //
+    // `rtl/plumbing/cadr_gp1_split.sv` decodes the port into two 4 KB pages
+    // and a third port for the rest of the gigabyte.  **THE THIRD PORT IS
+    // WHAT KEEPS THE RULE**: a read nothing answers on a general-purpose port
+    // does not fault the Arm, it hangs both cores at one PC each, measured on
+    // this board, so every address in the window reaches a slave that
+    // completes it.  Before the split the console answered the whole
+    // gigabyte by itself; now it answers `0x8000_0000`, the debug cable's
+    // carrier answers `0x8000_1000`, and `cadr_gp0_default.sv` answers the
+    // other 262,142 pages.
+    //
+    // The console keeps its own `REG_BASE` default, so `cadr-console` does
+    // not move and `build/console.pass` is unchanged.  muir is told
+    // `--debug-cable-connect 0x80001000`.
+    //
+    // **THE DEFAULT SLAVE IS `cadr_gp0_default.sv` AND ITS NAME SAYS GP0.**
+    // It is a whole-port slave with no address on it at all --- every read
+    // gives `WORD` and OKAY, every write completes and is dropped --- so it
+    // is the same thing on either port and a second copy would be two
+    // descriptions of one thing.  The name is the port it was written for;
+    // renaming it moves that port's check, its Makefile lists and two
+    // mutation records, which is a change worth making on its own and not
+    // inside this one.
+    logic [31:0] gp1c_awaddr, gp1c_araddr, gp1c_wdata, gp1c_rdata;
+    logic [3:0]  gp1c_awlen, gp1c_arlen, gp1c_wstrb;
+    logic [11:0] gp1c_awid, gp1c_arid, gp1c_bid, gp1c_rid;
+    logic        gp1c_awvalid, gp1c_awready, gp1c_wlast, gp1c_wvalid, gp1c_wready;
+    logic        gp1c_bvalid, gp1c_bready, gp1c_arvalid, gp1c_arready;
+    logic        gp1c_rlast, gp1c_rvalid, gp1c_rready;
+    logic [1:0]  gp1c_bresp, gp1c_rresp;
+    logic [31:0] gp1d_awaddr, gp1d_araddr, gp1d_wdata, gp1d_rdata;
+    logic [3:0]  gp1d_awlen, gp1d_arlen, gp1d_wstrb;
+    logic [11:0] gp1d_awid, gp1d_arid, gp1d_bid, gp1d_rid;
+    logic        gp1d_awvalid, gp1d_awready, gp1d_wlast, gp1d_wvalid, gp1d_wready;
+    logic        gp1d_bvalid, gp1d_bready, gp1d_arvalid, gp1d_arready;
+    logic        gp1d_rlast, gp1d_rvalid, gp1d_rready;
+    logic [1:0]  gp1d_bresp, gp1d_rresp;
+    logic [31:0] gp1x_rdata;
+    logic [3:0]  gp1x_arlen;
+    logic [11:0] gp1x_awid, gp1x_arid, gp1x_bid, gp1x_rid;
+    logic        gp1x_awvalid, gp1x_awready, gp1x_wlast, gp1x_wvalid, gp1x_wready;
+    logic        gp1x_bvalid, gp1x_bready, gp1x_arvalid, gp1x_arready;
+    logic        gp1x_rlast, gp1x_rvalid, gp1x_rready;
+    logic [1:0]  gp1x_bresp, gp1x_rresp;
     // The disk's interrupt into the processing system, `IRQ_F2P` bit 0:
     // the pack side's, or nothing on a board without one.
     logic        pack_irq;
@@ -1336,7 +1428,7 @@ module cadr_arty #(
       gp1_rst      <= rst || !gp1_rst_sync[2];
     end
 
-    cadr_console u_console (
+    cadr_gp1_split u_gp1_split (
         .clk(clk), .rst(gp1_rst),
         .s_awaddr(gp1_awaddr), .s_awlen(gp1_awlen), .s_awid(gp1_awid),
         .s_awvalid(gp1_awvalid), .s_awready(gp1_awready),
@@ -1348,6 +1440,102 @@ module cadr_arty #(
         .s_arvalid(gp1_arvalid), .s_arready(gp1_arready),
         .s_rdata(gp1_rdata), .s_rresp(gp1_rresp), .s_rid(gp1_rid),
         .s_rlast(gp1_rlast), .s_rvalid(gp1_rvalid), .s_rready(gp1_rready),
+        .con_awaddr(gp1c_awaddr), .con_awlen(gp1c_awlen), .con_awid(gp1c_awid),
+        .con_awvalid(gp1c_awvalid), .con_awready(gp1c_awready),
+        .con_wdata(gp1c_wdata), .con_wstrb(gp1c_wstrb), .con_wlast(gp1c_wlast),
+        .con_wvalid(gp1c_wvalid), .con_wready(gp1c_wready),
+        .con_bresp(gp1c_bresp), .con_bid(gp1c_bid), .con_bvalid(gp1c_bvalid),
+        .con_bready(gp1c_bready),
+        .con_araddr(gp1c_araddr), .con_arlen(gp1c_arlen), .con_arid(gp1c_arid),
+        .con_arvalid(gp1c_arvalid), .con_arready(gp1c_arready),
+        .con_rdata(gp1c_rdata), .con_rresp(gp1c_rresp), .con_rid(gp1c_rid),
+        .con_rlast(gp1c_rlast), .con_rvalid(gp1c_rvalid), .con_rready(gp1c_rready),
+        .dbg_awaddr(gp1d_awaddr), .dbg_awlen(gp1d_awlen), .dbg_awid(gp1d_awid),
+        .dbg_awvalid(gp1d_awvalid), .dbg_awready(gp1d_awready),
+        .dbg_wdata(gp1d_wdata), .dbg_wstrb(gp1d_wstrb), .dbg_wlast(gp1d_wlast),
+        .dbg_wvalid(gp1d_wvalid), .dbg_wready(gp1d_wready),
+        .dbg_bresp(gp1d_bresp), .dbg_bid(gp1d_bid), .dbg_bvalid(gp1d_bvalid),
+        .dbg_bready(gp1d_bready),
+        .dbg_araddr(gp1d_araddr), .dbg_arlen(gp1d_arlen), .dbg_arid(gp1d_arid),
+        .dbg_arvalid(gp1d_arvalid), .dbg_arready(gp1d_arready),
+        .dbg_rdata(gp1d_rdata), .dbg_rresp(gp1d_rresp), .dbg_rid(gp1d_rid),
+        .dbg_rlast(gp1d_rlast), .dbg_rvalid(gp1d_rvalid), .dbg_rready(gp1d_rready),
+        .dflt_awid(gp1x_awid), .dflt_awvalid(gp1x_awvalid),
+        .dflt_awready(gp1x_awready),
+        .dflt_wlast(gp1x_wlast), .dflt_wvalid(gp1x_wvalid),
+        .dflt_wready(gp1x_wready),
+        .dflt_bresp(gp1x_bresp), .dflt_bid(gp1x_bid), .dflt_bvalid(gp1x_bvalid),
+        .dflt_bready(gp1x_bready),
+        .dflt_arlen(gp1x_arlen), .dflt_arid(gp1x_arid),
+        .dflt_arvalid(gp1x_arvalid), .dflt_arready(gp1x_arready),
+        .dflt_rdata(gp1x_rdata), .dflt_rresp(gp1x_rresp), .dflt_rid(gp1x_rid),
+        .dflt_rlast(gp1x_rlast), .dflt_rvalid(gp1x_rvalid),
+        .dflt_rready(gp1x_rready)
+    );
+
+    // -------------------------------------------- the debug cable's carrier
+    //
+    // `rtl/plumbing/cadr_debug_window.sv` is MIT's twenty-one wires as
+    // sixteen words on the port, and the far end of them is
+    // `rtl/machine/cadr_dbgin.sv` inside `cadr_machine`.  The debugger is
+    // muir on this board's own Arm cores, reaching this through `/dev/mem`
+    // with `--debug-cable-connect 0x80001000`.
+    //
+    // **IT TAKES THE PORT'S RESET AND NOT THE MACHINE'S**, for the reason
+    // the console gives about its own: a carrier reset by the machine's
+    // reset would abandon the request that asked for it, and the debugger
+    // would be left waiting for an acknowledgement from a cable that had
+    // forgotten the request.  Modifier bit 1 resets the machine and this is
+    // deliberately outside that.
+    //
+    // `WATCHDOG_T` stays at the module's own one second here.  It is a floor
+    // with margin and not derived from anything --- `docs/debug-cable.md`
+    // has the argument --- and what it recovers is a wedged Unibus after
+    // muir is killed with a request standing, not the machine, which an NXM
+    // has already hit 4.25 us in.
+    cadr_debug_window #(
+        .REG_BASE(32'h8000_1000)
+    ) u_debug_window (
+        .clk(clk), .rst(gp1_rst),
+        .s_awaddr(gp1d_awaddr), .s_awlen(gp1d_awlen), .s_awid(gp1d_awid),
+        .s_awvalid(gp1d_awvalid), .s_awready(gp1d_awready),
+        .s_wdata(gp1d_wdata), .s_wstrb(gp1d_wstrb), .s_wlast(gp1d_wlast),
+        .s_wvalid(gp1d_wvalid), .s_wready(gp1d_wready),
+        .s_bresp(gp1d_bresp), .s_bid(gp1d_bid), .s_bvalid(gp1d_bvalid),
+        .s_bready(gp1d_bready),
+        .s_araddr(gp1d_araddr), .s_arlen(gp1d_arlen), .s_arid(gp1d_arid),
+        .s_arvalid(gp1d_arvalid), .s_arready(gp1d_arready),
+        .s_rdata(gp1d_rdata), .s_rresp(gp1d_rresp), .s_rid(gp1d_rid),
+        .s_rlast(gp1d_rlast), .s_rvalid(gp1d_rvalid), .s_rready(gp1d_rready),
+        .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
+        .dbd_out(dbd_to_machine),
+        .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_from_machine), .dbd_oe(dbd_oe)
+    );
+
+    cadr_gp0_default u_gp1_rest (
+        .clk(clk), .rst(gp1_rst),
+        .s_awvalid(gp1x_awvalid), .s_awid(gp1x_awid), .s_awready(gp1x_awready),
+        .s_wlast(gp1x_wlast), .s_wvalid(gp1x_wvalid), .s_wready(gp1x_wready),
+        .s_bresp(gp1x_bresp), .s_bid(gp1x_bid), .s_bvalid(gp1x_bvalid),
+        .s_bready(gp1x_bready),
+        .s_arlen(gp1x_arlen), .s_arid(gp1x_arid), .s_arvalid(gp1x_arvalid),
+        .s_arready(gp1x_arready),
+        .s_rdata(gp1x_rdata), .s_rresp(gp1x_rresp), .s_rid(gp1x_rid),
+        .s_rlast(gp1x_rlast), .s_rvalid(gp1x_rvalid), .s_rready(gp1x_rready)
+    );
+
+    cadr_console u_console (
+        .clk(clk), .rst(gp1_rst),
+        .s_awaddr(gp1c_awaddr), .s_awlen(gp1c_awlen), .s_awid(gp1c_awid),
+        .s_awvalid(gp1c_awvalid), .s_awready(gp1c_awready),
+        .s_wdata(gp1c_wdata), .s_wstrb(gp1c_wstrb), .s_wlast(gp1c_wlast),
+        .s_wvalid(gp1c_wvalid), .s_wready(gp1c_wready),
+        .s_bresp(gp1c_bresp), .s_bid(gp1c_bid), .s_bvalid(gp1c_bvalid),
+        .s_bready(gp1c_bready),
+        .s_araddr(gp1c_araddr), .s_arlen(gp1c_arlen), .s_arid(gp1c_arid),
+        .s_arvalid(gp1c_arvalid), .s_arready(gp1c_arready),
+        .s_rdata(gp1c_rdata), .s_rresp(gp1c_rresp), .s_rid(gp1c_rid),
+        .s_rlast(gp1c_rlast), .s_rvalid(gp1c_rvalid), .s_rready(gp1c_rready),
         .dbg_req(con_req), .dbg_gnt(con_gnt),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
@@ -1478,6 +1666,16 @@ module cadr_arty #(
     // And no console reset either, so `mach_rst` is `rst` a tick late on
     // this board and the whole of the OR folds away.
     assign con_mach_rst = 1'b0;
+    // And no debug cable: there is no general-purpose port to put its
+    // carrier on.  The cable is levels and not pulses, so holding
+    // `-DEBUG IN REQ` UP --- which is `dbg_in_req` low, the sense the whole
+    // transport uses --- is exactly what the SIP at DBGIN 0A22 does to an
+    // unplugged connector.  `cadr_dbgin.sv` then makes no strobe, never asks
+    // for the bus, and the whole arm of the arbiter folds.
+    assign dbg_in_req     = 1'b0;
+    assign dbg_in_wr      = 1'b0;
+    assign dbg_in_a       = 2'd0;
+    assign dbd_to_machine = 16'd0;
     // And no port for the I/O board's two cables, so their far ends are
     // tied off: this is the board that has no processing system at all, and
     // a program is what is on the other end of either cable.  With
@@ -1616,7 +1814,8 @@ module cadr_arty #(
                    ser_syn_face,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
-                   sintr};
+                   sintr,
+                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit};
     end
   end
 

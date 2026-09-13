@@ -4386,6 +4386,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note them at all.  Caught by this slice running every record aimed at the
 @note files it touched before trusting any run --- the rule above, followed
 @note a third time, and the third time it was the rule and not luck.
+@note
+@note **AND A NINTH TIME**, when MIT's debug cable left `cadr_machine`:
+@note `DEBUG IN ACK`, the sixteen `DBD` lines as this board drives them, the
+@note two byte-wise enables, and the modifier register's timeout inhibit,
+@note which is the one of the cable's outputs NOTHING consumes --- the NXM
+@note counter it wants is inside `cadr_busint_xbus.sv`, which is held to muir
+@note tick for tick.  So that bit is in the machine because the machine has
+@note it, and the fold is the only thing between it and the bin.
+@note `debuggee_reset` is NOT in the anchor, and that is the interesting
+@note half: it reaches the machine's own reset, so it is read whatever the
+@note fold does.
 @old
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
@@ -4396,7 +4407,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    ser_syn_face,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
-                   sintr};
+                   sintr,
+                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit};
 @new
                    ch_wrote, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
@@ -4407,7 +4419,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    ser_syn_face,
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
-                   sintr};
+                   sintr,
+                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit};
 @end
 
 @mutation the-interrupt-reaches-no-pin
@@ -7931,6 +7944,21 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note never seeing it.  Dropping `!sts_ack` reloads the latch on every tick the
 @note acknowledgement stands, which is the same defect from the other end and
 @note leaves every signal read.
+@note
+@note **AND IT HOLDS A CONSTRAINT AS WELL AS THE FABRIC.**
+@note `rtl/plumbing/xilinx7/cadr_debug.xdc` gives `sts_dbd`'s `/D` pins four
+@note ticks, because this register is the one place MIT's diagnostic mux
+@note leaves `cadr_machine` and lands outside everything
+@note `cadr_machine.xdc` can reach --- 23 logic levels, -8.772 ns on the first
+@note board that composed the cable.  The exception's whole argument is that
+@note the latch fires ONCE, at the acknowledgement, by which time the word has
+@note stood for twenty-five ticks: `busint::DIAGNOSTIC_NS` is 250 ns after
+@note `-UB MSYN` and `dbg_addr` has not moved since the previous lift.  A
+@note latch that reloaded every tick would be capturing a word with no such
+@note history, and four ticks would then be an exemption for a path that had
+@note not earned it.  So this record is what stands behind that file, the way
+@note `the-setup-time-is-short` stands behind `cadr_ddr.xdc`, and nothing else
+@note about either would show it.
 @old
       if (dbg_in_req && dbg_in_ack && !sts_ack) begin
 @new
@@ -10328,4 +10356,147 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
     else if (page == SER_BASE[31:12]) return SEL_SER;
 @new
     else if (page[31:13] == SER_BASE[31:13]) return SEL_SER;
+@end
+
+# ----------------------------------------------------------------------------
+# `M_AXI_GP1` SPLIT THREE WAYS.  `rtl/plumbing/cadr_gp1_split.sv` is the
+# decode that lets the console and the debug cable's carrier share the second
+# general purpose port, and the property is the one `gp0_split` holds on the
+# first: EVERY address on it is answered in both directions.  A read nothing
+# answers there does not fault the Arm, it hangs both cores at one PC each,
+# measured on the board, and no software guard can catch it.  Until this the
+# console answered the whole gigabyte by itself.
+#
+# The check demonstrates that rather than asserting it --- the console says
+# "CONS", the cable's carrier says "DBUG", everything else says "NONE", and
+# the two faces' UNMAPPED words are the complements of two different IDENTs
+# --- and it then reaches the SAME diagnostic register block by both of the
+# two roads the port now has: `spy_read` through the console's page and a
+# `-DB NEED UB` cycle over MIT's own cable through the window's.
+
+@mutation gp1-split-one-selection-for-both-channels
+@check gp1_split
+@file rtl/plumbing/cadr_gp1_split.sv
+@note THE RECORD THIS MODULE'S SHAPE EXISTS FOR, and the second time it has
+@note been written down: AXI's write and read channels are independent and
+@note the interconnect drives them independently, so a splitter with ONE held
+@note selection routes a read to whichever slave a write in flight at the same
+@note moment chose.  `cadr_memory_path.sv`'s "two decode instances, not one
+@note muxed decode" in a third place.  The stimulus that sees it is a write
+@note and a read to DIFFERENT pages at once, which the check runs thirty-two
+@note rounds of; a check with only one channel busy would pass this.
+@note `target()` stays used, on the write side.
+@old
+          r_sel <= target(s_araddr[31:12]);
+@new
+          r_sel <= w_sel;
+@end
+
+@mutation gp1-split-matches-the-console-a-page-too-wide
+@check gp1_split
+@file rtl/plumbing/cadr_gp1_split.sv
+@note A decode one bit short swallows the neighbouring page, and the
+@note neighbouring page here is the debug cable's: muir would read the
+@note console's UNMAPPED at `0x8000_1000` where it expects "DBUG", and
+@note `--debug-cable-connect` would report a window that is not there.  It is
+@note the console's match that is widened rather than the cable's because the
+@note console is FIRST in `target()` --- a first match one bit short takes the
+@note page the second was written for, which is the way round that hides.
+@note Caught at the debug cable's IDENT, which is what the distinguishable
+@note replies are for.
+@old
+    if (page == CON_BASE[31:12]) return SEL_CON;
+@new
+    if (page[31:13] == CON_BASE[31:13]) return SEL_CON;
+@end
+
+@mutation gp1-split-reads-the-address-rather-than-the-one-it-held
+@check gp1_split
+@file rtl/plumbing/cadr_gp1_split.sv
+@note The match is held and never computed, for the reason the disk
+@note controller's first draft measured: a combinational match carries the
+@note ripple in front of it into every clock enable downstream, -6.195 ns on
+@note 1,065 endpoints.  A fabric that handed a slave the LIVE address instead
+@note of the captured one is also wrong functionally, and only a stimulus that
+@note changes the address once its handshake is done can say so --- AXI allows
+@note that and a real interconnect does it.  The testbench poisons every
+@note address, length and ID the tick its handshake completes, which is this
+@note project's "a stimulus more polite than the real consumer tests less".
+@note Caught at the debug cable's IDENT.
+@old
+  assign dbg_araddr  = r_at;
+@new
+  assign dbg_araddr  = s_araddr;
+@end
+
+@mutation gp1-split-lets-go-of-a-write-before-its-answer
+@check gp1_split
+@file rtl/plumbing/cadr_gp1_split.sv
+@note A response is carried through while the splitter is in `W_RESP`, so
+@note leaving that state on the slave's BVALID rather than on the master
+@note TAKING it drops BVALID before the master ever sees it --- and a write
+@note with no response on a general purpose port is the frozen cores again.
+@note Both signals stay read, so lint has nothing to say.  Caught at "a write
+@note that never completed --- the board's frozen cores".
+@old
+        W_RESP:  if (sel_bvalid && s_bready) wst <= W_ADDR;
+@new
+        W_RESP:  if (sel_bvalid || s_bready) wst <= W_ADDR;
+@end
+
+@mutation gp1-split-ends-a-read-before-the-slave-does
+@check gp1_split
+@file rtl/plumbing/cadr_gp1_split.sv
+@note The transaction ends where the SLAVE says it does, and this module
+@note counts nothing.  Ending it on the first beat taken leaves a burst's
+@note remaining beats owed by a slave the port is no longer listening to,
+@note which is a read that never completes --- the frozen cores a third time.
+@note `sel_rlast` stays read, at `s_rlast`, so lint has nothing to say and
+@note a one-beat read is unaffected: it takes a burst to see it, which is why
+@note the check drives four-beat bursts at the end of each page and at the
+@note start of both.  Caught at "a read that never completed".
+@old
+        R_DATA:  if (sel_rvalid && s_rready && sel_rlast) rst_r <= R_ADDR;
+@new
+        R_DATA:  if (sel_rvalid && s_rready) rst_r <= R_ADDR;
+@end
+
+@mutation gp1-split-offers-a-write-to-the-cable-that-was-not-for-it
+@check gp1_split
+@file rtl/plumbing/cadr_gp1_split.sv
+@note The payload is broadcast and only the VALID is gated, so the gate is
+@note the whole of what keeps a slave off somebody else's transaction ---
+@note the guard goes where it cannot be bypassed, which is this project's
+@note `tv-answers-its-neighbours` lesson.  Offering the write to everything
+@note that is not the console puts every store to the other 262,143 pages
+@note into the debug cable's `CTL` as well as into the default slave, so two
+@note slaves answer one write.  `T_DBG` stays used on the read side.  Caught
+@note at tick 1,095,453 on "a write that never completed --- the board's
+@note frozen cores", with "responses to one write" beside it: two slaves
+@note offered one transaction fight over the response channel and the master
+@note never gets a clean one.  That second line is the AXI3 rule this check
+@note counts handshake by handshake rather than inferring from a word.
+@old
+  assign dbg_awvalid = (wst == W_ISSUE) && w_sel[T_DBG];
+@new
+  assign dbg_awvalid = (wst == W_ISSUE) && !w_sel[T_CON];
+@end
+
+@mutation the-debuggee-reset-reaches-no-pin
+@check arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The debug cable's modifier register bit 1 is `-DEBUGEE RESET`: it
+@note crosses the debuggee's own cables to OLORD2 and is that processor's
+@note power-on reset, so CC's reset of a debuggee goes down the cable and
+@note needs nothing else.  It is the ONE output of the cable that is not in
+@note the `witness` fold, deliberately --- it reaches the machine's reset, so
+@note it is read whatever the fold does --- and that is exactly what makes
+@note this record possible: dropped from the OR it is read by nothing at all,
+@note UNUSEDSIGNAL on every one of the five lint passes.  The same shape as
+@note `the-request-path-reaches-no-pin`, one signal along, and the reason
+@note that signal is not folded is the reason this bites.
+@old
+  always_ff @(posedge clk) mach_rst <= rst || con_mach_rst || debuggee_reset;
+@new
+  always_ff @(posedge clk) mach_rst <= rst || con_mach_rst;
 @end

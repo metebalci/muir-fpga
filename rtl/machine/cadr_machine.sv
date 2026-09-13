@@ -295,6 +295,45 @@ module cadr_machine #(
     input  var logic [15:0] con_wdata,
     output var logic        con_ssyn,
     output var logic [15:0] con_rdata,
+
+    // --- THE DEBUG CABLE, which leaves this machine as MIT's own wires.
+    //
+    // A CADR is debugged by another CADR: the debugger's DBGOUT connector
+    // goes to this one's DBGIN connector over twenty-one wires, and
+    // `rtl/machine/cadr_dbgin.sv` inside `cadr_memory_path` is that page ---
+    // the 74S139 at DBGIN 0A15, the modifier register, the two address
+    // latches, the error-status driver, and the debug master's place on this
+    // machine's Unibus.  What crosses HERE is the cable, and nothing else.
+    //
+    // The carrier that puts the cable on a general-purpose port is
+    // `rtl/plumbing/cadr_debug_window.sv`, beside the PS7 in
+    // `boards/arty-z7-20/cadr_arty.sv` exactly as the console and the disk's
+    // pack side sit there.  With no carrier the top level holds `dbg_in_req`
+    // low and the whole of the page folds to its idle state.
+    //
+    // `dbg_in_req` high means `-DEBUG IN REQ` is DOWN, muir's `fabric::REQ`.
+    input  var logic        dbg_in_req,
+    input  var logic        dbg_in_wr,
+    input  var logic [1:0]  dbg_in_a,
+    input  var logic [15:0] dbd_in,
+    output var logic        dbg_in_ack,
+    output var logic [15:0] dbd_out,
+    output var logic [1:0]  dbd_oe,
+    // The modifier register's two effects.  `debuggee_reset` is bit 1, a
+    // LEVEL that is this processor's power-on reset --- it goes out here and
+    // comes back as `rst`, which the top level makes out of the board's own
+    // reset, the console's pulse and this.  `timeout_inhibit` is bit 2 and
+    // nothing consumes it yet; `cadr_memory_path.sv` says why at the
+    // instance.
+    output var logic        debuggee_reset,
+    output var logic        timeout_inhibit,
+    // And the reset the DBGIN page takes, which is NOT this module's `rst`.
+    // `debuggee_reset` is modifier bit 1 and the top level joins it INTO
+    // `rst`; a page reset by its own bit 1 clears the bit that is clearing
+    // it, and MIT's "write a 1 here then write a 0" could not be written.
+    // `cadr_memory_path.sv` says it at length at the instance.  On a board
+    // with no carrier this and `rst` are the same net.
+    input  var logic        dbg_rst,
     // **AND THE THREE REGISTERS THAT ARE NOT ON THAT BUS.**  MIT's sixteen
     // carry `IR`, `OPC`, `PC`, `OB`, the two flag words, `M`, `A` and `ST`
     // and nothing else, so neither the virtual address register nor `Q` nor
@@ -610,6 +649,16 @@ module cadr_machine #(
       .con_wdata  (con_wdata),
       .con_ssyn   (con_ssyn),
       .con_rdata  (con_rdata),
+      .dbg_in_req (dbg_in_req),
+      .dbg_in_wr  (dbg_in_wr),
+      .dbg_in_a   (dbg_in_a),
+      .dbd_in     (dbd_in),
+      .dbg_in_ack (dbg_in_ack),
+      .dbd_out    (dbd_out),
+      .dbd_oe     (dbd_oe),
+      .debuggee_reset (debuggee_reset),
+      .timeout_inhibit(timeout_inhibit),
+      .dbg_rst    (dbg_rst),
       .mem_req    (mem_req),
       .mem_write  (mem_write),
       .mem_addr   (mem_addr),

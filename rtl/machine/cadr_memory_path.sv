@@ -321,6 +321,70 @@ module cadr_memory_path (
     output var logic        con_ssyn,     // -UB SSYN, to whoever asked
     output var logic [15:0] con_rdata,    // SPY<15:0> back
 
+    // --- THE DEBUG CABLE, the third master on the diagnostic bus, and MIT's
+    // --- own wires out of this machine.
+    //
+    // `rtl/machine/cadr_dbgin.sv` is the DBGIN page: the 74S139 at 0A15, the
+    // modifier register at 0A16, the two address latches at 0A18 and 0A19,
+    // the error-status driver at REQERR 0B15, and the debug master's place on
+    // this machine's Unibus.  It is instantiated below, beside the two Unibus
+    // slaves, because the master it makes belongs on the arbiter down there
+    // and an arbiter must be one description of one thing.
+    //
+    // What crosses THIS boundary is the cable itself --- the twenty-one wires
+    // of MIT's DBGIN connector --- and nothing else.  The carrier that puts
+    // them on a general-purpose port is `rtl/plumbing/cadr_debug_window.sv`,
+    // which is a level above and is not the machine's: that is the same
+    // boundary this repository draws between `rtl/machine/` and
+    // `rtl/plumbing/`.  `docs/debug-cable.md` has the whole of it.
+    //
+    // `dbg_in_req` high means `-DEBUG IN REQ` is DOWN, which is muir's
+    // `fabric::REQ` and is the sense the whole transport uses.
+    input  var logic        dbg_in_req,
+    input  var logic        dbg_in_wr,       // DEBUG IN WR
+    input  var logic [1:0]  dbg_in_a,        // DEBUG IN A<1:0>
+    input  var logic [15:0] dbd_in,          // DBD<15:0> as the debugger drives
+    output var logic        dbg_in_ack,      // DEBUG IN ACK
+    output var logic [15:0] dbd_out,         // DBD<15:0> as this board drives
+    output var logic [1:0]  dbd_oe,          // {DBD<15:8>, DBD<7:0>} driven
+
+    // --- the modifier register's two effects, `busint::debug_modifier`.
+    // Bit 1 is `-DEBUGEE RESET`, which crosses the debuggee's own cables to
+    // OLORD2 and is that processor's power-on reset, so it goes OUT of the
+    // machine and comes back as `rst` --- `boards/arty-z7-20/cadr_arty.sv`
+    // joins it with the board's own and with the console's pulse, which is
+    // where the console's already lands.  It is a LEVEL and not a pulse:
+    // MIT's own note is "write a 1 here then write a 0".
+    //
+    // Bit 2 turns off this machine's NXM timeout, for all of its cycles and
+    // not only the debugger's.  **Nothing consumes it yet** --- the counter
+    // is inside `cadr_busint_xbus.sv`, which is held to muir tick for tick
+    // over a trace, so giving it this term needs a trace with a debug cable
+    // in it.  It is a port so that the bit exists and is readable rather
+    // than being quietly dropped, which is this file's rule about building
+    // the machine whole.
+    output var logic        debuggee_reset,
+    output var logic        timeout_inhibit,
+
+    // --- and the reset the DBGIN page itself takes, which is NOT this
+    // --- module's `rst`.
+    //
+    // **A MODIFIER REGISTER CLEARED BY ITS OWN BIT 1 CLEARS THE BIT THAT IS
+    // CLEARING IT.**  `debuggee_reset` above is modifier bit 1, and MIT's own
+    // note is that it is a LEVEL --- "write a 1 here then write a 0".  The
+    // top level joins it with the board's reset and the console's pulse and
+    // hands the result back as this module's `rst`, so a DBGIN page reset by
+    // `rst` would turn that level into a one-tick pulse and MIT's sequence
+    // could not be written at all.  `tb/cadr_dbgin_harness.sv` measured
+    // exactly that before it was understood and says so at its instance.
+    //
+    // So the cable's own end takes the BOARD's reset, one level up, exactly
+    // as the carrier does --- and it is a port rather than a constant for the
+    // reason every seam here is: a thing on a cable is not a property of the
+    // board it plugs into.  On a board with no carrier the two are the same
+    // net and the difference costs nothing.
+    input  var logic        dbg_rst,
+
     // The diagnostic register block, which lives on this board: its read side
     // reaches into the processor, and its written bits are the console's.
     output var logic [3:0]  spy_eadr,
@@ -386,13 +450,80 @@ module cadr_memory_path (
   assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? bir_rdata : blk_rdata;
   assign ub_ssyn_by = {bir_ssyn, iob_ssyn, blk_ssyn};
 
-  // The third master's answers, folded: see the tie-off below.  Its GRANT is
-  // not folded --- it is half of `ub_foreign`, which is what says a Unibus
-  // cycle is somebody else's and so whether the mapped window answers it.
-  logic        dbg_gnt, dbg_ssyn_unused;
-  logic [15:0] dbg_rdata_unused;
+  // ------------------------------------------------- the debug cable's end
+  //
+  // `rtl/machine/cadr_dbgin.sv` is MIT's DBGIN page and the third master on
+  // the diagnostic bus.  It was tied off here until the port the carrier
+  // sits on was decided, and the tie-off's own comment said so; the decision
+  // is made --- `rtl/plumbing/cadr_debug_window.sv` shares `M_AXI_GP1` with
+  // the console behind `rtl/plumbing/cadr_gp1_split.sv` --- so the arm is
+  // live and the cable leaves this module as ports.
+  //
+  // `tb/cadr_dbgin_harness.sv` was written as this attachment before it
+  // landed, and these are its lines.  What that harness has and this does not
+  // is a `cadr_console_bus` of its own; here the one below is the same
+  // module, so what `build/dbgin.pass` checks is what the board carries.
+  //
+  // **THE PAGE TAKES `dbg_rst` AND NOT `rst`, AND THAT IS THE WHOLE REASON
+  // THERE ARE TWO.**  `rst` is the machine's, which the top level makes out
+  // of the board's reset, the console's pulse and `debuggee_reset` --- and
+  // `debuggee_reset` is this module's modifier bit 1.  A page reset by its
+  // own bit 1 clears the bit that is clearing it, so MIT's "write a 1 here
+  // then write a 0" becomes a one-tick pulse that cannot be written.
+  // Measured in `tb/cadr_dbgin_harness.sv` before it was understood, and the
+  // port declaration above says it again where somebody wiring this will
+  // read it.
+  //
+  // What a machine reset DOES do to a standing debug cycle is leave it
+  // unanswered: `cadr_console_bus` takes `rst` and drops the grant, so a
+  // cycle in `C_XFER` waits for a `-UB SSYN` that never comes until the
+  // debugger lifts.  That is what the real board does --- there is no
+  // timeout for this master --- and the debugger's own 11.05 us is what ends
+  // it.
+  //
+  // **AND THE ERROR STATUS BYTE IS ZERO, WHICH IS HONEST AND NOT FINISHED.**
+  // `Machine::debug_status` is `bus_error | NOT_FREE | WRITE_THROUGH`.
+  // `bus_error` is the bus interface's own error status register at
+  // `0o766044`, which `rtl/machine/cadr_busint_regs.sv` holds and does not
+  // bring out; `-FREE` is that interface's busy, which
+  // `cadr_busint_xbus.sv` does not bring out either; and write-through mode
+  // is not built.  So the byte is zero here and `docs/debug-cable.md` says
+  // which bits it owes.  It is a PORT on `cadr_dbgin` rather than a constant
+  // inside it for the reason `build/dbgin.pass` gives: a check that hands
+  // the module the answer tests nothing, and there the byte comes from
+  // outside.
+  logic        dbg_req, dbg_gnt, dbg_msyn, dbg_write, dbg_ssyn;
+  logic [17:0] dbg_addr;
+  logic [15:0] dbg_wdata, dbg_rdata;
+  logic [2:0]  dbg_modifier;
+  logic [15:0] dbg_address;
   logic        unused_dbg;
-  assign unused_dbg = ^{dbg_ssyn_unused, dbg_rdata_unused};
+  assign unused_dbg = ^{dbg_modifier, dbg_address};
+
+  cadr_dbgin dbgin (
+      .clk             (clk),
+      .rst             (dbg_rst),
+      .dbg_in_req      (dbg_in_req),
+      .dbg_in_wr       (dbg_in_wr),
+      .dbg_in_a        (dbg_in_a),
+      .dbd_in          (dbd_in),
+      .dbg_in_ack      (dbg_in_ack),
+      .dbd_out         (dbd_out),
+      .dbd_oe          (dbd_oe),
+      .err_status      (8'd0),
+      .debuggee_reset  (debuggee_reset),
+      .timeout_inhibit (timeout_inhibit),
+      .dbg_req         (dbg_req),
+      .dbg_gnt         (dbg_gnt),
+      .ub_msyn         (dbg_msyn),
+      .ub_write        (dbg_write),
+      .ub_addr         (dbg_addr),
+      .ub_wdata        (dbg_wdata),
+      .ub_ssyn         (dbg_ssyn),
+      .ub_rdata        (dbg_rdata),
+      .modifier_o      (dbg_modifier),
+      .address_o       (dbg_address)
+  );
 
   // **WHOSE CYCLE IS ON THE BUS**, which is `MSYN IN` rather than `MSYN OUT`
   // and is the one thing the mapped window at `0o140000`-`0o177777` needs
@@ -409,28 +540,29 @@ module cadr_memory_path (
   // console's cycle exactly as it maps the cable's --- but
   // `rtl/plumbing/cadr_console.sv` builds its address as `SPY_BASE |
   // eadr<<1`, four bits of `eadr`, and can put nothing but
-  // `0o766000`-`0o766036` on the bus.  With `dbg_req` tied off below, NOTHING
-  // IN THE COMPOSED MACHINE MAKES A MAPPED CYCLE TODAY.
+  // `0o766000`-`0o766036` on the bus.
+  //
+  // **THE CABLE IS THAT MASTER AND IT IS COMPOSED HERE NOW.**  Until the
+  // carrier's port was decided this arm was tied off and the window answered
+  // nothing, which the tie-off's own comment said; `cadr_dbgin` is
+  // instantiated above and its grant is half of this term, so a debug cycle
+  // at a window address is translated and the processor's at the same address
+  // still times out.
   logic ub_foreign;
   assign ub_foreign = dbg_gnt || con_gnt;
 
   cadr_console_bus console_bus (
-      // --- the debug cable's master, `rtl/machine/cadr_dbgin.sv`, which is
-      // --- NOT COMPOSED HERE YET.  `rtl/machine/cadr_console_bus.sv` carries
-      // --- the third master because the arbiter must be one description of
-      // --- one thing, and `tb/cadr_dbgin_harness.sv` is where it is driven
-      // --- and held.  Tied off, the whole arm folds --- `dbg_own` is
-      // --- constant false --- exactly as `con_req` was tied off in
-      // --- `boards/arty-z7-20/cadr_arty.sv` before the console landed.
-      // --- `docs/debug-cable.md` has the patch that brings it up.
-      .dbg_req   (1'b0),
+      // --- the debug cable's master, `rtl/machine/cadr_dbgin.sv` above.
+      // --- First on MIT's grant chain, so it beats the console; it waits
+      // --- for the processor's own strobe like everything else on this bus.
+      .dbg_req   (dbg_req),
       .dbg_gnt   (dbg_gnt),
-      .dbg_msyn  (1'b0),
-      .dbg_write (1'b0),
-      .dbg_addr  (18'd0),
-      .dbg_wdata (16'd0),
-      .dbg_ssyn  (dbg_ssyn_unused),
-      .dbg_rdata (dbg_rdata_unused),
+      .dbg_msyn  (dbg_msyn),
+      .dbg_write (dbg_write),
+      .dbg_addr  (dbg_addr),
+      .dbg_wdata (dbg_wdata),
+      .dbg_ssyn  (dbg_ssyn),
+      .dbg_rdata (dbg_rdata),
       .clk       (clk),
       .rst       (rst),
       .mclk      (mclk),
