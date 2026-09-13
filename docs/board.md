@@ -699,3 +699,78 @@ is presented early in `rtl/plumbing/cadr_serial_line.sv`. And nothing has
 driven the debug cable from the board. So the terminal and Chaosnet blocks on
 the drawing go green, and the I/O board keeps the colour that says checked here
 and not yet on silicon.
+
+## A keyboard at the board
+
+The board has a USB host port and Linux drives it, so a keyboard plugged in
+appears as `/dev/input/event*`. `cadr-usb-input` reads it and hands the keys to
+`cadr-terminal`, which is the one program that writes the I/O board's keyboard
+and mouse registers. `docs/usb-input.md` says why it is arranged that way.
+
+What has to be there first. The bitstream must be one with the I/O board's
+input cables in it: `cadr-terminal` says so at start-up, naming the registers
+it found and the flush it wrote. And `cadr-terminal` must be running, because
+it owns the socket. A board where either is missing gives one line a scan from
+`cadr-usb-input` saying the link is not answering, and it recovers on its own
+when the terminal starts.
+
+The program is started at boot by `S88cadr-usb-input`, after the terminal's
+`S85`. Nothing has to be passed to it: it looks in `/dev/input` for a keyboard
+and a mouse, opens what it finds, and keeps looking every second, so a keyboard
+plugged in later works and one unplugged and plugged in again works.
+
+### Putting it on a board that is already running
+
+The root filesystem is a RAM disk, so a program can be copied onto a running
+board without the reset that serving a new image would need. That matters when
+the machine is up and its state is worth keeping.
+
+    scp -O cadr-usb-input root@<board>:/usr/bin/
+    scp -O S88cadr-usb-input root@<board>:/etc/init.d/
+    ssh root@<board> /etc/init.d/S88cadr-usb-input start
+
+`-O` because dropbear has no sftp. The binary is built by Buildroot, or by the
+cross toolchain directly:
+
+    make -C boards/arty-z7-20/linux/buildroot/package/cadr-usb-input/src \
+        CC=<buildroot>/host/bin/arm-linux-gcc COMMON=host
+
+### What it should say, and what should happen
+
+The console says which node is a keyboard and which is a mouse, with the name
+the device reports, and then that it has attached to the link. Typing at the
+keyboard then types at the machine: the characters appear at the Lisp Listener,
+which can be watched over RFB from another machine at the same time.
+
+Shift and a digit is the interesting one to try. The shift level is applied in
+`cadr-usb-input` and the word that reaches the machine is the shifted position
+with Shift still down, so `!` must arrive as `!`. A program that sent the
+unshifted keysym would give `1`, and the machine would see the Shift key lifted
+and put back around it.
+
+### Proving it with nobody at the board
+
+There is no way to press a key from another machine on this image, and it is
+worth saying which of the obvious ways do not work.
+
+`evtest` only reads. It prints every event a device delivers, which is how the
+USB port was proved in the first place, and it cannot deliver one.
+
+`uinput` would do it --- a program opens `/dev/uinput`, says which key codes its
+virtual keyboard reports, and writes `input_event` structures, and
+`cadr-usb-input` finds the device on its next scan and reads it like any other.
+But `CONFIG_INPUT_UINPUT` is not in this board's kernel configuration, so
+`/dev/uinput` is not there. Turning it on is one line in
+`boards/arty-z7-20/linux/buildroot/board/arty-z7-20/linux/linux.config` and a
+kernel build, which is a change to the image rather than a thing to do to a
+board that is running.
+
+What can be done from another machine is to feed the link directly, which
+proves everything except the read of the device: a client connects to
+`/var/run/cadr-input`, sends the greeting, and then sends key records.
+`cadr/cadr_input_link.h` has the format. That is what the host check does, and
+on the board it would show the terminal's half --- the mapping, the pacing and
+the registers --- carrying a key to the machine.
+
+So the first run with a finger on a real keyboard is still owed, and until it
+happens the drawing's USB input block says checked here and not yet on silicon.

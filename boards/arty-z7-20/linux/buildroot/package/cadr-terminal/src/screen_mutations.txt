@@ -408,12 +408,17 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @note machine's run and every character after it is a control character.
 @note The only place this can be done is where the viewer is dropped.  It
 @note runs for the LAST viewer only, so that what somebody still watching is
-@note holding stands.  Caught at "...and released when the viewer went".
+@note holding stands --- and not at all while something is attached to the
+@note input link, a keyboard at the board being a source of its own whose keys
+@note are released when IT goes.  Caught at "...and released when the viewer
+@note went".
 @old
-	if (s->input && s->viewers == 1) {
+	if (s->input && s->viewers == 1
+	    && !(s->link_ready && cadr_input_link_clients(&s->link))) {
 		key_all_up(&s->keys);
 @new
-	if (s->input && s->viewers == 0) {
+	if (s->input && s->viewers == 0
+	    && !(s->link_ready && cadr_input_link_clients(&s->link))) {
 		key_all_up(&s->keys);
 @end
 

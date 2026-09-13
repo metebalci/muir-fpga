@@ -373,9 +373,10 @@ header: nothing but an AXI write can make a strobe, and a machine reset empties
 the queue. **The leg that belongs to a program is the flush.** `cadr-terminal`
 writes `CTL`'s FLUSH bit after it has read `IDENT` and before it binds its
 socket, so a viewer cannot have sent anything yet. A program taking keys from a
-device the kernel has been buffering --- `cadr-usb-input`, when it is built ---
-must also drain that device before its first write, because the buffering is on
-the far side of this seam and no register here can see it.
+device the kernel has been buffering must also drain that device before its
+first write, because the buffering is on the far side of this seam and no
+register here can see it. `cadr-usb-input` drains every device it opens, for
+this reason.
 
 ## The mouse
 
@@ -402,6 +403,45 @@ taken between whatever position was last reported and the new one, whoever
 reported each. With two viewers moving pointers the machine's cursor jumps.
 muir has exactly this and for the same reason: the machine has one mouse, and
 which of the people watching is holding it is not something RFB says.
+
+## A source that is not a viewer: the input link
+
+The keyboard and mouse registers have one queue behind them, and how fast words
+may be handed over is a rule about the machine rather than about the card. A
+rule like that needs one pacer. Two programs writing those registers side by
+side would each obey it and the machine would still be given words twice as
+fast as either meant.
+
+So this program is the only one that writes them, and everything else is a
+source. `cadr-usb-input` reads a USB keyboard and mouse plugged into the board
+itself and sends keysyms and mouse movement over a Unix socket, and they take
+exactly the path a viewer's keys take from there: the same mapping, the same
+queue, the same pacer. One `--keyboard-mapping` file therefore serves both.
+
+That is the reference emulator's own arrangement one seam out. It has one
+`Keyboard` and one `Mouse` per machine, up to eight viewers push into them, and
+one place hands words to the card. A viewer is a source and not an owner.
+
+`--input-link PATH` says where the socket is, `/var/run/cadr-input` by default,
+and `--no-input-link` leaves it unmade. **A server with no input face refuses
+to listen at all**: a socket that took keystrokes and dropped them would look
+exactly like one that worked. The socket is made after the flush and before
+anything can be sent, for the same reason the RFB socket is.
+
+What crosses it is keysyms, already shifted, as a viewer sends them. The shift
+level is chosen at the far end, in `cadr-usb-input`, which is an X server's
+keymap in miniature. `docs/usb-input.md` has that decision and
+`cadr/cadr_input_link.h` is the wire format.
+
+Two things about a source going away. A client that dies with keys down has
+them released for it, by keysym, from what the server remembers it was
+holding. And **the last viewer leaving no longer releases every key that is
+down** when something is attached to the link: a viewer closing its window must
+not lift the Shift under a finger at the board.
+
+The three switches are the OR of what the viewers hold and what the link holds.
+There is one mouse, and a button held in one place is not lifted by the other
+letting go.
 
 ## The encodings, and what they cost
 

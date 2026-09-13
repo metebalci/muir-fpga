@@ -46,6 +46,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
        $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
+       $(BUILD)/usb_input.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -1986,6 +1987,8 @@ CHAOSNET_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet
 CHAOSNET_SRC := $(CHAOSNET_PKG)/src
 SERIAL_SRC   := boards/arty-z7-20/linux/buildroot/package/cadr-serial/src
 TERMINAL_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src
+USB_INPUT_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-usb-input
+USB_INPUT_SRC := $(USB_INPUT_PKG)/src
 
 # The init script and the check that runs it are prerequisites too.  The
 # package ships three things --- the program, its mutations and the script that
@@ -2021,6 +2024,24 @@ $(BUILD)/terminal.pass: $(wildcard $(TERMINAL_SRC)/*.c) $(wildcard $(TERMINAL_SR
 	$(MAKE) -C $(TERMINAL_SRC) clean
 	@echo "terminal: the program builds, its pixels agree with muir's own rule, and a viewer's"
 	@echo "terminal: keys become MIT's key positions through muir's own mapping"
+	@touch $@
+
+# **THE USB PROGRAM'S CHECK BUILDS THE SCREEN'S SOURCES TOO**, so the screen's
+# files are prerequisites of it: what it holds is the whole road from a key
+# code on the board's own USB port to a word at the machine, and half of that
+# road is cadr-terminal's.  A change to either package must re-run it.  The
+# program itself links none of the screen's files; the Makefile in its src/
+# says which of its two builds is which.
+$(BUILD)/usb_input.pass: $(wildcard $(USB_INPUT_SRC)/*.c) $(wildcard $(USB_INPUT_SRC)/*.h) \
+                         $(wildcard $(TERMINAL_SRC)/*.c) $(wildcard $(TERMINAL_SRC)/*.h) \
+                         $(USB_INPUT_SRC)/usb_mutations.txt \
+                         $(USB_INPUT_PKG)/S88cadr-usb-input \
+                         $(USB_INPUT_SRC)/mutate.py | $(BUILD)
+	$(MAKE) -C $(USB_INPUT_SRC) check
+	$(MAKE) -C $(USB_INPUT_SRC) all COMMON=host
+	$(MAKE) -C $(USB_INPUT_SRC) clean
+	@echo "usb_input: the program builds, a USB key becomes MIT's own key position with the"
+	@echo "usb_input: shift level applied here, and a burst obeys the machine's own pacing"
 	@touch $@
 
 $(BUILD):
