@@ -175,10 +175,64 @@ undriven byte as ones, because that is what the SIP at DBGIN 0A22 does. muir's
 `Rtl::try_debug_request` already writes the answer as `0xff00 | status`, so
 the adapter must not zero it.
 
-Six of the eight status bits are zero in this fabric and will stay zero until
-the bus interface's control and error status registers at `0o766040` to
-`0o766076` are built. Bit 6 is `-FREE` and is real. Bit 7 is
-`WRITE THROUGH ENB` and is zero because write-through mode is not built.
+Five of the eight status bits are live. `Machine::debug_status` is
+`bus_error | NOT_FREE | WRITE_THROUGH`, and the eight lines the 8304 takes are
+the bus interface's error status register at `0o766044`. Seven of them are
+`rtl/machine/cadr_busint_regs.sv`'s, and four of those seven are flops it
+holds: the two NXM bits, `UB MAP ERROR` and `WRITE THROUGH ENB`. The eighth is
+`-FREE`, which is not a flop of that register at all. It is the interface's own
+busy, `Busint::busy`, and here it is `cadr_busint_xbus.sv`'s `busy`.
+
+The seven are one expression in `cadr_busint_regs.sv`, because the 74LS244 at
+REQERR 0C16 reads the same seven for `0o766044` and on the board there is one
+set of nets. `rtl/machine/cadr_memory_path.sv` joins `-FREE` to them at the
+instantiation, which is where REQERR joins them.
+
+The bit positions are the pins. 0B15 pin 1 pairs with pin 19, which is
+`XB NXM ERROR` on `DBD0`; pin 8 pairs with pin 12, which is
+`WRITE THROUGH ENB` on `DBD7`. The 244 agrees independently, and both give
+`machine::bus_error` and `busint::error_status`.
+
+Bits 1, 2 and 4 are zero and always will be. They are `XB PAR ERROR`,
+`LM ADR PAR ERROR` and `LM PAR ERROR`. muir says why: the rest of the register
+is parity errors, which cannot happen here.
+
+A read of `0o766044` by the processor always finds bit 6 set, because that read
+is itself a cycle of the interface's. `Machine::interface_read` writes the bit
+as a constant for that reason and this fabric does the same. The debugger's
+strobe is not a cycle of the interface's at all, so it finds the bus as it
+stands. That is the one bit of the eight the cable and the register read
+differently, and it is the same wire on the board.
+
+### The status strobe has one tick where a cycle has twenty-five
+
+This is a hazard worth naming rather than leaving to be found, and it is
+measured rather than reasoned.
+
+`rtl/plumbing/xilinx7/cadr_debug.xdc` relaxes every path into the carrier's
+`sts_dbd` register to four ticks, and the argument it gives is the debug
+CYCLE's: the diagnostic register block answers `busint::DIAGNOSTIC_NS` after
+`-UB MSYN`, so the word has had twenty-five ticks to settle by the time
+`DEBUG IN ACK` rises. A `-DB READ STATUS` strobe is not like that. It is
+acknowledged the instant it is made, the 74S10 at DBGIN 0A14, so the carrier
+captures one tick after `-DEBUG IN REQ` falls and the byte has had exactly one.
+While the byte was a constant zero nothing could move inside that tick. Four of
+its bits are flip-flops now.
+
+Measured on the routed memory-on board, with every one of these paths carrying
+the 40 ns requirement the exception gives them:
+
+| path | levels | delay |
+|---|---|---|
+| the read cycle's word, `vma_reg[14]` through the map | 25 | 28.453 ns |
+| the error flops, `err_xbus` and `err_map` | 6 | 6.376 ns |
+| the select, the carrier's own `dbg_in_req` | 3 | 6.411 ns |
+
+So the byte's own arcs are inside a single 10 ns tick with about 3.6 ns to
+spare, and the exemption is wider than they need rather than wrong for them.
+The `-FREE` term was not resolved separately by cell name in that query and is
+not quoted; it joins the same expression as the other seven and is bounded
+above by the 28.453 ns worst path, which is the read cycle's and not this one.
 
 ## The timeout belongs to the debugger
 
@@ -250,9 +304,11 @@ understood.
 ## What the debug cycle reaches in this fabric
 
 A debug cycle runs on the debuggee's Unibus at the latched address. This
-fabric's Unibus has two slaves: the diagnostic register block at `0o766000`,
-`rtl/machine/cadr_spy_registers.sv`, and the I/O board at `0o764100`,
-`rtl/machine/cadr_io_board.sv`.
+fabric's Unibus has three slaves: the diagnostic register block at `0o766000`,
+`rtl/machine/cadr_spy_registers.sv`; the I/O board at `0o764100`,
+`rtl/machine/cadr_io_board.sv`; and the bus interface's own registers,
+`rtl/machine/cadr_busint_regs.sv`, which are the interrupt block at
+`0o766040`-`0o766076` and the Unibus map at `0o766140`-`0o766176`.
 
 The register block is the one that matters, because it is CC's whole
 vocabulary. `spy_write(CLK, 0)` halts the machine and `spy_read(PC)` reads its
@@ -260,9 +316,33 @@ program counter, and both are ordinary Unibus cycles at `0o766000` plus twice
 the register number. So muir over this cable can do to the machine what muir
 over the lashup does to a simulated one.
 
-The Unibus map is not built, so a debug cycle cannot reach main memory. That
-is not a limit of the cable; it is the same absence the machine's own Unibus
-cycles meet. `cadr_spy_registers.sv` names it in its own header.
+**And a debug cycle reaches main memory.** The Unibus map is built, and so is
+the mapped window at `0o140000`-`0o177777` that translates through it: a
+foreign master's cycle there is an Xbus cycle at the translated address, which
+is `Machine::mapped_read` and `Machine::mapped_write`. The debug cable is the
+master those two were written for, `Rtl::try_debug_request` being the only
+place in muir that makes a map responder at all. `ub_foreign` in
+`rtl/machine/cadr_memory_path.sv` is the arbiter's grant to this master or to
+the console, and the machine's own cycle at the same address is not mapped: it
+goes through `busint::decode`, which answers `Responder::NoUnibus` over the
+whole window.
+
+The window's own limits are its module's and are not the cable's. A mapped page
+that is not main memory is never acknowledged, which is muir's own decision:
+`Busint::debug_xbus_edge` says the processor asking for the Xbus meanwhile, and
+a mapped page nothing answers, are not modelled, because the debuggee CC works
+on is halted and its map points at memory. A page whose `MAPVALID` is down, or
+whose `WRITEOK` is down on a write, sets `UB MAP ERROR` and is never answered
+either. In both cases the debugger's own timeout is what ends the cycle, which
+is what happens to any cycle nothing answers.
+
+`-UB TO MD` is the one mapped function this fabric decodes and does not
+perform. A write of the odd word through a page whose high five bits are ones
+is CC's `CC-WRITE-MD`; muir loads the processor's `MD` with it, and here the
+path would have to go through the `RDCYC` gate on `-LOADMD` inside
+`rtl/machine/cadr_microcycle.sv`. `cadr_busint_regs.sv`'s header says so at
+length. Such a cycle raises the decode, makes no Xbus cycle and is not
+answered.
 
 ## The debug master is the third master on the diagnostic bus
 
@@ -405,10 +485,43 @@ What it measures rather than assumes:
 
 Six mutation records are aimed at the splitter and one at the board's wiring.
 
+`build/unibus.pass` is the third check, and it holds what neither of the first
+two can. `build/dbgin.pass` gives the cable its own machine, with one Unibus
+slave on it and no map; `build/busint_regs.pass` holds the mapped window at its
+own seam, with the Xbus half two ports a testbench drives. Neither has the
+cable and the window in one design, and until they are in one design a debug
+cycle cannot reach main memory.
+
+That check's DUT is `rtl/machine/cadr_memory_path.sv`, so the master is the
+`cadr_dbgin` the board carries and the arbiter is the module the board
+instantiates. The testbench stands where the carrier stands and drives the
+cable and nothing else.
+
+What it measures rather than assumes:
+
+- all sixteen diagnostic registers read over the cable, each giving a word the
+  testbench drove from the address it was driving and never from `spy_eadr`;
+- a mode register write over the cable moving `PROMDISABLE`, which is a wire
+  out of the machine;
+- a map entry written and read back over the cable at `0o766146`, which is
+  above `0o400000` and so carries address bit 17 in the modifier register;
+- a mapped read, a mapped write and a read back through the map, with the
+  cable as the master, reaching the machine's own memory port at the byte
+  address `cadr_ddr_map::main_byte_address` gives muir's own translated page;
+- the odd word answered out of the read buffer with no memory cycle at all;
+- a cycle through a page whose `MAPVALID` is down never acknowledged over two
+  thousand ticks, and `UB MAP ERROR` set by it;
+- the error status byte read back over the cable eight times, high byte `0o377`
+  every time, with each of its five live bits made true by driving the machine
+  first and the three parity bits never seen set at all.
+
+Five mutation records are aimed at the join and at the cable's place on the
+arbiter.
+
 ## What is not built
 
 **The composition onto the board is done.** `rtl/machine/cadr_dbgin.sv` is
-instantiated in `rtl/machine/cadr_memory_path.sv` beside the two Unibus
+instantiated in `rtl/machine/cadr_memory_path.sv` beside the three Unibus
 slaves, `cadr_machine.sv` passes the cable up as ports, and
 `boards/arty-z7-20/cadr_arty.sv` puts `cadr_debug_window.sv` behind the GP1
 split and joins the two. The lines are the lines
@@ -417,15 +530,8 @@ for: it was the attachment before the attachment landed, and the arbiter it
 instantiates is the module `cadr_memory_path.sv` instantiates rather than a
 copy of it.
 
-The status byte is zero, and that is honest rather than finished.
-`Machine::debug_status` is `bus_error | NOT_FREE | WRITE_THROUGH`. `bus_error`
-is the bus interface's own error status register at `0o766044`, which
-`rtl/machine/cadr_busint_regs.sv` holds and does not bring out. `-FREE` is
-that interface's busy, which `cadr_busint_xbus.sv` does not bring out either.
-Write-through mode is not built. So six of the eight bits were always going to
-be zero and the other two are owed by two modules that do not expose them yet.
-`cadr_dbgin.sv` takes the byte as a port, so the day either does, the change
-is at the instantiation.
+**The status byte is real**, and what is left of it is three bits that cannot
+ever be anything but zero. The section above says which and why.
 
 **The modifier's second effect.** Bit 1, the debuggee reset, is wired: it
 leaves `cadr_machine` and joins the board's own reset and the console's pulse
