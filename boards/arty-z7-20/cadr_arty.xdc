@@ -73,3 +73,71 @@ set_false_path -from [get_ports { btn[*] }]
 ## of context, and a constraint naming an absent object is the "no valid
 ## object" warning that file has already been through once.
 set_false_path -to [get_cells -quiet witness_reg]
+
+## MIT's debug cable on the two Pmod headers, JA carrying DBGOUT and JB
+## carrying DBGIN. Pins from Digilent's Arty-Z7-20-Master.xdc verbatim, with
+## that file's own schematic names and header pin numbers kept in the comments
+## so that the mapping can be checked against the board rather than against
+## memory. Both headers are four differential pairs there; used single-ended,
+## as Digilent's own file uses them, they are eight signal pins each.
+##
+## FOUR PINS EACH WAY, one strobe and three data. A cable joins one board's
+## JA to another's JB, so its eight wires carry both directions:
+## `rtl/plumbing/cadr_dbg_pmod.sv` has the argument for splitting them rather
+## than sharing seven and turning them around.
+##
+## THE PIN ROLES ARE MIRRORED BETWEEN THE TWO HEADERS, so that a straight Pmod
+## cable maps pin one to pin one. Header pins 1 to 4 carry the request
+## direction and 7 to 10 the answer, on both connectors; what differs is which
+## end drives them. That also makes a cable from this board's JA to its own JB
+## a loopback of the whole carrier, which is the cheapest way to exercise it on
+## silicon with one board.
+##
+## AND THE EIGHTH WIRE IS A STROBE AND NOT A CLOCK. Nothing on either side is
+## clocked by it, which is just as well: JA3_P/JA3_N is the only clock-capable
+## pair on either header and JB has none at all, so a receiver on JB could not
+## have been clocked from the cable. It is on JA's own pins 7 and 8, where this
+## design's inputs are, which is the one place a clock-capable pin would have
+## been of any use if the arrangement had ever needed one.
+
+## Pmod JA --- DBGOUT: this board as somebody else's debugger.
+set_property -dict { PACKAGE_PIN Y18   IOSTANDARD LVCMOS33 } [get_ports { dbgout_stb }];      #IO_L17P_T2_34 Sch=JA1_P (Pin 1)
+set_property -dict { PACKAGE_PIN Y19   IOSTANDARD LVCMOS33 } [get_ports { dbgout_d[2] }];     #IO_L17N_T2_34 Sch=JA1_N (Pin 2)
+set_property -dict { PACKAGE_PIN Y16   IOSTANDARD LVCMOS33 } [get_ports { dbgout_d[1] }];     #IO_L7P_T1_34 Sch=JA2_P (Pin 3)
+set_property -dict { PACKAGE_PIN Y17   IOSTANDARD LVCMOS33 } [get_ports { dbgout_d[0] }];     #IO_L7N_T1_34 Sch=JA2_N (Pin 4)
+set_property -dict { PACKAGE_PIN U18   IOSTANDARD LVCMOS33 } [get_ports { dbgout_ret_stb }];  #IO_L12P_T1_MRCC_34 Sch=JA3_P (Pin 7)
+set_property -dict { PACKAGE_PIN U19   IOSTANDARD LVCMOS33 } [get_ports { dbgout_ret_d[2] }]; #IO_L12N_T1_MRCC_34 Sch=JA3_N (Pin 8)
+set_property -dict { PACKAGE_PIN W18   IOSTANDARD LVCMOS33 } [get_ports { dbgout_ret_d[1] }]; #IO_L22P_T3_34 Sch=JA4_P (Pin 9)
+set_property -dict { PACKAGE_PIN W19   IOSTANDARD LVCMOS33 } [get_ports { dbgout_ret_d[0] }]; #IO_L22N_T3_34 Sch=JA4_N (Pin 10)
+
+## Pmod JB --- DBGIN: this board as somebody else's debuggee.
+set_property -dict { PACKAGE_PIN W14   IOSTANDARD LVCMOS33 } [get_ports { dbgin_stb }];       #IO_L8P_T1_34 Sch=JB1_P (Pin 1)
+set_property -dict { PACKAGE_PIN Y14   IOSTANDARD LVCMOS33 } [get_ports { dbgin_d[2] }];      #IO_L8N_T1_34 Sch=JB1_N (Pin 2)
+set_property -dict { PACKAGE_PIN T11   IOSTANDARD LVCMOS33 } [get_ports { dbgin_d[1] }];      #IO_L1P_T0_34 Sch=JB2_P (Pin 3)
+set_property -dict { PACKAGE_PIN T10   IOSTANDARD LVCMOS33 } [get_ports { dbgin_d[0] }];      #IO_L1N_T0_34 Sch=JB2_N (Pin 4)
+set_property -dict { PACKAGE_PIN V16   IOSTANDARD LVCMOS33 } [get_ports { dbgin_ret_stb }];   #IO_L18P_T2_34 Sch=JB3_P (Pin 7)
+set_property -dict { PACKAGE_PIN W16   IOSTANDARD LVCMOS33 } [get_ports { dbgin_ret_d[2] }];  #IO_L18N_T2_34 Sch=JB3_N (Pin 8)
+set_property -dict { PACKAGE_PIN V12   IOSTANDARD LVCMOS33 } [get_ports { dbgin_ret_d[1] }];  #IO_L4P_T0_34 Sch=JB4_P (Pin 9)
+set_property -dict { PACKAGE_PIN W13   IOSTANDARD LVCMOS33 } [get_ports { dbgin_ret_d[0] }];  #IO_L4N_T0_34 Sch=JB4_N (Pin 10)
+
+## AN UNPLUGGED CONNECTOR MUST READ ZERO AND NOT FLOAT. The carrier treats a
+## strobe that never moves as a connector with nothing on it, so it never takes
+## a frame, holds its levels at zero and says it is not live --- which is the
+## idle cable, `-DEBUG IN REQ` up, and is what the SIP at DBGIN 0A22 does on
+## MIT's own board. A floating input decides that question by noise, so the
+## four inputs of each connector carry a pull-down.
+set_property PULLTYPE PULLDOWN [get_ports { dbgout_ret_stb dbgout_ret_d[*] }]
+set_property PULLTYPE PULLDOWN [get_ports { dbgin_stb dbgin_d[*] }]
+
+## AND THERE IS NO CLOCK ON THIS CONNECTOR, so there is no instant by which an
+## edge on it must arrive and no setup window to meet. What makes the link safe
+## is the beat: the far end holds each level for six ticks and the strobe is
+## sampled through two flops, so the data has been standing for two ticks when
+## it is taken and stands for three more. That is a property of the protocol
+## and not of the route, and an input delay constraint here would be a fiction
+## about a clock the board does not have. Saying it is a false path is the
+## honest statement, and it is the same statement the buttons already carry.
+set_false_path -from [get_ports { dbgout_ret_stb dbgout_ret_d[*] }]
+set_false_path -from [get_ports { dbgin_stb dbgin_d[*] }]
+set_false_path -to   [get_ports { dbgout_stb dbgout_d[*] }]
+set_false_path -to   [get_ports { dbgin_ret_stb dbgin_ret_d[*] }]

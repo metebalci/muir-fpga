@@ -518,6 +518,180 @@ What it measures rather than assumes:
 Five mutation records are aimed at the join and at the cable's place on the
 arbiter.
 
+## The cable on two Pmod connectors
+
+The register window is one transport. A second board is the other, and it is
+built. `rtl/plumbing/cadr_dbg_pmod.sv` puts MIT's cable on eight Pmod pins and
+`rtl/plumbing/cadr_dbg_join.sv` lets the connector and the window share one
+DBGIN page. JA carries DBGOUT and JB carries DBGIN.
+
+### Four pins each way, not one clock and seven data
+
+One Pmod cable joins one board's DBGOUT connector to another's DBGIN. Its
+eight wires therefore carry both directions: twenty signals towards the
+debuggee and nineteen back. The drawing described that as one clock and seven
+data, which is a half-duplex arrangement with the seven data lines shared and
+turned around. That is MIT's own arrangement one connector along, where the
+Am8304s at DBGOUT 0B21 and 0B22 face whichever way `-DEBUG > UD` says. It is
+not available here, for two reasons.
+
+The first is a pin. A receiver clocked by the cable needs a clock-capable
+input. Digilent's master file marks exactly one pair on the two headers:
+JA3_P and JA3_N, package pins U18 and U19. JB has none at all. The connector
+that would have to receive the clock is the one that cannot.
+
+The second is the turnaround. Two sets of drivers sharing seven wires must
+agree on the instant one stops and the other starts, and they have no back
+channel to agree on. A turnaround that misses does not corrupt a word. It puts
+two drivers on one wire.
+
+So the eight pins are split four and four: one strobe and three data lines in
+each direction. Nothing is shared and nothing is turned around. The eighth
+wire is a strobe rather than a clock, because nothing on either side is
+clocked by it. It is sampled through two flops like any other asynchronous
+input.
+
+### Eight beats each way
+
+Twenty signals cross in each direction. A frame must also say that it is a
+frame, because a connector with nothing on it reads as a constant, and a
+constant is indistinguishable from twenty levels that happen to be all ones or
+all zeros. The answer is the two-bit marker this document already describes in
+`STS`: all zeros reads `00`, all ones reads `11`, and a frame is taken only on
+`01`.
+
+Twenty payload bits and two marker bits is twenty-two, and twenty-two over
+three lines is eight beats. Eight beats is twenty-four slots, so two are zero
+fill, which the receiver checks as well. The beat count is eight each way, and
+the reason it is eight rather than seven is the marker.
+
+The count written down before anything was built was four out and three back.
+That was right for its own premise: twenty signals over seven data lines is
+three beats, and twenty-two is four. What does not hold is the premise,
+because a connector has to carry both directions.
+
+### The gap is the frame marker
+
+A receiver with no clock has to know which beat is beat zero. It is told by
+the silence. The sender emits its eight beats six ticks apart and then leaves
+the lines alone for eighteen. Any interval longer than twelve ticks with no
+transition is between frames, so the next transition is beat zero. That costs
+no wire and no slot.
+
+The marker and the gap answer different questions and both are kept. The gap
+says where a frame begins. The marker says whether what arrived was a frame at
+all.
+
+### What the carrier promises
+
+A level put in at one end stands at the other until it is replaced. Nothing is
+ever cleared and nothing is a pulse, because the debuggee's latches take
+`DBD<15:0>` at the trailing edge of their own strobe.
+
+A frame is presented whole or not at all. That is the promise that matters
+most. This document already names three hazards the cable has no defence
+against. A late address bit makes the wrong strobe. A late data line is
+latched instead of the intended word. A write flag that moves inside a request
+inverts the cycle. The window answers all three by making a request one 32-bit
+store, and a carrier that delivered a frame beat by beat would hand every one
+of them back. So the sender takes its snapshot once, at the first beat, and
+the receiver moves its outputs once, at the last.
+
+A connector with nothing on it presents zeros, which is the idle cable:
+`-DEBUG IN REQ` up and `DEBUG IN ACK` down. A connector that goes quiet while
+a request stands is taken to have been unplugged after `LOSS_T` ticks, and the
+levels go back to idle. On a real lashup the SIP at DBGIN 0A22 does that when
+somebody pulls the cable.
+
+### What the two connectors carry on this board
+
+JB is a second board's debugger arriving at this machine's DBGIN page. It
+joins the window's cable at `cadr_dbg_join.sv`. The rule there is that the
+first to assert holds until it lifts, with a tie going to the window. Nothing
+pre-empts, because a request that changes hands halfway is a request built
+from two debuggers, and a modifier register that takes a stray one in bit 1
+resets this machine.
+
+JA carries this board's own debugger outward, so a second board plugged in
+there sees the requests the emulator makes. What comes back is carried into
+the fabric and folded rather than consumed. That is a decision and not an
+oversight. This board's window already has a debuggee, its own machine, and
+taking a second one's answer as well would mean deciding which of two
+debuggees on one debugger's cable an acknowledgement came from. MIT's
+`DBD<15:0>` is an open-collector bus and would give the OR of them, which is a
+lashup rather than a design. Consuming it wants a second window at a second
+address behind `cadr_gp1_split.sv`, and that is not the carrier's decision to
+take.
+
+The pin roles are mirrored between the two headers, so a straight Pmod cable
+maps pin one to pin one. That also makes a cable from one board's JA to its
+own JB a loopback of the whole carrier, which is the cheapest way to exercise
+it on silicon with one board.
+
+### The cable's own requirement on a debugger
+
+A lift is a level like any other and has to cross a frame. On the direct cable
+the debuggee sees a lift at the next tick and the structural margin is four
+ticks. Over eight pins it is a whole frame, so a debugger that lifted and
+asked again inside that would have the far end see one request where it made
+two. The check sweeps it. The shortest lift that still latches is fifty-six
+ticks, against a frame of sixty-six.
+
+### The carrier's own deadline
+
+The word `cadr_dbgin.sv` drives on `DBD<15:0>` now ends at a frame register
+outside the machine as well as at the window's latch. It is the same cone
+`rtl/plumbing/xilinx7/cadr_debug.xdc` was written for, one module further out,
+and it was measured before it was constrained: -9.779 ns on 3,905 endpoints,
+the ten worst all in that one register, twenty-five logic levels from
+`vma_reg` to `tx_frame_reg`. `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` gives
+it four ticks, the same number and the same argument, and
+`boards/arty-z7-20/vivado/bitstream.tcl` asserts that no other register of the
+carrier carries it. With that in place the memory-on board closes at
++0.350 ns on 0 of 47,495 endpoints.
+
+### The check
+
+`build/dbg_pmod.pass` is `tb/cadr_dbg_pmod_harness.sv` and
+`tb/cadr_dbg_pmod_tb.cpp`. The testbench is the cable. The harness brings the
+eight wires of each connector out as ports, so every wire is delayed, skewed,
+shorted, crossed or unplugged by the check rather than assumed to be perfect.
+
+What crosses is poison. Every value sent has its low ten bits the complement
+of its high ten, no two values in a run are the same, and none is zero. A
+frame delivered half-built, a line shorted or two lines crossed then produces
+a word that relation refuses.
+
+The two ends are two boards and have two clocks. One phase runs the model at a
+twelfth of a tick so that the far end can be given a different period and a
+phase of its own, and each wire a delay of its own.
+
+What it measures rather than assumes, on its own output:
+
+- twenty-four levels each way delivered whole over an ideal wire, the worst
+  taking fifty-eight ticks against a frame of sixty-six;
+- six levels each way delivered with the far end in phase, out of phase, eight
+  per cent slow, eight per cent fast, and nine per cent fast over a long wire;
+- a cable pulled while a request stands stops being live and puts its levels
+  back to the idle cable;
+- a frame of all ones and a frame of all zeros both refused by the marker;
+- nine shorted or crossed data lines, every one of them visible;
+- the strobe sampled correctly two and a half ticks early and three and a half
+  late, against a beat of six;
+- eight addresses latched and sixteen diagnostic registers read over the
+  cable, the worst round trip two hundred and sixty ticks against the one
+  thousand one hundred and five a debugger waits before it gives up;
+- the machine halted and started again over the cable;
+- a cycle at an address nothing answers never acknowledged;
+- the page never changing hands inside a request, with a second debugger
+  asking for the modifier register with bit 1 set;
+- an unplugged DBGIN connector asking for nothing;
+- one board reset while the other keeps running, swept over seventy-one reset
+  lengths so that the restart lands at every offset inside a frame, the worst
+  taking a hundred and six ticks to come back.
+
+Eleven mutation records are aimed at it and at the board's wiring.
+
 ## What is not built
 
 **The composition onto the board is done.** `rtl/machine/cadr_dbgin.sv` is
@@ -557,14 +731,3 @@ console already has and is recorded here rather than hidden: the grant is
 taken with the processor's strobe down and held until the master lets go, and
 the instants either side of it are not MIT's.
 
-**The physical two-Pmod adapter.** A second real board over two eight-pin
-connectors is a different transport with its own serialisation. It is not
-needed for any of this and nothing here depends on it.
-
-One correction belongs with it. `README.md` says the enables on `DBD` are
-byte-wise, because `DBD` is driven by two octal Am8304s at DBGOUT 0B21 and
-0B22. muir read the netlist and found that both transceivers take the same
-enable net on pin 9, `-DBD ENB`, and the same direction net on pin 11,
-`-DEBUG > UD`. There is one enable and one direction for both bytes. That
-changes the count for whoever designs the physical adapter and has no bearing
-on the memory-mapped transport, where both signals stay inside the fabric.

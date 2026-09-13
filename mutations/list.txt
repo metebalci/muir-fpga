@@ -4379,6 +4379,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note anchor is the whole fold now**, from the request path's pulses to
 @note `sintr`, so that a line added anywhere in it rots this loudly again.
 @note
+@note **AND AN EIGHTH TIME**, when the debug cable's two Pmod connectors
+@note brought four more into the fold --- what a second board answers this
+@note board's own debugger with, whether either connector has anything on it,
+@note and which of two debuggers has the DBGIN page.  Found by the slice that
+@note added them, which validated every record's `@old` against the tree
+@note before writing its own, which is the rule six notes up followed at the
+@note time rather than by somebody else later.
+@note
 @note **AND AN EIGHTH TIME**, when the 2651's SYN registers and their pointer
 @note joined the fold as `ser_syn_face`.  That output exists for the fold:
 @note nothing reads those three registers back, on the chip or on the board,
@@ -4408,7 +4416,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr,
-                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit};
+                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit,
+                   ja_back, ja_live, jb_live, dbg_holder};
 @new
                    ch_wrote, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
@@ -4420,7 +4429,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    ser_reset, iob_intr, iob_vector, audio, csr_face,
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr,
-                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit};
+                   dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit,
+                   ja_back, ja_live, jb_live, dbg_holder};
 @end
 
 @mutation the-interrupt-reaches-no-pin
@@ -10631,4 +10641,254 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign ub_foreign = dbg_gnt || con_gnt;
 @new
   assign ub_foreign = con_gnt;
+@end
+
+# ---------------------------------------------------------------------------
+# The debug cable on two Pmod connectors
+#
+# `rtl/plumbing/cadr_dbg_pmod.sv` carries MIT's twenty-one wires over eight
+# pins, four each way, and `rtl/plumbing/cadr_dbg_join.sv` lets the connector
+# and the window share one DBGIN page.  Neither has a muir reference, so what
+# the records below aim at is a property rather than a column: what goes in one
+# end comes out the other, unchanged, whole, and in bounded time.
+#
+# WHAT MAKES THE CHECK ABLE TO SEE ANY OF IT is the poison.  A carrier fed a
+# constant passes whatever it does to it, so every value the check sends has
+# its low ten bits the complement of its high ten and no two values in a run
+# are the same.  A frame delivered half-built, a line shorted or two lines
+# crossed then produces a word that relation refuses, rather than a plausible
+# one.  That is why several records below can be written as a small
+# rearrangement rather than as a deletion.
+
+@mutation the-levels-move-before-the-frame-is-whole
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_pmod.sv
+@note THE ONE PROPERTY THE CARRIER EXISTS FOR, broken. A request crosses this
+@note cable as twenty levels, and `cadr_debug_window.sv` names three hazards
+@note that follow from any one of them being late: a late address bit makes
+@note the 74S139 decode the wrong strobe and runs a Unibus cycle nobody asked
+@note for, a late data line is latched instead of the intended word, and a
+@note write flag that moves inside a request inverts the cycle. The window
+@note answers all three by making a request one 32-bit store; a carrier that
+@note delivered a frame beat by beat hands every one of them back.
+@note
+@note Written as an extra assignment rather than as a moved one, so that the
+@note correct write still happens on the tick the frame completes --- which
+@note is the honest shape of this bug. It is not that the whole frame is
+@note wrong; it is that the levels are briefly a mixture of two frames.
+@old
+      if (complete && good) begin
+        rx_levels <= rx_next[PAYLOAD_W-1:0];
+@new
+      if (change) rx_levels <= rx_next[PAYLOAD_W-1:0];
+      if (complete && good) begin
+        rx_levels <= rx_next[PAYLOAD_W-1:0];
+@end
+
+@mutation one-flop-of-synchroniser-and-not-two
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_pmod.sv
+@note The strobe is the only signal on this cable that is synchronised, and
+@note the only one that needs to be: the data lines are sampled at an instant
+@note when they have been standing for two ticks. One flop instead of two
+@note leaves the comparison between a signal that has crossed one flop and a
+@note copy that has crossed two, so every transition is seen on two
+@note consecutive ticks and every beat is counted twice.
+@note
+@note `stb_s[1]` stays read --- `stb_q` follows it --- so lint cannot do the
+@note catching here, which is what this list asks of a record.
+@old
+  assign change = (stb_s[1] != stb_q);
+@new
+  assign change = (stb_s[0] != stb_q);
+@end
+
+@mutation the-frame-is-taken-a-beat-early
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_pmod.sv
+@note Eight beats is what twenty signals and a two-bit marker need over three
+@note lines. Taking the frame after seven puts the marker where a payload bit
+@note should be, so no frame is ever good and the far end never comes live ---
+@note which is the state an unplugged connector is in, and is why the check
+@note asserts that a cable with something on it IS live rather than only
+@note asserting what arrives when it is.
+@old
+  assign complete = change && (rx_beat == BEAT_W'(BEATS - 1));
+@new
+  assign complete = change && (rx_beat == BEAT_W'(BEATS - 2));
+@end
+
+@mutation the-gap-does-not-put-the-receiver-back-at-beat-zero
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_pmod.sv
+@note THE FRAME BOUNDARY IS THE SILENCE AND NOTHING ELSE. There is no wire and
+@note no slot spent on saying which beat is beat zero: the sender leaves the
+@note lines alone between frames and any interval longer than `GAP_MIN` is
+@note between them. Take that away and the two ends agree only because they
+@note came out of reset together.
+@note
+@note **Which is why the check resets ONE of the two boards.** With both reset
+@note together this mutation survives, and the reason is worth keeping: two
+@note ends that start counting at the same instant stay in step for ever, so a
+@note check that only ever resets both is a check that never asks what the gap
+@note is for. A button on one of two boards is the real case and it is the
+@note whole of this record's stimulus.
+@old
+      end else if (idle_t != IDLE_W'(GAP_MIN)) begin
+        idle_t <= idle_t + 1'b1;
+      end else begin
+        // The gap: whatever arrives next is beat zero.
+        rx_beat <= '0;
+      end
+@new
+      end else if (idle_t != IDLE_W'(GAP_MIN)) begin
+        idle_t <= idle_t + 1'b1;
+      end
+@end
+
+@mutation the-silence-a-receiver-calls-a-gap-is-shorter-than-a-beat
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_pmod.sv
+@note The constant walked rather than the structure broken. `GAP_MIN` has to
+@note sit between the beat and the gap with room either side for a tick of
+@note sampling jitter --- six and eighteen at the defaults, so twelve. Below
+@note the beat it fires between beats of a frame the sender is still sending,
+@note and the receiver is put back at beat zero in the middle of every frame.
+@old
+      end else if (idle_t != IDLE_W'(GAP_MIN)) begin
+@new
+      end else if (idle_t != IDLE_W'(4)) begin
+@end
+
+@mutation a-pulled-cable-leaves-its-levels-standing
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_pmod.sv
+@note On a real lashup the SIP at DBGIN 0A22 pulls `-DEBUG IN REQ` up when
+@note somebody pulls the cable out. In fabric there is nothing to unplug, so
+@note what does it is the dead man: `LOSS_T` ticks with no good frame and the
+@note levels go back to the idle cable. Without the levels going with it, a
+@note connector pulled while a request stands leaves `-DB NEED UB` down for
+@note ever, the debug master keeps this machine's Unibus, and every cycle the
+@note machine makes of its own waits --- which is the wedged bus the window's
+@note watchdog exists for one level further out, arriving by a door the
+@note watchdog cannot see.
+@note
+@note `rx_live` still falls, so a check that asked only whether the carrier
+@note knows the far end has gone would pass this. What catches it is asking
+@note what the levels read afterwards.
+@old
+        rx_levels <= '0;
+        rx_live   <= 1'b0;
+@new
+        rx_live   <= 1'b0;
+@end
+
+@mutation a-connector-with-nothing-on-it-is-taken-as-twenty-levels
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_pmod.sv
+@note THE MARKER IS WHAT THE EIGHTH BEAT IS FOR, and this is the record that
+@note holds it. Twenty signals over three lines is seven beats and
+@note twenty-one slots; what does not fit in the one spare slot is the
+@note two-bit marker, so the frame is eight beats and twenty-four. What the
+@note marker buys is that a connector with nothing on it cannot be mistaken
+@note for a word: all zeros reads `00` and all ones reads `11`, and a frame
+@note is taken only on `01`. Without it a shorted cable delivers twenty
+@note levels, `-DEBUG IN REQ` among them, and the debug master takes this
+@note machine's Unibus because a wire was pulled out.
+@note
+@note Written as a comparison against the complement rather than as a deleted
+@note test, so that `head_want` stays read and lint is not the thing doing the
+@note catching. Both rails then pass the head check and the check's own two
+@note claims --- that all ones is refused and that all zeros is refused ---
+@note are what see it.
+@note
+@note The first draft of this record set the beat count to seven instead, and
+@note the module then does not elaborate at all: with twenty-one slots the
+@note head is one bit wide and the marker's own part-select runs off the end
+@note of it. That is a true statement of the arithmetic and it is a BROKEN
+@note record, not a caught one --- `build_and_run` makes a build failure
+@note BROKEN for a check that simulates, and only a check that IS lint can
+@note declare otherwise. A live mutant is worth more than a refusal that has
+@note to be explained.
+@old
+  assign good     = (rx_next[SLOTS-1:PAYLOAD_W] == head_want);
+@new
+  assign good     = (rx_next[SLOTS-1:PAYLOAD_W] != ~head_want);
+@end
+
+@mutation the-join-crosses-the-two-debuggers-data-lines
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_join.sv
+@note Two debuggers at one DBGIN page is a thing MIT's board cannot have,
+@note there being one connector, so the join is fabric with no reference and
+@note a crossing in it has nothing to disagree with. What catches this is the
+@note check putting the window on the FAR arm and a second debugger on the
+@note near one: crossed, a debugger's own word never reaches the page and the
+@note first request over the cable latches whatever the other arm is holding.
+@old
+  assign dbd    = sel ? b_dbd : a_dbd;
+@new
+  assign dbd    = sel ? a_dbd : b_dbd;
+@end
+
+@mutation the-page-changes-hands-inside-a-request
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_join.sv
+@note The rule is that the first to assert holds until it lifts. Inverted, the
+@note page follows whoever is asking at this instant, so a second debugger
+@note asserting in the middle of a standing request replaces its address bits
+@note and its data lines under it.
+@note
+@note WHAT THAT COSTS IS NOT A CORRUPT WORD. The modifier register's bit 1 is
+@note `-DEBUGEE RESET` and is this machine's power-on reset, so a request
+@note built half from one debugger and half from another can halt the CADR
+@note because two debuggers happened to overlap. The check drives exactly
+@note that: a near arm asking for the modifier register with bit 1 set, while
+@note a request from the connector stands.
+@old
+  assign sel = busy ? held : (a_req ? 1'b0 : 1'b1);
+@new
+  assign sel = busy ? (a_req ? 1'b0 : 1'b1) : held;
+@end
+
+@mutation the-debug-connectors-are-crossed-at-the-top-level
+@check arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note The two Pmod connectors carry the same four signals in mirrored
+@note directions, so the wiring that tells them apart is at the instantiation
+@note and nowhere else. Crossed, the DBGIN end listens to the strobe coming
+@note back from JA while JB's own strobe reaches nothing.
+@note
+@note **LINT CATCHES THIS ONE BECAUSE IT ORPHANS A PIN**, and it is worth
+@note saying which crossings it cannot catch. `dbgin_stb` stops being read at
+@note all, which is UNUSEDSIGNAL. Swap two signals that are BOTH still read
+@note --- the two strobes, say --- and no tool anywhere sees it, which this
+@note repository already records about `.m_awaddr` and `.m_araddr`. What
+@note covers that case is the check, where the carrier's two ends are wired by
+@note the testbench and a crossed line produces a word the poison refuses.
+@old
+      .tx_stb(dbgin_ret_stb), .tx_d(dbgin_ret_d),
+      .rx_stb(dbgin_stb), .rx_d(dbgin_d)
+@new
+      .tx_stb(dbgin_ret_stb), .tx_d(dbgin_ret_d),
+      .rx_stb(dbgout_ret_stb), .rx_d(dbgin_d)
+@end
+
+@mutation the-debug-connectors-answer-reaches-no-pin
+@check arty
+@file boards/arty-z7-20/cadr_arty.sv
+@note What a second board answers this board's own debugger with is carried
+@note back into the fabric and folded, because consuming it would mean
+@note deciding which of two debuggees on one debugger's cable an
+@note acknowledgement came from --- and this board's own machine is always one
+@note of them. Folded, synthesis keeps the receiver; dropped from the fold,
+@note nothing reads it and the whole return half of JA is trimmed away, so the
+@note connector becomes a pin count rather than a path.
+@note
+@note The same shape as `dev_wdata`, and caught the same way: UNUSEDSIGNAL at
+@note the declaration, which is the only shape of this bug lint can see.
+@old
+                   ja_back, ja_live, jb_live, dbg_holder};
+@new
+                   ja_live, jb_live, dbg_holder};
 @end
