@@ -42,7 +42,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass \
        $(BUILD)/readout_face.pass $(BUILD)/checkpoint.pass \
-       $(BUILD)/chaosnet.pass $(BUILD)/serial.pass \
+       $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -403,12 +403,14 @@ MACHINE := rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv rtl/plum
            rtl/plumbing/cadr_bus_audit.sv \
            rtl/machine/cadr_memory_path.sv rtl/machine/cadr_machine.sv
 
-# `M_AXI_GP0` split four ways: the decode, the AXI3 register face the two new
-# slaves share, and the two cables' far ends.  Named once, because it goes on
-# every board that brings the port out --- the disk board and both proving
-# boards --- and a list that is not named once is a list that drifts.
+# `M_AXI_GP0` split five ways: the decode, the AXI3 register face the three
+# card faces share, and the far ends of the I/O board's four cables.  Named
+# once, because it goes on every board that brings the port out --- the disk
+# board and both proving boards --- and a list that is not named once is a
+# list that drifts.
 GP0 := rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_gp_regs.sv \
-       rtl/plumbing/cadr_chaos_cable.sv rtl/plumbing/cadr_serial_line.sv
+       rtl/plumbing/cadr_chaos_cable.sv rtl/plumbing/cadr_serial_line.sv \
+       rtl/plumbing/cadr_input_cables.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
@@ -1510,18 +1512,20 @@ $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 # ----------------------------------------------------- `M_AXI_GP0`, split
 #
 # `rtl/plumbing/cadr_gp0_split.sv` is the decode that lets the pack side, the
-# Chaosnet cable and the serial line share the port, and the property the
-# whole arrangement exists for is that EVERY address on it is answered in
-# both directions: a read nothing answers there hangs both Arm cores at one
-# PC each, measured on the board, and no software guard can catch it.
+# Chaosnet cable, the serial line and the keyboard-and-mouse face share the
+# port, and the property the whole arrangement exists for is that EVERY
+# address on it is answered in both directions: a read nothing answers there
+# hangs both Arm cores at one PC each, measured on the board, and no software
+# guard can catch it.
 #
 # THE HARNESS IS THE ATTACHMENT.  `tb/cadr_gp0_split_harness.sv` wires the
-# real four slaves behind the splitter exactly as `boards/arty-z7-20/
+# real five slaves behind the splitter exactly as `boards/arty-z7-20/
 # cadr_arty.sv` does, each answering with something only it can answer, and
-# puts `rtl/machine/cadr_io_board.sv` on the far side of the two new faces'
-# seams --- so the check sweeps the window AND carries a frame and a character
-# across in both directions.  `build/iob.pass` is what holds the card itself
-# to muir; this holds the two halves meeting, which nothing did before.
+# puts `rtl/machine/cadr_io_board.sv` on the far side of the three card
+# faces' seams --- so the check sweeps the window AND carries a frame, a
+# character, a keystroke and a mouse's movement across.  `build/iob.pass` is
+# what holds the card itself to muir; this holds the two halves meeting,
+# which nothing did before.
 GP0_SPLIT_SRC := tb/cadr_gp0_split_harness.sv $(GP0) \
                  rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_disk_pack.sv \
                  rtl/machine/cadr_io_board.sv
@@ -1801,8 +1805,17 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # somebody forgets to add to --- and a source added to the check but not to
 # the rule is a check that does not re-run when it changes, which is the
 # quiet half of a stale-artefact failure this project has met three times.
+#
+# **AND `cadr-terminal`'s JOINS THEM, WHICH IS A HOLE THE SCREEN SLICE LEFT.**
+# That program has had its own `make -C src check` since it was written --- 420
+# checks and fifteen mutations --- and nothing in `make check` ran it, so a
+# change to it was gated by whoever remembered.  It has a keyboard and a mouse
+# in it now, and the half of them that is a MAPPING has no other reference:
+# `input_keymap.h` is generated from muir but the state machine over it is
+# written out by hand, and this is what holds it.
 CHAOSNET_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/src
 SERIAL_SRC   := boards/arty-z7-20/linux/buildroot/package/cadr-serial/src
+TERMINAL_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src
 
 $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
                         $(wildcard $(CHAOSNET_SRC)/*.h) \
@@ -1821,6 +1834,16 @@ $(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h
 	$(MAKE) -C $(SERIAL_SRC) all COMMON=host
 	$(MAKE) -C $(SERIAL_SRC) clean
 	@echo "serial: the program builds, and the cable's far end agrees with muir's endpoint"
+	@touch $@
+
+$(BUILD)/terminal.pass: $(wildcard $(TERMINAL_SRC)/*.c) $(wildcard $(TERMINAL_SRC)/*.h) \
+                        $(TERMINAL_SRC)/screen_mutations.txt \
+                        $(TERMINAL_SRC)/mutate.py | $(BUILD)
+	$(MAKE) -C $(TERMINAL_SRC) check
+	$(MAKE) -C $(TERMINAL_SRC) all COMMON=host
+	$(MAKE) -C $(TERMINAL_SRC) clean
+	@echo "terminal: the program builds, its pixels agree with muir's own rule, and a viewer's"
+	@echo "terminal: keys become MIT's key positions through muir's own mapping"
 	@touch $@
 
 $(BUILD):

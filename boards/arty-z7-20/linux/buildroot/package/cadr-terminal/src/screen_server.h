@@ -10,16 +10,25 @@
 // one machine must not disagree about what a viewer is shown, and the
 // argument for each of those decisions is written out there.
 //
-// **THIS ONE IS READ-ONLY AND muir's IS NOT.**  muir's terminal is the
-// display, the keyboard and the mouse, because muir has an I/O board to
-// put a keystroke into.  The fabric has no I/O board yet, so a `KeyEvent`
-// or a `PointerEvent` here has nowhere to go: it is read off the wire,
-// counted, and dropped, and the program says so once.  Dropping it is not
-// the same as refusing the connection --- RFC 6143 gives a viewer no way
-// to be told a server takes no input, and every viewer sends pointer
-// events as the mouse crosses its window --- so a viewer that types at
-// this screen sees nothing happen, which is what a machine with no
-// keyboard attached does.
+// **AND IT IS NO LONGER READ-ONLY.**  It was, for as long as the fabric had
+// no I/O board to put a keystroke into; the card is in the machine now and
+// `rtl/plumbing/cadr_input_cables.sv` is the far end of its keyboard's cable
+// and its mouse's.  Given an `input_face`, a `KeyEvent` becomes a stream of
+// twenty-four-bit words through `input_keys.h` --- muir's own mapping, its
+// own table --- and a `PointerEvent` becomes deltas and a button mask.
+// Given NULL it is the read-only server it was, which is what a bitstream
+// without the input cables gets and what most of the host check runs.
+//
+// **THERE IS ONE MOUSE AND THERE ARE UP TO EIGHT VIEWERS.**  A
+// `PointerEvent` carries an absolute position and the CADR's mouse counts
+// deltas, so the server keeps the last position it was told and sends the
+// difference --- `muir::terminal::mouse::Mouse::pointer`, one count a pixel,
+// right and down positive, the first event only establishing where the
+// pointer is.  With two viewers moving pointers the difference is taken
+// between one viewer's position and the other's, and the machine's cursor
+// jumps.  muir has exactly this and for the same reason: the machine has one
+// mouse, and which of the people watching is holding it is not something RFB
+// says.
 //
 // **AND IT HAS RRE BESIDE RAW.**  `screen_rfb.h` has the measurement and
 // the reason.
@@ -34,6 +43,8 @@
 
 #include <stdint.h>
 
+#include "input_face.h"
+#include "input_keys.h"
 #include "screen_frame.h"
 #include "screen_rfb.h"
 
@@ -60,6 +71,18 @@ struct screen_server {
 	int said_input;
 	unsigned long connects, drops, refused;
 	unsigned long input_events;
+
+	// --- input.  NULL for the read-only server, which is what a board
+	// whose bitstream has no input cables gets.
+	struct input_face *input;
+	struct key_state keys;
+	// The last pointer position anybody reported, and whether anybody has.
+	uint16_t ptr_x, ptr_y;
+	int have_ptr;
+	uint8_t buttons;
+	// What went across, for a status line: words into the fabric, words
+	// the fabric had no room for, and pointer movements.
+	unsigned long keys_sent, keys_stuck, pointer_moves;
 	// What has gone out, by encoding, and what Raw would have cost for the
 	// rectangles RRE was used on: the measurement `docs/terminal.md` quotes.
 	unsigned long long sent_raw, sent_rre, saved_by_rre;

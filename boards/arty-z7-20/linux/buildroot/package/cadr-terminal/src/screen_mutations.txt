@@ -210,3 +210,308 @@
 @new
 		if (n && runs[n - 1].row + runs[n - 1].len == row + 1) {
 @end
+
+# ---------------------------------------------------------------------------
+# THE KEYBOARD AND THE MOUSE.  `input_keys.c` is `muir::terminal::keyboard`'s
+# state machine in C and `input_face.c` is the register face under it, and
+# what these break is the handful of decisions that are not data: the frame
+# bits, which half of a word says up, the shift worked around a character,
+# a modifier being a key of its own, the prefix, the dropped release, the
+# pointer's first event, and the room asked for before a word is written.
+#
+# **THE TABLE ITSELF IS NOT MUTATED AND SHOULD NOT BE.**  `input_keymap.h` is
+# generated from muir's `keyboard.rs` and `default.keys`, so a mutation of it
+# would be a mutation of a copy: what holds it is that the generator reads
+# muir, and what holds THAT is the eighteen named keys and fourteen modifiers
+# the check pins by position.
+
+@mutation keys-the-frame-bits-are-left-out
+@file input_keys.h
+@why the word's top eight bits are what say which keyboard sent it
+@note `keyboard::FRAME` is `0o37 << 19 | SOURCE << 16`: bits 23-19 "Reserved,
+@note must be 1's" and 18-16 the source ID of the NEW keyboard, so every
+@note up-down word has `word >> 16` equal to 0o371.  Without them the card's
+@note high half reads as zero and the machine is being typed at by a
+@note keyboard that does not exist --- and the high half is exactly where
+@note microcode 323's Unibus channel looks first.  Caught at "the frame bits
+@note of a key word".
+@old
+#define KEY_FRAME ((037u << 19) | (1u << 16))
+@new
+#define KEY_FRAME 0u
+@end
+
+@mutation keys-the-up-bit-says-down
+@file input_keys.h
+@why bit 8 is "1=key up, 0=key down", and a machine that decodes from the stream believes it
+@note There are no modifier bits in a word on this keyboard: the machine
+@note follows the stream of positions and works shift out for itself.  So a
+@note key whose release looks like a second press is a key the machine never
+@note sees come up --- and on a modifier that is a Control held for the rest
+@note of the run.  Caught at "'a' down and up", where the two words come out
+@note the same.
+@old
+	return KEY_FRAME | (up ? KEY_UP : 0u) | (position & 0177u);
+@new
+	return KEY_FRAME | (up ? 0u : KEY_UP) | (position & 0177u);
+@end
+
+@mutation keys-the-shift-is-not-worked-around-a-character
+@file input_keys.c
+@why RFB sends the shifted keysym and the machine wants the position with Shift down
+@note `Keyboard::tap`'s whole reason: a viewer pressing shift and 1 sends
+@note `Shift_L` and then `!`, and the Lisp Machine wants position 0o121 with
+@note the Shift key down.  Sending the position alone types `1` where the
+@note viewer typed `!`, which is the most visible thing this program can get
+@note wrong and the thing no round trip would catch.  Caught at "'!' with no
+@note shift held: the shift worked around it".
+@old
+	if (wants_shift && !held) {
+		push(k, key_up_down(shift, 0));
+		push(k, key_up_down(p, 0));
+		push(k, key_up_down(p, 1));
+		push(k, key_up_down(shift, 1));
+	} else if (!wants_shift && held) {
+@new
+	if (wants_shift && !held) {
+		push(k, key_up_down(p, 0));
+		push(k, key_up_down(p, 1));
+	} else if (!wants_shift && held) {
+@end
+
+@mutation keys-a-shift-the-viewer-holds-is-not-lifted
+@file input_keys.c
+@why the other half of the same decision, and the half a shifted screen never reaches
+@note A viewer holding Shift and pressing a key whose UNSHIFTED plane is the
+@note one wanted --- `(` with shift down, which is at 0o132 unshifted --- has
+@note the shift lifted around the key and put back.  Leaving it down types
+@note the shifted plane instead.  This is the branch the check reaches by
+@note holding `Shift_L` and then sending a plain letter's keysym, which is
+@note what a viewer with caps lock on actually sends.  Caught at "Shift_L and
+@note 'A': the plane the viewer holds" --- the words are right there, so this
+@note is caught by the count in "a character whose plane the viewer is not
+@note holding" instead, where the held shift has to come up.
+@old
+		for (unsigned i = 0; i < m; ++i)
+			push(k, key_up_down(up[i], 1));
+		push(k, key_up_down(p, 0));
+		push(k, key_up_down(p, 1));
+		for (unsigned i = 0; i < m; ++i)
+			push(k, key_up_down(up[i], 0));
+@new
+		push(k, key_up_down(p, 0));
+		push(k, key_up_down(p, 1));
+@end
+
+@mutation keys-a-modifier-is-tapped-like-a-character
+@file input_keys.c
+@why a shifting key is HELD, and holding it is the only thing it does
+@note `Keyboard::resolve` presses or releases a modifier at its own position
+@note "and nothing more".  Tapping it instead sends the key down and up at
+@note once, so a viewer holding Control and typing a letter sends Control
+@note down, Control up, and then the letter --- and the machine, which
+@note decodes from the stream, gets a plain letter every time.  Caught at
+@note "Shift_L", where the two words come out as four.
+@old
+	if (mp >= 0) {
+		if (down)
+			press(k, (uint8_t)mp);
+		else
+			release(k, (uint8_t)mp);
+		return;
+	}
+@new
+	if (mp >= 0) {
+		if (down)
+			tap(k, (uint8_t)mp, 0);
+		return;
+	}
+@end
+
+@mutation keys-every-release-is-dropped-and-not-only-a-tapped-ones
+@file input_keys.c
+@why a key the terminal did NOT send whole still owes the machine its release
+@note `resolve`'s first branch drops the release of a key that has already
+@note gone as a tap, and ONLY of such a key.  Dropping every release instead
+@note leaves every key down for ever, which on a modifier is a Control the
+@note machine goes on seeing for the rest of its run.  Caught at "Shift_L",
+@note where the two words come out as one.
+@note
+@note **AND THE OBVIOUS MUTATION HERE IS EQUIVALENT, WHICH IS WORTH
+@note RECORDING SO THAT NOBODY FILES IT AS A HOLE.**  Removing the early
+@note RETURN and keeping the bookkeeping --- `if (!down) (void)take_tapped(k,
+@note keysym);` --- survives, and not because the check is blind.  A tapped
+@note key's position is not in `down`, and every path the release then falls
+@note through to ends in `release()`, which does nothing for a position that
+@note is not down.  So the `tapped` set's whole job is to skip work that
+@note would be a no-op anyway, and the only live form is this one: the
+@note branch taken for keys it was never meant for.
+@old
+	if (!down && take_tapped(k, keysym))
+		return;
+@new
+	if (!down)
+		return;
+@end
+
+@mutation keys-a-prefix-sends-a-key-of-its-own
+@file input_keys.c
+@why a prefix sends nothing and gives the keysym after it a meaning
+@note `Scroll_Lock` is muir's answer to a host keyboard with fewer keys than
+@note this one: twenty-two of MIT's keys are reachable only behind it.  A
+@note prefix that was not one is a `Scroll_Lock` keysym looked for on MIT's
+@note table, found nowhere, and counted as unbound --- and every sequence
+@note behind it becomes the plain key.  Caught at "Scroll_Lock then '1',
+@note which is Roman I", where '1' comes out as '1'.
+@old
+static int is_prefix(uint32_t keysym)
+{
+	for (unsigned i = 0; i < KEY_PREFIX_COUNT; ++i)
+		if (KEY_PREFIX[i].first == keysym)
+			return 1;
+	return 0;
+}
+@new
+static int is_prefix(uint32_t keysym)
+{
+	(void)keysym;
+	return 0;
+}
+@end
+
+@mutation keys-a-latched-shifting-key-is-never-let-go
+@file input_keys.c
+@why a shifting key held behind a prefix is held for ONE key and no other
+@note `behind_prefix` presses a shifting key and latches it; the key that
+@note follows is tapped inside it and the latch let go after.  A latch that
+@note is never let go is a Control key down for the rest of the session,
+@note which on a Lisp Machine turns every character after it into a control
+@note character.  Caught at "Scroll_Lock l then 'x', which is Control-X",
+@note where the fourth word --- Control coming up --- never arrives.
+@old
+		const unsigned n = k->latches;
+		k->latches = 0;
+		for (unsigned i = 0; i < n; ++i)
+			release(k, k->latched[i]);
+		return;
+@new
+		k->latches = 0;
+		return;
+@end
+
+@mutation keys-a-viewer-that-goes-leaves-its-keys-down
+@file screen_server.c
+@why RFB has no "the viewer has gone" message, so the server owes the releases
+@note There are no modifier bits in a word on this keyboard, so a Control
+@note held when a connection drops is a Control held for the rest of the
+@note machine's run and every character after it is a control character.
+@note The only place this can be done is where the viewer is dropped.  It
+@note runs for the LAST viewer only, so that what somebody still watching is
+@note holding stands.  Caught at "...and released when the viewer went".
+@old
+	if (s->input && s->viewers == 1) {
+		key_all_up(&s->keys);
+@new
+	if (s->input && s->viewers == 0) {
+		key_all_up(&s->keys);
+@end
+
+@mutation mouse-the-first-pointer-event-moves-the-machine
+@file screen_server.c
+@why a PointerEvent is absolute and the mouse counts deltas, so the first one has nothing to subtract
+@note Without the guard a viewer connecting takes the difference against
+@note whatever the last one left --- or against zero on the first connection
+@note --- and flings the machine's cursor from wherever it was to wherever the
+@note pointer happened to enter the window.  `muir::terminal::mouse::Mouse::
+@note pointer` has the same guard for the same reason.  Caught at "%u
+@note movements for the first pointer event, wanting none".
+@old
+				const int first_ptr = !s->have_ptr;
+				if (!first_ptr) {
+@new
+				const int first_ptr = !s->have_ptr;
+				if (1) {
+@end
+
+@mutation mouse-the-deltas-are-the-other-way-round
+@file screen_server.c
+@why right and down are positive, which is `mouse.rs`'s "phase up is to the right and down"
+@note A mouse that goes the wrong way is the first thing anybody notices and
+@note the last thing a round trip catches, because the program and the check
+@note would be wrong the same way.  The check compares against hand-written
+@note deltas in both directions for that reason.  Caught at "right and down".
+@old
+					const int dx = (int)m.x - (int)s->ptr_x;
+					const int dy = (int)m.y - (int)s->ptr_y;
+@new
+					const int dx = (int)s->ptr_x - (int)m.x;
+					const int dy = (int)s->ptr_y - (int)m.y;
+@end
+
+@mutation mouse-the-wheel-reaches-the-cable
+@file input_face.c
+@why the CADR's mouse has three switches and RFB viewers send five bits
+@note RFB puts the wheel at bits 3 and 4 of the button mask, and this cable
+@note has three wires.  Writing the mask unmasked puts a wheel notch into
+@note bits the fabric does not carry --- harmless in the fabric, which masks
+@note again, and a lie in the register a bring-up reads back.  The mask is
+@note written once here so that there is one place to look.  Caught at "a
+@note wheel button, which the cable has no wire for".
+@old
+	f->write(f, IN_BUTTONS, mask & 0x7u);
+@new
+	f->write(f, IN_BUTTONS, mask);
+@end
+
+@mutation face-a-word-is-written-without-asking-for-room
+@file input_face.c
+@why a word written to a full queue is DROPPED, and the caller must keep it
+@note `input_face.h`: `KEY` on a full queue is "Dropped and counted in LOST".
+@note So the room is asked for before the word is written and a refusal is
+@note reported rather than swallowed --- which is `muir::terminal::keyboard::
+@note press` at its own backlog, one seam further out.  Without it a burst
+@note that overran the fabric's queue would be lost in the FABRIC, where no
+@note program can count it, and the words that WERE taken would be the wrong
+@note ones.  Caught at "the program did not record waiting for room" and at
+@note "%u words offered to a full face".
+@old
+	if (!(f->read(f, IN_STAT) & IN_ST_ROOM))
+		return 0;
+	f->write(f, IN_KEY, word & 0xFFFFFFu);
+	return 1;
+@new
+	f->write(f, IN_KEY, word & 0xFFFFFFu);
+	return 1;
+@end
+
+@mutation face-the-flush-is-not-written
+@file input_face.c
+@why the program's own leg against microcode 323's warm boot
+@note `uc-cadr.lisp` at `(LOC 6)` reads the keyboard's status register four
+@note instructions into microcode 323 and warm-boots if it is ready.  A word
+@note left in the fabric's queue by a previous run is therefore a machine
+@note sent somewhere nobody asked for, and `cadr-terminal` writes this after
+@note IDENT and before it binds its socket --- so a viewer cannot have typed
+@note at it yet.  Caught at "FLUSH: %u writes".
+@old
+	f->write(f, IN_CTL, IN_CTL_FLUSH);
+@new
+	(void)f;
+@end
+
+@mutation face-a-wide-delta-wraps-instead-of-holding
+@file input_face.c
+@why the register's fields are twelve bits and the fabric saturates what it OWES
+@note A pointer that jumped --- a viewer scrolling, or two viewers with
+@note pointers far apart --- gives a delta wider than the field, and a field
+@note that wraps sends the mouse the OTHER WAY by nearly its whole range.
+@note The fabric saturates what it owes rather than what it is handed, so
+@note the holding has to be here.  Caught at "a delta wider than the field".
+@old
+	if (v > 2047)
+		v = 2047;
+	if (v < -2048)
+		v = -2048;
+@new
+	(void)v;
+@end

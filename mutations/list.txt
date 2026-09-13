@@ -10040,3 +10040,292 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
         rdata_hold <= {23'd0, rx_valid, rx_char};
 @end
+
+# ---------------------------------------------------------------------------
+# The keyboard's cable and the mouse's, `rtl/plumbing/cadr_input_cables.sv`:
+# the fourth page of `M_AXI_GP0` and the far end of the I/O board's other two
+# cables.  These break the six things this module does that nothing else can
+# do for it --- the handshake the keyboard's word crosses on, the queue's
+# bound, the flush and the machine reset that keep a board out of microcode
+# 323's warm boot, the quadrature encoder's Gray order and direction, and its
+# rate.  Every one of them is caught by a Unibus read of the CARD's own
+# registers, which is the only thing that can hold a far end to anything.
+#
+# **THE ENCODER HAS NO muir REFERENCE AND ITS RATE HAS ONE.**  Nothing in
+# MIT's drawings is a register face, so the face is held to the protocol and
+# to read-back; but `mouse::MOUSE_STEP_NS` = 16,000 is muir's and so is the
+# Gray order, and the two records below aimed at them are the ones that say
+# so.
+
+@mutation input-strobes-a-word-without-the-cards-handshake
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note the keyboard's words must reach the card one at a time
+@note `muir::terminal::keyboard::deliver` is four lines --- "if
+@note board.keyboard_ready() { return false; }", else pop a word and press
+@note it --- and this module is that handshake in fabric.  Without the gate
+@note the queue empties into a shift register that holds ONE word, and MIT's
+@note own rule ("a word landing on one not yet read replaces it", the 74LS74
+@note at IOBKBD 0B30 having only `-READ.KBD.LOW` on its clear) makes the loss
+@note SILENT: the card ends up holding the last word of a burst and the three
+@note before it never happened.  A viewer typing a shifted character --- shift
+@note down, key down, key up, shift up --- would send the machine one key-up
+@note and nothing else.
+@note **WRITTEN AS THE GATE LOSING `kbd_ready` AND KEEPING THE PENDING
+@note FLAG**, because dropping both leaves `sent_pending` read by nothing
+@note and Verilator reports the UNUSEDSIGNAL --- lint would catch it where
+@note the check should, which is this project's bit-granularity lesson.
+@note `kbd_ready` itself stays read, in `stat_word`.  With the flag alone
+@note the words still go out back to back a few ticks apart, each
+@note overwriting the last: the handshake is gone and the rate the card is
+@note offered words at is the fabric's rather than the machine's.  Caught at
+@note "the word the machine read, in the order it was written" on the four
+@note words of a shifted keystroke.
+@old
+  assign taking = !kbd_ready && !sent_pending && (count != '0);
+@new
+  assign taking = !sent_pending && (count != '0);
+@end
+
+@mutation input-forgets-a-word-is-already-on-its-way
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note three words go out back to back in the two ticks before KBD READY comes back
+@note **THIS IS THE BUG THE MODULE WAS WRITTEN WITH AND THE ONE THE GATE
+@note ALONE DOES NOT CATCH.**  The card raises `KBD READY` at the edge it
+@note sees the strobe, `card_csr` is combinational off that flop and `csr_q`
+@note registers it one edge later --- so `kbd_ready` here is still DOWN for
+@note the two ticks after a word left, and a gate that consulted only it
+@note would strobe three words into a register that holds one.  The pending
+@note flag is what takes the round trip's latency out of the handshake, and
+@note without it the loss is the same silent one the record above describes.
+@note **WRITTEN AS THE FLAG NEVER BEING SET AND NOT AS THE GATE LOSING IT**,
+@note because dropping it from `taking` leaves `sent_pending` read by nothing
+@note and Verilator reports the UNUSEDSIGNAL --- lint would catch it where the
+@note check should, which is this project's bit-granularity lesson.  Set
+@note nowhere, the flag is read, cleared and reset as before and the gate is
+@note `!kbd_ready` alone.  Caught at "the word the machine read, in the order
+@note it was written".
+@old
+        ever_sent    <= 1'b1;
+        sent_pending <= 1'b1;
+@new
+        ever_sent    <= 1'b1;
+@end
+
+@mutation input-a-machine-reset-leaves-the-queue-standing
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note a key typed at the machine that was is not a key typed at the machine that is
+@note **THE AUTOBOOT TRAP, WHICH CLAUDE.md AIMS AT WHATEVER CARRIES KEYS.**
+@note Four instructions into microcode 323, `uc-cadr.lisp` at `(LOC 6)` reads
+@note `0o764112` and `(JUMP-IF-BIT-CLEAR (BYTE-FIELD 1 5) MD COLD-BOOT)`:
+@note `KBD READY` clear is a COLD boot and ready is a WARM one.  The console
+@note can restart the CADR while Linux runs, so a queue that survived the
+@note restart would put a word under that test and send the machine down a
+@note path nobody asked for --- and `0o46`, the only word the second test
+@note takes as a cold boot, is the Status key's position and not Rubout's, so
+@note no key a viewer can press makes it true.  `mach_rst` stays read, on the
+@note pending flag, so lint has nothing to say.  Caught at "the queue after
+@note the machine was reset".
+@old
+      if (flush || mach_rst) begin
+        head       <= '0;
+        tail       <= '0;
+        count      <= '0;
+@new
+      if (flush || mach_rst) begin
+        head       <= head;
+        tail       <= tail;
+        count      <= count;
+@end
+
+@mutation input-the-flush-leaves-the-queue-standing
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note a program restarted under a running machine must start with the seam empty
+@note The third leg of the same trap, and the one that belongs to a PROGRAM:
+@note `cadr-terminal` writes FLUSH after the guard and before it binds its
+@note socket, so a viewer cannot have typed at it yet.  A flush that emptied
+@note nothing would leave whatever a previous run left, and the words would
+@note arrive at the machine as soon as it read the one it was holding.
+@note Written as the flush term alone, so that the machine reset above stays
+@note live and this is not the same mutation twice.  Caught at "the queue
+@note after FLUSH".
+@old
+  assign flush = wr && (w_word == 10'd5) && wr_data[0] && wr_mask[0];
+@new
+  assign flush = wr && (w_word == 10'd5) && wr_data[0] && wr_mask[0] && 1'b0;
+@end
+
+@mutation input-the-mouse-turns-the-other-way
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note a dx to the right must raise the card's X counter, not lower it
+@note `muir::terminal::mouse` says "phase up is to the right and down", and
+@note the card's own `step_count` --- `up = o[0] ^ n[1]` on the inverted lines
+@note --- agrees: muir's `tests/ioboard.rs` walks a rightward move as
+@note board-side 00, 10, 11, 01 with counts 0, 1, 2, 3.  Counting the phase
+@note DOWN for a positive delta reverses both axes, and a mouse that goes the
+@note wrong way is the kind of thing a viewer notices and a check has to.
+@note The same family as `iob-the-mouse-turns-the-other-way`, which breaks
+@note the CARD's half of the same agreement.  Caught at "the mouse's X count
+@note after a step to the right".
+@old
+        if (owed_x > 12'sd0) begin
+          cx     <= cx + 2'd1;
+@new
+        if (owed_x > 12'sd0) begin
+          cx     <= cx - 2'd1;
+@end
+
+@mutation input-the-quadrature-is-not-gray
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note one step must move ONE line of a pair, or the card counts nothing at all
+@note `Encoders::levels` is `g = phase ^ (phase >> 1)` with `A` as `g & 2` and
+@note `B` as `g & 1`, which runs 00, 01, 11, 10 --- one line a step.  A plain
+@note binary count instead moves BOTH lines between phases 1 and 2, and
+@note IOBMS2's enable --- the 74LS86s at 0A26, counting only when exactly one
+@note line of the pair changed --- refuses it, so half the steps are lost and
+@note the counter arrives at half the delta.  This is the mutation that says
+@note the check reads the LINES the card latched and not only its count:
+@note both halves of "the quadrature the card latched" and "the mouse's X
+@note count" fail.  Caught at the first step.
+@old
+    return {p[1] ^ p[0], p[1]};
+@new
+    return {p[0], p[1]};
+@end
+
+@mutation input-the-mouse-steps-twice-as-fast
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note the step is muir's 16,000 ns and the card samples every 8,000
+@note `mouse::MOUSE_STEP_NS` is 16,000 and its own comment says what for:
+@note "two of the board's 8 us clocks, so that every step is latched into
+@note `NEW` and then into `OLD` before the next, and none is missed".  At
+@note 8,000 a step falls on EVERY `KB CLK^` and the card can still see each
+@note one, so the counts come out right and only the TIME is wrong --- which
+@note is why the check measures the span between the first step of a move
+@note and the last rather than only counting.  A halved rate is also a mouse
+@note that outruns a real one by a factor of two, which a viewer would feel
+@note and no count would show.  Caught at "the ticks 63 steps of the mouse
+@note took".
+@old
+  localparam int unsigned MOUSE_STEP_T = 16_000 / 5;
+@new
+  localparam int unsigned MOUSE_STEP_T = 8_000 / 5;
+@end
+
+@mutation input-the-mouse-comes-up-at-phase-zero
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note a mouse that has not moved must read as no mouse
+@note `muir::terminal::mouse`'s `Encoders::default` sits at `x_phase: 2`,
+@note which is both lines of each pair HIGH on the cable --- "what the board's
+@note 74LS14s read with nothing plugged in, so a mouse that has not yet moved
+@note reads as no mouse" --- and the card's four quadrature bits are then ZERO
+@note at rest, which `tests/ioboard.rs` asserts.  Coming up at phase 0 puts
+@note 0b0101 on those bits from power-on, and the card's comparator sees a
+@note change at its first `KB CLK^` and raises `MOUSE READY` for a mouse
+@note nobody touched.  Caught at "the mouse's quadrature lines at rest",
+@note before anything is written at all.
+@old
+      cx         <= 2'd2;
+      cy         <= 2'd2;
+@new
+      cx         <= 2'd0;
+      cy         <= 2'd0;
+@end
+
+@mutation input-a-word-offered-to-a-full-queue-is-queued-anyway
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note a full queue must LOSE a word and count it, never overwrite one waiting
+@note The queue is bounded and the loss is counted, so that a machine which
+@note has stopped reading loses words exactly as the cable does and `LOST` is
+@note the record of it rather than a silence.  Writing past the end without
+@note the guard overwrites the word at `tail` --- which is a word the program
+@note already believes is on its way --- and leaves `count` at its bound, so
+@note the loss is of the OLDEST unsent word and nothing says so.
+@note **WRITTEN AS A GUARD THAT IS ALWAYS TRUE AND NOT AS A DELETED ONE**,
+@note which is this project's bit-granularity lesson: deleting the `if`
+@note leaves `lost` with no writer and `room` with no reader, and Verilator
+@note would report both --- so lint would catch it where the CHECK should.
+@note Caught at "the queue's depth after a word was refused", the word having
+@note gone in rather than been counted in LOST.
+@old
+            if (room) begin
+              queue[tail] <= wr_data[23:0] & wr_mask[23:0];
+@new
+            if (room || 1'b1) begin
+              queue[tail] <= wr_data[23:0] & wr_mask[23:0];
+@end
+
+@mutation input-the-queues-count-misses-a-put-that-met-a-take
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note a word queued on the tick one left must still be counted
+@note The count is written ONCE from both sides for this reason, and it is
+@note the `cadr_serial_line.sv` lesson about two statements and one register
+@note in a second place: a program writing a word on the very tick the card
+@note took one would otherwise have the take stand and the put go missing,
+@note and the queue would report one fewer word than it holds for ever after.
+@note It drifts rather than breaking, which is the kind of defect that
+@note survives a check that only ever looks at an idle queue --- so the check
+@note writes four words while the card holds one and reads the depth back.
+@note Caught at "words still queued with the card holding the first".
+@old
+      count <= count
+             - (taking ? CNTW'(1) : CNTW'(0))
+             + ((wr && (w_word == 10'd2) && room) ? CNTW'(1) : CNTW'(0));
+@new
+      if (taking) count <= count - CNTW'(1);
+      else if (wr && (w_word == 10'd2) && room) count <= count + CNTW'(1);
+@end
+
+@mutation input-the-switches-are-not-pulled-to-ground
+@check gp0_split
+@file rtl/plumbing/cadr_input_cables.sv
+@note a pressed switch pulls its line LOW, and the card's 74LS14s invert it back
+@note `ioboard::MouseInterface::lines` reads a pressed switch as a ONE at the
+@note card, and `MouseOnCable` drives the line LOW to say so --- `lv(self.
+@note buttons >> k & 1 == 0)`.  So the cable carries the complement and the
+@note four quadrature lines do not, which is why one half of this expression
+@note is inverted and the other is not.  Driving the switches straight makes
+@note every button read backwards: three buttons held down on a mouse nobody
+@note is touching, which is `MOUSE READY` set for ever and a machine that
+@note thinks the pointer is being dragged.  Caught at "LINES: the seven the
+@note mouse is driving" and at "the three switches as the machine reads them
+@note at MOUSE Y".
+@old
+  assign mouse_lines = {~sw, cable(cy), cable(cx)};
+@new
+  assign mouse_lines = {sw, cable(cy), cable(cx)};
+@end
+
+@mutation input-the-serial-page-reaches-the-keyboards
+@check gp0_split
+@file rtl/plumbing/cadr_gp0_split.sv
+@note the third page's decode must not swallow the fourth
+@note The splitter's own family, and the fourth instance of it: a match one
+@note bit too wide takes a page that belongs to somebody else, and a program
+@note reading `IDENT` at `0x4000_3000` would get "SERI" where `input_face.h`
+@note expects "INPT".  The check reads every page of the gigabyte and the
+@note word each gives says which slave answered, so this is caught at the
+@note input page's own IDENT rather than at anything downstream of it.
+@note Same shape as `split-matches-the-pack-a-page-too-wide`.
+@note **WIDENED AT THE SERIAL ARM AND NOT AT THE INPUT ONE**, and that is
+@note measured rather than chosen: `target()` tests the four in order and
+@note the serial page is tested BEFORE the input page, so an input match
+@note widened downwards is masked by the arm above it and survives.  Same
+@note family as `tv-answers-its-neighbours` --- a mutation downstream of a
+@note guard tests the guard --- met inside one `if` chain.  Widened at the
+@note serial arm it is live: `0x4000_3000` answers "SERI" where the check
+@note reads every page of the gigabyte and expects "INPT".
+@old
+    else if (page == SER_BASE[31:12]) return SEL_SER;
+@new
+    else if (page[31:13] == SER_BASE[31:13]) return SEL_SER;
+@end

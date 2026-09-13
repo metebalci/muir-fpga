@@ -4,15 +4,18 @@ config BR2_PACKAGE_CADR_TERMINAL
 	bool "cadr-terminal"
 	select BR2_PACKAGE_CADR_COMMON
 	help
-	  The screen: the program on the processing system that shows the
-	  CADR's display to a VNC viewer.  The display board keeps no
-	  frame buffer in the fabric --- the picture is written into the
-	  display's own region of DDR --- so this maps that region and
-	  serves it over RFB, and needs no new fabric at all.
+	  The screen, the keyboard and the mouse: the program on the
+	  processing system that shows the CADR's display to a VNC viewer
+	  and carries the viewer's keys and pointer back to the machine.
+	  The display board keeps no frame buffer in the fabric --- the
+	  picture is written into the display's own region of DDR --- so
+	  this maps that region and serves it over RFB.
 
-	  READ-ONLY: no keyboard, no mouse, no pointer.  Those are the
-	  I/O board's and the I/O board is not in the fabric; a viewer's
-	  input is read, counted and dropped.
+	  A key becomes one of MIT's own key positions through muir's own
+	  mapping, and a pointer becomes counts on the mouse's quadrature
+	  lines, both through the I/O board's cables on M_AXI_GP0.  On a
+	  bitstream without those cables, and under --no-input, the screen
+	  is served read-only and a viewer's input is counted and dropped.
 
 	  It has an init script, as cadr-disk-pack does and unlike
 	  cadr-console: a viewer connects when somebody wants to look, and

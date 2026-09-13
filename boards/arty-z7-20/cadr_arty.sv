@@ -330,8 +330,14 @@ module cadr_arty #(
   // `M_AXI_GP0` behind `rtl/plumbing/cadr_gp0_split.sv`, and they are driven
   // from the `PORT` generate below --- so this file's tie-off is now only
   // for the board that has no PS at all, where there is no port for a
-  // program to reach them on.  The keyboard and the mouse stay tied off
-  // everywhere: `cadr-usb-input` is last in the order of work.
+  // program to reach them on.
+  // **AND THE KEYBOARD AND THE MOUSE HAVE JOINED THEM.**
+  // `rtl/plumbing/cadr_input_cables.sv` is the far end of the card's other
+  // two cables, on the fourth page of `M_AXI_GP0`, and `cadr-terminal`
+  // carries a viewer's keys and pointer to it.  They were tied off
+  // everywhere until this; they are tied off in `g_nomem` now, with the
+  // other two, for the same reason --- a cable with nothing on the end of
+  // it is a cable nobody has plugged in.
   logic        kbd_strobe;
   logic [23:0] kbd_code;
   logic [6:0]  mouse_lines;
@@ -342,9 +348,6 @@ module cadr_arty #(
   logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc;
   logic [12:0] chaos_rx_bits;
   logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
-  assign kbd_strobe     = 1'b0;
-  assign kbd_code       = 24'd0;
-  assign mouse_lines    = 7'd0;
   // What the card gives back.  Nothing on this board reads any of it: the
   // speaker has no pin, the 2651 is not fitted, and `iob_intr` and
   // `iob_vector` leave the machine as observations, the request itself going
@@ -1001,6 +1004,14 @@ module cadr_arty #(
     logic        gp0s_bvalid, gp0s_bready, gp0s_arvalid, gp0s_arready;
     logic        gp0s_rlast, gp0s_rvalid, gp0s_rready;
     logic [1:0]  gp0s_bresp, gp0s_rresp;
+    logic [11:0] gp0i_awaddr, gp0i_araddr;
+    logic [31:0] gp0i_wdata, gp0i_rdata;
+    logic [3:0]  gp0i_awlen, gp0i_arlen, gp0i_wstrb;
+    logic [11:0] gp0i_awid, gp0i_arid, gp0i_bid, gp0i_rid;
+    logic        gp0i_awvalid, gp0i_awready, gp0i_wlast, gp0i_wvalid, gp0i_wready;
+    logic        gp0i_bvalid, gp0i_bready, gp0i_arvalid, gp0i_arready;
+    logic        gp0i_rlast, gp0i_rvalid, gp0i_rready;
+    logic [1:0]  gp0i_bresp, gp0i_rresp;
     logic [31:0] gp0d_rdata;
     logic [3:0]  gp0d_arlen;
     logic [11:0] gp0d_awid, gp0d_arid, gp0d_bid, gp0d_rid;
@@ -1196,6 +1207,16 @@ module cadr_arty #(
         .ser_arvalid(gp0s_arvalid), .ser_arready(gp0s_arready),
         .ser_rdata(gp0s_rdata), .ser_rresp(gp0s_rresp), .ser_rid(gp0s_rid),
         .ser_rlast(gp0s_rlast), .ser_rvalid(gp0s_rvalid), .ser_rready(gp0s_rready),
+        .in_awaddr(gp0i_awaddr), .in_awlen(gp0i_awlen), .in_awid(gp0i_awid),
+        .in_awvalid(gp0i_awvalid), .in_awready(gp0i_awready),
+        .in_wdata(gp0i_wdata), .in_wstrb(gp0i_wstrb), .in_wlast(gp0i_wlast),
+        .in_wvalid(gp0i_wvalid), .in_wready(gp0i_wready),
+        .in_bresp(gp0i_bresp), .in_bid(gp0i_bid), .in_bvalid(gp0i_bvalid),
+        .in_bready(gp0i_bready),
+        .in_araddr(gp0i_araddr), .in_arlen(gp0i_arlen), .in_arid(gp0i_arid),
+        .in_arvalid(gp0i_arvalid), .in_arready(gp0i_arready),
+        .in_rdata(gp0i_rdata), .in_rresp(gp0i_rresp), .in_rid(gp0i_rid),
+        .in_rlast(gp0i_rlast), .in_rvalid(gp0i_rvalid), .in_rready(gp0i_rready),
         .dflt_awid(gp0d_awid), .dflt_awvalid(gp0d_awvalid),
         .dflt_awready(gp0d_awready),
         .dflt_wlast(gp0d_wlast), .dflt_wvalid(gp0d_wvalid),
@@ -1255,6 +1276,33 @@ module cadr_arty #(
         .ser_rx_framing(ser_rx_framing),
         .ser_plugged(ser_plugged),
         .irq(ser_irq)
+    );
+
+    // The keyboard's cable and the mouse's, which `cadr-terminal` drives
+    // with what a viewer types and where it points.  **`mach_rst` AND NOT
+    // `gp0_rst_s` FOR THE QUEUE'S FLUSH**, which is the whole reason that
+    // port exists: the console can restart the CADR while Linux runs, and
+    // the restarted microcode asks whether anybody is typing four
+    // instructions in --- so a key queued before the restart would send it
+    // down the warm-boot path.  The face's own reset stays the PORT's,
+    // because resetting an AXI state machine mid-transaction is how
+    // `con_mach_rst` would have frozen both Arm cores, which the note at
+    // `mach_rst` above sets out at length.
+    cadr_input_cables u_input (
+        .clk(clk), .rst(gp0_rst_s), .mach_rst(mach_rst),
+        .s_awaddr(gp0i_awaddr), .s_awlen(gp0i_awlen), .s_awid(gp0i_awid),
+        .s_awvalid(gp0i_awvalid), .s_awready(gp0i_awready),
+        .s_wdata(gp0i_wdata), .s_wstrb(gp0i_wstrb), .s_wlast(gp0i_wlast),
+        .s_wvalid(gp0i_wvalid), .s_wready(gp0i_wready),
+        .s_bresp(gp0i_bresp), .s_bid(gp0i_bid), .s_bvalid(gp0i_bvalid),
+        .s_bready(gp0i_bready),
+        .s_araddr(gp0i_araddr), .s_arlen(gp0i_arlen), .s_arid(gp0i_arid),
+        .s_arvalid(gp0i_arvalid), .s_arready(gp0i_arready),
+        .s_rdata(gp0i_rdata), .s_rresp(gp0i_rresp), .s_rid(gp0i_rid),
+        .s_rlast(gp0i_rlast), .s_rvalid(gp0i_rvalid), .s_rready(gp0i_rready),
+        .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
+        .mouse_lines(mouse_lines),
+        .card_csr(csr_face)
     );
 
     cadr_gp0_default u_gp0_rest (
@@ -1454,6 +1502,16 @@ module cadr_arty #(
     assign chaos_tx_done  = 1'b0;
     assign chaos_tx_abort = 1'b0;
     assign chaos_cbl_busy = 1'b0;
+    // The keyboard's cable and the mouse's, on the same argument.  **ALL
+    // ONES AND NOT ZERO on the mouse**: the seven lines are what the MOUSE
+    // drives, each switch pulled to ground when pressed and each quadrature
+    // line high at rest, so all ones is a cable with nothing moving on it
+    // and zero would be three buttons held down for ever.  It is also what
+    // `muir::terminal::mouse`'s `Encoders::default` sits at, and what the
+    // card's own `mnew` comes up holding.
+    assign kbd_strobe     = 1'b0;
+    assign kbd_code       = 24'd0;
+    assign mouse_lines    = 7'h7F;
 
   end
 
