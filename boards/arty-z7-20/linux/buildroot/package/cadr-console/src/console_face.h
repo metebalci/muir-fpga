@@ -303,17 +303,19 @@ void cons_start(struct console *c);
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
 // ClockControl and ../muir/tests/spy.rs:743-761).
 //
-// **THE FABRIC DOES NOT HAVE THIS YET.**  `SSTEP` and `SSDONE` are two flip
-// flops of the 74S174 at OLORD1 1A10 and `cadr_microcycle.sv` has neither;
-// `cadr_spy_registers.sv` takes bit 0 of a CLK write and drops bits 4:1.  So
-// the writes go out, land as a write of RUN=0, and the machine does not move.
-// This measures that rather than assuming it: CYCLES before and after, and
-// `moved` is the difference.  A silent no-op is the failure this project
-// keeps meeting.
+// **ONE MICROCYCLE A STEP, AND THE COUNT IS THE WITNESS.**  `SSTEP` and
+// `SSDONE` are two flip flops of the 74S174 at OLORD1 1A10 and `MACHRUN`'s
+// first term is `SSTEP AND -SSDONE`, so the machine runs for exactly the one
+// master clock in which the first is set and the second is not --- MIT's
+// `ir.bits` says "raising step clocks the machine once", and the bit must be
+// lowered again before the next.  So `moved` must equal `asked`, and the
+// caller is told both rather than being asked to trust one: a step that
+// silently clocked nothing, or clocked a stream, is the failure this project
+// keeps meeting and `cons_say_step` names either out loud.
 struct cons_step {
 	unsigned asked;		/* how many steps were asked for */
 	uint64_t before, after;	/* CYCLES either side */
-	uint64_t moved;		/* after - before: 0 on today's fabric */
+	uint64_t moved;		/* after - before: must equal `asked` */
 	int ssdone;		/* FLAG-1 bit 9 after: the board's own witness */
 };
 void cons_step(struct console *c, unsigned n, struct cons_step *s);

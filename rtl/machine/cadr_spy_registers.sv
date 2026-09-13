@@ -58,6 +58,22 @@ module cadr_spy_registers (
 
     // --- the console state, which is this block's
     output var logic        run,          // RUN, before OLORD1 1A10 registers it
+    // The other four bits of the clock control register: the 74S175 at OLORD1
+    // 1A09 beside `RUN`'s own 74S74 at 1A14.  MIT's `ir.bits` numbers them in
+    // OCTAL --- 1 Run, 2 Step, 4 NOP, 10 IDEBUG, 20 LDSTAT --- so CC's
+    // `CC-CLOCK` writes 2, `CC-DEBUG-CLOCK` 12 and `CC-NOOP-DEBUG-CLOCK` 16,
+    // all octal.  Reading that 16 as decimal gives LDSTAT alone, which loads
+    // the statistics counter and clocks nothing.
+    output var logic        step,         // STEP, bit 1
+    output var logic        nop11,        // NOP11, bit 2
+    output var logic        idebug,       // IDEBUG, bit 3
+    output var logic        ldstat,       // LDSTAT, bit 4
+    // The debug IR, the six 74S374s on page DEBUG, loaded sixteen bits at a
+    // time by `-LDDBIRL`, `-LDDBIRM` and `-LDDBIRH` --- EADR 0, 1 and 2,
+    // which are also the three registers that READ `IR`.  "Read and write at
+    // the same address are uncorrelated", as the interface's own document
+    // says, and this is where that bites.
+    output var logic [47:0] debug_ir,
     output var logic        promdisable,  // PROMDISABLE, mode register bit 5
     output var logic        errstop,      // ERRSTOP, bit 2
     output var logic        stathenb,     // STATHENB, bit 3
@@ -78,9 +94,12 @@ module cadr_spy_registers (
   assign selected = (ub_addr >= BASE) && (ub_addr < BASE + 18'o40);
   assign spy_eadr = ub_addr[4:1];
 
-  // spy::MODE, spy::CLK and spy::OPC_CONTROL.
-  localparam logic [3:0] REG_CLK  = 4'd3;
-  localparam logic [3:0] REG_MODE = 4'd5;
+  // spy::MODE, spy::CLK and the three halves of the debug IR.
+  localparam logic [3:0] REG_IR_LOW  = 4'd0;
+  localparam logic [3:0] REG_IR_MED  = 4'd1;
+  localparam logic [3:0] REG_IR_HIGH = 4'd2;
+  localparam logic [3:0] REG_CLK     = 4'd3;
+  localparam logic [3:0] REG_MODE    = 4'd5;
 
   logic [8:0] elapsed;
   logic       running;
@@ -118,6 +137,15 @@ module cadr_spy_registers (
       // whose boot button has just been let go, which is what every trace
       // here starts from.  A separate button is what a console would add.
       run         <= 1'b1;
+      // The 74S175 at OLORD1 1A09 is cleared by `-RESET`, where `RUN`'s own
+      // flip flop at 1A14 is preset by `-BOOT` and cleared by `-CLOCK RESET
+      // A`: a console that resets the machine leaves it running or halted as
+      // it was, and `Machine::reset_console_registers` says the same.
+      step        <= 1'b0;
+      nop11       <= 1'b0;
+      idebug      <= 1'b0;
+      ldstat      <= 1'b0;
+      debug_ir    <= 48'd0;
       promdisable <= 1'b0;
       errstop     <= 1'b0;
       stathenb    <= 1'b0;
@@ -135,7 +163,22 @@ module cadr_spy_registers (
       if (pending && landing) begin
         pending <= 1'b0;
         unique case (held_eadr)
-          REG_CLK: run <= held[0];
+          // **THE CLOCK CONTROL REGISTER IS FIVE BITS AND NOT ONE.**  It took
+          // bit 0 alone until CC, over the debug cable, wrote `16` octal at
+          // it and the machine did not move: `CC-EXECUTE` loads the debug IR
+          // and then asks for one clock, and with `STEP`, `NOP11` and
+          // `IDEBUG` all dropped the forced microinstruction never ran and
+          // the debugger read back its own stale OBUS.
+          REG_CLK: begin
+            run    <= held[0];
+            step   <= held[1];
+            nop11  <= held[2];
+            idebug <= held[3];
+            ldstat <= held[4];
+          end
+          REG_IR_LOW:  debug_ir[15:0]  <= held;
+          REG_IR_MED:  debug_ir[31:16] <= held;
+          REG_IR_HIGH: debug_ir[47:32] <= held;
           REG_MODE: begin
             mode_speed  <= {held[1], held[0]};
             errstop     <= held[2];
@@ -182,11 +225,11 @@ module cadr_spy_registers (
   assign ub_rdata = spy_rdata;
 
   logic unused;
-  // `held<7:6>` are the two pulses, and they are taken from the bus at the
-  // write pulse's leading edge rather than from the held word: they are the
-  // pulse, not the register.
-  assign unused = &{1'b0, ub_wdata[15:8], ub_wdata[4], held[15:6], held[4],
-                    ub_addr[17:5], ub_addr[0]};
+  // `held<7:6>` are the mode register's two pulses, and they are taken from
+  // the bus at the write pulse's leading edge rather than from the held word:
+  // they are the pulse, not the register.  Every bit of `held` is read now,
+  // the debug IR taking all sixteen.
+  assign unused = &{1'b0, ub_addr[17:5], ub_addr[0]};
 
 endmodule
 

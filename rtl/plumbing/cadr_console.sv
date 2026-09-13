@@ -384,18 +384,17 @@
 // bound: `tb/cadr_console_tb.cpp` holds the grant off and requires the read
 // to complete and to say it was lost.
 //
-// **WHAT IS NOT HERE.**  `STEP`, `NOP11`, `IDEBUG`, the debug IR, `LPC.HOLD`
-// and `OPCCLK` --- the clock control register's bits 4:1 and the whole OPC
-// control register --- are *written* through here, because a write of the
-// CLK register is a write of the CLK register; but the board's own
-// single-step is `SSTEP` and `SSDONE`, two flip flops of the 74S174 at OLORD1
-// 1A10, and they are in `cadr_microcycle.sv`, which says at its port list
-// that "the fabric has no console yet".  `cadr_spy_registers.sv` takes bit 0
-// of a CLK write and drops the rest.  So `HALT` and `START` --- bit 0, `RUN`
-// --- are the whole of what a console can make this machine do today, and
-// `docs/console.md` names the two hunks that would add the rest.  Examining
-// and depositing main memory is CC's `CC-EXECUTE-R`, which loads a
-// microinstruction into the debug IR and clocks it: same two hunks.
+// **WHAT IS NOT HERE.**  `LPC.HOLD` and `OPCCLK` --- the OPC control
+// register, EADR 4 --- are *written* through here, because a write of a
+// diagnostic register is a write of a diagnostic register, and they reach
+// nothing: `cadr_spy_registers.sv` stores neither and `cadr_microcycle.sv`
+// reads neither, so `CC-SAVE-OPCS` cannot shift the history out.
+//
+// The clock control register IS built, all five bits of it, and so is the
+// debug IR.  So `HALT`, `START`, a single step and `CC-EXECUTE-R` --- a
+// microinstruction loaded into the debug IR and clocked --- are all things a
+// console can make this machine do.  What examining main memory still wants
+// is a master for the mapped window, which is the debug cable's.
 //
 // This module does not know any of that.  It carries `SPY<15:0>` both ways
 // and the register block decides.

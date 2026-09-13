@@ -81,11 +81,17 @@
 //     a write of the memory, not a read of it --- so `dr`, `dp`, `dn` and
 //     `dpc` are unexercised, and the testbench asserts that rather than
 //     leaving it to be assumed.
-//   - The console: `NOP11`, `IDEBUG` and the debug IR, `LPC.HOLD`, the OPC
-//     clock a halted machine is stepped by, `-LDSTAT`, and the single-step
-//     term of `MACHRUN`, `SSTEP AND -SSDONE`.  `srun`, `promdisable`,
-//     `errstop`, `stathenb` and the speed bits are the console's registers
-//     as OLORD1 1A09 and 1A10 hold them, so they come in as ports.
+//   - The OPC control register: `LPC.HOLD`, and `OPCCLK`, the OPC clock a
+//     halted machine's history is shifted out by.  Those are OLORD1 1A08 and
+//     are the console's other write register; nothing here reads them.
+//
+//     **The CLOCK control register is here in full**, all five bits of it ---
+//     `RUN`, `STEP`, `NOP11`, `IDEBUG` and `LDSTAT` --- with the debug IR
+//     beside them, because a debugger over MIT's cable cannot do its two
+//     central acts without: single-step the machine, and force a
+//     microinstruction into `IR` to read a scratchpad with.  They come in as
+//     ports, as the mode register's bits do, because the register that holds
+//     them is `cadr_spy_registers.sv` on the other side of the cables.
 //   - `-HANG` and `-WAIT`.  `hang` is passed to the generator and nothing
 //     here raises it; VCTL1 is slice 5, where `src/rtl.rs`'s `stall` is.
 //
@@ -106,6 +112,18 @@ module cadr_microcycle #(
     input  var logic        errstop,      // ERRSTOP, bit 6
     input  var logic        stathenb,     // STATHENB, bit 11
     input  var logic [1:0]  mode_speed,   // {SPEED1, SPEED0}, bits 4 and 3
+
+    // --- the other four bits of the clock control register, and the debug IR
+    // --- the console loads in three halves.  `spy::ClockControl`, and MIT's
+    // --- own `ir.bits`, whose numbers are OCTAL: 1 Run, 2 Step, 4 NOP,
+    // --- 10 IDEBUG, 20 LDSTAT.  A write of decimal 16 is LDSTAT and clocks
+    // --- nothing; CC's `CC-NOOP-DEBUG-CLOCK` writes 16 OCTAL, which is STEP
+    // --- with NOP11 and IDEBUG.
+    input  var logic        step,         // STEP, before OLORD1 1A10 registers it
+    input  var logic        nop11,        // NOP11, the console's own nop
+    input  var logic        idebug,       // IDEBUG: the debug IR on the I bus
+    input  var logic        ldstat,       // LDSTAT: the counter loads from IWR
+    input  var logic [47:0] debug_ir,     // the six 74S374s on page DEBUG
 
     // --- the diagnostic bus's read side: EADR<3:0> in, SPY<15:0> back.
     // --- `Engine::spy_read` is this, and it is almost all processor state.
@@ -231,14 +249,38 @@ module cadr_microcycle #(
   // registered so that it stands high over the tick the registers actually
   // moved in, which is what anything watching them has to line up with.
 
-  // page OLORD1, the 9S42 at 1A15.  The single-step term is the console's and
-  // there is no console; `-WAIT` is VCTL1's and slice 5 has it.
-  logic errhalt, stathalt, machrun;
+  // page OLORD1, the 9S42 at 1A15, and all six of its inputs:
+  //
+  //     MACHRUN = (SSTEP AND -SSDONE) OR (SRUN AND -ERRHALT AND -WAIT
+  //                                       AND -STATHALT)
+  //
+  // **`-WAIT` IS IN THE SECOND TERM ONLY, AND THAT IS THE WHOLE OF WHY THE
+  // STEP GOES OUTSIDE IT.**  A single step runs its one microcycle with the
+  // bus still busy --- muir bypasses the `Wait` stall when `stepping` for the
+  // same reason --- so a step taken while the machine is waiting for memory
+  // is not held off.  `-HANG` is different: it parks the generator itself and
+  // is not bypassed, here or in muir.
+  //
+  // **AND NOTHING CHECKS THAT SPLIT, WHICH IS SAID HERE RATHER THAN LEFT TO
+  // BE ASSUMED.**  `build/sstep.pass`'s script never reaches a memory cycle,
+  // so `wait_` is false on every row of it: moving the step INSIDE `-WAIT`
+  // was built and run against that check and survived.  It is written the
+  // board's way on the netlist's authority and on muir's, not on a
+  // measurement, and what would settle it is a step taken while the machine
+  // waits for memory --- which wants the memory path under the processor.
+  //
+  // `SSTEP` and `SSDONE` are `STEP` registered once and twice on `MCLK5A` at
+  // OLORD1 1A10, so `MACHRUN` is up for exactly the one master clock in which
+  // `SSTEP` is set and `SSDONE` is not.  MIT's `ir.bits` says the same thing
+  // in four words: "raising step clocks the machine once".  It must be
+  // lowered again before the next, which is why CC writes `2` then `0`.
+  logic errhalt, stathalt, machrun, stepping;
   logic halted, statstop;
-  logic srun;
+  logic srun, sstep, ssdone;
   assign errhalt  = errstop && halted;
   assign stathalt = stathenb && statstop;
-  assign machrun  = srun && !errhalt && !stathalt && !wait_;
+  assign stepping = sstep && !ssdone;
+  assign machrun  = stepping || (srun && !errhalt && !stathalt && !wait_);
 
   logic cpu_edge;
   assign cpu_edge = mclk_edge && machrun;
@@ -378,7 +420,7 @@ module cadr_microcycle #(
   logic promdisabled;
   logic bottom_1k, promenable;
   assign bottom_1k  = pc < 14'(PROM_WORDS);
-  assign promenable = bottom_1k && !promdisabled && !iwrited;
+  assign promenable = bottom_1k && !promdisabled && !iwrited && !idebug;
 
   // page IWR: `IR<15:0>` of the A bus over the whole of the M bus.  The word
   // a `WRITE-I-MEM` stores, and what the I bus carries while `IWRITED` is up
@@ -395,8 +437,15 @@ module cadr_microcycle #(
   // out of the RAM is what the board does, and it is what makes every one of
   // the 16,384 words the boot PROM loads a write *and* a read that IR is then
   // compared on.  Bypassing would leave the control store write-only.
+  //
+  // **AND `IDEBUG` PUTS THE DEBUG IR THERE INSTEAD.**  The six 74S374s on
+  // page DEBUG drive the I bus while it is up: `RAMDISABLE` is `IDEBUG OR
+  // ...` at ICTL 1A15 and `-IDEBUG` is an input of `-PROMENABLE` at PCTL
+  // 1C19, which is why it takes the PROM off as well.  This is how CC
+  // executes an instruction of its own on the debuggee, and with `NOP11` it
+  // is how CC reads a scratchpad without executing anything.
   logic [47:0] i;
-  assign i = promenable ? prom_q : imem_q;
+  assign i = idebug ? debug_ir : (promenable ? prom_q : imem_q);
 
   // `-IWEA` is `NAND(WP5A, IWRITEDA)` at ICTL 1B13: the control store write
   // pulse is -TPWPIRAM, and the word is stored on its trailing edge, in the
@@ -419,9 +468,11 @@ module cadr_microcycle #(
   logic trap;
 
   // `-INOP` is the 74S175's own -Q at CONTRL 3D26 wire-ANDed with the
-  // open-collector 74S08 at 3E14; `NOP11` is the console's and is not here.
+  // open-collector 74S08 at 3E14, which is what `NOP11` pulls down: the
+  // console's own nop, which stops the instruction in `IR` having any effect
+  // while leaving it there to be looked at.
   logic inop;
-  assign nop = trap || inop;
+  assign nop = trap || inop || nop11;
 
   // page SOURCE: the class, off IR<44:43>, and the misc function off
   // IR<11:10>.  A nopped cycle decodes as nothing at all.
@@ -716,7 +767,9 @@ module cadr_microcycle #(
   assign next_instr        = spop && !(srcspcpop && !nop) && spcv[14];
   // The 74S10 at PDLCTL 4D10: a WRITE-I-MEM raises it too. `IDEBUG` is the
   // console's and there is none.
-  assign imod              = destimod0 || destimod1 || iwrited;
+  // `IMOD` is asserted under `IDEBUG` too, so that the parity check ignores a
+  // word the control store never held.
+  assign imod              = destimod0 || destimod1 || iwrited || idebug;
 
   logic spcmung, spc1a;
   logic [13:0] spc_target;
@@ -1311,11 +1364,12 @@ module cadr_microcycle #(
   // Register 3 has no read select --- Y3 of SPY0 1F01 is not connected --- so
   // no buffer drives the bus and it reads as the open bus, all ones.
   //
-  // The parity flags in FLAG-1 and the console's SSDONE are zero: no memory
-  // here has parity to get wrong, and there is no console to single-step.
+  // The parity flags in FLAG-1 are zero: no memory here has parity to get
+  // wrong.  `SSDONE` at bit 9 is the board's own witness that the step the
+  // console asked for has run, and it is read as often as `SRUN`.
   logic [15:0] spy_flag1, spy_flag2;
   assign spy_flag1 = {!wait_, 1'b1, 1'b1, promdisabled, !stathalt, halted,
-                      1'b0, srun, 8'd0};
+                      ssdone, srun, 8'd0};
   assign spy_flag2 = 16'hc0c0
                    | {2'b00, wmapd, destspcd, iwrited, imodd, pdlwrited, spushd,
                       2'b00, 1'b0, nop, !vmaok, jcond, pcs1, pcs0};
@@ -1355,6 +1409,10 @@ module cadr_microcycle #(
       // `Engine::boot` raises SRUN with RUN rather than a master clock later,
       // so the first microcycle runs. See the note in cadr_spy_registers.sv.
       srun         <= 1'b1;
+      // `-CLOCK RESET A` clears the two step flip flops: a machine coming out
+      // of reset has no step owed to it.
+      sstep        <= 1'b0;
+      ssdone       <= 1'b0;
       inop         <= 1'b0;
       iwrited      <= 1'b0;
       halted       <= 1'b0;
@@ -1460,7 +1518,12 @@ module cadr_microcycle #(
         // following MEMRQ through a WAIT --- which is what ends the wait.
         mbusy_sync <= (memstart && vmaok) || mbusy_next;
         promdisabled <= promdisable;
-        // OLORD1 1A10 takes RUN into SRUN on MCLK5A.
+        // OLORD1 1A10 takes RUN into SRUN on MCLK5A, and STEP twice over
+        // into SSTEP and then SSDONE.  The order matters and is muir's:
+        // SSDONE takes the OLD SSTEP, so the two are one master clock apart
+        // and `SSTEP AND -SSDONE` is true for exactly one of them.
+        ssdone <= sstep;
+        sstep <= step;
         srun <= run;
         // The 74LS109 at OLORD2 1A18 drops the trap at the first edge whose
         // J, SRUN, was up.
@@ -1483,10 +1546,15 @@ module cadr_microcycle #(
         for (int unsigned k = 1; k < 8; k++) opcs[k] <= opcs[k-1];
 
         // page STAT 1B01-1C05: eight 74S169s chained, counting up, enabled by
-        // -STATBIT.  `STAT.OVF` registered at OLORD2 1A05 is STATSTOP.  The
-        // console's -LDSTAT, which loads the counter from IWR, is not here.
+        // -STATBIT.  `STAT.OVF` registered at OLORD2 1A05 is STATSTOP.
+        //
+        // `-LDSTAT` is the LOAD of those 74S169s, so while the console holds
+        // it up the counter takes `IWR<31:0>` at every `CLK5A` instead of
+        // counting --- and `IWR` is this edge's own, which is the word the
+        // register held before it, since both move here.
         statstop <= (&st) && statbit;
-        if (statbit) st <= st + 32'd1;
+        if (ldstat) st <= iwr[31:0];
+        else if (statbit) st <= st + 32'd1;
 
         // page L, and page ACTL: the write this cycle's instruction has just
         // computed, handed to the next one to store.
