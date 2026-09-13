@@ -188,13 +188,23 @@ set ddr [expr {[info exists ::env(DDR)] ? $::env(DDR) : 0}]
 # complete instruction and everything below that asks "is the processing
 # system in this design" has to ask about both.
 set prove [expr {[info exists ::env(PROVE)] ? $::env(PROVE) : 0}]
+
+# THE DISPLAY OUTPUT, `HDMI=1`.  The CADR's screen read out of DDR over
+# `S_AXI_HP3` and driven onto the board's HDMI connector, with no software in
+# the path; `docs/display-output.md` is the design.  Like `PROVE` it turns the
+# processing system on by itself, because the port it needs is the processing
+# system's.  A board is normally built `DDR=1 HDMI=1`: the machine running out
+# of real memory with its own screen on a monitor.
+#
+#     DDR=1 HDMI=1 OUTDIR=build/hdmi vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
+set hdmi [expr {[info exists ::env(HDMI)] ? $::env(HDMI) : 0}]
 if {$prove != 0 && $prove != 1 && $prove != 2} {
     puts "BIT: FAILED --- PROVE=$prove is not a board. 1 writes a word, 2 reads"
     puts "BIT: one back, 0 is the machine. See rtl/plumbing/cadr_prove.sv."
     exit 1
 }
 # Everything below asks this rather than `$ddr`.
-set port [expr {($ddr > 0 || $prove > 0) ? 1 : 0}]
+set port [expr {($ddr > 0 || $prove > 0 || $hdmi > 0) ? 1 : 0}]
 
 set prom build/boot_prom.hex
 if {![file exists $prom]} {
@@ -207,7 +217,8 @@ synth_design -top cadr_arty -part $part \
     -generic PROM_HEX=[file normalize $prom] \
     -generic PROBE_DEPTH=$probe_depth \
     -generic DDR=$ddr \
-    -generic PROVE=$prove
+    -generic PROVE=$prove \
+    -generic HDMI=$hdmi
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilisation and timing prose below describes."
@@ -249,6 +260,48 @@ if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # `rtl/plumbing/xilinx7/cadr_ddr.xdc` names is inside `g_ddr`, so reading it against the
 # default board would be four critical warnings about absent objects.
 if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_ddr.xdc }
+
+# The display output's clocks, and the one crossing between them and the
+# machine's.  Read only when the display is built, on `cadr_ddr.xdc`'s own
+# precedent: every object it names is inside the `g_hdmi` generate.  The PINS
+# are not in it --- they are in `cadr_arty.xdc` with the rest, because the four
+# pairs are in the port list on every board.
+if {$hdmi > 0} { read_xdc rtl/plumbing/xilinx7/cadr_hdmi.xdc }
+
+# AND THE ASSERTIONS THAT FILE CANNOT MAKE FOR ITSELF, because an XDC is a
+# restricted Tcl subset that rejects `if` and `foreach`. The first draft of
+# `cadr_hdmi.xdc` guarded itself with both and both were refused, so the guard
+# read as protection and applied to nothing --- CLAUDE.md's own loudest trap,
+# met in a new file. This is plain Tcl and the checks belong here.
+#
+# What they hold: that the display's two clocks exist and are not the
+# machine's, and that the `set_max_delay` on the one bus crossing between them
+# reached a register. A `set_max_delay` that matches nothing is a `CRITICAL
+# WARNING [Vivado 12-4739]` in a log nobody reads, and the crossing then has
+# no bound at all --- which is exactly what happened before this was written.
+if {$hdmi > 0} {
+    foreach {what pattern} {clk_raw clk_raw pixel_raw pixel_raw                             serial_raw serial_raw} {
+        if {[llength [get_clocks -quiet $pattern]] != 1} {
+            puts "BIT: FAILED --- the display board has no clock `$what`."
+            puts "BIT: The three are derived by the tool from the two MMCMs and"
+            puts "BIT: rtl/plumbing/xilinx7/cadr_hdmi.xdc names them by the nets"
+            puts "BIT: they drive. A renamed net there is a clock group that"
+            puts "BIT: reached nothing, and the line buffer's crossing would"
+            puts "BIT: then be timed as though the two domains were related."
+            exit 1
+        }
+    }
+    set hdmi_cross [get_cells -quiet -hier -filter {NAME =~ *req_line_reg*}]
+    if {[llength $hdmi_cross] == 0} {
+        puts "BIT: FAILED --- no `req_line` register was found, so the"
+        puts "BIT: set_max_delay in rtl/plumbing/xilinx7/cadr_hdmi.xdc applied"
+        puts "BIT: to nothing and the one bus that crosses between the machine's"
+        puts "BIT: clock and the pixel clock has no bound on it."
+        exit 1
+    }
+    puts "BIT: the display's clocks are grouped apart from the machine's, and"
+    puts "BIT: [llength $hdmi_cross] register(s) of the line-number crossing are bounded"
+}
 # And the debug cable's, by the same rule: `rtl/plumbing/xilinx7/cadr_debug.xdc`
 # names one register of `cadr_debug_window`, which is inside `g_ddr` too. What
 # it exists for is measured and is in its own header --- the machine's

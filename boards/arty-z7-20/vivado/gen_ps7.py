@@ -49,10 +49,10 @@ SPDX = ("// SPDX-FileCopyrightText: 2026 Mete Balci\n"
         "// SPDX-License-Identifier: AGPL-3.0-or-later")
 
 # The pins the fabric brings out, and the whole of them.  Everything else is
-# tied or left open below.  Four ports cross the boundary: `S_AXI_HP0` for
-# the machine's main memory, `S_AXI_HP2` for the disk's pack, `M_AXI_GP0` for
-# the disk's registers, `M_AXI_GP1` for the console's --- and the EMIO GPIO
-# the memory tally is read on.
+# tied or left open below.  Five ports cross the boundary: `S_AXI_HP0` for
+# the machine's main memory, `S_AXI_HP2` for the disk's pack, `S_AXI_HP3` for
+# the display output, `M_AXI_GP0` for the disk's registers, `M_AXI_GP1` for
+# the console's --- and the EMIO GPIO the memory tally is read on.
 #
 # `S_AXI_HP0` at its NATIVE 64 BITS, which is not an arbitrary choice: diffed
 # at 1d3a9bc, HP0 disabled against HP0 enabled at 64 bits gives a
@@ -110,6 +110,25 @@ EXPOSED = [
     "SAXIHP2ARVALID", "SAXIHP2ARREADY",
     "SAXIHP2RDATA", "SAXIHP2RRESP", "SAXIHP2RLAST", "SAXIHP2RVALID",
     "SAXIHP2RREADY",
+    # `S_AXI_HP3`, the display output's, at the same 64 bits and for the same
+    # reason --- measured again for this one: enabling it changes `ps7_init`
+    # by nothing, 673 operations byte-identical across all three silicon
+    # revisions.  HP3 because it is HP2's pair-mate on the other DDR
+    # controller port, so the display and the disk share a port with each
+    # other and neither shares one with the machine's memory bridge on HP0.
+    # `rtl/plumbing/cadr_display_out.sv` is the master on it, and it only
+    # ever reads: the write channels are brought out and tied off rather
+    # than left unconnected, because an unconnected PS7 input is silent.
+    "SAXIHP3ACLK", "SAXIHP3ARESETN",
+    "SAXIHP3AWADDR", "SAXIHP3AWLEN", "SAXIHP3AWSIZE", "SAXIHP3AWBURST",
+    "SAXIHP3AWVALID", "SAXIHP3AWREADY",
+    "SAXIHP3WDATA", "SAXIHP3WSTRB", "SAXIHP3WLAST", "SAXIHP3WVALID",
+    "SAXIHP3WREADY",
+    "SAXIHP3BRESP", "SAXIHP3BVALID", "SAXIHP3BREADY",
+    "SAXIHP3ARADDR", "SAXIHP3ARLEN", "SAXIHP3ARSIZE", "SAXIHP3ARBURST",
+    "SAXIHP3ARVALID", "SAXIHP3ARREADY",
+    "SAXIHP3RDATA", "SAXIHP3RRESP", "SAXIHP3RLAST", "SAXIHP3RVALID",
+    "SAXIHP3RREADY",
     # `M_AXI_GP0`, the one port on which the PS is the master: Linux writes
     # the block's address and the drive's presence into
     # `rtl/plumbing/cadr_disk_pack.sv`'s registers through it.  What that slave needs
@@ -181,6 +200,8 @@ TIED = {
     "SAXIHP0ARCACHE": ("4'b0011", "as AWCACHE"),
     "SAXIHP2AWCACHE": ("4'b0011", "as HP0's: a PL master writing DDR"),
     "SAXIHP2ARCACHE": ("4'b0011", "as AWCACHE"),
+    "SAXIHP3AWCACHE": ("4'b0011", "as HP0's, though this port only reads"),
+    "SAXIHP3ARCACHE": ("4'b0011", "as AWCACHE"),
 }
 
 # Why an input that is tied to zero is tied to zero, for the ones where the
@@ -210,6 +231,17 @@ WHY_ZERO = {
     "SAXIHP2ARQOS": "as AWQOS",
     "SAXIHP2RDISSUECAP1EN": "the port's default issuing capability",
     "SAXIHP2WRISSUECAP1EN": "as RDISSUECAP1EN",
+    "SAXIHP3AWID": "one burst is outstanding at a time, so one ID",
+    "SAXIHP3ARID": "as AWID",
+    "SAXIHP3WID": "as AWID; AXI3 carries an ID on the write data channel",
+    "SAXIHP3AWLOCK": "no exclusive or locked access on this path",
+    "SAXIHP3ARLOCK": "as AWLOCK",
+    "SAXIHP3AWPROT": "data, secure, unprivileged, as HP0's",
+    "SAXIHP3ARPROT": "as AWPROT",
+    "SAXIHP3AWQOS": "no quality-of-service arbitration is asked for",
+    "SAXIHP3ARQOS": "as AWQOS",
+    "SAXIHP3RDISSUECAP1EN": "the port's default issuing capability",
+    "SAXIHP3WRISSUECAP1EN": "as RDISSUECAP1EN",
 }
 
 
@@ -256,6 +288,7 @@ def die(msg):
 PREFIXES = [
     ("SAXIHP0", "hp0_"),
     ("SAXIHP2", "hp2_"),
+    ("SAXIHP3", "hp3_"),
     ("MAXIGP0", "gp0_"),
     ("MAXIGP1", "gp1_"),
     ("EMIOGPIO", "gpio_"),

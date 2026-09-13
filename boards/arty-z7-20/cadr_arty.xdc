@@ -141,3 +141,33 @@ set_false_path -from [get_ports { dbgout_ret_stb dbgout_ret_d[*] }]
 set_false_path -from [get_ports { dbgin_stb dbgin_d[*] }]
 set_false_path -to   [get_ports { dbgout_stb dbgout_d[*] }]
 set_false_path -to   [get_ports { dbgin_ret_stb dbgin_ret_d[*] }]
+
+## The HDMI transmitter's four differential pairs. Pins from Digilent's
+## Arty-Z7-20-Master.xdc verbatim, with that file's own schematic names and
+## pin functions kept in the comments so that the mapping can be checked
+## against the board rather than against memory.
+##
+## **CONSTRAINED ON EVERY BOARD, NOT ONLY AN `HDMI=1` ONE.** The four pairs
+## are in `cadr_arty.sv`'s port list whatever `HDMI` says, because a port
+## with no pin cannot be placed and a pin constrained `TMDS_33` cannot be
+## driven single-ended. With the display not built the four buffers are fed
+## from zero and the connector sits at a direct-current level, which a
+## monitor reads as no signal. The display's own timing constraints are in
+## `rtl/plumbing/xilinx7/cadr_hdmi.xdc`, which IS read only when it is built.
+##
+## `TMDS_33` on a high-range bank is Xilinx's emulation of TMDS out of a
+## 3.3 V driver and the resistor network on the board. The XC7Z020 has no
+## high-performance banks, so there is no alternative to choose.
+##
+## All eight pins are in bank 35 and, measured with `get_clock_regions`, all
+## eight are in clock region X1Y2 --- which is what lets one `BUFIO` carry
+## the serial clock to all four serialisers. A board that moves these pins
+## has to check that again.
+set_property -dict { PACKAGE_PIN L16   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_clk_p }]; # IO_L11P_T1_SRCC_35      Sch=HDMI_TX_CLK_P
+set_property -dict { PACKAGE_PIN L17   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_clk_n }]; # IO_L11N_T1_SRCC_35      Sch=HDMI_TX_CLK_N
+set_property -dict { PACKAGE_PIN K17   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_d_p[0] }]; # IO_L12P_T1_MRCC_35     Sch=HDMI_TX_D0_P
+set_property -dict { PACKAGE_PIN K18   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_d_n[0] }]; # IO_L12N_T1_MRCC_35     Sch=HDMI_TX_D0_N
+set_property -dict { PACKAGE_PIN K19   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_d_p[1] }]; # IO_L10P_T1_AD11P_35    Sch=HDMI_TX_D1_P
+set_property -dict { PACKAGE_PIN J19   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_d_n[1] }]; # IO_L10N_T1_AD11N_35    Sch=HDMI_TX_D1_N
+set_property -dict { PACKAGE_PIN J18   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_d_p[2] }]; # IO_L14P_T2_AD4P_SRCC_35 Sch=HDMI_TX_D2_P
+set_property -dict { PACKAGE_PIN H18   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_d_n[2] }]; # IO_L14N_T2_AD4N_SRCC_35 Sch=HDMI_TX_D2_N

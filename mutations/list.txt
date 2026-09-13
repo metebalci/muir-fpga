@@ -11304,3 +11304,142 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
           REG_IR_MED:  debug_ir[15:0]  <= held;
 @end
+
+# ---------------------------------------------------------------------------
+# The display output: the CADR's screen out of DDR and onto a monitor.
+# `docs/display-output.md` is the design and what each check holds.
+# ---------------------------------------------------------------------------
+
+@mutation the-acknowledge-synchroniser-starts-where-nothing-has-been-fetched
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note A synchroniser must come out of reset holding what its source comes
+@note out of reset holding. `ack_tog` resets to one, so these resetting to
+@note zero make the first line's readiness test true for the two or three
+@note clocks before the real value arrives: the first line takes a bank
+@note nothing filled, and every bank after it is one out.
+@note
+@note THIS WAS THE REAL BUG AND THE CHECK FOUND IT. The picture came out
+@note drawn one line early, for ever --- raster line 30 holding picture line
+@note 1's words. It is here so that it cannot come back, and it is caught
+@note only because the modelled memory is poisoned injectively in the
+@note address: against a memory of zeros a picture one line out is the same
+@note black screen.
+@old
+      ack_sync <= '1;
+@new
+      ack_sync <= '0;
+@end
+
+@mutation the-burst-runs-past-the-page-boundary
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note AXI forbids a burst crossing a 4 KB boundary, and a 96-byte line does
+@note not tile 4 KB: a few lines in every 128 begin close enough to one that
+@note twelve beats run over it. Taking the whole line whatever the address
+@note says is what the first draft did.
+@note
+@note `to_bound` stays read in the comparison, so this is not caught by lint
+@note --- which is the point, since lint catching a mutation is a mutation
+@note that tested the tool and not the check.
+@old
+  assign blen     = ({5'd0, to_bound} >= {10'd0, owed}) ? 4'(owed) : to_bound[3:0];
+@new
+  assign blen     = ({5'd0, to_bound} >= {10'd0, owed}) ? 4'(owed) : 4'(owed);
+@end
+
+@mutation the-raster-reads-the-bank-being-filled
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note Two line buffers, one being read while the other is filled. Reading
+@note the one being filled is the whole of what ping-pong exists to stop,
+@note and it does not show as a crash: it shows as a picture made of two
+@note different lines, which on a one-bit screen looks like noise.
+@note
+@note The first word of a line is still read from the right bank, so a
+@note check that only looked at the start of a line would pass this.
+@old
+        shreg <= lbuf[{show_n, wi}];
+@new
+        shreg <= lbuf[{~show_n, wi}];
+@end
+
+@mutation the-line-asked-for-is-the-one-already-being-drawn
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note The raster asks at the first pixel of line v for line v+1, because the
+@note fill has to land before line v+1 is drawn. Asking for line v instead
+@note fetches what is already on the screen and the picture comes out one
+@note line late everywhere.
+@note
+@note `vc` stays read, so lint has nothing to say about it.
+@old
+    next_vc = (vc == VC_W'(V_TOTAL - 1)) ? '0 : vc + 1'b1;
+@new
+    next_vc = (vc == VC_W'(V_TOTAL - 1)) ? '0 : vc;
+@end
+
+@mutation the-underrun-is-never-reported
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note A line the raster reached before its words did is shown black and
+@note said so. The saying so is the half that can rot silently: the line
+@note still goes black, the picture still looks plausible, and nothing
+@note anywhere says the port could not keep up.
+@note
+@note **AND IT IS ONLY CATCHABLE BECAUSE THE CHECK RUNS A SECOND
+@note CONFIGURATION WITH THE PORT SLOWED DOWN.** At the port's real speed
+@note the fetcher is a whole line ahead and this branch never runs, so a
+@note stimulus fast enough would hide the race it exists to show.
+@old
+          if (primed) underrun <= 1'b1;
+@new
+          if (primed && 1'b0) underrun <= 1'b1;
+@end
+
+@mutation the-disparity-moves-the-wrong-way-on-an-inverted-symbol
+@check hdmi_tx
+@file rtl/plumbing/cadr_tmds_encode.sv
+@note DVI 1.0 writes the running disparity's update as four expressions in
+@note three branches, and the fabric folds them into one signed difference
+@note so that a sign cannot be flipped in one branch of four. This flips it
+@note in the branch where the symbol goes out inverted.
+@note
+@note A monitor would show this as a picture that decodes for a while and
+@note then loses its direct-current balance, which is not a fault anybody
+@note would look for in an encoder. It is caught because the check sweeps
+@note every byte in every disparity state the encoder can reach, rather
+@note than a sample of them.
+@old
+      cnt_n = cnt + (qm[8] ? 6'sd2 : 6'sd0) - diff;
+@new
+      cnt_n = cnt + (qm[8] ? 6'sd2 : 6'sd0) + diff;
+@end
+
+@mutation the-transition-rule-reads-the-wrong-way-on-a-tie
+@check hdmi_tx
+@file rtl/plumbing/cadr_tmds_encode.sv
+@note Stage one chooses XNOR when the byte has more than four ones, or
+@note exactly four with bit 0 CLEAR. The tie is the half of the rule that a
+@note reader skims past, and it decides the encoding of 70 of the 256 byte
+@note values.
+@old
+  assign use_xnor = (n1_d > 4'd4) || ((n1_d == 4'd4) && !d[0]);
+@new
+  assign use_xnor = (n1_d > 4'd4) || ((n1_d == 4'd4) && d[0]);
+@end
+
+@mutation the-two-syncs-are-swapped-on-the-blue-channel
+@check hdmi_tx
+@file rtl/plumbing/cadr_hdmi_tx.sv
+@note DVI 1.0 section 3.3: channel 0's control period carries HSYNC as C0
+@note and VSYNC as C1. Swapping them sends legal tokens in a legal order to
+@note a monitor that never locks, and the fault looks exactly like a cable.
+@note
+@note Both signals stay read, so this is the check's to catch and not
+@note lint's.
+@old
+      .d(blue), .c({vsync, hsync}), .de(de), .q(tmds0)
+@new
+      .d(blue), .c({hsync, vsync}), .de(de), .q(tmds0)
+@end
