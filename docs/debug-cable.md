@@ -235,7 +235,7 @@ Bit 2 turns off the debuggee's NXM timeout, for all of its cycles and not only
 the debugger's.
 
 `cadr_dbgin.sv` brings bits 1 and 2 out as ports. `tb/cadr_dbgin_harness.sv`
-wires bit 1 to the machine's reset the way the fabric will wire it, joined with
+wires bit 1 to the machine's reset the way the fabric wires it, joined with
 the board's own reset and registered, so the check holds it. Bit 2 has no
 consumer yet and is named under "What is not built" below.
 
@@ -284,12 +284,12 @@ already there for the console and the reason is unchanged: a strobe masked in
 the middle of a cycle is a cycle that never answers, and the processor's own
 NXM timer is what would find it 4.25 microseconds later.
 
-## Where the window sits: the question, with the numbers
+## Where the window sits: decided, and why the second of three
 
-This is not decided and it is not the fabric's to decide. `README.md` once put
-the console on `M_AXI_GP0` and the debug cable on `M_AXI_GP1`. The console
-took `M_AXI_GP1` instead, and the note left behind said to settle the question
-when the adapter was built. It is built.
+`README.md` once put the console on `M_AXI_GP0` and the debug cable on
+`M_AXI_GP1`. The console took `M_AXI_GP1` instead, and the note left behind
+said to settle the question when the adapter was built. It is built, and the
+answer is the second of the three the question had.
 
 The constraint that shapes the answer is the GP0 hang. A read that nothing in
 the fabric answers inside a general-purpose port's window does not fault the
@@ -299,68 +299,54 @@ general-purpose port must answer the whole of it.
 
 The XC7Z020 has exactly two `M_AXI_GP` ports. There is no third.
 
-What is on them today:
-
-| | today | |
-|---|---|---|
-| `M_AXI_GP0` | `cadr_disk_pack.sv` | the block's address, the drive registers, `SLVERR` outside its window |
-| | `cadr_gp0_default.sv` | on boards without the pack side, `NONE` everywhere |
-| `M_AXI_GP1` | `cadr_console.sv` | thirty-two words at `0x8000_0000`, `OKAY` and `UNMAPPED` over the whole gigabyte |
-
-Three ways to fit the window in.
-
 **One: the adapter takes `M_AXI_GP1` and the console moves to `M_AXI_GP0`.**
-The adapter is then a whole-port slave, which is what it already is, and its
-attachment is one line. The cost is on the console's side, and it is smaller
-than it was when this was written. `M_AXI_GP0` already carries three faces
-behind `rtl/plumbing/cadr_gp0_split.sv`, so the console would be a fourth
-page rather than a decode somebody has to write. Two of the objections this
-paragraph used to raise are answered by that module. The decode does carry
-the disk's traffic, but it is a held match and a registered selection, and
-the exception count says the constraints still reach it. And the `SLVERR`
-rule and the `OKAY` rule no longer have to be reconciled: each page answers
-in its own way and the splitter's fourth port answers everything neither
-claims. What is left of the cost is a page of address space and the console's
-own wiring.
+Rejected. `M_AXI_GP0` already carries three faces behind
+`rtl/plumbing/cadr_gp0_split.sv`, so the console would be a fourth page rather
+than a decode somebody has to write, and that answers two of the objections
+this paragraph used to raise. What is left is the one that decides it: GP0 is
+the port where an unanswered read has actually frozen this board, and it
+carries the machine's own disk traffic on every boot, 42,967 blocks of it.
+Option one puts new logic in front of that.
 
-**Two: the adapter shares `M_AXI_GP1` behind a split.** A new module owns the
-port, routes a transaction to the console or to the adapter by address, and
-answers everything else itself. It is a module with a testbench and mutation
-records of its own, because it is new logic in front of two faces that are
-already proven. Nothing on `M_AXI_GP0` changes. The adapter goes behind it
-unchanged, being a whole-port slave already.
+**Two: the adapter shares `M_AXI_GP1` behind a split.** Taken.
+`rtl/plumbing/cadr_gp1_split.sv` owns the port, routes a transaction to the
+console or to the carrier by address, and hands everything else to
+`cadr_gp0_default.sv`. Nothing on `M_AXI_GP0` changes at all. The carrier goes
+behind it unchanged, being a whole-port slave already, and the console keeps
+its own `REG_BASE`, so `cadr-console` does not move and `build/console.pass`
+is unchanged.
 
 **Three: the adapter is a second face behind the console's own AXI front
-end.** `cadr_console.sv` already owns the port, already decodes a window and
-already answers everything else. Its window is 128 bytes and two pages of
-sixteen words. Widening the match by one address bit gives four pages, and
-pages 2 and 3 are free. The adapter's registers then sit at `0x8000_0080`,
-which is the address muir's issue used as its own example, and the console
-forwards the beat to them and muxes the word back. No new AXI logic anywhere.
+end.** Rejected on checkability. It puts the adapter's address match
+downstream of the console's, and a mutation aimed at a match behind an
+exhaustively checked guard tests the guard and not the thing. The display's
+`tv-answers-its-neighbours` survived for exactly that reason.
 
-Neither option's size has been measured, so neither is quoted. What decides is
-not size.
+Neither option two's cost nor option three's was measured, so neither is
+quoted. The decision turns on those two facts and not on lines of code.
 
-The recommendation is **two or three, and not one**. Both leave `M_AXI_GP0`
-untouched, and that is worth more than what either costs. The disk's port
-carries the machine's own traffic on every boot, 42,967 blocks of it, and it is
-the port where an unanswered read has actually frozen this board. Option one
-puts new, unproven decode logic in front of that.
+The map the port now has:
 
-Between two and three, the recommendation is **two**, and the reason is a
-lesson this project has already paid for. Option three puts the adapter's
-address match downstream of the console's, and a mutation aimed at a match
-behind an exhaustively checked guard tests the guard and not the thing --- the
-display's `tv-answers-its-neighbours` survived for exactly that reason. The
-adapter's own window match is checkable today, in `build/dbgin.pass`, because
-the adapter owns the whole port there; putting it behind the console's decode
-would make that check a claim about the console. Option two keeps the two faces
-independent and pays one module for it, and that module's own decode is then
-the thing a record is aimed at.
+| | | |
+|---|---|---|
+| `0x8000_0000` | `cadr_console.sv` | thirty-two words, `CONS`, its own `UNMAPPED` in the rest of its page |
+| `0x8000_1000` | `cadr_debug_window.sv` | sixteen words, `DBUG`, its own `UNMAPPED` in the rest of its page |
+| everything else | `cadr_gp0_default.sv` | `NONE` to every read, OKAY to every write |
 
-The adapter is built so that either answer is a change at the attachment and
-not in the module. `REG_BASE` is a parameter and `cadr_debug_window.sv` is a
-whole-port AXI3 slave.
+So muir is given `--debug-cable-connect 0x80001000`.
+
+The default slave's name says GP0 and it is used on both ports. It is a
+whole-port slave with no address on it at all, so it is the same thing on
+either one and a second copy would be two descriptions of one thing. Renaming
+it moves that port's check, two Makefile lists and two mutation records, which
+is a change worth making on its own rather than inside this one.
+
+`build/gp1_split.pass` is what holds the arrangement. It reads all 262,144
+pages of the port. Each page's word must name the slave that answered, so the
+routing is read off the reply rather than assumed. It then sweeps every word
+of the two pages, runs a write and a read to different pages at once, and
+reaches the same sixteen diagnostic registers by both of the two roads the
+port now has.
 
 ## The check
 
@@ -368,8 +354,9 @@ whole-port AXI3 slave.
 `tb/cadr_dbgin_harness.sv` and `tb/cadr_dbgin_tb.cpp`, and the Makefile runs it
 with the rest.
 
-The harness is the attachment, written before it lands. It puts the window, the
-DBGIN page, the real arbiter, the real register block and the real processor
+The harness was written as the attachment before the attachment landed, and
+it is now the same lines the board carries. It puts the window, the DBGIN
+page, the real arbiter, the real register block and the real processor
 together, and the processor runs MIT's boot PROM out of `build/rtl.golden`. So
 the claim is muir's own: a debugger over MIT's own cable halts this machine and
 reads a program counter whose value muir wrote down.
@@ -393,49 +380,67 @@ What it measures rather than assumes, reported on its own output:
 
 Fourteen mutation records are aimed at it in `mutations/list.txt`.
 
+`build/gp1_split.pass` is the second check, and it holds what the first
+cannot. `build/dbgin.pass` gives the carrier the whole port, so it says
+nothing about a port the carrier shares. This one puts the real splitter, the
+real console, the real carrier and the real default slave together, exactly as
+`boards/arty-z7-20/cadr_arty.sv` does, and puts MIT's cable between the
+carrier and `cadr_dbgin.sv` behind them.
+
+What it measures rather than assumes:
+
+- all 262,144 pages of the port answered, each with a word that says which
+  slave answered;
+- every word of the two pages and a spread over the rest of the gigabyte,
+  read and written, with every address, length and ID poisoned the tick its
+  handshake completed;
+- thirty-two rounds with a write and a read to different pages in flight at
+  once, which is the only stimulus that sees one held selection serving both
+  channels;
+- all sixteen diagnostic registers read by both roads, giving the word the
+  harness supplied;
+- the error status read back as `0xff00 | status`;
+- MIT's own reset sequence over the cable, with the level standing two hundred
+  ticks between the write of a 1 and the write of a 0.
+
+Six mutation records are aimed at the splitter and one at the board's wiring.
+
 ## What is not built
 
-**The composition onto the board.** The window is not instantiated in
-`boards/arty-z7-20/cadr_arty.sv` and no bitstream has the DBGIN end in it.
-That waits on the port question above. muir's own words for what would settle
-its half are "a bitstream with the DBGIN end in it", so this is the thing that
-stands between here and that.
+**The composition onto the board is done.** `rtl/machine/cadr_dbgin.sv` is
+instantiated in `rtl/machine/cadr_memory_path.sv` beside the two Unibus
+slaves, `cadr_machine.sv` passes the cable up as ports, and
+`boards/arty-z7-20/cadr_arty.sv` puts `cadr_debug_window.sv` behind the GP1
+split and joins the two. The lines are the lines
+`tb/cadr_dbgin_harness.sv` was written with, which is what that harness is
+for: it was the attachment before the attachment landed, and the arbiter it
+instantiates is the module `cadr_memory_path.sv` instantiates rather than a
+copy of it.
 
-What has landed towards it is the arbiter. `rtl/machine/cadr_console_bus.sv`
-carries the third master, because the arbiter must be one description of one
-thing and `tb/cadr_dbgin_harness.sv` must hold what the board carries rather
-than a copy of it. It is tied off at both existing instantiations, in
-`rtl/machine/cadr_memory_path.sv` and `tb/cadr_console_harness.sv`, and the
-whole arm folds there: `dbg_own` is constant false. That is the shape the
-console had before it landed, when `cadr_arty.sv` tied `con_req` off.
+The status byte is zero, and that is honest rather than finished.
+`Machine::debug_status` is `bus_error | NOT_FREE | WRITE_THROUGH`. `bus_error`
+is the bus interface's own error status register at `0o766044`, which
+`rtl/machine/cadr_busint_regs.sv` holds and does not bring out. `-FREE` is
+that interface's busy, which `cadr_busint_xbus.sv` does not bring out either.
+Write-through mode is not built. So six of the eight bits were always going to
+be zero and the other two are owed by two modules that do not expose them yet.
+`cadr_dbgin.sv` takes the byte as a port, so the day either does, the change
+is at the instantiation.
 
-What remains is three files and no new logic. `cadr_memory_path.sv`
-instantiates `cadr_dbgin` beside the two Unibus slaves and brings the cable out
-as ports instead of tying the master off. `cadr_machine.sv` passes those ports
-up. `cadr_arty.sv` instantiates `cadr_debug_window` on whichever
-general-purpose port is chosen and joins the two. The lines are the lines in
-`tb/cadr_dbgin_harness.sv`.
+**The modifier's second effect.** Bit 1, the debuggee reset, is wired: it
+leaves `cadr_machine` and joins the board's own reset and the console's pulse
+in `boards/arty-z7-20/cadr_arty.sv`, which is where the console's already
+landed. It is the one output of the cable that is not in that file's `witness`
+fold, because it is read by the reset it drives, and
+`the-debuggee-reset-reaches-no-pin` is the record that holds it there.
 
-One thing to settle when it is composed. `cadr_dbgin.sv` takes the status byte
-as a port, and the composing level has to assemble it: bit 6 is `-FREE`, which
-is the bus interface's own busy, and `cadr_busint_xbus.sv` does not bring that
-out today. The other seven bits are zero in this fabric.
-
-And one thing to measure rather than assume. `cadr_dbgin`'s registers are
-inside `cadr_machine`, so they fall into `rtl/plumbing/xilinx7/cadr_machine
-.xdc`'s relaxed set on that file's own test, which relaxes every register the
-file does not name. Before any slack figure is quoted for a board with this in
-it, ask which set these registers fell into. The arc that wants looking at is
-the sixteen-way diagnostic mux reaching the cable, and its clock enable with
-it: a relaxed register's enable is relaxed with it, and `elapsed -> md/CE` is
-the instance of that this project has already paid for.
-
-**The modifier's two effects.** Bit 1, the debuggee reset, and bit 2, the
-timeout inhibit, leave `cadr_dbgin.sv` as ports and nothing consumes them.
-Bit 1 wants the machine's reset, which is where `cadr_console.sv`'s own reset
-pulse already lands. Bit 2 wants the NXM timeout counter inside
-`cadr_busint_xbus.sv`, which is held to muir tick for tick over a trace, so it
-is a change that needs a trace with a debug cable in it.
+Bit 2, the timeout inhibit, is a port of `cadr_machine` and nothing consumes
+it. It wants the NXM timeout counter inside `cadr_busint_xbus.sv`, which is
+held to muir tick for tick over a trace, so it is a change that needs a trace
+with a debug cable in it. Until then it is in the fold, which is this
+project's rule about building the machine whole: a register the fabric does
+not have is a way this is not the CADR, whether or not today's seam can
+observe it.
 
 **MIT's own Unibus arbitration for this master.** muir takes the debug master
 through `NPR`, `NPG1 IN`, `SACK` and `-UB BBSY`, and
