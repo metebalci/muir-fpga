@@ -54,11 +54,22 @@
 // get read.  A character's own frame time is what the interval has to beat.
 // At MIT's own 300 baud, ten bits is 33.3 ms --- which is why muir polls its
 // endpoint every 33 ms and says so at `SERIAL_INTERVAL`.  At 9,600 baud it is
-// 1.04 ms and at the 2651's fastest, 19,200, it is 521 us.  The default here
-// is 2,000 us, comfortable to 9,600 and not to 19,200; `--poll-us` shortens
-// it, and the fabric's own DROPPED counter --- printed on every status line
-// --- is what says whether it needed shortening.  A pass that finds nothing
-// costs one register read.
+// 1.04 ms and at the 2651's fastest, 19,200, it is 521 us.
+//
+// **THOSE ARE THE MACHINE'S MILLISECONDS AND THIS TIMEOUT IS THE WALL'S, AND
+// THE TWO ARE NOT THE SAME ON THIS BOARD.**  MIT's grid is 5 ns a tick and the
+// board's tick is 10 ns, so the CADR and everything on its I/O board --- the
+// serial line's baud-rate generator included --- runs at half real time on
+// purpose.  A frame the machine calls 1.04 ms at 9,600 baud therefore occupies
+// 2.08 ms of the wall this program's `poll()` is measured against, and one at
+// 19,200 occupies 1.04 ms.  The margin is twice what the paragraph above
+// counts, in this program's favour.  Do not close the gap by speeding the
+// generator up: the frame's length is what MIT's own interrupt walk depends on
+// and `rtl/plumbing/cadr_serial_line.sv` says at length what shortening it
+// cost.  The default here is 2,000 us, which is comfortable at 9,600 and
+// marginal at 19,200; `--poll-us` shortens it, and the fabric's own DROPPED
+// counter --- printed on every status line --- is what says whether it needed
+// shortening.  A pass that finds nothing costs one register read.
 //
 //     cadr-serial [--port N] [--bind ADDR] [--log PATH] [--regs ADDR]
 //                 [--poll-us N] [--no-guard] [--quiet] [--once]

@@ -139,7 +139,17 @@ const long KB_CLK_T = 8000 / 5;
 const unsigned DIVISORS[16] = {6336, 4224, 2880, 2355, 2112, 1056, 528, 264,
                                176,  158,  132,  88,   66,   44,   33,  16};
 const unsigned BRCLK_HZ = 5068800u;
-const unsigned CLK_HZ = 100000000u;
+// **MIT'S 5 ns GRID, AS THE TWO CONSTANTS ABOVE ALREADY USE IT.**  muir gives
+// a frame in nanoseconds of the MACHINE's own time, and every instant in this
+// file is turned into ticks by dividing by five --- `MOUSE_STEP_NS` and
+// `KB_CLK_NS` above, `ceil(span / 5)` in the disk's trace, `USEC_PERIOD_T` on
+// the card itself.  The board's tick is 10 ns and the machine therefore runs
+// at half real time on purpose; its clocks disagree with the wall and agree
+// with muir, which is the decision this project took and the serial line is
+// part of the machine.  A frame measured against the real 100 MHz instead
+// would be half this many ticks and the chip would run at twice the rate its
+// software programmed, measured in the only clock the machine has.
+const unsigned TICK_NS = 5u;
 
 int bad = 0;
 long tick = 0;
@@ -187,9 +197,9 @@ uint16_t CheckWord(const std::vector<uint16_t> &words) {
   return (uint16_t)r;
 }
 
-// `muir::serial::Framing::half_bits` off mode register 1, and the frame in
-// fabric ticks at a rate: `half_bits * 8` 16X clocks, each `DIVISORS[rate]`
-// crystal periods, each `CLK_HZ / BRCLK_HZ` ticks.
+// `muir::serial::Framing::half_bits` off mode register 1, and the frame at a
+// rate: `half_bits * 8` 16X clocks, each `DIVISORS[rate]` crystal periods of
+// the 5.0688 MHz can at IOBSER 0A15.
 unsigned HalfBits(unsigned mr1) {
   const unsigned bits = 5 + ((mr1 >> 2) & 3);
   const unsigned parity = (mr1 & 0x10) ? 2 : 0;
@@ -199,9 +209,16 @@ unsigned HalfBits(unsigned mr1) {
   return 2 + 2 * bits + parity + stop;
 }
 
+// `muir::serial::Framing::frame_ns`, transcribed: the nanoseconds a character
+// occupies the wire, in the machine's own time.
+double FrameNs(unsigned mr1, unsigned rate) {
+  return (double)HalfBits(mr1) * 8.0 * (double)DIVISORS[rate & 0xF] *
+         1000000000.0 / (double)BRCLK_HZ;
+}
+
+// And that frame in fabric ticks, on the grid.
 double FrameTicks(unsigned mr1, unsigned rate) {
-  const double x16 = (double)DIVISORS[rate & 0xF] * (double)CLK_HZ / (double)BRCLK_HZ;
-  return (double)HalfBits(mr1) * 8.0 * x16;
+  return FrameNs(mr1, rate) / (double)TICK_NS;
 }
 
 // ---------------------------------------------------------------- the bus
@@ -939,7 +956,7 @@ int main(int argc, char **argv) {
   // ======================================================================
   // THE SERIAL LINE, ACROSS THE SEAM
   // ======================================================================
-  long chars_out = 0, chars_in = 0, looped = 0;
+  long chars_out = 0, chars_in = 0, looped = 0, in_span = 0;
   double measured[2] = {0, 0};
   const unsigned kMr1 = 0x4E;    // asynchronous 16X, eight bits, no parity, one stop
   {
@@ -994,11 +1011,17 @@ int main(int argc, char **argv) {
       }
       ++chars_out;
       measured[i] = (double)span;
-      // The take is the first 16X clock at or after the load, so the span is
-      // the frame plus up to one 16X clock, plus the bus cycles either side.
-      // A wrong divisor is a factor out and a wrong frame length a tenth,
-      // so a fifth is a bound that catches both and tolerates neither.
-      if ((double)span < want || (double)span > want * 1.2 + 2000.0)
+      // **THE FRAME IS COMPARED AGAINST muir AND NOT AGAINST ITSELF.**  `want`
+      // is `Framing::frame_ns` divided by MIT's 5 ns, so this is the
+      // reference's own number and not a restatement of the module's
+      // arithmetic in the testbench.  The take is the first 16X clock at or
+      // after the load, so the span is the frame plus up to one 16X clock,
+      // plus the bus cycles either side --- and nothing else.  Bounded both
+      // ways at that, because a frame that is too LONG is as wrong as one
+      // that is too short and a one-sided bound would say nothing about it.
+      const double x16_t = (double)DIVISORS[rates[i] & 0xF] * 1000000000.0 /
+                           (double)BRCLK_HZ / (double)TICK_NS;
+      if ((double)span < want || (double)span > want + x16_t + 4000.0)
         Fail("the ticks a character's frame took", (unsigned long long)span,
              (unsigned long long)want);
       const uint32_t rd = b.Read(SER_PAGE + 4 * 2);
@@ -1039,6 +1062,18 @@ int main(int argc, char **argv) {
     if (!(b.UbRead(UB_SER_STAT) & 2u)) {
       Fail("RxRDY: the machine never saw the character", 0, 1);
     } else {
+      // **AND IT TOOK ITS FRAME, WHICH IS THE HALF THAT WAS NOT BEING
+      // ASKED.**  `ser_rx_end` is the receiver's frame end and it comes off
+      // the same generator as the transmitter's, so the same wrong time base
+      // sat here too --- and a loop that only waits for the character to
+      // arrive passes a receiver that hands it over at once.  A machine given
+      // characters faster than its own rate overruns, which is `SR4` and is
+      // silent.
+      in_span = tick - in_at;
+      const double in_want = FrameTicks(kMr1, 15);
+      if ((double)in_span < in_want)
+        Fail("the ticks a character's frame into the machine took",
+             (unsigned long long)in_span, (unsigned long long)in_want);
       ++chars_in;
       const unsigned got = b.UbRead(UB_SER_DATA) & 0xFFu;
       if (got != 0x51u) Fail("the character the machine received", got, 0x51u);
@@ -1092,6 +1127,194 @@ int main(int argc, char **argv) {
     if (b.Read(SER_PAGE + 4) & 1u)
       Fail("a character on the cable in local loop back", 1, 0);
     b.UbWrite(UB_SER_CMD, 0x27);
+  }
+
+  // ======================================================================
+  // MIT'S OWN CHANNEL WALK, AND THE FRAME'S LENGTH AS THE THING THAT SAVES IT
+  // ======================================================================
+  //
+  // `sys/io1/serial.lisp`'s `:RESET` makes three Unibus channels on vector
+  // `0o264`, all with the status register `0o764162` as their CSR, and
+  // `GET-UNIBUS-CHANNEL` pushes each new one to the FRONT of the vector's
+  // list, so the microcode walks them RANDOM, OUTPUT, INPUT.  It reads each
+  // channel's CSR, ANDs it with that channel's mask, services the FIRST
+  // channel whose bits are set, and dismisses --- it does not go on walking.
+  //
+  //   RANDOM  mask 4  SR2 TxEMT/DSCHG   its data address IS the CSR, so
+  //                                     "absorbing" is a status read
+  //   OUTPUT  mask 1  SR0 TxRDY         loads the next character, or writes
+  //                                     the command register to turn the
+  //                                     transmitter off
+  //   INPUT   mask 2  SR1 RxRDY         takes the character in
+  //
+  // RANDOM exists, in MIT's own comment, "for some serial pci chips which
+  // seem to cause interrupts on modem transitions.  This absorbs these to
+  // prevent the microcode from bombing because it can't find anyone to give
+  // the interrupt to."  It is meant for DSCHG, which a status read clears.
+  // It is NOT meant for TxEMT, which a status read does NOT clear --- the
+  // sheet is explicit, and the diagnostic it documents (read the status
+  // twice; SR2 still set with SR6 and SR7 unchanged means TxEMT) only works
+  // because of that.  muir models both rules and so does `cadr_io_board.sv`,
+  // and neither is at fault here.
+  //
+  // **WHAT KEEPS RANDOM OFF THE TRANSMITTER'S BACK IS TIME.**  TxEMT rises a
+  // whole character frame after the holding register empties, and the
+  // handler reloads within a walk of TxRDY, so SR2 is clear at every
+  // interrupt the transmitter causes and OUTPUT is reached every time.  The
+  // frame is the margin, and the margin is the thing this section measures
+  // --- from the DRIVER's side, in the driver's own terms, rather than by
+  // reading the module's arithmetic back out of it.
+  //
+  // Two latencies, either side of the frame muir gives, which between them
+  // LOCATE the frame's end instead of merely bounding it:
+  //
+  //   nine tenths of a frame   OUTPUT still reloads first: the string streams
+  //   eleven tenths of a frame TxEMT is up when the handler arrives, RANDOM
+  //                            absorbs eight in a row and the machine spins
+  //                            having sent one character --- which is the real
+  //                            chip's behaviour too, and is what the board did
+  //
+  // A fabric whose frame ends early fails the first of those with the second
+  // still passing, and that is the board's fault written down as a check.
+  long walk_streamed = 0, walk_wedged = 0;
+  {
+    const char *out = "HELLO CADR";
+    const size_t out_len = 10;
+    // Rate 14 is 9600 baud, which is what the machine asked for on the board.
+    const unsigned kRate = 14;
+    const unsigned kMr2 = 0x30u | kRate;   // both halves on the generator
+    const double frame = FrameTicks(kMr1, kRate);
+
+    for (int leg = 0; leg < 2 && bad < 25; ++leg) {
+      const long latency = (long)(frame * (leg == 0 ? 0.9 : 1.1));
+      const char *name = leg == 0 ? "nine tenths of a frame"
+                                  : "eleven tenths of a frame";
+
+      // --- the chip, programmed as `serial.lisp` programs it.
+      b.Write(SER_PAGE + 4 * 4, 0u);         // cable out first, so that
+      b.Idle(8);                             // plugging it in is one change
+      (void)b.UbRead(UB_SER_CMD);            // the mode pointer back to MR1
+      b.UbWrite(UB_SER_MODE, kMr1);
+      b.UbWrite(UB_SER_MODE, kMr2);
+      b.UbWrite(UB_SER_CMD, 0x27);           // TxEN, RxEN, DTR, RTS
+      b.Write(SER_PAGE + 4 * 4, 7u);         // the device plugs in
+      b.Idle(8);
+      // SER INT ENABLE, the 74LS74 at IOBSER 0D21, keeping the four bits of
+      // the 74LS175 the card holds beside it.
+      b.UbWrite(UB_IOB_CSR, (b.UbRead(UB_IOB_CSR) & 017u) | 0200u);
+      // The plug raised DSCHG, which is RANDOM's real job: let the walk
+      // absorb it before the string starts, exactly as it would on the board.
+      b.Idle(64);
+      (void)b.UbRead(UB_SER_STAT);
+
+      size_t op = 0, in_hand = 0;
+      std::string arrived;
+      long absorbed = 0, run_absorbed = 0, armed = -1;
+      bool turned_off = false;
+
+      // The foreground primes the transmitter with the first character, as
+      // `serial.lisp`'s output does before it leaves the buffer to the
+      // interrupt.
+      b.UbWrite(UB_SER_DATA, (unsigned char)out[op++]);
+      in_hand = 1;
+
+      const long began = tick;
+      // Leg 0 runs one frame a character; leg 1 spends a whole latency on
+      // each absorbed interrupt, so its budget is counted in those.
+      const long budget = leg == 0 ? (long)(frame * 16.0) + 200000
+                                   : latency * 12 + (long)(frame * 4.0);
+      while (tick - began < budget) {
+        if (leg == 0 && arrived.size() >= out_len) break;
+        if (leg == 1 && run_absorbed >= 8) break;
+
+        // The card's own request at the machine, on the serial vector.
+        if (b.d->intr_request && b.d->intr_vector == 0264u) {
+          if (armed < 0) armed = tick;
+        } else {
+          armed = -1;
+        }
+
+        if (armed >= 0 && tick - armed >= latency) {
+          // --- the walk, first match wins, then dismiss.  The microcode
+          // reads each channel's CSR in turn and all three name the same
+          // register, so it reads the status once per channel it tests where
+          // this reads it once and tests the masks in order.  The count
+          // differs and nothing that depends on it does: a status read
+          // clears DSCHG and leaves TxEMT, which is the whole point, and
+          // DSCHG is gone after the walk either way.
+          const unsigned st = b.UbRead(UB_SER_STAT) & 0377u;
+          if (st & 4u) {                       // RANDOM: SR2
+            (void)b.UbRead(UB_SER_STAT);       // absorbed by reading the CSR
+            ++absorbed;
+            ++run_absorbed;
+          } else if (st & 1u) {                // OUTPUT: SR0 TxRDY
+            run_absorbed = 0;
+            if (op < out_len) {
+              b.UbWrite(UB_SER_DATA, (unsigned char)out[op++]);
+              ++in_hand;
+            } else {
+              b.UbWrite(UB_SER_CMD, 0x27u & 0376u);   // INTR-OUTDEV's turnoff
+              turned_off = true;
+            }
+          } else if (st & 2u) {                // INPUT: SR1 RxRDY
+            run_absorbed = 0;
+            (void)b.UbRead(UB_SER_DATA);
+          }
+          armed = -1;
+          continue;
+        }
+
+        // The far end, which is Linux: it takes what the port has finished
+        // sending.  Between handler runs only, so that the latency above is
+        // the handler's and not the bus's.
+        if (b.Read(SER_PAGE + 4) & 1u) {
+          const uint32_t rd = b.Read(SER_PAGE + 4 * 2);
+          if (rd & 0x100u) arrived.push_back((char)(rd & 0xFFu));
+        }
+        b.Idle(1);
+      }
+
+      if (leg == 0) {
+        // The whole string, in order, with RANDOM never once absorbing a
+        // transmitter interrupt.  `in_hand` and `turned_off` are named so
+        // that a leg which streamed by accident --- the foreground's one
+        // character and nothing else --- cannot read as a pass.
+        if (arrived != std::string(out, out_len)) {
+          Fail("the characters that reached the cable at nine tenths of a frame",
+               arrived.size(), out_len);
+          std::fprintf(stderr, "  the far end got \"%s\", wanting \"%s\"\n",
+                       arrived.c_str(), out);
+          std::fprintf(stderr,
+                       "  the handler waited %ld ticks; muir's frame is %ld, "
+                       "and RANDOM absorbed %ld interrupts\n",
+                       latency, (long)frame, absorbed);
+        } else {
+          ++walk_streamed;
+        }
+        if (absorbed != 0)
+          Fail("interrupts RANDOM absorbed while the transmitter was streaming",
+               absorbed, 0);
+        if (in_hand != out_len)
+          Fail("characters OUTPUT handed the chip", in_hand, out_len);
+        if (!turned_off)
+          Fail("INTR-OUTDEV's turnoff once the buffer emptied", 0, 1);
+      } else {
+        // And the other side of it: a handler slower than the frame really
+        // does wedge, on this chip and on MIT's.  Without this half, a
+        // frame made enormous would pass the leg above and say nothing.
+        if (run_absorbed < 8)
+          Fail("interrupts RANDOM absorbed in a row at eleven tenths of a frame",
+               run_absorbed, 8);
+        else if (arrived.size() != 1)
+          Fail("characters that reached the cable before the walk wedged",
+               arrived.size(), 1);
+        else
+          ++walk_wedged;
+      }
+      // Leave the port as the section above left it.
+      b.UbWrite(UB_SER_CMD, 0x27);
+      b.UbWrite(UB_IOB_CSR, b.UbRead(UB_IOB_CSR) & 017u);
+    }
   }
 
   // ======================================================================
@@ -1708,9 +1931,17 @@ int main(int argc, char **argv) {
       "      counted in LOST\n"
       "    %ld characters out of the machine at two rates and %ld into it:\n"
       "      %.0f ticks a frame at 19,200 baud and %.0f at 4,800, against\n"
-      "      %.0f and %.0f from `Framing::half_bits` and `DIVISORS`; and %ld\n"
+      "      %.0f and %.0f from `Framing::half_bits` and `DIVISORS`; %ld ticks\n"
+      "      for a character INTO the machine against the same %.0f, the\n"
+      "      receiver's frame being the transmitter's generator again; and %ld\n"
       "      through local loop back with the cable out, which is the leg\n"
       "      that exercises the nine derivations the line transcribes\n"
+      "    MIT's own RANDOM/OUTPUT/INPUT walk on vector 0o264, at 9600 baud:\n"
+      "      %ld leg streamed \"HELLO CADR\" whole with a handler nine tenths\n"
+      "      of a frame late and RANDOM absorbing nothing, and %ld wedged\n"
+      "      after one character with it eleven tenths late --- the two\n"
+      "      together locate the frame's end where the chip puts it, from the\n"
+      "      driver's side\n"
       "    %ld keyboard words the machine read back out of its own two halves,\n"
       "      handed over ONE AT A TIME against the card's KBD READY, which is\n"
       "      `Keyboard::deliver` in fabric; %ld refused on a full queue and\n"
@@ -1730,7 +1961,9 @@ int main(int argc, char **argv) {
       pages, reads, writes, by[kPack], by[kChaos], by[kSer], by[kInput], by[kDflt],
       crossed, bursts,
       frames_out, frames_in, chars_out, chars_in, measured[0], measured[1],
-      FrameTicks(kMr1, 15), FrameTicks(kMr1, 12), looped,
+      FrameTicks(kMr1, 15), FrameTicks(kMr1, 12), in_span,
+      FrameTicks(kMr1, 15), looped,
+      walk_streamed, walk_wedged,
       keys_typed, keys_lost, keys_swept, mouse_moved, step_span,
       (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls);
   return 0;
