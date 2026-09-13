@@ -13,6 +13,10 @@
 # this --- it takes the defaults and says so, which is better than a machine
 # with no cable at all.
 #
+# **WHAT THE ORDER DOES NOT BUY IS A NETWORK.**  S40network has run by the time
+# this does and the network is still not up; the wait at WAIT_SECONDS below is
+# what answers that, and the comment there is the whole account of it.
+#
 # **THE ADDRESSES ARE THE BAND'S AND NOT THIS PROGRAM'S.**  A band holds a
 # host table and calls its file and time host at the address that table gives.
 # A host answering anywhere else is a host the band never calls, and the
@@ -62,6 +66,185 @@ RC="$PACKS/fpgarc"
 DEFAULT_ADDRESS=3050
 DEFAULT_PORT=42042
 
+# **HOW LONG TO WAIT FOR THE NETWORK, IN SECONDS**, and why there is a wait at
+# all.  cadr-chaosnet resolves every peer's name once, at the start, and
+# refuses a name that has no address --- muir's behaviour, and right: a name
+# with no address is a refusal at the start rather than a peer that is never
+# reached.  But this script runs during init, and on this image the network is
+# not up when it does.
+#
+# **WHAT init ACTUALLY DOES HERE, read off the image rather than assumed.**
+# /etc/network/interfaces says `iface eth0 inet dhcp`, so S40network's
+# `ifup -a` starts BusyBox udhcpc --- and BusyBox is built with
+# CONFIG_IFUPDOWN_UDHCPC_CMD_OPTIONS="-t1 -A3 -b ...", where `-b` means the
+# client forks into the background when the first DISCOVER is not answered.
+# So `ifup -a` prints OK with the interface bare, and the lease arrives later,
+# after the link comes up: the console shows the PHY at 1Gbps seconds AFTER
+# every init script has run.  Measured on two boots, on both of which this
+# program printed that a peer's name had no address this host can reach and
+# exited, while this script printed OK and left a pid file.
+#
+# **SO AN S-NUMBER CANNOT FIX IT.**  Ordering orders scripts, and what is late
+# here is an EVENT --- the link, then the lease --- which no script is waiting
+# on.  An S99 would lose the same race on a slower switch, and would be a
+# number chosen to beat a measurement rather than a statement of what is
+# needed.  What this script needs is stated below and waited for.
+#
+# **AND THE OTHER WAY ROUND WAS CONSIDERED: start this from the lease.**
+# udhcpc runs /usr/share/udhcpc/default.script at `bound`, so that script could
+# start the program at the moment the network came up, with no waiting and no
+# polling.  Three things against it.  That file is BusyBox's own and would have
+# to be replaced in the rootfs overlay, which puts our start-up inside a file
+# we do not otherwise own.  It runs at every renew, not only the first, so the
+# program would need starting only if it were not already started.  And a board
+# with a static address, or none, would never reach it at all, where this
+# waits, gives up and starts the program anyway.  One place starts the program
+# and it is this script.
+#
+# The wait is bounded and the bound is not a guess about the network: it is
+# how long a boot may be delayed by something that may never arrive.  On
+# expiry the program is started ANYWAY, so that a card whose peers are all
+# addresses, or which names no peer at all, is never held here --- and so that
+# when a name really cannot be resolved, the refusal that reaches the console
+# is the program's own, with the name in it, rather than this script's silence.
+WAIT_SECONDS=30
+
+# The host in one peer's endpoint, printed, or nothing at all.
+#
+# The program's own reading of these: the port is after the LAST colon, so
+# what is before it is the host.  A host made only of digits and dots is a
+# literal address and there is nothing for a resolver to answer about it; a
+# name has something else in it.  That is the whole test, and it is the right
+# shape --- a name of nothing but digits and dots is not a name anybody can
+# look up either.
+host_of() {
+	h=$1
+	case "$h" in
+	*:*) h=${h%:*} ;;
+	esac
+	case "$h" in
+	"") ;;
+	# A flag where a peer's endpoint should be is a settings file with a
+	# line missing its argument.  The program will say so by name; this
+	# must not spend the whole bound asking a resolver about it.
+	-*) ;;
+	*[!0-9.]*) printf '%s\n' "$h" ;;
+	esac
+}
+
+# The names the flags about to be passed carry, one a line.  READ OUT OF THE
+# FLAGS and never from a list of hosts here: the settings file is the command
+# line, so a host this script knew about would be a second place to edit and
+# a place to be wrong.  Both spellings of each flag, because the program takes
+# muir's long name and its own short one.
+names_in() {
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--udp-peer|--chaos-udp-peer)
+			[ $# -gt 1 ] || break
+			host_of "${2#*@}"
+			shift
+			;;
+		--udp-default-peer|--chaos-udp-default-peer)
+			[ $# -gt 1 ] || break
+			# A default peer of nothing but digits is a port on the
+			# loopback and names no host, which is the program's
+			# own rule for it.
+			case "$2" in
+			*[!0-9]*) host_of "$2" ;;
+			esac
+			shift
+			;;
+		esac
+		shift
+	done
+}
+
+# **WHAT "THE NETWORK IS USABLE" MEANS ON THIS IMAGE**, and every part of it is
+# something udhcpc's own script does at `bound`
+# (/usr/share/udhcpc/default.script, which is BusyBox's):
+#
+#   an address    it runs `ifconfig $interface $ip`, so until the lease there
+#                 is no address anywhere but the loopback
+#   a route       it runs `route add default gw $i`, and a peer off this
+#                 subnet is unreachable without one
+#   a resolver    it writes the lease's nameservers into /etc/resolv.conf,
+#                 which is a symlink into /run and starts out empty
+#
+# All three become true together, at the lease, which is why waiting for the
+# third is not more than waiting for the first --- and the third is the one the
+# program actually dies of.
+#
+# nslookup asks the nameserver and does not read /etc/hosts, where getaddrinfo
+# reads both.  So a name that lives only in /etc/hosts waits out the bound and
+# is then started anyway and works --- late, not broken.  `-type=a` is the
+# query the program makes, AF_INET and nothing else, and the two bounds keep
+# one dead nameserver from eating the whole wait.
+#
+# `names` is filled in by start() out of the flags it is about to pass, and
+# `network_why` is the reason the first unmet condition gives, kept for the
+# console.
+names=""
+network_why=""
+network_ready() {
+	if ! ip -o -4 addr show 2>/dev/null | grep -q 'scope global'; then
+		network_why="no address yet on anything but the loopback"
+		return 1
+	fi
+	if ! ip -4 route list 2>/dev/null | grep -q '^default'; then
+		network_why="no default route yet"
+		return 1
+	fi
+	for n in $names; do
+		if ! nslookup -type=a -retry=1 -timeout=2 "$n" \
+		    >/dev/null 2>&1; then
+			network_why="$n does not resolve yet"
+			return 1
+		fi
+	done
+	network_why=""
+	return 0
+}
+
+# Seconds since the machine started, which is monotonic and needs no clock.
+# This board has no battery-backed one, so the time of day is whatever the
+# last thing to set it said and is not a thing to measure a wait with.
+uptime_s() {
+	read -r up _ < /proc/uptime 2>/dev/null || up=""
+	case "$up" in
+	""|*[!0-9.]*) echo 0 ;;
+	*) echo "${up%%.*}" ;;
+	esac
+}
+
+# Wait for it, bounded, and say what was waited for and how long.  The bound is
+# read off the clock, and the number of polls is the floor under it: a poll
+# sleeps a second, so a clock that is not there still ends this.
+wait_for_network() {
+	if network_ready; then
+		echo "cadr-chaosnet: the network is ready"
+		return 0
+	fi
+	echo "cadr-chaosnet: waiting up to ${WAIT_SECONDS}s for the network:" \
+	     "$network_why"
+	started=$(uptime_s)
+	polls=0
+	elapsed=0
+	while [ "$elapsed" -lt "$WAIT_SECONDS" ]; do
+		sleep 1
+		polls=$((polls + 1))
+		elapsed=$(($(uptime_s) - started))
+		[ "$elapsed" -ge "$polls" ] || elapsed=$polls
+		if network_ready; then
+			echo "cadr-chaosnet: the network is ready after ${elapsed}s"
+			return 0
+		fi
+	done
+	echo "cadr-chaosnet: the network is still not ready after ${elapsed}s:" \
+	     "$network_why; starting anyway, and what it says next is its own"
+	return 1
+}
+
 start() {
 	set --
 	if [ -f "$RC" ]; then
@@ -90,6 +273,12 @@ start() {
 		echo "cadr-chaosnet: no $RC; the defaults"
 		set -- --chaos-address "$DEFAULT_ADDRESS" --chaos-udp "0.0.0.0:$DEFAULT_PORT"
 	fi
+
+	# The names first, out of the very flags about to be passed, then the
+	# wait.  Before the line below rather than after it, so that a boot's
+	# log does not hold a half-printed "Starting" across the wait.
+	names=$(names_in "$@")
+	wait_for_network
 
 	printf "Starting cadr-chaosnet: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \

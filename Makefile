@@ -1927,18 +1927,26 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # in it now, and the half of them that is a MAPPING has no other reference:
 # `input_keymap.h` is generated from muir but the state machine over it is
 # written out by hand, and this is what holds it.
-CHAOSNET_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/src
+CHAOSNET_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet
+CHAOSNET_SRC := $(CHAOSNET_PKG)/src
 SERIAL_SRC   := boards/arty-z7-20/linux/buildroot/package/cadr-serial/src
 TERMINAL_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src
 
+# The init script and the check that runs it are prerequisites too.  The
+# package ships three things --- the program, its mutations and the script that
+# starts it at boot --- and until the script joined this check a change to it
+# was gated by whoever remembered, which is the shape this file already
+# records for the terminal's own tests.
 $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
                         $(wildcard $(CHAOSNET_SRC)/*.h) \
                         $(CHAOSNET_SRC)/chaos_mutations.txt \
+                        $(CHAOSNET_SRC)/chaos_test_boot.sh \
+                        $(CHAOSNET_PKG)/S87cadr-chaosnet \
                         $(CHAOSNET_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(CHAOSNET_SRC) check
 	$(MAKE) -C $(CHAOSNET_SRC) all COMMON=host
 	$(MAKE) -C $(CHAOSNET_SRC) clean
-	@echo "chaosnet: the program builds, and its packet, its register face and CHUDP agree with muir"
+	@echo "chaosnet: the program builds, its packet, its register face and CHUDP agree with muir, and its init script waits for the network"
 	@touch $@
 
 $(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h) \
