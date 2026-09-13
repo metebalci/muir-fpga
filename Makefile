@@ -30,6 +30,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/sstep.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
        $(BUILD)/md_compose.pass \
+       $(BUILD)/park.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
@@ -2273,4 +2274,23 @@ $(BUILD)/obj_md_compose/Vcadr_machine: $(MACHINE) tb/cadr_md_compose_tb.cpp | $(
 
 $(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_md_compose/Vcadr_machine
+	@touch $@
+
+# ------------------------------------------------------- the halted machine
+#
+# A halted machine must go on making master clocks, and CC's own entry ---
+# `CC-STOP-MACH` and the five microinstructions `CC-FULL-SAVE` forces, the
+# last of them a `SRCMD` read of MD --- must not park the ring.  `Rtl::step`
+# answers a halted machine before it looks at the bus at all, so muir never
+# takes a `-HANG` there; this is that property on the composed machine, where
+# the memory path is under the processor and a memory cycle can actually be
+# outstanding.  `sstep` scripts the same register against muir row for row
+# and its own header says it never reaches a memory cycle.
+$(BUILD)/obj_park/Vcadr_machine: $(MACHINE) tb/cadr_park_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_park \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_park_tb.cpp)
+
+$(BUILD)/park.pass: $(BUILD)/obj_park/Vcadr_machine $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_park/Vcadr_machine
 	@touch $@
