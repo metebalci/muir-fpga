@@ -287,7 +287,15 @@ figure.screen img {
 :root {
   --st-done:  #2da44e;   /* on the board: silicon has shown it */
   --st-built: #0aa2c0;   /* checked in simulation, not yet run on the board */
-  --st-part:  #d97706;   /* partly built: some of it verified, some not there */
+  --st-part:  #d97706;   /* partly built, and it is only about building: some
+                            of the block exists and some of it does not.  It
+                            says nothing about verification.  A block that is
+                            whole goes turquoise even if only part of it has
+                            run on the board, because turquoise carries the
+                            assumption that what is built is checked --- in
+                            simulation for fabric, by its own tests for a
+                            program --- and green is reserved for what silicon
+                            itself has shown. */
   --st-wip:   #8250df;   /* being built now: somebody is in those files today --- violet, since blue sat too near the turquoise */
   --st-ext:   #d0d7de;   /* outside the project */
 }
