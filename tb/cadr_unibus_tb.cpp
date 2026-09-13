@@ -125,6 +125,7 @@
 #include <cstring>
 #include <cstdint>
 #include <string>
+#include <map>
 #include <vector>
 
 #include "Vcadr_memory_path.h"
@@ -183,6 +184,21 @@ const unsigned kOpenBus = 0177777;
 // and the mouse lines below are chosen so that the quadrature nibble does not
 // either.
 uint16_t Poison(unsigned eadr) { return 0xC300u | (uint16_t)((eadr & 0xF) * 0x11u); }
+
+// And a word injective in the DDR BYTE address, for the mapped window's own
+// section. `cadr_ddr_map::main_byte_address` is `0x1800_0000 + (phys << 2)`,
+// so the physical word address is recoverable from what the port asks for and
+// the claim is on the address as much as on the word: a translation one page
+// or one word wide reaches a byte address this testbench put nothing else at.
+// Multiplication by an odd constant is a bijection on 32 bits.
+uint32_t MainPoison(uint32_t byte_addr) {
+  return ((byte_addr ^ 0x2AAAAAAAu) * 0x85EBCA6Bu) ^ 0x3C3C3C3Cu;
+}
+
+// The DDR byte address the machine's memory port names a physical word at,
+// and the physical word address back out of one.
+constexpr uint32_t kMainBase = 0x18000000u;
+uint32_t MainByteAddress(uint32_t phys) { return kMainBase + (phys << 2); }
 
 // The seven lines the mouse drives, held still for the whole run: bits 0 to 3
 // the quadrature, 4 to 6 the tail, middle and head switches, each pulled to
@@ -307,9 +323,23 @@ int main(int argc, char **argv) {
   std::vector<uint8_t> iface(kAddrs, kNoIface);
   std::vector<uint8_t> icovered(kAddrs, 0);
   long iface_rows = 0, iface_none_runs = 0;
+  // The mapped window's first map entry and the physical page
+  // `Machine::map_entry` reads out of it, out of the `MAPSWEEP` rows. The
+  // section below programs that entry and then reaches main memory through
+  // it, and the page it must land on is muir's reading of the word and not
+  // this file's arithmetic on it.
+  unsigned sweep_entry0 = 0;
+  uint32_t sweep_page0 = 0;
+  int sweep_seen = 0;
   while (std::fgets(line, sizeof line, g)) {
     unsigned a, b, k, n;
-    if (std::sscanf(line, "IFACENONE %x %x", &a, &b) == 2) {
+    if (std::sscanf(line, "MAPSWEEP %x %x %x", &k, &a, &b) == 3) {
+      if (k == 0) {
+        sweep_entry0 = a;
+        sweep_page0 = b;
+      }
+      ++sweep_seen;
+    } else if (std::sscanf(line, "IFACENONE %x %x", &a, &b) == 2) {
       if (b >= kAddrs) {
         std::fprintf(stderr, "FAIL: %s: an IFACENONE run ends at 0x%x\n", ipath, b);
         return 2;
@@ -335,6 +365,13 @@ int main(int argc, char **argv) {
   if (iface_rows < 90) {
     std::fprintf(stderr, "FAIL: %s carries %ld IFACE rows; the block has more than that\n", ipath,
                  iface_rows);
+    return 2;
+  }
+  if (sweep_seen != 16 || !(sweep_entry0 & 0x8000u) || !(sweep_entry0 & 0x4000u) || !sweep_page0) {
+    std::fprintf(stderr,
+                 "FAIL: %s carries %d MAPSWEEP rows and entry 0 is 0x%x naming page 0%o; the "
+                 "window's section needs a valid, writable entry\n",
+                 ipath, sweep_seen, sweep_entry0, sweep_page0);
     return 2;
   }
 
@@ -428,7 +465,18 @@ int main(int argc, char **argv) {
   // decode sends none of these addresses there --- but it is answered anyway
   // so that a fault which sent one to main memory hangs nothing and shows up
   // as the wrong slave rather than as a stuck run.
-  long main_memory_cycles = 0;
+  //
+  // **EXCEPT WHILE THE MAPPED WINDOW IS OPEN**, which is the one thing here
+  // that reaches main memory on purpose: a foreign Unibus master's cycle at
+  // `0o140000`-`0o177777` is an Xbus cycle at the translated address, and
+  // that section opens this port for exactly its own cycles.  The two are
+  // counted apart so that the claim below --- no Unibus address of the
+  // machine's own reaches the memory port --- stays the claim it was.
+  long main_memory_cycles = 0, window_mem_cycles = 0;
+  int window_open = 0;
+  std::map<uint32_t, uint32_t> main_mem;
+  uint32_t last_mem_addr = 0, last_mem_wdata = 0;
+  int last_mem_write = 0;
   auto Tick = [&]() {
     dut->rst = (tick == 0);
     dut->mclk = (tick % kMicrocycle) == 0;
@@ -436,7 +484,19 @@ int main(int argc, char **argv) {
     dut->eval();
     dut->mem_done = dut->mem_req;
     dut->mem_rdata = 0;
-    if (dut->mem_req) ++main_memory_cycles;
+    if (dut->mem_req) {
+      if (window_open) {
+        ++window_mem_cycles;
+        last_mem_addr = dut->mem_addr;
+        last_mem_write = dut->mem_write;
+        last_mem_wdata = dut->mem_wdata;
+        if (dut->mem_write) main_mem[dut->mem_addr] = dut->mem_wdata;
+        const auto it = main_mem.find(dut->mem_addr);
+        dut->mem_rdata = (it == main_mem.end()) ? MainPoison(dut->mem_addr) : it->second;
+      } else {
+        ++main_memory_cycles;
+      }
+    }
     dut->eval();
     dut->clk = 0;
     dut->eval();
@@ -1058,6 +1118,159 @@ int main(int argc, char **argv) {
     Idle(4);
   }
 
+  // ---- the mapped window, through the arbiter and into main memory --------
+  //
+  // **THIS IS THE COMPOSITION THE WINDOW EXISTS FOR**, and it is the half
+  // `build/busint_regs.pass` cannot make: there the Xbus seam is two ports
+  // the testbench drives, and here it is the arbiter, the bridge and the
+  // machine's own memory port.  A foreign Unibus master writes a map entry,
+  // reaches `0o140000`-`0o177777` through it, and the word comes off
+  // `mem_addr` at the translated address.
+  //
+  // **THE MASTER IS THIS TESTBENCH AND NOT A PROGRAM, and that is a real
+  // limit.**  `rtl/machine/cadr_dbgin.sv`'s request is tied off inside
+  // `cadr_memory_path.sv` and `rtl/plumbing/cadr_console.sv` builds its
+  // address as `SPY_BASE | eadr<<1` and cannot address the window at all, so
+  // NOTHING IN THE COMPOSED MACHINE MAKES A MAPPED CYCLE.  What is driven
+  // here is the console's own seam --- `con_req`, `con_addr`, `con_msyn` ---
+  // which is the seam a foreign master presents to this module, and `con_gnt`
+  // is half of the `ub_foreign` the window answers on.  The section is
+  // therefore the arbiter and the datapath, held to a property; the words and
+  // the responders are `busint_regs.pass`'s, against muir.
+  long window_cycles = 0, window_reads = 0, window_writes = 0;
+  int window_timed_out = 0;
+  if (failures < kMaxFailures) {
+    // The entry, written by the PROCESSOR's own master --- the map registers
+    // answer everybody and only the window is foreign-only.
+    Run(0766140, true, sweep_entry0);
+    const Cycle back = Run(0766140, false, 0);
+    if ((back.word & 0xFFFFu) != sweep_entry0)
+      failures += Fail("the map entry read back", back.word & 0xFFFFu, sweep_entry0, "the window");
+    iface_writes += 1;
+    iface_reads += 1;
+
+    // A foreign master's cycle, driven the way the console drives one: the
+    // request up, the grant taken with the processor's strobe down, the
+    // strobe held until the slave answers, and the request dropped only once
+    // the line is free.
+    auto Foreign = [&](unsigned uaddr, bool write, unsigned wdata, long guard) {
+      dut->con_req = 1;
+      dut->con_addr = uaddr;
+      dut->con_write = write ? 1 : 0;
+      dut->con_wdata = wdata;
+      for (long gg = 0; gg < 200 && !dut->con_gnt; ++gg) Tick();
+      dut->con_msyn = 1;
+      long at = -1;
+      unsigned word = 0, by = 0;
+      for (long gg = 0; gg < guard; ++gg) {
+        Tick();
+        // **`ub_ssyn_o` IS THE PROCESSOR'S OWN LINE AND IS MASKED HERE**:
+        // `cadr_console_bus.sv` makes `cpu_ssyn` zero while another master
+        // holds the bus, which is the discipline the section above measures.
+        // A foreign master's answer is its own `-UB SSYN`.
+        if (dut->con_ssyn) {
+          at = tick - 1;
+          // The word off the BUS, at the instant the slave pulls the line:
+          // `cadr_console_bus.sv` captures the console's own copy at the
+          // microcycle boundary, and what is being held here is the slave.
+          word = dut->ub_rdata_o & 0xFFFFu;
+          by = dut->ub_ssyn_by;
+          break;
+        }
+      }
+      dut->con_msyn = 0;
+      for (long gg = 0; gg < 400; ++gg) {
+        Tick();
+        if (!dut->ub_ssyn_by) break;
+      }
+      dut->con_req = 0;
+      for (long gg = 0; gg < 40; ++gg) Tick();
+      ++window_cycles;
+      return std::make_pair((long)by, (long)((at < 0) ? -1 : (long)word));
+    };
+
+    window_open = 1;
+    const uint32_t phys = (sweep_page0 << 8) | 0x2Au;
+    const uint32_t byte_addr = MainByteAddress(phys);
+    const uint32_t want = MainPoison(byte_addr);
+
+    // The EVEN word: an Xbus read at the translated address, whose low half
+    // is the answer and whose high half goes into the page's read buffer.
+    const unsigned base = 0140000u + (0u << 10) + (0x2Au << 2);
+    auto r = Foreign(base, false, 0, 4000);
+    ++window_reads;
+    if (r.second < 0) {
+      failures += Fail("-UB SSYN on a mapped read", 0, 1, "the window");
+    } else {
+      if (r.first != 4)
+        failures += Fail("which slave answered the mapped read", (unsigned)r.first, 4,
+                         "the window");
+      if ((uint32_t)r.second != (want & 0xFFFFu))
+        failures += Fail("the low half of the mapped word", (unsigned)r.second, want & 0xFFFFu,
+                         "the window");
+      if (last_mem_addr != byte_addr)
+        failures += Fail("the byte address the memory port was asked for", last_mem_addr,
+                         byte_addr, "the window");
+      if (last_mem_write)
+        failures += Fail("the direction at the memory port on a mapped read", 1, 0, "the window");
+    }
+    // The ODD word: the read buffer, no Xbus cycle, the HIGH half.
+    const long before = window_mem_cycles;
+    r = Foreign(base + 2, false, 0, 4000);
+    ++window_reads;
+    if (r.second < 0)
+      failures += Fail("-UB SSYN on a mapped buffer read", 0, 1, "the window");
+    else if ((uint32_t)r.second != (want >> 16))
+      failures += Fail("the high half out of the read buffer", (unsigned)r.second, want >> 16,
+                       "the window");
+    if (window_mem_cycles != before)
+      failures += Fail("memory cycles for a read of the odd word",
+                       (unsigned long)(window_mem_cycles - before), 0, "the window");
+
+    // And a WRITE: the even word into the write buffer, the odd word an Xbus
+    // write of the two halves at the same address.  This is the claim
+    // `docs/debug-cable.md` says is missing --- "a debug cycle cannot reach
+    // main memory" --- made from the other direction.
+    const long before_w = window_mem_cycles;
+    Foreign(base, true, 0x4321, 4000);
+    ++window_writes;
+    if (window_mem_cycles != before_w)
+      failures += Fail("memory cycles for a write of the even word",
+                       (unsigned long)(window_mem_cycles - before_w), 0, "the window");
+    r = Foreign(base + 2, true, 0x8765, 4000);
+    ++window_writes;
+    if (!last_mem_write || last_mem_addr != byte_addr || last_mem_wdata != 0x87654321u)
+      failures += Fail("the word the mapped write put in main memory", last_mem_wdata,
+                       0x87654321u, "the window");
+    // Read it back through the map, which is what says the whole route works
+    // in both directions rather than each half on its own.
+    r = Foreign(base, false, 0, 4000);
+    ++window_reads;
+    if (r.second < 0 || (uint32_t)r.second != 0x4321u)
+      failures += Fail("the low half read back through the map", (unsigned)r.second, 0x4321u,
+                       "the window");
+    r = Foreign(base + 2, false, 0, 4000);
+    ++window_reads;
+    if (r.second < 0 || (uint32_t)r.second != 0x8765u)
+      failures += Fail("the high half read back through the map", (unsigned)r.second, 0x8765u,
+                       "the window");
+    window_open = 0;
+
+    // **AND THE MACHINE'S OWN CYCLE AT THE SAME ADDRESS TIMES OUT.**
+    // `busint::decode` answers `Responder::NoUnibus` over the whole window,
+    // so the processor is not mapped --- and this is that claim in the
+    // composition, where `ub_foreign` is a wire from the arbiter rather than
+    // a port the testbench holds.  A block that answered it would reach main
+    // memory here and `main_memory_cycles` would say so as well.
+    const Cycle own = Run(base, false, 0);
+    if (!own.timed_out || own.answered())
+      failures += Fail("the processor's own cycle in the mapped window",
+                       (unsigned)(own.answered() ? own.by : 0), 0, "the window");
+    else
+      window_timed_out = 1;
+    ++unanswered;
+  }
+
   // ---- the counter's high half, past the carry ----------------------------
   //
   // 65,536 of the card's microseconds is 13.1 million ticks.  Standing still
@@ -1135,6 +1348,19 @@ int main(int argc, char **argv) {
   least("cycles nothing answered", unanswered, 100);
   least("addresses swept", swept, 3000);
   least("console cycles run while a card cycle stood behind them", console_cycles, 4);
+  least("mapped cycles run by a foreign master", window_cycles, 6);
+  least("mapped reads", window_reads, 4);
+  least("mapped writes", window_writes, 2);
+  // Three, and the number is the route: two reads of the even word and one
+  // write of the odd word reach main memory, while the three cycles of the
+  // odd word's buffer and the even word's buffer reach nothing at all.
+  least("memory cycles the mapped window made", window_mem_cycles, 3);
+  if (!window_timed_out) {
+    std::fprintf(stderr,
+                 "FAIL: the processor's own cycle in the mapped window did not time out, so the\n"
+                 "      ub_foreign gate was not measured in the composition\n");
+    ++thin;
+  }
   if (main_memory_cycles != 0) {
     std::fprintf(stderr, "FAIL: %ld of these cycles reached the memory port, and a Unibus address must not\n",
                  main_memory_cycles);
@@ -1167,10 +1393,21 @@ int main(int argc, char **argv) {
       "    muir's own ioboard::answers (%ld DEC rows and %ld DECNONE runs out of %s) and its\n"
       "    busint::register (%ld IFACE rows out of %s) --- no transcription of either.\n"
       "    The bus interface's own registers answered %ld of the sweep's directions: the interrupt\n"
-      "    block at 0766040-0766076 and the Unibus map at 0766140-0766176.\n",
+      "    block at 0766040-0766076 and the Unibus map at 0766140-0766176.\n"
+      "    AND THE MAPPED WINDOW REACHED MAIN MEMORY: %ld cycles of a foreign Unibus master at\n"
+      "    0140000-0177777 --- %ld reads and %ld writes --- through a map entry out of %s,\n"
+      "    %ld of them reaching the machine's own memory port at the byte address\n"
+      "    cadr_ddr_map::main_byte_address gives the translated page, the odd word answered from\n"
+      "    the read buffer with no memory cycle at all, and a word written through the map and\n"
+      "    read back through it.  The PROCESSOR's own cycle at the same address timed out, which\n"
+      "    is busint::decode answering NoUnibus over the whole window.  The master is this\n"
+      "    testbench on the console's seam: cadr_dbgin.sv's request is tied off and\n"
+      "    cadr_console.sv cannot address the window, so nothing in the composed machine makes a\n"
+      "    mapped cycle yet.\n",
       tick, card_reads, card_writes, block_reads, block_writes, iface_reads, iface_writes, kStrobeT,
       kAckT, carry_ticks, swept,
       kSweepFirst, kSweepLast, answered_by_card, answered_by_block, unanswered, kAddrs, dec_rows,
-      dec_none_runs, path, iface_rows, ipath, answered_by_iface);
+      dec_none_runs, path, iface_rows, ipath, answered_by_iface, window_cycles, window_reads,
+      window_writes, ipath, window_mem_cycles);
   return 0;
 }
