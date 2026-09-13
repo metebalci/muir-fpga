@@ -24,12 +24,30 @@
 // that clears the holding register, so a line side that never pulsed it
 // would stop the CADR's serial output at the first character, for ever.
 // Built as a rational-rate divider rather than a division: 5,068,800 crystal
-// periods in every 100,000,000 fabric ticks, by adding the first and
-// subtracting the second, which is exact on the average and needs no real
-// arithmetic in a parameter.  A 16X clock is `DIVISORS[MR2 bits 3:0]`
-// crystal periods and a character's frame is `half_bits * 8` of those 16X
-// clocks, which is `muir::serial::Framing::frame_ns` with the nanoseconds
-// cancelled out.
+// periods in every second of the machine's own time, which on MIT's 5 ns grid
+// is 200,000,000 ticks, by adding the first and subtracting the second, which
+// is exact on the average and needs no real arithmetic in a parameter.  A 16X
+// clock is `DIVISORS[MR2 bits 3:0]` crystal periods and a character's frame is
+// `half_bits * 8` of those 16X clocks, which is
+// `muir::serial::Framing::frame_ns` with the nanoseconds cancelled out.
+//
+// **THE SECOND IS THE MACHINE'S AND NOT THE WALL'S, AND THIS WAS WRONG ONCE.**
+// The divider counted 5,068,800 periods in every 100,000,000 ticks --- the
+// board's real 100 MHz --- so the crystal ran at a real 5.0688 MHz while every
+// other timed thing in the machine counts MIT's 5 ns grid.  The board's tick
+// is 10 ns, so the machine runs at half real time on purpose and its clocks
+// disagree with the wall by exactly that; this module was the one part that
+// did not, and its frames came out HALF as long as muir's, measured in the
+// only clock the machine has.  What that cost: a character's frame at 9600
+// baud ended 520,830 ns into the machine's time where
+// `Framing::frame_ns` says 1,041,666, so `SR2`/TxEMT rose in half the margin
+// the real chip gives --- and `sys/io1/serial.lisp`'s RANDOM channel, which
+// is first in the walk on vector `0o264` and matches on `SR2`, absorbed the
+// TxRDY interrupt that OUTPUT was meant to have.  The machine sent one
+// character and spun in the interrupt handler for ever.  That frame's LENGTH
+// is the whole of what keeps MIT's driver working --- a status read does not
+// clear TxEMT, by the sheet's own diagnostic --- so this constant is a
+// correctness constant and not a convenience.
 //
 // **THE DERIVATIONS ARE TRANSCRIBED FROM THE CARD, AND THAT IS THE DESIGN
 // AND NOT A DUPLICATION.**  The card brings out `ser_mode1`, `ser_mode2`,
@@ -138,8 +156,15 @@
 module cadr_serial_line #(
     // "SERI", so that a read of word 0 can be told from a bus of zeros.
     parameter logic [31:0] IDENT = 32'h5345_5249,
-    // The fabric's clock, for the crystal's rational divider.  10 ns a tick.
-    parameter int unsigned CLK_HZ = 100_000_000
+    // **MIT'S GRID, AND NOT THE BOARD'S CLOCK.**  `cadr_phase_gen.sv`'s own
+    // `TICK_NS` is 5 for ever, because the drawings' grid is 5 ns and every
+    // instant in this machine is a count of them: the card's microsecond
+    // clock is `1000 / 5` ticks, the display's frame is muir's frame_ns over
+    // five, the disk's spans are `ceil(ns / 5)`.  The board's tick is 10 ns,
+    // so the whole machine deliberately runs at half real time and its clocks
+    // disagree with the wall --- and the serial line is part of the machine.
+    // See the header for what putting the real 100 MHz here did.
+    parameter int unsigned TICK_NS = 5
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -310,7 +335,11 @@ module cadr_serial_line #(
   // four fewer `$clog2` would buy: the sum is nowhere near the top and a
   // width nobody has to check is worth four flip-flops.
   localparam logic [31:0] XTAL_ADD = BRCLK_HZ;
-  localparam logic [31:0] XTAL_WRAP = CLK_HZ;
+  // Ticks in one second of the MACHINE's own time.  At `TICK_NS` = 5 that is
+  // 200,000,000, so a crystal period is 39.46 ticks and a 9600-baud frame is
+  // 208,333 of them --- `Framing::frame_ns` over five, which is the
+  // conversion every check in this tree makes.
+  localparam logic [31:0] XTAL_WRAP = 32'd1_000_000_000 / TICK_NS;
   logic [31:0] acc;
   logic        xtal;                 // a crystal period has passed
   logic [12:0] div_cnt;

@@ -10082,6 +10082,87 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
         rdata_hold <= {23'd0, rx_valid, rx_char};
 @end
 
+@mutation serial-line-times-the-frame-by-the-board-and-not-by-the-machine
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note **THE DEFECT THE BOARD HAD, AND THE ONE CONSTANT IN THE MACHINE'S
+@note TIMING THAT WAS NOT ON MIT'S GRID.**  The crystal's rational divider
+@note counted 5,068,800 periods in every 100,000,000 ticks --- the board's
+@note real clock --- where every other instant in this machine is a count of
+@note MIT's 5 ns: the card's own microsecond clock is `1000 / 5` ticks, the
+@note display's frame is muir's over five, the disk's spans are
+@note `ceil(ns / 5)`.  The board's tick is 10 ns and the machine therefore
+@note runs at half real time on purpose, so a serial line timed by the wall
+@note ran at TWICE the rate its software programmed, measured in the only
+@note clock the machine has, and every frame came out half as long as
+@note `Framing::frame_ns`.
+@note **What that costs is not a rate but a wedge.**  `SR2`/TxEMT rises one
+@note character frame after the holding register empties, and that frame is
+@note the whole of the margin `sys/io1/serial.lisp`'s interrupt walk depends
+@note on: RANDOM is first on vector `0o264` and matches on `SR2`, so a TxEMT
+@note that rises before the handler reaches OUTPUT means RANDOM absorbs the
+@note interrupt OUTPUT was meant to have.  A status read does not clear
+@note TxEMT --- the sheet's own read-it-twice diagnostic depends on that ---
+@note so nothing recovers and the machine spins having sent ONE character.
+@note Written with `TICK_NS` still in the expression, because the parameter
+@note left unread is a lint error and lint would catch this instead of the
+@note check: `@build-fails` is not what this record is.
+@note Caught at "the ticks a character's frame took", at "the ticks a
+@note character's frame into the machine took", and --- the reason the walk
+@note is in the check at all --- at "the characters that reached the cable at
+@note nine tenths of a frame", which prints `H` where it wants `HELLO CADR`.
+@old
+  localparam logic [31:0] XTAL_WRAP = 32'd1_000_000_000 / TICK_NS;
+@new
+  localparam logic [31:0] XTAL_WRAP = 32'd1_000_000_000 / (TICK_NS * 2);
+@end
+
+@mutation serial-line-gives-the-machine-its-character-at-once
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note The RECEIVER's frame, which had no lower bound on it until the
+@note transmitter's was found wrong.  A character into the machine takes its
+@note frame time and `ser_rx_end` is where that frame ends; a receiver that
+@note hands it over at the first 16X clock instead offers the machine
+@note characters faster than the rate it programmed, and the machine's
+@note answer to that is `SR4`, an overrun it never asked to have.  A check
+@note that only waits for the character to arrive passes this outright,
+@note which is what a bound with one side is worth.  `frame_x16` stays used
+@note at the transmitter.  Caught at "the ticks a character's frame into the
+@note machine took".
+@old
+          10'd3: if (tx_room) begin
+            in_char <= (in_char & ~wr_mask[7:0]) | (wr_data[7:0] & wr_mask[7:0]);
+            in_left <= frame_x16;
+@new
+          10'd3: if (tx_room) begin
+            in_char <= (in_char & ~wr_mask[7:0]) | (wr_data[7:0] & wr_mask[7:0]);
+            in_left <= 9'd1;
+@end
+
+@mutation serial-line-makes-the-frame-twice-as-long
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note And the other side of the same number, which is why the frame is
+@note bounded both ways and why the walk has a second leg.  A frame twice as
+@note long is as wrong as one half as long --- the machine's serial line then
+@note runs at half the rate its software programmed --- and it is INVISIBLE
+@note to any check that asks only whether the driver kept streaming, because
+@note a longer frame gives MIT's handler MORE margin and never wedges.  The
+@note leg that sees it is the one where the handler is deliberately slower
+@note than the frame: on the real chip that wedges, and a fabric whose frame
+@note has been stretched goes on streaming and says so.
+@note Caught first at "a character the machine transmitted never reached the
+@note line", the measurement's own bound running out before the stretched
+@note frame ends, and then --- the line that is this record's reason for
+@note existing --- at "interrupts RANDOM absorbed in a row at eleven tenths
+@note of a frame", where the walk does NOT wedge and should have.
+@old
+  assign frame_x16 = {half_bits, 3'b000};
+@new
+  assign frame_x16 = {half_bits, 3'b000} + {half_bits, 3'b000};
+@end
+
 # ---------------------------------------------------------------------------
 # The keyboard's cable and the mouse's, `rtl/plumbing/cadr_input_cables.sv`:
 # the fourth page of `M_AXI_GP0` and the far end of the I/O board's other two

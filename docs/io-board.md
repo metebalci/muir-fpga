@@ -936,6 +936,21 @@ both. It recomputes `tx_on`, `rx_on`, `-CTS` and `-DCD` from `ser_mode1`,
 runs the baud-rate generator off `ser_mode2`'s rate so that a character takes
 its own frame time either way.
 
+**The generator counts MIT's 5 ns grid and not the board's clock.** The frame
+above is 1,041,666 ns of the machine's own time, which is 208,333 ticks. The
+board's tick is 10 ns, so the whole machine runs at half real time on purpose
+and its clocks disagree with the wall by exactly that; the serial line is part
+of the machine and disagrees with it too. A generator timed by the real clock
+instead would halve every frame as the machine measures it. That is not merely
+a wrong rate. `SR2`, the chip's TxEMT, rises one character frame after the
+holding register empties, and a status read does not clear it: only loading
+the holding register does. MIT's driver in `sys/io1/serial.lisp` puts a
+catch-all channel first in the walk on vector `0o264` and that channel matches
+on `SR2`. The frame's length is therefore the whole of the margin in which the
+driver's output channel must reload. A frame that ends early means the
+catch-all absorbs the interrupt the output channel was meant to have, and the
+machine sends one character and then spins in its interrupt handler.
+
 What the programs owe is therefore frames and characters, and no seam pulse at
 all. The Chaosnet program reads `chaos_csr` --- which its own face carries in
 the top half of a status word --- for Loop Back and Spy.
