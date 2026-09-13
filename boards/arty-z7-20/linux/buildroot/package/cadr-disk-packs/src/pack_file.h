@@ -20,10 +20,9 @@
 // caveat both share: a sector laid with a header or checkword that is not
 // its own forgets that at the next start, and reads as a fresh pack's
 // sector, the format's own header and the code over the data.  **A sidecar
-// file persisting the two tables was built and then dropped, by Mete on 10
-// Sep, once what it preserved was understood**: the pack file is the only
-// disk file on the card, and this file holds exactly what muir's `Unit`
-// holds.
+// file persisting the two tables was built and then dropped, once what it
+// preserved was understood**: the pack file is the only disk file on the
+// card, and this file holds exactly what muir's `Unit` holds.
 
 #ifndef PACK_FILE_H
 #define PACK_FILE_H

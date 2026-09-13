@@ -95,9 +95,9 @@ and a debug cycle cannot reach main memory.
 
 **All four of the things this document used to list here are built.** The SYN
 and DLE registers and their pointer, the parity and framing flags, both
-echoing modes and the Chaosnet's timer interrupt. Mete reversed the usual
-default for them on 12 September: a register the fabric does not have is a way
-this is not the CADR, whether or not today's seam can observe it.
+echoing modes and the Chaosnet's timer interrupt. The usual default was
+reversed for them: a register the fabric does not have is a way this is not
+the CADR, whether or not today's seam can observe it.
 `docs/io-board.md`'s "What slice six built" says what holds each. Two are held
 to muir, one to the Signetics sheet, and the fourth turned out to be nothing to
 build at all, because MIT's own netlist says this version of the interface has

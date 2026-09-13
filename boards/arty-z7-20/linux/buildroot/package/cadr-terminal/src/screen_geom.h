@@ -101,7 +101,7 @@
 //
 // **THE TWO ARE KEPT APART RATHER THAN RECONCILED.**  Making the fabric's
 // frame 1,545,600 ticks would put `cadr_tv.sv` out of agreement with muir,
-// and the checks are the backbone; Mete's decision is that the machine keeps
+// and the checks are the backbone; it is decided that the machine keeps
 // agreeing with muir for now.  `docs/tv.md` and `docs/terminal.md` carry the
 // consequence.
 #define SCREEN_FRAME_REAL_NS    30912000u

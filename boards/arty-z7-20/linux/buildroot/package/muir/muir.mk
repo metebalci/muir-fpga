@@ -57,8 +57,8 @@
 # names the one binary, and naming it is also what lets board/arty-z7-20/
 # post-build.sh derive from this file that /usr/bin/muir must be in the image.
 #
-# **NO INIT SCRIPT.**  Decided with Mete on 12 September: muir is started by
-# hand when it is wanted.  Config.in has the argument.
+# **NO INIT SCRIPT.**  This is decided: muir is started by hand when it is
+# wanted.  Config.in has the argument.
 #
 # **THE COMPILER IS NOT THE ONE muir PINS, AND THAT IS A DECISION SOMEBODY
 # SHOULD TAKE RATHER THAN INHERIT.**  Measured on 12 September at this

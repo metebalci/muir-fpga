@@ -76,10 +76,9 @@
 //      checkwords are muir's `Unit`'s: the format's own for a fresh pack,
 //      what a transfer or a Write All lays for the run, and forgotten at
 //      exit (`pack_file.h`; a sidecar that persisted them was built and
-//      dropped by Mete on 10 Sep).  **An empty bay is not an error**: the
-//      program says so and goes on watching, and a pack copied in afterwards
-//      is a drive spinning up while the boot PROM is still asking whether
-//      one is ready.
+//      dropped).  **An empty bay is not an error**: the program says so and
+//      goes on watching, and a pack copied in afterwards is a drive spinning
+//      up while the boot PROM is still asking whether one is ready.
 //   5. THE LOOP: REQ and DIRTY polled, a request served or denied, dirty
 //      slots written back, the bay looked at every `--scan-ms`, until
 //      SIGTERM or SIGINT (the init script's stop), on which every dirty slot

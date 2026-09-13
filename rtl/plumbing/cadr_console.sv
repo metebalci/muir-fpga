@@ -205,9 +205,9 @@
 //
 // **THE RESET, WHICH IS WHY REGISTER 6 EXISTS.**  `boards/arty-z7-20/cadr_arty.sv`'s reset
 // is MMCM lock or BTN0 and nothing else, so restarting the CADR has meant a
-// finger on a board or a fresh bitstream.  Mete asked for a soft reboot from
-// the processing system and this is where it belongs: the console is already
-// the thing that says whether the machine is running.
+// finger on a board or a fresh bitstream.  So the machine takes a soft reboot
+// from the processing system, and this is where it belongs: the console is
+// already the thing that says whether the machine is running.
 //
 // **IT IS A PULSE OF A STATED LENGTH AND NOT A LEVEL.**  A level is a bit a
 // program can set and then be killed, or forget, or crash holding --- and a

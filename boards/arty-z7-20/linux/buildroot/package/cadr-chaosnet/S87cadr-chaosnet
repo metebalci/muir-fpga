@@ -31,12 +31,11 @@
 PACKS=/mnt/packs
 PIDFILE=/var/run/cadr-chaosnet.pid
 
-# **THREE FILES, EACH NAMED FOR WHAT IT HOLDS.**  Mete chose
-# these on 12 Sep.  There is no `chaosnet.conf` and there should not be: a
-# CADR has no file or time server in it, muir has none either since its own
-# `79c7590`, and neither do we --- so once the services are gone this program
-# has two numbers and a list of peers, and a file called "conf" would be a
-# file with nothing in it.
+# **THREE FILES, EACH NAMED FOR WHAT IT HOLDS.**  There is no
+# `chaosnet.conf` and there should not be: a CADR has no file or time server
+# in it, muir has none either since its own `79c7590`, and neither do we ---
+# so once the services are gone this program has two numbers and a list of
+# peers, and a file called "conf" would be a file with nothing in it.
 #
 #   chaosnet.addr.txt            the DIP switches on the Chaosnet card, in octal.
 #                            Not configuration: it is what the hardware IS.

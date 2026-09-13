@@ -11,9 +11,9 @@
 //
 // WHY IT EXISTS.  `boards/arty-z7-20/cadr_arty.sv` said the machine "stalls there for ever"
 // at the boot PROM's first main-memory cycle, and the board said otherwise:
-// Mete reported LD1 blinking, slowly.  The prediction was wrong and re-reading
-// the RTL would have produced another prediction.  So the configuration the
-// bitstream actually has --- `mem_done` tied low, `mem_rdata` zero, which is
+// LD1 was blinking, slowly.  The prediction was wrong and re-reading the RTL
+// would have produced another prediction.  So the configuration the bitstream
+// actually has --- `mem_done` tied low, `mem_rdata` zero, which is
 // the instantiation in `cadr_arty.sv` --- was run in simulation and measured.
 //
 // An unanswered cycle does not stall the machine; it ends on the NXM timer,

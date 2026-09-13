@@ -74,8 +74,8 @@
 //     carries, and `-MEMACK` is `busint::UNIBUS_ACK_NS` --- 150 ns --- which
 //     it does not, so that one is named here as a constant with muir's name
 //     on it.
-//   - **A cycle nothing answers gives MD zero**, which is Mete's decision of
-//     10 Sep for an unanswered read, one bus along from where it was made.
+//   - **A cycle nothing answers gives MD zero**, which is the decision for an
+//     unanswered read, one bus along from where it was made.
 //
 // WHAT IS DELIBERATELY NOT HERE.
 //

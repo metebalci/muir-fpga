@@ -38,19 +38,19 @@
 # TIMING IS MET, AND WHAT MADE IT MET WAS THE TICK AND NOT THE DESIGN. For as
 # long as this file has existed a tick was 5 ns and the board did not close:
 # -0.129 ns at 712909e, -0.384 at b1bcc34, -0.054 at cc6b9ce, -0.233 on 79
-# endpoints by the time the disk, the display and the console had landed. Mete
-# decided on 2026-09-11 to stop chasing it and remove timing as a threat to
-# the machine's correctness instead. THE TICK MOVED TWICE THAT DAY: to 6.25 ns
+# endpoints by the time the disk, the display and the console had landed. On
+# 2026-09-11 chasing it stopped, and timing was removed as a threat to the
+# machine's correctness instead. THE TICK MOVED TWICE THAT DAY: to 6.25 ns
 # in the morning, where both boards closed for the first time, and to 10 ns in
 # the afternoon, when a one-character change to a multiplexer cost a third of
 # a nanosecond and the memory-on board read -0.261 ns and did not close again.
 # A design sitting near zero turns every edit into a timing question, which is
-# what the second move buys off; Mete's words were "if you have timing
-# concern, we can even increase the tick to 10ns". So `cadr_arty.sv`'s MMCM
-# divides its 1000 MHz VCO by 10 rather than by 5, a tick is 10 ns, and the
-# machine runs at 50% of the speed the hardware ran. **Not one tick COUNT in
-# the design changed and no check moved**, because the machine's own clock is
-# the only clock it has; `cadr_arty.sv`'s header is the whole argument.
+# what the second move buys off, and raising the tick is what buys it. So
+# `cadr_arty.sv`'s MMCM divides its 1000 MHz VCO by 10 rather than by 5, a
+# tick is 10 ns, and the machine runs at 50% of the speed the hardware ran.
+# **Not one tick COUNT in the design changed and no check moved**, because the
+# machine's own clock is the only clock it has; `cadr_arty.sv`'s header is the
+# whole argument.
 #
 # Measured at `822535c` with that change and nothing else, both boards, this
 # flow:
