@@ -186,6 +186,11 @@ static int RunOne(const char *path, bool inject, Result &res) {
   dut->clk = 0;
   dut->rst = 1;
   dut->n_memack = 1;
+  // `UB MD LOAD` is MD's third writer and it is a foreign Unibus master's,
+  // so nothing in this DUT can raise it: held down, said rather than left to
+  // the model's zero.  `build/md_compose.pass` is what drives it.
+  dut->ub_md_req = 0;
+  dut->ub_md_data = 0;
   dut->n_memgrant = 1;
   dut->n_loadmd = 1;
   dut->rdata = 0;

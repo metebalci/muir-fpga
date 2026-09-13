@@ -4,7 +4,8 @@
 // CAN THE COMPOSED MACHINE LEAVE MD STALE ACROSS A READ?
 //
 // CLAUDE.md records a latent defect in `rtl/machine/cadr_microcycle.sv`: MD
-// has two writers, and at a tick where `loadmd_edge` and a `DESTMDR`
+// has three writers --- the third of them held by the last section of this
+// file --- and at a tick where `loadmd_edge` and a `DESTMDR`
 // `cpu_edge` coincide the first branch of the register runs, the `else if`
 // that clears `md_pending` never does, and the held bus word commits over the
 // instruction's own word one boundary later.  `tb/cadr_md_inject_tb.cpp` is
@@ -129,6 +130,16 @@ struct Run {
   long deferred = 0;           // strobes that landed ON a boundary tick
   long strobe_on_edge = 0;
   long read_carried_md = 0;    // reads whose write-data lines carried MD
+  // `UB MD LOAD`, MD's third writer: a foreign master's mapped write.
+  long md_loads = 0;           // edges the debugger's word was taken at
+  long md_gate_waits = 0;      // ticks the request stood while the gate held
+  long md_wait_mbusy = 0;      // of those, ticks MBUSY was the term holding it
+  long md_wait_pending = 0;    // and ticks md_pending was
+  long md_word_wrong = 0;      // loads after which MD did not hold the word
+  long md_across_processor = 0; // loads taken while the processor owned MD
+  long md_answered = 0;        // mapped writes of MD the interface answered
+  long md_load_on_even = 0;    // a load on the EVEN word, which is the buffer
+  long md_load_missing = 0;    // an odd word that never reached the load
   std::vector<Strobe> first;      // the first few, printed
   std::map<long, long> phase;     // ticks since the last boundary, histogram
   long final_pc = -1;
@@ -362,6 +373,138 @@ Run Simulate() {
     dut->clk = 0;
     dut->eval();
   }
+
+  // ---------------------------------------------------------------------
+  // `UB MD LOAD`: MD's THIRD WRITER, ON A MACHINE THAT IS STILL RUNNING.
+  // ---------------------------------------------------------------------
+  //
+  // A Unibus master that is not this board, writing through a map entry whose
+  // page has its high five bits ones, loads the processor's `MD` with the two
+  // halves instead of putting them on the Xbus: `busint::map_to_md`, CC's
+  // `CC-WRITE-MD`, which is how the debugger sets the pushdown buffer index
+  // and how every write it makes through `MD` gets there.  `MD` had two
+  // writers and now has three, and the whole question this file exists to ask
+  // --- can one of them land across another --- is asked of the new one here.
+  //
+  // **THE MACHINE IS LEFT RUNNING ON PURPOSE.**  muir's own gate is that the
+  // interface must not be in a granted cycle, and its reason is that "the
+  // debuggee CC works on is halted" --- so a halted debuggee would test the
+  // gate against the one case where it cannot bite.  Running MIT's boot PROM
+  // under it gives real `MBUSY` windows for the request to arrive in, and the
+  // check is the invariant rather than an outcome: every edge the word is
+  // taken at has both terms DOWN, and every tick the request waits is counted
+  // --- split by which term held it --- so the coverage is on the output.
+  //
+  // **AND THE SPLIT SAYS THE `md_pending` TERM IS UNCOVERED HERE, WHICH IS
+  // THE HONEST THING TO PRINT.**  Measured: 54 ticks of waiting over three
+  // writes, `MBUSY` up for every one of them and `md_pending` for one.  The
+  // reason is structural --- `md_pending` is cleared at once under `-HANG`
+  // and the boot PROM hangs at nearly every strobe it makes --- so the window
+  // that term is about is about one tick long on this program.
+  // `mutations/list.txt` carries that as a measured equivalence rather than
+  // as a record nothing catches.
+  //
+  // The master is this file on `con_*`, which is the seam a foreign master
+  // presents to `cadr_machine` --- `con_gnt` is half of the `ub_foreign` the
+  // window answers on.  `tb/cadr_unibus_tb.cpp` runs the same route with
+  // MIT's own cable one module down.
+  {
+    auto TickMd = [&]() {
+      dut->mem_done = 0;
+      dut->mem_rdata = kNotAnswering;
+      if (dut->mem_req) {
+        const long w = (static_cast<long>(dut->mem_addr) - static_cast<long>(kMainBase)) / 4;
+        const bool inside = w >= 0 && w < kWindowWords && (dut->mem_addr & 3u) == 0;
+        if (dut->mem_write) {
+          if (inside) mem[w] = dut->mem_wdata;
+        } else {
+          dut->mem_rdata = inside ? mem[w] : kNotAnswering;
+        }
+        dut->mem_done = 1;
+      }
+      dut->clk = 1;
+      dut->eval();
+      // Post-edge, so everything read here is what the NEXT edge will see:
+      // the same convention the loop above works in.
+      if (root->cadr_machine__DOT__ub_md_req && !root->cadr_machine__DOT__ub_md_ack) {
+        ++out.md_gate_waits;
+        // Which term held it, so the coverage says whether a mutation of
+        // either could bite rather than leaving it to be guessed.
+        if (root->cadr_machine__DOT__processor__DOT__mbusy) ++out.md_wait_mbusy;
+        if (root->cadr_machine__DOT__processor__DOT__md_pending) ++out.md_wait_pending;
+      }
+      dut->clk = 0;
+      dut->eval();
+    };
+
+    // The cycle a foreign master runs: the request up, the grant taken, the
+    // strobe held until the slave answers, and the request dropped once the
+    // line is free.  It watches for `UB MD LOAD` throughout and compares `MD`
+    // at the tick after the edge that took the word --- the gate forbids any
+    // other writer at that edge, so one tick is exact.
+    auto Foreign = [&](unsigned uaddr, int write, unsigned wdata, long guard) -> int {
+      dut->con_req = 1;
+      dut->con_addr = uaddr;
+      dut->con_write = write;
+      dut->con_wdata = wdata;
+      for (long g = 0; g < 4000 && !dut->con_gnt; ++g) TickMd();
+      dut->con_msyn = 1;
+      int answered = 0, due = 0;
+      uint32_t want = 0;
+      for (long g = 0; g < guard; ++g) {
+        TickMd();
+        // The edge that took the word has just happened, so `md` is the
+        // register's post-edge value: the gate forbids any other writer at
+        // that edge, which is what makes one tick exact.
+        if (due) {
+          due = 0;
+          if (dut->md != want) ++out.md_word_wrong;
+        }
+        if (root->cadr_machine__DOT__ub_md_ack) {
+          ++out.md_loads;
+          want = root->cadr_machine__DOT__ub_md_data;
+          due = 1;
+          // The invariant: the debugger's word is never taken at an edge
+          // where the processor's own path into `MD` is live.
+          if (root->cadr_machine__DOT__processor__DOT__md_pending ||
+              root->cadr_machine__DOT__processor__DOT__mbusy)
+            ++out.md_across_processor;
+        }
+        if (dut->con_ssyn) {
+          answered = 1;
+          break;
+        }
+      }
+      if (due) {
+        TickMd();
+        if (dut->md != want) ++out.md_word_wrong;
+      }
+      dut->con_msyn = 0;
+      for (long g = 0; g < 400; ++g) TickMd();
+      dut->con_req = 0;
+      for (long g = 0; g < 40; ++g) TickMd();
+      return answered;
+    };
+
+    // CC's own entry: "CC-WRITE-MD loads map register 16 with 177000".
+    Foreign(0766140u + 2u * 016u, 1, 0177000u, 8000);
+    // Three pairs, the halves differing in every byte, at three words of the
+    // page --- `MD` has no address and this is what says so.
+    const unsigned pairs[3][2] = {{0xC3A5u, 0x7E19u}, {0x0FF0u, 0x1234u}, {0xFFFFu, 0x0000u}};
+    for (int i = 0; i < 3; ++i) {
+      const unsigned base = 0140000u + (016u << 10) + ((0x21u + (unsigned)i) << 2);
+      // The EVEN word is the page's write buffer and no load at all.
+      const long before = out.md_loads;
+      Foreign(base, 1, pairs[i][0], 8000);
+      if (out.md_loads != before) ++out.md_load_on_even;
+      // The ODD word loads `MD` with the two halves, and is ANSWERED:
+      // `-LOADMD ACK` at REQLM 0A11 is what acknowledges the cycle, which is
+      // the whole of what used to hang.
+      out.md_answered += Foreign(base + 2, 1, pairs[i][1], 8000);
+      if (out.md_loads != before + 1) ++out.md_load_missing;
+    }
+  }
+
   dut->final();
   delete dut;
   return out;
@@ -393,6 +536,16 @@ int main(int argc, char **argv) {
   std::printf("  words deferred a whole microcycle %ld\n", r.deferred);
   std::printf("  reads with MD on the write lines %ld of %ld\n",
               r.read_carried_md, r.reads);
+
+  std::printf("\n  UB MD LOAD, MD's third writer --- a foreign master's mapped write:\n");
+  std::printf("    loads taken        %ld\n", r.md_loads);
+  std::printf("    cycles answered    %ld by -LOADMD ACK\n", r.md_answered);
+  std::printf("    ticks the gate held the request off  %ld --- %ld on MBUSY, %ld on md_pending\n",
+              r.md_gate_waits, r.md_wait_mbusy, r.md_wait_pending);
+  std::printf("    loads across the processor's own MD path  %ld\n", r.md_across_processor);
+  std::printf("    loads after which MD did not hold the word  %ld\n", r.md_word_wrong);
+  std::printf("    loads on the even word (the buffer's)  %ld\n", r.md_load_on_even);
+  std::printf("    odd words that never reached a load  %ld\n", r.md_load_missing);
 
   std::printf("\n  the first strobes, and what was true on their tick:\n");
   std::printf("    %-10s %-9s %-5s %-5s %-5s %-8s %-5s %-5s %-6s\n",
@@ -462,6 +615,33 @@ int main(int argc, char **argv) {
         r.dir_wrong);
   Check(r.reads == 256 && r.writes == 256,
         "%ld reads and %ld writes, wanting 256 of each", r.reads, r.writes);
+
+  // `UB MD LOAD`.  Three pairs, three loads, three acknowledgements; the word
+  // in `MD` after every one of them; and the invariant that no load was taken
+  // at an edge where the processor's own path into `MD` was live.
+  Check(r.md_loads == 3, "%ld writes of MD reached UB MD LOAD, wanting 3", r.md_loads);
+  Check(r.md_answered == 3,
+        "%ld mapped writes of MD were acknowledged, wanting 3 --- -LOADMD ACK is "
+        "what answers the cycle and a debugger hangs for ever without it",
+        r.md_answered);
+  Check(r.md_gate_waits > 20,
+        "the gate held the request off for only %ld ticks, which is too few "
+        "for the refusal to be a measurement rather than a coincidence",
+        r.md_gate_waits);
+  Check(r.md_word_wrong == 0,
+        "%ld writes of MD left MD holding something other than the word that "
+        "went out on UB MD LOAD",
+        r.md_word_wrong);
+  Check(r.md_load_on_even == 0,
+        "%ld EVEN words of a write of MD reached UB MD LOAD; the even word is "
+        "the page's write buffer and nothing else",
+        r.md_load_on_even);
+  Check(r.md_load_missing == 0, "%ld odd words never reached UB MD LOAD",
+        r.md_load_missing);
+  Check(r.md_across_processor == 0,
+        "%ld writes of MD were taken while the processor's own MBUSY or "
+        "md_pending was up",
+        r.md_across_processor);
 
   if (fails) {
     std::printf("\nmd_compose: %d failures\n", fails);

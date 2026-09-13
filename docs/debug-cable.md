@@ -336,13 +336,28 @@ whose `WRITEOK` is down on a write, sets `UB MAP ERROR` and is never answered
 either. In both cases the debugger's own timeout is what ends the cycle, which
 is what happens to any cycle nothing answers.
 
-`-UB TO MD` is the one mapped function this fabric decodes and does not
-perform. A write of the odd word through a page whose high five bits are ones
-is CC's `CC-WRITE-MD`; muir loads the processor's `MD` with it, and here the
-path would have to go through the `RDCYC` gate on `-LOADMD` inside
-`rtl/machine/cadr_microcycle.sv`. `cadr_busint_regs.sv`'s header says so at
-length. Such a cycle raises the decode, makes no Xbus cycle and is not
-answered.
+`-UB TO MD` is built. A write of the odd word through a page whose high five
+bits are ones is CC's `CC-WRITE-MD`, and the two halves go into the
+processor's `MD` instead of onto the Xbus. MIT's gate is `NAND(UBMA<21:17>,
+UBXRQ, -UBRD, MSYN IN)` at REQU 0D12. It holds the Xbus request off at REQLM
+0E09, so such a cycle never takes the bus at all, and `UB MD LOAD`,
+`NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17, is a term of `-LOADMD` at 0C10 and
+of `-LOADMD ACK` at 0A11, which answers the cycle.
+
+`rtl/machine/cadr_busint_regs.sv` decodes it, puts the request up
+`busint::UB_XBUS_REQUEST_NS` after `-UB MSYN` and latches the thirty-two
+lines; `rtl/machine/cadr_memory_path.sv` carries them out of the module; and
+`rtl/machine/cadr_microcycle.sv` takes the word. `MD` has three writers now:
+the instruction's own store, the bus word from `-LOADMD`, and this. The third
+is taken only while the other two are quiet, which is muir's own gate written
+on this side of the cables, and `-UB SSYN` follows `busint::UB_MD_ACK_NS`
+after the load.
+
+A read through such a page is not a read of `MD`. `Rtl::try_debug_request`
+tests the direction before it tests the page, so the odd word of a read is the
+page's read buffer and the even word is a mapped Xbus cycle at physical page
+`0o37000`, which is the Unibus and not main memory. `MD` is write-only through
+the map.
 
 ## The debug master is the third master on the diagnostic bus
 

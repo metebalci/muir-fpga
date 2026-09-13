@@ -139,6 +139,27 @@ module cadr_microcycle #(
     input  var logic [31:0] rdata,        // MEM<31:0> into the cpu
     input  var logic        sintr,        // SINTR, the interrupt off the cables
 
+    // --- `UB MD LOAD`, `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17: MD's
+    // THIRD writer, and the only one that is not the processor's own.  A
+    // foreign master on the Unibus writing through a map entry whose page
+    // has its high five bits ones loads MD with the two halves instead of
+    // putting them on the Xbus --- `busint::map_to_md`, CC's `CC-WRITE-MD`,
+    // which is how the debugger sets the pushdown buffer index and how every
+    // write it makes through MD gets there.
+    //
+    // It is a PORT OF ITS OWN and not the `-LOADMD` above, because on the
+    // board it is a separate input of the same gate: `-LOADMD` at REQLM 0C10
+    // is the processor's acknowledgement OR `UB MD LOAD`, and only the first
+    // of those carries the `RDCYC` term that `loadmd_edge` below applies.
+    // A write of MD has no `RDCYC` to be gated by; the master is not this
+    // machine.
+    //
+    // `ub_md_ack` is the edge the word is taken at, which the interface
+    // answers `busint::UB_MD_ACK_NS` after.  The register says when.
+    input  var logic        ub_md_req,
+    input  var logic [31:0] ub_md_data,
+    output var logic        ub_md_ack,
+
     // --- the machine, as `Rtl::signals` and `Rtl::spy` name it
     output var logic [13:0] pc,
     output var logic [13:0] lpc,
@@ -1098,8 +1119,12 @@ module cadr_microcycle #(
 
   // page MD 2A20-2B14, and the address the cables carry.
   //
-  // MD is clocked two ways and only two: `MDSEL AND -CLK2C` at VCTL2 1D27,
-  // which is this instruction's own store, and `-LOADMD` from the bus.
+  // MD is clocked three ways: `MDSEL AND -CLK2C` at VCTL2 1D27, which is
+  // this instruction's own store; `-LOADMD` from the bus, which is this
+  // machine's own memory cycle; and `UB MD LOAD` at REQLM 0B17, which is a
+  // FOREIGN master's mapped write through a page whose high five bits are
+  // ones.  The first two are the processor's and the third is the debugger's;
+  // `ub_md_take` below is where the three are ordered.
   //
   // **`-LOADMD` IS GATED BY RDCYC HERE, NOT AT THE INTERFACE.**  MIT's own
   // words, as `src/rtl.rs` quotes them: "-LOADMD equals MEMACK **and RDCYC**
@@ -1114,6 +1139,9 @@ module cadr_microcycle #(
   logic n_loadmd_q, loadmd_edge, md_pending;
   logic [31:0] md_held;
   assign loadmd_edge = !n_loadmd && n_loadmd_q && rdcyc;
+
+  // `UB MD LOAD`, MD's third writer, is built below with `mbusy` and
+  // `destmdr`, which are declared further down: see `ub_md_take`.
 
   // **THE WORD IS HELD UNTIL THE MACHINE NEXT LOOKS.**  `-LOADMD` is
   // asynchronous --- "Loads MD from MEM, asynchronous with clock" --- and it
@@ -1239,6 +1267,36 @@ module cadr_microcycle #(
     if (mfinish_clearing) mbusy_next = 1'b0;
     if (cpu_edge && memgo) mbusy_next = 1'b1;
   end
+
+  // **`UB MD LOAD`, AND WHY IT IS GATED THE WAY IT IS.**  `Busint::debug_
+  // xbus_edge` takes the grant for a write of `MD` only when the interface
+  // is not in a granted or acknowledged cycle of the processor's own ---
+  // "the debuggee CC works on is halted" --- so the one thing muir forbids
+  // is the debugger's word landing across the processor's own.  Written on
+  // this side of the cables that is two terms and they are the two halves of
+  // the processor's own path into `MD`:
+  //
+  //   `mbusy`      a memory cycle is in flight, so `-LOADMD` may yet fall
+  //                for it; `MBUSY` is set at MEMGO and cleared `MFINISHD_T`
+  //                after `-MEMACK`, which is after the strobe.
+  //   `md_pending` a word is strobed and not yet committed.  That window
+  //                outlives `MBUSY`: the commit waits for a master clock
+  //                edge or a `-HANG`.
+  //
+  // Together they cover the whole of the processor's own way in, so the
+  // debugger's word can neither be overwritten by one nor overwrite one.
+  // The instruction's own store is the third term: `DESTMDR` needs a
+  // `cpu_edge`, and the tick it has one is refused rather than ordered
+  // against, because `DESTMDR` drives `OB` onto `MEM<31:0>` and a write of
+  // `MD` drives the Unibus halves onto the same lines --- so the board has
+  // no tick where both happen either.
+  //
+  // A cycle that waits is not lost: the master holds `-UB MSYN` and the
+  // register block holds `-UB TO MD` with it, so `ub_md_req` stands until it
+  // is taken --- "there being no timeout for this master".
+  logic ub_md_take;
+  assign ub_md_take = ub_md_req && !md_pending && !mbusy && !(cpu_edge && destmdr);
+  assign ub_md_ack  = ub_md_take;
 
   // **THE IR-DERIVED HALF OF EACH -WAIT TERM IS HELD**, and the other half is
   // not.  Each term is one thing the instruction wants AND one thing the bus
@@ -1494,6 +1552,17 @@ module cadr_microcycle #(
         md         <= md_held;
         md_pending <= 1'b0;
       end
+
+      // `UB MD LOAD`: a foreign master's mapped write, the third writer.
+      // **The gate and not the order is what keeps the three apart**:
+      // `ub_md_take` is false at every tick either of the others can run, so
+      // there is no tie for an order to settle.  What the order says if the
+      // gate were ever loosened is that a word already OWED loses to this one
+      // --- it is written after the commit above --- and that the
+      // instruction's own store wins, `DESTMDR` being written below.  Both
+      // are the way round the board is: the newer word off the bus, and the
+      // processor's own drive of `MEM<31:0>` over a foreign master's.
+      if (ub_md_take) md <= ub_md_data;
       memgo_q <= memgo;
       if (memack_edge) begin
         mfinish_t  <= 6'(MFINISHD_T);

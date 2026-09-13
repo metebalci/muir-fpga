@@ -1884,7 +1884,9 @@
 # ============================== MD holds what its instruction put there ===
 #
 # `md_hold` is the property `tb/cadr_md_hold_tb.cpp` measures every tick over
-# both programs: MD has two writers, and a word strobed by `-LOADMD` before
+# both programs: MD's two PROCESSOR writers --- its third is a foreign Unibus
+# master's `UB MD LOAD`, which that DUT cannot raise --- and a word strobed by
+# `-LOADMD` before
 # the `cpu_edge` at which `DESTMDR` writes MD may not land after it.  The map
 # is indexed by `MD<23:8>` whenever `MEMSTART` is down and `wmapd` is
 # registered at the boundary, so an instruction that puts a virtual address in
@@ -1902,9 +1904,9 @@
 @mutation the-held-word-is-never-let-go
 @check md_hold
 @file rtl/machine/cadr_microcycle.sv
-@note MD's two writers are one `always_ff`: the held word committed at a
-@note master clock edge or at once under `-HANG`, and `DESTMDR` at
-@note `cpu_edge`.  `md_pending` is what says a word is still owed, and
+@note MD's writers are one `always_ff`: the held word committed at a master
+@note clock edge or at once under `-HANG`, `DESTMDR` at `cpu_edge`, and
+@note `UB MD LOAD`, which this check's DUT cannot raise.  `md_pending` is what says a word is still owed, and
 @note clearing it at the commit is what stops the same word landing again.
 @note Left set, every later master clock edge writes `md_held` over MD ---
 @note including the boundary after an instruction has just put its own word
@@ -7172,10 +7174,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 #     `busint_regs` runs 57,139,860 now --- and the four fields the window
 #     added have not been measured the same way**, which is the citation
 #     CLAUDE.md asks for rather than a claim that they were.
-#   - **`Responder::MapMd`'s EFFECT.**  The decode is live and has a record
-#     below; the word's path into the processor's `MD` is `-LOADMD`, which
-#     `cadr_microcycle.sv` gates with `RDCYC`, and it is not built.  A
-#     mutation of a wire that goes nowhere is not a mutation.
+#   - **NOTHING ABOUT `MD` ITSELF.**  `Responder::MapMd` is built, and this
+#     module's half of it --- the decode with `UBXRQ` in the gate, the
+#     thirty-two lines and `-LOADMD ACK`'s instant --- has records below.  The
+#     REGISTER is `cadr_microcycle.sv`'s and a mutation of it belongs to
+#     `md_compose`, which composes the two; the wire between them belongs to
+#     `unibus`.
 #
 # AND ONE MEASURED EQUIVALENCE at the other end of the same wire: with
 # `t_msyn` made to wrap at `T_MAX` rather than saturate there, the block still
@@ -7747,12 +7751,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the physical space: the cycle would go out on the Xbus at an address
 @note that is the Unibus, which is the loop the window exists not to make.
 @note
-@note **What is caught is the DECODE and not the effect.**  `map_md` is a port
-@note this fabric folds, because the word's path into `MD` is `-LOADMD` and
-@note `cadr_microcycle.sv` gates that with `RDCYC`; the module's header
-@note carries the argument.  So the mutation is caught by `map_md` standing
-@note down on a row where muir's responder is `MapMd`, and by the Xbus request
-@note this makes and muir does not.
+@note **The effect is built now, so this is caught twice over.**  `map_md`
+@note stands down on a row whose responder is `MapMd`, the cycle is never
+@note answered where `-LOADMD ACK` would answer it, and the Xbus request this
+@note makes is one muir does not.  The note here used to say the word's path
+@note into `MD` was not built; it is, and the records below hold it.
 @note
 @note The form is a SIXTH bit on the comparison rather than a deletion, so
 @note `ent_page` stays used whole and lint has nothing to say: `0o177000`
@@ -7762,6 +7765,105 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign ent_md    = &ent_page[13:9];
 @new
   assign ent_md    = &ent_page[13:8];
+@end
+
+@mutation busint-regs-a-write-of-md-swaps-the-halves
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The two halves of a write of `MD` crossed.**  "Each Lisp machine
+@note memory word is accessed as two unibus words; the low half has the lower
+@note unibus address" --- `unaddr.text` --- so the EVEN word goes into the
+@note page's write buffer and the ODD word is the high half, carrying that
+@note buffer under it.  `Machine::mapped_write` writes exactly
+@note `(v as u32) << 16 | self.write_buffer[k] as u32` and the Xbus half of
+@note the window is held to the same order by its own record; this is that
+@note claim for the half that goes to `MD` instead.
+@note
+@note It is a real mistake and not an invented one: the two halves are a
+@note SECOND thing to get backwards after the addresses, and a debugger that
+@note wrote `MD` with them crossed would set the pushdown buffer index to
+@note something the machine had never asked for and look like a processor
+@note fault.
+@note
+@note Caught on the `MAPMD` rows, which carry muir's own thirty-two bits ---
+@note five pairs whose halves differ in every byte, so no pair agrees with
+@note itself swapped.
+@old
+            map_md_wdata <= mp_high ? {ub_wdata, wr_buf[mp_page]} : {16'd0, ub_wdata};
+@new
+            map_md_wdata <= mp_high ? {wr_buf[mp_page], ub_wdata} : {16'd0, ub_wdata};
+@end
+
+@mutation busint-regs-a-write-of-md-takes-the-wrong-half
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The choice of half inverted, so the odd word loses the write buffer
+@note and write-through's even word gains it.**  `Machine::mapped_write`'s
+@note word is `if access.high { (v << 16) | buffer } else { v }`: the odd word
+@note is the whole thirty-two bits and the even word --- which reaches `MD` at
+@note all only in write-through mode --- is the Unibus word with GROUND above
+@note it.  Inverted, the odd word writes `MD` with zeros in the high half and
+@note the even word writes it with whatever the buffer last held.
+@note
+@note This is the half-select and not the half-order, so it is a different
+@note mistake from the record above and the same trace catches both: the
+@note `MAPMD` rows carry a write-through pair as well as five ordinary ones,
+@note and the two mutations disagree with different rows.
+@note
+@note `mp_high` stays read here and in the Xbus half's own word, so lint has
+@note nothing to say.
+@old
+            map_md_wdata <= mp_high ? {ub_wdata, wr_buf[mp_page]} : {16'd0, ub_wdata};
+@new
+            map_md_wdata <= !mp_high ? {ub_wdata, wr_buf[mp_page]} : {16'd0, ub_wdata};
+@end
+
+@mutation busint-regs-loadmd-ack-comes-a-tick-early
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`busint::UB_MD_ACK_NS` one tick short.**  "`-LOADMD ACK` and with it
+@note `SSYN`, this long after the master clock edge that grants the cycle and
+@note loads `MD`" --- measured on the netlist board, muir's `tests/chip.rs`.
+@note The 74S51 at REQLM 0A11 is what answers a write of `MD`, and it is the
+@note only thing that answers it: there is no bus cycle and no slave.
+@note
+@note The constant is measured from the LOAD and not from `-UB MSYN`, and
+@note that is what makes it checkable at all: the testbench moves the load's
+@note own latency from cycle to cycle, so a block counting ticks from the
+@note strobe could not agree with any of them.  `RD_FINISH_T` again, one
+@note module along.
+@note
+@note The form is a subtraction rather than a zeroing, so `MD_ACK_T` stays
+@note read and lint does not do the catching --- the same shape the Xbus
+@note half's own read-acknowledgement record uses, and for the same measured
+@note reason.
+@old
+  assign answer_md  = md_loaded && (t_md >= 7'(MD_ACK_T));
+@new
+  assign answer_md  = md_loaded && (t_md >= 7'(MD_ACK_T) - 7'd1);
+@end
+
+@mutation busint-regs-ub-to-md-without-its-request
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`UBXRQ` dropped from `-UB TO MD`, so the gate becomes the bare
+@note decode.**  MIT's gate is `NAND(UBMA<21:17>, UBXRQ, -UBRD, MSYN IN)` at
+@note REQU 0D12 and `UBXRQ` is one of its four inputs: the request rises
+@note `busint::UB_XBUS_REQUEST_NS` after `-UB MSYN`, which is the same
+@note instant the Xbus half's does because it is the same `UBXRQ`.
+@note
+@note Without it the request stands from the tick the held decode settles,
+@note which is nineteen ticks before the thirty-two lines are latched --- so
+@note a processor that took it at once would load `MD` with whatever the
+@note register held from the cycle before.  That is the hazard
+@note `cadr_memory_path.sv` already records for the mapped window's Xbus
+@note half, met on the other side of the same seam.
+@note
+@note `md_rq` stays read in the sequencer below, so nothing is left unused.
+@old
+  assign map_md    = to_md && ub_msyn && md_rq;
+@new
+  assign map_md    = to_md && ub_msyn;
 @end
 
 # ---------------------------------------------------------------------------
@@ -7860,6 +7962,52 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? bir_rdata : blk_rdata;
 @new
   assign ub_rdata   = iob_ssyn ? iob_rdata : bir_ssyn ? blk_rdata : bir_rdata;
+@end
+
+@mutation unibus-a-write-of-md-waits-for-a-bus-it-never-asks-for
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **`UB MD LOAD` gated on the mapped window's XBUS request, which a write
+@note of `MD` never makes.**  `-UB TO MD` "holds the Xbus request off at REQLM
+@note 0E09" --- the word does not go to memory at all --- so `map_req` is
+@note down for the whole of such a cycle and this gate makes the load
+@note impossible.
+@note
+@note **This is the board's own fault written down.**  Before the path was
+@note built, CC's `CC-WRITE-MD` over the debug cable returned T, clocked
+@note nothing and left `MD` where it was, so `cc-read-pdl-buffer` read the
+@note index the machine happened to be holding.  A cycle nothing loads is a
+@note cycle nothing answers: the master waits for an acknowledgement that
+@note cannot come.
+@note
+@note Caught by the cable's own write of `MD` never reaching `UB MD LOAD` and
+@note never being acknowledged.  `map_req` stays read by the arbiter, so lint
+@note has nothing to say.
+@old
+  assign ub_md_req  = map_md;
+@new
+  assign ub_md_req  = map_md && map_req;
+@end
+
+@mutation unibus-a-bit-is-dropped-between-the-window-and-md
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **One bit of the thirty-two crossed on its way out of the module.**
+@note Bit 16 is the seam between the two halves --- the lowest bit the odd
+@note Unibus word contributes --- so this is the wiring fault that looks most
+@note like a working path: the word arrives, the cycle is acknowledged, and
+@note `MD` is wrong by one bit in the half a debugger is least likely to be
+@note looking at.
+@note
+@note **Lint cannot see it**, which is the bit-granularity lesson
+@note deliberately invoked: every bit of `map_md_wdata` is still read, so the
+@note only thing that can catch it is a comparison against the word muir's
+@note `Machine::mapped_write` made.  `tb/cadr_unibus_tb.cpp` compares the
+@note thirty-two lines at the port against the two halves it drove.
+@old
+  assign ub_md_data = map_md_wdata;
+@new
+  assign ub_md_data = {map_md_wdata[31:17], ~map_md_wdata[16], map_md_wdata[15:0]};
 @end
 
 @mutation the-unibus-half-of-the-interrupt-gate-inverted
@@ -11442,4 +11590,99 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
       .d(blue), .c({vsync, hsync}), .de(de), .q(tmds0)
 @new
       .d(blue), .c({hsync, vsync}), .de(de), .q(tmds0)
+@end
+
+# `UB MD LOAD` AT THE REGISTER, which is the composed machine and no module
+# alone.  `build/busint_regs.pass` holds the bus interface's half --- the
+# decode, the thirty-two lines and `-LOADMD ACK`'s instant --- and
+# `build/unibus.pass` the wire out of `cadr_memory_path`.  What neither can
+# see is `MD` itself: the register is `cadr_microcycle.sv`'s and only
+# `cadr_machine` has both ends.
+#
+# WHAT THE CHECK DOES THAT MAKES THESE LIVE.  `tb/cadr_md_compose_tb.cpp`
+# runs a foreign master on `con_*` against a machine that is STILL RUNNING
+# MIT's boot PROM, so the request arrives in real `MBUSY` windows --- 54 ticks
+# of them over three writes, measured --- rather than against a halted
+# debuggee, where muir's own gate cannot bite at all.
+#
+# **AND THE `md_pending` HALF OF THE GATE IS AN EQUIVALENCE ON THIS PROGRAM,
+# MEASURED, so nobody files it as a hole.**  Of those 54 ticks exactly one had
+# `md_pending` up and `MBUSY` was up for that one too, so `!mbusy` alone holds
+# the request everywhere `!md_pending` would and a record that dropped
+# `!md_pending` could not be caught.  The reason is structural rather than
+# lucky: `md_pending` is set at the `-LOADMD` strobe and cleared at the next
+# master clock edge OR AT ONCE UNDER `-HANG`, and the boot PROM is hanging at
+# almost every strobe it makes --- so the window the term is about is about one
+# tick long here.  The term stays, because it is the correct gate and the
+# window is a property of the program rather than of the machine.
+#
+# **An attempt to make it live by DRIVING `md_pending` was made and thrown
+# away, and that is worth keeping.**  Held high from outside, the flag is
+# cleared by the DUT at every master clock edge --- correctly, the word being
+# committed there --- so the one-tick window after each boundary let the load
+# through, and the run reported two takes "with a word owed" and six loads for
+# four cycles.  Every one of those numbers was about the poke and none was
+# about the fabric.  A testbench that drives a register the DUT also drives is
+# measuring itself.
+#
+# AND ONE MORE EQUIVALENCE RECORDED RATHER THAN LEFT TO BE FILED.  `MD`'s third
+# writer is written after the other two in the same `always_ff`, so a tie
+# would go to the debugger --- and the gate means there is no tie to go
+# anywhere: moving the statement above them changes nothing that any check
+# here can see, because `ub_md_take` is false at every tick either of the
+# others can run.  The ordering is belt and braces and is documented at the
+# register as such.
+
+@mutation md-compose-the-debuggers-word-lands-across-a-memory-cycle
+@check md_compose
+@file rtl/machine/cadr_microcycle.sv
+@note **`MBUSY` dropped from the gate, so a foreign master's write of `MD`
+@note is taken while the processor's own memory cycle is in flight.**
+@note `Busint::debug_xbus_edge` gives the grant for a write of `MD` only when
+@note the interface is not in a granted or acknowledged cycle --- "the
+@note debuggee CC works on is halted" --- and `MBUSY` is this side's name for
+@note that: set at MEMGO and cleared `MFINISHD_T` after `-MEMACK`, which is
+@note after the strobe that loads `MD`.
+@note
+@note Taken inside one, the debugger's word is overwritten by the word the
+@note machine was already waiting for, a microcycle or so later, and the
+@note debugger has no way to know: it was acknowledged.  That is the shape of
+@note fault this file's own bridge record is about, met at the other end.
+@note
+@note `mbusy` stays read by `-WAIT`, by `MBUSY.SYNC` and by the readout, so
+@note lint has nothing to say.
+@note
+@note **Caught twice, and the two lines say different things.**  The one the
+@note runner prints is the coverage --- "the gate held the request off for
+@note only 0 ticks", against 54 unmutated --- and the one below it is the
+@note invariant itself: "1 writes of MD were taken while the processor's own
+@note MBUSY or md_pending was up".  The first says the gate is gone and the
+@note second says what that costs, and it is the running boot PROM that makes
+@note there be any such tick at all.
+@old
+  assign ub_md_take = ub_md_req && !md_pending && !mbusy && !(cpu_edge && destmdr);
+@new
+  assign ub_md_take = ub_md_req && !md_pending && !(cpu_edge && destmdr);
+@end
+
+@mutation md-compose-the-debuggers-word-reaches-md-with-its-halves-crossed
+@check md_compose
+@file rtl/machine/cadr_microcycle.sv
+@note **The thirty-two bits rotated on their way into the register.**  The
+@note bus interface put the Unibus word in the high half over the page's write
+@note buffer, `Machine::mapped_write`'s own order; this takes them the other
+@note way round at the last place they can be got wrong.
+@note
+@note It is the same mistake as the register block's own swap and a DIFFERENT
+@note check has to catch it, which is the point of having a record at each
+@note end: `busint_regs` compares the word at the block's port and cannot see
+@note `MD`, and this compares `MD` and cannot see the port.  Neither one
+@note covers the wire between them --- `unibus` does.
+@note
+@note Every bit stays read.  Caught by `MD` not holding the word that went out
+@note on `UB MD LOAD` at the tick after the load.
+@old
+      if (ub_md_take) md <= ub_md_data;
+@new
+      if (ub_md_take) md <= {ub_md_data[15:0], ub_md_data[31:16]};
 @end
