@@ -141,7 +141,12 @@ module cadr_arty #(
     // and writes what it read to a second address.
     // See the note above the memory below: a `PROVE` board is a `DDR` board
     // by construction, because proving the port needs the port.
-    parameter int unsigned PROVE = 0
+    parameter int unsigned PROVE = 0,
+    // The display output: the CADR's screen out of DDR over `S_AXI_HP3` and
+    // onto the HDMI connector, with no software in the path.  It needs the
+    // processing system for that port, so like `PROVE` it turns `PORT` on by
+    // itself.  `docs/display-output.md` is the design.
+    parameter int unsigned HDMI = 0
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -165,7 +170,18 @@ module cadr_arty #(
     input  var logic       dbgin_stb,
     input  var logic [2:0] dbgin_d,
     output var logic       dbgin_ret_stb,
-    output var logic [2:0] dbgin_ret_d
+    output var logic [2:0] dbgin_ret_d,
+    // The HDMI transmitter's four differential pairs.  **THEY ARE IN THE
+    // PORT LIST AND CONSTRAINED ON EVERY BOARD, NOT ONLY AN `HDMI` ONE**,
+    // because a pin with no driver cannot be placed and a pin constrained
+    // `TMDS_33` cannot be driven single-ended.  With `HDMI` clear the four
+    // buffers are fed from zero and the connector sits at a direct-current
+    // level, which a monitor reads as no signal.  Pins from Digilent's
+    // published master file; `boards/arty-z7-20/cadr_hdmi.xdc` has them.
+    output var logic       hdmi_tx_clk_p,
+    output var logic       hdmi_tx_clk_n,
+    output var logic [2:0] hdmi_tx_d_p,
+    output var logic [2:0] hdmi_tx_d_n
 );
 
   // ------------------------------------------------------------ the clock
@@ -511,7 +527,16 @@ module cadr_arty #(
   // generics, because `PROVE=1` alone silently building the default board is
   // the shape of failure this project keeps meeting --- a switch that reads as
   // set and does nothing.
-  localparam int unsigned PORT = ((DDR != 0) || (PROVE != 0)) ? 1 : 0;
+  // The display output needs `S_AXI_HP3`, which needs the processing
+  // system, so it turns the port on for the same reason `PROVE` does.
+  localparam int unsigned PORT = ((DDR != 0) || (PROVE != 0) || (HDMI != 0))
+                                 ? 1 : 0;
+
+  // What goes down the connector's four pairs.  Driven from inside the
+  // memory generate when the display is built, and from zero when it is
+  // not; the buffers that turn it differential are at the bottom of this
+  // file, where every configuration reaches them.
+  logic [3:0] hdmi_ser;
 
   // The heartbeat's counter. Declared here and counted down in the lamps
   // where its comment is, because a `PROVE` board's LD4 blinks off it and the
@@ -1654,6 +1679,157 @@ module cadr_arty #(
         .mach_rst(con_mach_rst)
     );
 
+    // ================================================= the display output
+    //
+    // `rtl/plumbing/cadr_display_out.sv` reads the CADR's bitmap out of the
+    // display's own region of DDR over `S_AXI_HP3` and puts it on a raster;
+    // `rtl/plumbing/cadr_hdmi_tx.sv` encodes that as DVI; and
+    // `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` makes the pixel clock and
+    // serialises the four channels.  `docs/display-output.md` is the whole
+    // design and the measurements behind it.
+    //
+    // THE PORT IS BROUGHT OUT WHETHER OR NOT THE DISPLAY IS BUILT, because
+    // an exposed PS7 pin that nobody connects is a PINMISSING that stops
+    // `build/arty.pass` and an unconnected PS7 INPUT is silent --- so the
+    // read channels are driven and the write channels are tied off in both
+    // arms below rather than left to the default board's luck.
+    logic        hp3_aresetn;
+    logic [31:0] hp3_awaddr, hp3_araddr;
+    logic [3:0]  hp3_awlen, hp3_arlen;
+    logic [1:0]  hp3_awsize, hp3_arsize, hp3_awburst, hp3_arburst;
+    logic [63:0] hp3_wdata, hp3_rdata;
+    logic [7:0]  hp3_wstrb;
+    logic        hp3_awvalid, hp3_awready, hp3_wvalid, hp3_wready, hp3_wlast;
+    logic [1:0]  hp3_bresp, hp3_rresp;
+    logic        hp3_bvalid, hp3_bready, hp3_arvalid, hp3_arready;
+    logic        hp3_rvalid, hp3_rready, hp3_rlast;
+
+    // Nothing here ever writes memory: the display reads the bitmap and the
+    // machine owns it.  The write channels are tied off in one place for
+    // both arms so that a reader does not have to check two.
+    assign hp3_awaddr  = 32'd0;
+    assign hp3_awlen   = 4'd0;
+    assign hp3_awsize  = 2'b11;
+    assign hp3_awburst = 2'b01;
+    assign hp3_awvalid = 1'b0;
+    assign hp3_wdata   = 64'd0;
+    assign hp3_wstrb   = 8'd0;
+    assign hp3_wlast   = 1'b0;
+    assign hp3_wvalid  = 1'b0;
+    assign hp3_bready  = 1'b1;
+
+    // And nothing reads what the write channels answer, because nothing
+    // ever writes.  Folded here beside the tie-off rather than in either
+    // arm below, since it is true of both: a signal nobody reads is a
+    // signal lint reports, and the honest answer is to say once that this
+    // half of the port is not used.
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_hp3_write;
+    assign unused_hp3_write = ^{hp3_awready, hp3_wready, hp3_bresp, hp3_bvalid};
+    /* verilator lint_on UNUSEDSIGNAL */
+
+    if (HDMI != 0) begin : g_hdmi
+
+      // The port's own reset, synchronised as HP0's and HP2's are.
+      logic [2:0] disp_rst_sync;
+      logic       disp_rst;
+      always_ff @(posedge clk) begin
+        disp_rst_sync <= {disp_rst_sync[1:0], hp3_aresetn};
+        disp_rst      <= rst || !disp_rst_sync[2];
+      end
+
+      logic pclk, prst;
+      logic disp_de, disp_hsync, disp_vsync, disp_white;
+      logic disp_underrun, disp_rd_error;
+      logic [9:0] tmds0, tmds1, tmds2, tmds_clk;
+      logic [3:0] ser;
+
+      cadr_display_out #(
+          .BASE(cadr_ddr_map::DISPLAY_BASE)
+      ) u_display (
+          .clk(clk), .rst(disp_rst),
+          .m_araddr(hp3_araddr), .m_arlen(hp3_arlen), .m_arsize(hp3_arsize),
+          .m_arburst(hp3_arburst), .m_arvalid(hp3_arvalid),
+          .m_arready(hp3_arready),
+          .m_rdata(hp3_rdata), .m_rresp(hp3_rresp), .m_rlast(hp3_rlast),
+          .m_rvalid(hp3_rvalid), .m_rready(hp3_rready),
+          .pclk(pclk), .prst(prst),
+          .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
+          .white(disp_white),
+          .underrun(disp_underrun), .rd_error(disp_rd_error)
+      );
+
+      // One bit becomes three channels of eight.  The CADR's screen is
+      // black and white and the border is black, so every channel carries
+      // the same byte and full range is what a monitor assumes of DVI.
+      logic [7:0] shade;
+      assign shade = {8{disp_white}};
+
+      cadr_hdmi_tx u_tx (
+          .pclk(pclk), .prst(prst),
+          .red(shade), .green(shade), .blue(shade),
+          .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
+          .tmds0(tmds0), .tmds1(tmds1), .tmds2(tmds2), .tmds_clk(tmds_clk)
+      );
+
+      // The mode's own clock arithmetic: 125 MHz times 8.625 is a VCO of
+      // 1078.125 MHz, which halves to the 539.0625 MHz serial clock and
+      // tenths to the 107.8125 MHz pixel clock.  `docs/display-output.md`
+      // says why no multiple of an eighth gives 108 exactly and why 0.17
+      // per cent low does not matter.
+      // **THE PARAMETER NAMES ARE NOT THE PRIMITIVE'S, AND THAT IS WHY.**
+      // `boards/arty-z7-20/vivado/tick.tcl` reads the machine's tick by
+      // counting `DIVCLK_DIVIDE` and `CLKFBOUT_MULT_F` in THIS file and
+      // stops the whole flow if it finds either twice.  The display's MMCM
+      // is in `cadr_hdmi_phy.sv`, but an override written here with the
+      // primitive's own names puts the text in this file and the flow dies
+      // saying the tick is ambiguous --- which it did, at the first
+      // bitstream.  `VCO_DIVIDE` and `VCO_MULT_F` say the same thing and
+      // cannot collide.
+      cadr_hdmi_phy #(
+          .CLKIN_PERIOD_NS(8.000),
+          .VCO_DIVIDE     (1),
+          .VCO_MULT_F     (8.625),
+          .SERIAL_DIVIDE_F(2.000),
+          .PIXEL_DIVIDE   (10)
+      ) u_phy (
+          .sysclk(sysclk), .pclk(pclk), .prst(prst),
+          .tmds0(tmds0), .tmds1(tmds1), .tmds2(tmds2), .tmds_clk(tmds_clk),
+          .ser(ser)
+      );
+
+      assign hdmi_ser = ser;
+
+      // The two sticky reports are not on any path and nothing reads them.
+      // They go into the fold for the reason every other output of the
+      // machine does: a signal with no consumer is a signal synthesis is
+      // free to delete, and then the register that made it is gone and the
+      // check on the board would be measuring a different design.
+      /* verilator lint_off UNUSEDSIGNAL */
+      logic unused_disp;
+      assign unused_disp = ^{disp_underrun, disp_rd_error};
+      /* verilator lint_on UNUSEDSIGNAL */
+
+    end else begin : g_no_hdmi
+
+      // No display: the port is brought out and answered with nothing, and
+      // the connector is held at a level.
+      assign hp3_araddr  = 32'd0;
+      assign hp3_arlen   = 4'd0;
+      assign hp3_arsize  = 2'b11;
+      assign hp3_arburst = 2'b01;
+      assign hp3_arvalid = 1'b0;
+      assign hp3_rready  = 1'b1;
+      assign hdmi_ser    = 4'd0;
+
+      /* verilator lint_off UNUSEDSIGNAL */
+      logic unused_hp3;
+      assign unused_hp3 = ^{hp3_aresetn, hp3_arready, hp3_rdata, hp3_rresp,
+                            hp3_rlast, hp3_rvalid};
+      /* verilator lint_on UNUSEDSIGNAL */
+
+    end
+
     cadr_ps7 u_ps7 (
         .hp0_aclk(clk),
         .gpio_i(gpio_i),
@@ -1688,6 +1864,19 @@ module cadr_arty #(
         .hp2_arvalid(hp2_arvalid), .hp2_arready(hp2_arready),
         .hp2_rdata(hp2_rdata), .hp2_rresp(hp2_rresp), .hp2_rlast(hp2_rlast),
         .hp2_rvalid(hp2_rvalid), .hp2_rready(hp2_rready),
+        // The display's port, clocked by the fabric as HP0 and HP2 are.
+        .hp3_aclk(clk), .hp3_aresetn(hp3_aresetn),
+        .hp3_awaddr(hp3_awaddr), .hp3_awlen(hp3_awlen),
+        .hp3_awsize(hp3_awsize), .hp3_awburst(hp3_awburst),
+        .hp3_awvalid(hp3_awvalid), .hp3_awready(hp3_awready),
+        .hp3_wdata(hp3_wdata), .hp3_wstrb(hp3_wstrb), .hp3_wlast(hp3_wlast),
+        .hp3_wvalid(hp3_wvalid), .hp3_wready(hp3_wready),
+        .hp3_bresp(hp3_bresp), .hp3_bvalid(hp3_bvalid), .hp3_bready(hp3_bready),
+        .hp3_araddr(hp3_araddr), .hp3_arlen(hp3_arlen),
+        .hp3_arsize(hp3_arsize), .hp3_arburst(hp3_arburst),
+        .hp3_arvalid(hp3_arvalid), .hp3_arready(hp3_arready),
+        .hp3_rdata(hp3_rdata), .hp3_rresp(hp3_rresp), .hp3_rlast(hp3_rlast),
+        .hp3_rvalid(hp3_rvalid), .hp3_rready(hp3_rready),
         .gp1_aclk(clk), .gp1_aresetn(gp1_aresetn),
         .gp1_awaddr(gp1_awaddr), .gp1_awlen(gp1_awlen), .gp1_awid(gp1_awid),
         .gp1_awvalid(gp1_awvalid), .gp1_awready(gp1_awready),
@@ -2056,6 +2245,26 @@ module cadr_arty #(
   assign led[1] = beat[19];      // microcycles are retiring, ~3.5 Hz
   assign led[2] = nxm_count[16]; // NXM timeouts, blinking at their rate
   assign led[3] = witness;       // the datapath is not optimised away
+
+  // On a board with no processing system there is no `S_AXI_HP3` and so no
+  // display; the connector is held at a level exactly as it is on a board
+  // that has the port and does not use it.
+  if (PORT == 0) begin : g_no_port_hdmi
+    assign hdmi_ser = 4'd0;
+  end
+
+  // ---------------------------------------------------- the HDMI connector
+  //
+  // The four differential pairs, made here rather than inside
+  // `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` for the reason that file's
+  // header gives: the pins exist on every board and the phy does not.  Bit 3
+  // is the clock channel.  This is the same rule the `BSCANE2` follows ---
+  // the primitive goes where every configuration can see it, and the module
+  // below it stays a module.
+  OBUFDS u_hdmi_d0  (.I(hdmi_ser[0]), .O(hdmi_tx_d_p[0]), .OB(hdmi_tx_d_n[0]));
+  OBUFDS u_hdmi_d1  (.I(hdmi_ser[1]), .O(hdmi_tx_d_p[1]), .OB(hdmi_tx_d_n[1]));
+  OBUFDS u_hdmi_d2  (.I(hdmi_ser[2]), .O(hdmi_tx_d_p[2]), .OB(hdmi_tx_d_n[2]));
+  OBUFDS u_hdmi_clk (.I(hdmi_ser[3]), .O(hdmi_tx_clk_p), .OB(hdmi_tx_clk_n));
 
   // btn[3:1] are pins the board has and this design does not use. BTN1 was
   // a `PROVE=2` board's start button until the witness learned to write back

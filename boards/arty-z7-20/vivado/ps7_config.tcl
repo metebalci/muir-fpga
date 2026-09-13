@@ -670,5 +670,8 @@ set ps7_config [dict merge $ps7_config [list \
     CONFIG.PCW_USE_S_AXI_HP2 {1} \
     CONFIG.PCW_S_AXI_HP2_DATA_WIDTH {64} \
     CONFIG.PCW_S_AXI_HP2_ID_WIDTH {6} \
+    CONFIG.PCW_USE_S_AXI_HP3 {1} \
+    CONFIG.PCW_S_AXI_HP3_DATA_WIDTH {64} \
+    CONFIG.PCW_S_AXI_HP3_ID_WIDTH {6} \
     CONFIG.PCW_USE_M_AXI_GP1 {1} \
 ]]

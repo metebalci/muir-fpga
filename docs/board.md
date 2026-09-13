@@ -774,3 +774,82 @@ the registers --- carrying a key to the machine.
 
 So the first run with a finger on a real keyboard is still owed, and until it
 happens the drawing's USB input block says checked here and not yet on silicon.
+
+## Looking at the display output
+
+The display output block scans the CADR's screen out of DDR and drives the
+board's HDMI TX connector from the fabric, with no software in the path.
+`docs/display-output.md` is the design. **Nothing below has been done yet: no
+monitor has been connected.** These are the steps, written before the fact so
+that what counts as a pass is fixed in advance.
+
+### What to build and serve
+
+The display is built into the bitstream and is off by default. Build it with
+both the memory and the display:
+
+    DDR=1 HDMI=1 OUTDIR=build/hdmi vivado -mode batch -nojournal -nolog \
+        -source boards/arty-z7-20/vivado/bitstream.tcl
+
+That writes `build/hdmi/cadr.bit`. Serve it the way any other bitstream is
+served: copy it over the `cadr.bit` the board fetches, and reset the board.
+Nothing else changes. The start-up routine is unaffected, because enabling
+`S_AXI_HP3` changes `ps7_init` by nothing, and the root filesystem is
+unaffected, because no program is involved.
+
+### What to connect
+
+An HDMI cable from the board's **HDMI TX** connector to a monitor that does
+1280x1024 at 60 Hz. That is the connector nearer the Ethernet jack; the board
+has an HDMI RX beside it and a cable in the wrong one shows nothing.
+
+The monitor must accept 1280x1024 at 60 Hz. It is the most widely supported
+mode after 640x480, but a small panel with a fixed lower resolution will
+refuse it, and there is no fallback: the block sends one mode and does not
+read the monitor's EDID.
+
+### What should appear
+
+The machine's own screen, 768 by 963, centred in a 1280 by 1024 raster with a
+black border 256 pixels wide on each side and about 30 rows deep above and
+below. White on black.
+
+The board takes about fifteen seconds to boot Linux and the CADR takes a while
+longer to load its microcode off the pack and paint anything, so the first
+thing on the monitor is a black screen with the run bar and the disk light
+blinking on one line near the bottom. What should follow is the window system
+and a Lisp Listener, which is the same picture the remote viewer serves on
+port 5900 — so **the viewer is the control**. If the viewer shows the screen
+and the monitor does not, the fault is in this block or in the cable; if
+neither shows it, the machine has not got there yet and this block is not the
+thing to look at.
+
+### What the failures would mean
+
+**No signal at all, or the monitor reporting no input.** The serialisers are
+not sending, which is the clock rather than the picture: either the bitstream
+is not the `HDMI=1` one, or the display's MMCM is not locked. The CADR itself
+runs either way, so LD0 and LD1 say nothing about this. The cheapest check is
+that the bitstream served is the one that was built with `HDMI=1`.
+
+**A signal the monitor syncs to, showing black everywhere.** The raster is
+running and the picture is not arriving. That is the memory side: either
+`S_AXI_HP3` is not answering, or the display's region of DDR is empty because
+the machine has not painted anything yet. The remote viewer separates the two
+in one step, because it reads the same words over the same DDR by a different
+path.
+
+**A signal the monitor syncs to, showing noise.** The picture is arriving and
+is being read wrongly. That would be new: the raster, the line buffer handoff
+and every read burst are checked against a modelled memory poisoned
+injectively in the address, which is exactly the stimulus that makes a
+misread show as noise rather than as black.
+
+**A picture that tears when the machine draws.** Expected, and not a fault.
+The machine writes the bitmap whenever it likes and the raster reads it
+whenever it likes, with no buffering — which is what MIT's display controller
+did. See `docs/display-output.md`.
+
+**A stable picture with the wrong geometry — shifted, or wrapped diagonally.**
+The monitor has picked a different mode from the one being sent. Check what it
+reports the incoming timing as; it should say 1280x1024 at about 60 Hz.
