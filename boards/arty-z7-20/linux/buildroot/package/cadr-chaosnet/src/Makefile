@@ -32,6 +32,7 @@ PROGRAMS := cadr-chaosnet
 CORE     := chaos_packet.c chaos_udp.c chaos_face.c
 HEADERS  := chaos_face.h chaos_packet.h chaos_udp.h
 TESTS    := chaos_test.c chaos_test_packet.c chaos_test_udp.c chaos_test_face.c
+BOOTTEST := chaos_test_boot.sh
 
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src
@@ -70,8 +71,13 @@ install: all
 # The check.  Its own object directory, so a target build and a host build
 # never share a binary --- and a build artefact that outlived a machine move
 # would name a home directory that no longer exists.
+# And the init script, which is the third thing this package ships and was
+# the only one nothing ran.  It lives a directory up, like cadr-common's
+# sources do, and for the same reason: `..` is a real directory on the build
+# host and this check never runs anywhere else.
 check: $(WORK)/chaos_test
 	$(WORK)/chaos_test
+	WORK=$(WORK)/boot ./$(BOOTTEST)
 	@python3 mutate.py --list chaos_mutations.txt --work $(WORK)/mutants \
 	    --cc "$(HOSTCC)" --cflags "$(HOSTCFLAGS)"
 

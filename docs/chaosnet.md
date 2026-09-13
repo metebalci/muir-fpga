@@ -221,6 +221,58 @@ end of its port and was refused by name. That was measured on the board. A
 file of flags has no values for a shell to get wrong, and it is the same text
 the program would have been given on a command line.
 
+## The program waits for the network, and stops waiting
+
+`cadr-chaosnet` resolves each peer's name once, when it starts, and exits if a
+name has no address. That follows muir. A name with no address is a refusal at
+the start rather than a peer that is never reached.
+
+The init script therefore has to start the program on a network that works.
+On this image the network is not up at the moment init would reach it.
+`/etc/network/interfaces` says `iface eth0 inet dhcp`, so `S40network` runs
+`ifup -a`, which starts BusyBox udhcpc. BusyBox is built here with `-b` among its udhcpc options, so the
+client forks into the background when its first request is not answered at
+once. `ifup -a` then prints `OK` with the interface still bare. The link
+itself comes up later still: the console shows the Ethernet at 1Gbps several
+seconds after every init script has run. The program was started before any
+of that, printed that a peer's name had no address this host can reach, and
+exited, while the init script printed `OK` and left a pid file. That was
+measured on the board on two boots.
+
+An S-number cannot fix this. Ordering orders scripts, and what is late here is
+an event rather than a script. A higher number would lose the same race on a
+slower switch.
+
+So `S87cadr-chaosnet` waits for the network before it starts the program. It
+waits for three things, and each of them is something udhcpc's own script does
+when the lease arrives. There has to be an address on an interface other than
+the loopback. There has to be a default route. And the resolver has to answer
+for every name the flags carry, which the script reads out of those flags
+rather than from a list of its own. A peer written as an address is skipped,
+because there is nothing for a resolver to answer about it.
+
+The wait is bounded at thirty seconds, and on expiry the program is started
+anyway. That matters in two cases. A card whose peers are all addresses, or
+which names no peer at all, is never held up by a network that may never
+arrive. And when a name really cannot be resolved, the message that reaches
+the console is the program's own, with the name in it, rather than a script
+that quietly did nothing.
+
+The script says what it is waiting for and how long it waited. A boot on a
+working network prints one line. A boot that waits prints the reason and then
+the time.
+
+    cadr-chaosnet: the network is ready
+    cadr-chaosnet: waiting up to 30s for the network: no address yet on anything but the loopback
+    cadr-chaosnet: the network is ready after 4s
+    cadr-chaosnet: the network is still not ready after 30s: no default route yet; starting anyway, and what it says next is its own
+
+`chaos_test_boot.sh` holds all of this. It runs the real init script with
+stubs for `ip`, `nslookup` and `start-stop-daemon`, and it rewrites two
+constants in a copy of the script, asserting that each rewrite matched exactly
+once. Renaming either constant therefore fails the check by name instead of
+leaving it testing nothing.
+
 ## The default peer is the way out, and nothing is learned
 
 A peer line says that one Chaosnet address lives at one endpoint. A frame for

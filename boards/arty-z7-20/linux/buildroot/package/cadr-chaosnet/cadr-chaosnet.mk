@@ -23,6 +23,14 @@
 # compiler and python3: the packet and its check word, CHUDP on a loopback
 # socket, and the register face against a model of the RTL --- then every
 # record in src/chaos_mutations.txt, each of which the check must fail on.
+#
+# **AND THE INIT SCRIPT, which for a while was the one thing this package
+# ships that nothing ran.**  src/chaos_test_boot.sh runs S87cadr-chaosnet
+# itself, with stubs for `ip`, `nslookup` and `start-stop-daemon`, and holds
+# it to waiting for a network that is not up yet and to giving up on one that
+# never comes.  It has to: the program refuses a peer name it cannot resolve,
+# the network on this image is not up when init runs, and the script's header
+# has the measurement.
 
 CADR_CHAOSNET_VERSION = 0
 CADR_CHAOSNET_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-chaosnet/src
