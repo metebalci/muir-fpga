@@ -64,6 +64,17 @@
 //! service's root, whose `sys` is the release's sources. `CC_PACK_BAND`
 //! is the partition the world is saved into, `LOD3` by default, and
 //! `CC_PACK_FORCE` lets it be one that already holds a band.
+//!
+//! **The Chaosnet numbers are the band's and not this program's, so a
+//! base pack whose site files are not the release's needs its own.**
+//! `CC_PACK_CHAOS` is the address the machine answers at, `CC_PACK_SERVER`
+//! the address of the file and time host its site files call for, and
+//! `CC_PACK_SERVER_NAME` the name that host answers `STATUS` with --- all
+//! three octal or a name, defaulting to the System 304 release's own
+//! `4401`, `4403` and `OZ`. The name is used in the forms this program
+//! types as well, because a file it asks the machine to write is named on
+//! that host. At any other trio the machine boots and reaches no server at
+//! all.
 
 #![allow(dead_code)]
 
@@ -98,17 +109,45 @@ fn band() -> String {
     std::env::var("CC_PACK_BAND").unwrap_or_else(|_| "LOD3".to_string())
 }
 
-/// System 304's own Chaosnet numbers: the band is `AMS-LISPM-1` at 4401
-/// and calls its file and time host `OZ` at 4403. At any other pair the
-/// machine boots and reaches no server at all.
+/// System 304's own Chaosnet numbers, which are what a band saved from
+/// the release asks for: the band is `AMS-LISPM-1` at 4401 and calls its
+/// file and time host `OZ` at 4403. A base pack carrying another site's
+/// files asks for that site's numbers instead, so all three are read from
+/// the environment.
 const CHAOS: (u16, u16) = (0o4401, 0o4403);
+const SERVER_NAME: &str = "OZ";
+
+/// An octal address the environment names, or `fallback`.
+fn octal(name: &str, fallback: u16) -> u16 {
+    match std::env::var(name) {
+        Ok(v) => u16::from_str_radix(v.trim().trim_start_matches("0o"), 8)
+            .unwrap_or_else(|e| panic!("{name} is {v:?}, which is not an octal address: {e}")),
+        Err(_) => fallback,
+    }
+}
+
+/// The address the machine answers at.
+fn chaos_address() -> u16 {
+    octal("CC_PACK_CHAOS", CHAOS.0)
+}
+
+/// The address of the file and time host the band's site files call for.
+fn server_address() -> u16 {
+    octal("CC_PACK_SERVER", CHAOS.1)
+}
+
+/// The name that host answers `STATUS` with, which is also the name a
+/// pathname on it carries.
+fn server_name() -> String {
+    std::env::var("CC_PACK_SERVER_NAME").unwrap_or_else(|_| SERVER_NAME.to_string())
+}
 
 /// One machine with the boot PROM, the pack **read-write** on unit 0, and
 /// the Chaosnet server on its cable.
 fn machine(pack: &Path, root: PathBuf) -> Machine {
     let mut m = bare_machine(pack);
-    ChaosServer::new(CHAOS.1)
-        .named("OZ")
+    ChaosServer::new(server_address())
+        .named(&server_name())
         .serving(root)
         .at_time(time::TEST_UNIVERSAL)
         .plug(&mut m, 0);
@@ -122,7 +161,7 @@ fn bare_machine(pack: &Path) -> Machine {
     let mut m = Machine::new();
     m.load_prom(&muir::prom::boot_prom());
     m.disk.attach(0, Unit::open_rw(pack, Geometry::T300).expect("the pack, read-write"));
-    m.chaos.address = CHAOS.0;
+    m.chaos.address = chaos_address();
     m.chaos.trace = std::env::var_os("MUIR_CHAOS_TRACE").is_some();
     m
 }
@@ -288,8 +327,11 @@ impl Cadr {
         let file = tmp.join(format!("{name}.text"));
         let _ = std::fs::remove_file(&file);
         let before: std::collections::HashSet<PathBuf> = temp_files(&tmp).into_iter().collect();
+        // The file is named on the host the band calls its own, which is
+        // the server on the modelled cable and is not always `OZ`.
+        let host = server_name();
         let line = format!(
-            "(with-open-file (f \"OZ://tmp//{name}.text\" :direction :output) \
+            "(with-open-file (f \"{host}://tmp//{name}.text\" :direction :output) \
              (let* ((both (make-broadcast-stream terminal-io f)) \
              (standard-output both) (*standard-output* both)) {form}) \
              (format f \"~%~%*DONE*~%\"))"

@@ -23,21 +23,33 @@ it drives.
 
 ## What the pack is
 
-It is the System 304 release pack with a new band in a spare partition.
+It is a System 304 pack with a new band in a spare partition.
 
 | | |
 |---|---|
 | Geometry | Trident T-300, 815 cylinders, 19 heads, 17 blocks a track |
 | Size | 269,562,880 bytes, 263,245 blocks, 257.1 MiB |
 | Release | System 304.0, ZWEI 130.0, microcode 323 |
-| Band | `LOD3` by default, 24,225 blocks at block 115,278 |
+| Band | a spare partition of 24,225 blocks, `LOD3` on the release pack and `LOD4` on a base that has a band there |
 | Current band | set to the saved one, so the machine boots it with no argument |
 | In the band | the whole `CADR-DEBUGGER` system, and the microcode's own symbol table for version 323 |
 
-The band's partition comment reads `Exp 304.0`, which is what
-`SYSTEM-VERSION-INFO` gives and what the release's own band says. The pack
-therefore has two partitions with that comment: `LOD2`, the release as
-published, and `LOD3`, the same release with CC in it.
+The band's partition comment is what `SYSTEM-VERSION-INFO` gives, which on
+the release is `Exp 304.0` and on another band is whatever that band says of
+itself. So a pack made this way carries two bands with the same comment: the
+one it was built from, and the same world with CC in it.
+
+**The debugger's pack is built on a pack whose site files name the
+development network's own hosts.** A band asks its file host for the host
+table, the machine locations, the site definition and the logical pathname
+translations every time it cold boots, and those four decide the name it
+calls itself, the associated machine its herald names and the host it asks
+for the date. So the debugger now boots at the address the board gives muir,
+under the name that network's table holds for it, with the same associated
+machine and time host as the machine in the fabric beside it. The first pack
+was built on the release pack instead, and its band asks for a date at every
+boot because the file and time host the release's site files name is nowhere
+on this network.
 
 Every pack this project makes is a T-300. A T-80 was offered and declined.
 
@@ -66,6 +78,14 @@ Measured with that command on the build host: muir reports `pack: ... in unit
 0, written as the machine writes it`, runs at about five million microcycles
 a second, and has the band up and asking for the date well inside sixty
 million microcycles. `(cadr:cc)` at the listener is the debugger.
+
+**The address is the band's, not muir's, so it changes with the base pack.**
+A band saved from the release calls itself `AMS-LISPM-1` at 4401 and its file
+and time host `OZ` at 4403. A band saved from a base carrying another
+network's site files takes that network's numbers, and the board's `.muirrc`
+gives muir the address the table holds for it, the peers it can reach and a
+default peer. At any other numbers the machine boots and reaches no server at
+all.
 
 **The pack is written as the machine runs.** muir opens `--disk-pack`
 read-write, so the board's copy drifts from the moment it first boots. That
@@ -200,6 +220,12 @@ microcycles in both, and CC was loaded at microcycle 10,417,717,000 in both.
 That is worth knowing, because it means a run that goes wrong goes wrong in
 the same place.
 
+**A run on another base pack is another program and reaches other counts.**
+The second pack's `make-system` took 10,182,723,000 microcycles and CC was
+loaded at 10,264,373,000, where the first pack's figures are the ones above.
+The determinism is of one band compiling one set of sources, not of the
+procedure across bands.
+
 The file is a different question. A band is a dump of a running Lisp world,
 and the world holds the truenames of every file it loaded. The FILE service
 writes through a temporary whose name carries a process id, so there is at
@@ -231,6 +257,16 @@ its own. The muir checkout it is given is never written to. The release's
 sources are copied rather than linked, because `make-system :compile` writes
 every QFASL back through the file service and the vendored sources must not
 be what it writes into.
+
+**Five things in the environment are what the script takes for a band that is
+not the release's.** `BASE` names the pack to start from, which is copied and
+never written to itself. `SITE` names a directory of site files copied over
+the release's own under the file service's root, which is what lets the band
+identify itself on its own network. `CC_PACK_CHAOS`, `CC_PACK_SERVER` and
+`CC_PACK_SERVER_NAME` put the machine and the server on the modelled cable at
+that network's addresses, and the name is used in the forms the program types
+as well, because a file it asks the machine to write is named on that host.
+Left alone, all five are the release's own.
 
 The program has five tests, each run on its own, so that a cheap one can be
 had without the expensive one. The script runs two of them; the other three
@@ -300,6 +336,11 @@ in it. If that is not wanted, the other answer is already in the plan:
 that band's own numbers, 4401 calling 4403, where System 100 uses 3050 and
 3060.
 
+**A pack built on a base whose site files name the development network's own
+hosts does not do this**, because the board's muir is a station on that
+network and its file and time host answers. The band cold boots to a Lisp
+Listener with a date in the who-line and nobody types anything.
+
 ## The partitions of the System 304 pack
 
 The release pack has four spare bands and a fifth larger one, so the saved
@@ -314,14 +355,19 @@ band displaces nothing.
     LOD4 to LOD6   139503 to 212177, 24225 blocks each, empty
     LOD9  block  212178,  51067 blocks   empty
 
-`BAND` in the environment picks another. `LOD9` is the one to use if the
-world with CC in it ever outgrows 24,225 blocks; `SI:DISK-SAVE` checks the
-size itself and refuses rather than overrunning.
+`BAND` in the environment picks another, and a base pack that already has a
+band of its own has `LOD3` taken, so `LOD4` is the next spare. The program
+refuses a partition whose comment says a band is in it, and `CC_PACK_FORCE`
+is what overrules that. `LOD9` is the one to use if the world with CC in it
+ever outgrows 24,225 blocks; `SI:DISK-SAVE` checks the size itself and
+refuses rather than overrunning.
 
-## The first one built
+## The packs built
 
-`tools/make-cc-pack.sh` was run end to end on the build host and it made a
-pack that boots with CC in it.
+`tools/make-cc-pack.sh` has been run end to end on the build host twice, and
+each run made a pack that boots with CC in it.
+
+**The first, on the release pack.**
 
 | | |
 |---|---|
@@ -338,3 +384,25 @@ booted it with nothing on the Chaosnet cable and reached a Lisp Listener once
 a date was typed. And `muir --rtl --disk-pack <it> --chaos-address 4401`,
 which is the command the board will run, brought the band up to its date
 prompt.
+
+**The second, on a base whose site files name the development network's own
+hosts.** This is the one the board runs.
+
+| | |
+|---|---|
+| Digest | `149783f78cfa62ebc49410d0dfbadb8f462a669dfa6d679d467ba1ab9ba19d52` |
+| Size | 269,562,880 bytes |
+| muir | `d6eac6d9113ec44c7a5baf2dd54ba2d9d742c11d` |
+| Release | System 304, at the check-in `tools/fetch-system-304.sh` names |
+| Band | `LOD4`, the label's current band |
+| Built | September 2026, in about thirty-five minutes |
+
+It was checked the same three ways, with the third taking the flags the board
+gives muir rather than the release band's address. `the_saved_band_has_cc`
+booted it and `CADR:CC` answered `CC-LOADED`. `the_saved_band_with_no_network`
+booted it with nothing on the cable and reached a Lisp Listener once a date
+was typed. And muir with the board's own flags, on the real network, cold
+booted it to a Lisp Listener with a date in the who-line and no typing at
+all: the herald names the station and its associated machine out of the
+network's own host table, the file and time host answers `HOST-UP-P`, and
+`(cadr:cc)` runs and prints its status line.
