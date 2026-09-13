@@ -49,8 +49,13 @@
 // on every cycle and whichever comes first wins.  They agree wherever the model
 // is exercised, real devices answering far inside 4.25 us.
 //
-// NOT HERE YET: the Unibus path and its arbitration, the interface's own
-// registers, and the debug cable.  Each is its own slice.
+// NOT HERE YET: MIT's own Unibus arbitration for the DEBUG master --- `NPR`,
+// `NPG1 IN`, `SACK` and `-UB BBSY`, the branches named above --- and the
+// timeout inhibit that cable's modifier register carries, which wants this
+// module's own counter and so wants a trace with a cable in it.
+// `rtl/machine/cadr_dbgin.sv` says what this fabric puts in their place.  The
+// Unibus path is here; the interface's own registers are
+// `rtl/machine/cadr_busint_regs.sv`; the cable's end is `cadr_dbgin.sv`.
 
 `default_nettype none
 
@@ -69,6 +74,22 @@ module cadr_busint_xbus (
     output var logic n_memack,     // -MEMACK
     output var logic n_loadmd,     // -LOADMD, which strobes MD
     output var logic timed_out,    // NXM TIMEOUT: nothing answered this cycle
+
+    // `-FREE`, inverted: this interface has a cycle in flight.  It is
+    // `Busint::busy`, which is `self.state != State::Idle` and nothing else,
+    // and `Machine::debug_status` takes it for bit 6 of the byte the 8304 at
+    // REQERR 0B15 puts on the debug cable --- `error_status::NOT_FREE`, the
+    // wire that part's pin 7 carries.  On MIT's board `-FREE` arrives at
+    // REQERR from the request logic rather than being a flop of that page's
+    // own, which is why it leaves here and is joined to the error status
+    // register's other seven bits in `rtl/machine/cadr_memory_path.sv`.
+    //
+    // A read of `0o766044` by the PROCESSOR always finds this up, the
+    // interface being busy with that very read, which is why
+    // `Machine::interface_read` writes the bit as a constant and
+    // `cadr_busint_regs.sv` does the same.  The debugger's strobe is not a
+    // cycle of this interface's at all, so it finds the bit as it stands.
+    output var logic busy,
 
     // The Xbus slave.
     output var logic dev_rq,       // -XBUS.RQ, as a positive level
@@ -103,11 +124,15 @@ module cadr_busint_xbus (
 
   // --- the Unibus, busint::UNIBUS_* ---
   //
-  // ARBITRATION IS FIVE STAGES AND ONLY BECAUSE THERE IS ONE MASTER.
-  // `Busint::mclk_edge`'s state machine looks large --- stage 7,
+  // ARBITRATION IS FIVE STAGES AND ONLY BECAUSE THIS MODULE ARBITRATES FOR
+  // ONE MASTER.  `Busint::mclk_edge`'s state machine looks large --- stage 7,
   // `debug_holds_bbsy`, `LMUB MASTER` waiting behind somebody else --- and
   // every one of those branches belongs to the *debug cable*, a second master
-  // on this Unibus.  This fabric has no debug cable, so what is left is a
+  // on this Unibus.  **That cable is built now and this paragraph is not
+  // stale:** `rtl/machine/cadr_dbgin.sv` is the debug master and
+  // `rtl/machine/cadr_console_bus.sv` is where it and the processor are kept
+  // apart, which is a simple arbiter rather than MIT's grant chain, and both
+  // files say so at the parting.  What is left here is therefore still a
   // fixed sequence advancing one stage a master clock: 1, 2, 3 with a 200 ns
   // `SACK` wait, 4, 5, and then the transfer.
   //
@@ -263,6 +288,9 @@ module cadr_busint_xbus (
   // when the cpu lifts -MEMRQ and the cycle is over. What outlives the cycle is
   // the NXM bit in the bus error register at REQERR, which is not this slice.
   assign timed_out  = (state == ACKED) && nxm;
+  // `Busint::busy`, verbatim: a cycle is in flight from the tick -MEMRQ is
+  // taken to the tick the processor lifts it.
+  assign busy       = (state != IDLE);
 
   always_ff @(posedge clk) begin
     // The oscillator runs whatever the cycle is doing, and reset only sets its

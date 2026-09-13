@@ -172,23 +172,27 @@
 // down, where the window must be silent, and all 262,144 again with it up,
 // where the window must answer and nothing else may start to.
 //
-// **AND THE ONLY MASTER THAT CAN REACH IT IS THE DEBUG CABLE'S, WHICH IS NOT
-// COMPOSED.  SAID PLAINLY, BECAUSE IT IS WHAT THIS BLOCK IS WORTH TODAY.**
-// `rtl/machine/cadr_console_bus.sv` has three masters.  The processor's is
-// the board itself and `ub_foreign` is down for it by the paragraph above.
-// `rtl/machine/cadr_dbgin.sv` is the debug cable's --- MIT's own, the one
-// `Machine::mapped_read` and `mapped_write` were written for --- and
-// `cadr_memory_path.sv` still ties its request off, so `dbg_gnt` is a
-// constant there.  The console's is a master and `ub_foreign` counts it,
-// because a slave decodes the address and not the master and a board on
-// MIT's backplane would answer it the same; but `rtl/plumbing/
-// cadr_console.sv` builds its address as `SPY_BASE | eadr<<1` with four bits
-// of `eadr`, so it cannot put anything but `0o766000`-`0o766036` on the bus
-// and cannot reach this window at all.  **So nothing in the composed machine
-// makes a mapped cycle today**, and what this block is is the debuggee's half
-// of a route waiting for its master.  `build/busint_regs.pass` drives it at
-// its own seam and `build/unibus.pass` drives it through the arbiter with a
-// master of the testbench's own; neither is a program, and the header of
+// **AND THE ONLY MASTER THAT CAN REACH IT IS THE DEBUG CABLE'S, WHICH IS
+// COMPOSED NOW.**  `rtl/machine/cadr_console_bus.sv` has three masters.  The
+// processor's is the board itself and `ub_foreign` is down for it by the
+// paragraph above.  `rtl/machine/cadr_dbgin.sv` is the debug cable's ---
+// MIT's own, the one `Machine::mapped_read` and `mapped_write` were written
+// for, `Rtl::try_debug_request` being the only place in muir that makes a map
+// responder at all --- and `cadr_memory_path.sv` instantiates it beside this
+// block, with `ub_foreign` half its grant.  The console's is a master and
+// `ub_foreign` counts it, because a slave decodes the address and not the
+// master and a board on MIT's backplane would answer it the same; but
+// `rtl/plumbing/cadr_console.sv` builds its address as `SPY_BASE | eadr<<1`
+// with four bits of `eadr`, so it cannot put anything but
+// `0o766000`-`0o766036` on the bus and cannot reach this window at all.
+//
+// **THIS PARAGRAPH USED TO SAY NOTHING IN THE COMPOSED MACHINE MADE A MAPPED
+// CYCLE, AND THAT IS WHAT CHANGED.**  `build/busint_regs.pass` drives the
+// window at its own seam; `build/unibus.pass` drives it through the arbiter
+// twice over --- once on the console's seam, which is the seam a foreign
+// master presents, and once with MIT'S OWN CABLE, which latches an address
+// into `cadr_dbgin.sv`, strobes `-DB NEED UB` and reaches main memory at the
+// translated address.  Neither is a program, and the header of
 // `golden/src/busint_regs.rs` says so in as many words.
 //
 // **WHAT THE XBUS HALF IS HELD TO, AND WHAT IT IS NOT.**  Held: the request
@@ -261,12 +265,13 @@
 // handler takes the branch MIT wrote for a machine that arbitrates its own
 // Unibus.
 //
-// And the window closes the half-route `docs/debug-cable.md` names: "The
-// Unibus map is not built, so a debug cycle cannot reach main memory."  The
-// map's registers were built before the window they translate through, so
-// the debugger could program the map and then had nothing to send through
-// it.  It has the window now; what it still needs is `cadr_dbgin.sv`
-// composed into `cadr_machine`, which is that file's own note.
+// And the window closed the half-route `docs/debug-cable.md` used to name:
+// "The Unibus map is not built, so a debug cycle cannot reach main memory."
+// The map's registers were built before the window they translate through, so
+// the debugger could program the map and then had nothing to send through it.
+// It has the window, `cadr_dbgin.sv` is composed, and that sentence in the
+// document is corrected: a debug cycle reaches main memory and
+// `build/unibus.pass` runs one.
 
 `default_nettype none
 
@@ -331,7 +336,35 @@ module cadr_busint_regs (
 
     // --- `UB INT`: a Unibus interrupt taken, or simulated by writing the bit.
     // `cadr_machine.sv` ORs it with the Xbus line into `SINTR`.
-    output var logic        ub_int
+    output var logic        ub_int,
+
+    // --- THE ERROR STATUS REGISTER'S EIGHT LINES, SEVEN OF THEM THIS
+    // --- MODULE'S, for the debug cable.
+    //
+    // The 8304 at REQERR 0B15 and the 74LS244 at REQERR 0C16 take the SAME
+    // eight nets: the 244 puts them on `UDO<7:0>` for a read of `0o766044`
+    // and the 8304 puts them on `DBD<7:0>` under `-DB READ STATUS`, which is
+    // `Machine::debug_status`.  The pins say which net is which bit and the
+    // two parts agree --- 0B15 pin 1 to pin 19 is `XB NXM ERROR` on `DBD0`,
+    // pin 8 to pin 12 is `WRITE THROUGH ENB` on `DBD7` --- and that is
+    // `machine::bus_error` and `busint::error_status` exactly.
+    //
+    // Of the seven, four are flops this module holds --- the two NXM bits,
+    // `UB MAP ERROR` and `WRITE THROUGH ENB` --- and three are `XB PAR
+    // ERROR`, `LM ADR PAR ERROR` and `LM PAR ERROR`, which muir says cannot
+    // happen here: "the rest of the register is parity errors".  Those three
+    // are zero for good.
+    //
+    // **BIT 6 IS THE EIGHTH AND IS NOT THIS MODULE'S.**  `-FREE` is the
+    // interface's own busy, which is `cadr_busint_xbus.sv`'s `busy` and
+    // `Busint::busy` there; on the board it is a net arriving at REQERR from
+    // the request logic rather than a flop of this page's.  The two meet in
+    // `rtl/machine/cadr_memory_path.sv`, which is the page-level wiring, and
+    // `err_word` below keeps the constant one muir's `Machine::interface_read`
+    // keeps: a read of `0o766044` by the processor IS a cycle of this
+    // interface's, so it can never find the bus free.
+    //
+    output var logic [7:0]  err_status
 );
 
   // busint::DIAGNOSTIC_NS and REGISTER_STROBE_NS, the same two instants
@@ -459,7 +492,13 @@ module cadr_busint_regs (
   // the Unibus pulled up and reads as ones, measured on the netlist board.
   // `-FREE` in bit 6 reads SET because the interface is busy with this very
   // read.  Bit 5 is `UB MAP ERROR`, the 74LS74 at REQERR 0D03.
-  assign err_word = {8'hFF, write_through, 1'b1, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'hFF, err_status[7], 1'b1, err_status[5:0]};
+
+  // The same eight lines, as the 8304 at REQERR 0B15 takes them, with bit 6
+  // left to `cadr_memory_path.sv`: see the port.  One expression for both
+  // parts, because on the board there is one set of nets and a byte written
+  // twice is two places a mutation can be made and one of them caught.
+  assign err_status = {write_through, 1'b0, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
 
   always_comb begin
     if (in_win) begin

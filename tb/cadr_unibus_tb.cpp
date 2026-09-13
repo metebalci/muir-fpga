@@ -106,6 +106,18 @@
 // the bus interface's own registers is `build/busint_regs.pass`'s, where a
 // cycle is fifty ticks rather than nine hundred.
 //
+// THE THIRD MASTER, AND WHAT IT CLOSED.  `rtl/machine/cadr_dbgin.sv` is MIT's
+// DBGIN page and is instantiated inside `cadr_memory_path.sv` beside the two
+// Unibus slaves, so this is the only check in the tree where a DEBUG CYCLE
+// crosses the composed machine.  `build/dbgin.pass` puts that page on an
+// arbiter with the diagnostic register block and the processor and holds the
+// cable's own instants to muir; `build/busint_regs.pass` holds the mapped
+// window at its own seam.  Neither has the cable and the window in one
+// design, and until they are in one design a debug cycle cannot reach main
+// memory.  The last section here drives one that does, and reads the error
+// status byte --- which is assembled in `cadr_memory_path.sv` out of two
+// modules and nowhere else --- back over MIT's own wires.
+//
 // THE THIRD SLAVE, AND WHAT IT CLOSED.  `rtl/machine/cadr_busint_regs.sv` is
 // the bus interface's own two groups --- the interrupt block at
 // `0o766040`-`0o766076` and the Unibus map at `0o766140`-`0o766176` --- and
@@ -328,12 +340,21 @@ int main(int argc, char **argv) {
   // section below programs that entry and then reaches main memory through
   // it, and the page it must land on is muir's reading of the word and not
   // this file's arithmetic on it.
+  // All sixteen are kept, because the debug cable's section below reaches
+  // main memory through a different one and must compare against muir's
+  // reading of that word rather than against arithmetic of its own.
+  unsigned sweep_entry[16] = {0};
+  uint32_t sweep_page[16] = {0};
   unsigned sweep_entry0 = 0;
   uint32_t sweep_page0 = 0;
   int sweep_seen = 0;
   while (std::fgets(line, sizeof line, g)) {
     unsigned a, b, k, n;
     if (std::sscanf(line, "MAPSWEEP %x %x %x", &k, &a, &b) == 3) {
+      if (k < 16) {
+        sweep_entry[k] = a;
+        sweep_page[k] = b;
+      }
       if (k == 0) {
         sweep_entry0 = a;
         sweep_page0 = b;
@@ -373,6 +394,26 @@ int main(int argc, char **argv) {
                  "window's section needs a valid, writable entry\n",
                  ipath, sweep_seen, sweep_entry0, sweep_page0);
     return 2;
+  }
+  // The debug cable's section reaches main memory through entry 3, so that
+  // one has to be valid and writable as well and has to name a page of its
+  // own.  Checked here rather than assumed, because a trace whose entries
+  // stopped being distinct would make the window's own byte addresses
+  // ambiguous and nothing would say so.
+  for (unsigned k = 0; k < 16; ++k) {
+    if (!(sweep_entry[k] & 0x8000u) || !(sweep_entry[k] & 0x4000u) || !sweep_page[k]) {
+      std::fprintf(stderr,
+                   "FAIL: %s: MAPSWEEP entry %u is 0x%x naming page 0%o, and every one of the "
+                   "sixteen has to be valid and writable\n",
+                   ipath, k, sweep_entry[k], sweep_page[k]);
+      return 2;
+    }
+    for (unsigned j = 0; j < k; ++j)
+      if (sweep_page[j] == sweep_page[k]) {
+        std::fprintf(stderr, "FAIL: %s: MAPSWEEP entries %u and %u both name page 0%o\n", ipath, j,
+                     k, sweep_page[k]);
+        return 2;
+      }
   }
 
   if (want_tick_ns != kTickNs || want_bits != 18) {
@@ -459,6 +500,13 @@ int main(int argc, char **argv) {
   dut->kbd_strobe = 0;
   dut->kbd_code = 0;
   dut->mouse_lines = kMouseIdle;
+  // MIT's cable, idle.  `dbg_in_req` high means `-DEBUG IN REQ` is DOWN,
+  // which is the sense the whole transport uses, so idle is zero.
+  dut->dbg_rst = 1;
+  dut->dbg_in_req = 0;
+  dut->dbg_in_wr = 0;
+  dut->dbg_in_a = 0;
+  dut->dbd_in = 0;
   dut->eval();
 
   // One tick.  Nothing is behind the memory port on a Unibus cycle --- the
@@ -477,8 +525,20 @@ int main(int argc, char **argv) {
   std::map<uint32_t, uint32_t> main_mem;
   uint32_t last_mem_addr = 0, last_mem_wdata = 0;
   int last_mem_write = 0;
+  // **THE TWO RESETS, AND THE LOOP THAT TELLS THEM APART.**  `cadr_memory_path`
+  // has `rst` and `dbg_rst`, and the DBGIN page takes the second: the machine's
+  // reset carries `debuggee_reset`, which is the page's own modifier bit 1, and
+  // a modifier register cleared by its own bit 1 clears the bit that is
+  // clearing it.  Until something writes that bit the two are the same tick
+  // and a check cannot tell them apart, which is why the last section of the
+  // cable's own run closes the loop `boards/arty-z7-20/cadr_arty.sv` closes ---
+  // `debuggee_reset` registered and joined into the machine's reset --- and
+  // writes it.  `cable_reset_wired` is zero everywhere else, so nothing else in
+  // this file moves by a tick.
+  int cable_rst_q = 0, cable_reset_wired = 0;
   auto Tick = [&]() {
-    dut->rst = (tick == 0);
+    dut->rst = (tick == 0) || cable_rst_q;
+    dut->dbg_rst = (tick == 0);
     dut->mclk = (tick % kMicrocycle) == 0;
     dut->clk = 1;
     dut->eval();
@@ -498,6 +558,9 @@ int main(int argc, char **argv) {
       }
     }
     dut->eval();
+    // `always_ff @(posedge clk) mach_rst <= rst || con_mach_rst ||
+    // debuggee_reset;`, which is the line the top level carries.
+    cable_rst_q = cable_reset_wired && dut->debuggee_reset;
     dut->clk = 0;
     dut->eval();
     ++tick;
@@ -1127,16 +1190,20 @@ int main(int argc, char **argv) {
   // reaches `0o140000`-`0o177777` through it, and the word comes off
   // `mem_addr` at the translated address.
   //
-  // **THE MASTER IS THIS TESTBENCH AND NOT A PROGRAM, and that is a real
-  // limit.**  `rtl/machine/cadr_dbgin.sv`'s request is tied off inside
-  // `cadr_memory_path.sv` and `rtl/plumbing/cadr_console.sv` builds its
-  // address as `SPY_BASE | eadr<<1` and cannot address the window at all, so
-  // NOTHING IN THE COMPOSED MACHINE MAKES A MAPPED CYCLE.  What is driven
-  // here is the console's own seam --- `con_req`, `con_addr`, `con_msyn` ---
-  // which is the seam a foreign master presents to this module, and `con_gnt`
-  // is half of the `ub_foreign` the window answers on.  The section is
-  // therefore the arbiter and the datapath, held to a property; the words and
-  // the responders are `busint_regs.pass`'s, against muir.
+  // **THE MASTER HERE IS THIS TESTBENCH ON THE CONSOLE'S SEAM**, which is the
+  // seam a foreign master presents to this module: `con_req`, `con_addr` and
+  // `con_msyn`, with `con_gnt` half of the `ub_foreign` the window answers on.
+  // So this section is the arbiter and the datapath held to a property; the
+  // words and the responders are `build/busint_regs.pass`'s, against muir.
+  //
+  // **AND THE SECTION AFTER IT RUNS THE SAME ROUTE WITH MIT'S OWN MASTER.**
+  // `rtl/machine/cadr_dbgin.sv` is instantiated in `cadr_memory_path.sv` and
+  // its grant is the other half of `ub_foreign`, so the debug cable makes
+  // mapped cycles in the composed machine.  `rtl/plumbing/cadr_console.sv`
+  // still cannot: it builds its address as `SPY_BASE | eadr<<1` with four
+  // bits of `eadr` and can put nothing but `0o766000`-`0o766036` on the bus.
+  // Both are kept, because they are different claims --- this one is the
+  // arbiter's seam and that one is MIT's cable end to end.
   long window_cycles = 0, window_reads = 0, window_writes = 0;
   int window_timed_out = 0;
   if (failures < kMaxFailures) {
@@ -1228,9 +1295,7 @@ int main(int argc, char **argv) {
                        (unsigned long)(window_mem_cycles - before), 0, "the window");
 
     // And a WRITE: the even word into the write buffer, the odd word an Xbus
-    // write of the two halves at the same address.  This is the claim
-    // `docs/debug-cable.md` says is missing --- "a debug cycle cannot reach
-    // main memory" --- made from the other direction.
+    // write of the two halves at the same address.
     const long before_w = window_mem_cycles;
     Foreign(base, true, 0x4321, 4000);
     ++window_writes;
@@ -1269,6 +1334,476 @@ int main(int argc, char **argv) {
     else
       window_timed_out = 1;
     ++unanswered;
+  }
+
+  // ---- MIT's debug cable, the third master, through the composed machine --
+  //
+  // **THIS IS THE FIRST CHECK IN THE TREE THAT DRIVES A DEBUG CYCLE THROUGH
+  // `cadr_memory_path.sv`**, and it is what the two slices above it were
+  // each missing half of.  `build/dbgin.pass` puts `cadr_dbgin.sv` on an
+  // arbiter with the diagnostic register block and the processor and holds
+  // the cable's own instants to muir; `build/busint_regs.pass` holds the
+  // mapped window at its own seam.  Neither has the cable and the window in
+  // one design, and until they are in one design a debug cycle cannot reach
+  // main memory at all.  It reaches it here.
+  //
+  // The master is the same `cadr_dbgin` the board carries, instantiated
+  // inside the DUT, and the testbench stands where the carrier stands: the
+  // levels up, the request down, held until `DEBUG IN ACK`, and lifted with
+  // the levels still standing.  `rtl/plumbing/cadr_debug_window.sv` is the
+  // carrier on the board and `build/gp1_split.pass` holds it; what is driven
+  // here is the cable and nothing else, which is the boundary
+  // `docs/debug-cable.md` draws.
+  //
+  // **AND THE ERROR STATUS BYTE IS THE OTHER HALF OF THE SECTION.**  The
+  // eight lines the 8304 at REQERR 0B15 puts on `DBD<7:0>` are assembled in
+  // `cadr_memory_path.sv` out of two modules --- `cadr_busint_regs.sv`'s four
+  // flops and `cadr_busint_xbus.sv`'s `-FREE` --- and nothing else in this
+  // tree composes them.  `build/dbgin.pass` drives that byte from OUTSIDE on
+  // purpose, so that a check which supplies the answer cannot be the thing
+  // that tests it; so what makes each bit true here is the machine being
+  // driven, and the byte is read back over the cable.  A bit misplaced by one
+  // in the join lands on a neighbour this section has just measured clear.
+  long cable_strobes = 0, cable_cycles = 0, cable_reads = 0, cable_writes = 0;
+  long cable_mapped = 0, cable_status_reads = 0, cable_unanswered = 0;
+  long cable_after_reset = 0;
+  unsigned cable_status_bits = 0;
+  if (failures < kMaxFailures) {
+    // The four strobes, `DEBUG IN A<1:0>`, which are the debugger's own Unibus
+    // address bits 3 and 2: `busint::DEBUG_CYCLE`, `DEBUG_STATUS`,
+    // `DEBUG_MODIFIER` and `DEBUG_ADDRESS`.
+    const unsigned kACycle = 0, kAStatus = 1, kAModifier = 2, kAAddress = 3;
+
+    // `busint::DEBUG_OUT_REQUEST_NS`: the levels are on the cable a hundred
+    // nanoseconds before the request, because `-DEBUG OUT REQ` is
+    // `NAND(SELECT DEBUG, SELECT DEBUG DLYD)` and the MTD100 at DBGOUT 0A10
+    // delays the second.  Twenty ticks on MIT's grid.
+    const long kCableLeadT = 100 / kTickNs;
+
+    // What an open cable reads: the two bytes the debuggee drives, and ones
+    // wherever it drives nothing, which is the SIP at DBGIN 0A22.  This is
+    // `cable::DebugIn::observe` and is why `Rtl::try_debug_request` writes a
+    // status answer as `0xff00 | status`.
+    auto Seen = [&]() {
+      const unsigned drv = dut->dbd_oe;
+      return (unsigned)((((drv & 2) ? (dut->dbd_out & 0xFF00u) : 0xFF00u) |
+                         ((drv & 1) ? (dut->dbd_out & 0x00FFu) : 0x00FFu)));
+    };
+
+    // One request on the cable.  Returns the word the debuggee drove at the
+    // instant `DEBUG IN ACK` first rose, or -1 if it never did.
+    auto Strobe = [&](unsigned a, bool write, unsigned dbd, long guard) {
+      dut->dbg_in_a = a;
+      dut->dbg_in_wr = write ? 1 : 0;
+      dut->dbd_in = dbd;
+      for (long i = 0; i < kCableLeadT; ++i) Tick();
+      dut->dbg_in_req = 1;
+      long word = -1;
+      for (long g = 0; g < guard && failures < kMaxFailures; ++g) {
+        Tick();
+        if (dut->dbg_in_ack) {
+          word = (long)Seen();
+          break;
+        }
+      }
+      // The lift, with every level still standing: the two latches take `DBD`
+      // at the trailing edge of their own strobe, so a carrier that cleared
+      // the lines as part of lifting would write the wrong word into this
+      // machine's address or modifier register.
+      dut->dbg_in_req = 0;
+      Tick();
+      dut->dbg_in_a = 0;
+      dut->dbg_in_wr = 0;
+      dut->dbd_in = 0;
+      // `RELEASE_T` and then some: `-DB BUS REQ` is down only once the page
+      // is back in `C_IDLE`, and the arbiter may not be asked for anything
+      // else until it is.
+      for (long g = 0; g < 200; ++g) Tick();
+      ++cable_strobes;
+      return word;
+    };
+
+    // A cycle on this machine's Unibus at `uaddr`: the address latched into
+    // the two 74LS374s as `UAO<16:1>`, bit 17 into the modifier register, and
+    // then `-DB NEED UB`.  `ub_addr` is `{modifier[0], address, 1'b0}`, which
+    // is `Busint::debug_unibus_address`, so an eighteen-bit address crosses in
+    // two strobes and MIT's own note --- "Bit 0 of the address is not sent
+    // over the cable" --- is why the third bit is never sent.
+    //
+    // **MODIFIER BITS 1 AND 2 ARE HELD CLEAR ON EVERY ONE OF THESE.**  Bit 1
+    // is `-DEBUGEE RESET` and would halt the machine; bit 2 is the timeout
+    // inhibit, which nothing in this fabric consumes.  `build/dbgin.pass`
+    // owns both.
+    auto CableCycle = [&](unsigned uaddr, bool write, unsigned wdata, long guard) {
+      dut->spy_rdata = Poison(SpyEadr(uaddr));
+      Strobe(kAAddress, false, (uaddr >> 1) & 0xFFFFu, 200);
+      Strobe(kAModifier, false, (uaddr >> 17) & 1u, 200);
+      ++cable_cycles;
+      if (write) ++cable_writes; else ++cable_reads;
+      return Strobe(kACycle, write, wdata, guard);
+    };
+
+    // The byte, read the way CC's `DBG-PRINT-STATUS` reads it.  The high byte
+    // is the open cable and must come back as ones, which is the one place
+    // this fabric deliberately drives nothing.
+    auto Status = [&](const char *where) {
+      const long w = Strobe(kAStatus, false, 0, 200);
+      ++cable_status_reads;
+      if (w < 0) {
+        failures += Fail("DEBUG IN ACK on -DB READ STATUS", 0, 1, where);
+        return 0u;
+      }
+      if (((unsigned)w >> 8) != 0xFFu)
+        failures += Fail("the high byte of a status read", (unsigned)w >> 8, 0xFFu, where);
+      cable_status_bits |= (unsigned)w & 0xFFu;
+      return (unsigned)w & 0xFFu;
+    };
+
+    // ---- the cable reaches the diagnostic register block --------------------
+    //
+    // CC's whole vocabulary is `0o766000` plus twice the register number, so
+    // this is the claim that muir over this cable can do to this machine what
+    // muir over the lashup does to a simulated one.  The word is the poison
+    // driven from the address THIS testbench put on the bus and never from
+    // `spy_eadr`, so a block that answered the wrong register is visible.
+    for (unsigned eadr = 0; eadr < 16; ++eadr) {
+      const unsigned uaddr = 0766000u + 2u * eadr;
+      const long w = CableCycle(uaddr, false, 0, 4000);
+      if (w < 0)
+        failures += Fail("DEBUG IN ACK on a cycle at the register block", 0, 1, "the cable");
+      else if ((unsigned)w != Poison(eadr))
+        failures += Fail("the register block's word over the cable", (unsigned)w, Poison(eadr),
+                         "the cable");
+    }
+
+    // A WRITE over the cable, whose landing is a wire out of the machine:
+    // `0o766012` is the mode register and bit 5 is `PROMDISABLE`, which is
+    // how MIT's boot PROM turns itself off.  The register loads at the
+    // machine's next look, so the level is read after a microcycle.
+    const int promdisable_before = dut->promdisable;
+    CableCycle(0766012u, true, 040u, 4000);
+    Idle(2 * kMicrocycle);
+    if (promdisable_before || !dut->promdisable)
+      failures += Fail("PROMDISABLE after a mode register write over the cable",
+                       (unsigned)dut->promdisable, 1, "the cable");
+    CableCycle(0766012u, true, 0u, 4000);
+    Idle(2 * kMicrocycle);
+    if (dut->promdisable)
+      failures += Fail("PROMDISABLE after the cable wrote it back", (unsigned)dut->promdisable, 0,
+                       "the cable");
+
+    // ---- the error status byte, bit by bit, each made true by the machine ---
+    //
+    // `-RESET ERR` first: "Writing this location ignores the data written and
+    // clears the status bits", all but bit 7, which the 74S74 at UBCYC 0B08
+    // clocks from data bit 7.  So this clears the three error flops and puts
+    // write-through down with them.
+    Run(0766044u, true, 0);
+    iface_writes += 1;
+    unsigned st = Status("the cable, with nothing wrong and the bus free");
+    if (st != 0x00u)
+      failures += Fail("the status byte with nothing wrong", st, 0x00u, "the cable");
+
+    // Bit 6, `-FREE`: the byte read WHILE a cycle of the machine's own stands.
+    // This is the one bit of the eight that is not a flop of the error status
+    // register at all --- it is `cadr_busint_xbus.sv`'s own busy, which is
+    // `Busint::busy`, and `Machine::debug_status` takes it live.  A cycle at a
+    // Unibus address nothing answers stands for the whole NXM timeout, which
+    // is a window wide enough to read the byte in; the SAME byte is read again
+    // once the cycle is over and must have the bit clear.
+    //
+    // A status strobe is not a bus cycle and takes no bus: `DEBUG IN ACK` for
+    // it is `NAND(-DB ADR1 CLK, -DB ADR0 CLK, -DB READ STATUS)` at DBGIN 0A14
+    // and the cycle engine never leaves `C_IDLE`.  So this can be done under a
+    // standing processor cycle, and nothing else in the machine moves.
+    unsigned st_busy = 0xFFFFu, st_free = 0xFFFFu;
+    {
+      dut->phys = UnibusPhysical(0765000u);
+      dut->wrcyc = 0;
+      dut->wdata = 0;
+      dut->spy_rdata = 0;
+      dut->n_memrq = 0;
+      // Far enough in that the cycle is running and nowhere near the timer.
+      for (long g = 0; g < 400 && dut->n_memgrant; ++g) Tick();
+      st_busy = Status("the cable, with a cycle of the machine's own standing");
+      for (long g = 0; g < 6000; ++g) {
+        Tick();
+        if (!dut->n_memack) break;
+      }
+      dut->n_memrq = 1;
+      for (long g = 0; g < 200; ++g) {
+        Tick();
+        if (dut->n_memgrant && !dut->ub_msyn_o) break;
+      }
+      Idle(4);
+      ++unanswered;
+      st_free = Status("the cable, with the bus free again");
+    }
+    const unsigned kNotFree = 0100u, kXbusNxm = 01u, kUnibusNxm = 010u, kUbMapError = 040u;
+    const unsigned kWriteThrough = 0200u;
+    if (!(st_busy & kNotFree))
+      failures += Fail("-FREE in the status byte with a cycle standing", st_busy, kNotFree,
+                       "the cable");
+    if (st_free & kNotFree)
+      failures += Fail("-FREE in the status byte with the bus free", st_free & kNotFree, 0,
+                       "the cable");
+    // And that cycle timed out on the Unibus, so bit 3 is up and bit 0 is not.
+    if ((st_free & (kUnibusNxm | kXbusNxm)) != kUnibusNxm)
+      failures += Fail("the NXM bits after a Unibus cycle nothing answered",
+                       st_free & (kUnibusNxm | kXbusNxm), kUnibusNxm, "the cable");
+
+    // Bit 0, `XB NXM ERROR`: the same again on the XBUS.  An Xbus page above
+    // the fitted memory and below the device pages is `Responder::NoXbus`, so
+    // nothing answers and the timer ends it.  The two bits are three apart in
+    // the register and a join that crossed them is caught here rather than at
+    // a read of `0o766044`, where `build/busint_regs.pass` already holds them.
+    {
+      dut->phys = 0x300000u;   // 3,145,728: past 32 boards, short of 0o36000
+      dut->wrcyc = 0;
+      dut->wdata = 0;
+      dut->n_memrq = 0;
+      for (long g = 0; g < 6000; ++g) {
+        Tick();
+        if (!dut->n_memack) break;
+      }
+      dut->n_memrq = 1;
+      for (long g = 0; g < 200; ++g) {
+        Tick();
+        if (dut->n_memgrant) break;
+      }
+      Idle(4);
+    }
+    st = Status("the cable, after a cycle nothing on the Xbus answered");
+    if ((st & (kXbusNxm | kUnibusNxm)) != (kXbusNxm | kUnibusNxm))
+      failures += Fail("both NXM bits after one cycle of each kind",
+                       st & (kXbusNxm | kUnibusNxm), kXbusNxm | kUnibusNxm, "the cable");
+
+    // Bit 7, `WRITE THROUGH ENB`: a write of `0o766044` clears the three error
+    // flops and clocks bit 7 from the data.  So the byte becomes exactly bit 7
+    // and nothing else, which says the clear reaches all three and the one bit
+    // it must not reach survives.
+    Run(0766044u, true, 0200u);
+    iface_writes += 1;
+    st = Status("the cable, with write-through on and the errors cleared");
+    if (st != kWriteThrough)
+      failures += Fail("the status byte with write-through alone", st, kWriteThrough, "the cable");
+    Run(0766044u, true, 0);
+    iface_writes += 1;
+    st = Status("the cable, with write-through written back off");
+    if (st != 0x00u)
+      failures += Fail("the status byte with write-through off again", st, 0x00u, "the cable");
+
+    // ---- THE MAPPED WINDOW, WITH THE CABLE AS THE MASTER --------------------
+    //
+    // `Machine::mapped_read` and `mapped_write` were written for exactly this
+    // master, and `Rtl::try_debug_request` is the only place in muir that
+    // makes a map responder at all.  The map entry is written OVER THE CABLE
+    // too --- `0o766140` is above `0o400000`, so modifier bit 0 carries
+    // address bit 17 and a cable that dropped it would write somewhere else
+    // entirely and the read-back would say so.
+    window_open = 1;
+    const unsigned kCablePage = 3u;
+    const unsigned kCableWord = 0x5Cu;
+    const unsigned cable_entry = sweep_entry[kCablePage];
+    const uint32_t cphys = (sweep_page[kCablePage] << 8) | kCableWord;
+    const uint32_t cbyte = MainByteAddress(cphys);
+    const uint32_t cwant = MainPoison(cbyte);
+    const unsigned cbase = 0140000u + (kCablePage << 10) + (kCableWord << 2);
+
+    CableCycle(0766140u + 2u * kCablePage, true, cable_entry, 4000);
+    long w = CableCycle(0766140u + 2u * kCablePage, false, 0, 4000);
+    if (w < 0 || (unsigned)w != cable_entry)
+      failures += Fail("the map entry written and read back over the cable", (unsigned)w,
+                       cable_entry, "the cable");
+
+    // The EVEN word: an Xbus read at the translated address, whose low half is
+    // the answer and whose high half goes into the page's read buffer.  This
+    // is the sentence `docs/debug-cable.md` used to carry the opposite of.
+    w = CableCycle(cbase, false, 0, 8000);
+    ++cable_mapped;
+    if (w < 0) {
+      failures += Fail("DEBUG IN ACK on a mapped read over the cable", 0, 1, "the cable");
+    } else {
+      if ((unsigned)w != (cwant & 0xFFFFu))
+        failures += Fail("the low half of the mapped word over the cable", (unsigned)w,
+                         cwant & 0xFFFFu, "the cable");
+      if (last_mem_addr != cbyte)
+        failures += Fail("the byte address the memory port was asked for over the cable",
+                         last_mem_addr, cbyte, "the cable");
+      if (last_mem_write)
+        failures += Fail("the direction at the memory port on a mapped read over the cable", 1, 0,
+                         "the cable");
+    }
+    // The ODD word: the read buffer, no Xbus cycle at all.
+    {
+      const long before = window_mem_cycles;
+      w = CableCycle(cbase + 2, false, 0, 8000);
+      ++cable_mapped;
+      if (w < 0 || (unsigned)w != (cwant >> 16))
+        failures += Fail("the high half out of the read buffer over the cable", (unsigned)w,
+                         cwant >> 16, "the cable");
+      if (window_mem_cycles != before)
+        failures += Fail("memory cycles for a cable read of the odd word",
+                         (unsigned long)(window_mem_cycles - before), 0, "the cable");
+    }
+    // And a WRITE, which is the half a read alone cannot make: the even word
+    // into the write buffer and nothing else, the odd word an Xbus write of
+    // the two halves at the translated address.
+    {
+      const long before = window_mem_cycles;
+      CableCycle(cbase, true, 0xBEEFu, 8000);
+      ++cable_mapped;
+      if (window_mem_cycles != before)
+        failures += Fail("memory cycles for a cable write of the even word",
+                         (unsigned long)(window_mem_cycles - before), 0, "the cable");
+    }
+    CableCycle(cbase + 2, true, 0x1234u, 8000);
+    ++cable_mapped;
+    if (!last_mem_write || last_mem_addr != cbyte || last_mem_wdata != 0x1234BEEFu)
+      failures += Fail("the word a cable write put in main memory", last_mem_wdata, 0x1234BEEFu,
+                       "the cable");
+    w = CableCycle(cbase, false, 0, 8000);
+    ++cable_mapped;
+    if (w < 0 || (unsigned)w != 0xBEEFu)
+      failures += Fail("the low half read back through the map over the cable", (unsigned)w,
+                       0xBEEFu, "the cable");
+    w = CableCycle(cbase + 2, false, 0, 8000);
+    ++cable_mapped;
+    if (w < 0 || (unsigned)w != 0x1234u)
+      failures += Fail("the high half read back through the map over the cable", (unsigned)w,
+                       0x1234u, "the cable");
+
+    // ---- bit 5, `UB MAP ERROR`, and the cycle that is never acknowledged ----
+    //
+    // "Set when an attempt to perform an Xbus cycle through the Unibus map is
+    // refused because the map specifies invalid or write-protected."  A page
+    // whose `MAPVALID` is down refuses, sets the bit at `UB XBUS T100` --- the
+    // 74LS74 at REQERR 0D03 --- and NEVER ANSWERS.  So this measures two
+    // things at once that no other check in the tree puts together: the bit
+    // reaching the cable's own status driver, and `cadr_dbgin.sv`'s "a cycle
+    // at an address nothing answers is never acknowledged, there being no
+    // timeout for this master".
+    //
+    // The guard is 2,000 ticks, which is longer than the debugger's own
+    // 11.05 us timeout and nearly three times this machine's 4.25 us NXM
+    // timer.  Nothing must acknowledge inside it.
+    Run(0766044u, true, 0);   // -RESET ERR, so bit 5 is the only bit that can rise
+    iface_writes += 1;
+    {
+      const unsigned bad_page = 5u;
+      CableCycle(0766140u + 2u * bad_page, true, 0u, 4000);   // MAPVALID down
+      const unsigned bad = 0140000u + (bad_page << 10) + (0x10u << 2);
+      const long before = window_mem_cycles;
+      w = CableCycle(bad, false, 0, 2000);
+      ++cable_mapped;
+      if (w >= 0)
+        failures += Fail("a mapped cable cycle through an invalid page was acknowledged",
+                         (unsigned)w, 0, "the cable");
+      else
+        ++cable_unanswered;
+      if (window_mem_cycles != before)
+        failures += Fail("memory cycles for a refused mapped cycle",
+                         (unsigned long)(window_mem_cycles - before), 0, "the cable");
+    }
+    window_open = 0;
+    st = Status("the cable, after a mapped cycle the map refused");
+    if (st != kUbMapError)
+      failures += Fail("the status byte after a refused mapped cycle", st, kUbMapError,
+                       "the cable");
+    Run(0766044u, true, 0);
+    iface_writes += 1;
+    st = Status("the cable, after -RESET ERR cleared the map error");
+    if (st != 0x00u)
+      failures += Fail("the status byte after -RESET ERR", st, 0x00u, "the cable");
+
+    // ---- THE PAGE'S TWO RESETS, WHICH ARE TWO ON PURPOSE --------------------
+    //
+    // **AND THIS IS LAST BECAUSE IT RESETS THE MACHINE.**  The card's two
+    // clocks, the map's sixteen registers and the error flops all go with it,
+    // so nothing above may run after it; the section that follows reads the
+    // microsecond counter from wherever it stands and is the only one that
+    // could care.
+    //
+    // `cadr_memory_path` takes `rst` and `dbg_rst` and gives the DBGIN page the
+    // second.  MIT's modifier bit 1 is `-DEBUGEE RESET` and is a LEVEL ---
+    // "write a 1 here then write a 0" --- and it crosses the debuggee's own
+    // cables to OLORD2 as that processor's power-on reset.  So the machine's
+    // reset carries it, and a DBGIN page reset by the machine's reset would
+    // clear the modifier register that is holding the bit down: the level
+    // becomes a one-tick pulse and MIT's sequence cannot be written at all.
+    //
+    // **UNTIL THIS POINT THE TWO RESETS HAVE BEEN THE SAME TICK IN THIS FILE**,
+    // so a `.rst(rst)` at the instantiation would have survived every line
+    // above.  `build/dbgin.pass` writes the bit, but against a harness that
+    // wires the two itself rather than against this module.  Here the loop is
+    // closed the way the top level closes it --- `debuggee_reset` registered
+    // and joined into `rst` --- and what is measured is that the level STANDS.
+    cable_reset_wired = 1;
+    Idle(8);
+    if (dut->debuggee_reset || cable_rst_q)
+      failures += Fail("-DEBUGEE RESET before the cable asked for it",
+                       (unsigned)dut->debuggee_reset, 0, "the two resets");
+    // Bit 0 with it, as CC's own sequence carries it: the address bit must
+    // survive a write that is about to reset the machine.
+    Strobe(kAModifier, false, 0b011u, 200);
+    if (!dut->debuggee_reset)
+      failures += Fail("-DEBUGEE RESET after modifier bit 1 was written",
+                       (unsigned)dut->debuggee_reset, 1, "the two resets");
+    long stood = 0;
+    for (long g = 0; g < 400; ++g) {
+      Tick();
+      if (dut->debuggee_reset) ++stood;
+    }
+    if (stood != 400)
+      failures += Fail("ticks -DEBUGEE RESET stood out of 400", (unsigned long)stood, 400,
+                       "the two resets");
+    if (!cable_rst_q)
+      failures += Fail("the machine's own reset under -DEBUGEE RESET", (unsigned)cable_rst_q, 1,
+                       "the two resets");
+    // And the modifier register kept address bit 17 through all of it, which a
+    // page in reset could not have done.
+    Strobe(kAAddress, false, 0xF600u, 200);   // 0o766000 >> 1, the block's base
+    Strobe(kAModifier, false, 0b001u, 200);
+    if (dut->debuggee_reset)
+      failures += Fail("-DEBUGEE RESET after modifier bit 1 was written back",
+                       (unsigned)dut->debuggee_reset, 0, "the two resets");
+    Idle(8);
+    if (cable_rst_q)
+      failures += Fail("the machine still in reset after the cable let go",
+                       (unsigned)cable_rst_q, 0, "the two resets");
+    // The machine works again, and the address the cable latched while it was
+    // held is the one the cycle now runs at.
+    {
+      dut->spy_rdata = Poison(0);
+      ++cable_cycles;
+      ++cable_reads;
+      const long back = Strobe(kACycle, false, 0, 4000);
+      if (back < 0 || (unsigned)back != Poison(0))
+        failures += Fail("the register block over the cable after the reset", (unsigned)back,
+                         Poison(0), "the two resets");
+      else
+        ++cable_after_reset;
+    }
+    cable_reset_wired = 0;
+    Idle(4 * kMicrocycle);
+
+    // **AND THE MACHINE TAKES ITS OWN UNIBUS AGAIN, WHICH THE RESET GAVE
+    // BACK.**  `cadr_busint_xbus.sv` sets `LMUB MASTER` at arbitration stage 3
+    // and nothing but a reset ever clears it, which is why its header says
+    // stages 1 to 3 happen once in the life of the machine --- and a reset
+    // makes that life start again.  So the first processor cycle after this
+    // section pays the 200 ns `SACK` wait and the stages either side of it,
+    // 116 ticks more than the cycles before and after it.
+    //
+    // The section below times the microsecond counter by two of its own
+    // strobes and requires them to be an exact number of the card's
+    // microseconds apart, so one cycle 116 ticks longer than its partner
+    // breaks an invariant that has nothing to do with this one.  Measured
+    // rather than foreseen: the run failed there before this line existed,
+    // which is the arbitration's own "it runs once" caveat arriving from the
+    // far side.
+    Run(0766044u, true, 0);
+    iface_writes += 1;
   }
 
   // ---- the counter's high half, past the carry ----------------------------
@@ -1351,6 +1886,30 @@ int main(int argc, char **argv) {
   least("mapped cycles run by a foreign master", window_cycles, 6);
   least("mapped reads", window_reads, 4);
   least("mapped writes", window_writes, 2);
+  least("requests made on MIT's debug cable", cable_strobes, 60);
+  least("cycles the debug master ran on this machine's Unibus", cable_cycles, 20);
+  least("reads by the debug master", cable_reads, 18);
+  least("writes by the debug master", cable_writes, 4);
+  least("mapped cycles with the DEBUG CABLE as the master", cable_mapped, 7);
+  least("error status bytes read over the cable", cable_status_reads, 6);
+  least("mapped cable cycles the map refused and nothing acknowledged", cable_unanswered, 1);
+  least("cycles the debug master ran after it had reset the machine", cable_after_reset, 1);
+  // **THE FIVE LIVE BITS WERE EACH SEEN UP AND THE THREE PARITY BITS NEVER
+  // WERE.**  A byte that is only ever compared against zero passes a driver
+  // stuck at zero, which is this project's standing rule about a memory whose
+  // only exercise writes one constant; this is the same rule for eight wires.
+  // Bits 1, 2 and 4 are `XB PAR ERROR`, `LM ADR PAR ERROR` and `LM PAR
+  // ERROR`, which muir says cannot happen here, so a join that shifted a live
+  // bit onto one of them shows as a bit this run never saw and a bit it
+  // should not have.
+  if (cable_status_bits != 0351u) {
+    std::fprintf(stderr,
+                 "FAIL: the status bits this run saw set over the cable are 0%03o, wanting 0351 ---\n"
+                 "      XB NXM (1), UB NXM (10), UB MAP ERROR (40), -FREE (100) and WRITE THROUGH\n"
+                 "      (200), and never the three parity bits\n",
+                 cable_status_bits);
+    ++thin;
+  }
   // Three, and the number is the route: two reads of the even word and one
   // write of the odd word reach main memory, while the three cycles of the
   // odd word's buffer and the even word's buffer reach nothing at all.
@@ -1400,14 +1959,41 @@ int main(int argc, char **argv) {
       "    cadr_ddr_map::main_byte_address gives the translated page, the odd word answered from\n"
       "    the read buffer with no memory cycle at all, and a word written through the map and\n"
       "    read back through it.  The PROCESSOR's own cycle at the same address timed out, which\n"
-      "    is busint::decode answering NoUnibus over the whole window.  The master is this\n"
-      "    testbench on the console's seam: cadr_dbgin.sv's request is tied off and\n"
-      "    cadr_console.sv cannot address the window, so nothing in the composed machine makes a\n"
-      "    mapped cycle yet.\n",
+      "    is busint::decode answering NoUnibus over the whole window.  That master is this\n"
+      "    testbench on the console's seam, which is the seam a foreign master presents; the\n"
+      "    section below runs the same route with MIT's own master on MIT's own cable.\n"
+      "    AND THE DEBUG CABLE DROVE A CYCLE THROUGH THE COMPOSED MACHINE: %ld requests on the\n"
+      "    cable, %ld of them cycles on this machine's Unibus --- %ld reads and %ld writes --- by\n"
+      "    the same cadr_dbgin.sv the board carries, on the arbiter cadr_memory_path.sv\n"
+      "    instantiates.  All sixteen diagnostic registers read back the word driven from the\n"
+      "    address and never from spy_eadr; a mode register write over the cable moved\n"
+      "    PROMDISABLE, which is a wire out of the machine.  %ld mapped cycles had the CABLE as\n"
+      "    the master, through a map entry the cable itself wrote and read back at 0766146 ---\n"
+      "    which is above 0400000, so modifier bit 0 carried address bit 17 --- and the even\n"
+      "    word's read and the odd word's write reached the machine's own memory port at the\n"
+      "    byte address cadr_ddr_map::main_byte_address gives muir's own translated page.  A\n"
+      "    cycle through a page whose MAPVALID is down was never acknowledged over 2,000 ticks,\n"
+      "    which is longer than the debugger's own 11.05 us timeout and nearly three times this\n"
+      "    machine's NXM timer: there is no timeout for this master.\n"
+      "    THE ERROR STATUS BYTE IS ASSEMBLED IN cadr_memory_path.sv AND WAS READ BACK OVER THE\n"
+      "    CABLE %ld times, high byte 0377 every time, being the open cable's pull-ups.  Each of\n"
+      "    its five live bits was made true by driving the machine and then read: XB NXM by an\n"
+      "    Xbus cycle nothing answered, UB NXM by a Unibus one, UB MAP ERROR by the refused\n"
+      "    mapped cycle above, WRITE THROUGH by a write of 0766044, and -FREE --- which is\n"
+      "    cadr_busint_xbus.sv's own busy and no flop of the register's --- by reading the byte\n"
+      "    with a cycle of the machine's own standing and again with the bus free.  The three\n"
+      "    parity bits were never seen set, and -RESET ERR left the byte at zero.\n"
+      "    AND THE DBGIN PAGE'S TWO RESETS ARE TWO: with debuggee_reset registered and joined\n"
+      "    into the machine's own reset, as the top level joins it, modifier bit 1 held\n"
+      "    -DEBUGEE RESET up for all 400 ticks it was asked to.  A page reset by the machine's\n"
+      "    reset would have cleared the bit that was clearing it and made MIT's level a\n"
+      "    one-tick pulse.  The address bit the modifier carried survived the hold, and the\n"
+      "    cable ran a cycle at it once it let the machine go.\n",
       tick, card_reads, card_writes, block_reads, block_writes, iface_reads, iface_writes, kStrobeT,
       kAckT, carry_ticks, swept,
       kSweepFirst, kSweepLast, answered_by_card, answered_by_block, unanswered, kAddrs, dec_rows,
       dec_none_runs, path, iface_rows, ipath, answered_by_iface, window_cycles, window_reads,
-      window_writes, ipath, window_mem_cycles);
+      window_writes, ipath, window_mem_cycles, cable_strobes, cable_cycles, cable_reads,
+      cable_writes, cable_mapped, cable_status_reads);
   return 0;
 }

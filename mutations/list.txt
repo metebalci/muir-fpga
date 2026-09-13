@@ -7407,11 +7407,13 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note Re-aimed when the mapped window landed and bit 5 stopped being a
 @note constant zero: `UB MAP ERROR` is the 74LS74 at REQERR 0D03 and sits
-@note between `-FREE` and the Unibus NXM bit.
+@note between `-FREE` and the Unibus NXM bit.  Re-aimed again when the debug
+@note cable's byte was wired, which made the seven lines one expression that
+@note both the 244 and the 8304 read.
 @old
-  assign err_word = {8'hFF, write_through, 1'b1, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'hFF, err_status[7], 1'b1, err_status[5:0]};
 @new
-  assign err_word = {8'hFF, write_through, 1'b0, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'hFF, err_status[7], 1'b0, err_status[5:0]};
 @end
 
 @mutation busint-regs-the-error-registers-high-byte-is-zero
@@ -7430,11 +7432,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note not zero because zero is convenient.
 @note
 @note Re-aimed when the mapped window landed and bit 5 stopped being a
-@note constant zero.
+@note constant zero, and again when the debug cable's byte made the seven
+@note lines one expression that both the 244 and the 8304 read.
 @old
-  assign err_word = {8'hFF, write_through, 1'b1, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'hFF, err_status[7], 1'b1, err_status[5:0]};
 @new
-  assign err_word = {8'h00, write_through, 1'b1, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'h00, err_status[7], 1'b1, err_status[5:0]};
 @end
 
 @mutation busint-regs-766042-reads-the-register-back
@@ -10499,4 +10502,133 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   always_ff @(posedge clk) mach_rst <= rst || con_mach_rst || debuggee_reset;
 @new
   always_ff @(posedge clk) mach_rst <= rst || con_mach_rst;
+@end
+
+# ================================== the debug cable's error status byte ===
+#
+# `Machine::debug_status` is `bus_error | NOT_FREE | WRITE_THROUGH`, and the
+# 8304 at REQERR 0B15 puts those eight nets on `DBD<7:0>` under
+# `-DB READ STATUS`.  Seven of them are `rtl/machine/cadr_busint_regs.sv`'s
+# and the eighth, `-FREE`, is `cadr_busint_xbus.sv`'s own busy, so
+# `rtl/machine/cadr_memory_path.sv` is the page they meet on and is the only
+# place in the tree where the byte exists at all.
+#
+# `build/dbgin.pass` drives that byte from OUTSIDE on purpose --- a check
+# that hands the module the answer tests nothing --- so it can say what the
+# driver does with a byte and can say nothing about where the byte came from.
+# What holds the join is `build/unibus.pass`, which makes each of the five
+# live bits true by driving the machine and reads the byte back over MIT's
+# own cable.  Bits 1, 2 and 4 are parity errors, which muir says cannot
+# happen here, and the check asserts they are never seen up.
+#
+# **AND THE OBVIOUS MUTATION IS NOT WRITABLE**, which is worth recording so
+# that nobody adds it: dropping `-FREE` from the join leaves `busint_busy`
+# unread and `NOT_FREE` unused, and Verilator refuses the build with two
+# warnings rather than running the check.  That is CLAUDE.md's bit-
+# granularity lesson, so the record below inverts the term instead and every
+# signal stays read.
+
+@mutation the-cable-reads-free-inverted
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **`-FREE` the wrong way round in the byte the debugger reads.**  The
+@note bit means NOT free: muir's `error_status::NOT_FREE` is set while the
+@note interface has a cycle in flight, and CC's `DBG-PRINT-STATUS` reads it to
+@note find out whether the debuggee's bus is doing anything.
+@note
+@note It is the one bit of the eight that is not a flop of the error status
+@note register, so nothing that reads `0o766044` can see this: muir's own
+@note `Machine::interface_read` writes bit 6 as a constant one there, the
+@note processor's read being itself a cycle, and `cadr_busint_regs.sv` does
+@note the same.  Only the cable reads it live.
+@note
+@note Caught at "-FREE in the status byte with a cycle standing is 0x0,
+@note wanting 0x40", which is the byte read twice with a cycle of the
+@note machine's own standing between the two reads.
+@old
+  assign dbg_err_status = regs_err_status | (busint_busy ? NOT_FREE : 8'd0);
+@new
+  assign dbg_err_status = regs_err_status | (busint_busy ? 8'd0 : NOT_FREE);
+@end
+
+@mutation the-cable-reads-free-on-the-write-through-bit
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **`-FREE` joined one bit too high**, onto `WRITE THROUGH ENB`.  The two
+@note are neighbours on the 8304 --- pin 7 to `DBD6` and pin 8 to `DBD7` ---
+@note so this is the off-by-one a byte assembled by hand invites, and both
+@note bits are live in this fabric, which is what makes it invisible to a
+@note check that only ever compares the byte against zero.
+@note
+@note The record exists because a bit position is exactly what the pins say
+@note and nothing else does.  Caught at "-FREE in the status byte with a cycle
+@note standing is 0x80, wanting 0x40".
+@old
+  localparam logic [7:0] NOT_FREE = 8'o100;
+@new
+  localparam logic [7:0] NOT_FREE = 8'o200;
+@end
+
+@mutation the-interface-is-busy-only-at-the-acknowledgement
+@check unibus
+@file rtl/machine/cadr_busint_xbus.sv
+@note **`-FREE` up for the last state of a cycle rather than all of it.**
+@note `Busint::busy` is `self.state != State::Idle` and nothing else, so the
+@note bus is busy from the tick the request is taken to the tick the
+@note processor lifts it; this makes it busy only while `-MEMACK` stands,
+@note which is true of every cycle and is the same answer for most of the
+@note time anybody would look.
+@note
+@note It survives every check that reads `0o766044`, `build/busint_regs.pass`
+@note included, because the bit is a constant one on that path.  Caught at
+@note "-FREE in the status byte with a cycle standing is 0x0, wanting 0x40",
+@note where the byte is read four hundred ticks into a cycle nothing will
+@note answer for another five hundred.
+@old
+  assign busy       = (state != IDLE);
+@new
+  assign busy       = (state == ACKED);
+@end
+
+@mutation the-error-status-registers-two-nxm-bits-swapped
+@check unibus
+@file rtl/machine/cadr_busint_regs.sv
+@note **`XB NXM ERROR` and `UB NXM ERROR` crossed in the byte both the 244 and
+@note the 8304 read.**  The pins say which is which twice over --- 0B15 pin 1
+@note to `DBD0` and pin 4 to `DBD3`, 0C16 pin 2 to `UDO0` and pin 8 to `UDO3`
+@note --- and they are `machine::bus_error`'s `XBUS_NXM` at `0o1` and
+@note `UNIBUS_NXM` at `0o10`.
+@note
+@note The two flops stay read, so lint is silent, and a diagnostic told the
+@note wrong bus is broken looks for the fault in the wrong half of the
+@note machine.  Caught twice, which is the point of making the seven lines one
+@note expression: at `0o766044` through a read of the machine's own and at
+@note `DBD<7:0>` over the cable, the second being the only path the 8304 has.
+@old
+  assign err_status = {write_through, 1'b0, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
+@new
+  assign err_status = {write_through, 1'b0, err_map, 1'b0, err_xbus, 2'b00, err_unibus};
+@end
+
+@mutation the-cable-is-not-a-foreign-master
+@check unibus
+@file rtl/machine/cadr_memory_path.sv
+@note **The debug master not counted as somebody other than this board.**
+@note `ub_foreign` is `MSYN IN` rather than `MSYN OUT` and is what the mapped
+@note window at `0o140000`-`0o177777` answers on: `busint::decode`, which is
+@note the processor's own route, has no map responder in it at all, and the
+@note map responders are made in `Rtl::try_debug_request` and nowhere else.
+@note So the debug cable is the master `Machine::mapped_read` and
+@note `mapped_write` were written for.
+@note
+@note `con_gnt` stays read, so every signal is used and lint is silent, and
+@note the console cannot reach the window anyway --- it builds its address as
+@note `SPY_BASE | eadr<<1` --- so the existing window section still passes
+@note while the cable's half goes dark.  Caught at "DEBUG IN ACK on a mapped
+@note read over the cable is 0x0, wanting 0x1": the cycle is not translated,
+@note nothing answers it, and there is no timeout for this master.
+@old
+  assign ub_foreign = dbg_gnt || con_gnt;
+@new
+  assign ub_foreign = con_gnt;
 @end

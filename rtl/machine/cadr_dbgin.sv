@@ -71,10 +71,21 @@
 // drive a byte it does not drive.
 //
 // `err_status` is the byte itself and comes from outside, as `spy_rdata`
-// does: `Machine::debug_status` assembles it out of the bus error register's
-// eight bits, `-FREE` in bit 6 and `WRITE THROUGH ENB` in bit 7, and those
-// registers are the bus interface's at `0o766040`-`0o766076`, which this
-// fabric does not build.  What is real here is bit 6.
+// does: `Machine::debug_status` is `bus_error | NOT_FREE | WRITE_THROUGH`,
+// and the eight nets it assembles belong to the bus interface's own error
+// status register at `0o766044`.  **That register is built** ---
+// `rtl/machine/cadr_busint_regs.sv` holds the two NXM bits, `UB MAP ERROR`
+// and `WRITE THROUGH ENB`, and `cadr_busint_xbus.sv` has `-FREE` as its own
+// busy --- and `rtl/machine/cadr_memory_path.sv` joins the two at the
+// instantiation, which is where REQERR joins them.  Five of the eight bits
+// are therefore live; bits 1, 2 and 4 are parity errors, which muir says
+// cannot happen here, and are zero for good.
+//
+// It stays a port rather than becoming an expression inside this module for
+// two reasons.  The nets are REQERR's and this page is DBGIN, so a byte made
+// here would be this page claiming a register that is not on it; and
+// `build/dbgin.pass` drives it from outside, because a check that hands the
+// module the answer tests nothing.
 //
 // **NO TIMEOUT RUNS FOR THIS MASTER.**  `Rtl::debug_ack`'s own comment: "a
 // cycle at an address nothing answers is never acknowledged, there being no
