@@ -915,10 +915,15 @@
 @note the check sees exactly the property the record names.
 @note
 @note Re-aimed a third time when the display landed: the bridge's select gained the frame-buffer window, `tv_fb`, held in `rtl/machine/cadr_tv.sv` as `is_memory` is held here.
+@note
+@note And a fourth time when the Unibus map's window landed: the mux gained a
+@note third arm, `mp_own`, for the mapped cycle's Xbus half. The processor's
+@note arm --- the one this record names --- is the last of the three and is
+@note untouched by that.
 @old
-  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb);
+  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb);
 @new
-  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb || nxm);
+  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb || nxm);
 @end
 
 @mutation every-cycle-is-a-read-on-the-xbus
@@ -3811,11 +3816,16 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note cycles twice --- once with the channel idle and once with it streaming
 @note --- and requires that no cycle grew by more than one memory access.
 @note That bound is the measured worst and not a round number.
+@note
+@note Re-aimed when the Unibus map's window landed: the channel's own take
+@note gained `&& !mp_own`, the window being a third master on the Xbus and
+@note behind the channel. The release --- which is what this record breaks ---
+@note is unchanged.
 @old
-      if (!ch_own) ch_own <= ch_req && !cpu_rq;
+      if (!ch_own) ch_own <= ch_req && !cpu_rq && !mp_own;
       else if (ch_done) ch_own <= 1'b0;
 @new
-      if (!ch_own) ch_own <= ch_req && !cpu_rq;
+      if (!ch_own) ch_own <= ch_req && !cpu_rq && !mp_own;
       else if (ch_done && ch_addr[0]) ch_own <= 1'b0;
 @end
 
@@ -5063,10 +5073,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note frame-buffer cycle lands in main memory's region --- at the right
 @note offset, so a shadow keyed by the DUT would have agreed.  Caught at the
 @note port on the first frame-buffer write.
+@note
+@note Re-aimed when the Unibus map's window landed: the term gained
+@note `&& !mp_own`, a third master on the Xbus whose cycles are never the
+@note display's.
 @old
-  assign bus_display = !ch_own && tv_fb;
+  assign bus_display = !ch_own && !mp_own && tv_fb;
 @new
-  assign bus_display = ch_own && tv_fb;
+  assign bus_display = ch_own && !mp_own && tv_fb;
 @end
 
 @mutation tv-register-word-not-selected-in-the-path
@@ -7118,21 +7132,27 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 #
 # WHAT CANNOT BE MUTATED HERE, said once so nobody hunts for it.
 #
-#   - **The held match.**  `sel`, `in_int`, `in_map`, `which`, `mapk` and `wr`
-#     are registers off `ub_addr` because a combinational match carries the
-#     map's ripple into the countdowns' clock enables --- the disk
-#     controller's -6.195 ns, which CLAUDE.md records.  Computing them instead
-#     is a TIMING fault and not a behavioural one: the earliest answer is
-#     fifty ticks after `-UB MSYN` and the address is up before the strobe in
-#     every master this repository has.  **Measured, not reasoned**: the six
-#     rewritten as `assign`s off `ub_addr` pass `busint_regs` over all
-#     38,319,186 of its ticks and `unibus` over all 13,192,237 of its, with
-#     both summaries byte-identical to the held design's.  So it is an
-#     equivalence and is recorded here rather than filed as a hole.
-#   - **`UB MAP ERROR`, the map's read and write buffers, and write-through's
-#     effect.**  All three have the debug cable's master as their only
-#     consumer and none of it is built; the module's header says so.  A
-#     mutation of a constant zero is not a mutation.
+#   - **The held match.**  `sel`, `in_int`, `in_map`, `in_win`, `which`,
+#     `mapk`, `mp_page`, `mp_word`, `mp_high` and `wr` are registers off
+#     `ub_addr` because a combinational match carries the map's ripple into
+#     the countdowns' clock enables --- the disk controller's -6.195 ns, which
+#     CLAUDE.md records.  Computing them instead is a TIMING fault and not a
+#     behavioural one: the earliest answer is fifty ticks after `-UB MSYN`,
+#     the earliest thing the block does at all is the Xbus request at twenty,
+#     and the address is up before the strobe in every master this repository
+#     has.  **Measured, not reasoned**: the six that existed before the window
+#     landed, rewritten as `assign`s off `ub_addr`, passed `busint_regs` over
+#     all 38,319,186 of its ticks then and `unibus` over all 13,192,237 of
+#     its, with both summaries byte-identical to the held design's.  So it is
+#     an equivalence and is recorded here rather than filed as a hole.  **That
+#     measurement was made at `8e9e94e`, both tick counts have moved since ---
+#     `busint_regs` runs 57,139,860 now --- and the four fields the window
+#     added have not been measured the same way**, which is the citation
+#     CLAUDE.md asks for rather than a claim that they were.
+#   - **`Responder::MapMd`'s EFFECT.**  The decode is live and has a record
+#     below; the word's path into the processor's `MD` is `-LOADMD`, which
+#     `cadr_microcycle.sv` gates with `RDCYC`, and it is not built.  A
+#     mutation of a wire that goes nowhere is not a mutation.
 #
 # AND ONE MEASURED EQUIVALENCE at the other end of the same wire: with
 # `t_msyn` made to wrap at `T_MAX` rather than saturate there, the block still
@@ -7371,10 +7391,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note something else to the DEBUGGER, which reads the same eight lines over
 @note the cable under `-DB READ STATUS` and finds the bus as it stands; that
 @note is `Machine::debug_status(busy)` and is not this path.
+@note
+@note Re-aimed when the mapped window landed and bit 5 stopped being a
+@note constant zero: `UB MAP ERROR` is the 74LS74 at REQERR 0D03 and sits
+@note between `-FREE` and the Unibus NXM bit.
 @old
-  assign err_word = {8'hFF, write_through, 1'b1, 2'b00, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'hFF, write_through, 1'b1, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
 @new
-  assign err_word = {8'hFF, write_through, 1'b0, 2'b00, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'hFF, write_through, 1'b0, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
 @end
 
 @mutation busint-regs-the-error-registers-high-byte-is-zero
@@ -7391,10 +7415,13 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note And it is the same family as the Unibus read whose top half CLAUDE.md
 @note records as a live disagreement, one level down: what nothing drives is
 @note not zero because zero is convenient.
+@note
+@note Re-aimed when the mapped window landed and bit 5 stopped being a
+@note constant zero.
 @old
-  assign err_word = {8'hFF, write_through, 1'b1, 2'b00, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'hFF, write_through, 1'b1, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
 @new
-  assign err_word = {8'h00, write_through, 1'b1, 2'b00, err_unibus, 2'b00, err_xbus};
+  assign err_word = {8'h00, write_through, 1'b1, err_map, 1'b0, err_unibus, 2'b00, err_xbus};
 @end
 
 @mutation busint-regs-766042-reads-the-register-back
@@ -7414,6 +7441,301 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
         2'd0, 2'd1: word = ctl_word;
         2'd2: word = err_word;
+@end
+
+# ---------------------------------------------------------------------------
+# THE MAPPED WINDOW, `0o140000`-`0o177777`: `busint::map_access`,
+# `Machine::mapped_read` and `Machine::mapped_write`, and the three responders
+# `Rtl::try_debug_request` makes for it.  `build/busint_regs.pass` runs 27
+# mapped cycles against muir and then sweeps the whole window at every one of
+# the 262,144 addresses in both directions of `ub_foreign`.
+#
+# **THE ONE MASTER muir HAS FOR ANY OF THIS IS THE DEBUG CABLE'S, AND IT IS
+# NOT COMPOSED.**  So no reference PROGRAM reaches these records: the trace is
+# a scripted one, as the card's is, and `unibus` drives the window with a
+# master of the testbench's own on the console's seam.  Nothing here can be
+# caught by `machine`, `map_boot` or any band trace, and that is a property of
+# the machine rather than of the records.
+
+@mutation busint-regs-the-window-answers-the-board-itself
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`ub_foreign` dropped, so the PROCESSOR's own Unibus cycle is mapped.**
+@note `busint::decode` --- which is the function a cycle of the machine's own
+@note goes through --- answers `Responder::NoUnibus` at every one of the
+@note 16,384 addresses of this window: `register` is `None` there,
+@note `debug_register` is `None` there and the I/O board answers none of it.
+@note The map responders are made in `Rtl::try_debug_request` and nowhere
+@note else, which is a FOREIGN master's request.  The drawings say the same at
+@note the gate: `-UB TO MD` is `NAND(UBMA<21:17>, UBXRQ, -UBRD, MSYN IN)` at
+@note REQU 0D12 and `MSYN IN` is the strobe as RECEIVED.
+@note
+@note Turning the board's own Unibus cycle back into an Xbus cycle is a loop,
+@note and it would take every microcode reference to `77740000`-`77777777`
+@note virtual through the Unibus map rather than off the end of the bus.
+@note
+@note **The form is the misreading somebody would actually make**, and it is
+@note why `ub_foreign` stays read rather than being deleted: `MSYN IN` is the
+@note name of the strobe as RECEIVED, and read as "the strobe" it becomes
+@note `ub_msyn`, which is up for every cycle there is.  A deletion would also
+@note be caught by lint rather than by the check, which is the wrong place.
+@note
+@note Caught by the decode sweep, which runs all 262,144 addresses with
+@note `ub_foreign` DOWN and requires the window to be silent.
+@old
+  assign in_win_c = ub_foreign && (ub_addr >= WIN_LOW) && (ub_addr <= WIN_HIGH);
+@new
+  assign in_win_c = (ub_foreign || ub_msyn) && (ub_addr >= WIN_LOW) && (ub_addr <= WIN_HIGH);
+@end
+
+@mutation busint-regs-the-mapped-words-halves-are-swapped
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The Xbus word's two halves the wrong way round on a read.**
+@note `Machine::mapped_read`: the even word is an Xbus read "whose low half is
+@note the answer and whose high half goes into the page's read buffer", and
+@note `unaddr.text` says which way round that is --- "each Lisp machine memory
+@note word is accessed as two unibus words; the low half has the lower unibus
+@note address".
+@note
+@note **Written as a SWAP and not as a drop, because a drop is lint's to
+@note catch.**  Loading the buffer from `map_rdata[15:0]` alone leaves the top
+@note sixteen bits of the port unread and `%Warning-UNUSEDSIGNAL` stops the
+@note build, so the check never sees it --- measured, and it is CLAUDE.md's
+@note own rule about bit-granularity met a second time.  Swapped, every bit
+@note stays used and the fault is the one a transcription makes.
+@note
+@note Caught on the window's own sweep, where all 8,192 words are taken out in
+@note two halves and put back together, and on the very first mapped read.
+@old
+                rd_buf[mp_page] <= map_rdata[31:16];
+                xword           <= map_rdata[15:0];
+@new
+                rd_buf[mp_page] <= map_rdata[15:0];
+                xword           <= map_rdata[31:16];
+@end
+
+@mutation busint-regs-the-mapped-address-loses-its-word
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The translated address without `UBA<9:2>` under it**, so every word of
+@note a mapped page reaches the page's first word.  `busint::map_access` takes
+@note `UBA<9:2>` as "the word within the mapped page --- `XAO<7:0>`", and
+@note `Rtl::try_debug_request` builds `Responder::MapXbus((page << 8) |
+@note access.word)`.
+@note
+@note **Every bit stays used**, which is the lint rule this file records:
+@note `mp_word` is exclusive-ored into the top of the address instead of
+@note sitting under it, so it is a WRONG address rather than a dropped signal
+@note and Verilator has nothing to say about it.
+@note
+@note Caught at once, and then at 8,192 addresses of the sweep, because main
+@note memory is poisoned injectively in the physical address: a word fetched
+@note from the wrong place in the page is a word muir never had.
+@old
+                map_addr  <= {ent_page, mp_word};
+@new
+                map_addr  <= {ent_page ^ {6'd0, mp_word}, mp_word};
+@end
+
+@mutation busint-regs-a-write-protected-page-is-written-anyway
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`WRITEOK` ignored on a write, so a protected page takes the word.**
+@note `Machine::map_entry` reads bit 14 as "enables write access from the
+@note unibus" --- `unaddr.text` --- and `Machine::mapped_write` refuses
+@note anything but `Some((page, true))`, setting `UB MAP ERROR`: "Set when an
+@note attempt to perform an Xbus cycle through the Unibus map is refused
+@note because the map specifies invalid or write-protected."
+@note
+@note This is the half of the map that protects a page from a device, and a
+@note fabric that lost it would let a debugger or a DMA master write over a
+@note page the microcode had deliberately closed.
+@note
+@note Caught on the row that writes the odd word of `MAP_RO`: the responder is
+@note the Xbus where muir refuses, so the cycle is acknowledged, no error bit
+@note sets, and the word reaches main memory.
+@old
+  assign xbus_ok   = xbus_half && !to_md && ent_valid && (!wr || ent_write);
+@new
+  assign xbus_ok   = xbus_half && !to_md && ent_valid;
+@end
+
+@mutation busint-regs-a-refusal-sets-no-error
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`UB MAP ERROR` never set, so a refused mapped cycle is silent.**  The
+@note 74LS74 at REQERR 0D03 is clocked by `UB XBUS T100`, which is
+@note `busint::UB_XBUS_REQUEST_NS` after `-UB MSYN` and the same instant the
+@note Xbus request would have gone out; `Machine::mapped_read` and
+@note `mapped_write` set `bus_error::UB_MAP_ERROR` on exactly that path.
+@note
+@note The cycle is never answered either way, so the ONLY thing that tells a
+@note refusal from a fabric that quietly did nothing is this bit.  A debugger
+@note reading `0o766044` after a timeout would be told the map was fine.
+@note
+@note Caught on the face of the first refused row, where the error status
+@note register reads `0xff40` for muir's `0xff60`.
+@old
+              if (refused) err_map <= 1'b1;
+@new
+              if (refused) err_map <= 1'b0;
+@end
+
+@mutation busint-regs-the-write-buffer-is-the-high-half
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The Xbus write of the odd word with its two halves the wrong way
+@note round.**  `Machine::mapped_write`: "the odd word an Xbus write of the
+@note two halves", `(v as u32) << 16 | self.write_buffer[k] as u32` --- the
+@note word that arrives LAST is the high half, because "the low half has the
+@note lower unibus address" and the low address came first.
+@note
+@note The 29701s at WBUF exist for exactly this: a Unibus word is sixteen bits
+@note and a Lisp machine word thirty-two, so the low half has to wait
+@note somewhere for the high half to arrive.  Put the wrong way round, every
+@note word a debugger writes through the map is byte-swapped in halves ---
+@note and reads back through the map correctly, because the read buffer is
+@note not touched, which is what makes it quiet.
+@note
+@note **Written as a SWAP and not as a drop**: `{ub_wdata, 16'd0}` leaves
+@note `wr_buf` read by nothing and `%Warning-UNUSEDSIGNAL` stops the build,
+@note so lint would be doing the catching instead of the check.  Measured.
+@note
+@note Caught on the row that writes the odd word, where `map_wdata` is
+@note compared against the thirty-two bits muir's memory then held.
+@old
+                           : mp_high ? {ub_wdata, wr_buf[mp_page]}
+@new
+                           : mp_high ? {wr_buf[mp_page], ub_wdata}
+@end
+
+@mutation busint-regs-write-through-reaches-the-lower-pages
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **Write-through's exception widened to all sixteen pages.**
+@note `Machine::mapped_write` takes it only on the upper eight --- "`!(self.
+@note write_through && access.page >= 0o10)`" --- which is `-UBPN3A` into the
+@note 74S32 at UBCYC 0E04 with `-WRITE THROUGH ENB`, and is MEASURED ON THE
+@note NETLIST BOARD in muir's `tests/chip.rs` rather than read off a
+@note specification.
+@note
+@note Widened, every even word of a write becomes an Xbus cycle while the bit
+@note is set: the low half goes to memory on its own with zeros above it and
+@note is then overwritten by the pair, so the memory is right at the end and
+@note wrong in between --- and a page that is not writable turns a buffer
+@note write into `UB MAP ERROR`.
+@note
+@note Caught on the row that writes the even word of `MAP_RW` with the bit
+@note set, where muir makes no Xbus cycle at all and this makes one.
+@old
+  assign wt_low    = wr && write_through && mp_page[3];
+@new
+  assign wt_low    = wr && write_through;
+@end
+
+@mutation busint-regs-the-buffer-half-looks-at-the-map
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The odd word of a read refused when the page is invalid.**  It reads
+@note as the careful thing to do and muir does not do it:
+@note `Machine::mapped_read` returns `self.read_buffer[k]` BEFORE it looks at
+@note the entry at all, and only the even word's Xbus half can fail.  The
+@note drawings agree --- `-UB READ BUFFER` is Y-something of the 74S139 at
+@note UBCYC 0E07 and reaches no part of UBMAP's validity.
+@note
+@note The asymmetry matters to a debugger: it reads the even word, gets the
+@note low half, and then reads the odd word to collect the high half of a
+@note fetch that has already happened.  Refusing the second because the map
+@note has since been changed would lose a word that was already in the
+@note buffer.
+@note
+@note Caught on the row that reads the odd word of `MAP_BAD`, where muir
+@note answers from the buffer and this never answers at all.
+@old
+  assign buf_half  = in_win && (mp_high != wr) && !wt_low;
+@new
+  assign buf_half  = in_win && (mp_high != wr) && !wt_low && (!mp_high || wr || ent_valid);
+@end
+
+@mutation busint-regs-the-xbus-request-is-a-tick-early
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`UBXRQ` a tick before `busint::UB_XBUS_REQUEST_NS`.**  One tick out of
+@note a hundred nanoseconds, on a constant the module's own comment
+@note documents --- which is `RD_FINISH_T` again, and the reason that entry is
+@note in CLAUDE.md: a correct derivation with a blind check still drifts.
+@note
+@note The instant is not cosmetic.  It is the same one that clocks the 74LS74
+@note at REQERR 0D03, so a request a tick early is a `UB MAP ERROR` a tick
+@note early as well, and `Busint::debug_set_master` gives a refused access
+@note `answered = msyn + UB_XBUS_REQUEST_NS` for exactly that reason.
+@note
+@note Caught on every row whose responder is the Xbus, where the tick the
+@note request came up is compared against the trace's own constant.
+@old
+            if (t_msyn == 7'(XBUS_RQ_T)) begin
+@new
+            if (t_msyn == 7'(XBUS_RQ_T) - 7'd1) begin
+@end
+
+@mutation busint-regs-a-mapped-read-answers-a-tick-early
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **A mapped READ acknowledged one tick before
+@note `busint::UB_XBUS_READ_ACK_NS`.**  `Busint::debug_xbus_edge`: "`SSYN` [is]
+@note `UB_XBUS_READ_ACK_NS` after `-UBACK` for a read and with it for a
+@note write", and that hundred nanoseconds is the deskew a read needs and a
+@note write does not --- the same asymmetry `cadr_busint_xbus.sv` has at the
+@note 60 ns tap of the TD100 at 0C09, one bus along.
+@note
+@note One tick out of a hundred nanoseconds on a constant the module's own
+@note comment documents is `RD_FINISH_T` again, and CLAUDE.md's reason for
+@note that entry is this one: a correct derivation with a blind check still
+@note drifts.
+@note
+@note **The testbench's seam answers at a latency that MOVES from cycle to
+@note cycle**, so nothing here can be caught by counting ticks from `-UB
+@note MSYN`: what is compared is the distance from the ACKNOWLEDGEMENT, which
+@note is the only thing the constant is about.  Zeroing the term instead
+@note would leave `READ_ACK_T` unused and lint would do the catching, which is
+@note the wrong place --- measured.
+@old
+                   || ((xs == XS_DONE) && (wr || (t_ack >= 7'(READ_ACK_T))));
+@new
+                   || ((xs == XS_DONE) && (wr || (t_ack >= 7'(READ_ACK_T) - 7'd1)));
+@end
+
+@mutation busint-regs-a-write-of-md-goes-to-the-xbus
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`-UB TO MD` not decoded, so CC's `CC-WRITE-MD` becomes an ordinary
+@note Xbus write.**  `busint::map_to_md` is "the high five bits of the page
+@note are ones" --- `unaddr.text`: "if high 5 bits of page=1, writes MD
+@note register" --- and CC loads map register `0o16` with `0o177000` to make
+@note one.  `Rtl::try_debug_request` answers `Responder::MapMd` there and
+@note `Machine::mapped_write` loads the processor's `MD` instead of writing
+@note memory.
+@note
+@note Undecoded, the physical page is `0o37xxx`, which is the UNIBUS half of
+@note the physical space: the cycle would go out on the Xbus at an address
+@note that is the Unibus, which is the loop the window exists not to make.
+@note
+@note **What is caught is the DECODE and not the effect.**  `map_md` is a port
+@note this fabric folds, because the word's path into `MD` is `-LOADMD` and
+@note `cadr_microcycle.sv` gates that with `RDCYC`; the module's header
+@note carries the argument.  So the mutation is caught by `map_md` standing
+@note down on a row where muir's responder is `MapMd`, and by the Xbus request
+@note this makes and muir does not.
+@note
+@note The form is a SIXTH bit on the comparison rather than a deletion, so
+@note `ent_page` stays used whole and lint has nothing to say: `0o177000`
+@note gives a page of `0x3E00`, whose bit 8 is clear, so one bit too many is
+@note the off-by-one a transcription of "the high 5 bits" makes.
+@old
+  assign ent_md    = &ent_page[13:9];
+@new
+  assign ent_md    = &ent_page[13:8];
 @end
 
 # ---------------------------------------------------------------------------
@@ -8052,10 +8374,13 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note Caught here on the clause that says a bus cycle the decode did not call
 @note main memory must leave the memory port silent, which on this program
 @note applies 88,698 times against the memory clause's 512.
+@note
+@note Re-aimed when the Unibus map's window landed and the mux gained a third
+@note arm: the processor's is the last of the three and is what this breaks.
 @old
-  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb);
+  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb);
 @new
-  assign bus_sel     = ch_own ? ch_memory : (is_memory || tv_fb
+  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb
                                              || (device && cpu_write));
 @end
 
@@ -8337,10 +8662,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the bus, so `ch_own` is false for the whole of both runs and this line
 @note cannot be reached.  Every bit stays used, so lint does not do the
 @note catching.
+@note
+@note Re-aimed when the Unibus map's window landed: the address mux gained a
+@note third arm, `mp_own`, which is the mapped cycle's translated address and
+@note is untouched here.
 @old
-  assign bus_phys  = ch_own ? ch_addr  : phys;
+  assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : phys;
 @new
-  assign bus_phys  = ch_own ? {ch_addr[21:1], ~ch_addr[0]} : phys;
+  assign bus_phys  = ch_own ? {ch_addr[21:1], ~ch_addr[0]} : mp_own ? map_addr : phys;
 @end
 
 # ------------------------------------------- the audit wired into the machine

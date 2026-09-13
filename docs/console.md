@@ -774,14 +774,18 @@ registers but through the debuggee's Unibus map: map register 17 at
 `0o140000 + 17*0o2000 + 4*(loc & 0o377)`, low half then high, with a write
 buffer on the write side and a read buffer on the read side
 (`../muir/src/lashup.rs:262-284`, `../muir/src/machine.rs:518-580`,
-`../muir/tests/lashup.rs:712-769`). **Half of that route is in the fabric
-now and the other half is not.**
+`../muir/tests/lashup.rs:712-769`). **That route is in the fabric now and has
+no master.**
 `rtl/machine/cadr_busint_regs.sv` answers `0o766140`--`0o766176`, so the
-sixteen map registers store and read back. What no slave answers is the
-mapped window at `0o140000`--`0o177777`, and the read and write buffers a
-mapped cycle makes a word out of are not built either. Their one master is
-the debug cable's and that cable has no side here. A route with registers and
-no cycle is still not a route, so `cadr-console` examines and deposits
+sixteen map registers store and read back; it answers the mapped window at
+`0o140000`--`0o177777` as well, keeps the read and write buffers a mapped
+cycle makes a word out of, and sets `UB MAP ERROR` when the map refuses.
+What is missing is a master that can reach it. The one muir has is the debug
+cable's and that cable's request is still tied off inside
+`rtl/machine/cadr_memory_path.sv`; the console is a Unibus master but builds
+its address as `SPY_BASE | eadr<<1` and cannot leave
+`0o766000`--`0o766036`. A route with no master is still not a route, so
+`cadr-console` examines and deposits
 through `/dev/mem` on the machine's reserved DDR region instead, at
 `rtl/plumbing/cadr_ddr_map.sv`'s own address arithmetic, and says in its own output
 that it is reading DDR directly and not through the machine. The two are not

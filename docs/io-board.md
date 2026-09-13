@@ -1191,14 +1191,19 @@ takes one step, and the bound is there to fail rather than to hang.
   register on a wire. muir does the same and says why: "The model has no grant
   cycle to latch at, so the vector is read off the requesting board at the
   time of the read."
-- **The mapped Unibus window, the map's read and write buffers, and
-  `UB MAP ERROR`.** The sixteen map registers store and read back. What walks
-  them is the debug cable's master, `Machine::mapped_read` and
-  `mapped_write`, and the processor's own Unibus cycles are not mapped. So no
-  slave answers `0o140000`--`0o177777`, the 29701s at RBUF and WBUF that make
-  a word out of two Unibus cycles are not here, and neither is the error bit
-  only a mapped cycle can set. That is the half of CC's route to main memory
-  that is still missing, and `docs/console.md` says what it costs.
+- **A master for the mapped Unibus window.** The window itself is built.
+  `rtl/machine/cadr_busint_regs.sv` answers `0o140000`--`0o177777` for a
+  Unibus master that is not the board, translates through the sixteen map
+  registers, keeps the 29701s at RBUF and WBUF that make one Lisp machine
+  word out of two Unibus cycles, and sets `UB MAP ERROR` when the map refuses.
+  `rtl/machine/cadr_memory_path.sv` arbitrates its Xbus half onto the bus as
+  it arbitrates the disk's channel. What is missing is a master that can
+  reach it. The one muir has is the debug cable's, `Machine::mapped_read` and
+  `mapped_write`, and `rtl/machine/cadr_dbgin.sv`'s request is still tied off;
+  the console is a master but cannot address anything outside
+  `0o766000`--`0o766036`; and the processor's own Unibus cycles are not
+  mapped, which `busint::decode` says by answering `Responder::NoUnibus` over
+  the whole window.
 - **The debug block at `0o766100`--`0o766136`.** It is a cycle on the other
   machine's Unibus, answered over the cable. `busint::register` decodes it to
   nothing and so does this fabric; in the composed machine those four
