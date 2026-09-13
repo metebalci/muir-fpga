@@ -119,15 +119,15 @@ today's design would already be **52.4% of its logic and 83.0% of its block
 RAM** before a single one of the fabric answers above was added.
 
 That is as tight as the Cora Z7-07S or tighter, and the Cora is the board this
-repository calls the hard one. The variant Mete named is the right one.
+repository calls the hard one. This variant is the right one.
 
 ## What is not known, and the fit above all
 
 **None of the above is a fit.** These are percentages computed from a part
 database. No design in this repository has ever been through synthesis, place
 and route for a XC7A100T, so nothing here says whether the machine closes
-timing on one. Mete's words on 13 September 2026 were "i dont know if we will
-fit to a7-100 or s7-50 but we will check", and the checking has not happened.
+timing on one. Whether it fits is an open question and the checking has not
+happened.
 
 **Nor does the database settle the licence.** `get_parts` listing a part says
 the device data is installed. It does not say that the free BASIC tier will
