@@ -1264,7 +1264,7 @@ module cadr_microcycle #(
   logic mbusy_next;
   always_comb begin
     mbusy_next = mbusy;
-    if (mfinish_clearing) mbusy_next = 1'b0;
+    if (mfinish_clearing || mfinishd_level) mbusy_next = 1'b0;
     if (cpu_edge && memgo) mbusy_next = 1'b1;
   end
 
@@ -1406,6 +1406,57 @@ module cadr_microcycle #(
   logic       memack_edge, mfinish_clearing;
   assign memack_edge      = !n_memack && n_memack_q;
   assign mfinish_clearing = (mfinish_t == 6'd1) && !memack_edge;
+
+  // **A DELAY LINE PASSES A LEVEL, AND A COUNTDOWN OFF ITS RISING EDGE DOES
+  // NOT.  THE DIFFERENCE IS A DEADLOCK, AND IT WAS MET ON SILICON.**
+  //
+  // -MFINISHD and -RDFINISH are -MEMACK through the TD50 and TD250 at VCTL1
+  // 1D23/1D22.  A delay line carries the whole waveform, so while -MEMACK
+  // STANDS its delayed copy stands too, and the two flip flops it clears are
+  // held cleared rather than cleared once.  The countdowns above are loaded
+  // at the acknowledgement's rising edge and fire exactly once, which is the
+  // same thing for every cycle a running machine makes --- and is not the
+  // same thing when the acknowledgement never falls.
+  //
+  // It never falls when the machine is HALTED with a memory cycle prepared.
+  // -MEMRQ is `MEMSTART AND VMAOK OR MBUSY` and MEMSTART is a cpu-clocked
+  // register, so a machine stopped just after a memory instruction stands
+  // -MEMRQ for the whole halt; `cadr_busint_xbus.sv`'s ACKED state leaves
+  // only on `n_memrq` --- "-XBUS.ACK remains asserted until the -XBUS.RQ
+  // signal is removed by the master" --- so the interface sits
+  // acknowledging, with -MEMGRANT asserted too.  Nothing is wrong yet.
+  //
+  // What goes wrong is the next single step.  A step is a cpu edge, MEMGO is
+  // still up on the frozen MEMSTART, so the step sets MBUSY and READ IN
+  // PROGRESS again and zeroes both countdowns --- and there is no second
+  // rising edge of an acknowledgement that has been asserted all along, so
+  // nothing ever clears them.  READ IN PROGRESS standing with `USE.MD` and
+  // no -WAIT (the second -WAIT term is `USE.MD AND MBUSY AND -MEMGRANT`, and
+  // -MEMGRANT is asserted) is -HANG, and -HANG parks the ring for ever: a
+  // parked ring makes no boundary, so no master clock, so
+  // `cadr_busint_xbus.sv` can take no grant, so no acknowledgement can
+  // arrive to end it --- and `cadr_spy_registers.sv`'s `landing` is
+  // `mclk || phase_t == SPEEDCLK_T` with `phase_t` saturating, so no console
+  // write lands either.  RUN, a STEP pulse, the console's own step and the
+  // debugger's clock are all inert; only `rst` is left.
+  //
+  // That is not a theoretical sequence.  It is CC's, verbatim: `CC-STOP-MACH`
+  // is one write of zero to the clock control register with no handshake of
+  // any kind, and `CC-FULL-SAVE` then forces five microinstructions through
+  // the debug IR, the last of which is `CONS-M-SRC-MD` --- `SRCMD`, which is
+  // what `USE.MD` is made of.  `build/park.pass` runs exactly that.
+  //
+  // So the taps are levels here too.  The countdown still places the clear at
+  // the instant it always did; the term below only adds what the delay line
+  // has been doing all along once the countdown has run out and the
+  // acknowledgement is still there.  On a running machine it is reached for
+  // one or two ticks after MBUSY has already gone, where it asserts what is
+  // already true --- no golden trace moves --- and on a halted one it is what
+  // stops the step arming a hang nothing can end.
+  logic ack_standing, mfinishd_level, rdfinish_level;
+  assign ack_standing   = !n_memack && !memack_edge;
+  assign mfinishd_level = ack_standing && (mfinish_t == 6'd0);
+  assign rdfinish_level = ack_standing && (rdfinish_t == 6'd0);
 
   // page Q 2A05-2A11: the 74S194s shift under `QS1`/`QS0`.
   logic qs1, qs0;
@@ -1571,10 +1622,14 @@ module cadr_microcycle #(
         if (mfinish_t != 6'd0) begin
           mfinish_t <= mfinish_t - 6'd1;
           if (mfinish_clearing) mbusy <= 1'b0;
+        end else if (mfinishd_level) begin
+          mbusy <= 1'b0;
         end
         if (rdfinish_t != 6'd0) begin
           rdfinish_t <= rdfinish_t - 6'd1;
           if (rdfinish_t == 6'd1) rd_in_progress <= 1'b0;
+        end else if (rdfinish_level) begin
+          rd_in_progress <= 1'b0;
         end
       end
 

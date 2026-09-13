@@ -352,6 +352,37 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # A HALTED MACHINE MUST GO ON MAKING MASTER CLOCKS.  `Rtl::step` answers
+    # a halted machine before it looks at the bus at all, so muir never takes
+    # a `-HANG` there; this is that property on the composed machine, where a
+    # memory cycle can actually be outstanding while the clock is stopped.
+    # The files it holds are the four the ring and its stops live in ---
+    # the generator, the processor, the bus interface --- and the two the
+    # console reaches them through.
+    "park": {
+        "sources": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_console_bus.sv",
+        ],
+        "extra": [
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
+            "rtl/plumbing/cadr_bus_audit.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_park_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "--public-flat-rw", "-Irtl/machine",
+                  "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
+                  "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
     "ddr_boot": {
         "sources": [
             "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
