@@ -352,9 +352,12 @@ CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
   printf "# The host your band calls goes here.  The host is ON THE NET and\r\n"
   printf "# not inside any of these programs, so a machine with no peers says\r\n"
   printf "# its file host is not answering --- which is true.\r\n"
-  if [ -n "${CHAOS_PEER:-}" ]; then printf "%s\r\n" "$CHAOS_PEER"; fi
+  # CHAOS_PEER may name more than one station, separated by whitespace,
+  # because a machine on a cable usually has more than one neighbour and
+  # the file has always been one a line.
+  for peer in ${CHAOS_PEER:-}; do printf "%s\r\n" "$peer"; done
 } > "$OUT/packs/chaosnet.over.udp.peers.txt"
-echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -n "${CHAOS_PEER:-}" ] && echo "one peer from local.conf" || echo "no peers --- the network is the user's")"
+echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peers --- the network is the user's")"
 
 # --------------------------------------------------------- muir's file of flags
 #
@@ -410,7 +413,7 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
   printf "# along from the CADR in the fabric, on a port of its own.\r\n"
   printf -- "--chaos-address %s\r\n" "$CHAOS_ADDR_M"
   printf -- "--chaos-udp 0.0.0.0:%s\r\n" "$CHAOS_PORT_M"
-  if [ -n "${CHAOS_PEER:-}" ]; then printf -- "--chaos-udp-peer %s\r\n" "$CHAOS_PEER"; fi
+  for peer in ${CHAOS_PEER:-}; do printf -- "--chaos-udp-peer %s\r\n" "$peer"; done
   printf "\r\n"
   printf "# NOT BUILT YET, AND THE TWO LINES THAT FINISH THIS FILE.\r\n"
   printf "#\r\n"
