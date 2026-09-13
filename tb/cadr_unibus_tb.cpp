@@ -536,12 +536,40 @@ int main(int argc, char **argv) {
   // writes it.  `cable_reset_wired` is zero everywhere else, so nothing else in
   // this file moves by a tick.
   int cable_rst_q = 0, cable_reset_wired = 0;
+
+  // **`UB MD LOAD`, THE ONE THING THIS MODULE PUTS OUT THAT IS NEITHER THE
+  // BUS NOR THE UNIBUS.**  A foreign master's mapped write through a page
+  // whose high five bits are ones is `busint::map_to_md` --- CC's
+  // `CC-WRITE-MD` --- and the word goes into the processor's `MD` instead of
+  // onto the Xbus.  `MD` is a level up, so what this file stands in for is
+  // the processor taking the word: `ub_md_ack` at a latency that MOVES, for
+  // `tb/cadr_busint_regs_tb.cpp`'s reason, so a block counting ticks from
+  // `-UB MSYN` could not pass.
+  long md_latency = 3, md_count = -1, md_loads = 0, md_req_ticks = 0;
+  uint32_t last_md_data = 0;
+  int md_open = 0, md_warned = 0;
   auto Tick = [&]() {
     dut->rst = (tick == 0) || cable_rst_q;
     dut->dbg_rst = (tick == 0);
     dut->mclk = (tick % kMicrocycle) == 0;
     dut->clk = 1;
     dut->eval();
+    // Driven INTO this edge, as `mem_done` is.
+    dut->ub_md_ack = 0;
+    if (dut->ub_md_req) {
+      ++md_req_ticks;
+      if (md_count < 0) md_count = md_latency;
+      if (md_count == 0) {
+        dut->ub_md_ack = 1;
+        last_md_data = dut->ub_md_data;
+        ++md_loads;
+        md_count = -1;
+      } else {
+        --md_count;
+      }
+    } else {
+      md_count = -1;
+    }
     dut->mem_done = dut->mem_req;
     dut->mem_rdata = 0;
     if (dut->mem_req) {
@@ -558,6 +586,13 @@ int main(int argc, char **argv) {
       }
     }
     dut->eval();
+    // Nothing outside the `MD` section may ask for a load at all: the port
+    // is the debugger's alone and the machine's own cycles never reach it.
+    if (dut->ub_md_req && !md_open && !md_warned) {
+      failures += Fail("UB MD LOAD asked for outside the mapped window's MD page", 1, 0,
+                       "the machine");
+      md_warned = 1;   // say it once
+    }
     // `always_ff @(posedge clk) mach_rst <= rst || con_mach_rst ||
     // debuggee_reset;`, which is the line the top level carries.
     cable_rst_q = cable_reset_wired && dut->debuggee_reset;
@@ -1366,6 +1401,7 @@ int main(int argc, char **argv) {
   // in the join lands on a neighbour this section has just measured clear.
   long cable_strobes = 0, cable_cycles = 0, cable_reads = 0, cable_writes = 0;
   long cable_mapped = 0, cable_status_reads = 0, cable_unanswered = 0;
+  long md_writes_seen = 0;
   long cable_after_reset = 0;
   unsigned cable_status_bits = 0;
   if (failures < kMaxFailures) {
@@ -1673,6 +1709,111 @@ int main(int argc, char **argv) {
       failures += Fail("the high half read back through the map over the cable", (unsigned)w,
                        0x1234u, "the cable");
 
+    // ---- `-UB TO MD`: CC's `CC-WRITE-MD`, over MIT's own cable -------------
+    //
+    // A map entry whose page has its high five bits ones is `MD` and not the
+    // Xbus: `busint::map_to_md`, and CC loads register `0o16` with
+    // `0o177000` for it.  This is the composition of that --- the cable's
+    // master, the arbiter, the register block's decode and the word leaving
+    // `cadr_memory_path` on `UB MD LOAD` --- and it is the one path in the
+    // machine that reaches `MD` without a memory cycle.  The register the
+    // word lands in is `cadr_microcycle`'s and `build/md_compose.pass` holds
+    // it, on a machine that is still running.
+    {
+      const unsigned kMdPage = 016u;
+      const unsigned mdbase = 0140000u + (kMdPage << 10) + (0x21u << 2);
+      CableCycle(0766140u + 2u * kMdPage, true, 0177000u, 4000);
+      w = CableCycle(0766140u + 2u * kMdPage, false, 0, 4000);
+      if (w < 0 || (unsigned)w != 0177000u)
+        failures += Fail("CC's own map entry written and read back over the cable", (unsigned)w,
+                         0177000u, "the cable");
+
+      md_open = 1;
+      // The EVEN word is the page's write buffer and nothing else: no memory
+      // cycle, and NO LOAD.  A fabric that took the low half straight to `MD`
+      // would be caught here rather than by a word comparison.
+      long before = window_mem_cycles;
+      long loads_before = md_loads;
+      CableCycle(mdbase, true, 0xC3A5u, 8000);
+      ++cable_mapped;
+      if (window_mem_cycles != before)
+        failures += Fail("memory cycles for the even word of a write of MD",
+                         (unsigned long)(window_mem_cycles - before), 0, "the cable");
+      if (md_loads != loads_before)
+        failures += Fail("UB MD LOAD on the even word of a write of MD",
+                         (unsigned long)(md_loads - loads_before), 0, "the cable");
+
+      // And the ODD word loads `MD` with the two halves and is ACKNOWLEDGED,
+      // which is the whole finding: `-LOADMD ACK` at REQLM 0A11 answers the
+      // cycle, so `DEBUG IN ACK` comes back where it used to hang for ever.
+      before = window_mem_cycles;
+      md_latency = 9;
+      w = CableCycle(mdbase + 2, true, 0x7E19u, 8000);
+      ++cable_mapped;
+      if (w < 0)
+        failures += Fail("DEBUG IN ACK on a write of MD over the cable", 0, 1, "the cable");
+      if (md_loads != loads_before + 1)
+        failures += Fail("UB MD LOAD on the odd word of a write of MD",
+                         (unsigned long)(md_loads - loads_before), 1, "the cable");
+      if (last_md_data != 0x7E19C3A5u)
+        failures += Fail("the thirty-two bits UB MD LOAD carried", last_md_data, 0x7E19C3A5u,
+                         "the cable");
+      if (window_mem_cycles != before)
+        failures += Fail("memory cycles for a write of MD --- it never reaches the Xbus",
+                         (unsigned long)(window_mem_cycles - before), 0, "the cable");
+
+      // A second pair at a different word of the same page and with the
+      // latency moved, so that neither the word address nor a fixed delay is
+      // what the load is a function of.
+      md_latency = 31;
+      CableCycle(mdbase + 0x40u, true, 0x0FF0u, 8000);
+      w = CableCycle(mdbase + 0x42u, true, 0x1234u, 8000);
+      cable_mapped += 2;
+      if (w < 0)
+        failures += Fail("DEBUG IN ACK on the second write of MD", 0, 1, "the cable");
+      if (last_md_data != 0x12340FF0u)
+        failures += Fail("the thirty-two bits the second write of MD carried", last_md_data,
+                         0x12340FF0u, "the cable");
+      if (md_loads != loads_before + 2)
+        failures += Fail("UB MD LOADs after two writes of MD",
+                         (unsigned long)(md_loads - loads_before), 2, "the cable");
+      md_latency = 3;
+
+      // **AND A READ THROUGH THE SAME ENTRY IS NOT A READ OF `MD`.**
+      // `Rtl::try_debug_request` tests `req.write` first, so the odd word is
+      // the page's read buffer --- a register cycle, no load and no bus ---
+      // and the even word is a mapped Xbus cycle at physical page `0o37000`,
+      // which is the Unibus and not main memory, so this arbiter never grants
+      // it and it is never answered.  Both halves are run.
+      before = window_mem_cycles;
+      w = CableCycle(mdbase + 2, false, 0, 8000);
+      ++cable_mapped;
+      if (w < 0)
+        failures += Fail("DEBUG IN ACK reading the odd word through CC's entry", 0, 1,
+                         "the cable");
+      if (md_loads != loads_before + 2)
+        failures += Fail("UB MD LOAD on a READ through CC's entry",
+                         (unsigned long)(md_loads - loads_before), 2, "the cable");
+      if (window_mem_cycles != before)
+        failures += Fail("memory cycles for a buffer read through CC's entry",
+                         (unsigned long)(window_mem_cycles - before), 0, "the cable");
+      w = CableCycle(mdbase, false, 0, 2000);
+      ++cable_mapped;
+      if (w >= 0)
+        failures += Fail("a mapped read at a page that is not main memory was acknowledged",
+                         (unsigned)w, 0, "the cable");
+      else
+        ++cable_unanswered;
+      if (window_mem_cycles != before)
+        failures += Fail("memory cycles for a mapped read of a page that is not memory",
+                         (unsigned long)(window_mem_cycles - before), 0, "the cable");
+      md_open = 0;
+      // The entry is put back where the sweep left it, so nothing after this
+      // sees CC's page.
+      CableCycle(0766140u + 2u * kMdPage, true, sweep_entry[kMdPage], 4000);
+      md_writes_seen = md_loads - loads_before;
+    }
+
     // ---- bit 5, `UB MAP ERROR`, and the cycle that is never acknowledged ----
     //
     // "Set when an attempt to perform an Xbus cycle through the Unibus map is
@@ -1892,7 +2033,9 @@ int main(int argc, char **argv) {
   least("writes by the debug master", cable_writes, 4);
   least("mapped cycles with the DEBUG CABLE as the master", cable_mapped, 7);
   least("error status bytes read over the cable", cable_status_reads, 6);
-  least("mapped cable cycles the map refused and nothing acknowledged", cable_unanswered, 1);
+  least("mapped cable cycles nothing acknowledged --- one refused by the map and one at a "
+        "page that is not main memory", cable_unanswered, 2);
+  least("writes of MD over the cable that reached UB MD LOAD", md_writes_seen, 2);
   least("cycles the debug master ran after it had reset the machine", cable_after_reset, 1);
   // **THE FIVE LIVE BITS WERE EACH SEEN UP AND THE THREE PARITY BITS NEVER
   // WERE.**  A byte that is only ever compared against zero passes a driver

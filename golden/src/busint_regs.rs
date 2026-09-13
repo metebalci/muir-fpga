@@ -73,6 +73,10 @@
 //!   `Machine::mapped_write`, with the responder `Rtl::try_debug_request`
 //!   makes for it, the physical address and the thirty-two bits that cross
 //!   the Xbus, and the word the master gets.
+//! - `MAPMD`, one mapped write that goes into the processor's `MD` instead
+//!   of the Xbus: `busint::map_to_md`, CC's `CC-WRITE-MD`. It carries the
+//!   thirty-two bits `Machine::mapped_write` put there and `MD` itself
+//!   afterwards, which no `MAP` row has a column for.
 //!
 //! **Main memory is poisoned injectively in the physical address** before
 //! any of it, so a read the map sent to the wrong page takes a word muir
@@ -96,10 +100,14 @@
 //!   in its own words that "a mapped page nothing answers" is **not
 //!   modelled**, so no row asks for one and the fabric's arbiter refuses
 //!   such a page the bus rather than guessing at its timing.
-//! - `Responder::MapMd`'s effect. It is decoded and its row is here, but
-//!   the word's path into the processor's `MD` is `-LOADMD`, which
-//!   `cadr_microcycle.sv` gates with `RDCYC`; the module's header carries
-//!   the argument and the row says the cycle is never answered.
+//! - A read through a page whose high five bits are ones. `MD` is
+//!   write-only through the map: `Rtl::try_debug_request` tests
+//!   `req.write` before `map_to_md`, so the odd word of a read is the
+//!   page's read buffer and the even word is a mapped Xbus cycle at
+//!   page `0o37000`, which is the Unibus and not main memory --- and
+//!   `Busint::debug_xbus_edge` says a mapped page nothing answers is not
+//!   modelled. Both halves of a read through CC's own entry are here, the
+//!   even one through a real page, and neither touches `MD`.
 //! - The debug block at `0o766100`-`0o766136`. `busint::register` decodes
 //!   it to `None` and this trace says so in its `IFACENONE` runs, which is
 //!   the claim the fabric has to hold: those four registers answer over the
@@ -214,6 +222,8 @@ struct Gen {
     /// Mapped cycles, and which of the four responders each reached.
     maps: u64,
     resp_seen: [u64; 4],
+    /// `MAPMD` rows: mapped writes muir loaded `MD` with.
+    md_writes: u64,
 }
 
 impl Gen {
@@ -235,6 +245,7 @@ impl Gen {
             err_bits: 0,
             maps: 0,
             resp_seen: [0; 4],
+            md_writes: 0,
         }
     }
 
@@ -487,6 +498,64 @@ impl Gen {
         rdata
     }
 
+    /// One mapped write that `Rtl::try_debug_request` answers
+    /// `Responder::MapMd`: the word is not written to the Xbus but loaded
+    /// into the processor's `MD`. `busint::map_to_md`, CC's `CC-WRITE-MD`.
+    ///
+    /// It is a `MAPMD` row rather than a `MAP` row because it carries two
+    /// columns no other mapped cycle has: the thirty-two bits
+    /// `Machine::mapped_write` put in `MD`, and `MD` itself afterwards. The
+    /// responder is not a column at all --- every row of this tag is
+    /// `MapMd`, which the assertion below is what makes true.
+    ///
+    /// **A read never reaches here.** `Rtl::try_debug_request` tests
+    /// `req.write` before it tests `map_to_md`, so the odd word of a read
+    /// is the page's read buffer and the even word is a mapped Xbus cycle
+    /// at a page that is not main memory --- which `Busint::debug_xbus_edge`
+    /// says in its own words is **not modelled**. So `MD` is write-only
+    /// through the map, and this generator cannot ask for the other half.
+    fn mapped_md(&mut self, uaddr: u32, v: u16) -> u32 {
+        let a = busint::map_access(uaddr).expect("the address is inside the window");
+        let k = a.page as usize;
+        let before = self.lines();
+        let (resp, phys) = responder(&self.m, a, true);
+        assert_eq!(resp, RESP_MD, "the cycle at {uaddr:o} is not a write of MD");
+        assert_eq!(phys, None, "a write of MD makes no Xbus cycle");
+        let err0 = self.m.bus_error;
+        let rb0 = self.m.read_buffer;
+        let wb0 = self.m.write_buffer;
+        let main0 = self.m.main.clone();
+
+        // `Machine::mapped_write`: the odd word carries the page's write
+        // buffer under it, and write-through's even word puts ground above
+        // the Unibus word. The same two halves the Xbus would have taken.
+        let md32 = if a.high { ((v as u32) << 16) | wb0[k] as u32 } else { v as u32 };
+        let took = self.m.mapped_write(a, v);
+        assert!(took, "a write of MD is taken");
+        assert_eq!(before, self.lines(), "the mapped cycle at {uaddr:o} moved a wire");
+        assert_eq!(self.m.md, md32, "the word muir put in MD");
+        assert_eq!(self.m.bus_error, err0, "a write of MD set an error bit");
+        assert_eq!(self.m.read_buffer, rb0, "a write of MD moved the read buffer");
+        // The even word is a buffer write as well, write-through sending it
+        // to the map afterwards; the odd word leaves the buffer alone.
+        if a.high {
+            assert_eq!(self.m.write_buffer, wb0, "the odd word moved the write buffer");
+        } else {
+            assert_eq!(self.m.write_buffer[k], v, "write-through's own buffer write");
+        }
+        assert!(
+            self.m.main.iter().zip(main0.iter()).all(|(x, y)| x == y),
+            "a write of MD reached main memory"
+        );
+
+        let (x, req, vec) = before;
+        self.say("MAPMD", format!("1 {uaddr:o} {v:x} {x} {req} {vec:x} {md32:x} {:x}", self.m.md));
+        self.maps += 1;
+        self.md_writes += 1;
+        self.resp_seen[RESP_MD as usize] += 1;
+        md32
+    }
+
     /// Time passes with no cycle: the card's clocks run, which is what makes
     /// `CLOCK READY` and so a clock interrupt possible.
     fn wait(&mut self, ns: u64) {
@@ -510,6 +579,7 @@ fn main() {
     assert_eq!(error_status::WRITE_THROUGH, 0o200);
     assert_eq!(busint::DIAGNOSTIC_NS, 250);
     assert_eq!(busint::REGISTER_STROBE_NS, 150);
+    assert_eq!(busint::UB_MD_ACK_NS, 100);
 
     // ------------------------------------------------------------------
     // The decode, over the whole of the Unibus address the interface can
@@ -1146,6 +1216,98 @@ fn main() {
     }
 
     // ------------------------------------------------------------------
+    // `-UB TO MD`, BUILT: CC's `CC-WRITE-MD`.
+    // ------------------------------------------------------------------
+    //
+    // **APPENDED AFTER THE SWEEP ON PURPOSE.**  Every row above keeps the
+    // number it had, so the trace grew without renumbering anything ---
+    // which is what makes "the old rows did not move" a `cmp` rather than an
+    // argument.  The cost is that the sweep has just put a main-memory page
+    // in all sixteen entries, so CC's own is programmed again here; the
+    // testbench writes the sweep's entries back itself before it sweeps the
+    // window, so nothing downstream depends on what this leaves behind.
+    //
+    // "if high 5 bits of page=1, writes MD register" --- `unaddr.text`, and
+    // `busint::map_to_md` is that sentence.  The path is `UB MD LOAD`,
+    // `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17, a term of `-LOADMD` at
+    // 0C10 and of `-LOADMD ACK` at 0A11 --- so the cycle IS acknowledged,
+    // `busint::UB_MD_ACK_NS` after the edge that loads `MD`, and the trace
+    // said it never was because the fabric had not built it.
+    g.write(0o766140 + 2 * MAP_MD, 0o177000);
+    let (md_page, md_write) = g.m.map_entry(MAP_MD as u8).expect("CC's entry is valid");
+    assert!(md_write && busint::map_to_md(md_page), "CC's entry is MD's");
+
+    // Five words, the halves differing in every byte in most of them, and
+    // both all-zeros and all-ones reached in each half: a fabric that sent
+    // the Unibus word to the wrong half, or swapped the two, cannot agree
+    // with all five.  Each pair is at a DIFFERENT word of the page, which is
+    // `UBA<9:2>` reaching the cycle and being ignored --- `MD` has no
+    // address.
+    let pairs: [(u16, u16); 5] = [
+        (0x1234, 0xABCD),
+        (0xAAAA, 0x5555),
+        (0x00FF, 0xFF00),
+        (0xFFFF, 0xFFFF),
+        (0x0000, 0x0000),
+    ];
+    let mut md_before = g.m.md;
+    for (i, &(lo, hi)) in pairs.iter().enumerate() {
+        let w = 0o11 + i as u32;
+        // The EVEN word of a write is the page's write buffer and nothing
+        // else, with write-through off: no `MD`, no Xbus, no error.
+        g.mapped(uw(MAP_MD, w, false), true, lo);
+        assert_eq!(g.m.md, md_before, "the even word of the pair moved MD");
+        // And the ODD word is the load, carrying that buffer under it.
+        let md32 = g.mapped_md(uw(MAP_MD, w, true), hi);
+        assert_eq!(md32, ((hi as u32) << 16) | lo as u32, "the halves, in muir's order");
+        assert_eq!(g.m.md, md32);
+        md_before = md32;
+    }
+    assert_eq!(g.m.md, 0, "the last pair wrote zero, which a held word would hide");
+
+    // **AND WRITE-THROUGH SENDS THE EVEN WORD TO `MD` TOO**, on the upper
+    // eight pages, with ground above it: `Machine::mapped_write` puts the
+    // word in the buffer, does not return, and reaches `map_to_md` with
+    // `word = v as u32`.  `MAP_MD` is `0o16` and so is one of those pages.
+    g.write(0o766044, error_status::WRITE_THROUGH);
+    assert!(g.m.write_through);
+    let md32 = g.mapped_md(uw(MAP_MD, 0o25, false), 0x7E81);
+    assert_eq!(md32, 0x0000_7E81, "write-through's even word put ground above the word");
+    assert_eq!(g.m.write_buffer[MAP_MD as usize], 0x7E81, "and the buffer took it as well");
+    // The odd word after it then carries that same buffer under its own half,
+    // which is the one place the two rules meet.
+    let md32 = g.mapped_md(uw(MAP_MD, 0o25, true), 0x39C6);
+    assert_eq!(md32, 0x39C6_7E81);
+    g.write(0o766044, 0);
+    assert!(!g.m.write_through);
+
+    // ---- and what a READ of the same window gives, which is NOT MD ----
+    //
+    // `Rtl::try_debug_request` tests `req.write` before `map_to_md`, so a
+    // read through CC's entry is the ordinary pair: the ODD word is the
+    // page's read buffer and the EVEN word a mapped Xbus cycle at physical
+    // page `0o37000`, which is the Unibus and not main memory ---
+    // `Busint::debug_xbus_edge` does not model one and no row here asks for
+    // it.  So the buffer is filled through a real page first and read back
+    // through CC's, which is the sharp form of the claim: the odd word
+    // answers with the READ BUFFER and has nothing to do with `MD`'s high
+    // half.
+    let kept = g.m.md;
+    g.write(0o766140 + 2 * MAP_MD, (0x8000 | 0x4000 | PAGE_RW) as u16);
+    let lo = g.mapped(uw(MAP_MD, 0o7, false), false, 0);
+    assert_eq!(lo, mpoison((PAGE_RW << 8) | 0o7) & 0xffff, "the low half off the Xbus");
+    g.write(0o766140 + 2 * MAP_MD, 0o177000);
+    let hi = g.mapped(uw(MAP_MD, 0o7, true), false, 0);
+    assert_eq!(hi, mpoison((PAGE_RW << 8) | 0o7) >> 16, "the high half out of the read buffer");
+    assert_ne!(hi, kept >> 16, "the buffer's word is not MD's high half");
+    assert_eq!(g.m.md, kept, "a read through CC's entry moved MD");
+    assert_eq!(
+        g.read(0o766044) & machine::bus_error::UB_MAP_ERROR as u32,
+        0,
+        "nothing here was refused"
+    );
+
+    // ------------------------------------------------------------------
     // What the program reached.
     // ------------------------------------------------------------------
     let mut reached = g.reached.clone();
@@ -1182,6 +1344,7 @@ fn main() {
     assert!(g.resp_seen[RESP_BUFFER as usize] >= 8, "the buffers were barely touched");
     assert!(g.resp_seen[RESP_XBUS as usize] >= 8, "the Xbus half was barely touched");
     assert!(g.resp_seen[RESP_REFUSED as usize] >= 4, "the refusals were barely touched");
+    assert!(g.md_writes >= 7, "only {} writes of MD", g.md_writes);
 
     println!("# the bus interface's own Unibus registers, from muir's busint::register");
     println!("# and Machine::interface_read / interface_write");
@@ -1216,10 +1379,19 @@ fn main() {
     println!("#     one mapped cycle: Machine::mapped_read or Machine::mapped_write.  resp");
     println!("#     is Rtl::try_debug_request's answer --- {RESP_BUFFER} the buffer,");
     println!("#     {RESP_XBUS} the Xbus, {RESP_REFUSED} refused, {RESP_MD} a write of MD");
-    println!("#     --- and the last two are NEVER acknowledged.  phys is the physical word");
+    println!("#     --- a refusal is NEVER acknowledged and a write of MD is acknowledged");
+    println!("#     ub_md_ack_ns after the edge that loads MD.  phys is the physical word");
     println!("#     address and xword the thirty-two bits that crossed the Xbus, both");
     println!("#     {NONE:x} where no Xbus cycle happened; rdata {NONE:x} is a write or a");
     println!("#     cycle nothing answered.");
+    println!("# MAPMD      n write uaddr wdata xint ireq ivec md32 md <face>");
+    println!("#     one mapped write that busint::map_to_md sends to the processor's MD");
+    println!("#     rather than to the Xbus: CC's CC-WRITE-MD.  write is always 1, a read");
+    println!("#     never reaching this responder.  md32 is the thirty-two bits");
+    println!("#     Machine::mapped_write put in MD --- the Unibus word in the high half");
+    println!("#     and the page's write buffer under it, or the word with ground above it");
+    println!("#     for write-through's even word --- and md is MD itself afterwards.");
+    println!("#     The cycle is acknowledged ub_md_ack_ns after the edge that loads MD.");
     println!("#");
     println!("# <face> = ctl err ubint int");
     println!("#     ctl    a read of 766040: the interrupt status register");
@@ -1245,6 +1417,7 @@ fn main() {
     println!("# ub_map_error {:o}", machine::bus_error::UB_MAP_ERROR);
     println!("# ub_xbus_request_ns {}", busint::UB_XBUS_REQUEST_NS);
     println!("# ub_xbus_read_ack_ns {}", busint::UB_XBUS_READ_ACK_NS);
+    println!("# ub_md_ack_ns {}", busint::UB_MD_ACK_NS);
     println!("# iface_rows {iface_rows}");
     println!("# none_runs {none_runs}");
     println!("# win_rows {win_rows}");
@@ -1253,6 +1426,7 @@ fn main() {
     println!("# errs {}", g.errs);
     println!("# lines_rows {}", g.lines_rows);
     println!("# maps {}", g.maps);
+    println!("# md_writes {}", g.md_writes);
     println!("# rows {}", g.line);
     for d in &dec {
         println!("{d}");
@@ -1268,8 +1442,8 @@ fn main() {
     }
 
     eprintln!(
-        "busint_regs: {} rows, {} register cycles, {} mapped cycles, {} timeouts, {} wire rows, \
-         {iface_rows} decode rows, {win_rows} window rows",
-        g.line, g.ops, g.maps, g.errs, g.lines_rows
+        "busint_regs: {} rows, {} register cycles, {} mapped cycles ({} of them writes of MD), \
+         {} timeouts, {} wire rows, {iface_rows} decode rows, {win_rows} window rows",
+        g.line, g.ops, g.maps, g.md_writes, g.errs, g.lines_rows
     );
 }

@@ -418,6 +418,11 @@ module cadr_machine #(
   logic [47:0] debug_ir;
   logic [1:0]  mode_speed;
   logic        n_memgrant, n_memack, n_loadmd;
+  // `UB MD LOAD` at REQLM 0B17: the register block in `cadr_memory_path`
+  // decodes a foreign master's mapped write into `MD` and the processor takes
+  // the word.  Three wires under one roof, which is what this module is for.
+  logic        ub_md_req, ub_md_ack;
+  logic [31:0] ub_md_data;
 
   // **`-XBUS.INTR` IS WHOLLY IN THE FABRIC NOW.**  `LM INT` is `UB INT OR
   // XBUS INTR IN` at UBINTC 0E04, and the Xbus line is the display's
@@ -501,6 +506,9 @@ module cadr_machine #(
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
       .rdata       (rdata),
+      .ub_md_req   (ub_md_req),
+      .ub_md_data  (ub_md_data),
+      .ub_md_ack   (ub_md_ack),
       .pc          (pc),
       .lpc         (lpc),
       .opc         (opc),
@@ -674,6 +682,9 @@ module cadr_machine #(
       .debuggee_reset (debuggee_reset),
       .timeout_inhibit(timeout_inhibit),
       .dbg_rst    (dbg_rst),
+      .ub_md_req  (ub_md_req),
+      .ub_md_data (ub_md_data),
+      .ub_md_ack  (ub_md_ack),
       .mem_req    (mem_req),
       .mem_write  (mem_write),
       .mem_addr   (mem_addr),

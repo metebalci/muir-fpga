@@ -21,7 +21,10 @@ microcycles later. That span is what this document calls a window.
 
 ## What MD's register does
 
-MD has exactly two writers, both inside one `always_ff`.
+MD has three writers, all inside one `always_ff`. Two are the processor's own
+and the third is a foreign Unibus master's, `UB MD LOAD`, which is CC's
+`CC-WRITE-MD` through the Unibus map. The check below drives only the two: its
+DUT is `cadr_microcycle` alone, and nothing in it can raise the third.
 
 ```
       if (loadmd_edge) begin
@@ -33,11 +36,21 @@ MD has exactly two writers, both inside one `always_ff`.
       end
 ```
 
+then, after it,
+
+```
+      if (ub_md_take) md <= ub_md_data;
+```
+
 and, inside `if (cpu_edge)`,
 
 ```
         if (destmdr) md <= ob;
 ```
+
+The third writer is `UB MD LOAD`. It is a foreign Unibus master's mapped
+write, and `ub_md_take` is false at every tick either of the other two can
+run. The rest of this document is about the two the check drives.
 
 `-LOADMD` is asynchronous and arrives in the middle of a microcycle, so the
 word is latched at the strobe and committed where the machine next looks: at
@@ -81,9 +94,9 @@ Three things are asserted, every tick:
    fails at the instant the damage is done rather than wherever the wrong map
    entry is eventually read.
 3. MD does not change between that edge and the write pulse that reads it,
-   unless a `-LOADMD` strobe has arrived since. MD has two writers, so a
-   change with nothing strobed is the other one, and there is nothing else it
-   can be.
+   unless a `-LOADMD` strobe has arrived since. MD has no other writer in this
+   run, so a change with nothing strobed is the other one. There is nothing
+   else it can be.
 
 ## What the two programs contain — measured
 

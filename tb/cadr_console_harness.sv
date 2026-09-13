@@ -373,6 +373,8 @@ module cadr_console_harness #(
       .prog_boot  (prog_boot_o)
   );
 
+  logic ub_md_ack_u;
+
   cadr_microcycle #(
       .PROM_HEX(PROM_HEX)
   ) processor (
@@ -394,6 +396,12 @@ module cadr_console_harness #(
       .n_memgrant  (n_memgrant),
       .n_loadmd    (n_loadmd),
       .rdata       (rdata),
+      // `UB MD LOAD`, MD's third writer: a foreign master's mapped write
+      // through the Unibus map, which this harness has no register block to
+      // make.  Tied off, and the acknowledgement is then never asked for.
+      .ub_md_req   (1'b0),
+      .ub_md_data  (32'd0),
+      .ub_md_ack   (ub_md_ack_u),
       .sintr       (sintr),
       .pc          (pc),
       .lpc         (lpc),
@@ -439,7 +447,8 @@ module cadr_console_harness #(
   logic [31:0] wdata_u;
   logic        mbusy_u, mbusy_sync_u, memstart_u, rdcyc_u;
   logic        unused;
-  assign unused = ^{phys_u, wdata_u, mbusy_u, mbusy_sync_u, memstart_u, rdcyc_u};
+  assign unused = ^{phys_u, wdata_u, mbusy_u, mbusy_sync_u, memstart_u, rdcyc_u,
+                    ub_md_ack_u};
 
 endmodule
 

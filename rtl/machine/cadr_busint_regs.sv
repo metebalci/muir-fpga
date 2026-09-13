@@ -219,22 +219,38 @@
 // until the debugger gives up.  Nothing is starved meanwhile, because the arm
 // never takes the Xbus at all.
 //
-// **`-UB TO MD` IS DECODED AND NOT BUILT, AND THE REASON IS ONE GATE IN
-// ANOTHER FILE.**  A write of the odd word through a page whose high five
-// bits are ones is `busint::map_to_md` --- CC's `CC-WRITE-MD`, which loads
-// map register `0o16` with `0o177000` --- and muir loads the processor's `MD`
-// with it and acknowledges `busint::UB_MD_ACK_NS` on.  The path is `UB MD
-// LOAD`, `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17, a term of `-LOADMD` at
-// 0C10.  In this fabric `-LOADMD` is gated by `RDCYC` inside
-// `rtl/machine/cadr_microcycle.sv` --- which is right for the processor's own
-// cycles, and is the gate the `rdcyc-gate-dropped` record holds --- so a
-// foreign master's `MD` load cannot be made without changing that file.  This
-// module therefore DECODES it, raises `map_md`, makes no Xbus cycle, sets no
-// error and does not answer; the check compares the decode against muir's own
-// `Responder::MapMd` on every mapped cycle and counts the rows whose answer
-// it exempts, so the exemption is a number on the output rather than a
-// silence.  The cycle hangs where muir acknowledges it, and that is written
-// here rather than left to be found.
+// **`-UB TO MD`, WHICH IS WHAT CC's `CC-WRITE-MD` IS.**  A write through a
+// page whose high five bits are ones is `busint::map_to_md` --- CC loads map
+// register `0o16` with `0o177000` for it --- and the word is not written to
+// the Xbus at all but loaded into the processor's `MD`.  MIT's gate is
+// `-UB TO MD` = `NAND(UBMA<21:17>, UBXRQ, -UBRD, MSYN IN)` at REQU 0D12; it
+// holds the Xbus request off at REQLM 0E09, and `UB MD LOAD`,
+// `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17, is a term of `-LOADMD` at 0C10
+// and of `-LOADMD ACK` at 0A11, which acknowledges the cycle.
+//
+// **`UBXRQ` IS ONE OF THAT GATE'S FOUR INPUTS**, so `map_md` is not the bare
+// decode: it rises `busint::UB_XBUS_REQUEST_NS` after `-UB MSYN`, the same
+// instant the Xbus half's request does, because it is the same `UBXRQ`.  The
+// thirty-two lines are latched at that edge, `Machine::mapped_write`'s own
+// word --- the Unibus word in the high half over the page's write buffer, or
+// the Unibus word with ground above it for write-through's even word, which
+// is the one case where the EVEN word reaches `MD`.
+//
+// What this module does NOT own is the load.  `MD` is the processor's
+// register and `rtl/machine/cadr_microcycle.sv` takes the word when it can
+// --- muir's own gate is that the interface is not in a granted Xbus cycle,
+// "the debuggee CC works on is halted" --- and says so on `map_md_done`,
+// which is `UB MD LOAD` arriving back.  `-UB SSYN` follows
+// `busint::UB_MD_ACK_NS` after it: "`-LOADMD ACK` and with it `SSYN`, this
+// long after the master clock edge that grants the cycle and loads `MD`".
+//
+// **A READ THROUGH SUCH A PAGE IS NOT A READ OF `MD`.**
+// `Rtl::try_debug_request` tests `req.write` before it tests `map_to_md`, so
+// the odd word of a read is the page's read buffer and the even word is a
+// mapped Xbus cycle at physical page `0o37000`, which is the Unibus and not
+// main memory --- and a mapped page nothing answers is not modelled.  `MD` is
+// write-only through the map, and `golden/src/busint_regs.rs` carries both
+// halves of such a read to say so.
 //
 // **WITHIN THE INTERRUPT BLOCK THE FOUR REPEAT EVERY EIGHT BYTES.**  The
 // 74S138 at 0E03 looks at address bits 2 and 1 alone, so `0o766050` is
@@ -307,9 +323,15 @@ module cadr_busint_regs (
     input  var logic        map_done,
     input  var logic [31:0] map_rdata,
 
-    // --- `-UB TO MD`: a mapped write whose page is the processor's `MD`.
-    // Decoded here and built nowhere; see the header.
+    // --- `-UB TO MD`: a mapped write whose page is the processor's `MD`,
+    // with `UBXRQ` in the gate as the drawings have it, so the request rises
+    // `busint::UB_XBUS_REQUEST_NS` after `-UB MSYN` and the word is latched
+    // at that edge.  `map_md_done` is `UB MD LOAD` coming back from the
+    // processor: the edge `MD` took the word, which is what `-LOADMD ACK`
+    // and `-UB SSYN` are `busint::UB_MD_ACK_NS` after.  See the header.
     output var logic        map_md,
+    output var logic [31:0] map_md_wdata,
+    input  var logic        map_md_done,
 
     // --- `XBUS INTR IN`, the backplane's own interrupt line, live.  It is
     // read in bit 14 of the interrupt status register and is not stored.
@@ -379,6 +401,12 @@ module cadr_busint_regs (
   // busint::UB_XBUS_READ_ACK_NS, `-UB SSYN` after `-UBACK` on a read.
   localparam int unsigned XBUS_RQ_T  = 100 / 5;
   localparam int unsigned READ_ACK_T = 100 / 5;
+
+  // busint::UB_MD_ACK_NS, `-LOADMD ACK` after the edge that loads `MD`.  A
+  // constant of its own however equal it is to `READ_ACK_T` today: one is
+  // `-UB SSYN` after `-UBACK` on a mapped read and this is `-LOADMD ACK`
+  // after a load that makes no bus cycle at all.
+  localparam int unsigned MD_ACK_T   = 100 / 5;
 
   // busint::interrupt_status and busint::error_status.
   localparam logic [15:0] LOCAL_ENABLE  = 16'o000002;
@@ -470,9 +498,11 @@ module cadr_busint_regs (
   assign to_md     = xbus_half && wr && ent_valid && ent_write && ent_md;
   assign xbus_ok   = xbus_half && !to_md && ent_valid && (!wr || ent_write);
   assign refused   = xbus_half && !to_md && !xbus_ok;
-  // `-UB TO MD` is `NAND(UBMA<21:17>, UBXRQ, -UBRD, MSYN IN)` at REQU 0D12,
-  // so it stands while the cycle does and not a tick longer.
-  assign map_md    = to_md && ub_msyn;
+  // `-UB TO MD` is `NAND(UBMA<21:17>, UBXRQ, -UBRD, MSYN IN)` at REQU 0D12:
+  // the decode, the request and the strobe as RECEIVED.  `md_rq` is `UBXRQ`
+  // registered, so this stands from `busint::UB_XBUS_REQUEST_NS` after
+  // `-UB MSYN` until the processor takes the word, and not a tick longer.
+  assign map_md    = to_md && ub_msyn && md_rq;
 
   // ---------------------------------------------------------- the read side
   logic [15:0] ctl_word, err_word, word;
@@ -528,7 +558,14 @@ module cadr_busint_regs (
   // ------------------------------------------------------------ the bus cycle
   logic [6:0]  t_msyn;   // ticks since `-UB MSYN`, saturating
   logic [6:0]  t_ack;    // ticks since the Xbus acknowledgement, saturating
-  logic        answer_reg, answer_buf, answer_x, answer_now, land, land_wbuf;
+  logic [6:0]  t_md;     // ticks since `MD` took the word, saturating
+  logic        answer_reg, answer_buf, answer_x, answer_md, answer_now;
+  logic        land, land_wbuf;
+
+  // `UBXRQ` for a write of `MD`, and the load that came back.  Two flops:
+  // one is the request the gate above ANDs in, the other says the processor
+  // has taken the word and `-LOADMD ACK` is counting.
+  logic        md_rq, md_loaded;
 
   // The Xbus half's three states.  A plain register rather than an enum: the
   // whole of it is these three lines and a `unique case` on four values would
@@ -551,7 +588,13 @@ module cadr_busint_regs (
   // --- `ack = if write { xack } else { xack + UB_XBUS_READ_ACK_NS }`.
   assign answer_x   = ((xs == XS_ASK) && map_done && wr)
                    || ((xs == XS_DONE) && (wr || (t_ack >= 7'(READ_ACK_T))));
-  assign answer_now = answer_reg || answer_buf || answer_x;
+  // `-LOADMD ACK` at REQLM 0A11, `busint::UB_MD_ACK_NS` after the edge that
+  // loaded `MD`.  The interval is from the LOAD and not from `-UB MSYN`,
+  // because the load waits on the processor: `Busint::debug_xbus_edge` puts
+  // it at a master clock edge with the interface free, and here it is the
+  // edge `map_md_done` names.
+  assign answer_md  = md_loaded && (t_md >= 7'(MD_ACK_T));
+  assign answer_now = answer_reg || answer_buf || answer_x || answer_md;
 
   // The tick the write lands, which muir puts at `REGISTER_STROBE_NS` and
   // not at the answer: `Busint`'s `answered` for a write of this block.
@@ -584,6 +627,10 @@ module cadr_busint_regs (
       t_ack         <= 7'd0;
       xs            <= XS_IDLE;
       xword         <= 16'd0;
+      t_md          <= 7'd0;
+      md_rq         <= 1'b0;
+      md_loaded     <= 1'b0;
+      map_md_wdata  <= 32'd0;
       map_req       <= 1'b0;
       map_addr      <= 22'd0;
       map_write     <= 1'b0;
@@ -627,12 +674,17 @@ module cadr_busint_regs (
       end
 
       if (!ub_msyn) begin
-        ub_ssyn <= 1'b0;
-        t_msyn  <= 7'd0;
-        t_ack   <= 7'd0;
-        xs      <= XS_IDLE;
-        map_req <= 1'b0;
-        xword   <= 16'd0;
+        ub_ssyn   <= 1'b0;
+        t_msyn    <= 7'd0;
+        t_ack     <= 7'd0;
+        xs        <= XS_IDLE;
+        map_req   <= 1'b0;
+        xword     <= 16'd0;
+        // A cycle the master abandons takes `-UB TO MD` down with it, so a
+        // load can never arrive for a cycle that has gone.
+        t_md      <= 7'd0;
+        md_rq     <= 1'b0;
+        md_loaded <= 1'b0;
       end else begin
         if (t_msyn != T_MAX) t_msyn <= t_msyn + 7'd1;
         if (answer_now) ub_ssyn <= 1'b1;
@@ -674,6 +726,30 @@ module cadr_busint_regs (
           default:
             if (t_ack != T_MAX) t_ack <= t_ack + 7'd1;
         endcase
+
+        // ---- `-UB TO MD`, which makes no Xbus cycle at all ---------------
+        //
+        // `UBXRQ` is up `UB_XBUS_REQUEST_NS` after `-UB MSYN` and this is
+        // that instant, the same one `XS_IDLE` uses: the request goes to the
+        // processor with the thirty-two lines latched beside it.
+        // `Machine::mapped_write`'s word --- the odd word over the page's
+        // write buffer, write-through's even word with ground above it.
+        if (!md_rq && !md_loaded) begin
+          if (to_md && (t_msyn == 7'(XBUS_RQ_T))) begin
+            md_rq        <= 1'b1;
+            map_md_wdata <= mp_high ? {ub_wdata, wr_buf[mp_page]} : {16'd0, ub_wdata};
+          end
+        end else if (md_rq) begin
+          // `UB MD LOAD` came back: the processor has the word, the request
+          // drops with it and `-LOADMD ACK` starts counting.
+          if (map_md_done) begin
+            md_rq     <= 1'b0;
+            md_loaded <= 1'b1;
+            t_md      <= 7'd1;
+          end
+        end else begin
+          if (t_md != T_MAX) t_md <= t_md + 7'd1;
+        end
 
         // ---- the write buffer, `-UB WRITE BUFFER` -----------------------
         if (land_wbuf) wr_buf[mp_page] <= ub_wdata;
