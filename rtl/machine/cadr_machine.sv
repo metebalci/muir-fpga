@@ -411,6 +411,11 @@ module cadr_machine #(
   logic [3:0]  spy_eadr;
   logic [15:0] spy_rdata;
   logic        run, errstop, stathenb, prog_reset, prog_boot;
+  // The clock control register's other four bits and the debug IR, made on
+  // the bus interface and read by the processor: a single step and the
+  // forced microinstruction CC reads a scratchpad with.
+  logic        step, nop11, idebug, ldstat;
+  logic [47:0] debug_ir;
   logic [1:0]  mode_speed;
   logic        n_memgrant, n_memack, n_loadmd;
 
@@ -480,6 +485,11 @@ module cadr_machine #(
       .clk         (clk),
       .rst         (rst),
       .run         (run),
+      .step        (step),
+      .nop11       (nop11),
+      .idebug      (idebug),
+      .ldstat      (ldstat),
+      .debug_ir    (debug_ir),
       .promdisable (promdisable),
       .errstop     (errstop),
       .stathenb    (stathenb),
@@ -635,6 +645,11 @@ module cadr_machine #(
       .spy_eadr   (spy_eadr),
       .spy_rdata  (spy_rdata),
       .run        (run),
+      .step       (step),
+      .nop11      (nop11),
+      .idebug     (idebug),
+      .ldstat     (ldstat),
+      .debug_ir   (debug_ir),
       .promdisable(promdisable),
       .errstop    (errstop),
       .stathenb   (stathenb),

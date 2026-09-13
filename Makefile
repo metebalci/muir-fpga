@@ -27,6 +27,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/memory_path.pass $(BUILD)/axi_master.pass \
        $(BUILD)/axi_widen.pass $(BUILD)/prove.pass \
        $(BUILD)/microcycle.pass $(BUILD)/microcycle_sys.pass \
+       $(BUILD)/sstep.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
        $(BUILD)/md_compose.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
@@ -42,7 +43,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass \
-       $(BUILD)/readout_face.pass $(BUILD)/checkpoint.pass \
+       $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
+       $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
@@ -390,6 +392,40 @@ $(BUILD)/obj_microcycle/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_microcycle_tb.cp
 $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
                           $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl.golden
+	@touch $@
+
+# ------------------------------------------------- the clock control register
+#
+# What a console does to a halted machine: step it, and force a
+# microinstruction into IR to read a scratchpad with. `golden/src/sstep.rs`
+# scripts muir's own `rtl` engine the way CC does --- `CC-CLOCK`, then
+# `CC-NOOP-DEBUG-CLOCK` and `CC-DEBUG-CLOCK` over a debug IR --- and this
+# compares the fabric row for row against it, every column read back through
+# `spy_eadr`/`spy_rdata`.
+#
+# **IT IS THE PROCESSOR ALONE AND NOT THE COMPOSED MACHINE, ON PURPOSE.** The
+# five bits of the clock control register are ports of `cadr_microcycle.sv`,
+# as the mode register's bits already were; the register that HOLDS them is
+# `cadr_spy_registers.sv` and what lands its word at the machine's next look
+# is `build/console.pass`'s. So this check holds what the processor does with
+# the bits once they are there, which is the half no reference program could
+# ever reach: MIT's boot PROM never writes the register and neither does any
+# band, the register being the console's.
+#
+# It shares `MICROCYCLE` and the PROM image with `microcycle.pass` and takes
+# under a second: the script is a few dozen master clocks after a short
+# warm-up.
+$(BUILD)/sstep.golden: golden/src/sstep.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin sstep > $@
+
+$(BUILD)/obj_sstep/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_sstep_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_sstep \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_sstep_tb.cpp)
+
+$(BUILD)/sstep.pass: $(BUILD)/obj_sstep/Vcadr_microcycle \
+                     $(BUILD)/sstep.golden $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_sstep/Vcadr_microcycle $(BUILD)/sstep.golden
 	@touch $@
 
 # ------------------------------------------------------- the whole machine
@@ -1783,6 +1819,25 @@ $(BUILD)/readout.pass: $(BUILD)/obj_readout/Vcadr_console_harness \
 # `rtl/machine/cadr_microcycle.sv` and repeated in the program's own headers,
 # because C cannot read Verilog.
 READOUT_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-readout/src
+
+CONSOLE_SRC_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-console/src
+
+# ---------------------------------------------- the console program's own core
+#
+# **`cadr-console`'s HOST TEST HAD NEVER BEEN RUN BY `make check`.**  The
+# package has carried `src/console_test.c` and a `check` target since the
+# console landed --- 194 checks against a model of the slave, the words of
+# every message included --- and nothing in this Makefile named it, where
+# `cadr-readout`, `cadr-chaosnet`, `cadr-serial` and `cadr-terminal` all have
+# theirs here.  So the one test that could have said the console's `step`
+# reported a fabric that no longer exists was not being run.  It is now.
+$(BUILD)/console_face.pass: $(CONSOLE_SRC_DIR)/console_face.c \
+                            $(CONSOLE_SRC_DIR)/console_face.h \
+                            $(CONSOLE_SRC_DIR)/console_test.c \
+                            $(CONSOLE_SRC_DIR)/cadr-console.c | $(BUILD)
+	$(MAKE) -C $(CONSOLE_SRC_DIR) check
+	@echo "console: the program's core agrees with a modelled slave"
+	@touch $@
 
 $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
                             $(READOUT_SRC)/cadr_image.h \

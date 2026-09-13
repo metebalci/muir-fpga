@@ -75,17 +75,19 @@
 // reading that register through the console is what compares them.  The
 // counts are printed.
 //
-// **WHAT THIS CANNOT CHECK, said here rather than left to be assumed.**
+// **AND THE SINGLE STEP IS CHECKED HERE NOW, END TO END.**  It used to be in
+// the list below as a thing this could not check: `cadr_microcycle.sv` had
+// neither `SSTEP` nor `SSDONE` and `cadr_spy_registers.sv` took bit 0 of a
+// CLK write and dropped bits 4:1, so a write of 2 went down the diagnostic
+// bus and landed in nothing.  Both files have the rest of the register now.
+// What this asserts is the WHOLE ROAD --- an AXI write on `M_AXI_GP1`, a
+// Unibus cycle at `0o766006`, the register block's landing rule, and
+// `MACHRUN`'s first term --- and it asserts the number muir gives: **one
+// microcycle a step and exactly one**, with `FLAG-1`'s `SSDONE` up after it.
+// `build/sstep.pass` holds the processor's half against a reference trace
+// tick by tick; this holds that a console can reach it.
 //
-//   Single step.  The board's is `SSTEP` and `SSDONE`, the 74S174 at OLORD1
-//   1A10, and `MACHRUN`'s first term `SSTEP AND -SSDONE` --- muir/src/rtl.rs
-//   :1125-1128.  `cadr_microcycle.sv` has neither, and says so at its port
-//   list; `cadr_spy_registers.sv` takes bit 0 of a CLK write and drops bits
-//   4:1.  Neither file is this slice's.  So a write of 2 to the CLK register
-//   goes down the diagnostic bus, lands in nothing, and the machine does not
-//   move --- **which this measures and prints** rather than asserting muir's
-//   answer, because asserting it would leave the check red for a defect in
-//   another file.  `docs/console.md` carries the two hunks.
+// **WHAT THIS CANNOT CHECK, said here rather than left to be assumed.**
 //
 //   The write-strobe aliasing.  muir's `spy::write_strobe` is `eadr & 7`:
 //   `EADR3` does not reach the write decoder, so a write at register 13
@@ -713,6 +715,13 @@ int main(int argc, char **argv) {
   };
   auto SpyRead = [&](unsigned e) { return ReadWord(Spy(e)); };
   auto SpyWrite = [&](unsigned e, uint16_t v) { DoWrite(Spy(e), v, 0xF); };
+  // CYCLES, the machine's own count of retired microcycles, as two words of
+  // page 0.  It is the witness of a step that does not depend on the
+  // reference, and once the reference is exhausted it is the only one.
+  auto Cycles = [&]() {
+    const std::vector<uint32_t> c = DoRead(Con(kRegCycles), 1);
+    return c.at(0) | (static_cast<uint64_t>(c.at(1)) << 32);
+  };
 
   // ---- the run ----------------------------------------------------------
   Run(4);
@@ -1040,15 +1049,38 @@ int main(int argc, char **argv) {
     if ((c2.at(0) | (static_cast<uint64_t>(c2.at(1)) << 32)) != cycles)
       Fail("CYCLES moved while the machine was halted", c2.at(0), cycles);
 
-    // ---- a step, which this fabric does not have.  Measured, not asserted:
-    // ---- `SSTEP`/`SSDONE` are `cadr_microcycle.sv`'s and the CLK register's
-    // ---- bits 4:1 are `cadr_spy_registers.sv`'s, and neither file is this
-    // ---- slice's.  muir/tests/spy.rs:743-761 is what it should do.
+    // ---- A STEP, ASSERTED.  CC's `CC-CLOCK` is `2` then `0`, and muir's
+    // ---- own words for it are "raising step clocks the machine once".  So
+    // ---- the row must move by exactly one: a fabric that dropped the bit
+    // ---- stands still, and one that took it as a level runs a microcycle
+    // ---- every master clock the bit is up, which over these 176 ticks
+    // ---- would be four or five.
+    const size_t before_step = k;
+    // The stepped microcycle straddles the halt exactly as the resumed one
+    // does --- the generator has been running all through the reads --- so its
+    // LENGTH is not the reference's and is not compared.  Its existence is,
+    // which is the assertion below.
+    last_edge = -1;
+    ++resume_skipped;
     SpyWrite(3, 2);
     Run(4 * 44);
+    // `SSDONE` is `FLAG-1` bit 9 and is the board's own witness that the step
+    // it was asked for has run.  It is read while `STEP` is still up, where
+    // muir shows it set: two master clocks behind the write, and it does not
+    // fall until two after the bit is lowered.
+    const uint16_t f1s = SpyRead(8) & 0xffffu;
     SpyWrite(3, 0);
     Run(4 * 44);
-    if (k != at) ++step_moved;
+    if (k != before_step + 1)
+      Fail("a write of 2 to the clock control register did not run exactly one "
+           "microcycle",
+           k - before_step, 1);
+    if ((f1s & 0x200u) == 0)
+      Fail("FLAG-1 SSDONE is down after a step", f1s, f1s | 0x200u);
+    if ((f1s & 0x100u) != 0)
+      Fail("FLAG-1 SRUN is up during a step, which is not a running machine",
+           f1s, f1s & ~0x100u);
+    ++step_moved;
 
     // ---- START.  muir/tests/lashup.rs:311-315.
     //
@@ -1092,6 +1124,91 @@ int main(int argc, char **argv) {
   SpyWrite(3, 0);
   Run(4 * 44);
   const size_t at_end = k;
+
+  // ------------------------------------------- CC-EXECUTE, the whole road
+  //
+  // **THE ACT THE DEBUG CABLE EXISTS FOR, over every piece between an AXI
+  // write and the machine's own IR.**  CC reads a scratchpad by writing a
+  // microinstruction into the debug IR and asking for one clock with `NOP11`
+  // and `IDEBUG` up: the instruction loads into `IR` and the datapath shows
+  // the console its operands and its result on the A, M and O buses without
+  // executing it.  On the board it came back with the debugger's own stale
+  // OBUS, because the clock control register was one bit wide and the
+  // machine never stepped.
+  //
+  // It is done HERE, after the reference is exhausted, and that is not
+  // tidiness: a nopped debug clock still retires a microcycle and still
+  // advances `PC`, so the PROM instruction it stands in for is SKIPPED.  Run
+  // in the middle of the trace it would derail every row after it.
+  //
+  // **AND THE READ-BACK IS NOT A LOOPBACK.**  Registers 0, 1 and 2 are
+  // written to the debug IR and read from `IR` --- "read and write at the
+  // same address are uncorrelated", says the interface's own document --- so
+  // the word comes back only if it went out to the debug IR, through
+  // `IDEBUG` onto the I bus, and into `IR` at the step's own edge.  A
+  // register block that put the middle half where the low one goes would
+  // read back correctly at all three if this were a loopback, and does not.
+  {
+    // `((A-MEM 100) SETA A-MEM-3)`, muir's own filler instruction.  The A
+    // destination is harmless and `NOP11` stops it happening in any case,
+    // which is the whole point of a noop debug clock.
+    const uint64_t kAluClass = 1ull << 12;              // IR<13:12> = 1
+    const uint64_t kSetA = 5ull << 3;                   // IR<8:3> = 5, SETA
+    const uint64_t insn = kAluClass | kSetA |
+                          (3ull << 32) |                // IR<41:32>, A source
+                          (1ull << 25) | (0100ull << 14);  // IR<25>, IR<23:14>
+
+    SpyWrite(0, static_cast<uint16_t>(insn));
+    SpyWrite(1, static_cast<uint16_t>(insn >> 16));
+    SpyWrite(2, static_cast<uint16_t>(insn >> 32));
+    Run(4 * 44);
+
+    // CC-NOOP-DEBUG-CLOCK: `16` OCTAL --- STEP, NOP11 and IDEBUG, bits 3:1.
+    // Decimal 16 is bit 4 alone, LDSTAT, which clocks nothing at all.
+    const uint64_t cyc_before = Cycles();
+    SpyWrite(3, 016);
+    Run(4 * 44);
+
+    // Read while the write is still up: `IR` holds the forced instruction and
+    // `FLAG-2`'s NOP bit is what `NOP11` makes.
+    const uint64_t got = static_cast<uint64_t>(SpyRead(0) & 0xffffu) |
+                         static_cast<uint64_t>(SpyRead(1) & 0xffffu) << 16 |
+                         static_cast<uint64_t>(SpyRead(2) & 0xffffu) << 32;
+    const uint16_t f2x = SpyRead(9) & 0xffffu;
+    const uint64_t cyc_after = Cycles();
+
+    // **AND THE O BUS IS READ AFTER THE WRITE GOES BACK TO ZERO, WHICH IS
+    // CC'S OWN ORDER AND NOT A CONVENIENCE.**  `cc_clock` is `16` then `0`
+    // and only then the read, and it has to be: a nopped cycle decodes as no
+    // class at all, so while `NOP11` is up the output select is `2'b00` and
+    // the O bus carries the byte masker's output rather than the ALU's.
+    // Measured, with the write still up: 0xfffffcff where the A bus reads
+    // 0xffffffff.  Lowering the write does NOT take the instruction out of
+    // `IR` --- only a clocked microcycle would, and the machine is halted ---
+    // so what is read below is still the forced instruction's own result.
+    SpyWrite(3, 0);
+    Run(4 * 44);
+    const uint32_t obx = static_cast<uint32_t>(SpyRead(6) & 0xffffu) |
+                         static_cast<uint32_t>(SpyRead(7) & 0xffffu) << 16;
+    const uint32_t ax = static_cast<uint32_t>(SpyRead(12) & 0xffffu) |
+                        static_cast<uint32_t>(SpyRead(13) & 0xffffu) << 16;
+
+    if (cyc_after != cyc_before + 1)
+      Fail("a noop debug clock did not run exactly one microcycle",
+           cyc_after - cyc_before, 1);
+    if (got != insn) Fail("the debug IR read back through IR", got, insn);
+    // `FLAG-2` bit 4 is `NOP`, which `NOP11` makes: the instruction is in
+    // `IR` and is not being executed, which is what lets a console look at a
+    // scratchpad without changing it.
+    if ((f2x & 0x10u) == 0)
+      Fail("FLAG-2 NOP is down under a noop debug clock", f2x, f2x | 0x10u);
+    // The instruction is `SETA`, so the O bus IS the A bus --- the read
+    // `(cadr:cc-read-a-mem 3)` makes, and the one that came back wrong on the
+    // board.  Comparing them needs no reference: it is what the ALU function
+    // means, and a fabric that answered a stale OBUS fails it.
+    if (obx != ax)
+      Fail("SETA put something other than the A bus on the OB", obx, ax);
+  }
 
   // Every word of page 0, and the three that are still not registers.
   long unmapped_seen = 0;
@@ -1628,7 +1745,7 @@ int main(int argc, char **argv) {
       "      the 600,000 microcycles still agrees with muir column for column\n"
       "      across the halts (%ld lengths checked, %ld exempt for the\n"
       "      Unibus arbitration this interface does not have, %ld inside a\n"
-      "      tick on a stalled row, %ld re-anchored at a resume)\n"
+      "      tick on a stalled row, %ld re-anchored at a step or a resume)\n"
       "    %ld diagnostic registers read and compared against `Engine::spy_read`\n"
       "      --- IR in three halves, OPC, PC, OB, FLAG-1, FLAG-2, M, A, ST,\n"
       "      and the open bus at register 3 reading all ones\n"
@@ -1708,11 +1825,12 @@ int main(int argc, char **argv) {
       "      DIFFERENT reset from the button's.  The console survived its own\n"
       "      reset: IDENT, STAT's sticky lost bit and the reset count all\n"
       "      stand, and the AXI write that asked for the reset completed\n"
-      "    MEASURED, NOT ASSERTED, because the files are not this slice's:\n"
-      "      a write of 2 to the clock control register moved the machine on\n"
-      "      %ld of %ld halts (muir: one microcycle each --- SSTEP/SSDONE are\n"
-      "      not in cadr_microcycle.sv), and a mode write at register 13\n"
-      "      landed %ld times (muir's write_strobe is `eadr & 7`, so: once)\n",
+      "    a write of 2 to the clock control register ran EXACTLY ONE\n"
+      "      microcycle on %ld of %ld halts, with FLAG-1's SSDONE up and SRUN\n"
+      "      down --- the whole road from an AXI write to MACHRUN's first term\n"
+      "    MEASURED, NOT ASSERTED, because the file is not this slice's:\n"
+      "      a mode write at register 13 landed %ld times (muir's\n"
+      "      write_strobe is `eadr & 7`, so: once)\n",
       visits, total_rows, distinct_pc, lengths_checked, arb_skipped, sub_tick,
       resume_skipped, regs_compared, regs_hunted, flag2_wmapd, flag2_destspcd,
       flag2_imodd, flag2_pdlwrited, flag2_spushd, flag2_iwrited,

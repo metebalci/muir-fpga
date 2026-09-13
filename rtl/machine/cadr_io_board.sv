@@ -324,8 +324,11 @@ module cadr_io_board (
   // nanoseconds and a CADR wall clock run off it loses half a day in a day.
   // It was decided on 2026-09-11 that the machine keeps agreeing with muir
   // for now: the checks are the backbone, `iob.golden` compares tick counts,
-  // and nothing built yet needs the time of day.  The card is not composed
-  // into `cadr_machine` at all, so nothing on the board reads it.
+  // and nothing built yet needs the time of day.  **The card IS composed into
+  // `cadr_machine`, and the machine has read this clock on the board**, so
+  // the slow microsecond is a live divergence from real time rather than a
+  // dormant one --- which is the whole of what makes the constant below worth
+  // the paragraph after it.
   //
   // **UNDOING THIS IS STILL ONE CONSTANT, WHICH IS WHY THE TICK IS A NUMBER
   // THAT DIVIDES 1,000.**  A real microsecond is exactly 100 ticks of 10 ns,

@@ -85,11 +85,12 @@ static void emit_mode(struct chk *w, const struct cadr_image *img)
 
 static void emit_clock_control(struct chk *w, const struct cadr_image *img)
 {
-	// `spy::ClockControl::save`: five bools.  Only RUN is in the fabric
-	// --- `cadr_spy_registers.sv` keeps bit 0 of register 3 and drops bits
-	// 4:1 --- so single step, NOP11, IDEBUG and LDSTAT are NONE.  A
-	// resumed machine therefore cannot be single-stepped from where the
-	// board left it, which nobody can do on the board either.
+	// `spy::ClockControl::save`: five bools.  All five are in the fabric
+	// --- `cadr_spy_registers.sv` stores the whole of register 3 --- but
+	// only RUN is brought out where this program can read it, so the other
+	// four are NONE and are written clear.  That is what a halted machine
+	// holds: a console writes `2` and then `0`, and a checkpoint is taken
+	// with the machine stopped, so the four are down when it is read.
 	chk_bool(w, img_flag(img, IMG_F_RUN));		/* READ */
 	chk_bool(w, 0);					/* NONE step */
 	chk_bool(w, 0);					/* NONE nop11 */
@@ -490,9 +491,13 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, img_flag(img, IMG_F_TRAP));		/* READ boot_trap */
 	chk_bool(w, img_flag(img, IMG_F_PROMDISABLED));	/* READ */
 	chk_bool(w, img_flag(img, IMG_F_SRUN));		/* READ */
-	// NONE: single step is not in this fabric --- the register block drops
-	// the clock control register's bits 4:1 --- so SSTEP and SSDONE have
-	// no reading and no meaning here.
+	// NONE: SSTEP and SSDONE are in the fabric now --- OLORD1 1A10, and
+	// MACHRUN's first term --- but nothing brings them out where this
+	// program can read them.  FLAG-1 bit 9 is SSDONE and could be taken
+	// from a spy read; SSTEP has no port at all.  So they are written
+	// clear, which is what a machine halted from the console holds: both
+	// are down unless a step is in flight, and a checkpoint is taken with
+	// the machine stopped.
 	chk_bool(w, 0);					/* NONE sstep */
 	chk_bool(w, 0);					/* NONE ssdone */
 	chk_bool(w, img_flag(img, IMG_F_STATSTOP));	/* READ */
@@ -561,13 +566,15 @@ static const char *const kMissing[] = {
 	"the mode register's TRAPENB: cadr_spy_registers.sv drops bit 4, so it",
 	"    is written clear.  The fabric raises MIT's boot trap out of reset",
 	"    instead of from this bit, so the machine behaves as it reads.",
-	"the clock control register's STEP, NOP11, IDEBUG and LDSTAT: the same",
-	"    block keeps bit 0 and drops bits 4:1.  A resumed machine cannot be",
-	"    single-stepped from where the board left it; neither can the board.",
+	"the clock control register's STEP, NOP11, IDEBUG and LDSTAT, and with",
+	"    them SSTEP and SSDONE: the fabric has all of them, but none is",
+	"    brought out where this program can read it, so all are written",
+	"    clear.  A checkpoint is taken with the machine halted, which is what",
+	"    a console leaves them at, so the written value is the right one.",
 	"the OPC control register, all three bits: register 4 is dropped.  The",
 	"    fabric behaves as all three clear, which is what is written.",
-	"the debug IR, 48 bits: IDEBUG is not built, so there is nothing to read",
-	"    and nothing that would look at it.",
+	"the debug IR, 48 bits: it is built and it is written only by a console",
+	"    or a debugger, but nothing brings it out to be read back.",
 	"the bus interface's own registers --- the sixteen Unibus map entries,",
 	"    their read and write buffers, the error register, the interrupt",
 	"    status and WRITE-THROUGH.  All but the read and write buffers ARE",

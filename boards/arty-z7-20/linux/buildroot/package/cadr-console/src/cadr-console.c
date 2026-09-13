@@ -43,14 +43,14 @@
 // THE COMMANDS.  muir's references for each are in `console_face.h` beside
 // the function; the two that need saying here:
 //
-//   step N   **DOES NOT WORK ON TODAY'S FABRIC AND SAYS SO.**  `SSTEP` and
-//            `SSDONE` are two flip flops of the 74S174 at OLORD1 1A10 and
-//            `cadr_microcycle.sv` has neither, and `cadr_spy_registers.sv`
-//            takes bit 0 of a clock control write and drops bits 4:1.  So the
-//            command runs, measures CYCLES either side, finds that nothing
-//            moved and reports that plainly, naming `docs/console.md`, which
-//            carries the two hunks.  A silent no-op is the failure this
-//            project keeps meeting.
+//   step N   CC's `CC-CLOCK`, `2` then `0`, N times.  `SSTEP` and `SSDONE`
+//            are two flip flops of the 74S174 at OLORD1 1A10 and `MACHRUN`'s
+//            first term is `SSTEP AND -SSDONE`, so raising the bit clocks the
+//            machine ONCE and it must be lowered before the next.  The
+//            command measures CYCLES either side and reports both, and names
+//            either failure out loud: nothing moved, or more than one
+//            microcycle a step.  A silent no-op is the failure this project
+//            keeps meeting, and so is a silent runaway.
 //
 //   examine  **READS DDR DIRECTLY AND NOT THROUGH THE MACHINE**, and says so
 //   deposit  on every line it prints.  CC reaches main memory through the
@@ -228,7 +228,7 @@ static void help(void)
 {
 	say("halt            0 into the clock control register: RUN clear (CC's first act on a debuggee)");
 	say("start           1 into it: RUN");
-	say("step [N]        CC's CC-CLOCK, 2 then 0, N times. THE FABRIC HAS NO SSTEP: it will say so");
+	say("step [N]        CC's CC-CLOCK, 2 then 0, N times: one microcycle each, CYCLES either side");
 	say("regs            all sixteen registers by muir's names, FLAG-1 and FLAG-2 field by field");
 	say("status          running or halted, and why; PC; CYCLES measured twice");
 	say("ident           IDENT, STAT, CYCLES and TICKS");

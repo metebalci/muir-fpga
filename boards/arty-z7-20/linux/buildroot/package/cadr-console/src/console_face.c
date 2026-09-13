@@ -271,11 +271,21 @@ void cons_step(struct console *c, unsigned n, struct cons_step *s)
 		// CC's `CC-CLOCK`: raise STEP, lower it.  It must be lowered
 		// again before the next.
 		cons_spy_write(c, SPY_CLK, CLK_STEP);
+		// **SSDONE IS READ WHILE STEP IS STILL UP, AND THAT IS NOT A
+		// CONVENIENCE.**  SSTEP and SSDONE are STEP registered once
+		// and twice on MCLK5A, so SSDONE rises one master clock after
+		// the step's microcycle and falls two master clocks after STEP
+		// is lowered.  A diagnostic cycle is longer than that, so a
+		// read taken after the lowering sees it down on a machine that
+		// stepped perfectly --- which would make the console report a
+		// fault that is its own reading order.
+		if (k + 1 == n) {
+			uint16_t f1 = 0;
+			if (cons_spy_read(c, SPY_FLAG_1, &f1) == 0)
+				s->ssdone = !!(f1 & (1u << 9));
+		}
 		cons_spy_write(c, SPY_CLK, 0);
 	}
-	uint16_t f1 = 0;
-	if (cons_spy_read(c, SPY_FLAG_1, &f1) == 0)
-		s->ssdone = !!(f1 & (1u << 9));
 	s->after = cons_cycles(c);
 	s->moved = s->after - s->before;
 }
@@ -393,13 +403,27 @@ void cons_say_step(const struct cons_step *s)
 	say("step %u: CYCLES %llu -> %llu, %llu microcycle(s) retired; SSDONE %s",
 	    s->asked, (unsigned long long)s->before, (unsigned long long)s->after,
 	    (unsigned long long)s->moved, s->ssdone ? "up" : "down");
-	if (s->moved == 0 && s->asked) {
-		say("step: THE MACHINE DID NOT MOVE, and on today's fabric it cannot: single-stepping is SSTEP and "
-		    "SSDONE, two flip flops of the 74S174 at OLORD1 1A10, and cadr_microcycle.sv has neither");
-		say("step: cadr_spy_registers.sv takes bit 0 of a clock control write --- RUN --- and drops bits 4:1, "
-		    "so the 2-then-0 CC's CC-CLOCK writes lands as RUN cleared twice and clocks nothing");
-		say("step: halt and start are the whole of what a console can make this machine do today; "
-		    "docs/console.md names the two hunks that would add the rest");
+	if (!s->asked)
+		return;
+	// **THE TWO WAYS A STEP GOES WRONG ARE OPPOSITE AND BOTH ARE SILENT.**
+	// Nothing moved means the STEP bit reached nothing --- which is what
+	// this console reported for as long as the clock control register was
+	// one bit wide.  More than one microcycle a step means the bit was
+	// taken as a level rather than as an edge, and the machine ran on
+	// while it was up.  Either way the number is printed and named.
+	if (s->moved == 0) {
+		say("step: THE MACHINE DID NOT MOVE.  Single-stepping is SSTEP and SSDONE, two flip flops of the "
+		    "74S174 at OLORD1 1A10, and MACHRUN's first term SSTEP AND -SSDONE");
+		say("step: the clock control register is EADR 3 and five bits wide --- RUN, STEP, NOP11, IDEBUG, "
+		    "LDSTAT --- and a fabric that takes only bit 0 clocks nothing for the 2-then-0 CC-CLOCK writes");
+	} else if (s->moved != s->asked) {
+		say("step: THE MACHINE RAN %llu MICROCYCLES FOR %u STEP(S).  Raising STEP clocks the machine ONCE; "
+		    "SSDONE catches SSTEP at the next master clock and holds MACHRUN down until STEP is lowered",
+		    (unsigned long long)s->moved, s->asked);
+	} else if (!s->ssdone) {
+		say("step: the machine moved, but FLAG-1 bit 9 SSDONE is down.  That bit is the board's own witness "
+		    "that the step it was asked for has run, and it is read here while STEP is still up, where it "
+		    "must be set: the count and the witness disagree");
 	}
 }
 
