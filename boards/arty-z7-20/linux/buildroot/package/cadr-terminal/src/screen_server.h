@@ -81,8 +81,23 @@ struct screen_server {
 	int have_ptr;
 	uint8_t buttons;
 	// What went across, for a status line: words into the fabric, words
-	// the fabric had no room for, and pointer movements.
+	// the fabric would not take yet, and pointer movements.
 	unsigned long keys_sent, keys_stuck, pointer_moves;
+	// --- how fast key words are handed over.  `input_face.h` has the two
+	// rules and where the number comes from; this is the second of them.
+	// **ZERO MEANS THE DERIVED DEFAULT**, `INPUT_KEY_INTERVAL_NS`, so that
+	// a server struct that was only zeroed is a server that paces itself
+	// --- which is every server, `screen_server_bind` being the only way
+	// to make one and beginning with a `memset`.  A server made some other
+	// way would have to zero this or ask for an interval of its own.
+	// The host check sets it to 1 ns where it is testing what a key MEANS
+	// rather than how fast it goes, and to the real figure where it is
+	// testing the pacing itself.
+	uint64_t key_interval_ns;
+	// When the last word was handed over, on the caller's own clock, and
+	// whether one ever was --- the first word of a run does not wait.
+	uint64_t key_at_ns;
+	int key_ever;
 	// What has gone out, by encoding, and what Raw would have cost for the
 	// rectangles RRE was used on: the measurement `docs/terminal.md` quotes.
 	unsigned long long sent_raw, sent_rre, saved_by_rre;
@@ -104,6 +119,12 @@ int screen_server_bind(struct screen_server *s, const char *bind_addr, unsigned 
 // the whole-screen interval still.
 void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 			int timeout_ms, uint64_t now_ns);
+
+// How long the caller may sleep before a key word is due, in nanoseconds:
+// 0 when none is waiting, 1 when one is due now.  `screen_server_poll` never
+// sleeps past a word --- a key that waited a whole frame because the loop had
+// nothing else to do would be the pacing rule paying for itself twice.
+uint64_t screen_server_key_wait_ns(const struct screen_server *s, uint64_t now_ns);
 
 // What port the listener actually took, which is the interesting question
 // only when a caller asked for 0 and let the kernel choose --- the host

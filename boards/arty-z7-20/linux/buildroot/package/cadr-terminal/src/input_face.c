@@ -121,6 +121,17 @@ uint32_t input_face_lost(struct input_face *f)
 	return f->read(f, IN_LOST);
 }
 
+int input_face_key_idle(struct input_face *f)
+{
+	// One read of STAT answers both halves of it: `IN_ST_KBD_READY` is
+	// the card's own flop, and `IN_ST_QUEUED` is what the fabric still
+	// holds for it.  Both must be empty --- a word in the queue has not
+	// reached the card yet, so a seam that asked only about the card
+	// would hand over a second word while the first was still on its way.
+	const uint32_t st = f->read(f, IN_STAT);
+	return !(st & IN_ST_KBD_READY) && IN_ST_QUEUED(st) == 0u;
+}
+
 int input_face_key(struct input_face *f, uint32_t word)
 {
 	// **ROOM FIRST, ALWAYS.**  `input_face.h`: a word written to a full

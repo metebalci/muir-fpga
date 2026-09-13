@@ -1151,6 +1151,31 @@ static void check_blank(void)
 
 #define MODEL_WORDS 512
 
+// **AND IT MODELS THE SEAM'S OWN PACING, WHICH THE CARD'S HANDSHAKE IS NOT
+// ALL OF.**  Three things sit between a word written here and a character on
+// the machine's screen, and only the first two are in any register:
+//
+//   the fabric's queue   `cadr_input_cables.sv`, DEPTH words;
+//   the card             `cadr_io_board.sv`, ONE word behind `KBD READY`,
+//                        and the fabric hands it the next only when the
+//                        machine has read the last --- `taking`, which is
+//                        `muir::terminal::keyboard::Keyboard::deliver`;
+//   the machine          which reads every word the card offers, and
+//                        DIGESTS them at its own rate, which no register
+//                        here can see.
+//
+// The third is what the board measured and what nothing modelled: twenty
+// characters handed over with no gap arrived as nineteen while the fabric's
+// `LOST` stayed zero, because nothing was lost in the fabric --- the machine
+// read all forty words and its software kept nineteen characters' worth.  So
+// the machine here reads the card whenever there is something on it, and
+// takes the word only if `digest_ns` has gone by since the last one it took;
+// otherwise it counts it in `swallowed`, which is the board's silent loss.
+//
+// `digest_ns` of 0 is a machine that keeps up with anything, which is what
+// every check of what a key MEANS wants behind it.
+#define MODEL_DEPTH 16
+
 struct model_face {
 	uint32_t reg[1024];
 	uint32_t keys[MODEL_WORDS];
@@ -1163,21 +1188,98 @@ struct model_face {
 	// How many more words it will take; -1 for "as many as come".
 	int room;
 	unsigned long over;      // words offered with no room, which must be 0
+
+	// --- the fabric's queue
+	uint32_t q[MODEL_DEPTH];
+	unsigned qhead, qcount;
+	// --- the card: one word, and the flop the machine clears by reading
+	uint32_t card;
+	int kbd_ready;
+	// How long the machine takes to notice a word on the card --- its
+	// interrupt latency, which is nothing to do with how fast its software
+	// digests them.  0 is a machine that reads the instant a word lands.
+	uint64_t read_ns, next_read;
+	// The most the fabric's queue ever held.  **ONE WORD IN FLIGHT** is
+	// the first of the seam's two rules, and this is what says it holds:
+	// a program that placed a second word while the first had not reached
+	// the card would show here and nowhere else.
+	unsigned qmax;
+	// --- the machine behind it
+	uint64_t now;            // the test's own clock, handed over before a pass
+	uint64_t digest_ns;      // 0: a machine that keeps up with anything
+	uint64_t next_digest;    // when it will take another
+	uint32_t got[MODEL_WORDS];
+	unsigned ngot;
+	unsigned long swallowed; // read off the card too soon to be kept
+	uint64_t gap_min;        // the closest two kept words ever were
+	uint64_t last_kept;
+	int ever_kept;
 };
 
 static struct model_face model;
 static struct input_face face;
 
+// One turn of the fabric and the machine, run wherever the program touches
+// the face --- which is every pass in which it has a word to place, since it
+// must read `STAT` to know whether it may.
+static void model_step(void)
+{
+	struct model_face *m = &model;
+	// The modelled machine runs on the check's own clock, read here rather
+	// than handed over, so that a pass taken anywhere --- `pump`, or the
+	// polling inside `client_write` --- sees the same time.
+	m->now = clock_ns;
+	// `cadr_input_cables.sv`: a word goes to the card when the card is
+	// free.  ONE word, and not the queue: that gate is the whole reason
+	// the fabric cannot overwrite the card.
+	if (!m->kbd_ready && m->qcount) {
+		m->card = m->q[m->qhead];
+		m->qhead = (m->qhead + 1) % MODEL_DEPTH;
+		--m->qcount;
+		m->kbd_ready = 1;
+	}
+	if (!m->kbd_ready)
+		return;
+	if (m->read_ns && m->now < m->next_read)
+		return;
+	// ...and the machine reads it, which is what clears `KBD READY` ---
+	// `R_KBD_LOW: if (!wr) kbd_ready <= 1'b0`.  The READ always happens.
+	m->kbd_ready = 0;
+	m->next_read = m->now + m->read_ns;
+	if (m->digest_ns && m->now < m->next_digest) {
+		++m->swallowed;
+		return;
+	}
+	if (m->ever_kept) {
+		const uint64_t gap = m->now - m->last_kept;
+		if (gap < m->gap_min)
+			m->gap_min = gap;
+	}
+	m->last_kept = m->now;
+	m->ever_kept = 1;
+	m->next_digest = m->now + m->digest_ns;
+	if (m->ngot < MODEL_WORDS)
+		m->got[m->ngot++] = m->card;
+}
+
 static uint32_t model_read(struct input_face *f, unsigned word)
 {
 	struct model_face *m = f->ctx;
+	model_step();
 	if (word == IN_IDENT)
 		return IN_IDENT_WORD;
 	if (word == IN_STAT) {
-		// Room, and nothing else: the card's own ready bits are the
-		// fabric's business and `build/gp0_split.pass` is what holds
-		// them.  What this program does with STAT is ask for room.
-		return (m->room != 0) ? IN_ST_ROOM : 0u;
+		// Room, the card's `KBD READY` and what the queue still holds:
+		// the three things the program asks about before it places a
+		// word.  `build/gp0_split.pass` is what holds the fabric to
+		// them; what is here is enough of them to pace against.
+		uint32_t st = 0;
+		if (m->room != 0 && m->qcount < MODEL_DEPTH)
+			st |= IN_ST_ROOM;
+		if (m->kbd_ready)
+			st |= IN_ST_KBD_READY;
+		st |= (uint32_t)(m->qcount & 0x3Fu) << 8;
+		return st;
 	}
 	return m->reg[word & 1023];
 }
@@ -1185,15 +1287,20 @@ static uint32_t model_read(struct input_face *f, unsigned word)
 static void model_write(struct input_face *f, unsigned word, uint32_t v)
 {
 	struct model_face *m = f->ctx;
+	model_step();
 	m->reg[word & 1023] = v;
 	switch (word) {
 	case IN_KEY:
-		if (m->room == 0) {
+		if (m->room == 0 || m->qcount >= MODEL_DEPTH) {
 			++m->over;
 			break;
 		}
 		if (m->room > 0)
 			--m->room;
+		m->q[(m->qhead + m->qcount) % MODEL_DEPTH] = v;
+		++m->qcount;
+		if (m->qcount > m->qmax)
+			m->qmax = m->qcount;
 		if (m->nkeys < MODEL_WORDS)
 			m->keys[m->nkeys++] = v;
 		break;
@@ -1213,8 +1320,11 @@ static void model_write(struct input_face *f, unsigned word, uint32_t v)
 			m->buttons[m->nbuttons++] = v;
 		break;
 	case IN_CTL:
-		if (v & IN_CTL_FLUSH)
+		if (v & IN_CTL_FLUSH) {
 			++m->flushes;
+			m->qcount = 0;
+			m->qhead = 0;
+		}
 		break;
 	default:
 		break;
@@ -1225,17 +1335,31 @@ static void model_reset(void)
 {
 	memset(&model, 0, sizeof model);
 	model.room = -1;
+	model.gap_min = UINT64_MAX;
 	face.read = model_read;
 	face.write = model_write;
 	face.ctx = &model;
 }
 
+// A pass costs the modelled clock this much.  A real poll loop takes time,
+// and the pacing rule the program follows is measured on the clock its caller
+// hands it --- so a check of what a key MEANS needs the clock to move at all,
+// or the first word of a burst would be the only one.  A MICROSECOND, which
+// is small against the 30.912 ms frame and the 30 s handshake deadline that
+// the clock must not run past, and large against the 1 ns interval those
+// checks set.
+#define POLL_STEP_NS 1000u
+
 // The words the program has sent, drained by polling.  The server drains its
 // queue at the end of a pass, so a pass is what it takes.
 static void pump(int passes)
 {
-	for (int k = 0; k < passes; ++k)
+	for (int k = 0; k < passes; ++k) {
 		screen_server_poll(&srv, &frame, 0, clock_ns);
+		if (!clock_frozen)
+			clock_ns += POLL_STEP_NS;
+		model_step();
+	}
 }
 
 // `keyboard::up_down`, written out here so that the check's expected words
@@ -1271,6 +1395,13 @@ static int open_typist_with(struct client *c, const struct key_map *map)
 {
 	model_reset();
 	srv.input = &face;
+	// **THESE CHECKS ARE ABOUT WHAT A KEY MEANS AND NOT ABOUT PACING.**
+	// One nanosecond is an interval every pass satisfies, so the stream
+	// they compare is the stream the mapping makes.  `check_key_pacing`
+	// below sets the real figure and drives the clock itself.
+	srv.key_interval_ns = 1;
+	srv.key_at_ns = 0;
+	srv.key_ever = 0;
 	if (map)
 		key_state_init_with(&srv.keys, map);
 	else
@@ -1603,6 +1734,282 @@ static void check_keyboard(void)
 // deltas, so what crosses is the difference.  `muir::terminal::mouse`: one
 // count a pixel, right and down positive, and the FIRST event only
 // establishes where the pointer is.
+// ---- how fast words may be handed over ----------------------------------
+//
+// **THE BOARD MEASURED BOTH OF THESE AND NOTHING IN THE TREE COULD SEE
+// EITHER.**  The four words of a shifted keystroke, written back to back,
+// gave `=` where `+` was meant; the same four 50 ms apart gave `+`.  Twenty
+// characters with no gap arrived as nineteen, one missing and one doubled.
+// Throughout, the fabric's `LOST` read zero --- nothing was lost in the
+// fabric.  What loses them is behind the card, where the machine's own
+// software digests the stream, and `input_face.h` has the rule and where its
+// number comes from.
+//
+// The model above is what makes this checkable without a board: a machine
+// that reads every word the card offers and keeps only those far enough
+// apart, which is the board's symptom written down.
+
+// A pass, with the modelled clock moved on by `step_ns`.  The pacing rule is
+// measured on the clock the caller hands the server, so a check of it has to
+// drive that clock.
+static void pace(unsigned passes, uint64_t step_ns)
+{
+	for (unsigned k = 0; k < passes; ++k) {
+		screen_server_poll(&srv, &frame, 0, clock_ns);
+		clock_ns += step_ns;
+		// **THE FABRIC AND THE MACHINE RUN WHETHER THE PROGRAM LOOKS OR
+		// NOT.**  Stepping the model only where the program touches the
+		// face would leave the last word of a burst sitting in the
+		// queue for ever, which is the model's doing and not the
+		// program's.
+		model_step();
+	}
+}
+
+// The machine put behind the card for these checks, and the pacing turned on.
+//
+// **THE INTERVAL IS LEFT AT ZERO, WHICH IS THE DERIVED DEFAULT.**  Setting it
+// here would leave the default --- what a server struct that was only zeroed
+// paces itself at, and so what the program on the board actually uses ---
+// tested by nothing at all.  The one check below that sets it is there to say
+// the field is read when it is set.
+static void expect_a_real_machine(void)
+{
+	srv.key_interval_ns = 0;
+	srv.key_at_ns = 0;
+	srv.key_ever = 0;
+	model.digest_ns = INPUT_KEY_INTERVAL_NS;
+	model.next_digest = 0;
+	model.ngot = 0;
+	model.swallowed = 0;
+	model.gap_min = UINT64_MAX;
+	model.ever_kept = 0;
+	model.nkeys = 0;
+	model.read_ns = 0;
+	model.next_read = 0;
+	model.qmax = 0;
+}
+
+static void want_got(const char *what, const uint32_t *w, unsigned n)
+{
+	CHECK(model.ngot == n, "%s: the machine kept %u words, wanting %u",
+	      what, model.ngot, n);
+	CHECK(model.swallowed == 0,
+	      "%s: %lu words reached the machine too fast to be kept, wanting none",
+	      what, model.swallowed);
+	const unsigned m = model.ngot < n ? model.ngot : n;
+	for (unsigned i = 0; i < m; ++i)
+		CHECK(model.got[i] == w[i], "%s: word %u is 0x%06x, wanting 0x%06x",
+		      what, i, model.got[i], w[i]);
+}
+
+static void check_key_pacing(void)
+{
+	// The constant, said in the two facts it is made of, so that a change
+	// to either has to be made here as well as at the constant.  muir
+	// attempts one `deliver` every `TERMINAL_CHECK` = 4,096 microcycles,
+	// and a microcycle on this board is 29 ticks of 10 ns.
+	CHECK(INPUT_KEY_INTERVAL_NS == 4096ull * 290ull,
+	      "the key interval is %llu ns, wanting 4096 microcycles of 290 ns",
+	      (unsigned long long)INPUT_KEY_INTERVAL_NS);
+
+	struct client c;
+
+	// --- (1) THE FOUR WORDS OF A SHIFTED KEYSTROKE.  `+` is the shifted
+	// plane of the `=` key, and a viewer that is not holding Shift gets
+	// the Shift worked around it: down, key down, key up, up.  The board
+	// gave `=` for this, which is the machine having kept the key and not
+	// the Shift in front of it.
+	if (open_typist(&c) == 0) {
+		expect_a_real_machine();
+		send_key(&c, '+', 1);
+		send_key(&c, '+', 0);
+		// Five intervals' worth of passes, at a step well under one, so
+		// that the pacing and not the step is what spaces the words.
+		pace(300, INPUT_KEY_INTERVAL_NS / 20);
+		CHECK(model.nkeys == 4, "%u words placed for `+`, wanting 4", model.nkeys);
+		const uint32_t w[] = {
+			word_of(024, 0),   // Shift_L down
+			word_of(0126, 0),  // the `=` key down
+			word_of(0126, 1),  // ...and up
+			word_of(024, 1)    // Shift_L up
+		};
+		want_got("the four words of `+`", w, 4);
+		CHECK(model.gap_min >= INPUT_KEY_INTERVAL_NS,
+		      "two words arrived %llu ns apart, wanting no closer than %llu",
+		      (unsigned long long)model.gap_min,
+		      (unsigned long long)INPUT_KEY_INTERVAL_NS);
+		client_close(&c);
+		settle();
+	}
+
+	// --- (2) TWENTY CHARACTERS WITH NO GAP, which is forty words: the
+	// burst that arrived as nineteen characters on the board.  They are
+	// all sent before a single pass is taken, so the whole burst is
+	// waiting when the pacing starts.
+	if (open_typist(&c) == 0) {
+		expect_a_real_machine();
+		static const char text[] = "abcdefghijklmnopqrst";
+		for (unsigned i = 0; i < 20; ++i) {
+			send_key(&c, (uint32_t)(unsigned char)text[i], 1);
+			send_key(&c, (uint32_t)(unsigned char)text[i], 0);
+		}
+		// Forty-one intervals, at a step well under one.
+		pace(1200, INPUT_KEY_INTERVAL_NS / 20);
+		CHECK(model.nkeys == 40, "%u words placed for twenty characters, wanting 40",
+		      model.nkeys);
+		CHECK(model.ngot == 40,
+		      "the machine kept %u of forty words; %lu were swallowed",
+		      model.ngot, model.swallowed);
+		CHECK(model.swallowed == 0,
+		      "%lu words reached the machine too fast to be kept, wanting none",
+		      model.swallowed);
+		// And in order, and each exactly once: the board's burst lost
+		// one and repeated another, so counting is not enough.
+		unsigned wrong = 0;
+		for (unsigned i = 0; i < model.ngot && i < 40; ++i)
+			if (model.got[i] != model.keys[i])
+				++wrong;
+		CHECK(wrong == 0, "%u of the forty words arrived out of order or changed",
+		      wrong);
+		CHECK(model.gap_min >= INPUT_KEY_INTERVAL_NS,
+		      "two of the forty arrived %llu ns apart, wanting no closer than %llu",
+		      (unsigned long long)model.gap_min,
+		      (unsigned long long)INPUT_KEY_INTERVAL_NS);
+		client_close(&c);
+		settle();
+	}
+
+	// --- and the interval is a FIELD, so that the host check can hold the
+	// mapping checks still and this one can ask for a slower machine.  A
+	// server that ignored it would pace everything at the default and this
+	// is what says it does not.
+	if (open_typist(&c) == 0) {
+		expect_a_real_machine();
+		const uint64_t slow = INPUT_KEY_INTERVAL_NS * 4;
+		srv.key_interval_ns = slow;
+		model.digest_ns = slow;
+		send_key(&c, 'a', 1);
+		send_key(&c, 'a', 0);
+		pace(400, slow / 20);
+		want_got("a slower machine", (const uint32_t[]){
+			word_of(0123, 0), word_of(0123, 1)
+		}, 2);
+		CHECK(model.gap_min >= slow,
+		      "the two words arrived %llu ns apart, wanting no closer than %llu: "
+		      "the interval the caller set was not the one used",
+		      (unsigned long long)model.gap_min, (unsigned long long)slow);
+		client_close(&c);
+		settle();
+	}
+
+	// --- ONE WORD IN FLIGHT, which is the seam's other rule and the one
+	// the fabric already keeps for itself.  It only shows against a machine
+	// that is SLOW TO NOTICE a word on its card: the interval then comes
+	// round while the card still holds the last word, and a program that
+	// went by the clock alone would place a second.  The fabric would hold
+	// it --- its queue is sixteen words --- so nothing is lost, and that is
+	// exactly why nothing but the queue's own high-water mark can see it.
+	if (open_typist(&c) == 0) {
+		expect_a_real_machine();
+		// Reads its card every third interval, and keeps everything it
+		// reads: the loss here would be of the rule, not of a word.
+		model.read_ns = INPUT_KEY_INTERVAL_NS * 3;
+		model.digest_ns = 0;
+		static const char text[] = "abcdef";
+		for (unsigned i = 0; i < 6; ++i) {
+			send_key(&c, (uint32_t)(unsigned char)text[i], 1);
+			send_key(&c, (uint32_t)(unsigned char)text[i], 0);
+		}
+		pace(1400, INPUT_KEY_INTERVAL_NS / 20);
+		CHECK(model.qmax <= 1,
+		      "the fabric's queue reached %u words, wanting no more than 1: "
+		      "a word was placed while the card still held the last",
+		      model.qmax);
+		CHECK(model.ngot == 12,
+		      "the machine kept %u of twelve words", model.ngot);
+		CHECK(model.over == 0, "%lu words were offered with no room", model.over);
+		client_close(&c);
+		settle();
+	}
+
+	// --- WHAT THE LOOP MAY SLEEP FOR.  The pacing holds a word back, and a
+	// caller that then slept its whole frame would make a keystroke cost a
+	// frame a word instead of an interval a word --- the rule paying for
+	// itself twice.  `cadr-terminal.c` shortens its poll to this.
+	if (open_typist(&c) == 0) {
+		expect_a_real_machine();
+		const uint64_t t0 = clock_ns;
+		CHECK(screen_server_key_wait_ns(&srv, t0) == 0,
+		      "a word is due with nothing waiting");
+		send_key(&c, 'a', 1);
+		pace(1, 0);
+		// One word has gone; the next is a whole interval away.
+		CHECK(srv.key_ever, "no word was placed at all");
+		const uint64_t due = screen_server_key_wait_ns(&srv, srv.key_at_ns);
+		CHECK(due == 0 || due == INPUT_KEY_INTERVAL_NS,
+		      "the wait just after a word is %llu ns, wanting %llu or nothing left "
+		      "to send", (unsigned long long)due,
+		      (unsigned long long)INPUT_KEY_INTERVAL_NS);
+		// ...and once it has gone by, the answer is "now".
+		if (key_pending(&srv.keys))
+			CHECK(screen_server_key_wait_ns(&srv,
+				srv.key_at_ns + INPUT_KEY_INTERVAL_NS) == 1,
+			      "a word whose interval has gone by is not due now");
+		client_close(&c);
+		settle();
+	}
+
+	// --- (3) THE BACKLOG GUARD, WHICH CHECKED ONE SLOT AND THEN PUSHED
+	// FOUR.  `tap`'s own comment says a keystroke beyond the backlog is
+	// "refused whole ... so that it leaves nothing down", and at
+	// `KEY_BACKLOG - 1` it was not: the Shift went down and its release
+	// was dropped, which on this keyboard is a Shift held for the rest of
+	// the machine's run.
+	{
+		struct key_state k;
+		// A queue one short of full, filled with a word that is not any
+		// of the four, so that a partial push shows as a changed tail.
+		const uint32_t filler = word_of(0177, 1);
+		key_state_init(&k);
+		k.head = 0;
+		k.count = KEY_BACKLOG - 1;
+		for (unsigned i = 0; i < KEY_BACKLOG - 1; ++i)
+			k.queue[i] = filler;
+		const unsigned long refused_before = k.refused;
+		key_event(&k, '+', 1);
+		CHECK(key_pending(&k) == KEY_BACKLOG - 1,
+		      "a shifted keystroke at one free slot pushed %u words, wanting none: "
+		      "it is refused whole or it leaves Shift down",
+		      key_pending(&k) - (KEY_BACKLOG - 1));
+		CHECK(k.queue[KEY_BACKLOG - 1] != word_of(024, 0),
+		      "a Shift went down into the last free slot and its release was dropped");
+		CHECK(k.refused == refused_before + 1,
+		      "%lu keystrokes refused, wanting 1", k.refused - refused_before);
+		CHECK(k.dropped == 0, "%lu words were dropped silently, wanting none",
+		      k.dropped);
+
+		// And the other way round: a viewer HOLDING Shift, typing a key
+		// on the plain plane, which is Shift up, key down, key up, Shift
+		// down --- four words again, and three free slots.  A partial
+		// push there leaves the machine believing Shift is UP while the
+		// viewer still holds it.
+		key_state_init(&k);
+		key_event(&k, 0xffe1u, 1);          // Shift_L down: one word
+		k.head = 0;
+		k.queue[0] = word_of(024, 0);
+		k.count = KEY_BACKLOG - 3;
+		for (unsigned i = 1; i < KEY_BACKLOG - 3; ++i)
+			k.queue[i] = filler;
+		key_event(&k, 'a', 1);
+		CHECK(key_pending(&k) == KEY_BACKLOG - 3,
+		      "a keystroke under a held Shift at three free slots pushed %u words, "
+		      "wanting none", key_pending(&k) - (KEY_BACKLOG - 3));
+		CHECK(k.dropped == 0, "%lu words were dropped silently, wanting none",
+		      k.dropped);
+	}
+}
+
 static void check_mouse(void)
 {
 	struct client c;
@@ -2180,6 +2587,9 @@ int main(int argc, char **argv)
 
 	printf("--- the keyboard: muir's mapping onto MIT's own key table\n");
 	check_keyboard();
+
+	printf("--- how fast key words may be handed over\n");
+	check_key_pacing();
 
 	printf("--- the mouse\n");
 	check_mouse();

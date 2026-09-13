@@ -811,25 +811,57 @@ void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 			++k;
 	}
 
-	// --- and the words waiting go to the fabric.
+	// --- and the words waiting go to the fabric, at the rate the machine
+	// behind it takes them.
 	//
 	// **THE QUEUE IS DRAINED HERE AND NOT WHERE THE KEY ARRIVED**, because
-	// the fabric's own queue is sixteen words and a shifted keystroke is
-	// four: a burst that filled it would otherwise be lost at the write
-	// rather than held.  `input_face_key` asks the face for room and says
-	// so, and a word it would not take stays at the head of this queue for
-	// the next pass --- which is `muir::terminal::keyboard::deliver`'s own
-	// arrangement one seam further out.
-	if (s->input) {
+	// a word the seam will not take yet has to be held somewhere, and a
+	// word held at the head of this queue goes next pass in order ---
+	// which is `muir::terminal::keyboard::deliver`'s own arrangement one
+	// seam further out.
+	//
+	// **AND IT GOES ONE WORD AT A TIME, NO FASTER THAN THE INTERVAL.**
+	// `input_face.h` has the two rules and where the number comes from.
+	// The first is the card's handshake, `input_face_key_idle`, which is
+	// `deliver`'s `if board.keyboard_ready()` read from this side.  The
+	// second is muir's `attend` cadence, and it is the one the board
+	// proved is needed: the fabric offers the card its next word about two
+	// ticks after the machine's read clears `KBD READY`, and a machine fed
+	// that fast reads every word and digests some of them --- twenty
+	// characters arrived as nineteen with the fabric's `LOST` at zero.
+	//
+	// The interval is measured on the caller's own clock, so this waits by
+	// declining to send rather than by sleeping: the loop goes round, the
+	// screen keeps being served, and the word goes on a later pass.
+	if (s->input && key_pending(&s->keys)) {
+		const uint64_t interval = s->key_interval_ns ? s->key_interval_ns
+							    : INPUT_KEY_INTERVAL_NS;
 		while (key_pending(&s->keys)) {
-			if (!input_face_key(s->input, key_peek(&s->keys))) {
+			if (s->key_ever && now_ns - s->key_at_ns < interval)
+				break;
+			if (!input_face_key_idle(s->input)
+			    || !input_face_key(s->input, key_peek(&s->keys))) {
 				++s->keys_stuck;
 				break;
 			}
 			key_took(&s->keys);
 			++s->keys_sent;
+			s->key_at_ns = now_ns;
+			s->key_ever = 1;
 		}
 	}
+}
+
+uint64_t screen_server_key_wait_ns(const struct screen_server *s, uint64_t now_ns)
+{
+	if (!s->input || !key_pending(&s->keys))
+		return 0;
+	const uint64_t interval = s->key_interval_ns ? s->key_interval_ns
+						     : INPUT_KEY_INTERVAL_NS;
+	if (!s->key_ever)
+		return 1;
+	const uint64_t gone = now_ns - s->key_at_ns;
+	return gone >= interval ? 1 : interval - gone;
 }
 
 void screen_server_close(struct screen_server *s)

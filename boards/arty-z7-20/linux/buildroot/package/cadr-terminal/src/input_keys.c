@@ -24,8 +24,16 @@
 
 static void push(struct key_state *k, uint32_t word)
 {
-	if (k->count >= KEY_BACKLOG)
+	if (k->count >= KEY_BACKLOG) {
+		// **A DROP HERE IS A CALLER THAT DID NOT RESERVE ITS BURST.**
+		// Every caller asks for room for the WHOLE keystroke before it
+		// pushes any of it, so this cannot happen; it is counted rather
+		// than ignored because the failure it stands for is silent --- a
+		// Shift down whose release was dropped is a Shift held for the
+		// rest of the machine's run.
+		++k->dropped;
 		return;
+	}
 	k->queue[(k->head + k->count) % KEY_BACKLOG] = word;
 	++k->count;
 }
@@ -238,38 +246,52 @@ static void release(struct key_state *k, uint8_t p)
 // leaves nothing down.
 static void tap(struct key_state *k, uint8_t p, int wants_shift)
 {
-	if (k->count >= KEY_BACKLOG) {
-		++k->refused;
-		return;
-	}
 	uint8_t at[4];
 	const unsigned n = shifting(SH_SHIFT, at, 4);
 	if (n == 0)
 		return;
+	// **THE WHOLE KEYSTROKE IS WORKED OUT BEFORE ANY OF IT IS PUSHED, AND
+	// THE ROOM IS ASKED FOR ONCE, FOR ALL OF IT.**  A guard that tests one
+	// free slot and then pushes four is worse than no guard at all: at the
+	// backlog it let the Shift go down and dropped its release, and this
+	// keyboard has no modifier bits --- `ukbd.lisp`, "all key-encoding ...
+	// will be done in software in the central machine" --- so a Shift the
+	// machine never saw come up is a Shift held for the rest of the run,
+	// and every character after it a different character.  Ten is the
+	// longest burst the branches below can make: four shifting keys let go
+	// around the key and put back.
+	uint32_t burst[2 * 4 + 2];
+	unsigned m = 0;
 	const uint8_t shift = at[0];
 	const int held = holding(k, SH_SHIFT);
 	if (wants_shift && !held) {
-		push(k, key_up_down(shift, 0));
-		push(k, key_up_down(p, 0));
-		push(k, key_up_down(p, 1));
-		push(k, key_up_down(shift, 1));
+		burst[m++] = key_up_down(shift, 0);
+		burst[m++] = key_up_down(p, 0);
+		burst[m++] = key_up_down(p, 1);
+		burst[m++] = key_up_down(shift, 1);
 	} else if (!wants_shift && held) {
 		// Every shift the viewer holds comes up around the key.
 		uint8_t up[4];
-		unsigned m = 0;
+		unsigned u = 0;
 		for (unsigned i = 0; i < n; ++i)
 			if (has_down(k, at[i]))
-				up[m++] = at[i];
-		for (unsigned i = 0; i < m; ++i)
-			push(k, key_up_down(up[i], 1));
-		push(k, key_up_down(p, 0));
-		push(k, key_up_down(p, 1));
-		for (unsigned i = 0; i < m; ++i)
-			push(k, key_up_down(up[i], 0));
+				up[u++] = at[i];
+		for (unsigned i = 0; i < u; ++i)
+			burst[m++] = key_up_down(up[i], 1);
+		burst[m++] = key_up_down(p, 0);
+		burst[m++] = key_up_down(p, 1);
+		for (unsigned i = 0; i < u; ++i)
+			burst[m++] = key_up_down(up[i], 0);
 	} else {
-		push(k, key_up_down(p, 0));
-		push(k, key_up_down(p, 1));
+		burst[m++] = key_up_down(p, 0);
+		burst[m++] = key_up_down(p, 1);
 	}
+	if (k->count + m > KEY_BACKLOG) {
+		++k->refused;
+		return;
+	}
+	for (unsigned i = 0; i < m; ++i)
+		push(k, burst[i]);
 }
 
 // `Keyboard::behind_prefix`: a shifting key is held for the one key that

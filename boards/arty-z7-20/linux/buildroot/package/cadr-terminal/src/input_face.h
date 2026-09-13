@@ -140,6 +140,52 @@ void input_face_flush(struct input_face *f);
 uint32_t input_face_stat(struct input_face *f);
 uint32_t input_face_lost(struct input_face *f);
 
+// ## HOW FAST WORDS MAY BE HANDED OVER
+//
+// **THE CARD'S HANDSHAKE IS NOT THE WHOLE RULE, AND THE BOARD PROVED IT.**
+// The fabric already hands the card a word only when `KBD READY` is clear ---
+// `cadr_input_cables.sv`'s `taking`, which is `muir::terminal::keyboard::
+// Keyboard::deliver`'s own gate --- so no word is ever written over one the
+// machine has not read.  That gate is about the CARD.  What is behind the
+// card is the machine's Unibus channel handler and the software behind
+// THAT, and neither of them is in any handshake this seam can see: the
+// fabric offers the next word about two ticks after the machine's read of
+// the low half clears `KBD READY`, and a machine given its keys twenty
+// nanoseconds apart reads them all and digests some of them.
+//
+// So there are two rules and the fabric implements only the first:
+//
+//   1. one word in flight --- `input_face_key_idle` below, which is
+//      `deliver`'s gate read from this side;
+//   2. and successive words no closer than `INPUT_KEY_INTERVAL_NS`, which
+//      is muir's `attend` cadence.
+//
+// **THE INTERVAL IS muir's OWN AND IS NOT TUNED TO A MEASUREMENT.**  muir
+// runs `attend` --- and so attempts one `deliver` --- every
+// `TERMINAL_CHECK` microcycles, which is 4,096 (`muir src/main.rs`), and a
+// microcycle on this board is 29 ticks of 10 ns.  So the interval is
+// 4,096 x 290 ns, and it is the rate at which the reference emulator has
+// always fed this same microcode.  muir's own comment at that delivery says
+// "a glance every check is far more often than the machine reads it", so this
+// is an upper bound on muir's rate and NOT a measured floor of what the
+// machine needs --- what recommends it is that the reference has always used
+// it and the microcode has always kept up.  The board's own passing
+// measurements --- 40 ms between key events, 50 ms between the four words of
+// a shifted keystroke --- are thirty-four times more generous, so the
+// constant is derived rather than fitted to them; what those measurements
+// establish is only that twenty nanoseconds is far too close.
+#define INPUT_KEY_MICROCYCLES 4096ull
+#define INPUT_KEY_MICROCYCLE_NS 290ull
+#define INPUT_KEY_INTERVAL_NS (INPUT_KEY_MICROCYCLES * INPUT_KEY_MICROCYCLE_NS)
+
+// Whether the seam is empty: the fabric holds no word and the card's
+// `KBD READY` is clear, so the machine has read everything handed to it and
+// the next word will go to a card that is free.  This is
+// `Keyboard::deliver`'s `if board.keyboard_ready() { return false }` read
+// from the Linux side, with the fabric's own queue counted in as well ---
+// a word still in that queue is a word already committed to the card.
+int input_face_key_idle(struct input_face *f);
+
 // One word into the card's shift register.  1 if it was queued, 0 if the
 // queue was full and the caller should keep it.
 int input_face_key(struct input_face *f, uint32_t word);

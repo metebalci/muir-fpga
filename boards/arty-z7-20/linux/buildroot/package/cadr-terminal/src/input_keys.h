@@ -106,8 +106,16 @@ static inline uint32_t key_up_down(unsigned position, int up)
 // muir's `keyboard::BACKLOG`, and for muir's reason: the keyboard's own
 // firmware has a shift register and no queue, so a viewer typing faster than
 // the machine reads has to be held somewhere, and the far end is the only
-// place with room.  The fabric holds a few more, enough that this need not
-// poll at the card's 8 us rate; this is where a burst goes.
+// place with room.  This is where a burst goes.
+//
+// **AND IT IS A LONG WAY DEEPER THAN THE FABRIC'S OWN QUEUE, WHICH IS THE
+// POINT.**  An earlier note here said the fabric held enough that this need
+// not poll at the card's 8 us rate.  The card's rate was never the constraint
+// and the fabric's sixteen words are not a buffer to type into: a word may
+// only go when the machine has taken the last AND the interval has gone by
+// --- `input_face.h`'s two rules --- so twenty characters is forty words and
+// about 48 ms, and every one of them waits here meanwhile.  Two hundred and
+// fifty-six is roughly six seconds of the fastest typing anybody does.
 #define KEY_BACKLOG 256
 
 // How many keysyms may be down at once, and how many releases may be owed.
@@ -140,6 +148,13 @@ struct key_state {
 	// What this has refused, for a status line: a press beyond the
 	// backlog, and a keysym nothing maps.
 	unsigned long refused, unbound;
+	// **AND WHAT WAS DROPPED WITHOUT BEING REFUSED, WHICH MUST STAY 0.**
+	// `push` is silent when the queue is full, so a caller that asked for
+	// room for one word and then pushed four left the machine half a
+	// keystroke --- a Shift down whose release went nowhere.  Every caller
+	// reserves the whole burst now; this counts the case that says one did
+	// not, and the check holds it at zero.
+	unsigned long dropped;
 };
 
 // `Keyboard::new`: the built-in mapping.
