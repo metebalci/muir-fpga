@@ -41,7 +41,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
-       $(BUILD)/dbgin.pass \
+       $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass \
        $(BUILD)/readout_face.pass $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
@@ -430,6 +430,15 @@ GP0 := rtl/plumbing/cadr_gp0_split.sv rtl/plumbing/cadr_gp_regs.sv \
 # beside its own check because `:=` is expanded where it is read and
 # `arty.pass`'s prerequisites are read before that.
 GP1 := rtl/plumbing/cadr_gp1_split.sv
+
+# MIT's debug cable on the two Pmod headers: the carrier and the join that
+# lets the connector and the window share one DBGIN page.  Named here for the
+# same reason GP0 and GP1 are, and it goes on EVERY board rather than only the
+# ones with a processing system, because the pins are the top level's and a
+# top-level output nothing drives is a PINMISSING.  Not in `$(MACHINE)`:
+# `cadr_machine` does not instantiate either of them, and a check that builds
+# a module nothing in it reaches is a check with a source it cannot mutate.
+DBGPMOD := rtl/plumbing/cadr_dbg_pmod.sv rtl/plumbing/cadr_dbg_join.sv
 
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
@@ -1050,15 +1059,16 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
                     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
                     $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
+                    $(DBGPMOD) \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) boards/arty-z7-20/cadr_arty.sv
+	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) boards/arty-z7-20/cadr_arty.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) \
-	    boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilinx7/cadr_probe.sv
+	    boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilinx7/cadr_probe.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GDDR=1 \
@@ -1066,7 +1076,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=1 \
@@ -1074,7 +1084,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GPROVE=2 \
@@ -1082,7 +1092,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
 # AND THE DEBUG CABLE'S TWO, AT THEIR OWN DEFAULT PARAMETERS, WHICH IS STILL
 # WORTH A PASS OF ITS OWN. Both are composed now --- `cadr_dbgin.sv` is in
 # `$(MACHINE)`, so every pass above elaborates it, and
@@ -1672,6 +1682,41 @@ $(BUILD)/obj_dbgin/Vcadr_dbgin_harness: $(DBGIN_SRC) \
 $(BUILD)/dbgin.pass: $(BUILD)/obj_dbgin/Vcadr_dbgin_harness \
                      $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_dbgin/Vcadr_dbgin_harness $(BUILD)/rtl.golden
+	@touch $@
+
+# ------------------------------------------- the debug cable on two Pmods
+#
+# `rtl/plumbing/cadr_dbg_pmod.sv` is the carrier that puts MIT's twenty-one
+# wires on eight Pmod pins, four each way, and `rtl/plumbing/cadr_dbg_join.sv`
+# is what lets the connector and the window share one DBGIN page.  Neither has
+# a muir reference --- muir has the cable and no wires --- so what holds them
+# is a property, which is the footing `cadr_axi_master.sv` is on.
+#
+# THE TESTBENCH IS THE CABLE.  The harness brings the eight wires of each
+# connector out as ports, so the check delays them, skews the strobe against
+# the data, shorts a line, crosses two and unplugs the lot.  It runs the two
+# ends on two clocks at a twelfth of a tick for the phase where that matters,
+# because a strobe sampled on a common clock is a strobe sampled against
+# itself.
+#
+# And the far half of it is the composed path: the real window, the real
+# DBGIN page, the real arbiter and the real register block, with the carrier
+# between them, so the claim is a debugger halting this machine and reading
+# its registers over eight pins rather than bits crossing a wire.
+DBG_PMOD_SRC := tb/cadr_dbg_pmod_harness.sv rtl/plumbing/cadr_dbg_pmod.sv \
+                rtl/plumbing/cadr_dbg_join.sv \
+                rtl/plumbing/cadr_debug_window.sv \
+                rtl/machine/cadr_dbgin.sv rtl/machine/cadr_console_bus.sv \
+                rtl/machine/cadr_spy_registers.sv
+
+$(BUILD)/obj_dbg_pmod/Vcadr_dbg_pmod_harness: $(DBG_PMOD_SRC) \
+                                              tb/cadr_dbg_pmod_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
+	    -Mdir $(BUILD)/obj_dbg_pmod --top-module cadr_dbg_pmod_harness \
+	    $(DBG_PMOD_SRC) $(abspath tb/cadr_dbg_pmod_tb.cpp)
+
+$(BUILD)/dbg_pmod.pass: $(BUILD)/obj_dbg_pmod/Vcadr_dbg_pmod_harness
+	$(BUILD)/obj_dbg_pmod/Vcadr_dbg_pmod_harness
 	@touch $@
 
 # ------------------------------------------------------------- the readout

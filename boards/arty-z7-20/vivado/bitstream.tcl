@@ -255,6 +255,11 @@ if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_ddr.xdc }
 # diagnostic mux reaching the carrier's latch, 23 levels, -8.772 ns on a board
 # that read +0.914 one commit earlier.
 if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
+# And the Pmod carrier's, which is the same cone with a second reader on it:
+# `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` names the frame registers of the
+# DBGIN connector's sender. Gated the same way, because with no window
+# `dbg_in_req` is tied low and the whole sender folds to constants.
+if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc }
 
 # ...and then ask the design whether that worked, rather than trusting it.
 source boards/arty-z7-20/vivado/constraints_check.tcl
@@ -280,9 +285,19 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 # entry names the WINDOW and the exemption is one register of it; what keeps
 # that honest is `assert_instance_timing` below, which fails if any other
 # register of the window carries it.
+#
+# A FIFTH WITH `DDR=1`, and it is that same cone with a second reader on it.
+# The Pmod carrier on the DBGIN connector sends the word a remote debugger
+# reads, so `cadr_dbgin.sv`'s `DBD<15:0>` now ends at a frame register outside
+# the machine as well as at the window's latch. Measured before it was
+# constrained: -9.779 ns on 3,905 endpoints, the ten worst all in that one
+# register. `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` has the argument and
+# the numbers; the DBGOUT connector's sender is NOT in this list, because what
+# feeds it is the window's own fast registers and not the machine's mux.
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
-if {$port > 0}        { lappend inside g_ddr.u_axi g_ddr.u_debug_window }
+if {$port > 0}        { lappend inside g_ddr.u_axi g_ddr.u_debug_window \
+                                      u_dbgin_pmod }
 assert_constraints_scoped $inside $tick
 
 # --- 1. did the constraints apply?
@@ -378,6 +393,11 @@ if {$port > 0} { assert_multicycle_applied $tick 16 }
 # that it reached a path at all.
 if {$port > 0} {
     assert_instance_timing $tick 4 *g_ddr.u_debug_window/* {*sts_dbd_reg*}
+    # And the Pmod carrier's, the same two halves. The frame registers of the
+    # DBGIN connector's sender may carry it; the strobe's synchroniser, the
+    # beat counter, the gap counter and the dead man may not, because a
+    # counter given four ticks to settle is a counter that no longer counts.
+    assert_instance_timing $tick 4 *u_dbgin_pmod/* {*tx_frame_reg* *tx_d_reg*}
     assert_multicycle_applied $tick 4
 }
 
