@@ -174,9 +174,19 @@ $(BUILD)/prove.pass: $(BUILD)/obj_prove/Vcadr_prove_harness
 # The pieces running together: decode, bus interface and DDR bridge, from the
 # same trace. Checked two ways --- the timing still agrees with muir, and a read
 # returns the word an earlier write put there.
+#
+# **`cadr_spy_registers.sv` AND `cadr_dbgin.sv` ARE NAMED HERE THOUGH VERILATOR
+# WOULD FIND THEM ANYWAY.**  `cadr_memory_path.sv` instantiates both and `-I`
+# resolves a module by its file name, so leaving them out built a correct
+# binary that make believed was current when either file changed.  That was
+# harmless while nothing drove them from outside; `build/unibus.pass` drives
+# the debug cable through `cadr_dbgin.sv` now, so a prerequisite that is not
+# listed is a check that silently runs yesterday's module.  Same family as the
+# build artefact carrying the old machine's PROM path.
 MEMPATH := rtl/plumbing/cadr_ddr_map.sv rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv \
            rtl/plumbing/cadr_xbus_ddr.sv rtl/machine/cadr_tv.sv rtl/machine/cadr_console_bus.sv \
            rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
+           rtl/machine/cadr_spy_registers.sv rtl/machine/cadr_dbgin.sv \
            rtl/machine/cadr_memory_path.sv
 
 $(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cpp | $(BUILD)

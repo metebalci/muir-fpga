@@ -80,15 +80,15 @@
 // first, so the debugger could program a map and then had nothing to send
 // through it.
 //
-// **NOTHING IN THE COMPOSED MACHINE MAKES A MAPPED CYCLE YET, and that is
-// said here rather than found.**  The only master muir has for one is the
-// debug cable's, `cadr_dbgin.sv`, whose request is still tied off below; the
-// console is a master but cannot address anything outside
-// `0o766000`-`0o766036`; and the processor's own cycles are not mapped by
-// `busint::decode` and must not be.  So this arm is the debuggee's half of a
-// route waiting for its master, and what drives it is `build/
-// busint_regs.pass` at the block's own seam and `build/unibus.pass` through
-// this arbiter with a master of the testbench's own.
+// **AND THE MASTER FOR ONE IS COMPOSED.**  The only master muir has for a
+// mapped cycle is the debug cable's, `cadr_dbgin.sv`, which is instantiated
+// below with `ub_foreign` half its grant; the console is a master but cannot
+// address anything outside `0o766000`-`0o766036`; and the processor's own
+// cycles are not mapped by `busint::decode` and must not be.  What drives the
+// route is `build/busint_regs.pass` at the block's own seam and
+// `build/unibus.pass` through this arbiter twice --- once on the console's
+// seam, which is the seam a foreign master presents, and once over MIT's own
+// cable, which is the master the route was built for.
 //
 // **THERE IS NO DECODE IN FRONT OF THEM, AND THAT IS DELIBERATE.**  The
 // obvious composition is one decode that hands the cycle to a slave, and it
@@ -481,17 +481,36 @@ module cadr_memory_path (
   // timeout for this master --- and the debugger's own 11.05 us is what ends
   // it.
   //
-  // **AND THE ERROR STATUS BYTE IS ZERO, WHICH IS HONEST AND NOT FINISHED.**
-  // `Machine::debug_status` is `bus_error | NOT_FREE | WRITE_THROUGH`.
-  // `bus_error` is the bus interface's own error status register at
-  // `0o766044`, which `rtl/machine/cadr_busint_regs.sv` holds and does not
-  // bring out; `-FREE` is that interface's busy, which
-  // `cadr_busint_xbus.sv` does not bring out either; and write-through mode
-  // is not built.  So the byte is zero here and `docs/debug-cable.md` says
-  // which bits it owes.  It is a PORT on `cadr_dbgin` rather than a constant
-  // inside it for the reason `build/dbgin.pass` gives: a check that hands
-  // the module the answer tests nothing, and there the byte comes from
-  // outside.
+  // **AND THE ERROR STATUS BYTE IS ASSEMBLED HERE, WHICH IS WHERE REQERR
+  // ASSEMBLES IT.**  `Machine::debug_status` is `bus_error | NOT_FREE |
+  // WRITE_THROUGH`, and the 8304 at REQERR 0B15 takes the eight nets that
+  // make it: seven are that page's own and the eighth, `-FREE`, arrives from
+  // the request logic.  In this fabric the seven are
+  // `rtl/machine/cadr_busint_regs.sv`'s `err_status` and `-FREE` is
+  // `cadr_busint_xbus.sv`'s `busy`, so this module is the page they meet on.
+  // The 74LS244 at REQERR 0C16 reads the same seven for `0o766044`, which is
+  // why they are one expression over there rather than two.
+  //
+  // **FIVE OF THE EIGHT BITS ARE REAL AND THREE ARE ZERO FOR GOOD.**  Bits 1,
+  // 2 and 4 are `XB PAR ERROR`, `LM ADR PAR ERROR` and `LM PAR ERROR`, and
+  // muir's own note on `machine::bus_error` is that "the rest of the register
+  // is parity errors, which cannot happen here".  The two NXM bits, the map
+  // error and write-through are held over there; `-FREE` is live here.
+  //
+  // The byte is a PORT on `cadr_dbgin` rather than a constant inside it for
+  // the reason `build/dbgin.pass` gives: a check that hands the module the
+  // answer tests nothing, and there the byte comes from outside.  What holds
+  // THIS join is `build/unibus.pass`, which makes each bit true by driving
+  // the machine and reads the byte back over MIT's own cable.
+
+  // `error_status::NOT_FREE`, the 8304's pin 7 and `DBD6`.
+  localparam logic [7:0] NOT_FREE = 8'o100;
+
+  logic [7:0]  regs_err_status;   // the seven this board holds
+  logic        busint_busy;       // `-FREE`, inverted
+  logic [7:0]  dbg_err_status;
+  assign dbg_err_status = regs_err_status | (busint_busy ? NOT_FREE : 8'd0);
+
   logic        dbg_req, dbg_gnt, dbg_msyn, dbg_write, dbg_ssyn;
   logic [17:0] dbg_addr;
   logic [15:0] dbg_wdata, dbg_rdata;
@@ -510,7 +529,7 @@ module cadr_memory_path (
       .dbg_in_ack      (dbg_in_ack),
       .dbd_out         (dbd_out),
       .dbd_oe          (dbd_oe),
-      .err_status      (8'd0),
+      .err_status      (dbg_err_status),
       .debuggee_reset  (debuggee_reset),
       .timeout_inhibit (timeout_inhibit),
       .dbg_req         (dbg_req),
@@ -547,7 +566,8 @@ module cadr_memory_path (
   // nothing, which the tie-off's own comment said; `cadr_dbgin` is
   // instantiated above and its grant is half of this term, so a debug cycle
   // at a window address is translated and the processor's at the same address
-  // still times out.
+  // still times out.  `build/unibus.pass` runs both and compares the word the
+  // memory port was asked for.
   logic ub_foreign;
   assign ub_foreign = dbg_gnt || con_gnt;
 
@@ -837,7 +857,8 @@ module cadr_memory_path (
       .ub_msyn    (ub_msyn),
       .ub_write   (ub_write),
       .ub_ssyn    (ub_ssyn),
-      .arb_stage  (arb_stage)
+      .arb_stage  (arb_stage),
+      .busy       (busint_busy)
   );
 
   // `ub_addr` is `busint::unibus_address`: the pages above 0o37000 of the
@@ -1022,7 +1043,8 @@ module cadr_memory_path (
       .iob_vector(iob_vector),
       .timed_out (timed_out),
       .unibus    (unibus),
-      .ub_int    (ub_int)
+      .ub_int    (ub_int),
+      .err_status(regs_err_status)
   );
 
   cadr_xbus_ddr main_memory (
