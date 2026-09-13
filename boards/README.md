@@ -29,20 +29,17 @@ works is worse than an empty directory, because somebody will run it.
 
 ## The order
 
-The Arty Z7-20 is the board and stays the board. The other three are in the
-order Mete named them on 13 September 2026, asking for "preliminary files for
-cora-z7-07s and arty-a7-100 and arty-s7-50". That was the order of his sentence
-rather than a stated priority, and it is recorded here as such.
+The Arty Z7-20 is the board and stays the board. The other three are listed
+in the order they were named when they were added, which was not a stated
+priority and should not be read as one.
 
-The Cora being first is a priority he has stated separately. His words were
-"pynq is not that important cora z7-07s more", and he wants to look at the Cora
-before the display output block starts. A board with no HDMI pulls against
-exactly that work. The Cora is also the tightest of the four by a long way, as
-the next section shows.
+The Cora comes first for two reasons. It is worth settling before the display
+output block starts, because a board with no HDMI pulls against exactly that
+work. And it is the tightest of the four by a long way, as the next section
+shows, so it is the one that would say something about the design.
 
-None of the three is urgent. Mete's words about the Cora were "nothing urgent
-but we can also support this board", and it waits behind the three blocks he
-asked to have finalised first.
+None of the three is urgent. The Cora waits behind the remote viewer, the
+bus interface and the debug cable adapter, which are finished first.
 
 ## Does the machine fit
 
