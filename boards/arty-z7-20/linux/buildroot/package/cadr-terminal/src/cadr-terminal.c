@@ -332,7 +332,21 @@ int main(int argc, char **argv)
 				blank = now_blank;
 			}
 		}
-		screen_server_poll(&srv, &frame, (int)interval_ms, monotonic_ns());
+		// **AND THE LOOP MUST NOT SLEEP PAST A KEY WORD.**  The pacing
+		// rule holds a word back until the interval has gone by, and a
+		// poll that then slept a whole frame would make a keystroke
+		// take a frame a word instead of the interval a word.  So when
+		// a word is waiting the sleep is shortened to what is left of
+		// its wait, rounded up to a millisecond, which is poll(2)'s own
+		// resolution.
+		int wait_ms = (int)interval_ms;
+		const uint64_t due = screen_server_key_wait_ns(&srv, now);
+		if (due) {
+			const int due_ms = (int)((due + 999999u) / 1000000u);
+			if (due_ms < wait_ms)
+				wait_ms = due_ms;
+		}
+		screen_server_poll(&srv, &frame, wait_ms, monotonic_ns());
 		const time_t t = time(NULL);
 		if (t - last_said >= 60
 		    && (srv.connects != said_connects || srv.input_events != said_input
@@ -340,7 +354,7 @@ int main(int argc, char **argv)
 			say("%u watching (%lu connected, %lu gone, %lu refused); %lu frames read; "
 			    "%lu rectangles Raw for %llu bytes (RRE would have been %llu), "
 			    "%lu RRE for %llu, saving %llu; %lu input events, %lu key words to "
-			    "the machine (%lu waits for room, %lu lost in the fabric), "
+			    "the machine (%lu held back for pacing or room, %lu lost in the fabric), "
 			    "%lu pointer moves, %lu keysyms nothing maps",
 			    srv.viewers, srv.connects, srv.drops, srv.refused, frame.reads,
 			    srv.rects_raw, srv.sent_raw, srv.declined_rre, srv.rects_rre,
@@ -363,8 +377,28 @@ int main(int argc, char **argv)
 	// Control down for the rest of the machine's run.
 	if (have_input) {
 		key_all_up(&srv.keys);
-		while (key_pending(&srv.keys) && input_face_key(&input, key_peek(&srv.keys)))
-			key_took(&srv.keys);
+		// **PACED LIKE ANY OTHER WORDS.**  A handful of releases handed
+		// over at once is the fault this program was fixed for, and a
+		// Shift release the machine swallowed is a Shift held for the
+		// rest of its run --- which is exactly what this loop exists to
+		// prevent.  Bounded, so that a machine which has stopped reading
+		// its keyboard cannot hold this program open: twenty releases is
+		// the most that can be owed, `KEY_MAX_DOWN`, and the allowance is
+		// many times their cost.
+		const uint64_t deadline = monotonic_ns()
+					+ 64ull * KEY_MAX_DOWN * INPUT_KEY_INTERVAL_NS;
+		while (key_pending(&srv.keys) && monotonic_ns() < deadline) {
+			if (input_face_key_idle(&input)
+			    && input_face_key(&input, key_peek(&srv.keys)))
+				key_took(&srv.keys);
+			const struct timespec gap = {
+				.tv_sec = 0, .tv_nsec = (long)INPUT_KEY_INTERVAL_NS
+			};
+			nanosleep(&gap, NULL);
+		}
+		if (key_pending(&srv.keys))
+			say("%u key words the machine would not take: it is not reading "
+			    "its keyboard", key_pending(&srv.keys));
 		input_face_buttons(&input, 0);
 	}
 	screen_server_close(&srv);
