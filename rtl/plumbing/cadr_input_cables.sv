@@ -15,11 +15,10 @@
 // `cadr_chaos_cable.sv` of the Chaosnet's cable.
 //
 // **SO THE MOUSE'S QUADRATURE ENCODER IS HERE.**  `docs/io-board.md` settled
-// that at slice two, at Mete's direction: the card takes the lines, as MIT's
-// does, and "whatever turns a USB mouse's deltas into quadrature phases is
-// fabric beside it".  A card taking ready-made deltas would be a different
-// card and `build/iob.golden` would stop being a reference for the mouse
-// half.  It cannot be in the program either: a step is
+// that at slice two: the card takes the lines, as MIT's does, and "whatever
+// turns a USB mouse's deltas into quadrature phases is fabric beside it".  A
+// card taking ready-made deltas would be a different card and
+// `build/iob.golden` would stop being a reference for the mouse half.  It cannot be in the program either: a step is
 // `muir::terminal::mouse::MOUSE_STEP_NS` = 16,000 ns of the machine's own
 // time, 32 real microseconds at this board's tick, so a program making
 // phases over `M_AXI_GP0` would be writing fifty thousand times a second.

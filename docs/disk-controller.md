@@ -468,9 +468,9 @@ are in memory for the run. A fresh start has every block's header and
 checkwords as the format lays them --- `header_of` with the code over it, the
 code over the data --- and a sector laid with others forgets that at the next
 start. **A sidecar file that persisted the two tables (`pack.meta`) was built
-at this revision and dropped, by Mete on 10 Sep, once what it preserved was
-understood.** The pack file is the only disk file on the card, and the program
-holds exactly what muir's `Unit` holds. Several things got simpler.
+at this revision and dropped once what it preserved was understood.** The
+pack file is the only disk file on the card, and the program holds exactly
+what muir's `Unit` holds. Several things got simpler.
 `pack_file.c` lost its file format, its creation on the first write-back, its
 mismatch rules (magic, version, size, a pack newer than the sidecar by mtime)
 and the flag that overrode them. `struct pack` lost five fields. The disk pack
@@ -1058,7 +1058,7 @@ sixteen and does not reach it.
 **A store miss is invisible to the CADR.** That is stated above and is worth
 repeating as a property rather than as a clue. Nothing the microcode can read
 distinguishes "the block was denied and the transfer stopped" from "the
-transfer finished". Whether it should is Mete's to decide, the board having no
+transfer finished". Whether it should is an open decision, the board having no
 such condition and the store being this fabric's own invention. But a driver
 that denies a block silently truncates a transfer, and the CADR runs on.
 

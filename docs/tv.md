@@ -195,9 +195,9 @@ enables the display's interrupt, and this paragraph is where that is
 written down.
 
 **The frame is 3,091,200 ticks, and since 2026-09-11 that is 30.912 real
-milliseconds and not 15.456.** Mete decided that day to stop chasing timing
-closure and make a tick longer instead: 6.25 ns that morning and 10 ns the
-same afternoon, when a one-character change to a multiplexer cost a third of a
+milliseconds and not 15.456.** That day the tick was made longer instead of
+timing closure being chased: 6.25 ns that morning and 10 ns the same
+afternoon, when a one-character change to a multiplexer cost a third of a
 nanosecond and the memory-on board stopped closing again. So the fabric runs
 at 100 MHz and the machine at 50% of the speed the hardware ran. Every tick
 count in the design is unchanged --- this module's `FRAME_T` among them --- so
@@ -205,8 +205,8 @@ the machine's own time is exactly what it was and not one golden trace moved.
 What it costs is that the vertical interrupt arrives at **32.35 Hz where the
 display board scanned at 64.70**, and MIT's microcode uses that interrupt as
 its roughly-sixty-cycle clock for mouse tracking and the scheduler's sequence
-break. So the machine's idea of a second is 50% of one. **Mete's decision is
-that this keeps agreeing with muir for now**, because the checks are the
+break. So the machine's idea of a second is 50% of one. **It is decided that
+this keeps agreeing with muir for now**, because the checks are the
 backbone of this project and nothing built yet needs the time of day. **And
 undoing it is still one constant.** A real frame is exactly 1,545,600 ticks, a
 whole number, so restoring real time here means changing `FRAME_T` and nothing
@@ -466,9 +466,9 @@ ticks, so at the 10 ns tick built today the same requirements read 10.000 and
 `rtl/plumbing/xilinx7/cadr_machine.xdc`'s new clause did exactly what its
 comment says.
 
-**Both boards close at the 10 ns tick.** Mete decided on 2026-09-11 to stop
-treating timing closure as something to chase and divide the MMCM's 1000 MHz
-VCO by 10 rather than 5 --- one parameter in
+**Both boards close at the 10 ns tick.** On 2026-09-11 timing closure stopped
+being something to chase and the MMCM's 1000 MHz VCO was divided by 10 rather
+than 5 --- one parameter in
 `boards/arty-z7-20/cadr_arty.sv`, nothing under `rtl/`. It went to 6.25 first
 and to 10 the same afternoon, when a one-character change to a multiplexer
 cost a third of a nanosecond and the memory-on board stopped closing again.

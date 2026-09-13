@@ -17,8 +17,8 @@ at what it draws. **It needs no new fabric to fix that**, which is why this
 came next. `rtl/machine/cadr_tv.sv` keeps no frame buffer of its own. A cycle
 to the window at `0o17000000` is answered by main memory's bridge, at the
 display's own base in PS DDR3. So the picture the machine draws is 92,448
-bytes of ordinary DDR, and Linux can map it. Mete asked for the screen first
-and the keyboard and mouse later, when the I/O board exists.
+bytes of ordinary DDR, and Linux can map it. The screen comes first and the
+keyboard and mouse later, when the I/O board exists.
 
 ## What it is, and what it is not
 

@@ -28,14 +28,15 @@
 # --- a semicolon, not an `&&` --- so when uenvcmd fails, U-Boot goes on to
 # `cp_kernel2ram`, which is `mmcinfo && fatload mmc 0 ${netstart}
 # ${kernel_img}`, and boots the card's `image.ub` with Digilent's own device
-# tree and 512 MB: a Linux that owns the CADR's memory.  Mete decided the board
-# must never do that --- better stuck than wrong.  This U-Boot has no `while`,
-# so the way to wait is to reboot and try again, and the way to make that
-# certain is to REPLACE THE FALLBACK'S OWN COPY STEP: this file is imported
-# before `default_bootcmd` runs, so the line below is what `run cp_kernel2ram`
-# finds.  A fetch that fails therefore ends in `resetting ...`, U-Boot's
-# banner ten seconds later, and another try, for as long as the server is
-# away; the first boot that completes is the reserved one.
+# tree and 512 MB: a Linux that owns the CADR's memory.  It is decided that
+# the board must never do that --- better stuck than wrong.  This U-Boot has
+# no `while`, so the way to wait is to reboot and try again, and the way to
+# make that certain is to REPLACE THE FALLBACK'S OWN COPY STEP: this file is
+# imported before `default_bootcmd` runs, so the line below is what
+# `run cp_kernel2ram` finds.  A fetch that fails therefore ends in
+# `resetting ...`, U-Boot's banner ten seconds later, and another try, for as
+# long as the server is away; the first boot that completes is the reserved
+# one.
 #
 # `|| reset` on the end of uenvcmd was tried first and IS NOT ENOUGH: when the
 # server's host is up but nothing listens, this U-Boot prints "TFTP server

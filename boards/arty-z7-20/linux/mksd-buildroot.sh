@@ -72,13 +72,13 @@
 #
 # So **1 GB is the absolute minimum** and one pack fits on far less than
 # that, while **4 GB takes a full bay of eight**, which is 2,056 MiB of
-# packs.  Nobody runs eight.  64 MiB of boot partition is Mete's decision
-# and it is the default on every card: the seven files are 11.3 MiB, so it
-# is six times what they need and leaves room for a second bitstream and a
-# second kernel beside them.  The whole default image is 2,625 MiB.  A bigger card leaves the rest of itself
-# unused, which costs nothing and is not worth a resize step at first boot;
-# set PACKS_MB to the card you have if you want all of it, and remember that
-# `dd` writes every byte of whatever size you ask for.
+# packs.  Nobody runs eight.  64 MiB of boot partition is decided and it is
+# the default on every card: the seven files are 11.3 MiB, so it is six times
+# what they need and leaves room for a second bitstream and a second kernel
+# beside them.  The whole default image is 2,625 MiB.  A bigger card leaves
+# the rest of itself unused, which costs nothing and is not worth a resize
+# step at first boot; set PACKS_MB to the card you have if you want all of
+# it, and remember that `dd` writes every byte of whatever size you ask for.
 #
 # THE CARD CARRIES EVERYTHING AND BOOTS ON ITS OWN; the server directory is
 # this project's convenience.  Which path the loader takes is decided by the
@@ -319,10 +319,10 @@ done
 # in it, so neither program has one, and what is left is two numbers and a
 # list of peers.
 #
-# **THE NUMBERS ARE THE SAME ON EVERY CARD, RELEASE INCLUDED** (Mete, 12 Sep:
-# "we can keep the port numbers same, actually we can also keep addresses
-# same, since it is a private subnet").  Subnet 0o376 is private in the way
-# 192.168 is, so two boards out of the box do not collide with anybody.
+# **THE NUMBERS ARE THE SAME ON EVERY CARD, RELEASE INCLUDED**: the port
+# numbers and the addresses alike, since it is a private subnet.  Subnet
+# 0o376 is private in the way 192.168 is, so two boards out of the box do not
+# collide with anybody.
 # **ONLY THE PEER IS PRIVATE**, because it names a real host on a real
 # network: it comes from `local.conf`, the same rule and the same file as
 # SERVERIP, and a card built without one gets an empty peers file that says
@@ -358,7 +358,7 @@ echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -
 
 # --------------------------------------------------------- muir's file of flags
 #
-# The debugger is the word `muir` and nothing else (Mete, 12 Sep).  muir reads
+# The debugger is the word `muir` and nothing else.  muir reads
 # --config if it is given, else `.muirrc` in the directory it was run from,
 # else `.muirrc` in the home directory --- the FIRST of those and not all of
 # them --- and a flag typed on the command line still wins over the file.  So
