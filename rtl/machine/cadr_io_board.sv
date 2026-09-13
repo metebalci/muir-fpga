@@ -612,6 +612,14 @@ module cadr_io_board (
   assign s_rx_on  = (s_cmd[2] || s_local) && s_rxclk;
   assign s_rx_runs = s_rx_on && s_dcd;
   assign s_tx_ready = s_tx_on && !s_thr_full;
+  // SR0 and SR2 are "valid only when the transmitter is enabled", so `CR0`
+  // masks the flag here as `Pci::status` and `pci_sr2` both mask it.
+  // **AND THE MASK IS NOW UNREACHABLE-TRUE, WHICH IS A MEASURED EQUIVALENCE
+  // AND NOT A HOLE.**  The only thing that sets `s_tx_empty` is gated by
+  // `s_tx_on`, which implies `s_cmd[0]`, and every path that clears `CR0`
+  // clears the flag with it, so `s_tx_empty` without `s_cmd[0]` cannot
+  // happen and a mutation dropping this term survives.  It stays because it
+  // is the sheet's own sentence at the place the sheet says it.
   assign s_tx_empty_vis = s_cmd[0] && s_tx_empty;
 
   assign ser_status = {s_dsr, s_dcd, s_errors, s_tx_empty_vis || s_dschg, s_rx_ready, s_tx_ready};
@@ -1067,7 +1075,9 @@ module cadr_io_board (
         s_dcd_was <= s_dcd;
       end
       // Its shift register's two edges, which are the baud-rate generator's
-      // and so the far end's.  `Pci::transmit`, written out.
+      // and so the far end's.  `Pci::transmit`, written out --- except for
+      // `TxEMT`, where muir's own two models of this chip disagree and the
+      // sheet decides.  The note at the flag below is that argument.
       if (ser_tx_done && s_shifting) begin
         s_shifting <= 1'b0;
         if (s_local) begin
@@ -1078,7 +1088,36 @@ module cadr_io_board (
           ser_tx_strobe <= 1'b1;
           ser_tx_data   <= s_shift & s_mask;
         end
-        if (!(s_thr_full && s_tx_on && s_cts)) s_tx_empty <= 1'b1;
+        // `TxEMT`, AND THE TRANSMITTER HAS TO BE ON FOR IT TO RISE.  The
+        // command register: "If the transmitter is disabled, it will
+        // complete the transmission of the character in the transmit shift
+        // register (if any) prior to terminating operation.  The TxD output
+        // will then remain in the marking state (High) while TxRDY and
+        // TxEMT will go High (inactive)" --- High is inactive on both, so
+        // the drain that FOLLOWS a disable leaves the flag down, and it is
+        // still down at the next enable: "TxEMT will not go active until at
+        // least one character has been transmitted", SR0 being "initially
+        // set when the transmitter is enabled by CR0".
+        //
+        // **THIS IS WHAT LETS A PROGRAM TRANSMIT TWICE.**  `serial.lisp`'s
+        // `INTR-OUTDEV` ends a burst by writing the command register with
+        // `TxEN` cleared, and the last character is still in the shift
+        // register when it does.  A flag raised by that drain is invisible
+        // while the transmitter is off and is presented the instant the
+        // next `format` turns it back on --- with the holding register
+        // empty, so nothing can clear it --- and MIT's RANDOM channel,
+        // first in the walk on vector `0o264`, then matches every interrupt
+        // and OUTPUT never loads a character.  One burst a boot, which is
+        // what the board did.  `tb/cadr_gp0_split_tb.cpp` runs two bursts
+        // at 9600 and at 300 baud and fails without this term.
+        //
+        // muir's `Pci::transmit` sets the flag here whatever the
+        // transmitter is doing, and its `status()` masks it with `CR0`, so
+        // the flag survives a disable there; muir's own netlist-level 2651
+        // in `src/part.rs` raises it only inside `if tx_on`, which is this.
+        // The two models disagree and the sheet settles it; `docs/io-board.md`
+        // carries the reading and an issue asks muir to take the same one.
+        if (s_tx_on && !(s_thr_full && s_cts)) s_tx_empty <= 1'b1;
       end
       if (ser_tx_take && s_thr_full && s_tx_on && s_cts && (!s_shifting || ser_tx_done)) begin
         s_shifting <= 1'b1;
@@ -1363,6 +1402,12 @@ module cadr_io_board (
                   // and `RxRDY` clears "when the receiver is disabled by
                   // CR2".
                   if (!cmd_rx_on) s_rx_ready <= 1'b0;
+                  // The other half of the disable's sentence --- "TxRDY and
+                  // TxEMT will go High (inactive)" --- for the case the
+                  // drain's own `s_tx_on` gate cannot reach: a handler
+                  // slower than the frame finds `TxEMT` already up and
+                  // turns the transmitter off with it standing.  Neither
+                  // term is the rule alone.
                   if (!ub_wdata[0]) s_tx_empty <= 1'b0;
                 end
               endcase

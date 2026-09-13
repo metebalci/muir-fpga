@@ -951,6 +951,52 @@ driver's output channel must reload. A frame that ends early means the
 catch-all absorbs the interrupt the output channel was meant to have, and the
 machine sends one character and then spins in its interrupt handler.
 
+**And the frame is only half of what keeps that channel off the
+transmitter's back. The other half is what `TxEMT` does across a turn-off.**
+MIT's output channel ends a burst by writing the command register with `TxEN`
+cleared, and the last character is still in the shift register when it does.
+The sheet answers that case directly. SCN2661/SCN68661, the command register:
+"If the transmitter is disabled, it will complete the transmission of the
+character in the transmit shift register (if any) prior to terminating
+operation. The TxD output will then remain in the marking state (High) while
+TxRDY and TxEMT will go High (inactive)." High is inactive on both. So the
+drain that follows a disable does not raise `TxEMT`, and a disable that finds
+it already up takes it down. At the next enable it is therefore still down:
+"TxEMT will not go active until at least one character has been transmitted",
+with `SR0` "initially set when the transmitter is enabled by CR0".
+
+A card that raises the flag on that drain sends exactly one burst per boot.
+The flag is invisible while `CR0` is clear, so nothing shows between the two
+transmissions. The next one writes `CR0` back, and `SR2` is presented at
+once. The holding register is empty, so nothing can clear it. The catch-all
+channel then matches every interrupt for ever and the output channel never
+loads a character. The machine spins in its interrupt handler, with the
+keyboard starved behind it on the card's priority chain. The status register
+reads `0o305` there, which is `DSR`, `DCD`, `TxRDY` and `SR2`, and the
+command register reads `0o47`.
+
+`rtl/machine/cadr_io_board.sv` does two things that sentence asks for. It
+gates the drain's flag on the transmitter being on. It clears the flag when
+`CR0` is written clear. Neither is the rule on its own, because where the
+driver's turn-off lands relative to the drain depends on how quickly its
+handler runs. `tb/cadr_gp0_split_tb.cpp` runs MIT's walk through two
+transmissions with the turn-off between them, at 9600 baud and at 300. Two
+mutation records break one term each.
+
+**muir's two models of this chip disagree here and the sheet decides.** Its
+behavioural `serial::Pci::transmit` raises the flag whenever the shift
+register runs out, whatever the transmitter is doing. Its `status()` masks
+the flag with `CR0`, so the flag survives a disable and is presented at the
+next enable. Its netlist-level 2651 in `src/part.rs` raises the flag only
+inside `if tx_on`, and so agrees with the sheet. Driving muir's own `IoBoard`
+through MIT's walk twice, unmodified, wedges on the second burst with the
+status register reading `0o305`. That is the board's own value.
+`build/iob.pass` compares this card against the behavioural model over
+82,509,813 ticks and cannot see the difference. Nothing in that trace
+disables a transmitter with a character still in its shift register and then
+enables it again. An issue records the finding for muir. Nothing here changes
+muir.
+
 What the programs owe is therefore frames and characters, and no seam pulse at
 all. The Chaosnet program reads `chaos_csr` --- which its own face carries in
 the top half of a status word --- for Loop Back and Spy.

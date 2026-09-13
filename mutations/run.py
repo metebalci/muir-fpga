@@ -803,20 +803,31 @@ CHECKS = {
     # asserted: each of the four answers with something only it can answer, so
     # the sweep reads the routing off the reply.
     #
-    # The harness, the default slave, the pack side and the card are `extra`
-    # rather than `sources`: each of the last three has a check of its own and
-    # records aimed at it there, and the harness is wiring.  What is aimed
-    # here is the four files nothing else builds.
+    # The harness, the default slave and the pack side are `extra` rather than
+    # `sources`: the last two have a check of their own and records aimed at
+    # them there, and the harness is wiring.  What is aimed here is the four
+    # files nothing else builds --- and the card, for the one reason below.
     "gp0_split": {
+        # `cadr_io_board.sv` MOVED FROM `extra` INTO `sources`, which is the
+        # rule `bus_audit`'s entry states: a record aimed at a file has to
+        # name a check that BUILDS it in `sources`.  The card is otherwise
+        # `iob`'s to hold against muir, and two records about `TxEMT` across a
+        # driver's turn-off are aimed here instead.  One of them is invisible
+        # to `iob` by construction: muir's `Pci::transmit` raises the flag on
+        # a drain whatever the transmitter is doing, so a trace generated from
+        # muir cannot object to a card that does the same, and `iob` is green
+        # over all 82,509,813 ticks with that term deleted.  The other, the
+        # clear at the disable, `iob` does catch --- both are measured in the
+        # records' own notes.  What sees the pair is this check, where MIT's
+        # channel walk runs against the card and the line together.
         "sources": [
             "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
             "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
-            "rtl/plumbing/cadr_input_cables.sv",
+            "rtl/plumbing/cadr_input_cables.sv", "rtl/machine/cadr_io_board.sv",
         ],
         "extra": ["tb/cadr_gp0_split_harness.sv",
                   "rtl/plumbing/cadr_gp0_default.sv",
-                  "rtl/plumbing/cadr_disk_pack.sv",
-                  "rtl/machine/cadr_io_board.sv"],
+                  "rtl/plumbing/cadr_disk_pack.sv"],
         "top": "cadr_gp0_split_harness",
         "tb": "tb/cadr_gp0_split_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
