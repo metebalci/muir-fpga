@@ -11686,3 +11686,104 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
       if (ub_md_take) md <= {ub_md_data[15:0], ub_md_data[31:16]};
 @end
+
+@mutation the-acknowledgement-stops-holding-read-in-progress-down
+@check park
+@file rtl/machine/cadr_microcycle.sv
+@note -RDFINISH is -MEMACK through the TD50 and TD250 at VCTL1 1D23/1D22,
+@note which are DELAY LINES: they carry the whole waveform, so while -MEMACK
+@note stands its delayed copy stands and READ IN PROGRESS is held cleared.
+@note This takes that away and leaves only the countdown loaded at the
+@note acknowledgement's rising edge, which is what the module had until this
+@note deadlock was met on silicon.
+@note
+@note What it costs is not a wrong number anywhere: every cycle a RUNNING
+@note machine makes is identical, because the acknowledgement always falls
+@note there. It costs a halted machine, whose frozen MEMSTART stands -MEMRQ
+@note and holds the interface acknowledging: the next single step arms READ
+@note IN PROGRESS off that frozen MEMSTART with the countdown zeroed and no
+@note second rising edge left to fall, so -HANG parks the ring, a parked
+@note ring makes no master clock, no grant can be taken, no acknowledgement
+@note can arrive, and no console write can land. Only a reset is left.
+@note
+@note Six checks, two processor traces and a hardware capture pass over it,
+@note because none of them halts the machine. CC's entry does, and it was
+@note wedging one entry in three on the board.
+@note
+@note Caught at the second halt of the sweep, before CC is reached at all:
+@note "halt k=2: the ring is parked --- no master clock for 4909 ticks, at
+@note PC 313 memstart 0 rdcyc 1 -MEMRQ 1 -MEMGRANT 1 -MEMACK 1 MBUSY 0".
+@note Not caught by ddr_boot, machine, map_access, map_boot, md_compose,
+@note md_hold, md_hold_sys, microcycle, microcycle_sys, probe, readout or
+@note sstep, each of which builds this file.
+@old
+        end else if (rdfinish_level) begin
+          rd_in_progress <= 1'b0;
+        end
+@new
+        end else if (rdfinish_level && 1'b0) begin
+          rd_in_progress <= 1'b0;
+        end
+@end
+
+@mutation the-acknowledgement-stops-holding-mbusy-down
+@check park
+@file rtl/machine/cadr_microcycle.sv
+@note The other half of the same delay line: -MFINISHD is the 30 ns tap and
+@note MBUSY "clears on MEMACK or RESET" through it. With only the one-shot
+@note countdown, a step taken on a halted machine sets MBUSY off the frozen
+@note MEMSTART and nothing clears it, so -MEMRQ stands for ever on MBUSY
+@note itself, the bus interface never leaves ACKED, and MBUSY.SYNC holds the
+@note first -WAIT term up: the machine cannot be started again even though
+@note the ring is still turning. The check reads that as a machine that did
+@note not restart rather than as a parked ring, and the two are different
+@note failures of the same defect.
+@note
+@note **AND IT SURVIVED THE CHECK AS FIRST WRITTEN**, which is why the check
+@note now asks a second thing of a restarted machine. With only the READ IN
+@note PROGRESS half of the fix the ring never parks, microcycles retire and
+@note the console answers --- so a check that asks only whether the machine
+@note is alive calls this healthy, while every memory cycle is being
+@note acknowledged before it has happened. What catches it is
+@note "halt k=2: -MEMRQ never fell in 4,000 ticks of a running machine ---
+@note the bus was never let go, at PC 311 ... -MEMACK 0 MBUSY 1", and the
+@note line after it about -MEMACK standing. Not caught by ddr_boot, machine,
+@note map_access, map_boot, md_compose, md_hold, md_hold_sys, microcycle,
+@note microcycle_sys, probe, readout or sstep.
+@old
+        end else if (mfinishd_level) begin
+          mbusy <= 1'b0;
+        end
+@new
+        end else if (mfinishd_level && 1'b0) begin
+          mbusy <= 1'b0;
+        end
+@end
+
+@mutation the-standing-acknowledgement-is-read-off-the-grant
+@check park
+@file rtl/machine/cadr_microcycle.sv
+@note The delayed level has to be made of -MEMACK and not of -MEMGRANT, and
+@note the two are easy to confuse: the interface asserts -MEMGRANT in
+@note GRANTED, UB and ACKED, so it is up for the whole cycle and -MEMACK
+@note only for the end of it. Read off the grant, the level is asserted from
+@note the moment the bus is taken, so the first tick at which a countdown is
+@note zero clears READ IN PROGRESS and MBUSY while the slave is still being
+@note waited for.
+@note
+@note Every signal stays read, so this is the check's to catch and not
+@note lint's.
+@note
+@note It is caught by the check's own GUARD rather than by its property, and
+@note that is worth saying plainly: clearing READ IN PROGRESS at the grant
+@note breaks memory cycles so thoroughly that no halt in the sweep ever
+@note freezes MEMSTART up on a read, and the line that fails is "no halt in
+@note the sweep froze MEMSTART up on a read, so the hazard was never reached
+@note and this check proves nothing". That guard is there because a check
+@note whose stimulus stopped reaching the hazard would otherwise pass in
+@note silence, and here it is doing exactly the job it was put there for.
+@old
+  assign ack_standing   = !n_memack && !memack_edge;
+@new
+  assign ack_standing   = !n_memgrant && !memack_edge;
+@end
