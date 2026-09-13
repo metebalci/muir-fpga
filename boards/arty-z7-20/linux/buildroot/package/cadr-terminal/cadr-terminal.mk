@@ -12,9 +12,13 @@
 # What is in it:
 #
 #   cadr-terminal       maps the display's region of DDR and serves it over
-#                       RFB, RFC 6143, to a VNC viewer; read-only.
-#                       src/cadr-terminal.c's header says how, and
-#                       src/screen_geom.h is the geometry with its sources
+#                       RFB, RFC 6143, to a VNC viewer --- and carries the
+#                       viewer's keys and pointer the other way, onto the
+#                       I/O board's keyboard and mouse cables through the
+#                       fourth page of `M_AXI_GP0`.  src/cadr-terminal.c's
+#                       header says how, src/screen_geom.h is the geometry
+#                       with its sources, and src/input_keys.h is muir's own
+#                       key mapping with the three things it cannot map
 #   S85cadr-terminal    starts it at boot, its log on the console
 #
 # **AND AN INIT SCRIPT, WHERE cadr-console HAS NONE.**  The console is a
@@ -32,10 +36,20 @@
 # the build directory.  package/cadr-common/cadr-common.mk's header has the
 # argument in full.
 #
+# **AND src/input_keymap.h IS GENERATED, BY src/keymap_from_muir.py, WHICH NO
+# BUILD RUNS.**  MIT's key table is ninety-nine entries and muir's default
+# mapping is sixty-one bindings, and a transcription error in either is a key
+# that types the wrong character on one position in a hundred --- so the
+# generator reads muir's own `keyboard.rs` and `default.keys` and writes them
+# out as C.  It is not a build step because it needs muir beside the tree,
+# which neither Buildroot nor CI has: the output is committed, its header
+# names the muir commit it came from, and that file says how to move it.
+#
 # And `make -C src check` on the build host, which needs nothing but a C
 # compiler and python3: the server driven from screens made here, with a
-# viewer written for the purpose on a loopback socket, and then every record
-# in src/screen_mutations.txt, each of which the check must fail on.
+# viewer written for the purpose on a loopback socket and a model of the
+# input face behind two function pointers, and then every record in
+# src/screen_mutations.txt, each of which the check must fail on.
 
 CADR_TERMINAL_VERSION = 0
 CADR_TERMINAL_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-terminal/src

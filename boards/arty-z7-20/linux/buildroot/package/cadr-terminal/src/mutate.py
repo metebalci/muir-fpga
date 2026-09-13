@@ -27,8 +27,10 @@ import shutil
 import subprocess
 import sys
 
-CORE = ["screen_frame.c", "screen_rfb.c", "screen_server.c"]
-HEADERS = ["screen_geom.h", "screen_frame.h", "screen_rfb.h", "screen_server.h"]
+CORE = ["screen_frame.c", "screen_rfb.c", "screen_server.c",
+        "input_face.c", "input_keys.c"]
+HEADERS = ["screen_geom.h", "screen_frame.h", "screen_rfb.h", "screen_server.h",
+           "input_face.h", "input_keys.h", "input_keymap.h"]
 COMMON = ["cadr_log.c", "cadr_mem.c"]
 
 

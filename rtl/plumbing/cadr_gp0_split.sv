@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The splitter on `M_AXI_GP0`: which of four slaves a transaction is for.
+// The splitter on `M_AXI_GP0`: which of five slaves a transaction is for.
 //
 // **WHY THERE WAS ONLY EVER ONE SLAVE ON THIS PORT, AND WHY THAT HAD TO
 // CHANGE.**  A read on `M_AXI_GP0` that nothing in the fabric answers does
@@ -16,27 +16,29 @@
 // slave answering a gigabyte is the cheapest way to keep that rule, and it
 // is why the console went to `M_AXI_GP1` rather than share GP0.
 //
-// Three faces want the port now --- the pack side, the Chaosnet cable and
-// the serial line, the last two being the I/O board's two cables and so one
-// card --- and a third `M_AXI_GP` does not exist.  This is the decode that
-// lets them share it **without any address falling through**: three 4 KB
-// pages, and a fourth port for the rest of the gigabyte.
+// Four faces want the port now --- the pack side, and the I/O board's three
+// far ends: the Chaosnet cable, the serial line, and the keyboard's cable
+// with the mouse's --- and a third `M_AXI_GP` does not exist.  This is the
+// decode that lets them share it **without any address falling through**:
+// four 4 KB pages, and a fifth port for the rest of the gigabyte.
 //
 //     0x4000_0000   the pack side          `cadr_disk_pack.sv`
 //     0x4000_1000   the Chaosnet cable     `cadr_chaos_cable.sv`
 //     0x4000_2000   the serial line        `cadr_serial_line.sv`
+//     0x4000_3000   the keyboard and mouse `cadr_input_cables.sv`
 //     everything else                      `cadr_gp0_default.sv`
 //
-// The three bases are the ones `chaos_face.h` and `serial_face.h` already
-// assume and the one the pack side already has, so no program moves.  Each
-// is a parameter: a face that moves moves here and in one `#define`.
+// Three of the bases are the ones `chaos_face.h` and `serial_face.h` already
+// assume and the one the pack side already has, so no program moves; the
+// fourth was the first free page above them.  Each is a parameter: a face
+// that moves moves here and in one `#define`.
 //
 // **THE DEFAULT PORT MUST BE CONNECTED, AND LINT IS WHAT SAYS SO.**  This
 // module cannot answer a page nothing is behind --- it has no word of its own
 // --- so the promise "every address is answered" is a promise about the
 // composition and not about this file.  What keeps it is that an unconnected
 // port on the instantiation is a PINMISSING: the same thing that stopped
-// `arty.pass` when `dev_wdata` was connected to nothing.  The fourth port
+// `arty.pass` when `dev_wdata` was connected to nothing.  The last port
 // carries no address, no length and no write data, because what answers
 // there answers without looking at one; that is `cadr_gp0_default.sv`'s own
 // property and this is the shape of it.
@@ -74,8 +76,8 @@
 // path that was four logic levels off a register, the hard block's setup
 // being most of the tick.
 //
-// **THE PAGE IS THIS MODULE'S AND THE OFFSET IS THE SLAVE'S.**  The two new
-// faces are handed twelve bits of address --- the offset within their page
+// **THE PAGE IS THIS MODULE'S AND THE OFFSET IS THE SLAVE'S.**  The three
+// card faces are handed twelve bits of address --- the offset within a page
 // --- and not the whole of it, so a face cannot answer outside the page it
 // was given however wide its own match is.  That is the shape
 // `tv-answers-its-neighbours` failed at: a mutation downstream of a guard
@@ -103,18 +105,19 @@
 // where the length says --- and to read-back: an address written and read
 // again gives back what the slave the map names holds, and no other slave
 // saw the transaction at all.  `tb/cadr_gp0_split_tb.cpp` sweeps the whole
-// gigabyte with four slaves behind the splitter, each answering with
+// gigabyte with five slaves behind the splitter, each answering with
 // something only it can answer, and counts every handshake on every one of
-// the five faces.
+// the six faces.
 
 `default_nettype none
 
 module cadr_gp0_split #(
-    // The three pages.  `cadr_disk_pack.sv`'s own `REG_BASE` default, and
-    // the two the Linux headers assume.
+    // The four pages.  `cadr_disk_pack.sv`'s own `REG_BASE` default, the two
+    // the Linux headers assume, and the first page free above them.
     parameter logic [31:0] PACK_BASE  = 32'h4000_0000,
     parameter logic [31:0] CHAOS_BASE = 32'h4000_1000,
-    parameter logic [31:0] SER_BASE   = 32'h4000_2000
+    parameter logic [31:0] SER_BASE   = 32'h4000_2000,
+    parameter logic [31:0] INPUT_BASE = 32'h4000_3000
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -227,6 +230,33 @@ module cadr_gp0_split #(
     input  var logic        ser_rvalid,
     output var logic        ser_rready,
 
+    // --- the keyboard's cable and the mouse's, the offset in their page ---
+    output var logic [11:0] in_awaddr,
+    output var logic [3:0]  in_awlen,
+    output var logic [11:0] in_awid,
+    output var logic        in_awvalid,
+    input  var logic        in_awready,
+    output var logic [31:0] in_wdata,
+    output var logic [3:0]  in_wstrb,
+    output var logic        in_wlast,
+    output var logic        in_wvalid,
+    input  var logic        in_wready,
+    input  var logic [1:0]  in_bresp,
+    input  var logic [11:0] in_bid,
+    input  var logic        in_bvalid,
+    output var logic        in_bready,
+    output var logic [11:0] in_araddr,
+    output var logic [3:0]  in_arlen,
+    output var logic [11:0] in_arid,
+    output var logic        in_arvalid,
+    input  var logic        in_arready,
+    input  var logic [31:0] in_rdata,
+    input  var logic [1:0]  in_rresp,
+    input  var logic [11:0] in_rid,
+    input  var logic        in_rlast,
+    input  var logic        in_rvalid,
+    output var logic        in_rready,
+
     // --- everything else, which answers without looking at an address -----
     output var logic [11:0] dflt_awid,
     output var logic        dflt_awvalid,
@@ -250,26 +280,29 @@ module cadr_gp0_split #(
     output var logic        dflt_rready
 );
 
-  // The four, one hot.  One hot because the selection then muxes in one LUT
+  // The five, one hot.  One hot because the selection then muxes in one LUT
   // level a bit, and because "exactly one" is a property a reader can see:
   // `target()` returns exactly one bit on every input, including the inputs
   // nothing names.
   localparam int unsigned T_PACK  = 0;
   localparam int unsigned T_CHAOS = 1;
   localparam int unsigned T_SER   = 2;
-  localparam int unsigned T_DFLT  = 3;
-  localparam logic [3:0] SEL_PACK  = 4'b0001;
-  localparam logic [3:0] SEL_CHAOS = 4'b0010;
-  localparam logic [3:0] SEL_SER   = 4'b0100;
-  localparam logic [3:0] SEL_DFLT  = 4'b1000;
+  localparam int unsigned T_INPUT = 3;
+  localparam int unsigned T_DFLT  = 4;
+  localparam logic [4:0] SEL_PACK  = 5'b00001;
+  localparam logic [4:0] SEL_CHAOS = 5'b00010;
+  localparam logic [4:0] SEL_SER   = 5'b00100;
+  localparam logic [4:0] SEL_INPUT = 5'b01000;
+  localparam logic [4:0] SEL_DFLT  = 5'b10000;
 
   // Which slave a page belongs to.  Used at two places below --- once on the
   // write address and once on the read --- which is two instances in fabric
   // and is the point: see the header.
-  function automatic logic [3:0] target(input logic [31:12] page);
+  function automatic logic [4:0] target(input logic [31:12] page);
     if (page == PACK_BASE[31:12]) return SEL_PACK;
     else if (page == CHAOS_BASE[31:12]) return SEL_CHAOS;
     else if (page == SER_BASE[31:12]) return SEL_SER;
+    else if (page == INPUT_BASE[31:12]) return SEL_INPUT;
     else return SEL_DFLT;
   endfunction
 
@@ -283,7 +316,7 @@ module cadr_gp0_split #(
   logic [31:0] w_at, r_at;
   logic [3:0]  w_len, r_len;
   logic [11:0] w_id, r_id;
-  logic [3:0]  w_sel, r_sel;
+  logic [4:0]  w_sel, r_sel;
 
   // ------------------------------------------------------------------------
   // What the four see.  The payload is broadcast and only the valid is
@@ -335,6 +368,21 @@ module cadr_gp0_split #(
   assign ser_arvalid = (rst_r == R_ISSUE) && r_sel[T_SER];
   assign ser_rready  = (rst_r == R_DATA) && r_sel[T_SER] && s_rready;
 
+  assign in_awaddr  = w_at[11:0];
+  assign in_awlen   = w_len;
+  assign in_awid    = w_id;
+  assign in_awvalid = (wst == W_ISSUE) && w_sel[T_INPUT];
+  assign in_wdata   = s_wdata;
+  assign in_wstrb   = s_wstrb;
+  assign in_wlast   = s_wlast;
+  assign in_wvalid  = (wst == W_DATA) && w_sel[T_INPUT] && s_wvalid;
+  assign in_bready  = (wst == W_RESP) && w_sel[T_INPUT] && s_bready;
+  assign in_araddr  = r_at[11:0];
+  assign in_arlen   = r_len;
+  assign in_arid    = r_id;
+  assign in_arvalid = (rst_r == R_ISSUE) && r_sel[T_INPUT];
+  assign in_rready  = (rst_r == R_DATA) && r_sel[T_INPUT] && s_rready;
+
   assign dflt_awid    = w_id;
   assign dflt_awvalid = (wst == W_ISSUE) && w_sel[T_DFLT];
   assign dflt_wlast   = s_wlast;
@@ -377,6 +425,13 @@ module cadr_gp0_split #(
         sel_bresp   = ser_bresp;
         sel_bid     = ser_bid;
       end
+      SEL_INPUT: begin
+        sel_awready = in_awready;
+        sel_wready  = in_wready;
+        sel_bvalid  = in_bvalid;
+        sel_bresp   = in_bresp;
+        sel_bid     = in_bid;
+      end
       default: begin
         sel_awready = dflt_awready;
         sel_wready  = dflt_wready;
@@ -409,6 +464,14 @@ module cadr_gp0_split #(
         sel_rresp   = ser_rresp;
         sel_rid     = ser_rid;
         sel_rlast   = ser_rlast;
+      end
+      SEL_INPUT: begin
+        sel_arready = in_arready;
+        sel_rvalid  = in_rvalid;
+        sel_rdata   = in_rdata;
+        sel_rresp   = in_rresp;
+        sel_rid     = in_rid;
+        sel_rlast   = in_rlast;
       end
       default: begin
         sel_arready = dflt_arready;

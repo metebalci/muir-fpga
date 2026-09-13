@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// `M_AXI_GP0` as the board has it: the splitter, the four slaves behind it,
-// and the I/O board on the far side of the two new faces' seams.
+// `M_AXI_GP0` as the board has it: the splitter, the five slaves behind it,
+// and the I/O board on the far side of the three card faces' seams.
 //
 // **THE HARNESS IS THE ATTACHMENT, and that is the point.**  What the check
 // has to demonstrate is not that `cadr_gp0_split.sv` routes --- routing is
@@ -10,24 +10,35 @@
 // directions**, which is a property of the splitter AND of what is wired
 // behind it.  A read nothing answers on GP0 does not fault the Arm, it hangs
 // both cores at one PC each, measured on this board.  So this instantiates
-// the real four: `cadr_disk_pack.sv` on the first page, `cadr_chaos_cable.sv`
-// on the second, `cadr_serial_line.sv` on the third and
-// `cadr_gp0_default.sv` for the rest of the gigabyte, exactly as
-// `boards/arty-z7-20/cadr_arty.sv` does, and the testbench sweeps the window.
+// the real five: `cadr_disk_pack.sv` on the first page, `cadr_chaos_cable.sv`
+// on the second, `cadr_serial_line.sv` on the third, `cadr_input_cables.sv`
+// on the fourth and `cadr_gp0_default.sv` for the rest of the gigabyte,
+// exactly as `boards/arty-z7-20/cadr_arty.sv` does, and the testbench sweeps
+// the window.
 //
 // Each answers word 0 or word 7 with something only it can answer --- "PACK",
-// "CHAO", "SERI", "NONE" --- so which slave took a transaction is READ OFF
-// the reply rather than assumed.
+// "CHAO", "SERI", "INPT", "NONE" --- so which slave took a transaction is
+// READ OFF the reply rather than assumed.
 //
 // **AND `cadr_io_board.sv` IS HERE TOO, WHICH IS WHAT MAKES IT READ-BACK.**
-// The two new faces are the far ends of the card's two cables, so the only
+// The three new faces are the far ends of the card's four cables, so the only
 // way to hold them to anything is to put the card on the other side and
-// carry a frame and a character across in both directions.  The card is
-// driven through its Unibus exactly as `tb/cadr_io_board_tb.cpp` drives it,
-// and the register faces are reached through the splitter --- so a
+// carry a frame, a character, a keystroke and a mouse's movement across.  The
+// card is driven through its Unibus exactly as `tb/cadr_io_board_tb.cpp`
+// drives it, and the register faces are reached through the splitter --- so a
 // transaction crosses the decode, the AXI3 face and the seam before anything
 // is compared.  `build/iob.pass` is what holds the card itself to muir; this
 // holds the two halves meeting.
+//
+// **THE CARD HAS A RESET OF ITS OWN HERE, AND THAT IS THE BOARD AND NOT A
+// CONVENIENCE.**  On `cadr_arty.sv` the card is inside `cadr_machine` and
+// takes `mach_rst` --- BTN0, the MMCM's lock, or the console's `RESET_KEY`
+// --- while everything on the general purpose port takes `gp0_rst_s`.  So
+// `card_rst` is a second input here, and `cadr_input_cables.sv` takes it at
+// its own `mach_rst` port: a machine restarted under a running Linux must
+// not come up to a card holding somebody's keystroke, which is the autoboot
+// trap that module's header sets out, and a harness that reset the two
+// together could not tell whether the leg holding it shut works.
 //
 // The pack side's own two ports are tied off: its `S_AXI_HP2` master never
 // runs, because nothing here commands a move, and `disk_pack.pass` is what
@@ -39,7 +50,11 @@
 
 module cadr_gp0_split_harness (
     input  var logic        clk,
+    // The port's reset: the splitter and the four faces behind it.
     input  var logic        rst,
+    // The MACHINE's, which resets the card and empties the input face's
+    // queue.  See the header.
+    input  var logic        card_rst,
 
     // --- `M_AXI_GP0` as the PS would drive it -----------------------------
     input  var logic [31:0] m_awaddr,
@@ -109,6 +124,15 @@ module cadr_gp0_split_harness (
   logic        l_rlast, l_rvalid, l_rready;
   logic [1:0]  l_bresp, l_rresp;
 
+  logic [11:0] i_awaddr, i_araddr;
+  logic [31:0] i_wdata, i_rdata;
+  logic [3:0]  i_awlen, i_wstrb, i_arlen;
+  logic [11:0] i_awid, i_arid, i_bid, i_rid;
+  logic        i_awvalid, i_awready, i_wlast, i_wvalid, i_wready;
+  logic        i_bvalid, i_bready, i_arvalid, i_arready;
+  logic        i_rlast, i_rvalid, i_rready;
+  logic [1:0]  i_bresp, i_rresp;
+
   logic [31:0] d_rdata;
   logic [3:0]  d_arlen;
   logic [11:0] d_awid, d_arid, d_bid, d_rid;
@@ -158,6 +182,16 @@ module cadr_gp0_split_harness (
       .ser_arvalid(l_arvalid), .ser_arready(l_arready),
       .ser_rdata(l_rdata), .ser_rresp(l_rresp), .ser_rid(l_rid),
       .ser_rlast(l_rlast), .ser_rvalid(l_rvalid), .ser_rready(l_rready),
+      .in_awaddr(i_awaddr), .in_awlen(i_awlen), .in_awid(i_awid),
+      .in_awvalid(i_awvalid), .in_awready(i_awready),
+      .in_wdata(i_wdata), .in_wstrb(i_wstrb), .in_wlast(i_wlast),
+      .in_wvalid(i_wvalid), .in_wready(i_wready),
+      .in_bresp(i_bresp), .in_bid(i_bid), .in_bvalid(i_bvalid),
+      .in_bready(i_bready),
+      .in_araddr(i_araddr), .in_arlen(i_arlen), .in_arid(i_arid),
+      .in_arvalid(i_arvalid), .in_arready(i_arready),
+      .in_rdata(i_rdata), .in_rresp(i_rresp), .in_rid(i_rid),
+      .in_rlast(i_rlast), .in_rvalid(i_rvalid), .in_rready(i_rready),
       .dflt_awid(d_awid), .dflt_awvalid(d_awvalid), .dflt_awready(d_awready),
       .dflt_wlast(d_wlast), .dflt_wvalid(d_wvalid), .dflt_wready(d_wready),
       .dflt_bresp(d_bresp), .dflt_bid(d_bid), .dflt_bvalid(d_bvalid),
@@ -282,6 +316,28 @@ module cadr_gp0_split_harness (
       .irq(ser_irq)
   );
 
+  // ------------------------------ the keyboard and the mouse, page 3
+  logic        kbd_strobe;
+  logic [23:0] kbd_code;
+  logic [6:0]  mouse_lines;
+  logic [7:0]  iob_csr_face;
+
+  cadr_input_cables u_input (
+      .clk(clk), .rst(rst), .mach_rst(card_rst),
+      .s_awaddr(i_awaddr), .s_awlen(i_awlen), .s_awid(i_awid),
+      .s_awvalid(i_awvalid), .s_awready(i_awready),
+      .s_wdata(i_wdata), .s_wstrb(i_wstrb), .s_wlast(i_wlast),
+      .s_wvalid(i_wvalid), .s_wready(i_wready),
+      .s_bresp(i_bresp), .s_bid(i_bid), .s_bvalid(i_bvalid), .s_bready(i_bready),
+      .s_araddr(i_araddr), .s_arlen(i_arlen), .s_arid(i_arid),
+      .s_arvalid(i_arvalid), .s_arready(i_arready),
+      .s_rdata(i_rdata), .s_rresp(i_rresp), .s_rid(i_rid),
+      .s_rlast(i_rlast), .s_rvalid(i_rvalid), .s_rready(i_rready),
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
+      .mouse_lines(mouse_lines),
+      .card_csr(iob_csr_face)
+  );
+
   // ------------------------------------------------- the rest of the window
   cadr_gp0_default u_dflt (
       .clk(clk), .rst(rst),
@@ -295,19 +351,20 @@ module cadr_gp0_split_harness (
   );
 
   // ----------------------------------------------------- and the card itself
-  logic [7:0]  iob_vector, iob_csr_face;
+  logic [7:0]  iob_vector;
   logic [11:0] iob_mouse_x, iob_mouse_y;
   logic [15:0] iob_interval;
   logic        iob_intr, iob_audio, iob_clock_ready;
 
   cadr_io_board u_iob (
-      .clk(clk), .rst(rst),
+      .clk(clk), .rst(card_rst),
       .ub_msyn(ub_msyn), .ub_write(ub_write), .ub_addr(ub_addr),
       .ub_wdata(ub_wdata), .ub_ssyn(ub_ssyn), .ub_rdata(ub_rdata),
       .ub_init(ub_init),
-      // No keyboard and no mouse on this check: the card's own is
-      // `build/iob.pass`, and what is held here is the two cables.
-      .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'h7F),
+      // The keyboard's cable and the mouse's, from the fourth page's face:
+      // what makes the keystroke and the movement a read-back rather than a
+      // register written and read again.
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines),
       .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
       .ser_cmd(ser_cmd), .ser_tx_strobe(ser_tx_strobe),
       .ser_tx_data(ser_tx_data), .ser_tx_take(ser_tx_take),
@@ -331,9 +388,15 @@ module cadr_gp0_split_harness (
   );
 
   // What no part of this check reads: the pack side's idle master and store
-  // seam, and the card's keyboard, mouse, clocks and interrupt, each of
-  // which has a check of its own.  Folded rather than left dangling, so
-  // that lint's bit granularity stays sharp here as it is in the modules.
+  // seam, and the card's clocks, interrupt and observation outputs, each of
+  // which has a check of its own.  **`csr_face` is NOT in here any more**:
+  // it is the input face's `KBD READY` gate, which is the one thing that
+  // makes the keyboard a handshake rather than a guess.  The two mouse
+  // counters stay, because this check reads them where the MACHINE does ---
+  // over the Unibus at `0o764104` and `0o764106` --- and a check that read
+  // the observation port instead would be reading round the registers it is
+  // there to hold.  Folded rather than left dangling, so that lint's bit
+  // granularity stays sharp here as it is in the modules.
   logic unused_h;
   assign unused_h = ^{pk_m_awaddr, pk_m_awlen, pk_m_awsize, pk_m_awburst,
                       pk_m_awvalid, pk_m_wdata, pk_m_wstrb, pk_m_wlast,
@@ -343,7 +406,7 @@ module cadr_gp0_split_harness (
                       pk_store_wdata, pk_moving, pk_moving_slot, pk_deny,
                       pk_irq, pk_present, pk_read_only, pk_timed,
                       chaos_bits, ser_syn_face,
-                      iob_vector, iob_csr_face, iob_mouse_x,
+                      iob_vector, iob_mouse_x,
                       iob_mouse_y, iob_interval, iob_intr, iob_audio,
                       iob_clock_ready};
 
