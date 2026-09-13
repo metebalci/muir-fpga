@@ -654,3 +654,48 @@ handler reads bit 1 of `0o766040`, which is a jumper that comes up set. Nothing
 answered that address, so the bit read clear and the handler took a branch that
 never reaches the code which clears an Xbus interrupt level. The machine lived
 inside that handler until it fell over.
+
+## The machine on the network, 13 September
+
+The board was booted on the System 304 band, which `docs/cc-pack.md`
+describes, with the Chaosnet program running beside it.
+
+The machine reaches its Lisp Listener. Its herald names the associated machine
+the band talks to, and the who-line carries a date. That date comes from the
+network. The band asks the time host for it at cold boot, and
+`(time:print-current-time)` answers with the same date and time. A host-up
+query for that host answers `T`, which is a STATUS request going out and an
+answer coming back. The Chaosnet program's own tally reads seven frames from
+the machine and one to it, seven out and one in over UDP, with none malformed,
+none refused and none with nowhere to go. The screen at the herald holds 18,079
+lit pixels of 739,584.
+
+The machine tracks the mouse itself, with nothing typed and no
+`(si:setup-cpt)`. `MOUSE READY` in the input face's status register is clear at
+rest. Over a forty-step walk of a viewer's pointer it was set in 26 of 80
+samples and clear in the other 54. The System 100 band left it set in all 60
+samples of the same measurement, because nothing there was reading it. MIT's
+mouse tracking runs off the display's frame interrupt, and this band's cold
+boot leaves that interrupt enabled. The arrow glyph is on the screen and
+follows the viewer's pointer, and `tv:mouse-x` and `tv:mouse-y` follow it too.
+
+A viewer's keys reach the Listener. `(+ 1 2)` typed over RFB evaluates to `3`,
+and the `+` arrives as a `+` rather than an `=`. That shifted character is what
+the pacing rule exists for, and `docs/terminal.md` states the rule: one key
+word every 4,096 microcycles, which is muir's own interval. The terminal's
+tally over the session reads 722 input events, 394 key words to the machine,
+none held back for pacing or room, none lost in the fabric, 354 pointer moves
+and no keysym that nothing maps.
+
+The machine's clocks run at half real time, which is what the fabric says they
+should. The who-line clock advanced 31 seconds over 61 real seconds. That is a
+ratio of 0.508, and the readings are to the second, so it is a half. The
+microsecond clock counts 200 ticks (`rtl/machine/cadr_io_board.sv`), and at a
+10 ns tick that is one count every 2.0 real microseconds.
+
+Two things are not shown yet. The serial port's registers are programmed and
+its rate reads back, but characters do not flow, because the line's frame end
+is presented early in `rtl/plumbing/cadr_serial_line.sv`. And nothing has
+driven the debug cable from the board. So the terminal and Chaosnet blocks on
+the drawing go green, and the I/O board keeps the colour that says checked here
+and not yet on silicon.
