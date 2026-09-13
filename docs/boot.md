@@ -121,6 +121,65 @@ So the loader stays out of the CADR's region by the same node that keeps the
 kernel out. That closes the hazard `linux.md` recorded for this U-Boot ---
 "the reserved-memory node binds the kernel, and not the loader".
 
+## SPL or FSBL, and why the drawing still says U-Boot
+
+These three names get used for overlapping things, so this is the one place
+that says which is which.
+
+**SPL** is Secondary Program Loader. It is U-Boot's own name for its first
+stage: a cut-down U-Boot small enough to run out of on-chip memory, whose job
+is to bring the DDR up and then load the full loader.
+
+**FSBL** is First Stage Boot Loader. That is Xilinx's name for the same job on
+a Zynq, and for the program Xilinx ships to do it.
+
+**On this board they are the same thing, and the thing is an SPL.** We use
+U-Boot's SPL as the first stage, so the SPL plays the FSBL's role. We do not
+use Xilinx's FSBL, and Digilent's was the stepping stone and is gone. So an
+SPL is what is actually in `BOOT.BIN`, and calling it an FSBL would send
+somebody looking for Xilinx FSBL sources that this project does not have.
+
+Use SPL when you mean the first stage. Use FSBL only when you mean Xilinx's
+program, which is not here.
+
+### What is ours inside the loader
+
+The loader is mainline U-Boot and this project does not write it. Four files
+in it are ours, and they are the reason `CLAUDE.md` carries a licensing note
+about GPL compatibility:
+
+    ps7_init_gpl.c                  the start-up routine: 660 operations,
+                                    generated here and byte-identical to the
+                                    one Vivado writes
+    cadr.env                        the environment
+    zynq-arty-z7-20.dts             the device tree
+    zynq-arty-z7-20-u-boot.dtsi     the loader's own additions to it
+
+The first of those is the board bring-up. Without it the chip has no memory
+and nothing runs at all.
+
+### The drawing keeps saying U-Boot, for now
+
+Mete and I went round this on 13 September and settled on no change yet.
+
+The worry was that a finished colour beside the word "U-Boot" reads as a claim
+that this project wrote U-Boot. It does not. On that drawing the colours
+answer how far along a block is, and a separate marker answers whose code it
+is. Nothing is over-claimed.
+
+Three replacements were considered and each fails for its own reason. "boot:
+SPL, ps7_init" does not fit a narrow rotated strip. "boot loader" and "loader"
+name a category rather than this component. "SPL" is specific but names only
+the first stage, where the block covers both.
+
+And the drawing already names real components by their real names: muir,
+microSD, gigabit Ethernet, HDMI out. A product name that identifies an actual
+component is information rather than branding.
+
+So the block still says U-Boot. If it is ever renamed, SPL is the word for our
+half and the sequence drawing below the board already separates the two stages
+where there is room to explain them.
+
 ## The card, and the two ways it boots
 
     partition 1 BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional),
