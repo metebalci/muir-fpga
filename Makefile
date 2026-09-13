@@ -1264,7 +1264,19 @@ MUTREV ?= HEAD
 # mutations are of `cadr_microcycle.sv`, so a run from a clean build directory
 # needs the traces they are checked against. Without them the runner stops and
 # says which trace is missing, which is how this was found.
-mutants: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
+# THE CHEAP GUARD IN FRONT OF THE EXPENSIVE ONE, and a prerequisite of it
+# rather than a thing to remember.  A record whose `@old` matches nothing does
+# not weaken the mutation suite, it KILLS it: `parse()` refuses the whole list,
+# so one rotted anchor takes every other record with it and the run ends with
+# no summary line at all.  That happened once and eleven commits were gated and
+# pushed before anybody noticed, because `make check` does not run the suite.
+# It uses the runner's own `parse()`, so the two cannot drift about what a
+# record is, and it takes seconds with no traces and no Verilator.
+.PHONY: mutants-anchors
+mutants-anchors:
+	python3 mutations/anchors.py
+
+mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
          $(BUILD)/disk.golden $(BUILD)/disk_boot.golden $(BUILD)/tv.golden \
          $(BUILD)/iob.golden $(BUILD)/busint_regs.golden \
