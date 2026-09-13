@@ -16,11 +16,16 @@
 // MD inside that span writes the map at the wrong entry, silently, and the
 // machine reads through a translation nobody asked for.
 //
-// MD has exactly two writers, both in one `always_ff`: the held word from
-// `-LOADMD`, committed at a master clock edge or at once under `-HANG`, and
-// `DESTMDR` at `cpu_edge`.  So a change of MD inside the window is a held
-// word committing, and there is nothing else it can be.  That is what makes
-// this property sharp rather than a smoke test.
+// MD has three writers, all in one `always_ff`: the held word from `-LOADMD`,
+// committed at a master clock edge or at once under `-HANG`; `DESTMDR` at
+// `cpu_edge`; and `UB MD LOAD`, a foreign Unibus master's mapped write
+// through the map, which is CC's `CC-WRITE-MD`.  **The third is not driven
+// here**: `ub_md_req` is an input of this module and this testbench leaves it
+// down, there being no register block in the DUT to raise it.  So inside this
+// run a change of MD is a held word committing and there is nothing else it
+// can be, which is what makes the property sharp rather than a smoke test.
+// What holds the third writer is `build/md_compose.pass`, which has the
+// register block and the arbiter under the same roof.
 //
 // THE THREE THINGS IT SAYS, in the order they bite:
 //
@@ -175,6 +180,11 @@ int main(int argc, char **argv) {
   dut->clk = 0;
   dut->rst = 1;
   dut->n_memack = 1;
+  // `UB MD LOAD` is MD's third writer and it is a foreign Unibus master's,
+  // so nothing in this DUT can raise it: held down, said rather than left to
+  // the model's zero.  `build/md_compose.pass` is what drives it.
+  dut->ub_md_req = 0;
+  dut->ub_md_data = 0;
   dut->n_memgrant = 1;
   dut->n_loadmd = 1;
   dut->rdata = 0;
@@ -387,7 +397,7 @@ int main(int argc, char **argv) {
         ++commits_after_strobe;
         expect_md = post_md;
       } else {
-        // 3. THE PROPERTY, on the observable.  MD has two writers and this
+        // 3. THE PROPERTY, on the observable.  MD's other writer here is this
         // is not the instruction, so a word strobed BEFORE the owning
         // DESTMDR has committed after it.  Every map write from here to the
         // next DESTMDR is made at a different entry.

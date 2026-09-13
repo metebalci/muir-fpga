@@ -65,11 +65,18 @@
 //
 // WHAT IS DELIBERATELY NOT HERE.
 //
-//   - `Responder::MapMd`'s effect. The rows are here and the decode is
-//     compared, but the word's path into the processor's `MD` is `-LOADMD`,
-//     which `cadr_microcycle.sv` gates with `RDCYC`; the module's header
-//     carries the argument, and the exemption is the count of `MapMd` rows
-//     on this check's own output rather than a silence.
+//   - `MD` itself. `Responder::MapMd` is built now: the `MAPMD` rows hold
+//     the request, the thirty-two lines and `-LOADMD ACK`'s instant at this
+//     block's own seam, and the register the word lands in is a level up.
+//     `build/unibus.pass` carries it through the arbiter to
+//     `cadr_memory_path`'s port and `build/md_compose.pass` holds the
+//     register itself, on a machine that is still running --- MD having a
+//     third writer now, and that being where it lives.
+//   - A read through a page whose high five bits are ones reaching `MD`. It
+//     does not: `Rtl::try_debug_request` tests `req.write` first, so the odd
+//     word of a read is the page's read buffer and the even word a mapped
+//     Xbus cycle at physical page `0o37000`, which muir does not model. `MD` is
+//     write-only through the map and the trace's last two `MAP` rows say so.
 //   - A mapped page that is not main memory. `Busint::debug_xbus_edge` says
 //     in its own words that one is **not modelled**, so no row asks for one.
 //   - The debug block at `0o766100`-`0o766136`. `busint::register` decodes it
@@ -137,7 +144,7 @@ int Fail(long row, const char *what, unsigned long got, unsigned long want) {
   return 1;
 }
 
-enum Tag { kOp, kLines, kErr, kMapCyc };
+enum Tag { kOp, kLines, kErr, kMapCyc, kMapMd };
 
 struct Row {
   Tag tag;
@@ -152,6 +159,8 @@ struct Row {
   int resp;       // MAP: which of the four responders
   uint32_t phys;  // MAP: the physical word address, or kNone
   uint32_t xword; // MAP: the thirty-two bits that crossed, or kNone
+  uint32_t md32;  // MAPMD: the thirty-two bits Machine::mapped_write put in MD
+  uint32_t md;    // MAPMD: MD itself afterwards
   uint32_t ctl, err, ubint;
   int lm_int;
 };
@@ -181,6 +190,7 @@ struct Dut {
     d->ub_foreign = 0;
     d->map_done = 0;
     d->map_rdata = 0;
+    d->map_md_done = 0;
     d->xbus_intr = 0;
     d->iob_intr = 0;
     d->iob_vector = 0;
@@ -236,6 +246,7 @@ int main(int argc, char **argv) {
   long iface_rows = 0, none_runs = 0, win_rows = 0, win_runs = 0;
   long want_ssyn_ns = -1, want_strobe_ns = -1, want_bits = -1;
   long want_rq_ns = -1, want_read_ack_ns = -1, want_map_error = -1;
+  long want_md_ack_ns = -1, want_md_writes = -1;
   long want_ops = -1, want_errs = -1, want_lines = -1, want_maps = -1;
   unsigned want_ctl_mask = 0, want_ctl2_mask = 0, want_local = 0;
   char line[512];
@@ -253,6 +264,8 @@ int main(int argc, char **argv) {
         if (!std::strcmp(name, "maps")) want_maps = v;
         if (!std::strcmp(name, "ub_xbus_request_ns")) want_rq_ns = v;
         if (!std::strcmp(name, "ub_xbus_read_ack_ns")) want_read_ack_ns = v;
+        if (!std::strcmp(name, "ub_md_ack_ns")) want_md_ack_ns = v;
+        if (!std::strcmp(name, "md_writes")) want_md_writes = v;
         // Octal in the header, as muir writes `bus_error`'s bits.
         if (!std::strcmp(name, "ub_map_error")) want_map_error = strtoul(line + 15, nullptr, 8);
         // The three masks are octal in the header, as MIT writes them.
@@ -323,6 +336,17 @@ int main(int argc, char **argv) {
       sweep_entry[k] = a;
       sweep_page[k] = b;
       ++sweep_seen;
+    } else if (std::sscanf(line, "MAPMD %ld %d %o %x %d %d %x %x %x %x %x %x %d", &r.n,
+                           &r.write, &r.uaddr, &r.wdata, &r.xint, &r.ireq, &r.ivec, &r.md32,
+                           &r.md, &r.ctl, &r.err, &r.ubint, &r.lm_int) == 13) {
+      // Every row of this tag is `Responder::MapMd`: the generator asserts
+      // it and there is no column for it.
+      r.tag = kMapMd;
+      r.resp = kMd;
+      r.phys = kNone;
+      r.xword = kNone;
+      r.rdata = kNone;
+      rows.push_back(r);
     } else if (std::sscanf(line, "MAP %ld %d %o %x %d %d %x %d %x %x %x %x %x %x %d", &r.n,
                            &r.write, &r.uaddr, &r.wdata, &r.xint, &r.ireq, &r.ivec, &r.resp,
                            &r.phys, &r.xword, &r.rdata, &r.ctl, &r.err, &r.ubint,
@@ -379,6 +403,14 @@ int main(int argc, char **argv) {
                  path, want_rq_ns, want_read_ack_ns, want_map_error, sweep_seen);
     return 2;
   }
+  // `busint::UB_MD_ACK_NS`, which is a different constant from
+  // `UB_XBUS_READ_ACK_NS` however equal the two happen to be today: one is
+  // `-LOADMD ACK` after the load and the other `-UB SSYN` after `-UBACK`.
+  if (want_md_ack_ns <= 0 || want_md_writes <= 0) {
+    std::fprintf(stderr, "FAIL: %s says ub_md_ack_ns %ld and md_writes %ld\n", path,
+                 want_md_ack_ns, want_md_writes);
+    return 2;
+  }
   // The window's own coverage, the same claim `covered` makes for the decode:
   // every address is either inside `busint::map_access`'s range or in a run
   // that says it is not.
@@ -406,6 +438,7 @@ int main(int argc, char **argv) {
   const long kStrobeT = want_strobe_ns / kTickNs;
   const long kXbusRqT = want_rq_ns / kTickNs;
   const long kReadAckT = want_read_ack_ns / kTickNs;
+  const long kMdAckT = want_md_ack_ns / kTickNs;
 
   Dut b;
   b.Idle(4);
@@ -428,12 +461,22 @@ int main(int argc, char **argv) {
     uint32_t mwdata = 0;
     int mwrite = 0;
     int md_seen = 0;     // `-UB TO MD` stood at some tick of the cycle
+    // `-UB TO MD`'s own seam, which has no Xbus cycle in it at all.
+    long md_req_at = -1;   // the tick `-UB TO MD` came up, after `-UB MSYN`
+    long md_done_at = -1;  // the tick the processor took the word
+    uint32_t md_word = 0;  // what stood on the thirty-two lines at the request
   };
   // **THE XBUS BEHIND THE WINDOW ANSWERS AT A LATENCY THAT MOVES.** A fixed
   // one would let a block that counted ticks from `-UB MSYN` rather than
   // watching the acknowledgement pass, which is the whole of what
   // `busint::UB_XBUS_READ_ACK_NS` is a claim about.
   long map_latency = 1;
+  // **AND `UB MD LOAD` ANSWERS AT A LATENCY THAT MOVES TOO**, for the same
+  // reason: the load is a grant on the machine's side of the seam, and a
+  // block that counted ticks from `-UB MSYN` rather than watching the
+  // acknowledgement would pass a fixed one.  `busint::UB_MD_ACK_NS` is a
+  // claim about the interval from the LOAD, not from the strobe.
+  long md_latency = 1;
   auto Run = [&](unsigned uaddr, int write, unsigned wdata, long hold) {
     Result res;
     b.d->ub_addr = uaddr;
@@ -441,6 +484,7 @@ int main(int argc, char **argv) {
     b.d->ub_wdata = wdata;
     b.d->ub_msyn = 1;
     long count = -1;   // ticks left before the seam answers, -1 idle
+    long mdcount = -1; // the same, for the processor taking the MD word
     for (long k = 0; k < hold; ++k) {
       // The seam, driven INTO this edge: the DUT takes `map_done` and the
       // word at the same edge, as it takes `-MEMACK` and `MEM<31:0>`.
@@ -451,9 +495,26 @@ int main(int argc, char **argv) {
         res.done_at = k;
         count = -1;
       }
+      // `UB MD LOAD`: the processor takes the word at this edge, which is
+      // where `Busint::debug_xbus_edge` loads `MD` --- and `-LOADMD ACK`
+      // follows `busint::UB_MD_ACK_NS` later.
+      if (mdcount == 0) {
+        b.d->map_md_done = 1;
+        res.md_done_at = k;
+        mdcount = -1;
+      }
       b.Step();
       b.d->map_done = 0;
-      if (b.d->map_md) res.md_seen = 1;
+      b.d->map_md_done = 0;
+      if (b.d->map_md) {
+        res.md_seen = 1;
+        if (res.md_req_at < 0) {
+          res.md_req_at = k;
+          res.md_word = b.d->map_md_wdata;
+          mdcount = md_latency;
+        }
+      }
+      if (mdcount > 0) --mdcount;
       if (b.d->map_req && res.req_at < 0) {
         res.req_at = k;
         res.addr = b.d->map_addr;
@@ -496,7 +557,7 @@ int main(int argc, char **argv) {
 
   // ---- the rows ------------------------------------------------------------
   long ops = 0, errs = 0, lines = 0, faces = 0, writes = 0, reads = 0;
-  long maps = 0, by_resp[4] = {0}, map_xbus_reads = 0, map_xbus_writes = 0;
+  long maps = 0, by_resp[4] = {0}, map_xbus_reads = 0, map_xbus_writes = 0, md_writes = 0;
   for (const Row &r : rows) {
     if (bad >= kMaxBad) break;
     // The three wires, which every row carries and which move only on a
@@ -531,6 +592,7 @@ int main(int argc, char **argv) {
         }
         break;
       }
+      case kMapMd:
       case kMapCyc: {
         ++maps;
         by_resp[r.resp]++;
@@ -538,23 +600,55 @@ int main(int argc, char **argv) {
         // whole reason this port exists; the sweeps below hold the other way.
         b.d->ub_foreign = 1;
         map_latency = 1 + (maps % 13);
+        md_latency = 1 + (maps % 7);
         // Long enough that "it did not answer" is a measurement and not a
         // race: the request at twenty ticks, the seam's latency, the read's
         // deskew at twenty, and margin over all of it.
         const Result got = Run(r.uaddr, r.write, r.wdata, 200);
         b.d->ub_foreign = 0;
-        const int want_ack = (r.resp == kBuffer || r.resp == kXbus);
+        // **A WRITE OF `MD` IS ANSWERED NOW**, `busint::UB_MD_ACK_NS` after
+        // the edge that loads it: `-LOADMD ACK` at REQLM 0A11 is what
+        // acknowledges the cycle, and `UB MD LOAD` is a term of it.  Only a
+        // refusal is never answered.
+        const int want_ack = (r.resp != kRefused);
         if (got.answered != want_ack) {
           bad += Fail(r.n, want_ack ? "-UB SSYN on a mapped cycle muir answers"
                                     : "-UB SSYN on a mapped cycle muir NEVER answers",
                       got.answered, want_ack);
           break;
         }
-        // `-UB TO MD` is decoded here and built nowhere, so the decode is
-        // what is compared: it stands on exactly muir's `Responder::MapMd`.
+        // `-UB TO MD` stands on exactly muir's `Responder::MapMd`.
         if (got.md_seen != (r.resp == kMd))
           bad += Fail(r.n, "-UB TO MD", got.md_seen, r.resp == kMd);
-        if (r.resp == kXbus) {
+        if (r.resp == kMd) {
+          ++md_writes;
+          // `-UB TO MD` is `NAND(UBMA<21:17>, UBXRQ, -UBRD, MSYN IN)` at REQU
+          // 0D12, and `UBXRQ` is one of its four inputs: the request rises
+          // `busint::UB_XBUS_REQUEST_NS` after `-UB MSYN`, the same instant
+          // the Xbus half's does, because it is the same `UBXRQ`.
+          if (got.md_req_at != kXbusRqT)
+            bad += Fail(r.n, "-UB TO MD, in ticks after -UB MSYN",
+                        (unsigned long)got.md_req_at, (unsigned long)kXbusRqT);
+          // It holds the Xbus request off at REQLM 0E09: no bus cycle at all.
+          if (got.req_at >= 0)
+            bad += Fail(r.n, "an Xbus request from a write of MD", (unsigned long)got.req_at, 0);
+          // The thirty-two lines: `Machine::mapped_write`'s own word.  The
+          // odd word is the Unibus word over the page's write buffer, and
+          // write-through's even word is the Unibus word with ground above
+          // it.  A fabric that sent the word to the wrong half, or swapped
+          // the two, disagrees here and nowhere else.
+          if (r.tag == kMapMd && got.md_word != r.md32)
+            bad += Fail(r.n, "the thirty-two bits that go into MD", got.md_word, r.md32);
+          // The trace's own two columns, asserted against each other: a row
+          // where the word that went out and MD afterwards disagreed would
+          // otherwise pass twice.  `MD` itself is a level up and
+          // `build/md_compose.pass` is what compares it.
+          if (r.tag == kMapMd && r.md != r.md32)
+            bad += Fail(r.n, "the trace's own MD, against the word it carried", r.md, r.md32);
+          if (got.md_done_at < 0 || got.ssyn - got.md_done_at != kMdAckT)
+            bad += Fail(r.n, "-LOADMD ACK, in ticks after the edge that loads MD",
+                        (unsigned long)(got.ssyn - got.md_done_at), (unsigned long)kMdAckT);
+        } else if (r.resp == kXbus) {
           if (r.write) ++map_xbus_writes; else ++map_xbus_reads;
           if (got.req_at != kXbusRqT)
             bad += Fail(r.n, "the Xbus request, in ticks after -UB MSYN", (unsigned long)got.req_at,
@@ -574,9 +668,9 @@ int main(int argc, char **argv) {
             bad += Fail(r.n, "-UB SSYN, in ticks after the Xbus acknowledgement",
                         (unsigned long)(got.ssyn - got.done_at), (unsigned long)want);
         } else {
-          // The buffer halves, the refusals and `-UB TO MD` make no Xbus
-          // cycle at all: `Responder::MapBuffer` is a register cycle and the
-          // other two never reach the bus.
+          // The buffer halves and the refusals make no Xbus cycle at all:
+          // `Responder::MapBuffer` is a register cycle and a refusal never
+          // reaches the bus.
           if (got.req_at >= 0)
             bad += Fail(r.n, "an Xbus request where muir makes none", (unsigned long)got.req_at, 0);
           if (r.resp == kBuffer && got.ssyn != kSsynT)
@@ -857,6 +951,7 @@ int main(int argc, char **argv) {
     least("mapped cycles of one of the four responders", by_resp[k], 1);
   least("mapped reads that made an Xbus cycle", map_xbus_reads, 4);
   least("mapped writes that made an Xbus cycle", map_xbus_writes, 3);
+  least("mapped writes that loaded MD", md_writes, want_md_writes);
   least("window addresses answered from the read buffer", win_buf, 8192);
   least("window addresses answered off the Xbus", win_xbus, 8192);
   least("words of the window taken out in two halves and put together", win_pairs, 8192);
@@ -892,10 +987,17 @@ int main(int argc, char **argv) {
       "    THE MAPPED WINDOW: %ld mapped cycles replayed against Machine::mapped_read and\n"
       "    mapped_write --- %ld answered from a buffer, %ld off the Xbus (%ld reads and %ld\n"
       "    writes), %ld refused with UB MAP ERROR and never answered, and %ld a write of MD,\n"
-      "    decoded and never answered because -LOADMD is gated by RDCYC in\n"
-      "    cadr_microcycle.sv.  The Xbus request is %ld ticks after -UB MSYN on every one of\n"
+      "    decoded, answered and loaded into MD.  The Xbus request is %ld ticks after -UB MSYN\n"
+      "    on every one of\n"
       "    them and -UB SSYN is %ld ticks after the acknowledgement on a read and with it on a\n"
       "    write, the seam answering at a latency that moves from cycle to cycle.\n"
+      "    AND -UB TO MD IS BUILT: %ld of those mapped writes put their thirty-two lines into\n"
+      "    the processor's MD instead of onto the Xbus --- the Unibus word in the high half\n"
+      "    over the page's write buffer, or with ground above it for write-through's even\n"
+      "    word --- with -UB TO MD up %ld ticks after -UB MSYN, no Xbus request at all, and\n"
+      "    -LOADMD ACK %ld ticks after the edge the processor took the word at, that edge\n"
+      "    moving from cycle to cycle so the interval is measured and not counted from the\n"
+      "    strobe.  A read through the same entry never reaches MD.\n"
       "    And the window at every one of the %u addresses with a foreign master on the bus:\n"
       "    %ld answered, %ld of them off the Xbus at the physical address Machine::map_entry\n"
       "    names and %ld from the read buffer --- all %ld words of the window taken out in two\n"
@@ -906,7 +1008,7 @@ int main(int argc, char **argv) {
       b.tick, ops, reads, writes, errs, faces, kSsynT, answered, kStrobeT, aliases, swept, kAddrs,
       swept_answered, swept_silent, path, iface_rows, none_runs, maps, by_resp[kBuffer],
       by_resp[kXbus], map_xbus_reads, map_xbus_writes, by_resp[kRefused], by_resp[kMd], kXbusRqT,
-      kReadAckT, kAddrs, win_buf + win_xbus + win_reg, win_xbus, win_buf, win_pairs, win_reg,
+      kReadAckT, md_writes, kXbusRqT, kMdAckT, kAddrs, win_buf + win_xbus + win_reg, win_xbus, win_buf, win_pairs, win_reg,
       win_silent, win_rows);
   return 0;
 }

@@ -404,6 +404,17 @@ module cadr_memory_path (
     output var logic        prog_reset,
     output var logic        prog_boot,
 
+    // --- `UB MD LOAD`, `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17: a
+    // foreign master's mapped write whose page is the processor's `MD`.
+    // The word does not go on the Xbus at all --- `-UB TO MD` holds the
+    // request off at REQLM 0E09 --- so this leaves the module beside the
+    // memory port rather than through it, and `cadr_machine.sv` wires it to
+    // `cadr_microcycle`, which owns `MD` and says on `ub_md_ack` when it has
+    // taken the word.  `busint::Responder::MapMd`, CC's `CC-WRITE-MD`.
+    output var logic        ub_md_req,
+    output var logic [31:0] ub_md_data,
+    input  var logic        ub_md_ack,
+
     // PS DDR3, behind the AXI adapter that is not written yet.
     output var logic        mem_req,
     output var logic        mem_write,
@@ -691,7 +702,7 @@ module cadr_memory_path (
   // meanwhile.
   logic        map_req, map_write, map_done, map_md;
   logic [21:0] map_addr;
-  logic [31:0] map_wdata;
+  logic [31:0] map_wdata, map_md_wdata;
   logic        mp_own, mp_ack_q, mp_memory, mp_memory_c;
   logic        mp_device_c, mp_nxm_c, mp_unibus_c;
 
@@ -704,12 +715,23 @@ module cadr_memory_path (
       .unibus(mp_unibus_c)
   );
 
-  // `-UB TO MD` is decoded in the block and built nowhere, because `-LOADMD`
-  // is gated by `RDCYC` inside `cadr_microcycle.sv` and a foreign master's
-  // `MD` load would have to go through that gate.  That file's own header
-  // carries the argument; this is where the wire ends today.
+  // `-UB TO MD` LEAVES THIS MODULE NOW.  The register block decodes it,
+  // puts `UBXRQ` in the gate as REQU 0D12 does and latches the thirty-two
+  // lines; the processor takes the word and acknowledges, which is `UB MD
+  // LOAD` at REQLM 0B17 and the whole of what CC's `CC-WRITE-MD` needs.  The
+  // arbitration is NOT here: the word never reaches the Xbus, so nothing has
+  // to wait for the bus, and the one gate muir has --- the interface not
+  // being in a granted cycle --- is about the processor's own `MD` writers
+  // and lives with them in `cadr_microcycle.sv`.
+  assign ub_md_req  = map_md;
+  assign ub_md_data = map_md_wdata;
+
+  // The map's decode says only whether main memory answers for the address:
+  // a mapped cycle at any other page never takes the bus, which the header
+  // says at length, so the other three outputs are read here and nowhere
+  // else.
   logic unused_map;
-  assign unused_map = ^{map_md, mp_device_c, mp_nxm_c, mp_unibus_c};
+  assign unused_map = ^{mp_device_c, mp_nxm_c, mp_unibus_c};
 
   // **THE CHANNEL MAY BEGIN A WORD ONLY WHILE THE PROCESSOR IS NOT ASKING**,
   // and it gives the bus back at the end of every one.  `ch_own` is a
@@ -1050,6 +1072,8 @@ module cadr_memory_path (
       .map_done  (map_done),
       .map_rdata (memory_rdata),
       .map_md    (map_md),
+      .map_md_wdata(map_md_wdata),
+      .map_md_done(ub_md_ack),
       .xbus_intr (xbus_intr),
       .iob_intr  (iob_intr),
       .iob_vector(iob_vector),
