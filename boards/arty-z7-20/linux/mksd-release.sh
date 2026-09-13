@@ -12,7 +12,15 @@
 #
 #   1. NO DISK PACK.  A band is the user's own to supply.  The bay is empty,
 #      the program says so on the console, and the CADR waits for a drive as
-#      the real machine did with no pack loaded.
+#      the real machine did with no pack loaded.  **THE DEBUGGER'S BAND IS A
+#      BAND TOO.**  CC compiled into a world is 257 MiB of somebody else's
+#      Lisp on a public artefact, and the muirrc that names it would name a
+#      file the user is free to delete, so a release carries neither.  The
+#      mechanism is STANDALONE=1: mksd-buildroot.sh clears CC_PACK with the
+#      four private values, and because it clears them BEFORE reading
+#      local.conf as well, a CC_PACK in the environment cannot reach a
+#      release either.  What ships instead is the muirrc that says how to
+#      make one, with both of its last two lines commented.
 #   2. NOTHING OF OURS ON IT.  STANDALONE=1, which means the card carries
 #      nothing from local.conf: no TFTP server address, no MAC, no Chaosnet
 #      peer.  Without it the released card would try to boot over a network

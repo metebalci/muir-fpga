@@ -119,6 +119,56 @@ done
 [ -n "$BIT" ] || die "BIT is not set: name the bitstream, e.g. BIT=build/ddr/cadr_arty.bit $0"
 [ -f "$BIT" ] || die "no bitstream at $BIT"
 
+# The address, the MAC, the Chaosnet peers and the debugger's pack, from the
+# file the repository does not carry.  The first four are everything private a
+# card can hold: an IP, a MAC and hosts on somebody's network.
+# CHAOS_DEFAULT_PEER is one of them: it is the bridge, and a bridge is a
+# machine on a real network like any other.  CC_PACK is private for a duller
+# reason: it is a path on whoever's build host, and the file it names is
+# 257 MiB and is not in the repository.
+#
+# **IT IS READ HERE, BEFORE THE BAY IS RESOLVED, AND IT USED TO BE READ TWO
+# HUNDRED LINES LATER.**  As far as the card is concerned the debugger's pack
+# is a pack: it takes a T-300's 257 MiB of partition 2, so it has to be known
+# where the packs are sized and not where the files are written.  Read late,
+# a card built with the default PACKS_MB would have squeezed it into the spare
+# room meant for one more drive and left seven megabytes --- a card that
+# stages without complaint and then has nowhere to put a band.
+SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=
+if [ -r boards/arty-z7-20/linux/local.conf ]; then
+  . boards/arty-z7-20/linux/local.conf
+fi
+# **STANDALONE MEANS THE CARD CARRIES NOTHING FROM local.conf**, and that is
+# wider than it used to be on purpose.  It cleared SERVERIP alone, which was
+# right while the only private value on a card was the TFTP server's address.
+# It is not any more: uEnv.txt carries ETHADDR, and both files of flags ---
+# fpgarc for the CADR in the fabric and muirrc for the CADR inside muir ---
+# carry CHAOS_PEER and CHAOS_DEFAULT_PEER, and a release card is built by
+# setting exactly this flag.  Clearing one of the four and shipping the others
+# is the failure this flag exists to prevent, so it clears all four and
+# mksd-release.sh's guard is the check on it rather than the whole of it.
+#
+# **AND IT CLEARS CC_PACK TOO, FOR A DIFFERENT REASON.**  The debugger's pack
+# carries no address and no host, so the release guard would never see it and
+# nothing private would ship.  It is cleared because a release carries no band
+# at all: mksd-release.sh refuses PACKS on the argument that a band is the
+# user's own to supply, and the debugger's band is a band.  Left in, a
+# released card would ship 257 MiB of somebody else's Lisp world and a muirrc
+# naming a pack the user is free to delete.
+if [ -n "$STANDALONE" ]; then
+  SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=
+fi
+if [ -n "${SERVERIP:-}" ]; then
+  MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp"
+else
+  MODE="the card path: uEnv.txt names no server, the five files come from the card, no network is used"
+fi
+if [ -n "$STANDALONE" ]; then
+  echo "mksd-buildroot: STANDALONE: no server, no MAC and no Chaosnet peers --- this card carries nothing from local.conf"
+elif [ -z "${ETHADDR:-}" ]; then
+  echo "mksd-buildroot: WARNING: no ETHADDR in boards/arty-z7-20/linux/local.conf; the board will use a random MAC and U-Boot will say so" >&2
+fi
+
 # The drive bay, resolved before anything is written: which file goes on
 # which unit, and whether they fit.  A pack is only a pack at exactly a
 # T-300's or a T-80's size (boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src/
@@ -150,13 +200,43 @@ for entry in $PACKS; do
   pack_files="$pack_files $unit=$file"
   packs_total=$((packs_total + size))
 done
+
+# **THE DEBUGGER'S PACK IS NOT ONE OF THE EIGHT.**  muir on this board's own
+# Arm cores is the far end of the debug cable, and the debugger is not muir:
+# it is CC running on a CADR that muir simulates.  So muir needs a band with
+# CC already loaded in it, and that band rides on this partition beside the
+# bay.  Its name must NOT be disk-pack-0.img to disk-pack-7.img, because those
+# eight are the fabric machine's drive bay and this pack is muir's own; the
+# card carries it as muir-cc.img and muirrc names it at that path
+# (docs/cc-pack.md).
+#
+# Unset, muirrc keeps the two commented lines and their explanation, which is
+# what every card built before the pack existed got.
+#
+# **EXACTLY A T-300, WHERE THE BAY ALSO TAKES A T-80.**  The bay takes both
+# because the real controller had both geometries and muir has both; nothing
+# this project makes is a T-80, and the band in this pack was saved into a
+# T-300's partition table.  A T-80 here is a mistake and is refused as one.
+CC_PACK_NAME=muir-cc.img
+CC_PACK_SHA=
+if [ -n "${CC_PACK:-}" ]; then
+  [ -f "$CC_PACK" ] || die "CC_PACK names no file at $CC_PACK"
+  size=$(stat -c %s "$CC_PACK")
+  [ "$size" = "$T300" ] \
+    || die "$CC_PACK is $size bytes, which is not a T-300 ($T300); every pack this project makes is a T-300 and the debugger's is not the exception"
+  CC_PACK_SHA=$(sha256sum "$CC_PACK" | cut -d' ' -f1)
+  packs_total=$((packs_total + size))
+fi
+
 # FAT32 needs a little room of its own; a megabyte a pack is generous.
 packs_need=$(( packs_total / 1048576 + 8 ))
 # THE DEFAULT IS WHAT IS BEING CARRIED PLUS ROOM FOR ONE MORE DRIVE, not a
 # round number.  `dd` writes every byte of the image, so a partition sized for
 # nine drives costs eight drives' worth of zeros on a card carrying one.  A
 # T-300 is 257 MiB, so the spare room is 264: enough to copy a pack in beside
-# what is there, and enough on its own for an empty bay.  Ask for more with
+# what is there, and enough on its own for an empty bay.  The debugger's pack
+# counts as carried, not as spare: a card with a bay pack and a CC pack comes
+# out at 851 MiB and still has room for one more drive.  Ask for more with
 # PACKS_MB and the table in this header says what each card takes.
 [ -n "$PACKS_MB" ] || PACKS_MB=$(( packs_need + 264 ))
 [ "$PACKS_MB" -ge "$packs_need" ] \
@@ -228,37 +308,6 @@ BITLINE=$(bitinfo "$BIT") || die "$BIT does not carry a Xilinx bitstream header"
 echo "mksd-buildroot: bitstream $BIT"
 echo "mksd-buildroot:   $BITLINE"
 
-# The address, the MAC and the Chaosnet peers, from the file the repository
-# does not carry.  Those are everything private a card can hold: an IP, a MAC
-# and hosts on somebody's network.  CHAOS_DEFAULT_PEER is one of them: it is
-# the bridge, and a bridge is a machine on a real network like any other.
-SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=
-if [ -r boards/arty-z7-20/linux/local.conf ]; then
-  . boards/arty-z7-20/linux/local.conf
-fi
-# **STANDALONE MEANS THE CARD CARRIES NOTHING FROM local.conf**, and that is
-# wider than it used to be on purpose.  It cleared SERVERIP alone, which was
-# right while the only private value on a card was the TFTP server's address.
-# It is not any more: uEnv.txt carries ETHADDR, and both files of flags ---
-# fpgarc for the CADR in the fabric and muirrc for the CADR inside muir ---
-# carry CHAOS_PEER and CHAOS_DEFAULT_PEER, and a release card is built by
-# setting exactly this flag.  Clearing one of the four and shipping the others
-# is the failure this flag exists to prevent, so it clears all four and
-# mksd-release.sh's guard is the check on it rather than the whole of it.
-if [ -n "$STANDALONE" ]; then
-  SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=
-fi
-if [ -n "${SERVERIP:-}" ]; then
-  MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp"
-else
-  MODE="the card path: uEnv.txt names no server, the five files come from the card, no network is used"
-fi
-if [ -n "$STANDALONE" ]; then
-  echo "mksd-buildroot: STANDALONE: no server, no MAC and no Chaosnet peers --- this card carries nothing from local.conf"
-elif [ -z "${ETHADDR:-}" ]; then
-  echo "mksd-buildroot: WARNING: no ETHADDR in boards/arty-z7-20/linux/local.conf; the board will use a random MAC and U-Boot will say so" >&2
-fi
-
 rm -rf "$OUT"
 mkdir -p "$OUT/card" "$OUT/packs" "$OUT/server"
 
@@ -278,6 +327,31 @@ for spec in $pack_files; do
   cp -l "$file" "$OUT/packs/disk-pack-$unit.img" 2>/dev/null \
     || cp "$file" "$OUT/packs/disk-pack-$unit.img"
 done
+
+# The debugger's pack, beside the bay and not in it.  Hard linked like the
+# others where the filesystem allows one, and then digested --- which says
+# which of the two happened and that the bytes staged are the bytes CC_PACK
+# named.  A link makes the staged name resolve to that very file; a copy makes
+# it a copy of it.  What proves the IMAGE holds those bytes is the mtools
+# readback further down, which compares every file on partition 2 against this
+# directory byte for byte.
+#
+# **NOTHING HERE IS `dd conv=sparse`, and a pack is why.**  That flag skips
+# runs of zeros, and a disk pack is full of legitimate zeros, so wherever the
+# image has them a card keeps whatever it held before.  Measured on this
+# project's own card: the image's digest was right and the card's pack read
+# back different.  `cp` writes every byte.
+if [ -n "${CC_PACK:-}" ]; then
+  cp -l "$CC_PACK" "$OUT/packs/$CC_PACK_NAME" 2>/dev/null \
+    || cp "$CC_PACK" "$OUT/packs/$CC_PACK_NAME"
+  staged=$(sha256sum "$OUT/packs/$CC_PACK_NAME" | cut -d' ' -f1)
+  [ "$staged" = "$CC_PACK_SHA" ] \
+    || die "packs/$CC_PACK_NAME staged as $staged where $CC_PACK is $CC_PACK_SHA"
+  if [ "$(stat -c %d:%i "$CC_PACK")" = "$(stat -c %d:%i "$OUT/packs/$CC_PACK_NAME")" ]
+  then how="hard linked"; else how=copied; fi
+  echo "mksd-buildroot: the debugger's pack: $CC_PACK $how to packs/$CC_PACK_NAME"
+  echo "mksd-buildroot:   $CC_PACK_SHA"
+fi
 
 # **AND A README, WHICH IS NOT DECORATION.**  Two reasons, and the second is
 # the one that makes it mandatory rather than nice.  First: this partition is
@@ -302,6 +376,10 @@ done
   printf 'machine sees it on, and whichever of the eight files exist are the\r\n'
   printf 'drives that are present.  A pack must be exactly 269,562,880 bytes\r\n'
   printf '(a T-300) or 70,937,600 (a T-80); any other size is not a pack.\r\n\r\n'
+  printf 'muir-cc.img, if this card carries it, is not one of the eight and is\r\n'
+  printf 'not a drive.  It is the debugger pack: a band with CC already loaded\r\n'
+  printf 'in it, which muir reads and the machine in the fabric never sees.\r\n'
+  printf 'muirrc is what names it, and the two are deleted or kept together.\r\n\r\n'
   printf 'While the board is running you need not take the card out at all:\r\n'
   printf '  copy a pack in            that drive comes ready\r\n'
   printf '  RENAME a pack out         that drive is taken away, and anything\r\n'
@@ -457,30 +535,62 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
     printf -- "--chaos-udp-default-peer %s\r\n" "$CHAOS_DEFAULT_PEER"
   fi
   printf "\r\n"
-  printf "# NOT BUILT YET, AND THE TWO LINES THAT FINISH THIS FILE.\r\n"
-  printf "#\r\n"
-  printf "# The pack.  The debugger is not muir; it is CC running on a CADR that\r\n"
-  printf "# muir simulates, so muir needs a band with CC already loaded.  That\r\n"
-  printf "# pack does not exist yet.  Until it does, a \`muir\` typed here boots\r\n"
-  printf "# the PROM and waits on a drive that never answers, which is what a\r\n"
-  printf "# CADR with no pack loaded did.  The name must not be\r\n"
-  printf "# disk-pack-0.img to disk-pack-7.img: those eight are the fabric\r\n"
-  printf "# machine's drive bay and this pack is muir's own.\r\n"
-  printf "#--disk-pack /mnt/packs/muir-cc.img\r\n"
-  printf "#\r\n"
-  printf "# The cable.  An argument beginning 0x is no endpoint but the physical\r\n"
-  printf "# address where this project's CADR presents its DBGIN as a register\r\n"
-  printf "# window, reached through /dev/mem.  THE ADDRESS IS SETTLED:\r\n"
-  printf "# 0x8000_1000, the second 4 KB page of M_AXI_GP1, behind the split\r\n"
-  printf "# that shares that port with the console at 0x8000_0000.  muir\r\n"
-  printf "# refuses a window that does not read DBUG, and has no default for\r\n"
-  printf "# where one sits, so a bitstream without the cable in it stops muir\r\n"
-  printf "# rather than letting it talk to nothing.  That is also why this\r\n"
-  printf "# line stays commented until the pack above exists: a muir attached\r\n"
-  printf "# to the cable with no CC band is a debugger with no debugger in it,\r\n"
-  printf "# and a card that demanded the window would refuse to start on every\r\n"
-  printf "# older bitstream.  Uncomment the two together.\r\n"
-  printf "#--debug-cable-connect 0x80001000\r\n"
+  # **THE TWO LINES THAT FINISH THIS FILE GO IN LIVE OR COMMENTED, TOGETHER,
+  # AND NEVER ONE OF EACH.**  They are one arrangement and not two settings: a
+  # muir attached to the cable with no CC band is a debugger with no debugger
+  # in it, and a muir with the band and no cable is a second CADR that debugs
+  # nothing.  So the card that carries the pack writes both live and the card
+  # that does not writes both commented, with the explanation the second case
+  # needs.
+  if [ -n "${CC_PACK:-}" ]; then
+    printf "# THE PACK AND THE CABLE.  This card carries the debugger's band,\r\n"
+    printf "# so both of these are live.\r\n"
+    printf "#\r\n"
+    printf "# The pack.  The debugger is not muir; it is CC running on a CADR\r\n"
+    printf "# that muir simulates, so muir needs a band with CC already loaded\r\n"
+    printf "# in it.  The name is not disk-pack-0.img to disk-pack-7.img:\r\n"
+    printf "# those eight are the fabric machine's drive bay and this pack is\r\n"
+    printf "# muir's own.  muir opens it read-write, as a drive writes a pack,\r\n"
+    printf "# so this copy drifts from the first boot; that is what a drive\r\n"
+    printf "# does and is not a fault.\r\n"
+    printf -- "--disk-pack /mnt/packs/%s\r\n" "$CC_PACK_NAME"
+    printf "#\r\n"
+    printf "# The cable.  An argument beginning 0x is no endpoint but the\r\n"
+    printf "# physical address where this project's CADR presents its DBGIN as\r\n"
+    printf "# a register window, reached through /dev/mem.  THE ADDRESS IS\r\n"
+    printf "# SETTLED: 0x8000_1000, the second 4 KB page of M_AXI_GP1, behind\r\n"
+    printf "# the split that shares that port with the console at 0x8000_0000.\r\n"
+    printf "# muir refuses a window that does not read DBUG, and has no default\r\n"
+    printf "# for where one sits, so a bitstream without the cable in it stops\r\n"
+    printf "# muir rather than letting it talk to nothing --- which is also\r\n"
+    printf "# what this line does on a board holding an older bitstream.\r\n"
+    printf -- "--debug-cable-connect 0x80001000\r\n"
+  else
+    printf "# NOT ON THIS CARD, AND THE TWO LINES THAT WOULD FINISH THIS FILE.\r\n"
+    printf "#\r\n"
+    printf "# The pack.  The debugger is not muir; it is CC running on a CADR\r\n"
+    printf "# that muir simulates, so muir needs a band with CC already loaded.\r\n"
+    printf "# This card carries no such pack.  Without it a \`muir\` typed here\r\n"
+    printf "# boots the PROM and waits on a drive that never answers, which is\r\n"
+    printf "# what a CADR with no pack loaded did.  The name must not be\r\n"
+    printf "# disk-pack-0.img to disk-pack-7.img: those eight are the fabric\r\n"
+    printf "# machine's drive bay and this pack is muir's own.\r\n"
+    printf "#--disk-pack /mnt/packs/%s\r\n" "$CC_PACK_NAME"
+    printf "#\r\n"
+    printf "# The cable.  An argument beginning 0x is no endpoint but the\r\n"
+    printf "# physical address where this project's CADR presents its DBGIN as\r\n"
+    printf "# a register window, reached through /dev/mem.  THE ADDRESS IS\r\n"
+    printf "# SETTLED: 0x8000_1000, the second 4 KB page of M_AXI_GP1, behind\r\n"
+    printf "# the split that shares that port with the console at 0x8000_0000.\r\n"
+    printf "# muir refuses a window that does not read DBUG, and has no default\r\n"
+    printf "# for where one sits, so a bitstream without the cable in it stops\r\n"
+    printf "# muir rather than letting it talk to nothing.  That is also why\r\n"
+    printf "# this line stays commented while the pack above is missing: a card\r\n"
+    printf "# that demanded the window would refuse to start on every older\r\n"
+    printf "# bitstream.  Copy a pack in beside this file and uncomment the\r\n"
+    printf "# two together.\r\n"
+    printf "#--debug-cable-connect 0x80001000\r\n"
+  fi
   printf "#\r\n"
   printf "# The serial line would be --serial 0.0.0.0:7642, one above the fabric\r\n"
   printf "# machine's 7641.  It is NOT here, and not by oversight: muir refuses\r\n"
@@ -489,7 +599,7 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
   printf "# and a --serial line cannot both be in this file.  The cable is what\r\n"
   printf "# this muir is for.\r\n"
 } > "$OUT/packs/muirrc"
-echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at 0x80001000 and waits on the CC pack"
+echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at 0x80001000 and $([ -n "${CC_PACK:-}" ] && echo "is live, with the debugger's pack at /mnt/packs/$CC_PACK_NAME" || echo "waits on the CC pack")"
 
 # The server: the same five files and the command that fetches them.
 cp "$BIT" "$OUT/server/cadr.bit"
@@ -588,6 +698,10 @@ if [ -x "$HOSTBIN/genimage" ]; then
       case "$n" in
         disk-pack-[0-7].img|README.TXT) ;;
         fpgarc|muirrc) ;;
+        # A variable and not the literal muir-cc.img, so that the name lives
+        # in one place: it is written into muirrc as well, and two spellings
+        # of it would part company on the first one somebody changed.
+        "$CC_PACK_NAME") ;;
         *) die "partition 2 carries '$n', which is none of the eight pack names, the README, or a settings file" ;;
       esac
     done

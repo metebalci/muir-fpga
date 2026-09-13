@@ -255,7 +255,19 @@ them into the `.bit` --- so the provenance of every staging is in its log:
 is `unit=path`, or a bare path taking the lowest free unit. Without it the
 bay is empty, and the script says so and says how to fill it from the running
 board. A file whose size is neither a T-300's nor a T-80's is refused here,
-because on the board it would simply not be a drive. `BOOT_MB=<n>` and `PACKS_MB=<n>` are
+because on the board it would simply not be a drive.
+
+**`CC_PACK` is the debugger's band, and it is not one of the eight.** muir on
+the board's own Arm cores is the far end of the debug cable, and the debugger
+is CC running on a CADR that muir simulates. So muir needs a band with CC
+already loaded in it, which `docs/cc-pack.md` says how to build. Name that
+file with `CC_PACK` in `local.conf` and the card carries it as
+`/mnt/packs/muir-cc.img`, beside the bay rather than in it, and `muirrc` gets
+its `--disk-pack` and `--debug-cable-connect` lines live. Leave `CC_PACK`
+unset and those two lines stay commented, with the explanation of what is
+missing. The variable is in `local.conf` because the file is 257 MiB and is a
+path on whoever's build host. It must be exactly a T-300, where the bay also
+takes a T-80. `STANDALONE` clears it, so no release card carries it. `BOOT_MB=<n>` and `PACKS_MB=<n>` are
 how big the two partitions are made. `BOOT_MB` is 64. `PACKS_MB`, left
 unset, is what the packs named come to plus 264 MiB, which is room for one
 more drive. One T-300 pack therefore makes an image of 594 MiB rather than of
