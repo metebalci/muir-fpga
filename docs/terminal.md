@@ -3,11 +3,14 @@ SPDX-FileCopyrightText: 2026 Mete Balci
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# The screen
+# The screen, and the keyboard and mouse
 
 `cadr-terminal` is the program on the processing system that shows the CADR's
-display to a VNC viewer. It was written at the slice, against muir at
-`dad7249` and the fabric at the commit that added this file.
+display to a VNC viewer and carries the viewer's keys and pointer back to the
+machine. The screen was written at the first slice, against muir at
+`dad7249` and the fabric at the commit that added this file. The keyboard and
+the mouse came at a second slice, against muir at `ff5de42`, once the I/O
+board was in the fabric.
 
 The display block is built and checked (`docs/tv.md`), and nothing could look
 at what it draws. **It needs no new fabric to fix that**, which is why this
@@ -21,23 +24,28 @@ and the keyboard and mouse later, when the I/O board exists.
 
     cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
                   [--window ADDR] [--interval-ms N] [--no-rre]
-                  [--no-guard] [--once]
+                  [--no-guard] [--no-input] [--input ADDR] [--once]
 
 It maps 128 KB at `0x1C00_0000` through `/dev/mem`. It copies the visible
 23,112 words out of that once a frame while anybody is watching. It serves them
 over RFB on port 5900, which is display `:0`. RFB is RFC 6143, which is what a
 VNC viewer speaks. `S85cadr-terminal` starts it at boot.
 
-**It is READ-ONLY.** It has no keyboard, no mouse and no pointer. A viewer's
-`KeyEvent` and `PointerEvent` are read off the wire, counted and dropped, and
-the program says so once, the first time one arrives. The CADR's keyboard and
-mouse are the I/O board's, and that board is not in the fabric. muir's own
-terminal serves all three, because muir has an I/O board to put a keystroke
-into. A viewer that types at this screen sees nothing happen, which is what a
-machine with no keyboard attached does. RFC 6143 gives a server no way to tell
-a viewer it takes no input, and every viewer sends pointer events as the mouse
-crosses its window. So refusing the connection would be worse than dropping
-them.
+**It carries the keyboard and the mouse.** It did not at first, because there
+was no I/O board in the fabric to put a keystroke into. There is one now.
+`rtl/plumbing/cadr_input_cables.sv` is the far end of the card's keyboard
+cable and its mouse, on the fourth page of `M_AXI_GP0` at `0x4000_3000`. A
+viewer's `KeyEvent` becomes a stream of twenty-four-bit words and its
+`PointerEvent` becomes deltas and a button mask. The mapping is muir's own,
+and the section below says what it could not map.
+
+**It is read-only where the fabric has no input cables.** A bitstream without
+them answers `IDENT` with something other than "INPT", and the program says so
+and serves the screen anyway. `--no-input` asks for that deliberately. In
+either case a viewer's events are read off the wire, counted and dropped: RFC
+6143 gives a server no way to tell a viewer it takes no input, and every
+viewer sends pointer events as the mouse crosses its window, so refusing the
+connection would be worse than dropping them.
 
 **It has no authentication.** `None` is the only security type offered (RFC
 6143 section 7.2.1), so anybody who can reach the port sees the screen. That
@@ -114,6 +122,143 @@ like. muir drawing MIT's System 100 band at microcycle 200,000,000 has mode 0
 and 7,572 of its 739,584 pixels lit: **white text on black, one per cent of
 the screen**.
 
+
+## What a key is, and what the machine is told
+
+**There are no modifier bits in a key event.** The CADR's keyboard --- source
+ID 1, the one with the three 74LS164s --- sends a key POSITION going down and
+the same position coming up, and nothing else. MIT's own `ukbd.lisp` says why:
+"All key-encoding, including hacking of shifts, will be done in software in the
+central machine, not in the keyboard." So Shift, Control, Meta, Super, Hyper,
+Top and Greek are keys at positions of their own. The machine works out what
+was typed from the stream.
+
+The word is `muir::terminal::keyboard::up_down`. Bits 23 to 19 are all ones,
+"Reserved, must be 1's". Bits 18 to 16 are the source ID. Bit 8 is "1=key up,
+0=key down". The low seven bits are the position on MIT's table. Every word
+this keyboard sends therefore has `word >> 16` equal to `0o371`, which is what
+the card's high half at `0o764102` carries.
+
+**RFB gives a keysym per event, already shifted.** A viewer pressing shift and
+`1` sends `Shift_L` down and then `!`, not `1`. The Lisp Machine wants position
+`0o121` with the Shift key down. Where the viewer's shift state and the plane
+the keysym wants already agree, the position is simply pressed. Where they do
+not, the Shift key is worked around the key: shift down, key down, key up,
+shift up, which is what a typist would have done. The key's own release is
+then dropped, the terminal having sent it whole already.
+
+**A viewer that goes away has every key it held released.** There are no
+modifier bits in a word, so a Control held when a connection drops is a Control
+held for the rest of the machine's run, and every character after it is a
+control character. RFB has no message for a server to act on here, so the
+releases are sent when the last viewer is dropped.
+
+### The mapping is muir's, and the table is generated from it
+
+`src/input_keymap.h` is written by `src/keymap_from_muir.py`, which reads
+muir's `src/terminal/keyboard.rs` and `src/terminal/default.keys` and resolves
+every name exactly as muir's own `key_of` resolves it. MIT's key table is
+ninety-nine entries and the default mapping is sixty-one bindings. A
+transcription error in either would be a key that types the wrong character on
+one position in a hundred, which is the kind of mistake that survives every
+check that does not happen to press that key. The generator removes that class
+of error entirely.
+
+**No build runs the generator.** It needs muir beside the tree, which neither
+Buildroot nor CI has. The output is committed and its header names the muir
+commit it came from. `muir.commit` at the top of this repository is the pin
+every reference here is held to.
+
+The state machine over the table is written out by hand in `src/input_keys.c`,
+function for function against `Keyboard::resolve`, `tap`, `press` and
+`release`. A translation of behaviour is not a translation of data, and
+pretending otherwise would hide where the judgement is.
+
+### What could not be mapped
+
+Three things, all of them muir's limits rather than this program's.
+
+**A keysym neither bound nor printable ASCII goes nowhere.** `Home`, `Insert`,
+`Print`, `Num_Lock` and the arrow keys on their own are examples. muir's
+`positions` returns an empty list for anything outside `0x20` to `0x7e` that no
+line of `default.keys` names, and nothing goes down the cable. The program
+counts them and says how many.
+
+The arrows, the four Roman keys, the two thumbs and the two hands are
+reachable, but only behind the `Scroll_Lock` prefix. That is muir's own answer
+to a host keyboard with fewer keys than this one: press `Scroll_Lock`, then the
+key it names. Twenty-two of MIT's keys are reachable that way and no other.
+
+**Position `0o021` is unreachable on purpose.** MIT's table has plus-minus
+there, which is not ASCII, so `keyboard.rs` leaves it undefined and no keysym
+finds it.
+
+**`Left Greek` is position `0o035`, which MIT's table labels Right Greek.**
+muir looks a shifting key's positions up by walking the table upwards, and
+`Left` takes the first one it finds. Greek is the one shifting key of the seven
+whose two positions are in the other order: `0o035` is Right and `0o044` is
+Left, where Shift, Control, Meta, Super, Hyper and Top all have Left below
+Right. So `ISO_Level3_Shift` reaches the right-hand key and MIT's left-hand one
+cannot be named by side. It is harmless, both positions being the same shift to
+a machine that decodes from the stream, and it is pinned in the check so that
+nobody corrects it into a disagreement with muir.
+
+### And one thing that is not a mapping limit
+
+**Microcode 323's cold-boot test cannot be reached by typing.** The microcode
+compares the low six bits of the keyboard word against `0o46`. On this keyboard
+`0o46` is the Status key's position and Rubout is `0o23`, so "hold Rubout at
+boot for a cold boot" is the old Knight keyboard's behaviour and does not
+happen here. What the test does mean for this program is in the section below.
+
+## The autoboot trap, and the program's part in it
+
+**The machine asks whether anybody is typing four instructions into microcode
+323.** MIT's `sys/ucadr/uc-cadr.lisp` at `(LOC 6)`:
+
+    (CALL-XCT-NEXT PHYS-MEM-READ)
+   ((VMA) (A-CONSTANT 17772045))        ;Unibus 764112, the KBD CSR
+    (JUMP-IF-BIT-CLEAR (BYTE-FIELD 1 5) MD COLD-BOOT)
+
+`KBD READY` clear is a cold boot. Ready is a warm one. So a word waiting at
+that register when the microcode starts sends the machine down a path nobody
+asked for.
+
+The fabric's legs against that are in `rtl/plumbing/cadr_input_cables.sv`'s own
+header: nothing but an AXI write can make a strobe, and a machine reset empties
+the queue. **The leg that belongs to a program is the flush.** `cadr-terminal`
+writes `CTL`'s FLUSH bit after it has read `IDENT` and before it binds its
+socket, so a viewer cannot have sent anything yet. A program taking keys from a
+device the kernel has been buffering --- `cadr-usb-input`, when it is built ---
+must also drain that device before its first write, because the buffering is on
+the far side of this seam and no register here can see it.
+
+## The mouse
+
+A `PointerEvent` carries an absolute position and the CADR's mouse counts
+deltas, so what crosses the seam is the difference. One count a pixel, right
+and down positive, which is `muir::terminal::mouse`'s own convention. The first
+event only establishes where the pointer is: without that, a viewer connecting
+would fling the machine's cursor from wherever it was to wherever the pointer
+happened to enter the window.
+
+The quadrature encoder is in the fabric and not here. A step is 16,000 ns of
+the machine's own time, which is 32 real microseconds at this board's tick, so
+a program making phases over `M_AXI_GP0` would be writing fifty thousand times
+a second. `docs/io-board.md` settled that at the card's second slice: the card
+takes the seven lines MIT's mouse drives, and whatever turns a delta into
+phases is fabric beside it.
+
+The three switches need no translation. RFB's mask is left 1, middle 2, right
+4, and MIT's `buttons-down-mask` is the same three bits in the same order.
+muir's `mouse.rs` says so.
+
+**There is one mouse and there are up to eight viewers.** The difference is
+taken between whatever position was last reported and the new one, whoever
+reported each. With two viewers moving pointers the machine's cursor jumps.
+muir has exactly this and for the same reason: the machine has one mouse, and
+which of the people watching is holding it is not something RFB says.
+
 ## The encodings, and what they cost
 
 **Raw** (RFC 6143 section 7.7.1) is what every server must have and every
@@ -161,8 +306,14 @@ channel's, and nothing in the fabric has to know a viewer exists.
 `make -C boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src check`
 runs on the build host, with no board. The server is driven from screens made
 in the check, and a viewer written for the purpose sits on a real loopback
-socket. **420 checks, 0 failures**, then **15 mutations, 15 caught, 0 survived,
-0 broken.** The whole thing takes about half a minute.
+socket. **617 checks, 0 failures**, then **30 mutations, 30 caught, 0 survived,
+0 broken.** The whole thing takes about a minute.
+
+**And `make check` at the repository root runs it now**, as `terminal.pass`,
+beside `chaosnet.pass` and `serial.pass`. It did not before. That was a hole
+the first slice left: this program had its own check from the day it was
+written and nothing gated on it, so a change to it was gated by whoever
+remembered.
 
 - **The mapping, on nine hand-computed anchors**, in both directions of `MODE
   BOW` and in both encodings. One bit set in an empty screen must light
@@ -197,6 +348,41 @@ socket. **420 checks, 0 failures**, then **15 mutations, 15 caught, 0 survived,
   to skip it.
 - **The whole-screen interval** is held by a clock the check owns.
 - **The blank states** are each told from the others.
+
+And, for the keyboard and the mouse, with a model of the fabric's register
+face behind the two function pointers. **It records and it does not
+interpret**: the model keeps the word stream the program wrote and nothing
+else, and every expected word is computed by hand from `up_down` and MIT's own
+table. A model that turned the words back into keysyms would agree with a
+program that was wrong the same way.
+
+- **A plain letter, and its frame bits.** `a` is position `0o123` on the
+  unshifted plane, pressed and released with no shift anywhere.
+- **A character whose plane the viewer is not holding**, both ways round: `!`
+  with no shift held, where the Shift key is worked around the key; and a
+  plane-0 keysym with the viewer holding Shift, where every shift it holds
+  comes up around the key and goes back down. The second of those was added
+  because a mutation of that branch survived without it.
+- **Eighteen named keys and fourteen modifiers**, each by position in octal.
+  `Return`, `KP_Enter`, `Tab`, `BackSpace` and `Delete` as Rubout, `Linefeed`
+  as Line, `Escape` as Alt Mode, `Help`, `Break`, `Cancel` as Abort, `End`,
+  `Pause` as Hold Output, and six of the function keys. Left and Right are
+  different positions and a mapping that collapsed them would be caught.
+- **The prefix**: `Scroll_Lock` then `1` is Roman I and is tapped;
+  `Scroll_Lock` then `l` is Control, which is held for the one key that
+  follows and then let go; and a prefix pressed twice is the way out of a
+  sequence begun by mistake.
+- **A keysym nothing maps** goes nowhere and is counted.
+- **A viewer that goes with keys down** has them released.
+- **A fabric with no room** holds the program up rather than losing what it
+  could not send, and the words come out in order afterwards.
+- **The mouse**: the first event moves nothing, right and down are positive,
+  left and up negative, a pointer that did not move writes nothing, the three
+  switches are RFB's own mask, a wheel button reaches no wire, and a viewer
+  going lifts the switches.
+- **The face**: `IDENT`, the flush, a delta wider than the register's twelve
+  bits held rather than wrapped, and a word refused rather than written when
+  the queue is full.
 
 **And two real screens, when they are there.** `vendor/screen/` is gitignored
 like the rest of `vendor/`. So a fresh clone runs the anchors and the check's
@@ -234,8 +420,25 @@ two fabric mutations reported as surviving that had never been built.
 
 **What it cannot hold to.** It cannot hold to the uncached mapping's speed on
 the board, which is real traffic on the DDR controller and is measured there
-and not here. It cannot hold to the torn frame above. And it cannot hold to
-`MODE BOW`, which nothing in the fabric will tell it.
+and not here. It cannot hold to the torn frame above. It cannot hold to
+`MODE BOW`, which nothing in the fabric will tell it. And it cannot hold to
+the fabric behind the register face, which is `build/gp0_split.pass`'s: that
+check drives the same face through the splitter and reads the CARD's own
+keyboard and mouse registers over the Unibus, so the two halves meet there and
+not here.
+
+### The seam is checked at the other end too
+
+`build/gp0_split.pass` carries a keystroke and a mouse movement all the way
+across. It writes a word at `0x4000_3000` and reads it back out of the card's
+two halves at `0o764100` and `0o764102`, in MIT's own order, with only the low
+half clearing `KBD READY`. It writes four words while the card holds one and
+requires them to arrive one at a time and in order. It moves the mouse one
+step at a time and compares the quadrature the card latched against muir's own
+`00, 10, 11, 01` with counts one to four, the twelve-bit wrap, and 63 steps
+against 63 times `MOUSE_STEP_NS`. And it holds the two fabric legs of the
+autoboot trap: nothing reaches the card's `KBD READY` until a word is written,
+and nothing reaches it after the machine's own reset.
 
 ## On the board
 
@@ -255,9 +458,15 @@ lines:
       768x963, 24 words a line, 23112 of the window's 32768 words, one bit a
       pixel, a one bit WHITE (MODE BOW clear, the fabric's power-on state)
     cadr-terminal: the screen is BLANK: every visible word zero (0x00000000) ...
+    cadr-terminal: the keyboard and mouse answer at word 0 with "INPT"; STAT ...
     cadr-terminal: RFB on 0.0.0.0:5900 --- display :0 to a viewer. NO
-      AUTHENTICATION ... READ-ONLY ... Encodings: Raw and RRE, whichever is
-      smaller for each rectangle
+      AUTHENTICATION ... The keyboard and mouse go to the machine. Encodings:
+      Raw and RRE, whichever is smaller for each rectangle
+    cadr-terminal: the keyboard and mouse are at 0x40003000; a viewer's keys go
+      to the machine as MIT's own key positions, muir's mapping, and its
+      pointer as the mouse's own counts. The fabric's queue was flushed before
+      this socket was bound, so nothing was waiting at the machine's cold-boot
+      test
 
 The blank line is expected at boot, and it is the point of it. **An unwritten
 word of this board's DDR reads zero in some places and all ones in others**
@@ -297,10 +506,11 @@ of the pixels lit.
 
 ## What is not built
 
-- **Input.** Keyboard, mouse and pointer are the I/O board's. When that
-  block exists, this program grows a path for them or a second program takes
-  them. `muir`'s `src/terminal/keyboard.rs` and `mouse.rs` are the model
-  either way.
+- **`--keyboard-mapping`.** muir reads a file of `key` and `prefix` lines over
+  its built-in map, and this carries the built-in one and nothing else. The
+  parser is the larger half of muir's keyboard, and the board has nowhere to
+  put a file that survives a reboot except the card, so it waits for somebody
+  to want it. `muir --keyboard-mapping-dump` prints the map this one has.
 - **Reading `MODE BOW`**, which is described above.
 - **Encodings past Raw and RRE.** Hextile and ZRLE would both beat RRE on a
   screen of text. ZRLE needs zlib on the board, Hextile is a real amount of

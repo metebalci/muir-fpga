@@ -250,6 +250,20 @@ static void drop(struct screen_server *s, unsigned k, const char *why)
 {
 	struct screen_viewer *v = s->viewer[k];
 	say("viewer %s: gone (%s); %u watching", v->who, why, s->viewers - 1);
+	// **EVERY KEY THE VIEWER HAD DOWN COMES UP.**  There are no modifier
+	// bits in a word on this keyboard --- the machine follows the stream of
+	// positions --- so a Control held when a connection drops is a Control
+	// held for the rest of the run, and every character after it is a
+	// control character.  RFB has no "the viewer has gone" message for a
+	// server to act on, so the only place this can be done is here.  It
+	// runs for the LAST viewer only: with somebody else still watching,
+	// whatever they are holding is theirs and must stand.
+	if (s->input && s->viewers == 1) {
+		key_all_up(&s->keys);
+		s->buttons = 0;
+		s->have_ptr = 0;
+		input_face_buttons(s->input, 0);
+	}
 	viewer_free(v);
 	s->viewer[k] = s->viewer[s->viewers - 1];
 	s->viewer[s->viewers - 1] = NULL;
@@ -380,16 +394,68 @@ static int viewer_step(struct screen_server *s, struct screen_viewer *v, const c
 				v->rh = m.h;
 				break;
 			case RFB_KEY:
-			case RFB_POINTER:
-				// Read-only: counted and dropped.  The line is
-				// said once for the program, not once a viewer,
-				// because a room of viewers all moving a mouse
-				// would otherwise write a line each.
 				++s->input_events;
-				if (!s->said_input) {
-					s->said_input = 1;
-					say("a viewer sent a key or pointer event: this server is READ-ONLY and drops them. "
-					    "The CADR's keyboard and mouse are the I/O board's, which is not in the fabric");
+				if (!s->input) {
+					// No input face: counted and dropped,
+					// and the line is said once for the
+					// PROGRAM and not once a viewer,
+					// because a room of viewers all moving
+					// a mouse would write a line each.
+					if (!s->said_input) {
+						s->said_input = 1;
+						say("a viewer sent a key or pointer event and this server has no "
+						    "keyboard: is the bitstream one with the I/O board's input "
+						    "cables in it?");
+					}
+					break;
+				}
+				// muir's own mapping: `input_keys.h` says what
+				// a keysym becomes and what it could not map.
+				key_event(&s->keys, m.keysym, m.down);
+				break;
+			case RFB_POINTER:
+				++s->input_events;
+				if (!s->input) {
+					if (!s->said_input) {
+						s->said_input = 1;
+						say("a viewer sent a key or pointer event and this server has no "
+						    "mouse: is the bitstream one with the I/O board's input "
+						    "cables in it?");
+					}
+					break;
+				}
+				// `Mouse::pointer`: the difference from the
+				// last position, one count a pixel, right and
+				// down positive.  **The first event moves
+				// nothing**, having no previous position to
+				// take a difference from --- without that, a
+				// viewer connecting would fling the machine's
+				// cursor from wherever it was to wherever the
+				// pointer happened to enter the window.
+				const int first_ptr = !s->have_ptr;
+				if (!first_ptr) {
+					const int dx = (int)m.x - (int)s->ptr_x;
+					const int dy = (int)m.y - (int)s->ptr_y;
+					if (dx || dy) {
+						input_face_move(s->input, dx, dy);
+						++s->pointer_moves;
+					}
+				}
+				s->ptr_x = m.x;
+				s->ptr_y = m.y;
+				s->have_ptr = 1;
+				// The switches are a LEVEL on the cable, so
+				// they are written whenever they change and
+				// the card's own comparator decides whether
+				// anything happened.  **AND ON THE FIRST EVENT
+				// WHETHER THEY CHANGED OR NOT**: a viewer whose
+				// first word is a button already down would
+				// otherwise leave the fabric's register at
+				// whatever the last viewer left, which is a
+				// button the machine sees held by nobody.
+				if (first_ptr || m.buttons != s->buttons) {
+					s->buttons = m.buttons;
+					input_face_buttons(s->input, m.buttons);
 				}
 				break;
 			case RFB_CUT_TEXT:
@@ -743,6 +809,26 @@ void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 			drop(s, k, why);
 		else
 			++k;
+	}
+
+	// --- and the words waiting go to the fabric.
+	//
+	// **THE QUEUE IS DRAINED HERE AND NOT WHERE THE KEY ARRIVED**, because
+	// the fabric's own queue is sixteen words and a shifted keystroke is
+	// four: a burst that filled it would otherwise be lost at the write
+	// rather than held.  `input_face_key` asks the face for room and says
+	// so, and a word it would not take stays at the head of this queue for
+	// the next pass --- which is `muir::terminal::keyboard::deliver`'s own
+	// arrangement one seam further out.
+	if (s->input) {
+		while (key_pending(&s->keys)) {
+			if (!input_face_key(s->input, key_peek(&s->keys))) {
+				++s->keys_stuck;
+				break;
+			}
+			key_took(&s->keys);
+			++s->keys_sent;
+		}
 	}
 }
 

@@ -14,17 +14,30 @@
 // that region, reads it once a frame, and serves it over RFB, RFC 6143,
 // which is what a VNC viewer speaks.
 //
-// **READ-ONLY, AND THE PROGRAM SAYS SO.**  No keyboard, no mouse, no pointer.
-// A viewer's `KeyEvent` and `PointerEvent` are read off the wire, counted and
-// dropped, and one line says so the first time one arrives.  The CADR's
-// keyboard and mouse are the I/O board's --- muir's `terminal` serves all
-// three because muir has an I/O board to put a keystroke into --- and that
-// board is not in the fabric.  Mete asked for the screen first and the input
-// later, and this is the screen.
+// **AND IT CARRIES THE KEYBOARD AND THE MOUSE.**  It did not, for as long as
+// there was no I/O board in the fabric to put a keystroke into; the card is
+// in the machine now, and `rtl/plumbing/cadr_input_cables.sv` is the far end
+// of its keyboard's cable and its mouse's, on the fourth page of
+// `M_AXI_GP0`.  A viewer's `KeyEvent` becomes a stream of twenty-four-bit
+// words --- muir's own mapping and MIT's own key table, `input_keys.h` --- and
+// its `PointerEvent` becomes deltas for the quadrature encoder in fabric and
+// a mask for the mouse's three switches.  Mete asked for the screen first and
+// the input later; this is the later.  **`--no-input` is the old behaviour**,
+// and so is a bitstream without the input cables: the events are counted and
+// dropped and one line says so.
 //
 // HOW IT RUNS.  `S85cadr-terminal` starts it at boot with `--log /dev/console`.
 // In order:
 //
+//   0. THE FLUSH, before anything can be typed at this program.  **The
+//      machine asks whether anybody is typing four instructions into
+//      microcode 323** --- `uc-cadr.lisp` at `(LOC 6)` reads the keyboard's
+//      status register and cold-boots if it is not ready, warm-boots if it
+//      is --- so a word left in the fabric's queue by a previous run would
+//      send a restarted machine down a path nobody asked for.  The flush is
+//      written after `IDENT` and BEFORE the socket is bound, which is what
+//      makes it airtight here: a viewer cannot have sent a key to a socket
+//      that does not exist yet.  `input_face.h` has the other three legs.
 //   1. THE GUARD.  A read on `M_AXI_GP0` or `M_AXI_GP1` that nothing in the
 //      fabric answers hangs both Arm cores, and no software guard can catch
 //      it afterwards (CLAUDE.md; measured on the board).  The one thing a
@@ -37,7 +50,10 @@
 //      never wrote a word of that region, so what this program would serve is
 //      whatever the DDR controller last held.  Reading the tally first is how
 //      it tells a machine that has not drawn from a board that cannot.
-//      `--no-guard` is for a board somebody knows.
+//      `--no-guard` is for a board somebody knows.  **The input face IS on a
+//      GP port**, unlike the display's window, so for this program the guard
+//      is no longer only a diagnostic: `--no-guard --no-input` is the pair
+//      that reaches nothing.
 //   2. THE WINDOW: 128 KB at 0x1C00_0000 through /dev/mem, uncached --- a
 //      word the fabric writes over `S_AXI_HP0` must not be read out of a
 //      cache the port cannot see.
@@ -61,7 +77,8 @@
 // summary at most once a minute, and only while the counts move.
 //
 //     cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
-//                   [--interval-ms N] [--no-rre] [--no-guard] [--once]
+//                   [--interval-ms N] [--no-rre] [--no-guard] [--no-input]
+//                   [--input ADDR] [--once]
 
 #include <errno.h>
 #include <getopt.h>
@@ -75,6 +92,8 @@
 #include <cadr/cadr_log.h>
 #include <cadr/cadr_mem.h>
 
+#include "input_face.h"
+#include "input_keys.h"
 #include "screen_frame.h"
 #include "screen_geom.h"
 #include "screen_server.h"
@@ -105,6 +124,8 @@ static void usage(void)
 		"  --interval-ms N   how often the window is read while anybody watches (default 16)\n"
 		"  --no-rre          send every rectangle Raw, for measuring what RRE buys\n"
 		"  --no-guard        do not check the EMIO tally first\n"
+		"  --no-input        do not carry the keyboard and mouse; drop what a viewer sends\n"
+		"  --input ADDR      the keyboard and mouse registers (default 0x40003000)\n"
 		"  --once            do the checks, read one frame, say what is on it, and exit\n");
 }
 
@@ -123,7 +144,8 @@ int main(int argc, char **argv)
 	const char *log_path = NULL, *bind_addr = NULL;
 	unsigned port = 5900, interval_ms = 16;
 	uint32_t window_phys = SCREEN_BASE;
-	int bow = 0, no_guard = 0, once = 0, no_rre = 0;
+	uint32_t input_phys = IN_REG_BASE;
+	int bow = 0, no_guard = 0, once = 0, no_rre = 0, no_input = 0;
 	static const struct option opts[] = {
 		{ "port", required_argument, NULL, 'p' },
 		{ "bind", required_argument, NULL, 'b' },
@@ -133,12 +155,14 @@ int main(int argc, char **argv)
 		{ "interval-ms", required_argument, NULL, 'i' },
 		{ "no-rre", no_argument, NULL, 'R' },
 		{ "no-guard", no_argument, NULL, 'G' },
+		{ "no-input", no_argument, NULL, 'I' },
+		{ "input", required_argument, NULL, 'n' },
 		{ "once", no_argument, NULL, 'o' },
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGoh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGIn:oh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'p': port = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'b': bind_addr = optarg; break;
@@ -148,6 +172,8 @@ int main(int argc, char **argv)
 		case 'i': interval_ms = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'R': no_rre = 1; break;
 		case 'G': no_guard = 1; break;
+		case 'I': no_input = 1; break;
+		case 'n': input_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'o': once = 1; break;
 		default: usage(); return 2;
 		}
@@ -204,16 +230,53 @@ int main(int argc, char **argv)
 	if (once)
 		return 0;
 
+	// 2b. The keyboard and the mouse, and the FLUSH before the socket.
+	//
+	// **A FACE THAT DOES NOT ANSWER IS NOT A FAILURE**, it is a bitstream
+	// without the input cables, and the screen is worth serving either
+	// way: the program says which it got and carries on.  `--no-input`
+	// says so deliberately.
+	struct input_face input;
+	int have_input = 0;
+	if (!no_input) {
+		if (input_face_open(&input, mem, input_phys) == 0) {
+			if (input_face_ident(&input) == 0) {
+				// The flush, with nothing able to have typed
+				// yet: the socket is bound below.
+				input_face_flush(&input);
+				have_input = 1;
+			} else {
+				input_face_close(&input);
+			}
+		}
+		if (!have_input)
+			say("no keyboard and mouse: the screen is served READ-ONLY, and a viewer's "
+			    "keys and pointer are counted and dropped");
+	} else {
+		say("--no-input: the screen is served READ-ONLY");
+	}
+
 	// 3. The socket.
 	struct screen_server srv;
 	if (screen_server_bind(&srv, bind_addr, port) < 0)
 		return 1;
 	srv.rre_offered = !no_rre;
+	if (have_input) {
+		srv.input = &input;
+		key_state_init(&srv.keys);
+		say("the keyboard and mouse are at 0x%08x; a viewer's keys go to the machine "
+		    "as MIT's own key positions, muir's mapping, and its pointer as the "
+		    "mouse's own counts. The fabric's queue was flushed before this socket "
+		    "was bound, so nothing was waiting at the machine's cold-boot test",
+		    input_phys);
+	}
 	say("RFB on %s:%u --- display :%u to a viewer. NO AUTHENTICATION: RFC 6143's None is the "
 	    "only security type offered, so anyone who can reach this port sees the screen. "
-	    "READ-ONLY: keys and pointer events are dropped. Encodings: Raw%s",
+	    "%s. Encodings: Raw%s",
 	    bind_addr && *bind_addr ? bind_addr : "0.0.0.0", port,
 	    port >= 5900 && port < 5900 + 100 ? port - 5900 : 0,
+	    have_input ? "The keyboard and mouse go to the machine"
+	               : "READ-ONLY: keys and pointer events are dropped",
 	    no_rre ? " only (--no-rre)" : " and RRE, whichever is smaller for each rectangle");
 
 	// 4. The loop.
@@ -250,10 +313,15 @@ int main(int argc, char **argv)
 			|| srv.sent_raw + srv.sent_rre != said_bytes)) {
 			say("%u watching (%lu connected, %lu gone, %lu refused); %lu frames read; "
 			    "%lu rectangles Raw for %llu bytes (RRE would have been %llu), "
-			    "%lu RRE for %llu, saving %llu; %lu input events dropped",
+			    "%lu RRE for %llu, saving %llu; %lu input events, %lu key words to "
+			    "the machine (%lu waits for room, %lu lost in the fabric), "
+			    "%lu pointer moves, %lu keysyms nothing maps",
 			    srv.viewers, srv.connects, srv.drops, srv.refused, frame.reads,
 			    srv.rects_raw, srv.sent_raw, srv.declined_rre, srv.rects_rre,
-			    srv.sent_rre, srv.saved_by_rre, srv.input_events);
+			    srv.sent_rre, srv.saved_by_rre, srv.input_events,
+			    srv.keys_sent, srv.keys_stuck,
+			    have_input ? (unsigned long)input_face_lost(&input) : 0ul,
+			    srv.pointer_moves, srv.keys.unbound);
 			said_connects = srv.connects;
 			said_input = srv.input_events;
 			said_bytes = srv.sent_raw + srv.sent_rre;
@@ -261,9 +329,20 @@ int main(int argc, char **argv)
 		}
 	}
 	say("stopped: %lu viewers came and %lu went; %lu frames read; %llu bytes of pixels sent, "
-	    "%llu saved by RRE; %lu input events dropped",
+	    "%llu saved by RRE; %lu input events, %lu key words to the machine, %lu pointer moves",
 	    srv.connects, srv.drops, frame.reads, srv.sent_raw + srv.sent_rre, srv.saved_by_rre,
-	    srv.input_events);
+	    srv.input_events, srv.keys_sent, srv.pointer_moves);
+	// Every key the last viewer had down comes up, and the machine is left
+	// with nothing held: a Control still down when this program stops is a
+	// Control down for the rest of the machine's run.
+	if (have_input) {
+		key_all_up(&srv.keys);
+		while (key_pending(&srv.keys) && input_face_key(&input, key_peek(&srv.keys)))
+			key_took(&srv.keys);
+		input_face_buttons(&input, 0);
+	}
 	screen_server_close(&srv);
+	if (have_input)
+		input_face_close(&input);
 	return 0;
 }

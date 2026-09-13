@@ -76,6 +76,8 @@
 
 #include <cadr/cadr_log.h>
 
+#include "input_face.h"
+#include "input_keys.h"
 #include "screen_frame.h"
 #include "screen_geom.h"
 #include "screen_rfb.h"
@@ -1046,9 +1048,15 @@ static void check_handshakes(void)
 
 // Keys and pointer events are read, counted and dropped, and the line is said
 // once.
+// With NO input face --- which is `--no-input`, and a bitstream without the
+// input cables --- the events are still read off the wire and dropped, and the
+// connection survives all of it.  RFC 6143 gives a server no way to tell a
+// viewer it takes no input, and every viewer sends pointer events as the
+// mouse crosses its window, so refusing the connection would be worse.
 static void check_read_only(void)
 {
 	struct client c;
+	srv.input = NULL;
 	if (open_viewer(&c, "RFB 003.008\n", NULL, NULL, 0) < 0)
 		return;
 	const unsigned long before = srv.input_events;
@@ -1124,6 +1132,573 @@ static void check_blank(void)
 	frame.words[0] ^= 1u;
 	CHECK(screen_frame_blank(&frame) == SCREEN_BLANK_NO,
 	      "the first word different and the screen is still called blank");
+}
+
+
+// ---- a model of the fabric's input face ---------------------------------
+//
+// **IT RECORDS AND IT DOES NOT INTERPRET.**  CLAUDE.md's standing rule is
+// that a shadow of the thing under test must not move with a bug in it, so
+// this keeps the word stream the program wrote and nothing else: every check
+// below compares that stream against words worked out BY HAND from
+// `keyboard::up_down` and MIT's own table.  A model that turned the words
+// back into keysyms would agree with a program that was wrong the same way.
+//
+// What it does model is the one thing the program has to cope with, which is
+// a queue that fills: `room` says how many more words it will take, and a
+// check sets it to nothing to make the program hold what it could not send.
+
+#define MODEL_WORDS 512
+
+struct model_face {
+	uint32_t reg[1024];
+	uint32_t keys[MODEL_WORDS];
+	unsigned nkeys;
+	int moves[MODEL_WORDS][2];
+	unsigned nmoves;
+	uint32_t buttons[MODEL_WORDS];
+	unsigned nbuttons;
+	unsigned flushes;
+	// How many more words it will take; -1 for "as many as come".
+	int room;
+	unsigned long over;      // words offered with no room, which must be 0
+};
+
+static struct model_face model;
+static struct input_face face;
+
+static uint32_t model_read(struct input_face *f, unsigned word)
+{
+	struct model_face *m = f->ctx;
+	if (word == IN_IDENT)
+		return IN_IDENT_WORD;
+	if (word == IN_STAT) {
+		// Room, and nothing else: the card's own ready bits are the
+		// fabric's business and `build/gp0_split.pass` is what holds
+		// them.  What this program does with STAT is ask for room.
+		return (m->room != 0) ? IN_ST_ROOM : 0u;
+	}
+	return m->reg[word & 1023];
+}
+
+static void model_write(struct input_face *f, unsigned word, uint32_t v)
+{
+	struct model_face *m = f->ctx;
+	m->reg[word & 1023] = v;
+	switch (word) {
+	case IN_KEY:
+		if (m->room == 0) {
+			++m->over;
+			break;
+		}
+		if (m->room > 0)
+			--m->room;
+		if (m->nkeys < MODEL_WORDS)
+			m->keys[m->nkeys++] = v;
+		break;
+	case IN_MOUSE:
+		if (m->nmoves < MODEL_WORDS) {
+			// Sign-extended out of the two twelve-bit fields, which
+			// is the register's own shape: `input_face.h`.
+			const int dx = (int)((v & 0xFFFu) << 20) >> 20;
+			const int dy = (int)(((v >> 12) & 0xFFFu) << 20) >> 20;
+			m->moves[m->nmoves][0] = dx;
+			m->moves[m->nmoves][1] = dy;
+			++m->nmoves;
+		}
+		break;
+	case IN_BUTTONS:
+		if (m->nbuttons < MODEL_WORDS)
+			m->buttons[m->nbuttons++] = v;
+		break;
+	case IN_CTL:
+		if (v & IN_CTL_FLUSH)
+			++m->flushes;
+		break;
+	default:
+		break;
+	}
+}
+
+static void model_reset(void)
+{
+	memset(&model, 0, sizeof model);
+	model.room = -1;
+	face.read = model_read;
+	face.write = model_write;
+	face.ctx = &model;
+}
+
+// The words the program has sent, drained by polling.  The server drains its
+// queue at the end of a pass, so a pass is what it takes.
+static void pump(int passes)
+{
+	for (int k = 0; k < passes; ++k)
+		screen_server_poll(&srv, &frame, 0, clock_ns);
+}
+
+// `keyboard::up_down`, written out here so that the check's expected words
+// and the program's are not one expression.
+static uint32_t word_of(unsigned position, int up)
+{
+	return 0xF90000u | (up ? 0x100u : 0u) | (position & 0177u);
+}
+
+// What a key event should become, compared as a whole stream.
+static void want_keys(const char *what, const uint32_t *w, unsigned n)
+{
+	++checks;
+	if (model.nkeys != n) {
+		fail(__LINE__, "%s: %u words reached the fabric, wanting %u", what, model.nkeys, n);
+		for (unsigned k = 0; k < model.nkeys; ++k)
+			fprintf(stderr, "      [%u] 0x%06x\n", k, model.keys[k]);
+		return;
+	}
+	for (unsigned k = 0; k < n; ++k) {
+		++checks;
+		if (model.keys[k] != w[k])
+			fail(__LINE__, "%s: word %u is 0x%06x, wanting 0x%06x (position 0%o %s)",
+			     what, k, model.keys[k], w[k], w[k] & 0177u,
+			     (w[k] & 0x100u) ? "up" : "down");
+	}
+}
+
+// One viewer, with the input face attached, and the model emptied.
+static int open_typist(struct client *c)
+{
+	model_reset();
+	srv.input = &face;
+	key_state_init(&srv.keys);
+	srv.have_ptr = 0;
+	srv.buttons = 0;
+	if (open_viewer(c, "RFB 003.008\n", NULL, NULL, 0) < 0)
+		return -1;
+	pump(4);
+	model.nkeys = 0;
+	return 0;
+}
+
+static void send_key(struct client *c, uint32_t keysym, int down)
+{
+	const uint8_t m[8] = { 4, (uint8_t)(down ? 1 : 0), 0, 0,
+			       (uint8_t)(keysym >> 24), (uint8_t)(keysym >> 16),
+			       (uint8_t)(keysym >> 8), (uint8_t)keysym };
+	client_send(c, m, sizeof m);
+}
+
+static void send_pointer(struct client *c, uint8_t buttons, unsigned x, unsigned y)
+{
+	const uint8_t m[6] = { 5, buttons, (uint8_t)(x >> 8), (uint8_t)x,
+			       (uint8_t)(y >> 8), (uint8_t)y };
+	client_send(c, m, sizeof m);
+}
+
+// ---- the keyboard -------------------------------------------------------
+//
+// **EVERY EXPECTED WORD BELOW IS HAND-COMPUTED FROM MIT'S OWN TABLE**, the
+// positions in octal exactly as `keyboard.rs` has them, and `word_of` is
+// `up_down` written a second time.  That is the anchors' rule applied to the
+// keyboard: a builder and a reader that are wrong the same way agree with
+// each other, and the literals are what no such pair can put back.
+static void check_keyboard(void)
+{
+	struct client c;
+
+	// --- a plain letter.  'a' is at 0o123 on the unshifted plane, and
+	// with no shift held the position is simply pressed and released:
+	// there are no modifier bits in a word on this keyboard.
+	if (open_typist(&c) == 0) {
+		send_key(&c, 'a', 1);
+		send_key(&c, 'a', 0);
+		pump(40);
+		const uint32_t w[] = { word_of(0123, 0), word_of(0123, 1) };
+		want_keys("'a' down and up", w, 2);
+		// ...and the frame bits, which are what the card's high half
+		// carries: `word >> 16` is 0o371 on every word this keyboard
+		// sends, bits 23-19 all ones and 18-16 the source ID.
+		CHECK(model.nkeys == 2 && (model.keys[0] >> 16) == 0371u,
+		      "the frame bits of a key word: 0x%02x, wanting 0o371",
+		      model.nkeys ? model.keys[0] >> 16 : 0);
+		client_close(&c);
+		settle();
+	}
+
+	// --- a character whose plane the viewer is not holding.  RFB sends
+	// the SHIFTED keysym, '!', and the Lisp Machine wants position 0o121
+	// with Shift down --- so the Shift key is worked around the key and
+	// the viewer's own release of '!' is dropped, the key having gone
+	// whole already.
+	if (open_typist(&c) == 0) {
+		send_key(&c, '!', 1);
+		send_key(&c, '!', 0);
+		pump(40);
+		const uint32_t w[] = {
+			word_of(024, 0),    // Left Shift down
+			word_of(0121, 0),   // '1'/'!'
+			word_of(0121, 1),
+			word_of(024, 1)     // ...and up again
+		};
+		want_keys("'!' with no shift held: the shift worked around it", w, 4);
+		client_close(&c);
+		settle();
+	}
+
+	// --- and the same character with the viewer holding shift, where
+	// nothing has to be worked around: the position is pressed and the
+	// machine, which follows the stream, sees the shift already down.
+	if (open_typist(&c) == 0) {
+		send_key(&c, 0xffe1u, 1);   // Shift_L
+		send_key(&c, 'A', 1);
+		send_key(&c, 'A', 0);
+		send_key(&c, 0xffe1u, 0);
+		pump(40);
+		const uint32_t w[] = {
+			word_of(024, 0), word_of(0123, 0), word_of(0123, 1), word_of(024, 1)
+		};
+		want_keys("Shift_L and 'A': the plane the viewer holds", w, 4);
+		client_close(&c);
+		settle();
+	}
+
+	// --- AND THE OTHER HALF OF THE SAME DECISION: the viewer holding
+	// shift and sending a keysym whose only position is on the UNSHIFTED
+	// plane.  A viewer with caps lock on does this, and so does one whose
+	// own keymap puts a character somewhere this keyboard does not.  Every
+	// shift the viewer holds comes UP around the key and goes back down,
+	// so that the machine --- which decodes from the stream --- sees the
+	// character the viewer meant.
+	if (open_typist(&c) == 0) {
+		send_key(&c, 0xffe1u, 1);   // Shift_L, and held
+		send_key(&c, 'a', 1);       // ...with a keysym on plane 0 only
+		send_key(&c, 'a', 0);
+		send_key(&c, 0xffe1u, 0);
+		pump(40);
+		const uint32_t w[] = {
+			word_of(024, 0),     // the shift the viewer pressed
+			word_of(024, 1),     // ...lifted around the key
+			word_of(0123, 0),
+			word_of(0123, 1),
+			word_of(024, 0),     // ...and put back
+			word_of(024, 1)      // ...until the viewer lets it go
+		};
+		want_keys("Shift_L held and a plane-0 keysym: the shift lifted around it", w, 6);
+		client_close(&c);
+		settle();
+	}
+
+	// --- the named keys a host keyboard has a key for, which are
+	// `default.keys`' own `key` lines.  Each is one position and its
+	// release, and the positions are MIT's.
+	if (open_typist(&c) == 0) {
+		struct named { uint32_t keysym; unsigned position; const char *what; };
+		static const struct named NAMED[] = {
+			{ 0xff0du, 0136, "Return" },
+			{ 0xff8du, 0136, "KP_Enter, which is Return too" },
+			{ 0xff09u, 022,  "Tab" },
+			{ 0xff08u, 023,  "BackSpace, which is Rubout" },
+			{ 0xffffu, 023,  "Delete, which is Rubout as well" },
+			{ 0xff0au, 036,  "Linefeed, which is Line" },
+			{ 0xff1bu, 0143, "Escape, which is Alt Mode" },
+			{ 0xff6au, 0116, "Help" },
+			{ 0xff6bu, 0167, "Break" },
+			{ 0xff69u, 067,  "Cancel, which is Abort" },
+			{ 0xff57u, 0156, "End" },
+			{ 0xff13u, 030,  "Pause, which is Hold Output" },
+			{ 0xffbeu, 040,  "F1, which is Terminal" },
+			{ 0xffbfu, 0141, "F2, which is System" },
+			{ 0xffc0u, 042,  "F3, which is Network" },
+			{ 0xffc1u, 046,  "F4, which is Status" },
+			{ 0xffc2u, 047,  "F5, which is Resume" },
+			{ 0xffc9u, 0120, "F12, which is Quote" },
+		};
+		for (unsigned k = 0; k < sizeof NAMED / sizeof NAMED[0]; ++k) {
+			model.nkeys = 0;
+			send_key(&c, NAMED[k].keysym, 1);
+			send_key(&c, NAMED[k].keysym, 0);
+			pump(20);
+			const uint32_t w[] = { word_of(NAMED[k].position, 0),
+					       word_of(NAMED[k].position, 1) };
+			want_keys(NAMED[k].what, w, 2);
+		}
+		client_close(&c);
+		settle();
+	}
+
+	// --- the modifiers, which are keys of their own at their own
+	// positions.  Left and Right are different positions and a face that
+	// collapsed them would be caught here.
+	if (open_typist(&c) == 0) {
+		struct named { uint32_t keysym; unsigned position; const char *what; };
+		static const struct named MODS[] = {
+			{ 0xffe1u, 024,  "Shift_L" },
+			{ 0xffe2u, 025,  "Shift_R" },
+			{ 0xffe3u, 020,  "Control_L" },
+			{ 0xffe4u, 026,  "Control_R" },
+			{ 0xffe7u, 045,  "Meta_L" },
+			{ 0xffe9u, 045,  "Alt_L, which is Meta too" },
+			{ 0xffe8u, 0165, "Meta_R" },
+			{ 0xffebu, 05,   "Super_L" },
+			{ 0xffecu, 065,  "Super_R" },
+			{ 0xffedu, 0145, "Hyper_L" },
+			{ 0xffeeu, 0175, "Hyper_R" },
+			{ 0xffe5u, 0125, "Caps_Lock" },
+			// **`Left Greek` IS POSITION 0o035, WHICH MIT'S TABLE
+			// LABELS *RIGHT* GREEK**, and that is muir's and not a
+			// slip here.  `shifting(s)` walks the table upwards and
+			// `Left` takes the FIRST position it finds, and Greek
+			// is the one shifting key of the seven whose two
+			// positions are in the other order: 0o035 is Right and
+			// 0o044 is Left, where Shift, Control, Meta, Super,
+			// Hyper and Top all have Left below Right.  Harmless,
+			// both positions being the same shift to the machine,
+			// and pinned here so that nobody "fixes" it into a
+			// disagreement with muir.
+			{ 0xfe03u, 035,  "ISO_Level3_Shift, which is Greek" },
+			{ 0xff67u, 0104, "Menu, which is Left Top" },
+		};
+		for (unsigned k = 0; k < sizeof MODS / sizeof MODS[0]; ++k) {
+			model.nkeys = 0;
+			send_key(&c, MODS[k].keysym, 1);
+			send_key(&c, MODS[k].keysym, 0);
+			pump(20);
+			const uint32_t w[] = { word_of(MODS[k].position, 0),
+					       word_of(MODS[k].position, 1) };
+			want_keys(MODS[k].what, w, 2);
+		}
+		client_close(&c);
+		settle();
+	}
+
+	// --- the prefix, which is muir's answer to a keyboard with fewer keys
+	// than this one.  `Scroll_Lock` sends nothing of its own; the keysym
+	// after it is looked up behind it.  Behind a prefix a SHIFTING key is
+	// held for the one key that follows, and everything else is tapped.
+	if (open_typist(&c) == 0) {
+		// Scroll_Lock then '1' is Roman I, at 0o101: tapped, and the
+		// '1' release dropped.
+		send_key(&c, 0xff14u, 1);
+		send_key(&c, 0xff14u, 0);
+		send_key(&c, '1', 1);
+		send_key(&c, '1', 0);
+		pump(40);
+		const uint32_t w[] = { word_of(0101, 0), word_of(0101, 1) };
+		want_keys("Scroll_Lock then '1', which is Roman I", w, 2);
+
+		// Scroll_Lock then 'l' is Control, a shifting key: held, then
+		// the next key tapped inside it and the latch let go after.
+		// 'x' is at 0o064.
+		model.nkeys = 0;
+		send_key(&c, 0xff14u, 1);
+		send_key(&c, 'l', 1);
+		send_key(&c, 'l', 0);
+		send_key(&c, 'x', 1);
+		send_key(&c, 'x', 0);
+		pump(40);
+		const uint32_t v[] = {
+			word_of(020, 0),    // Left Control down, latched
+			word_of(064, 0),    // 'x' tapped inside it
+			word_of(064, 1),
+			word_of(020, 1)     // ...and the latch let go
+		};
+		want_keys("Scroll_Lock l then 'x', which is Control-X", v, 4);
+
+		// A prefix pressed again is the way out of a sequence begun by
+		// mistake, and sends nothing.
+		model.nkeys = 0;
+		send_key(&c, 0xff14u, 1);
+		send_key(&c, 0xff14u, 1);
+		send_key(&c, 'a', 1);
+		send_key(&c, 'a', 0);
+		pump(40);
+		const uint32_t u[] = { word_of(0123, 0), word_of(0123, 1) };
+		want_keys("a prefix pressed twice lets go, and 'a' is 'a'", u, 2);
+		client_close(&c);
+		settle();
+	}
+
+	// --- a keysym nothing maps goes nowhere, and is counted so that it
+	// can be said.  `Home` is in muir's keysym names and in no binding,
+	// and is not printable ASCII, so `positions` finds nothing for it.
+	if (open_typist(&c) == 0) {
+		const unsigned long before = srv.keys.unbound;
+		send_key(&c, 0xff50u, 1);   // Home
+		send_key(&c, 0xff50u, 0);
+		send_key(&c, 0xff63u, 1);   // Insert
+		send_key(&c, 0xff63u, 0);
+		pump(40);
+		want_keys("Home and Insert, which nothing maps", NULL, 0);
+		// FOUR and not two: `positions` finds nothing for an unbound
+		// keysym going DOWN or coming UP, and muir counts each.
+		CHECK(srv.keys.unbound == before + 4,
+		      "%lu unbound keysyms counted, wanting %lu",
+		      srv.keys.unbound - before, 4ul);
+		client_close(&c);
+		settle();
+	}
+
+	// --- a viewer that goes with keys down owes the machine their
+	// releases.  There are no modifier bits in a word here, so a Control
+	// held when a connection drops is a Control held for the rest of the
+	// run and every character after it is a control character.
+	if (open_typist(&c) == 0) {
+		send_key(&c, 0xffe3u, 1);   // Control_L down and never up
+		send_key(&c, 0xffe1u, 1);   // Shift_L too
+		pump(40);
+		const uint32_t w[] = { word_of(020, 0), word_of(024, 0) };
+		want_keys("two modifiers held", w, 2);
+		client_close(&c);
+		settle();
+		pump(20);
+		const uint32_t v[] = {
+			word_of(020, 0), word_of(024, 0),
+			word_of(020, 1), word_of(024, 1)
+		};
+		want_keys("...and released when the viewer went", v, 4);
+	}
+
+	// --- a fabric with no room holds the program up rather than losing
+	// what it could not send.  The face refuses, the word stays at the
+	// head of the queue, and the next pass with room delivers it in
+	// ORDER: nothing is dropped and nothing is reordered.
+	if (open_typist(&c) == 0) {
+		model.room = 2;
+		send_key(&c, 'a', 1);
+		send_key(&c, 'a', 0);
+		send_key(&c, 'b', 1);
+		send_key(&c, 'b', 0);
+		pump(40);
+		CHECK(model.nkeys == 2, "%u words through a face with room for two, wanting 2",
+		      model.nkeys);
+		CHECK(model.over == 0, "%lu words offered to a full face, wanting none: "
+		      "the program must ask for room", model.over);
+		CHECK(srv.keys_stuck > 0, "the program did not record waiting for room");
+		CHECK(key_pending(&srv.keys) == 2, "%u words still held, wanting 2",
+		      key_pending(&srv.keys));
+		model.room = -1;
+		pump(20);
+		const uint32_t w[] = {
+			word_of(0123, 0), word_of(0123, 1),   // 'a'
+			word_of(0114, 0), word_of(0114, 1)    // 'b', at 0o114
+		};
+		want_keys("held and then delivered in order", w, 4);
+		client_close(&c);
+		settle();
+	}
+}
+
+// ---- the mouse ----------------------------------------------------------
+//
+// A `PointerEvent` is an absolute position and the CADR's mouse counts
+// deltas, so what crosses is the difference.  `muir::terminal::mouse`: one
+// count a pixel, right and down positive, and the FIRST event only
+// establishes where the pointer is.
+static void check_mouse(void)
+{
+	struct client c;
+	if (open_typist(&c) < 0)
+		return;
+
+	// The first event moves nothing.  Without that, a viewer connecting
+	// would fling the machine's cursor from wherever it was to wherever
+	// the pointer happened to enter the window.
+	send_pointer(&c, 0, 100, 200);
+	pump(20);
+	CHECK(model.nmoves == 0, "%u movements for the first pointer event, wanting none",
+	      model.nmoves);
+	CHECK(model.nbuttons == 1 && model.buttons[0] == 0,
+	      "the switches on the first pointer event: %u writes, first 0x%x",
+	      model.nbuttons, model.nbuttons ? model.buttons[0] : 0u);
+
+	// Right and down are positive.
+	send_pointer(&c, 0, 110, 205);
+	pump(20);
+	CHECK(model.nmoves == 1 && model.moves[0][0] == 10 && model.moves[0][1] == 5,
+	      "right and down: (%d, %d), wanting (10, 5)",
+	      model.nmoves ? model.moves[0][0] : 0, model.nmoves ? model.moves[0][1] : 0);
+
+	// ...and left and up negative, which is the same statement the other
+	// way round and is what a sign error would fail.
+	send_pointer(&c, 0, 103, 201);
+	pump(20);
+	CHECK(model.nmoves == 2 && model.moves[1][0] == -7 && model.moves[1][1] == -4,
+	      "left and up: (%d, %d), wanting (-7, -4)",
+	      model.nmoves > 1 ? model.moves[1][0] : 0, model.nmoves > 1 ? model.moves[1][1] : 0);
+
+	// A pointer event that moved nothing writes nothing: the register
+	// ADDS, so a zero written every time a viewer breathed would be
+	// harmless and a decode that read it as a step would not.
+	const unsigned was = model.nmoves;
+	send_pointer(&c, 0, 103, 201);
+	pump(20);
+	CHECK(model.nmoves == was, "%u movements for a pointer that did not move, wanting %u",
+	      model.nmoves, was);
+
+	// The three switches are RFB's own mask unchanged: left 1, middle 2,
+	// right 4, which is `mouse::BUTTONS` in MIT's order --- `mouse.rs`
+	// says the two need no translation.  Written on a change and not on
+	// every event.
+	const unsigned btn = model.nbuttons;
+	send_pointer(&c, 1, 103, 201);
+	pump(20);
+	CHECK(model.nbuttons == btn + 1 && model.buttons[btn] == 1,
+	      "the left button down: %u writes, last 0x%x", model.nbuttons,
+	      model.nbuttons ? model.buttons[model.nbuttons - 1] : 0u);
+	send_pointer(&c, 1, 103, 201);
+	pump(20);
+	CHECK(model.nbuttons == btn + 1, "%u writes for a mask that did not change, wanting %u",
+	      model.nbuttons, btn + 1);
+	send_pointer(&c, 4, 103, 201);
+	pump(20);
+	CHECK(model.nbuttons == btn + 2 && model.buttons[btn + 1] == 4,
+	      "the right button, which is bit 2: last write 0x%x",
+	      model.nbuttons ? model.buttons[model.nbuttons - 1] : 0u);
+	// A wheel, which RFB puts at bits 3 and 4 and this mouse has not got.
+	send_pointer(&c, 4 | 8, 103, 201);
+	pump(20);
+	CHECK(model.nbuttons == btn + 3 && model.buttons[btn + 2] == 4,
+	      "a wheel button, which the cable has no wire for: last write 0x%x",
+	      model.nbuttons ? model.buttons[model.nbuttons - 1] : 0u);
+
+	// And a viewer going lifts the switches: a button held by nobody is a
+	// button the machine goes on seeing.
+	const unsigned lift = model.nbuttons;
+	client_close(&c);
+	settle();
+	CHECK(model.nbuttons > lift && model.buttons[model.nbuttons - 1] == 0,
+	      "the switches when the viewer went: last write 0x%x",
+	      model.nbuttons ? model.buttons[model.nbuttons - 1] : 0u);
+}
+
+// ---- the face ------------------------------------------------------------
+static void check_input_face(void)
+{
+	model_reset();
+	CHECK(input_face_ident(&face) == 0, "IDENT is not answered by the model");
+	// **THE FLUSH IS THE PROGRAM'S LEG AGAINST THE AUTOBOOT TRAP.**
+	// `uc-cadr.lisp` at `(LOC 6)` warm-boots if the keyboard is ready, so
+	// a word left in the fabric's queue by a previous run is a machine
+	// sent somewhere nobody asked for.  `cadr-terminal.c` writes this
+	// after IDENT and before the socket is bound.
+	input_face_flush(&face);
+	CHECK(model.flushes == 1 && (model.reg[IN_CTL] & IN_CTL_FLUSH),
+	      "FLUSH: %u writes, CTL 0x%x", model.flushes, model.reg[IN_CTL]);
+	// A delta wider than the register's twelve bits is HELD and not
+	// wrapped: the fabric saturates what it owes, not what it is handed,
+	// so a pointer that jumped a screen would otherwise go the other way.
+	input_face_move(&face, 5000, -5000);
+	CHECK(model.nmoves == 1 && model.moves[0][0] == 2047 && model.moves[0][1] == -2048,
+	      "a delta wider than the field: (%d, %d), wanting (2047, -2048)",
+	      model.moves[0][0], model.moves[0][1]);
+	// And a word offered with no room is refused and reported, never
+	// written: `IN_KEY` on a full queue is dropped and counted in LOST.
+	model.room = 0;
+	CHECK(input_face_key(&face, word_of(0123, 0)) == 0,
+	      "a word offered with no room was not refused");
+	CHECK(model.over == 0, "the face wrote a word the fabric had no room for");
+	model.room = -1;
+	CHECK(input_face_key(&face, word_of(0123, 0)) == 1, "a word with room was refused");
+	CHECK(model.nkeys == 1 && model.keys[0] == 0xF90053u,
+	      "the word written: 0x%06x, wanting 0xf90053", model.nkeys ? model.keys[0] : 0u);
 }
 
 // ---- the screens the check makes for itself ------------------------------
@@ -1224,8 +1799,21 @@ int main(int argc, char **argv)
 	printf("--- the handshakes, and the two ways a viewer is refused\n");
 	check_handshakes();
 
-	printf("--- read-only\n");
+	printf("--- read-only, with no input face\n");
 	check_read_only();
+
+	printf("--- the register face\n");
+	check_input_face();
+
+	printf("--- the keyboard: muir's mapping onto MIT's own key table\n");
+	check_keyboard();
+
+	printf("--- the mouse\n");
+	check_mouse();
+
+	// Back to read-only for the screen checks that follow, which have no
+	// business with a keyboard.
+	srv.input = NULL;
 
 	printf("--- the whole-screen interval\n");
 	check_full_update_interval(pic_a);
@@ -1266,8 +1854,9 @@ int main(int argc, char **argv)
 
 	screen_server_close(&srv);
 	printf("screen_test: %u checks, %d failures; %lu viewers came and %lu went, "
-	       "%lu rectangles Raw for %llu bytes and %lu RRE for %llu, saving %llu\n",
+	       "%lu rectangles Raw for %llu bytes and %lu RRE for %llu, saving %llu; "
+	       "%lu key words and %lu pointer movements across the seam\n",
 	       checks, bad, srv.connects, srv.drops, srv.rects_raw, srv.sent_raw, srv.rects_rre,
-	       srv.sent_rre, srv.saved_by_rre);
+	       srv.sent_rre, srv.saved_by_rre, srv.keys_sent, srv.pointer_moves);
 	return bad ? 1 : 0;
 }

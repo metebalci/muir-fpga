@@ -80,10 +80,11 @@ LIST = os.path.join(HERE, "list.txt")
 #
 # `microcycle` is deliberately absent.  Stage 4 is being written right now and
 # is not frozen; it gets mutations when a slice lands.
-# `M_AXI_GP0` split four ways, named once because it goes on every board that
+# `M_AXI_GP0` split five ways, named once because it goes on every board that
 # brings the port out.  The Makefile's own `GP0` is the same list.
 GP0 = ["rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
-       "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv"]
+       "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
+       "rtl/plumbing/cadr_input_cables.sv"]
 
 CHECKS = {
     "phase_gen": {
@@ -791,6 +792,7 @@ CHECKS = {
         "sources": [
             "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
             "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
+            "rtl/plumbing/cadr_input_cables.sv",
         ],
         "extra": ["tb/cadr_gp0_split_harness.sv",
                   "rtl/plumbing/cadr_gp0_default.sv",
@@ -1638,20 +1640,30 @@ def check_makefile():
     # machinery against the same file, and this runner has no way to build a
     # C program three times over and put muir behind it.  So it is named
     # here, which is the one of CLAUDE.md's two ways that stands alone.
-    # `chaosnet` and `serial` are the Linux halves of the I/O board's other
-    # two devices, and they are closed the third way --- which is neither of
-    # CLAUDE.md's two, and is worth saying so rather than filing under one of
-    # them.  Each carries a mutation list OF ITS OWN, in its own package, run
-    # by its own `mutate.py` from its own `make check`: the same machinery
-    # cadr-terminal and cadr-disk-packs already use, and the same record
-    # format as `mutations/list.txt`.  So something does mutate them and this
-    # runner is not it, because this runner verilates SystemVerilog and those
-    # checks are C programs with a socket and a scratch directory behind them.
-    # A record aimed here would have to build a C program a second way; the
-    # package's own runner already builds each mutant in a directory of its
-    # own and calls a build failure BROKEN, which is the property that matters.
+    # `chaosnet`, `serial` and `terminal` are the Linux halves of three of the
+    # I/O board's four cables, and they are closed the third way --- which is
+    # neither of CLAUDE.md's two, and is worth saying so rather than filing
+    # under one of them.  Each carries a mutation list OF ITS OWN, in its own
+    # package, run by its own `mutate.py` from its own `make check`: the same
+    # machinery cadr-disk-packs already uses, and the same record format as
+    # `mutations/list.txt`.  So something does mutate them and this runner is
+    # not it, because this runner verilates SystemVerilog and those checks are
+    # C programs with a socket and a scratch directory behind them.  A record
+    # aimed here would have to build a C program a second way; the package's
+    # own runner already builds each mutant in a directory of its own and
+    # calls a build failure BROKEN, which is the property that matters.
+    #
+    # **`terminal` IS NEW HERE AND THE CHECK IT NAMES IS OLDER THAN THE
+    # ENTRY.**  `cadr-terminal` has had `make -C src check` since it was
+    # written, and nothing in the top-level `make check` ran it until the
+    # keyboard slice --- so for as long as it was only a screen, the 420
+    # checks and fifteen mutations it carries were run by whoever remembered.
+    # That is the hole this line and the Makefile's `terminal.pass` close
+    # together, and the pair had to land in one commit: a `.pass` added
+    # without the name here warns, and a name here without the `.pass` says
+    # nothing about a check nobody runs.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
-                           "chaosnet", "serial"}
+                           "chaosnet", "serial", "terminal"}
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

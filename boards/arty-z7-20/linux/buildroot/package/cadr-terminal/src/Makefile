@@ -25,6 +25,14 @@
 # a real directory here.  `make all COMMON=host` builds the program itself
 # that way, which is how it is compiled here without Buildroot.
 #
+# **`input_keymap.h` IS GENERATED AND NO BUILD RUNS THE GENERATOR.**
+# `keymap_from_muir.py` reads muir's own `keyboard.rs` and `default.keys` and
+# writes the key table and the bindings out as C, so that this program and
+# muir cannot disagree about what a key means.  It is not a build step
+# because it needs muir beside the tree, which neither Buildroot nor CI has:
+# the output is committed, its header names the muir commit it came from, and
+# that file's own comment says how to move it.
+#
 # **THE REAL SCREENS ARE OPTIONAL AND THE CHECK SAYS WHICH IT RAN.**  Two
 # pictures muir drew of MIT's System 100 band live in vendor/screen/, which is
 # gitignored with the rest of vendor/, so a fresh clone has the check's
@@ -33,8 +41,9 @@
 # not there.  docs/terminal.md has the three commands that make them.
 
 PROGRAMS := cadr-terminal
-CORE     := screen_frame.c screen_rfb.c screen_server.c
-HEADERS  := screen_geom.h screen_frame.h screen_rfb.h screen_server.h
+CORE     := screen_frame.c screen_rfb.c screen_server.c input_face.c input_keys.c
+HEADERS  := screen_geom.h screen_frame.h screen_rfb.h screen_server.h \
+            input_face.h input_keys.h input_keymap.h
 
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src

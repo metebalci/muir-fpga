@@ -68,10 +68,12 @@ const uint32_t GP0_TOP  = 0x7FFFFFFCu;
 const uint32_t PACK_PAGE = 0x40000000u;
 const uint32_t CHAOS_PAGE = 0x40001000u;
 const uint32_t SER_PAGE = 0x40002000u;
+const uint32_t INPUT_PAGE = 0x40003000u;
 
 const uint32_t W_PACK = 0x5041434Bu;   // "PACK"
 const uint32_t W_CHAO = 0x4348414Fu;   // "CHAO"
 const uint32_t W_SERI = 0x53455249u;   // "SERI"
+const uint32_t W_INPT = 0x494E5054u;   // "INPT"
 const uint32_t W_NONE = 0x4E4F4E45u;   // "NONE"
 
 // The two windows, as word offsets into the Chaosnet page --- `+0x400` and
@@ -89,6 +91,49 @@ const unsigned UB_SER_DATA  = 0764160;
 const unsigned UB_SER_STAT  = 0764162;
 const unsigned UB_SER_MODE  = 0764164;
 const unsigned UB_SER_CMD   = 0764166;
+const unsigned UB_KBD_LOW    = 0764100;
+const unsigned UB_KBD_HIGH   = 0764102;
+const unsigned UB_MOUSE_Y    = 0764104;
+const unsigned UB_MOUSE_X    = 0764106;
+const unsigned UB_IOB_CSR    = 0764112;
+
+// `muir::terminal::keyboard`: `FRAME` is `0o37 << 19 | SOURCE << 16` with
+// `SOURCE` = 1, the new keyboard's source ID --- bits 23-19 "Reserved, must
+// be 1's" and 18-16 the source --- so every up-down word has `word >> 16 ==
+// 0o371`.  `UP` is bit 8, "1=key up, 0=key down", and the position is the
+// low seven bits.
+const uint32_t KBD_FRAME = (037u << 19) | (1u << 16);
+const uint32_t KBD_UP = 1u << 8;
+uint32_t KbdWord(unsigned position, bool up) {
+  return KBD_FRAME | (up ? KBD_UP : 0u) | (position & 0177u);
+}
+// `keyboard::TABLE`, by position: enough of MIT's own table to type with.
+const unsigned KEY_RUBOUT = 023;      // Named("Rubout")
+const unsigned KEY_LSHIFT = 024;      // Shift(Shift)
+const unsigned KEY_STATUS = 046;      // Named("Status"), and 0o46 is the
+                                      // value `(LOC 6)` compares against
+const unsigned KEY_A      = 0123;     // Char('a', 'A')
+const unsigned KEY_RETURN = 0136;     // Named("Return")
+
+// `cadr_input_cables.sv`'s eight words.
+enum InReg { IN_IDENT = 0, IN_STAT = 1, IN_KEY = 2, IN_MOUSE = 3,
+             IN_BUTTONS = 4, IN_CTL = 5, IN_LOST = 6, IN_LINES = 7 };
+const uint32_t IN_ST_KBD_READY = 1u << 0;
+const uint32_t IN_ST_MOUSE_READY = 1u << 1;
+const uint32_t IN_ST_ROOM = 1u << 2;
+const uint32_t IN_ST_OWES = 1u << 3;
+const uint32_t IN_CTL_FLUSH = 1u << 0;
+const unsigned IN_DEPTH = 16;
+
+// `ioboard::FLOATING`: nothing drives `UBO8`-`UBO15` at the keyboard's high
+// half, so the upper byte pulls up.
+const unsigned UB_FLOATING = 0177400;
+
+// `mouse::MOUSE_STEP_NS` = 16,000, on MIT's 5 ns grid.
+const long MOUSE_STEP_T = 16000 / 5;
+// `ioboard::KB_CLK_NS` = 8,000: how long the card may take to latch a
+// change onto `NEW`.
+const long KB_CLK_T = 8000 / 5;
 
 // `muir::serial::DIVISORS`, Table 1: the crystal periods in one 16X clock.
 const unsigned DIVISORS[16] = {6336, 4224, 2880, 2355, 2112, 1056, 528, 264,
@@ -393,13 +438,14 @@ struct Bus {
 
 // Which slave the map says answers `addr`, and what that slave's reply looks
 // like.  This is the map, written once, and the sweep compares against it.
-enum Slave { kPack, kChaos, kSer, kDflt };
+enum Slave { kPack, kChaos, kSer, kInput, kDflt };
 
 Slave Owner(uint32_t addr) {
   const uint32_t page = addr & 0xFFFFF000u;
   if (page == PACK_PAGE) return kPack;
   if (page == CHAOS_PAGE) return kChaos;
   if (page == SER_PAGE) return kSer;
+  if (page == INPUT_PAGE) return kInput;
   return kDflt;
 }
 
@@ -408,6 +454,7 @@ const char *Name(Slave s) {
     case kPack: return "the pack side";
     case kChaos: return "the Chaosnet cable";
     case kSer: return "the serial line";
+    case kInput: return "the keyboard and mouse";
     default: return "the default slave";
   }
 }
@@ -420,6 +467,10 @@ int main(int argc, char **argv) {
   Bus b(dut);
 
   dut->rst = 1;
+  // The card's own reset, which on the board is `mach_rst` and not the
+  // port's: the two are released together here and are pulsed apart below,
+  // where the input face's queue is held to emptying on a machine restart.
+  dut->card_rst = 1;
   b.Quiet();
   dut->ub_msyn = 0; dut->ub_write = 0; dut->ub_addr = 0; dut->ub_wdata = 0;
   dut->ub_init = 0;
@@ -428,7 +479,52 @@ int main(int argc, char **argv) {
   dut->m_araddr = 0; dut->m_arlen = 0; dut->m_arid = 0;
   for (int k = 0; k < 8; ++k) b.Step();
   dut->rst = 0;
+  dut->card_rst = 0;
   b.Idle(4);
+
+  // ======================================================================
+  // THE AUTOBOOT TEST, BEFORE ANYTHING HAS BEEN WRITTEN
+  // ======================================================================
+  //
+  // **THIS IS THE FIRST THING THE CHECK DOES BECAUSE IT IS THE FIRST THING
+  // THE MACHINE DOES.**  Four instructions into microcode 323,
+  // `sys/ucadr/uc-cadr.lisp` at `(LOC 6)` reads `0o764112` and
+  // `(JUMP-IF-BIT-CLEAR (BYTE-FIELD 1 5) MD COLD-BOOT)`: `KBD READY` clear
+  // is a cold boot and ready is a WARM one.  A board coming up with a word
+  // waiting at that register therefore goes somewhere it was never asked to
+  // go, and CLAUDE.md names this as the trap aimed at whatever carries keys.
+  //
+  // `cadr_input_cables.sv`'s first leg against it is that the ONLY source of
+  // `kbd_strobe` is an AXI write.  So: from reset, with nothing written,
+  // the card's `KBD READY` must be down and STAY down --- and muir had to
+  // build the same leg, its `unibus.rs` recording what happened without one:
+  // an un-reset receiver read the idle-high cable as twenty-four ones and
+  // `KBD READY` was up 196 us after power-on for the microcode to find.
+  //
+  // It runs for a card's `KB CLK^` and more, so a face that strobed on its
+  // own divider rather than on a write would have had several chances.
+  {
+    for (int k = 0; k < 6 && bad < 25; ++k) {
+      b.Idle(KB_CLK_T);
+      const unsigned csr = b.UbRead(UB_IOB_CSR);
+      if (csr & 040u)
+        Fail("KBD READY with nothing ever written to the input face --- the machine "
+             "would take the WARM boot at (LOC 6)", csr, 0);
+    }
+    // And the mouse at rest reads as no mouse: `Encoders::default` sits at
+    // phase 2, both lines of each pair HIGH on the cable, which the card's
+    // 74LS14s turn into four quadrature bits of ZERO.  A face that came up
+    // at phase 0 would read 0b0101 here and MOUSE READY would come up at the
+    // first `KB CLK^`.
+    const unsigned mx = b.UbRead(UB_MOUSE_X);
+    if ((mx >> 12) != 0)
+      Fail("the mouse's quadrature lines at rest, which muir's Encoders::default "
+           "makes zero at the card", mx >> 12, 0);
+    if ((mx & 07777u) != 0) Fail("the mouse's X count at rest", mx & 07777u, 0);
+    const unsigned my = b.UbRead(UB_MOUSE_Y);
+    if ((my & 07777u) != 0) Fail("the mouse's Y count at rest", my & 07777u, 0);
+    if (b.UbRead(UB_IOB_CSR) & 020u) Fail("MOUSE READY with nothing ever moved", 1, 0);
+  }
 
   // ======================================================================
   // The four are where the map says, and each says who it is
@@ -444,9 +540,12 @@ int main(int argc, char **argv) {
     const uint32_t ident_ser = b.Read(SER_PAGE, &resp);
     if (ident_ser != W_SERI) FailAt(SER_PAGE, "the serial line's IDENT", ident_ser, W_SERI);
     if (resp != 0) FailAt(SER_PAGE, "RRESP at the serial IDENT", resp, 0);
-    const uint32_t none = b.Read(GP0_BASE + 0x3000, &resp);
-    if (none != W_NONE) FailAt(GP0_BASE + 0x3000, "the default slave's word", none, W_NONE);
-    if (resp != 0) FailAt(GP0_BASE + 0x3000, "RRESP at the fourth page", resp, 0);
+    const uint32_t ident_in = b.Read(INPUT_PAGE, &resp);
+    if (ident_in != W_INPT) FailAt(INPUT_PAGE, "the input face's IDENT", ident_in, W_INPT);
+    if (resp != 0) FailAt(INPUT_PAGE, "RRESP at the input IDENT", resp, 0);
+    const uint32_t none = b.Read(GP0_BASE + 0x4000, &resp);
+    if (none != W_NONE) FailAt(GP0_BASE + 0x4000, "the default slave's word", none, W_NONE);
+    if (resp != 0) FailAt(GP0_BASE + 0x4000, "RRESP at the fifth page", resp, 0);
   }
 
   // ======================================================================
@@ -482,6 +581,9 @@ int main(int argc, char **argv) {
         case kSer:
           if (got != W_SERI) FailAt(addr, "the word at the serial page", got, W_SERI);
           break;
+        case kInput:
+          if (got != W_INPT) FailAt(addr, "the word at the input page", got, W_INPT);
+          break;
         case kPack:
           // The pack side's word 0 is its ADDR register, which holds
           // whatever was last written to it --- so what is held here is that
@@ -510,8 +612,9 @@ int main(int argc, char **argv) {
     sweep.push_back(PACK_PAGE + 4 * k);
     sweep.push_back(CHAOS_PAGE + 4 * k);
     sweep.push_back(SER_PAGE + 4 * k);
+    sweep.push_back(INPUT_PAGE + 4 * k);
   }
-  for (uint32_t p = 3; p < 16; ++p) sweep.push_back(GP0_BASE + (p << 12));
+  for (uint32_t p = 4; p < 16; ++p) sweep.push_back(GP0_BASE + (p << 12));
   for (int s = 12; s < 30; ++s) {
     sweep.push_back(GP0_BASE + (1u << s));
     sweep.push_back(GP0_BASE + (1u << s) + 0xFFC);
@@ -526,7 +629,7 @@ int main(int argc, char **argv) {
     sweep.push_back((GP0_BASE + (rnd() & 0x3FFFFFFCu)) & 0x7FFFFFFCu);
 
   long reads = 0, writes = 0;
-  long by[4] = {0, 0, 0, 0};
+  long by[5] = {0, 0, 0, 0, 0};
   for (uint32_t addr : sweep) {
     if (bad >= 25) break;
     const Slave s = Owner(addr);
@@ -543,12 +646,13 @@ int main(int argc, char **argv) {
         if (resp != 0) FailAt(addr, "RRESP from the default slave", resp, 0);
         break;
       case kChaos:
-      case kSer: {
+      case kSer:
+      case kInput: {
         const uint32_t word = (addr & 0xFFFu) >> 2;
         if (resp != 0) FailAt(addr, "RRESP from a register face", resp, 0);
         if (got == W_NONE) FailAt(addr, "the reply: the default slave answered a register page", got, 0);
-        // An undefined word of either face reads zero; the defined ones are
-        // held below, register by register.
+        // An undefined word of any of the three reads zero; the defined ones
+        // are held below, register by register.
         const bool defined = (s == kChaos)
             ? (word <= 8 || (word >= 0x100 && word < 0x300))
             : (word <= 7);
@@ -575,7 +679,11 @@ int main(int argc, char **argv) {
   // Writes over the same sweep.  Zero everywhere, so that no command bit of
   // any face is set: a `CTL` write with no bits set is a harmless probe by
   // each face's own rule, and a sweep that started a disk move or committed
-  // a frame would be testing the slave rather than the decode.
+  // a frame would be testing the slave rather than the decode.  **The one
+  // thing it does leave behind is a key word of zero on the input face**,
+  // `KEY` being a register whose whole content is a word; the input section
+  // below drains the card and flushes the queue before it begins, and says
+  // so.
   for (uint32_t addr : sweep) {
     if (bad >= 25) break;
     const Slave s = Owner(addr);
@@ -606,6 +714,9 @@ int main(int argc, char **argv) {
       {PACK_PAGE + 4 * 2, 0u, SER_PAGE, W_SERI},
       {CHAOS_PAGE + 4 * 2, 0x1234u, GP0_BASE + 0x11000, W_NONE},
       {GP0_BASE + 0x7000, 0u, SER_PAGE, W_SERI},
+      {INPUT_PAGE + 4 * IN_BUTTONS, 0u, CHAOS_PAGE, W_CHAO},
+      {SER_PAGE + 4 * 4, 0u, INPUT_PAGE, W_INPT},
+      {INPUT_PAGE + 4 * IN_MOUSE, 0u, PACK_PAGE + 4 * 7, W_PACK},
     };
     for (const Pair &p : pairs) {
       for (int round = 0; round < 4 && bad < 25; ++round) {
@@ -1042,6 +1153,536 @@ int main(int argc, char **argv) {
     if (b.Read(PACK_PAGE + 28) != W_PACK) Fail("the pack's IDENT after a reset", b.Read(PACK_PAGE + 28), W_PACK);
   }
 
+  // ======================================================================
+  // THE KEYBOARD AND THE MOUSE, ACROSS THE SEAM
+  // ======================================================================
+  //
+  // The fourth page is the far end of the card's other two cables, and the
+  // only way to hold a far end to anything is to read what the MACHINE sees
+  // of it.  So every comparison here is a Unibus read of the card's own
+  // registers --- `0o764100` and `0o764102` for the keyboard's two halves,
+  // `0o764104` and `0o764106` for the mouse, `0o764112` for the status they
+  // share --- against what was written at `0x4000_3000`.  The card itself is
+  // `build/iob.pass`'s and is held to muir there; what is held here is the
+  // crossing.
+  //
+  // **IT IS LAST BECAUSE IT ENDS BY RESETTING THE CARD**, which is leg 2 of
+  // the autoboot trap and cannot be run with anything else still to check.
+  long keys_typed = 0, keys_lost = 0, mouse_moved = 0, keys_swept = 0;
+  double step_span = 0;
+  {
+    // The write sweep swept a zero through every word of every page, and on
+    // this face word 2 is `KEY`: one word of zero is queued and the card is
+    // holding it.  Drain it in MIT's own order and flush, which is also the
+    // state `cadr-terminal` is required to start a program from.
+    (void)b.UbRead(UB_KBD_HIGH);
+    (void)b.UbRead(UB_KBD_LOW);
+    b.Write(INPUT_PAGE + 4 * IN_CTL, IN_CTL_FLUSH);
+    b.Idle(16);
+    uint32_t st = b.Read(INPUT_PAGE + 4 * IN_STAT);
+    if (st & IN_ST_KBD_READY) Fail("KBD READY after the card was drained", st, 0);
+    if (!(st & IN_ST_ROOM)) Fail("the queue's room after a flush", st, IN_ST_ROOM);
+    if ((st >> 8) & 0x3Fu) Fail("the queue's depth after a flush", (st >> 8) & 0x3Fu, 0);
+    if (st & IN_ST_OWES) Fail("the mouse owing steps after a flush", st, 0);
+
+    // --- ONE WORD, AND THE CARD'S OWN ASYMMETRY BETWEEN THE HALVES.
+    // MIT's Unibus channel reads the HIGH half first --- `uc-interrupt.lisp`,
+    // "needs to read the high-order word first" --- and only the LOW half
+    // clears `KBD READY`, the 74LS74 at IOBKBD 0B30 having `-READ.KBD.LOW`
+    // on its clear pin and nothing else.  The word is `keyboard::up_down`'s,
+    // so the frame bits are compared too: `word >> 16` is `0o371` on every
+    // word the new keyboard sends.
+    {
+      const uint32_t w = KbdWord(KEY_RUBOUT, false);
+      b.Write(INPUT_PAGE + 4 * IN_KEY, w);
+      long waited = 0;
+      while (!(b.UbRead(UB_IOB_CSR) & 040u) && waited < 40) ++waited;
+      if (!(b.UbRead(UB_IOB_CSR) & 040u)) {
+        Fail("KBD READY after a word was written to the input face", 0, 1);
+      } else {
+        ++keys_typed;
+        const unsigned hi = b.UbRead(UB_KBD_HIGH);
+        if (hi != (UB_FLOATING | ((w >> 16) & 0xFFu)))
+          Fail("the keyboard's high half, with the upper byte floating",
+               hi, UB_FLOATING | ((w >> 16) & 0xFFu));
+        if ((hi & 0377u) != 0371u)
+          Fail("the frame bits: every new-keyboard word has `word >> 16` = 0o371",
+               hi & 0377u, 0371u);
+        // Reading the high half does NOT clear it.
+        if (!(b.UbRead(UB_IOB_CSR) & 040u))
+          Fail("KBD READY after the HIGH half was read, which must not clear it", 0, 1);
+        const unsigned lo = b.UbRead(UB_KBD_LOW);
+        if (lo != (w & 0xFFFFu)) Fail("the keyboard's low half", lo, w & 0xFFFFu);
+        // ...and the LOW half does.
+        b.Idle(4);
+        if (b.UbRead(UB_IOB_CSR) & 040u)
+          Fail("KBD READY after the LOW half was read, which must clear it", 1, 0);
+      }
+      // And `KEY` reads back the word last HANDED TO THE CARD.
+      const uint32_t back = b.Read(INPUT_PAGE + 4 * IN_KEY);
+      if ((back & 0xFFFFFFu) != w) Fail("KEY read back", back & 0xFFFFFFu, w);
+      if (!(back & 0x1000000u)) Fail("KEY's bit 24, that a word has ever gone", back, 0x1000000u);
+    }
+
+    // --- THE HANDSHAKE, WHICH IS `Keyboard::deliver` IN FABRIC.
+    // Four words written while the card can hold one.  The card must get
+    // them ONE AT A TIME, each after the machine has read the last --- a
+    // face that strobed them all in would leave the card holding the LAST,
+    // and MIT's own rule is that "a word landing on one not yet read
+    // replaces it", so the loss would be silent.  This is the shape of a
+    // shifted key: Left Shift down, 'a' down, 'a' up, Left Shift up.
+    {
+      const uint32_t typed[4] = {
+        KbdWord(KEY_LSHIFT, false), KbdWord(KEY_A, false),
+        KbdWord(KEY_A, true), KbdWord(KEY_LSHIFT, true)
+      };
+      for (uint32_t w : typed) b.Write(INPUT_PAGE + 4 * IN_KEY, w);
+      b.Idle(16);
+      // One has gone and three are waiting.
+      st = b.Read(INPUT_PAGE + 4 * IN_STAT);
+      if (((st >> 8) & 0x3Fu) != 3)
+        Fail("words still queued with the card holding the first", (st >> 8) & 0x3Fu, 3);
+      for (int k = 0; k < 4 && bad < 25; ++k) {
+        long waited = 0;
+        while (!(b.UbRead(UB_IOB_CSR) & 040u) && waited < 40) ++waited;
+        if (!(b.UbRead(UB_IOB_CSR) & 040u)) {
+          Fail("KBD READY for a word of a shifted keystroke", 0, 1);
+          break;
+        }
+        const unsigned hi = b.UbRead(UB_KBD_HIGH);
+        const unsigned lo = b.UbRead(UB_KBD_LOW);
+        const uint32_t got = ((uint32_t)(hi & 0377u) << 16) | lo;
+        if (got != typed[k])
+          Fail("the word the machine read, in the order it was written", got, typed[k]);
+        else
+          ++keys_typed;
+        b.Idle(8);
+      }
+      st = b.Read(INPUT_PAGE + 4 * IN_STAT);
+      if ((st >> 8) & 0x3Fu) Fail("the queue once the machine has read them all",
+                                  (st >> 8) & 0x3Fu, 0);
+    }
+
+    // --- THE QUEUE'S BOUND, AND `LOST`.  A machine that has stopped reading
+    // still loses words, exactly as the cable does; what this face owes is
+    // that the loss is COUNTED and not silent.
+    {
+      b.Write(INPUT_PAGE + 4 * IN_KEY, KbdWord(KEY_RETURN, false));
+      long waited = 0;
+      while (!(b.UbRead(UB_IOB_CSR) & 040u) && waited < 40) ++waited;
+      const uint32_t lost_before = b.Read(INPUT_PAGE + 4 * IN_LOST);
+      for (unsigned k = 0; k < IN_DEPTH; ++k)
+        b.Write(INPUT_PAGE + 4 * IN_KEY, KbdWord(KEY_A, false));
+      st = b.Read(INPUT_PAGE + 4 * IN_STAT);
+      if (((st >> 8) & 0x3Fu) != IN_DEPTH)
+        Fail("the queue filled to its depth", (st >> 8) & 0x3Fu, IN_DEPTH);
+      if (st & IN_ST_ROOM) Fail("the queue's room bit when it is full", st, 0);
+      if (b.Read(INPUT_PAGE + 4 * IN_LOST) != lost_before)
+        Fail("LOST while the queue still had room", 1, 0);
+      b.Write(INPUT_PAGE + 4 * IN_KEY, KbdWord(KEY_A, true));
+      const uint32_t lost_after = b.Read(INPUT_PAGE + 4 * IN_LOST);
+      if (lost_after != lost_before + 1)
+        Fail("LOST for a word offered to a full queue", lost_after, lost_before + 1);
+      keys_lost = 1;
+      // The one that was refused must be LOST and not queued behind the
+      // others: the depth is unchanged.
+      if (((b.Read(INPUT_PAGE + 4 * IN_STAT) >> 8) & 0x3Fu) != IN_DEPTH)
+        Fail("the queue's depth after a word was refused",
+             (b.Read(INPUT_PAGE + 4 * IN_STAT) >> 8) & 0x3Fu, IN_DEPTH);
+    }
+
+    // --- FLUSH, which is leg 3: a program starting under a running machine
+    // begins with the seam empty.  The queue is full here, so this is the
+    // case that matters.
+    {
+      b.Write(INPUT_PAGE + 4 * IN_CTL, IN_CTL_FLUSH);
+      b.Idle(8);
+      st = b.Read(INPUT_PAGE + 4 * IN_STAT);
+      if ((st >> 8) & 0x3Fu) Fail("the queue after FLUSH", (st >> 8) & 0x3Fu, 0);
+      if (!(st & IN_ST_ROOM)) Fail("the queue's room after FLUSH", st, IN_ST_ROOM);
+      // The card is still holding the word it had; release it, and NOTHING
+      // may follow, because the sixteen behind it are gone.
+      (void)b.UbRead(UB_KBD_LOW);
+      for (int k = 0; k < 4 && bad < 25; ++k) {
+        b.Idle(KB_CLK_T);
+        if (b.UbRead(UB_IOB_CSR) & 040u)
+          Fail("a word reaching the card after FLUSH threw the queue away", 1, 0);
+      }
+    }
+
+
+    // --- A WORD QUEUED ON THE VERY TICK ONE LEFT, which is the only thing
+    // that can see the queue's count written from two places.
+    //
+    // **THE RACE HAS TO BE AIMED, AND THREE ATTEMPTS AT THIS CHECK MISSED
+    // IT.**  The record was written, run, and SURVIVED three times before
+    // this worked, which is the useful part of the story and is why it is
+    // written out.
+    //
+    //   1. Four words written while the card held one.  With `KBD READY` up
+    //      no take fires at all, so the two events never met.
+    //   2. The card released, then a write swept across the ticks after it.
+    //      By the time a Unibus read RETURNS the take has already fired ---
+    //      and the queue was empty anyway, a take needing `count` non-zero
+    //      and the word just handed over having been the only one in it.
+    //   3. The write issued WHILE `-UB MSYN` was up, with the delay before
+    //      it swept over the window the card answers in.  Nearer, but the
+    //      card answers this group anywhere between 1,250 and 2,250 ns after
+    //      the strobe depending where the request fell in its own
+    //      microsecond, so a delay measured from the STROBE lands on the
+    //      take only by luck, and two hundred offsets of luck were not
+    //      enough.
+    //
+    // **WHAT WORKS IS MEASURING FROM THE ANSWER AND NOT FROM THE STROBE.**
+    // The write's address is handshaken early and its DATA BEAT held back by
+    // hand; the run then waits for `-UB SSYN` itself and releases the beat a
+    // counted number of ticks after it.  The card clears `KBD READY` where
+    // it answers, this module sees that one tick later and takes the tick
+    // after that, so a sweep of a dozen ticks from the answer covers the
+    // take exactly and needs no luck at all.  That is this project's own
+    // "to tell an equivalence from a blind check, sweep the magnitude",
+    // applied to a phase rather than to a delay.
+    //
+    // **AND WHAT SAYS IT LANDED IS THE WORDS AND NOT THE COUNT.**  The count
+    // is the thing being tested.  A put swallowed by a take leaves the queue
+    // one short for ever, so its word is never handed over and `KBD READY`
+    // never comes up for it: a comparison against the stimulus, which cannot
+    // move with the bug.
+    {
+      long wrote = 0, read_back = 0;
+      const uint32_t seq[4] = {
+        KbdWord(KEY_A, false), KbdWord(KEY_A, true),
+        KbdWord(KEY_RETURN, false), KbdWord(KEY_RETURN, true)
+      };
+      for (unsigned after = 0; after < 12 && bad < 25; ++after) {
+        // Start clean: the card free and the queue empty.
+        b.Write(INPUT_PAGE + 4 * IN_CTL, IN_CTL_FLUSH);
+        b.Idle(8);
+        if (b.UbRead(UB_IOB_CSR) & 040u) {
+          (void)b.UbRead(UB_KBD_LOW);
+          b.Idle(8);
+        }
+        // One word to the card and TWO behind it, so that the take which
+        // fires when the card is released has something to take.
+        for (int j = 0; j < 3; ++j) {
+          b.Write(INPUT_PAGE + 4 * IN_KEY, seq[j]);
+          ++wrote;
+        }
+        long waited = 0;
+        while (!(b.UbRead(UB_IOB_CSR) & 040u) && waited < 40) ++waited;
+
+        // The write's ADDRESS, handshaken now; its data beat is held.
+        b.Quiet();
+        dut->m_awaddr = INPUT_PAGE + 4 * IN_KEY;
+        dut->m_awlen = 0;
+        dut->m_awid = 0x2A;
+        dut->m_wdata = seq[3];
+        dut->m_wstrb = 0xF;
+        dut->m_wlast = 1;
+        dut->m_awvalid = 1;
+        int aw_done = 0;
+        for (int t = 0; t < 16 && !aw_done; ++t) {
+          dut->clk = 0; dut->eval();
+          aw_done = dut->m_awvalid && dut->m_awready;
+          dut->clk = 1; dut->eval();
+          ++tick;
+        }
+        dut->m_awvalid = 0;
+        if (!aw_done) {
+          Fail("the write address of an aimed round was never taken", 0, 1);
+          break;
+        }
+
+        // `-UB MSYN` up for a read of the keyboard's low half, and the word
+        // taken at the FIRST tick the card answers --- before the take that
+        // follows can put the next one on the same lines.
+        dut->ub_msyn = 1;
+        dut->ub_addr = UB_KBD_LOW;
+        dut->ub_write = 0;
+        dut->ub_wdata = 0;
+        unsigned got = 0;
+        long spun = 0;
+        int answered = 0;
+        while (spun < 2000) {
+          dut->clk = 0; dut->eval();
+          if (dut->ub_ssyn) { got = dut->ub_rdata; answered = 1; }
+          dut->clk = 1; dut->eval();
+          ++tick;
+          ++spun;
+          if (answered) break;
+        }
+        if (!answered) {
+          Fail("the card never answered the aimed Unibus cycle", 0, 1);
+          break;
+        }
+        if (got != (seq[0] & 0xFFFFu))
+          FailAt(INPUT_PAGE, "the word the aimed cycle read", got, seq[0] & 0xFFFFu);
+        ++read_back;
+        dut->ub_msyn = 0;
+
+        // ...and the data beat `after` ticks past that answer.  Somewhere in
+        // this sweep is the tick the take fires on.
+        for (unsigned t = 0; t < after; ++t) {
+          dut->clk = 0; dut->eval();
+          dut->clk = 1; dut->eval();
+          ++tick;
+        }
+        dut->m_wvalid = 1;
+        int w_done = 0;
+        for (int t = 0; t < 16 && !w_done; ++t) {
+          dut->clk = 0; dut->eval();
+          w_done = dut->m_wvalid && dut->m_wready;
+          dut->clk = 1; dut->eval();
+          ++tick;
+        }
+        dut->m_wvalid = 0;
+        if (!w_done) {
+          Fail("the write data of an aimed round was never taken", 0, 1);
+          break;
+        }
+        ++wrote;
+        dut->m_bready = 1;
+        int b_done = 0;
+        for (int t = 0; t < 16 && !b_done; ++t) {
+          dut->clk = 0; dut->eval();
+          b_done = dut->m_bvalid && dut->m_bready;
+          dut->clk = 1; dut->eval();
+          ++tick;
+        }
+        dut->m_bready = 0;
+        b.Quiet();
+        b.Idle(4);
+
+        // The three behind it, sampled at a settled card and so held to
+        // their order.  **A LOST PUT SHOWS UP AS THE THIRD NEVER
+        // ARRIVING**: the count is one short of what the queue holds, so
+        // the last word is never handed over and `KBD READY` never comes up
+        // for it.
+        for (int j = 1; j < 4 && bad < 25; ++j) {
+          waited = 0;
+          while (!(b.UbRead(UB_IOB_CSR) & 040u) && waited < 60) ++waited;
+          if (!(b.UbRead(UB_IOB_CSR) & 040u)) {
+            Fail("a word queued on the tick one left never reached the card --- "
+                 "the queue's count lost a put to a take", 0, 1);
+            break;
+          }
+          const unsigned lo = b.UbRead(UB_KBD_LOW);
+          if (lo != (seq[j] & 0xFFFFu))
+            Fail("a word of an aimed round, in order", lo, seq[j] & 0xFFFFu);
+          ++read_back;
+        }
+        const uint32_t left = (b.Read(INPUT_PAGE + 4 * IN_STAT) >> 8) & 0x3Fu;
+        if (left != 0) Fail("the queue at the end of an aimed round", left, 0);
+      }
+      if (wrote != read_back)
+        Fail("words written against words the machine read, over the sweep",
+             (unsigned long long)read_back, (unsigned long long)wrote);
+      keys_swept = wrote;
+    }
+
+    // --- THE MOUSE, ONE STEP AT A TIME: THE GRAY ORDER AND THE DIRECTION.
+    // muir's `tests/ioboard.rs` walks a rightward move as board-side
+    // `(HORB, HORA)` readings 00, 10, 11, 01, 00 with counts 0, 1, 2, 3, 4,
+    // and `mouse.rs` says "phase up is to the right and down".  `MOUSE_X`
+    // puts `NEW HORA` at bit 12 and `NEW HORB` at 13, so the reading is
+    // `(x >> 12) & 3` with bit 13 above bit 12.
+    {
+      const unsigned want_phase[4] = {2, 3, 1, 0};   // 0b10, 0b11, 0b01, 0b00
+      for (unsigned k = 0; k < 4 && bad < 25; ++k) {
+        b.Write(INPUT_PAGE + 4 * IN_MOUSE, 1u);      // dx = +1
+        long waited = 0;
+        while ((b.Read(INPUT_PAGE + 4 * IN_STAT) & IN_ST_OWES) && waited < 8000) ++waited;
+        // The card latches the lines on its own `KB CLK^`, up to 8,000 ns
+        // after they move.
+        b.Idle(2 * KB_CLK_T);
+        const unsigned x = b.UbRead(UB_MOUSE_X);
+        ++mouse_moved;
+        if ((x & 07777u) != k + 1)
+          Fail("the mouse's X count after a step to the right", x & 07777u, k + 1);
+        if (((x >> 12) & 3u) != want_phase[k])
+          Fail("the quadrature the card latched, (HORB, HORA)", (x >> 12) & 3u, want_phase[k]);
+        if (((x >> 14) & 3u) != 0)
+          Fail("the VERTICAL lines, which a move on X must not touch", (x >> 14) & 3u, 0);
+        if ((b.UbRead(UB_MOUSE_Y) & 07777u) != 0)
+          Fail("the mouse's Y count during a move on X", b.UbRead(UB_MOUSE_Y) & 07777u, 0);
+      }
+      // Back to zero, then ONE count below it: the counters are twelve bits
+      // and wrap, `mouse::COUNT` being 0o7777.
+      b.Write(INPUT_PAGE + 4 * IN_MOUSE, 0xFFCu);    // dx = -4
+      long waited = 0;
+      while ((b.Read(INPUT_PAGE + 4 * IN_STAT) & IN_ST_OWES) && waited < 40000) ++waited;
+      b.Idle(2 * KB_CLK_T);
+      if ((b.UbRead(UB_MOUSE_X) & 07777u) != 0)
+        Fail("the mouse's X count back at zero", b.UbRead(UB_MOUSE_X) & 07777u, 0);
+      b.Write(INPUT_PAGE + 4 * IN_MOUSE, 0xFFFu);    // dx = -1
+      waited = 0;
+      while ((b.Read(INPUT_PAGE + 4 * IN_STAT) & IN_ST_OWES) && waited < 8000) ++waited;
+      b.Idle(2 * KB_CLK_T);
+      if ((b.UbRead(UB_MOUSE_X) & 07777u) != 07777u)
+        Fail("one count below zero, which wraps at twelve bits",
+             b.UbRead(UB_MOUSE_X) & 07777u, 07777u);
+      b.Write(INPUT_PAGE + 4 * IN_MOUSE, 1u);
+      waited = 0;
+      while ((b.Read(INPUT_PAGE + 4 * IN_STAT) & IN_ST_OWES) && waited < 8000) ++waited;
+      b.Idle(2 * KB_CLK_T);
+      // --- and DOWN is positive on Y.
+      b.Write(INPUT_PAGE + 4 * IN_MOUSE, 3u << 12);  // dy = +3
+      waited = 0;
+      while ((b.Read(INPUT_PAGE + 4 * IN_STAT) & IN_ST_OWES) && waited < 40000) ++waited;
+      b.Idle(2 * KB_CLK_T);
+      mouse_moved += 3;
+      if ((b.UbRead(UB_MOUSE_Y) & 07777u) != 3)
+        Fail("the mouse's Y count after three steps down", b.UbRead(UB_MOUSE_Y) & 07777u, 3);
+      if ((b.UbRead(UB_MOUSE_X) & 07777u) != 0)
+        Fail("the mouse's X count during a move on Y", b.UbRead(UB_MOUSE_X) & 07777u, 0);
+      b.Write(INPUT_PAGE + 4 * IN_MOUSE, 0xFFDu << 12);   // dy = -3, back to rest
+      waited = 0;
+      while ((b.Read(INPUT_PAGE + 4 * IN_STAT) & IN_ST_OWES) && waited < 40000) ++waited;
+    }
+
+    // --- THE RATE, WHICH IS THE ONE THING HOLDING THIS ENCODER TO muir.
+    // `mouse::MOUSE_STEP_NS` is 16,000 ns of the machine's own time --- "two
+    // of the board's 8 us clocks, so that every step is latched into `NEW`
+    // and then into `OLD` before the next, and none is missed".  Measured
+    // between the FIRST step of a move and the LAST, which has no phase in
+    // it: the divider free-runs, so when the first step falls is a matter of
+    // where the write landed, and 63 steps after it is not.
+    {
+      const unsigned kSteps = 64;
+      b.Write(INPUT_PAGE + 4 * IN_MOUSE, kSteps);
+      long first = 0, last = 0, waited = 0;
+      while (waited < 400000) {
+        const uint32_t owed = b.Read(INPUT_PAGE + 4 * IN_MOUSE) & 0xFFFu;
+        if (owed != kSteps && first == 0) first = tick;
+        if (owed == 0) { last = tick; break; }
+        ++waited;
+      }
+      if (!first || !last) {
+        Fail("a move of 64 steps never finished", 0, 1);
+      } else {
+        step_span = (double)(last - first);
+        mouse_moved += kSteps;
+        const double want = (double)(kSteps - 1) * (double)MOUSE_STEP_T;
+        // The two instants are each read by a poll, so each is late by at
+        // most one poll; 200 ticks is generous against a poll of about ten
+        // and tight against 0.2 per cent of the span.
+        if (step_span < want - 200.0 || step_span > want + 200.0)
+          Fail("the ticks 63 steps of the mouse took, against 63 x MOUSE_STEP_NS / 5",
+               (unsigned long long)step_span, (unsigned long long)want);
+      }
+      b.Idle(2 * KB_CLK_T);
+      if ((b.UbRead(UB_MOUSE_X) & 07777u) != kSteps)
+        Fail("the count 64 steps produced --- one a step, none missed",
+             b.UbRead(UB_MOUSE_X) & 07777u, kSteps);
+    }
+
+    // --- THE THREE SWITCHES, AND WHICH READ OF THE MOUSE CLEARS `MOUSE
+    // READY`.  `mouse.rs` says RFB's own mask needs no translation: left 1,
+    // middle 2, right 4, and the card puts them at `MOUSE_Y` bits 12, 13 and
+    // 14 as `TAILSW`, `MIDSW` and `HEADSW`.  A read of Y clears `MOUSE
+    // READY` and a read of X does not, the 74LS109 at IOBCSR 0C26 having
+    // `-READ.MOUSE.Y` on its clear.
+    {
+      (void)b.UbRead(UB_MOUSE_Y);                    // clear whatever stands
+      b.Idle(4);
+      b.Write(INPUT_PAGE + 4 * IN_BUTTONS, 5u);      // left and right down
+      if (b.Read(INPUT_PAGE + 4 * IN_BUTTONS) != 5u)
+        Fail("BUTTONS read back", b.Read(INPUT_PAGE + 4 * IN_BUTTONS), 5u);
+      b.Idle(2 * KB_CLK_T);
+      if (!(b.UbRead(UB_IOB_CSR) & 020u))
+        Fail("MOUSE READY after a switch changed, which the 25LS2521 compares "
+             "on all seven lines", 0, 1);
+      const unsigned y = b.UbRead(UB_MOUSE_Y);
+      if (((y >> 12) & 7u) != 5u)
+        Fail("the three switches as the machine reads them at MOUSE Y", (y >> 12) & 7u, 5u);
+      if ((y >> 15) != 0) Fail("bit 15 of MOUSE Y, which is ground", y >> 15, 0);
+      b.Idle(4);
+      if (b.UbRead(UB_IOB_CSR) & 020u)
+        Fail("MOUSE READY after a read of Y, which must clear it", 1, 0);
+      b.Write(INPUT_PAGE + 4 * IN_BUTTONS, 0u);
+      b.Idle(2 * KB_CLK_T);
+      if (!(b.UbRead(UB_IOB_CSR) & 020u)) Fail("MOUSE READY after the switches lifted", 0, 1);
+      (void)b.UbRead(UB_MOUSE_X);
+      b.Idle(4);
+      if (!(b.UbRead(UB_IOB_CSR) & 020u))
+        Fail("MOUSE READY after a read of X, which must NOT clear it", 0, 1);
+      (void)b.UbRead(UB_MOUSE_Y);
+      b.Idle(4);
+      if (b.UbRead(UB_IOB_CSR) & 020u) Fail("MOUSE READY after the read of Y", 1, 0);
+    }
+
+    // --- `LINES`, the diagnostic, against what the card actually has.  The
+    // whole seam in one word, so that a bring-up on the board can see the
+    // cable without a Unibus cycle: the seven lines as the connector sees
+    // them, and the card's own `csr_face` beside them.
+    {
+      b.Write(INPUT_PAGE + 4 * IN_BUTTONS, 5u);
+      b.Idle(4);
+      const uint32_t lines = b.Read(INPUT_PAGE + 4 * IN_LINES);
+      // A pressed switch is pulled to GROUND, so `~5` in the top three; the
+      // mouse is at rest, which is both lines of each pair HIGH.
+      if ((lines & 0x7Fu) != 0x2Fu)
+        Fail("LINES: the seven the mouse is driving, two switches down and at rest",
+             lines & 0x7Fu, 0x2Fu);
+      const unsigned csr = b.UbRead(UB_IOB_CSR);
+      if ((((lines >> 16) & 040u) != 0) != ((csr & 040u) != 0))
+        Fail("LINES' copy of the card's KBD READY against the card's own CSR",
+             (lines >> 16) & 040u, csr & 040u);
+      b.Write(INPUT_PAGE + 4 * IN_BUTTONS, 0u);
+    }
+
+    // --- AND LEG 2: A MACHINE RESET EMPTIES THE QUEUE.
+    // The console can restart the CADR while Linux runs.  A key typed at the
+    // machine that was is not a key typed at the machine that is, and the
+    // microcode's first act after the boot PROM is to ask whether anybody is
+    // typing --- so a queue that survived the restart would put a word under
+    // that test and send the machine down the warm path.  This is the last
+    // thing the check does, because it resets the card.
+    {
+      b.Write(INPUT_PAGE + 4 * IN_CTL, IN_CTL_FLUSH);
+      b.Idle(8);
+      for (int k = 0; k < 5; ++k) b.Write(INPUT_PAGE + 4 * IN_KEY, KbdWord(KEY_STATUS, false));
+      b.Idle(16);
+      st = b.Read(INPUT_PAGE + 4 * IN_STAT);
+      if (((st >> 8) & 0x3Fu) != 4)
+        Fail("four words queued behind the one the card took", (st >> 8) & 0x3Fu, 4);
+      if (!(b.UbRead(UB_IOB_CSR) & 040u)) Fail("KBD READY before the machine's reset", 0, 1);
+      dut->card_rst = 1;
+      b.Idle(8);
+      dut->card_rst = 0;
+      b.Idle(16);
+      st = b.Read(INPUT_PAGE + 4 * IN_STAT);
+      if ((st >> 8) & 0x3Fu)
+        Fail("the queue after the machine was reset", (st >> 8) & 0x3Fu, 0);
+      // And nothing arrives afterwards, for longer than the card's own
+      // clock: the machine comes up to a keyboard with nothing in it, which
+      // is what `(LOC 6)` needs.
+      for (int k = 0; k < 6 && bad < 25; ++k) {
+        b.Idle(KB_CLK_T);
+        if (b.UbRead(UB_IOB_CSR) & 040u)
+          Fail("KBD READY after the machine was reset --- the restarted microcode "
+               "would take the WARM boot", 1, 0);
+      }
+      // The keyboard still works afterwards, which is what says the pending
+      // flag was cleared with the queue and not left set on a word whose
+      // acknowledgement the reset threw away.
+      const uint32_t w = KbdWord(KEY_RETURN, false);
+      b.Write(INPUT_PAGE + 4 * IN_KEY, w);
+      long waited = 0;
+      while (!(b.UbRead(UB_IOB_CSR) & 040u) && waited < 40) ++waited;
+      if (!(b.UbRead(UB_IOB_CSR) & 040u)) {
+        Fail("a word after the machine's reset: the keyboard is dead", 0, 1);
+      } else {
+        ++keys_typed;
+        const unsigned hi = b.UbRead(UB_KBD_HIGH);
+        const unsigned lo = b.UbRead(UB_KBD_LOW);
+        if ((((uint32_t)(hi & 0377u) << 16) | lo) != w)
+          Fail("the word the machine read after its own reset",
+               ((uint32_t)(hi & 0377u) << 16) | lo, w);
+      }
+    }
+  }
+
   delete dut;
   if (bad) {
     std::fprintf(stderr, "FAIL: %d mismatches\n", bad);
@@ -1052,9 +1693,10 @@ int main(int argc, char **argv) {
       "    all %ld pages of the port read, and the word each gave says which\n"
       "      slave answered: no address in the gigabyte falls through\n"
       "    %ld reads and %ld writes swept over the window --- every word of the\n"
-      "      three pages and a spread over the rest of the gigabyte: %ld to the\n"
+      "      four pages and a spread over the rest of the gigabyte: %ld to the\n"
       "      pack side, %ld to the Chaosnet cable, %ld to the serial line,\n"
-      "      %ld to the default slave, each identified BY ITS OWN REPLY\n"
+      "      %ld to the keyboard and mouse, %ld to the default slave, each\n"
+      "      identified BY ITS OWN REPLY\n"
       "    %ld rounds with a write and a read to different pages in flight\n"
       "      together, which is the only stimulus that sees one selection\n"
       "      serving both channels\n"
@@ -1069,11 +1711,27 @@ int main(int argc, char **argv) {
       "      %.0f and %.0f from `Framing::half_bits` and `DIVISORS`; and %ld\n"
       "      through local loop back with the cable out, which is the leg\n"
       "      that exercises the nine derivations the line transcribes\n"
+      "    %ld keyboard words the machine read back out of its own two halves,\n"
+      "      handed over ONE AT A TIME against the card's KBD READY, which is\n"
+      "      `Keyboard::deliver` in fabric; %ld refused on a full queue and\n"
+      "      counted in LOST; and %ld more over a twelve-tick sweep whose write\n"
+      "      beat is released a counted number of ticks after the card's OWN\n"
+      "      answer, so that a put lands on the tick a take does --- the only\n"
+      "      thing that can see the queue's count written from two places\n"
+      "    %ld mouse steps, the Gray order and the direction against muir's own\n"
+      "      00, 10, 11, 01 with counts 1 to 4, the twelve-bit wrap, and\n"
+      "      %.0f ticks over 63 steps against 63 x MOUSE_STEP_NS / 5 = %.0f\n"
+      "    nothing reached the card's KBD READY until a word was WRITTEN, and\n"
+      "      nothing reached it after the machine's own reset: the two legs\n"
+      "      that keep a board out of the warm boot at (LOC 6)\n"
       "    every address, length and ID poisoned the tick its handshake was\n"
       "      done, so a match that is read rather than held routes elsewhere\n"
       "    %ld responses and read beats held until they were taken\n",
-      pages, reads, writes, by[kPack], by[kChaos], by[kSer], by[kDflt], crossed, bursts,
+      pages, reads, writes, by[kPack], by[kChaos], by[kSer], by[kInput], by[kDflt],
+      crossed, bursts,
       frames_out, frames_in, chars_out, chars_in, measured[0], measured[1],
-      FrameTicks(kMr1, 15), FrameTicks(kMr1, 12), looped, b.stalls);
+      FrameTicks(kMr1, 15), FrameTicks(kMr1, 12), looped,
+      keys_typed, keys_lost, keys_swept, mouse_moved, step_span,
+      (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls);
   return 0;
 }
