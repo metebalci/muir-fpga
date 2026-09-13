@@ -91,12 +91,15 @@ struct model {
 	struct cons_flag2 f2;
 	uint16_t mode, opc_control;	/* what the write strobes loaded */
 	uint16_t clk_written;		/* the last CLK write AS ASKED, bits and all */
+	int sstep, ssdone;		/* STEP registered once and twice, OLORD1 1A10 */
 	// The face.
 	uint32_t ident;			/* what word 0 answers: a wrong board is a wrong IDENT */
 	uint32_t cycles_hi_latch, ticks_hi_latch;
 	int answered, lost_ever;
 	int grant;			/* 0: nothing answers, every cycle is lost */
 	int freeze;			/* the counters stand: for a check that reads them */
+	int deaf_to_step;		/* a register block that takes bit 0 and drops the rest */
+	int step_is_a_level;		/* STEP taken as a level: the opposite defect */
 	unsigned long diag_reads, diag_writes;
 };
 
@@ -142,10 +145,44 @@ static void model_spy_write(struct model *m, unsigned eadr, uint16_t v)
 		m->ir[eadr & 3u] = v;	/* the debug IR's three halves */
 		break;
 	case 3:
-		// **cadr_spy_registers.sv TAKES BIT 0 AND DROPS BITS 4:1.**
-		// STEP, NOP11, IDEBUG and LDSTAT reach nothing in this fabric.
+		// The clock control register is five bits.  Only RUN and STEP
+		// change anything a console can see from here: NOP11, IDEBUG
+		// and LDSTAT steer the datapath, which this model does not
+		// have, and `build/sstep.pass` is what holds them.
+		//
+		// **STEP IS AN EDGE AND NOT A LEVEL.**  SSTEP and SSDONE are
+		// STEP registered once and twice on MCLK5A, and MACHRUN's
+		// first term is SSTEP AND -SSDONE, so the machine runs for
+		// exactly the one master clock in which the first is set and
+		// the second is not.  Modelling it as a level would let a
+		// console that wrote 2 and never wrote 0 look correct here
+		// and run away on the board.
 		m->clk_written = v;
 		m->run = v & CLK_RUN ? 1 : 0;
+		if (m->deaf_to_step) {
+			/* bits 4:1 reach nothing, which is what this console
+			   was written against */
+		} else if (m->step_is_a_level) {
+			if (v & CLK_STEP) {
+				m->cycles += 4;
+				m->ssdone = 1;
+				m->f1.ssdone = 1;
+			}
+		} else {
+			const int step = v & CLK_STEP ? 1 : 0;
+			if (step && !m->sstep && !m->ssdone) {
+				// The one microcycle the step buys.  `freeze`
+				// holds off the free-running advance so that a
+				// check can read the counter; it does not hold
+				// off a step, which is the thing being counted.
+				++m->cycles;
+				m->ssdone = 1;
+			}
+			m->sstep = step;
+			if (!step)
+				m->ssdone = 0;
+			m->f1.ssdone = m->ssdone;
+		}
 		break;
 	case 4: m->opc_control = v; break;
 	case 5: m->mode = v; break;
@@ -446,28 +483,76 @@ static void check_step(void)
 	cons_halt(&c);
 
 	m.diag_writes = 0;
+	m.freeze = 1;		/* only the step may move the counter */
 	capture_start();
 	cons_step(&c, 3, &s);
 	cons_say_step(&s);
 	const char *out = capture_end();
 
 	CHECK(s.asked == 3, "step did not ask for three");
-	CHECK(s.moved == 0, "the modelled machine moved %llu microcycle(s) on a fabric with no SSTEP",
+	// **ONE MICROCYCLE A STEP, AND EXACTLY ONE.**  MIT's own words for the
+	// bit are "raising step clocks the machine once".  Nothing moving is
+	// the fabric this console was written against, where the clock control
+	// register took bit 0 and dropped the rest; more than one a step is
+	// STEP taken as a level, which runs the machine away under a debugger.
+	CHECK(s.moved == 3, "three steps retired %llu microcycle(s), not three",
 	      (unsigned long long)s.moved);
-	CHECK(s.after == s.before, "CYCLES was not sampled either side of the step");
+	CHECK(s.after == s.before + 3, "CYCLES was not sampled either side of the step");
 	// The write went out as CC's CC-CLOCK writes it, and the register
-	// block took bit 0 of it: that is the whole of what happened.
+	// block took the whole of it.
 	CHECK(m.diag_writes == 6, "three steps are six diagnostic writes, not %lu", m.diag_writes);
+	CHECK(m.diag_reads == 1, "the one FLAG-1 read is not %lu", m.diag_reads);
 	CHECK(m.clk_written == 0, "the last clock control write was 0x%04x, not the 0 of `2 then 0`", m.clk_written);
 	CHECK(m.run == 0, "the step left the machine running");
-	CHECK(!s.ssdone, "SSDONE is up on a fabric with no SSDONE flip flop");
-	// **AND IT MUST SAY SO.**  A silent no-op is the failure this project
-	// keeps meeting.
+	// SSDONE is read while STEP is still up, where it must be set: it
+	// falls two master clocks after the bit is lowered, so reading it
+	// afterwards would report a fault that is the console's own ordering.
+	CHECK(s.ssdone, "SSDONE is down after a step that moved the machine");
+	// **AND IT MUST SAY WHAT HAPPENED.**  A silent no-op is the failure
+	// this project keeps meeting, so the count is always printed.
+	CHECK(strstr(out, "CYCLES") != NULL, "step did not report CYCLES either side");
+	CHECK(strstr(out, "SSDONE up") != NULL, "step did not report SSDONE");
+	CHECK(strstr(out, "THE MACHINE DID NOT MOVE") == NULL,
+	      "step reported that the machine did not move, and it did");
+
+	// **A STEP THAT CLOCKS NOTHING MUST BE NAMED.**  The fabric this
+	// console was written against did exactly that, so the words are held
+	// as well as the number: a register block that takes bit 0 and drops
+	// the rest is modelled by refusing STEP.
+	struct model dead;
+	struct console dc;
+	model_init(&dead);
+	attach(&dc, &dead);
+	cons_halt(&dc);
+	dead.freeze = 1;
+	dead.deaf_to_step = 1;
+	capture_start();
+	cons_step(&dc, 1, &s);
+	cons_say_step(&s);
+	out = capture_end();
+	CHECK(s.moved == 0, "the deaf model moved %llu microcycle(s)",
+	      (unsigned long long)s.moved);
 	CHECK(strstr(out, "THE MACHINE DID NOT MOVE") != NULL,
-	      "step did not report that the machine did not move");
+	      "a step that clocked nothing was not reported as such");
 	CHECK(strstr(out, "SSTEP") != NULL, "step did not name SSTEP as the missing thing");
-	CHECK(strstr(out, "docs/console.md") != NULL,
-	      "step did not name docs/console.md, which carries the two hunks");
+
+	// **AND SO MUST A STEP THAT CLOCKS TOO MANY.**  STEP taken as a level
+	// rather than as an edge is the opposite failure and is just as silent.
+	struct model loose;
+	struct console lc;
+	model_init(&loose);
+	attach(&lc, &loose);
+	cons_halt(&lc);
+	loose.freeze = 1;
+	loose.step_is_a_level = 1;
+	capture_start();
+	cons_step(&lc, 1, &s);
+	cons_say_step(&s);
+	out = capture_end();
+	CHECK(s.moved > 1, "the level model retired %llu microcycle(s), not more than one",
+	      (unsigned long long)s.moved);
+	CHECK(strstr(out, "MICROCYCLES FOR") != NULL,
+	      "a step that ran away was not reported as such");
 
 	// A step on a RUNNING machine moves the counter for the ordinary
 	// reason and must not be reported as a step having worked.
@@ -936,7 +1021,11 @@ int main(void)
 	       "      marker pattern (w & 0x80008000) == 0x00008000\n"
 	       "    halt then status: SRUN down, CYCLES standing, the halt attributed to the\n"
 	       "      console; start then status: CYCLES MEASURED to have moved\n"
-	       "    step: the machine did not move, and it says so and names docs/console.md\n"
+	       "    step: ONE microcycle a step and exactly one, with SSDONE up --- read\n"
+	       "      while STEP is still up, where it must be, since it falls two master\n"
+	       "      clocks after the bit is lowered.  Both opposite failures are held as\n"
+	       "      words too: a register block deaf to bit 1 clocks nothing and says so,\n"
+	       "      and a STEP taken as a level runs away and says that\n"
 	       "    FLAG-1's low byte through its inverting driver and FLAG-2's four floating\n"
 	       "      ones, field by field against known words\n"
 	       "    CYCLES low then high: the pair is one instant across a carry, the high word\n"

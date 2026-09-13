@@ -212,6 +212,25 @@ CHECKS = {
         "golden": "rtl.golden",
         "files": [("boot_prom.hex", "build/boot_prom.hex")],
     },
+    # THE CLOCK CONTROL REGISTER, WHICH NO REFERENCE PROGRAM CAN REACH.  The
+    # boot PROM never writes it and no band does either --- it is the
+    # console's register, and a machine running its own microcode has no
+    # console --- so `golden/src/sstep.rs` scripts muir's `rtl` engine the way
+    # CC does and this compares the fabric row for row against that.  The same
+    # module and the same PROM image as the pair above; a different reference
+    # and a different testbench.
+    #
+    # A mutation of the five bits' EFFECT belongs here, where the reference
+    # exercises them.  A mutation of the register that HOLDS them belongs at
+    # `console` or `unibus`, which build `cadr_spy_registers.sv`.
+    "sstep": {
+        "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
+        "top": "cadr_microcycle",
+        "tb": "tb/cadr_sstep_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2"],
+        "golden": "sstep.golden",
+        "files": [("boot_prom.hex", "build/boot_prom.hex")],
+    },
     "microcycle_sys": {
         "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
         "top": "cadr_microcycle",
@@ -835,11 +854,19 @@ CHECKS = {
     # face, or by the sweep that measures the read-back's lag with the machine
     # running.
     "console": {
+        # `cadr_spy_registers.sv` moved out of `extra` and into `sources`
+        # when this check stopped MEASURING the single step and started
+        # ASSERTING it.  A record aimed at the clock control register's own
+        # write belongs where the whole road is exercised --- an AXI write, a
+        # Unibus cycle, the landing rule and MACHRUN's first term --- and that
+        # is here.  `unibus` also has the file in `sources`, for the address
+        # match; the two see different halves of one module.
         "sources": ["rtl/plumbing/cadr_console.sv", "rtl/machine/cadr_console_bus.sv",
-                    "rtl/machine/cadr_console_state.sv"],
+                    "rtl/machine/cadr_console_state.sv",
+                    "rtl/machine/cadr_spy_registers.sv"],
         "extra": [
             "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
-            "rtl/machine/cadr_spy_registers.sv", "tb/cadr_console_harness.sv",
+            "tb/cadr_console_harness.sv",
         ],
         "top": "cadr_console_harness",
         "tb": "tb/cadr_console_tb.cpp",
@@ -1710,7 +1737,7 @@ def check_makefile():
     # without the name here warns, and a name here without the `.pass` says
     # nothing about a check nobody runs.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
-                           "chaosnet", "serial", "terminal"}
+                           "chaosnet", "serial", "terminal", "console_face"}
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

@@ -10973,3 +10973,226 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
                    ja_live, jb_live, dbg_holder};
 @end
+
+# ============================================================================
+# THE CLOCK CONTROL REGISTER: A SINGLE STEP, AND THE DEBUG IR
+# ============================================================================
+#
+# What CC does to a halted machine, and the one thing the debug cable found
+# missing in the fabric: `CC-EXECUTE` writes the debug IR and then asks for
+# one clock, and with the clock control register one bit wide the machine
+# never stepped and the forced microinstruction never ran --- so a scratchpad
+# read came back as the debugger's own stale OBUS.
+#
+# **THE NUMBERS IN CC AND IN `ir.bits` ARE OCTAL, AND READING THEM AS DECIMAL
+# IS THE TRAP.**  MIT's table is `1 Run, 2 Step, 4 NOP, 10 IDEBUG, 20 LDSTAT`,
+# so `CC-NOOP-DEBUG-CLOCK`'s `16` is STEP with NOP11 and IDEBUG, bits 3:1.
+# Decimal 16 is bit 4 alone, LDSTAT, which loads the statistics counter and
+# clocks nothing.
+#
+# `sstep` is the check and `build/sstep.golden` the reference: no reference
+# PROGRAM can reach this register, because it is the console's and a machine
+# running its own microcode has no console, so `golden/src/sstep.rs` scripts
+# muir's `rtl` engine the way CC does.
+#
+# **AND THE CHECK IS LOAD-BEARING, MEASURED RATHER THAN ARGUED.**  Four of the
+# records below were run against `microcycle` as well --- the same two files,
+# 600,000 microcycles of MIT's boot PROM --- and ALL FOUR SURVIVED it: the
+# step term dropped from `MACHRUN`, the debug IR off the I bus, `NOP11`
+# reaching nothing and `LDSTAT` not loading.  A program that never writes the
+# register cannot tell, however long it runs, which is the argument for a
+# scripted reference put as a measurement.
+#
+# **TWO EQUIVALENCES, ALSO MEASURED, recorded so that nobody files them as
+# holes.**  Both were built and run against `sstep` and both came back exit 0.
+#
+# Putting the step inside `-WAIT` --- `(stepping || (srun && ...)) && !wait_`
+# in place of the board's `stepping || (srun && ... && !wait_)` --- survives,
+# and not because the check is blind: the script never reaches a memory cycle,
+# so `wait_` is false on every row of it.  The board's form is the one the
+# 9S42 at OLORD1 1A15 has and muir bypasses its `Wait` stall while stepping
+# for the same reason, so the fabric keeps the board's; what would catch the
+# difference is a step taken while the machine waits for memory, which wants
+# the memory path under the processor and is not this check.
+#
+# Dropping `!idebug` from `promenable` survives too, and by construction: the
+# I-bus mux tests `idebug` first, so what `-PROMENABLE` does under `IDEBUG`
+# cannot be seen through it.  The term is kept because it is what PCTL 1C19
+# has, not because anything here can tell.
+
+@mutation sstep-the-step-term-is-dropped-from-machrun
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note **THE BOARD'S OWN DEFECT, IN THE PROCESSOR HALF.** `MACHRUN`'s first
+@note term is `SSTEP AND -SSDONE`, the 9S42 at OLORD1 1A15. Suppressed, a
+@note halted machine stays halted however many times the console writes the
+@note STEP bit --- which is what CC met over the debug cable, and why
+@note `(cadr:cc-read-a-mem 1)` came back with a stale OBUS.
+@note
+@note Caught at "row 11 (cc-clock, clk 0002): CYCLES is 7d5, the reference
+@note says 7d6" --- the first `CC-CLOCK` of the script.
+@old
+  assign machrun  = stepping || (srun && !errhalt && !stathalt && !wait_);
+@new
+  assign machrun  = (stepping && 1'b0) || (srun && !errhalt && !stathalt && !wait_);
+@end
+
+@mutation sstep-ssdone-rises-with-sstep-rather-than-behind-it
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note `SSTEP` and `SSDONE` are `STEP` registered ONCE and TWICE on `MCLK5A` at
+@note OLORD1 1A10, which is what makes `SSTEP AND -SSDONE` true for exactly
+@note one master clock. Registering both from `STEP` makes them rise together,
+@note the term is never true, and the step clocks nothing --- the same
+@note outcome as the record above by a different route, and the reason the
+@note two flip flops are two and not one.
+@note
+@note Caught at "row 10 (cc-clock, clk 0002): FLAG-1 is ea00, the reference
+@note says e800" --- on SSDONE ITSELF, a row before the microcycle that does
+@note not happen. The flag is the sharper of the two witnesses and says so
+@note here: it catches the defect at the master clock the step was asked at,
+@note where CYCLES can only speak at the one it was owed.
+@old
+        ssdone <= sstep;
+        sstep <= step;
+@new
+        ssdone <= step;
+        sstep <= step;
+@end
+
+@mutation sstep-the-step-is-a-level-and-not-an-edge
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note THE OPPOSITE FAILURE, AND IT IS THE DANGEROUS ONE. With `SSDONE` never
+@note set, `SSTEP AND -SSDONE` stands for as long as the console leaves the
+@note bit up and the machine runs away under a debugger that asked for one
+@note microcycle. MIT's own words are "raising step clocks the machine once".
+@note
+@note The trace holds `STEP` up over six master clocks for exactly this: a
+@note fabric that stepped once and a fabric that steps for ever agree on
+@note every row where the bit goes up and straight down again.
+@note
+@note Caught at "row 11 (cc-clock, clk 0002): FLAG-1 is e800, the reference
+@note says ea00" --- SSDONE never rises, so it is caught at the FIRST
+@note `CC-CLOCK` and never reaches the six held rows the note above is about.
+@note Those rows still earn their place: they are what would catch a fabric
+@note whose SSDONE rose correctly and whose MACHRUN read it wrongly.
+@old
+        ssdone <= sstep;
+@new
+        ssdone <= sstep && 1'b0;
+@end
+
+@mutation sstep-the-debug-ir-does-not-reach-the-i-bus
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note `IDEBUG` puts the six 74S374s on page DEBUG on the I bus in place of the
+@note control store, and that is how `CC-EXECUTE` forces a microinstruction
+@note into `IR` to read a scratchpad with. Suppressed, the step still steps
+@note --- so the machine runs a microcycle of ITS OWN PROGRAM under the
+@note debugger's feet, which is worse than not stepping at all, and the word
+@note the console reads back is whatever that instruction put on the O bus.
+@note
+@note Caught at "row 32 (cc-read-a-mem-1, clk 000e): IR is ffffffffffff, the
+@note reference says 11c001028" --- the control store coming up all ones,
+@note which is this project's own convention and is here doing the work the
+@note convention was adopted for.
+@old
+  assign i = idebug ? debug_ir : (promenable ? prom_q : imem_q);
+@new
+  assign i = (idebug && 1'b0) ? debug_ir : (promenable ? prom_q : imem_q);
+@end
+
+@mutation sstep-nop11-does-not-nop-the-cycle
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note `NOP11` is the console's own nop, the open-collector 74S08 at CONTRL
+@note 3E14 pulling `-INOP` down. It is what lets CC load an instruction into
+@note `IR` and LOOK at its operands and result without executing it, which is
+@note the whole of how a scratchpad is read: `CC-NOOP-DEBUG-CLOCK` is `16`
+@note octal and carries this bit.
+@note
+@note Suppressed, every forced read EXECUTES, so the reads in the script
+@note write A memory as they go. The script reads the destination before the
+@note write and after it, so a fabric that wrote on the read has already
+@note disturbed the answer it is about to give.
+@note
+@note Caught at "row 31 (cc-read-a-mem-1, clk 000e): FLAG-2 is c0c3, the
+@note reference says c0d3" --- bit 4, which is NOP itself.
+@old
+  assign nop = trap || inop || nop11;
+@new
+  assign nop = trap || inop || (nop11 && 1'b0);
+@end
+
+@mutation sstep-the-statistics-counter-does-not-load
+@check sstep
+@file rtl/machine/cadr_microcycle.sv
+@note `-LDSTAT` is the LOAD of the eight 74S169s on page STAT, so while the
+@note console holds it up the counter takes `IWR<31:0>` at every `CLK5A`
+@note instead of counting. It is the fifth bit of the clock control register
+@note and the only one with no effect on the machine's flow, which is exactly
+@note why it would go unnoticed.
+@note
+@note The trace's LDSTAT row is placed after four running microcycles so that
+@note `IWR` holds something: loading zero over a counter reading zero is the
+@note control-store-comes-up-zero trap, and the generator refuses to write a
+@note trace where it happens.
+@note
+@note Caught at "row 63 (ldstat, clk 0012): ST is 0, the reference says
+@note ffffffff", which is that refusal paying for itself.
+@old
+        if (ldstat) st <= iwr[31:0];
+@new
+        if (ldstat && 1'b0) st <= iwr[31:0];
+@end
+
+@mutation console-the-clock-register-drops-the-step-bit
+@check console
+@file rtl/machine/cadr_spy_registers.sv
+@note **THIS IS THE BOARD'S DEFECT EXACTLY, IN THE REGISTER HALF.** The clock
+@note control register took bit 0 --- `RUN` --- and dropped bits 4:1, so CC's
+@note `2` then `0` landed as `RUN` cleared twice and clocked nothing. The
+@note machine did not move and the debugger read back its own stale OBUS.
+@note
+@note It is aimed here rather than at `sstep` because what it breaks is the
+@note road and not the gate: an AXI write on `M_AXI_GP1`, a Unibus cycle at
+@note `0o766006`, the register block's landing rule, and only then `MACHRUN`.
+@note `build/sstep.pass` holds the gate with the bit driven directly, so a
+@note record there could not see a register that never delivered it.
+@note
+@note Caught at "tick 4058: a write of 2 to the clock control register did
+@note not run exactly one microcycle is 0x0, the reference says 0x1" --- the
+@note first of the check's sixteen halts.
+@old
+            step   <= held[1];
+@new
+            step   <= held[1] && 1'b0;
+@end
+
+@mutation console-the-debug-ir-halves-are-written-to-one-half
+@check console
+@file rtl/machine/cadr_spy_registers.sv
+@note The debug IR is loaded sixteen bits at a time by `-LDDBIRL`, `-LDDBIRM`
+@note and `-LDDBIRH`, at EADR 0, 1 and 2 --- which are also the three
+@note registers that READ `IR`. "Read and write at the same address are
+@note uncorrelated", says the interface's own document, and this is where
+@note that bites: a block that took the middle half for the low one would
+@note read back correctly at every one of the three and still hand the
+@note machine an instruction nobody wrote.
+@note
+@note **AND IT SURVIVED UNTIL THE CHECK GREW A `CC-EXECUTE`.** Measured: at
+@note the commit that landed the register's other four bits, `console.pass`
+@note wrote only the CLK register and never the debug IR, so a record aimed
+@note at the halves was caught by nothing. The check now forces a
+@note microinstruction in and reads it back out of `IR` --- after the trace
+@note is exhausted, because a nopped debug clock still advances `PC` and
+@note would skip the PROM instruction it stands in for.
+@note
+@note Caught at "tick 26894030: the debug IR read back through IR is
+@note 0x300000210, the reference says 0x302101028".
+@old
+          REG_IR_MED:  debug_ir[31:16] <= held;
+@new
+          REG_IR_MED:  debug_ir[15:0]  <= held;
+@end

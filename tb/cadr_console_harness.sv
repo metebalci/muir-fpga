@@ -341,6 +341,12 @@ module cadr_console_harness #(
       .mach_rst   (con_mach_rst)
   );
 
+  // The clock control register's other four bits and the debug IR, out of
+  // the register block and into the processor: the single step, and the
+  // forced microinstruction CC reads a scratchpad with.
+  logic        step_w, nop11_w, idebug_w, ldstat_w;
+  logic [47:0] debug_ir_w;
+
   cadr_spy_registers spy_registers (
       .clk        (clk),
       .rst        (mach_rst),
@@ -354,6 +360,11 @@ module cadr_console_harness #(
       .spy_eadr   (spy_eadr),
       .spy_rdata  (spy_rdata),
       .run        (run_o),
+      .step       (step_w),
+      .nop11      (nop11_w),
+      .idebug     (idebug_w),
+      .ldstat     (ldstat_w),
+      .debug_ir   (debug_ir_w),
       .promdisable(promdisable_o),
       .errstop    (errstop_o),
       .stathenb   (stathenb_o),
@@ -368,6 +379,11 @@ module cadr_console_harness #(
       .clk         (clk),
       .rst         (mach_rst),
       .run         (run_o),
+      .step        (step_w),
+      .nop11       (nop11_w),
+      .idebug      (idebug_w),
+      .ldstat      (ldstat_w),
+      .debug_ir    (debug_ir_w),
       .promdisable (promdisable_o),
       .errstop     (errstop_o),
       .stathenb    (stathenb_o),

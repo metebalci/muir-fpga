@@ -740,26 +740,15 @@ run reported itself content. Measured, and fixed.
 
 ## What is NOT checked, and why
 
-**Single step.** The board's is `SSTEP` and `SSDONE`, two flip flops of the
-74S174 at OLORD1 1A10, and `MACHRUN`'s first term `SSTEP AND -SSDONE`
-(`../muir/src/rtl.rs:1119-1128`). `rtl/machine/cadr_microcycle.sv` has neither and
-says so at its port list --- "the fabric has no console yet" --- and
-`cadr_spy_registers.sv` takes bit 0 of a CLK write and drops bits 4:1. So a
-write of 2 to the clock control register goes down the diagnostic bus, lands
-in nothing, and the machine does not move. The check **measures and prints**
-this rather than asserting muir's answer, because asserting it would leave
-`console.pass` red for a defect in two files this slice does not own. It
-reads, on the check's own output: *"a write of 2 to the clock control
-register moved the machine on 0 of 16 halts (muir: one microcycle each)"*.
-The two hunks are named below.
-
 **The write-strobe aliasing.** muir's `spy::write_strobe` is `eadr & 7`
 (`../muir/src/spy.rs:126-130`): `EADR3` does not reach the write decoder --- the
 74S138 at SPY0 1F03, whose `G1` is `HI1` --- so a write at register 13 loads the
 mode register. `cadr_spy_registers.sv` compares all four bits of `held_eadr`
-and does not. Measured and printed for the same reason: *"a mode write at
-register 13 landed 0 times (muir's `write_strobe` is `eadr & 7`, so: once)"*.
-One line, named below.
+and does not. The check measures and prints this rather than asserting muir's
+answer, because asserting it would leave `console.pass` red for a difference
+nobody has decided to close. It reads, on the check's own output: *"a mode
+write at register 13 landed 0 times (muir's `write_strobe` is `eadr & 7`, so:
+once)"*. The fix is one line in that module.
 
 **The two pulses reach nothing.** `-PROG.RESET` and `PROG.BOOT` leave
 `cadr_spy_registers` and are folded into `unused` at `rtl/machine/cadr_machine.sv:425`
@@ -953,36 +942,36 @@ and to its three PS7 command lines.
 **`mutations/run.py`** --- the same file added to `arty_check`'s three PS7
 board tuples.
 
-### The two hunks that would give the console a step
+### The single step, and the debug IR
 
-Not in the patch, because they are in two files this slice does not own and
-because each needs a check of its own. Named here so that the next person does
-not have to find them:
+The two hunks this section used to name as missing are landed, and so is the
+rest of the clock control register.
 
-**`rtl/machine/cadr_spy_registers.sv`**, at the CLK register's write. It is
+The register is five bits: `RUN`, `STEP`, `NOP11`, `IDEBUG` and `LDSTAT`.
+`rtl/machine/cadr_spy_registers.sv` holds all five now, and the debug IR
+beside them --- forty-eight bits written sixteen at a time at EADR 0, 1 and 2.
+`rtl/machine/cadr_microcycle.sv` takes them as ports, registers `STEP` twice
+into `SSTEP` and `SSDONE` on the master clock edge, and gives `MACHRUN` its
+first term.
 
-    REG_CLK: run <= held[0];
+**The numbers in CC and in MIT's `ir.bits` are octal.** The table reads `1
+Run, 2 Step, 4 NOP, 10 IDEBUG, 20 LDSTAT`, so `CC-CLOCK` writes `2`,
+`CC-DEBUG-CLOCK` writes `12` and `CC-NOOP-DEBUG-CLOCK` writes `16` --- which
+is `STEP` with `NOP11` and `IDEBUG`, bits 3:1. Read as decimal, `16` is bit 4
+alone: `LDSTAT`, which loads the statistics counter and clocks nothing.
 
-and the board's clock control register is five bits: `RUN`, `STEP`, `NOP11`,
-`IDEBUG`, `LDSTAT` (`../muir/src/spy.rs:266-281`). `STEP` at least has to
-leave the module.
+**A step's `MACHRUN` does not go through `-WAIT`.** The 9S42 at OLORD1 1A15
+has six inputs, `SSTEP`, `-SSDONE`, `SRUN`, `-ERRHALT`, `-WAIT` and
+`-STATHALT`, and `-WAIT` is in the `SRUN` term only. So a single step runs its
+microcycle with the bus still busy. `-HANG` is different: it parks the
+generator itself and is not bypassed.
 
-**`rtl/machine/cadr_microcycle.sv`**, at `MACHRUN`. It is
-
-    assign machrun  = srun && !errhalt && !stathalt && !wait_;
-
-and the board's 9S42 at OLORD1 1A15 has six inputs: `SSTEP`, `-SSDONE`,
-`SRUN`, `-ERRHALT`, `-WAIT`, `-STATHALT`
-(`../muir/tests/halt.rs:145-163`, which reads them off the netlist pin by
-pin). `SSTEP` and `SSDONE` are `STEP` registered once and twice on `MCLK5A`
-at OLORD1 1A10 (`../muir/src/rtl.rs:1976-1978`), and a single step's
-`MACHRUN` deliberately does **not** go through `-WAIT`
-(`../muir/src/rtl.rs:2313-2315`), so its microcycle runs with the bus still
-busy. `../muir/tests/spy.rs:715-767` is the timing to hold it to, tick by
-tick, and it is a check that could be written the day the hunks land.
-
-Whoever lands them should also fix the write-strobe aliasing above at the same
-time, since it is the same register block and one line.
+`build/sstep.pass` holds the processor's half against a reference trace taken
+from muir's own `rtl` engine, scripted the way CC scripts it. `build/console.pass`
+holds that a console can reach it, asserting one microcycle a step over sixteen
+halts and forcing one microinstruction in through the debug IR. The
+write-strobe aliasing above is still not fixed and is still measured rather
+than asserted.
 
 ## The timing, and the -12.837 ns
 
@@ -1211,9 +1200,11 @@ that package models the slave and would want the register modelled with it.
 `start`, `step N`, `regs`, `status`, `examine` and `deposit`. `status` is the
 question of the day and answers it the way `main.rs`'s `machrun_low` does,
 plus a positive measurement: CYCLES sampled twice a few milliseconds apart, so
-that "running" is something seen rather than inferred. `step N` reports
-plainly that the machine did not move and why, naming this file --- a silent
-no-op is the failure this project keeps meeting.
+that "running" is something seen rather than inferred. `step N` is CC's
+`CC-CLOCK`, `2` then `0`, N times, and reports CYCLES either side with
+`FLAG-1`'s `SSDONE`. It names either failure out loud: a machine that did not
+move, and a machine that ran more than one microcycle a step. A silent no-op
+is the failure this project keeps meeting, and so is a silent runaway.
 
 **There is no init script**, and `cadr-console.mk` says why: the console is a
 person at a prompt, and started at boot it would hold a second master on the
@@ -1224,8 +1215,11 @@ processor's own cycles with nobody reading what it said.
 check`, on the build host, needing nothing but a C compiler; scratch under
 `~/.cache/muir-fpga-console`. It runs the program's core against a model of
 the slave --- the two pages, the latch, the lost bit, `UNMAPPED`, and a
-modelled machine whose CYCLES advances only while RUN is set --- and holds 149
-checks. The model is a model and not the RTL, and says so at its head, as
+modelled machine whose CYCLES advances only while RUN is set, and whose STEP
+is an edge and not a level --- and the count is printed by the run. **It is in
+`make check` now**, as `$(BUILD)/console_face.pass`: it had been in the tree
+since the console landed and nothing ran it, where every other program's host
+check was named in the Makefile. The model is a model and not the RTL, and says so at its head, as
 `feeder_test.c` does; the RTL is held to the same contract by
 `tb/cadr_console_tb.cpp`.
 
@@ -1240,7 +1234,7 @@ copy and reverted, and this table is the record of them. All eight caught:
     FLAG-1's SRUN read from bit 9          console_test.c:329
     CYCLES's two halves swapped            console_test.c:531
     a lost cycle's bit 16 taken for data   console_test.c:610
-    `step` reports nothing                 console_test.c:425
+    `step` moves the machine by one        console_test.c, check_step
     FLAG-2's four open bits dropped        console_test.c:495
     CYCLESH read before the low word       console_test.c:531
 
@@ -1251,13 +1245,13 @@ stale binary.
 
 ## What is not built
 
-- Single step, and everything that needs it: `CC-EXECUTE-R` and
-  `CC-EXECUTE-W`, which are how a console examines and deposits the
-  scratchpads, the stack, the dispatch memory and the statistics counter.
-  They load a microinstruction into the debug IR and clock it under `NOP11`
-  and `IDEBUG` (`../muir/tests/spy.rs:772-822`), and the debug IR's three
-  halves are written through registers 0, 1 and 2 --- which this module already
-  carries, and which land in nothing.
+- `CC-EXECUTE-R` and `CC-EXECUTE-W` as console COMMANDS, which are how a
+  console examines and deposits the scratchpads, the stack, the dispatch
+  memory and the statistics counter. The fabric under them is built: a single
+  step, `NOP11`, `IDEBUG` and the debug IR's three halves at registers 0, 1
+  and 2, with `build/console.pass` forcing one microinstruction in and reading
+  it back out of `IR`. What is missing is the program's side --- the
+  instruction assembler and the commands that drive it.
 - The OPC history, `CC-SAVE-OPCS`: eight `OPCCLK` pulses on a halted machine
   read the eight PCs out oldest first (`../muir/tests/spy.rs:831`). The OPC
   control register is register 4 and `cadr_spy_registers.sv` drops it.

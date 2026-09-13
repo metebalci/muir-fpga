@@ -346,6 +346,12 @@ module cadr_dbg_pmod_harness #(
 
   logic con_gnt_u, con_ssyn_u;
   logic errstop_u, stathenb_u, prog_reset_u, prog_boot_u, promdisable_u;
+  // The clock control register's other four bits and the debug IR.  There is
+  // no processor in this harness, so they are folded like the mode register's
+  // bits beside them: what the register block MAKES is checked here, and what
+  // the machine does with it is `build/sstep.pass`'s.
+  logic        step_u, nop11_u, idebug_u, ldstat_u;
+  logic [47:0] debug_ir_u;
   logic [1:0] mode_speed_u;
 
   cadr_spy_registers u_spy (
@@ -353,6 +359,8 @@ module cadr_dbg_pmod_harness #(
       .ub_msyn(sr_msyn), .ub_write(sr_write), .ub_addr(sr_addr),
       .ub_wdata(sr_wdata), .ub_ssyn(sr_ssyn), .ub_rdata(sr_rdata),
       .spy_eadr(spy_eadr), .spy_rdata(spy_rdata),
+      .step(step_u), .nop11(nop11_u), .idebug(idebug_u), .ldstat(ldstat_u),
+      .debug_ir(debug_ir_u),
       .run(run_o), .promdisable(promdisable_u),
       .errstop(errstop_u), .stathenb(stathenb_u), .mode_speed(mode_speed_u),
       .prog_reset(prog_reset_u), .prog_boot(prog_boot_u)
@@ -361,7 +369,9 @@ module cadr_dbg_pmod_harness #(
   logic unused;
   assign unused = ^{timeout_inhibit_u, con_gnt_u, con_ssyn_u, con_rdata_u,
                     errstop_u, stathenb_u, mode_speed_u, prog_reset_u,
-                    prog_boot_u, promdisable_u, in_req_v[19:16],
+                    prog_boot_u, promdisable_u,
+                    step_u, nop11_u, idebug_u, ldstat_u, debug_ir_u,
+                    in_req_v[19:16],
                     out_back[19]};
 
 endmodule

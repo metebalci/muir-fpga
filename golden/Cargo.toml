@@ -59,3 +59,7 @@ path = "src/iob.rs"
 [[bin]]
 name = "busint_regs"
 path = "src/busint_regs.rs"
+
+[[bin]]
+name = "sstep"
+path = "src/sstep.rs"
