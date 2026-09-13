@@ -158,27 +158,38 @@ about GPL compatibility:
 The first of those is the board bring-up. Without it the chip has no memory
 and nothing runs at all.
 
-### The drawing keeps saying U-Boot, for now
+### The drawing says both, in two boxes
 
-Mete and I went round this on 13 September and settled on no change yet.
+Mete and I went round this on 13 September and settled on no change. Later the
+same day he proposed the shape that resolves it, and the drawing carries it
+now: a grey box for U-Boot with a small green box inside it saying SPL.
 
 The worry was that a finished colour beside the word "U-Boot" reads as a claim
-that this project wrote U-Boot. It does not. On that drawing the colours
-answer how far along a block is, and a separate marker answers whose code it
-is. Nothing is over-claimed.
+that this project wrote U-Boot. It does not. On that drawing the colours answer
+how far along a block is, and grey answers whose code it is.
 
-Three replacements were considered and each fails for its own reason. "boot:
-SPL, ps7_init" does not fit a narrow rotated strip. "boot loader" and "loader"
-name a category rather than this component. "SPL" is specific but names only
-the first stage, where the block covers both.
+Three single-word replacements were considered first and each failed for its
+own reason. "boot: SPL, ps7_init" does not fit a narrow rotated strip. "boot
+loader" and "loader" name a category rather than this component. "SPL" alone is
+specific but names only the first stage, where the block covers both.
 
-And the drawing already names real components by their real names: muir,
-microSD, gigabit Ethernet, HDMI out. A product name that identifies an actual
-component is information rather than branding.
+The label is stacked one letter to a line rather than rotated, which Mete
+asked for on 13 September. The strip is 54 pixels wide and 93 tall below the
+first-stage box, and six lines fill 84 of it. A rotated label makes the reader
+tilt their head and a stacked one does not.
 
-So the block still says U-Boot. If it is ever renamed, SPL is the word for our
-half and the sequence drawing below the board already separates the two stages
-where there is room to explain them.
+Two boxes say what one word could not. Grey is the drawing's existing marker
+for what is outside the project, which is what muir and the DDR controller
+already carry, so the loader is marked as upstream. The green box inside it is
+the first stage, and it is green because the board boots from it and because
+the start-up routine that stage runs is generated here.
+
+**The split is a little kind to us and it is worth knowing why.** Only one of
+the four files above lives in the first stage. `ps7_init_gpl.c` is compiled
+into the SPL, and `cadr.env` and the two device trees are read by U-Boot
+proper, which is the grey box. So the green box understates what is ours by
+three files, and no arrangement of two boxes on a strip 54 pixels wide will
+say that. This paragraph is where it is said instead.
 
 ## The card, and the two ways it boots
 
