@@ -47,8 +47,8 @@ end and says where its seam is drawn.
 Slice six is the four things slice five left out: the 2651's SYN and DLE
 registers and their pointer, its parity and framing flags, its two echoing
 modes, and the Chaosnet's timer interrupt. The section "What slice six built"
-says what holds each, and it opens with the rule Mete set for that slice,
-which reverses this project's usual default.
+says what holds each, and it opens with the rule that slice followed, which
+reverses this project's usual default.
 
 ## What muir says the card is
 
@@ -272,8 +272,8 @@ fabric runs at 100 MHz, so the machine runs at 50% of the speed the hardware
 ran. `USEC_PERIOD_T` is 200 ticks, which is now 2.0 real microseconds, and a
 CADR wall clock run off this counter loses half a day in a day. The
 sixty-cycle counter is the same family and slows in the same proportion, its
-mains edges arriving at 30 Hz. **Mete's decision is that both keep agreeing
-with muir for now**, because the checks are the backbone of this project and
+mains edges arriving at 30 Hz. **It is decided that both keep agreeing with
+muir for now**, because the checks are the backbone of this project and
 nothing built yet needs the time of day --- this card is not composed into
 `cadr_machine` at all, so nothing on the board reads either of them. **And
 undoing it is still one constant, which is part of why the tick is a number
@@ -312,10 +312,10 @@ is gone and the trace moves that line through the chip's own registers.
 The trace shows `serrdy` falling at every init, as it always did.
 
 **THE MOUSE'S SEAM IS DECIDED AND IT IS MIT'S CARD: the card takes the seven
-lines.** Slice one posed it as an open question and slice two answered it, at
-Mete's session's direction. This project reproduces the machine and is held to
-muir, and a module taking ready-made deltas is a different card: one that
-cannot lose counts, whose `NEW`/`OLD` latches and comparator disappear, and
+lines.** Slice one posed it as an open question and slice two answered it.
+This project reproduces the machine and is held to muir, and a module taking
+ready-made deltas is a different card: one that cannot lose counts, whose
+`NEW`/`OLD` latches and comparator disappear, and
 against which this trace stops being a reference for the mouse half. So
 `rtl/machine/cadr_io_board.sv` takes `mouse_lines<6:0>`, and the encoder that turns
 Linux's deltas into quadrature phases is fabric beside it. On this slice that
@@ -1032,16 +1032,15 @@ processing system and is not worth taking twice.
 ## What slice six built, and the rule it followed
 
 Slice six is the four things slice five left out of the 2651 and the Chaosnet
-interface. It follows a rule Mete set on 12 September, and the rule is worth
-stating because it reverses this project's usual default.
+interface. It follows a rule worth stating, because it reverses this
+project's usual default.
 
-Told that the four were unfalsifiable at this seam, he said: "we need to add
-the above things i guess, even if they are no testable or usable at the
-moment." The usual default stands for checks. A claim nothing exercises is not
-a claim, and a check written to confirm rather than to compare is worse than
-none. But that is about checks and not about the machine. The CADR is a real
-machine MIT built whole, and a register the fabric does not have is a way this
-is not the CADR.
+The four were unfalsifiable at this seam and they are built anyway. The usual
+default stands for checks. A claim nothing exercises is not a claim, and a
+check written to confirm rather than to compare is worse than none. But that
+is about checks and not about the machine. The CADR is a real machine MIT
+built whole, and a register the fabric does not have is a way this is not the
+CADR.
 
 So all four are built, and what holds each is stated rather than assumed.
 
@@ -1181,8 +1180,8 @@ takes one step, and the bound is there to fail rather than to hang.
   one 4 KB page each on `M_AXI_GP0` behind `rtl/plumbing/cadr_gp0_split.sv`.
   What has not happened is a run on the board.
 - **The keyboard's and mouse's far end.** That is `cadr-usb-input`, last in
-  the order of work. The kernel side is done, and `evtest` printed Mete's name
-  off a USB keyboard on the board on 10 Sep.
+  the order of work. The kernel side is done, and `evtest` printed typed
+  characters off a USB keyboard on the board on 10 Sep.
 - **The Unibus interrupt cycle.** Nothing in `rtl/` puts a vector on the bus
   or arbitrates `BR5`. The interrupt itself is built: the card's request
   reaches the bus interface's own register at `0o766040`, is taken under

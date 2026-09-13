@@ -74,11 +74,11 @@ measured on the console, with the board reset over JTAG between attempts.
 
 5. **The fallback is gone.** Digilent's stock boot was run once for
    comparison, with the server stopped and the board reset, and it reaches a
-   login with `Memory: 335116K/524288K`. Then Mete decided the board must never
-   boot it, because a Linux with 512 MB owns the CADR's memory. The card's file
-   sets `cp_kernel2ram=reset`, so the fallback's own copy step reboots the
-   board to try again. (`|| reset` on the fetch line was tried first and did
-   not fire on the real boot path.) The sections below that
+   login with `Memory: 335116K/524288K`. It is decided that the board must
+   never boot it, because a Linux with 512 MB owns the CADR's memory. The
+   card's file sets `cp_kernel2ram=reset`, so the fallback's own copy step
+   reboots the board to try again. (`|| reset` on the fetch line was tried
+   first and did not fire on the real boot path.) The sections below that
    call the fallback "the control" describe the first card. They are kept as
    the record of why the network loop was built the way it was.
 
@@ -339,7 +339,7 @@ There is no AXI path today.
 
 **The card is written once and everything after it arrives over Ethernet.**
 U-Boot fetches `system.dtb` and `zImage` from the build host by TFTP. The
-bitstream is loaded from Linux, later. That is Mete's decision, and it turns
+bitstream is loaded from Linux, later. That is the decision, and it turns
 out to buy more than convenience.
 
 **`default_bootcmd` is `run uenvboot; run cp_kernel2ram && bootm ${netstart}`,
@@ -488,8 +488,8 @@ believable, and a device tree is no different.
   built where `dtc` already is.
 - **The microSD card is free to use.** It is `/dev/sda`, 29.7 GB over USB. It
   came carrying Raspberry Pi OS: `sda1` 512 MB vfat labelled `bootfs`, and
-  `sda2` 29.2 GB ext4 labelled `rootfs`. That was inspected read-only, and Mete
-  has since confirmed the card can be reformatted. **Check the device node
+  `sda2` 29.2 GB ext4 labelled `rootfs`. That was inspected read-only, and the
+  card has since been confirmed free to reformat. **Check the device node
   before writing anything.** It is `/dev/sda` on this laptop today, and it is
   `/dev/sda` on the build host too, where that is the system disk. `mksd.sh`
   never touches a device for exactly this reason. The naming is done by a

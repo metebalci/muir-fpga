@@ -886,9 +886,10 @@ module cadr_memory_path (
   // and the scheduler hang off it.  A System 100 band's first
   // `READ-MICROSECOND-CLOCK` is at microcycle 2,087,379 and `TRACK-MOUSE`
   // reads `0o764104` and `0o764106` six thousand microcycles later.  Unwired,
-  // those reads are answered by nothing and MD takes zero, which is Mete's
-  // own decision for an unanswered cycle and not a fault --- but a machine
-  // whose clock reads zero for ever is not one that can run a scheduler.
+  // those reads are answered by nothing and MD takes zero, which is the
+  // decided behaviour for an unanswered cycle and not a fault --- but a
+  // machine whose clock reads zero for ever is not one that can run a
+  // scheduler.
   //
   // **THE STROBE ARRIVES LONG AFTER THE ADDRESS HERE, WHICH THE CARD'S TRACE
   // CANNOT SAY.**  `golden/src/iob.rs` is a master with no address setup at

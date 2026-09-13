@@ -82,12 +82,12 @@
           <!-- Slack is a build's figure and not the design's, and it moves by a
                quarter of a nanosecond between builds of identical logic ---
                measured, at two commits whose RTL is identical. It is here at
-               Mete's request, for now, with the count beside it because the
+               request, for now, with the count beside it because the
                worst path alone says nothing about how much is wrong, and with
                the clock above it because a slack in nanoseconds means nothing
                without the period it is slack against: +0.868 ns of a 10 ns
                tick is most of a tick spare, and of a 5 ns tick it would not
-               be. Mete asked for the clock line on 12 Sep. -->
+               be. The clock line was added on 12 Sep for that reason. -->
           <text class="d-s" x="-164" y="180">100 MHz, 10 ns a tick</text>
           <text class="d-s" x="-164" y="196">worst slack +0.868 ns</text>
           <text class="d-s" x="-164" y="212">failing 0 of 39,442</text>
@@ -232,9 +232,8 @@
                FSBL on this part, it is where the board's own start-up routine
                runs, and that routine is generated here from
                boards/arty-z7-20/vivado/ps7_init.ops.  Green because the board
-               has booted from it.  Mete asked for this shape on 13 Sep, having
-               parked the question on 12 Sep; the four files that are ours are
-               listed in docs/boot.md, and two of them are read by U-Boot proper
+               has booted from it.  The four files that are ours are listed
+               in docs/boot.md, and two of them are read by U-Boot proper
                rather than by the first stage, which is why the grey box is not
                simply somebody else's. -->
           <rect class="d-plate" x="1226" y="542" width="54" height="128"/>
@@ -242,8 +241,8 @@
           <rect class="d-plate" x="1231" y="547" width="44" height="30"/>
           <rect class="d-box d-done" x="1231" y="547" width="44" height="30"/>
           <text class="d-t" x="1253" y="567" text-anchor="middle">SPL</text>
-          <!-- Stacked rather than rotated, at Mete's asking on 13 Sep: the
-               strip is 54 wide and 93 tall under the SPL box, and six lines
+          <!-- Stacked rather than rotated: the strip is 54 wide and
+               93 tall under the SPL box, and six lines
                at 14 fill 84 of it.  A reader tilts their head for a rotated
                label and does not for this one. -->
           <text class="d-t" text-anchor="middle"><tspan x="1253" y="592">U</tspan><tspan x="1253" y="606">-</tspan><tspan x="1253" y="620">B</tspan><tspan x="1253" y="634">o</tspan><tspan x="1253" y="648">o</tspan><tspan x="1253" y="662">t</tspan></text>
@@ -321,7 +320,7 @@
           <rect class="d-box d-ext" x="1305" y="78" width="150" height="84"/>
           <text class="d-t" x="1380" y="104" text-anchor="middle">Pmod JA &mdash; DBGOUT</text>
           <text class="d-s" x="1380" y="130" text-anchor="middle">1 clock + 7 data</text>
-          <!-- The six lamps, assigned with Mete for a user rather than for
+          <!-- The six lamps, assigned for a user rather than for
                bring-up: clocked, executing, booted, working, with the disk's
                own light and one that is dark until something goes wrong.
                docs/board.md carries the same table in prose. -->

@@ -5303,8 +5303,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
           answered <= 1'b1;
 @end
 
-# THE CONSOLE'S RESET, page 0's word 6.  Mete asked for a soft reboot from the
-# processing system and this is it: a write of `RESET_KEY` and of nothing else
+# THE CONSOLE'S RESET, page 0's word 6.  A soft reboot from the processing
+# system is what this is: a write of `RESET_KEY` and of nothing else
 # pulses the machine's reset for `RESET_T` ticks, joining BTN0 rather than
 # replacing it.  Six ways to be wrong: the key not tested, the pulse the wrong
 # length, the write answered before the machine is back, the console resetting

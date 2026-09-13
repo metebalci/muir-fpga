@@ -129,9 +129,9 @@ module cadr_tv (
   // machine, because **MIT's microcode uses this interrupt as its
   // roughly-sixty-cycle clock**: mouse tracking and the scheduler's sequence
   // break both run off it, so the machine's idea of a second is 50% of one.
-  // Mete decided on 2026-09-11 that the machine keeps agreeing with muir for
-  // now --- the checks are the backbone and `tv.golden` compares tick counts
-  // --- and this is the record of what that costs rather than a fix.
+  // It was decided on 2026-09-11 that the machine keeps agreeing with muir
+  // for now --- the checks are the backbone and `tv.golden` compares tick
+  // counts --- and this is the record of what that costs rather than a fix.
   //
   // **UNDOING IT IS STILL ONE CONSTANT.**  A real frame is exactly 1,545,600
   // ticks of 10 ns, a whole number, so restoring real time here is that

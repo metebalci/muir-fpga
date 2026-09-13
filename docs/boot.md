@@ -160,9 +160,9 @@ and nothing runs at all.
 
 ### The drawing says both, in two boxes
 
-Mete and I went round this on 13 September and settled on no change. Later the
-same day he proposed the shape that resolves it, and the drawing carries it
-now: a grey box for U-Boot with a small green box inside it saying SPL.
+This was settled with no change to the label, and with a change of shape that
+resolves it instead. The drawing carries it now: a grey box for U-Boot with a
+small green box inside it saying SPL.
 
 The worry was that a finished colour beside the word "U-Boot" reads as a claim
 that this project wrote U-Boot. It does not. On that drawing the colours answer
@@ -173,10 +173,9 @@ own reason. "boot: SPL, ps7_init" does not fit a narrow rotated strip. "boot
 loader" and "loader" name a category rather than this component. "SPL" alone is
 specific but names only the first stage, where the block covers both.
 
-The label is stacked one letter to a line rather than rotated, which Mete
-asked for on 13 September. The strip is 54 pixels wide and 93 tall below the
-first-stage box, and six lines fill 84 of it. A rotated label makes the reader
-tilt their head and a stacked one does not.
+The label is stacked one letter to a line rather than rotated. The strip is 54
+pixels wide and 93 tall below the first-stage box, and six lines fill 84 of it.
+A rotated label makes the reader tilt their head and a stacked one does not.
 
 Two boxes say what one word could not. Grey is the drawing's existing marker
 for what is outside the project, which is what muir and the DDR controller
@@ -779,9 +778,9 @@ the `image.ub` already on the card.
 4. **If the fetch fails** --- server down, cable out, wrong network --- the
    board waits, and never boots anything else. Left to itself, U-Boot would
    fall through to `image.ub` with Digilent's own device tree and 512 MB,
-   which is a Linux that owns the CADR's memory. Mete decided the board must
-   never do that. The card's file sets `cp_kernel2ram=reset`, replacing the
-   copy step the fallback itself would run. So a fetch that fails ends in
+   which is a Linux that owns the CADR's memory. It is decided that the board
+   must never do that. The card's file sets `cp_kernel2ram=reset`, replacing
+   the copy step the fallback itself would run. So a fetch that fails ends in
    `resetting ...`, and another attempt follows ten seconds later, for as
    long as the server is away. This was measured 10 September on the real
    boot path, with the server stopped. A `|| reset` on the end of the fetch

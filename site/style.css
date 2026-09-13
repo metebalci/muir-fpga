@@ -222,7 +222,7 @@ figure.fig { margin: 34px 0 36px; }
    they were at 1272 for 1170 units. */
 .fig.dense.wide { width: 1810px; }
 /* And it never forces a horizontal scrollbar: on a narrower window it scales
-   down to the viewport instead (Mete, 10 Sep). */
+   down to the viewport instead. */
 .fig.dense.wide svg { min-width: 0; }
 /* A picture at its own size, wider than the band: the page scrolls to it
    rather than shrinking it, which is what a browser showing an image file
@@ -268,7 +268,7 @@ figure.screen img {
 .d-fill { fill: var(--paper); stroke: currentColor; stroke-width: 1.5; }
 .d-tex  { stroke: currentColor; stroke-width: 1.5; }
 .d-dash { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 6 5; }
-/* THE LINE STYLES SAY ONE THING EACH, settled with Mete on 10 Sep.  Solid is
+/* THE LINE STYLES SAY ONE THING EACH, and that is settled.  Solid is
    a thing --- a block, a connector, a program, whether inside the chip or on
    the board.  Dashed is a boundary: the fabric from the processing system on
    the architecture drawing, and a lifeline on the sequences.  Dotted is

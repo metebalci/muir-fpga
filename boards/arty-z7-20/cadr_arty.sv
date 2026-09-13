@@ -37,12 +37,13 @@
 //
 // **THE TICK IS 10 ns, AND EVERY TICK COUNT IN THE MACHINE IS UNCHANGED.**
 // `CLKOUT0_DIVIDE_F` below is the only place the length of a tick is decided,
-// and it is the only thing that moved when Mete decided on 2026-09-11 to stop
-// treating timing closure as something to chase.  It went from 5 to 6.25 that
-// morning and from 6.25 to 10 that afternoon, when a one-character change to
-// a multiplexer cost a third of a nanosecond and the memory-on board stopped
-// closing again: Mete's words were "if you have timing concern, we can even
-// increase the tick to 10ns".  Nothing under `rtl/machine/` changed:
+// and it is the only thing that moved when this project stopped treating
+// timing closure as something to chase, on 2026-09-11.  It went from 5 to
+// 6.25 that morning and from 6.25 to 10 that afternoon, when a one-character
+// change to a multiplexer cost a third of a nanosecond and the memory-on
+// board stopped closing again.  A design sitting near zero turns every edit
+// into a timing question, and the longer tick buys that off.  Nothing under
+// `rtl/machine/` changed:
 // `cadr_phase_gen.sv`'s `TICK_NS` is still 5, because that constant
 // is the conversion from MIT's drawings --- whose instants are five
 // nanoseconds apart --- into tick counts, and the seven read taps are still
@@ -81,9 +82,9 @@
 // **THE TWO CLOCKS THAT NOW DISAGREE WITH THE WALL, DELIBERATELY.**  Two
 // things the machine owns are clocks in the ordinary sense, and they cannot
 // both agree with muir tick for tick and agree with the time of day once a
-// tick stops being 5 ns.  Mete's decision is that **for now they keep
-// agreeing with muir**, because the checks are the backbone of this project
-// and nothing built yet needs the time of day:
+// tick stops being 5 ns.  It is decided that **for now they keep agreeing
+// with muir**, because the checks are the backbone of this project and
+// nothing built yet needs the time of day:
 //
 //   - `rtl/machine/cadr_io_board.sv`'s microsecond clock is 200 ticks, so it
 //     counts one per 2.0 real microseconds and a CADR wall clock run off it
@@ -306,7 +307,7 @@ module cadr_arty #(
   // that will drive it.
   //
   //   the keyboard    `cadr-usb-input`, last in the order of work.  The kernel
-  //                   side is done --- `evtest` printed Mete's name off a USB
+  //                   side is done --- `evtest` printed keystrokes off a USB
   //                   keyboard on this board on 10 Sep --- and what is missing
   //                   is the program that carries those events across and the
   //                   register face it writes them through.  No strobe means
@@ -397,9 +398,9 @@ module cadr_arty #(
   // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN0 RATHER THAN
   // REPLACING IT.**  `rst` above is the MMCM's lock and the button; a write of
   // `RESET_KEY` to the console's word 6 pulses `con_mach_rst` for 64 ticks,
-  // and this is the OR.  Mete asked for a soft reboot from the processing
-  // system --- the board runs Linux beside the machine, and restarting the
-  // CADR had meant a finger on a board nobody is sitting at, or a fresh
+  // and this is the OR.  A soft reboot from the processing system is wanted
+  // because the board runs Linux beside the machine, and restarting the CADR
+  // had otherwise meant a finger on a board nobody is sitting at, or a fresh
   // bitstream.  `rtl/plumbing/cadr_console.sv`'s header has the key, the length and
   // why it is a pulse and not a level.
   //

@@ -56,10 +56,10 @@
 // **THE FOUR THINGS THAT USED TO BE LEFT OUT HERE ARE IN, AND WHAT HOLDS
 // EACH IS DIFFERENT.**  They were left out on the argument that nothing in
 // muir or on this board could tell a card that has them from one that does
-// not, and Mete reversed that on 12 Sep: "we need to add the above things i
-// guess, even if they are no testable or usable at the moment".  The rule
-// that stands is about CHECKS and not about the machine --- a register the
-// fabric does not have is a way this is not the CADR.  So:
+// not, and that argument was reversed: they are built even though nothing
+// here can test them or use them.  The rule that stands is about CHECKS and
+// not about the machine --- a register the fabric does not have is a way
+// this is not the CADR.  So:
 //
 //   - **The SYN1, SYN2 and DLE registers and their pointer.**  Built, and
 //     held by `build/iob.pass` against the Signetics sheet rather than
@@ -322,10 +322,10 @@ module cadr_io_board (
   // board clocks a tick at 10 ns rather than 5 (`cadr_arty.sv`, and its
   // header is the argument), so this counter advances once per 2,000 real
   // nanoseconds and a CADR wall clock run off it loses half a day in a day.
-  // Mete decided on 2026-09-11 that the machine keeps agreeing with muir for
-  // now: the checks are the backbone, `iob.golden` compares tick counts, and
-  // nothing built yet needs the time of day.  The card is not composed into
-  // `cadr_machine` at all, so nothing on the board reads it.
+  // It was decided on 2026-09-11 that the machine keeps agreeing with muir
+  // for now: the checks are the backbone, `iob.golden` compares tick counts,
+  // and nothing built yet needs the time of day.  The card is not composed
+  // into `cadr_machine` at all, so nothing on the board reads it.
   //
   // **UNDOING THIS IS STILL ONE CONSTANT, WHICH IS WHY THE TICK IS A NUMBER
   // THAT DIVIDES 1,000.**  A real microsecond is exactly 100 ticks of 10 ns,

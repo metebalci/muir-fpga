@@ -180,8 +180,8 @@ be a value the instrument can mean.**
 **`boards/arty-z7-20/cadr_arty.sv`'s reset was MMCM lock or BTN0 and nothing else**, so
 restarting the CADR meant a finger on a board nobody is sitting at, or a fresh
 bitstream --- on a board that runs Linux beside the machine and is reached
-over the network. Mete asked for a soft reboot from the processing system;
-page 0's word 6 is it, and **it joins BTN0 rather than replacing it.**
+over the network. So the machine takes a soft reboot from the processing
+system; page 0's word 6 is it, and **it joins BTN0 rather than replacing it.**
 
 **It is a pulse of a stated length and not a level.** A level is a bit a
 program can set and then be killed, or forget, or crash holding, and a machine
@@ -880,15 +880,16 @@ for M_AXI_GP1 is 0x80000000 - 0xbfffffff"*.
 
 **`README.md` puts the console on GP0 and the debug cable on GP1, and this
 slice does the opposite. That is a decision, not an oversight, and it is
-not mine to take.** `README.md`'s paragraph is reasoned: the console masters
-the machine's own Unibus and so exercises nothing of the debug block, while
-muir over GP1 goes through the real debug block and tests it. What argues the
-other way is concrete and is why this slice landed on GP1: **the slave that
-owns a GP port must answer the whole of it**, and GP0 is already answered end
-to end by `cadr_disk_pack.sv` (SLVERR outside its window, anywhere in the
-gigabyte) or by `cadr_gp0_default.sv`. Putting the console on GP0 therefore
-means an address decode and a mux in front of the pack side, in a file this
-slice does not own; putting it on GP1 costs one `PCW_*` property and changes
+not this slice's to take.** `README.md`'s paragraph is reasoned: the console
+masters the machine's own Unibus and so exercises nothing of the debug block,
+while muir over GP1 goes through the real debug block and tests it. What
+argues the other way is concrete and is why this slice landed on GP1: **the
+slave that owns a GP port must answer the whole of it**, and GP0 is already
+answered end to end by `cadr_disk_pack.sv` (SLVERR outside its window,
+anywhere in the gigabyte) or by `cadr_gp0_default.sv`. Putting the console on
+GP0 therefore means an address decode and a mux in front of the pack side, in
+a file this slice does not own; putting it on GP1 costs one `PCW_*` property
+and changes
 `ps7_init` by nothing. Moving it back is one parameter at the instantiation
 (`REG_BASE`) plus that decode. If the debug cable wants GP1 later, the two can
 share it the same way --- with a decode in front --- or the console can move.
