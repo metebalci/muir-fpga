@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "input_keymap.h"
+#include "input_mapping.h"
 
 // ---- the queue ----------------------------------------------------------
 
@@ -146,15 +147,16 @@ static unsigned character_positions(uint32_t keysym, uint8_t *pos, uint8_t *want
 }
 
 // `Mapping::positions`: a binding first, then the character search.
-static unsigned positions(uint32_t keysym, uint8_t *pos, uint8_t *want, unsigned max)
+static unsigned positions(const struct key_map *m, uint32_t keysym,
+			  uint8_t *pos, uint8_t *want, unsigned max)
 {
-	for (unsigned i = 0; i < KEY_BOUND_COUNT; ++i) {
-		if (KEY_BOUND[i].keysym != keysym)
+	for (unsigned i = 0; i < m->bounds; ++i) {
+		if (m->bound[i].keysym != keysym)
 			continue;
 		if (max == 0)
 			return 0;
-		pos[0] = KEY_BOUND[i].position;
-		want[0] = KEY_BOUND[i].shifted;
+		pos[0] = m->bound[i].position;
+		want[0] = m->bound[i].shifted;
 		return 1;
 	}
 	return character_positions(keysym, pos, want, max);
@@ -162,12 +164,12 @@ static unsigned positions(uint32_t keysym, uint8_t *pos, uint8_t *want, unsigned
 
 // `Mapping::modifier`: the shifting key a keysym is, and which side of it.
 // -1 if the keysym is not bound to a shifting key.
-static int modifier_position(uint32_t keysym)
+static int modifier_position(const struct key_map *m, uint32_t keysym)
 {
-	for (unsigned i = 0; i < KEY_BOUND_COUNT; ++i) {
-		if (KEY_BOUND[i].keysym != keysym)
+	for (unsigned i = 0; i < m->bounds; ++i) {
+		if (m->bound[i].keysym != keysym)
 			continue;
-		const unsigned p = KEY_BOUND[i].position;
+		const unsigned p = m->bound[i].position;
 		if (KEY_TABLE[p].kind != KEY_SHIFT)
 			return -1;
 		// muir looks the side up and then looks the position back out
@@ -181,22 +183,23 @@ static int modifier_position(uint32_t keysym)
 }
 
 // `Mapping::is_prefix`.
-static int is_prefix(uint32_t keysym)
+static int is_prefix(const struct key_map *m, uint32_t keysym)
 {
-	for (unsigned i = 0; i < KEY_PREFIX_COUNT; ++i)
-		if (KEY_PREFIX[i].first == keysym)
+	for (unsigned i = 0; i < m->afters; ++i)
+		if (m->after[i].first == keysym)
 			return 1;
 	return 0;
 }
 
 // `Mapping::after_prefix`.
-static int after_prefix(uint32_t first, uint32_t second, uint8_t *pos, uint8_t *want)
+static int after_prefix(const struct key_map *m, uint32_t first, uint32_t second,
+			uint8_t *pos, uint8_t *want)
 {
-	for (unsigned i = 0; i < KEY_PREFIX_COUNT; ++i) {
-		if (KEY_PREFIX[i].first != first || KEY_PREFIX[i].second != second)
+	for (unsigned i = 0; i < m->afters; ++i) {
+		if (m->after[i].first != first || m->after[i].second != second)
 			continue;
-		*pos = KEY_PREFIX[i].position;
-		*want = KEY_PREFIX[i].shifted;
+		*pos = m->after[i].position;
+		*want = m->after[i].shifted;
 		return 1;
 	}
 	return 0;
@@ -285,6 +288,13 @@ static void behind_prefix(struct key_state *k, uint8_t p, int wants_shift)
 void key_state_init(struct key_state *k)
 {
 	memset(k, 0, sizeof *k);
+	key_map_built_in(&k->map);
+}
+
+void key_state_init_with(struct key_state *k, const struct key_map *map)
+{
+	memset(k, 0, sizeof *k);
+	k->map = *map;
 }
 
 // `Keyboard::resolve`, branch for branch.
@@ -298,7 +308,7 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 	// A prefix standing: this keysym is looked up behind it.
 	if (k->prefix) {
 		const uint32_t first = k->prefix;
-		if (is_prefix(keysym)) {
+		if (is_prefix(&k->map, keysym)) {
 			// The prefix's own release, or the prefix again, which
 			// is the way out of a sequence begun by mistake.
 			if (down)
@@ -310,11 +320,11 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 		k->prefix = 0;
 		mark_tapped(k, keysym);
 		uint8_t p, want;
-		if (after_prefix(first, keysym, &p, &want))
+		if (after_prefix(&k->map, first, keysym, &p, &want))
 			behind_prefix(k, p, want);
 		return;
 	}
-	if (is_prefix(keysym)) {
+	if (is_prefix(&k->map, keysym)) {
 		if (down)
 			k->prefix = keysym;
 		return;
@@ -322,7 +332,7 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 
 	// A modifier is pressed or released at its own position and nothing
 	// more: there is no shift state in a word on this keyboard.
-	const int mp = modifier_position(keysym);
+	const int mp = modifier_position(&k->map, keysym);
 	if (mp >= 0) {
 		if (down)
 			press(k, (uint8_t)mp);
@@ -332,7 +342,7 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 	}
 
 	uint8_t pos[8], want[8];
-	const unsigned found = positions(keysym, pos, want, 8);
+	const unsigned found = positions(&k->map, keysym, pos, want, 8);
 	if (found == 0) {
 		++k->unbound;
 		return;

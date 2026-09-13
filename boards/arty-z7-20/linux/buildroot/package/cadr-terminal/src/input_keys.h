@@ -71,19 +71,24 @@
 // keyboard's behaviour and does not happen here.  `input_face.h` has what
 // this program does about the test instead.
 //
-// ## What is not built
+// ## The mapping is a value here, not a table
 //
 // **`--keyboard-mapping`.**  muir reads a file of `key` and `prefix` lines
-// over its built-in map; this carries the built-in one and nothing else.
-// The parser is the larger half of muir's keyboard and the board has no
-// place to put a file that survives a reboot except the card, so it waits
-// for somebody to want it.  `--keyboard-mapping-dump` on muir prints the map
-// this one has.
+// over its built-in map, and so does this: `input_mapping.h` is that file's
+// grammar and its parser, and a `struct key_state` carries the mapping it
+// resolves against rather than reaching for the generated tables directly.
+// `key_state_init` gives it the built-in one, which is what every check and
+// every board that has no file on its card uses.  Nothing else about the
+// state machine below changed when the file arrived: `positions`,
+// `modifier`, `is_prefix` and `after_prefix` ask the mapping instead of the
+// table and are otherwise the same functions.
 
 #ifndef INPUT_KEYS_H
 #define INPUT_KEYS_H
 
 #include <stdint.h>
+
+#include "input_mapping.h"
 
 // `keyboard::FRAME`: bits 23-19 "Reserved, must be 1's" and 18-16 the source
 // ID of the new keyboard.  Every up-down word has `word >> 16 == 0o371`.
@@ -112,6 +117,10 @@ static inline uint32_t key_up_down(unsigned position, int up)
 #define KEY_MAX_DOWN 20
 
 struct key_state {
+	// What a viewer's keysyms mean here: `Keyboard`'s own `map` field,
+	// by value as muir holds it, so that a mapping read at start-up
+	// cannot outlive or be outlived by the keyboard using it.
+	struct key_map map;
 	// Words still to go to the fabric, oldest first.
 	uint32_t queue[KEY_BACKLOG];
 	unsigned head, count;
@@ -133,7 +142,11 @@ struct key_state {
 	unsigned long refused, unbound;
 };
 
+// `Keyboard::new`: the built-in mapping.
 void key_state_init(struct key_state *k);
+
+// `Keyboard::with_mapping`: a mapping somebody read from a file, copied in.
+void key_state_init_with(struct key_state *k, const struct key_map *map);
 
 // A key from the viewer, by X11 keysym, going down or coming up.
 // `muir::terminal::keyboard::Keyboard::key`.
