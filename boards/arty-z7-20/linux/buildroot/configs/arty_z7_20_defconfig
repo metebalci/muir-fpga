@@ -69,6 +69,10 @@ BR2_PACKAGE_CADR_DISK_PACKS=y
 BR2_PACKAGE_CADR_TERMINAL=y
 BR2_PACKAGE_CADR_SERIAL=y
 BR2_PACKAGE_CADR_CHAOSNET=y
+# The USB keyboard and mouse at the board, carried to the CADR through
+# cadr-terminal, which is the one program that writes the I/O board's input
+# registers.  Its Config.in selects that package for that reason.
+BR2_PACKAGE_CADR_USB_INPUT=y
 # muir itself, built from its own source at the commit muir.commit pins, to be
 # the debugger at the other end of the fabric's debug cable.  It is the only
 # program in the image that is not ours and the only one with no init script:

@@ -15,8 +15,8 @@
 # on the host, so nothing here may assume the ARM either.
 
 LIB     := libcadr-common.a
-SOURCES := cadr_log.c cadr_mem.c
-HEADERS := cadr/cadr_log.h cadr/cadr_mem.h
+SOURCES := cadr_log.c cadr_mem.c cadr_input_link.c
+HEADERS := cadr/cadr_log.h cadr/cadr_mem.h cadr/cadr_input_link.h
 OBJECTS := $(SOURCES:.c=.o)
 
 AR ?= ar

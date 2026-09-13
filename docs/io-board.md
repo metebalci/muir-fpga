@@ -1240,8 +1240,12 @@ takes one step, and the bound is there to fail rather than to hang.
   `rtl/plumbing/cadr_chaos_cable.sv` and `rtl/plumbing/cadr_serial_line.sv`,
   one 4 KB page each on `M_AXI_GP0` behind `rtl/plumbing/cadr_gp0_split.sv`.
   What has not happened is a run on the board.
-- **The keyboard's and mouse's far end.** That is `cadr-usb-input`, last in
-  the order of work. The kernel side is done, and `evtest` printed typed
+- **The keyboard's and mouse's far end on the board itself.** That is
+  `cadr-usb-input`, which is built and checked here and has not run on the
+  board. It reads `/dev/input/event*` and sends keysyms and mouse movement to
+  `cadr-terminal`, which is the one program that writes these registers and
+  paces the words onto the card. `docs/usb-input.md` has the reason for that
+  shape, and the kernel side was done earlier: `evtest` printed typed
   characters off a USB keyboard on the board on 10 Sep.
 - **The Unibus interrupt cycle.** Nothing in `rtl/` puts a vector on the bus
   or arbitrates `BR5`. The interrupt itself is built: the card's request

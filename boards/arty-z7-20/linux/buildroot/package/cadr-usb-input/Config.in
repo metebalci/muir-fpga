@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+config BR2_PACKAGE_CADR_USB_INPUT
+	bool "cadr-usb-input"
+	select BR2_PACKAGE_CADR_COMMON
+	select BR2_PACKAGE_CADR_TERMINAL
+	help
+	  A USB keyboard and mouse plugged into the board, carried to the
+	  CADR's own keyboard and mouse.  With it the machine can be used
+	  at the board rather than only through a viewer on another
+	  machine over the network.
+
+	  It reads /dev/input/event* and sends keysyms and mouse movement
+	  to cadr-terminal over a local socket; that program writes the
+	  I/O board's registers.  There is one queue behind those
+	  registers and the rate at which words may be handed over is a
+	  rule about the machine, so one program paces them and everything
+	  else is a source --- which is how the reference emulator is
+	  arranged too, with one keyboard and up to eight viewers pushing
+	  into it.  docs/usb-input.md has the decision.
+
+	  It selects cadr-terminal for that reason: without it there is
+	  nothing to send to.  It maps no memory and reaches no port of
+	  its own.
+
+	  It has an init script, S88, after the terminal's S85.

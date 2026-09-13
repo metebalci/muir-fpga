@@ -238,6 +238,84 @@ static int set_nonblocking(int fd)
 	return fl < 0 ? -1 : fcntl(fd, F_SETFL, fl | O_NONBLOCK);
 }
 
+// ---- the input link: a source that is not a viewer -----------------------
+//
+// Three functions in the vocabulary the rest of this file already uses, so
+// that a key from the board's own keyboard takes exactly the path a viewer's
+// key takes from here on --- the same mapping, the same queue, the same
+// pacer.  `cadr/cadr_input_link.h` says why a second program may not write
+// the face itself.
+
+static void link_key(void *ctx, uint32_t keysym, int down)
+{
+	struct screen_server *s = ctx;
+	++s->input_events;
+	if (!s->input)
+		return;
+	key_event(&s->keys, keysym, down);
+}
+
+static void link_move(void *ctx, int dx, int dy)
+{
+	struct screen_server *s = ctx;
+	++s->input_events;
+	if (!s->input)
+		return;
+	// **A DELTA AND NOT A DIFFERENCE.**  A viewer's `PointerEvent` carries
+	// an absolute position and this server subtracts the last one; a mouse
+	// on the board reports motion, which is what the cable wants, so it
+	// goes across as it stands.  Nothing here touches `ptr_x`/`ptr_y`: the
+	// two sources move one cursor and neither knows where the other left
+	// it, which is the same thing two viewers already do to each other.
+	input_face_move(s->input, dx, dy);
+	++s->pointer_moves;
+}
+
+// The three switches: the OR of the viewers' and the link's.  Written every
+// time it is asked for, because the register is a LEVEL and the card's own
+// comparator decides whether anything happened.
+static void write_buttons(struct screen_server *s)
+{
+	if (!s->input)
+		return;
+	// **NOT MASKED HERE.**  `input_face_buttons` masks to the cable's three
+	// wires and is the one place that does, which a mutation record holds
+	// it to; a second mask on the way in would make that record survive
+	// and the check quietly weaker.  A viewer may send five bits --- RFB
+	// puts a wheel at bits 3 and 4 --- and what the link sends is three.
+	input_face_buttons(s->input, (uint32_t)(s->buttons | s->link_buttons));
+}
+
+static void link_buttons(void *ctx, unsigned mask)
+{
+	struct screen_server *s = ctx;
+	s->link_buttons = (uint8_t)(mask & 7u);
+	write_buttons(s);
+}
+
+static const struct cadr_input_sink *link_sink(struct screen_server *s,
+					       struct cadr_input_sink *sink)
+{
+	sink->key = link_key;
+	sink->move = link_move;
+	sink->buttons = link_buttons;
+	sink->ctx = s;
+	return sink;
+}
+
+int screen_server_link(struct screen_server *s, const char *path)
+{
+	if (!s->input) {
+		say("no input link: this server has no keyboard to put a key into, so a "
+		    "socket here would take keystrokes and drop them");
+		return -1;
+	}
+	if (cadr_input_link_listen(&s->link, path) < 0)
+		return -1;
+	s->link_ready = 1;
+	return 0;
+}
+
 static void viewer_free(struct screen_viewer *v)
 {
 	if (v->fd >= 0)
@@ -258,11 +336,18 @@ static void drop(struct screen_server *s, unsigned k, const char *why)
 	// server to act on, so the only place this can be done is here.  It
 	// runs for the LAST viewer only: with somebody else still watching,
 	// whatever they are holding is theirs and must stand.
-	if (s->input && s->viewers == 1) {
+	//
+	// **AND NOT WHILE SOMETHING IS ATTACHED TO THE INPUT LINK.**  A USB
+	// keyboard at the board is a source of its own, and a viewer closing a
+	// window must not lift the Shift under somebody's finger.  What a link
+	// client holds is released when that client goes, by
+	// `cadr_input_link_poll`, which is the same rule one source along.
+	if (s->input && s->viewers == 1
+	    && !(s->link_ready && cadr_input_link_clients(&s->link))) {
 		key_all_up(&s->keys);
 		s->buttons = 0;
 		s->have_ptr = 0;
-		input_face_buttons(s->input, 0);
+		write_buttons(s);
 	}
 	viewer_free(v);
 	s->viewer[k] = s->viewer[s->viewers - 1];
@@ -455,7 +540,7 @@ static int viewer_step(struct screen_server *s, struct screen_viewer *v, const c
 				// button the machine sees held by nobody.
 				if (first_ptr || m.buttons != s->buttons) {
 					s->buttons = m.buttons;
-					input_face_buttons(s->input, m.buttons);
+					write_buttons(s);
 				}
 				break;
 			case RFB_CUT_TEXT:
@@ -715,8 +800,11 @@ static void accept_one(struct screen_server *s, uint64_t now_ns)
 void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 			int timeout_ms, uint64_t now_ns)
 {
-	struct pollfd fds[SCREEN_MAX_VIEWERS + 1];
-	for (unsigned k = 0; k <= SCREEN_MAX_VIEWERS; ++k) {
+	// The listener, the viewers, and then the input link's listener and
+	// its clients.
+	struct pollfd fds[SCREEN_MAX_VIEWERS + 1 + CADR_INPUT_LINK_MAX_CLIENTS + 1];
+	const unsigned nfds_max = (unsigned)(sizeof fds / sizeof fds[0]);
+	for (unsigned k = 0; k < nfds_max; ++k) {
 		fds[k].fd = -1;
 		fds[k].events = 0;
 		fds[k].revents = 0;
@@ -731,8 +819,15 @@ void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 			fds[k + 1].events |= POLLOUT;
 		fds[k + 1].revents = 0;
 	}
-	if (poll(fds, s->viewers + 1, timeout_ms) < 0 && errno != EINTR)
+	unsigned nfds = s->viewers + 1;
+	if (s->link_ready)
+		nfds += cadr_input_link_pollfds(&s->link, fds + nfds, nfds_max - nfds);
+	if (poll(fds, nfds, timeout_ms) < 0 && errno != EINTR)
 		return;
+	if (s->link_ready) {
+		struct cadr_input_sink sink;
+		cadr_input_link_poll(&s->link, fds, nfds, link_sink(s, &sink));
+	}
 	if (fds[0].revents & POLLIN)
 		accept_one(s, now_ns);
 
@@ -866,6 +961,15 @@ uint64_t screen_server_key_wait_ns(const struct screen_server *s, uint64_t now_n
 
 void screen_server_close(struct screen_server *s)
 {
+	// The link first, and through the sink: every client's keys come up
+	// into the queue, which the caller then drains at the pacing rule's
+	// own rate.  A client whose Control was never released is a Control
+	// held for the rest of the machine's run.
+	if (s->link_ready) {
+		struct cadr_input_sink sink;
+		cadr_input_link_close(&s->link, link_sink(s, &sink));
+		s->link_ready = 0;
+	}
 	for (unsigned k = 0; k < s->viewers; ++k)
 		viewer_free(s->viewer[k]);
 	s->viewers = 0;

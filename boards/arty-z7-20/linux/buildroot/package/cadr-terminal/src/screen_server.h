@@ -43,6 +43,8 @@
 
 #include <stdint.h>
 
+#include <cadr/cadr_input_link.h>
+
 #include "input_face.h"
 #include "input_keys.h"
 #include "screen_frame.h"
@@ -83,6 +85,23 @@ struct screen_server {
 	// What went across, for a status line: words into the fabric, words
 	// the fabric would not take yet, and pointer movements.
 	unsigned long keys_sent, keys_stuck, pointer_moves;
+
+	// --- the local input link: a source that is not a viewer.
+	//
+	// **ONE PROGRAM WRITES THE FACE AND EVERYTHING ELSE IS A SOURCE.**
+	// `cadr-usb-input` reads the board's own USB keyboard and mouse and
+	// sends keysyms and deltas here, and they go into the same key queue
+	// and the same face as a viewer's, so the pacing below serves both.
+	// `cadr/cadr_input_link.h` says why it cannot write the face itself.
+	// Attached with `screen_server_link`; without that the listener is -1
+	// and none of this costs anything.
+	struct cadr_input_link link;
+	int link_ready;
+	// The switches each half is holding.  **They are ORed**, because there
+	// is one mouse with three switches and a button held at the board must
+	// not be lifted by a viewer letting go of a different one.  `buttons`
+	// is the viewers' and `link_buttons` the link's.
+	uint8_t link_buttons;
 	// --- how fast key words are handed over.  `input_face.h` has the two
 	// rules and where the number comes from; this is the second of them.
 	// **ZERO MEANS THE DERIVED DEFAULT**, `INPUT_KEY_INTERVAL_NS`, so that
@@ -120,6 +139,19 @@ int screen_server_bind(struct screen_server *s, const char *bind_addr, unsigned 
 void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 			int timeout_ms, uint64_t now_ns);
 
+// Listen for sources that are not viewers, on a Unix socket at `path`
+// (NULL for `CADR_INPUT_LINK_PATH`).  0, or -1 having said why.
+//
+// **AFTER THE FLUSH**, which is the ordering that matters and the same reason
+// the RFB socket is: the machine cold-boots or warm-boots on whether a key is
+// waiting at its keyboard register when the microcode starts, so nothing may
+// be able to send a key until the fabric's queue has been emptied.  Where this
+// falls relative to the RFB socket does not matter, both being after it.  A
+// server with no input face refuses to listen at all --- a link nobody can
+// write through is a socket that would take keystrokes and drop them
+// silently.
+int screen_server_link(struct screen_server *s, const char *path);
+
 // How long the caller may sleep before a key word is due, in nanoseconds:
 // 0 when none is waiting, 1 when one is due now.  `screen_server_poll` never
 // sleeps past a word --- a key that waited a whole frame because the loop had
@@ -131,7 +163,8 @@ uint64_t screen_server_key_wait_ns(const struct screen_server *s, uint64_t now_n
 // check does, so that two runs of it never collide on one port.
 unsigned screen_server_port(const struct screen_server *s);
 
-// The listener and every viewer.
+// The listener, every viewer, and the input link --- whose clients each owe
+// the releases for what they were holding.
 void screen_server_close(struct screen_server *s);
 
 // The most often a viewer is given the whole screen: one frame of the

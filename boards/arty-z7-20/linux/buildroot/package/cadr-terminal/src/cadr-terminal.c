@@ -92,6 +92,8 @@
 #include <cadr/cadr_log.h>
 #include <cadr/cadr_mem.h>
 
+#include <cadr/cadr_input_link.h>
+
 #include "input_face.h"
 #include "input_keys.h"
 #include "input_mapping.h"
@@ -130,6 +132,10 @@ static void usage(void)
 		"  --keyboard-mapping FILE   what a viewer's keysyms mean, over the built-in map\n"
 		"                            (muir's own `key` and `prefix` lines; `muir\n"
 		"                            --keyboard-mapping-dump` writes a starting file)\n"
+		"  --input-link PATH the socket a source that is not a viewer sends keys and\n"
+		"                    mouse movement on (default /var/run/cadr-input). That is\n"
+		"                    cadr-usb-input, the board's own USB keyboard and mouse\n"
+		"  --no-input-link   do not listen for one\n"
 		"  --once            do the checks, read one frame, say what is on it, and exit\n");
 }
 
@@ -149,7 +155,8 @@ int main(int argc, char **argv)
 	unsigned port = 5900, interval_ms = 16;
 	uint32_t window_phys = SCREEN_BASE;
 	uint32_t input_phys = IN_REG_BASE;
-	int bow = 0, no_guard = 0, once = 0, no_rre = 0, no_input = 0;
+	int bow = 0, no_guard = 0, once = 0, no_rre = 0, no_input = 0, no_link = 0;
+	const char *link_path = CADR_INPUT_LINK_PATH;
 	static const struct option opts[] = {
 		{ "port", required_argument, NULL, 'p' },
 		{ "bind", required_argument, NULL, 'b' },
@@ -162,12 +169,14 @@ int main(int argc, char **argv)
 		{ "no-input", no_argument, NULL, 'I' },
 		{ "input", required_argument, NULL, 'n' },
 		{ "keyboard-mapping", required_argument, NULL, 'k' },
+		{ "input-link", required_argument, NULL, 'L' },
+		{ "no-input-link", no_argument, NULL, 'N' },
 		{ "once", no_argument, NULL, 'o' },
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGIn:k:oh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGIn:k:L:Noh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'p': port = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'b': bind_addr = optarg; break;
@@ -180,6 +189,8 @@ int main(int argc, char **argv)
 		case 'I': no_input = 1; break;
 		case 'n': input_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'k': keymap_path = optarg; break;
+		case 'L': link_path = optarg; break;
+		case 'N': no_link = 1; break;
 		case 'o': once = 1; break;
 		default: usage(); return 2;
 		}
@@ -295,6 +306,19 @@ int main(int argc, char **argv)
 		    "mouse's own counts. The fabric's queue was flushed before this socket "
 		    "was bound, so nothing was waiting at the machine's cold-boot test",
 		    input_phys);
+		// **AND A SOURCE THAT IS NOT A VIEWER.**  `cadr-usb-input`
+		// reads the board's own USB keyboard and mouse and sends
+		// keysyms here, where they take exactly the path a viewer's
+		// keys take: one mapping, one queue, one pacer.  It could not
+		// write the registers itself --- the rule about how fast words
+		// may be handed over needs ONE pacer, and two programs obeying
+		// it separately would give the machine words twice as fast as
+		// either meant.  `cadr/cadr_input_link.h` and docs/usb-input.md
+		// have the whole of it.  **After the flush**, like the socket
+		// above and for the same reason.
+		if (!no_link && screen_server_link(&srv, link_path) == 0)
+			say("a source that is not a viewer may attach at %s: its keys and "
+			    "its mouse go the same way a viewer's do", link_path);
 	}
 	say("RFB on %s:%u --- display :%u to a viewer. NO AUTHENTICATION: RFC 6143's None is the "
 	    "only security type offered, so anyone who can reach this port sees the screen. "
@@ -362,6 +386,12 @@ int main(int argc, char **argv)
 			    srv.keys_sent, srv.keys_stuck,
 			    have_input ? (unsigned long)input_face_lost(&input) : 0ul,
 			    srv.pointer_moves, srv.keys.unbound);
+			if (srv.link_ready && (srv.link.connects || srv.link.events))
+				say("the input link: %u attached (%lu came, %lu went, %lu refused, "
+				    "%lu dropped for what they said); %lu events",
+				    cadr_input_link_clients(&srv.link), srv.link.connects,
+				    srv.link.drops, srv.link.refused, srv.link.rejected,
+				    srv.link.events);
 			said_connects = srv.connects;
 			said_input = srv.input_events;
 			said_bytes = srv.sent_raw + srv.sent_rre;
@@ -372,8 +402,14 @@ int main(int argc, char **argv)
 	    "%llu saved by RRE; %lu input events, %lu key words to the machine, %lu pointer moves",
 	    srv.connects, srv.drops, frame.reads, srv.sent_raw + srv.sent_rre, srv.saved_by_rre,
 	    srv.input_events, srv.keys_sent, srv.pointer_moves);
-	// Every key the last viewer had down comes up, and the machine is left
-	// with nothing held: a Control still down when this program stops is a
+	// **THE SOCKET AND THE LINK GO FIRST, AND THE DRAIN IS AFTER THEM.**
+	// Closing the link releases every key its clients were holding INTO
+	// the queue, so it has to happen before the queue is drained below;
+	// closing it after would queue those releases where nothing would ever
+	// send them.
+	screen_server_close(&srv);
+	// Every key anybody had down comes up, and the machine is left with
+	// nothing held: a Control still down when this program stops is a
 	// Control down for the rest of the machine's run.
 	if (have_input) {
 		key_all_up(&srv.keys);
@@ -401,7 +437,6 @@ int main(int argc, char **argv)
 			    "its keyboard", key_pending(&srv.keys));
 		input_face_buttons(&input, 0);
 	}
-	screen_server_close(&srv);
 	if (have_input)
 		input_face_close(&input);
 	return 0;

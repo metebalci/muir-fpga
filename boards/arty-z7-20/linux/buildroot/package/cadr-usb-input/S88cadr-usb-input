@@ -1,0 +1,56 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The USB keyboard and mouse at boot: cadr-usb-input reading the board's own
+# USB host port and sending what it finds to cadr-terminal, which writes the
+# I/O board's registers.
+#
+# S88, after S85cadr-terminal, because the terminal is what listens on the
+# link.  Started before it, this program says the link is not there and tries
+# again every second, so the order is tidiness rather than a dependency --- but
+# a console log that reads in the order the machine needs things is worth the
+# number.
+#
+# **NO OPTION IS PASSED AND NONE IS WANTED.**  The program looks in
+# /dev/input for a keyboard and a mouse, opens what is there, and keeps
+# looking, so one init script is right for a board with a keyboard plugged in,
+# one with a keyboard plugged in later, and one with nothing plugged in at
+# all.  Its flags are in docs/usb-input.md, and they are named so that they
+# can move into the card's `fpgarc` beside the Chaosnet's when that file comes
+# to serve more than one program.
+#
+# **THE DEVICES ARE NOT TAKEN EXCLUSIVELY.**  `--grab` would keep the keys from
+# anything else on the board, and nothing else on this board reads them: there
+# is no virtual console, the login is on the serial line, and the keyboard is
+# there to type at the CADR.  Off by default all the same, because a grab that
+# succeeds on a device somebody is debugging with `evtest` is a keyboard that
+# has silently stopped answering them.
+#
+# The log goes to the console, which is where the board is watched from
+# (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
+# program is told where to write instead.
+
+PIDFILE=/var/run/cadr-usb-input.pid
+
+start() {
+	printf "Starting cadr-usb-input: "
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
+		--exec /usr/bin/cadr-usb-input -- --log /dev/console
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+	printf "Stopping cadr-usb-input: "
+	start-stop-daemon -K -q -p "$PIDFILE"
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+
+exit $?
