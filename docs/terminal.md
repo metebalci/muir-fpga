@@ -174,6 +174,42 @@ held for the rest of the machine's run, and every character after it is a
 control character. RFB has no message for a server to act on here, so the
 releases are sent when the last viewer is dropped.
 
+### How fast words may go, and why one word at a time is not enough
+
+**A word goes only when the machine has taken the last one, and no sooner than
+1.188 ms after it.** Both rules are needed. The first is the card's own
+handshake. The fabric hands the card a word only when `KBD READY` is clear, so
+no word is ever written over one the machine has not read. That is
+`muir::terminal::keyboard::Keyboard::deliver`'s gate, kept in hardware.
+
+The second rule exists because the first is about the card and not about the
+machine behind it. The fabric offers the card its next word about two ticks
+after the machine's read clears `KBD READY`. A machine given its keys twenty
+nanoseconds apart reads every one of them and digests only some. Behind the
+card are the Unibus channel handler and the software above it, and neither is
+in any handshake this seam can see.
+
+Both failures were measured on the board. A shifted keystroke is four words:
+Shift down, key down, key up, Shift up. Sent back to back they typed `=` where
+`+` was meant, the machine having kept the key and not the Shift in front of
+it. Twenty characters sent with no gap arrived as nineteen, one missing and one
+doubled. The fabric's `LOST` register read zero throughout, so nothing was lost
+in the fabric.
+
+**The interval is muir's own rate and is not fitted to those measurements.**
+muir attempts one delivery every `TERMINAL_CHECK` microcycles, which is 4,096,
+and a microcycle on this board is 29 ticks of 10 ns. So the interval is
+4,096 x 290 ns. It is the rate at which the reference emulator has always fed
+this same microcode. The board's own passing measurements were 40 ms and 50 ms,
+which are about thirty-four times more generous, so they establish only that
+twenty nanoseconds is far too close.
+
+The cost is small. A character is two words, so typing runs at about 420
+characters a second, and the twenty-character burst above takes 48 ms. Words
+waiting their turn are held in the program's own backlog, which is 256 words.
+The poll loop shortens its sleep when a word is due, so a keystroke costs the
+interval and not a frame.
+
 ### The mapping is muir's, and the table is generated from it
 
 `src/input_keymap.h` is written by `src/keymap_from_muir.py`, which reads
