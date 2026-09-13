@@ -59,6 +59,41 @@
 #     memory-off    +1.537 ns   0/25,525  +0.073    5,194     1,848      37
 #     DDR=1         +0.657 ns   0/38,593  +0.030    9,543     5,894      39.5
 #
+# AND AGAIN WHEN THE DEBUG CABLE LANDED, both boards, with the baseline beside
+# them so the cost is a difference and not a number. The baseline is the same
+# flow at the commit one before, measured the same afternoon:
+#
+#     board                    WNS        hold      LUTs    registers   BRAM
+#     memory-off             +1.882 ns   +0.044    5,555     2,288      38
+#     memory-off, baseline   +1.876 ns   +0.057    5,549     2,288      38
+#     DDR=1                  +0.922 ns   +0.042   11,290     7,777      41.5
+#     DDR=1, baseline        +0.914 ns   +0.024   10,909     7,390      41.5
+#
+# Nothing failing on any of them. So MIT's DBGIN page, the GP1 splitter, the
+# carrier and a second default slave together cost **381 Slice LUTs, 387
+# registers and 0.008 ns** on the board that has them, which is placement
+# noise, and the worst path there is `memory/busint/elapsed_reg[6]/C ->
+# audit/first_data_reg[1]/CE`, entirely inside the machine and nothing to do
+# with the cable.
+#
+# **AND SIX LUTs ON THE BOARD WITH NO PROCESSING SYSTEM**, which is the
+# interesting half. There is no carrier there, so `cadr_arty.sv` holds
+# `-DEBUG IN REQ` UP --- an unplugged connector is what the SIP at DBGIN 0A22
+# makes --- and MIT's whole DBGIN page folds to its idle state, the arbiter's
+# third arm with it. A seam tied off is a cable that is never plugged in, and
+# this is what that costs.
+#
+# **THAT SECOND FIGURE IS ONLY TRUE BECAUSE OF `cadr_debug.xdc`, AND THE FIRST
+# ATTEMPT READ -8.772 ns.** The machine's sixteen-way diagnostic mux leaves
+# `cadr_machine` on `DBD<15:0>` and lands in the carrier's latch, which is
+# outside everything `cadr_machine.xdc` can reach: 23 logic levels, 18.679 ns,
+# timed at one tick, with ten of the twenty worst endpoints in that one
+# register. It is the `md_reg` trap this project already records, one signal
+# along, and `rtl/plumbing/xilinx7/cadr_debug.xdc` is the four-tick deadline
+# that answers it. **Before believing a slack figure for anything new, ask
+# which set its registers fell into** --- and the three `XDC:` lines this flow
+# prints are what answers that.
+#
 # (`report_utilization`'s Slice LUTs and Slice Registers, and Block RAM Tiles.
 # The `BIT:` line below prints CELL counts instead, 3,508 and 8,219 LUT cells
 # and 38 and 41 BMEM cells, and the two do not agree by construction --- the
@@ -214,6 +249,12 @@ if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # `rtl/plumbing/xilinx7/cadr_ddr.xdc` names is inside `g_ddr`, so reading it against the
 # default board would be four critical warnings about absent objects.
 if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_ddr.xdc }
+# And the debug cable's, by the same rule: `rtl/plumbing/xilinx7/cadr_debug.xdc`
+# names one register of `cadr_debug_window`, which is inside `g_ddr` too. What
+# it exists for is measured and is in its own header --- the machine's
+# diagnostic mux reaching the carrier's latch, 23 levels, -8.772 ns on a board
+# that read +0.914 one commit earlier.
+if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
 
 # ...and then ask the design whether that worked, rather than trusting it.
 source boards/arty-z7-20/vivado/constraints_check.tcl
@@ -230,9 +271,18 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 # So the adapter joins the list, and what the invariant still says is that
 # nothing ELSE outside the machine is relaxed: the port's reset synchroniser
 # and the held error bit sit beside it in `g_ddr` and are not exempt.
+#
+# A FOURTH WITH `DDR=1`, and it is the debug cable's own contract on the same
+# footing. `rtl/plumbing/xilinx7/cadr_debug.xdc` gives four ticks to the
+# sixteen bits of `DBD` the debuggee drives, because the word has been
+# standing for twenty-five by the time the carrier latches it, and the carrier
+# is outside `u_machine` by construction --- the cable is the boundary. The
+# entry names the WINDOW and the exemption is one register of it; what keeps
+# that honest is `assert_instance_timing` below, which fails if any other
+# register of the window carries it.
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
-if {$port > 0}        { lappend inside g_ddr.u_axi }
+if {$port > 0}        { lappend inside g_ddr.u_axi g_ddr.u_debug_window }
 assert_constraints_scoped $inside $tick
 
 # --- 1. did the constraints apply?
@@ -322,6 +372,14 @@ if {$port > 0} {
 # there would fail on a healthy design; not asserting it here would leave the
 # 80 ns claim exactly as unchecked as it was before it existed.
 if {$port > 0} { assert_multicycle_applied $tick 16 }
+# And the debug cable's four ticks, the same way and for the same reason. The
+# instance assertion is the narrow half --- `sts_dbd_reg` may carry it and no
+# other register of the carrier may --- and the count is the `foreach` half,
+# that it reached a path at all.
+if {$port > 0} {
+    assert_instance_timing $tick 4 *g_ddr.u_debug_window/* {*sts_dbd_reg*}
+    assert_multicycle_applied $tick 4
+}
 
 opt_design
 place_design

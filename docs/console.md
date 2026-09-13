@@ -158,12 +158,17 @@ low read latched.
 on a GP port does not fault the Arm, it hangs both cores at one PC each,
 measured on the board and set out at length in `rtl/plumbing/cadr_gp0_default.sv`. So a
 read outside the thirty-two words completes with `UNMAPPED` and a write
-outside them completes and is dropped, over the whole gigabyte GP1 decodes.
-OKAY and not SLVERR, which is where this differs from `rtl/plumbing/cadr_disk_pack.sv`:
-an error response to a Cortex-A9's posted write arrives as an imprecise
-external abort the kernel cannot attribute to a process. The pack side can
-afford SLVERR because a board with GP0 and no pack side has
-`cadr_gp0_default.sv` under it; GP1 has only this.
+outside them completes and is dropped. OKAY and not SLVERR, which is where
+this differs from `rtl/plumbing/cadr_disk_pack.sv`: an error response to a
+Cortex-A9's posted write arrives as an imprecise external abort the kernel
+cannot attribute to a process.
+
+The console no longer owns the whole gigabyte, and that is a correction. The
+debug cable's carrier wanted a general-purpose port and there was no third, so
+`rtl/plumbing/cadr_gp1_split.sv` splits this one. The console keeps the 4 KB
+page at `0x8000_0000`, the carrier takes the page above it, and
+`cadr_gp0_default.sv` answers the other 262,142. Nothing in the console moved
+for it and `build/console.pass` is unchanged.
 
 `UNMAPPED` is the complement of `IDENT` and is neither zero nor all ones ---
 zero is what a dead bus reads and all ones what an undriven one reads,

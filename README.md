@@ -105,8 +105,18 @@ other. A disk on `HP1` would have met the machine at that shared port, which is
 the thing a separate port was for.
 
 `M_AXI_GP0` carries the disk's registers, the Chaosnet buffers and the block's
-address. `M_AXI_GP1` carries the console. The debug cable adapter will need one
-of the two, and which one is decided when it is built.
+address, behind `rtl/plumbing/cadr_gp0_split.sv`. `M_AXI_GP1` carries the
+console and the debug cable's carrier, behind `rtl/plumbing/cadr_gp1_split.sv`.
+The console keeps `0x8000_0000` and the cable's sixteen words sit at
+`0x8000_1000`, which is the address muir is given as
+`--debug-cable-connect 0x80001000`.
+
+Each splitter has a port for everything neither face claims, and that is the
+rule the arrangement exists for. A read on a general-purpose port that nothing
+in the fabric answers does not fault the Arm. It hangs both cores at one
+program counter each, and no software guard can catch it. So the fabric that
+owns a port answers every address on it, and each splitter's check reads all
+262,144 pages of its port back.
 
 The Zynq-7000's PS-PL ports are **AXI3** and the logic here is AXI4, but no
 protocol converter is needed. The `PS7` primitive takes `AWLEN[3:0]`,
@@ -171,6 +181,12 @@ PDP-11 once did, with the phase generator held at a microcycle boundary while
 muir computes its side. Machine-time stays exact and only wall-clock stretches.
 muir already runs the lashup, so the debugger is software that works before the
 fabric it is pointed at does.
+
+Both ends are built. `rtl/machine/cadr_dbgin.sv` is MIT's DBGIN page inside
+`cadr_machine`, and `rtl/plumbing/cadr_debug_window.sv` is the carrier that
+puts the twenty-one wires on `M_AXI_GP1` as sixteen words. muir reaches them
+with ordinary loads and stores through `/dev/mem`. `docs/debug-cable.md` is
+the whole of it.
 
 A second board is the same cable on two Pmods, one clock and seven data each
 way. Outgoing there are the sixteen data values, the bus enable, its direction

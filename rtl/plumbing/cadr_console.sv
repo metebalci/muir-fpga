@@ -175,18 +175,28 @@
 //     the datapath, and the two halves of the rule are in the two files: the
 //     boundary makes them one MICROCYCLE, the latch here makes them one READ.
 //
-// **EVERY ADDRESS ON GP1 IS ANSWERED, and with OKAY.**  A read nothing
-// answers on a GP port does not fault the Arm, it hangs both cores at one PC
-// each --- measured on the board, and `rtl/plumbing/cadr_gp0_default.sv` says so at
-// length.  So a read outside the thirty-two words completes with `UNMAPPED`
-// and a write outside them completes and is dropped, in the window and out
-// of it, over the whole gigabyte GP1 decodes.  **OKAY and not SLVERR**, which
-// is where this differs from `rtl/plumbing/cadr_disk_pack.sv`'s face: an error
-// response to a Cortex-A9's posted write arrives as an imprecise external
-// abort the kernel cannot attribute to a process, and a constant a program
-// can recognise is the safer failure.  The pack side answers SLVERR outside
-// its window because a board with GP0 and no pack side has
-// `cadr_gp0_default.sv` under it to answer instead; GP1 has only this.
+// **EVERY ADDRESS THIS MODULE IS OFFERED IS ANSWERED, and with OKAY.**  A
+// read nothing answers on a GP port does not fault the Arm, it hangs both
+// cores at one PC each --- measured on the board, and
+// `rtl/plumbing/cadr_gp0_default.sv` says so at length.  So a read outside
+// the thirty-two words completes with `UNMAPPED` and a write outside them
+// completes and is dropped, in the window and out of it, however wide the
+// address it is handed.  **OKAY and not SLVERR**, which is where this differs
+// from `rtl/plumbing/cadr_disk_pack.sv`'s face: an error response to a
+// Cortex-A9's posted write arrives as an imprecise external abort the kernel
+// cannot attribute to a process, and a constant a program can recognise is
+// the safer failure.
+//
+// **AND IT IS NO LONGER THE WHOLE GIGABYTE, WHICH IS A CORRECTION.**  This
+// module owned `M_AXI_GP1` end to end until the debug cable's carrier wanted
+// a general-purpose port and there was no third.  `rtl/plumbing/cadr_gp1_split.sv`
+// now gives this face the 4 KB page at `REG_BASE`, the carrier the page
+// above it, and `cadr_gp0_default.sv` the other 262,142 --- so the promise
+// above is kept by the composition and not by this file, exactly as it is on
+// GP0.  Nothing here moved for it: the window is still thirty-two words at
+// `REG_BASE`, the address handed in is still the whole of it, and
+// `build/console.pass` is unchanged.  `build/gp1_split.pass` is what holds
+// the arrangement.
 //
 // `UNMAPPED` is the complement of `IDENT` and neither zero nor all ones ---
 // zero is what a dead bus reads and all ones is what an undriven one reads,

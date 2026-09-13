@@ -804,6 +804,28 @@ CHECKS = {
                   "-Irtl/plumbing/xilinx7"],
         "golden": None,
     },
+    # `M_AXI_GP1` split three ways: the decode that lets the console and the
+    # debug cable's carrier share the port, with the property `gp0_split`
+    # holds on the other one --- every address answered, in both directions,
+    # by the slave the map names.  The harness is the attachment and carries
+    # MIT's own cable between the window and `cadr_dbgin.sv`, so a record can
+    # be aimed at the decode AND at the two roads the port now has onto one
+    # register block.
+    "gp1_split": {
+        "sources": ["rtl/plumbing/cadr_gp1_split.sv"],
+        "extra": ["tb/cadr_gp1_split_harness.sv",
+                  "rtl/plumbing/cadr_console.sv",
+                  "rtl/plumbing/cadr_debug_window.sv",
+                  "rtl/plumbing/cadr_gp0_default.sv",
+                  "rtl/machine/cadr_dbgin.sv",
+                  "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_spy_registers.sv"],
+        "top": "cadr_gp1_split_harness",
+        "tb": "tb/cadr_gp1_split_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7"],
+        "golden": None,
+    },
     # The console: the sixteen diagnostic registers on `M_AXI_GP1`, held to
     # `Engine::spy_read` over MIT's boot PROM.  The harness is the console,
     # `cadr_spy_registers.sv` and the REAL processor, with the arbiter that
