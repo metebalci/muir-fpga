@@ -27,6 +27,17 @@ set -eu
 
 cd "$(dirname "$0")/../../.."
 OUT=${OUT:-build/sd/buildroot}
+# WHICH BOARD, passed straight through to mksd-buildroot.sh, which explains
+# the two variables at its own defaults.  Both default to the Arty Z7-20's,
+# so a run that sets neither is the run this script has always been; the Cora
+# Z7-07S sets all three, its images being in their own output directory.
+#
+#     IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
+#     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+#     BIT=<the Cora's .bit> boards/arty-z7-20/linux/mksd-dev.sh
+BOARD_DIR=${BOARD_DIR:-boards/arty-z7-20}
+BOARD_DTB=${BOARD_DTB:-zynq-arty-z7-20.dtb}
+BOARD_NAME=$(basename "$BOARD_DIR")
 BIT=${BIT:-}
 [ -n "$BIT" ] || { echo "mksd-dev: BIT=<a bitstream> is required" >&2; exit 1; }
 [ -f "$BIT" ] || { echo "mksd-dev: no bitstream at $BIT" >&2; exit 1; }
@@ -35,8 +46,8 @@ BIT=${BIT:-}
 # board boots from itself --- but it is not what this script is for, and
 # somebody who has forgotten to write local.conf should be told rather than
 # handed a card that quietly does something else.
-if [ ! -r boards/arty-z7-20/linux/local.conf ]; then
-	echo "mksd-dev: no boards/arty-z7-20/linux/local.conf, so this card would name no server" >&2
+if [ ! -r "$BOARD_DIR/linux/local.conf" ]; then
+	echo "mksd-dev: no $BOARD_DIR/linux/local.conf, so this card would name no server" >&2
 	echo "mksd-dev: write SERVERIP=<the TFTP server> and ETHADDR=<the board's MAC> there," >&2
 	echo "mksd-dev: or use mksd-release.sh if a card that boots from itself is what you want" >&2
 	exit 1
@@ -46,7 +57,12 @@ fi
 # prefix that comes out of a parameter expansion is not an assignment, it is
 # the command name, and `PACKS_MB=3584: not found` is what that looks like.
 [ -z "${PACKS_MB:-}" ] || export PACKS_MB
+# IMAGES is exported for the same reason PACKS_MB is, one line above: a
+# prefix that comes out of a parameter expansion is not an assignment, it is
+# the command name.
+[ -z "${IMAGES:-}" ] || export IMAGES
 OUT="$OUT" BIT="$BIT" BOOT_MB=${BOOT_MB:-64} PACKS="${PACKS:-}" \
+    BOARD_DIR="$BOARD_DIR" BOARD_DTB="$BOARD_DTB" \
     boards/arty-z7-20/linux/mksd-buildroot.sh
 
 img="$OUT/sdcard.img"
@@ -55,4 +71,6 @@ echo "mksd-dev: write it with"
 echo "    sudo dd if=$img of=/dev/sdX bs=4M status=progress"
 echo "mksd-dev: NOT conv=sparse --- it leaves the old card's bytes wherever the"
 echo "mksd-dev: image has zeros, and a disk pack is full of legitimate zeros"
-echo "mksd-dev: and $OUT/server/ is what goes to the TFTP server's directory"
+echo "mksd-dev: and $OUT/server/$BOARD_NAME/ is what goes to this board's own"
+echo "mksd-dev: directory on the TFTP server, /srv/tftp/$BOARD_NAME --- a directory a"
+echo "mksd-dev: board, because every board's five files carry the same five names"

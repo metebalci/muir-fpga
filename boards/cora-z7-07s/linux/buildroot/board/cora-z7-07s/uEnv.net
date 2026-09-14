@@ -3,9 +3,18 @@
 #
 # The boot command for this project's own board, served by its TFTP server
 # and fetched by U-Boot's cadr_net when the card's uEnv.txt names a server.
-# Edit here, copy to /srv/tftp, reset the board; the card is never touched.
-# A card without a server named on it never reads this file: it boots the
-# same five files from the card (cadr.env's cadr_card).
+# Edit here, copy to /srv/tftp/cora-z7-07s, reset the board; the card is
+# never touched.  A card without a server named on it never reads this file:
+# it boots the same five files from the card (cadr_cora.env's cadr_card).
+#
+# EVERY PATH HERE IS UNDER cora-z7-07s/, AND THAT IS THE RULE FOR EVERY
+# BOARD.  One TFTP server serves more than one board here, and every board's
+# five files carry the same five names, so a flat server root would hand this
+# board the Arty's bitstream --- a bitstream for the wrong part, which
+# configures nothing and says nothing about why.  A board's served set
+# therefore sits in a directory named as its directory under `boards/` is.
+# The names below are relative to the server's root and not to this file, so
+# a copy of this file anywhere on that server still fetches the right five.
 #
 # WHAT IT DOES.  The CADR goes into the fabric first: `fpga loadb` configures
 # it with cadr.bit and the machine is running its boot PROM out of DDR3
@@ -26,4 +35,4 @@
 # fdt_high and initrd_high are left unset: U-Boot relocates the tree and the
 # ramdisk into memory it allocates below its own, and the reserved-memory
 # node in its tree keeps that below the CADR's region.
-netcmd=tftpboot ${cadr_bit_addr} cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize} && tftpboot ${cadr_fdt_addr} zynq-cora-z7-07s.dtb && tftpboot ${cadr_kernel_addr} zImage && tftpboot ${cadr_ramdisk_addr} rootfs.cpio.uboot && run cadr_bootz
+netcmd=tftpboot ${cadr_bit_addr} cora-z7-07s/cadr.bit && fpga loadb 0 ${cadr_bit_addr} ${filesize} && tftpboot ${cadr_fdt_addr} cora-z7-07s/zynq-cora-z7-07s.dtb && tftpboot ${cadr_kernel_addr} cora-z7-07s/zImage && tftpboot ${cadr_ramdisk_addr} cora-z7-07s/rootfs.cpio.uboot && run cadr_bootz

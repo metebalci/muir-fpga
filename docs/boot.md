@@ -196,23 +196,25 @@ say that. This paragraph is where it is said instead.
                 cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
     partition 2 disk-pack-0.img .. disk-pack-7.img, whichever exist, and a
                 README.TXT; neither the boot ROM nor U-Boot ever looks here
-    /srv/tftp   uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
-                --- this project's convenience, the same five files
+    /srv/tftp/arty-z7-20
+                uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage,
+                rootfs.cpio.uboot --- this project's convenience, the same
+                five files, in a directory named for the board
 
 U-Boot's built-in environment (`cadr.env`) boots **from the card by
 default**. It loads `cadr.bit` and `fpga loadb`'s it, then reads the tree,
 `zImage` and `rootfs.cpio.uboot` off the FAT partition, then runs `bootz`. No
 network is used and none is needed. DHCP is not attempted, and a board with
 no cable boots. If the card's `uEnv.txt` sets `serverip`, the loader takes
-**the network path** instead. It runs `dhcp`, fetches `uEnv.net` from that
-server, and runs the `netcmd` it defines, which fetches the same five files
-over TFTP and ends in the same `bootz`. That is this project's own card. The
-five files live in `/srv/tftp`, a change to any of them is a copy and a
-reset, and the card is never rewritten. On either path a failure loops: a
-message, ten seconds, another attempt, for ever. The network path does not
-fall back to the card's own copies. A card that names a server is this
-project's, and booting stale files silently is the thing this project decided
-against. Nothing else is ever booted.
+**the network path** instead. It runs `dhcp`, fetches `arty-z7-20/uEnv.net`
+from that server, and runs the `netcmd` it defines, which fetches the same
+five files over TFTP and ends in the same `bootz`. That is this project's own
+card. The five files live in `/srv/tftp/arty-z7-20`, a change to any of them
+is a copy and a reset, and the card is never rewritten. On either path a
+failure loops: a message, ten seconds, another attempt, for ever. The network
+path does not fall back to the card's own copies. A card that names a server
+is this project's, and booting stale files silently is the thing this project
+decided against. Nothing else is ever booted.
 
 The root filesystem is the initramfs on both paths, unpacked into RAM, so
 nothing on the board drifts. **Partition 1 is read by the loader and mounted
@@ -233,13 +235,53 @@ that way. It also checks that the U-Boot inside carries `bootcmd=run
 cadr_boot` and the `cadr_card` path. Buildroot writes the SPL as `boot.bin`.
 The card has it as `BOOT.BIN`, the name the boot ROM looks for.
 
+### One server, more than one board
+
+**A board's served files live in a directory on the server named as the
+board's own directory under `boards/` is.** The Arty Z7-20's are in
+`/srv/tftp/arty-z7-20` and the Cora Z7-07S's in `/srv/tftp/cora-z7-07s`. The
+reason is that every board's five files carry the same five names. A flat
+server root would hand the Cora the Arty's `cadr.bit`, which is a bitstream
+for a different part. The part refuses it, the fabric stays empty, and
+nothing on the console says which file was wrong.
+
+The rule is carried in two places and both are checked when a card is staged.
+The U-Boot compiled for a board fetches `<board>/uEnv.net`, and that served
+`uEnv.net` names the other four files the same way. Every path inside
+`uEnv.net` is relative to the server's root rather than to the file's own
+place, so a copy of it anywhere on that server still fetches the right five
+files.
+
+**The card is untouched by the rule.** A card belongs to one board already,
+so the files on partition 1 keep the names they have always had.
+
+**The board this project runs crosses the change in two steps, and neither
+needs a card reader.** Its U-Boot predates the rule and fetches `uEnv.net`
+from the server's root. The first step is to put its five files under
+`arty-z7-20/` and to copy the same `uEnv.net` to the root as well. Its
+`netcmd` then names `arty-z7-20/cadr.bit` and the rest, so the running board
+follows into the directory on its next reset with no card change at all.
+Create the directory and fill it before copying the root's file, or the board
+loops saying which file it could not fetch. The second step is the next time
+that card's `u-boot.img` is written: the U-Boot on it then fetches
+`arty-z7-20/uEnv.net`, the root's copy can go, and no board fetches from the
+root any more.
+
+**A change to a board's `cadr.env` reaches a card only after U-Boot has been
+rebuilt.** Buildroot does not watch this repository's files, so a plain `make
+buildroot` leaves the old environment in place once the package has a build
+stamp. `make buildroot-rebuild` forces it. The staging refuses a `u-boot.img`
+that still fetches `uEnv.net` from the root and says so by name, so a card
+built from a stale U-Boot cannot be handed to a board by accident.
+
 ## Staging, and what to copy where
 
     echo SERVERIP=<the TFTP server's address> >  boards/arty-z7-20/linux/local.conf   # this project's card; omit for a standalone one
     echo ETHADDR=<the board's MAC>            >> boards/arty-z7-20/linux/local.conf   # optional; the console printed it
     make buildroot                                                  # once; ~25 min the first time
     BIT=<the memory-on board's .bit> boards/arty-z7-20/linux/mksd-buildroot.sh        # stages build/sd/buildroot/
-    cp build/sd/buildroot/server/* /srv/tftp/                       # the network path's files
+    mkdir -p /srv/tftp/arty-z7-20                                   # the board's own directory
+    cp build/sd/buildroot/server/arty-z7-20/* /srv/tftp/arty-z7-20/  # the network path's files
 
 **`BIT` is mandatory and names the bitstream explicitly.** An earlier version
 took `build/ddr/cadr_arty.bit` if it was there, and what was there was a
@@ -316,8 +358,32 @@ console. That is harmless on the card path. On the network path it means the
 DHCP lease pinned to the board's real address is not the one it gets. The
 card's `ethaddr` is imported before `dhcp`. U-Boot writes it into the
 kernel's tree at boot (`fdt_fixup_ethernet`, on the `ethernet0` alias), and
-Linux asks DHCP with the same address. Like `SERVERIP` it lives in
-`boards/arty-z7-20/linux/local.conf` and in no committed file.
+Linux asks DHCP with the same address. Like `SERVERIP` it lives in the
+board's own `linux/local.conf` and in no committed file.
+
+### Another board's card, from the same script
+
+**One script stages every board's card, and the board enters it as two
+variables.** `BOARD_DIR` is where the board's `linux/` directory is and
+`BOARD_DTB` is what its compiled device tree is called. Both default to the
+Arty Z7-20's, so a run that sets neither is the run it has always been. The
+Cora Z7-07S is
+
+    make buildroot-cora                                        # its own output directory
+    IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
+    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+    BIT=<the Cora's memory-on .bit> PACKS=<a pack> \
+        boards/arty-z7-20/linux/mksd-buildroot.sh
+    mkdir -p /srv/tftp/cora-z7-07s
+    cp build/sd/buildroot/server/cora-z7-07s/* /srv/tftp/cora-z7-07s/
+
+Everything else about the card is the machine's rather than the part's: the
+two partitions, the bay, the `fpgarc` and the `muirrc`, the U-Boot
+environment and every warning above. `local.conf` is read out of
+`$BOARD_DIR/linux/`, so each board carries its own server address, its own
+MAC and its own Chaosnet addresses. Two boards on one network must differ in
+all three, and the development allocation reserves a second pair of Chaosnet
+addresses for exactly that.
 
 `build/sd/buildroot/sdcard.img` is the card as one image. It has an MBR and
 two primary FAT32 partitions of type `0x0c`, aligned to a megabyte. genimage
@@ -335,8 +401,9 @@ pack in it. But `dd` writes every byte, so allow a few minutes.
 the second partition is for. Adding, replacing or protecting a disk pack is
 `scp` to the running board and nothing else, as "The drive bay" below says.
 For this project's own board, a change to the loader, kernel or bitstream is
-`cp build/sd/buildroot/server/* /srv/tftp/` and a reset. For a standalone
-card those live on partition 1, and they can be replaced from the board with
+`cp build/sd/buildroot/server/<board>/* /srv/tftp/<board>/` and a reset. For
+a standalone card those live on partition 1, and they can be replaced from
+the board with
 
     mount -o remount,rw /mnt/card && cp ... && sync && mount -o remount,ro /mnt/card
 

@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# The card's optional file.  THIS IS A TEMPLATE: boards/cora-z7-07s/linux/mksd-buildroot.sh
-# writes uEnv.txt from it, filling @SERVERIP@ and @ETHADDR@ from
+# The card's optional file.  THIS IS A TEMPLATE: one script stages every
+# board's card --- boards/arty-z7-20/linux/mksd-buildroot.sh, run with
+# BOARD_DIR=boards/cora-z7-07s --- and it writes uEnv.txt from this file,
+# filling @SERVERIP@ and @ETHADDR@ from
 # boards/cora-z7-07s/linux/local.conf --- gitignored, because this repository is public and a
 # machine's address on a private network, or a board's MAC, is not part of
 # the project --- and dropping the line for anything local.conf does not set.
@@ -11,10 +13,12 @@
 # uboot/cadr_cora.env) boots from the card by default: cadr.bit, the tree, zImage
 # and the root filesystem off the FAT partition, no network needed.  If this
 # file sets `serverip`, the loader takes the network path instead: `dhcp`,
-# fetch uEnv.net from that server, and run the netcmd it defines, which
-# fetches the same five files over TFTP.  That is this project's own card:
-# the files live in /srv/tftp and a change to any of them is a copy and a
-# reset.  A card for anyone else simply has no serverip line --- or no
+# fetch cora-z7-07s/uEnv.net from that server, and run the netcmd it
+# defines, which fetches the same five files over TFTP.  That is this
+# project's own card: the files live in /srv/tftp/cora-z7-07s --- a directory
+# a board, because one server here serves more than one and every board's
+# five files carry the same five names --- and a change to any of them is a
+# copy and a reset.  A card for anyone else simply has no serverip line --- or no
 # uEnv.txt at all.
 #
 # `ethaddr` is the board's MAC.  Mainline U-Boot cannot read it from the
