@@ -4,9 +4,12 @@ This directory is the project page. The files are hand-written, and there is no
 build step and no generator, the same way
 [muir's `site/`](https://github.com/metebalci/muir/tree/main/site) has none:
 
-    index.html    the front page. What the project is in a paragraph, then a
-                  short standing for each board with a link to its page, and
-                  a link to the page on the real machine
+    index.html    the front page. What the project is in a paragraph, then one
+                  table with a row for each board saying what that board is and
+                  what it does, each board's name linking its own page, and a
+                  link to the page on the real machine. The table's styles are
+                  in front.css beside it, because the table is this project's
+                  own rather than muir's
     arty-z7-20.html
                   the Arty Z7-20's architecture drawing, and under it two
                   boot sequences: the board on its own from the card, and the

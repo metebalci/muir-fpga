@@ -1,0 +1,123 @@
+/* SPDX-FileCopyrightText: 2026 Mete Balci */
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+
+/* The front page's board table, and nothing else.  It is a stylesheet of its
+   own rather than a block in `style.css` because `style.css` is muir's
+   stylesheet carried over, and this table is this project's alone: three
+   boards against twelve things a board either has, or has been built but not
+   shown, or is planned to have, or cannot have.
+
+   Everything here is scoped to the table's own classes, and every token it
+   needs falls back to a value of its own, so the table still reads correctly
+   if it is ever seen without `style.css` in front of it.  Type is stated in
+   rem against the reader's own root, never in px: the narrow-screen step is
+   `style.css`'s one block of token overrides and this file inherits it
+   through `--t-small`. */
+
+:root {
+  --front-paper: var(--paper, #ffffff);
+  --front-ink:   var(--ink, #000000);
+  --front-small: var(--t-small, 0.9775rem);
+  --front-mono:  var(--mono, "IBM Plex Mono", ui-monospace, Menlo, monospace);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root { --front-paper: var(--paper, #000000); --front-ink: var(--ink, #ffffff); }
+}
+
+/* ----------------------------------------------------------- the table */
+
+/* Twelve columns are wider than the reading column and wider than a phone,
+   so the table scrolls inside this box and the page itself never scrolls
+   sideways.  The box takes the keyboard, because a region that scrolls and
+   cannot be reached by the keyboard is a region some readers cannot read. */
+.tablescroll {
+  overflow-x: auto;
+  margin: 26px 0 0;
+  padding-bottom: 4px;
+}
+.tablescroll:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+
+table.boardtable {
+  border-collapse: collapse;
+  width: 100%;
+  /* Stated in rem so the table grows with a reader who has raised their
+     browser's default rather than crushing twelve columns into the space a
+     16px root would have needed. */
+  min-width: 58rem;
+  font-size: var(--front-small);
+  color: var(--front-ink);
+}
+
+.boardtable th,
+.boardtable td {
+  text-align: left;
+  vertical-align: top;
+  padding: 10px 14px 10px 0;
+  border-bottom: 1px solid var(--front-ink);
+  line-height: 1.4;
+}
+.boardtable thead th { font-weight: 600; }
+.boardtable tbody tr:last-child th,
+.boardtable tbody tr:last-child td { border-bottom: 0; }
+
+/* The board's name is the row's heading, and it stays in view while the rest
+   of the row scrolls under it: a cell reading `built` says nothing without
+   the board it belongs to.  The background has to be opaque for that, which
+   is what `--front-paper` is for. */
+.boardtable th.board {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--front-paper);
+  padding-right: 20px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+/* ----------------------------------------------------------- the cells */
+
+/* The part, the figures and the four status words are values rather than
+   prose, so they take the machine face, as the tables on the other pages do.
+   The word is held on one line: `planned` broken over two reads as two. */
+.boardtable td.part,
+.boardtable td.num,
+.boardtable td.st {
+  font: 500 var(--front-small)/1.5 var(--front-mono);
+  white-space: nowrap;
+}
+
+/* The per cent goes under the count rather than beside it, which keeps five
+   columns of figures out of the seven columns of words. */
+.boardtable .pc { display: block; opacity: 0.62; }
+
+/* A thing the board cannot have is faint, the way the drawings leave such a
+   block's label faint rather than taking it out.  Why it cannot is on the
+   cell as a title and in the prose under the table, because a title alone is
+   a fact only a pointer can read. */
+.boardtable td.st.no { opacity: 0.55; }
+.boardtable td[title] { cursor: help; }
+
+/* A figure that is not in yet, in reverse video so that it cannot be read as
+   a measurement and cannot be missed.  Nothing on a published page should
+   carry one of these. */
+.boardtable .todo {
+  font: 500 var(--front-small)/1.5 var(--front-mono);
+  background: var(--front-ink);
+  color: var(--front-paper);
+  padding: 0 5px;
+}
+
+/* --------------------------------------------------------- the notes */
+
+/* What the four words mean, and why a `no` is a `no`.  It reads at the
+   caption size, under the table it is about. */
+.tnote { margin: 26px 0 0; font-size: var(--front-small); }
+.tnote p { margin: 0 0 12px; }
+.tnote p:last-child { margin-bottom: 0; }
+
+@media (max-width: 720px) {
+  .boardtable th,
+  .boardtable td { padding-right: 12px; }
+  .boardtable th.board { padding-right: 14px; }
+}
