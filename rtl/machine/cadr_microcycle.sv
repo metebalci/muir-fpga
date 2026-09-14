@@ -144,8 +144,13 @@ module cadr_microcycle #(
     // `ERRHALT` and `STATHALT` are the two ways the machine stops ITSELF:
     // `ERRSTOP AND HALTED`, which is MIT's `(si:%halt)` through `HALT-CONS`,
     // and `STATHENB AND STATSTOP`, the statistics counter running out.  A
-    // console halt is neither --- it clears `RUN` --- which is what makes
-    // these two the trouble lamp's and not the state lamp's.
+    // console halt is neither --- it clears `RUN`.
+    //
+    // **ONLY `ERRHALT` REACHES A LAMP**, LD4, and a statistics halt does not:
+    // that one is something the console asked for by setting STATHENB, where
+    // this one is the machine falling over.  `rtl/plumbing/cadr_lamp_errhalt.sv`
+    // has the argument.  `STATHALT` is out here because `MACHRUN` is made of
+    // it and a check has to be able to see why the machine stopped.
     output var logic        machrun_o,
     output var logic        errhalt_o,
     output var logic        stathalt_o,
@@ -153,6 +158,15 @@ module cadr_microcycle #(
     // --- the console's registers: OLORD1 1A09 and 1A10.  The fabric has no
     // --- console yet, so these are driven rather than written.
     input  var logic        run,          // RUN, before OLORD1 1A10 registers it
+    // **THE NO-AUTO-BOOT SWITCH, READ AT THE RESET ARM AND NOWHERE ELSE.**
+    // The fabric's reset is the boot button held and let go, so `SRUN` comes
+    // out of it set beside `RUN`; with the switch on there is no button, and
+    // both come out clear, which is `Rtl::new` before `Engine::boot`.  Without
+    // it here a held machine retires exactly one microcycle --- the one master
+    // clock before `SRUN` follows `RUN` down --- where muir's own
+    // `--no-auto-boot` retires none.  `cadr_spy_registers.sv` carries the same
+    // level to `RUN`'s own flip flop and its port says the rest.
+    input  var logic        no_auto_boot,
     input  var logic        promdisable,  // PROMDISABLE, mode register bit 14
     input  var logic        errstop,      // ERRSTOP, bit 6
     input  var logic        stathenb,     // STATHENB, bit 11
@@ -1565,7 +1579,17 @@ module cadr_microcycle #(
       promdisabled <= 1'b0;
       // `Engine::boot` raises SRUN with RUN rather than a master clock later,
       // so the first microcycle runs. See the note in cadr_spy_registers.sv.
-      srun         <= 1'b1;
+      //
+      // **AND WITH THE NO-AUTO-BOOT SWITCH ON IT COMES UP CLEAR, WITH `RUN`.**
+      // The fabric's reset is the boot button held and let go, which is why
+      // both come up set; with the switch on there is no button, so neither
+      // does.  `Rtl::new` comes up with every register clear and `Engine::boot`
+      // raises the pair together, so this is muir either way round --- and the
+      // machine then retires NO microcycle at all, where SRUN alone would let
+      // it retire exactly one before it followed `RUN` down.  Measured: that
+      // one microcycle was there, and `build/no_auto_boot.pass` is what found
+      // it.  The trap is left raised, which is where a boot would leave it.
+      srun         <= !no_auto_boot;
       // `-CLOCK RESET A` clears the two step flip flops: a machine coming out
       // of reset has no step owed to it.
       sstep        <= 1'b0;

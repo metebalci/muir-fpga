@@ -109,6 +109,11 @@ struct model {
 	unsigned boots;
 	int boot_pressed;
 	int boot_deaf_to_the_key;	/* a fabric that boots on any value */
+	// SW0, the no-auto-boot switch: what it did at the last reset and where
+	// it is now.  Two bits of STAT, and two rather than one because the
+	// fabric reads the switch only at the reset, so a switch moved since
+	// then has changed nothing and the pair is what says so.
+	int held_at_reset, switch_now;
 	unsigned long diag_reads, diag_writes;
 };
 
@@ -222,7 +227,9 @@ static uint32_t model_read(struct console *c, unsigned word)
 	case CONS_IDENT: return m->ident;
 	case CONS_STAT:
 		return (m->lost_ever ? CONS_ST_LOST : 0u) | (m->answered ? CONS_ST_ANSWERED : 0u)
-		     | (m->grant ? CONS_ST_GNT : 0u);
+		     | (m->grant ? CONS_ST_GNT : 0u)
+		     | (m->held_at_reset ? CONS_ST_HELD_AT_RESET : 0u)
+		     | (m->switch_now ? CONS_ST_SWITCH_NOW : 0u);
 	case CONS_CYCLES:
 		// The low half's read latches the high half beside it.
 		m->cycles_hi_latch = (uint32_t)(m->cycles >> 32);
@@ -1158,6 +1165,129 @@ static void check_held(void)
 	      "the marker is not where the init step leaves it");
 }
 
+// **SW0, AND WHAT A CONSOLE MUST SAY ABOUT A MACHINE THAT NEVER RAN.**
+//
+// A machine the switch held has SRUN down and reads EXACTLY like one somebody
+// halted from the console: `status` says NOT RUNNING and attributes it to a
+// cleared RUN, which is true and sends a person looking for whoever halted it.
+// So the two bits are not a decoration --- they are the difference between a
+// diagnosis and a wild goose chase, and what is asserted here is the WORDS, on
+// this project's own rule that a check on a program asserts the line it prints.
+static void check_switch(void)
+{
+	struct model m;
+	struct console c;
+	struct cons_switch sw;
+	struct cons_status st;
+
+	// 1.  A board that boots itself, switch never touched: no bit, and
+	//     `status` says nothing about a switch at all.
+	model_init(&m);
+	attach(&c, &m);
+	cons_read_switch(&c, &sw);
+	CHECK(sw.held_at_reset == 0, "a board that boots itself reports a hold");
+	CHECK(sw.now == 0, "a switch that is off reads on");
+	capture_start();
+	cons_say_switch(&sw);
+	{
+		const char *said = capture_end();
+		CHECK(strstr(said, "did not hold the machine") != NULL,
+		      "switch did not say the machine was not held: %s", said);
+		CHECK(strstr(said, "still OFF") != NULL,
+		      "switch did not say where the switch is: %s", said);
+	}
+	capture_start();
+	CHECK(cons_status(&c, 2000, &st) == 0, "status failed on a board that boots itself");
+	cons_say_status(&st);
+	{
+		const char *said = capture_end();
+		CHECK(strstr(said, "SW0") == NULL,
+		      "status talks about a switch nobody touched: %s", said);
+	}
+
+	// 2.  The switch held the machine.  It is stopped, and `status` must
+	//     say it never ran rather than leaving the console's own halt as
+	//     the only reason on offer.
+	model_init(&m);
+	m.held_at_reset = 1;
+	m.switch_now = 1;
+	m.run = 0;
+	m.f1.srun = 0;
+	attach(&c, &m);
+	cons_read_switch(&c, &sw);
+	CHECK(sw.held_at_reset == 1, "a held machine does not report the hold");
+	CHECK(sw.now == 1, "a switch that is on reads off");
+	capture_start();
+	CHECK(cons_status(&c, 2000, &st) == 0, "status failed on a held machine");
+	cons_say_status(&st);
+	{
+		const char *said = capture_end();
+		CHECK(strstr(said, "NOT RUNNING") != NULL, "status did not say NOT RUNNING");
+		CHECK(strstr(said, "SW0 held this machine") != NULL,
+		      "status did not say the switch held it: %s", said);
+		CHECK(strstr(said, "has never run") != NULL,
+		      "status did not say the machine never ran: %s", said);
+	}
+
+	// 3.  THE SWITCH MOVED SINCE THE RESET, which is the case one bit
+	//     could not carry.  The machine is still held; the switch is off.
+	//     Both must be said, and the second must say it changes nothing.
+	model_init(&m);
+	m.held_at_reset = 1;
+	m.switch_now = 0;
+	m.run = 0;
+	m.f1.srun = 0;
+	attach(&c, &m);
+	cons_read_switch(&c, &sw);
+	CHECK(sw.held_at_reset == 1 && sw.now == 0,
+	      "a switch moved since the reset is not reported as moved");
+	capture_start();
+	cons_say_switch(&sw);
+	{
+		const char *said = capture_end();
+		CHECK(strstr(said, "somebody has moved it") != NULL,
+		      "switch did not say the switch had moved: %s", said);
+		CHECK(strstr(said, "changes nothing until the next reset") != NULL,
+		      "switch did not say a moved switch changes nothing: %s", said);
+	}
+	capture_start();
+	CHECK(cons_status(&c, 2000, &st) == 0, "status failed on a machine whose switch moved");
+	cons_say_status(&st);
+	{
+		const char *said = capture_end();
+		CHECK(strstr(said, "SW0 held this machine") != NULL,
+		      "status forgot the hold when the switch moved: %s", said);
+		CHECK(strstr(said, "not what it was at the last reset") != NULL,
+		      "status did not say the switch had moved: %s", said);
+	}
+
+	// 4.  AND THE OTHER WAY ROUND: the switch was off at the reset and is
+	//     on now.  The machine is running, and the console must not say it
+	//     is held --- a fabric that read the switch live would, which is
+	//     the defect this pair exists to make visible.
+	model_init(&m);
+	m.held_at_reset = 0;
+	m.switch_now = 1;
+	attach(&c, &m);
+	capture_start();
+	CHECK(cons_status(&c, 2000, &st) == 0, "status failed on a running machine");
+	cons_say_status(&st);
+	{
+		const char *said = capture_end();
+		CHECK(strstr(said, "RUNNING") != NULL, "status did not say RUNNING");
+		CHECK(strstr(said, "SW0 held this machine") == NULL,
+		      "status says a running machine is held: %s", said);
+		CHECK(strstr(said, "not what it was at the last reset") != NULL,
+		      "status did not say the switch had moved: %s", said);
+	}
+
+	// 5.  The two bits are where the fabric puts them and nowhere else.
+	//     A bit that moved would make every reading above agree with a
+	//     console reading the wrong bit of the wrong word.
+	CHECK(CONS_ST_HELD_AT_RESET == (1u << 4), "the held bit is not STAT bit 4");
+	CHECK(CONS_ST_SWITCH_NOW == (1u << 5), "the switch bit is not STAT bit 5");
+}
+
 int main(void)
 {
 	capture_start();		/* nothing may print to the terminal but the verdict */
@@ -1166,6 +1296,7 @@ int main(void)
 	check_halt_and_start();
 	check_boot();
 	check_held();
+	check_switch();
 	check_step();
 	check_flags();
 	check_counters();
@@ -1196,6 +1327,10 @@ int main(void)
 	       "      a modelled fabric that boots on any value is caught by the same twelve\n"
 	       "    the held machine: start and step refuse while /var/run/cadr-held exists and\n"
 	       "      say muir's own sentence for it, and boot presses the button and removes it\n"
+	       "    SW0, the no-auto-boot switch, as two bits of STAT and not one: what it did at\n"
+	       "      the last reset and where it is now, so that a machine that NEVER RAN is not\n"
+	       "      reported as one somebody halted --- the two read exactly alike off FLAG-1 ---\n"
+	       "      and so that a switch moved since the reset is said to have changed nothing\n"
 	       "    step: ONE microcycle a step and exactly one, with SSDONE up --- read\n"
 	       "      while STEP is still up, where it must be, since it falls two master\n"
 	       "      clocks after the bit is lowered.  Both opposite failures are held as\n"

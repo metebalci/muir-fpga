@@ -358,7 +358,12 @@ module cadr_console_harness #(
       .ro_data    (con_ro_data),
       .ro_echo    (con_ro_echo),
       .mach_rst   (con_mach_rst),
-      .mach_boot  (con_mach_boot)
+      .mach_boot  (con_mach_boot),
+      // The board's no-auto-boot switch, which this harness has none of: the
+      // machine came up with its boot button just let go, and nobody has
+      // touched a switch since.
+      .no_auto_boot_held(1'b0),
+      .no_auto_boot_now (1'b0)
   );
 
   // The clock control register's other four bits and the debug IR, out of
@@ -391,7 +396,8 @@ module cadr_console_harness #(
       .mode_speed (mode_speed_o),
       .prog_reset (prog_reset_o),
       .prog_boot  (prog_boot_o),
-      .n_boot     (n_boot)
+      .n_boot     (n_boot),
+      .no_auto_boot(1'b0)
   );
 
   logic ub_md_ack_u;
@@ -407,6 +413,10 @@ module cadr_console_harness #(
       .machrun_o (), .errhalt_o (), .stathalt_o (),
       /* verilator lint_on PINCONNECTEMPTY */
       .run         (run_o),
+      // The board's no-auto-boot switch, which this harness has none of: the
+      // machine comes up as the fabric's reset leaves it, with the boot
+      // button just let go.
+      .no_auto_boot(1'b0),
       .step        (step_w),
       .nop11       (nop11_w),
       .idebug      (idebug_w),

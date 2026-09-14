@@ -69,7 +69,7 @@
 //     cadr-console [--regs ADDR] [--log PATH] [--settle-us N] [--no-guard]
 //                  [command [arguments]]
 //
-//     halt | start | step [N] | regs | status | ident
+//     halt | start | step [N] | regs | status | ident | switch
 //     read EADR | write EADR VALUE
 //     examine ADDR [N] | deposit ADDR VALUE
 //     help | quit
@@ -265,6 +265,8 @@ static void help(void)
 	say("regs            all sixteen registers by muir's names, FLAG-1 and FLAG-2 field by field");
 	say("status          running or halted, and why; PC; CYCLES measured twice");
 	say("ident           IDENT, STAT, CYCLES and TICKS");
+	say("switch          SW0, the no-auto-boot switch: what it did at the last reset,");
+	say("                and where it is now.  Exits 0 when it held the machine");
 	say("read EADR       one diagnostic READ cycle");
 	say("write EADR VAL  one diagnostic WRITE cycle");
 	say("examine A [N]   N words of DDR from CADR physical word A --- not through the machine");
@@ -278,9 +280,11 @@ static void do_ident(struct console *c)
 	const uint32_t stat = cons_stat(c);
 	const uint64_t cy = cons_cycles(c), ti = cons_ticks(c);
 	cons_ident_ok(c, &id);
-	say("IDENT 0x%08x  STAT 0x%08x (busy %d, gnt %d, answered %d, lost-since-reset %d)",
+	say("IDENT 0x%08x  STAT 0x%08x (busy %d, gnt %d, answered %d, lost-since-reset %d,"
+	    " SW0 held the machine %d, SW0 now %d)",
 	    id, stat, !!(stat & CONS_ST_BUSY), !!(stat & CONS_ST_GNT),
-	    !!(stat & CONS_ST_ANSWERED), !!(stat & CONS_ST_LOST));
+	    !!(stat & CONS_ST_ANSWERED), !!(stat & CONS_ST_LOST),
+	    !!(stat & CONS_ST_HELD_AT_RESET), !!(stat & CONS_ST_SWITCH_NOW));
 	// TICKS is the fabric's clock and the divisor is the one number here
 	// that is about the wall clock: `CONS_TICKS_PER_US`, 100 at the 10 ns
 	// tick `cadr_arty.sv`'s MMCM builds.  The microcycle count beside it is
@@ -289,6 +293,16 @@ static void do_ident(struct console *c)
 	    (unsigned long long)cy, (unsigned long long)ti,
 	    (unsigned long long)(ti / CONS_TICKS_PER_US));
 }
+
+// **WHAT THE SHELL IS TOLD, WHICH IS A DIFFERENT QUESTION FROM WHETHER TO GO
+// ON READING.**  `command` returns 0 to go on and 1 to stop, and at the prompt
+// anything non-zero ends the session --- so a command that wants to answer a
+// QUESTION with its exit status cannot say so that way without quitting the
+// prompt.  `switch` is the one such command: it asks whether SW0 held the
+// machine, and an init script reads the status where a person reads the line.
+// So the status is set here and `main` returns it, and nothing about the
+// prompt changes.
+static int exit_status;
 
 // One command line, already split.  0 to go on, 1 to stop.
 static int command(struct console *c, struct mmio *m, unsigned settle_us, int argc, char **argv)
@@ -323,6 +337,15 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		do_status(c, settle_us);
 	else if (!strcmp(cmd, "ident"))
 		do_ident(c);
+	else if (!strcmp(cmd, "switch")) {
+		struct cons_switch sw;
+		cons_read_switch(c, &sw);
+		cons_say_switch(&sw);
+		// The answer, for a script: 0 when the switch held the machine.
+		// `console_face.h` has the argument for putting it here as well
+		// as in the line above.
+		exit_status = sw.held_at_reset ? 0 : 1;
+	}
 	else if (!strcmp(cmd, "read")) {
 		if (argc < 2) {
 			say("read EADR");
@@ -460,8 +483,12 @@ int main(int argc, char **argv)
 	if (probe_face(&con, regs_phys) < 0)
 		return 1;
 
-	if (optind < argc)
-		return command(&con, &m, settle_us, argc - optind, argv + optind) < 0 ? 1 : 0;
+	if (optind < argc) {
+		(void)command(&con, &m, settle_us, argc - optind, argv + optind);
+		// `switch` is the one command that answers a question with the
+		// status; every other leaves it at 0.
+		return exit_status;
+	}
 	prompt(&con, &m, settle_us);
 	return 0;
 }

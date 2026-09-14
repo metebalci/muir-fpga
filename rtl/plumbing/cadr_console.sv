@@ -42,6 +42,12 @@
 //                 bit 1  gnt       the diagnostic bus is the console's, live
 //                 bit 2  answered  the last cycle got `-UB SSYN`
 //                 bit 3  lost      some cycle since reset did not: sticky
+//                 bit 4  held      the no-auto-boot switch held the machine
+//                                  at the last reset: it came up with `RUN`
+//                                  clear and only the boot button starts it
+//                 bit 5  switch    where that switch is NOW.  It differs from
+//                                  bit 4 when somebody has moved it since,
+//                                  which changes nothing until the next reset
 //     2  CYCLES   microcycles the machine has retired since reset, bits 31:0.
 //                 This is `Machine::cycles`, which `cc.rs` prints of the
 //                 machine it is debugging, and it is what says the machine is
@@ -560,7 +566,29 @@ module cadr_console #(
     // --- module is "the button is down"; the inversion is at the gate,
     // --- because the line has two drivers and a pull-up and neither driver
     // --- owns it.
-    output var logic        mach_boot
+    output var logic        mach_boot,
+
+    // --- **THE NO-AUTO-BOOT SWITCH, BOTH HALVES OF IT**: word 1's bits 4 and
+    // --- 5.  SW0 on the board says whether the machine comes out of reset
+    // --- with `RUN` clear, as a CADR is when the power comes on with nobody
+    // --- at it, or preset, which is what a board switched on to be used
+    // --- wants.  It is read at the machine's own reset arms and at no other
+    // --- instant, so moving it under a running machine does nothing until
+    // --- the next reset.
+    // ---
+    // --- **TWO BITS AND NOT ONE, AND THE SECOND IS NOT A LUXURY.**  `_held`
+    // --- is the value the machine ACTUALLY came up with --- the board latches
+    // --- it at the reset, off the same synchronised level the machine's reset
+    // --- arms read, so the two cannot disagree --- and `_now` is where the
+    // --- switch is today.  A person who moved the switch after the board came
+    // --- up sees them differ, and that is exactly the thing they need to be
+    // --- told: the machine is the way it is because of what the switch said
+    // --- THEN.  One bit would make a moved switch look like a lying console.
+    // ---
+    // --- The init step that holds the machine at boot reads `_held`: a
+    // --- machine the switch held is already stopped, so nothing halts it.
+    input  var logic        no_auto_boot_held,
+    input  var logic        no_auto_boot_now
 );
 
   // spy::BASE, and "the EADR<3:0> lines just follow the Unibus address
@@ -914,7 +942,8 @@ module cadr_console #(
   // A page-0 read is a register of this module; a page-1 read is what the
   // cycle brought back, with bit 16 up if it brought nothing.
   logic [31:0] stat_word, r_word;
-  assign stat_word = {28'd0, lost_ever, answered, dbg_gnt, (est != E_IDLE)};
+  assign stat_word = {26'd0, no_auto_boot_now, no_auto_boot_held,
+                      lost_ever, answered, dbg_gnt, (est != E_IDLE)};
   logic [31:0] cycles_hi_q, ticks_hi_q;
   // The three, latched together by a read of word 7.  **Not cleared by a
   // console reset**, for the same reason `cycles_hi_q` is not: they are the

@@ -32,6 +32,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/md_compose.pass \
        $(BUILD)/park.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass $(BUILD)/kbd_boot.pass \
+       $(BUILD)/no_auto_boot.pass $(BUILD)/errhalt_lamp.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
@@ -535,6 +536,51 @@ $(BUILD)/obj_kbd_boot/Vcadr_machine: $(MACHINE) tb/cadr_kbd_boot_tb.cpp | $(BUIL
 
 $(BUILD)/kbd_boot.pass: $(BUILD)/obj_kbd_boot/Vcadr_machine $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_kbd_boot/Vcadr_machine
+	@touch $@
+
+# ------------------------------ the state the machine comes up in
+
+# **THE NO-AUTO-BOOT SWITCH: A CADR WHOSE BUTTON HAS NOT BEEN PRESSED.**  The
+# check above holds the three boot lines; this one holds the other half of the
+# same page of MIT's drawings, which is what `RUN` is at reset.  A CADR whose
+# power has just come on has `RUN` clear and runs nothing, and the button is
+# what starts it --- muir's `--no-auto-boot` in its own words.  On this board
+# SW0 says which of the two states the machine comes up in.
+#
+# What it holds: the machine retires no microcycle at all with the switch on,
+# `-BOOT2` starts the PROM from word 0 and it goes on running at the rate the
+# control measured, and the switch is read AT RESET and at no other instant ---
+# both directions of that, since a fabric taking the level live one way round
+# passes one of the two cases alone.
+#
+# No memory, for the check above's reason.  It takes about a second.
+$(BUILD)/obj_no_auto_boot/Vcadr_machine: $(MACHINE) tb/cadr_no_auto_boot_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_no_auto_boot \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_no_auto_boot_tb.cpp)
+
+$(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_no_auto_boot/Vcadr_machine
+	@touch $@
+
+# ---------------------------------------------------------------- LD4
+
+# **THE LAMP THAT SAYS THE MACHINE FELL OVER.**  Four lines of fabric, and a
+# module rather than four lines in the top level because the top level is
+# reached by `arty.pass`'s lint and by nothing else --- and lint cannot tell a
+# lamp that latches from one that does not.  What this holds: dark at reset and
+# while the machine runs, lit by `ERRHALT`, still lit when `ERRHALT` goes away,
+# out at `-BOOT` and at a reset, not lit under a held button, and lit again at
+# the next halt.  Which signal the board wires to it is the top level's and
+# stays lint-only; the claim that nothing else lights it is the port list.
+$(BUILD)/obj_errhalt_lamp/Vcadr_lamp_errhalt: rtl/plumbing/cadr_lamp_errhalt.sv \
+                                              tb/cadr_lamp_errhalt_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -Mdir $(BUILD)/obj_errhalt_lamp \
+	    --top-module cadr_lamp_errhalt rtl/plumbing/cadr_lamp_errhalt.sv \
+	    $(abspath tb/cadr_lamp_errhalt_tb.cpp)
+
+$(BUILD)/errhalt_lamp.pass: $(BUILD)/obj_errhalt_lamp/Vcadr_lamp_errhalt
+	$(BUILD)/obj_errhalt_lamp/Vcadr_lamp_errhalt
 	@touch $@
 
 # --------------------------------------- the map, read through a real memory
@@ -1126,6 +1172,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
                     rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
                     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
+                    rtl/plumbing/cadr_lamp_errhalt.sv \
                     $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
                     $(DBGPMOD) $(DISPLAY) \
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)

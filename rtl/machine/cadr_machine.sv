@@ -161,6 +161,23 @@ module cadr_machine #(
     // console's own register; muir's prompt `boot` presses this one.
     input  var logic        n_boot2,
 
+    // --- **THE NO-AUTO-BOOT SWITCH.**
+    //
+    // A CADR whose power has just come on has `RUN` clear and runs nothing:
+    // the button on its light panel is what starts it.  This says which of
+    // those two states the machine comes out of reset in --- high leaves `RUN`
+    // clear, low presets it, which is what every trace here starts from ---
+    // and it is read at the reset arm of `cadr_spy_registers.sv` and at no
+    // other instant, so moving it under a running machine does nothing until
+    // the next reset.  `-BOOT` presets `RUN` whatever it says, because the
+    // button is what takes the hold off.
+    //
+    // It is a LEVEL and not a pulse, and it is the board's: on the Arty Z7-20
+    // it is SW0.  muir's `--no-auto-boot` leaves the same machine in the same
+    // state, and the console reports both this level and the value the machine
+    // actually came up with.
+    input  var logic        no_auto_boot,
+
     // --- THE SERIAL PORT'S LINE AND THE CHAOSNET'S CABLE, which the two
     // Linux programs own: `cadr-serial` offers the 2651's line on a TCP
     // socket as muir's `--serial` does, and `cadr-chaosnet` frames what the
@@ -299,6 +316,14 @@ module cadr_machine #(
     output var logic        machrun,
     output var logic        errhalt,
     output var logic        stathalt,
+    // **`-BOOT` ITSELF, WHICH LEAVES THE MACHINE BECAUSE THE BOARD HAS A LAMP
+    // TO CLEAR.**  The 74S02 at OLORD2 1A07 makes it out of all three boot
+    // lines and the processor cannot tell which was pressed; neither can
+    // anything out here, which is the point.  It is active low, like the
+    // three it is made of.  The error lamp is cleared by it, so a machine
+    // booted at the button starts with a clean lamp however it stopped, and
+    // the board does not have to know that a keyboard chord is also a boot.
+    output var logic        n_boot_o,
 
     // --- THE CONSOLE'S HALF OF THE DIAGNOSTIC BUS.
     //
@@ -558,6 +583,7 @@ module cadr_machine #(
       .errhalt_o   (errhalt),
       .stathalt_o  (stathalt),
       .run         (run),
+      .no_auto_boot(no_auto_boot),
       .step        (step),
       .nop11       (nop11),
       .idebug      (idebug),
@@ -734,6 +760,7 @@ module cadr_machine #(
       .prog_reset (prog_reset),
       .prog_boot  (prog_boot),
       .n_boot     (n_boot),
+      .no_auto_boot(no_auto_boot),
       .con_req    (con_req),
       .con_gnt    (con_gnt),
       .con_msyn   (con_msyn),
@@ -987,6 +1014,7 @@ module cadr_machine #(
   // takers are the processor and the register block.
   logic n_boot;
   assign n_boot = !(!n_boot1 || !n_boot2 || prog_boot);
+  assign n_boot_o = n_boot;
 
   // RDCYC leaves the processor for the check's sake: a write must not move
   // MD, and that is the thing this composition makes visible.

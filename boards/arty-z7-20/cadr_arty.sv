@@ -150,12 +150,21 @@ module cadr_arty #(
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
+    // The board's two slide switches.  **SW0 IS THE NO-AUTO-BOOT SWITCH** ---
+    // see the note below the buttons --- and SW1 is a pin the board has that
+    // this design has no opinion about, brought out so the port list matches
+    // the board rather than the design, as BTN1 and BTN2 are.
+    input  var logic [1:0] sw,
     output var logic [3:0] led,
     // The two tricolour LEDs. Driven high to light, one pin a colour.
     output var logic       led4_r, led4_g, led4_b,
     output var logic       led5_r, led5_g, led5_b,
     // MIT's debug cable on the two Pmod headers, JA carrying DBGOUT and JB
-    // DBGIN. Eight pins a connector, four each way: one strobe and three data
+    // DBGIN.  **THE DECISION IS ONE CONNECTOR, JA, CARRYING THE WHOLE LINK
+    // BOTH WAYS, WITH JB UNASSIGNED** --- a board is a debugger or a debuggee
+    // by configuration and never both at once --- and these sixteen pins are
+    // the earlier arrangement, which is what is built.  `docs/debug-cable.md`
+    // says which is which. Eight pins a connector, four each way: one strobe and three data
     // lines, `rtl/plumbing/cadr_dbg_pmod.sv`. A cable joins one board's JA to
     // another's JB, and the pin roles are mirrored between the two headers so
     // that a straight Pmod cable maps pin one to pin one --- which also makes
@@ -346,6 +355,10 @@ module cadr_arty #(
   // OLORD1's three, for the lamps: the machine's own run signal as a level,
   // and the two ways it stops itself.
   logic        machrun, errhalt, stathalt;
+  // `-BOOT`, the 74S02 at OLORD2 1A07's output, out of the machine because the
+  // error lamp is cleared by it and nothing out here can otherwise tell that
+  // a keyboard chord or the debug cable booted the machine.
+  logic        n_boot;
   // -XBUS.INTR, the display's vertical interrupt ORed with the disk's
   // request inside `cadr_machine`.  Nothing on this board reads it but the
   // fold: it is the machine's own line to its own processor, and what it is
@@ -602,15 +615,60 @@ module cadr_arty #(
   logic con_mach_boot;
   logic n_boot2;
   assign n_boot2 = !(btn0_level || con_mach_boot);
+
+  // --------------------------------------- SW0, THE NO-AUTO-BOOT SWITCH
+  //
+  // **A CADR WHOSE POWER HAS JUST COME ON HAS ITS CLOCK STOPPED**: `RUN` is
+  // clear, nothing is running, and the button on its light panel is what
+  // starts it.  This fabric comes up the other way by default, with `RUN`
+  // preset --- a board switched on runs its boot PROM, waits for a drive and
+  // boots its band, which is what somebody switching a board on wants and what
+  // every bring-up board here needs.  SW0 is how a board being worked on is
+  // asked for the other behaviour instead.  muir's `--no-auto-boot` is the
+  // same state by the same argument, and the card's `fpgarc` has that flag;
+  // the two are an OR and the flag can never turn the switch off.
+  //
+  // **IT IS A POWER-ON CONDITION AND NOT A CONTROL, WHICH IS WHY IT IS READ
+  // AT THE RESET AND NOWHERE ELSE.**  `cadr_spy_registers.sv`'s reset arm is
+  // the one place `RUN` is decided and `cadr_microcycle.sv`'s is the one place
+  // `SRUN` is, so the level goes to both and to nothing else: moving the
+  // switch under a running machine does nothing until the next fabric reset,
+  // and moving it back under a held machine starts nothing.  Only `-BOOT`
+  // takes the hold off, which is what a button is for.
+  //
+  // **AND WHAT THE CONSOLE REPORTS IS THE VERY VALUE THE MACHINE USED.**
+  // `sw0_held` follows the synchronised level at every edge `mach_rst` is up
+  // and freezes at the last of them --- the same edge, off the same signal, as
+  // the two reset arms inside the machine --- so the two cannot disagree, and
+  // a person reading `cadr-console status` is told what the machine actually
+  // came up with rather than what the switch says now.  Both go out: the value
+  // that held it and the level today, because a switch moved since the reset
+  // is exactly the thing somebody will want to see.
+  //
+  // Three synchroniser stages, because the switch is asynchronous to this
+  // clock like every other pin.  No debounce: `-BOOT2` needs one because a
+  // bounce on the RELEASE is another press, and this is a level read once, at
+  // an instant a slide switch is not being moved at.
+  //
+  // Pin: `sw[0]` is M20, `LVCMOS33`, `IO_L7N_T1_AD2N_35`, Sch=SW0, from
+  // Digilent's `Arty-Z7-20-Master.xdc`.  `boards/arty-z7-20/cadr_arty.xdc`
+  // carries it and false-paths both switches, a slide switch being no timing
+  // constraint.
+  logic [2:0] sw0_sync;
+  logic       sw0_level;
+  logic       sw0_held;
+  always_ff @(posedge clk) sw0_sync <= {sw0_sync[1:0], sw[0]};
+  assign sw0_level = sw0_sync[2];
+  always_ff @(posedge clk) if (mach_rst) sw0_held <= sw0_level;
   // A write or read that came back SLVERR or DECERR, held. Zero when there is
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
 
   // LD4's three colours, as {red, green, blue}. It is a wire and not three
   // assignments because WHAT LD4 SAYS DEPENDS ON THE BOARD: on the machine it
-  // is trouble and nothing else, dark or red, and on a `PROVE` board it is
-  // the witness's verdict, which is a board with no machine behind the memory
-  // port and so no trouble to report.
+  // is the machine's own error halt and nothing else, dark or red, and on a
+  // `PROVE` board it is the witness's verdict, which is a board with no
+  // machine behind the memory port and so no halt to report.
   // Driven from exactly one of two generate blocks, one down in the
   // memory and one beside the other lamps, so that neither configuration
   // leaves a signal the other one reads. Getting that wrong is an
@@ -798,6 +856,10 @@ module cadr_arty #(
       // The I/O board's cables, tied off above with the slice that will
       // drive each, and what the card shows.
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .n_boot2(n_boot2),
+      // SW0, synchronised, read at the machine's own reset arms and nowhere
+      // else --- the block above `cadr_machine` here says the whole of it ---
+      // and `-BOOT` on its way back out, for the error lamp to be cleared by.
+      .no_auto_boot(sw0_level), .n_boot_o(n_boot),
       .machrun(machrun), .errhalt(errhalt), .stathalt(stathalt),
       .mouse_lines(mouse_lines), .ser_reset(ser_reset),
       .ser_mode1(ser_mode1), .ser_mode2(ser_mode2), .ser_cmd(ser_cmd),
@@ -1777,7 +1839,13 @@ module cadr_arty #(
         // above.  **Not `gp1_rst` and not this instance's own `rst`**: see
         // the rule there and `rtl/plumbing/cadr_console.sv`'s header.
         .mach_rst(con_mach_rst),
-        .mach_boot(con_mach_boot)
+        .mach_boot(con_mach_boot),
+        // SW0, both halves of it: the value the machine actually came out of
+        // reset with, and where the switch is now.  `cadr-console status`
+        // prints both, and the init step that holds the machine at boot asks
+        // the first of them.
+        .no_auto_boot_held(sw0_held),
+        .no_auto_boot_now(sw0_level)
     );
 
     // ================================================= the display output
@@ -2225,7 +2293,7 @@ module cadr_arty #(
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
                    mem_req, mem_write, store_miss, ch_active,
-                   machrun, errhalt, stathalt, ddr_error,
+                   machrun, errhalt, stathalt, n_boot, ddr_error,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
@@ -2308,67 +2376,108 @@ module cadr_arty #(
   //   LD3  disk activity    lit while the controller moves a block.  The
   //                         light every computer has had, and it answers
   //                         whether a pause is the disk or the program.
-  //   LD4  trouble          and nothing else.  See below.
-  //   LD5  -PROMDISABLE     LIT while the machine runs out of the boot PROM
-  //                         and DARK once it has loaded its microcode from
-  //                         the disk and disabled the PROM.  So lit means
+  //   LD4  ERRHALT          the machine halted ITSELF under ERRSTOP, which is
+  //                         `(si:%halt)` and nothing else.  Dark normally,
+  //                         red when it happens, and cleared by the boot
+  //                         button or a reset.  See below.
+  //   LD5  -PROMDISABLE     the mode register's own bit, inverted: LIT while
+  //                         the machine runs its microcode out of the boot
+  //                         PROM and DARK once it has loaded microcode from
+  //                         the disk and set `PROMDISABLE`.  So lit means
   //                         BOOTING and dark means BOOTED, which is the way
   //                         round a lamp should be: the interesting state is
-  //                         the one that ends.
+  //                         the one that ends.  It is NOT `PROMENABLE`, which
+  //                         is a different net; see below.
   //
   // LD0's level and LD2's blink say different things on purpose, and neither
   // replaces the other.
   //
   // ---------------------------------------------------------------- LD4
   //
-  // **LD4 IS RESERVED TO ERROR, ABSOLUTELY: IT IS EITHER OFF OR RED.**  No
-  // other colour and no other meaning ever reaches it --- not at power-on,
-  // not during the PROM, not while halted.  Its green and blue channels are
-  // tied off, so there is nothing for a later meaning to be put on.
+  // **LD4 IS THE MACHINE'S OWN ERROR HALT AND NOTHING ELSE: IT IS EITHER OFF
+  // OR RED.**  No other colour and no other meaning ever reaches it --- not at
+  // power-on, not during the PROM, not while halted by a console.  Its green
+  // and blue channels are tied off, so there is nothing for a later meaning to
+  // be put on.
+  //
+  // `ERRHALT` is `ERRSTOP AND HALTED` at OLORD1 and is one of `MACHRUN`'s own
+  // terms: the machine executed a halt with the console's error-stop bit set
+  // and stopped itself.  On microcode 323 that is `(si:%halt)` reached through
+  // `ILLOP`, `%HALT` and `ZERO`; MIT's own boards reach the same line from the
+  // memory parity checkers, which this fabric does not have.  A console halt
+  // is not it --- that clears `RUN` --- so stopping the machine to look at it
+  // leaves the lamp dark.
   //
   // **AND DARK IS THE GOOD STATE**, which is the whole argument for it: this
   // is the one lamp nobody should have to watch, and a lamp that means one
-  // thing is read faster than one that means three.  It makes LD2's freeze
+  // thing is read faster than one that means four.  It makes LD2's freeze
   // readable --- LD2 stopped with LD4 dark means somebody halted the machine,
   // LD2 stopped with LD4 red means it fell over.
   //
-  // Red and STICKY until the fabric is reset, for three things:
+  // **THE THREE OTHER THINGS THAT USED TO LIGHT IT ARE GONE.**  A
+  // non-existent-memory timeout is not a fault: the boot PROM makes two cycles
+  // to empty Xbus space on every boot, so the lamp came up red on a machine
+  // that was perfectly well, and a lamp whose normal state is red says
+  // nothing.  A statistics halt is something the console asked for.  And
+  // `store_miss` --- a block the disk's store could not supply --- is a real
+  // defect and this was never the place for it: the controller ends that
+  // transfer with a clean status, so the microcode believes it read a page
+  // that was never written and nothing the CADR can read says otherwise.  That
+  // is `rtl/machine/cadr_disk_controller.sv`'s to answer, with a transfer
+  // error the machine can see, and it is open there.  A board lamp was not a
+  // fix for it and showing it here only made this lamp mean two things.
   //
-  //   an NXM          `timed_out`: a bus cycle that ended on the 4.25 us
-  //                   timer rather than on a slave.
-  //   a disk error    `store_miss`: the block store could not supply a block
-  //                   the channel asked for.  CLAUDE.md records that this
-  //                   raises no error the CADR itself can read, which is a
-  //                   defect of the controller and is exactly why the BOARD
-  //                   should show it.
-  //   a self-halt     `errhalt` or `stathalt`: the machine stopping ITSELF,
-  //                   which is `(si:%halt)` under ERRSTOP or the statistics
-  //                   counter running out.  A console halt is neither of
-  //                   those --- it clears RUN --- so halting the machine to
-  //                   look at it does not light the trouble lamp.
+  // **CLEARED BY THE BUTTON AS WELL AS BY A RESET**, which is why `-BOOT`
+  // comes out of the machine: a board booted at the button, at the keyboard's
+  // chord or over the debug cable starts with a clean lamp, and nothing out
+  // here has to know which of the three it was.
   //
-  // **THE BOOT-STATE COLOURS THAT USED TO BE HERE ARE GONE**, and the half of
-  // them worth keeping, PROMDISABLE, is LD5.
+  // **THE LATCH IS A MODULE AND THE WIRING IS NOT, AND THAT SPLIT IS
+  // DELIBERATE.**  `rtl/plumbing/cadr_lamp_errhalt.sv` is held by
+  // `build/errhalt_lamp.pass`, because lint cannot tell a lamp that latches
+  // from one that does not.  WHICH signal reaches its input is this line, and
+  // this line is reached by `build/arty.pass`'s lint and by nothing else ---
+  // so a second term ORed in here would be caught by nobody, and the reason it
+  // is not there is this paragraph.
+  //
   // **AND ON A `PROVE` BOARD LD4 SAYS SOMETHING ELSE ENTIRELY** --- the
   // witness's verdict, driven from `g_ddr.g_prove` where the numbers are.
   // That is a board with no machine behind the memory port at all, so it has
-  // no trouble to report and the register is not built there.
+  // no halt to report and the lamp is not built there.
   assign {led4_r, led4_g, led4_b} = lamp4;
-  if (PROVE == 0) begin : g_lamp_trouble
-    logic trouble;
-    always_ff @(posedge clk) begin
-      if (mach_rst) trouble <= 1'b0;
-      else if (timed_out || store_miss || errhalt || stathalt) trouble <= 1'b1;
-    end
-    assign lamp4 = {trouble, 1'b0, 1'b0};
+  if (PROVE == 0) begin : g_lamp_errhalt
+    logic errhalt_lit;
+    cadr_lamp_errhalt u_lamp_errhalt (
+        .clk(clk), .rst(mach_rst), .errhalt(errhalt), .n_boot(n_boot),
+        .lit(errhalt_lit)
+    );
+    assign lamp4 = {errhalt_lit, 1'b0, 1'b0};
   end
 
   // ---------------------------------------------------------------- LD5
   //
+  // **`-PROMDISABLE`, AND THAT IS THE NAME OF THE SIGNAL ON THE PIN.**  The
+  // lamps are named by the machine's own signals --- LD0 is `MACHRUN` and LD4
+  // is `ERRHALT` --- and this one is `PROMDISABLE` inverted: bit 5 of the mode
+  // register at OLORD1 1A08, which the machine sets itself once it has loaded
+  // its microcode off the disk.  So the lamp is LIT while the machine runs its
+  // microcode out of the boot PROM and DARK once `PROMDISABLE` is set, which
+  // is the way round a lamp should be: the interesting state is the one that
+  // ends.
+  //
+  // **IT IS NOT `PROMENABLE`, AND THE TWO ARE DIFFERENT NETS.**  MIT's
+  // `-PROMENABLE` at PCTL 1C19 is `BOTTOM.1K` with `PROMDISABLED`, `IWRITEDA`
+  // and `-IDEBUG`, which is `cadr_microcycle.sv`'s `promenable` --- it says
+  // whether THIS microinstruction is coming out of the PROM, so it follows the
+  // PC and changes many times a boot.  What reaches this pin is the mode
+  // register's own bit and nothing else.  Naming the lamp `PROMENABLE` would
+  // be naming it after a signal that does not drive it; putting `promenable`
+  // on it instead is a port out of the processor and a different lamp.
+  //
   // Blue, and blue only, for the one state it carries.  A colour lamp showing
-  // one thing is still the right lamp for it: PROMDISABLE is the answer to
-  // "has it finished booting", which is worth telling apart from the four
-  // plain green ones at a glance.
+  // one thing is still the right lamp for it: this is the answer to "has it
+  // finished booting", which is worth telling apart from the four plain green
+  // ones at a glance.
   assign led5_r = 1'b0;
   assign led5_g = 1'b0;
   assign led5_b = !promdisable;
@@ -2438,14 +2547,23 @@ module cadr_arty #(
   OBUFDS u_hdmi_d2  (.I(hdmi_ser[2]), .O(hdmi_tx_d_p[2]), .OB(hdmi_tx_d_n[2]));
   OBUFDS u_hdmi_clk (.I(hdmi_ser[3]), .O(hdmi_tx_clk_p), .OB(hdmi_tx_clk_n));
 
-  // btn[2:1] are pins the board has and this design does not use. BTN0 is
-  // the machine's boot button and BTN3 the fabric's reset; BTN1 was a
+  // btn[2:1] and sw[1] are pins the board has and this design does not use.
+  // BTN0 is the machine's boot button and BTN3 the fabric's reset; BTN1 was a
   // `PROVE=2` board's start button until the witness learned to write back
-  // what it read, and nothing presses it now. The two are read here only to
-  // keep them legal without inventing behaviour for them.
+  // what it read, and nothing presses it now. SW0 is the no-auto-boot switch
+  // and SW1 has no meaning here. They are read here only to keep them legal
+  // without inventing behaviour for them.
+  //
+  // **AND `sw0_held` IS READ HERE FOR A DIFFERENT REASON**, which is worth
+  // keeping apart from theirs: it has a reader, the console, and the console
+  // exists only on a board with a general-purpose port. On the boards that
+  // have none it would be a signal nothing reads, which lint reports and is
+  // right to --- and tying it off inside the `DDR` generate's `else` arm would
+  // put a board's own pin behind the memory's parameter. It is read twice on a
+  // board that has a console, which is legal and is the honest arrangement.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = &{1'b0, btn[2:1]};
+  assign unused = &{1'b0, btn[2:1], sw[1], sw0_held};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule
