@@ -12,40 +12,47 @@ property instead are in `rtl/plumbing/`, and the Xilinx-specific ones are in
 line is drawn and why the machine has one home rather than one repository per
 part family.
 
-## The four directories
+## The three directories
 
 | Directory | Board | Part | State |
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
 | `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Preliminary. A pin file and a note. |
 | `arty-a7-100/` | Digilent Arty A7-100T | XC7A100T | Preliminary. A pin file and a note. |
-| `arty-s7-50/` | Digilent Arty S7-50 | XC7S50 | Preliminary. A pin file and a note. |
 
-**Only `arty-z7-20/` builds anything.** The other three hold Digilent's
-published master pin file and a `README.md` saying what would have to be built.
-There is no top level, no constraint file of ours, no Vivado script and no
-device tree in any of them. That is deliberate. A skeleton that looks like it
-works is worse than an empty directory, because somebody will run it.
+**Only `arty-z7-20/` builds anything.** The other two hold Digilent's published
+master pin file and a `README.md` saying what would have to be built. There is
+no top level, no constraint file of ours, no Vivado script and no device tree in
+either of them. That is deliberate. A skeleton that looks like it works is worse
+than an empty directory, because somebody will run it.
+
+**There is no Spartan-7 directory, because the Digilent Arty S7-50 has no
+Ethernet.** This machine finds its time host and its file host over Chaosnet,
+and Chaosnet reaches them across the network. The remote viewer serves the
+screen over the network as well, and on a board with no video pins that is the
+only way to see the machine at all. A board nothing can reach is a board the
+CADR cannot be used on, so the Arty S7-50 is not a target. The Arty A7-100
+keeps its place because it has an Ethernet PHY on fabric pins.
 
 ## The order
 
-The Arty Z7-20 is the board and stays the board. The other three are listed
-in the order they were named when they were added, which was not a stated
-priority and should not be read as one.
+The Arty Z7-20 is the board and stays the board. The other two are listed in the
+order they were named when they were added, which was not a stated priority and
+should not be read as one.
 
 The Cora comes first for two reasons. It is worth settling before the display
 output block starts, because a board with no HDMI pulls against exactly that
-work. And it is the tightest of the four by a long way, as the next section
+work. And it is the tightest of the three by a long way, as the next section
 shows, so it is the one that would say something about the design.
 
-None of the three is urgent. The Cora waits behind the remote viewer, the
-bus interface and the debug cable adapter, which are finished first.
+Neither is urgent. The Cora waits behind the remote viewer, the bus interface
+and the debug cable adapter, which are finished first.
 
 ## Does the machine fit
 
 Today's memory-on design, placed and routed for the Arty Z7-20 at commit
 `95cbb84`, is **10,909 slice LUTs, 7,390 slice registers, 41.5 block RAM tiles
-and 4 DSP slices**. Vivado's own part database at 2026.1 gives the four parts
+and 4 DSP slices**. Vivado's own part database at 2026.1 gives the three parts
 as follows. Those four counts are properties of the die, so the package and the
 speed grade do not change them.
 
@@ -54,7 +61,6 @@ speed grade do not change them.
 | XC7Z020 Arty Z7-20 | 53,200 | 106,400 | 140 | 220 |
 | XC7Z007S Cora Z7-07S | 14,400 | 28,800 | 50 | 66 |
 | XC7A100T Arty A7-100 | 63,400 | 126,800 | 135 | 240 |
-| XC7S50 Arty S7-50 | 32,600 | 65,200 | 75 | 120 |
 
 Put the design beside each of them and the percentages read:
 
@@ -63,26 +69,24 @@ Put the design beside each of them and the percentages read:
 | Arty Z7-20 | 20.5% | 6.9% | 29.6% | 1.8% |
 | Cora Z7-07S | 75.8% | 25.7% | **83.0%** | 6.1% |
 | Arty A7-100 | 17.2% | 5.8% | 30.7% | 1.7% |
-| Arty S7-50 | 33.5% | 11.3% | 55.3% | 3.3% |
 
-**The Cora is the tight board and the Artix and the Spartan are not.** That
-inverts the obvious expectation. The XC7A100T has more logic than the part this
-project runs on today and almost the same block RAM, and the XC7S50 has room to
-spare. The small Zynq is the hard one.
+**The Cora is the tight board and the Artix is not.** That inverts the obvious
+expectation. The XC7A100T has more logic than the part this project runs on
+today and almost the same block RAM. The small Zynq is the hard one.
 
 **Read those two columns differently on the two kinds of board.** For the Cora
 the percentage is close to honest, because a Cora runs this same design with
-the same Linux programs beside it. For the Artix and the Spartan it is not,
-because on those parts this is not the design. Main memory needs a controller
-in the fabric, the disk needs a way to read a card, and the screen, the console,
-Chaosnet, the serial line and the debugger all lose the programs that implement
-them today. Every one of those costs logic and block RAM that these numbers do
-not include. **The part is not the obstacle on those two boards. The work is.**
+the same Linux programs beside it. For the Artix it is not, because on that part
+this is not the design. Main memory needs a controller in the fabric, the disk
+needs a way to read a card, and the screen, the console, Chaosnet, the serial
+line and the debugger all lose the programs that implement them today. Every one
+of those costs logic and block RAM that these numbers do not include. **The part
+is not the obstacle on that board. The work is.**
 
 **And none of this is a fit.** These are percentages computed from a part
 database. No design in this repository has ever been through synthesis, place
-and route for an XC7A100T or an XC7S50, and until one has, nothing here says
-whether the machine closes timing on either.
+and route for an XC7A100T, and until one has, nothing here says whether the
+machine closes timing on it.
 
 ## Two kinds of new board
 
@@ -91,14 +95,14 @@ pin file, a processing-system configuration and a device tree. Nothing in
 `rtl/` changes. The question there is whether the machine fits, because the
 XC7Z007S is a much smaller part than the XC7Z020.
 
-**The Artix and the Spartan are a different project.** Neither part has a
-processing system at all. The fabric is the same seven-series fabric, so
-`rtl/machine/` and the vendor primitives carry over unchanged. What does not
-carry over is everything the processing system does today.
+**The Artix is a different project.** That part has no processing system at all.
+The fabric is the same seven-series fabric, so `rtl/machine/` and the vendor
+primitives carry over unchanged. What does not carry over is everything the
+processing system does today.
 
 ## What a board with no processing system has to answer
 
-This list is here rather than in the two board notes so that there is one copy
+This list is here rather than in the board note itself so that there is one copy
 of it. It is what `boards/arty-z7-20/` uses the Zynq's processing system for,
 read off that directory.
 
@@ -138,11 +142,11 @@ board directory stays thin.
 Pins come from Digilent's published file and never from memory. A wrong pin is
 a light that does not come on, and that reads as a design fault in the machine.
 
-Each of the three preliminary directories therefore holds Digilent's master
-`.xdc` byte for byte as published, under Digilent's own filename, with its
-provenance recorded in that directory's `README.md`. Digilent publishes them
-under the MIT licence, so each directory also holds a copy of that licence text
-as `Digilent-License.txt`.
+Each of the two preliminary directories therefore holds Digilent's master `.xdc`
+byte for byte as published, under Digilent's own filename, with its provenance
+recorded in that directory's `README.md`. Digilent publishes them under the MIT
+licence, so each directory also holds a copy of that licence text as
+`Digilent-License.txt`.
 
 The finished board does it differently, and that is the convention to follow
 once a top level exists. `arty-z7-20/cadr_arty.xdc` copies out the handful of

@@ -59,14 +59,14 @@ processing-system configuration and a device tree. That is one directory under
 `boards/`, and nothing in `rtl/` changes.
 
 **A part with no processing system is not a port but a second set of
-plumbing.** An Artix or a Spartan is the same seven-series fabric, so the
-machine and even the clock and scan primitives carry over unchanged. What does
-not carry over is everything the processing system does today: main memory,
-Linux, and therefore the disk pack program, the console's path and the
-display's. Each of those needs a fabric answer instead. Nearly all of that work
-lands in `rtl/plumbing/`, where it is reusable, and the board directory stays
-thin. The disk controller would ask for a block exactly as it does now and
-would not care who answered.
+plumbing.** An Artix is the same seven-series fabric, so the machine and even
+the clock and scan primitives carry over unchanged. What does not carry over is
+everything the processing system does today: main memory, Linux, and therefore
+the disk pack program, the console's path and the display's. Each of those
+needs a fabric answer instead. Nearly all of that work lands in
+`rtl/plumbing/`, where it is reusable, and the board directory stays thin. The
+disk controller would ask for a block exactly as it does now and would not care
+who answered.
 
 **It is one repository and not one per family, deliberately.** The value here
 is the CADR held to muir. Two repositories would mean two copies of the machine
