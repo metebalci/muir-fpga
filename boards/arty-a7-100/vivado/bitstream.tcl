@@ -115,7 +115,7 @@ set memory [expr {($ddr > 0 || $prove > 0) ? 1 : 0}]
 # address in the cycle it uses it, and on this part that arc is about 12.9 ns
 # against a 10 ns tick; the machine's tick cannot move, every instant in
 # `rtl/machine/` being a count of them.  So the soft system runs on `CLKOUT2`
-# of the same manager at 50 MHz and the seam between it and the four faces is a
+# of the same manager at 50 MHz and the seam between it and the three faces is a
 # clock domain crossing --- `rtl/plumbing/cadr_soc_cross.sv`, bounded by
 # `rtl/plumbing/xilinx7/cadr_soc.xdc`.  Three things are asserted about that
 # below and each of them has a silent failure behind it: that there IS a second
@@ -262,17 +262,25 @@ read_xdc -ref cadr_machine rtl/plumbing/xilinx7/cadr_machine.xdc
 # reads exactly like a constraint which applied. The file is the other board's
 # and is read unchanged --- see the header for why it is not copied.
 if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
-# **THE DEBUG CABLE's WINDOW IS OUTSIDE `cadr_machine` AND THE MACHINE's OWN
-# FILE CANNOT REACH IT.**  `cadr_machine.xdc` is read `-ref cadr_machine`, so
-# a register a level above it is timed at one tick however deep the cone in
-# front of it --- and the cone in front of this one is the machine's whole
-# diagnostic multiplexer, twenty-three logic levels.  Measured on this board
-# without the file: -9.236 ns from `memstart_reg_replica` into
-# `sts_dbd_reg[1]`, which is the same arc and nearly the same number the other
-# board measured at -8.772.  `rtl/plumbing/xilinx7/cadr_debug.xdc` is that
-# board's file, read here unchanged; its header has the whole argument for
-# four ticks and for why it names the `/D` pins and nothing else.
-if {$soc != 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
+# **`rtl/plumbing/xilinx7/cadr_debug.xdc` IS NOT READ ON THIS BOARD, BECAUSE
+# THE REGISTER IT NAMES IS NOT HERE.**  That file gives four ticks to one
+# register inside `rtl/plumbing/cadr_debug_window.sv` --- the window a debugger
+# reaches over a general-purpose port, which is how muir on a Zynq board's ARM
+# cores plays the far end of MIT's debug cable in software.  There is no such
+# program on this board and no window in any configuration of it; the debugger
+# here is a SECOND BOARD on Pmod JB, through the carrier below.  An XDC read
+# for a module that is not in the design applies to nothing, and this
+# repository's own record of what that looks like is a page long: a constraint
+# naming an absent object is "No valid object(s) found", a critical warning
+# that reads exactly like a constraint which applied.
+#
+# **AND THE COST IT USED TO BUY IS NOT LOST, BECAUSE THE CARRIER PAYS IT.**
+# The arc the file exists for is the machine's diagnostic multiplexer reaching
+# a register a level above `cadr_machine` --- measured here at -9.236 ns from
+# `memstart_reg_replica` into the window's `sts_dbd_reg[1]` before it was read.
+# The carrier's own sender is at the far end of the same cone and is on every
+# configuration of this board, so `cadr_debug_pmod.xdc` below is read with no
+# `if` on it at all and is what holds that arc now.
 # **AND THE SOFT SYSTEM'S OWN CLOCK, WHICH IS NOT THE MACHINE'S.**  Ibex
 # computes a load or a store's address in the cycle it uses it and that arc
 # does not settle in a 10 ns tick, so the core runs on `CLKOUT2` of the same
@@ -283,15 +291,17 @@ if {$soc != 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
 # where they can be written in ordinary Tcl.
 if {$soc != 0} { read_xdc rtl/plumbing/xilinx7/cadr_soc.xdc }
 
-# AND THE PMOD CARRIER'S, WHICH IS THE SAME CONE WITH A SECOND READER ON IT,
+# AND THE PMOD CARRIER'S, WHICH ON THIS BOARD IS THE ONLY READER OF THAT CONE
 # AND WHICH IS NOT GATED.  `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` names the
-# frame registers of the debug cable's sender on Pmod JA.  A board is always a
-# DEBUGGEE --- the connector is instantiated whatever `SOC` says, because a
-# CADR answers a debugger that plugs in and nothing has to be set for it --- so
-# the machine's diagnostic mux reaches that sender on every configuration of
-# this board, including the ones with no soft processing system at all.  That
-# is the file's own header, and it is why this read has no `if` on it where the
-# window's above does.
+# frame registers of the debug cable's sender on Pmod JB --- JB rather than the
+# JA the two Zynq boards use, this being the only board with four headers and
+# the only one whose headers differ; `boards/arty-a7-100/cadr_arty_a7.xdc` has
+# the argument and the pins.  A board is always a DEBUGGEE --- the connector is
+# instantiated whatever `SOC` says, because a CADR answers a debugger that
+# plugs in and nothing has to be set for it --- so the machine's diagnostic mux
+# reaches that sender on every configuration of this board, including the ones
+# with no soft processing system at all.  That is the file's own header, and it
+# is why this read has no `if` on it.
 read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
 
 # THE DDR3L's PINS, IN EXACTLY ONE OF TWO FILES.  With the controller in the
@@ -374,10 +384,10 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 # The list of places the microcycle exception is allowed to live. One when this
 # is the machine on a board; two when the probe is in it, because
 # `cadr_probe.xdc` relaxes the register that holds the machine's combinational
-# outputs and says at length why. Nothing else, either way --- and on this
-# board there is no third or fourth entry, because the memory port's 80 ns
-# contract and the debug cable's four ticks both name registers that live
-# behind a processing system this part has not got.
+# outputs and says at length why.  The memory controller and the debug cable's
+# connector add one each below, and the debug cable's WINDOW adds none: it is
+# not on this board in any configuration, and the memory port's 80 ns contract
+# names registers that live behind a processing system this part has not got.
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
 # **AND THE GENERATED CONTROLLER, WHICH CARRIES EXCEPTIONS OF ITS OWN.**  Its
@@ -390,16 +400,13 @@ if {$probe_depth > 0} { lappend inside g_probe.u_probe }
 # so `cadr_mem_cross`, `cadr_mig_ui`, `cadr_jtag_mem` and the tally are all
 # still asked about.
 if {$memory} { lappend inside g_memory.u_memory.u_mig }
-# **AND THE DEBUG CABLE's WINDOW WITH `SOC=1`**, for the reason the other
-# board's flow lists `g_ddr.u_debug_window`: this assertion catches any
-# register outside the machine whose requirement is more than one period, and
-# `rtl/plumbing/xilinx7/cadr_debug.xdc` deliberately gives four ticks to one
-# register in that module.  Naming it here is what keeps the assertion about
-# everything ELSE --- a reset synchroniser or a free-running counter given a
-# whole microcycle to settle is still a failure, and the soft processing
-# system's own registers, the pack side's and the console's are all still
-# asked.
-if {$soc != 0} { lappend inside g_soc.u_debug_window }
+# **AND NOT THE DEBUG CABLE's WINDOW, WHICH THE OTHER TWO BOARDS' FLOWS LIST
+# HERE AND THIS ONE HAS NOT GOT.**  `g_ddr.u_debug_window` is in the Arty
+# Z7-20's list because `cadr_debug.xdc` gives a register in that module four
+# ticks; there is no window on this board in any configuration, nothing is
+# read that could relax one, and an entry naming an absent instance would be
+# an exemption that tests nothing while looking exactly like one that is
+# right.  The connector below is what carries the cable here.
 # **AND THE DEBUG CABLE'S CONNECTOR WHATEVER `SOC` SAYS**, for the reason its
 # constraint file is read unconditionally one screen up: the carrier is on
 # every board, so its sender is relaxed on every board and the invariant would
@@ -414,7 +421,7 @@ lappend inside u_dbg_cable
 # be an exemption too wide, which is the failure this repository records more
 # often than any other, so `assert_soc_domain_timed` below asks the same
 # question of those registers against THEIR OWN period.  Everything else in
-# `g_soc` --- the four faces, which are the machine's neighbours --- stays in
+# `g_soc` --- the three faces, which are the machine's neighbours --- stays in
 # the list and is still held to the tick.
 if {$soc != 0} { lappend inside g_soc.u_soc }
 # **AND THIS CALL IS WEAKER THAN IT LOOKS WITH TWO CLOCKS IN THE DESIGN, WHICH

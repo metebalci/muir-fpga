@@ -7,11 +7,11 @@
 // **WHAT THIS HOLDS.**  `tb/cadr_soc_harness.sv` is the Arty A7-100's top
 // level below the clock: `cadr_soc` with Ibex in it, `cadr_machine` with MIT's
 // boot PROM in its control store and nothing behind its memory port, and the
-// four faces the soft core masters --- the disk pack side, the console, the
-// debug cable's window and the default slave --- at the addresses the Linux
-// programs use.  The firmware is the one the board runs, the same ELF, the
-// same hex.  What this asserts is every line it says, in order, and then three
-// things it cannot say about itself:
+// three faces the soft core masters --- the disk pack side, the console and
+// the default slave --- at the addresses the Linux programs use.  The firmware
+// is the one the board runs, the same ELF, the same hex.  What this asserts is
+// every line it says, in order, and then four things it cannot say about
+// itself:
 //
 //   **THE MACHINE REALLY HALTED AND REALLY STEPPED.**  `clock_edge` is the
 //   machine's own microcycle boundary and this counts it every tick, so the
@@ -37,6 +37,21 @@
 //   machine's, and one where the soft clock is faster.  A crossing that
 //   worked only at the number the board happens to use would be a crossing
 //   held to a coincidence.
+//
+//   **THE DEBUG CABLE'S WINDOW IS NOT ON THIS BOARD, IN BOTH THE PLACES THAT
+//   COULD HIDE IT.**  `rtl/plumbing/cadr_debug_window.sv` is how muir, on a
+//   Zynq board's own ARM cores, plays the far end of MIT's debug cable in
+//   software; an Arty A7-100 has no such program and its debugger is a second
+//   board on the Pmod.  So two things must hold and neither is an absence.
+//   The ADDRESS the window holds on those boards, `0x8000_1000`, must be
+//   answered by the catch-all like any other address nothing implements ---
+//   which the firmware's own line says, and which matters because the
+//   GP0-hang rule is about every address in the window and not about the ones
+//   somebody remembered.  And the JOIN in front of the machine's DBGIN page
+//   must never be asked for by the arm that window used to drive: this watches
+//   it every tick, because a join whose empty arm asserted would take the page
+//   and hold it, and the console's own diagnostic cycles are on the other side
+//   of that arbiter.
 //
 //   **THE BAUD DIVISOR IS MEASURED FROM THE WIRE.**  The narrowest level the
 //   transmitter ever holds is one bit time, so the minimum pulse width over
@@ -168,10 +183,13 @@ struct Uart {
 	}
 };
 
-static int popcount4(unsigned v)
+// The three slaves' valid lines, read as a bit each: the pack side, the
+// console and the default.  THREE and not four --- the debug cable's window is
+// not on this board and the header says why.
+static int popcount3(unsigned v)
 {
 	int n = 0;
-	for (int i = 0; i < 4; ++i)
+	for (int i = 0; i < 3; ++i)
 		if (v & (1u << i))
 			n++;
 	return n;
@@ -271,6 +289,11 @@ static int run_one(const Ratio &r)
 	long min_pulse = -1;
 	long level_since = 0;
 
+	// The join in front of the machine's DBGIN page, on the machine's
+	// clock: how often the empty arm asked, how often it held the page,
+	// and how often anything reached the page at all.
+	long win_asked = 0, win_held = 0, page_asked = 0;
+
 	// The bridge, which is on the machine's clock.
 	long r_out = 0, w_out = 0;
 	long reads = 0, writes = 0;
@@ -354,10 +377,27 @@ static int run_one(const Ratio &r)
 				machrun_in_gap++;
 			}
 
+			// --- the join at the machine's DBGIN page
+			//
+			// **THE ARM THE WINDOW USED TO DRIVE IS EMPTY AND
+			// THIS IS WHAT SAYS SO.**  `cadr_dbg_join.sv` gives
+			// the page to whichever arm asserts first and holds
+			// it until that arm lifts, and a tie goes to arm A ---
+			// the window's.  With no window on this board, arm A
+			// must never assert, the holder must never name it,
+			// and with nothing in the connector either nothing
+			// must reach `cadr_dbgin.sv` at all.  An arm that
+			// asked would take the page and keep it, and the
+			// console's own diagnostic cycles arbitrate behind
+			// the same bus.
+			if (d->dbg_win_req_o) win_asked++;
+			if (!d->rst && !d->dbg_holder_o) win_held++;
+			if (d->dbg_req_o) page_asked++;
+
 			// --- the bridge
 			unsigned aw = d->aw_v_o, ar = d->ar_v_o, hs = d->hs_o;
-			if (popcount4(aw) > 1) multi_aw++;
-			if (popcount4(ar) > 1) multi_ar++;
+			if (popcount3(aw) > 1) multi_aw++;
+			if (popcount3(ar) > 1) multi_ar++;
 			if (aw && ar) both_channels++;
 			if (hs & 0x02) { r_out++; reads++; }	/* ar handshake */
 			if (hs & 0x01) r_out--;			/* r  handshake */
@@ -435,8 +475,13 @@ static int run_one(const Ratio &r)
 		"cadr-soc: started: RUNNING,",
 		"cadr-soc: the disk pack face at 0x40000000 answers PACK (register 7)",
 		"cadr-soc: the default slave at 0x40001000 answers NONE",
-		"cadr-soc: the debug window at 0x80001000 answers DBUG",
-		"cadr-soc: 0 of 16 rounds of four back-to-back loads, one at "
+		// **THE PAGE THE WINDOW HOLDS ON THE TWO ZYNQ BOARDS, WHICH ON
+		// THIS ONE IS THE CATCH-ALL's.**  This line used to read
+		// "the debug window at 0x80001000 answers DBUG".  It is the
+		// one assertion that says the window's own address did not
+		// become a hole when the window left the design.
+		"cadr-soc: the window's page at 0x80001000 answers NONE",
+		"cadr-soc: 0 of 16 rounds of three back-to-back loads, one at "
 			"each face, came back wrong",
 		"cadr-soc: 0 failure(s); idling"
 	};
@@ -531,6 +576,34 @@ static int run_one(const Ratio &r)
 	if (edges < 1000)
 		Fail("the machine retired almost no microcycles: it never ran");
 
+	// ------------------------------------- the machine's DBGIN page
+	if (win_asked) {
+		char m[256];
+		std::snprintf(m, sizeof m,
+			      "the join's window arm asked for the DBGIN page "
+			      "on %ld tick(s): there is no window on this "
+			      "board and that arm must never assert",
+			      win_asked);
+		Fail(m);
+	}
+	if (win_held) {
+		char m[256];
+		std::snprintf(m, sizeof m,
+			      "the join gave the DBGIN page to its window arm "
+			      "on %ld tick(s): with that arm idle the "
+			      "connector holds it from the first tick",
+			      win_held);
+		Fail(m);
+	}
+	if (page_asked) {
+		char m[256];
+		std::snprintf(m, sizeof m,
+			      "something asked for the machine's DBGIN page on "
+			      "%ld tick(s): there is no window and nothing in "
+			      "the connector", page_asked);
+		Fail(m);
+	}
+
 	// ------------------------------------------------------- the bridge
 	if (multi_aw) Fail("more than one slave saw AWVALID at once");
 	if (multi_ar) Fail("more than one slave saw ARVALID at once");
@@ -572,7 +645,11 @@ static int run_one(const Ratio &r)
 			"and %ld write(s) across the two\n"
 			"    clocks, never spoke to two slaves at once, never "
 			"had a read and a write in flight\n"
-			"    together, and left nothing outstanding.\n",
+			"    together, and left nothing outstanding.  The join "
+			"at the machine's DBGIN page never\n"
+			"    gave it to the arm the debug cable's window holds "
+			"on a Zynq board, and nothing\n"
+			"    asked for that page at all.\n",
 			mtick, stick, (int)u.lines.size(), min_pulse, edges,
 			HALT_GAP, reads, writes);
 

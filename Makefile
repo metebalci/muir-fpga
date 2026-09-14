@@ -1443,10 +1443,21 @@ $(error SOC_CLK_DIVIDE could not be read out of \
         be two numbers that can come apart)
 endif
 SOC_CLK_HZ := $(shell echo $$(( 1000000000 / $(SOC_CLK_DIVIDE) )))
-# The four faces the soft system masters, unchanged from the boards that have
-# a processing system.
+# The faces the soft system masters, unchanged from the boards that have a
+# processing system.
+#
+# **THREE AND NOT FOUR, AND THE FOURTH IS THE DEBUG CABLE'S WINDOW.**
+# `rtl/plumbing/cadr_debug_window.sv` is how muir, on a Zynq board's own ARM
+# cores, plays the far end of MIT's debug cable in software.  There is no muir
+# on an Artix and no processor to run one on: this board's debugger is a SECOND
+# BOARD on Pmod JB, which reaches the machine's DBGIN page through the cable's
+# own carrier and never through the bridge.  So the window is in no
+# configuration of this board, `0x8000_1000` is an address the catch-all
+# answers "NONE", and `rtl/plumbing/cadr_soc_axi.sv` has two windows and a
+# catch-all where it had three and one.  The file itself stays: both Zynq
+# boards read it.
 SOC_FACES := rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_disk_pack.sv \
-             rtl/plumbing/cadr_debug_window.sv rtl/plumbing/cadr_gp0_default.sv
+             rtl/plumbing/cadr_gp0_default.sv
 
 # ----------------------------------------------- the Arty A7-100's top level
 #
@@ -3142,8 +3153,16 @@ SOC_TB_DIVISOR := 32
 SOC_TB_BAUD    := $(shell echo $$(( $(SOC_CLK_HZ) / $(SOC_TB_DIVISOR) )))
 SOC_TICKS_PER_US := $(shell echo $$(( $(SOC_CLK_HZ) / 1000000 )))
 
+# **AND THE JOIN, WHICH THE HARNESS INSTANTIATES AND THE FACES DO NOT
+# INCLUDE.**  `rtl/plumbing/cadr_dbg_join.sv` is what sits in front of the
+# machine's DBGIN page on every board in this repository; on this one it has
+# the Pmod connector for its only master and its other arm --- the register
+# window's on a Zynq --- is tied idle.  Named here rather than left to
+# Verilator's own module search, so that a change to it re-runs this check:
+# a prerequisite list is what makes a file part of a check, and finding the
+# module is not the same as depending on it.
 SOC_HARNESS_SRC := $(MACHINE) tb/cadr_soc_harness.sv $(IBEX_SRC) $(SOC_RTL) \
-                   $(SOC_FACES)
+                   $(SOC_FACES) rtl/plumbing/cadr_dbg_join.sv
 
 $(BUILD)/obj_soc/Vcadr_soc_harness: $(SOC_HARNESS_SRC) $(IBEX_VLT) \
                                     tb/cadr_soc_tb.cpp | $(BUILD)
