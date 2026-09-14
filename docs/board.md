@@ -1047,6 +1047,25 @@ machine.
 
 So every block on the drawing is now green. Nothing is turquoise.
 
+## The switch, the boot button and the lamps, 14 September
+
+**SW0 holds the machine at power-on.** With the switch on and the board reset,
+the machine comes up with RUN clear and nothing running: LD0 is dark, LD5 is
+blue and steady, LD2 does not blink, and the screen stays black. The console's
+`switch` command says the switch held it. Pressing BTN0 starts the boot PROM,
+LD5 goes dark once the microcode is loaded, and the machine boots to the
+Listener. With the switch off the board boots by itself as before.
+
+**LD4 is ERRHALT and clears at the boot button.** A normal boot leaves LD4
+dark throughout. Typing `(si:%halt)` in the Listener turns it red, LD0 goes
+dark and LD2 stops. Pressing BTN0 clears the lamp at the press and the machine
+boots again.
+
+**LD5 is -PROMDISABLE.** It is blue for under a second while the PROM loads
+the microcode and dark from then on.
+
+Each step above was taken one at a time at the board and behaved as written.
+
 ## Looking at the display output
 
 The display output block scans the CADR's screen out of DDR and drives the
