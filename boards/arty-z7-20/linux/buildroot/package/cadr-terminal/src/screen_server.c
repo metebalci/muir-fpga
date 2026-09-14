@@ -252,7 +252,7 @@ static void link_key(void *ctx, uint32_t keysym, int down)
 	++s->input_events;
 	if (!s->input)
 		return;
-	key_event(&s->keys, keysym, down);
+	key_event_from(&s->keys, keysym, down, "the input link");
 }
 
 static void link_move(void *ctx, int dx, int dy)
@@ -496,7 +496,7 @@ static int viewer_step(struct screen_server *s, struct screen_viewer *v, const c
 				}
 				// muir's own mapping: `input_keys.h` says what
 				// a keysym becomes and what it could not map.
-				key_event(&s->keys, m.keysym, m.down);
+				key_event_from(&s->keys, m.keysym, m.down, "a viewer");
 				break;
 			case RFB_POINTER:
 				++s->input_events;

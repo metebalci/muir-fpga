@@ -36,6 +36,7 @@
 // register index off by one has nowhere to hide.  And a lost cycle reported
 // as lost and never mistaken for data.
 
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1329,6 +1330,113 @@ static void check_held(void)
 	      "the marker is not where the init step leaves it");
 }
 
+// **`trace-keys`, WHICH SIGNALS TWO PROGRAMS AND TOUCHES NO REGISTER.**
+//
+// What is under check is the pid file and the signal: that the right one of
+// the two goes, that a file which does not name a process is REFUSED rather
+// than acted on, and that the line says which happened.  The daemons are
+// played by this process itself --- it writes its own pid into the stub file
+// and installs the two handlers --- which is the only honest way to see that
+// a signal went at all.
+//
+// **THE PID FILE HOLDING `0` IS THE ONE THAT MATTERS.**  `kill(0, SIGUSR1)`
+// signals the whole process GROUP, which at a prompt is the shell somebody
+// typed in; a negative pid signals a group by number, and -1 signals every
+// process the user may signal.  So the refusal is asserted by the handler NOT
+// firing, which is the only assertion that could tell a refusal from a signal
+// sent to everybody.
+static volatile sig_atomic_t trace_seen_on, trace_seen_off;
+
+static void trace_note(int sig)
+{
+	if (sig == SIGUSR1)
+		++trace_seen_on;
+	else
+		++trace_seen_off;
+}
+
+static void check_trace_keys(void)
+{
+	char path[] = "/tmp/cadr-trace-testXXXXXX";
+	const int fd = mkstemp(path);
+	CHECK(fd >= 0, "could not make the pid file the test needs");
+	if (fd < 0)
+		return;
+	close(fd);
+	signal(SIGUSR1, trace_note);
+	signal(SIGUSR2, trace_note);
+
+	// A pid file naming this process: the signal must arrive, and it must
+	// be the one the word asked for.
+	FILE *f = fopen(path, "w");
+	fprintf(f, "%ld\n", (long)getpid());
+	fclose(f);
+
+	struct cons_trace_keys r;
+	trace_seen_on = trace_seen_off = 0;
+	capture_start();
+	CHECK(cons_trace_keys("a program", path, 1, &r) == CONS_TRACE_SIGNALLED,
+	      "the signal did not go to a live process");
+	CHECK(r.pid == (long)getpid(), "the pid read back is %ld and not this process's %ld",
+	      r.pid, (long)getpid());
+	CHECK(trace_seen_on == 1 && trace_seen_off == 0,
+	      "`on` sent %d SIGUSR1 and %d SIGUSR2, wanting one and none",
+	      (int)trace_seen_on, (int)trace_seen_off);
+	cons_say_trace_keys(&r, 1);
+	CHECK(strstr(capture_end(), "turn its key trace ON") != NULL,
+	      "the line for a program that was reached does not say the trace was turned on");
+
+	trace_seen_on = trace_seen_off = 0;
+	CHECK(cons_trace_keys("a program", path, 0, &r) == CONS_TRACE_SIGNALLED,
+	      "the off signal did not go");
+	CHECK(trace_seen_off == 1 && trace_seen_on == 0,
+	      "`off` sent %d SIGUSR2 and %d SIGUSR1, wanting one and none",
+	      (int)trace_seen_off, (int)trace_seen_on);
+
+	// **THE THREE FILES THAT NAME NO PROCESS**, and the handler must not
+	// fire for any of them.  `0` and `-1` are the dangerous two; an empty
+	// file is what `start-stop-daemon` leaves when nothing started.
+	static const char *const bad[] = { "0\n", "-1\n", "", "not a number\n" };
+	for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; ++i) {
+		f = fopen(path, "w");
+		fputs(bad[i], f);
+		fclose(f);
+		trace_seen_on = trace_seen_off = 0;
+		capture_start();
+		CHECK(cons_trace_keys("a program", path, 1, &r) == CONS_TRACE_NOT_RUNNING,
+		      "a pid file holding \"%s\" was not refused", bad[i]);
+		CHECK(trace_seen_on == 0 && trace_seen_off == 0,
+		      "a pid file holding \"%s\" signalled something: %d on, %d off",
+		      bad[i], (int)trace_seen_on, (int)trace_seen_off);
+		cons_say_trace_keys(&r, 1);
+		CHECK(strstr(capture_end(), "is not running") != NULL,
+		      "a pid file holding \"%s\" did not report the program as not running",
+		      bad[i]);
+	}
+
+	// A pid file that is not there at all: the ordinary board with one of
+	// the two programs stopped.
+	unlink(path);
+	trace_seen_on = trace_seen_off = 0;
+	capture_start();
+	CHECK(cons_trace_keys("a program", path, 1, &r) == CONS_TRACE_NOT_RUNNING,
+	      "a missing pid file was not reported as a program that is not running");
+	CHECK(trace_seen_on == 0 && trace_seen_off == 0, "a missing pid file signalled something");
+	cons_say_trace_keys(&r, 1);
+	CHECK(strstr(capture_end(), "is not running") != NULL,
+	      "a missing pid file did not report the program as not running");
+	signal(SIGUSR1, SIG_DFL);
+	signal(SIGUSR2, SIG_DFL);
+
+	// The two pid files are where the init scripts write them.  A word that
+	// signalled the wrong file would say `not running` for ever on a board
+	// where both programs are up.
+	CHECK(strcmp(CONS_TRACE_TERMINAL_PID, "/var/run/cadr-terminal.pid") == 0,
+	      "the terminal's pid file is not where S85cadr-terminal writes it");
+	CHECK(strcmp(CONS_TRACE_USB_PID, "/var/run/cadr-usb-input.pid") == 0,
+	      "the USB program's pid file is not where S88cadr-usb-input writes it");
+}
+
 // **SW0, AND WHAT A CONSOLE MUST SAY ABOUT A MACHINE THAT NEVER RAN.**
 //
 // A machine the switch held has SRUN down and reads EXACTLY like one somebody
@@ -1460,6 +1568,7 @@ int main(void)
 	check_halt_and_start();
 	check_boot();
 	check_held();
+	check_trace_keys();
 	check_switch();
 	check_step();
 	check_flags();
@@ -1490,6 +1599,10 @@ int main(void)
 	       "      machine and on a running one alike, counted and reported with the PC and\n"
 	       "      CYCLES either side; twelve values that are not the key press nothing, and\n"
 	       "      a modelled fabric that boots on any value is caught by the same twelve\n"
+	       "    trace-keys: the pid file read and the right signal sent --- SIGUSR1 for on\n"
+	       "      and SIGUSR2 for off, this process playing the daemon --- and a file\n"
+	       "      holding 0, -1, nothing or a word REFUSED with nothing signalled, since\n"
+	       "      kill(0) signals the whole process group and kill(-1) signals everything\n"
 	       "    the held machine: start and step refuse while /var/run/cadr-held exists and\n"
 	       "      say muir's own sentence for it, and boot presses the button and removes it\n"
 	       "    SW0, the no-auto-boot switch, as two bits of STAT and not one: what it did at\n"

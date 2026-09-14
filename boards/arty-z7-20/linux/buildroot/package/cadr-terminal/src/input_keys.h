@@ -122,6 +122,39 @@
 //
 // ## The mapping is a value here, not a table
 //
+// ## The trace, and it is muir's line
+//
+// **`--keyboard-mapping-trace`, AND IT PRINTS muir'S OWN LINE.**  muir's
+// `Keyboard::key_traced` writes one line for every keysym that arrives ---
+// the keysym by name and by number, whether it went down or up, what it
+// became, and what the keyboard's own firmware then did with it --- and
+// `key_event_traced` below writes the SAME line, word for word, for every
+// keysym the two programs share a vocabulary for.  That is the point of it:
+// somebody who has read one machine's trace reads the other's.
+//
+// The one thing this line carries that muir's cannot is WHERE the keysym came
+// from, because muir has one keyboard and this program has two sources for
+// it: a viewer over RFB, and `cadr-usb-input` over the input link.  So the
+// source is written after `down` or `up`, where the sentence has room for it,
+// and with no source named the line is muir's exactly.
+//
+//     keysym 0x42 B down from a viewer, B
+//     keysym 0x42 B down, B                      (muir's own line)
+//
+// `enum key_went_kind` is muir's `Went` and `key_went_text` is its `Display`:
+// what a keysym became is a VALUE that `key_event` hands back, and not a
+// branch that prints for itself, because the same eight answers are what the
+// check holds the wording to.
+//
+// **AND IT SWITCHES WHILE THE PROGRAM RUNS.**  A trace is a diagnostic
+// somebody wants for the minute they are looking at a keyboard, and a board
+// that has to be restarted to get one is a board whose Lisp is lost to get
+// it.  So `SIGUSR1` turns it on and `SIGUSR2` turns it off ---
+// `key_trace_signals` installs them and `key_trace_apply` acts on them once a
+// pass of the program's own loop, which is where `say` may be called from ---
+// and `cadr-console trace-keys on` is the word that sends them.  The flag is
+// how a run STARTS with it on and is nothing else.
+
 // **`--keyboard-mapping`.**  muir reads a file of `key` and `prefix` lines
 // over its built-in map, and so does this: `input_mapping.h` is that file's
 // grammar and its parser, and a `struct key_state` carries the mapping it
@@ -135,6 +168,7 @@
 #ifndef INPUT_KEYS_H
 #define INPUT_KEYS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "input_mapping.h"
@@ -208,6 +242,59 @@ enum key_firmware {
 	KEY_FW_HELD_BACK
 };
 
+// **WHAT A KEYSYM BECAME**, which is muir's `Went` and is the only thing that
+// says which half of a key's journey is wrong.  A viewer chooses the keysym it
+// sends for a physical key --- RFC 6143 leaves that to it --- so the source is
+// the only authority on which keysym arrived, and the mapping is the only
+// authority on what it meant.
+enum key_went_kind {
+	// The mapping has nothing for it.  The answer to "why does this key do
+	// nothing".
+	KEY_WENT_UNBOUND = 0,
+	// Held as a prefix: nothing goes down the cable until the keysym after
+	// it.  **Saying so is the point** --- a prefix's press produces no key
+	// by design, and printing nothing for it would look exactly like
+	// `KEY_WENT_UNBOUND`.
+	KEY_WENT_HELD_AS_PREFIX,
+	// The prefix pressed again, which is the way out of a sequence begun by
+	// mistake.
+	KEY_WENT_PREFIX_LET_GO,
+	// Looked up behind a standing prefix, and what was there.
+	KEY_WENT_BEHIND,
+	// Sent to a key: its position, the plane wanted, and whether the
+	// terminal had to work the shift around it.
+	KEY_WENT_SENT,
+	// Found on a key and refused there: the queue was full, `KEY_BACKLOG`
+	// words the machine has not read, and the press was refused whole.
+	// **Said, and not folded into `KEY_WENT_SENT`**: a keystroke refused
+	// here is a character that does not type, and a trace that called it
+	// sent would be asserting the opposite of what happened to the one
+	// person reading it for exactly this.
+	KEY_WENT_REFUSED,
+	// Nothing went down the cable, and why.  Every one of these is by
+	// design rather than a mapping that is short of a line.
+	KEY_WENT_NOTHING
+};
+
+struct key_went {
+	int kind;
+	// The key it reached, and the plane: `KEY_WENT_SENT`,
+	// `KEY_WENT_REFUSED`, and `KEY_WENT_BEHIND` when `found`.
+	uint8_t p, shifted, tapped, found;
+	// `KEY_WENT_BEHIND`: the prefix's own keysym.
+	uint32_t first;
+	// `KEY_WENT_NOTHING`: muir's own words for why, a literal.
+	const char *why;
+};
+
+// The longest line the trace writes, with room for a key's name and a
+// keysym's: the refusal is the longest of the eight and is under 160.
+#define KEY_TRACE_MAX 256
+// The longest a key's or a keysym's name is written as.  MIT's longest is
+// `Right Hyper` at eleven and X11's is `ISO_Level3_Shift` at sixteen; a
+// position written out instead is shorter than either.
+#define KEY_NAME_MAX 64
+
 // How many words wait here while the machine is not reading the keyboard.
 // muir's `keyboard::BACKLOG`, and for muir's reason: the keyboard's own
 // firmware has a shift register and no queue, so a viewer typing faster than
@@ -268,6 +355,13 @@ struct key_state {
 	int firmware;
 	// `--keyboard-boot-trace`: say on the log when a key-up is held back.
 	int boot_trace;
+	// `--keyboard-mapping-trace`: say what every keysym arrived as and what
+	// it became.  muir's `Keyboard::trace`, and switched by the same two
+	// signals at run time.
+	int trace;
+	// What the last keysym became, for the trace and for the check: muir's
+	// `Went`, handed back by `key_event` rather than printed by it.
+	struct key_went went;
 	// How many boot words have gone, and how many key-ups were held back
 	// behind them, for the summary line.
 	unsigned long boots, held_back;
@@ -294,12 +388,46 @@ void key_boot_set(struct key_state *k, struct key_boot b);
 // a machine asked to reboot because somebody typed a chord is exactly what
 // this program's log is for --- and this adds the key-ups, which are one line
 // a keystroke and would be noise otherwise.  muir prints both under
-// `--keyboard-mapping-trace`, whose per-keysym line this program has not got.
+// `--keyboard-mapping-trace`, and so does this program: with that trace on, a
+// key-up held back says so on its own line as part of what the key became, and
+// this flag is the way to have that one line without the rest.
 void key_boot_traced(struct key_state *k, int on);
+
+// `Keyboard::traced`: print every keysym as it arrives and what it became.
+// **On the log**, where every line of this program goes, and not on stderr as
+// muir's does: muir runs beside a prompt that owns stdout, and this runs as a
+// daemon whose stderr `start-stop-daemon -b` sends to /dev/null.
+void key_traced(struct key_state *k, int on);
+
+// `SIGUSR1` turns the trace on and `SIGUSR2` turns it off, so that a keyboard
+// can be watched without restarting the program and losing the Lisp on the
+// machine.  `key_trace_signals` installs the two handlers; `key_trace_apply`
+// acts on what they asked for and says one line when it CHANGES, and is
+// called once a pass of the program's loop --- not in the handler, where
+// `say` may not be called.  Idempotent: a second `SIGUSR1` says nothing.
+void key_trace_signals(void);
+void key_trace_apply(struct key_state *k);
 
 // A key from the viewer, by X11 keysym, going down or coming up.
 // `muir::terminal::keyboard::Keyboard::key`.
 void key_event(struct key_state *k, uint32_t keysym, int down);
+
+// ...and from a named source: `a viewer`, or `the input link`.  The only
+// difference is the trace's line, which says where the keysym came from; with
+// `source` NULL the line is muir's exactly.
+void key_event_from(struct key_state *k, uint32_t keysym, int down, const char *source);
+
+// `Keyboard::key_traced`: the key acted on, and the line the trace writes for
+// it written into `out`, which wants `KEY_TRACE_MAX` bytes.  Returned as well
+// as printed so that the check can hold the wording without capturing a
+// stream, which is muir's own reason for handing its line back.  The key is
+// acted on either way: this is `key_event_from` with the line handed back.
+const char *key_event_traced(struct key_state *k, uint32_t keysym, int down,
+			     const char *source, char *out, size_t n);
+
+// `Went`'s `Display`: what a keysym became, in muir's own words.  For the
+// check, which holds the eight answers to muir's wording one at a time.
+const char *key_went_text(const struct key_went *w, char *out, size_t n);
 
 // How many words are waiting.
 unsigned key_pending(const struct key_state *k);

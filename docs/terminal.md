@@ -486,9 +486,9 @@ register, and a machine that works out what is held from the stream on it.
 said whether or not anything is traced, because this program's log is a low
 rate one and a machine being asked to start over is exactly what it is for.
 `--keyboard-boot-trace` adds a line for each key-up that was held back behind
-the word, which is one line a keystroke and would be noise otherwise. muir
-says both under `--keyboard-mapping-trace`, whose line for every keysym this
-program has not got.
+the word, which is one line a keystroke and would be noise otherwise. muir says
+both under `--keyboard-mapping-trace`, and so does this program: the section
+below is that trace.
 
 **The other half is the fabric's, and it is what makes the machine restart.**
 This program sends the word. What turns it into a boot is a comparator on the
@@ -518,6 +518,77 @@ low six bits is the cold boot the sequence asked for. So the flush this program
 does before it binds its socket matters for the sequence too --- a word left
 over from a previous run in that register is a word the microcode will read as
 an answer to a question it has not asked yet.
+
+## What a key became: the trace
+
+**A key that does nothing has two halves to its road and the trace says which
+one is wrong.** A keysym arrives from a viewer or over the input link, the
+mapping turns it into one of MIT's own key positions, and the stream of
+positions goes to the machine. Any of those can be the step that is wrong, and
+without a line for each one there is nothing to read but a machine that did not
+type.
+
+**It is muir's own flag and muir's own line.** `muir
+--keyboard-mapping-trace` writes a line for every keysym its keyboard is given;
+this writes the same line. Somebody who has read one machine's trace reads the
+other's.
+
+    keysym 0x61 a down from a viewer, a
+    keysym 0x21 ! down from a viewer, !, tapped with the shift worked around it
+    keysym 0xffe3 Control_L down from the input link, Left Control
+    keysym 0xff50 Home down from a viewer, no binding
+    keysym 0xff14 Scroll_Lock down from a viewer, held as a prefix; the keysym after it is looked up behind it
+    keysym 0x31 1 down from a viewer, behind Scroll_Lock: Roman I
+    keysym 0xffff Delete down, Rubout, and the boot sequence is complete: the cold boot word goes after it
+
+The keysym is given by number and by name. The number is what to write in a
+mapping file when there is no name; the name is what a file already written
+says. Then whether the key went down or came up, then where it came from, and
+then what it became.
+
+**The source is the one thing this line carries that muir's does not.** muir
+has one keyboard and one way into it. This program has two: a viewer over RFB
+and `cadr-usb-input` over the input link. With no source named the line is
+muir's exactly, which is what the check asserts last.
+
+**A key is named as a mapping file would name it.** `Left Control` and not
+`Control`, because the two are different keys at different positions. Where the
+name would not read back as this key the position is written instead, in octal
+as MIT writes it: `(` is on two keys, and with no shift held it is the one whose
+name would resolve to the other, so the line says `position 132`. A mapping file
+can be written from any name this trace prints.
+
+**Every answer is said, including the ones that send nothing.** A prefix's press
+produces no key by design, and a line saying nothing for it would read exactly
+like a key with no binding. So the trace says `held as a prefix`, `the prefix is
+let go`, `nothing: a latched shifting key holds for the press alone`, and the
+rest. A keystroke the queue had no room for says `refused: the queue is full,
+256 words the machine has not read`, because a refusal is a character that does
+not type and a line calling it sent would be the opposite of the truth.
+
+### Turning it on while the machine runs
+
+**The trace switches without restarting the program**, which matters because
+restarting it is not free: the machine keeps running, but the program is the
+only way to see the screen, and on a board being watched that is the whole
+picture.
+
+    cadr-console trace-keys on
+    cadr-console trace-keys off
+
+That word signals both input programs --- this one and `cadr-usb-input` --- so
+the two halves of a key's road are turned on together. It reads their pid files
+and sends `SIGUSR1` or `SIGUSR2`, and it touches no register, so it works on a
+board whose fabric has no console in it. `docs/console.md` has the word.
+
+**The flag is how a run starts with the trace on.** `--keyboard-mapping-trace`
+on the command line, or in the card's `fpgarc` for a board that should always
+trace. It is off by default: a line a keystroke on the board's own console is
+not something to leave running.
+
+**The lines go where every other line of this program goes.** On the board that
+is the console, because `S85cadr-terminal` starts it with `--log /dev/console`.
+So somebody with the serial console open sees each key as it is typed.
 
 ## The mouse
 

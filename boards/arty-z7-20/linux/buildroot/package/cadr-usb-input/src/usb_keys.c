@@ -11,6 +11,7 @@
 
 #include "usb_keys.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "usb_keymap.h"
@@ -62,6 +63,18 @@ uint32_t usb_kbd_keysym(const struct usb_kbd_state *k, uint16_t code)
 	return level2 ? e->shifted : e->plain;
 }
 
+// What became of the key event, left behind for `usb_kbd_line`.  muir's own
+// arrangement for its keyboard: the answer is a value the caller may read, so
+// that the decision and the printing are not the same branch.
+static int went(struct usb_kbd_state *k, int what, uint32_t keysym, int level, int keypad)
+{
+	k->went = what;
+	k->went_keysym = keysym;
+	k->went_level = (uint8_t)!!level;
+	k->went_keypad = (uint8_t)!!keypad;
+	return what == USB_WENT_SENT;
+}
+
 static void note_held(struct usb_kbd_state *k, uint16_t code)
 {
 	if (k->holds < USB_KBD_MAX_DOWN)
@@ -86,11 +99,11 @@ int usb_kbd_key(struct usb_kbd_state *k, uint16_t code, int value,
 		// The kernel's auto-repeat.  See the header: this keyboard has
 		// a Repeat key of its own and sends no position twice.
 		++k->repeats;
-		return 0;
+		return went(k, USB_WENT_REPEAT, 0, 0, 0);
 	}
 	if (code >= USB_KEY_CODES) {
 		++k->unknown;
-		return 0;
+		return went(k, USB_WENT_NO_KEYSYM, 0, 0, 0);
 	}
 	const int down = value != 0;
 
@@ -121,7 +134,7 @@ int usb_kbd_key(struct usb_kbd_state *k, uint16_t code, int value,
 			// press stands and this one is dropped, because a
 			// second press with no release owes a second release.
 			++k->repeats;
-			return 0;
+			return went(k, USB_WENT_ALREADY_DOWN, k->sent[code], 0, 0);
 		}
 		if (k->holds >= USB_KBD_MAX_DOWN) {
 			// **REFUSED WHOLE.**  A press this cannot remember is
@@ -129,17 +142,24 @@ int usb_kbd_key(struct usb_kbd_state *k, uint16_t code, int value,
 			// release went nowhere is a Shift held for the rest of
 			// the machine's run.
 			++k->refused;
-			return 0;
+			return went(k, USB_WENT_NO_ROOM, 0, 0, 0);
 		}
 		const uint32_t sym = usb_kbd_keysym(k, code);
 		if (!sym) {
 			++k->unknown;
-			return 0;
+			return went(k, USB_WENT_NO_KEYSYM, 0, 0, 0);
 		}
 		k->sent[code] = sym;
 		note_held(k, code);
 		out->keysym = sym;
-		return 1;
+		// The level the keysym came from, for the trace: the same test
+		// `usb_kbd_keysym` made, asked again of the same two flags.
+		{
+			const struct usb_key *e = lookup(code);
+			const int pad = e && e->keypad;
+			return went(k, USB_WENT_SENT, sym,
+				    pad ? k->numlock != 0 : (k->shift_l || k->shift_r), pad);
+		}
 	}
 
 	// **UP CARRIES THE KEYSYM THE PRESS CARRIED**, not the one the level
@@ -147,11 +167,92 @@ int usb_kbd_key(struct usb_kbd_state *k, uint16_t code, int value,
 	// not turn `exclam` into `1` and leave the shifted position down.
 	const uint32_t sym = k->sent[code];
 	if (!sym)
-		return 0;   // an up for a key this never sent down
+		return went(k, USB_WENT_NOT_SENT, 0, 0, 0);   // never sent down
 	k->sent[code] = 0;
 	drop_held(k, code);
 	out->keysym = sym;
-	return 1;
+	// **NO LEVEL ON AN UP**, and the line says so rather than naming one: the
+	// level was consulted at the press and the release carries what the
+	// press carried.
+	return went(k, USB_WENT_SENT, sym, 0, 0);
+}
+
+const char *usb_code_name(uint16_t code)
+{
+	for (size_t i = 0; i < USB_CODE_NAME_COUNT; ++i)
+		if (USB_CODE_NAMES[i].code == code)
+			return USB_CODE_NAMES[i].name;
+	return NULL;
+}
+
+// What to call the keysym that crossed: the generated name for the plane it
+// came from.  A release carries the keysym its press carried, which may be
+// either plane, so it is looked for rather than chosen.
+static const char *sym_name(uint16_t code, uint32_t keysym)
+{
+	const struct usb_key *e = lookup(code);
+	if (!e)
+		return NULL;
+	if (keysym == e->plain)
+		return e->plain_name;
+	if (keysym == e->shifted)
+		return e->shifted_name;
+	return NULL;
+}
+
+const char *usb_kbd_line(const struct usb_kbd_state *k, const char *device,
+			 uint16_t code, int value, char *out, size_t n)
+{
+	const char *kname = usb_code_name(code);
+	const char *sym = sym_name(code, k->went_keysym);
+	const int down = value != 0;
+	char head[128];
+
+	// The head of every line: the code by number and by the kernel's own
+	// name, which is the name `evtest` prints, then up or down and the
+	// device it came from.  A repeat is neither up nor down --- the kernel
+	// sends it as value 2 --- and says so.
+	snprintf(head, sizeof head, "key %u %s %s on %s", code,
+		 kname ? kname : "(the kernel names no such code)",
+		 value == 2 ? "repeat" : (down ? "down" : "up"), device);
+
+	switch (k->went) {
+	case USB_WENT_SENT:
+		if (!down) {
+			snprintf(out, n, "%s: %s (keysym 0x%x), the keysym its press carried",
+				 head, sym ? sym : "?", k->went_keysym);
+			break;
+		}
+		// **THE LEVEL, AND WHAT CHOSE IT.**  Shift for every key but
+		// the keypad's and Num Lock for those, which is this file's one
+		// decision and the thing somebody tracing a key wants to see.
+		snprintf(out, n, "%s, %s: %s (keysym 0x%x)", head,
+			 k->went_keypad ? (k->went_level ? "Num Lock on" : "Num Lock off")
+					: (k->went_level ? "Shift held" : "no shift"),
+			 sym ? sym : "?", k->went_keysym);
+		break;
+	case USB_WENT_REPEAT:
+		snprintf(out, n, "%s: dropped, the kernel's auto-repeat --- this keyboard has a "
+			 "Repeat key of its own", head);
+		break;
+	case USB_WENT_ALREADY_DOWN:
+		snprintf(out, n, "%s: dropped, it is already down --- a device that was not "
+			 "drained, or a release that was lost", head);
+		break;
+	case USB_WENT_NO_ROOM:
+		snprintf(out, n, "%s: refused whole, %u keys are already held and a press this "
+			 "cannot remember is a release it could not owe", head,
+			 (unsigned)USB_KBD_MAX_DOWN);
+		break;
+	case USB_WENT_NOT_SENT:
+		snprintf(out, n, "%s: nothing, an up for a key this never sent down", head);
+		break;
+	default:
+		snprintf(out, n, "%s: the code is not in the table, so nothing crosses the "
+			 "link --- the far end never sees this key", head);
+		break;
+	}
+	return out;
 }
 
 unsigned usb_kbd_release_all(struct usb_kbd_state *k, struct cadr_input_event *out, unsigned max)

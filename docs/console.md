@@ -1258,7 +1258,8 @@ contradicts itself. The board latches bit 4 off the same synchronised level the
 machine's own reset arms read, at the same edges, so the two cannot disagree.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
-`start`, `boot`, `step N`, `regs`, `status`, `switch`, `examine` and `deposit`.
+`start`, `boot`, `step N`, `regs`, `status`, `switch`, `trace-keys on|off`,
+`examine` and `deposit`.
 `status` is the question of the day and answers it the way `main.rs`'s
 `machrun_low` does, plus a positive measurement: CYCLES sampled twice a few
 milliseconds apart, so that "running" is something seen rather than inferred. `step N` is CC's
@@ -1283,6 +1284,41 @@ button that starts it". `boot` presses the button and removes the marker.
 Nothing in the fabric knows about any of this, since `RUN` is still preset at
 reset. The marker is the whole of the contract, and the host check holds all
 three behaviours.
+
+**And one word here is not about the fabric at all: `trace-keys on|off`.** It
+tells the two input programs to say what each key becomes, on their own logs.
+
+    cadr-console trace-keys on
+    cadr-console trace-keys off
+
+A key's road has two halves. `cadr-usb-input` turns a key code from the board's
+own USB port into a keysym; `cadr-terminal` turns a keysym --- from there or
+from a viewer --- into one of MIT's own key positions. Each says what it did
+under a trace of its own, and this word switches both, because a key that does
+nothing is a question about the road and not about either half of it.
+`docs/terminal.md` and `docs/usb-input.md` have the two lines.
+
+**It reads their pid files and signals them.** `/var/run/cadr-terminal.pid` and
+`/var/run/cadr-usb-input.pid` are what the init scripts write; `SIGUSR1` turns a
+trace on and `SIGUSR2` turns it off. Each program installs a handler that does
+nothing but set a flag, acts on it once a pass of its own loop, and says one
+line when it changes, so asking twice is not two lines. One line is printed here
+for each program, saying that it was reached or that it is not running, because
+a word that silently reached one of the two would be worse than one that reached
+neither. The status is 0 when at least one was told, which a board with no USB
+keyboard needs: one of the two programs is enough.
+
+**A pid file that does not name a process is refused rather than acted on.**
+`kill(0, SIGUSR1)` signals the whole process group --- the shell somebody typed
+in --- and a negative pid signals a group by number, so a file holding `0`, `-1`,
+nothing, or a word is reported as a program that is not running and nothing is
+sent. The host check asserts that by installing the two handlers itself and
+requiring that they do not fire.
+
+**And it touches no register**, so the program does it before the guard and
+before `IDENT`: a word that cannot reach `M_AXI_GP1` must not be stopped by a
+window that does not answer. `cadr-console trace-keys on` works on a board whose
+fabric has no console in it at all.
 
 **There is no init script**, and `cadr-console.mk` says why: the console is a
 person at a prompt, and started at boot it would hold a second master on the

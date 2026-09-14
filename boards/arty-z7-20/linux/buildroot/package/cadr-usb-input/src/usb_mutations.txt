@@ -86,11 +86,11 @@
 @old
 	const uint32_t sym = k->sent[code];
 	if (!sym)
-		return 0;   // an up for a key this never sent down
+		return went(k, USB_WENT_NOT_SENT, 0, 0, 0);   // never sent down
 @new
 	const uint32_t sym = k->sent[code] ? usb_kbd_keysym(k, code) : 0;
 	if (!sym)
-		return 0;   // an up for a key this never sent down
+		return went(k, USB_WENT_NOT_SENT, 0, 0, 0);   // never sent down
 @end
 
 @mutation the-kernels-repeat-is-passed-on-as-a-press
@@ -365,4 +365,56 @@
 	if (at) {
 		d->in_len = 0;
 	}
+@end
+
+# --- the trace, which is what somebody watching a key reads ---------------
+#
+# **THE LINE IS THE PRODUCT HERE**, as it is in the screen's own three: a
+# trace that named the wrong keysym or the wrong level would send somebody to
+# look at the far end of a road whose near end is what moved.
+
+@mutation the-trace-names-the-other-plane-s-keysym
+@file usb_keys.c
+@why the trace: `a` with no shift is `a` and not `A`, and the keysym that crossed the link is the one the line must name
+@note What crosses the link is untouched --- the far end still gets the right
+@note keysym --- so nothing but the trace's own wording can see this.  A key
+@note traced as `A` while the machine types `a` would be read as the screen's
+@note mapping being wrong, which is the other program and the other half of
+@note the road.
+@old
+	if (keysym == e->plain)
+		return e->plain_name;
+	if (keysym == e->shifted)
+		return e->shifted_name;
+@new
+	if (keysym == e->plain)
+		return e->shifted_name;
+	if (keysym == e->shifted)
+		return e->plain_name;
+@end
+
+@mutation the-trace-names-the-wrong-level
+@file usb_keys.c
+@why the level is Shift's for every key but the keypad's and Num Lock's for those, which is this program's one decision and the thing a trace is turned on for
+@note Reversed, a keypad key with Num Lock on reads `Num Lock off` and a
+@note shifted letter reads `no shift`.  The keysym is right on every line, so
+@note this is invisible to anything but the words.
+@old
+			 k->went_keypad ? (k->went_level ? "Num Lock on" : "Num Lock off")
+					: (k->went_level ? "Shift held" : "no shift"),
+@new
+			 k->went_keypad ? (k->went_level ? "Num Lock off" : "Num Lock on")
+					: (k->went_level ? "no shift" : "Shift held"),
+@end
+
+@mutation the-trace-signals-are-the-wrong-way-round
+@file usb_devices.c
+@why SIGUSR1 turns the trace on and SIGUSR2 turns it off; swapped, `cadr-console trace-keys on` turns it off
+@note The two signals are all the switching there is, and a program that had
+@note them the wrong way round would answer `trace-keys on` by going quiet ---
+@note which reads exactly like a program that is not running.
+@old
+	trace_asked = (sig == SIGUSR1);
+@new
+	trace_asked = (sig == SIGUSR2);
 @end

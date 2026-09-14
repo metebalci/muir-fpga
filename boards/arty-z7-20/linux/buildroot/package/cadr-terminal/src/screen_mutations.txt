@@ -314,17 +314,17 @@
 @note "Shift_L", where the two words come out as four.
 @old
 	if (mp >= 0) {
-		if (down)
-			press(k, (uint8_t)mp);
-		else
+		if (down && !press(k, (uint8_t)mp))
+			return w_of(KEY_WENT_REFUSED, (uint8_t)mp, 0, 0);
+		if (!down)
 			release(k, (uint8_t)mp);
-		return;
+		return w_of(KEY_WENT_SENT, (uint8_t)mp, 0, 0);
 	}
 @new
 	if (mp >= 0) {
 		if (down)
-			tap(k, (uint8_t)mp, 0);
-		return;
+			(void)tap(k, (uint8_t)mp, 0);
+		return w_of(KEY_WENT_SENT, (uint8_t)mp, 0, 0);
 	}
 @end
 
@@ -348,10 +348,12 @@
 @note branch taken for keys it was never meant for.
 @old
 	if (!down && take_tapped(k, keysym))
-		return;
+		return w_nothing("its key was tapped and has gone already");
 @new
-	if (!down)
-		return;
+	if (!down) {
+		(void)take_tapped(k, keysym);
+		return w_nothing("its key was tapped and has gone already");
+	}
 @end
 
 @mutation keys-a-prefix-sends-a-key-of-its-own
@@ -394,10 +396,10 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 		k->latches = 0;
 		for (unsigned i = 0; i < n; ++i)
 			release(k, k->latched[i]);
-		return;
+		if (!went)
 @new
 		k->latches = 0;
-		return;
+		if (!went)
 @end
 
 @mutation keys-a-viewer-that-goes-leaves-its-keys-down
@@ -999,4 +1001,53 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 		if (v > 65535u)
 @new
 		if (v > 655350u)
+@end
+
+# --- the trace, which is muir's own line ---------------------------------
+#
+# **THE LINE IS THE PRODUCT HERE.**  A trace exists so that somebody can see
+# which half of a key's road is wrong, and one that named the wrong key would
+# send them to fix a mapping that is right --- so these three are aimed at the
+# words and not at the keyboard under them.
+
+@mutation the-trace-names-the-other-plane-of-the-key
+@file input_keys.c
+@why the trace: `a` pressed with no shift is `a` and not `A`, and a line that says otherwise sends somebody to fix a mapping that is right
+@note The state machine is untouched --- the right word still goes down the
+@note cable --- so nothing but the trace's own wording can see this.  That is
+@note the point: a diagnostic nothing checks is a diagnostic that lies.
+@old
+	case KEY_WENT_SENT:
+		key_written(w->p, w->shifted, key, sizeof key);
+@new
+	case KEY_WENT_SENT:
+		key_written(w->p, !w->shifted, key, sizeof key);
+@end
+
+@mutation the-trace-writes-a-name-that-would-not-read-back
+@file input_keys.c
+@why `(` is on two keys, and the one chosen with no shift held is written as its position because its name would read back as the other
+@note muir's `key_written` writes a NAME only when `key_of` would resolve it to
+@note this position and plane, and the position otherwise.  Without the round
+@note trip the trace says `(` for position 0o132, and a mapping file written
+@note from that line binds the other key.  `back_p` and `back_s` are still
+@note written through their pointers, so the compiler cannot catch this
+@note instead of the check.
+@old
+	if (key_key_of(name, &back_p, &back_s, why, sizeof why) == 0
+	    && back_p == p && (back_s != 0) == (shifted != 0)) {
+@new
+	if (key_key_of(name, &back_p, &back_s, why, sizeof why) == 0) {
+@end
+
+@mutation the-trace-signals-are-the-wrong-way-round
+@file input_keys.c
+@why SIGUSR1 turns the trace on and SIGUSR2 turns it off; swapped, `cadr-console trace-keys on` turns it off
+@note The two signals are all the switching there is, and a program that had
+@note them the wrong way round would answer `trace-keys on` by going quiet ---
+@note which reads exactly like a program that is not running.
+@old
+	trace_asked = (sig == SIGUSR1);
+@new
+	trace_asked = (sig == SIGUSR2);
 @end
