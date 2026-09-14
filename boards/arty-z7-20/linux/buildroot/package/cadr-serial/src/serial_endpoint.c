@@ -75,7 +75,7 @@ int serial_endpoint_bind(struct serial_endpoint *e, const char *bind_addr, unsig
 	if (!bind_addr || !*bind_addr) {
 		a.sin_addr.s_addr = htonl(INADDR_ANY);
 	} else if (inet_pton(AF_INET, bind_addr, &a.sin_addr) != 1) {
-		say("--bind %s is not a dotted quad", bind_addr);
+		say("--serial %s is not a dotted quad", bind_addr);
 		return -1;
 	}
 	const int fd = socket(AF_INET, SOCK_STREAM, 0);

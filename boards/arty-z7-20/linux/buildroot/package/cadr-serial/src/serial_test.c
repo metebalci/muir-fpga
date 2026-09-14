@@ -66,9 +66,16 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <cadr/cadr_endpoint.h>
 #include <cadr/cadr_log.h>
 
 #include "serial_endpoint.h"
+
+// The port cadr-serial defaults to, repeated here rather than included from
+// the program: the check holds the grammar against a default and does not
+// care which number it is, and a shared constant would let both move
+// together and say nothing.
+#define SER_TEST_PORT 7641
 #include "serial_face.h"
 
 static int bad;
@@ -878,6 +885,92 @@ static void check_nodelay(void)
 	settle();
 }
 
+// ---- `--serial`'s endpoint, which is muir's grammar --------------------
+//
+// **WHY THE GRAMMAR IS CHECKED AND NOT THE FLAG.**  `cadr-serial.c`'s
+// `main` is not in this check --- the check links the two core files and
+// drives them --- so what is held here is the thing `main` calls, which is
+// where every decision about a spelling is made.  `main` reads one word and
+// refuses what comes back with no port named, and that is the whole of it.
+//
+// muir's four forms, out of its own `endpoint_at`: nothing, a port, an
+// address, address:port.  This program takes the two that name a port and
+// refuses the two that do not, which is muir's own rule for `--serial`: the
+// serial line's number is not one anybody would guess, so an endpoint that
+// does not say it is an endpoint nobody was told to attach to.
+//
+// **AND THE DEFAULT ADDRESS IS EVERY INTERFACE AND NOT THE LOOPBACK**, which
+// is the one place this board parts from muir and is checked here so that
+// nobody changes it by accident: the board has no terminal of its own and the
+// line exists to be reached from another machine.
+static void check_the_endpoint_grammar(void)
+{
+	struct cadr_endpoint e;
+
+	// A bare port: the default's address at that port, and a port named.
+	CHECK(cadr_endpoint_parse("7641", NULL, SER_TEST_PORT, &e) == 0,
+	      "a bare port must be taken");
+	CHECK(e.port == 7641, "a bare port is that port: %u", e.port);
+	CHECK(e.addr[0] == '\0',
+	      "and it is on the default's address, every interface here: [%s]", e.addr);
+	CHECK(e.port_named == 1, "and it names a port, which is what --serial requires");
+
+	// address:port, which is what the card writes.
+	CHECK(cadr_endpoint_parse("0.0.0.0:7641", NULL, SER_TEST_PORT, &e) == 0,
+	      "address:port must be taken");
+	CHECK(strcmp(e.addr, "0.0.0.0") == 0, "the address is the address: [%s]", e.addr);
+	CHECK(e.port == 7641, "and the port is the port: %u", e.port);
+	CHECK(e.port_named == 1, "and it names a port");
+
+	// The loopback, which is how the line is kept off the LAN now that
+	// there is no --bind to say it with.
+	CHECK(cadr_endpoint_parse("127.0.0.1:7641", NULL, SER_TEST_PORT, &e) == 0,
+	      "the loopback with a port must be taken");
+	CHECK(strcmp(e.addr, "127.0.0.1") == 0, "and it is the loopback: [%s]", e.addr);
+
+	// A bare address parses and names no port, which is the spelling
+	// `main` refuses.  It must parse, or the refusal would be a syntax
+	// error rather than the rule it is.
+	CHECK(cadr_endpoint_parse("127.0.0.1", NULL, SER_TEST_PORT, &e) == 0,
+	      "a bare address must parse");
+	CHECK(e.port_named == 0, "and must name no port, which is why --serial refuses it");
+	CHECK(e.port == SER_TEST_PORT, "falling back to the default's port: %u", e.port);
+
+	// Nothing: the default, naming no port.  `--serial` makes the argument
+	// mandatory, as muir does, so this is the shape of the default the
+	// program starts from rather than a spelling of the flag.
+	CHECK(cadr_endpoint_parse(NULL, NULL, SER_TEST_PORT, &e) == 0,
+	      "the default must parse");
+	CHECK(e.port == SER_TEST_PORT && e.addr[0] == '\0' && e.port_named == 0,
+	      "and it is every interface at the default port, naming no port");
+
+	// The refusals, each a spelling somebody could write on a card.
+	CHECK(cadr_endpoint_parse("junk", NULL, SER_TEST_PORT, &e) != 0,
+	      "a word that is neither a port nor an address must be refused");
+	CHECK(cadr_endpoint_parse(":7641", NULL, SER_TEST_PORT, &e) != 0,
+	      "an empty host must be refused rather than read as every interface: "
+	      "0.0.0.0:7641 is how that is said");
+	CHECK(cadr_endpoint_parse("7641:", NULL, SER_TEST_PORT, &e) != 0,
+	      "a colon with no port after it must be refused");
+	CHECK(cadr_endpoint_parse("65536", NULL, SER_TEST_PORT, &e) != 0,
+	      "a port above 65535 must be refused");
+	CHECK(cadr_endpoint_parse("0.0.0.0:65536", NULL, SER_TEST_PORT, &e) != 0,
+	      "and so must one in address:port");
+	CHECK(cadr_endpoint_parse("-1", NULL, SER_TEST_PORT, &e) != 0,
+	      "a negative port must be refused");
+	CHECK(cadr_endpoint_parse("76 41", NULL, SER_TEST_PORT, &e) != 0,
+	      "a port with a space in it must be refused");
+	CHECK(cadr_endpoint_parse("1.2.3", NULL, SER_TEST_PORT, &e) != 0,
+	      "an address that is not a dotted quad must be refused");
+	CHECK(cadr_endpoint_parse("", NULL, SER_TEST_PORT, &e) != 0,
+	      "and an empty argument must be refused");
+
+	// Port 0 is a port: the kernel picks one, which is what this check's
+	// own binds do.  It is a legal spelling and must not be refused.
+	CHECK(cadr_endpoint_parse("0", NULL, SER_TEST_PORT, &e) == 0 && e.port_named == 1,
+	      "port 0 is a port and names one");
+}
+
 static void check_the_rate_is_read_out_of_mode_register_2(void)
 {
 	model_init(&mdl, 4, 2);
@@ -944,6 +1037,9 @@ int main(void)
 
 	printf("--- the receiver having no room\n");
 	check_receiver_refuses_and_is_offered_again();
+
+	printf("--- where the far end is offered: muir's endpoint grammar\n");
+	check_the_endpoint_grammar();
 
 	printf("--- the face's own rules\n");
 	check_rdata_is_not_read_blind();

@@ -425,6 +425,13 @@ fi
 # in it.
 CHAOS_ADDR=${CHAOS_ADDR_FPGA:-177101}
 CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
+# The two endpoints written out in full rather than left to the programs'
+# defaults, so that the card SAYS where the screen and the line are.  They are
+# the same numbers the init scripts pass, and a card that says nothing gets
+# them anyway; saying them is what lets somebody at a card reader change one.
+TERMINAL_ENDPOINT=${TERMINAL_ENDPOINT:-0.0.0.0:5900}
+SERIAL_ENDPOINT=${SERIAL_ENDPOINT:-0.0.0.0:7641}
+KEYBOARD_BOOT=${KEYBOARD_BOOT:-ctrl,meta}
 # **THE BOOT BUTTON IS A COMMENT UNLESS local.conf ASKS FOR IT.**  A card that
 # boots its band by itself is what somebody switching a board on wants, so the
 # line is written commented out with the sentence that explains it, and a
@@ -436,6 +443,21 @@ if [ -n "${NO_AUTO_BOOT:-}" ] && [ "${NO_AUTO_BOOT}" != "0" ]; then
 else
   NO_AUTO_BOOT_PREFIX="#"
 fi
+# **EVERY FLAG EVERY PROGRAM TAKES FROM THIS FILE IS WRITTEN INTO IT, grouped
+# by program, each under a sentence or two saying what it does and what it
+# falls back to.**  The ones a card uses are live and the rest are commented
+# out, so that somebody with the card in a reader sees the whole menu and
+# uncomments what they want instead of going to look for a list somewhere
+# else.  `fpgarc.pass` holds the two together: every flag named in any init
+# script's own list must appear here exactly once, so a flag added to a
+# program and not to this file fails the check by name.
+#
+# **THE CONVENTION THAT MAKES THAT CHECKABLE**: a commented-out SETTING is `#`
+# with the flag immediately after it and no space, and a flag written inside
+# prose is indented away from the `#`.  So `#--bow` is a setting somebody may
+# uncomment and `#     --chaos-udp-peer <address>@<host>:<port>` is a sentence
+# about one.  The reader treats both as comments; only the check tells them
+# apart, and it is what keeps the menu honest.
 {
   printf "# The flags for the CADR in the fabric, so that its programs are\r\n"
   printf "# configured the way muir is: one flag a line, the flag then a space\r\n"
@@ -448,6 +470,15 @@ fi
   printf "# network, the USB input and the boot button.  A flag names one of\r\n"
   printf "# them, and a flag none of them owns goes to nobody.  docs/fpgarc.md\r\n"
   printf "# lists what each one takes.\r\n"
+  printf "#\r\n"
+  printf "# EVERY flag those programs take is below, grouped by program.  The\r\n"
+  printf "# ones this card uses are live; the rest are commented out with what\r\n"
+  printf "# they do, to be uncommented.  A flag given twice is settled by the\r\n"
+  printf "# program, which takes the last one.\r\n"
+
+  printf "\r\n"
+  printf "# ======================================================= the network\r\n"
+  printf "# Read by the Chaosnet program. docs/chaosnet.md says what each means.\r\n"
   printf "\r\n"
   printf "# The sixteen address switches on the Chaosnet card: this machine's\r\n"
   printf "# own address, in octal.  Not a preference --- it is what the\r\n"
@@ -470,27 +501,165 @@ fi
   printf "#\r\n"
   printf "# The host your band calls goes here.  That host is ON THE NET and\r\n"
   printf "# not inside any of these programs, so a machine with no peers says\r\n"
-  printf "# its file host is not answering --- which is true.\r\n"
-  for peer in ${CHAOS_PEER:-}; do printf -- "--chaos-udp-peer %s\r\n" "$peer"; done
-  printf "\r\n"
-  printf "# The way out, if there is one:\r\n"
-  printf "#\r\n"
-  printf "#     --chaos-udp-default-peer <host or IP>:<port>\r\n"
-  printf "#\r\n"
-  printf "# A frame whose destination no peer line above names goes there\r\n"
-  printf "# rather than nowhere, which is what lets a bridge carry this\r\n"
-  printf "# machine's traffic on to the wider Chaosnet.  Naming that bridge as\r\n"
-  printf "# a peer does not do it: a peer line places ONE address.  So this\r\n"
-  printf "# takes an endpoint and no Chaosnet address, the frame carrying the\r\n"
-  printf "# real destination for the bridge to route on.  A broadcast is not\r\n"
-  printf "# sent here; it goes to the peers above, who are stations on this\r\n"
-  printf "# machine's own cable.\r\n"
-  if [ -n "${CHAOS_DEFAULT_PEER:-}" ]; then
-    printf -- "--chaos-udp-default-peer %s\r\n" "$CHAOS_DEFAULT_PEER"
+  printf "# its file host is not answering --- which is true.  The port may be\r\n"
+  printf "# left off for 42042.  Repeatable, once for each station.\r\n"
+  if [ -n "${CHAOS_PEER:-}" ]; then
+    for peer in ${CHAOS_PEER}; do printf -- "--chaos-udp-peer %s\r\n" "$peer"; done
+  else
+    printf -- "#--chaos-udp-peer 3060@192.0.2.1:42043\r\n"
   fi
   printf "\r\n"
-  printf "# The boot button, left unpressed:\r\n"
-  printf "#\r\n"
+  printf "# The way out, if there is one.  A frame whose destination no peer\r\n"
+  printf "# line above names goes there rather than nowhere, which is what lets\r\n"
+  printf "# a bridge carry this machine's traffic on to the wider Chaosnet.\r\n"
+  printf "# Naming that bridge as a peer does not do it: a peer line places ONE\r\n"
+  printf "# address.  So this takes an endpoint and no Chaosnet address, the\r\n"
+  printf "# frame carrying the real destination for the bridge to route on.  A\r\n"
+  printf "# broadcast is not sent here; it goes to the peers above, who are\r\n"
+  printf "# stations on this machine's own cable.  Off by default, and a frame\r\n"
+  printf "# no peer line names is dropped.\r\n"
+  if [ -n "${CHAOS_DEFAULT_PEER:-}" ]; then
+    printf -- "--chaos-udp-default-peer %s\r\n" "$CHAOS_DEFAULT_PEER"
+  else
+    printf -- "#--chaos-udp-default-peer 192.0.2.1:42042\r\n"
+  fi
+  printf "\r\n"
+  printf "# Every Chaosnet packet and frame on the cable, to the log.  Off by\r\n"
+  printf "# default: it is a great deal of output and it is for finding out why\r\n"
+  printf "# a host is not answering.\r\n"
+  printf -- "#--chaos-trace\r\n"
+  printf "\r\n"
+  printf "# **THESE FOUR ARE REFUSED BY NAME AND ARE NOT PART OF THE MENU.**\r\n"
+  printf "# They named a file host and a time host that used to live inside the\r\n"
+  printf "# Chaosnet program and now do not: a CADR has neither in it, so\r\n"
+  printf "# neither has that program, and the host your band calls is somewhere\r\n"
+  printf "# on the network.  They are listed so that a card still carrying one\r\n"
+  printf "# gets an answer saying where the host went, instead of a line that\r\n"
+  printf "# goes to nobody.  Uncommenting one stops the program starting.\r\n"
+  printf -- "#--chaos-file-root /mnt/packs/file-root\r\n"
+  printf -- "#--chaos-file-peers /mnt/packs/peers\r\n"
+  printf -- "#--server-name MIT-OZ\r\n"
+  printf -- "#--time\r\n"
+
+  printf "\r\n"
+  printf "# ======================================================== the screen\r\n"
+  printf "# Read by the terminal program, which serves the display, keyboard\r\n"
+  printf "# and mouse over RFB. docs/terminal.md says what each means.\r\n"
+  printf "\r\n"
+  printf "# Where the screen is served: nothing, a port, an address, or\r\n"
+  printf "# address:port, which is muir's own grammar for its own --terminal.\r\n"
+  printf "# Every interface, so that a VNC viewer on another machine can reach\r\n"
+  printf "# it; 127.0.0.1:5900 keeps it to this board and an SSH tunnel.  RFB's\r\n"
+  printf "# None security is the only type offered and a viewer needs no\r\n"
+  printf "# password.  5900 is what a viewer calls display :0.\r\n"
+  printf -- "--terminal %s\r\n" "$TERMINAL_ENDPOINT"
+  printf "\r\n"
+  printf "# What a viewer's keysyms mean on the Lisp Machine keyboard: muir's\r\n"
+  printf "# own \`key\` and \`prefix\` lines, over the built-in mapping rather than\r\n"
+  printf "# replacing it.  \`muir --keyboard-mapping-dump\` writes a file to edit.\r\n"
+  printf "# terminal.keyboard.mapping.txt beside this file is taken with no\r\n"
+  printf "# line here at all; this names another.\r\n"
+  printf -- "#--keyboard-mapping /mnt/packs/terminal.keyboard.mapping.txt\r\n"
+  printf "\r\n"
+  printf "# The keys the keyboard's boot sequence needs: held with Rubout they\r\n"
+  printf "# cold-boot the machine and with Return they warm-boot it, as on a\r\n"
+  printf "# CADR.  ctrl,meta is either Control and either Meta, which is\r\n"
+  printf "# Ctrl-Alt-Del on any keyboard; ctrl,ctrl,meta,meta is both of each,\r\n"
+  printf "# the CADR keyboard's own sequence.\r\n"
+  printf -- "--keyboard-boot %s\r\n" "$KEYBOARD_BOOT"
+  printf "\r\n"
+  printf "# Say when a key going up is held back behind a boot word.  Off by\r\n"
+  printf "# default; it is for finding out why a chord did not boot.\r\n"
+  printf -- "#--keyboard-boot-trace\r\n"
+  printf "\r\n"
+  printf "# The display's MODE BOW: one bits are black.  Off by default, which\r\n"
+  printf "# is the fabric's own power-on state and muir's --- a one bit white.\r\n"
+  printf -- "#--bow\r\n"
+  printf "\r\n"
+  printf "# The display's region in memory, and how often it is read while\r\n"
+  printf "# anybody is watching, in milliseconds.  The defaults are where the\r\n"
+  printf "# fabric puts the window and about sixty frames a second.\r\n"
+  printf -- "#--window 0x1C000000\r\n"
+  printf -- "#--interval-ms 16\r\n"
+  printf "\r\n"
+  printf "# Send every rectangle Raw instead of RRE where RRE is smaller.  Off\r\n"
+  printf "# by default; it is for measuring what RRE buys.\r\n"
+  printf -- "#--no-rre\r\n"
+  printf "\r\n"
+  printf "# The keyboard and mouse registers on the I/O board, and the switch\r\n"
+  printf "# that turns the input half off altogether --- a screen to watch and\r\n"
+  printf "# nothing carried back to the machine.  The default is the address\r\n"
+  printf "# the fabric puts them at, with input on.\r\n"
+  printf -- "#--input 0x40003000\r\n"
+  printf -- "#--no-input\r\n"
+  printf "\r\n"
+  printf "# The socket a source that is not a viewer sends keys and pointer\r\n"
+  printf "# movement on, which is the board's own USB keyboard and mouse, and\r\n"
+  printf "# the switch that stops listening for one.  The default is the path\r\n"
+  printf "# the USB program connects to.\r\n"
+  printf -- "#--input-link /var/run/cadr-input\r\n"
+  printf -- "#--no-input-link\r\n"
+
+  printf "\r\n"
+  printf "# =================================================== the serial line\r\n"
+  printf "# Read by the serial program, which offers the far end of the CADR's\r\n"
+  printf "# RS-232 cable on TCP. docs/chaosnet.md has the section on it.\r\n"
+  printf "\r\n"
+  printf "# Where that far end is offered: a port, or address:port, which is\r\n"
+  printf "# muir's own grammar for its own --serial, and the port must be\r\n"
+  printf "# named.  Every interface, so that \`nc\` or telnet on another machine\r\n"
+  printf "# reaches it; 127.0.0.1:7641 keeps it to this board.  7641 is the\r\n"
+  printf "# 2651's own Unibus address, 0o764160.\r\n"
+  printf -- "--serial %s\r\n" "$SERIAL_ENDPOINT"
+  printf "\r\n"
+  printf "# The port's register window, and how often it is looked at while\r\n"
+  printf "# idle, in microseconds.  The defaults are where the fabric puts the\r\n"
+  printf "# registers and an interval comfortable at 9,600 baud.\r\n"
+  printf -- "#--regs 0x40002000\r\n"
+  printf -- "#--poll-us 2000\r\n"
+  printf "\r\n"
+  printf "# Do not say when a device plugs in or hangs up.  Off by default, so\r\n"
+  printf "# the console shows somebody attaching to the line.\r\n"
+  printf -- "#--quiet\r\n"
+
+  printf "\r\n"
+  printf "# ============================ the USB keyboard and mouse at the board\r\n"
+  printf "# Read by the USB input program, which reads the board's own USB host\r\n"
+  printf "# port and sends what it finds to the terminal program.  Every one of\r\n"
+  printf "# these is spelled --usb- because the other spelling is a word\r\n"
+  printf "# another program could want. docs/usb-input.md says what each means.\r\n"
+  printf "\r\n"
+  printf "# The socket the terminal program listens on, and where the evdev\r\n"
+  printf "# nodes are.  The defaults are that socket and /dev/input, and a\r\n"
+  printf "# board passes neither.\r\n"
+  printf -- "#--usb-link /var/run/cadr-input\r\n"
+  printf -- "#--usb-input-dir /dev/input\r\n"
+  printf "\r\n"
+  printf "# One device to read, instead of everything that looks like a\r\n"
+  printf "# keyboard or a mouse.  Repeatable.  With none of these the program\r\n"
+  printf "# opens what it finds and keeps looking, which is what a board wants.\r\n"
+  printf -- "#--usb-device /dev/input/event0\r\n"
+  printf "\r\n"
+  printf "# How often to look for a device that has been plugged in, in\r\n"
+  printf "# milliseconds.  The default is once a second.\r\n"
+  printf -- "#--usb-scan-ms 1000\r\n"
+  printf "\r\n"
+  printf "# Take the devices exclusively, so that nothing else on the board\r\n"
+  printf "# sees the keys.  Off by default: a grab that succeeds on a device\r\n"
+  printf "# somebody is debugging with evtest is a keyboard that has silently\r\n"
+  printf "# stopped answering them.\r\n"
+  printf -- "#--usb-grab\r\n"
+  printf "\r\n"
+  printf "# Ignore keyboards, or ignore mice.  Both off by default, and both\r\n"
+  printf "# together would leave the program nothing to read.\r\n"
+  printf -- "#--usb-no-keyboard\r\n"
+  printf -- "#--usb-no-mouse\r\n"
+
+  printf "\r\n"
+  printf "# =================================================== the boot button\r\n"
+  printf "# Read by the disk pack program's init script, before the drive comes\r\n"
+  printf "# present. docs/fpgarc.md has the section on it.\r\n"
+  printf "\r\n"
   printf "# With this line the machine is held at boot with RUN clear, as a\r\n"
   printf "# CADR is when the power comes on with nobody at the button, and\r\n"
   printf "# \`cadr-console boot\` or BTN0 on the board is what starts it.\r\n"

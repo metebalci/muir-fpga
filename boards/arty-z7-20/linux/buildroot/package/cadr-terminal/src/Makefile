@@ -49,7 +49,7 @@ HEADERS  := screen_geom.h screen_frame.h screen_rfb.h screen_server.h \
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src
 COMMON_SRC  := $(COMMON_DIR)/cadr_log.c $(COMMON_DIR)/cadr_mem.c \
-               $(COMMON_DIR)/cadr_input_link.c
+               $(COMMON_DIR)/cadr_input_link.c $(COMMON_DIR)/cadr_endpoint.c
 ifeq ($(COMMON),host)
 COMMON_CFLAGS := -I$(COMMON_DIR)
 COMMON_LINK   := $(COMMON_SRC)
@@ -60,7 +60,15 @@ endif
 
 HOSTCC ?= cc
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
-WORK    ?= $(HOME)/.cache/muir-fpga-screen
+# **THE PATH CARRIES THE CHECKOUT, because this tree is worked in several at
+# once.**  A fixed `~/.cache/<name>` is shared by the main checkout and every
+# `git worktree`, so two of them building at the same time overwrite each
+# other's test binary and each other's mutants --- one run then dies with
+# "Terminated" and the other reports on sources it did not build.  That is
+# CLAUDE.md's stale-artefact scar, and it has been measured here twice.  The
+# other three packages hash $(CURDIR) for the same reason and this is the same
+# line.
+WORK    ?= $(HOME)/.cache/muir-fpga-screen-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 SCREENS ?= $(abspath ../../../../../../../vendor/screen)
 
 CFLAGS += -Wall -Wextra -std=gnu11

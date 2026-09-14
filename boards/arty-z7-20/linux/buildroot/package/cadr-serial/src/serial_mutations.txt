@@ -326,3 +326,41 @@
 @new
 	return f->read(f, SER_MODE) & 0xFu;
 @end
+
+@mutation the-serial-endpoint-takes-an-address-with-no-port
+@file cadr-common/src/cadr_endpoint.c
+@why a bare address names no port, which is the one thing that lets --serial refuse it
+@note muir gives --serial no default port on purpose: every other endpoint
+@note flag has a number a person already knows to fall back on and a serial
+@note line has none.  So `--serial 127.0.0.1` is refused rather than bound
+@note where nobody was told to attach, and what carries that refusal is not
+@note the flag's own code but `port_named` coming back false from here.
+@note Set it true and the grammar still parses every spelling correctly --- it
+@note lies about one bit --- and the line silently comes up on a port the card
+@note never said.
+@old
+	if (an_addr(&e, spec) == 0) {
+		*out = e;
+		return 0;
+	}
+@new
+	if (an_addr(&e, spec) == 0) {
+		e.port_named = 1;
+		*out = e;
+		return 0;
+	}
+@end
+
+@mutation the-endpoint-reads-an-empty-host-as-every-interface
+@file cadr-common/src/cadr_endpoint.c
+@why `:7641` must be refused, not read as every interface: 0.0.0.0:7641 is how that is said
+@note The failure this shape invites.  A card that says `:7641` has somebody's
+@note half-finished edit on it, and reading it as every interface puts the
+@note CADR's serial line on the LAN on the strength of a typo --- silently,
+@note because the program then starts and says a sensible thing.  muir refuses
+@note it, all three of its parses failing on an empty host.
+@old
+		if (hostlen == 0 || hostlen >= sizeof host)
+@new
+		if (hostlen >= sizeof host)
+@end

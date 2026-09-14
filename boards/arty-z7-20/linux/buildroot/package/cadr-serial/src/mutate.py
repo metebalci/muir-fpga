@@ -35,7 +35,7 @@ import sys
 
 CORE = ["serial_face.c", "serial_endpoint.c"]
 HEADERS = ["serial_face.h", "serial_endpoint.h"]
-COMMON = ["cadr_log.c", "cadr_mem.c"]
+COMMON = ["cadr_log.c", "cadr_mem.c", "cadr_endpoint.c"]
 
 
 def parse(path):
@@ -100,17 +100,23 @@ def apply(record, work, src, common):
         shutil.copy(os.path.join(src, f), os.path.join(here, "cadr-serial", "src", f))
     for f in COMMON:
         shutil.copy(os.path.join(common, f), os.path.join(here, "cadr-common", "src", f))
-    for f in ("cadr_log.h", "cadr_mem.h"):
+    for f in ("cadr_log.h", "cadr_mem.h", "cadr_endpoint.h"):
         shutil.copy(os.path.join(common, "cadr", f),
                     os.path.join(here, "cadr-common", "src", "cadr", f))
-    target = os.path.join(here, "cadr-serial", "src", record["file"])
+    # A bare name is this package's; cadr-common's files are named with their
+    # own directory in front, which is also how a reader tells them apart in
+    # the list.  The endpoint grammar lives there because the screen reads the
+    # same one.
+    named = record["file"]
+    target = (os.path.join(here, named) if "/" in named
+              else os.path.join(here, "cadr-serial", "src", named))
     if not os.path.exists(target):
-        return here, (f"@file {record['file']} is not one of the sources this check builds; "
+        return here, (f"@file {named} is not one of the sources this check builds; "
                       "a record aimed anywhere else could never be caught")
     text = open(target).read()
     hits = text.count(record["old"])
     if hits != 1:
-        return here, (f"@old matches {hits} times in {record['file']}; a record names its "
+        return here, (f"@old matches {hits} times in {named}; a record names its "
                       "lines exactly once or it has rotted")
     open(target, "w").write(text.replace(record["old"], record["new"]))
     return here, None
