@@ -54,9 +54,9 @@ took that word, so neither could say where it listened. The section below on
 ## A default is passed only where this file says nothing
 
 An init script writes some of its program's settings out in full, so that the
-script itself says what it does. The screen's endpoint and the serial line's
-are the two that matter, and the keyboard mapping file beside this one is a
-third.
+script itself says what it does. The screen's endpoint is one. The Chaosnet
+address switches are another, and the keyboard mapping file beside this one is
+a third.
 
 A card that names one of those flags wins. The script asks the reader whether
 this file carries the flag before passing its own value for it. So the flag
@@ -68,6 +68,29 @@ would also put the same flag on the command line twice, which reads as a fault
 to anybody looking at `ps` to see what a program is doing. The board ran
 `cadr-terminal --terminal 0.0.0.0:5900 --terminal 0.0.0.0:5900` until this was
 fixed.
+
+## Two settings are off when this file says nothing, and that is muir's rule
+
+The Chaosnet cable and the serial line are not defaults a script supplies. They
+are things a user plugs in.
+
+`--chaos-udp` is the cable. Without it the Chaosnet program sets its address
+switches and sends nothing, which is what a machine with no cable does. muir
+behaves the same way: the switches are one flag and the cable is another,
+because they are two things on the board. A card that is there and says nothing
+about `--chaos-udp` is a board on no network, and the init script says so on
+the console and does not wait for a network it has nothing to reach.
+
+`--serial` is the serial line. Without it the serial program is not started at
+all. muir gives `--serial` no default, because a port it invented would be one
+nobody knows, and a line nobody asked for is a port nobody was told to attach
+to. The init script says the line is off and how to turn it on.
+
+**A file that is there and says nothing is not the same as no file.** A file
+that is there has been asked and has answered. No file at all is nobody having
+been asked, and it is also what a boot looks like when the pack partition did
+not mount. A board in that state runs what it has always run: the Chaosnet
+address and the cable, and the serial line on its own endpoint.
 
 ## What each program takes
 
@@ -310,9 +333,9 @@ hold is a lie about the machine.
 `boards/arty-z7-20/linux/mksd-buildroot.sh` writes this file. It writes every
 flag every program takes, grouped by program, with an explanation above each.
 
-The live lines are the Chaosnet address and the cable, which are the same on
-every card; the peers and the bridge, which come from `local.conf`; the
-screen's endpoint and the serial line's, written out in full; and the boot
+On the card this project builds for itself, the live lines are the Chaosnet
+address and the cable; the peers and the bridge, which come from `local.conf`;
+the screen's endpoint and the serial line's, written out in full; and the boot
 keyboard's chord. Everything else is commented out with what it does. The
 `--no-auto-boot` line is commented out with the sentence that explains it.
 
@@ -320,6 +343,37 @@ keyboard's chord. Everything else is commented out with what it does. The
 differ in one character and carry the same explanation. A released card always
 boots its band by itself, because `STANDALONE` clears the setting along with
 everything else that comes from `local.conf`.
+
+## The released card's menu has three live lines
+
+A card a stranger is given carries the same whole menu, with three of its lines
+live.
+
+    --chaos-address 177101
+    --terminal 0.0.0.0:5900
+    --keyboard-boot ctrl,meta
+
+Those are what a board out of the box needs. A Chaosnet interface has an
+address whether or not anything is plugged into it, so the switches are always
+set. The screen is the only way to use a board that has no monitor of its own.
+The chord is what cold-boots the machine from a viewer.
+
+Every other flag is on the card and commented out, under the sentence that says
+what it does. **The Chaosnet cable and the serial line are among them.** A
+release with `--chaos-udp` live would put a station on a network the user has
+not got, listening on a port nobody named, with no peer it could reach. A
+release with `--serial` live would offer an unauthenticated port on every
+interface for a cable hardly anybody wants. Each is one `#` away from being on.
+
+The development card is unchanged. It has those three lines and the cable and
+the serial line as well, which is what this project's own board needs.
+
+`RELEASE=1` is what writes the released menu, and `mksd-release.sh` sets it.
+That is a separate flag from `STANDALONE=1`, which is about what is private:
+one decides which lines are live and the other keeps an address, a MAC and this
+board's own station numbers off a public artefact. `fpgarc.pass` writes both
+menus and compares them, so a release menu cut down by turning the development
+card's lines off as well would fail by name.
 
 ## What holds all of this
 
@@ -355,6 +409,21 @@ once, live or commented out. The requirements are read out of the scripts and
 never from a list in the check, because a second list is a second place to be
 wrong. One line of a script's list is one requirement, since the Chaosnet
 program takes two spellings of each of its flags and a card says a setting once.
+That is held for the released menu as well as the development one.
+
+**And it holds the two menus apart.** The released menu must have those three
+live lines and no others, and the development menu must still have its five.
+The second half is the control: a release menu with three live lines could
+otherwise be bought by turning the development card's lines off too, and every
+other case would still pass.
+
+**And it holds what a board does with the released menu**, on the file the real
+card script really writes rather than one written in the check. The Chaosnet
+program is given the address and no cable, and says so. The serial program is
+not started, and the script says the line is off and how to turn it on. The
+screen is given its endpoint and the boot chord. A menu whose commented lines
+the scripts ignored, or whose live ones they missed, would be a card that says
+one thing and a board that does another.
 
 `chaosnet.pass` holds the Chaosnet script's own wait for the network, and it now
 also holds that script to taking its own flags out of a file written for the
