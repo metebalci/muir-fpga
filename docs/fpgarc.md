@@ -63,11 +63,13 @@ one means.
     --chaos-udp-default-peer  --udp-default-peer
     --chaos-trace         --trace
 
-Four more are in that list although the program refuses them: `--chaos-file-root`,
-`--chaos-file-peers`, `--server-name` and `--time`. They named services that
-used to live inside the program and now do not, and the program answers each by
-saying where the host went. Dropped by the reader instead, the card would say
-nothing at all.
+Four flags are deliberately absent from that list. `--chaos-file-root`,
+`--chaos-file-peers`, `--server-name` and `--time` named a file host and a time
+host that used to live inside the program and now do not. A flag that no
+program has is not a setting this file can carry. A card still carrying one of
+those lines is named at boot by the report below, which says the line went to
+nobody. The program itself still refuses each by name, saying where the host
+went, for somebody who passes one by hand.
 
 **The screen**, read by `S85cadr-terminal`. `docs/terminal.md` says what each
 one means. `--terminal` takes nothing, a port, an address, or address:port.
@@ -176,11 +178,6 @@ program and not to the card fails that check by name.
 Two flags may appear more than once, because they are repeatable by their own
 definition. A peer entry places one Chaosnet address, and a named USB device is
 one device.
-
-Four flags in the Chaosnet's list are written commented out with a note saying
-the program refuses them. They are not part of the menu. They named a file host
-and a time host that used to live inside that program, and they are listed so
-that a card still carrying one gets an answer about where the host went.
 
 ## A line no program takes is named at boot
 
