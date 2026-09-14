@@ -51,6 +51,24 @@ here. `--port` was the case that proved it: the screen and the serial line both
 took that word, so neither could say where it listened. The section below on
 `--terminal` and `--serial` is how that was settled.
 
+## A default is passed only where this file says nothing
+
+An init script writes some of its program's settings out in full, so that the
+script itself says what it does. The screen's endpoint and the serial line's
+are the two that matter, and the keyboard mapping file beside this one is a
+third.
+
+A card that names one of those flags wins. The script asks the reader whether
+this file carries the flag before passing its own value for it. So the flag
+stands on the program's command line exactly once, with the card's value where
+the card has one and the script's where it has not.
+
+Passing both would work, because a program takes the last flag it is given. It
+would also put the same flag on the command line twice, which reads as a fault
+to anybody looking at `ps` to see what a program is doing. The board ran
+`cadr-terminal --terminal 0.0.0.0:5900 --terminal 0.0.0.0:5900` until this was
+fixed.
+
 ## What each program takes
 
 **The Chaosnet**, read by `S87cadr-chaosnet`. Each flag has muir's spelling and
@@ -88,8 +106,9 @@ one means. `--terminal` takes nothing, a port, an address, or address:port.
     --no-input-link       do not listen for one
 
 The keyboard mapping is also taken from `terminal.keyboard.mapping.txt` beside
-this file when that file is there. The init script passes that one first, so a
-`--keyboard-mapping` line here wins.
+this file when that file is there. A `--keyboard-mapping` line here wins. The
+init script passes the file beside it only when this file says nothing about
+that flag.
 
 **The serial line**, read by `S86cadr-serial`. `docs/chaosnet.md` has the
 section on it. `--serial` takes a port or address:port, and the port must be
