@@ -9,7 +9,9 @@
 //
 //   page 0, +0x00, the console's own, read-only:
 //     0  IDENT    "CONS"
-//     1  STAT     bit 0 busy, 1 gnt, 2 answered, 3 lost (sticky since reset)
+//     1  STAT     bit 0 busy, 1 gnt, 2 answered, 3 lost (sticky since reset),
+//                 4 the no-auto-boot switch held the machine at the last
+//                 reset, 5 where that switch is now
 //     2  CYCLES   microcycles retired since reset, bits 31:0
 //     3  CYCLESH  bits 63:32, **latched when CYCLES was read**
 //     4  TICKS    100 MHz ticks since reset, bits 31:0
@@ -109,8 +111,17 @@ enum cons_p0 { CONS_IDENT = 0, CONS_STAT = 1, CONS_CYCLES = 2, CONS_CYCLESH = 3,
 // person at the machine presses, which is what a console is.  muir's prompt
 // makes the same choice: its `boot` presses `-BOOT2`.
 #define CONS_BOOT_KEY     0x424F4F54u	/* "BOOT" */
+// **THE NO-AUTO-BOOT SWITCH IS TWO BITS AND NOT ONE.**  SW0 on the board says
+// whether the machine comes out of reset with `RUN` clear, as a CADR is when
+// the power comes on with nobody at it, or preset.  The fabric reads it at the
+// machine's own reset arms and at no other instant, so moving it under a
+// running machine does nothing until the next reset --- which is why the value
+// that HELD the machine and the level TODAY are both reported.  A person who
+// moved the switch after the board came up sees them differ, and that is the
+// thing they need to be told.
 enum cons_stat_bit { CONS_ST_BUSY = 1u << 0, CONS_ST_GNT = 1u << 1,
-		     CONS_ST_ANSWERED = 1u << 2, CONS_ST_LOST = 1u << 3 };
+		     CONS_ST_ANSWERED = 1u << 2, CONS_ST_LOST = 1u << 3,
+		     CONS_ST_HELD_AT_RESET = 1u << 4, CONS_ST_SWITCH_NOW = 1u << 5 };
 
 // Page 1: word 16 + k is diagnostic register k.
 #define CONS_PAGE1        16u
@@ -356,18 +367,28 @@ void cons_say_boot(const struct cons_boot_report *r);
 
 // --- THE HELD MACHINE ----------------------------------------------------
 //
-// **`--no-auto-boot` LEAVES THE BUTTON UNPRESSED, AND THE MARKER IS HOW THIS
-// PROGRAM KNOWS.**  muir's own flag leaves a CADR as it is when the power
-// comes on: RUN clear, nothing run, and only the button starts it.  On the
-// board the same state is made by an init step, which halts the machine
-// before the disk pack program presents the drive and leaves this file
-// behind.  Nothing in the fabric changes for it --- RUN is still preset at
-// reset --- so the marker is the whole of the contract.
+// **`--no-auto-boot` LEAVES THE BUTTON UNPRESSED, AND THERE ARE TWO WAYS TO
+// ASK FOR IT.**  muir's own flag leaves a CADR as it is when the power comes
+// on: RUN clear, nothing run, and only the button starts it.
 //
-// While it exists, `start` and `step` refuse and say what muir says; `boot`
-// presses the button and removes it, because the button is what takes the
-// hold off.  A marker that is not there is the ordinary case and costs one
-// `access` per command.
+//   the switch   SW0 on the board.  The FABRIC holds the machine: it comes out
+//                of reset with `RUN` clear and has never run a microcycle.
+//                `cons_switch` reads it back, and the init step writes the
+//                marker without halting anything, there being nothing to halt.
+//   the flag     `--no-auto-boot` in `fpgarc` on the card.  Nothing in the
+//                fabric changes for it: the init step halts the machine
+//                before the disk pack program presents a drive, so the PROM
+//                has run for a few hundred milliseconds and got as far as
+//                waiting for a drive.
+//
+// Either way the marker at `CONS_HELD_PATH` is what THIS program knows it by,
+// and its first line names which of the two it was.  The two are an OR and the
+// flag can never turn the switch off.
+//
+// While the marker exists, `start` and `step` refuse and say what muir says;
+// `boot` presses the button and removes it, because the button is what takes
+// the hold off, whichever way the hold was asked for.  A marker that is not
+// there is the ordinary case and costs one `access` per command.
 #define CONS_HELD_PATH    "/var/run/cadr-held"
 
 // muir's own sentence for a machine whose RUN is clear, ../muir/src/main.rs's
@@ -381,6 +402,25 @@ int cons_held(const char *path);
 // Take the hold off: remove the marker.  Returns 0 if it is gone afterwards,
 // whether or not it was there to begin with.
 int cons_release_held(const char *path);
+
+// `switch`: what SW0 did and where it is.  The two STAT bits, read as one
+// word, so that the pair names one instant.
+//
+// **THE EXIT STATUS IS THE ANSWER AND THE LINE IS THE EVIDENCE**, and both are
+// there on purpose: the init step reads the status, and a person reads the
+// line.  `cadr-console switch` exits 0 when the switch held the machine at the
+// last reset and non-zero when it did not --- which is the same shape as
+// `mountpoint -q` and as `fpgarc_has`, a question rather than a failure.  A
+// console that could not reach the board at all exits non-zero too, and that
+// is the safe direction: it means "no hold from the switch", and a board whose
+// console cannot be reached is not a board anything is being held on.
+struct cons_switch {
+	int held_at_reset;	/* the machine came out of reset with RUN clear */
+	int now;		/* where SW0 is today */
+	uint32_t stat;		/* the word both came out of */
+};
+void cons_read_switch(struct console *c, struct cons_switch *s);
+void cons_say_switch(const struct cons_switch *s);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
 // ClockControl and ../muir/tests/spy.rs:743-761).
@@ -437,6 +477,13 @@ struct cons_status {
 	unsigned settle_us;
 	int running;			/* CYCLES moved */
 	const char *why;		/* NULL if running; else why it is not */
+	// **AND SW0, BECAUSE A MACHINE THAT NEVER RAN LOOKS EXACTLY LIKE ONE
+	// THAT STOPPED.**  `status` on a held machine says NOT RUNNING and
+	// gives the reason FLAG-1 gives, which is "halted from the console:
+	// SRUN is down" --- true, and misleading, because nobody halted it.
+	// These two say which it is, and they cost no extra read: they are
+	// bits of the STAT word this already has to look at.
+	struct cons_switch sw;
 };
 int cons_status(struct console *c, unsigned settle_us, struct cons_status *st);
 

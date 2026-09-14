@@ -333,6 +333,37 @@ int cons_release_held(const char *path)
 	return errno == ENOENT ? 0 : -1;
 }
 
+void cons_read_switch(struct console *c, struct cons_switch *sw)
+{
+	// ONE read for both bits, so that the pair names one instant.  Two
+	// reads would let a switch moved between them report a state the board
+	// was never in, which is the same rule the VMA/Q/MD latch is for.
+	sw->stat = cons_stat(c);
+	sw->held_at_reset = (sw->stat & CONS_ST_HELD_AT_RESET) != 0;
+	sw->now = (sw->stat & CONS_ST_SWITCH_NOW) != 0;
+}
+
+void cons_say_switch(const struct cons_switch *sw)
+{
+	if (sw->held_at_reset)
+		say("SW0 held the machine at the last reset: it came up with RUN clear, as a "
+		    "CADR is when the power comes on, and only the boot button starts it");
+	else
+		say("SW0 did not hold the machine: it came out of reset running, which is what "
+		    "a board switched on to be used does");
+	// **AND THE DISAGREEMENT IS THE THING WORTH SAYING OUT LOUD.**  The
+	// fabric reads the switch at the machine's own reset arms and at no
+	// other instant, so a switch moved since then has changed nothing.
+	// Without this line the two bits would look like a console that
+	// contradicts itself.
+	if (sw->now != sw->held_at_reset)
+		say("and SW0 is %s NOW, so somebody has moved it since: that changes nothing "
+		    "until the next reset, the switch being read only there",
+		    sw->now ? "ON" : "OFF");
+	else
+		say("and SW0 is still %s", sw->now ? "ON" : "OFF");
+}
+
 void cons_step(struct console *c, unsigned n, struct cons_step *s)
 {
 	memset(s, 0, sizeof *s);
@@ -424,6 +455,12 @@ int cons_status(struct console *c, unsigned settle_us, struct cons_status *st)
 		c->pause(c, settle_us);
 	st->cycles_second = cons_cycles(c);
 	st->ticks = cons_ticks(c);
+	// SW0, off the STAT word.  It is taken AFTER the second sample of
+	// CYCLES on purpose: what the switch did at the last reset does not
+	// change while this runs, so it belongs outside the bracket the two
+	// samples make rather than inside it, where one more register read
+	// would widen the window `running` is measured over.
+	cons_read_switch(c, &st->sw);
 	st->flag1_word = f1;
 	st->flag2_word = f2;
 	st->f1 = cons_flag1_of(f1);
@@ -539,6 +576,20 @@ void cons_say_status(const struct cons_status *st)
 	    st->f1.wait ? "waiting" : "clear", st->f1.promdisable ? "set" : "clear");
 	if (st->why)
 		say("status: %s", st->why);
+	// **AND WHETHER IT EVER RAN AT ALL.**  A machine SW0 held has SRUN down
+	// and reads exactly like one somebody halted, so the reason above would
+	// be true and would send a person looking for whoever halted it.  This
+	// is printed on a held machine and on a moved switch, and on nothing
+	// else: a board that boots itself and whose switch has not been touched
+	// has nothing to say about a switch.
+	if (st->sw.held_at_reset)
+		say("status: and SW0 held this machine at the last reset --- it came up with RUN "
+		    "clear and has never run, as a CADR is when the power comes on; "
+		    "`boot` presses the button that starts it");
+	if (st->sw.now != st->sw.held_at_reset)
+		say("status: SW0 is %s NOW, which is not what it was at the last reset; the switch "
+		    "is read only there, so that changes nothing until the next one",
+		    st->sw.now ? "ON" : "OFF");
 }
 
 // FLAG-1's sixteen fields, the low byte named as CC's `CC-PRINT-ERROR-STATUS`

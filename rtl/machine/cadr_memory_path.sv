@@ -416,6 +416,10 @@ module cadr_memory_path (
     // board now and `-BOOT` is one of the three inputs of `RESET` at 1C08,
     // which clears them.  `cadr_machine.sv` has the gate and the account.
     input  var logic        n_boot,
+    // The no-auto-boot switch, on its way to the register block's reset arm
+    // and to nothing else.  `cadr_spy_registers.sv`'s port says what it does
+    // and when it is read; this module only carries it.
+    input  var logic        no_auto_boot,
 
     // --- `UB MD LOAD`, `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17: a
     // foreign master's mapped write whose page is the processor's `MD`.
@@ -937,7 +941,8 @@ module cadr_memory_path (
       .mode_speed (mode_speed),
       .prog_reset (prog_reset),
       .prog_boot  (prog_boot),
-      .n_boot     (n_boot)
+      .n_boot     (n_boot),
+      .no_auto_boot(no_auto_boot)
   );
 
   // --- the I/O board, the second Unibus slave -----------------------------

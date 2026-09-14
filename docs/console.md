@@ -105,6 +105,10 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  bit 1  gnt       the diagnostic bus is the console's, live
                  bit 2  answered  the LAST cycle got -UB SSYN
                  bit 3  lost      some cycle since reset did not; sticky
+                 bit 4  held      SW0 held the machine at the last reset: it
+                                  came up with RUN clear and has never run
+                 bit 5  switch    where SW0 is NOW.  It differs from bit 4
+                                  when somebody has moved it since
      2  CYCLES   microcycles retired since reset, bits 31:0.  This is muir's
                  `Machine::cycles`
      3  CYCLESH  bits 63:32, LATCHED when CYCLES was read
@@ -259,9 +263,9 @@ two thousand registers spread across `cadr_machine`, and a LUT between the
 countdown and that fanout is a LUT on every one of their reset pins. The rule
 for what takes it: **`mach_rst` replaces `rst` wherever `rst` means "since the
 MACHINE started", and `rst` stays wherever it means "since the FABRIC was
-configured".** So `u_machine`, `u_probe`, `witness`, `beat`, the trouble
-lamp's own register and the disk lamp's one-shot take `mach_rst`; `axi_rst`, `pack_rst`, `gp0_rst`,
-`gp1_rst`, the tally `u_count` and `error_seen` keep `rst`.
+configured".** So `u_machine`, `u_probe`, `witness`, `beat`, LD4's
+own latch and the disk lamp's one-shot take `mach_rst`; `axi_rst`, `pack_rst`,
+`gp0_rst`, `gp1_rst`, the tally `u_count` and `error_seen` keep `rst`.
 
 The tidier alternative --- folding `con_mach_rst` into `rst_sync` beside the button
 --- is wrong in three places at once, and each is on the record in the top
@@ -1217,23 +1221,47 @@ count. It is deliberately not written here: `boards/arty-z7-20/linux/` is anothe
 `docs/console.md` is where the next person finds the key. The host check in
 that package models the slave and would want the register modelled with it.
 
-**A held machine is a state the console has to know about.** `--no-auto-boot` in
-the card's `fpgarc` leaves the CADR's boot button unpressed, as a CADR is when
-the power comes on with nobody at it. `S80cadr-disk-packs` reads that flag,
-halts the machine before it starts the disk pack program so that no drive ever
-comes present, and leaves a marker at `/var/run/cadr-held`. While that marker
-stands, `cadr-console` refuses `start` and `step` in muir's own words, and
-`boot` is what presses the button: it presets RUN, forces the boot trap, starts
-the PROM from zero and removes the marker. BTN0 on the board presses the same
-line in the fabric, so a held machine can be booted by hand with nobody logged
-in. `docs/fpgarc.md` is the flag and the init step; `docs/board.md` is what to
-do at the board.
+**A held machine is a state the console has to know about, and there are two
+ways a machine gets into it.** Both leave the CADR's boot button unpressed, as a
+CADR is when the power comes on with nobody at it.
+
+The first is SW0 on the board. The fabric holds the machine: it comes out of
+reset with RUN clear and has never run a microcycle. The console reads that back
+as STAT's bits 4 and 5.
+
+The second is `--no-auto-boot` in the card's `fpgarc`. Nothing in the fabric
+changes for it. `S80cadr-disk-packs` reads the flag and halts the machine before
+it starts the disk pack program, so that no drive ever comes present.
+
+Either way the init step leaves a marker at `/var/run/cadr-held` whose one line
+names which of the two did it. While that marker stands, `cadr-console` refuses
+`start` and `step` in muir's own words, and `boot` is what presses the button: it
+presets RUN, forces the boot trap, starts the PROM from zero and removes the
+marker. BTN0 on the board presses the same line in the fabric, so a held machine
+can be booted by hand with nobody logged in. `docs/fpgarc.md` is the flag and
+the init step; `docs/board.md` is what to do at the board.
+
+**A machine the switch held reads exactly like one somebody halted, and that is
+why the switch is reported at all.** Both have SRUN down, so `status` would
+otherwise say "halted from the console" about a machine nobody has touched and
+send a person looking for whoever halted it. `status` therefore says outright
+when the switch held the machine and when it has been moved since. `switch` asks
+the same question on its own: it prints both bits in plain words and exits 0
+when the switch held the machine, which is how the init step asks the fabric
+rather than a file.
+
+**Two bits and not one, because the switch is read only at the reset.** Bit 4 is
+what the machine actually came up with and bit 5 is where the switch is now.
+They differ when somebody has moved it since, which changes nothing until the
+next reset, and the console says so rather than looking as though it
+contradicts itself. The board latches bit 4 off the same synchronised level the
+machine's own reset arms read, at the same edges, so the two cannot disagree.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
-`start`, `boot`, `step N`, `regs`, `status`, `examine` and `deposit`. `status` is the
-question of the day and answers it the way `main.rs`'s `machrun_low` does,
-plus a positive measurement: CYCLES sampled twice a few milliseconds apart, so
-that "running" is something seen rather than inferred. `step N` is CC's
+`start`, `boot`, `step N`, `regs`, `status`, `switch`, `examine` and `deposit`.
+`status` is the question of the day and answers it the way `main.rs`'s
+`machrun_low` does, plus a positive measurement: CYCLES sampled twice a few
+milliseconds apart, so that "running" is something seen rather than inferred. `step N` is CC's
 `CC-CLOCK`, `2` then `0`, N times, and reports CYCLES either side with
 `FLAG-1`'s `SSDONE`. It names either failure out loud: a machine that did not
 move, and a machine that ran more than one microcycle a step. A silent no-op

@@ -130,12 +130,17 @@ exec sleep 8
 EOF
 	done
 	# The console.  \$CONSOLE_HALTS decides whether `halt` works, so that a
-	# console which cannot reach the machine is a case of its own.
+	# console which cannot reach the machine is a case of its own, and
+	# \$CONSOLE_SWITCH whether SW0 held the machine at the last reset ---
+	# `cadr-console switch` answers that with its exit status, 0 for held,
+	# as `mountpoint -q` and `fpgarc_has` answer a question with theirs.
+	# The default is NOT held, which is the ordinary board.
 	cat > "$WORK/bin/cadr-console" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/console.calls"
 case "\$1" in
 halt) [ "\${CONSOLE_HALTS:-yes}" = yes ] ;;
+switch) [ "\${CONSOLE_SWITCH:-no}" = yes ] ;;
 *) : ;;
 esac
 EOF
@@ -950,10 +955,17 @@ sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
 	run_script S80cadr-disk-packs
-	if [ -s "$WORK/console.calls" ]; then
-		fail "the console was told: $(cat "$WORK/console.calls")"
+	# The console IS asked about the switch --- that is how the fabric's own
+	# hold is found --- and must be told nothing else.
+	if grep -qx "switch" "$WORK/console.calls"; then
+		ok "the console was asked about SW0"
 	else
-		ok "the console was not told anything"
+		fail "the console was not asked about SW0; it was told: $(cat "$WORK/console.calls")"
+	fi
+	if grep -qx "halt" "$WORK/console.calls"; then
+		fail "the console was told to halt a machine nothing asked to hold"
+	else
+		ok "and nothing was halted"
 	fi
 	if [ -f "$WORK/run/cadr-held" ]; then
 		fail "a hold marker was left by a board that boots itself"
@@ -978,10 +990,15 @@ sandbox
 if prepare cadr-disk-packs S80cadr-disk-packs; then
 	rm -f "$WORK/packs/fpgarc"
 	run_script S80cadr-disk-packs
-	if [ -s "$WORK/console.calls" ]; then
-		fail "the console was told: $(cat "$WORK/console.calls")"
+	if grep -qx "halt" "$WORK/console.calls"; then
+		fail "the console was told to halt: $(cat "$WORK/console.calls")"
 	else
-		ok "the console was not told anything"
+		ok "nothing was halted"
+	fi
+	if [ -f "$WORK/run/cadr-held" ]; then
+		fail "a hold marker was left by a board with no fpgarc and no switch"
+	else
+		ok "there is no hold marker"
 	fi
 	if [ -s "$WORK/daemon.calls" ]; then
 		ok "the pack program was started"
@@ -1025,6 +1042,119 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 		ok "and the boot goes on: the pack program was started anyway"
 	else
 		fail "the boot stopped: the pack program was never started"
+	fi
+fi
+
+# **SW0 HOLDS THE MACHINE AND NOTHING IS HALTED**, which is the whole
+# difference between the two ways of asking.  With the switch on, the fabric
+# brought the machine up with RUN clear and it has never run a microcycle, so
+# there is nothing for this script to halt --- a halt here would be the script
+# taking credit for the switch's work, and it would also be a write to the
+# clock control register on a machine nobody has touched.  What the step does
+# is leave the marker, so that cadr-console refuses `start` and `step` and says
+# why.
+case_head "SW0 holds the machine, and nothing is halted"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	: > "$WORK/daemon.calls"
+	CONSOLE_SWITCH=yes FPGARC_CLAIMED="$WORK/run/claimed" \
+		PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" start \
+		> "$WORK/out.sw0" 2>&1
+	if grep -qx "switch" "$WORK/console.calls"; then
+		ok "the console was asked about SW0"
+	else
+		fail "the console was not asked about SW0; it was told: $(cat "$WORK/console.calls")"
+	fi
+	if grep -qx "halt" "$WORK/console.calls"; then
+		fail "the machine was halted, and the switch had already stopped it"
+	else
+		ok "and nothing was halted: the machine had never run"
+	fi
+	if [ -f "$WORK/run/cadr-held" ]; then
+		ok "the hold marker stands"
+	else
+		fail "there is no hold marker"
+	fi
+	if grep -q "^held at boot by SW0$" "$WORK/run/cadr-held"; then
+		ok "and it names SW0 as the cause"
+	else
+		fail "the marker does not name SW0; it says: $(cat "$WORK/run/cadr-held" 2>/dev/null)"
+	fi
+	if grep -q "cadr-boot: SW0" "$WORK/out.sw0"; then
+		ok "and the console says so"
+	else
+		fail "the console does not say the switch held it; it says:"
+		sed 's/^/        /' "$WORK/out.sw0"
+	fi
+	if grep -q "cadr-console boot" "$WORK/out.sw0" && grep -q "BTN0" "$WORK/out.sw0"; then
+		ok "and names both ways to press the button"
+	else
+		fail "the line does not name cadr-console boot and BTN0"
+	fi
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "the pack program was started"
+	else
+		fail "the pack program was not started"
+	fi
+fi
+
+# **THE SWITCH AND THE FLAG TOGETHER, AND THE FLAG CANNOT TURN THE SWITCH
+# OFF.**  They are an OR, so a card that says `--no-auto-boot` on a board whose
+# switch is on is held once and not twice; the switch is what did it, since the
+# machine was already stopped before Linux existed, and the line says the flag
+# asked for the same thing so that nobody thinks it was dropped.
+case_head "SW0 and --no-auto-boot together: held once, by the switch"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--no-auto-boot' > "$WORK/packs/fpgarc"
+	CONSOLE_SWITCH=yes FPGARC_CLAIMED="$WORK/run/claimed" \
+		PATH="$WORK/bin:$PATH" "$WORK/S80cadr-disk-packs" start \
+		> "$WORK/out.both" 2>&1
+	if grep -qx "halt" "$WORK/console.calls"; then
+		fail "the machine was halted, and the switch had already stopped it"
+	else
+		ok "nothing was halted"
+	fi
+	if grep -q "^held at boot by SW0$" "$WORK/run/cadr-held" 2>/dev/null; then
+		ok "the marker names SW0"
+	else
+		fail "the marker does not name SW0; it says: $(cat "$WORK/run/cadr-held" 2>/dev/null)"
+	fi
+	if grep -q -- "--no-auto-boot in" "$WORK/out.both"; then
+		ok "and the line says the flag asks for the same thing"
+	else
+		fail "the line does not mention the flag; it says:"
+		sed 's/^/        /' "$WORK/out.both"
+	fi
+fi
+
+# **AND A CONSOLE THAT CANNOT BE REACHED ANSWERS NO**, which is the safe
+# direction: a board whose console cannot be read is a board nothing could have
+# been held on, and it is the same console that would have had to do the
+# halting.  Without cadr-console on the PATH at all, a card with no flag boots
+# itself and says nothing.
+case_head "no cadr-console at all, and no flag: the board boots itself"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+	rm -f "$WORK/bin/cadr-console"
+	run_script S80cadr-disk-packs
+	if [ -f "$WORK/run/cadr-held" ]; then
+		fail "a hold marker was left by a board with no console to ask"
+	else
+		ok "there is no hold marker"
+	fi
+	if grep -q "cadr-boot" "$WORK/out.S80cadr-disk-packs"; then
+		fail "the console says something about the boot button and should not:"
+		sed 's/^/        /' "$WORK/out.S80cadr-disk-packs"
+	else
+		ok "and nothing is said about the boot button"
+	fi
+	if [ -s "$WORK/daemon.calls" ]; then
+		ok "the pack program was started"
+	else
+		fail "the pack program was not started"
 	fi
 fi
 

@@ -53,8 +53,8 @@ is more lamps than the Arty Z7-20 has, so the six-lamp assignment in
 `docs/board.md` fits this board with room left over and needs no decision.
 
 There are four Pmod headers, JA through JD, where the Arty Z7-20 has two. The
-debug cable adapter's assignment of JA to DBGOUT and JB to DBGIN therefore
-carries over by name, and two spare headers remain.
+debug cable adapter puts its whole link on JA, so that assignment carries over
+by name and three spare headers remain.
 
 There is a USB-UART bridge on PL pins. The Arty Z7-20's master file constrains
 no UART pins at all, so whatever serial port that board has is the processing

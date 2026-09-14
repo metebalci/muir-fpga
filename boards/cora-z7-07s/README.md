@@ -35,9 +35,9 @@ that by 10, so the divider reads literally as the tick in nanoseconds and the
 tick stays 10 ns. No tick count in the design moves and no check moves with it.
 
 The two Pmod headers are named JA and JB here as they are on the Arty Z7-20, so
-the debug cable's assignment of JA to DBGOUT and JB to DBGIN carries over by
-name. The pins behind those names are different and must be taken from the file
-in this directory.
+the debug cable's assignment of the whole link to JA carries over by name and JB
+is spare here as it is there. The pins behind those names are different and must
+be taken from the file in this directory.
 
 ## What has to be built
 

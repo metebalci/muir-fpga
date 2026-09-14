@@ -256,7 +256,10 @@ module cadr_gp1_split_harness #(
       .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
       // `-BOOT2`, the light panel's button: this page has no processor to
       // give it to, so it folds below with the console's reset.
-      .mach_rst(con_mach_rst), .mach_boot(con_mach_boot)
+      .mach_rst(con_mach_rst), .mach_boot(con_mach_boot),
+      // No board and so no switch: the machine came up with its boot button
+      // just let go.
+      .no_auto_boot_held(1'b0), .no_auto_boot_now(1'b0)
   );
 
   // The readout window's three wires belong to `build/readout.pass` and
@@ -363,7 +366,10 @@ module cadr_gp1_split_harness #(
       .errstop(errstop_u), .stathenb(stathenb_u), .mode_speed(mode_speed_u),
       .prog_reset(prog_reset_u), .prog_boot(prog_boot_u),
       // `-BOOT` released: nothing in this check presses any of the three.
-      .n_boot(1'b1)
+      .n_boot(1'b1),
+      // No no-auto-boot switch here: the machine comes up as the fabric's
+      // reset leaves it, with the boot button just let go.
+      .no_auto_boot(1'b0)
   );
 
   // ---------------------------------------- everything else on the port

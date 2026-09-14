@@ -375,7 +375,8 @@ module cadr_dbgin_harness #(
       .mode_speed (mode_speed_u),
       .prog_reset (prog_reset_u),
       .prog_boot  (prog_boot_u),
-      .n_boot     (n_boot)
+      .n_boot     (n_boot),
+      .no_auto_boot(1'b0)
   );
 
   logic       errstop_u, stathenb_u, prog_reset_u, prog_boot_u;
@@ -394,6 +395,10 @@ module cadr_dbgin_harness #(
       .machrun_o (), .errhalt_o (), .stathalt_o (),
       /* verilator lint_on PINCONNECTEMPTY */
       .run         (run_o),
+      // The board's no-auto-boot switch, which this harness has none of: the
+      // machine comes up as the fabric's reset leaves it, with the boot
+      // button just let go.
+      .no_auto_boot(1'b0),
       .step        (step_w),
       .nop11       (nop11_w),
       .idebug      (idebug_w),

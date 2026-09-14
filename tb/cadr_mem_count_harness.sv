@@ -169,8 +169,13 @@ module cadr_mem_count_harness #(
       // any of the three boot lines.  **Active low**, so a pin left off is a
       // machine held at the boot trap and not a machine that runs.
       .n_boot2(1'b1),
-      // OLORD1's three, which this harness has no lamps for.
+      // The board's no-auto-boot switch, which this harness has none of: the
+      // machine comes up as the fabric's reset leaves it, with the boot
+      // button just let go.
+      .no_auto_boot(1'b0),
+      // OLORD1's three and `-BOOT` itself, which this harness has no lamps for.
       /* verilator lint_off PINCONNECTEMPTY */
+      .n_boot_o(),
       .machrun(), .errhalt(), .stathalt(),
       /* verilator lint_on PINCONNECTEMPTY */
       .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),

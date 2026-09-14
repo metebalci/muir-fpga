@@ -137,6 +137,9 @@ program. One flag, and the section below is about it.
 
     --no-auto-boot        leave the boot button unpressed
 
+SW0 on the board asks for the same thing, and the two are an OR. `docs/board.md`
+has the switch.
+
 ## What cannot be written here, and why
 
 `--log` is passed by the init script, which is what decides where a daemon
@@ -254,12 +257,25 @@ muir's flag, and it means here what it means there: leave the boot button
 unpressed, as a CADR is when the power comes on with nobody at the button. The
 machine is held with RUN clear and nothing running.
 
-The fabric keeps RUN preset at reset, which is muir's own default and what the
-bring-up boards need. So a board that is not to boot itself is held by halting
-it. `S80cadr-disk-packs` reads the flag, halts the machine with `cadr-console
-halt`, and leaves a marker at `/var/run/cadr-held`. It prints one line saying
-the machine is held and that `cadr-console boot` or BTN0 on the board presses
-the button. Without the flag it does nothing and says nothing.
+With SW0 off the fabric keeps RUN preset at reset, which is muir's own default
+and what the bring-up boards need. So a board that is not to boot itself is held
+by halting it. `S80cadr-disk-packs` reads the flag, halts the machine with
+`cadr-console halt`, and leaves a marker at `/var/run/cadr-held` saying the flag
+held it. It prints one line saying the machine is held and another naming both
+ways to press the button.
+
+**SW0 on the board asks for the same thing and the two are an OR.** With the
+switch on, the fabric itself brings the machine up with RUN clear and it has
+never run a microcycle. The init step asks the fabric with `cadr-console
+switch`, writes a marker saying SW0 held it, and halts nothing, there being
+nothing running to halt. If the flag is there as well, the line says so, because
+a setting somebody wrote down should not look as though it was dropped.
+
+**A flag can never turn the switch off.** That is what an OR means here, and it
+is deliberate: the switch is a board somebody has their hands on, and a file on
+a card should not be able to overrule it.
+
+With neither the flag nor the switch the step does nothing and says nothing.
 
 **The step is in that script for two reasons.** It must run before the disk pack
 program starts, because a drive coming present is what lets the boot PROM go on
@@ -268,14 +284,15 @@ script is the one thing that mounts. A step of its own at S79 would have to
 mount that partition itself, which would leave the mount with two owners and
 one unmounter.
 
-**The PROM has already run when Linux halts it, and that is not a gap in the
-hold.** The CADR starts when the bitstream is loaded, which is seconds before
-Linux reaches this step. Within a few hundred milliseconds it has cleared its
-control store and reached `AWAIT-DRIVE-READY`. It can go no further, because no
-drive is present until the disk pack program starts. So the machine that is
+**The PROM has already run when the FLAG is what holds it, and that is not a gap
+in the hold.** The CADR starts when the bitstream is loaded, which is seconds
+before Linux reaches this step. Within a few hundred milliseconds it has cleared
+its control store and reached `AWAIT-DRIVE-READY`. It can go no further, because
+no drive is present until the disk pack program starts. So the machine that is
 halted has done its PROM work and is waiting, with nothing of a band loaded.
 `cadr-console boot` presses `-BOOT2`, which presets RUN and starts the PROM
-again from zero.
+again from zero. The switch has no such gap, because the machine never ran at
+all.
 
 While the marker stands, `cadr-console` refuses `start` and `step`, in muir's
 own words. `boot` presses the button and removes it. BTN0 on the board presses

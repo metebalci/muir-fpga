@@ -340,7 +340,8 @@ failures are worth knowing before they happen:
   the beat. The script says so and names `cadr_axi_widen.sv`'s strobes.
 
 LD4 carries the witness's own verdict on a `PROVE` board, and only there. On
-the machine board it is the trouble lamp and carries nothing else. It blinks red for a
+the machine board it is the machine's own error halt and carries nothing else.
+It blinks red for a
 port still dead, shows steady red for a live port with nothing completed, green
 for completed and right, and blue for completed and wrong. Nothing in either
 script can read a lamp. The read-back is the honest observer anyway, because a
@@ -519,6 +520,35 @@ network.
 The pins are `D19` for BTN0 and `L19` for BTN3, `LVCMOS33`, from Digilent's
 `Arty-Z7-20-Master.xdc`.
 
+## The switches
+
+The board has two slide switches and this design uses one of them.
+
+    SW0   the no-auto-boot switch
+    SW1   nothing
+
+With SW0 off the machine comes out of reset running. It runs its boot PROM,
+waits for a drive, and boots its band as soon as the disk pack program presents
+one. That is what somebody switching a board on wants and it is what a card
+does by default.
+
+With SW0 on the machine comes out of reset with RUN clear. It has not run a
+single microcycle and only the boot button starts it. That is what a CADR is
+when the power comes on with nobody at it, and it is muir's `--no-auto-boot`.
+
+**The switch is read at the fabric's reset and at no other instant.** Moving it
+under a running machine does nothing until the next reset. Moving it back under
+a held machine starts nothing. Only `-BOOT` takes the hold off, which is what a
+button is for. A control that stopped the machine mid-instruction is not
+something a CADR ever had.
+
+The card's `fpgarc` has a `--no-auto-boot` flag that asks for the same thing.
+The two are an OR. A flag can never turn the switch off, and the section below
+has the whole of how the two work together.
+
+The pin is `M20`, `LVCMOS33`, from Digilent's `Arty-Z7-20-Master.xdc`. SW1 is
+`M19` and is brought out so that the design's port list matches the board.
+
 ## What the LEDs say
 
 The six lamps read left to right as the machine's own progress.
@@ -527,8 +557,8 @@ The six lamps read left to right as the machine's own progress.
     LD1   the fabric clock   the slow blink, about 1.5 Hz at 100 MHz
     LD2   microcycles        the fast blink, and it freezes when the machine does
     LD3   disk activity      lit while the controller moves a block
-    LD4   trouble            dark normally, red and sticky once something is wrong
-    LD5   booting            blue while the machine runs out of its boot PROM
+    LD4   ERRHALT            dark normally, red once the machine halts itself
+    LD5   -PROMDISABLE       blue while the machine runs out of its boot PROM
 
 **LD0 is a level and LD2 is a blink, and they say different things.** MACHRUN
 is the machine's own run signal, the 9S42 at OLORD1 1A15. It drops during
@@ -538,22 +568,58 @@ machine that is thrashing. A level can be held high by a fabric that has
 stopped, though. That is why LD2 carries the blink instead: motion cannot be
 faked.
 
-**LD4 is reserved to error and is either off or red.** No other colour and no
-other meaning ever reaches it, at power-on, during the PROM or while halted.
-Its green and blue channels are tied off. It lights for a non-existent-memory
-reference, for a block the disk's store could not supply, and for the machine
-stopping itself under ERRSTOP or on the statistics counter. It stays lit until
-the fabric is reset. Halting the machine from the console is none of those and
-does not light it.
+**LD4 is the machine's own error halt and nothing else. It is either off or
+red.** No other colour and no other meaning ever reaches it, at power-on,
+during the PROM or while halted. Its green and blue channels are tied off.
+
+ERRHALT is ERRSTOP and HALTED at OLORD1, and it is one of MACHRUN's own terms.
+It means the machine executed a halt with the console's error-stop bit set and
+stopped itself. On microcode 323 that is `(si:%halt)` reached through `ILLOP`,
+`%HALT` and `ZERO`. MIT's own boards reach the same line from the memory parity
+checkers, which this fabric does not have. Halting the machine from the console
+is not it, because that clears RUN, so stopping the machine to look at it leaves
+the lamp dark.
+
+The lamp is sticky. It stays lit until the boot button is pressed or the fabric
+is reset. Any boot clears it: BTN0, the keyboard's chord, or the debug cable.
+Clearing ERRSTOP over the console does not, because what somebody at the board
+saw should not be erased by a register write.
 
 Dark being the good state is the point of it. It makes LD2's freeze readable:
 LD2 stopped with LD4 dark means somebody halted the machine, and LD2 stopped
 with LD4 red means it fell over.
 
-**LD5 is lit while the machine is still booting.** It is blue, and blue is the
-only colour it takes. It goes dark when the machine sets PROMDISABLE, which is
-the moment it leaves the boot PROM and starts running the microcode it loaded
-from the disk. So a lit lamp means booting and a dark one means booted.
+**Three other things used to light it and no longer do.** They were a
+non-existent-memory timeout, a block the disk's store could not supply, and the
+statistics counter running out. None of the three belongs on this lamp. The
+boot PROM makes two cycles to empty Xbus space on every boot, so a timeout lit
+the lamp red on a machine that was perfectly well, and a lamp whose normal state
+is red says nothing. A statistics halt is something the console asked for.
+
+The disk's silent denial is a real defect and this was never the place for it.
+When the block store cannot supply a block, the controller ends the transfer
+with a clean status. The microcode believes it read a page that was never
+written and nothing the CADR can read says otherwise. That belongs to
+`rtl/machine/cadr_disk_controller.sv`, which should set a transfer error the
+machine can see, and it is still open there.
+
+The latch is `rtl/plumbing/cadr_lamp_errhalt.sv` and `build/errhalt_lamp.pass`
+holds it. It is a module rather than four lines in the top level because the
+top level is reached by lint alone, and lint cannot tell a lamp that latches
+from one that does not. Which signal the board wires to it stays lint-only.
+
+**LD5 is `-PROMDISABLE`, the mode register's own bit inverted.** It is lit blue
+while the machine runs its microcode out of the boot PROM and dark once
+`PROMDISABLE` is set, which is the moment it leaves the PROM and starts running
+the microcode it loaded from the disk. So a lit lamp means booting and a dark
+one means booted. Blue is the only colour it takes.
+
+The lamps are named for the machine's own signals: LD0 is `MACHRUN`, LD4 is
+`ERRHALT`, LD5 is `-PROMDISABLE`. **LD5 is not `PROMENABLE`.** That is a
+different net, MIT's `-PROMENABLE` at PCTL 1C19, which is `BOTTOM.1K` with
+`PROMDISABLED`, `IWRITEDA` and `-IDEBUG`. It says whether the microinstruction
+being fetched comes out of the PROM, so it follows the program counter and
+changes many times during a boot. It does not reach this pin.
 
 **Every rate here is in the machine's own time, and a wristwatch reads twice as
 long.** The tick is 10 ns rather than 5, so the machine runs at half the speed
@@ -570,9 +636,9 @@ Read the first three in order.
 
 **The assignment before this one was a bring-up instrument and is superseded.**
 LD0 was the fabric's clock, LD2 counted non-existent-memory timeouts, LD3 was
-the datapath fold, LD4 carried three boot states in three colours and LD5
-showed whether the last bus cycle was answered. Each of those answers a
-question nobody asks of a working machine. What is worth keeping from the
+the datapath fold, LD4 carried three boot states in three colours and then four
+kinds of fault at once, and LD5 showed whether the last bus cycle was answered.
+Each of those answers a question nobody asks of a working machine. What is worth keeping from the
 measurements behind them is below.
 
 **The timeout rate said nothing, measured.** LD2 used to light a bit of a count
@@ -597,8 +663,10 @@ The bus interface's own register, carried out as `timed_out`, says this cycle
 ended on the timer rather than on a slave. The old LD5 was first wired to the
 decode's signal and came up green on a board with no memory. The reason is that
 the boot PROM's traffic goes to the disk registers at `0o17377774`. Those are
-in the decode's map and are therefore not empty space. They are simply unanswered. LD4
-takes `timed_out` for the same reason.
+in the decode's map and are therefore not empty space. They are simply
+unanswered. LD4 took `timed_out` for the same reason until the lamp was reserved
+to ERRHALT, and those two cycles on every boot are part of why it no longer
+does.
 
 **No memory means slow progress, not no progress.** An earlier prediction here
 was that with nothing answering `mem_*` the machine would reach its first
@@ -635,33 +703,59 @@ was predicted wrongly, and it was predicted wrongly in this file.
 
 ## Holding the machine at boot
 
-The CADR starts the instant the part configures. `boards/arty-z7-20/cadr_arty.sv`
-keeps RUN preset at reset, which is muir's own default, so a board that is
-switched on runs its boot PROM, waits for a drive, and boots its band as soon
-as the disk pack program presents one. That is what somebody switching a board
-on wants and it is what a card does by default.
+The CADR starts the instant the part configures. With SW0 off,
+`boards/arty-z7-20/cadr_arty.sv` keeps RUN preset at reset, which is muir's own
+default, so a board that is switched on runs its boot PROM, waits for a drive,
+and boots its band as soon as the disk pack program presents one. That is what
+somebody switching a board on wants and it is what a card does by default.
 
-**A board that is being worked on can be held at the button instead.** Put
-`--no-auto-boot` in `fpgarc` on the pack partition. `S80cadr-disk-packs` reads
-it and halts the machine before it starts the disk pack program, so no drive
-ever comes present and nothing of a band is loaded. The console says
+**A board that is being worked on can be held at the button instead. There are
+two ways to ask for it and they are an OR.**
 
-    cadr-boot: --no-auto-boot: the machine is held with RUN clear; `cadr-console boot` or BTN0 on the board presses the boot button
+The first is SW0 on the board. The fabric holds the machine: it comes out of
+reset with RUN clear and has never run a microcycle. Nothing in Linux has to do
+anything, and there is no window in which the machine ran.
 
-and a marker stands at `/var/run/cadr-held`. While it stands, `cadr-console`
-refuses `start` and `step`. `cadr-console boot` presses `-BOOT2`, which presets
-RUN and starts the PROM from zero, and removes the marker. BTN0 on the board
-presses the same line in the fabric, so a held machine can be booted by hand
-with nobody logged in. The fabric's own push-button reset is BTN3.
+The second is `--no-auto-boot` in `fpgarc` on the pack partition. Nothing in the
+fabric changes for it. `S80cadr-disk-packs` reads the flag and halts the machine
+before it starts the disk pack program, so no drive ever comes present and
+nothing of a band is loaded.
+
+**A flag can never turn the switch off.** A board whose switch is on is held
+whatever the card says, and the init step does not halt a machine that has
+already been stopped by the fabric.
+
+Either way a marker stands at `/var/run/cadr-held` and its one line names which
+of the two did it. While it stands, `cadr-console` refuses `start` and `step`.
+`cadr-console boot` presses `-BOOT2`, which presets RUN and starts the PROM from
+zero, and removes the marker. BTN0 on the board presses the same line in the
+fabric, so a held machine can be booted by hand with nobody logged in. The
+fabric's own push-button reset is BTN3.
+
+The console says one of
+
+    cadr-boot: SW0: the machine came up with RUN clear and has never run
+    cadr-boot: --no-auto-boot: the machine is held with RUN clear
+
+and then
+
+    cadr-boot: `cadr-console boot` or BTN0 on the board presses the boot button
+
+`cadr-console switch` asks the fabric directly. It prints what the switch did at
+the last reset and where the switch is now, and it exits 0 when the switch held
+the machine. `cadr-console status` says the same in its own report, which
+matters because a machine the switch held reads exactly like one somebody
+halted: both have SRUN down.
 
 This is muir's flag and it means the same thing there: leave the boot button
 unpressed, as a CADR is when the power comes on with nobody at it.
 
-**The PROM has already run when Linux halts it.** The bitstream is loaded
-seconds before Linux reaches that init step, and within a few hundred
+**The PROM has already run when the FLAG is what holds it.** The bitstream is
+loaded seconds before Linux reaches that init step, and within a few hundred
 milliseconds the machine has cleared its control store and is waiting for a
 drive. It can go no further on its own. So the halt lands on a machine that has
-done its PROM work and is waiting, and the gap costs nothing.
+done its PROM work and is waiting, and the gap costs nothing. The switch has no
+such gap, because the machine never ran at all.
 
 `boards/arty-z7-20/linux/mksd-buildroot.sh` writes the line commented out, with
 the sentence that explains it, and `NO_AUTO_BOOT=1` in `local.conf` makes it
@@ -932,13 +1026,33 @@ the registers --- carrying a key to the machine.
 So the first run with a finger on a real keyboard is still owed, and until it
 happens the drawing's USB input block says checked here and not yet on silicon.
 
+## The display, the keyboard and the mouse, 14 September
+
+**A monitor on the HDMI TX connector shows the machine's screen.** It is
+1280x1024 at 60 Hz with the CADR's own 768x963 screen centred in it, white on
+black, and the rest of the frame black. That is the display output block as it
+was built and as `docs/display-output.md` describes it. The picture comes out
+of DDR over `S_AXI_HP3` with no software anywhere in the path, so the block and
+the port are both shown by the same monitor.
+
+**A USB keyboard plugged into the board reaches Lisp.** `cadr-usb-input` reads
+the keyboard as an evdev device and hands each key to `cadr-terminal`, which is
+the one program that writes the I/O board's keyboard register and which paces
+the words onto it. The keys arrive in the machine as a person typing at a
+viewer's keys do.
+
+**A USB mouse reaches it too.** Its movement and its buttons go down the same
+path. The arrow on the screen follows the hand and a click registers in the
+machine.
+
+So every block on the drawing is now green. Nothing is turquoise.
+
 ## Looking at the display output
 
 The display output block scans the CADR's screen out of DDR and drives the
 board's HDMI TX connector from the fabric, with no software in the path.
-`docs/display-output.md` is the design. **Nothing below has been done yet: no
-monitor has been connected.** These are the steps, written before the fact so
-that what counts as a pass is fixed in advance.
+`docs/display-output.md` is the design. These are the steps that were followed,
+written before the fact so that what counted as a pass was fixed in advance.
 
 ### What to build and serve
 
