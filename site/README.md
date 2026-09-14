@@ -18,8 +18,9 @@ build step and no generator, the same way
                   the same three drawings for the Cora Z7-07S. That part is
                   smaller and the board has no HDMI connector, no USB host port
                   and no switches, so the display output block, its port, the
-                  HDMI connector, the USB input program, the USB host port and
-                  the no-auto-boot switch are crossed off in their places
+                  HDMI connector, the USB input program, the USB host
+                  controller, the port it would drive and the no-auto-boot
+                  switch are crossed off in their places
     arty-a7-100.html
                   the architecture drawing for the Arty A7-100. That board has
                   no processing system at all, so everything the Arm cores and
@@ -70,6 +71,17 @@ with the same viewBox, the same translation and every block at the same
 coordinates. What a board does not have is crossed off where it stands rather
 than taken out, and on the Arty A7-100 what takes the place of the processing
 system is drawn in the positions that system's own parts hold.
+
+Under the machine, each drawing is three layers. The software region is on
+top. That is the Linux programs on a Zynq board and the firmware's own services
+on the Arty A7-100. Under it is a row of controllers, one for each thing the
+board is attached to: the memory controller, the MAC, the SD host, the UART,
+and on the Arty Z7-20 the USB host. Under that row are the board's own
+connectors, one under each controller. A line that leaves a program ends on a
+controller and never on a connector. Each controller has one line down to the
+connector it drives. On the two Zynq boards every controller in the row is the
+part's own silicon, so the whole row is grey. On the Arty A7-100 every one of
+them is in the fabric, so each carries a colour of its own.
 
 So a change to the Arty Z7-20's drawing is carried to the other two by the same
 edit, at the same coordinates, and the three can be compared with `diff`. The
