@@ -53,7 +53,7 @@ module cadr_dbg_join (
     input  var logic [1:0]  a_a,
     input  var logic [15:0] a_dbd,
 
-    // --- the debugger on the connector, off `cadr_dbg_pmod.sv`.  An
+    // --- the debugger on the connector, off `cadr_dbg_rx.sv`.  An
     // --- unplugged connector presents zeros, so it never asks.
     input  var logic        b_req,
     input  var logic        b_wr,

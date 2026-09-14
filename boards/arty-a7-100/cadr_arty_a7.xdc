@@ -136,7 +136,7 @@ set_property -dict { PACKAGE_PIN A9    IOSTANDARD LVCMOS33 } [get_ports { uart_t
 ## counterpart.
 ##
 ## FOUR PINS EACH WAY, one strobe and three data.
-## `rtl/plumbing/cadr_dbg_pmod.sv` has the argument for splitting them rather
+## `rtl/plumbing/cadr_dbg_tx.sv` has the argument for splitting them rather
 ## than sharing seven and turning them around; `rtl/plumbing/cadr_dbg_cable.sv`
 ## is the connector that puts both directions on this one header. The LOW four
 ## are the debugger's at both ends and the HIGH four the debuggee's, and the

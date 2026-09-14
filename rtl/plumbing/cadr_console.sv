@@ -88,8 +88,14 @@
 //                 connector and a write of its complement gives the role
 //                 back; every other value is dropped.  It reads
 //                   bits 31:16  `DEBUG_KEY`'s own top half, a marker
-//                   bits 15:8   how many connects since the CONSOLE came up,
-//                               saturating at 255
+//                   bits 15:9   how many connects since the CONSOLE came up,
+//                               saturating at 127
+//                   bit 8       what is arriving is on the four pins this
+//                               board ANSWERS on, which only a mirrored
+//                               ribbon can do: the cable is crossed and the
+//                               board at the far end has not compensated
+//                   bits 7:5    what came of the wiring, one value a
+//                               meaning; `cadr_dbg_cable.sv` names the eight
 //                   bit 4       good frames are arriving on the connector
 //                   bit 3       the far end is driving its pin group
 //                   bit 2       somebody else is the debugger on it
@@ -101,7 +107,21 @@
 //                 group holds its own engagement down --- so what was asked
 //                 for and what happened are different facts and a console
 //                 that reported one of them would be lying about the other.
-//     15          reads `UNMAPPED`; writes dropped
+//     15 FRAMES   **THE DEBUG CABLE'S TWO COUNTS**, Pmod JA.  Writes dropped.
+//                 It reads
+//                   bits 31:24  `0x44`, a marker: neither an undriven bus's
+//                               ones nor a dead one's zeros can be it
+//                   bits 23:8   frames heard on the connector, whatever
+//                               their checks said, saturating at 65,535
+//                   bits 7:0    frames REFUSED --- the marker, the parity or
+//                               the fill wrong --- saturating at 255
+//                 The pins of a Pmod row are routed as coupled pairs and this
+//                 link drives all four single-ended, so an edge on one line
+//                 can couple into the strobe beside it and misalign a frame.
+//                 A misaligned frame moves nothing and the next one carries
+//                 the levels again, so what crosstalk costs is refused frames
+//                 --- and these two numbers are how often, which is a thing
+//                 nobody has measured.  `cadr_dbg_cable.sv` has the fallback.
 //
 //   page 1, `REG_BASE + 0x40`, the sixteen diagnostic registers, word k
 //   being `EADR` k:
@@ -495,7 +515,26 @@ module cadr_console #(
     // the other.  Differing in every bit, no partial write of either can be
     // the other.  `~DEBUG_KEY` is `0xBBBDB8AD`, which is four distinct bytes
     // and neither `00` nor `FF` among them.
-    parameter logic [31:0] DEBUG_KEY = 32'h4442_4752
+    parameter logic [31:0] DEBUG_KEY = 32'h4442_4752,
+    // **AND THE CABLE'S WIRING**, the same word and three more keys: "AUTO",
+    // "STRA" and "CROS".  A Pmod ribbon is supposed to join pin one to pin
+    // one; one made from two host sockets mirrors the header's two rows
+    // instead, and a debugger then drives four pins the far board never
+    // listens to.  `rtl/plumbing/cadr_dbg_cable.sv` has the measurement and
+    // the table.  `AUTO` is the reset value and looks for the answer; the
+    // other two take the looking out of the way when somebody is diagnosing
+    // a cable.
+    //
+    // Chosen on `RESET_KEY`'s rule --- four distinct bytes, none `00` or
+    // `FF`, not zero, not all ones, not `IDENT`, not `UNMAPPED`, not what the
+    // word reads back, and not any other key --- and they read as their own
+    // words in a memory dump, which is what every key in this window does.
+    // They are not complements of one another because they are three and not
+    // two; what stands in for that is that no two of them share a byte lane
+    // value, so no partial write of one is another.
+    parameter logic [31:0] WIRE_AUTO_KEY      = 32'h4155_544F,
+    parameter logic [31:0] WIRE_STRAIGHT_KEY  = 32'h5354_5241,
+    parameter logic [31:0] WIRE_CROSSOVER_KEY = 32'h4352_4F53
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -642,9 +681,20 @@ module cadr_console #(
     // --- is driving the forward group --- and `dbg_active` and `dbg_live`
     // --- are the connector's own two questions, whether anything is driving
     // --- it at all and whether what arrives is good frames.
+    // --- and `dbg_wiring` is which way round the ribbon was made: 0 auto,
+    // --- 1 straight, 2 crossover.  Only a DEBUGGER applies it, so a board
+    // --- that is a debuggee is unaffected by it whatever it says.
+    // --- `dbg_wire_state` is what came of it, one value a meaning, and
+    // --- `cadr_dbg_cable.sv` names the eight.
     output var logic        dbg_connect,
+    output var logic [1:0]  dbg_wiring,
+    input  var logic [2:0]  dbg_wire_state,
+    // --- and the cable's two counts, page 0's word 15: frames heard and
+    // --- frames refused.  See the word's own entry above.
+    input  var logic [23:0] dbg_frames,
     input  var logic        dbg_engaged,
     input  var logic        dbg_foreign,
+    input  var logic        dbg_peer_far,
     input  var logic        dbg_live,
     input  var logic        dbg_active
 );
@@ -821,6 +871,15 @@ module cadr_console #(
   // asked for.
   localparam logic [3:0] R_DEBUG = 4'd14;
 
+  // And word 15, the cable's two counts.  Read-only and no key: nothing here
+  // changes anything, so a wrong write costs nothing and a wrong read is a
+  // wrong number rather than a connector taken away from the machine using it.
+  // The marker is one byte where the words above it use two, there being
+  // twenty-four bits of count to carry and eight left: `0x44` is neither
+  // `0x00` nor `0xFF`, which is the whole of what a marker has to be.
+  localparam logic [3:0] R_FRAMES    = 4'd15;
+  localparam logic [7:0] FRAMES_MARK = 8'h44;
+
   // The reserved selector and the word a selector this fabric does not map
   // reads back.  **They are `cadr_microcycle.sv`'s and are repeated here
   // rather than parameterised**, because they are properties of the window
@@ -845,8 +904,11 @@ module cadr_console #(
   // And the role's own two: the level the connector takes, and a saturating
   // count of the times it has been asked for --- saturating for `resets`'s
   // reason, a counter that can read zero again being one that can say nobody
-  // ever asked.
-  logic [7:0] connects;
+  // ever asked.  Seven bits and not eight: the eighth went to the bit that
+  // says a mirrored ribbon is on the connector, and a hundred and twenty-seven
+  // connects answers the question the count exists for exactly as well as two
+  // hundred and fifty-five does.
+  logic [6:0] connects;
 
   // Which page-0 word this beat names, and whether it is the key.  The
   // address match is `w_in`, taken at AWVALID and held --- it is not computed
@@ -880,6 +942,19 @@ module cadr_console #(
                            (w_full == DEBUG_KEY);
   assign w_is_disconnect = w_in && !w_idx[4] && (w_idx[3:0] == R_DEBUG) &&
                            (w_full == ~DEBUG_KEY);
+
+  // And which beat sets the cable's wiring.  **A SETTING MAY NOT MOVE UNDER A
+  // BOARD THAT IS ALREADY DEBUGGING**, so the write is refused while this
+  // board holds the role --- the same refusal the role change itself gets
+  // under a standing cycle, and for the same reason: the wiring decides which
+  // four pins this board drives, and moving them inside a session would leave
+  // the far end answering into pins nobody is listening to.  A program writes
+  // and then READS, and `dbg_wire_state` says whether it took.
+  logic w_wire, w_is_wire_auto, w_is_wire_straight, w_is_wire_crossover;
+  assign w_wire = w_in && !w_idx[4] && (w_idx[3:0] == R_DEBUG) && !dbg_engaged;
+  assign w_is_wire_auto      = w_wire && (w_full == WIRE_AUTO_KEY);
+  assign w_is_wire_straight  = w_wire && (w_full == WIRE_STRAIGHT_KEY);
+  assign w_is_wire_crossover = w_wire && (w_full == WIRE_CROSSOVER_KEY);
 
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
@@ -1113,7 +1188,9 @@ module cadr_console #(
         // The debug cable's role.  The marker and the count for word 6's
         // reason, and then the connector: what was asked for and what
         // happened, which are two facts.
-        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, 3'd0,
+        R_FRAMES: r_word = {FRAMES_MARK, dbg_frames};
+        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, dbg_peer_far,
+                           dbg_wire_state,
                            dbg_live, dbg_active, dbg_foreign,
                            dbg_connect, dbg_engaged};
         default: r_word = UNMAPPED;
@@ -1165,7 +1242,11 @@ module cadr_console #(
       // **A BOARD COMES UP A DEBUGGEE**, which is the power-on state of any
       // CADR: it listens on the connector and nothing has to be set for it.
       dbg_connect <= 1'b0;
-      connects    <= 8'd0;
+      connects    <= 7'd0;
+      // **AND IT COMES UP LOOKING**, which is `cadr_dbg_cable.sv`'s own
+      // default and muir's shape of it: a board that looks is right more
+      // often than a board that assumes.
+      dbg_wiring  <= 2'd0;
     end else begin
       // --- the machine's reset, counted out.  Written first so that the
       // write channel below can arm it in the same tick and win: a pulse
@@ -1211,9 +1292,14 @@ module cadr_console #(
           // it takes no state and does not wait.
           if (w_is_connect) begin
             dbg_connect <= 1'b1;
-            if (connects != 8'hFF) connects <= connects + 8'd1;
+            if (connects != 7'h7F) connects <= connects + 7'd1;
           end
           else if (w_is_disconnect) dbg_connect <= 1'b0;
+          // The wiring, a register load for the role's own reason.  Three
+          // keys and no complement, refused while this board is the debugger.
+          if (w_is_wire_auto)           dbg_wiring <= 2'd0;
+          else if (w_is_wire_straight)  dbg_wiring <= 2'd1;
+          else if (w_is_wire_crossover) dbg_wiring <= 2'd2;
           if (w_in && w_idx[4]) wst <= W_CYCLE;
           else if (w_is_reset) begin
             mach_rst <= 1'b1;

@@ -1251,10 +1251,17 @@ CHECKS = {
         # one cable, so it is the only one that can ask what the join does on
         # a board that holds the cable's other role --- which is the case
         # `docs/debug-cable.md` calls "only the connector changes hands".
+        # **AND THE CARRIER IS MUTABLE HERE AS WELL AS UNDER `dbg_pmod`**, for
+        # the join's reason one line down: this is the only check with two
+        # whole boards on one cable, so it is the only one that can ask what a
+        # receiver does about the group its own board is driving --- which is
+        # the question the frame counts and the wiring's detection both rest
+        # on, and which a carrier alone cannot be asked.
         "sources": ["rtl/plumbing/cadr_dbg_cable.sv",
+                    "rtl/plumbing/cadr_dbg_tx.sv",
+                    "rtl/plumbing/cadr_dbg_rx.sv",
                     "rtl/plumbing/cadr_dbg_join.sv"],
         "extra": ["tb/cadr_dbg_cable_harness.sv",
-                  "rtl/plumbing/cadr_dbg_pmod.sv",
                   "rtl/machine/cadr_dbgin.sv",
                   "rtl/machine/cadr_busint_regs.sv",
                   "rtl/machine/cadr_console_bus.sv",
@@ -1265,7 +1272,8 @@ CHECKS = {
         "golden": None,
     },
     "dbg_pmod": {
-        "sources": ["rtl/plumbing/cadr_dbg_pmod.sv",
+        "sources": ["rtl/plumbing/cadr_dbg_tx.sv",
+                    "rtl/plumbing/cadr_dbg_rx.sv",
                     "rtl/plumbing/cadr_dbg_join.sv"],
         "extra": ["tb/cadr_dbg_pmod_harness.sv",
                   "rtl/plumbing/cadr_debug_window.sv",

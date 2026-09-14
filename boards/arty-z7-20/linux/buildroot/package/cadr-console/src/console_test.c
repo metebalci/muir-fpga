@@ -124,8 +124,13 @@ struct model {
 	// bits exist for.  `connects` counts as the fabric's saturating counter
 	// does.
 	int dbg_asked, dbg_engaged, dbg_foreign, dbg_active, dbg_live;
+	int dbg_peer_far;	/* what arrives is on the pins this board answers on */
+	int dbg_wiring;		/* the setting this console holds: auto, straight, crossover */
+	int dbg_wire_state;	/* and what the connector made of it */
+	unsigned dbg_heard, dbg_refused;   /* the cable's two counts, word 15 */
 	unsigned connects;
 	int debug_deaf_to_the_key;	/* a fabric that takes any value */
+	int debug_frames_unmapped;	/* a fabric older than word 15's counts */
 	unsigned long diag_reads, diag_writes;
 };
 
@@ -271,17 +276,27 @@ static uint32_t model_read(struct console *c, unsigned word)
 	// a read can happen, the fabric holding the write's answer off for the
 	// length of the pulse.
 	case CONS_BOOT: return (CONS_BOOT_KEY & 0xFFFF0000u) | ((m->boots & 0xFFu) << 8);
-	// The debug cable's role: the key's top half as a marker, the connects,
+	// The debug cable's role: the key's top half as a marker, the connects
+	// (seven bits, the eighth having gone to the crossed-cable bit),
 	// and the connector --- what was asked for and what happened.
 	case CONS_DEBUG:
 		return (CONS_DEBUG_CONNECT_KEY & 0xFFFF0000u) |
-		       ((m->connects & 0xFFu) << 8) |
+		       ((unsigned)(m->connects & 0x7Fu) << 9) |
+		       (m->dbg_peer_far ? CONS_DBG_PEER_FAR : 0u) |
+		       (((unsigned)m->dbg_wire_state & CONS_DBG_WIRE_MASK)
+			<< CONS_DBG_WIRE_SHIFT) |
 		       (m->dbg_live ? CONS_DBG_LIVE : 0u) |
 		       (m->dbg_active ? CONS_DBG_ACTIVE : 0u) |
 		       (m->dbg_foreign ? CONS_DBG_FOREIGN : 0u) |
 		       (m->dbg_asked ? CONS_DBG_ASKED : 0u) |
 		       (m->dbg_engaged ? CONS_DBG_ENGAGED : 0u);
-	default: return CONS_UNMAPPED;	/* words 10-12, 15 */
+	// The cable's two counts, and a marker of one byte: twenty-four bits of
+	// count leave eight, and `0x44` is neither `0x00` nor `0xFF`.
+	case CONS_DEBUG_FRAMES:
+		if (m->debug_frames_unmapped) return CONS_UNMAPPED;
+		return ((uint32_t)CONS_DEBUG_FRAMES_MARK << 24) |
+		       ((m->dbg_heard & 0xFFFFu) << 8) | (m->dbg_refused & 0xFFu);
+	default: return CONS_UNMAPPED;	/* words 10-12 */
 	}
 }
 
@@ -324,6 +339,22 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 			m->dbg_asked = 0;
 			m->dbg_engaged = 0;
 			m->dbg_live = 0;
+			m->dbg_wire_state = m->dbg_wiring;
+		} else if (v == CONS_DEBUG_WIRE_AUTO_KEY ||
+			   v == CONS_DEBUG_WIRE_STRAIGHT_KEY ||
+			   v == CONS_DEBUG_WIRE_CROSSOVER_KEY) {
+			// **AND THE SETTING IS REFUSED WHILE THIS BOARD IS THE
+			// DEBUGGER**, because the wiring decides which four pins
+			// it drives and moving them inside a session would take
+			// the pins out from under a standing cycle.
+			if (!m->dbg_engaged) {
+				m->dbg_wiring = (v == CONS_DEBUG_WIRE_STRAIGHT_KEY)
+						    ? CONS_DBG_WIRE_STRAIGHT
+						: (v == CONS_DEBUG_WIRE_CROSSOVER_KEY)
+						    ? CONS_DBG_WIRE_CROSSOVER
+						    : CONS_DBG_WIRE_AUTO_IDLE;
+				m->dbg_wire_state = m->dbg_wiring;
+			}
 		}
 		return;
 	}
@@ -440,16 +471,19 @@ static void check_ident(void)
 	CHECK(CONS_UNMAPPED != 0 && CONS_UNMAPPED != 0xFFFFFFFFu,
 	      "UNMAPPED is a value a dead or undriven bus could produce");
 	// 6 is the machine's reset, 7, 8 and 9 are VMA, Q and MD, 13 is the
-	// light panel's button and 14 is the debug cable's role: registers,
-	// each of which must read as something a dead bus could not produce.
-	// Word 15 names nothing and reads UNMAPPED.
+	// light panel's button, 14 is the debug cable's role and 15 its two
+	// frame counts: registers, each of which must read as something a dead
+	// bus could not produce.
 	//
 	// **10, 11 and 12 ARE THE READOUT AND THIS MODEL DOES NOT CARRY
 	// THEM**, so they read UNMAPPED here and are registers on the fabric.
 	// `build/readout.pass` is what holds them; said out loud rather than
 	// left as a gap, because a sweep that called a register unmapped and
 	// was believed would be this file agreeing with itself.
-	CHECK(c.read(&c, 15) == CONS_UNMAPPED, "page 0 word 15 is not UNMAPPED");
+	CHECK(c.read(&c, CONS_DEBUG_FRAMES) != CONS_UNMAPPED,
+	      "page 0 word 15 reads UNMAPPED, and it is the cable's two counts");
+	CHECK((c.read(&c, CONS_DEBUG_FRAMES) >> 24) == CONS_DEBUG_FRAMES_MARK,
+	      "word 15 does not carry its marker byte");
 	CHECK(c.read(&c, CONS_DEBUG) != CONS_UNMAPPED,
 	      "page 0 word 14 reads UNMAPPED, and it is the debug cable's role");
 	CHECK((c.read(&c, CONS_DEBUG) & 0xFFFF0000u) ==
@@ -1180,6 +1214,117 @@ static void check_debug_cable(void)
 			CHECK(!m.dbg_engaged, "a write that is not a key took the role");
 		}
 		CHECK(m.connects == was, "a write that is not a key was counted");
+	}
+
+	// ---- WHICH WAY ROUND THE RIBBON WAS MADE ------------------------
+	//
+	// Three more keys on the same word, and one thing they may not do:
+	// move under a board that is already the debugger.  A board with
+	// nothing said is on `auto`, which is the fabric's own reset value and
+	// what a card that says nothing leaves it at.
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.wire == CONS_DBG_WIRE_AUTO_IDLE, "a board told nothing is not on auto");
+	cons_debug_cable_wiring(&c, CONS_DBG_WIRE_CROSSOVER);
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.wire == CONS_DBG_WIRE_CROSSOVER, "the crossover key did not take");
+	capture_start();
+	cons_say_debug_cable(&d);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "crossover") != NULL, "the wiring is not said");
+	}
+	cons_debug_cable_wiring(&c, CONS_DBG_WIRE_STRAIGHT);
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.wire == CONS_DBG_WIRE_STRAIGHT, "the straight key did not take");
+	// **AND NOT WHILE THIS BOARD IS THE DEBUGGER.**
+	cons_debug_cable_connect(&c);
+	cons_debug_cable_wiring(&c, CONS_DBG_WIRE_CROSSOVER);
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.engaged, "the role was not taken before the setting was moved");
+	CHECK(d.wire == CONS_DBG_WIRE_STRAIGHT,
+	      "a setting moved under a board that was already the debugger");
+	cons_debug_cable_disconnect(&c);
+	cons_debug_cable_wiring(&c, CONS_DBG_WIRE_AUTO_IDLE);
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.wire == CONS_DBG_WIRE_AUTO_IDLE, "the auto key did not take");
+	// A spelling nothing names writes nothing.
+	cons_debug_cable_wiring(&c, 99);
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.wire == CONS_DBG_WIRE_AUTO_IDLE, "a wiring nobody names was written");
+
+	// **AND THE CROSSED CABLE, NAMED FROM THE END THAT CANNOT COMPENSATE.**
+	// A debuggee answers on the four pins it never hears anything on, so
+	// frames arriving there say the two ends disagree about the cable.  It
+	// is said BEFORE the plain `a debugger is on the connector`, both being
+	// true at once, because it is the one that tells somebody what to do.
+	m.dbg_peer_far = 1;
+	m.dbg_foreign = 1;
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.peer_far, "the far pins are not reported");
+	capture_start();
+	cons_say_debug_cable(&d);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "PINS THIS BOARD ANSWERS ON") != NULL,
+		      "a crossed cable is not named from the debuggee's end");
+		CHECK(strstr(out, "disagree") != NULL, "the diagnosis is not said");
+	}
+	m.dbg_peer_far = 0;
+	m.dbg_foreign = 0;
+
+	// **AND THE CABLE'S TWO COUNTS**, which are the instrument for the one
+	// thing about these pins nobody has measured: a Pmod row is routed as
+	// coupled pairs and this link drives all four of them single-ended, so an
+	// edge can couple into the strobe beside it and misalign a frame.  A
+	// misaligned frame moves nothing and the next carries the levels again,
+	// so what it costs is refused frames --- and how often is the number.
+	m.dbg_heard = 40000;
+	m.dbg_refused = 3;
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.frames_ok, "word 15 did not carry its marker");
+	CHECK(d.heard == 40000, "the frames heard");
+	CHECK(d.refused == 3, "the frames refused");
+	capture_start();
+	cons_say_debug_cable(&d);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "40000 frame(s) heard, 3 refused") != NULL,
+		      "the two counts are not said together");
+		CHECK(strstr(out, "costs a frame and never a word") != NULL,
+		      "what a refusal costs is not said");
+	}
+	// None refused is the ordinary case and says nothing more than the two
+	// numbers: a line that explained a refusal every time would train
+	// somebody to stop reading it.
+	m.dbg_refused = 0;
+	cons_read_debug_cable(&c, &d);
+	capture_start();
+	cons_say_debug_cable(&d);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "40000 frame(s) heard, 0 refused") != NULL,
+		      "a clean cable's counts are not said");
+		CHECK(strstr(out, "costs a frame and never a word") == NULL,
+		      "a clean cable is given the explanation of a refusal");
+	}
+	// And a fabric older than the counts is said to be, rather than read as
+	// a cable that has heard nothing: the marker is what tells them apart.
+	{
+		struct model old;
+		struct console oc;
+		model_init(&old);
+		attach(&oc, &old);
+		old.debug_frames_unmapped = 1;
+		struct cons_debug_cable od;
+		cons_read_debug_cable(&oc, &od);
+		CHECK(!od.frames_ok, "an unmapped word 15 was read as two counts");
+		capture_start();
+		cons_say_debug_cable(&od);
+		{
+			const char *out = capture_end();
+			CHECK(strstr(out, "older than they are") != NULL,
+			      "an unmapped word 15 is not called out");
+		}
 	}
 
 	// And the check itself can fail: a modelled fabric that takes any value

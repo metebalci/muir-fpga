@@ -542,12 +542,22 @@ KEYBOARD_BOOT=${KEYBOARD_BOOT:-ctrl,meta}
 # cards.  The init scripts follow the same rule from the other side: a file
 # that is present and says nothing about the cable is a cable not plugged in,
 # and one that says nothing about `--serial` is a serial line that is off.
+#
+# **AND THE JA RIBBON'S WIRING IS LIVE ON A DEVELOPMENT CARD AND COMMENTED ON
+# A RELEASE, THOUGH BOTH SAY THE SAME THING.**  `auto` is the fabric's own
+# reset value, so the line changes nothing either way; what it buys on a card
+# that is being worked on is that the boot log says which wiring the board is
+# on, and that the path from the card to the console is exercised at every
+# boot rather than only when somebody is diagnosing a cable.  A release keeps
+# its three live lines.
 if [ -n "${RELEASE:-}" ]; then
   MENU_CABLE="#"
   MENU_SERIAL="#"
+  MENU_WIRING="#"
 else
   MENU_CABLE=""
   MENU_SERIAL=""
+  MENU_WIRING=""
 fi
 # **THE BOOT BUTTON IS A COMMENT UNLESS local.conf ASKS FOR IT.**  A card that
 # boots its band by itself is what somebody switching a board on wants, so the
@@ -801,6 +811,22 @@ fi
   printf "# that has the role. \`cadr-console debug-cable-connect\` and\r\n"
   printf "# \`... -disconnect\` do the same thing at any time.\r\n"
   printf -- "#--debug-cable-connect\r\n"
+
+  printf "\r\n"
+  printf "# Which way round the JA ribbon was made. A Pmod cable is supposed to\r\n"
+  printf "# join pin one to pin one; one made from two host sockets mirrors the\r\n"
+  printf "# header's two rows instead, so each board's pins 1-4 reach the other's\r\n"
+  printf "# 7-10 and a debugger drives four pins the far board never listens to.\r\n"
+  printf "# Only a DEBUGGER applies this, so it changes nothing on a board that\r\n"
+  printf "# is a debuggee. \`auto\` looks for the answer and is what the fabric\r\n"
+  printf "# comes up with: the board drives nothing while it listens on both\r\n"
+  printf "# groups, then assumes straight and tries the other wiring in turn\r\n"
+  printf "# until something answers. \`straight\` and \`crossover\` take the\r\n"
+  printf "# looking out of the way when somebody is diagnosing a cable.\r\n"
+  printf "# \`cadr-console debug-cable-wiring auto|straight|crossover\` does the\r\n"
+  printf "# same thing at any time, and \`cadr-console debug-cable\` says which\r\n"
+  printf "# wiring the board found.\r\n"
+  printf -- "%s--debug-cable-wiring auto\r\n" "$MENU_WIRING"
 } > "$OUT/packs/fpgarc"
 echo "mksd-buildroot: the boot button: $([ -z "$NO_AUTO_BOOT_PREFIX" ] && echo "--no-auto-boot --- the machine is held at boot and cadr-console boot or BTN0 starts it" || echo "pressed at boot --- the board boots its band by itself")"
 echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, $([ -z "$MENU_CABLE" ] && echo "the cable on port $CHAOS_PORT" || echo "and the cable NOT plugged in --- --chaos-udp is written commented out")$([ -n "${CHAOS_PEER:-}" ] && echo ", $(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo ", no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"

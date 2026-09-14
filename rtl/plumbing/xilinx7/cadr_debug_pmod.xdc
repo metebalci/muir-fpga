@@ -78,13 +78,20 @@
 #     were meeting their deadline anyway, and `assert_instance_timing` still
 #     holds it to those two register names and no others.
 #
-#   - **And the receivers are untouched.** The strobe's synchroniser, the
-#     frame counter, the gap counter and the dead man all count ticks, and a
-#     counter given four of them is a counter that no longer counts.
+#   - **And the receivers are untouched, BOTH OF THEM.** The connector has one
+#     sender and a receiver a pin group, because a board listening for which
+#     way round the ribbon was made has to hear both at once. The strobe's
+#     synchroniser, the frame counter, the gap counter and the dead man all
+#     count ticks, and a counter given four of them is a counter that no longer
+#     counts.
 #     Each board's `vivado/bitstream.tcl` asserts exactly that with
 #     `assert_instance_timing`: no path into any other register of this
 #     carrier may ask for 40 ns, and at least one path into these must.
-set pmod [get_pins -quiet {u_dbg_cable/u_pmod/tx_frame_reg[*]/D
-                           u_dbg_cable/u_pmod/tx_d_reg[*]/D}]
+# `u_tx` and not `u_pmod`: the carrier is a sender and a receiver in two
+# modules, so that the connector can hold a receiver quiet while it drives the
+# group that receiver watches. What is relaxed is the sender's, as it always
+# was.
+set pmod [get_pins -quiet {u_dbg_cable/u_tx/tx_frame_reg[*]/D
+                           u_dbg_cable/u_tx/tx_d_reg[*]/D}]
 set_multicycle_path -setup 4 -to $pmod
 set_multicycle_path -hold  3 -to $pmod

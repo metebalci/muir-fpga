@@ -362,25 +362,115 @@ void cons_debug_cable_disconnect(struct console *c)
 	c->write(c, CONS_DEBUG, CONS_DEBUG_DISCONNECT_KEY);
 }
 
+// And which way round the ribbon was made.  Three keys and no complement,
+// because there are three of them; every other value is dropped, and so is
+// any of these while this board is already the debugger.
+void cons_debug_cable_wiring(struct console *c, int wire)
+{
+	uint32_t key;
+
+	switch (wire) {
+	case CONS_DBG_WIRE_AUTO_IDLE:
+		key = CONS_DEBUG_WIRE_AUTO_KEY;
+		break;
+	case CONS_DBG_WIRE_STRAIGHT:
+		key = CONS_DEBUG_WIRE_STRAIGHT_KEY;
+		break;
+	case CONS_DBG_WIRE_CROSSOVER:
+		key = CONS_DEBUG_WIRE_CROSSOVER_KEY;
+		break;
+	default:
+		return;
+	}
+	c->write(c, CONS_DEBUG, key);
+}
+
 void cons_read_debug_cable(struct console *c, struct cons_debug_cable *d)
 {
-	// ONE read for all of it, so that the five bits name one instant ---
-	// the rule the switch's two bits and the VMA/Q/MD latch are both for.
+	// ONE read for all of it, so that the bits name one instant --- the
+	// rule the switch's two bits and the VMA/Q/MD latch are both for.
 	d->word = c->read(c, CONS_DEBUG);
 	d->engaged = (d->word & CONS_DBG_ENGAGED) != 0;
 	d->asked = (d->word & CONS_DBG_ASKED) != 0;
 	d->foreign = (d->word & CONS_DBG_FOREIGN) != 0;
+	d->peer_far = (d->word & CONS_DBG_PEER_FAR) != 0;
 	d->active = (d->word & CONS_DBG_ACTIVE) != 0;
 	d->live = (d->word & CONS_DBG_LIVE) != 0;
-	d->connects = (d->word >> 8) & 0xFFu;
+	d->wire = (int)((d->word >> CONS_DBG_WIRE_SHIFT) & CONS_DBG_WIRE_MASK);
+	d->connects = (d->word >> 9) & 0x7Fu;
+	// **AND THE TWO COUNTS ARE A SECOND READ, WHICH IS RIGHT HERE AND IS
+	// NOT ELSEWHERE.**  The bits above name one instant because the fabric
+	// presents them in one word: a role and the reason it was refused would
+	// contradict each other if they came from two.  These two are counters,
+	// and a counter read a few microseconds after a flag is still the same
+	// counter --- what would be wrong is reading the two COUNTS apart, and
+	// they are one word.
+	d->frames = c->read(c, CONS_DEBUG_FRAMES);
+	d->frames_ok = (d->frames >> 24) == CONS_DEBUG_FRAMES_MARK;
+	d->heard = CONS_DEBUG_FRAMES_HEARD(d->frames);
+	d->refused = CONS_DEBUG_FRAMES_REFUSED(d->frames);
+}
+
+// What came of the wiring, in words.  The eight values are one axis and each
+// says both which way the board is driving and how it came to think so, which
+// is what somebody diagnosing a cable needs: a board that was TOLD and a board
+// that FOUND OUT are different kinds of evidence.
+static const char *wire_words(int wire)
+{
+	switch (wire) {
+	case CONS_DBG_WIRE_STRAIGHT:
+		return "straight, set";
+	case CONS_DBG_WIRE_CROSSOVER:
+		return "crossover, set";
+	case CONS_DBG_WIRE_LISTENING:
+		return "looking for the far end, driving nothing";
+	case CONS_DBG_WIRE_ST_FOUND:
+		return "straight, detected";
+	case CONS_DBG_WIRE_CR_FOUND:
+		return "crossover, detected";
+	case CONS_DBG_WIRE_ST_ASSUMED:
+		return "nothing heard, assuming straight";
+	case CONS_DBG_WIRE_CR_ASSUMED:
+		return "nothing heard, assuming crossover";
+	default:
+		return "auto --- it is looked for when this board takes the role";
+	}
 }
 
 void cons_say_debug_cable(const struct cons_debug_cable *d)
 {
+	// **THE WIRING IS ITS OWN LINE AND IS ALWAYS SAID.**  It is a different
+	// fact from the role --- which end of the cable this board is, against
+	// which four pins that end drives --- and a board that is a debuggee
+	// today still holds the setting it will use when it is told to connect.
+	// Somebody checking what a card set reads it here without having to
+	// take the role first.
+	say("debug cable: the wiring is %s", wire_words(d->wire));
+	// **AND WHAT THE CABLE IS DOING TO THE FRAMES.**  The pins of a Pmod row
+	// are coupled pairs and this link drives all four single-ended, so an
+	// edge can couple into the strobe beside it; a frame that catches one
+	// fails its marker or parity and is dropped, and the next carries the
+	// levels again.  So a refusal is not a fault to act on and a RATE of
+	// them is: the two numbers are printed together for that reason.
+	if (d->frames_ok)
+		say("debug cable: %u frame(s) heard, %u refused%s", d->heard, d->refused,
+		    d->refused == 0 ? "" :
+		    " --- a refused frame costs a frame and never a word, and what the"
+		    " number says is how much of the cable's time that costs");
+	else
+		say("debug cable: the frame counts did not carry their marker (0x%08x);"
+		    " this fabric is older than they are", d->frames);
 	if (d->engaged)
+		// **AND AN ANSWER COMES FROM A DEBUGGEE.**  `live` says good
+		// frames are arriving and `foreign` says they are a second
+		// DEBUGGER's, which on a mirrored ribbon is where the other
+		// board's requests land.  The fabric will not take one word of
+		// them, and neither will this line call them an answer.
 		say("debug cable: this board is the DEBUGGER on Pmod JA%s",
-		    d->live ? ", and the board at the far end is answering"
-			    : ", and nothing is answering it yet");
+		    d->foreign ? ", and what is on the connector is ANOTHER DEBUGGER, whose "
+				 "frames are not an answer and are not taken for one"
+		    : d->live ? ", and the board at the far end is answering"
+			      : ", and nothing is answering it yet");
 	else if (d->asked)
 		// **THE ONE CASE THE TWO BITS EXIST FOR.**  A board that can
 		// see a debugger already on the connector holds its own
@@ -395,9 +485,19 @@ void cons_say_debug_cable(const struct cons_debug_cable *d)
 	else
 		say("debug cable: this board is a DEBUGGEE on Pmod JA, which is what a CADR is "
 		    "with nothing set%s",
-		    d->foreign ? ", and a debugger is on the connector now"
-			       : d->active ? ", and something is driving the connector"
-					   : ", with nothing driving the connector");
+		    // **AND THE ONE CASE THAT NAMES A CROSSED CABLE FROM THIS
+		    // END.**  A debuggee listens on the low four and answers on
+		    // the high four, so frames on the high four can only be the
+		    // far board's low four reaching the wrong pins.  Said before
+		    // the plain `foreign`, because it is the more particular
+		    // fact and the two are true together.
+		    d->peer_far ? ", AND WHAT IS ON THE CONNECTOR IS ARRIVING ON THE FOUR "
+				  "PINS THIS BOARD ANSWERS ON: the two ends disagree about "
+				  "the cable's wiring, and the board at the far end is the "
+				  "one with the setting"
+		    : d->foreign ? ", and a debugger is on the connector now"
+		    : d->active ? ", and something is driving the connector"
+				: ", with nothing driving the connector");
 	// The DBGIN page is never switched off by any of this, and saying so is
 	// worth a line: somebody reading `DEBUGGER` above could otherwise think
 	// this board had stopped being debuggable.

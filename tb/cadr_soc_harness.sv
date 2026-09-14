@@ -184,6 +184,7 @@ module cadr_soc_harness #(
   logic [1:0]  dbd_oe;
   logic [15:0] dbd_from_machine;
   logic        dbg_connect;
+  logic [1:0]  dbg_wiring;
   logic        dbgout_req, dbgout_wr;
   logic [1:0]  dbgout_a;
   logic [15:0] dbgout_dbd;
@@ -566,7 +567,9 @@ module cadr_soc_harness #(
       // The debug cable's role, page 0's word 14.  No connector in this
       // harness, so the four come back as a bare header and what the console
       // asks for is folded.
-      .dbg_connect(dbg_connect), .dbg_engaged(1'b0), .dbg_foreign(1'b0),
+      .dbg_connect(dbg_connect), .dbg_wiring(dbg_wiring),
+      .dbg_wire_state(3'd0), .dbg_frames(24'd0),
+      .dbg_engaged(1'b0), .dbg_foreign(1'b0), .dbg_peer_far(1'b0),
       .dbg_live(1'b0), .dbg_active(1'b0)
   );
 
@@ -648,7 +651,7 @@ module cadr_soc_harness #(
                     con_ro_echo, req_valid, req_tag, req_post, ch_waiting,
                     ch_slot, ch_wrote, ch_hit, dbg_in_ack, dbd_from_machine,
                     dbd_oe, dbgout_req, dbgout_wr, dbgout_a, dbgout_dbd,
-                    dbg_connect};
+                    dbg_connect, dbg_wiring};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule
