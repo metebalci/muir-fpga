@@ -342,7 +342,7 @@ figure.screen img {
    join their 3.3 V rails.  It borrows the crossings' red rather than taking a
    colour of its own, so that red on a drawing goes on meaning one thing ---
    something that is not about how far along a block is. */
-.d-warn, .d-s.d-warn { fill: var(--st-absent); }  /* the compound selector outranks .d-s, which sets currentColor later in this file */
+.d-warn, .d-s.d-warn { fill: var(--st-absent); font-weight: 700; }  /* the compound selector outranks .d-s, which sets currentColor later in this file */
 /* A status colour on a connection, not a block: the wash a status class
    carries would fill the shape an open path implies, so lines force it off
    and keep only the stroke. */
