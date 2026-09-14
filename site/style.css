@@ -151,6 +151,19 @@ li::marker { font-size: 0.92em; }
 .topbar nav a { font-size: var(--t-small); text-decoration: none; }
 .topbar nav a:hover { text-decoration: underline; }
 
+/* ------------------------------------------------------------- crumb */
+
+/* The drawing pages carry no topbar.  The drawing is the page, and a bar
+   above it would be the caption the drawing rule forbids.  What they carry
+   instead is one faint line saying which board you are looking at and
+   linking the other pages, in the same register as the faint notes inside
+   the drawings themselves. */
+.crumb {
+  margin: 0;
+  font-size: var(--t-small);
+  opacity: 0.62;
+}
+
 /* ---------------------------------------------------------------- hero */
 
 .hero {
@@ -219,8 +232,12 @@ figure.fig { margin: 34px 0 36px; }
 .fig.dense svg { min-width: 1272px; }
 /* The architecture drawing grew to the right (the Pmods, HDMI and USB) and is
    drawn on a 1380-unit canvas; rendered at 1500px its labels stay the size
-   they were at 1272 for 1170 units. */
-.fig.dense.wide { width: 1810px; }
+   they were at 1272 for 1170 units.
+   One board's drawing is not another's width: the Cora Z7-07S has no display
+   output block, so its canvas is 1697 units where the Arty Z7-20's is 1810.
+   Each figure renders at its own canvas width, set on the element as
+   --fig-width, so one label is the same size on every board's page. */
+.fig.dense.wide { width: var(--fig-width, 1810px); }
 /* And it never forces a horizontal scrollbar: on a narrower window it scales
    down to the viewport instead. */
 .fig.dense.wide svg { min-width: 0; }
