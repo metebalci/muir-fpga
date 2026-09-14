@@ -158,7 +158,7 @@
           <text class="d-s" x="959" y="114" text-anchor="middle">20 out</text>
           <text class="d-s" x="959" y="150" text-anchor="middle">17 in</text>
           <path class="d-line" d="M1256,120 L1305,120"/>
-          <path class="d-line" d="M1256,136 L1272,136 L1272,242 L1305,242"/>
+          <path class="d-line" d="M1256,136 L1272,136 L1272,190 L1305,190"/>
 
           <!-- The two buses are separate: the interface reaches each by its own
                line, and the two never share a segment. -->
@@ -324,23 +324,28 @@
           <text class="d-s" x="87" y="762" text-anchor="middle">64 MB reserved for main memory,</text>
           <text class="d-s" x="87" y="776" text-anchor="middle">8 MB for the display, 56 MB spare</text>
           <text class="d-s" x="87" y="790" text-anchor="middle">&mdash; and 384 MB left to Linux</text>
-          <rect class="d-box d-ext" x="1305" y="78" width="150" height="84"/>
-          <text class="d-t" x="1380" y="104" text-anchor="middle">Pmod JA &mdash; DBGOUT</text>
-          <text class="d-s" x="1380" y="130" text-anchor="middle">1 clock + 7 data</text>
+          <rect class="d-box d-ext" x="1305" y="88" width="150" height="64"/>
+          <text class="d-t" x="1380" y="114" text-anchor="middle">Pmod JA &mdash; DBGOUT</text>
+          <text class="d-s" x="1380" y="134" text-anchor="middle">1 clock + 7 data</text>
           <!-- The machine's boot button, above the lamps because on MIT's
                light panel it sits with them.  There it is -BOOT2, a momentary
                contact pulled up and taken low through a Schmitt inverter,
                meeting the keyboard's -BOOT1 and the debug cable's PROG.BOOT at
                the gate that makes -BOOT, which presets RUN and forces the boot
                trap.  Here it is BTN0, debounced in fabric, and the console's
-               boot command presses the same line through a register.  Under
-               development: neither half has run on a board.  The box is 40
-               tall rather than the 84 of the Pmod boxes above it, because that
-               is what the 52 between Pmod JB and the lamps holds with a gap
-               either side; there is no third line for that reason. -->
-          <rect class="d-box d-ext" x="1305" y="290" width="150" height="40"/>
-          <text class="d-t" x="1380" y="309" text-anchor="middle">BTN0</text>
-          <text class="d-s" x="1380" y="323" text-anchor="middle">boot</text>
+               boot command presses the same line through a register.
+               Written as the lamps are written: one row at their own left
+               margin, the glyph on their centre line and the text 14 to the
+               right of it, so the block is one row where the lamp block is
+               six.  The glyph is a square and not a dot, and carries no lit
+               colour, because a momentary button is not a light; its 8 by 8
+               is the area of a lamp's 4.5 radius.  Its line reaches the
+               fabric as the lamps' does, from that rectangle's right edge to
+               this block's left edge at the block's own centre. -->
+          <rect class="d-box d-ext" x="1305" y="300" width="150" height="30"/>
+          <rect x="1315" y="311" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="319">BTN0 &mdash; BOOT</text>
+          <path class="d-line" d="M1290,315 L1305,315"/>
           <!-- The six lamps, assigned for a user rather than for
                bring-up: clocked, executing, booted, working, with the disk's
                own light and one that is dark until something goes wrong.
@@ -361,9 +366,9 @@
           <circle cx="1319" cy="466" r="4.5" fill="#2da44e" fill-opacity="0.45" stroke="currentColor" stroke-width="1"/>
           <text class="d-s" x="1333" y="470">LD5 &mdash; MACHRUN</text>
           <path class="d-line" d="M1290,412 L1305,412"/>
-          <rect class="d-box d-ext" x="1305" y="200" width="150" height="84"/>
-          <text class="d-t" x="1380" y="226" text-anchor="middle">Pmod JB &mdash; DBGIN</text>
-          <text class="d-s" x="1380" y="252" text-anchor="middle">1 clock + 7 data</text>
+          <rect class="d-box d-ext" x="1305" y="158" width="150" height="64"/>
+          <text class="d-t" x="1380" y="184" text-anchor="middle">Pmod JB &mdash; DBGIN</text>
+          <text class="d-s" x="1380" y="204" text-anchor="middle">1 clock + 7 data</text>
 
           <!-- What a person at the board uses: the keyboard and mouse on the
                processing system's USB host, the display over HDMI straight from
