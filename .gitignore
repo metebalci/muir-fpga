@@ -49,9 +49,13 @@ NA/
 clockInfo.txt
 tight_setup_hold_pins.txt
 
-# The TFTP server's address for the card, filled into uEnv.txt by mksd.sh.
-# Private to this network; the repository is public.
+# The TFTP server's address for the card, filled into uEnv.txt by mksd.sh,
+# and the board's own cable serial, which the JTAG scripts select it by.
+# Private to this network and to these boards; the repository is public. One
+# file a board, because two boards on one network need different addresses and
+# two boards on one hub need different serials.
 boards/arty-z7-20/linux/local.conf
+boards/cora-z7-07s/linux/local.conf
 
 # Buildroot's downloads (vendor/buildroot-dl, already under vendor/ above) and
 # its build tree, which the Makefile keeps out of the repository altogether

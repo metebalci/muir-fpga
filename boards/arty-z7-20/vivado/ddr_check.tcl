@@ -5,12 +5,43 @@
 # answers.
 #
 #     ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/ddr_check.tcl
-#     PS7_INIT=build/ps7/ps7_init.tcl BOARD_URL=<host>:3121 \
+#     PS7_INIT=build/ps7/ps7_init.tcl BOARD_URL=<host>:3121 JTAG_SERIAL=<serial> \
 #         ~/Xilinx/2026.1/Vivado/bin/xsdb boards/arty-z7-20/vivado/ddr_check.tcl
 #
 # Run from the repository root.  `connect` with no URL starts a local
 # `hw_server` itself; `docs/board.md` has the remote arrangement and the udev
 # rules whose absence looks like a network fault.
+#
+# TWO BOARDS READ THIS FILE, AND THE SECOND ONE SETS SIX FACTS AND SOURCES IT.
+# `boards/cora-z7-07s/vivado/ddr_check.tcl` sets that board's name, its
+# directory, its part, the device identity its `PSS_IDCODE` must carry, where
+# its routine is written and where its DDR ends, and then sources this file.
+# That is the shape this project already uses for the same board's `gen_ps7.py`
+# and `ps7_ops.py`: one copy of what the check does, and one copy of every
+# reason written beside it.  A board that sets nothing gets the Arty Z7-20's
+# values, which are the ones written here.
+#
+# AND THE BOARD IS PICKED BY ITS CABLE SERIAL, BECAUSE `name =~ "APU*"` NAMES
+# EVERY ZYNQ ON THE HUB.  That filter was the whole of the selection while one
+# board was attached.  Three hang off one hub now and it matches each of their
+# APUs, so on its own it can no longer say which board `ps7_init` is about to
+# be run against, and this routine writes the memory controller of whichever
+# target it is pointed at.
+#
+#   JTAG_SERIAL in the environment wins, so a run can name a board without
+#   editing anything.  Otherwise the serial is read from
+#   `<board>/linux/local.conf`, which is gitignored: a cable serial identifies
+#   one physical board the way its MAC address does, and this repository is
+#   public.
+#
+#   With no serial at all and exactly one Zynq attached, the filter is the one
+#   this file has always used and the run goes ahead.  So a bench with one
+#   board behaves as it did, and what is added there is two lines saying which
+#   board was chosen and how.
+#
+#   With no serial and more than one Zynq attached, the run refuses and prints
+#   the serials it can see.  Guessing would start the memory controller on
+#   whichever board enumerated first, and the numbering moves with enumeration.
 #
 # NO BITSTREAM, AND NO `ps7_post_config`.  This is the processor side alone.
 # `ps7_post_config` writes LVL_SHFTR_EN at 0xF8000900 and clears
@@ -112,14 +143,46 @@
 # The region is `rtl/plumbing/cadr_ddr_map.sv`'s: 0x1800_0000 for 128 MB, which is what
 # the machine will own.
 
+# ---------------------------------------------------------------- the board
+#
+# The six facts that differ between boards.  A board that sources this file
+# sets the ones it needs first, and `board_fact` leaves those alone; what it
+# does not set is the Arty Z7-20's, which is what these values are.
+proc board_fact {name value} {
+    if {![info exists ::$name]} {
+        set ::$name $value
+    }
+}
+
+# The name that goes in the messages.
+board_fact BOARD_NAME "Arty Z7-20"
+# Where the board's gitignored `local.conf` is, which is where a cable serial
+# comes from when the environment does not carry one.
+board_fact BOARD_DIR "boards/arty-z7-20"
+# The part, named in the failure the identity check prints.
+board_fact PART_NAME "XC7Z020"
+# The low 28 bits `PSS_IDCODE` must carry.  This is Xilinx's own number, out
+# of the device table Vivado ships at
+# `data/xicom/cable_data/digilent/lnx64/jtscdvclist.txt`: under `XC7Z` it
+# gives every Zynq device its IDCODE and the mask `0x0FFFFFFF` that drops the
+# revision nibble, and device `020` there is `0x03727093`.  The chain's own
+# JTAG IDCODE for this part is that word with a revision on top, which
+# `docs/board.md` quotes as `0x23727093`.
+board_fact DEVICE_ID 0x03727093
+# Where `make ps7-init` writes the routine this check runs.
+board_fact PS7_INIT_DEFAULT "build/ps7/ps7_init.tcl"
+# One past the top of the board's DDR.  Both boards carry 512 MB, the same
+# MT41K256M16 at the same width, so this is the same number twice and is a
+# fact about a board rather than about the machine.
+board_fact DDR_TOP 0x20000000
+
 set url  [expr {[info exists ::env(BOARD_URL)] ? $::env(BOARD_URL) : ""}]
 set init [expr {[info exists ::env(PS7_INIT)] ? $::env(PS7_INIT) \
-                                              : "build/ps7/ps7_init.tcl"}]
+                                              : $PS7_INIT_DEFAULT}]
 
 # ------------------------------------------------------------------ the map
 # rtl/plumbing/cadr_ddr_map.sv: RESERVED_BASE, and MAIN_BASE on top of it.
 set MAIN_BASE   0x18000000
-set DDR_TOP     0x20000000
 set RESERVED_MB 128
 
 # The proving address and word, the same pair `boards/arty-z7-20/cadr_arty.sv` gives the
@@ -130,7 +193,8 @@ set PROVE_NEIGH 0x18A72EE0
 set PROVE_WORD  0x8A5C36E1
 set PROVE_POISON 0x75A3C91E
 
-set TOP_ADDR    0x1FFFFFF0
+# Sixteen bytes below the top of DDR.
+set TOP_ADDR    [expr {$DDR_TOP - 16}]
 
 # ------------------------------------------------------------------ helpers
 
@@ -167,6 +231,25 @@ proc fail {what addr want got} {
     bye 1
 }
 
+# `local.conf` is a shell file of KEY=VALUE lines --- `mksd-buildroot.sh`
+# sources it --- and this reads one key out of it without running it.  A file
+# that is not there is not an error: it means no serial, which is allowed when
+# one board is attached.
+proc local_conf_serial {path} {
+    if {![file readable $path]} {
+        return ""
+    }
+    set fh [open $path]
+    set text [read $fh]
+    close $fh
+    foreach line [split $text "\n"] {
+        if {[regexp {^[ \t]*JTAG_SERIAL[ \t]*=[ \t]*\"?([A-Za-z0-9]+)} $line -> s]} {
+            return $s
+        }
+    }
+    return ""
+}
+
 proc rd32 {addr} {
     return [expr {[lindex [mrd -force -value $addr 1] 0] & 0xFFFFFFFF}]
 }
@@ -196,6 +279,17 @@ if {![file exists $init]} {
     exit 1
 }
 
+say "the $BOARD_NAME"
+
+# The environment first, so that a run can name a board without editing
+# anything, then the board's own gitignored file.
+set serial [expr {[info exists ::env(JTAG_SERIAL)] ? $::env(JTAG_SERIAL) : ""}]
+set serial_from "JTAG_SERIAL in the environment"
+if {$serial eq ""} {
+    set serial [local_conf_serial $BOARD_DIR/linux/local.conf]
+    set serial_from "$BOARD_DIR/linux/local.conf"
+}
+
 if {$url eq ""} {
     say "connecting to a local hw_server"
     if {[catch {connect} err]} {
@@ -211,8 +305,53 @@ if {$url eq ""} {
 }
 set connected 1
 
-if {[catch {targets -set -filter {name =~ "APU*"}} err]} {
-    stop "no APU target: $err"
+# ------------------------------------------------------- which board this is
+#
+# Every Zynq on the hub has an APU, so the count is asked before anything is
+# selected and a run with nothing to tell them apart refuses rather than
+# initialising the first one.
+set apus [targets -target-properties -filter {name =~ "APU*"}]
+set seen {}
+foreach t $apus {
+    if {[dict exists $t jtag_cable_serial]} {
+        lappend seen [dict get $t jtag_cable_serial]
+    }
+}
+
+if {$serial eq ""} {
+    if {[llength $apus] > 1} {
+        say "FAILED --- [llength $apus] Zynq targets are attached and nothing"
+        say "FAILED   says which of them this run is for.  Their cable serials:"
+        foreach one $seen {
+            say "FAILED     $one"
+        }
+        say "FAILED   Set JTAG_SERIAL, or put a JTAG_SERIAL line in"
+        say "FAILED   $BOARD_DIR/linux/local.conf, which is gitignored."
+        say "FAILED   Guessing would run ps7_init against whichever board"
+        say "FAILED   enumerated first, and that order is not ours to choose."
+        bye 1
+    }
+    say "no cable serial was given and one Zynq is attached, so it is that one"
+    set filter {name =~ "APU*"}
+} else {
+    say "selecting by cable serial, from $serial_from"
+    # The serial the debugger reports carries a letter after the one on the
+    # board, so this matches a prefix rather than the whole string.
+    set filter [format {jtag_cable_serial =~ "%s*" && name =~ "APU*"} $serial]
+}
+
+set chosen [targets -target-properties -filter $filter]
+if {[llength $chosen] != 1} {
+    say "FAILED --- [llength $chosen] targets match, and exactly one is wanted."
+    say "FAILED   The filter was: $filter"
+    say "FAILED   The APU cable serials attached are: [join $seen {, }]"
+    bye 1
+}
+if {[dict exists [lindex $chosen 0] jtag_cable_name]} {
+    say "the cable is [dict get [lindex $chosen 0] jtag_cable_name]"
+}
+if {[catch {targets -set -filter $filter} err]} {
+    stop "no APU target for the $BOARD_NAME: $err"
 }
 say "targets seen:"
 foreach line [split [string trimright [targets]] "\n"] {
@@ -233,13 +372,15 @@ configparams force-mem-accesses 1
 set idcode [rd32 0xF8000530]
 set device [expr {$idcode & 0x0FFFFFFF}]
 say "SLCR PSS_IDCODE at 0xF8000530 reads [hex $idcode]"
-say "  device identity              [hex $device]  wanted 0x03727093 (XC7Z020)"
-if {$device != 0x03727093} {
-    say "FAILED at 0xF8000530 --- PSS_IDCODE is not an XC7Z020's."
+say "  device identity              [hex $device]  wanted [hex $DEVICE_ID] ($PART_NAME)"
+if {$device != ($DEVICE_ID & 0xFFFFFFFF)} {
+    say "FAILED at 0xF8000530 --- PSS_IDCODE is not a $PART_NAME's."
     say "FAILED   read [hex $idcode], device identity [hex $device],"
-    say "FAILED   wanted 0x03727093.  docs/board.md quotes the whole word as"
-    say "FAILED   the JTAG IDCODE 0x23727093.  Nothing below is initialised"
-    say "FAILED   against a part this routine was not written for."
+    say "FAILED   wanted [hex $DEVICE_ID], which is Xilinx's own device code"
+    say "FAILED   for this part with the revision nibble masked off.  The"
+    say "FAILED   chain's JTAG IDCODE is the same word with a revision on it."
+    say "FAILED   Nothing below is initialised against a part this routine was"
+    say "FAILED   not written for."
     bye 1
 }
 
@@ -368,7 +509,7 @@ expect "its neighbour, still" [expr {$TOP_ADDR + 4}] 0x5AA51248
 # ----------------------------------------------------------------------- done
 
 configparams force-mem-accesses $saved_mode
-say "PASSED --- the memory controller is up and DDR answers at [hex $MAIN_BASE]"
+say "PASSED --- the $BOARD_NAME's memory controller is up and DDR answers at [hex $MAIN_BASE]"
 say "  through [hex [expr {$DDR_TOP - 1}]], with no bitstream and no"
 say "  ps7_post_config."
 bye 0

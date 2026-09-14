@@ -5,8 +5,8 @@ XC7Z007S variant of it, which is the one this project targets.
 
 **The machine fits on it and closes timing.** That was a ratio out of a part
 database until this directory was built, and it is a placed and routed figure
-now. Nothing here has been on silicon: no Cora Z7-07S has been programmed from
-this repository.
+now. **And the machine runs on it.** The section "On silicon" below has what
+the board has been made to do and what it has not.
 
 ## What the board is
 
@@ -273,23 +273,62 @@ which is gitignored as the other board's is. Two boards on one network need
 different Chaosnet addresses, and the development allocation reserves a second
 pair for exactly that.
 
+## On silicon
+
+**The start-up routine is right and the memory controller answers.**
+`vivado/ddr_check.tcl` was run over JTAG with no bitstream and no
+`ps7_post_config`. It read `PSS_IDCODE` as `0x13723093`, whose device identity
+is the `0x03723093` this part must carry, and `PCAP_PS_VERSION` as 3, which is
+silicon 3.1 and takes `ps7_init`'s else branch onto the 3.0 tables exactly as
+the other board does. Then DDR answered: the proving word and its complement at
+`0x18A72EE4` with its neighbour untouched, 26 walking-one addresses across the
+machine's region, and a word and its complement sixteen bytes below the top of
+the 512 MB.
+
+**Uninitialised DDR reads in half-word bands on this board.** Before anything
+was written, the words at `0x18000000` read `0x0000FFFF` and the words at
+`0x19000000` read `0xFFFF0000`, with a scatter of single flipped bits and no
+change between two reads. So an unwritten word here is neither zero nor all
+ones, and anything that would take one of those halves as evidence a write
+happened is testing nothing. That is the same trap the other board's own bands
+carry, in a different shape.
+
+**The machine runs MIT's boot PROM out of real DDR3.** The bitstream was
+programmed after `ps7_init` and `ps7_post_config`, the part asserted DONE, and
+the level shifters stayed up across the download. The console answered `CONS` at
+`0x80000000` over `M_AXI_GP1`, read through the debugger, and the machine
+retired 4,000,388 microcycles in 2.01 seconds. Its program counter sat in the
+boot PROM's no-drive loop, `0o541` to `0o553`, with `MD` holding `0x2321`, which
+is the disk controller's own no-drive status. `FLAG-1` read `0xE900`: running,
+no error, every parity bit clean, and `PROMDISABLE` clear.
+
+**And the memory tally witnessed the traffic from outside the design.** The two
+EMIO GPIO words both read `0x01008100`: 256 reads and 256 writes asked, and 256
+reads and 256 writes answered, which is the boot PROM's identity copy of page 0
+and the whole of its main-memory traffic. Page 0 read back afterwards holds
+exactly what the debugger had written into it. That is the other board's step
+four, on this one.
+
+**What a person at the board sees is LD0 green and LD1 steady blue.** LD0 is
+`MACHRUN` and the machine is running. LD1 is blue because the machine is still
+in its boot PROM, and there is no green blink under it: the blink is gated
+behind `PROMDISABLE`, so it only appears once the machine has loaded microcode
+off a disk. With no drive that never happens, so LD1 stays blue and nothing on
+this board moves. Two lamps cannot say everything, and this is the case where
+what they cannot say is whether the fabric is still clocked.
+
 ## What has not been done
 
-**Nothing here has been on silicon.** No Cora Z7-07S has been programmed with a
-bitstream from this repository, no image has been built from this Buildroot
-configuration, and no card has been written.
-
-The natural first board step is the one the other board's plan starts with:
-`vivado/ddr_check.tcl` over JTAG, which starts the memory controller from the
-debugger and reads DDR back. It needs nothing in the fabric and no bitstream,
-and it says whether the start-up routine derived here is right. After it come
-the proving boards, `PROVE=1` and `PROVE=2`, and then the machine running out
-of real memory.
+No image has been built from this Buildroot configuration and no card has been
+written, so nothing on this board has run Linux or served the machine a disk.
 
 Three Vivado flows the Arty Z7-20 has are not ported here: the probe readout,
 the two proving scripts and the memory tally's run script. The parameters they
 build are in `cadr_cora.sv` and the bitstream flow, so what is missing is the
-script that programs a board and reads it back.
+script that programs a board and reads it back. The proving boards, `PROVE=1`
+and `PROVE=2`, were the other board's way of proving the memory path before the
+machine was put behind it; here the tally above witnessed the machine's own
+cycles directly, so what they would add is the two directions taken apart.
 
 **Two scripts are read out of the other board's directory on purpose.**
 `vivado/tick.tcl` parses the clock generator's four parameters out of whatever
@@ -298,6 +337,18 @@ requirement its paths carry. Neither knows anything about a part. They live in
 the first board's directory because that is where they were written, and a copy
 here would be a second description of one rule. When a directory shared between
 boards exists, those two move into it.
+
+**And `vivado/ddr_check.tcl` here is a front end of eight lines and a page of
+reasons.** It sets the six facts that differ between the boards and sources the
+other board's file, which is where the check itself lives. That is the shape
+`vivado/gen_ps7.py` and `vivado/ps7_ops.py` in this directory already use.
+
+**Every script that reaches a board names it by its cable serial.** Several
+boards hang off one hub here, and a filter that names a part or a target number
+can reach the wrong one. The serial comes from `JTAG_SERIAL` in the environment
+or from `linux/local.conf`, which is gitignored: a cable serial identifies one
+physical board the way its MAC address does. With more than one Zynq attached
+and no serial given, the check refuses to run.
 
 ## Why the pin file is vendored
 
