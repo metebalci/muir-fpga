@@ -58,6 +58,7 @@
 # prefixes its one line `cadr-boot:` rather than `cadr-disk-packs:` because it
 # is the boot button's and not the pack program's.
 
+PROG=/usr/bin/cadr-disk-packs
 BOOT_DEV=/dev/mmcblk0p1
 PACKS_DEV=/dev/mmcblk0p2
 BOOT=/mnt/card
@@ -73,6 +74,14 @@ PIDFILE=/var/run/cadr-disk-packs.pid
 RC="$PACKS/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
+
+# And the daemon starter, cadr-common's too: it starts the program, looks for
+# it a moment later, and prints what it says when it is not there.  Its header
+# is the whole account, and the short of it is that `start-stop-daemon -b`
+# sends a refusal to /dev/null, so a flag this program will not take would
+# otherwise be a boot that printed OK.
+DAEMON_SH=/usr/share/cadr/daemon.sh
+. "$DAEMON_SH"
 
 # **THE HOLD MARKER.**  It stands while the machine is held, and it is what
 # `cadr-console` reads to refuse `start` and `step` with muir's own words and
@@ -96,10 +105,7 @@ start() {
 		echo "cadr-disk-packs: no pack partition at $PACKS_DEV; the bay will be empty"
 	fi
 	hold_the_machine
-	printf "Starting cadr-disk-packs: "
-	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-disk-packs -- --packs "$PACKS" --log /dev/console
-	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS" --log /dev/console
 }
 
 # **`--no-auto-boot`: LEAVE THE BOOT BUTTON UNPRESSED.**  muir's flag and

@@ -22,7 +22,7 @@ keyboard and mouse later, when the I/O board exists.
 
 ## What it is, and what it is not
 
-    cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
+    cadr-terminal [--terminal [<endpoint>]] [--log PATH] [--bow]
                   [--window ADDR] [--interval-ms N] [--no-rre]
                   [--no-guard] [--no-input] [--input ADDR]
                   [--keyboard-mapping FILE] [--keyboard-boot KEYS]
@@ -32,6 +32,23 @@ It maps 128 KB at `0x1C00_0000` through `/dev/mem`. It copies the visible
 23,112 words out of that once a frame while anybody is watching. It serves them
 over RFB on port 5900, which is display `:0`. RFB is RFC 6143, which is what a
 VNC viewer speaks. `S85cadr-terminal` starts it at boot.
+
+**Where it listens is `--terminal`, which is muir's word for it.** The flag
+takes muir's own four forms: nothing, a port, an address, or address:port. It
+replaced a `--port` and a `--bind` of this program's own. Two reasons. A person
+who knows one of the two CADRs on this board should not have to learn a second
+vocabulary for the other. And `--port` was a word this program and the serial
+line both took, so the card's one file of flags could not carry it: a flag
+there names one program, and neither program could say where it listened.
+
+**The one place it differs from muir is the default address.** muir binds the
+loopback unless told otherwise, which is where an unauthenticated server
+belongs on a machine somebody is sitting at. This board has no screen of its
+own and the whole point of this program is to be watched from another machine,
+so its default is every interface. The grammar is muir's exactly; only the
+default the grammar is read against is this board's. `--terminal
+127.0.0.1:5900` asks for the loopback, and the card writes its endpoint out in
+full so that nothing rests on which default is which.
 
 **It carries the keyboard and the mouse, and a file may say what its keys
 mean.** It did not carry them at first, because there was no I/O board in the
@@ -55,8 +72,9 @@ connection would be worse than dropping them.
 6143 section 7.2.1), so anybody who can reach the port sees the screen. That
 is the decision the rest of this image already makes, since root logs in with
 the password `root` over Dropbear. It is stated in the program's own
-opening line rather than left to be discovered. `--bind 127.0.0.1` restricts
-it to the board itself, and a viewer then reaches it over an SSH tunnel.
+opening line rather than left to be discovered. `--terminal 127.0.0.1:5900`
+restricts it to the board itself, and a viewer then reaches it over an SSH
+tunnel.
 
 **It cannot read `MODE BOW`.** Whether a one bit shows white or black is four
 flops in the fabric (`rtl/machine/cadr_tv.sv:141`, cleared to zero at `:195`).
@@ -886,8 +904,8 @@ nothing further is printed per frame:
 
     vncviewer <the board>:0          # or :5900, or any RFB client
 
-If the port is not to be open on the LAN, pass `--bind 127.0.0.1` on the board
-and use:
+If the port is not to be open on the LAN, pass `--terminal 127.0.0.1:5900` on
+the board and use:
 
     ssh -L 5900:127.0.0.1:5900 root@<the board>
     vncviewer 127.0.0.1:0

@@ -31,7 +31,7 @@ CORE = ["screen_frame.c", "screen_rfb.c", "screen_server.c",
         "input_face.c", "input_keys.c", "input_mapping.c"]
 HEADERS = ["screen_geom.h", "screen_frame.h", "screen_rfb.h", "screen_server.h",
            "input_face.h", "input_keys.h", "input_keymap.h", "input_mapping.h"]
-COMMON = ["cadr_log.c", "cadr_mem.c", "cadr_input_link.c"]
+COMMON = ["cadr_log.c", "cadr_mem.c", "cadr_input_link.c", "cadr_endpoint.c"]
 
 
 def parse(path):
@@ -96,16 +96,23 @@ def apply(record, work, src, common):
         shutil.copy(os.path.join(src, f), os.path.join(here, "cadr-terminal", "src", f))
     for f in COMMON:
         shutil.copy(os.path.join(common, f), os.path.join(here, "cadr-common", "src", f))
-    for f in ("cadr_log.h", "cadr_mem.h", "cadr_input_link.h"):
+    for f in ("cadr_log.h", "cadr_mem.h", "cadr_input_link.h", "cadr_endpoint.h"):
         shutil.copy(os.path.join(common, "cadr", f),
                     os.path.join(here, "cadr-common", "src", "cadr", f))
-    target = os.path.join(here, "cadr-terminal", "src", record["file"])
+    # A bare name is this package's; cadr-common's files are named with their
+    # own directory in front, which is also how a reader tells them apart in
+    # the list.  The endpoint grammar lives there because the serial line
+    # reads the same one.
+    named = record["file"]
+    target = (os.path.join(here, named) if "/" in named
+              else os.path.join(here, "cadr-terminal", "src", named))
     if not os.path.exists(target):
-        return here, f"@file {record['file']} is not one of this package's sources"
+        return here, (f"@file {named} is not one of the sources this check builds; "
+                      "a record aimed anywhere else could never be caught")
     text = open(target).read()
     hits = text.count(record["old"])
     if hits != 1:
-        return here, (f"@old matches {hits} times in {record['file']}; a record names its "
+        return here, (f"@old matches {hits} times in {named}; a record names its "
                       "lines exactly once or it has rotted")
     open(target, "w").write(text.replace(record["old"], record["new"]))
     return here, None

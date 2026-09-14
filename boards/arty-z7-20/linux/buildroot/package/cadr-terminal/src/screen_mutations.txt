@@ -957,3 +957,46 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @new
 	// **NOT `queue_down`**: the boot word is not a key going down and must
 @end
+
+@mutation the-terminal-endpoint-falls-back-to-the-loopback
+@file cadr-common/src/cadr_endpoint.c
+@why a bare port is on this board's default address, every interface, and not on the loopback
+@note **THE ONE PLACE THIS BOARD PARTS FROM muir, so it is the one that needs
+@note a record.**  muir puts a bare port on the loopback, which is where an
+@note unauthenticated server belongs on a machine somebody is sitting at.
+@note This board has no screen of its own and the whole point of this program
+@note is to be watched from another machine, so a bare port is on every
+@note interface and the loopback is asked for in as many words.  Taking muir's
+@note rule here is the plausible edit --- it reads as a correction --- and the
+@note board it makes is one whose screen nobody can reach, with the program
+@note reporting that it is serving.
+@old
+	if (a_port(spec, &e.port) == 0) {
+		e.port_named = 1;
+		*out = e;
+		return 0;
+	}
+@new
+	if (a_port(spec, &e.port) == 0) {
+		e.port_named = 1;
+		snprintf(e.addr, sizeof e.addr, "127.0.0.1");
+		*out = e;
+		return 0;
+	}
+@end
+
+@mutation the-endpoint-takes-a-port-above-65535
+@file cadr-common/src/cadr_endpoint.c
+@why a port is 0 to 65535, and one above it must be refused rather than truncated
+@note muir reads a port as `parse::<u16>()`, which refuses anything that does
+@note not fit.  Widened here, `--terminal 65536` parses, and what the socket
+@note is then given is the low sixteen bits --- port 0, which binds whatever
+@note the kernel hands out.  The screen comes up on a port that moves between
+@note boots and the program's own opening line names the number nobody asked
+@note for.  The bound is widened rather than deleted so that every value stays
+@note read and the compiler cannot catch this instead of the check.
+@old
+		if (v > 65535u)
+@new
+		if (v > 655350u)
+@end

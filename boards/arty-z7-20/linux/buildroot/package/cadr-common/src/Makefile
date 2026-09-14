@@ -20,8 +20,9 @@
 # is installed rather than staged.  Its own header is the contract.
 
 LIB     := libcadr-common.a
-SOURCES := cadr_log.c cadr_mem.c cadr_input_link.c
-HEADERS := cadr/cadr_log.h cadr/cadr_mem.h cadr/cadr_input_link.h
+SOURCES := cadr_log.c cadr_mem.c cadr_input_link.c cadr_endpoint.c
+HEADERS := cadr/cadr_log.h cadr/cadr_mem.h cadr/cadr_input_link.h \
+           cadr/cadr_endpoint.h
 OBJECTS := $(SOURCES:.c=.o)
 
 AR ?= ar
@@ -42,14 +43,18 @@ install-staging: all
 	install -m 0644 $(LIB) $(DESTDIR)/usr/lib/
 	install -m 0644 $(HEADERS) $(DESTDIR)/usr/include/cadr/
 
-# The target.  One file: the shell reader the init scripts source.  It has no
-# build step --- it is read, not compiled --- so `all` says nothing about it
-# and this is the whole of its shipping.
+# The target.  Two files, both shell the init scripts source and neither with
+# a build step --- they are read, not compiled --- so `all` says nothing about
+# them and this is the whole of their shipping.  `fpgarc.sh` decides what a
+# program is given out of the card's one file of flags; `daemon.sh` starts it
+# so that a program which will not take what it was given says so on the
+# console instead of dying behind an OK.
 SHAREDIR := /usr/share/cadr
 
 install:
 	install -d $(DESTDIR)$(SHAREDIR)
 	install -m 0644 fpgarc.sh $(DESTDIR)$(SHAREDIR)/fpgarc.sh
+	install -m 0644 daemon.sh $(DESTDIR)$(SHAREDIR)/daemon.sh
 
 # The reader's own check, on the build host, needing nothing but a POSIX
 # shell: one `fpgarc` handed to five init scripts, each getting its own flags

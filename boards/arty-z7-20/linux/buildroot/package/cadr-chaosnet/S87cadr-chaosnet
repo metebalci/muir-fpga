@@ -33,6 +33,7 @@
 # program is told where to write instead.
 
 PACKS=/mnt/packs
+PROG=/usr/bin/cadr-chaosnet
 PIDFILE=/var/run/cadr-chaosnet.pid
 
 # **ONE FILE, IN muir'S OWN rc FORMAT, AND THIS PROGRAM TAKES ITS OWN FLAGS
@@ -69,6 +70,14 @@ RC="$PACKS/fpgarc"
 # Chaosnet started with the wrong flags is worse than one not started.
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
+
+# And the daemon starter, cadr-common's too: it starts the program, looks for
+# it a moment later, and prints what it says when it is not there.  Its header
+# is the whole account, and the short of it is that `start-stop-daemon -b`
+# sends a refusal to /dev/null, so a flag this program will not take would
+# otherwise be a boot that printed OK.
+DAEMON_SH=/usr/share/cadr/daemon.sh
+. "$DAEMON_SH"
 
 # **THE FLAGS THIS PROGRAM OWNS**, read off its own argument list
 # (src/cadr-chaosnet.c).  Both spellings of each, muir's `--chaos-` one and
@@ -301,12 +310,13 @@ start() {
 	names=$(names_in "$@")
 	wait_for_network
 
-	printf "Starting cadr-chaosnet: "
-	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-chaosnet -- \
-		"$@" --log /dev/console
-	[ $? = 0 ] && echo "OK" || echo "FAIL"
-
+	# `--log` is last of all and is not the card's to say: where a daemon
+	# writes is this script's.  **THIS IS THE PROGRAM THE SILENT REFUSAL
+	# WAS MEASURED ON**: a carriage return on every peer's port, refused by
+	# name into /dev/null, with this script printing OK and leaving a pid
+	# file.  The reader took the carriage return away and `cadr_daemon`
+	# takes the silence away.
+	cadr_daemon "$PROG" "$PIDFILE" "$@" --log /dev/console
 }
 
 stop() {

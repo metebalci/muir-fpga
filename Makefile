@@ -2087,6 +2087,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
                         $(CHAOSNET_SRC)/chaos_test_boot.sh \
                         $(CHAOSNET_PKG)/S87cadr-chaosnet \
                         $(COMMON_SRC)/fpgarc.sh \
+                        $(COMMON_SRC)/daemon.sh \
                         $(CHAOSNET_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(CHAOSNET_SRC) check
 	$(MAKE) -C $(CHAOSNET_SRC) all COMMON=host
@@ -2108,6 +2109,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
 # The scripts are prerequisites, not only the reader: the flag lists are in
 # them, and a list that goes wrong is exactly what this is for.
 $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
+                      $(COMMON_SRC)/daemon.sh \
                       $(COMMON_SRC)/fpgarc_test.sh \
                       $(CHAOSNET_PKG)/S87cadr-chaosnet \
                       $(TERMINAL_PKG)/S85cadr-terminal \
@@ -2120,7 +2122,13 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
 	@echo "fpgarc: owns and no others, and --no-auto-boot holds the machine before the drive"
 	@touch $@
 
+# **cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK COMPILES
+# THEM.**  The endpoint grammar `--serial` reads is there, shared with the
+# screen so that one grammar cannot become two, and a record in this package's
+# list aims at it by name.  Without these a change to it would leave the check
+# stamped and unrun, which is this project's stale-artefact scar in a Makefile.
 $(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h) \
+                      $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
                       $(SERIAL_SRC)/serial_mutations.txt \
                       $(SERIAL_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(SERIAL_SRC) check
@@ -2129,7 +2137,10 @@ $(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h
 	@echo "serial: the program builds, and the cable's far end agrees with muir's endpoint"
 	@touch $@
 
+# cadr-common's sources for the same reason the serial line's check has them:
+# the endpoint grammar `--terminal` reads is there and a record aims at it.
 $(BUILD)/terminal.pass: $(wildcard $(TERMINAL_SRC)/*.c) $(wildcard $(TERMINAL_SRC)/*.h) \
+                        $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
                         $(TERMINAL_SRC)/screen_mutations.txt \
                         $(TERMINAL_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(TERMINAL_SRC) check
@@ -2147,8 +2158,10 @@ $(BUILD)/terminal.pass: $(wildcard $(TERMINAL_SRC)/*.c) $(wildcard $(TERMINAL_SR
 # says which of its two builds is which.
 $(BUILD)/usb_input.pass: $(wildcard $(USB_INPUT_SRC)/*.c) $(wildcard $(USB_INPUT_SRC)/*.h) \
                          $(wildcard $(TERMINAL_SRC)/*.c) $(wildcard $(TERMINAL_SRC)/*.h) \
+                         $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
                          $(USB_INPUT_SRC)/usb_mutations.txt \
                          $(USB_INPUT_PKG)/S88cadr-usb-input \
+                         $(COMMON_SRC)/fpgarc.sh $(COMMON_SRC)/daemon.sh \
                          $(USB_INPUT_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(USB_INPUT_SRC) check
 	$(MAKE) -C $(USB_INPUT_SRC) all COMMON=host

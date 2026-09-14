@@ -9,7 +9,7 @@
 # purpose, because a number it invented would be one nobody knows.  A daemon
 # has to have one, so it is taken the way the debug cable's 7661 is taken from
 # DBGOUT's Unibus address: the 2651's first register is `0o764160`
-# (sys/doc/unaddr.text), so the port is 7641.  `--port` changes it.
+# (sys/doc/unaddr.text), so the port is 7641.  `--serial` changes it.
 #
 # S86, after S85cadr-terminal and S80cadr-disk-packs: the drive comes present
 # first, then the screen, then the line.  Nothing here depends on that order
@@ -23,14 +23,25 @@
 # `root` over Dropbear
 # (boards/arty-z7-20/linux/buildroot/configs/arty_z7_20_defconfig) --- because
 # the board is on a private LAN and the line has to be reached from another
-# machine.  `--bind 127.0.0.1` is how that is changed, and then the line is
-# reached over an SSH tunnel.
+# machine.  `--serial 127.0.0.1:7641` is how that is changed, and then the line
+# is reached over an SSH tunnel.
 #
 # The log goes to the console, which is where the board is watched from
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
-# program is told where to write instead.
+# program is told where to write instead --- and `-b` is also why this script
+# does not start the program itself but hands it to cadr-common's
+# `cadr_daemon`, which looks for it a moment later and prints what it says if
+# it is not there.  A flag this program refuses is otherwise a boot that prints
+# OK with no line on it.
 
-PORT=7641
+PROG=/usr/bin/cadr-serial
+# **WHERE THE FAR END IS OFFERED, WRITTEN OUT IN FULL.**  muir's own flag and
+# muir's own grammar, one word for the address and the port together
+# (cadr/cadr_endpoint.h).  It is written as an endpoint rather than left to the
+# program's default so that this script says what it does; the card's `fpgarc`
+# may say another and wins, being passed after.  Every interface, because the
+# board has no terminal of its own and the paragraph above is the whole of why.
+ENDPOINT=0.0.0.0:7641
 PIDFILE=/var/run/cadr-serial.pid
 PACKS=/mnt/packs
 
@@ -50,30 +61,36 @@ RC="$PACKS/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
 
+# And the daemon starter, cadr-common's too: it starts the program, looks for
+# it a moment later, and prints what it says when it is not there.  Its header
+# is the whole account.
+DAEMON_SH=/usr/share/cadr/daemon.sh
+. "$DAEMON_SH"
+
 # **THE FLAGS THIS PROGRAM OWNS**, read off its own argument list
-# (src/cadr-serial.c).  `--port` and `--bind` are NOT here and cannot be:
-# cadr-terminal takes both words too, and a flag in `fpgarc` names one program
-# or it names none.  muir says the same thing as `--serial <address>:<port>`,
-# one word that is the serial line's and nobody else's; this program does not
-# take that spelling yet, and it is listed so that the line goes to its own
-# program on the day it does rather than to nobody.  `--log`, `--no-guard` and
-# `--once` are this script's or a person's at a prompt.
+# (src/cadr-serial.c).  `--log`, `--no-guard` and `--once` are not here: they
+# are this script's or a person's at a prompt.
+#
+# **`--port` AND `--bind` ARE GONE FROM THE PROGRAM ITSELF**, and that is what
+# `--serial` is.  They were words this program and the screen both took, so no
+# list could claim either and no `fpgarc` line could say where either program
+# listened.  muir says the same thing in one word that belongs to one program,
+# and now so does this.
 FLAGS="--serial
        --regs
        --poll-us
        --quiet"
 
 start() {
-	set -- --port "$PORT"
+	set -- --serial "$ENDPOINT"
 	# The card's flags after this script's own, so that a line in `fpgarc`
 	# wins --- muir's rule that a flag given later wins, and the way round
 	# somebody editing the card expects.
 	[ -f "$RC" ] && eval "set -- \"\$@\" $(fpgarc_args "$RC" $FLAGS)"
 
-	printf "Starting cadr-serial: "
-	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-serial -- "$@" --log /dev/console
-	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	# `--log` is last of all and is not the card's to say: where a daemon
+	# writes is this script's.
+	cadr_daemon "$PROG" "$PIDFILE" "$@" --log /dev/console
 }
 
 stop() {

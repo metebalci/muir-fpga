@@ -29,6 +29,7 @@
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
 # program is told where to write instead.
 
+PROG=/usr/bin/cadr-usb-input
 PIDFILE=/var/run/cadr-usb-input.pid
 PACKS=/mnt/packs
 
@@ -47,6 +48,14 @@ PACKS=/mnt/packs
 RC="$PACKS/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
+
+# And the daemon starter, cadr-common's too: it starts the program, looks for
+# it a moment later, and prints what it says when it is not there.  Its header
+# is the whole account, and the short of it is that `start-stop-daemon -b`
+# sends a refusal to /dev/null, so a flag this program will not take would
+# otherwise be a boot that printed OK.
+DAEMON_SH=/usr/share/cadr/daemon.sh
+. "$DAEMON_SH"
 
 # **THE FLAGS THIS PROGRAM OWNS**, and it is the `--usb-` spellings alone.
 # The program takes every flag twice --- `--device` and `--usb-device`, and so
@@ -69,10 +78,20 @@ start() {
 	set --
 	[ -f "$RC" ] && eval "set -- $(fpgarc_args "$RC" $FLAGS)"
 
-	printf "Starting cadr-usb-input: "
-	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-usb-input -- "$@" --log /dev/console
-	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	# `--log` is last of all and is not the card's to say: where a daemon
+	# writes is this script's.
+	cadr_daemon "$PROG" "$PIDFILE" "$@" --log /dev/console
+
+	# **AND THE LAST WORD ON THE CARD'S FILE, because this is the last
+	# script to read it.**  Nothing in the reader refuses anything --- that
+	# is what lets one file serve five strict programs --- so a flag no
+	# list names is dropped in silence, and `--bwo` for `--bow` is a card
+	# that says something and a board that does nothing.  Every script
+	# records what it claimed as it reads the file; this compares the file
+	# against all of them and names what went to nobody.  S88 is the
+	# highest number of the five, so by here every other list has had its
+	# turn.
+	[ -f "$RC" ] && fpgarc_say_unclaimed "$RC"
 }
 
 stop() {

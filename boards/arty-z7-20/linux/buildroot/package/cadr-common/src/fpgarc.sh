@@ -49,6 +49,33 @@
 #   fpgarc_has FILE FLAG
 #       True when FILE names FLAG.  For a bare flag like --no-auto-boot.
 #
+#   fpgarc_say_unclaimed FILE
+#       Print one line naming the flags in FILE that no program on this board
+#       claimed, or nothing at all.  For the LAST init script to read the
+#       file, once every other one has had its turn.
+#
+# **WHY THE UNCLAIMED LINES ARE WORTH A LINE AT BOOT.**  Nothing here refuses
+# anything, which is what lets one file serve several strict programs --- and
+# it is also the one way a setting can still be lost.  A flag no list names is
+# dropped in silence, so `--bwo` for `--bow` is a card that says something and
+# a board that does nothing, with every program starting cleanly and nothing
+# to read.  That is the same failure the programs' own strictness exists to
+# prevent, one level up, and the answer is the same: say it where somebody is
+# looking.
+#
+# **AND THE LISTS ARE NOT GATHERED IN ONE PLACE TO DO IT.**  A union written
+# here would be a second copy of five lists and a second place to be wrong.
+# Instead each script's claim is recorded as it reads the file, so what the
+# last one compares against is what the scripts that actually ran asked for.
+# A flag for a program that is not on this board is then reported too, which is
+# true and worth knowing.
+
+# Where the claims are remembered across a boot.  /var/run is a RAM disk
+# unpacked at every boot, so this starts empty every time and cannot go stale.
+# A `restart` of one script only adds to it, and claims that only grow can
+# only make this report quieter, never wronger.
+FPGARC_CLAIMED=${FPGARC_CLAIMED:-/var/run/cadr-fpgarc.claimed}
+#
 # HOW A CALLER USES IT.  The words are quoted, so they go back through `eval`
 # and an argument with a space in it survives:
 #
@@ -87,6 +114,14 @@ fpgarc_lines() {
 fpgarc_args() {
 	_fpgarc_file=$1
 	shift
+	# What this caller claims, whether or not the file has any of it and
+	# whether or not the file is there at all: a claim is about the
+	# program's list and not about the card.
+	if [ -n "${FPGARC_CLAIMED:-}" ]; then
+		for _fpgarc_claim in "$@"; do
+			printf '%s\n' "$_fpgarc_claim"
+		done >> "$FPGARC_CLAIMED" 2>/dev/null || :
+	fi
 	[ -f "$_fpgarc_file" ] || return 1
 	fpgarc_lines "$_fpgarc_file" | while IFS= read -r _fpgarc_line; do
 		case "$_fpgarc_line" in
@@ -113,4 +148,31 @@ fpgarc_args() {
 
 fpgarc_has() {
 	[ -n "$(fpgarc_args "$1" "$2")" ]
+}
+
+# The flags in FILE that nobody claimed, one a line.  Nothing when the file is
+# not there, and nothing when no claim has been recorded --- which is a boot
+# where this ran first rather than last, and saying every flag went to nobody
+# would be worse than saying nothing.
+fpgarc_unclaimed() {
+	[ -f "$1" ] || return 0
+	[ -s "${FPGARC_CLAIMED:-}" ] || return 0
+	fpgarc_lines "$1" | while IFS= read -r _fpgarc_line; do
+		_fpgarc_flag=${_fpgarc_line%% *}
+		grep -qx -- "$_fpgarc_flag" "$FPGARC_CLAIMED" ||
+			printf '%s\n' "$_fpgarc_flag"
+	done
+}
+
+fpgarc_say_unclaimed() {
+	_fpgarc_none=$(fpgarc_unclaimed "$1" | sort -u | tr '\n' ' ')
+	# The trailing space from `tr` is why this is not simply -n.
+	case "$_fpgarc_none" in
+	""|" ") return 0 ;;
+	esac
+	# The flags last, so that the sentence reads the same for one of them
+	# as for six.
+	echo "fpgarc: no program on this board takes these lines, so they did nothing" \
+	     "(a misspelling, or a flag for a program that is not installed;" \
+	     "docs/fpgarc.md has the lists): ${_fpgarc_none% }"
 }

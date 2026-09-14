@@ -80,7 +80,15 @@
 #include "input_keys.h"
 #include "input_mapping.h"
 #include "screen_frame.h"
+#include <cadr/cadr_endpoint.h>
+
 #include "screen_geom.h"
+
+// The port cadr-terminal defaults to, repeated here rather than included from
+// the program: this holds the grammar against a default and does not care
+// which number it is, and a shared constant would let both move together and
+// say nothing.
+#define TERM_TEST_PORT 5900
 #include "screen_rfb.h"
 #include "screen_server.h"
 
@@ -1054,6 +1062,99 @@ static void check_handshakes(void)
 // connection survives all of it.  RFC 6143 gives a server no way to tell a
 // viewer it takes no input, and every viewer sends pointer events as the
 // mouse crosses its window, so refusing the connection would be worse.
+// ---- `--terminal`'s endpoint, which is muir's grammar -------------------
+//
+// **WHY THE GRAMMAR IS CHECKED AND NOT THE FLAG.**  `cadr-terminal.c`'s `main`
+// is not in this check --- the check links the core files and drives them ---
+// so what is held here is the thing `main` calls, which is where every
+// decision about a spelling is made.  `main` reads one word, hands it here and
+// binds what comes back.
+//
+// muir's four forms, out of its own `endpoint_at`: nothing, a port, an
+// address, address:port.  All four are taken here, because the screen's number
+// is one every VNC viewer already knows and an endpoint that does not say it
+// still says something.
+//
+// **AND THE DEFAULT ADDRESS IS EVERY INTERFACE AND NOT THE LOOPBACK**, which
+// is the one place this board parts from muir and is checked here so that
+// nobody changes it by accident.  muir binds the loopback because that is
+// where an unauthenticated server belongs on a machine somebody is sitting at;
+// this board has no screen of its own and the whole point of this program is
+// to be watched from another machine.  `--terminal 127.0.0.1:5900` is how the
+// loopback is asked for, and the card writes its endpoint out in full so that
+// nothing rests on which default is which.
+static void check_the_endpoint_grammar(void)
+{
+	struct cadr_endpoint e;
+
+	// Nothing: the flag given bare is the default, every interface at
+	// VNC's display :0.
+	CHECK(cadr_endpoint_parse(NULL, NULL, TERM_TEST_PORT, &e) == 0,
+	      "the flag given bare must be taken");
+	CHECK(e.port == TERM_TEST_PORT, "and it is the default port: %u", e.port);
+	CHECK(e.addr[0] == '\0', "and every interface, not the loopback: [%s]", e.addr);
+	CHECK(e.port_named == 0, "and it names no port");
+
+	// A bare port.
+	CHECK(cadr_endpoint_parse("5901", NULL, TERM_TEST_PORT, &e) == 0,
+	      "a bare port must be taken");
+	CHECK(e.port == 5901, "a bare port is that port: %u", e.port);
+	CHECK(e.addr[0] == '\0',
+	      "and it is on the default's address, every interface here: [%s]", e.addr);
+	CHECK(e.port_named == 1, "and it names a port");
+
+	// A bare address, at the default's port.
+	CHECK(cadr_endpoint_parse("127.0.0.1", NULL, TERM_TEST_PORT, &e) == 0,
+	      "a bare address must be taken");
+	CHECK(strcmp(e.addr, "127.0.0.1") == 0, "the address is the address: [%s]", e.addr);
+	CHECK(e.port == TERM_TEST_PORT, "at the default's port: %u", e.port);
+	CHECK(e.port_named == 0, "and it names no port");
+
+	// address:port, which is what the card writes.
+	CHECK(cadr_endpoint_parse("0.0.0.0:5900", NULL, TERM_TEST_PORT, &e) == 0,
+	      "address:port must be taken");
+	CHECK(strcmp(e.addr, "0.0.0.0") == 0 && e.port == 5900 && e.port_named == 1,
+	      "and it is itself: [%s]:%u", e.addr, e.port);
+
+	// The loopback with a port, which is how the screen is kept off the
+	// LAN now that there is no --bind to say it with.
+	CHECK(cadr_endpoint_parse("127.0.0.1:5900", NULL, TERM_TEST_PORT, &e) == 0 &&
+	      strcmp(e.addr, "127.0.0.1") == 0 && e.port == 5900,
+	      "the loopback with a port must be taken");
+
+	// The refusals, each a spelling somebody could write on a card.
+	CHECK(cadr_endpoint_parse("nonsense", NULL, TERM_TEST_PORT, &e) != 0,
+	      "a word that is neither a port nor an address must be refused");
+	CHECK(cadr_endpoint_parse(":5900", NULL, TERM_TEST_PORT, &e) != 0,
+	      "an empty host must be refused rather than read as every interface: "
+	      "0.0.0.0:5900 is how that is said");
+	CHECK(cadr_endpoint_parse("5900:", NULL, TERM_TEST_PORT, &e) != 0,
+	      "a colon with no port after it must be refused");
+	CHECK(cadr_endpoint_parse("65536", NULL, TERM_TEST_PORT, &e) != 0,
+	      "a port above 65535 must be refused");
+	CHECK(cadr_endpoint_parse("0.0.0.0:65536", NULL, TERM_TEST_PORT, &e) != 0,
+	      "and so must one in address:port");
+	CHECK(cadr_endpoint_parse("-1", NULL, TERM_TEST_PORT, &e) != 0,
+	      "a negative port must be refused");
+	CHECK(cadr_endpoint_parse("59 00", NULL, TERM_TEST_PORT, &e) != 0,
+	      "a port with a space in it must be refused");
+	CHECK(cadr_endpoint_parse("1.2.3", NULL, TERM_TEST_PORT, &e) != 0,
+	      "an address that is not a dotted quad must be refused");
+	CHECK(cadr_endpoint_parse("", NULL, TERM_TEST_PORT, &e) != 0,
+	      "an empty argument --- --terminal= --- must be refused, which is not "
+	      "the same case as the flag given bare");
+
+	// **AN ADDRESS THIS TAKES IS ONE THE BIND TAKES**, which is the whole
+	// reason the parse uses the same inet_pton the server does.  A grammar
+	// that accepted a spelling the socket then refused would move the
+	// failure from the flag to the bind, where nobody is reading.
+	CHECK(cadr_endpoint_parse("127.0.0.1", NULL, 0, &e) == 0, "the loopback parses");
+	struct screen_server probe;
+	CHECK(screen_server_bind(&probe, e.addr, e.port) == 0,
+	      "and the server binds the address the grammar gave back");
+	screen_server_close(&probe);
+}
+
 static void check_read_only(void)
 {
 	struct client c;
@@ -3052,6 +3153,9 @@ int main(int argc, char **argv)
 
 	printf("--- the handshakes, and the two ways a viewer is refused\n");
 	check_handshakes();
+
+	printf("--- where the screen is served: muir's endpoint grammar\n");
+	check_the_endpoint_grammar();
 
 	printf("--- read-only, with no input face\n");
 	check_read_only();

@@ -71,8 +71,28 @@
 // counter --- printed on every status line --- is what says whether it needed
 // shortening.  A pass that finds nothing costs one register read.
 //
-//     cadr-serial [--port N] [--bind ADDR] [--log PATH] [--regs ADDR]
+//     cadr-serial [--serial <endpoint>] [--log PATH] [--regs ADDR]
 //                 [--poll-us N] [--no-guard] [--quiet] [--once]
+//
+// **WHERE THE FAR END IS OFFERED IS muir'S WORD FOR IT, `--serial`**, and it
+// took over from a `--port` and a `--bind` of this program's own.  muir says
+// where its serial port is reached with one flag and one word and so does
+// this: a port, or address:port (`cadr/cadr_endpoint.h`).  `--port` was a word
+// this program and the screen both took, and the card's one file of flags
+// cannot carry a word two programs answer to, so neither could say where
+// either of them listened.
+//
+// **THE PORT MUST BE NAMED, WHICH IS muir'S OWN RULE**: a bare address is
+// refused rather than bound where nobody was told to attach.  What differs
+// from muir is the two defaults, and both differences are this board's.  muir
+// leaves J9 empty unless the flag is given, and a daemon has to have a number,
+// so the port above stands.  And muir binds the loopback unless told
+// otherwise, where this board has no terminal of its own and the line exists
+// to be reached from another machine, so the default here is every interface
+// --- the decision this file's own paragraph above has always carried.
+// `--serial 127.0.0.1:7641` is how the loopback is asked for, and the card
+// writes its endpoint out in full so that nothing rests on which default is
+// which.
 
 #include <errno.h>
 #include <getopt.h>
@@ -83,6 +103,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <cadr/cadr_endpoint.h>
 #include <cadr/cadr_log.h>
 #include <cadr/cadr_mem.h>
 
@@ -103,8 +124,11 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: cadr-serial [options]\n"
-		"  --port N       the TCP port (default 7641, the 2651's Unibus address 0o764160)\n"
-		"  --bind ADDR    the address to listen on (default every interface)\n"
+		"  --serial <endpoint>   where the far end of the CADR's cable is offered: a\n"
+		"                 port, or address:port. muir's own flag and muir's own grammar,\n"
+		"                 and the port must be named (default 0.0.0.0:7641, every\n"
+		"                 interface at the 2651's Unibus address 0o764160;\n"
+		"                 --serial 127.0.0.1:7641 is the loopback alone)\n"
 		"  --log PATH     where to write (default stdout)\n"
 		"  --regs ADDR    the port's register window (default 0x40002000)\n"
 		"  --poll-us N    how often the port is looked at while idle (default 2000)\n"
@@ -128,13 +152,18 @@ static void say_settings(struct serial_face *f)
 
 int main(int argc, char **argv)
 {
-	const char *log_path = NULL, *bind_addr = NULL;
-	unsigned port = SER_DEFAULT_PORT, poll_us = 2000;
+	const char *log_path = NULL;
+	unsigned poll_us = 2000;
+	// Where the far end is offered. The default is this board's own --- every
+	// interface at the 2651's Unibus address --- and `--serial` reads muir's
+	// grammar against it.
+	struct cadr_endpoint listen;
+	if (cadr_endpoint_parse(NULL, NULL, SER_DEFAULT_PORT, &listen) != 0)
+		return 2;
 	uint32_t regs_phys = SER_REG_BASE;
 	int no_guard = 0, quiet = 0, once = 0;
 	static const struct option opts[] = {
-		{ "port", required_argument, NULL, 'p' },
-		{ "bind", required_argument, NULL, 'b' },
+		{ "serial", required_argument, NULL, 's' },
 		{ "log", required_argument, NULL, 'l' },
 		{ "regs", required_argument, NULL, 'r' },
 		{ "poll-us", required_argument, NULL, 'u' },
@@ -145,10 +174,25 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:b:l:r:u:Gqoh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "s:l:r:u:Gqoh", opts, NULL)) != -1) {
 		switch (c) {
-		case 'p': port = (unsigned)strtoul(optarg, NULL, 0); break;
-		case 'b': bind_addr = optarg; break;
+		case 's':
+			// **THE PORT HAS TO BE NAMED, and that is muir's rule
+			// rather than a convenience.**  Every other endpoint flag
+			// has a number a person already knows to fall back on ---
+			// VNC's display :0, the debug cable's 7661 --- and a serial
+			// line has none, so an endpoint that does not say its port
+			// is an endpoint nobody was told to attach to.  A bare
+			// address parses and names no port, which is exactly the
+			// spelling this refuses.
+			if (cadr_endpoint_parse(optarg, NULL, SER_DEFAULT_PORT, &listen) != 0 ||
+			    !listen.port_named) {
+				fprintf(stderr, "cadr-serial: --serial %s: --serial wants a "
+					"port or address:port: where the far end of the "
+					"CADR's cable is offered\n", optarg);
+				return 2;
+			}
+			break;
 		case 'l': log_path = optarg; break;
 		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'u': poll_us = (unsigned)strtoul(optarg, NULL, 0); break;
@@ -158,8 +202,13 @@ int main(int argc, char **argv)
 		default: usage(); return 2;
 		}
 	}
-	if (port > 65535) {
-		fprintf(stderr, "cadr-serial: --port %u: a port is 0 to 65535\n", port);
+	// **A WORD THAT IS NOT A FLAG IS REFUSED AND NOT IGNORED.**  Everything
+	// this program is given comes from an init script or from the card's
+	// `fpgarc`, and a word left over is a line somebody wrote that nothing
+	// read --- the same failure as a flag quietly dropped, which is what the
+	// reader and every one of these programs is strict to avoid.
+	if (optind < argc) {
+		fprintf(stderr, "cadr-serial: %s: not a flag this program takes\n", argv[optind]);
 		return 2;
 	}
 	// A zero interval would make the loop a busy wait on both the socket
@@ -198,7 +247,7 @@ int main(int argc, char **argv)
 
 	// 3. The socket.
 	struct serial_endpoint e;
-	if (serial_endpoint_bind(&e, bind_addr, port) < 0)
+	if (serial_endpoint_bind(&e, listen.addr[0] ? listen.addr : NULL, listen.port) < 0)
 		return 1;
 	e.trace = !quiet;
 	// 4. The cable starts unplugged.
@@ -206,7 +255,7 @@ int main(int argc, char **argv)
 	say("the CADR's serial line is at %s:%u --- one device at a time, and a second connection "
 	    "is closed as it arrives. NO AUTHENTICATION: anybody who can reach this port is the "
 	    "device on the null-modem cable. The port is looked at every %u us",
-	    bind_addr && *bind_addr ? bind_addr : "0.0.0.0", serial_endpoint_port(&e), poll_us);
+	    listen.addr[0] ? listen.addr : "0.0.0.0", serial_endpoint_port(&e), poll_us);
 
 	// 5. The loop.
 	signal(SIGTERM, on_stop);
