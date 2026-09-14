@@ -25,7 +25,7 @@
   <div class="band">
     <figure class="fig dense wide">
       <div class="scroll">
-<svg viewBox="0 0 1810 865" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 100 MHz, 29 ticks to the microcycle, 290 nanoseconds of real time for the 145 the drawings name. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Five AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the disk controller, the Chaosnet buffers and the serial port, one 4 KB page each behind a decode that answers every address on the port; and M_AXI_GP1, carrying the console --- the sixteen diagnostic registers, in muir's own spy vocabulary, which has halted the machine on the board and read its registers back --- and the debug cable's register block beside it, one 4 KB page each behind a decode that answers every address on the port. Beside the bus interface, a debug cable adapter, verified, puts the cable's 21 wires as sixteen --- 20 signals out and 17 in, the data bus going both ways --- onto one Pmod connector of 8 pins --- four each way, a strobe and three data lines in each direction --- carrying the whole link in both directions, and presents the same registers on M_AXI_GP1. One connector is enough because a board is a debugger or a debuggee by configuration and never both at once. On the board, muir on the Arm cores has opened that register block, and MIT's own CC, running on the machine muir simulates, has halted the CADR over the cable and read back its program counter, its whole 48-bit instruction register and its status word, each equal to the console's at the same halt; it has read main memory through the mapped Unibus window, equal word for word to the same addresses in DDR; and with the machine single-stepped it has read the scratchpad memories, equal to the readout program's. The carrier over the connector waits on a second board and the physical adapter that would join them. The connector is drawn at the board's right side. Six status lights at the board's right, drawn in the colour each shows when it is lit: LD0 MACHRUN, the machine's own run signal as a level, dim when it is waiting for memory; LD1 the fabric's clock and LD2 retiring microcycles, both blinking; LD3 the disk moving a block; LD4 dark until the machine halts itself on an error and then red, which is the one thing it means, and cleared by the boot button or a reset; LD5 PROMENABLE, the boot PROM's own select, blue while the machine fetches its microinstructions out of the boot PROM and dark once it runs the microcode it loaded from the disk. Above them, BTN0 is the machine's boot button, the light panel's own -BOOT2, debounced in fabric and pressed by the console's boot command through a register as well, and it restarts the machine; BTN1 below it in the same block resets the whole fabric, which is the same pair of buttons on every board here. Above BTN0, SW0 is the no-auto-boot switch: with it on the machine comes out of reset with its clock stopped and RUN clear, as a CADR is when the power comes on with nobody at it, and only the boot button starts it; the card's own flag file asks for the same thing and the two are an OR; it is read at the fabric's reset and nowhere else, so moving it under a running machine changes nothing until the next one, and the console reports both what it did at the reset and where it is now. The TV block's display goes to a display output block at the fabric's left, verified, which scans the display's buffer out of DDR over a fifth port, S_AXI_HP3, and drives the board's HDMI out connector: 1280 by 1024 at 60 hertz with the machine's 768 by 963 screen centred in it and the rest black, encoded as DVI and serialised onto four differential pairs with no software in the path. Its raster and its encoder are checked, and a monitor on that connector shows the machine's own screen exactly so; the port it comes out of is verified with it. The USB input program carries a keyboard and mouse from the board's USB host connector to the machine through the RFB server, which is the one program that writes those registers, and is verified: a USB keyboard and a USB mouse plugged into the board have both reached Lisp through it. On the Linux side: the RFB server, verified --- it serves the machine's screen to a viewer, and it carries a viewer's keys and mouse to the card's own shift register and quadrature counters, with a key mapping it reads off the card, and the board has shown the screen, the keys and the pointer --- Chaosnet routing over gigabit Ethernet, verified --- it carries the machine's packets to the network and answers nothing itself, the file and time host the band calls being another machine on that network, from which the machine has taken its date on the board --- the disk packs as files on the microSD card, one file a drive and up to eight of them, served to the controller by a program on the board, verified --- the console, the serial port --- the CADR's serial line offered on a TCP socket as muir offers it, verified, the board having sent characters out of the machine whole and in order at every rate from 300 to 9600 baud and read characters back into it --- and USB input, verified --- it reads a USB keyboard and mouse plugged into the board and hands their keys and movement to the RFB server, which is the one program that writes the card's registers and paces the words onto it, and the board has shown both of them reaching Lisp; the rest not started. Below the ports is the processing system: an outline for Linux on the Arm cores, which boots from the card beside the running CADR with the CADR's 128 MB kept from it and holds the programs that run under it, each coloured for itself; beside it the boot loader in two parts: U-Boot itself, which is upstream and drawn grey as an existing component, and inside it its first stage, the SPL, drawn green because the board boots from it and because the start-up routine that first stage runs is generated here, and beside it a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm cores from the Linux group beside it, and one line out of the chip to the DRAM. Below that controller and grey with it is the processing system's own UART, which Linux's console comes out of, drawn on every board's drawing in this one position and joined to the board's USB-UART and JTAG socket at the left edge --- one micro-USB socket carrying both through one bridge, and the one every boot log this project has read has come out of. The microSD card holds everything the board needs: U-Boot with its first stage, the CADR's bitstream, Linux with its root filesystem, and the disk packs as files, one a drive. The two sequence drawings below say how the board boots, on its own from the card and, for development, from a TFTP server. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. How far along each block is, which the drawing otherwise says in colour --- green only for what the board itself has shown, turquoise for what is checked here and has not run on the board: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose has booted MIT's Lisp Machine system on the board out of real memory off a real disk, painting the window system and a Lisp Listener, and it ran past 2,425,000,000 microcycles; its first 1,024 microcycles have also been read back over JTAG and agree with muir column by column; the bus interface is verified: the board has run the machine through its arbitration, its NXM timeout and its address decode for billions of microcycles, and its Unibus side is whole --- the interrupt control and error status registers, the sixteen Unibus map entries, the debug block the cable reaches, and the mapped window those entries translate through, which is how a Unibus master that is not the board itself reaches main memory, all checked against muir; and the board has now shown that window in use, a debugger over the cable reading main memory through it as the foreign master it needs; the disk controller is verified, and selects one of up to eight drives by three bits of the disk address as the original does: its registers, its drive, its channel, Read All and Write All are checked against muir over a scripted trace, its pack side and request path against a modelled memory, and on the board the CADR reads and writes its pack through it, tens of thousands of blocks in the first minutes after a drive came present; the TV is verified: muir's simpletv tick for tick over 77 million ticks, its frame buffer a window into the display's own region of DDR, and on the board it has painted the machine's own screen --- the window system, a Lisp Listener and the who-line --- read off over the network, 20,741 lit pixels, which is muir's own figure for the same band; the I/O board is verified: the whole card --- the keyboard, the mouse, the two clocks and the status register they share, the serial port's 2651 and the Chaosnet interface's registers and its two packet buffers --- agrees with muir's own model over a scripted trace at the Unibus, and the board has now shown its keyboard, its mouse, its microsecond clock, its Chaosnet registers and its 2651 at work: a viewer's keys and pointer reaching the machine, the who-line dated off the clock, frames carried both ways, and characters carried out of the machine and back into it; the Chaosnet interface's cable and the 2651's line are in fabric too, on M_AXI_GP0 where the two programs reach them, so a frame the machine transmits comes out of a window with the source address and the check word appended and a character it sends comes out one frame at a time at the rate its own software chose; the keyboard's shift register and the mouse's quadrature counters are reached from Linux too, over a fourth page of that port, so a viewer's key becomes a word in the register the machine reads and a viewer's pointer becomes steps on the seven cable lines; the USB input program carries a keyboard and mouse plugged into the board itself down that same path, and is checked here against a model of the card and of a machine that reads a word only so often. The memory path over S_AXI_HP0, drawn from the bridge through the port to the DDR3, is verified: every piece of it has a check, and the machine has run its boot PROM out of real DDR3 on the board with a witness outside its logic counting every cycle. Under the fabric's label, two figures for the memory-on board with the disk and the display in it: 5,462 of the 13,300 slices occupied, 41.1 per cent, which is a conservative figure since a fuller design packs tighter; and 187 KB of the 630 KB of block RAM, 29.6 per cent; and the timing of this build, which is met --- the fabric runs at 100 megahertz with a tick of 10 nanoseconds, worst slack plus 0.125 nanoseconds against that, and none of its 52,560 endpoints failing. ">
+<svg viewBox="0 0 1810 865" role="img" aria-label="The CADR mapped onto one XC7Z020. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 100 MHz, 29 ticks to the microcycle, 290 nanoseconds of real time for the 145 the drawings name. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Five AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; and M_AXI_GP0, over which the PS reaches the disk controller, the Chaosnet buffers and the serial port, one 4 KB page each behind a decode that answers every address on the port; and M_AXI_GP1, carrying the console --- the sixteen diagnostic registers, in muir's own spy vocabulary, which has halted the machine on the board and read its registers back --- and the debug cable's register block beside it, one 4 KB page each behind a decode that answers every address on the port. Beside the bus interface, a debug cable adapter, verified, puts the cable's 21 wires --- 20 signals out and 19 back, the data bus going both ways --- onto one Pmod connector of 8 pins --- four each way, a strobe and three data lines in each direction --- carrying the whole link in both directions, and presents the same registers on M_AXI_GP1. One connector is enough because a board is a debugger or a debuggee by configuration and never both at once. On the board, muir on the Arm cores has opened that register block, and MIT's own CC, running on the machine muir simulates, has halted the CADR over the cable and read back its program counter, its whole 48-bit instruction register and its status word, each equal to the console's at the same halt; it has read main memory through the mapped Unibus window, equal word for word to the same addresses in DDR; and with the machine single-stepped it has read the scratchpad memories, equal to the readout program's. The carrier over the connector waits on a second board and the physical adapter that would join them. The connector is drawn at the board's right side. Six status lights at the board's right, drawn in the colour each shows when it is lit: LD0 MACHRUN, the machine's own run signal as a level, dim when it is waiting for memory; LD1 the fabric's clock and LD2 retiring microcycles, both blinking; LD3 the disk moving a block; LD4 dark until the machine halts itself on an error and then red, which is the one thing it means, and cleared by the boot button or a reset; LD5 PROMENABLE, the boot PROM's own select, blue while the machine fetches its microinstructions out of the boot PROM and dark once it runs the microcode it loaded from the disk. Above them, BTN0 is the machine's boot button, the light panel's own -BOOT2, debounced in fabric and pressed by the console's boot command through a register as well, and it restarts the machine; BTN1 below it in the same block resets the whole fabric, which is the same pair of buttons on every board here. Above BTN0, SW0 is the no-auto-boot switch: with it on the machine comes out of reset with its clock stopped and RUN clear, as a CADR is when the power comes on with nobody at it, and only the boot button starts it; the card's own flag file asks for the same thing and the two are an OR; it is read at the fabric's reset and nowhere else, so moving it under a running machine changes nothing until the next one, and the console reports both what it did at the reset and where it is now. The TV block's display goes to a display output block at the fabric's left, verified, which scans the display's buffer out of DDR over a fifth port, S_AXI_HP3, and drives the board's HDMI out connector: 1280 by 1024 at 60 hertz with the machine's 768 by 963 screen centred in it and the rest black, encoded as DVI and serialised onto four differential pairs with no software in the path. Its raster and its encoder are checked, and a monitor on that connector shows the machine's own screen exactly so; the port it comes out of is verified with it. The USB input program carries a keyboard and mouse from the board's USB host connector to the machine through the RFB server, which is the one program that writes those registers, and is verified: a USB keyboard and a USB mouse plugged into the board have both reached Lisp through it. On the Linux side: the RFB server, verified --- it serves the machine's screen to a viewer, and it carries a viewer's keys and mouse to the card's own shift register and quadrature counters, with a key mapping it reads off the card, and the board has shown the screen, the keys and the pointer --- Chaosnet routing over gigabit Ethernet, verified --- it carries the machine's packets to the network and answers nothing itself, the file and time host the band calls being another machine on that network, from which the machine has taken its date on the board --- the disk packs as files on the microSD card, one file a drive and up to eight of them, served to the controller by a program on the board, verified --- the console, the serial port --- the CADR's serial line offered on a TCP socket as muir offers it, verified, the board having sent characters out of the machine whole and in order at every rate from 300 to 9600 baud and read characters back into it --- and USB input, verified --- it reads a USB keyboard and mouse plugged into the board and hands their keys and movement to the RFB server, which is the one program that writes the card's registers and paces the words onto it, and the board has shown both of them reaching Lisp; the rest not started. Below the ports is the processing system: an outline for Linux on the Arm cores, which boots from the card beside the running CADR with the CADR's 128 MB kept from it and holds the programs that run under it, each coloured for itself; beside it the boot loader in two parts: U-Boot itself, which is upstream and drawn grey as an existing component, and inside it its first stage, the SPL, drawn green because the board boots from it and because the start-up routine that first stage runs is generated here. At the foot of the processing system is a row of controllers, each of them over the connector it drives and all of them grey, because on this board every one is the part's own silicon: the DDR controller, the gigabit MAC, the SD host, the UART and the USB host. The DDR controller has four ports arbitrated in hardware, fed by the machine's two fabric ports from above and by the Arm cores from the Linux group over it, with one line out of the chip to the DRAM. Every line that leaves a program ends on one of these and never on a connector, and each controller has one line down to its own. The UART is the one Linux's console comes out of, and under it is the board's USB-UART and JTAG socket --- one micro-USB socket carrying that console and JTAG together through one bridge, and the one every boot log this project has read has come out of. The microSD card holds everything the board needs: U-Boot with its first stage, the CADR's bitstream, Linux with its root filesystem, and the disk packs as files, one a drive. The two sequence drawings below say how the board boots, on its own from the card and, for development, from a TFTP server. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. How far along each block is, which the drawing otherwise says in colour --- green only for what the board itself has shown, turquoise for what is checked here and has not run on the board: the clock generator, the two processor boards and the Xbus-to-DDR bridge are built and checked, and the machine they compose has booted MIT's Lisp Machine system on the board out of real memory off a real disk, painting the window system and a Lisp Listener, and it ran past 2,425,000,000 microcycles; its first 1,024 microcycles have also been read back over JTAG and agree with muir column by column; the bus interface is verified: the board has run the machine through its arbitration, its NXM timeout and its address decode for billions of microcycles, and its Unibus side is whole --- the interrupt control and error status registers, the sixteen Unibus map entries, the debug block the cable reaches, and the mapped window those entries translate through, which is how a Unibus master that is not the board itself reaches main memory, all checked against muir; and the board has now shown that window in use, a debugger over the cable reading main memory through it as the foreign master it needs; the disk controller is verified, and selects one of up to eight drives by three bits of the disk address as the original does: its registers, its drive, its channel, Read All and Write All are checked against muir over a scripted trace, its pack side and request path against a modelled memory, and on the board the CADR reads and writes its pack through it, tens of thousands of blocks in the first minutes after a drive came present; the TV is verified: muir's simpletv tick for tick over 77 million ticks, its frame buffer a window into the display's own region of DDR, and on the board it has painted the machine's own screen --- the window system, a Lisp Listener and the who-line --- read off over the network, 20,741 lit pixels, which is muir's own figure for the same band; the I/O board is verified: the whole card --- the keyboard, the mouse, the two clocks and the status register they share, the serial port's 2651 and the Chaosnet interface's registers and its two packet buffers --- agrees with muir's own model over a scripted trace at the Unibus, and the board has now shown its keyboard, its mouse, its microsecond clock, its Chaosnet registers and its 2651 at work: a viewer's keys and pointer reaching the machine, the who-line dated off the clock, frames carried both ways, and characters carried out of the machine and back into it; the Chaosnet interface's cable and the 2651's line are in fabric too, on M_AXI_GP0 where the two programs reach them, so a frame the machine transmits comes out of a window with the source address and the check word appended and a character it sends comes out one frame at a time at the rate its own software chose; the keyboard's shift register and the mouse's quadrature counters are reached from Linux too, over a fourth page of that port, so a viewer's key becomes a word in the register the machine reads and a viewer's pointer becomes steps on the seven cable lines; the USB input program carries a keyboard and mouse plugged into the board itself down that same path, and is checked here against a model of the card and of a machine that reads a word only so often. The memory path over S_AXI_HP0, drawn from the bridge through the port to the DDR3, is verified: every piece of it has a check, and the machine has run its boot PROM out of real DDR3 on the board with a witness outside its logic counting every cycle. Under the fabric's label, two figures for the memory-on board with the disk and the display in it: 5,642 of the 13,300 slices occupied, 42.4 per cent, which is a conservative figure since a fuller design packs tighter; and 187 KB of the 630 KB of block RAM, 29.6 per cent; and the timing of this build, which is met --- the fabric runs at 100 megahertz with a tick of 10 nanoseconds, worst slack plus 0.137 nanoseconds against that, and none of its 52,431 endpoints failing. ">
           <text class="d-t" x="10" y="18">muir-fpga</text>
 
           <!-- How far along each block is. Nothing here says a block is
@@ -68,11 +68,11 @@
           <path class="d-line" d="M470,274 L470,256 L-70,256 L-70,274"/>
           <path class="d-line" d="M-70,386 L-70,464"/>
           <path class="d-line" d="M-160,330 L-183,330"/>
-          <rect class="d-plate" x="-150" y="464" width="160" height="44"/>
-          <rect class="d-box d-done" x="-150" y="464" width="160" height="44"/>
-          <text class="d-m" x="-70" y="483" text-anchor="middle">S_AXI_HP3</text>
-          <text class="d-s" x="-70" y="499" text-anchor="middle">PL masters, 64 bits, AXI3</text>
-          <path class="d-line" d="M-70,508 L-70,610 L-22,610"/>
+          <rect class="d-plate" x="-150" y="464" width="160" height="38"/>
+          <rect class="d-box d-done" x="-150" y="464" width="160" height="38"/>
+          <text class="d-m" x="-70" y="482" text-anchor="middle">S_AXI_HP3</text>
+          <text class="d-s" x="-70" y="496" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <path class="d-line" d="M-70,502 L-70,652"/>
           <rect class="d-box d-ext" x="-283" y="288" width="100" height="84"/>
           <text class="d-t" x="-233" y="314" text-anchor="middle">HDMI out</text>
           <text class="d-s" x="-233" y="336" text-anchor="middle">the display,</text>
@@ -80,22 +80,18 @@
 
           <text class="d-s" x="-164" y="48">PL &mdash; fabric</text>
           <!-- What the machine costs on the part: the memory-on board with the
-               disk and the display in it, place and routed at ba2ac6b with
-               DDR=1 and HDMI=1, which is the fabric the board runs. The report
-               read is the one the served bitstream was built from, at cdafdae;
-               nothing under rtl/ or under this board's own sources moved
-               between that commit and this one, so these are this commit's
-               figures.
+               disk and the display in it, place and routed at 2e01ab8 with
+               DDR=1 and HDMI=1, which is the fabric the board runs.
                Two rows, the same two on every board's drawing: occupied slices
                and block RAM. Occupied slices rather than lookup tables,
                because a slice counts as occupied the moment anything in it is
                used and that is the resource that runs out --- though it is
-               elastic, since a fuller design packs tighter. 13,752 lookup
-               tables and 11,281 flip-flops sit inside those 5,462 slices. -->
-          <text class="d-s" x="-164" y="68">Slices 5,462 of 13,300</text>
+               elastic, since a fuller design packs tighter. 13,758 lookup
+               tables and 11,229 flip-flops sit inside those 5,642 slices. -->
+          <text class="d-s" x="-164" y="68">Slices 5,642 of 13,300</text>
           <rect class="d-box" x="-164" y="74" width="136" height="13"/>
-          <rect x="-164" y="74" width="55.9" height="13" fill="currentColor" fill-opacity="0.42"/>
-          <text class="d-n" x="-158" y="84">41.1%</text>
+          <rect x="-164" y="74" width="57.7" height="13" fill="currentColor" fill-opacity="0.42"/>
+          <text class="d-n" x="-158" y="84">42.4%</text>
           <text class="d-s" x="-164" y="104">BRAM 187 KB of 630 KB</text>
           <rect class="d-box" x="-164" y="110" width="136" height="13"/>
           <rect x="-164" y="110" width="40.3" height="13" fill="currentColor" fill-opacity="0.42"/>
@@ -106,12 +102,12 @@
                request, for now, with the count beside it because the
                worst path alone says nothing about how much is wrong, and with
                the clock above it because a slack in nanoseconds means nothing
-               without the period it is slack against: +0.125 ns of a 10 ns
+               without the period it is slack against: +0.137 ns of a 10 ns
                tick is room over the deadline, and of a 5 ns tick it would
                not be. -->
           <text class="d-s" x="-164" y="144">100 MHz, 10 ns a tick</text>
-          <text class="d-s" x="-164" y="160">worst slack +0.125 ns</text>
-          <text class="d-s" x="-164" y="176">failing 0 of 52,560</text>
+          <text class="d-s" x="-164" y="160">worst slack +0.137 ns</text>
+          <text class="d-s" x="-164" y="176">failing 0 of 52,431</text>
           <rect class="d-box" x="-164" y="182" width="136" height="13"/>
           <text class="d-n" x="-158" y="192">0%</text>
 
@@ -172,9 +168,9 @@
           <text class="d-s" x="1162" y="138" text-anchor="middle">the cable both ways, 8 pins</text>
           <text class="d-s" x="1162" y="152" text-anchor="middle">registers at GP1 + 0x1000</text>
           <!-- one connector, one line out of the adapter to it -->
-          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,464 M1162,508 L1162,562"/>
+          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,464 M1162,502 L1162,542"/>
           <text class="d-s" x="959" y="114" text-anchor="middle">20 out</text>
-          <text class="d-s" x="959" y="150" text-anchor="middle">17 in</text>
+          <text class="d-s" x="959" y="150" text-anchor="middle">19 in</text>
           <path class="d-line" d="M1256,120 L1305,120"/>
 
           <!-- The two buses are separate: the interface reaches each by its own
@@ -226,28 +222,28 @@
 
           <!-- the PS-PL boundary, which the three ports cross -->
           <path class="d-dash" d="M-170,486 L-150,486 M10,486 L38,486 M198,486 L230,486 M390,486 L640,486 M890,486 L1092,486 M1232,486 L1290,486"/>
-          <rect class="d-plate" x="38" y="464" width="160" height="44"/>
-          <rect class="d-box d-done" x="38" y="464" width="160" height="44"/>
-          <text class="d-m" x="118" y="483" text-anchor="middle">S_AXI_HP0</text>
-          <text class="d-s" x="118" y="499" text-anchor="middle">PL masters, 64 bits, AXI3</text>
-          <rect class="d-box d-done" x="230" y="464" width="160" height="44"/>
-          <text class="d-m" x="310" y="483" text-anchor="middle">S_AXI_HP2</text>
-          <text class="d-s" x="310" y="499" text-anchor="middle">PL masters, 64 bits, AXI3</text>
-          <rect class="d-box d-done" x="640" y="464" width="250" height="44"/>
-          <text class="d-m" x="765" y="483" text-anchor="middle">M_AXI_GP0</text>
-          <text class="d-s" x="765" y="499" text-anchor="middle">PS masters, 32 bits, AXI3</text>
-          <rect class="d-box d-done" x="1092" y="464" width="140" height="44"/>
-          <text class="d-m" x="1162" y="483" text-anchor="middle">M_AXI_GP1</text>
-          <text class="d-s" x="1162" y="499" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+          <rect class="d-plate" x="38" y="464" width="160" height="38"/>
+          <rect class="d-box d-done" x="38" y="464" width="160" height="38"/>
+          <text class="d-m" x="118" y="482" text-anchor="middle">S_AXI_HP0</text>
+          <text class="d-s" x="118" y="496" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <rect class="d-box d-done" x="230" y="464" width="160" height="38"/>
+          <text class="d-m" x="310" y="482" text-anchor="middle">S_AXI_HP2</text>
+          <text class="d-s" x="310" y="496" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <rect class="d-box d-done" x="640" y="464" width="250" height="38"/>
+          <text class="d-m" x="765" y="482" text-anchor="middle">M_AXI_GP0</text>
+          <text class="d-s" x="765" y="496" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+          <rect class="d-box d-done" x="1092" y="464" width="140" height="38"/>
+          <text class="d-m" x="1162" y="482" text-anchor="middle">M_AXI_GP1</text>
+          <text class="d-s" x="1162" y="496" text-anchor="middle">PS masters, 32 bits, AXI3</text>
 
           <!-- the PS -->
-          <text class="d-s" x="-164" y="540.4">PS &mdash; Arm</text>
+          <text class="d-s" x="-164" y="520.4">PS &mdash; Arm</text>
           <!-- Everything inside this outline is a program on the A9s.  The
                controller to its left is not: it is the processing system's
                own silicon, which is why it stands outside the outline. -->
-          <rect class="d-dot" x="220" y="542" width="1000" height="128"/>
-          <text class="d-s" x="230" y="556">Linux &mdash; Buildroot</text>
-          <path class="d-line" d="M765,508 L765,533.2 M305,533.2 L1040,533.2 M305,533.2 L305,562 M452,533.2 L452,562 M599,533.2 L599,562 M746,533.2 L746,562 M893,533.2 L893,562 M1040,533.2 L1040,562"/>
+          <rect class="d-dot" x="220" y="522" width="1000" height="124"/>
+          <text class="d-s" x="230" y="536">Linux &mdash; Buildroot</text>
+          <path class="d-line" d="M765,502 L765,513.2 M305,513.2 L1040,513.2 M305,513.2 L305,542 M452,513.2 L452,542 M599,513.2 L599,542 M746,513.2 L746,542 M893,513.2 L893,542 M1040,513.2 L1040,542"/>
 
           <!-- The boot loader, beside Linux, in two parts because only one of
                them is ours.  U-Boot itself is upstream, so it is grey like muir
@@ -260,106 +256,119 @@
                in docs/boot.md, and two of them are read by U-Boot proper
                rather than by the first stage, which is why the grey box is not
                simply somebody else's. -->
-          <rect class="d-plate" x="1226" y="542" width="54" height="128"/>
-          <rect class="d-dot d-ext" x="1226" y="542" width="54" height="128"/>
-          <rect class="d-plate" x="1231" y="547" width="44" height="30"/>
-          <rect class="d-box d-done" x="1231" y="547" width="44" height="30"/>
-          <text class="d-t" x="1253" y="567" text-anchor="middle">SPL</text>
+          <rect class="d-plate" x="1226" y="522" width="54" height="124"/>
+          <rect class="d-dot d-ext" x="1226" y="522" width="54" height="124"/>
+          <rect class="d-plate" x="1231" y="527" width="44" height="30"/>
+          <rect class="d-box d-done" x="1231" y="527" width="44" height="30"/>
+          <text class="d-t" x="1253" y="547" text-anchor="middle">SPL</text>
           <!-- Stacked rather than rotated: the strip is 54 wide and
-               93 tall under the SPL box, and six lines
-               at 14 fill 84 of it.  A reader tilts their head for a rotated
+               89 tall under the SPL box, and six lines
+               at 13 fill 78 of it.  A reader tilts their head for a rotated
                label and does not for this one. -->
-          <text class="d-t" text-anchor="middle"><tspan x="1253" y="592">U</tspan><tspan x="1253" y="606">-</tspan><tspan x="1253" y="620">B</tspan><tspan x="1253" y="634">o</tspan><tspan x="1253" y="648">o</tspan><tspan x="1253" y="662">t</tspan></text>
-          <rect class="d-plate" x="240" y="562" width="130" height="96"/>
-          <rect class="d-box d-done" x="240" y="562" width="130" height="96"/>
-          <text class="d-t" x="305" y="586" text-anchor="middle">terminal</text>
-          <text class="d-s" x="305" y="606" text-anchor="middle">an RFB server: the screen,</text>
-          <text class="d-s" x="305" y="620" text-anchor="middle">the keys and the mouse</text>
+          <text class="d-t" text-anchor="middle"><tspan x="1253" y="572">U</tspan><tspan x="1253" y="585">-</tspan><tspan x="1253" y="598">B</tspan><tspan x="1253" y="611">o</tspan><tspan x="1253" y="624">o</tspan><tspan x="1253" y="637">t</tspan></text>
+          <rect class="d-plate" x="240" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="240" y="542" width="130" height="96"/>
+          <text class="d-t" x="305" y="566" text-anchor="middle">terminal</text>
+          <text class="d-s" x="305" y="586" text-anchor="middle">an RFB server: the screen,</text>
+          <text class="d-s" x="305" y="600" text-anchor="middle">the keys and the mouse</text>
 
-          <rect class="d-plate" x="387" y="562" width="130" height="96"/>
-          <rect class="d-box d-done" x="387" y="562" width="130" height="96"/>
-          <text class="d-t" x="452" y="586" text-anchor="middle">Chaosnet</text>
-          <text class="d-s" x="452" y="606" text-anchor="middle">routing, and the</text>
-          <text class="d-s" x="452" y="620" text-anchor="middle">cable to the net</text>
-          <text class="d-s" x="452" y="642" text-anchor="middle">for the other machines</text>
+          <rect class="d-plate" x="387" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="387" y="542" width="130" height="96"/>
+          <text class="d-t" x="452" y="566" text-anchor="middle">Chaosnet</text>
+          <text class="d-s" x="452" y="586" text-anchor="middle">routing, and the</text>
+          <text class="d-s" x="452" y="600" text-anchor="middle">cable to the net</text>
+          <text class="d-s" x="452" y="622" text-anchor="middle">for the other machines</text>
 
-          <rect class="d-plate" x="534" y="562" width="130" height="96"/>
-          <rect class="d-box d-done" x="534" y="562" width="130" height="96"/>
-          <text class="d-t" x="599" y="586" text-anchor="middle">serial</text>
-          <text class="d-s" x="599" y="606" text-anchor="middle">the CADR&rsquo;s serial line</text>
-          <text class="d-s" x="599" y="620" text-anchor="middle">on a TCP socket,</text>
-          <text class="d-s" x="599" y="642" text-anchor="middle">as muir offers it</text>
+          <rect class="d-plate" x="534" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="534" y="542" width="130" height="96"/>
+          <text class="d-t" x="599" y="566" text-anchor="middle">serial</text>
+          <text class="d-s" x="599" y="586" text-anchor="middle">the CADR&rsquo;s serial line</text>
+          <text class="d-s" x="599" y="600" text-anchor="middle">on a TCP socket,</text>
+          <text class="d-s" x="599" y="622" text-anchor="middle">as muir offers it</text>
 
-          <rect class="d-plate" x="681" y="562" width="130" height="96"/>
-          <rect class="d-box d-done" x="681" y="562" width="130" height="96"/>
-          <text class="d-t" x="746" y="586" text-anchor="middle">disk packs</text>
-          <text class="d-s" x="746" y="606" text-anchor="middle">a drive&rsquo;s blocks as a file,</text>
-          <text class="d-s" x="746" y="620" text-anchor="middle">one file a drive</text>
-          <text class="d-s" x="746" y="642" text-anchor="middle">staged into DDR</text>
+          <rect class="d-plate" x="681" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="681" y="542" width="130" height="96"/>
+          <text class="d-t" x="746" y="566" text-anchor="middle">disk packs</text>
+          <text class="d-s" x="746" y="586" text-anchor="middle">a drive&rsquo;s blocks as a file,</text>
+          <text class="d-s" x="746" y="600" text-anchor="middle">one file a drive</text>
+          <text class="d-s" x="746" y="622" text-anchor="middle">staged into DDR</text>
 
-          <rect class="d-plate" x="828" y="562" width="130" height="96"/>
-          <rect class="d-box d-done" x="828" y="562" width="130" height="96"/>
-          <text class="d-t" x="893" y="586" text-anchor="middle">console</text>
-          <text class="d-s" x="893" y="606" text-anchor="middle">halt, step and inspect</text>
-          <text class="d-s" x="893" y="620" text-anchor="middle">over M_AXI_GP1</text>
-          <text class="d-s" x="893" y="642" text-anchor="middle">a Unibus master</text>
+          <rect class="d-plate" x="828" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="828" y="542" width="130" height="96"/>
+          <text class="d-t" x="893" y="566" text-anchor="middle">console</text>
+          <text class="d-s" x="893" y="586" text-anchor="middle">halt, step and inspect</text>
+          <text class="d-s" x="893" y="600" text-anchor="middle">over M_AXI_GP1</text>
+          <text class="d-s" x="893" y="622" text-anchor="middle">a Unibus master</text>
 
           <!-- Verified: a USB keyboard and a USB mouse plugged into the
                board have both reached Lisp through this program and the
                terminal's input link.  The keys arrive as a viewer's do and
                the arrow follows the hand, with the buttons registering.  So
                both halves of what this block is have run on silicon. -->
-          <rect class="d-plate" x="975" y="562" width="130" height="96"/>
-          <rect class="d-box d-done" x="975" y="562" width="130" height="96"/>
-          <text class="d-t" x="1040" y="586" text-anchor="middle">USB input</text>
-          <text class="d-s" x="1040" y="606" text-anchor="middle">the keyboard and mouse,</text>
-          <text class="d-s" x="1040" y="620" text-anchor="middle">onto the I/O board</text>
-          <text class="d-s" x="1040" y="642" text-anchor="middle">through the terminal</text>
+          <rect class="d-plate" x="975" y="542" width="130" height="96"/>
+          <rect class="d-box d-done" x="975" y="542" width="130" height="96"/>
+          <text class="d-t" x="1040" y="566" text-anchor="middle">USB input</text>
+          <text class="d-s" x="1040" y="586" text-anchor="middle">the keyboard and mouse,</text>
+          <text class="d-s" x="1040" y="600" text-anchor="middle">onto the I/O board</text>
+          <text class="d-s" x="1040" y="622" text-anchor="middle">through the terminal</text>
 
-          <rect class="d-plate" x="1122" y="562" width="80" height="96"/>
-          <rect class="d-box d-ext" x="1122" y="562" width="80" height="96"/>
-          <text class="d-t" x="1162" y="586" text-anchor="middle">muir</text>
-          <text class="d-s" x="1162" y="606" text-anchor="middle">on the PS,</text>
-          <text class="d-s" x="1162" y="620" text-anchor="middle">running CC</text>
-          <text class="d-s" x="1162" y="642" text-anchor="middle">the debugger</text>
+          <rect class="d-plate" x="1122" y="542" width="80" height="96"/>
+          <rect class="d-box d-ext" x="1122" y="542" width="80" height="96"/>
+          <text class="d-t" x="1162" y="566" text-anchor="middle">muir</text>
+          <text class="d-s" x="1162" y="586" text-anchor="middle">on the PS,</text>
+          <text class="d-s" x="1162" y="600" text-anchor="middle">running CC</text>
+          <text class="d-s" x="1162" y="622" text-anchor="middle">the debugger</text>
 
-          <!-- main memory: through the PS's own memory controller, which is
-               Xilinx silicon and not ours, out to the DRAM.  The controller is
-               what makes two fabric ports and the processor's own path meet at
-               one set of chips: four ports on its inside face, arbitrated in
-               hardware, and one DRAM behind it. -->
-          <path class="d-line" d="M118,508 L118,580"/>
-          <path class="d-line" d="M240,508 L240,526 L170,526 L170,580"/>
-          <rect class="d-plate" x="-22" y="580" width="218" height="60"/>
-          <rect class="d-box d-ext" x="-22" y="580" width="218" height="60"/>
-          <text class="d-t" x="87" y="604" text-anchor="middle">DDR controller</text>
-          <text class="d-s" x="87" y="624" text-anchor="middle">four ports, arbitrated in hardware</text>
+          <!-- THE CONTROLLERS, IN ONE ROW AT THE FOOT OF THE PROCESSING
+               SYSTEM, each of them over the connector it drives.  Every line that
+               leaves a program ends on one of these and never on a connector, and
+               each of them has one line down to its own.  On this board they are
+               all the part's own silicon --- the memory controller, the gigabit
+               MAC, the SD host, the UART and the USB host --- so the whole row is
+               grey, an existing component, like the connectors under it.  On the
+               Arty A7-100 the same row stands in the same place and is ours to
+               build.  The memory controller moved left and lost twenty of its
+               height to make the room: what it is has not changed, and the three
+               buses that reach it still land on its top edge, as the line from
+               the software region above --- the Arm cores' own port --- lands on
+               its side. -->
+          <path class="d-line" d="M118,502 L118,652"/>
+          <path class="d-line" d="M240,502 L240,514 L170,514 L170,652"/>
+          <rect class="d-plate" x="-100" y="652" width="290" height="40"/>
+          <rect class="d-box d-ext" x="-100" y="652" width="290" height="40"/>
+          <text class="d-t" x="45" y="670" text-anchor="middle">DDR controller</text>
+          <text class="d-s" x="45" y="684" text-anchor="middle">four ports, arbitrated in hardware</text>
           <!-- the A9s reach memory through the controller like everything else;
                the line from the Linux outline is that port -->
-          <path class="d-line" d="M196,610 L220,610"/>
-          <path class="d-line" d="M87,640 L87,712"/>
-          <path class="d-line" d="M305,658 L305,712 M452,658 L452,712 M599,658 L599,712 M746,658 L746,712"/>
+          <path class="d-line" d="M240,646 L240,672 L190,672"/>
+          <path class="d-line" d="M45,692 L45,712"/>
+          <path class="d-line" d="M305,638 L305,652 M452,638 L452,652 M599,638 L599,652 M746,638 L746,652"/>
 
-          <!-- THE UART IS ON EVERY BOARD'S DRAWING, IN ONE POSITION. Linux's
-               console comes out of the processing system's own UART, and the
-               board's micro-USB socket carries it and JTAG together through
-               one FTDI bridge: every boot log this project has read came out
-               of it, and it was not drawn at all because it sits inside the
-               processing system. It is grey with the DDR controller above it,
-               being the part's own silicon rather than anything built here.
-               The position is the room the processing system has left at this
-               end, under the controller and clear of the port that feeds it,
-               and the socket is on the nearest board edge, as the display's
-               connector is. -->
-          <rect class="d-box d-ext" x="-160" y="646" width="150" height="44"/>
-          <text class="d-t" x="-85" y="665" text-anchor="middle">UART</text>
-          <text class="d-s" x="-85" y="681" text-anchor="middle">Linux&rsquo;s console</text>
-          <path class="d-line" d="M-160,668 L-183,668"/>
-          <rect class="d-box d-ext" x="-283" y="626" width="100" height="84"/>
-          <text class="d-t" x="-233" y="648" text-anchor="middle">USB-UART</text>
-          <text class="d-t" x="-233" y="666" text-anchor="middle">/ JTAG</text>
-          <text class="d-s" x="-233" y="688" text-anchor="middle">one micro-USB</text>
-          <text class="d-s" x="-233" y="702" text-anchor="middle">socket</text>
+          <rect class="d-box d-ext" x="280" y="652" width="340" height="40"/>
+          <text class="d-t" x="450" y="670" text-anchor="middle">MAC</text>
+          <text class="d-s" x="450" y="684" text-anchor="middle">gigabit Ethernet</text>
+          <path class="d-line" d="M450,692 L450,712"/>
+          <rect class="d-box d-ext" x="691" y="652" width="110" height="40"/>
+          <text class="d-t" x="746" y="670" text-anchor="middle">SD host</text>
+          <text class="d-s" x="746" y="684" text-anchor="middle">the card</text>
+          <path class="d-line" d="M746,692 L746,712"/>
+
+          <!-- THE UART IS ON EVERY BOARD'S DRAWING, IN ONE POSITION, in the
+               controller row with the others and over its own connector.
+               On this board the UART is the processing system's own silicon and
+               Linux's console comes out of it; on the Arty A7-100 the same block is
+               in the fabric and the firmware's console comes out of it.
+               The micro-USB socket under it carries that console and JTAG together
+               through one bridge, which is how a board like this is watched.  The
+               line up to the UART is drawn from the software region's own edge, in
+               the gap between two of the programs rather than from either of them,
+               because what comes out of this UART is the system's console and not
+               any one program's. -->
+          <rect class="d-box d-ext" x="832" y="652" width="130" height="40"/>
+          <text class="d-t" x="897" y="670" text-anchor="middle">UART</text>
+          <text class="d-s" x="897" y="684" text-anchor="middle">Linux&rsquo;s console</text>
+          <path class="d-line" d="M819,646 L819,672 L832,672"/>
+          <path class="d-line" d="M897,692 L897,712"/>
 
           <rect class="d-box d-ext" x="-79" y="712" width="332" height="84"/>
           <text class="d-t" x="87" y="738" text-anchor="middle">512 MB DDR3</text>
@@ -453,19 +462,28 @@
           <text class="d-s" x="1333" y="247">SW0 &mdash; NO AUTO BOOT</text>
           <path class="d-line" d="M1290,243 L1305,243"/>
 
-          <!-- What a person at the board uses: the keyboard and mouse on the
-               processing system's USB host, the display over HDMI straight from
-               the fabric's TV block. Neither is started. -->
+          <!-- The USB host, the last of the row, and the port it drives.  A keyboard
+               and a mouse plugged into that port are read by the USB input program
+               above, which hands them to the RFB server; the server is the one thing
+               that writes the card's own registers, on any of these boards. -->
+          <rect class="d-box d-ext" x="975" y="652" width="130" height="40"/>
+          <text class="d-t" x="1040" y="670" text-anchor="middle">USB host</text>
+          <text class="d-s" x="1040" y="684" text-anchor="middle">keyboard and mouse</text>
+          <path class="d-line" d="M1040,692 L1040,712"/>
+
           <rect class="d-box d-ext" x="970" y="712" width="140" height="84"/>
-          <text class="d-t" x="1040" y="738" text-anchor="middle">USB host</text>
-          <text class="d-s" x="1040" y="760" text-anchor="middle">keyboard and mouse,</text>
-          <text class="d-s" x="1040" y="774" text-anchor="middle">on the board&rsquo;s USB host port</text>
-          <path class="d-line" d="M1040,658 L1040,712"/>
+          <text class="d-t" x="1040" y="738" text-anchor="middle">USB host port</text>
+          <text class="d-s" x="1040" y="760" text-anchor="middle">a keyboard and a mouse,</text>
+          <text class="d-s" x="1040" y="774" text-anchor="middle">plugged into the board</text>
+          <path class="d-line" d="M1040,638 L1040,652"/>
 
 
-          <!-- The connectors on the board itself. The pack is a file on the
-               card; the terminal is a VNC client and Chaosnet's other machines
-               are elsewhere on the network, so both leave by the same socket. -->
+          <!-- The connectors on the board itself, one under each controller of the
+               row above.  The pack is a file on the card; the terminal is a VNC
+               client and Chaosnet's other machines are elsewhere on the network, so
+               both leave by the Ethernet; and the micro-USB socket carries the
+               console and JTAG together through one bridge, which is how a board
+               like this is programmed and watched. -->
           <rect class="d-box d-ext" x="268" y="712" width="370" height="84"/>
           <text class="d-t" x="453" y="738" text-anchor="middle">gigabit Ethernet</text>
           <text class="d-s" x="453" y="762" text-anchor="middle">the terminal is a VNC client; Chaosnet reaches</text>
@@ -475,6 +493,11 @@
           <text class="d-s" x="746" y="758" text-anchor="middle">U-Boot, the CADR&rsquo;s bitstream,</text>
           <text class="d-s" x="746" y="772" text-anchor="middle">Linux and its root filesystem,</text>
           <text class="d-s" x="746" y="786" text-anchor="middle">and the disk packs, a file a drive</text>
+          <rect class="d-box d-ext" x="836" y="712" width="122" height="84"/>
+          <text class="d-t" x="897" y="738" text-anchor="middle">USB-UART</text>
+          <text class="d-t" x="897" y="756" text-anchor="middle">/ JTAG</text>
+          <text class="d-s" x="897" y="778" text-anchor="middle">one micro-USB socket,</text>
+          <text class="d-s" x="897" y="792" text-anchor="middle">the console and JTAG</text>
 
           </g>
         </svg>
