@@ -178,10 +178,10 @@ pixels wide and 93 tall below the first-stage box, and six lines fill 84 of it.
 A rotated label makes the reader tilt their head and a stacked one does not.
 
 Two boxes say what one word could not. Grey is the drawing's existing marker
-for what is outside the project, which is what muir and the DDR controller
-already carry, so the loader is marked as upstream. The green box inside it is
-the first stage, and it is green because the board boots from it and because
-the start-up routine that stage runs is generated here.
+for an existing component, which is what muir and the DDR controller already
+carry, so the loader is marked as upstream. The green box inside it is the
+first stage, and it is green because the board boots from it and because the
+start-up routine that stage runs is generated here.
 
 **The split is a little kind to us and it is worth knowing why.** Only one of
 the four files above lives in the first stage. `ps7_init_gpl.c` is compiled
