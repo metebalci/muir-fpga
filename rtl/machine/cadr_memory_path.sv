@@ -356,6 +356,22 @@ module cadr_memory_path (
     output var logic [15:0] dbd_out,         // DBD<15:0> as this board drives
     output var logic [1:0]  dbd_oe,          // {DBD<15:8>, DBD<7:0>} driven
 
+    // --- AND THE SAME CABLE'S OTHER END: this machine as the DEBUGGER, which
+    // --- is the DBGOUT page in `rtl/machine/cadr_busint_regs.sv` and is what
+    // --- CC writes.  The carrier is `rtl/plumbing/cadr_dbg_cable.sv`, a
+    // --- level above for the same reason the window is.
+    //
+    // The four go out as levels held for the whole request; the two come back
+    // with the lines already resolved against the far end's pull-ups, and
+    // `dbgout_live` says whether there is a board there at all.
+    output var logic        dbgout_req,
+    output var logic        dbgout_wr,
+    output var logic [1:0]  dbgout_a,
+    output var logic [15:0] dbgout_dbd,
+    input  var logic        dbgout_ack,
+    input  var logic [15:0] dbgout_dbd_in,
+    input  var logic        dbgout_live,
+
     // --- the modifier register's two effects, `busint::debug_modifier`.
     // Bit 1 is `-DEBUGEE RESET`, which crosses the debuggee's own cables to
     // OLORD2 and is that processor's power-on reset, so it goes OUT of the
@@ -900,12 +916,19 @@ module cadr_memory_path (
       .dev_write  (cpu_write),
       .dev_ack    (dev_ack),
       .unibus     (unibus),
+      .select_debug(select_debug),
       .ub_msyn    (ub_msyn),
       .ub_write   (ub_write),
       .ub_ssyn    (ub_ssyn),
       .arb_stage  (arb_stage),
       .busy       (busint_busy)
   );
+
+  // `SELECT DEBUG`, which never leaves this module: the DBGOUT page makes it
+  // out of the held match and the REQTIM counter takes the PROM's second
+  // table for it.  This is the page-level wiring REQERR's own byte is joined
+  // by, one page along.
+  logic select_debug;
 
   // `ub_addr` is `busint::unibus_address`: the pages above 0o37000 of the
   // 22-bit physical space, shifted left one because the Unibus counts bytes.
@@ -1100,7 +1123,20 @@ module cadr_memory_path (
       .timed_out (timed_out),
       .unibus    (unibus),
       .ub_int    (ub_int),
-      .err_status(regs_err_status)
+      .err_status(regs_err_status),
+      // The DBGOUT end of MIT's debug cable, this machine as the debugger.
+      // It leaves the machine to `rtl/plumbing/cadr_dbg_cable.sv`, which is
+      // the connector and the role; `select_debug` does not leave at all and
+      // goes to the REQTIM counter above, which is the whole reason a debug
+      // cycle may wait 11.05 microseconds where any other waits 4.25.
+      .dbgout_req   (dbgout_req),
+      .dbgout_wr    (dbgout_wr),
+      .dbgout_a     (dbgout_a),
+      .dbgout_dbd   (dbgout_dbd),
+      .dbgout_ack   (dbgout_ack),
+      .dbgout_dbd_in(dbgout_dbd_in),
+      .dbgout_live  (dbgout_live),
+      .select_debug (select_debug)
   );
 
   cadr_xbus_ddr main_memory (

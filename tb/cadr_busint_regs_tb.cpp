@@ -196,6 +196,14 @@ struct Dut {
     d->iob_vector = 0;
     d->timed_out = 0;
     d->unibus = 0;
+    // The debug cable's DBGOUT end: an unplugged connector, which is muir's
+    // `debug_cable` false.  The lines read as ones because nothing drives
+    // them --- `cadr_dbg_cable.sv` resolves an undriven byte against the far
+    // end's pull-ups and there is no far end.  A check that drove zeros here
+    // would be handing the block a value the cable cannot produce.
+    d->dbgout_ack = 0;
+    d->dbgout_dbd_in = 0xFFFF;
+    d->dbgout_live = 0;
     d->eval();
   }
   ~Dut() {
@@ -214,6 +222,29 @@ struct Dut {
     for (long k = 0; k < n; ++k) Step();
   }
 };
+
+// One cycle of the debugger's own into the debug block, as the trace's
+// `DBGOUT` rows carry it: every instant in nanoseconds from the same
+// power-on, so the fabric's own can be compared as intervals.
+struct DbgRow {
+  long n = 0;
+  int cable = 0;
+  int write = 0;
+  unsigned strobe = 0;
+  unsigned wdata = 0;
+  long grant_ns = 0;
+  long msyn_ns = 0;
+  long req_ns = -1;
+  long ans_ns = -1;
+  long ssyn_ns = 0;
+  long memack_ns = 0;
+  int timed_out = 0;
+  int taken = 0;
+};
+
+// `chip::VCO_PERIOD`, the REQTIM oscillator's 850 ns.  It is here only to
+// size the phase table the trace fills; every value in it is muir's.
+constexpr long kVcoPeriodNs = 850;
 
 }  // namespace
 
@@ -243,6 +274,17 @@ int main(int argc, char **argv) {
   uint32_t sweep_page[16] = {0};
   int sweep_seen = 0;
   std::vector<Row> rows;
+  // The debug block, out of the trace's APPENDED rows: which strobe each of
+  // its thirty-two addresses puts on the cable, how long after the grant the
+  // interface gives up at each phase of the REQTIM oscillator, and the cycles
+  // muir's own `busint::Busint` ran.
+  std::vector<int8_t> dbg(kAddrs, -1);
+  std::vector<long> dbg_tmo(kVcoPeriodNs, -1);
+  std::vector<DbgRow> dbg_rows_cyc;
+  long dbg_rows = 0, dbg_tmo_rows = 0;
+  long want_dbg_req_ns = -1, want_dbg_tmo_ns = -1, want_ub_strobe_ns = -1;
+  long want_dbg_regs = -1, want_dbg_cycles = -1;
+  unsigned want_dbg_low = 0, want_dbg_high = 0;
   long iface_rows = 0, none_runs = 0, win_rows = 0, win_runs = 0;
   long want_ssyn_ns = -1, want_strobe_ns = -1, want_bits = -1;
   long want_rq_ns = -1, want_read_ack_ns = -1, want_map_error = -1;
@@ -266,6 +308,14 @@ int main(int argc, char **argv) {
         if (!std::strcmp(name, "ub_xbus_read_ack_ns")) want_read_ack_ns = v;
         if (!std::strcmp(name, "ub_md_ack_ns")) want_md_ack_ns = v;
         if (!std::strcmp(name, "md_writes")) want_md_writes = v;
+        if (!std::strcmp(name, "debug_out_request_ns")) want_dbg_req_ns = v;
+        if (!std::strcmp(name, "debug_timeout_ns")) want_dbg_tmo_ns = v;
+        if (!std::strcmp(name, "unibus_strobe_ns")) want_ub_strobe_ns = v;
+        if (!std::strcmp(name, "dbg_regs")) want_dbg_regs = v;
+        if (!std::strcmp(name, "dbg_cycles")) want_dbg_cycles = v;
+        // Octal in the header, as every Unibus address in this trace is.
+        if (!std::strcmp(name, "dbg_low")) want_dbg_low = strtoul(line + 10, nullptr, 8);
+        if (!std::strcmp(name, "dbg_high")) want_dbg_high = strtoul(line + 11, nullptr, 8);
         // Octal in the header, as muir writes `bus_error`'s bits.
         if (!std::strcmp(name, "ub_map_error")) want_map_error = strtoul(line + 15, nullptr, 8);
         // The three masks are octal in the header, as MIT writes them.
@@ -276,6 +326,45 @@ int main(int argc, char **argv) {
       continue;
     }
     unsigned a, b, k, n;
+    {
+      unsigned du, ds;
+      long dn, dcab, dwr, dstr, dgrant, dmsyn, dssyn, dmemack, dto, dtaken;
+      unsigned long dwdata, dreq, dans;
+      if (std::sscanf(line, "DBGREG %o %u", &du, &ds) == 2) {
+        if (du >= kAddrs || ds > 3) {
+          std::fprintf(stderr, "FAIL: %s: a DBGREG row names 0%o strobe %u\n", path, du, ds);
+          return 2;
+        }
+        dbg[du] = (int8_t)ds;
+        ++dbg_rows;
+        continue;
+      }
+      if (std::sscanf(line, "DBGTMO %ld %ld", &dn, &dgrant) == 2) {
+        dbg_tmo[dn] = dgrant;
+        ++dbg_tmo_rows;
+        continue;
+      }
+      if (std::sscanf(line, "DBGOUT %ld %ld %ld %ld %lx %ld %ld %lu %lu %ld %ld %ld %ld", &dn,
+                      &dcab, &dwr, &dstr, &dwdata, &dgrant, &dmsyn, &dreq, &dans, &dssyn,
+                      &dmemack, &dto, &dtaken) == 13) {
+        DbgRow d;
+        d.n = dn;
+        d.cable = (int)dcab;
+        d.write = (int)dwr;
+        d.strobe = (unsigned)dstr;
+        d.wdata = (unsigned)dwdata;
+        d.grant_ns = dgrant;
+        d.msyn_ns = dmsyn;
+        d.req_ns = (dreq == 0xffffffffu) ? -1 : (long)dreq;
+        d.ans_ns = (dans == 0xffffffffu) ? -1 : (long)dans;
+        d.ssyn_ns = dssyn;
+        d.memack_ns = dmemack;
+        d.timed_out = (int)dto;
+        d.taken = (int)dtaken;
+        dbg_rows_cyc.push_back(d);
+        continue;
+      }
+    }
     Row r;
     std::memset(&r, 0, sizeof r);
     if (std::sscanf(line, "IFACENONE %x %x", &a, &b) == 2) {
@@ -434,6 +523,77 @@ int main(int argc, char **argv) {
       return 2;
     }
 
+  // ---- the debug block, out of the APPENDED rows ---------------------------
+  //
+  // The trace must carry all of it or this file cannot hold the block to
+  // anything: thirty-two addresses, a phase for every 5 ns of the
+  // oscillator's period, and cycles of both outcomes.
+  if (dbg_rows != want_dbg_regs || dbg_rows != 32 || want_dbg_req_ns <= 0 ||
+      want_dbg_tmo_ns <= 0 || want_ub_strobe_ns <= 0 || want_dbg_low == 0 ||
+      want_dbg_high <= want_dbg_low || (long)dbg_rows_cyc.size() != want_dbg_cycles ||
+      want_dbg_cycles < 4) {
+    std::fprintf(stderr,
+                 "FAIL: %s carries %ld DBGREG rows (wanting %ld), %zu DBGOUT rows (wanting %ld), "
+                 "debug_out_request_ns %ld, debug_timeout_ns %ld and the block at 0%o-0%o\n",
+                 path, dbg_rows, want_dbg_regs, dbg_rows_cyc.size(), want_dbg_cycles,
+                 want_dbg_req_ns, want_dbg_tmo_ns, want_dbg_low, want_dbg_high);
+    return 2;
+  }
+  if (dbg_tmo_rows != kVcoPeriodNs / kTickNs) {
+    std::fprintf(stderr, "FAIL: %s carries %ld DBGTMO rows, wanting one every %ld ns of %ld\n",
+                 path, dbg_tmo_rows, (long)kTickNs, kVcoPeriodNs);
+    return 2;
+  }
+  // Every phase is filled, and every delay is `busint::DEBUG_TIMEOUT_NS` plus
+  // between half a period and a period and a half.  That is not a guess: the
+  // gated output takes its first FALL strictly after the grant --- the part
+  // cannot pass an edge it has not yet seen --- and the count starts at the
+  // rise after that, so a grant landing just before a fall waits nearly two
+  // half-periods longer than one landing just after.  A table that had
+  // collapsed to one number would pass every replay and would be exactly the
+  // bug CLAUDE.md records as "restarting it at the grant is the obvious way
+  // to write it and is wrong on every cycle but the lucky ones".
+  long tmo_lo = -1, tmo_hi = -1;
+  for (long ph = 0; ph < kVcoPeriodNs; ph += kTickNs) {
+    const long d = dbg_tmo[ph];
+    if (d < want_dbg_tmo_ns + kVcoPeriodNs / 2 ||
+        d > want_dbg_tmo_ns + 3 * kVcoPeriodNs / 2) {
+      std::fprintf(stderr, "FAIL: %s: a grant at phase %ld is given up on after %ld ns\n", path,
+                   ph, d);
+      return 2;
+    }
+    if (tmo_lo < 0 || d < tmo_lo) tmo_lo = d;
+    if (d > tmo_hi) tmo_hi = d;
+  }
+  if (tmo_hi - tmo_lo < kVcoPeriodNs - kTickNs) {
+    std::fprintf(stderr, "FAIL: %s's phase table spans %ld ns, so it is not a free-running "
+                 "oscillator's\n", path, tmo_hi - tmo_lo);
+    return 2;
+  }
+  // The block is exactly the range the trace names, and it is no register of
+  // this board's and no part of the window: three claims about the same
+  // thirty-two addresses, from three separate sets of rows.
+  for (unsigned u = 0; u < kAddrs; ++u) {
+    const bool in = (u >= want_dbg_low && u <= want_dbg_high);
+    if (in != (dbg[u] >= 0)) {
+      std::fprintf(stderr, "FAIL: 0%o: DBGREG says %s and the block runs 0%o-0%o\n", u,
+                   dbg[u] >= 0 ? "debug" : "not", want_dbg_low, want_dbg_high);
+      return 2;
+    }
+    if (dbg[u] >= 0 && (table[u] != kNothing || in_win[u])) {
+      std::fprintf(stderr, "FAIL: 0%o is the debug block's and also kind %d\n", u, table[u]);
+      return 2;
+    }
+    // Bits 4 and 1 are not decoded, so the four strobes repeat every eight
+    // bytes through the block.  Asserted against the rows rather than
+    // recomputed, so that a trace which had lost the repeat would say so.
+    if (dbg[u] >= 0 && dbg[u] != (int8_t)((u >> 2) & 3)) {
+      std::fprintf(stderr, "FAIL: 0%o carries strobe %d and its address bits say %d\n", u, dbg[u],
+                   (u >> 2) & 3);
+      return 2;
+    }
+  }
+
   const long kSsynT = want_ssyn_ns / kTickNs;
   const long kStrobeT = want_strobe_ns / kTickNs;
   const long kXbusRqT = want_rq_ns / kTickNs;
@@ -465,6 +625,15 @@ int main(int argc, char **argv) {
     long md_req_at = -1;   // the tick `-UB TO MD` came up, after `-UB MSYN`
     long md_done_at = -1;  // the tick the processor took the word
     uint32_t md_word = 0;  // what stood on the thirty-two lines at the request
+    // The debug cable's DBGOUT end.
+    int sel_dbg = 0;        // `SELECT DEBUG` stood at some tick of the cycle
+    int sel_dbg_at_msyn = 0;  // and it stood at the strobe itself
+    long dbg_req_at = -1;   // the tick `-DEBUG OUT REQ` came up, after `-UB MSYN`
+    unsigned dbg_a = 0;     // `DEBUG OUT A<1:0>` as it went out
+    int dbg_wr = 0;         // `DEBUG IN WR`
+    unsigned dbg_dbd = 0;   // `DBD<15:0>` as this board drove them
+    unsigned dbg_dbd_lift = 0;  // and as they stood at the lift
+    long dbg_ack_at = -1;   // the tick the far end's DEBUG ACK reached this edge
   };
   // **THE XBUS BEHIND THE WINDOW ANSWERS AT A LATENCY THAT MOVES.** A fixed
   // one would let a block that counted ticks from `-UB MSYN` rather than
@@ -477,14 +646,21 @@ int main(int argc, char **argv) {
   // acknowledgement would pass a fixed one.  `busint::UB_MD_ACK_NS` is a
   // claim about the interval from the LOAD, not from the strobe.
   long md_latency = 1;
+  // **AND THE FAR END OF THE DEBUG CABLE ANSWERS AT A LATENCY THAT MOVES**,
+  // for the third time and the same reason: `DEBUG SSYN` is the other
+  // machine's `DEBUG ACK` and comes when it comes, so a block that counted
+  // ticks from `-UB MSYN` would pass a fixed one.  Negative is a far end that
+  // never answers at all.
+  long cable_latency = -1;
   auto Run = [&](unsigned uaddr, int write, unsigned wdata, long hold) {
     Result res;
     b.d->ub_addr = uaddr;
     b.d->ub_write = write;
     b.d->ub_wdata = wdata;
     b.d->ub_msyn = 1;
-    long count = -1;   // ticks left before the seam answers, -1 idle
-    long mdcount = -1; // the same, for the processor taking the MD word
+    long count = -1;      // ticks left before the seam answers, -1 idle
+    long mdcount = -1;    // the same, for the processor taking the MD word
+    long cablecount = -1; // and for the other machine's DEBUG ACK
     for (long k = 0; k < hold; ++k) {
       // The seam, driven INTO this edge: the DUT takes `map_done` and the
       // word at the same edge, as it takes `-MEMACK` and `MEM<31:0>`.
@@ -503,9 +679,35 @@ int main(int argc, char **argv) {
         res.md_done_at = k;
         mdcount = -1;
       }
+      // The other machine's `DEBUG ACK`, driven INTO this edge as the seam's
+      // acknowledgement is: what `-UB SSYN` must follow with no delay of its
+      // own.  It is a level and it stands until the cycle ends.
+      if (cablecount == 0) {
+        b.d->dbgout_ack = 1;
+        res.dbg_ack_at = k;
+        cablecount = -1;
+      }
       b.Step();
       b.d->map_done = 0;
       b.d->map_md_done = 0;
+      // The cable, watched and answered.  The levels are read at the request
+      // and again at the lift, because what the far end's latches take is
+      // what stands at the TRAILING edge of the strobe.
+      if (b.d->select_debug) {
+        res.sel_dbg = 1;
+        if (k == 0) res.sel_dbg_at_msyn = 1;
+      }
+      if (b.d->dbgout_req) {
+        if (res.dbg_req_at < 0) {
+          res.dbg_req_at = k;
+          res.dbg_a = b.d->dbgout_a;
+          res.dbg_wr = b.d->dbgout_wr;
+          res.dbg_dbd = b.d->dbgout_dbd;
+          if (cable_latency >= 0) cablecount = cable_latency;
+        }
+        res.dbg_dbd_lift = b.d->dbgout_dbd;
+      }
+      if (cablecount > 0) --cablecount;
       if (b.d->map_md) {
         res.md_seen = 1;
         if (res.md_req_at < 0) {
@@ -534,6 +736,10 @@ int main(int argc, char **argv) {
       }
     }
     b.d->ub_msyn = 0;
+    // The cable's acknowledgement is a level the far end holds for its own
+    // cycle and lets go with it, which is what `cadr_dbgin.sv` does: it is
+    // dropped here with the strobe rather than left standing into the next.
+    b.d->dbgout_ack = 0;
     // The bus idles between cycles: a slave's state is its own cycle's.
     b.Idle(3);
     return res;
@@ -802,10 +1008,12 @@ int main(int argc, char **argv) {
   b.d->iob_vector = 0;
   long swept = 0, swept_answered = 0, swept_silent = 0;
   long by_kind[kNothing + 1] = {0};
+  long swept_debug = 0;
   for (unsigned u = 0; u < kAddrs && bad < kMaxBad; ++u) {
     for (int w = 0; w < 2; ++w) {
       const int kind = table[u];
-      const bool want = (kind != kNothing && kind != kDiagnostic);
+      const int strobe = dbg[u];
+      const bool want = (kind != kNothing && kind != kDiagnostic) || strobe >= 0;
       // A cycle nothing answers is held well past the instant an answer would
       // be due, so that "it did not answer" is a measurement and not a race.
       const Result got = Run(u, w, 0x5A5Au, want ? kSsynT + 40 : kSsynT + 20);
@@ -814,7 +1022,29 @@ int main(int argc, char **argv) {
         bad += Fail((long)u, w ? "answering a write" : "answering a read", got.answered, want);
         continue;
       }
-      if (want) {
+      // `SELECT DEBUG` is Y2 of the same decoder and stands on the debug
+      // block's thirty-two addresses and nowhere else.  It is what takes the
+      // REQTIM PROM's second table in `cadr_busint_xbus.sv`, so a decode a
+      // page wide here would give some other cycle 11.05 microseconds to
+      // answer in.
+      if (got.sel_dbg != (strobe >= 0))
+        bad += Fail((long)u, "SELECT DEBUG", got.sel_dbg, strobe >= 0);
+      if (strobe >= 0) {
+        ++swept_debug;
+        // **WITH NO CABLE THE PULL-UP ANSWERS AT `-UB MSYN` ITSELF**, which
+        // is muir's own `(msyn, msyn, false)` and is why this block's match
+        // is the one that is not held.
+        if (got.ssyn != 0)
+          bad += Fail((long)u, "-UB SSYN on a debug register with no cable, in ticks after -UB MSYN",
+                      (unsigned long)got.ssyn, 0);
+        if (!got.sel_dbg_at_msyn)
+          bad += Fail((long)u, "SELECT DEBUG at -UB MSYN itself", 0, 1);
+        // And the lines read as ones, because nothing drives them.  A block
+        // that answered its own machine with zero would be a debugger that
+        // said the other machine was there and gave every register as empty.
+        if (!w && got.word != 0xFFFFu)
+          bad += Fail((long)u, "the word an unplugged cable gives", got.word, 0xFFFFu);
+      } else if (want) {
         ++swept_answered;
         by_kind[kind]++;
         if (got.ssyn != kSsynT)
@@ -864,7 +1094,11 @@ int main(int argc, char **argv) {
     const Result got = Run(u, 0, 0, want ? 160 : kSsynT + 20);
     ++win_swept;
     if (got.answered != (int)want) {
-      bad += Fail((long)u, "answering a read with a foreign master on the bus", got.answered, want);
+      bad += Fail((long)u,
+                  dbg[u] >= 0
+                      ? "answering a foreign master at the debug block, which muir never does"
+                      : "answering a read with a foreign master on the bus",
+                  got.answered, want);
       continue;
     }
     if (!want) {
@@ -929,6 +1163,232 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  // ---- the debug block with a cable in it -----------------------------------
+  //
+  // The sweep above ran with nothing plugged in, which is the pull-up
+  // answering.  This runs the same thirty-two addresses with a board at the
+  // far end, and it is where the four strobes, the levels and the
+  // acknowledgement are compared.
+  //
+  // **THE FAR END'S WORD IS INJECTIVE IN THE ADDRESS AND THE DIRECTION**, so
+  // a block that answered one cycle with another's word says so, and it is
+  // never zero and never `0xFFFF`: those two are what an unplugged cable and
+  // a dead one read as, and a check whose expected value was one of them
+  // could not tell a working cable from no cable at all.
+  const long kDbgReqT = want_dbg_req_ns / kTickNs;
+  long dbg_cycles = 0, dbg_reads = 0, dbg_writes = 0;
+  long dbg_by_strobe[4] = {0};
+  b.d->dbgout_live = 1;
+  for (unsigned u = want_dbg_low; u <= want_dbg_high && bad < kMaxBad; ++u) {
+    for (int w = 0; w < 2; ++w) {
+      const unsigned far = 0x3C00u | ((u & 0x3Fu) << 4) | (unsigned)(w << 3) | 5u;
+      const unsigned mine = 0x8000u ^ (far * 3u);
+      cable_latency = 1 + ((long)(u + (unsigned)w) % 17);
+      b.d->dbgout_dbd_in = far;
+      const Result got = Run(u, w, mine, 400);
+      ++dbg_cycles;
+      if (w) ++dbg_writes; else ++dbg_reads;
+      dbg_by_strobe[dbg[u] & 3]++;
+      if (!got.answered) {
+        bad += Fail((long)u, "-UB SSYN on a debug register with a cable", 0, 1);
+        continue;
+      }
+      // `busint::DEBUG_OUT_REQUEST_NS`: the request follows `-UB MSYN` by a
+      // delay-line section, so the levels under it have been standing that
+      // long when the far end's latches see the strobe.
+      if (got.dbg_req_at != kDbgReqT)
+        bad += Fail((long)u, "-DEBUG OUT REQ, in ticks after -UB MSYN",
+                    (unsigned long)got.dbg_req_at, (unsigned long)kDbgReqT);
+      // `DEBUG OUT A<1:0>` is `busint::debug_register`, which is Unibus
+      // address bits 3 and 2 through the 74S241 at DBGOUT 0A17.
+      if (got.dbg_a != (unsigned)dbg[u])
+        bad += Fail((long)u, "DEBUG OUT A<1:0>", got.dbg_a, (unsigned)dbg[u]);
+      if (got.dbg_wr != w) bad += Fail((long)u, "DEBUG IN WR", got.dbg_wr, w);
+      if (got.dbg_dbd != mine)
+        bad += Fail((long)u, "DBD<15:0> as this board drives them", got.dbg_dbd, mine);
+      // `DEBUG SSYN` is `DEBUG OUT ACK AND SELECT DEBUG` at DBGOUT 0A12 and
+      // has no delay of its own: `-UB SSYN` is the other machine's answer.
+      if (got.ssyn != got.dbg_ack_at)
+        bad += Fail((long)u, "-UB SSYN, in ticks after DEBUG OUT ACK",
+                    (unsigned long)(got.ssyn - got.dbg_ack_at), 0);
+      if (!w && got.word != far)
+        bad += Fail((long)u, "the word the far end drove", got.word, far);
+      // **AND THE LEVELS STAND PAST THE LIFT**, which is the promise the far
+      // end's latches rest on: they clock `DBD` at the TRAILING edge of their
+      // own strobe, so a block that let the lines go with the request would
+      // write the wrong word into the other machine's address register.
+      if (b.d->dbgout_req)
+        bad += Fail((long)u, "-DEBUG OUT REQ after the master let the cycle go", 1, 0);
+      if (b.d->dbgout_dbd != mine)
+        bad += Fail((long)u, "DBD<15:0> standing after the lift", b.d->dbgout_dbd, mine);
+      if (b.d->dbgout_a != (unsigned)dbg[u])
+        bad += Fail((long)u, "DEBUG OUT A<1:0> standing after the lift", b.d->dbgout_a,
+                    (unsigned)dbg[u]);
+    }
+  }
+  cable_latency = -1;
+  b.d->dbgout_live = 0;
+  b.d->dbgout_dbd_in = 0xFFFF;
+  if (bad) {
+    std::fprintf(stderr, "FAIL: %d mismatches over %ld ticks\n", bad, b.tick);
+    return 1;
+  }
+
+  // ---- an acknowledgement that belongs to the CYCLE BEFORE ------------------
+  //
+  // `DEBUG OUT ACK` is a level.  On MIT's cable it falls within nanoseconds of
+  // the request it belongs to being lifted, because the far end's gate is
+  // `NAND(-DB ADR1 CLK, -DB ADR0 CLK, -DB READ STATUS)` and the three go with
+  // the request.  A carrier that serialises the cable does not give that for
+  // free: the fall takes a frame to cross, so the acknowledgement of the
+  // cycle just finished is still standing when the next one starts.
+  //
+  // So this is the stimulus that loses the race --- the ack left UP across
+  // the gap between two cycles, which is what the cable really does --- and
+  // the claim is that the second cycle waits for an acknowledgement of its
+  // own.  Found on the two-board check before it was a section here.
+  {
+    b.d->dbgout_live = 1;
+    b.d->dbgout_dbd_in = 0x4321;
+    cable_latency = 4;
+    const Result first = Run(want_dbg_low, 0, 0, 400);
+    if (!first.answered) bad += Fail(-1, "-UB SSYN on the first of two cabled cycles", 0, 1);
+    // The far end's answer has not had time to go away: it stands into the
+    // next cycle, as a level a frame behind does.
+    b.d->dbgout_ack = 1;
+    b.d->dbgout_dbd_in = 0xFFFF;
+    cable_latency = -1;
+    b.d->ub_addr = want_dbg_low;
+    b.d->ub_write = 0;
+    b.d->ub_wdata = 0;
+    b.d->ub_msyn = 1;
+    long early = -1;
+    for (long k = 0; k < 120; ++k) {
+      // The far end lets the old acknowledgement go a frame in, and gives one
+      // of its own for THIS cycle a little after.
+      if (k == 40) b.d->dbgout_ack = 0;
+      if (k == 80) {
+        b.d->dbgout_ack = 1;
+        b.d->dbgout_dbd_in = 0x4321;
+      }
+      b.Step();
+      if (b.d->ub_ssyn && early < 0) early = k;
+    }
+    b.d->ub_msyn = 0;
+    b.d->dbgout_ack = 0;
+    b.Idle(3);
+    if (early < 80)
+      bad += Fail(-1, "-UB SSYN taken from the acknowledgement of the cycle BEFORE",
+                  (unsigned long)early, 80);
+    b.d->dbgout_live = 0;
+    b.d->dbgout_dbd_in = 0xFFFF;
+  }
+
+  // ---- and a cable that goes away under a standing request ------------------
+  //
+  // The far end is there, the request goes out, and then the connector is
+  // pulled: no more frames arrive, `cadr_dbg_cable.sv` drops `out_live`, and
+  // the lines go back to the pull-ups.  The block must answer THERE rather
+  // than wait --- an unplugged cable is a debuggee that answers everything
+  // with ones, and a block that waited would hang its own machine's Unibus
+  // cycle on a cable nobody is holding.
+  {
+    b.d->dbgout_live = 1;
+    b.d->dbgout_dbd_in = 0x1234;
+    b.d->ub_addr = want_dbg_low;
+    b.d->ub_write = 0;
+    b.d->ub_wdata = 0;
+    b.d->ub_msyn = 1;
+    long ssyn_at = -1;
+    unsigned word = 0;
+    for (long k = 0; k < 200; ++k) {
+      // Pulled at the fiftieth tick, well after the request has gone out.
+      if (k == 50) {
+        b.d->dbgout_live = 0;
+        b.d->dbgout_dbd_in = 0xFFFF;
+      }
+      b.Step();
+      if (b.d->ub_ssyn && ssyn_at < 0) {
+        ssyn_at = k;
+        word = b.d->ub_rdata;
+      }
+    }
+    b.d->ub_msyn = 0;
+    b.Idle(3);
+    if (ssyn_at != 50)
+      bad += Fail(-1, "-UB SSYN, in ticks after the cable went away",
+                  (unsigned long)ssyn_at, 50);
+    if (word != 0xFFFFu)
+      bad += Fail(-1, "the word a cable that went away gives", word, 0xFFFFu);
+    b.d->dbgout_live = 0;
+    b.d->dbgout_dbd_in = 0xFFFF;
+  }
+
+  // ---- muir's own cycles, replayed ------------------------------------------
+  //
+  // `DBGOUT` rows out of `busint::Busint`: the instants a debug cycle is made
+  // of, from the grant onwards.  What this file can replay is everything from
+  // `-UB MSYN`; the two rows that end on the interface's own `NXM TIMEOUT`
+  // are held by `build/unibus.pass`, where the counter is.
+  long dbg_replayed = 0, dbg_unanswered = 0;
+  for (const DbgRow &r : dbg_rows_cyc) {
+    b.d->dbgout_live = r.cable;
+    // A cable with a board at the far end drives the lines; one with none
+    // reads as the pull-ups, and so does one nobody has answered yet.
+    const unsigned far = r.cable ? (unsigned)(0x2A00u ^ (r.n * 0x1111u) ^ 0x0055u) : 0xFFFFu;
+    b.d->dbgout_dbd_in = r.cable ? 0xFFFFu : far;
+    const long want_req = r.req_ns < 0 ? -1 : (r.req_ns - r.msyn_ns) / kTickNs;
+    const long want_ssyn = (r.ssyn_ns - r.msyn_ns) / kTickNs;
+    // The stimulus: when the other machine answers, in ticks after the
+    // request.  A row muir's interface gave up on is one nothing answers
+    // here, and this module has no timer of its own to end it --- which is
+    // the claim, and the reason `select_debug` leaves the module at all.
+    cable_latency = (r.ans_ns < 0 || !r.taken) ? -1 : (r.ans_ns - r.req_ns) / kTickNs;
+    if (cable_latency >= 0) b.d->dbgout_dbd_in = far;
+    const Result got = Run(want_dbg_low + 4 * r.strobe, r.write, r.wdata,
+                           want_ssyn + 2 * kDbgReqT + 40);
+    ++dbg_replayed;
+    if (want_req >= 0 && got.dbg_req_at != want_req)
+      bad += Fail(r.n, "-DEBUG OUT REQ, in ticks after -UB MSYN", (unsigned long)got.dbg_req_at,
+                  (unsigned long)want_req);
+    // **A CYCLE WITH NO CABLE PUTS NO REQUEST OUT, AND THE RACE IS THE
+    // BOARD'S OWN.**  The pull-up answers at `-UB MSYN` and the master lifts
+    // `busint::UNIBUS_STROBE_NS` later, which is the very instant the
+    // delay-line section would have made the request: on MIT's board that is
+    // a pulse of no width into a connector with nothing in it.  muir puts no
+    // request on the cable at all in that arm and neither does this.
+    if (want_req < 0 && got.dbg_req_at >= 0)
+      bad += Fail(r.n, "a request on a cable muir does not put one on",
+                  (unsigned long)got.dbg_req_at, 0);
+    if (want_req >= 0 && got.dbg_a != r.strobe)
+      bad += Fail(r.n, "DEBUG OUT A<1:0>", got.dbg_a, r.strobe);
+    if (r.timed_out) {
+      // muir's interface ended this one on its own counter, which is not in
+      // this module: here it stands, and `build/unibus.pass` is where the
+      // 11.05 microseconds are measured.
+      ++dbg_unanswered;
+      if (got.answered)
+        bad += Fail(r.n, "an answer to a cycle the far end never gave one", 1, 0);
+    } else {
+      if (!got.answered) {
+        bad += Fail(r.n, "-UB SSYN on a cycle muir answers", 0, 1);
+        continue;
+      }
+      if (got.ssyn != want_ssyn)
+        bad += Fail(r.n, "-UB SSYN, in ticks after -UB MSYN", (unsigned long)got.ssyn,
+                    (unsigned long)want_ssyn);
+      if (!r.write && got.word != (r.cable ? far : 0xFFFFu))
+        bad += Fail(r.n, "the word the master got", got.word, r.cable ? far : 0xFFFFu);
+    }
+  }
+  cable_latency = -1;
+  b.d->dbgout_live = 0;
+  b.d->dbgout_dbd_in = 0xFFFF;
+  if (bad) {
+    std::fprintf(stderr, "FAIL: %d mismatches over %ld ticks\n", bad, b.tick);
+    return 1;
+  }
+
   // ---- what the run reached ------------------------------------------------
   int thin = 0;
   auto least = [&](const char *what, long got, long want) {
@@ -952,6 +1412,14 @@ int main(int argc, char **argv) {
   least("mapped reads that made an Xbus cycle", map_xbus_reads, 4);
   least("mapped writes that made an Xbus cycle", map_xbus_writes, 3);
   least("mapped writes that loaded MD", md_writes, want_md_writes);
+  least("debug addresses answered with no cable in the connector", swept_debug, 64);
+  least("debug cycles run over a cable", dbg_cycles, 64);
+  least("debug reads over a cable", dbg_reads, 32);
+  least("debug writes over a cable", dbg_writes, 32);
+  for (int k = 0; k < 4; ++k)
+    least("cycles of one of the four debug strobes", dbg_by_strobe[k], 16);
+  least("of muir's own debug cycles replayed", dbg_replayed, want_dbg_cycles);
+  least("debug cycles nothing answered", dbg_unanswered, 2);
   least("window addresses answered from the read buffer", win_buf, 8192);
   least("window addresses answered off the Xbus", win_xbus, 8192);
   least("words of the window taken out in two halves and put together", win_pairs, 8192);
@@ -1004,11 +1472,25 @@ int main(int argc, char **argv) {
       "    halves and put back together --- %ld by the block's own registers and %ld silent.\n"
       "    The board's OWN cycle is refused all %ld of them, which is the sweep above with\n"
       "    ub_foreign down: busint::decode answers NoUnibus at every address of the window,\n"
-      "    so the processor is not mapped and must not be.\n",
+      "    so the processor is not mapped and must not be.\n"
+      "    AND THE DEBUG BLOCK IS THE CABLE'S OTHER END: all 32 addresses of\n"
+      "    busint::debug_register swept with nothing plugged in --- %ld cycles answered at\n"
+      "    -UB MSYN itself off the pull-up, every read giving all ones, SELECT DEBUG up on\n"
+      "    those addresses and on no other of the %u --- and %ld more over a cable, %ld reads\n"
+      "    and %ld writes, with -DEBUG OUT REQ %ld ticks after -UB MSYN, DEBUG OUT A<1:0> the\n"
+      "    strobe the address decodes to, the levels standing after the master let the cycle\n"
+      "    go, and -UB SSYN on the far end's DEBUG ACK with no delay of its own, that\n"
+      "    acknowledgement coming at a latency that moves from cycle to cycle.  A cable\n"
+      "    pulled under a standing request answers there with ones rather than waiting.\n"
+      "    %ld of muir's own busint::Busint cycles replayed, %ld of them at an address the\n"
+      "    far end never answered --- this block has no timer and build/unibus.pass is where\n"
+      "    the 11.05 us the interface waits is measured.  A foreign master is refused at all\n"
+      "    32, which is Busint::debug_set_master giving Responder::Debug no answer.\n",
       b.tick, ops, reads, writes, errs, faces, kSsynT, answered, kStrobeT, aliases, swept, kAddrs,
       swept_answered, swept_silent, path, iface_rows, none_runs, maps, by_resp[kBuffer],
       by_resp[kXbus], map_xbus_reads, map_xbus_writes, by_resp[kRefused], by_resp[kMd], kXbusRqT,
       kReadAckT, md_writes, kXbusRqT, kMdAckT, kAddrs, win_buf + win_xbus + win_reg, win_xbus, win_buf, win_pairs, win_reg,
-      win_silent, win_rows);
+      win_silent, win_rows, swept_debug, kAddrs, dbg_cycles, dbg_reads, dbg_writes, kDbgReqT,
+      dbg_replayed, dbg_unanswered);
   return 0;
 }

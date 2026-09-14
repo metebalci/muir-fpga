@@ -1052,6 +1052,27 @@ CHECKS = {
     # half of it runs a real debug cycle through the carrier into
     # `cadr_dbgin.sv` and the real register block, so a carrier fault shows as
     # a debugger that cannot read a register rather than as a bit.
+    # AND THE CONNECTOR ABOVE IT, which is where the ROLE is: one Pmod header
+    # carrying both directions, four pins each, and which four of them this
+    # board drives.  The DUT is two boards --- one running the DBGOUT page
+    # `rtl/machine/cadr_busint_regs.sv` and one answering through
+    # `rtl/machine/cadr_dbgin.sv` --- so a fault here shows as a debugger that
+    # cannot read the other machine's register, or as a pad driven from both
+    # ends, which the testbench counts on every tick.
+    "dbg_cable": {
+        "sources": ["rtl/plumbing/cadr_dbg_cable.sv"],
+        "extra": ["tb/cadr_dbg_cable_harness.sv",
+                  "rtl/plumbing/cadr_dbg_pmod.sv",
+                  "rtl/plumbing/cadr_dbg_join.sv",
+                  "rtl/machine/cadr_dbgin.sv",
+                  "rtl/machine/cadr_busint_regs.sv",
+                  "rtl/machine/cadr_console_bus.sv",
+                  "rtl/machine/cadr_spy_registers.sv"],
+        "top": "cadr_dbg_cable_harness",
+        "tb": "tb/cadr_dbg_cable_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing"],
+        "golden": None,
+    },
     "dbg_pmod": {
         "sources": ["rtl/plumbing/cadr_dbg_pmod.sv",
                     "rtl/plumbing/cadr_dbg_join.sv"],

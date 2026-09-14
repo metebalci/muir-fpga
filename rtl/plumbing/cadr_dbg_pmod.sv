@@ -20,28 +20,31 @@
 //
 // ## Eight pins, and why they are four each way
 //
-// One Pmod cable joins one board's DBGOUT connector to another's DBGIN, so
-// its eight wires carry BOTH directions --- twenty signals one way and
-// nineteen the other.  There are two ways to do that and only one of them is
-// available here.
+// The cable is ONE Pmod connector, and it carries both directions: twenty
+// signals out and twenty back.  There are two ways to do that and only one of
+// them is available here.
 //
 // **Half duplex**, seven data lines shared and turned around under a
-// forwarded clock, is MIT's own arrangement one connector along: the Am8304s
-// at DBGOUT 0B21 and 0B22 face whichever way `-DEBUG > UD` says.  It is also
-// what the drawing has claimed, as "one clock and seven data".  Two things
-// are wrong with it here.  The connector that would have to RECEIVE the
-// clock has no clock-capable pin: of the sixteen pins on the two headers,
-// Digilent's own master file marks exactly one pair `MRCC` --- JA3_P/JA3_N,
-// U18 and U19 --- and JB has none at all, so a receiver on JB cannot be
-// clocked from the cable.  And a shared line turned around is two sets of
-// drivers that must agree, with no back channel to agree on: a turnaround
-// that misses does not corrupt a word, it puts two drivers on one wire.
+// forwarded clock, is MIT's own arrangement: the Am8304s at DBGOUT 0B21 and
+// 0B22 face whichever way `-DEBUG > UD` says.  It is also what the drawing
+// claimed for a while, as "one clock and seven data".  Two things are wrong
+// with it here.  A shared line turned around is two sets of drivers that must
+// agree with no back channel to agree on, and a turnaround that misses does
+// not corrupt a word, it puts two drivers on one wire.  And a receiver clocked
+// from the cable is a second clock domain across the whole carrier, where the
+// two boards already have a tick of the same length; what it would buy is a
+// smaller delay, and delay is the one thing this cable does not care about.
 //
 // **Full duplex**, four pins each way, has no shared driver, nothing to turn
 // around and nothing to agree about.  Each direction is one strobe and three
 // data lines, driven by one end and sampled by the other with its own clock.
 // That is what is built, and it is what makes the eighth wire a STROBE and
 // not a clock: nothing on the receiving side is clocked by it.
+//
+// Which four pins are this end's is the ROLE and is not here:
+// `rtl/plumbing/cadr_dbg_cable.sv` puts one of these on one connector and
+// swaps the two groups between a debugger and a debuggee, so that a straight
+// cable from one board's JA to another's JA maps every driver to a listener.
 //
 // The beats this costs are free.  A debugger gives up on a cycle 11.05
 // microseconds after its grant --- `busint::DEBUG_TIMEOUT_NS`, the REQTIM
@@ -57,14 +60,27 @@
 // for a word.  `cadr_debug_window.sv` uses it in `STS` for the same reason.
 //
 // So a frame is twenty-two bits at least, and twenty-two over three lines is
-// eight beats.  Eight beats is twenty-four slots, of which two are zero fill
-// the receiver also checks.  **That is the beat count: eight, each way**, and
-// the reason it is eight and not seven is the marker.
+// eight beats.  Eight beats is twenty-four slots, which leaves two over.
+// **That is the beat count: eight, each way**, and the reason it is eight and
+// not seven is the marker.
+//
+// **THE TWO SLOTS LEFT OVER ARE A PARITY BIT AND A ZERO**, and they catch
+// what the marker cannot.  The marker says a frame is a frame; it says
+// nothing about the twenty bits under it, so one line shorted, one beat
+// sampled at the wrong instant or one bit flipped in the cable arrives as a
+// level and is taken.  The parity bit is over the payload alone, so any odd
+// number of bits wrong in it moves nothing at this end and the previous
+// levels stand --- which is the same refusal a bad marker gets.  The zero
+// fill is the third of the three: a line stuck high fails it whatever the
+// payload is.  None of them is a code that can correct anything, and none
+// should be: the far end sends the levels again sixty-six ticks later, so
+// refusing a frame costs one frame.
 //
 // The drawing said four out and three back, against seven data lines on a
 // connector carrying one direction.  Twenty over seven is three beats and
 // twenty-two is four, so that count was right for its own premise; what does
-// not hold is the premise, because a connector has to carry both directions.
+// not hold is the premise, because one connector has to carry both
+// directions, and the eighth pin is a strobe each way rather than a clock.
 //
 // ## The gap is the frame marker
 //
@@ -122,6 +138,16 @@
 // low in the sense the whole transport uses, and `DEBUG IN ACK` down with
 // neither byte driven.  `cadr_arty.sv` already ties the cable off that way on
 // a board with no processing system and says why, and this reads the same.
+//
+// **WHAT THIS MODULE DOES NOT KNOW IS WHEN TO BE QUIET.**  Two boards cabled
+// together with neither told to be the debugger must not both drive the
+// return group, and a board with nothing plugged in should drive nothing at
+// all; both are the CONNECTOR's business and are in
+// `rtl/plumbing/cadr_dbg_cable.sv`, which simply leaves the pads
+// high-impedance.  The sender here free-runs whatever the pads are doing, so
+// a group that comes back under a running sender starts mid-frame and the
+// receiver at the far end refuses that frame on its marker and its parity and
+// takes the next one whole.  One frame, sixty-six ticks.
 //
 // A cable pulled out while a request stands is the case that needs a timer.
 // The levels would otherwise stand for ever, `-DB NEED UB` would stay down,
@@ -186,9 +212,11 @@ module cadr_dbg_pmod #(
   localparam int unsigned          MARK_W = 2;
   localparam logic [MARK_W-1:0]    MARK   = 2'b01;
 
-  localparam int unsigned BEATS  = (PAYLOAD_W + MARK_W + LINES - 1) / LINES;
+  localparam int unsigned BEATS  = (PAYLOAD_W + MARK_W + 1 + LINES - 1) / LINES;
   localparam int unsigned SLOTS  = BEATS * LINES;
-  // The marker and the zero fill together: everything above the payload.
+  // The marker, the parity bit and the zero fill together: everything above
+  // the payload.  The marker is at the top, the parity bit under it, and the
+  // fill under that, so a setting with no fill at all is not a special case.
   localparam int unsigned HEAD_W = SLOTS - PAYLOAD_W;
   localparam int unsigned BEAT_W = $clog2(BEATS + 1);
   localparam int unsigned TT_W   = $clog2((GAP_T > BEAT_T ? GAP_T : BEAT_T) + 1);
@@ -201,18 +229,20 @@ module cadr_dbg_pmod #(
   // case in the source.
   logic [SLOTS-1:0] frame_out;
   always_comb begin
-    frame_out                    = '0;
-    frame_out[PAYLOAD_W-1:0]     = tx_levels;
-    frame_out[SLOTS-1 -: MARK_W] = MARK;
+    frame_out                      = '0;
+    frame_out[PAYLOAD_W-1:0]       = tx_levels;
+    frame_out[SLOTS-MARK_W-1]      = ^tx_levels;
+    frame_out[SLOTS-1 -: MARK_W]   = MARK;
   end
 
   // And what the head of a frame must read for the receiver to take it: the
-  // marker, and the fill as zero.  A frame that fails this moves nothing.
-  logic [HEAD_W-1:0] head_want;
-  always_comb begin
+  // marker, the parity of the payload UNDER it, and the fill as zero.  A
+  // frame that fails any of the three moves nothing.
+  function automatic logic [HEAD_W-1:0] head_want(input logic [PAYLOAD_W-1:0] v);
     head_want                     = '0;
+    head_want[HEAD_W-MARK_W-1]    = ^v;
     head_want[HEAD_W-1 -: MARK_W] = MARK;
-  end
+  endfunction
 
   // ------------------------------------------------------------------------
   // The sender
@@ -287,7 +317,7 @@ module cadr_dbg_pmod #(
   logic             complete, good;
   assign rx_next  = {rx_frame, rx_d};
   assign complete = change && (rx_beat == BEAT_W'(BEATS - 1));
-  assign good     = (rx_next[SLOTS-1:PAYLOAD_W] == head_want);
+  assign good     = (rx_next[SLOTS-1:PAYLOAD_W] == head_want(rx_next[PAYLOAD_W-1:0]));
 
   always_ff @(posedge clk) begin
     if (rst) begin

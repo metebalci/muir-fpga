@@ -14,15 +14,68 @@
 //
 //   - the DIAGNOSTIC block is `rtl/machine/cadr_spy_registers.sv` and has
 //     been since the console;
-//   - the DEBUG block is a cycle on the OTHER machine's Unibus, answered over
-//     the cable by that machine.  muir's `busint::register` gives it `None`
-//     for exactly that reason and so does the decode below: a slave here that
-//     answered `0o766100` would be answering for a machine that is not there.
-//     **In the composed machine those four addresses therefore time out**,
-//     where muir's `Responder::Debug` with no cable answers at `-UB MSYN` off
-//     the pull-up on `DEBUG OUT ACK`.  That is a divergence of the cable's
-//     absence and not of this module, and it goes when the cable's side is
-//     built.
+//   - the DEBUG block IS here now, and it is page DBGOUT rather than one of
+//     this file's five: a cycle on the OTHER machine's Unibus, put on the
+//     cable and answered by that machine.  muir's `busint::register` gives it
+//     `None` because it is not a register of this board's at all, and the
+//     decode below keeps that --- `sel` is still the three blocks that answer
+//     out of their own flops --- while `in_dbg` beside it is
+//     `busint::debug_register`.  What used to stand here said those four
+//     addresses time out in the composed machine where muir answers them.
+//     **That divergence is closed**: with no cable they are answered at
+//     `-UB MSYN` off the pull-up on `DEBUG OUT ACK`, which is muir's own
+//     no-cable arm, and with one they are answered by the far end.
+//
+// **WHAT THE DEBUG BLOCK IS, AND WHY IT IS IN THIS FILE.**  `0o766100` to
+// `0o766137` is `-SELECT DEBUG`, Y2 of the same 74S139 at UBCYC 0E07 that
+// splits the other three off address bits 6 and 5, and address bits 3 and 2
+// choose which of four strobes goes out --- `busint::debug_register`, which
+// is `(uaddr >> 2) & 3`, with bits 4 and 1 undecoded so the four repeat
+// through `0o766137`.  They go out on the cable as `DEBUG OUT A<1:0>` through
+// the 74S241 at DBGOUT 0A17, and the far end's 74S139 at DBGIN 0A15 makes
+// them into `-DB NEED UB`, `-DB READ STATUS`, `-DB ADR1 CLK` and
+// `-DB ADR0 CLK`.  CC writes exactly these four registers, so this block is
+// the whole of what a CADR needs to be a debugger.
+//
+// The parts are DBGOUT's: the request is `NAND(SELECT DEBUG, SELECT DEBUG
+// DLYD)` at 0A11 with the delay the MTD100 at 0A10, which is
+// `busint::DEBUG_OUT_REQUEST_NS` and is why the lines have been standing a
+// section before the request; the sixteen data lines are the two Am8304s at
+// 0B21 and 0B22 under ONE enable, `-DBD ENB` on pin 9, and ONE direction,
+// `-DEBUG > UD` on pin 11, which is read straight off `BUSINT.netlist` and
+// is not two byte-wise enables.  It is in this file because the block select
+// is the same decoder as the other three and because a page of its own would
+// duplicate the held match; `rtl/machine/cadr_dbgin.sv` is the other end and
+// is a file of its own because it is a MASTER on this machine's Unibus, which
+// nothing here is.
+//
+// **WHAT THIS BLOCK DOES NOT HOLD IS THE CABLE.**  `dbgout_*` leave for
+// `rtl/plumbing/cadr_dbg_cable.sv`, which is the connector and the role, and
+// the lines come back resolved --- a byte nobody drives reads as ones, the
+// SIP at DBGIN 0A22 being at the far end.  `dbgout_live` is whether there is
+// a board there at all, and it is the whole of the difference between muir's
+// two arms: `debug_cable` false answers at `-UB MSYN` and true waits for
+// `DEBUG ACK`.
+//
+// **AND THE WAIT IS 11.05 MICROSECONDS AND NOT 4.25, WHICH IS NOT THIS
+// MODULE'S DOING.**  `select_debug` leaves here for `cadr_busint_xbus.sv`,
+// where the REQTIM counter is: `DEBUG REQUEST ACTIVE` selects the PROM's
+// second table and `NXM TIMEOUT` lands at count 13 instead of count 5 ---
+// `busint::DEBUG_TIMEOUT_NS` against `busint::TIMEOUT_NS`.  Without it the
+// interface's own timer would end a debug cycle at 4.25 us, inside the window
+// the far end is allowed to answer in, and a debugger would give up on
+// answers that were on their way.
+//
+// **ONE PARTING, MEASURED AND NAMED.**  A debug cycle the far end never
+// answers ends on `NXM TIMEOUT` here and sets the Unibus NXM bit, because
+// the REQTIM counter cannot tell what kind of cycle it is counting.  muir
+// sets its two NXM bits at the DECODE instead --- `Machine::device` gives
+// `Responder::Debug(_)` no error at all, "neither is an error: the pull-up on
+// `DEBUG OUT ACK` answers" --- so muir's bit stays clear where this one sets.
+// It is the same family as the timeout race `cadr_busint_xbus.sv` records:
+// the model decides at the grant what the board can only discover by
+// counting.  The board is taken here, and a trace that compared the error
+// byte across a cable timeout would be comparing that difference.
 //
 // **WHY THIS IS A MODULE AND NOT MORE OF `cadr_spy_registers.sv`.**  The two
 // answer with the same register cycle --- `busint::DIAGNOSTIC_NS` after
@@ -333,6 +386,34 @@ module cadr_busint_regs (
     output var logic [31:0] map_md_wdata,
     input  var logic        map_md_done,
 
+    // --- THE DEBUG CABLE'S DBGOUT END: this machine as somebody else's
+    // --- debugger, which is CC writing the four registers above.
+    //
+    // `dbgout_req` is `-DEBUG OUT REQ` as a positive level, up
+    // `busint::DEBUG_OUT_REQUEST_NS` after `-UB MSYN` and down when the
+    // master lifts it; the three beside it are the levels that have been
+    // standing a delay-line section by then, HELD so that they stand past the
+    // lift --- the far end's latches take `DBD` at the trailing edge of their
+    // own strobe, and a carrier that let them go with the request would write
+    // the wrong word into the other machine's address register.
+    output var logic        dbgout_req,
+    output var logic        dbgout_wr,
+    output var logic [1:0]  dbgout_a,
+    output var logic [15:0] dbgout_dbd,
+    // `DEBUG OUT ACK` and `DBD<15:0>` coming back, the lines already resolved
+    // by `rtl/plumbing/cadr_dbg_cable.sv` against the far end's pull-ups: a
+    // byte nobody drives reads as ones.  `dbgout_live` is whether there is a
+    // board at the far end at all; down, this block answers its own machine
+    // at `-UB MSYN` with whatever the lines read, which on an open connector
+    // is all ones.
+    input  var logic        dbgout_ack,
+    input  var logic [15:0] dbgout_dbd_in,
+    input  var logic        dbgout_live,
+
+    // `SELECT DEBUG`, for the REQTIM PROM's second table in
+    // `cadr_busint_xbus.sv`: see the header.
+    output var logic        select_debug,
+
     // --- `XBUS INTR IN`, the backplane's own interrupt line, live.  It is
     // read in bit 14 of the interrupt status register and is not stored.
     input  var logic        xbus_intr,
@@ -423,6 +504,17 @@ module cadr_busint_regs (
   localparam logic [17:0] MAP_LOW  = 18'o766140;
   localparam logic [17:0] MAP_HIGH = 18'o766176;
 
+  // busint::debug_register's range, which ends at the ODD address: "Bits 4
+  // and 1 are not decoded, so the four repeat through `766136`", and muir's
+  // own `(0o766100..=0o766137).contains()` takes the odd one with it.
+  localparam logic [17:0] DBG_LOW  = 18'o766100;
+  localparam logic [17:0] DBG_HIGH = 18'o766137;
+
+  // busint::DEBUG_OUT_REQUEST_NS: `-UB MSYN` to `-DEBUG OUT REQ`, the MTD100
+  // at DBGOUT 0A10.  The data, the write flag and the two address bits have
+  // been on the cable that long before the request.
+  localparam int unsigned DBG_REQ_T = 100 / 5;
+
   // busint::map_access's range, `UB17-14=MAP` at UBCYC 0E06.
   localparam logic [17:0] WIN_LOW  = 18'o140000;
   localparam logic [17:0] WIN_HIGH = 18'o177777;
@@ -430,14 +522,22 @@ module cadr_busint_regs (
   // ------------------------------------------------------------- the decode
   //
   // Combinational here and registered below; nothing downstream sees these.
-  logic in_int_c, in_map_c, in_win_c;
+  logic in_int_c, in_map_c, in_win_c, in_dbg_c;
   assign in_int_c = (ub_addr >= INT_LOW) && (ub_addr <= INT_HIGH);
   assign in_map_c = (ub_addr >= MAP_LOW) && (ub_addr <= MAP_HIGH);
   assign in_win_c = ub_foreign && (ub_addr >= WIN_LOW) && (ub_addr <= WIN_HIGH);
+  assign in_dbg_c = (ub_addr >= DBG_LOW) && (ub_addr <= DBG_HIGH);
 
   logic        sel, in_int, in_map, wr;
   logic [1:0]  which;   // UBA<2:1>, which of the interrupt block's four
   logic [3:0]  mapk;    // UBA<4:1>, which of the map's sixteen
+
+  // The debug block's held match and which of its four strobes: address bits
+  // 3 and 2, `busint::debug_register`.  Held for the reason every other match
+  // here is held, and the request is twenty ticks after `-UB MSYN`, so the
+  // hold is nineteen ticks early.
+  logic        in_dbg;
+  logic [1:0]  dbgk;
 
   // `busint::MapAccess`, field for field, held like the rest.
   logic        in_win;
@@ -504,6 +604,62 @@ module cadr_busint_regs (
   // `-UB MSYN` until the processor takes the word, and not a tick longer.
   assign map_md    = to_md && ub_msyn && md_rq;
 
+  // ------------------------------------------------------- the DBGOUT page
+  //
+  // **THIS BLOCK'S MATCH IS THE ONE THAT IS NOT HELD, AND THE PART SAYS WHY.**
+  // The 74S139 at UBCYC 0E07 is a DECODER: `SELECT DEBUG` rises with `MSYN IN`
+  // and falls with it, and `-DBD ENB` and `-DEBUG > UD` --- the one enable and
+  // the one direction the two Am8304s at DBGOUT 0B21 and 0B22 share --- are
+  // made of it and of the write line.  So the cable's lines are on `UDI` from
+  // `-UB MSYN` itself, and so is the answer on a board with nothing plugged
+  // in: muir's no-cable arm is `(msyn, msyn, false)`, `-UB SSYN` at the
+  // strobe and not a tick after it.  A held match could not answer there.
+  //
+  // The hold is still what everything SLOW uses: the request is twenty ticks
+  // out and takes its levels from the held copies, so the address ripple
+  // reaches the cable and the answer and nothing else.
+  //
+  // **AND IT ANSWERS THE BOARD'S OWN MASTER ALONE, WHICH IS muir's DOING AND
+  // NOT THE DRAWINGS'.**  `Busint::debug_set_master` gives a cycle of the
+  // DEBUG master's at this block no answer at all --- `Responder::Debug`
+  // falls into the arm whose comment is "a cycle at an address nothing
+  // answers is never acknowledged, there being no timeout for this master".
+  // On MIT's board the decode knows nothing of who the master is and such a
+  // cycle would go out on THIS board's cable to a third machine; muir does
+  // not model a chain of debuggers and neither does this.  `ub_foreign` is
+  // the same port the mapped window uses and for the same reason: a decode
+  // that identifies a cycle by address alone will get this wrong.
+  logic dbd_enb, dbd_rd;
+  assign dbd_enb = in_dbg_c && ub_msyn && !ub_foreign;
+  assign dbd_rd  = dbd_enb && !ub_write;
+
+  assign select_debug = dbd_enb;
+
+  // What the far end answers with, and whether there is a far end.  With no
+  // cable the pull-up on `DEBUG OUT ACK` answers at once, which is muir's
+  // `debug_cable` false; with one, `DEBUG SSYN` is `DEBUG OUT ACK AND SELECT
+  // DEBUG` at DBGOUT 0A12 and comes when it comes.
+  //
+  // **AND IT MUST BE THIS CYCLE'S ACKNOWLEDGEMENT AND NOT THE LAST ONE'S.**
+  // `DEBUG OUT ACK` is a LEVEL, and on MIT's cable it falls within
+  // nanoseconds of the request it belongs to being lifted --- the far end's
+  // gate is `NAND(-DB ADR1 CLK, -DB ADR0 CLK, -DB READ STATUS)` and the three
+  // go with the request.  A carrier that serialises the cable does not give
+  // that for free: the fall takes a frame to cross, so the acknowledgement of
+  // the cycle just finished is still standing when the next one starts, and a
+  // page that took it would answer its own machine in no time with a word
+  // nobody drove.  That is the DDR bridge's fault --- a slave's state is its
+  // own cycle's --- met on a cable, and it was found by the two-board check
+  // rather than reasoned out.
+  //
+  // So the acknowledgement is taken only after it has been seen DOWN with
+  // this cycle's request already out: a request is answered by an
+  // acknowledgement that rose after it, which costs at most the one frame the
+  // far end's own fall was going to take anyway.
+  logic answer_dbg, ack_armed;
+  assign answer_dbg = dbd_enb
+                   && (dbgout_live ? (dbgout_ack && ack_armed) : 1'b1);
+
   // ---------------------------------------------------------- the read side
   logic [15:0] ctl_word, err_word, word;
   // The low half of the last word the Xbus gave this master, which is what a
@@ -553,7 +709,14 @@ module cadr_busint_regs (
   // The lines are driven only while this block is selected and reading, as a
   // slave on an open-collector bus drives them only for its own cycle: the
   // rule the DDR bridge broke by holding its word past the end of one.
-  assign ub_rdata = ((sel || in_win) && !wr) ? word : 16'd0;
+  // The 8304s face inward for the whole of a debug read and what they put on
+  // `UDI` is the cable, resolved by `cadr_dbg_cable.sv` against the far end's
+  // pull-ups.  Nothing here holds it: the word is good at `DEBUG ACK` and the
+  // master takes it a delay-line section later, and a register of this
+  // block's would be a second place to keep a word a driver already carries
+  // --- the rule the DDR bridge broke.
+  assign ub_rdata = dbd_rd ? dbgout_dbd_in
+                           : (((sel || in_win) && !wr) ? word : 16'd0);
 
   // ------------------------------------------------------------ the bus cycle
   logic [6:0]  t_msyn;   // ticks since `-UB MSYN`, saturating
@@ -594,7 +757,8 @@ module cadr_busint_regs (
   // it at a master clock edge with the interface free, and here it is the
   // edge `map_md_done` names.
   assign answer_md  = md_loaded && (t_md >= 7'(MD_ACK_T));
-  assign answer_now = answer_reg || answer_buf || answer_x || answer_md;
+  assign answer_now = answer_reg || answer_buf || answer_x || answer_md
+                   || answer_dbg;
 
   // The tick the write lands, which muir puts at `REGISTER_STROBE_NS` and
   // not at the answer: `Busint`'s `answered` for a write of this block.
@@ -616,6 +780,13 @@ module cadr_busint_regs (
       in_int        <= 1'b0;
       in_map        <= 1'b0;
       in_win        <= 1'b0;
+      in_dbg        <= 1'b0;
+      dbgk          <= 2'd0;
+      dbgout_req    <= 1'b0;
+      ack_armed     <= 1'b0;
+      dbgout_wr     <= 1'b0;
+      dbgout_a      <= 2'd0;
+      dbgout_dbd    <= 16'd0;
       wr            <= 1'b0;
       which         <= 2'd0;
       mapk          <= 4'd0;
@@ -657,6 +828,8 @@ module cadr_busint_regs (
       in_int  <= in_int_c;
       in_map  <= in_map_c;
       in_win  <= in_win_c;
+      in_dbg  <= in_dbg_c;
+      dbgk    <= ub_addr[3:2];
       wr      <= ub_write;
       which   <= ub_addr[2:1];
       mapk    <= ub_addr[4:1];
@@ -673,7 +846,26 @@ module cadr_busint_regs (
         else err_xbus <= 1'b1;
       end
 
+      // The request and the levels under it, at the one instant: `-DEBUG OUT
+      // REQ` is `NAND(SELECT DEBUG, SELECT DEBUG DLYD)` and the MTD100 at
+      // DBGOUT 0A10 is the delay, so everything the far end reads has been
+      // standing a section when the strobe reaches it.  The levels are HELD
+      // from here --- see the ports: the far end's latches clock on the
+      // TRAILING edge of their strobe, so what stands at the lift is what is
+      // written into the other machine's address and modifier registers, and
+      // a block that let them go with the request would write the wrong word.
+      if (ub_msyn && in_dbg && (t_msyn == 7'(DBG_REQ_T))) begin
+        dbgout_req <= 1'b1;
+        dbgout_wr  <= wr;
+        dbgout_a   <= dbgk;
+        dbgout_dbd <= ub_wdata;
+      end
+
       if (!ub_msyn) begin
+        // The request lifts when `SELECT DEBUG` drops, which is when the
+        // master lets the cycle go.  The levels under it stand: see above.
+        dbgout_req <= 1'b0;
+        ack_armed  <= 1'b0;
         ub_ssyn   <= 1'b0;
         t_msyn    <= 7'd0;
         t_ack     <= 7'd0;
@@ -688,6 +880,13 @@ module cadr_busint_regs (
       end else begin
         if (t_msyn != T_MAX) t_msyn <= t_msyn + 7'd1;
         if (answer_now) ub_ssyn <= 1'b1;
+
+        // The far end is not acknowledging, with this cycle's strobe up:
+        // whatever it says from here belongs to this cycle.  It is taken from
+        // `-UB MSYN` and not from the request, because the stale
+        // acknowledgement may still be standing when the request goes out and
+        // the thing being waited for is its FALL.  See `answer_dbg`.
+        if (!dbgout_ack) ack_armed <= 1'b1;
 
         // ---- the mapped window's Xbus half ------------------------------
         unique case (xs)
