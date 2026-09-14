@@ -17,14 +17,20 @@ part family.
 | Directory | Board | Part | State |
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
-| `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Preliminary. A pin file and a note. |
+| `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Builds. Placed, routed and closing timing; never on silicon. |
 | `arty-a7-100/` | Digilent Arty A7-100T | XC7A100T | Preliminary. A pin file and a note. |
 
-**Only `arty-z7-20/` builds anything.** The other two hold Digilent's published
-master pin file and a `README.md` saying what would have to be built. There is
-no top level, no constraint file of ours, no Vivado script and no device tree in
-either of them. That is deliberate. A skeleton that looks like it works is worse
-than an empty directory, because somebody will run it.
+**Two of the three build something.** `arty-z7-20/` is the board and is
+complete. `cora-z7-07s/` now has a top level, a pin file, a processing-system
+configuration, a device tree and a Vivado flow, and the machine has been placed
+and routed for that part; nothing in it has been on silicon.
+
+**`arty-a7-100/` holds Digilent's published master pin file and a `README.md`
+saying what would have to be built.** There is no top level, no constraint file
+of ours, no Vivado script and no device tree in it. That is deliberate. A
+skeleton that looks like it works is worse than an empty directory, because
+somebody will run it. That board has no processing system, so a port to it is a
+different piece of work from the Cora's and the next section says why.
 
 **There is no Spartan-7 directory, because the Digilent Arty S7-50 has no
 Ethernet.** This machine finds its time host and its file host over Chaosnet,
@@ -40,20 +46,40 @@ The Arty Z7-20 is the board and stays the board. The other two are listed in the
 order they were named when they were added, which was not a stated priority and
 should not be read as one.
 
-The Cora comes first for two reasons. It is worth settling before the display
-output block starts, because a board with no HDMI pulls against exactly that
+The Cora came first for two reasons. It was worth settling before the display
+output block started, because a board with no HDMI pulls against exactly that
 work. And it is the tightest of the three by a long way, as the next section
 shows, so it is the one that would say something about the design.
 
-Neither is urgent. The Cora waits behind the remote viewer, the bus interface
-and the debug cable adapter, which are finished first.
+**It did say something: the machine fits on the small part and closes timing
+there.** That was the open question and it is answered.
 
 ## Does the machine fit
 
-Today's memory-on design, placed and routed for the Arty Z7-20 at commit
-`95cbb84`, is **10,909 slice LUTs, 7,390 slice registers, 41.5 block RAM tiles
-and 4 DSP slices**. Vivado's own part database at 2026.1 gives the three parts
-as follows. Those four counts are properties of the die, so the package and the
+**On the Cora Z7-07S this is measured now and is not a ratio.** Both boards
+were placed and routed at commit `86d787b` with `DDR=1`, which is the machine
+with the processing system and DDR3 behind its memory port, so the two columns
+are the same design on two parts.
+
+| | Cora Z7-07S | Arty Z7-20 |
+|---|---|---|
+| worst slack | +0.495 ns, met | +0.236 ns, met |
+| failing endpoints | 0 of 48,104 | 0 of 47,935 |
+| slice LUTs | 12,352 of 14,400, **85.78%** | 12,130 of 53,200, 22.80% |
+| slice registers | 9,106 of 28,800, 31.62% | 9,041 of 106,400, 8.50% |
+| block RAM tiles | 41.5 of 50, **83.00%** | 41.5 of 140, 29.64% |
+| DSP slices | 4 of 66, 6.06% | 4 of 220, 1.82% |
+
+The two block RAM figures are the same number. The design spends 41.5 tiles on
+either part, so what changes between the boards is the denominator.
+`cora-z7-07s/README.md` has the rest of it and the argument for reading a slack
+figure with its commit.
+
+**For the Arty A7-100 what follows is still a ratio and not a fit.** Today's
+memory-on design, placed and routed for the Arty Z7-20 at commit `95cbb84`, was
+**10,909 slice LUTs, 7,390 slice registers, 41.5 block RAM tiles and 4 DSP
+slices**. Vivado's own part database at 2026.1 gives the three parts as
+follows. Those four counts are properties of the die, so the package and the
 speed grade do not change them.
 
 | Part | LUTs | flip-flops | block RAM tiles | DSP |
@@ -83,17 +109,18 @@ line and the debugger all lose the programs that implement them today. Every one
 of those costs logic and block RAM that these numbers do not include. **The part
 is not the obstacle on that board. The work is.**
 
-**And none of this is a fit.** These are percentages computed from a part
-database. No design in this repository has ever been through synthesis, place
-and route for an XC7A100T, and until one has, nothing here says whether the
-machine closes timing on it.
+**And the Artix column is not a fit.** Those are percentages computed from a
+part database. No design in this repository has ever been through synthesis,
+place and route for an XC7A100T, and until one has, nothing here says whether
+the machine closes timing on it. The Cora's column above is a routed report and
+is the one number on this page that was measured rather than computed.
 
 ## Two kinds of new board
 
 **The Cora is a variant.** It is another Zynq-7000, so a port is a top level, a
 pin file, a processing-system configuration and a device tree. Nothing in
-`rtl/` changes. The question there is whether the machine fits, because the
-XC7Z007S is a much smaller part than the XC7Z020.
+`rtl/` changed. The question there was whether the machine fits, because the
+XC7Z007S is a much smaller part than the XC7Z020, and it does.
 
 **The Artix is a different project.** That part has no processing system at all.
 The fabric is the same seven-series fabric, so `rtl/machine/` and the vendor
@@ -142,14 +169,14 @@ board directory stays thin.
 Pins come from Digilent's published file and never from memory. A wrong pin is
 a light that does not come on, and that reads as a design fault in the machine.
 
-Each of the two preliminary directories therefore holds Digilent's master `.xdc`
+`cora-z7-07s/` and `arty-a7-100/` therefore each hold Digilent's master `.xdc`
 byte for byte as published, under Digilent's own filename, with its provenance
 recorded in that directory's `README.md`. Digilent publishes them under the MIT
 licence, so each directory also holds a copy of that licence text as
 `Digilent-License.txt`.
 
-The finished board does it differently, and that is the convention to follow
-once a top level exists. `arty-z7-20/cadr_arty.xdc` copies out the handful of
-pins the design actually uses and cites the master file in its header. A
-constraint file that is mostly commented-out pins is a constraint file nobody
-reads.
+The two finished directories do it differently, and that is the convention to
+follow once a top level exists. `arty-z7-20/cadr_arty.xdc` and
+`cora-z7-07s/cadr_cora.xdc` each copy out the handful of pins that board's
+design actually uses and cite the master file in the header. A constraint file
+that is mostly commented-out pins is a constraint file nobody reads.

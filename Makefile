@@ -19,7 +19,8 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
-.PHONY: check cables ps7 ps7-init current mutants mutants-selftest probe-selftest \
+.PHONY: check cables ps7 ps7-cora ps7-init ps7-init-cora current mutants \
+        mutants-selftest probe-selftest \
         disk-golden disk-boot-golden iob-golden busint-regs-golden muir-pin clean
 
 check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
@@ -38,7 +39,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass \
-       $(BUILD)/arty.pass $(BUILD)/probe.pass \
+       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
@@ -1238,6 +1239,71 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    --top-module cadr_debug_window rtl/plumbing/cadr_debug_window.sv
 	@touch $@
 
+# ------------------------------------------------ the Cora Z7-07S's top level
+#
+# `boards/cora-z7-07s/cadr_cora.sv` is the second board, and it is the same
+# file one board along: the Arty Z7-20's top level with this board's pins on
+# it, `rtl/` unchanged.  Like that one it cannot be simulated --- an MMCM, a
+# BUFG and a PS7 are not things Verilator runs --- so lint and the fitter are
+# all there is, and this is the lint.
+#
+# FIVE BOARDS, NOT SIX.  The Arty's rule lints a sixth with `HDMI=1`, and the
+# Cora Z7-07S has no HDMI connector: `cadr_cora.sv` has no `HDMI` parameter to
+# set, `cadr_ps7.sv` here does not bring `S_AXI_HP3` out, and there is nothing
+# between a display and a PS7 on this board to be left unlinted.
+#
+# **AND IT USES THE ARTY's STUBS**, `tb/cadr_arty_stubs.sv` and
+# `tb/cadr_ps7_stub.sv`, because both name primitives and pins rather than a
+# board: `MMCME2_BASE`, `BUFG`, `OBUFDS`, `BSCANE2` and every one of the PS7's
+# 620 pins are the same on both parts.  A second pair of stubs would be a
+# second description of one hard block, and `tb/` is not a board's directory.
+$(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xilinx7/cadr_probe.sv \
+                    boards/cora-z7-07s/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
+                    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
+                    rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
+                    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
+                    $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
+                    $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
+                    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_cora tb/cadr_arty_stubs.sv $(MACHINE) boards/cora-z7-07s/cadr_cora.sv \
+	    rtl/plumbing/cadr_lamp_errhalt.sv $(DBGPMOD)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GPROBE_DEPTH=1024 \
+	    --top-module cadr_cora tb/cadr_arty_stubs.sv $(MACHINE) \
+	    boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xilinx7/cadr_probe.sv \
+	    rtl/plumbing/cadr_lamp_errhalt.sv $(DBGPMOD)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GDDR=1 \
+	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    rtl/plumbing/cadr_axi_master.sv \
+	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
+	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GPROVE=1 \
+	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    rtl/plumbing/cadr_axi_master.sv \
+	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
+	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GPROVE=2 \
+	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    rtl/plumbing/cadr_axi_master.sv \
+	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
+	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	@touch $@
+
 # --------------------------------------------------------------- the probe
 
 # `rtl/plumbing/xilinx7/cadr_probe.sv` is what will be read off the board. It is checked the
@@ -1333,6 +1399,13 @@ cables:
 ps7:
 	python3 boards/arty-z7-20/vivado/gen_ps7.py
 
+# And the Cora Z7-07S's, which is the same parse of the same PS7.v with
+# `S_AXI_HP3` left out --- that board has no HDMI connector and so no display
+# to master it.  `boards/cora-z7-07s/vivado/gen_ps7.py` is a front end that
+# calls the generator above rather than a second copy of it.
+ps7-cora:
+	python3 boards/cora-z7-07s/vivado/gen_ps7.py
+
 # -------------------------------------------------------- the PS7 routine
 
 # What `ps7_init` writes, as an ordered list of register operations.
@@ -1350,6 +1423,13 @@ ps7:
 ps7-init:
 	python3 boards/arty-z7-20/vivado/ps7_ops.py
 
+# And the Cora Z7-07S's routine, out of Digilent's own board preset for that
+# board.  Two files come of it: the ordered operations, and the C table
+# U-Boot's SPL runs, which is derived from them.
+ps7-init-cora:
+	python3 boards/cora-z7-07s/vivado/ps7_ops.py
+	python3 boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/gen_ps7_init_gpl.py
+
 $(BUILD)/cables.pass: rtl/machine/cadr_cables.svh rtl/machine/cadr_cables_lint.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall --top-module cadr_cables_lint -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    rtl/machine/cadr_cables_lint.sv
@@ -1365,6 +1445,14 @@ current:
 	@echo "ok: generated files are current"
 	@python3 boards/arty-z7-20/vivado/gen_ps7.py --check
 	@python3 boards/arty-z7-20/vivado/ps7_ops.py --check
+# And the second board's three generated files, on the same argument: a
+# generated file that is not what the generator writes today is a claim about
+# a design nobody is building.  All three skip without Vivado, as the two
+# above do, except the C table --- that one is derived from the committed
+# `.ops` by pure Python and runs anywhere.
+	@python3 boards/cora-z7-07s/vivado/gen_ps7.py --check
+	@python3 boards/cora-z7-07s/vivado/ps7_ops.py --check
+	@python3 boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/gen_ps7_init_gpl.py --check
 
 # ------------------------------------------------------------ the mutations
 #
@@ -2288,6 +2376,14 @@ BR_WORK     ?= $(HOME)/.cache/muir-fpga-buildroot
 BR_SRC      := $(BR_WORK)/buildroot-$(BR_VERSION)
 BR_OUT      := $(BR_WORK)/out
 BR_EXTERNAL := $(abspath boards/arty-z7-20/linux/buildroot)
+# The Cora Z7-07S's image is built from BOTH external trees, because the
+# packages live in the Arty Z7-20's and there is one copy of them; the second
+# tree holds only the board.  Its output goes in a directory of its own, so
+# the two images cannot overwrite each other and a rebuild of one does not
+# throw the other away.
+BR_EXTERNAL_CORA := $(BR_EXTERNAL):$(abspath boards/cora-z7-07s/linux/buildroot)
+BR_OUT_CORA := $(BR_WORK)/out-cora
+BR_GEN_PS7_CORA := boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/gen_ps7_init_gpl.py
 BR_GEN_PS7  := boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/gen_ps7_init_gpl.py
 # The packages `buildroot-rebuild` has to force are exactly those Buildroot's
 # `local` site method builds out of a src/ directory in this tree, so the list
@@ -2316,7 +2412,7 @@ BR_RECONFIGURE = uboot-reconfigure linux-reconfigure cadr-common-reconfigure \
 # sub-make convention would have carried is lost.
 BR_MAKE     := $(MAKE)
 
-.PHONY: buildroot buildroot-check buildroot-rebuild
+.PHONY: buildroot buildroot-check buildroot-rebuild buildroot-cora
 
 # The generated start-up routine has to be what boards/arty-z7-20/vivado/ps7_init.ops gives
 # today, or U-Boot would be built from a stale claim.  Pure Python, no
@@ -2366,6 +2462,37 @@ buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
+
+# ------------------------------------------------ the Cora Z7-07S's image
+#
+# The same Buildroot, the same packages and the same kernel configuration,
+# with this board's device tree, start-up routine and U-Boot environment.
+# `boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig` says what
+# it leaves out and why --- there is no USB input on this board.
+#
+# **IT HAS NEVER BEEN BUILT OR BOOTED.**  No Cora Z7-07S has been programmed
+# from this repository.  What holds this configuration is that it is the other
+# board's with the differences its own header names, and the `--check` below,
+# which says the start-up routine the SPL would run is what this board's
+# committed `.ops` gives.
+#
+# There is no `buildroot-cora-rebuild` beside it: the packages it builds are
+# the other tree's, so `buildroot-rebuild` is what forces them, and a second
+# forcing target would be a second list to keep in step.
+buildroot-cora:
+	@python3 $(BR_GEN_PS7_CORA) --check
+	@test -f $(BR_TARBALL) || { \
+	    echo "no Buildroot at $(BR_TARBALL); fetch it with"; \
+	    echo "  curl -o $(BR_TARBALL) $(BR_URL)"; exit 1; }
+	@echo "$(BR_SHA)  $(BR_TARBALL)" | sha256sum -c --quiet - \
+	    || { echo "$(BR_TARBALL) is not the Buildroot this image was built with"; exit 1; }
+	@mkdir -p $(BR_WORK)/bin vendor/buildroot-dl
+	@for f in /usr/bin/gnu*; do [ -x "$$f" ] && ln -sf "$$f" "$(BR_WORK)/bin/$${f#/usr/bin/gnu}"; done; true
+	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA) BR2_EXTERNAL=$(BR_EXTERNAL_CORA) cora_z7_07s_defconfig
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA)
+	@echo "buildroot-cora: images in $(BR_OUT_CORA)/images:"
+	@ls -l $(BR_OUT_CORA)/images/ | grep -v '^total'
 
 # ------------------------------------------------------- MD on the composed
 # machine
