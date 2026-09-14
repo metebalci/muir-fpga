@@ -48,7 +48,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
        $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
-       $(BUILD)/usb_input.pass \
+       $(BUILD)/usb_input.pass $(BUILD)/fpgarc.pass \
        $(BUILD)/iob.pass $(BUILD)/busint_regs.pass $(BUILD)/unibus.pass \
        muir-pin current
 
@@ -2064,10 +2064,15 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # in it now, and the half of them that is a MAPPING has no other reference:
 # `input_keymap.h` is generated from muir but the state machine over it is
 # written out by hand, and this is what holds it.
+COMMON_PKG   := boards/arty-z7-20/linux/buildroot/package/cadr-common
+COMMON_SRC   := $(COMMON_PKG)/src
+DISK_PACKS_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs
 CHAOSNET_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet
 CHAOSNET_SRC := $(CHAOSNET_PKG)/src
-SERIAL_SRC   := boards/arty-z7-20/linux/buildroot/package/cadr-serial/src
-TERMINAL_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src
+SERIAL_PKG   := boards/arty-z7-20/linux/buildroot/package/cadr-serial
+SERIAL_SRC   := $(SERIAL_PKG)/src
+TERMINAL_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-terminal
+TERMINAL_SRC := $(TERMINAL_PKG)/src
 USB_INPUT_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-usb-input
 USB_INPUT_SRC := $(USB_INPUT_PKG)/src
 
@@ -2081,11 +2086,38 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
                         $(CHAOSNET_SRC)/chaos_mutations.txt \
                         $(CHAOSNET_SRC)/chaos_test_boot.sh \
                         $(CHAOSNET_PKG)/S87cadr-chaosnet \
+                        $(COMMON_SRC)/fpgarc.sh \
                         $(CHAOSNET_SRC)/mutate.py | $(BUILD)
 	$(MAKE) -C $(CHAOSNET_SRC) check
 	$(MAKE) -C $(CHAOSNET_SRC) all COMMON=host
 	$(MAKE) -C $(CHAOSNET_SRC) clean
 	@echo "chaosnet: the program builds, its packet, its register face and CHUDP agree with muir, and its init script waits for the network"
+	@touch $@
+
+# **ONE `fpgarc` AND FIVE INIT SCRIPTS.**  The card carries one file of flags
+# for the CADR in the fabric and several programs serve that machine, each of
+# them refusing a flag it does not know.  So each init script names the flags
+# its own program owns and hands the file to cadr-common's reader, which gives
+# back those lines and no others.  This check runs all five real scripts
+# against one file with a line for each of them, with the tools they call
+# stubbed, and holds every program to getting its own and nobody else's.  It
+# also holds the boot button's step --- `--no-auto-boot` halting the machine
+# before the drive comes present --- and the two ways the card script writes
+# that line.
+#
+# The scripts are prerequisites, not only the reader: the flag lists are in
+# them, and a list that goes wrong is exactly what this is for.
+$(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
+                      $(COMMON_SRC)/fpgarc_test.sh \
+                      $(CHAOSNET_PKG)/S87cadr-chaosnet \
+                      $(TERMINAL_PKG)/S85cadr-terminal \
+                      $(SERIAL_PKG)/S86cadr-serial \
+                      $(USB_INPUT_PKG)/S88cadr-usb-input \
+                      $(DISK_PACKS_PKG)/S80cadr-disk-packs \
+                      boards/arty-z7-20/linux/mksd-buildroot.sh | $(BUILD)
+	$(MAKE) -C $(COMMON_SRC) check
+	@echo "fpgarc: one file of flags on the card reaches five programs, each gets the flags it"
+	@echo "fpgarc: owns and no others, and --no-auto-boot holds the machine before the drive"
 	@touch $@
 
 $(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h) \

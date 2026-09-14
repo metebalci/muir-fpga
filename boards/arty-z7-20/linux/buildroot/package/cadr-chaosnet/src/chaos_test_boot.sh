@@ -40,6 +40,13 @@ set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT="$HERE/../S87cadr-chaosnet"
+# The shared reader the script sources.  It is cadr-common's and it is
+# installed at /usr/share/cadr/fpgarc.sh on the board; here it is the file in
+# the sibling package, and the script's constant for it is rewritten below
+# like the other two.  Its own check is that package's fpgarc_test.sh; what
+# this file holds is that THIS script gets its own flags out of the one file
+# and waits for the network before it passes them on.
+READER="$HERE/../../cadr-common/src/fpgarc.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-chaosnet-boot-$$}
 fails=0
 cases=0
@@ -72,6 +79,7 @@ setup() {
 	chmod +x "$WORK/S87"
 	anchor "^PACKS=/mnt/packs\$" "PACKS=$WORK/packs" || return 1
 	anchor "^WAIT_SECONDS=30\$" "WAIT_SECONDS=$1" || return 1
+	anchor "^FPGARC_SH=/usr/share/cadr/fpgarc.sh\$" "FPGARC_SH=$READER" || return 1
 	return 0
 }
 
@@ -310,6 +318,38 @@ RC
 	says "still not ready after"
 	started
 	resolved "a-host.invalid"
+}
+
+# ---------------------------------------------------------------------------
+# 4b. The settings file serves the whole board, not this program.  The screen,
+#     the serial line, the USB input and the boot button take their own flags
+#     out of the same file, and this program refuses a flag it does not know,
+#     so it must be handed its own lines and nothing else.  It must also not
+#     go looking for a resolver on the strength of somebody else's line.
+# ---------------------------------------------------------------------------
+case_head "the file is the whole board's, and this program gets only its own flags"
+setup 2 && {
+	stubs 0 yes
+	cat > "$WORK/packs/fpgarc" <<'RC'
+--chaos-address 3050
+--chaos-udp 0.0.0.0:42042
+--keyboard-mapping /mnt/packs/keys.txt
+--usb-scan-ms 500
+--poll-us 250
+--no-auto-boot
+RC
+	run_start
+	started
+	passes_flag "--chaos-address 3050"
+	no_lookups
+	for stray in --keyboard-mapping --usb-scan-ms --poll-us --no-auto-boot; do
+		if grep -q -- "$stray" "$WORK/daemon.calls"; then
+			fail "cadr-chaosnet was given $stray, which is another program's:" \
+			     "$(cat "$WORK/daemon.calls")"
+		else
+			ok "cadr-chaosnet was not given $stray"
+		fi
+	done
 }
 
 # ---------------------------------------------------------------------------

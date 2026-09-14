@@ -165,19 +165,19 @@ The pack partition carries one file of flags for each of the two CADRs this
 board runs. `fpgarc` configures the machine in the fabric and `muirrc`
 configures the machine inside muir, which is the debugger. Both are in muir's
 own rc format, so the two stations are configured the same way with the same
-flag names.
+flag names. `docs/fpgarc.md` is that file, its format and every program's
+flags; this section is the Chaosnet's own.
 
-The format is one flag a line. The flag comes first, then a space, then the
-rest of the line as its argument, so an argument with a space in it needs no
-quoting. A line that is blank or starts with `#` is a comment. Carriage
-returns are stripped, because the partition is FAT32 and the point of putting
-the file there is that a laptop with a card reader can edit it.
+`S87cadr-chaosnet` hands `fpgarc` to the shared reader and names the flags
+below, and it is given those lines and no others. The file serves several
+programs and each of them refuses a flag it does not know, so none of them is
+given it whole. A board with no `fpgarc` runs the defaults, which are System
+100's own address and CHUDP's own port.
 
-`S87cadr-chaosnet` passes every line of `fpgarc` to `cadr-chaosnet` as it
-stands. The whole file goes to that one program today, so only its flags
-belong in it; the screen and the serial line will move their own flags into it
-later. A board with no `fpgarc` runs the defaults, which are System 100's own
-address and CHUDP's own port.
+Four flags this program refuses by name are in its list all the same:
+`--chaos-file-root`, `--chaos-file-peers`, `--server-name` and `--time`. The
+program answers each by saying where the host went, and a card that named one
+would otherwise get silence.
 
     --chaos-address 3050         this machine's Chaosnet address, in octal.
                                  It is the DIP switches on MIT's card, so it

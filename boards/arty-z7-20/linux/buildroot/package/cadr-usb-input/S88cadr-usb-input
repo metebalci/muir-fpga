@@ -12,13 +12,11 @@
 # a console log that reads in the order the machine needs things is worth the
 # number.
 #
-# **NO OPTION IS PASSED AND NONE IS WANTED.**  The program looks in
-# /dev/input for a keyboard and a mouse, opens what is there, and keeps
-# looking, so one init script is right for a board with a keyboard plugged in,
-# one with a keyboard plugged in later, and one with nothing plugged in at
-# all.  Its flags are in docs/usb-input.md, and they are named so that they
-# can move into the card's `fpgarc` beside the Chaosnet's when that file comes
-# to serve more than one program.
+# **NO OPTION HAS TO BE PASSED AND A BOARD USUALLY PASSES NONE.**  The program
+# looks in /dev/input for a keyboard and a mouse, opens what is there, and
+# keeps looking, so one init script is right for a board with a keyboard
+# plugged in, one with a keyboard plugged in later, and one with nothing
+# plugged in at all.  What a card does want to say it says in `fpgarc`, below.
 #
 # **THE DEVICES ARE NOT TAKEN EXCLUSIVELY.**  `--grab` would keep the keys from
 # anything else on the board, and nothing else on this board reads them: there
@@ -32,11 +30,48 @@
 # program is told where to write instead.
 
 PIDFILE=/var/run/cadr-usb-input.pid
+PACKS=/mnt/packs
+
+# **THE CARD'S ONE FILE OF FLAGS, FILTERED TO THIS PROGRAM'S.**  `fpgarc`
+# configures the CADR in the fabric the way `muirrc` beside it configures the
+# CADR inside muir: one flag a line, the flag then a space then the rest of
+# the line as its argument, `#` a comment, carriage returns stripped.  Several
+# programs serve this machine and each refuses a flag it does not know, so the
+# file is not passed to any of them whole --- cadr-common's reader hands back
+# the lines whose flag is in the list below and nothing else.  Its header is
+# the contract and docs/fpgarc.md has every program's list.
+#
+# S80cadr-disk-packs mounts that partition before this runs.  A boot where the
+# mount failed still starts this and takes the defaults, which are what the
+# program does with no flags at all.
+RC="$PACKS/fpgarc"
+FPGARC_SH=/usr/share/cadr/fpgarc.sh
+. "$FPGARC_SH"
+
+# **THE FLAGS THIS PROGRAM OWNS**, and it is the `--usb-` spellings alone.
+# The program takes every flag twice --- `--device` and `--usb-device`, and so
+# on --- and src/cadr-usb-input.c says the second spelling is there for this
+# file.  That is the rule a file serving several programs needs: `--device`,
+# `--grab` and `--no-mouse` are words another program could want, and a flag
+# in `fpgarc` names one program or it names none.  `--link` and `--usb-link`
+# are the same seam cadr-terminal listens on, and the `--usb-` one is this
+# end of it.  `--log` and `--once` are this script's or a person's at a
+# prompt.
+FLAGS="--usb-link
+       --usb-device
+       --usb-input-dir
+       --usb-scan-ms
+       --usb-grab
+       --usb-no-keyboard
+       --usb-no-mouse"
 
 start() {
+	set --
+	[ -f "$RC" ] && eval "set -- $(fpgarc_args "$RC" $FLAGS)"
+
 	printf "Starting cadr-usb-input: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-usb-input -- --log /dev/console
+		--exec /usr/bin/cadr-usb-input -- "$@" --log /dev/console
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 

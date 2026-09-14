@@ -630,6 +630,40 @@ that no memory means no progress. The fabric's answer is that no memory means
 *slow* progress. That is the first behaviour anyone here observed on silicon
 that was predicted wrongly, and it was predicted wrongly in this file.
 
+## Holding the machine at boot
+
+The CADR starts the instant the part configures. `boards/arty-z7-20/cadr_arty.sv`
+keeps RUN preset at reset, which is muir's own default, so a board that is
+switched on runs its boot PROM, waits for a drive, and boots its band as soon
+as the disk pack program presents one. That is what somebody switching a board
+on wants and it is what a card does by default.
+
+**A board that is being worked on can be held at the button instead.** Put
+`--no-auto-boot` in `fpgarc` on the pack partition. `S80cadr-disk-packs` reads
+it and halts the machine before it starts the disk pack program, so no drive
+ever comes present and nothing of a band is loaded. The console says
+
+    cadr-boot: --no-auto-boot: the machine is held with RUN clear; `cadr-console boot` or BTN0 on the board presses the boot button
+
+and a marker stands at `/var/run/cadr-held`. While it stands, `cadr-console`
+refuses `start` and `step`. `cadr-console boot` presses `-BOOT2`, which presets
+RUN and starts the PROM from zero, and removes the marker. BTN0 on the board
+presses the same line in the fabric, so a held machine can be booted by hand
+with nobody logged in. The fabric's own push-button reset is BTN3.
+
+This is muir's flag and it means the same thing there: leave the boot button
+unpressed, as a CADR is when the power comes on with nobody at it.
+
+**The PROM has already run when Linux halts it.** The bitstream is loaded
+seconds before Linux reaches that init step, and within a few hundred
+milliseconds the machine has cleared its control store and is waiting for a
+drive. It can go no further on its own. So the halt lands on a machine that has
+done its PROM work and is waiting, and the gap costs nothing.
+
+`boards/arty-z7-20/linux/mksd-buildroot.sh` writes the line commented out, with
+the sentence that explains it, and `NO_AUTO_BOOT=1` in `local.conf` makes it
+live. `docs/fpgarc.md` is that file and every flag in it.
+
 ## The machine booted Lisp, 12 September
 
 ![The CADR's screen on the board: the window system, a Lisp Listener and the

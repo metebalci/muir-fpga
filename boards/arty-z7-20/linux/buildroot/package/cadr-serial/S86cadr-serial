@@ -32,11 +32,47 @@
 
 PORT=7641
 PIDFILE=/var/run/cadr-serial.pid
+PACKS=/mnt/packs
+
+# **THE CARD'S ONE FILE OF FLAGS, FILTERED TO THIS PROGRAM'S.**  `fpgarc`
+# configures the CADR in the fabric the way `muirrc` beside it configures the
+# CADR inside muir: one flag a line, the flag then a space then the rest of
+# the line as its argument, `#` a comment, carriage returns stripped.  Several
+# programs serve this machine and each refuses a flag it does not know, so the
+# file is not passed to any of them whole --- cadr-common's reader hands back
+# the lines whose flag is in the list below and nothing else.  Its header is
+# the contract and docs/fpgarc.md has every program's list.
+#
+# S80cadr-disk-packs mounts that partition before this runs.  A boot where the
+# mount failed still starts this: it takes the defaults, which are the port
+# above and the register face where the fabric puts it.
+RC="$PACKS/fpgarc"
+FPGARC_SH=/usr/share/cadr/fpgarc.sh
+. "$FPGARC_SH"
+
+# **THE FLAGS THIS PROGRAM OWNS**, read off its own argument list
+# (src/cadr-serial.c).  `--port` and `--bind` are NOT here and cannot be:
+# cadr-terminal takes both words too, and a flag in `fpgarc` names one program
+# or it names none.  muir says the same thing as `--serial <address>:<port>`,
+# one word that is the serial line's and nobody else's; this program does not
+# take that spelling yet, and it is listed so that the line goes to its own
+# program on the day it does rather than to nobody.  `--log`, `--no-guard` and
+# `--once` are this script's or a person's at a prompt.
+FLAGS="--serial
+       --regs
+       --poll-us
+       --quiet"
 
 start() {
+	set -- --port "$PORT"
+	# The card's flags after this script's own, so that a line in `fpgarc`
+	# wins --- muir's rule that a flag given later wins, and the way round
+	# somebody editing the card expects.
+	[ -f "$RC" ] && eval "set -- \"\$@\" $(fpgarc_args "$RC" $FLAGS)"
+
 	printf "Starting cadr-serial: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-serial -- --port "$PORT" --log /dev/console
+		--exec /usr/bin/cadr-serial -- "$@" --log /dev/console
 	[ $? = 0 ] && echo "OK" || echo "FAIL"
 }
 

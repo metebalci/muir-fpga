@@ -6,8 +6,12 @@ config BR2_PACKAGE_CADR_COMMON
 	  What every program on the processing system does before it
 	  touches the fabric: the /dev/mem mapping, the EMIO tally's
 	  marker-bit guard, and one prefixed log line at a time.  A
-	  static library and its headers in the staging tree; no files
-	  on the target.
+	  static library and its headers in the staging tree.
 
-	  Selected by the programs that use it (cadr-disk-pack,
-	  cadr-console) rather than chosen on its own.
+	  On the target it installs one file, /usr/share/cadr/fpgarc.sh:
+	  the shell reader every init script hands the card's fpgarc to,
+	  which gives each program the lines of the flags it owns and no
+	  others.
+
+	  Selected by the programs that use it rather than chosen on its
+	  own.
