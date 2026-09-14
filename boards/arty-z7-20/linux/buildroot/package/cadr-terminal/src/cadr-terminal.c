@@ -57,8 +57,8 @@
 //   2. THE WINDOW: 128 KB at 0x1C00_0000 through /dev/mem, uncached --- a
 //      word the fabric writes over `S_AXI_HP0` must not be read out of a
 //      cache the port cannot see.
-//   3. THE SOCKET: RFB on `--port`, 5900 by default, which a viewer reaches
-//      as display `:0`.
+//   3. THE SOCKET: RFB where `--terminal` says, every interface at port 5900
+//      by default, which a viewer reaches as display `:0`.
 //   4. THE LOOP: the visible 23,112 words copied out of the window once a
 //      pass and every viewer answered from that one copy.  Nothing is read
 //      while nobody is watching.
@@ -76,10 +76,32 @@
 // when the screen goes blank or stops being blank, and NOTHING per frame.  A
 // summary at most once a minute, and only while the counts move.
 //
-//     cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
+//     cadr-terminal [--terminal [<endpoint>]] [--log PATH] [--bow]
 //                   [--interval-ms N] [--no-rre] [--no-guard] [--no-input]
 //                   [--input ADDR] [--keyboard-mapping FILE]
 //                   [--keyboard-boot KEYS] [--keyboard-boot-trace] [--once]
+//
+// **WHERE IT LISTENS IS muir'S WORD FOR IT, `--terminal`**, and it took over
+// from a `--port` and a `--bind` of this program's own.  muir says where its
+// screen is served with one flag and one word and so does this, in the same
+// four forms --- nothing, a port, an address, or address:port
+// (`cadr/cadr_endpoint.h`).  Two reasons, and the second is the one that
+// forced it.  `--port` was a word this program and the serial line both took,
+// and the card's one file of flags cannot carry a word two programs answer to,
+// so neither could say where either of them listened.  And a person who knows
+// one of the two CADRs on this board should not have to learn a second
+// vocabulary for the other.
+//
+// **THE ONE PLACE IT DIFFERS FROM muir IS THE DEFAULT ADDRESS, and the
+// difference is this board's and not the flag's.**  muir binds the loopback
+// unless told otherwise, which is where an unauthenticated server belongs on a
+// machine somebody is sitting at.  This board has no screen of its own and the
+// whole point of this program is to be reached from another machine, so its
+// default is every interface --- the decision the paragraph below has always
+// carried.  The GRAMMAR is muir's exactly: every spelling muir takes is taken
+// here and means the same shape of thing.  `--terminal 127.0.0.1:5900` is how
+// the loopback is asked for, and the card writes its endpoint out in full so
+// that nothing rests on which default is which.
 
 #include <errno.h>
 #include <getopt.h>
@@ -90,6 +112,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <cadr/cadr_endpoint.h>
 #include <cadr/cadr_log.h>
 #include <cadr/cadr_mem.h>
 
@@ -101,6 +124,11 @@
 #include "screen_frame.h"
 #include "screen_geom.h"
 #include "screen_server.h"
+
+// The port a screen is served at unless `--terminal` says another: VNC's
+// display :0, which is muir's own default and the number every viewer tries
+// first.
+#define TERMINAL_PORT 5900
 
 static volatile sig_atomic_t stopping;
 static void on_stop(int sig)
@@ -120,8 +148,12 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: cadr-terminal [options]\n"
-		"  --port N          the RFB port (default 5900, which is display :0)\n"
-		"  --bind ADDR       the address to listen on (default every interface)\n"
+		"  --terminal [<endpoint>]   where the screen, keyboard and mouse are served\n"
+		"                            over RFB: nothing, a port, an address, or\n"
+		"                            address:port. muir's own flag and muir's own\n"
+		"                            grammar (default 0.0.0.0:5900, every interface at\n"
+		"                            VNC's display :0; --terminal 127.0.0.1:5900 is the\n"
+		"                            loopback alone)\n"
 		"  --log PATH        where to write (default stdout)\n"
 		"  --bow             the display's MODE BOW: one bits are black (default: white)\n"
 		"  --window ADDR     the display's region (default 0x1C000000)\n"
@@ -159,8 +191,14 @@ static const char *blank_word(int blank)
 
 int main(int argc, char **argv)
 {
-	const char *log_path = NULL, *bind_addr = NULL, *keymap_path = NULL;
-	unsigned port = 5900, interval_ms = 16;
+	const char *log_path = NULL, *keymap_path = NULL;
+	unsigned interval_ms = 16;
+	// Where the screen is served. The default is this board's own --- every
+	// interface at VNC's display :0 --- and `--terminal` reads muir's four
+	// forms against it.
+	struct cadr_endpoint listen;
+	if (cadr_endpoint_parse(NULL, NULL, TERMINAL_PORT, &listen) != 0)
+		return 2;
 	uint32_t window_phys = SCREEN_BASE;
 	uint32_t input_phys = IN_REG_BASE;
 	int bow = 0, no_guard = 0, once = 0, no_rre = 0, no_input = 0, no_link = 0;
@@ -174,8 +212,7 @@ int main(int argc, char **argv)
 	if (key_boot_parse("ctrl,meta", &boot_keys, boot_why, sizeof boot_why) != 0)
 		return 2;
 	static const struct option opts[] = {
-		{ "port", required_argument, NULL, 'p' },
-		{ "bind", required_argument, NULL, 'b' },
+		{ "terminal", optional_argument, NULL, 't' },
 		{ "log", required_argument, NULL, 'l' },
 		{ "bow", no_argument, NULL, 'B' },
 		{ "window", required_argument, NULL, 'w' },
@@ -194,10 +231,31 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGIn:k:K:TL:Noh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "t::l:Bw:i:RGIn:k:K:TL:Noh", opts, NULL)) != -1) {
 		switch (c) {
-		case 'p': port = (unsigned)strtoul(optarg, NULL, 0); break;
-		case 'b': bind_addr = optarg; break;
+		case 't': {
+			// **THE ENDPOINT IS OPTIONAL, AS muir'S IS, AND getopt
+			// HANDS BACK AN OPTIONAL ARGUMENT ONLY WHEN IT IS
+			// WRITTEN `--terminal=<endpoint>`.**  The card writes
+			// its flags as two words --- that is the rc format's
+			// own shape, the flag then a space then the rest of
+			// the line --- so a `--terminal 0.0.0.0:5900` line
+			// would arrive here as the bare flag with the endpoint
+			// left standing as a word nobody looked at, which is
+			// the silent setting this whole file of flags exists to
+			// prevent.  muir takes the next word unless it is a
+			// flag; so does this.
+			const char *spec = optarg;
+			if (!spec && optind < argc && argv[optind][0] != '-')
+				spec = argv[optind++];
+			if (cadr_endpoint_parse(spec, NULL, TERMINAL_PORT, &listen) != 0) {
+				fprintf(stderr, "cadr-terminal: --terminal %s: "
+					"wants nothing, a port, an address or address:port\n",
+					spec ? spec : "");
+				return 2;
+			}
+			break;
+		}
 		case 'l': log_path = optarg; break;
 		case 'B': bow = 1; break;
 		case 'w': window_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
@@ -231,8 +289,14 @@ int main(int argc, char **argv)
 	// timeout to wait for and a window read every pass.
 	if (interval_ms == 0)
 		interval_ms = 1;
-	if (port > 65535) {
-		fprintf(stderr, "cadr-terminal: --port %u: a port is 0 to 65535\n", port);
+	// **A WORD THAT IS NOT A FLAG IS REFUSED AND NOT IGNORED.**  Everything
+	// this program is given comes from an init script or from the card's
+	// `fpgarc`, and a word left over is a line somebody wrote that nothing
+	// read --- the same failure as a flag quietly dropped, which is what the
+	// reader and every one of these programs is strict to avoid.
+	if (optind < argc) {
+		fprintf(stderr, "cadr-terminal: %s: not a flag this program takes\n",
+			argv[optind]);
 		return 2;
 	}
 	FILE *dest = stdout;
@@ -307,7 +371,7 @@ int main(int argc, char **argv)
 
 	// 3. The socket.
 	struct screen_server srv;
-	if (screen_server_bind(&srv, bind_addr, port) < 0)
+	if (screen_server_bind(&srv, listen.addr[0] ? listen.addr : NULL, listen.port) < 0)
 		return 1;
 	srv.rre_offered = !no_rre;
 	if (have_input) {
@@ -363,8 +427,9 @@ int main(int argc, char **argv)
 	say("RFB on %s:%u --- display :%u to a viewer. NO AUTHENTICATION: RFC 6143's None is the "
 	    "only security type offered, so anyone who can reach this port sees the screen. "
 	    "%s. Encodings: Raw%s",
-	    bind_addr && *bind_addr ? bind_addr : "0.0.0.0", port,
-	    port >= 5900 && port < 5900 + 100 ? port - 5900 : 0,
+	    listen.addr[0] ? listen.addr : "0.0.0.0", listen.port,
+	    listen.port >= TERMINAL_PORT && listen.port < TERMINAL_PORT + 100
+	        ? listen.port - TERMINAL_PORT : 0,
 	    have_input ? "The keyboard and mouse go to the machine"
 	               : "READ-ONLY: keys and pointer events are dropped",
 	    no_rre ? " only (--no-rre)" : " and RRE, whichever is smaller for each rectangle");

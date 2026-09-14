@@ -35,7 +35,8 @@ HEADERS  := serial_face.h serial_endpoint.h
 
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src
-COMMON_SRC  := $(COMMON_DIR)/cadr_log.c $(COMMON_DIR)/cadr_mem.c
+COMMON_SRC  := $(COMMON_DIR)/cadr_log.c $(COMMON_DIR)/cadr_mem.c \
+               $(COMMON_DIR)/cadr_endpoint.c
 ifeq ($(COMMON),host)
 COMMON_CFLAGS := -I$(COMMON_DIR)
 COMMON_LINK   := $(COMMON_SRC)

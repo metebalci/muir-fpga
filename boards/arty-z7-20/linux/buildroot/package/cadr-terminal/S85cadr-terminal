@@ -28,7 +28,11 @@
 #
 # The log goes to the console, which is where the board is watched from
 # (docs/boot.md).  start-stop-daemon's -b would send it to /dev/null, so the
-# program is told where to write instead.
+# program is told where to write instead --- and `-b` is also why this script
+# does not start the program itself but hands it to cadr-common's
+# `cadr_daemon`, which looks for it a moment later and prints what it says if
+# it is not there.  A flag this program refuses is otherwise a boot that
+# prints OK with no screen on it.
 #
 # **THE KEYBOARD MAPPING IS A FILE ON THE PACK PARTITION, AND IT IS
 # OPTIONAL.**  S80cadr-disk-packs mounts that partition at /mnt/packs before
@@ -43,7 +47,14 @@
 # muir is in this image: `muir --keyboard-mapping-dump` writes the mapping
 # this program already has, to edit.  docs/terminal.md has the whole of it.
 
-PORT=5900
+PROG=/usr/bin/cadr-terminal
+# **WHERE THE SCREEN IS SERVED, WRITTEN OUT IN FULL.**  muir's own flag and
+# muir's own grammar, one word for the address and the port together
+# (cadr/cadr_endpoint.h).  It is written as an endpoint rather than left to the
+# program's default so that this script says what it does; the card's `fpgarc`
+# may say another and wins, being passed after.  Every interface, because the
+# board has no screen of its own and the paragraph above is the whole of why.
+ENDPOINT=0.0.0.0:5900
 PIDFILE=/var/run/cadr-terminal.pid
 PACKS=/mnt/packs
 KEYS_FILE="$PACKS/terminal.keyboard.mapping.txt"
@@ -60,21 +71,25 @@ RC="$PACKS/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
 
+# And the daemon starter, cadr-common's too: it starts the program, looks for
+# it a moment later, and prints what it says when it is not there.  Its header
+# is the whole account.
+DAEMON_SH=/usr/share/cadr/daemon.sh
+. "$DAEMON_SH"
+
 # **THE FLAGS THIS PROGRAM OWNS**, read off its own argument list
-# (src/cadr-terminal.c).  `--port`, `--bind`, `--log`, `--no-guard` and
-# `--once` are not here: the first two are the serial line's words as well as
-# this program's, so no list may claim them and no `fpgarc` line can say them,
-# and the others are this script's or a person's at a prompt.
+# (src/cadr-terminal.c).  `--log`, `--no-guard` and `--once` are not here: they
+# are this script's or a person's at a prompt.
 #
-# `--terminal` and `--keyboard-boot` are this program's and nobody else's, and
-# they arrive with the terminal's own slice --- muir's spelling for the screen's
-# endpoint, and the chord a cold boot is asked for with.  They are listed now
-# so that the line goes to its own program on the day it lands rather than to
-# nobody; until then a card that names one gets this program's own refusal,
-# which is the failure that says something.
+# **`--port` AND `--bind` ARE GONE FROM THE PROGRAM ITSELF**, and that is what
+# `--terminal` is.  They were words this program and the serial line both took,
+# so no list could claim either and no `fpgarc` line could say where either
+# program listened.  muir says the same thing in one word that belongs to one
+# program, and now so does this.
 FLAGS="--terminal
        --keyboard-mapping
        --keyboard-boot
+       --keyboard-boot-trace
        --bow
        --window
        --interval-ms
@@ -93,10 +108,10 @@ start() {
 	# card expects.
 	[ -f "$RC" ] && eval "set -- \"\$@\" $(fpgarc_args "$RC" $FLAGS)"
 
-	printf "Starting cadr-terminal: "
-	start-stop-daemon -S -q -b -m -p "$PIDFILE" \
-		--exec /usr/bin/cadr-terminal -- --port "$PORT" "$@" --log /dev/console
-	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	# This script's own flags first and the card's after, so a card that
+	# names one of them wins.  `--log` is last of all and is not the card's
+	# to say: where a daemon writes is this script's.
+	cadr_daemon "$PROG" "$PIDFILE" --terminal "$ENDPOINT" "$@" --log /dev/console
 }
 
 stop() {

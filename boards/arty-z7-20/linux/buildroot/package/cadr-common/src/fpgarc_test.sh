@@ -44,6 +44,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=${TREE:-$(cd "$HERE/../../../../../../.." && pwd)}
 PKG="$TREE/boards/arty-z7-20/linux/buildroot/package"
 READER="$PKG/cadr-common/src/fpgarc.sh"
+STARTER="$PKG/cadr-common/src/daemon.sh"
 MKSD="$TREE/boards/arty-z7-20/linux/mksd-buildroot.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-fpgarc-$$}
 
@@ -87,11 +88,47 @@ sandbox() {
 	: > "$WORK/ip.calls"
 	: > "$WORK/nslookup.calls"
 
+	# **THE REAL ONE FORKS THE PROGRAM AND CLOSES ITS OUTPUT**, which is
+	# what made a refused flag silent, so this does the same: it records
+	# what it was asked, runs the program named by --exec in the
+	# background with stdout and stderr on /dev/null, and writes the pid
+	# where -p says.  A stub that only recorded could not tell a program
+	# that started from one that refused its flags and went, which is the
+	# whole of what `cadr_daemon` is for.
 	cat > "$WORK/bin/start-stop-daemon" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/daemon.calls"
+_pidfile=""
+_prog=""
+while [ \$# -gt 0 ]; do
+	case "\$1" in
+	-p) _pidfile=\$2; shift ;;
+	--exec) _prog=\$2; shift ;;
+	--) shift; break ;;
+	esac
+	shift
+done
+[ -n "\$_prog" ] || exit 0
+"\$_prog" "\$@" > /dev/null 2>&1 &
+[ -n "\$_pidfile" ] && echo \$! > "\$_pidfile"
 exit 0
 EOF
+	# The five programs, each a stand-in that refuses the flag \$REFUSE
+	# names --- on stderr, which is where every one of them refuses --- and
+	# otherwise runs, which is what a daemon does.  The name is its own, so
+	# a refusal printed here is attributable the way the real one is.
+	for _p in cadr-terminal cadr-serial cadr-usb-input cadr-chaosnet cadr-disk-packs; do
+		cat > "$WORK/bin/$_p" <<EOF
+#!/bin/sh
+for a; do
+	if [ -n "\${REFUSE:-}" ] && [ "\$a" = "\${REFUSE}" ]; then
+		echo "$_p: unrecognized option '\$a'" >&2
+		exit 2
+	fi
+done
+exec sleep 8
+EOF
+	done
 	# The console.  \$CONSOLE_HALTS decides whether `halt` works, so that a
 	# console which cannot reach the machine is a case of its own.
 	cat > "$WORK/bin/cadr-console" <<EOF
@@ -147,6 +184,22 @@ prepare() {
 	anchor "$dst" "^PACKS=/mnt/packs\$" "PACKS=$WORK/packs" || return 1
 	anchor "$dst" "^FPGARC_SH=/usr/share/cadr/fpgarc.sh\$" \
 	              "FPGARC_SH=$READER" || return 1
+	anchor "$dst" "^DAEMON_SH=/usr/share/cadr/daemon.sh\$" \
+	              "DAEMON_SH=$STARTER" || return 1
+	# The program itself, so that the stand-in on the stub PATH is what is
+	# started and what is run again for its refusal.  The name is read out
+	# of the script rather than written here, so a script that renames its
+	# own program fails the anchor by name instead of quietly testing a
+	# program that is not there.
+	prog=$(sed -n 's|^PROG=/usr/bin/||p' "$dst")
+	if [ -z "$prog" ]; then
+		fail "$2 has no PROG=/usr/bin/... line for this check to point at the stub"
+		return 1
+	fi
+	anchor "$dst" "^PROG=/usr/bin/$prog\$" "PROG=$WORK/bin/$prog" || return 1
+	# And the pid file, which the stub daemon now really writes and
+	# `cadr_daemon` really reads: /var/run belongs to the board.
+	anchor "$dst" "^PIDFILE=/var/run/$prog.pid\$" "PIDFILE=$WORK/run/$prog.pid" || return 1
 	case "$2" in
 	S87cadr-chaosnet)
 		anchor "$dst" "^WAIT_SECONDS=30\$" "WAIT_SECONDS=1" || return 1
@@ -161,6 +214,15 @@ prepare() {
 
 run_script() {
 	: > "$WORK/daemon.calls"
+	# A pid file left by an earlier run in this sandbox would answer for
+	# this one: the stand-in programs live for a few seconds, so a stale
+	# live pid is exactly the thing that would make a failed start look
+	# like a good one.
+	rm -f "$WORK"/run/*.pid "$WORK"/run/*.pid.why
+	# Where the reader remembers what each script claimed, so that the last
+	# one can name the lines nobody took.  /var/run belongs to the board;
+	# the reader takes this from the environment for exactly this reason.
+	FPGARC_CLAIMED="$WORK/run/claimed" \
 	PATH="$WORK/bin:$PATH" "$WORK/$1" start > "$WORK/out.$1" 2>&1
 	echo "$?" > "$WORK/status.$1"
 }
@@ -187,6 +249,12 @@ passes_not() {
 # ---------------------------------------------------------------------------
 # 1.  The reader on its own.
 # ---------------------------------------------------------------------------
+if [ ! -f "$STARTER" ]; then
+	case_head "the daemon starter is where cadr-common installs it from"
+	fail "there is no daemon starter at $STARTER: the init scripts source it, so"
+	fail "every one of them would die at its own first line"
+fi
+
 HAVE_READER=no
 if [ ! -f "$READER" ]; then
 	case_head "the reader is where cadr-common installs it from"
@@ -329,6 +397,8 @@ if prepare cadr-terminal S85cadr-terminal; then
 	run_script S85cadr-terminal
 	passes "--keyboard-mapping /mnt/packs/keys.txt" "cadr-terminal"
 	passes "--bow" "cadr-terminal"
+	passes "--terminal 0.0.0.0:5900" "cadr-terminal"
+	passes_not "--port" "cadr-terminal"
 	passes_not "--chaos-address" "cadr-terminal"
 	passes_not "--usb-scan-ms" "cadr-terminal"
 	passes_not "--no-auto-boot" "cadr-terminal"
@@ -340,7 +410,13 @@ if prepare cadr-serial S86cadr-serial; then
 	run_script S86cadr-serial
 	passes "--poll-us 250" "cadr-serial"
 	passes "--quiet" "cadr-serial"
-	passes "--port 7641" "cadr-serial"
+	# **muir'S SPELLING, WHICH IS THE WHOLE OF WHY `--port` IS GONE.**  The
+	# screen and the serial line both took `--port` and `--bind`, so no
+	# list could claim either word and no `fpgarc` line could say where
+	# either program listened.  Each has muir's own flag now and the init
+	# script passes it written out in full.
+	passes "--serial 0.0.0.0:7641" "cadr-serial"
+	passes_not "--port" "cadr-serial"
 	passes_not "--chaos-udp" "cadr-serial"
 	passes_not "--keyboard-mapping" "cadr-serial"
 	passes_not "--usb-grab" "cadr-serial"
@@ -390,7 +466,203 @@ if prepare cadr-terminal S85cadr-terminal; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3.  The boot button: --no-auto-boot holds the machine before the drive comes
+# 3.  A FLAG THE PROGRAM REFUSES REACHES THE CONSOLE, AND OK DOES NOT.
+# ---------------------------------------------------------------------------
+#
+# **THE FAULT.**  Every one of these programs refuses a flag it does not know,
+# which is muir's behaviour and the property this whole file of flags rests on.
+# But an init script starts its program with `start-stop-daemon -b`, which
+# daemonises it and closes stdout and stderr, so the refusal went to /dev/null
+# and the script printed OK.  That is exactly what a carriage return on every
+# peer's port once did to the Chaosnet on the board: a boot that looked perfect
+# with a program that was not running.
+#
+# **WHAT IS HELD HERE.**  Each script hands its program to cadr-common's
+# `cadr_daemon`, which looks for it a moment after starting it and, when it is
+# not there, runs it again and prints what it says.  The stand-in program on
+# the stub PATH refuses the flag $REFUSE names, on stderr, the way all five do.
+#
+# The control matters as much as the case: the same script with nothing to
+# refuse must print OK, or a check that always saw FAIL would pass this
+# section while saying nothing.
+refusal_case() {
+	# $1 the package, $2 the script, $3 the flag the file carries and the
+	# program refuses, $4 the program's name.
+	sandbox
+	printf '%s\r\n' "$3" > "$WORK/packs/fpgarc"
+	prepare "$1" "$2" || return 1
+
+	case_head "$4: a flag it refuses is printed, and OK is not"
+	REFUSE=$3
+	export REFUSE
+	run_script "$2"
+	unset REFUSE
+	if grep -q "unrecognized option '$3'" "$WORK/out.$2"; then
+		ok "the program's own refusal is on the console"
+	else
+		fail "the refusal is not on the console; it says:"
+		sed 's/^/        /' "$WORK/out.$2"
+	fi
+	if grep -q "Starting $4: OK" "$WORK/out.$2"; then
+		fail "and the script said OK for a program that is not running"
+	else
+		ok "and the script did not say OK"
+	fi
+	if grep -q "Starting $4: FAIL" "$WORK/out.$2"; then
+		ok "it said FAIL"
+	else
+		fail "it did not say FAIL either; it says:"
+		sed 's/^/        /' "$WORK/out.$2"
+	fi
+
+	case_head "$4: and with nothing refused it says OK"
+	run_script "$2"
+	if grep -q "Starting $4: OK" "$WORK/out.$2"; then
+		ok "the same script, the same flag, nothing refused: OK"
+	else
+		fail "the script says FAIL for a program that started; it says:"
+		sed 's/^/        /' "$WORK/out.$2"
+	fi
+	if grep -q "unrecognized option" "$WORK/out.$2"; then
+		fail "and it printed a refusal that did not happen"
+	else
+		ok "and printed no refusal"
+	fi
+	return 0
+}
+
+# Each program with a flag its own list claims, so that the line really
+# reaches it and the refusal is the program's rather than the reader's.
+refusal_case cadr-terminal   S85cadr-terminal  --bow          cadr-terminal
+refusal_case cadr-serial     S86cadr-serial    --quiet        cadr-serial
+refusal_case cadr-usb-input  S88cadr-usb-input --usb-grab     cadr-usb-input
+refusal_case cadr-chaosnet   S87cadr-chaosnet  --chaos-trace  cadr-chaosnet
+
+# The disk pack program takes no flag out of the file --- its init script reads
+# one for the boot button and passes the program only its own words --- so the
+# refusal it has to survive is of a flag the SCRIPT passes.  `--packs` is that
+# flag, and a program that stopped taking it would be a bay that never opens.
+case_head "cadr-disk-packs: a flag it refuses is printed, and OK is not"
+sandbox
+printf '%s\r\n' '--chaos-address 3050' > "$WORK/packs/fpgarc"
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	REFUSE=--packs
+	export REFUSE
+	run_script S80cadr-disk-packs
+	unset REFUSE
+	if grep -q "unrecognized option '--packs'" "$WORK/out.S80cadr-disk-packs"; then
+		ok "the program's own refusal is on the console"
+	else
+		fail "the refusal is not on the console; it says:"
+		sed 's/^/        /' "$WORK/out.S80cadr-disk-packs"
+	fi
+	if grep -q "Starting cadr-disk-packs: OK" "$WORK/out.S80cadr-disk-packs"; then
+		fail "and the script said OK for a program that is not running"
+	else
+		ok "and the script did not say OK"
+	fi
+fi
+
+case_head "a program that dies for a reason that is not its flags says so"
+sandbox
+printf '%s\r\n' '--bow' > "$WORK/packs/fpgarc"
+if prepare cadr-terminal S85cadr-terminal; then
+	# The stand-in is replaced by one that goes at once and says nothing,
+	# which is a program that died at start for a reason of its own.  The
+	# script must still not say OK, and must say the one thing it knows.
+	cat > "$WORK/bin/cadr-terminal" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+	chmod +x "$WORK/bin/cadr-terminal"
+	run_script S85cadr-terminal
+	if grep -q "Starting cadr-terminal: OK" "$WORK/out.S85cadr-terminal"; then
+		fail "the script said OK for a program that exited at once"
+	else
+		ok "the script did not say OK"
+	fi
+	if grep -q "died at start and said nothing" "$WORK/out.S85cadr-terminal"; then
+		ok "and said it died at start and said nothing"
+	else
+		fail "and said nothing useful about it; it says:"
+		sed 's/^/        /' "$WORK/out.S85cadr-terminal"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# 4.  A LINE NO PROGRAM TAKES IS NAMED AT BOOT.
+# ---------------------------------------------------------------------------
+#
+# Nothing in the reader refuses anything, which is what lets one file serve
+# five strict programs --- and it is the one way a setting can still be lost.
+# `--bwo` for `--bow` is a card that says something and a board that does
+# nothing, with every program starting cleanly and nothing to read.  The last
+# script to read the file compares it against what every script claimed and
+# names what went to nobody.
+case_head "a flag no program's list names is reported by the last script"
+sandbox
+printf '%s\r\n' \
+	'--chaos-address 3050' \
+	'--bow' \
+	'--usb-grab' \
+	'--quiet' \
+	'--bwo' \
+	'--not-anybodys-flag 7' > "$WORK/packs/fpgarc"
+ran=yes
+for pair in "cadr-disk-packs S80cadr-disk-packs" "cadr-terminal S85cadr-terminal" \
+            "cadr-serial S86cadr-serial" "cadr-chaosnet S87cadr-chaosnet" \
+            "cadr-usb-input S88cadr-usb-input"; do
+	set -- $pair
+	prepare "$1" "$2" || ran=no
+done
+if [ "$ran" = yes ]; then
+	for sc in S80cadr-disk-packs S85cadr-terminal S86cadr-serial \
+	          S87cadr-chaosnet S88cadr-usb-input; do
+		run_script "$sc"
+	done
+	last="$WORK/out.S88cadr-usb-input"
+	if grep -q -- '--bwo' "$last" && grep -q -- '--not-anybodys-flag' "$last"; then
+		ok "both lines nobody takes are named on the console"
+	else
+		fail "the unclaimed lines are not named; the last script says:"
+		sed 's/^/        /' "$last"
+	fi
+	# And nothing that DID reach a program may be named, or the line would
+	# cry wolf on every boot of every card.
+	for taken in --chaos-address --bow --usb-grab --quiet; do
+		if grep -q "takes.*$taken" "$last"; then
+			fail "$taken reached its program and was reported unclaimed anyway"
+		else
+			ok "$taken reached its program and is not reported"
+		fi
+	done
+fi
+
+case_head "and a file every program's list covers is reported silently"
+sandbox
+printf '%s\r\n' '--chaos-address 3050' '--bow' '--usb-grab' > "$WORK/packs/fpgarc"
+ran=yes
+for pair in "cadr-disk-packs S80cadr-disk-packs" "cadr-terminal S85cadr-terminal" \
+            "cadr-serial S86cadr-serial" "cadr-chaosnet S87cadr-chaosnet" \
+            "cadr-usb-input S88cadr-usb-input"; do
+	set -- $pair
+	prepare "$1" "$2" || ran=no
+done
+if [ "$ran" = yes ]; then
+	for sc in S80cadr-disk-packs S85cadr-terminal S86cadr-serial \
+	          S87cadr-chaosnet S88cadr-usb-input; do
+		run_script "$sc"
+	done
+	if grep -q "no program on this board takes" "$WORK/out.S88cadr-usb-input"; then
+		fail "a file whose every line reached a program was reported anyway:"
+		sed 's/^/        /' "$WORK/out.S88cadr-usb-input"
+	else
+		ok "nothing is said about a file with nothing left over"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5.  The boot button: --no-auto-boot holds the machine before the drive comes
 #     present.
 # ---------------------------------------------------------------------------
 case_head "--no-auto-boot halts the machine and leaves the marker"
@@ -527,7 +799,7 @@ if prepare cadr-disk-packs S80cadr-disk-packs; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4.  The card script writes the line, commented out unless asked.
+# 6.  The card script writes the line, commented out unless asked.
 # ---------------------------------------------------------------------------
 #
 # The generator is lifted out of mksd-buildroot.sh by its own two anchors and
@@ -556,6 +828,110 @@ generate_fpgarc() {
 	  . "$WORK/gen/gen.sh" ) || return 1
 	return 0
 }
+
+# **AND THE CARD'S FILE MUST NAME EVERY FLAG THE PROGRAMS TAKE FROM IT.**
+#
+# The file is a menu: somebody with the card in a reader sees every setting,
+# live or commented out, and uncomments what they want.  A menu is only a menu
+# while it is complete, and nothing about writing a flag into a program's own
+# list makes it appear here --- so this is what keeps the two from drifting.
+# A flag added to a program and not to the card fails by name.
+#
+# **THE REQUIREMENTS ARE READ OUT OF THE SCRIPTS**, never from a list here: a
+# second list is a second place to be wrong, which is the argument the Chaosnet
+# script already makes about the hosts it resolves.  One LINE of a script's
+# FLAGS is one requirement, because the Chaosnet program takes two spellings of
+# each of its flags --- muir's `--chaos-address` and its own `--address`, on one
+# line --- and a card says a setting once, in one spelling, not twice.
+#
+# **THE CONVENTION THE COUNT RESTS ON**: a commented-out setting is `#` with
+# the flag straight after it, and a flag inside prose is indented away from the
+# `#`.  So `#--bow` is a setting and `#     --chaos-udp-peer <address>@...` is a
+# sentence about one.  The reader treats both as comments; only this tells them
+# apart.
+#
+# Two flags are repeatable by their own definition --- a peer entry places ONE
+# address and a named device is ONE device --- so those may appear more than
+# once.  Everything else must appear exactly once, which is what catches a flag
+# written into the file twice under two different explanations.
+flag_requirements() {
+	for _f in cadr-chaosnet/S87cadr-chaosnet cadr-terminal/S85cadr-terminal \
+	          cadr-serial/S86cadr-serial cadr-usb-input/S88cadr-usb-input; do
+		sed -n '/^FLAGS="/,/"[[:space:]]*$/p' "$PKG/$_f" |
+			sed -e 's/^FLAGS="//' -e 's/"[[:space:]]*$//' |
+			while IFS= read -r _line; do
+				set -- $_line
+				[ $# -gt 0 ] && echo "$*"
+			done
+	done
+	# The disk pack script keeps no list: it asks for one flag by name.
+	sed -n 's/.*fpgarc_has "\$RC" \(--[a-z0-9-]*\).*/\1/p' \
+		"$PKG/cadr-disk-packs/S80cadr-disk-packs"
+}
+
+# How many SETTING lines a file has for one flag: live, or commented out with
+# the flag straight after the `#`.
+setting_lines() {
+	tr -d '\r' < "$1" | grep -Ec "^#?$2( |$)" || true
+}
+
+case_head "the card's file names every flag every program takes from it"
+sandbox
+if generate_fpgarc ""; then
+	GEN="$WORK/gen/packs/fpgarc"
+	reqs=0
+	missing=0
+	twice=0
+	flag_requirements > "$WORK/reqs"
+	if [ ! -s "$WORK/reqs" ]; then
+		fail "no flag lists were found in the init scripts: this check has rotted"
+	fi
+	while IFS= read -r req; do
+		[ -n "$req" ] || continue
+		reqs=$((reqs + 1))
+		n=0
+		for flag in $req; do
+			n=$((n + $(setting_lines "$GEN" "$flag")))
+		done
+		if [ "$n" = 0 ]; then
+			fail "the card's file says nothing about $req, which a program takes"
+			missing=$((missing + 1))
+			continue
+		fi
+		case "$req" in
+		*--chaos-udp-peer*|*--usb-device*)
+			# Repeatable: a peer entry places one address and a
+			# named device is one device.
+			;;
+		*)
+			if [ "$n" != 1 ]; then
+				fail "the card's file says $req $n times; a setting is written once"
+				twice=$((twice + 1))
+			fi
+			;;
+		esac
+	done < "$WORK/reqs"
+	if [ "$missing" = 0 ] && [ "$twice" = 0 ]; then
+		ok "all $reqs of them, each once, live or commented out"
+	fi
+
+	# And the file the card carries must still read as the reader reads it:
+	# a live line is a flag and a commented one is not.
+	if [ "$HAVE_READER" != yes ]; then
+		fail "there is no reader to agree with the card script"
+	else
+		if fpgarc_has "$GEN" --terminal && fpgarc_has "$GEN" --serial; then
+			ok "the screen's endpoint and the line's are live, and the reader finds both"
+		else
+			fail "the reader does not find --terminal and --serial live in the card's file"
+		fi
+		if fpgarc_has "$GEN" --bow || fpgarc_has "$GEN" --usb-grab; then
+			fail "the reader takes a commented-out setting as a flag"
+		else
+			ok "and a commented-out setting is not a flag"
+		fi
+	fi
+fi
 
 case_head "the card is written with the boot button pressed by default"
 sandbox

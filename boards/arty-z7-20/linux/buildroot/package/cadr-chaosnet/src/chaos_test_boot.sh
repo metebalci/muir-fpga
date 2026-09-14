@@ -46,6 +46,7 @@ SCRIPT="$HERE/../S87cadr-chaosnet"
 # like the other two.  Its own check is that package's fpgarc_test.sh; what
 # this file holds is that THIS script gets its own flags out of the one file
 # and waits for the network before it passes them on.
+STARTER="$HERE/../../cadr-common/src/daemon.sh"
 READER="$HERE/../../cadr-common/src/fpgarc.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-chaosnet-boot-$$}
 fails=0
@@ -67,7 +68,7 @@ ok() {
 # with the two constants rewritten.  $1 is the bound in seconds.
 setup() {
 	rm -rf "$WORK"
-	mkdir -p "$WORK/bin" "$WORK/packs"
+	mkdir -p "$WORK/bin" "$WORK/packs" "$WORK/run"
 	: > "$WORK/ip.calls"
 	: > "$WORK/nslookup.calls"
 	: > "$WORK/daemon.calls"
@@ -80,6 +81,16 @@ setup() {
 	anchor "^PACKS=/mnt/packs\$" "PACKS=$WORK/packs" || return 1
 	anchor "^WAIT_SECONDS=30\$" "WAIT_SECONDS=$1" || return 1
 	anchor "^FPGARC_SH=/usr/share/cadr/fpgarc.sh\$" "FPGARC_SH=$READER" || return 1
+	# The daemon starter, cadr-common's other shell file: the script sources
+	# it, so without this rewrite the copy dies at that line and every case
+	# below reports that the program was never started.
+	anchor "^DAEMON_SH=/usr/share/cadr/daemon.sh\$" "DAEMON_SH=$STARTER" || return 1
+	# The program and its pid file.  `cadr_daemon` really looks for the
+	# process it started, so the stand-in below has to be what is started
+	# and /var/run is not this check's to write in.
+	anchor "^PROG=/usr/bin/cadr-chaosnet\$" "PROG=$WORK/bin/cadr-chaosnet" || return 1
+	anchor "^PIDFILE=/var/run/cadr-chaosnet.pid\$" "PIDFILE=$WORK/run/cadr-chaosnet.pid" \
+		|| return 1
 	return 0
 }
 
@@ -123,15 +134,42 @@ for a; do
 done
 [ "$2" = yes ]
 EOF
+	# **THE REAL ONE FORKS THE PROGRAM AND CLOSES ITS OUTPUT.**  This does
+	# the same, because `cadr_daemon` looks for the process a moment after
+	# starting it and a stub that only recorded would leave every case here
+	# reporting a program that died.  What the refusal is worth is
+	# `fpgarc_test.sh`'s to hold; this only has to let the wait be checked.
 	cat > "$WORK/bin/start-stop-daemon" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/daemon.calls"
+_pidfile=""
+_prog=""
+while [ \$# -gt 0 ]; do
+	case "\$1" in
+	-p) _pidfile=\$2; shift ;;
+	--exec) _prog=\$2; shift ;;
+	--) shift; break ;;
+	esac
+	shift
+done
+[ -n "\$_prog" ] || exit 0
+"\$_prog" "\$@" > /dev/null 2>&1 &
+[ -n "\$_pidfile" ] && echo \$! > "\$_pidfile"
 exit 0
 EOF
-	chmod +x "$WORK/bin/ip" "$WORK/bin/nslookup" "$WORK/bin/start-stop-daemon"
+	cat > "$WORK/bin/cadr-chaosnet" <<EOF
+#!/bin/sh
+exec sleep 8
+EOF
+	chmod +x "$WORK/bin/ip" "$WORK/bin/nslookup" "$WORK/bin/start-stop-daemon" \
+		"$WORK/bin/cadr-chaosnet"
 }
 
 run_start() {
+	rm -f "$WORK"/run/*.pid "$WORK"/run/*.pid.why
+	# Where the reader remembers what this script claimed.  /var/run
+	# belongs to the board; the reader takes this from the environment.
+	FPGARC_CLAIMED="$WORK/run/claimed" \
 	PATH="$WORK/bin:$PATH" "$WORK/S87" start > "$WORK/out" 2>&1
 	echo "$?" > "$WORK/status"
 }
