@@ -6,6 +6,7 @@
 <title>muir-fpga — the MIT CADR in fabric</title>
 <meta name="description" content="The MIT CADR Lisp Machine in the fabric of small FPGA boards, held tick for tick to the muir emulator: what runs on the Arty Z7-20, the Cora Z7-07S and the Arty A7-100, and what the real machine was.">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="front.css">
 </head>
 <body>
 
@@ -31,35 +32,82 @@
 
 <section>
   <div class="band">
-    <div class="prose">
-      <h2>Arty Z7-20</h2>
-      <p>The Digilent Arty Z7-20 carries an XC7Z020. That part has programmable logic on one side and two Arm cores on the other, and both halves are used: the machine is in the fabric, and the disk, the screen, the network and the console are programs under Linux beside it.</p>
-      <p>This is the board the project was built on, and every block on its drawing has now run on it. The machine boots off a disk pack held on the board's card. It paints the window system and a Lisp Listener, served over the network and driven out of the board's HDMI connector. It answers a keyboard and a mouse, carries Chaosnet frames and a serial line, and has been halted and read register by register by MIT's own debugger over the debug cable.</p>
-      <p><a href="arty-z7-20.html">The Arty Z7-20: the drawing and how the board boots</a></p>
-    </div>
-  </div>
-</section>
+    <h2>The boards</h2>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>Cora Z7-07S</h2>
-      <p>The Digilent Cora Z7-07S carries an XC7Z007S. That is the same kind of part as the Arty Z7-20's and a much smaller one: 14,400 lookup tables against 53,200, and 50 block RAMs against 140.</p>
-      <p>The machine fits it and closes timing. It fills 85.8 per cent of the logic and 83.0 per cent of the block memory, and nothing in the machine itself changed to make it fit. The board boots from its own card, runs Linux beside the machine, and paints the same window system and Lisp Listener the larger board does.</p>
-      <p>The board has no HDMI connector, so there is no display output block and no port to feed it, and there is no USB input program either. The machine's screen, keyboard and mouse are served over the network instead.</p>
-      <p><a href="cora-z7-07s.html">The Cora Z7-07S: the drawing and how the board boots</a></p>
+    <!-- One row a board. The Arty Z7-20's slice and block RAM figures are its
+         own place and route report at cdafdae, which is the fabric the board
+         runs; the other two boards' figures come from their own reports in the
+         same way. A cell says yes only where that board itself has shown the
+         thing, which is the same claim the drawings' colours make. -->
+    <div class="tablescroll" tabindex="0" role="region" aria-label="What each board is and what it does">
+      <table class="boardtable">
+        <thead>
+          <tr>
+            <th scope="col" class="board">Board</th>
+            <th scope="col">FPGA</th>
+            <th scope="col">CPU</th>
+            <th scope="col">Slices</th>
+            <th scope="col">Block RAM</th>
+            <th scope="col">Ethernet</th>
+            <th scope="col">microSD</th>
+            <th scope="col">HDMI out</th>
+            <th scope="col">USB input</th>
+            <th scope="col">Remote screen (RFB)</th>
+            <th scope="col">Serial line</th>
+            <th scope="col">Debug cable</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row" class="board"><a href="arty-z7-20.html">Arty Z7-20</a></th>
+            <td class="part">XC7Z020</td>
+            <td class="cpu">2 x Arm Cortex-A9, Linux</td>
+            <td class="num">5,462 of 13,300<span class="pc">41.1%</span></td>
+            <td class="num">41.5 of 140<span class="pc">29.6%</span></td>
+            <td class="st">yes</td>
+            <td class="st" title="The board's own card slot.">yes</td>
+            <td class="st">yes</td>
+            <td class="st">yes</td>
+            <td class="st">yes</td>
+            <td class="st">yes</td>
+            <td class="st" title="The adapter is in the fabric and checked. The cable itself, over Pmod JA, waits on a second board to put at the other end of it.">built</td>
+          </tr>
+          <tr>
+            <th scope="row" class="board"><a href="cora-z7-07s.html">Cora Z7-07S</a></th>
+            <td class="part">XC7Z007S</td>
+            <td class="cpu">1 x Arm Cortex-A9, Linux</td>
+            <td class="num"><span class="todo">SLICES_CORA</span></td>
+            <td class="num"><span class="todo">BRAM_CORA</span></td>
+            <td class="st">yes</td>
+            <td class="st" title="The board's own card slot.">yes</td>
+            <td class="st no" title="The board has no HDMI connector.">no</td>
+            <td class="st no" title="The board has no USB host port, so the image leaves the program out.">no</td>
+            <td class="st">yes</td>
+            <td class="st">built</td>
+            <td class="st" title="The adapter is in the fabric and checked, and has not run on this board.">built</td>
+          </tr>
+          <tr>
+            <th scope="row" class="board"><a href="arty-a7-100.html">Arty A7-100</a></th>
+            <td class="part">XC7A100T</td>
+            <td class="cpu">soft CPU, Ibex, in progress</td>
+            <td class="num"><span class="todo">SLICES_A7</span></td>
+            <td class="num"><span class="todo">BRAM_A7</span></td>
+            <td class="st" title="A MAC in the fabric.">planned</td>
+            <td class="st" title="A card on Pmod JD, with an SD host in the fabric.">planned</td>
+            <td class="st no" title="The board has no HDMI connector.">no</td>
+            <td class="st no" title="The board has no USB host port.">no</td>
+            <td class="st">planned</td>
+            <td class="st">planned</td>
+            <td class="st" title="Over Pmod JA.">planned</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>Arty A7-100</h2>
-      <p>The Digilent Arty A7-100 carries an XC7A100T. It is a field-programmable gate array with no processing system at all: no Arm cores, no Linux, and nothing but fabric and the memory beside it.</p>
-      <p>The machine runs on it, with no main memory behind it yet. Its first 1,024 microcycles were read back over JTAG and agree with muir column for column. Main memory in fabric and a soft processor to take the place of the Arm cores are being built now.</p>
-      <p>Everything the processing system does on the other two boards has to have an answer in fabric here. The screen, the keyboard and the mouse will be served over the board's Ethernet and by nothing else.</p>
-      <p><a href="arty-a7-100.html">The Arty A7-100: the drawing</a></p>
+    <div class="prose tnote">
+      <p><code>yes</code> means the board itself has shown it. <code>built</code> means it is built and checked here and has not run on that board. <code>planned</code> means it is on the plan and not built yet. <code>no</code> means the board cannot have it.</p>
+      <p>The Arty Z7-20 is the board the project was built on, and every block on its drawing has now run on it. The Cora Z7-07S carries a much smaller part of the same kind, and the machine fits it and closes timing with nothing in the machine itself changed. The Arty A7-100 has no processing system at all, so everything the Arm cores and Linux do on the other two boards has to have an answer in the fabric there.</p>
+      <p>The Cora Z7-07S has no HDMI connector and no USB host port, so the display output block and the USB input program are left out of its build. The Arty A7-100 has neither, and its screen, keyboard and mouse will be served over its Ethernet and by nothing else. The slice and block RAM figures are each board's own place and route report for the build that board runs.</p>
     </div>
   </div>
 </section>
