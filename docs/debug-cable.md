@@ -536,6 +536,44 @@ arbiter.
 ## The cable on one Pmod connector
 
 The register window is one transport. A second board is the other.
+`rtl/plumbing/cadr_dbg_pmod.sv` puts one direction of MIT's cable on four Pmod
+pins. `rtl/plumbing/cadr_dbg_cable.sv` puts one of those carriers on ONE Pmod
+header and decides which four of its eight pins this board drives.
+`rtl/plumbing/cadr_dbg_join.sv` lets that connector and the window share one
+DBGIN page.
+
+**The connector is JA. JB is unassigned and carries nothing.** A board is a
+debugger or a debuggee on this cable and never both at once, so a second
+header would buy only the case of a board debugging one machine while another
+debugs it. The register window already covers that case: muir on this board's
+own Arm cores reaches the DBGIN page whatever the connector is doing.
+
+### What actually crosses, counted off the netlist
+
+MIT's debug cable is twenty-one wires. Four of them go one way: `-DEBUG OUT
+REQ`, `DEBUG OUT WR` and `DEBUG OUT A<1:0>`, which the 74S241 at DBGOUT 0A17
+drives from the debugger's own Unibus address bits. Sixteen are `DBD<15:0>`,
+an open-collector bus that either end may drive. One comes back, `DEBUG OUT
+ACK`.
+
+**The bus enable and its direction do not cross.** `-DBD ENB` and `-DEBUG >
+UD` are pins 9 and 11 of the two Am8304s at DBGOUT 0B21 and 0B22, and
+`data/BUSINT.netlist` shows them driven by the 74S02 at 0B12 and the 74S51 at
+0B11 out of `DEBUG ACTIVE`, `DBUB MASTER` and the write line. They are the
+debugger's own transceiver controls on the debugger's own board. An earlier
+count of twenty-two outgoing signals included them and was wrong.
+
+A serialised carrier has no shared bus, so the sixteen data lines are sent in
+each direction separately. Outgoing is therefore twenty: the four control
+signals and the sixteen data values. Coming back is nineteen: the
+acknowledgement, the sixteen data values, and **two bits saying which bytes of
+them this end is driving**. The two extra bits are needed because `-DB READ
+STATUS` drives only `DBD<7:0>` and MIT's cable carries the byte above it on
+pull-ups that a Pmod ribbon does not have. A count of seventeen coming back
+counts the acknowledgement and the data and misses them.
+
+The carrier's payload is twenty bits in each direction, so the return has one
+bit spare and sends it as zero.
 
 **ONE CONNECTOR CARRIES THE WHOLE LINK, IN BOTH DIRECTIONS.** The eight pins
 are one clock, driven from the debugger's end, and seven data pins split into
@@ -574,31 +612,75 @@ The rest of this section describes the carrier that is built.
 
 ### Four pins each way on the built carrier
 
-One Pmod cable joins one board's DBGOUT connector to another's DBGIN. Its
-eight wires therefore carry both directions: twenty signals towards the
-debuggee and nineteen back. A half-duplex arrangement would share the seven
-data lines and turn them around, which is MIT's own arrangement one connector
-along, where the Am8304s at DBGOUT 0B21 and 0B22 face whichever way `-DEBUG >
-UD` says. It was not available to a carrier spread over both headers, for two
-reasons.
+The eight pins are split four and four. Each direction is one strobe and three
+data lines, driven by one end and sampled by the other with its own clock.
+Nothing is shared and nothing is turned around.
 
-The first is a pin. A receiver clocked by the cable needs a clock-capable
-input. Digilent's master file marks exactly one pair on the two headers:
-JA3_P and JA3_N, package pins U18 and U19. JB has none at all. With the link
-spread over both headers, the connector that would have to receive the clock is
-the one that cannot. With the whole link on JA that argument no longer applies,
-which is part of why one connector is the better shape.
+The alternative was one clock and seven data lines shared and turned around
+under it. That is MIT's own arrangement, where the Am8304s face whichever way
+`-DEBUG > UD` says. Two things argue against it here. Two sets of drivers
+sharing seven wires must agree on the instant one stops and the other starts,
+and they have no back channel to agree on; a turnaround that misses does not
+corrupt a word, it puts two drivers on one wire. And a receiver clocked from
+the cable is a second clock domain across the whole carrier, where the two
+boards already have a tick of the same length. What a forwarded clock would
+buy is a smaller delay, and delay is the one thing this cable does not care
+about: a debugger waits 11.05 microseconds for an answer and a frame here is
+sixty-six ticks.
 
-The second is the turnaround. Two sets of drivers sharing seven wires must
-agree on the instant one stops and the other starts, and they have no back
-channel to agree on. A turnaround that misses does not corrupt a word. It puts
-two drivers on one wire.
+The eighth wire is therefore a strobe and not a clock. Nothing on either side
+is clocked by it. It is sampled through two flops like any other asynchronous
+input.
 
-So the eight pins of the built carrier are split four and four: one strobe and
-three data lines in each direction. Nothing is shared and nothing is turned
-around. The eighth wire is a strobe rather than a clock, because nothing on
-either side is clocked by it. It is sampled through two flops like any other
-asynchronous input.
+### Which four pins are this board's
+
+A Pmod ribbon joins pin one to pin one. A cable from one board's JA to
+another's JA therefore maps each pin to the same pin at the far end, and which
+end drives it has to follow the role.
+
+The four low pins are the debugger's. It drives them and the debuggee listens.
+The four high pins are the debuggee's. Neither group is ever driven from both
+ends while the two boards hold different roles, which is what makes this full
+duplex with no shared pin.
+
+### The roles must differ, and the fabric enforces it
+
+Two boards cabled together with nothing set are two debuggees. Neither may
+drive the return group, or both would. **A debuggee therefore drives nothing
+until it hears a debugger**, which is a strobe transition on the forward group
+within the carrier's own loss interval. A board with no cable in it drives
+nothing at all, for ever. The cost is one frame of silence at the start of a
+session.
+
+Two boards both told to connect are two debuggers. **The second may not take
+the role**, and it cannot: a board that can see the forward group being driven
+holds its own engagement down and the console has the bit that says why. The
+first board told is the one that has it, which is the only rule enforceable
+from one end.
+
+**A role may not change under a cycle**, at either end. A debug cycle is a
+level held for its whole length at both ends, so a role changing inside one
+would leave the far end waiting on a cable that had stopped answering.
+
+**And a board in reset drives nothing.** The activity timer comes out of reset
+saying nothing has been heard, and a pad enabled before that value is loaded
+is a board claiming a pin group on the strength of a counter that has not run.
+
+### Every board is a debuggee, and one is told to be the debugger
+
+A board with a cable in it and nothing said is a debuggee. It answers a
+debugger on the connector exactly as MIT's board answers one on its DBGIN.
+This is the power-on state and nothing has to be set to reach it.
+
+A board becomes the debugger by `--debug-cable-connect` in `fpgarc`, which an
+init script applies at boot through the console, or by `cadr-console
+debug-cable-connect` at any time. `cadr-console debug-cable-disconnect`
+returns it. The flag takes no argument because the connector is fixed in the
+bitstream.
+
+The DBGIN page is never switched off. Only the connector changes hands, so a
+debugger board stays debuggable through its register window while it debugs
+somebody else. A real CADR has both connectors live for the same reason.
 
 ### Eight beats each way
 
@@ -609,15 +691,25 @@ all zeros. The answer is the two-bit marker this document already describes in
 `STS`: all zeros reads `00`, all ones reads `11`, and a frame is taken only on
 `01`.
 
-Twenty payload bits and two marker bits is twenty-two, and twenty-two over
-three lines is eight beats. Eight beats is twenty-four slots, so two are zero
-fill, which the receiver checks as well. The beat count is eight each way, and
-the reason it is eight rather than seven is the marker.
+Twenty payload bits, two marker bits and one parity bit is twenty-three, and
+twenty-three over three lines is eight beats. Eight beats is twenty-four
+slots, so one is zero fill, which the receiver checks as well. The beat count
+is eight each way.
+
+**The parity bit catches what the marker cannot.** The marker says a frame is
+a frame and says nothing about the twenty bits under it. One line shorted, one
+beat sampled at the wrong instant or one bit flipped in the cable would
+otherwise arrive as a level and be taken. The parity is over the payload
+alone, so any odd number of bits wrong in it moves nothing at this end and the
+previous levels stand. That is the same refusal a bad marker gets. None of the
+three is a code that can correct anything, and none should be: the far end
+sends the levels again sixty-six ticks later, so refusing a frame costs one
+frame.
 
 The count written down before anything was built was four out and three back.
 That was right for its own premise: twenty signals over seven data lines is
-three beats, and twenty-two is four. What does not hold is the premise,
-because a connector has to carry both directions.
+three beats. What does not hold is the premise, because one connector has to
+carry both directions and the eighth pin is a strobe each way.
 
 ### The gap is the frame marker
 
@@ -652,108 +744,118 @@ a request stands is taken to have been unplugged after `LOSS_T` ticks, and the
 levels go back to idle. On a real lashup the SIP at DBGIN 0A22 does that when
 somebody pulls the cable.
 
-### What the two connectors of the built carrier carry
+### This board as the debugger: the DBGOUT page
 
-This is the carrier that is in the fabric today, not the one-connector link
-decided above.
+`0o766100` to `0o766137` is the debug block, and it is the four registers CC
+writes. `rtl/machine/cadr_busint_regs.sv` holds them now. The decode is Y2 of
+the same 74S139 at UBCYC 0E07 that splits the other three blocks off address
+bits 6 and 5, and address bits 3 and 2 choose which of the four strobes goes
+out: the cycle at `0o766100`, the status at `0o766104`, the modifier at
+`0o766110` and the address at `0o766114`. Bits 4 and 1 are not decoded, so the
+four repeat through `0o766137`.
 
-JB is a second board's debugger arriving at this machine's DBGIN page. It
-joins the window's cable at `cadr_dbg_join.sv`. The rule there is that the
-first to assert holds until it lifts, with a tie going to the window. Nothing
-pre-empts, because a request that changes hands halfway is a request built
-from two debuggers, and a modifier register that takes a stray one in bit 1
-resets this machine.
+`-DEBUG OUT REQ` follows `-UB MSYN` by a delay-line section, which is
+`busint::DEBUG_OUT_REQUEST_NS`. The levels under it are held from that instant
+and stand past the master's lift, because the far end's latches clock on the
+trailing edge of their own strobe.
 
-JA carries this board's own debugger outward, so a second board plugged in
-there sees the requests the emulator makes. What comes back is carried into
-the fabric and folded rather than consumed. That is a decision and not an
-oversight. This board's window already has a debuggee, its own machine, and
-taking a second one's answer as well would mean deciding which of two
-debuggees on one debugger's cable an acknowledgement came from. MIT's
-`DBD<15:0>` is an open-collector bus and would give the OR of them, which is a
-lashup rather than a design. Consuming it wants a second window at a second
-address behind `cadr_gp1_split.sv`, and that is not the carrier's decision to
-take.
+**With no cable the pull-up answers.** muir's own arm for a machine with
+nothing plugged in is `-UB SSYN` at `-UB MSYN` itself, and the sixteen lines
+read as ones. So a CADR with a bare connector reads ones from its debug
+registers and carries on, which is what MIT's board does. This closes a
+divergence the fabric carried until the cable's end was built: those four
+addresses used to time out.
 
-The pin roles are mirrored between the two headers, so a straight Pmod cable
-maps pin one to pin one.
+**A debug master's own cycle at the debug block is not answered.**
+`Busint::debug_set_master` gives `Responder::Debug` no answer at all. On MIT's
+board the decode knows nothing of who the master is and such a cycle would go
+out on this board's cable to a third machine. muir does not model a chain of
+debuggers and neither does this.
 
-**A cable from one board's JA to its own JB is not a loopback test, and it is
-worse than useless.** JA carries what the window is asking, and the window is
-already asking it at the join directly, so the returning copy arrives about a
-frame late at an arm that is not preferred and contributes nothing. Then the
-window lifts, the join sees no request from the near arm, and the echo is
-still standing for the rest of a frame: it is taken as a new request from the
-far arm and performed a second time. The join is right and the cable is the
-problem. Every request would happen twice.
+### The acknowledgement must belong to this cycle
 
-So the carrier's silicon test needs a second board, and until there is one
-what stands behind it is the check, where both ends have their own clock and
-every wire can be delayed, shorted or crossed.
+`DEBUG OUT ACK` is a level. On MIT's cable it falls within nanoseconds of the
+request it belongs to being lifted, because the far end's gate is a NAND of
+the three register strobes and they go with the request.
 
-### The cable's own requirement on a debugger
+A carrier that serialises the cable does not give that for free. The fall
+takes a frame to cross, so the acknowledgement of the cycle just finished is
+still standing when the next one starts. A page that took it would answer its
+own machine in no time with a word nobody drove. So the acknowledgement is
+taken only after it has been seen down with this cycle's strobe already up.
+This was a defect, and the two-board check below is what found it.
 
-A lift is a level like any other and has to cross a frame. On the direct cable
-the debuggee sees a lift at the next tick and the structural margin is four
-ticks. Over eight pins it is a whole frame, so a debugger that lifted and
-asked again inside that would have the far end see one request where it made
-two. The check sweeps it. The shortest lift that still latches is fifty-six
-ticks, against a frame of sixty-six.
+### The REQTIM PROM has two tables and both are built
 
-### The carrier's own deadline
+The interface gives up on a cycle nothing answers after `busint::TIMEOUT_NS`,
+4.25 microseconds. A debug cycle gets `busint::DEBUG_TIMEOUT_NS` instead,
+11.05 microseconds, because the other machine is allowed that long. It is the
+same counter and the same free-running oscillator; the PROM's second table
+raises `NXM TIMEOUT` at count 13 where the first raises it at count 5, and
+`DEBUG REQUEST ACTIVE` is what selects it.
 
-The word `cadr_dbgin.sv` drives on `DBD<15:0>` now ends at a frame register
-outside the machine as well as at the window's latch. It is the same cone
-`rtl/plumbing/xilinx7/cadr_debug.xdc` was written for, one module further out,
-and it was measured before it was constrained: -9.779 ns on 3,905 endpoints,
-the ten worst all in that one register, twenty-five logic levels from
-`vma_reg` to `tx_frame_reg`. `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` gives
-it four ticks, the same number and the same argument, and
-`boards/arty-z7-20/vivado/bitstream.tcl` asserts that no other register of the
-carrier carries it. With that in place the memory-on board closes at
-+0.350 ns on 0 of 47,495 endpoints.
+`rtl/machine/cadr_busint_regs.sv` therefore brings `SELECT DEBUG` out and
+`rtl/machine/cadr_memory_path.sv` joins it to `rtl/machine/cadr_busint_xbus.sv`,
+which is where the counter is. Without it a debugger would give up at 4.25
+microseconds on answers that were on their way.
 
-### The check
+**One parting from muir comes with it.** A debug cycle the far end never
+answers ends on `NXM TIMEOUT` here and sets the Unibus NXM bit, because the
+counter cannot tell what kind of cycle it is counting. muir sets its two NXM
+bits at the decode instead, where `Responder::Debug` gets no error at all. It
+is the same family as the timeout race `cadr_busint_xbus.sv` already records:
+the model decides at the grant what the board can only discover by counting.
 
-`build/dbg_pmod.pass` is `tb/cadr_dbg_pmod_harness.sv` and
-`tb/cadr_dbg_pmod_tb.cpp`. The testbench is the cable. The harness brings the
-eight wires of each connector out as ports, so every wire is delayed, skewed,
-shorted, crossed or unplugged by the check rather than assumed to be perfect.
+### The checks
 
-What crosses is poison. Every value sent has its low ten bits the complement
-of its high ten, no two values in a run are the same, and none is zero. A
-frame delivered half-built, a line shorted or two lines crossed then produces
-a word that relation refuses.
+`build/dbg_pmod.pass` holds the carrier to its one property: what goes in one
+end comes out the other, unchanged, whole and in bounded time. The testbench
+is the cable, so every wire is delayed, skewed, shorted, crossed or unplugged
+by the check rather than assumed to be perfect. What crosses is poison: every
+value sent has its low ten bits the complement of its high ten, no two values
+in a run are the same, and none is zero.
 
-The two ends are two boards and have two clocks. One phase runs the model at a
-twelfth of a tick so that the far end can be given a different period and a
-phase of its own, and each wire a delay of its own.
+`build/dbg_cable.pass` holds what the carrier is for. The DUT is two boards.
+One runs the DBGOUT page and the other answers through
+`rtl/machine/cadr_dbgin.sv` on the arbiter and the diagnostic registers, which
+is CC's whole vocabulary. All sixteen pads are harness ports with their
+tri-state enables beside them, so the testbench is the cable and can see
+contention: a pad driven from both ends is counted on every tick of every
+phase, and a run that counts one has failed.
 
-What it measures rather than assumes, on its own output:
+What it shows rather than argues, on its own output:
 
-- twenty-four levels each way delivered whole over an ideal wire, the worst
-  taking fifty-eight ticks against a frame of sixty-six;
-- six levels each way delivered with the far end in phase, out of phase, eight
-  per cent slow, eight per cent fast, and nine per cent fast over a long wire;
-- a cable pulled while a request stands stops being live and puts its levels
-  back to the idle cable;
-- a frame of all ones and a frame of all zeros both refused by the marker;
-- nine shorted or crossed data lines, every one of them visible;
-- the strobe sampled correctly two and a half ticks early and three and a half
-  late, against a beat of six;
-- eight addresses latched and sixteen diagnostic registers read over the
-  cable, the worst round trip two hundred and sixty ticks against the one
-  thousand one hundred and five a debugger waits before it gives up;
-- the machine halted and started again over the cable;
-- a cycle at an address nothing answers never acknowledged;
-- the page never changing hands inside a request, with a second debugger
-  asking for the modifier register with bit 1 set;
-- an unplugged DBGIN connector asking for nothing;
-- one board reset while the other keeps running, swept over seventy-one reset
-  lengths so that the restart lands at every offset inside a frame, the worst
-  taking a hundred and six ticks to come back.
+- all sixteen of the debuggee's diagnostic registers read through a cycle on
+  that board's own Unibus, each coming back with the word that board drove;
+- the address latch at the far end holding what CC wrote into it;
+- the status read coming back with the debuggee's byte below and all ones
+  above, which is the one place a byte nobody drives has to arrive as ones;
+- cycles over three ticks of wire each way, and cycles with a data line
+  inverted for a tick inside the request, both of which cost a frame and never
+  a word;
+- a cable pulled under a standing request answered at once with all ones
+  rather than waited on, and the far board heard again when it is plugged back
+  in;
+- two boards cabled together with neither told anything and no pad driven at
+  all;
+- a second board told to connect while the first has the role, refusing it;
+- a role dropped inside a cycle, held until the cycle has gone.
 
-Eleven mutation records are aimed at it and at the board's wiring.
+`build/busint_regs.pass` sweeps the debug block over all 262,144 Unibus
+addresses against `busint::debug_register`, with nothing plugged in and again
+with a board at the far end. `build/unibus.pass` runs the block in the
+composed memory path, where the REQTIM counter is: it measures the fabric's
+own convention on an ordinary cycle nothing answers and then requires a debug
+cycle to sit the same way against the other table, so what is compared is the
+count and not a constant transcribed into the check.
+
+### What is left for the attachment
+
+The connector is not wired to pins yet. `boards/arty-z7-20/cadr_arty.sv` and
+`cadr_arty.xdc` carry the older two-connector arrangement, and bringing JA out
+as eight bidirectional pads, retiring JB, and giving the console its two
+commands is one commit of its own. The pins come from Digilent's published
+file for this board and not from memory.
 
 ## What is not built
 

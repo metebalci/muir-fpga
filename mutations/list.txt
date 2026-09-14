@@ -495,7 +495,7 @@
               ub_ack_at   <= 10'd0;
               ub_md_at    <= 10'd0;
               tmr_fell    <= 1'b0;
-              tmr_rises   <= 3'd0;
+              tmr_rises   <= 4'd0;
               nxm         <= 1'b0;
               if (unibus) begin
                 state <= ARB;
@@ -11290,10 +11290,16 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note BROKEN for a check that simulates, and only a check that IS lint can
 @note declare otherwise. A live mutant is worth more than a refusal that has
 @note to be explained.
+@note
+@note The head is a marker, a parity bit and a zero now, and `head_want` is a
+@note function of the payload rather than a constant --- so the complement
+@note inverts the parity bit with the marker, and what this record still says
+@note is what it always said: a frame is taken on the head it should have and
+@note not on the one it should not.
 @old
-  assign good     = (rx_next[SLOTS-1:PAYLOAD_W] == head_want);
+  assign good     = (rx_next[SLOTS-1:PAYLOAD_W] == head_want(rx_next[PAYLOAD_W-1:0]));
 @new
-  assign good     = (rx_next[SLOTS-1:PAYLOAD_W] != ~head_want);
+  assign good     = (rx_next[SLOTS-1:PAYLOAD_W] != ~head_want(rx_next[PAYLOAD_W-1:0]));
 @end
 
 @mutation the-join-crosses-the-two-debuggers-data-lines
@@ -12438,4 +12444,276 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
     else if (errhalt) lit <= 1'b1;
 @new
     else if (errhalt) lit <= 1'b0;
+@end
+
+# THE DEBUG CABLE ON ONE CONNECTOR: the role, the pads, and the DBGOUT page
+#
+# `rtl/plumbing/cadr_dbg_pmod.sv` is the carrier and its records are above.
+# These are the two things built on it: `rtl/plumbing/cadr_dbg_cable.sv`,
+# which puts one carrier on ONE Pmod header and decides which four of its
+# eight pins this board drives, and the DBGOUT page in
+# `rtl/machine/cadr_busint_regs.sv`, which is the four registers CC writes.
+#
+# **THE ONE THING A CONNECTOR WITH TWO ROLES MUST MAKE IMPOSSIBLE IS A PAD
+# DRIVEN FROM BOTH ENDS**, and `build/dbg_cable.pass` counts one on every tick
+# of every phase.  Three of the records below are aimed at exactly that, and
+# each of them was a defect this check found before it was a record: two
+# boards in reset, a second board told to connect while the first has the
+# role, and a board coming OUT of the role believing it can hear a debugger.
+# ---------------------------------------------------------------------------
+
+@mutation the-cable-drives-its-pads-through-a-reset
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **A board in reset driving its half of the connector.**  The activity
+@note timer comes out of reset SATURATED --- nothing has been heard --- so a
+@note pad enabled before that value is loaded is a board claiming a pin group
+@note on the strength of a counter that has not run.  Two boards reset
+@note together both claim the return group and hold it until their timers run
+@note out.
+@note
+@note THIS WAS A DEFECT AND NOT A GUESS: the two-board check counted four pads
+@note held from both ends for the whole of `LOSS_T` before the `!rst` went in.
+@old
+  assign drive_fwd = engaged && !rst;
+  assign drive_ret = !engaged && tx_en && !rst;
+@new
+  assign drive_fwd = engaged;
+  assign drive_ret = !engaged && tx_en;
+@end
+
+@mutation the-cable-hears-a-debugger-in-its-own-echo
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **The activity timer left running while this board is the debugger.**  A
+@note debugger listens to the RETURN group, so its timer is reset by the
+@note debuggee's own answers; the tick it stops being the debugger it believes
+@note somebody is driving the FORWARD group and starts driving the return one,
+@note on top of the debuggee that is still driving it.
+@note
+@note ALSO A DEFECT THE CHECK FOUND, and the second of the three: four pads
+@note from both ends for as long as the timer took to run out.  What a board
+@note coming out of the role knows about the connector is nothing.
+@old
+      if (engaged) act_t <= ACT_W'(LOSS_T);
+      else if (act_s[1] != act_q) act_t <= '0;
+@new
+      if (act_s[1] != act_q) act_t <= '0;
+@end
+
+@mutation the-second-board-takes-a-role-that-is-taken
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **A board engaging with a debugger already on the cable.**  One
+@note connector and two roles is safe only while the roles differ, and the
+@note only way to enforce that from one end is to refuse: a board that can see
+@note the forward group being driven is a board that is not the debugger.  The
+@note first board told is the one that has it.
+@note
+@note With this, both boards drive the forward group and the check counts it.
+@old
+  assign take = connect && !engaged && !active && !in_req && !out_req;
+@new
+  assign take = connect && !engaged && !in_req && !out_req;
+@end
+
+@mutation the-role-changes-under-a-cycle
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **The debugger's role dropped with a request standing.**  A debug cycle
+@note is a level held for its whole length at both ends, so a role changing
+@note inside one leaves the far end waiting on a cable that has stopped
+@note answering --- which its own interface would end at
+@note `busint::DEBUG_TIMEOUT_NS`, but as a timeout rather than as an answer.
+@old
+  assign drop = !connect && engaged && !out_req;
+@new
+  assign drop = !connect && engaged;
+@end
+
+@mutation an-undriven-byte-of-the-cable-reads-as-zero
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **The far end's byte enables ignored, so a byte nobody drives reads as
+@note zero.**  `-DB READ STATUS` enables an octal driver onto `DBD<7:0>` and
+@note nothing drives the byte above it; the cable's own pull-ups carry it,
+@note which is why `Rtl::try_debug_request` answers `0xff00 | status`.  This
+@note is the unplugged signature at byte granularity, and a debugger that read
+@note zeros there would report a status byte that is half invented.
+@old
+                    ? {rx_levels[17] ? rx_levels[15:8] : 8'hFF,
+                       rx_levels[16] ? rx_levels[7:0]  : 8'hFF}
+@new
+                    ? {rx_levels[17] ? rx_levels[15:8] : 8'h00,
+                       rx_levels[16] ? rx_levels[7:0]  : 8'h00}
+@end
+
+@mutation a-cable-with-nothing-at-the-far-end-reads-as-zero
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **The unplugged signature itself.**  A connector with nothing in it is
+@note sixteen undriven lines and reads as ones; a debugger sees a machine it
+@note cannot reach and every register empty.  Zero is the one value that must
+@note not mean that, because zero is a word a register can legitimately hold.
+@old
+                    : 16'hFFFF;
+@new
+                    : 16'h0000;
+@end
+
+@mutation the-connector-swaps-its-two-pin-groups
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **The debugger driving the debuggee's four pins.**  A straight Pmod
+@note ribbon maps pin one to pin one, so the four low pins have to be the
+@note debugger's at BOTH ends and the four high ones the debuggee's.  Swap
+@note them at one end and the two boards drive each other's groups: nothing
+@note crosses, and every pad is driven twice.
+@old
+  assign rx_stb = engaged ? pin_i[RET_STB]     : pin_i[FWD_STB];
+@new
+  assign rx_stb = engaged ? pin_i[FWD_STB]     : pin_i[RET_STB];
+@end
+
+@mutation the-debug-block-takes-the-last-cycles-acknowledgement
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`DEBUG OUT ACK` taken without waiting for it to belong to this
+@note cycle.**  It is a LEVEL, and on MIT's cable it falls within nanoseconds
+@note of the request it belongs to being lifted.  A carrier that serialises
+@note the cable does not give that for free: the fall takes a frame to cross,
+@note so the acknowledgement of the cycle just finished is still standing when
+@note the next one starts.
+@note
+@note THE THIRD DEFECT THIS CHECK FOUND: every cycle after the first answered
+@note in no time with a word nobody drove.  It is the DDR bridge's fault --- a
+@note slave's state is its own cycle's --- met on a cable.
+@old
+        if (!dbgout_ack) ack_armed <= 1'b1;
+@new
+        ack_armed <= 1'b1;
+@end
+
+@mutation the-debug-blocks-levels-go-with-its-request
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`DBD<15:0>` let go when the master lifts the cycle.**  The far end's
+@note two 74LS374s and its 25LS2519 clock `DBD` at the TRAILING edge of their
+@note own strobe, so what stands at the lift is what is written into the other
+@note machine's address and modifier registers.  A page that let the lines go
+@note with the request would write the wrong word into both --- and a stray
+@note one in modifier bit 1 resets that machine and halts it.
+@old
+        dbgout_dbd <= ub_wdata;
+      end
+@new
+        dbgout_dbd <= ub_wdata;
+      end
+      if (!ub_msyn) dbgout_dbd <= 16'd0;
+@end
+
+@mutation the-debug-block-answers-a-foreign-master
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **A debug master's own cycle at the debug block answered.**
+@note `Busint::debug_set_master` gives `Responder::Debug` no answer at all ---
+@note it falls into the arm whose comment is "a cycle at an address nothing
+@note answers is never acknowledged, there being no timeout for this master".
+@note On MIT's board the decode knows nothing of who the master is and such a
+@note cycle would go out on THIS board's cable to a third machine; muir does
+@note not model a chain of debuggers and neither does this.
+@old
+  assign dbd_enb = in_dbg_c && ub_msyn && !ub_foreign;
+@new
+  assign dbd_enb = in_dbg_c && ub_msyn;
+@end
+
+@mutation the-debug-block-waits-for-a-cable-that-is-not-there
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The no-cable arm dropped, so a board with an empty connector hangs its
+@note own Unibus cycle.**  muir: "With no cable the pull-up answers at `-UB
+@note MSYN`" --- `(msyn, msyn, false)`.  A CADR with nothing plugged into it
+@note must read ones from its debug registers and carry on, which is what
+@note MIT's board does and is why the machine boots with a bare connector.
+@note
+@note The live line is kept in the expression and made to matter nowhere,
+@note rather than deleted: a mutation that leaves a signal unread is caught by
+@note lint and not by the check.
+@old
+                   && (dbgout_live ? (dbgout_ack && ack_armed) : 1'b1);
+@new
+                   && (dbgout_ack && ack_armed) && (dbgout_live | 1'b1);
+@end
+
+@mutation the-debug-request-is-a-section-early-on-the-cable
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **`-DEBUG OUT REQ` one tick before `busint::DEBUG_OUT_REQUEST_NS`.**  The
+@note MTD100 at DBGOUT 0A10 is what puts the delay between `SELECT DEBUG` and
+@note the request, and what it buys is that `DBD`, the two address bits and
+@note the write flag have been on the cable a section before the strobe
+@note reaches the far end's latches.  One tick in twenty, on a documented
+@note constant: `disk-seek-settle-a-tick-short`'s shape.
+@old
+  localparam int unsigned DBG_REQ_T = 100 / 5;
+@new
+  localparam int unsigned DBG_REQ_T = 95 / 5;
+@end
+
+@mutation the-debug-decode-runs-to-the-end-of-the-block
+@check busint_regs
+@file rtl/machine/cadr_busint_regs.sv
+@note **The debug block decoded a page wide.**  `busint::debug_register` is
+@note `0o766100..=0o766137` and the Unibus map's sixteen registers begin at
+@note `0o766140`; a decode that ran on would put map cycles on the cable and
+@note give them the REQTIM PROM's second table, 11.05 microseconds to answer
+@note in.  The exhaustive sweep is what sees it: `SELECT DEBUG` stands on
+@note thirty-two addresses and on no others of the 262,144.
+@old
+  localparam logic [17:0] DBG_HIGH = 18'o766137;
+@new
+  localparam logic [17:0] DBG_HIGH = 18'o766177;
+@end
+
+@mutation a-debug-cycle-takes-the-nxm-table
+@check unibus
+@file rtl/machine/cadr_busint_xbus.sv
+@note **The REQTIM PROM's FIRST table taken for a debug cycle.**  The counter
+@note is one counter and the PROM two tables: `DEBUG REQUEST ACTIVE` raises
+@note `NXM TIMEOUT` at count 13 where every other cycle raises it at count 5,
+@note which is `busint::DEBUG_TIMEOUT_NS` against `busint::TIMEOUT_NS`.  With
+@note this, a debugger gives up at 4.25 microseconds on answers that were on
+@note their way --- and the far end is allowed 11.05.
+@note
+@note The check measures the fabric's own convention on an ordinary cycle
+@note nothing answers and then requires a debug cycle to sit the same way
+@note against the OTHER table, so what is compared is the count and not a
+@note constant this file transcribed.
+@old
+  localparam int unsigned DBG_RISES = 14;
+@new
+  localparam int unsigned DBG_RISES = 6;
+@end
+
+@mutation the-frames-parity-is-not-looked-at
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_pmod.sv
+@note **The parity bit written and never checked.**  The marker says a frame
+@note is a frame and says nothing about the twenty bits under it, so one line
+@note shorted, one beat sampled at the wrong instant or one bit flipped in the
+@note cable arrives as a level and is taken.  The parity is over the payload
+@note alone, so any odd number of bits wrong in it moves nothing at this end
+@note and the previous levels stand --- which is the same refusal a bad marker
+@note gets, and it costs the one frame the far end is about to send anyway.
+@note
+@note Written as a parity of the payload AND its own parity --- which is
+@note always zero --- rather than as a constant, because a constant leaves the
+@note function's argument unread and lint does the catching instead of the
+@note check.  That is this project's standing rule about mutations at bit
+@note granularity, and the first draft of this record broke on it.
+@old
+    head_want[HEAD_W-MARK_W-1]    = ^v;
+@new
+    head_want[HEAD_W-MARK_W-1]    = ^{v, ^v};
 @end

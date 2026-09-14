@@ -176,6 +176,10 @@ enum IfaceKind { kDiagnostic = 0, kIntCtl, kIntCtl2, kErrStatus, kUnwired, kMap,
 // The sweep's window: both blocks, what is between them and a page either side.
 const unsigned kSweepFirst = 0763000, kSweepLast = 0770776;
 
+// `chip::VCO_PERIOD`, the REQTIM oscillator's 850 ns.  It sizes the phase
+// table the trace fills; every value in it is muir's.
+constexpr long kVcoPeriodNs = 850;
+
 // **NOTHING IN THE CARD'S BLOCK IS EXEMPT ANY MORE.**  This file used to
 // exempt `0o764140`-`0o764176` --- `ioboard::answers`' groups 6 and 7, the
 // Chaosnet interface and the serial port --- because the card decoded them
@@ -348,8 +352,56 @@ int main(int argc, char **argv) {
   unsigned sweep_entry0 = 0;
   uint32_t sweep_page0 = 0;
   int sweep_seen = 0;
+  // The debug block, out of the trace's APPENDED rows: which of the four
+  // strobes each of its thirty-two addresses is, and how long after the grant
+  // the interface gives up at each phase of the REQTIM oscillator.  The
+  // second is the whole of what says this block waits 11.05 microseconds
+  // where every other Unibus cycle waits 4.25.
+  std::vector<int8_t> dbg(kAddrs, -1);
+  std::vector<long> dbg_tmo(kVcoPeriodNs, -1);
+  std::vector<long> nxm_tmo(kVcoPeriodNs, -1);
+  long dbg_rows = 0, dbg_tmo_rows = 0, nxm_tmo_rows = 0;
+  long want_dbg_req_ns = -1, want_dbg_tmo_ns = -1, want_ub_address_ns = -1;
+  unsigned want_dbg_low = 0, want_dbg_high = 0;
   while (std::fgets(line, sizeof line, g)) {
     unsigned a, b, k, n;
+    if (line[0] == '#') {
+      char name[64];
+      long v;
+      if (std::sscanf(line, "# %63s %ld", name, &v) == 2) {
+        if (!std::strcmp(name, "debug_out_request_ns")) want_dbg_req_ns = v;
+        if (!std::strcmp(name, "debug_timeout_ns")) want_dbg_tmo_ns = v;
+        if (!std::strcmp(name, "unibus_address_ns")) want_ub_address_ns = v;
+        if (!std::strcmp(name, "dbg_low")) want_dbg_low = strtoul(line + 10, nullptr, 8);
+        if (!std::strcmp(name, "dbg_high")) want_dbg_high = strtoul(line + 11, nullptr, 8);
+      }
+      continue;
+    }
+    {
+      unsigned du, ds;
+      long ph, dl;
+      if (std::sscanf(line, "DBGREG %o %u", &du, &ds) == 2) {
+        if (du < kAddrs && ds <= 3) {
+          dbg[du] = (int8_t)ds;
+          ++dbg_rows;
+        }
+        continue;
+      }
+      if (std::sscanf(line, "DBGTMO %ld %ld", &ph, &dl) == 2) {
+        if (ph >= 0 && ph < kVcoPeriodNs) {
+          dbg_tmo[ph] = dl;
+          ++dbg_tmo_rows;
+        }
+        continue;
+      }
+      if (std::sscanf(line, "NXMTMO %ld %ld", &ph, &dl) == 2) {
+        if (ph >= 0 && ph < kVcoPeriodNs) {
+          nxm_tmo[ph] = dl;
+          ++nxm_tmo_rows;
+        }
+        continue;
+      }
+    }
     if (std::sscanf(line, "MAPSWEEP %x %x %x", &k, &a, &b) == 3) {
       if (k < 16) {
         sweep_entry[k] = a;
@@ -388,6 +440,26 @@ int main(int argc, char **argv) {
                  iface_rows);
     return 2;
   }
+  if (dbg_rows != 32 || dbg_tmo_rows != kVcoPeriodNs / kTickNs || want_dbg_req_ns <= 0 ||
+      want_dbg_tmo_ns <= 0 || want_ub_address_ns <= 0 || want_dbg_low == 0 ||
+      want_dbg_high <= want_dbg_low) {
+    std::fprintf(stderr,
+                 "FAIL: %s carries %ld DBGREG rows and %ld DBGTMO rows, the block at 0%o-0%o, and "
+                 "debug_out_request_ns %ld / debug_timeout_ns %ld\n",
+                 ipath, dbg_rows, dbg_tmo_rows, want_dbg_low, want_dbg_high, want_dbg_req_ns,
+                 want_dbg_tmo_ns);
+    return 2;
+  }
+  if (nxm_tmo_rows != dbg_tmo_rows) {
+    std::fprintf(stderr, "FAIL: %s carries %ld NXMTMO rows against %ld DBGTMO rows; the check "
+                 "needs both tables at the same phases\n", ipath, nxm_tmo_rows, dbg_tmo_rows);
+    return 2;
+  }
+  for (long ph = 0; ph < kVcoPeriodNs; ph += kTickNs)
+    if (dbg_tmo[ph] < 0 || nxm_tmo[ph] < 0) {
+      std::fprintf(stderr, "FAIL: %s leaves the oscillator's phase %ld undecided\n", ipath, ph);
+      return 2;
+    }
   if (sweep_seen != 16 || !(sweep_entry0 & 0x8000u) || !(sweep_entry0 & 0x4000u) || !sweep_page0) {
     std::fprintf(stderr,
                  "FAIL: %s carries %d MAPSWEEP rows and entry 0 is 0x%x naming page 0%o; the "
@@ -454,6 +526,10 @@ int main(int argc, char **argv) {
     if (bir) ++iface_addrs;
     // Three sets, three ways: no address may be claimed by two of them.
     if ((block && card[u]) || (bir && card[u]) || (block && bir)) ++overlaps;
+    // The debug block is a fourth set and disjoint from all three: it is no
+    // register of this board's, it is not the diagnostic block and it is not
+    // the card.
+    if (dbg[u] >= 0 && (block || bir || card[u])) ++overlaps;
   }
   if (overlaps) {
     std::fprintf(stderr, "FAIL: %ld addresses are claimed by two of the three Unibus slaves\n", overlaps);
@@ -490,6 +566,12 @@ int main(int argc, char **argv) {
   dut->device_ack = 0;
   dut->device_rdata = 0;
   dut->spy_rdata = 0;
+  // The debug cable's DBGOUT end.  Nothing plugged in, which is muir's
+  // `debug_cable` false: the lines read as the far end's pull-ups and the
+  // block answers its own machine at `-UB MSYN`.
+  dut->dbgout_ack = 0;
+  dut->dbgout_dbd_in = 0xFFFF;
+  dut->dbgout_live = 0;
   dut->mem_done = 0;
   dut->mem_rdata = 0;
   dut->ch_req = 0;
@@ -552,6 +634,8 @@ int main(int argc, char **argv) {
   long md_latency = 3, md_count = -1, md_loads = 0, md_req_ticks = 0;
   uint32_t last_md_data = 0;
   int md_open = 0, md_warned = 0;
+  // The far end of the debug cable, as the section below drives it.
+  long cable_latency = -1, cable_count = -1;
   auto Tick = [&]() {
     dut->rst = (tick == 0) || cable_rst_q;
     dut->dbg_rst = (tick == 0);
@@ -573,6 +657,22 @@ int main(int argc, char **argv) {
       }
     } else {
       md_count = -1;
+    }
+    // The other machine's `DEBUG ACK`, driven INTO this edge.  `cable_latency`
+    // is how long after `-DEBUG OUT REQ` it comes, and negative is a far end
+    // that never answers at all --- the case the interface's own counter has
+    // to end, and the whole reason `select_debug` leaves the register block.
+    if (dut->dbgout_req) {
+      if (cable_count < 0 && cable_latency >= 0 && !dut->dbgout_ack) cable_count = cable_latency;
+      if (cable_count == 0) {
+        dut->dbgout_ack = 1;
+        cable_count = -1;
+      } else if (cable_count > 0) {
+        --cable_count;
+      }
+    } else {
+      cable_count = -1;
+      dut->dbgout_ack = 0;
     }
     dut->mem_done = dut->mem_req;
     dut->mem_rdata = 0;
@@ -1002,13 +1102,18 @@ int main(int argc, char **argv) {
   }
 
   long swept = 0, answered_by_card = 0, answered_by_block = 0, answered_by_iface = 0, unanswered = 0;
+  long answered_by_debug = 0;
   for (unsigned u = kSweepFirst; u <= kSweepLast && failures < kMaxFailures; u += 2) {
     for (int w = 0; w < 2; ++w) {
       char where[64];
       std::snprintf(where, sizeof where, "0%o %s", u, w ? "written" : "read");
       const bool want_card = (card[u] & (w ? 2 : 1)) != 0;
       const bool want_block = (iface[u] == kDiagnostic);
-      const bool want_iface = (iface[u] != kDiagnostic && iface[u] != kNoIface);
+      // The debug block answers out of the same module, so it pulls the same
+      // line: what tells it apart is WHEN --- at `-UB MSYN` itself off the
+      // far end's pull-up, where a register of this board's takes 250 ns.
+      const bool want_dbg = dbg[u] >= 0;
+      const bool want_iface = (iface[u] != kDiagnostic && iface[u] != kNoIface) || want_dbg;
       const Cycle c = Run(u, w != 0, 0x5A5Au);
       ++swept;
       const int want_by = (want_card ? 2 : 0) | (want_block ? 1 : 0) | (want_iface ? 4 : 0);
@@ -1028,6 +1133,29 @@ int main(int argc, char **argv) {
       }
       if (c.by != want_by) failures += Fail("which slave pulled -UB SSYN", (unsigned)c.by, (unsigned)want_by, where);
       if (c.timed_out) failures += Fail("NXM TIMEOUT on an answered cycle", 1, 0, where);
+      if (want_dbg) {
+        ++answered_by_debug;
+        // muir's no-cable arm is `(msyn, msyn, false)`: `-UB SSYN` at the
+        // strobe itself, not a register cycle's 250 ns later.
+        //
+        // **ONE TICK, AND IT IS THE ONE A REGISTER COSTS.**  `ub_ssyn` is a
+        // flop, so the earliest it can answer is the first edge that sees the
+        // strobe --- muir's pull-up has no delay at all and no fabric has
+        // that.  The same fact reads as ZERO in `build/busint_regs.pass`,
+        // where the strobe is applied before the first edge instead of being
+        // watched at one; here both lines are watched on the bus and the
+        // answer is one tick behind the strobe.  Everything downstream ---
+        // `-LMACK` at `busint::UNIBUS_ACK_NS` after `-UB SSYN`, the MD strobe
+        // at `UNIBUS_STROBE_NS` --- is that one tick late with it.
+        if (c.ssyn - c.msyn != 1)
+          failures += Fail("-UB SSYN on a debug register with no cable, in ticks after -UB MSYN",
+                           (unsigned long)(c.ssyn - c.msyn), 1, where);
+        // And the word is all ones on the Unibus's sixteen: the 8304s face
+        // inward and nothing at the far end is driving them.
+        if (!w && (c.word & 0xFFFFu) != 0xFFFFu)
+          failures += Fail("the word an unplugged cable gives", c.word & 0xFFFFu, 0xFFFFu, where);
+        continue;
+      }
       if (want_iface) {
         ++answered_by_iface;
         // The words are `build/busint_regs.pass`'s, at that block's own seam
@@ -1373,6 +1501,115 @@ int main(int argc, char **argv) {
     else
       window_timed_out = 1;
     ++unanswered;
+  }
+
+  // ---- the debug cable's DBGOUT end, and the REQTIM PROM's second table ----
+  //
+  // The section above ran the debug block with nothing plugged in, which the
+  // pull-up answers at once.  This is the other half: a board at the far end,
+  // and the two things only the COMPOSITION can show.
+  //
+  // **THE FIRST IS THAT A CYCLE WAITS FOR THE OTHER MACHINE AT ALL.**  The
+  // register block has no timer: it puts the request on the cable and holds
+  // `-UB SSYN` down until `DEBUG ACK` comes back, however long that is.
+  //
+  // **THE SECOND IS HOW LONG "HOWEVER LONG" MAY BE, AND IT IS THE WHOLE
+  // REASON `select_debug` LEAVES THAT MODULE.**  Every other Unibus cycle
+  // nothing answers ends on the REQTIM counter's FIRST table, 4.25
+  // microseconds --- the sweep above ran dozens of them.  A debug cycle takes
+  // the SECOND table, 11.05, because the other machine is allowed that long:
+  // `busint::DEBUG_TIMEOUT_NS` against `busint::TIMEOUT_NS`, count 13 against
+  // count 5 of the same free-running oscillator.  A fabric without it would
+  // give up at 4.25 on answers that were on their way.
+  //
+  // **AND THE CLAIM IS MADE WITHOUT TRANSCRIBING EITHER CONSTANT.**  The
+  // trace carries both tables, phase by phase, because where the timeout
+  // falls depends on the oscillator's phase at the grant and not on the grant
+  // --- the 74LS124 at REQTIM 0A01 has run since power-on and the grant only
+  // opens its output.  So this measures the fabric's own convention on an
+  // ordinary cycle nothing answers (how its `-MEMACK` sits against muir's
+  // instant), and then requires a debug cycle to sit the same way against the
+  // OTHER table.  What is left being compared is the count.
+  long dbg_answered = 0, dbg_timed_out = 0, dbg_ns_ordinary = 0, dbg_ns_cable = 0;
+  {
+    // An address on the Unibus that nothing answers, for the first table.
+    // `0o765000` is what the section below uses for the same purpose.
+    const unsigned kNoSlave = 0765000u;
+    const Cycle nxm = Run(kNoSlave, false, 0);
+    if (!nxm.timed_out || nxm.answered()) {
+      failures += Fail("an ordinary Unibus cycle nothing answers", nxm.answered(), 0, "the cable");
+    } else {
+      ++unanswered;
+      const long grant = nxm.msyn - want_ub_address_ns / kTickNs;
+      const long phase = (grant * kTickNs) % kVcoPeriodNs;
+      // The fabric's own convention: `-MEMACK` against muir's instant.  It is
+      // not asserted here --- `build/busint_xbus.pass` holds the first table
+      // tick for tick --- it is MEASURED, so that the debug cycle below can
+      // be held to the same one.
+      const long k = nxm.memack - (grant + nxm_tmo[phase] / kTickNs);
+      dbg_ns_ordinary = (nxm.memack - grant) * kTickNs;
+
+      // And now the same thing with `SELECT DEBUG` up.  The far end is there
+      // --- frames are arriving --- and never answers, which is a debuggee
+      // whose own Unibus is wedged or whose DBGIN is held by somebody else.
+      dut->dbgout_live = 1;
+      cable_latency = -1;
+      const Cycle slow = Run(want_dbg_low, false, 0);
+      dut->dbgout_live = 0;
+      if (!slow.timed_out || slow.answered()) {
+        failures += Fail("a debug cycle the far end never answered", slow.answered(), 0,
+                         "the cable");
+      } else {
+        ++dbg_timed_out;
+        const long g2 = slow.msyn - want_ub_address_ns / kTickNs;
+        const long p2 = (g2 * kTickNs) % kVcoPeriodNs;
+        const long want = g2 + dbg_tmo[p2] / kTickNs + k;
+        dbg_ns_cable = (slow.memack - g2) * kTickNs;
+        if (slow.memack != want)
+          failures += Fail("NXM TIMEOUT on a debug cycle, in ticks after the grant",
+                           (unsigned long)(slow.memack - g2),
+                           (unsigned long)(want - g2), "the cable");
+        // And it is the SECOND table and not the first: a fabric that took
+        // the first would be over two and a half times early, which no
+        // rounding explains.
+        if (dbg_ns_cable <= dbg_ns_ordinary + want_dbg_tmo_ns / 2)
+          failures += Fail("a debug cycle's wait against an ordinary cycle's, in ns",
+                           (unsigned long)dbg_ns_cable, (unsigned long)dbg_ns_ordinary,
+                           "the cable");
+      }
+    }
+
+    // A cabled cycle that IS answered, at a latency that moves: the word
+    // crosses, `-UB SSYN` follows `DEBUG ACK`, and nothing times out.
+    for (int k2 = 0; k2 < 8; ++k2) {
+      const unsigned u = want_dbg_low + 4u * (unsigned)(k2 & 3);
+      const int w = k2 >> 2;
+      const unsigned far = 0x4C00u | ((unsigned)k2 << 5) | 3u;
+      dut->dbgout_live = 1;
+      dut->dbgout_dbd_in = far;
+      cable_latency = 2 + 37 * k2;
+      const Cycle c = Run(u, w != 0, 0xA55Au);
+      cable_latency = -1;
+      dut->dbgout_live = 0;
+      dut->dbgout_dbd_in = 0xFFFF;
+      if (!c.answered() || c.timed_out) {
+        failures += Fail("-UB SSYN on a debug cycle the far end answered",
+                         (unsigned)(c.answered() ? 1 : 0), 1, "the cable");
+        continue;
+      }
+      ++dbg_answered;
+      if (c.by != 4)
+        failures += Fail("which slave pulled -UB SSYN for a debug cycle", (unsigned)c.by, 4,
+                         "the cable");
+      // The answer is the far end's and not the pull-up's: it came after the
+      // request, and the word is what the far end drove.
+      if (c.ssyn - c.msyn < want_dbg_req_ns / kTickNs)
+        failures += Fail("-UB SSYN before the request even went out",
+                         (unsigned long)(c.ssyn - c.msyn),
+                         (unsigned long)(want_dbg_req_ns / kTickNs), "the cable");
+      if (!w && (c.word & 0xFFFFu) != far)
+        failures += Fail("the word the far end drove", c.word & 0xFFFFu, far, "the cable");
+    }
   }
 
   // ---- MIT's debug cable, the third master, through the composed machine --
@@ -2067,6 +2304,9 @@ int main(int argc, char **argv) {
                  "      ub_foreign gate was not measured in the composition\n");
     ++thin;
   }
+  least("debug registers answered off the pull-up with no cable", answered_by_debug, 32);
+  least("debug cycles a board at the far end answered", dbg_answered, 8);
+  least("debug cycles the far end never answered", dbg_timed_out, 1);
   if (main_memory_cycles != 0) {
     std::fprintf(stderr, "FAIL: %ld of these cycles reached the memory port, and a Unibus address must not\n",
                  main_memory_cycles);
@@ -2135,12 +2375,21 @@ int main(int argc, char **argv) {
       "    -DEBUGEE RESET up for all 400 ticks it was asked to.  A page reset by the machine's\n"
       "    reset would have cleared the bit that was clearing it and made MIT's level a\n"
       "    one-tick pulse.  The address bit the modifier carried survived the hold, and the\n"
-      "    cable ran a cycle at it once it let the machine go.\n",
+      "    cable ran a cycle at it once it let the machine go.\n"
+      "    AND THIS MACHINE IS A DEBUGGER TOO: the debug block at 0766100-0766137 answered %ld\n"
+      "    directions of the sweep off the far end's pull-ups with nothing plugged in, one tick\n"
+      "    after -UB MSYN and all ones, and %ld cycles with a board at the far end, whose answer\n"
+      "    came at a latency that moved and whose word crossed.  **AND THE REQTIM PROM'S SECOND\n"
+      "    TABLE IS BUILT**: a debug cycle nothing answered ran %ld ns from the grant against\n"
+      "    %ld ns for an ordinary Unibus cycle nothing answered, and the longer one landed on\n"
+      "    the tick busint::debug_timeout_at names for the oscillator's phase at ITS grant,\n"
+      "    with the fabric's own convention measured on the shorter one rather than assumed.\n",
       tick, card_reads, card_writes, block_reads, block_writes, iface_reads, iface_writes, kStrobeT,
       kAckT, carry_ticks, swept,
       kSweepFirst, kSweepLast, answered_by_card, answered_by_block, unanswered, kAddrs, dec_rows,
       dec_none_runs, path, iface_rows, ipath, answered_by_iface, window_cycles, window_reads,
       window_writes, ipath, window_mem_cycles, cable_strobes, cable_cycles, cable_reads,
-      cable_writes, cable_mapped, cable_status_reads);
+      cable_writes, cable_mapped, cable_status_reads,
+      answered_by_debug, dbg_answered, dbg_ns_cable, dbg_ns_ordinary);
   return 0;
 }

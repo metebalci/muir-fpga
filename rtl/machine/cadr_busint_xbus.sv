@@ -49,10 +49,23 @@
 // on every cycle and whichever comes first wins.  They agree wherever the model
 // is exercised, real devices answering far inside 4.25 us.
 //
+// **THE REQTIM PROM HAS TWO TABLES AND BOTH ARE HERE.**  The counter above is
+// the first, `busint::TIMEOUT_NS`, five whole periods after the gated output's
+// first rise.  `select_debug` picks the second: `DEBUG REQUEST ACTIVE` ---
+// `SELECT DEBUG` registered in the 74LS273 at REQTIM 0B01 --- raises
+// `NXM TIMEOUT` at count 13 instead of count 5, which is
+// `busint::DEBUG_TIMEOUT_NS` and is how long the debugger's own interface
+// waits for the other machine before it gives up.  It is the SAME oscillator
+// and the SAME counter, so a debug cycle's timeout depends on the phase at
+// the grant exactly as any other cycle's does, and `rtl/machine/
+// cadr_busint_regs.sv`'s DBGOUT page is what asserts the line.  Without it a
+// debug cycle would end at 4.25 us, inside the window the far end is still
+// allowed to answer in.
+//
 // NOT HERE YET: MIT's own Unibus arbitration for the DEBUG master --- `NPR`,
 // `NPG1 IN`, `SACK` and `-UB BBSY`, the branches named above --- and the
-// timeout inhibit that cable's modifier register carries, which wants this
-// module's own counter and so wants a trace with a cable in it.
+// timeout inhibit that cable's modifier register carries, which wants a trace
+// with a cable in it.
 // `rtl/machine/cadr_dbgin.sv` says what this fabric puts in their place.  The
 // Unibus path is here; the interface's own registers are
 // `rtl/machine/cadr_busint_regs.sv`; the cable's end is `cadr_dbgin.sv`.
@@ -99,6 +112,11 @@ module cadr_busint_xbus (
     // The Unibus. `unibus` is the decode's: this address is up there rather
     // than on the Xbus, so the cycle arbitrates for the bus before it runs.
     input  var logic unibus,
+    // `SELECT DEBUG`: this cycle is the processor's own into the debug block,
+    // so the timeout counter takes the REQTIM PROM's second table.  See the
+    // header.  `rtl/machine/cadr_busint_regs.sv` makes it and
+    // `rtl/machine/cadr_memory_path.sv` joins the two, as it joins `-FREE`.
+    input  var logic select_debug,
     output var logic ub_msyn,      // -UB MSYN, as a positive level
     output var logic ub_write,
     input  var logic ub_ssyn,      // -UB SSYN: a slave has answered
@@ -119,8 +137,11 @@ module cadr_busint_xbus (
   localparam int unsigned VCO_HALF_T = 425 / 5;
 
   // `NXM TIMEOUT` on the sixth rise of the gated output: the first rise plus
-  // busint::TIMEOUT_NS, which is five whole periods.
+  // busint::TIMEOUT_NS, which is five whole periods.  The REQTIM PROM's
+  // second table, which `DEBUG REQUEST ACTIVE` selects, is thirteen periods
+  // and so the fourteenth rise --- busint::DEBUG_TIMEOUT_NS.
   localparam int unsigned NXM_RISES = 6;
+  localparam int unsigned DBG_RISES = 14;
 
   // --- the Unibus, busint::UNIBUS_* ---
   //
@@ -162,7 +183,9 @@ module cadr_busint_xbus (
 
   logic       nxm;        // this cycle was ended by the timer, not a slave
   logic       tmr_fell;   // the gated output has taken its first fall
-  logic [2:0] tmr_rises;  // rises of the gated output since then
+  logic [3:0] tmr_rises;  // rises of the gated output since then
+  logic [3:0] tmr_want;   // and how many this cycle's table asks for
+  assign tmr_want = select_debug ? 4'(DBG_RISES) : 4'(NXM_RISES);
 
   state_e     state;
   logic [2:0] stage;
@@ -321,7 +344,7 @@ module cadr_busint_xbus (
       ub_acked    <= 1'b0;
       ub_loadmd   <= 1'b0;
       tmr_fell    <= 1'b0;
-      tmr_rises   <= 3'd0;
+      tmr_rises   <= 4'd0;
       nxm         <= 1'b0;
     end else begin
       // The gated output, while a cycle is granted. Its first fall is the
@@ -341,8 +364,8 @@ module cadr_busint_xbus (
           if (!tmr_fell && vco) begin
             tmr_fell <= 1'b1;
           end else if (tmr_fell && !vco) begin
-            tmr_rises <= tmr_rises + 3'd1;
-            if (tmr_rises + 3'd1 == 3'(NXM_RISES)) begin
+            tmr_rises <= tmr_rises + 4'd1;
+            if (tmr_rises + 4'd1 == tmr_want) begin
               state <= ACKED;
               nxm   <= 1'b1;
             end
@@ -369,7 +392,7 @@ module cadr_busint_xbus (
               ub_ack_at   <= 10'd0;
               ub_md_at    <= 10'd0;
               tmr_fell    <= 1'b0;
-              tmr_rises   <= 3'd0;
+              tmr_rises   <= 4'd0;
               nxm         <= 1'b0;
               if (unibus) begin
                 state <= ARB;
@@ -395,7 +418,7 @@ module cadr_busint_xbus (
             ub_ack_at   <= 10'd0;
             ub_md_at    <= 10'd0;
             tmr_fell    <= 1'b0;
-            tmr_rises   <= 3'd0;
+            tmr_rises   <= 4'd0;
             nxm         <= 1'b0;
             if (unibus) begin
               state <= ARB;

@@ -47,7 +47,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass \
        $(BUILD)/display_out.pass $(BUILD)/hdmi_tx.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
-       $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass \
+       $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass $(BUILD)/dbg_cable.pass \
        $(BUILD)/console_face.pass $(BUILD)/readout_face.pass \
        $(BUILD)/checkpoint.pass \
        $(BUILD)/chaosnet.pass $(BUILD)/serial.pass $(BUILD)/terminal.pass \
@@ -480,7 +480,8 @@ GP1 := rtl/plumbing/cadr_gp1_split.sv
 # top-level output nothing drives is a PINMISSING.  Not in `$(MACHINE)`:
 # `cadr_machine` does not instantiate either of them, and a check that builds
 # a module nothing in it reaches is a check with a source it cannot mutate.
-DBGPMOD := rtl/plumbing/cadr_dbg_pmod.sv rtl/plumbing/cadr_dbg_join.sv
+DBGPMOD := rtl/plumbing/cadr_dbg_pmod.sv rtl/plumbing/cadr_dbg_join.sv \
+           rtl/plumbing/cadr_dbg_cable.sv
 
 # The display output, named here beside the others for the same reason the
 # note above gives: `:=` is expanded where it is read and `arty.pass`'s
@@ -2048,6 +2049,37 @@ $(BUILD)/obj_dbg_pmod/Vcadr_dbg_pmod_harness: $(DBG_PMOD_SRC) \
 
 $(BUILD)/dbg_pmod.pass: $(BUILD)/obj_dbg_pmod/Vcadr_dbg_pmod_harness
 	$(BUILD)/obj_dbg_pmod/Vcadr_dbg_pmod_harness
+	@touch $@
+
+# ------------------------------------------------- the cable, end to end
+#
+# `rtl/plumbing/cadr_dbg_cable.sv` is the CONNECTOR: one Pmod header carrying
+# both directions, and which four of its eight pins this board drives.  The
+# carrier under it is held by `build/dbg_pmod.pass` and every module under
+# THAT is held to muir; what is held here is the thing neither can see, which
+# is that one board's own machine debugs another board's.
+#
+# The DUT is two boards.  Board A runs the DBGOUT page ---
+# `rtl/machine/cadr_busint_regs.sv`, the four registers CC writes --- and
+# board B answers them through `rtl/machine/cadr_dbgin.sv` on the arbiter and
+# the diagnostic registers, which is CC's whole vocabulary.  All sixteen pads
+# are harness ports with their tri-state enables beside them, so the testbench
+# is the cable and can delay it, corrupt a beat, unplug it, and count any pad
+# driven from both ends --- which is the one thing a connector with two roles
+# on it has to make impossible.
+DBG_CABLE_SRC := tb/cadr_dbg_cable_harness.sv rtl/plumbing/cadr_dbg_cable.sv \
+                 rtl/plumbing/cadr_dbg_pmod.sv rtl/plumbing/cadr_dbg_join.sv \
+                 rtl/machine/cadr_dbgin.sv rtl/machine/cadr_busint_regs.sv \
+                 rtl/machine/cadr_console_bus.sv rtl/machine/cadr_spy_registers.sv
+
+$(BUILD)/obj_dbg_cable/Vcadr_dbg_cable_harness: $(DBG_CABLE_SRC) \
+                                                tb/cadr_dbg_cable_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing \
+	    -Mdir $(BUILD)/obj_dbg_cable --top-module cadr_dbg_cable_harness \
+	    $(DBG_CABLE_SRC) $(abspath tb/cadr_dbg_cable_tb.cpp)
+
+$(BUILD)/dbg_cable.pass: $(BUILD)/obj_dbg_cable/Vcadr_dbg_cable_harness
+	$(BUILD)/obj_dbg_cable/Vcadr_dbg_cable_harness
 	@touch $@
 
 # ------------------------------------------------------------- the readout
