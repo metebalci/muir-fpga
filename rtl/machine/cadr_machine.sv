@@ -434,9 +434,46 @@ module cadr_machine #(
   logic [3:0]  spy_eadr;
   logic [15:0] spy_rdata;
   logic        run, errstop, stathenb, prog_reset, prog_boot;
-  // `-BOOT1`: the I/O board's `-BOOT*` on the backplane, which `cables.txt`
-  // pairs with the processor's `1AJ1-12`.  The gate that makes `-BOOT` of it
-  // is at the bottom of this file.
+  // `-BOOT1`: the I/O board's `-BOOT*`, which reaches the processor across
+  // the backplane, and which `cables.txt` pairs with the processor's
+  // `1AJ1-12`.
+  //
+  // **THE TWO ENDS SIT ON DIFFERENT PINS, AND ONE HAND-RUN WIRE JOINS
+  // THEM.**  The I/O board sends `-BOOT*` out of its slot on `CP1` and the
+  // bus interface takes `-LM BOOT` in on `CR1` at its own slot, so the line
+  // is not simply bused across the cage.  Two of MIT's own files say why,
+  // and both are read rather than reasoned from:
+  //
+  //   `mit/cadr1/dubspc.wires`  the wire list for the double SPC backplane
+  //                             the I/O board sits in.  It buses the power
+  //                             rails and the Unibus across every slot and
+  //                             names NEITHER `CP1` NOR `CR1` anywhere, so
+  //                             both pins are free there --- and it says in
+  //                             its own prose that device-specific wiring is
+  //                             added by hand afterwards and is not in it.
+  //   `mit/cadr1/xspec.text.3`  the Xbus specification.  Its "SLOT 11, BUS
+  //                             INTERFACE SLOT" table is the bus interface's
+  //                             own pin list, and there `CP1` is
+  //                             `-XBUS.SYNC`, so the boot line could not
+  //                             have arrived on the pin the I/O board sends
+  //                             it out on; `CR1` is marked bused through and
+  //                             otherwise uncommitted, which is how the Xbus
+  //                             power reset is marked at the same slot.
+  //
+  // So `-BOOT*` leaves a free pin of the I/O board's slot, `-LM BOOT` sits
+  // on a bused line at the bus interface's, and one wire run by hand joins
+  // them --- the way the console's video and sync pairs were run between
+  // boards in this same cage, landing on differently named pins at the two
+  // ends.  **THAT WIRE IS ASSUMED AND NOT SHOWN.**  No file in MIT's
+  // material carries it; muir's `src/cable.rs` makes the same assumption and
+  // keeps an unverified marker at it, and this fabric rests on muir's
+  // reading.  What would reopen it is a cage, or a photograph of one,
+  // showing something other than a wire between the I/O slot's `CP1` and the
+  // bus interface slot's `CR1`.
+  //
+  // Nothing downstream turns on the answer: either way the level arrives
+  // here, and the gate that makes `-BOOT` of it is at the bottom of this
+  // file.
   logic        n_boot1;
   // The clock control register's other four bits and the debug IR, made on
   // the bus interface and read by the processor: a single step and the
