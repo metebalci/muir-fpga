@@ -1545,6 +1545,106 @@ int main(int argc, char **argv) {
   }
 
   // ======================================================================
+  // A DISABLE HALF A FRAME INTO A CHARACTER, AND THE CHARACTER GOES ANYWAY
+  // ======================================================================
+  //
+  // The section above ends a burst the way `INTR-OUTDEV` ends one, with the
+  // last character still in the shift register, and takes that character off
+  // the far end afterwards.  So the drain itself is already exercised there.
+  // What nothing here could say is WHEN the character arrived, and that is
+  // the whole of the property.  The sheet, on the command register: "If the
+  // transmitter is disabled, it will complete the transmission of the
+  // character in the transmit shift register (if any) prior to terminating
+  // operation."  Completing it is a statement about the shift register going
+  // on shifting at the rate it was programmed with.  A shift register that
+  // stopped at the disable and finished the character whenever something
+  // else next started its clock would put the same character on the same
+  // wire, late, and every assertion above would pass.
+  //
+  // So this measures the instant.  `muir::serial::Pci::transmit` works the
+  // frame's end out at the TAKE --- `shifting = Some((next, start + frame))`
+  // --- and then delivers at that instant whatever the software has since
+  // done to the command register, so the reference has the character land
+  // one frame after it started and not one tick later.
+  //
+  // **AND THE SECOND LEG IS THE ONE NOTHING IN THIS TREE COULD SEE.**  With
+  // the receiver left on, the baud-rate generator has a reason to run that
+  // has nothing to do with the character in flight, so a generator gated on
+  // the two enables alone still clocks it out and the fault is invisible.
+  // Turn BOTH halves off and the character in the shift register is the only
+  // thing keeping the crystal going --- `gen_on`'s `tx_busy` term, which is
+  // `Pci::generator_on`'s own reason for existing.  Measured before this leg
+  // was written: with that term dropped, `gp0_split`, `iob` and `unibus` all
+  // passed.
+  long drained_on_time = 0;
+  {
+    const unsigned kRate = 14;                      // 9600 baud
+    const double frame = FrameTicks(kMr1, kRate);
+    const double x16_t = (double)DIVISORS[kRate & 0xF] * 1000000000.0 /
+                         (double)BRCLK_HZ / (double)TICK_NS;
+    // `TxEN` cleared, and then both halves cleared, with `DTR` and `RTS`
+    // kept in each: the two commands muir's own pair of tests writes.
+    const unsigned offs[2] = {0x26u, 0x22u};
+    for (int li = 0; li < 2 && bad < 25; ++li) {
+      // The chip from scratch and the plug in, as every leg above does it.
+      b.Write(SER_PAGE + 4 * 4, 0u);
+      b.Idle(8);
+      (void)b.UbRead(UB_SER_CMD);
+      b.UbWrite(UB_SER_MODE, kMr1);
+      b.UbWrite(UB_SER_MODE, 0x30u | kRate);
+      b.UbWrite(UB_SER_CMD, 0x27);
+      b.Write(SER_PAGE + 4 * 4, 7u);
+      b.Idle(64);
+      (void)b.UbRead(UB_SER_STAT);       // the plug's own data set change
+      if (b.Read(SER_PAGE + 4) & 1u) (void)b.Read(SER_PAGE + 4 * 2);
+
+      const long at = tick;
+      b.UbWrite(UB_SER_DATA, 'A');
+      // Half a frame in, which is where the output channel's turn-off lands:
+      // the character is in the shift register and the far end has not got
+      // it.
+      while (tick - at < (long)(frame / 2.0)) b.Idle(1);
+      if (b.Read(SER_PAGE + 4) & 1u)
+        Fail("a character on the cable half a frame into its own frame", 1, 0);
+      b.UbWrite(UB_SER_CMD, offs[li]);
+      // "The TxD output will then remain in the marking state (High) while
+      // TxRDY and TxEMT will go High (inactive)" --- High is inactive on
+      // both, so neither bit stands at a disable.
+      const unsigned st = b.UbRead(UB_SER_STAT) & 0377u;
+      if (st & 5u)
+        Fail("TxRDY and SR2 with the transmitter disabled mid-character",
+             st & 5u, 0);
+
+      const long bound = (long)(frame * 3.0) + 20000;
+      while (!(b.Read(SER_PAGE + 4) & 1u) && tick - at < bound) { }
+      if (!(b.Read(SER_PAGE + 4) & 1u)) {
+        Fail("the character the disable found in the shift register", 0, 1);
+        break;
+      }
+      const long span = tick - at;
+      const uint32_t rd = b.Read(SER_PAGE + 4 * 2);
+      if ((rd & 0x1FFu) != 0x141u)
+        Fail("the character the far end got after the disable",
+             rd & 0x1FFu, 0x141u);
+      // **AND IT ARRIVED WHEN IT WOULD HAVE.**  The same bound the rate
+      // measurement above uses: muir's own frame, plus the one 16X clock the
+      // take may wait for and the bus cycles either side, and nothing more.
+      // A frame that came out too LONG is the fault this section exists to
+      // catch, so the upper bound is the assertion and not a formality.
+      if ((double)span < frame || (double)span > frame + x16_t + 4000.0)
+        Fail("the ticks the disabled transmitter's last character took",
+             (unsigned long long)span, (unsigned long long)frame);
+      // And nothing follows it: the transmitter terminated operation.
+      b.Idle((long)(frame * 1.5));
+      if (b.Read(SER_PAGE + 4) & 1u)
+        Fail("a second character after the transmitter terminated operation",
+             1, 0);
+      if (bad == 0) ++drained_on_time;
+    }
+    b.UbWrite(UB_SER_CMD, 0x27);
+  }
+
+  // ======================================================================
   // AND THE INTERRUPTS THE TWO FACES RAISE
   // ======================================================================
   {
@@ -2189,7 +2289,11 @@ int main(int argc, char **argv) {
       "      had turned the transmitter off, which is one `format` and then\n"
       "      another: the sheet has TxEMT go inactive at a disable and stay\n"
       "      there until the enabled transmitter has sent something, with a\n"
-      "      character taken IN on each, which the same wedge stopped\n",
+      "      character taken IN on each, which the same wedge stopped\n"
+      "    %ld disables half a frame into a character whose character still\n"
+      "      reached the far end one frame after it started --- the second\n"
+      "      with the RECEIVER off too, so that the character in the shift\n"
+      "      register was the only thing keeping the crystal running\n",
       pages, reads, writes, by[kPack], by[kChaos], by[kSer], by[kInput], by[kDflt],
       crossed, bursts,
       frames_out, frames_in, chars_out, chars_in, measured[0], measured[1],
@@ -2197,6 +2301,6 @@ int main(int argc, char **argv) {
       FrameTicks(kMr1, 15), looped,
       walk_streamed, walk_wedged,
       keys_typed, keys_lost, keys_swept, mouse_moved, step_span,
-      (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls, second_streamed);
+      (double)(64 - 1) * (double)MOUSE_STEP_T, b.stalls, second_streamed, drained_on_time);
   return 0;
 }
