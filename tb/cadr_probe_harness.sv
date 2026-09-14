@@ -113,6 +113,13 @@ module cadr_probe_harness #(
       .con_gnt(con_gnt), .con_ssyn(con_ssyn), .con_rdata(con_rdata),
       .dbg_in_req(1'b0), .dbg_in_wr(1'b0), .dbg_in_a(2'd0), .dbd_in(16'd0),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_out), .dbd_oe(dbd_oe),
+      // The DBGOUT page, which is this machine as somebody else's debugger.
+      // No connector here, so it is tied as an unplugged cable: nothing at
+      // the far end, the lines carried by the pull-ups, and the page answers
+      // its own machine at `-UB MSYN`.  That is muir's `debug_cable` false.
+      .dbgout_req(dbgout_req), .dbgout_wr(dbgout_wr), .dbgout_a(dbgout_a),
+      .dbgout_dbd(dbgout_dbd), .dbgout_ack(1'b0),
+      .dbgout_dbd_in(16'hFFFF), .dbgout_live(1'b0),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
       .dbg_rst(rst),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
@@ -247,6 +254,9 @@ module cadr_probe_harness #(
   logic        dbg_in_ack, debuggee_reset, timeout_inhibit;
   logic [15:0] dbd_out;
   logic [1:0]  dbd_oe;
+  logic        dbgout_req, dbgout_wr;
+  logic [1:0]  dbgout_a;
+  logic [15:0] dbgout_dbd;
   // Page 0's words 7 and 8, which no console on this harness reads: folded
   // below with the rest, the way every other output of `cadr_machine` is.
   logic [31:0] con_vma, con_q, con_md;
@@ -260,6 +270,7 @@ module cadr_probe_harness #(
                     ch_wrote, ch_hit,
                     con_gnt, con_ssyn, con_rdata, con_vma, con_q, con_md,
                     dbg_in_ack, dbd_out, dbd_oe, debuggee_reset,
+                    dbgout_req, dbgout_wr, dbgout_a, dbgout_dbd,
                     timeout_inhibit,
                     con_ro_data, con_ro_echo,
                     mem_wdata, dev_wdata, wrcyc, device, dev_rq, dev_write,

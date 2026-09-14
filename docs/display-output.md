@@ -532,7 +532,7 @@ That is an argument and not a measurement. The measurement is the flow's own
 assertion, which prints:
 
     XDC: no register outside u_machine, g_ddr.u_axi, g_ddr.u_debug_window,
-         u_dbgin_pmod is relaxed
+         u_dbg_cable is relaxed
 
 `g_ddr.g_hdmi` is not in that list, so nothing in the display carries a
 relaxation and every one of its paths is timed at one tick of whichever clock

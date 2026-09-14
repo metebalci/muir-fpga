@@ -343,6 +343,70 @@ void cons_read_switch(struct console *c, struct cons_switch *sw)
 	sw->now = (sw->stat & CONS_ST_SWITCH_NOW) != 0;
 }
 
+// **THE DEBUG CABLE'S ROLE, page 0's word 14.**  A write of a key and of
+// nothing else; every other value is dropped by the fabric, which is the same
+// guard the machine's reset and the light panel's button carry and is there
+// for the same reason --- a value that means nothing, zero off a dead bus or
+// all ones off an undriven one, must not change what the connector is doing.
+//
+// Neither of these waits for anything: the write completes at once and the
+// role may still be refused.  `cons_read_debug_cable` is how a caller finds
+// out, and `cons_say_debug_cable` is what says it in words.
+void cons_debug_cable_connect(struct console *c)
+{
+	c->write(c, CONS_DEBUG, CONS_DEBUG_CONNECT_KEY);
+}
+
+void cons_debug_cable_disconnect(struct console *c)
+{
+	c->write(c, CONS_DEBUG, CONS_DEBUG_DISCONNECT_KEY);
+}
+
+void cons_read_debug_cable(struct console *c, struct cons_debug_cable *d)
+{
+	// ONE read for all of it, so that the five bits name one instant ---
+	// the rule the switch's two bits and the VMA/Q/MD latch are both for.
+	d->word = c->read(c, CONS_DEBUG);
+	d->engaged = (d->word & CONS_DBG_ENGAGED) != 0;
+	d->asked = (d->word & CONS_DBG_ASKED) != 0;
+	d->foreign = (d->word & CONS_DBG_FOREIGN) != 0;
+	d->active = (d->word & CONS_DBG_ACTIVE) != 0;
+	d->live = (d->word & CONS_DBG_LIVE) != 0;
+	d->connects = (d->word >> 8) & 0xFFu;
+}
+
+void cons_say_debug_cable(const struct cons_debug_cable *d)
+{
+	if (d->engaged)
+		say("debug cable: this board is the DEBUGGER on Pmod JA%s",
+		    d->live ? ", and the board at the far end is answering"
+			    : ", and nothing is answering it yet");
+	else if (d->asked)
+		// **THE ONE CASE THE TWO BITS EXIST FOR.**  A board that can
+		// see a debugger already on the connector holds its own
+		// engagement down, and the first board told is the one that
+		// has the role.  Without this line a refused connect would
+		// read as a console that did nothing.
+		say("debug cable: this board ASKED to be the debugger on Pmod JA and does not "
+		    "have the role%s",
+		    d->foreign ? ": somebody else is driving the connector, and the first "
+				 "board told is the one that has it"
+			       : ", and nothing on the connector says why");
+	else
+		say("debug cable: this board is a DEBUGGEE on Pmod JA, which is what a CADR is "
+		    "with nothing set%s",
+		    d->foreign ? ", and a debugger is on the connector now"
+			       : d->active ? ", and something is driving the connector"
+					   : ", with nothing driving the connector");
+	// The DBGIN page is never switched off by any of this, and saying so is
+	// worth a line: somebody reading `DEBUGGER` above could otherwise think
+	// this board had stopped being debuggable.
+	say("debug cable: %u connect(s) since the console came up; the register window is a "
+	    "debugger of its own and is never switched off, so this board is debuggable "
+	    "through it either way",
+	    d->connects);
+}
+
 void cons_say_switch(const struct cons_switch *sw)
 {
 	if (sw->held_at_reset)

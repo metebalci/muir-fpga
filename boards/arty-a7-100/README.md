@@ -163,10 +163,11 @@ at the addresses they have on the Zynq, and what masters them is a RISC-V core
 in the fabric. The section below is the whole of it. The original text
 continues:
 What is worth knowing is that the debug cable's Pmod carrier is pure fabric and
-carries over unchanged: the debug cable adapter puts its whole link on JA, so
-that assignment carries over by name, and this board has four Pmod headers
-where the other has two. A second board on the other end of that cable is a
-debugger this board could have with no processing system anywhere.
+carries over unchanged: the cable puts its whole link on JA, so that assignment
+carries over by name, and this board has four Pmod headers where the other has
+two. It is in the design here now, in every configuration, because a board is
+always a debuggee. A second board on the other end of that cable is a debugger
+this board has with no processing system anywhere.
 
 **The boot.** The Arty Z7-20 comes up because the processing system reads a
 card. Here the part reads its own 16 MB QSPI flash at power-on, and that
@@ -664,26 +665,22 @@ machine as it stands.
 | paths at the relaxed requirement | 18,861 of 27,266 at 150.000 ns | 18,843 of 28,916 at 150.000 ns |
 | bitstream | 3,825,992 bytes | 4,045,764 bytes |
 
-**THE SLACK ROW IS NOT A COMPARISON AND THE OTHER BOARD'S FIGURE IS NOT ITS
-PART'S FAULT.** Every one of the Arty Z7-20's 596 failing endpoints is in
-`u_dbgin_pmod`, the debug cable's Pmod carrier, and the ten worst paths all run
-from `u_machine/processor/memstart_reg` to `u_dbgin_pmod/tx_frame_reg[*]` ---
+**THE SLACK ROW IS NOT A COMPARISON AND THE OTHER BOARD'S FIGURE WAS NOT ITS
+PART'S FAULT.** Every one of the Arty Z7-20's 596 failing endpoints was in the
+debug cable's Pmod carrier, and the ten worst paths all ran from
+`u_machine/processor/memstart_reg` to that carrier's frame registers ---
 twenty-five logic levels of the machine's diagnostic multiplexer reaching a
 register outside the machine. `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` is the
-four-tick exception written for exactly that cone, and
-`boards/arty-z7-20/vivado/bitstream.tcl` reads it only when the processing
-system is in the design, while the carrier itself is instantiated on every
-board. So the memory-off board is timed without it and misses by 9.6
-nanoseconds. That is a gap in one flow's constraints, not a property of the
-part, and it has been invisible because that board is not built any more; the
-bitstreams that go on silicon are built with the processing system, where the
-file is read. **It is reported and it is not fixed here**, this directory not
-owning that one.
+four-tick exception written for exactly that cone, and each board's flow read
+it only when the processing system was in the design, while the carrier itself
+is instantiated on every board. So the memory-off board was timed without it
+and missed by 9.6 nanoseconds. **That gap is closed**: every board's flow reads
+the file unconditionally now and asserts that it reached a path.
 
-This board has no such arc at all, because it does not instantiate the Pmod
-carrier: its debug cable is tied off and the machine's `DBD` lines reach
-nothing but the false-pathed fold. So the two slack figures are of two
-different designs, and only the rows below the slack rows compare.
+These figures were measured before that, on a board whose debug cable was tied
+off and whose `DBD` lines reached nothing but the false-pathed fold. The
+carrier is in this design now, so the slack rows are of two designs neither of
+which is the one built today, and only the rows below them compare.
 
 **The count of relaxed paths is the check that the constraints reached the
 design, and it is the row to read first.** `rtl/plumbing/xilinx7/cadr_machine.xdc`

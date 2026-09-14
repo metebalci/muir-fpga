@@ -233,6 +233,7 @@ module cadr_gp1_split_harness #(
   // the console and has no processor behind it, so the line is folded rather
   // than wired; `build/console.pass` is where it reaches one.
   logic        con_mach_boot;
+  logic        dbg_connect;
   assign con_req_o = con_req;
   assign con_gnt_o = con_gnt;
 
@@ -259,7 +260,13 @@ module cadr_gp1_split_harness #(
       .mach_rst(con_mach_rst), .mach_boot(con_mach_boot),
       // No board and so no switch: the machine came up with its boot button
       // just let go.
-      .no_auto_boot_held(1'b0), .no_auto_boot_now(1'b0)
+      .no_auto_boot_held(1'b0), .no_auto_boot_now(1'b0),
+      // The debug cable's role, page 0's word 14.  There is no connector in
+      // this harness --- `build/dbg_cable.pass` is the check that has one ---
+      // so the four come back as a bare header: no role, nobody else driving
+      // it, nothing arriving.  What the console asks for is folded below.
+      .dbg_connect(dbg_connect), .dbg_engaged(1'b0), .dbg_foreign(1'b0),
+      .dbg_live(1'b0), .dbg_active(1'b0)
   );
 
   // The readout window's three wires belong to `build/readout.pass` and
@@ -390,7 +397,7 @@ module cadr_gp1_split_harness #(
                     errstop_u, stathenb_u, mode_speed_u,
                     prog_reset_u, prog_boot_u, promdisable_u,
                     step_u, nop11_u, idebug_u, ldstat_u, debug_ir_u,
-                    con_mach_boot};
+                    con_mach_boot, dbg_connect};
 
 endmodule
 

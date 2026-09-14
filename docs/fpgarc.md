@@ -163,6 +163,14 @@ program. One flag, and the section below is about it.
 SW0 on the board asks for the same thing, and the two are an OR. `docs/board.md`
 has the switch.
 
+**The debug cable**, read by the same script. One flag.
+
+    --debug-cable-connect be the debugger on Pmod JA
+
+A board with this line commented out is a debuggee. It answers a debugger that
+plugs into the connector, which is what a CADR is with nothing set.
+`docs/debug-cable.md` has the cable and the section below has the flag.
+
 ## What cannot be written here, and why
 
 `--log` is passed by the init script, which is what decides where a daemon
@@ -328,6 +336,42 @@ init step removes a marker it finds all the same, because a `restart` of that
 script is a case that can leave one standing, and a marker that outlives its
 hold is a lie about the machine.
 
+## `--debug-cable-connect`
+
+muir's flag, and it means here what it means there: be the debugger on the
+debug cable. MIT's cable is Pmod JA on this board, carrying both directions on
+one connector.
+
+**A board with nothing said is a debuggee.** It answers a debugger that plugs
+into JA exactly as MIT's board answers one on its DBGIN. That is the power-on
+state and nothing has to be set to reach it.
+
+The flag takes no argument, because the connector is fixed in the bitstream.
+**There is no listen flag**, here or in muir, because listening is what a CADR
+always does.
+
+`S80cadr-disk-packs` reads the flag and asks the fabric for the role with
+`cadr-console debug-cable-connect`, after the boot button's step and before the
+drive comes present. `cadr-console debug-cable-disconnect` gives the role back
+at any time, and `cadr-console debug-cable` says which role this board has.
+
+**Asking is not having, and the console says which happened.** A board that can
+see a debugger already driving the connector holds its own engagement down, and
+the first board told is the one that has the role. So the line printed at boot
+reports the outcome and not the request.
+
+**The DBGIN page is never switched off by any of this.** Only the connector
+changes hands. A board debugging somebody else is still debuggable through its
+own register window, which is what a real CADR's two live connectors give it.
+
+**`muirrc` beside this file has a flag of the same name and it is a different
+end of the same cable.** There it is muir's own, and it takes the address of
+the register window muir reaches the fabric machine through, so that muir on
+this board's Arm cores debugs the CADR in this board's fabric. Here it is the
+Pmod connector and takes no argument. The two can both be live on one card, and
+a board with both is a machine being debugged by the muir beside it while it
+debugs a second board over the ribbon.
+
 ## What the card script writes
 
 `boards/arty-z7-20/linux/mksd-buildroot.sh` writes this file. It writes every
@@ -337,7 +381,8 @@ On the card this project builds for itself, the live lines are the Chaosnet
 address and the cable; the peers and the bridge, which come from `local.conf`;
 the screen's endpoint and the serial line's, written out in full; and the boot
 keyboard's chord. Everything else is commented out with what it does. The
-`--no-auto-boot` line is commented out with the sentence that explains it.
+`--no-auto-boot` and `--debug-cable-connect` lines are commented out with the
+sentences that explain them.
 
 `NO_AUTO_BOOT=1` in `local.conf` makes that same line live. The two cards then
 differ in one character and carry the same explanation. A released card always

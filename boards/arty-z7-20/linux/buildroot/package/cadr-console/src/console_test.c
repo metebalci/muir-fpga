@@ -114,6 +114,16 @@ struct model {
 	// fabric reads the switch only at the reset, so a switch moved since
 	// then has changed nothing and the pair is what says so.
 	int held_at_reset, switch_now;
+	// Page 0's word 14, the debug cable's role on Pmod JA.  `asked` is what
+	// the console last told the connector and `engaged` is what the
+	// connector did about it, and the model keeps them APART so that a
+	// check can put them out of step: a board that can see a debugger
+	// already on the connector refuses, and that is the one case the two
+	// bits exist for.  `connects` counts as the fabric's saturating counter
+	// does.
+	int dbg_asked, dbg_engaged, dbg_foreign, dbg_active, dbg_live;
+	unsigned connects;
+	int debug_deaf_to_the_key;	/* a fabric that takes any value */
 	unsigned long diag_reads, diag_writes;
 };
 
@@ -259,7 +269,17 @@ static uint32_t model_read(struct console *c, unsigned word)
 	// a read can happen, the fabric holding the write's answer off for the
 	// length of the pulse.
 	case CONS_BOOT: return (CONS_BOOT_KEY & 0xFFFF0000u) | ((m->boots & 0xFFu) << 8);
-	default: return CONS_UNMAPPED;	/* words 10-12, 14, 15 */
+	// The debug cable's role: the key's top half as a marker, the connects,
+	// and the connector --- what was asked for and what happened.
+	case CONS_DEBUG:
+		return (CONS_DEBUG_CONNECT_KEY & 0xFFFF0000u) |
+		       ((m->connects & 0xFFu) << 8) |
+		       (m->dbg_live ? CONS_DBG_LIVE : 0u) |
+		       (m->dbg_active ? CONS_DBG_ACTIVE : 0u) |
+		       (m->dbg_foreign ? CONS_DBG_FOREIGN : 0u) |
+		       (m->dbg_asked ? CONS_DBG_ASKED : 0u) |
+		       (m->dbg_engaged ? CONS_DBG_ENGAGED : 0u);
+	default: return CONS_UNMAPPED;	/* words 10-12, 15 */
 	}
 }
 
@@ -284,6 +304,25 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 		m->pc = 0;
 		m->mode = 0;
 		m->f1.promdisable = 0;
+		return;
+	}
+	// Page 0's word 14, the debug cable's role.  Two keys and nothing else,
+	// and the second is the first complemented, so no partial write of
+	// either can be the other.  **THE ROLE IS NOT THE ASK**: the connector
+	// takes it only where nothing else has it, which is what `dbg_foreign`
+	// stands for here.
+	if (word == CONS_DEBUG) {
+		if (v == CONS_DEBUG_CONNECT_KEY || m->debug_deaf_to_the_key) {
+			m->dbg_asked = 1;
+			if (m->connects != 0xFFu)
+				++m->connects;
+			if (!m->dbg_foreign)
+				m->dbg_engaged = 1;
+		} else if (v == CONS_DEBUG_DISCONNECT_KEY) {
+			m->dbg_asked = 0;
+			m->dbg_engaged = 0;
+			m->dbg_live = 0;
+		}
 		return;
 	}
 	if (word >= 32 || word < CONS_PAGE1)
@@ -398,18 +437,22 @@ static void check_ident(void)
 	CHECK(CONS_UNMAPPED == ~CONS_IDENT_WORD, "UNMAPPED is not the complement of IDENT");
 	CHECK(CONS_UNMAPPED != 0 && CONS_UNMAPPED != 0xFFFFFFFFu,
 	      "UNMAPPED is a value a dead or undriven bus could produce");
-	// 6 is the machine's reset, 7, 8 and 9 are VMA, Q and MD, and 13 is
-	// the light panel's button: registers, each of which must read as
-	// something a dead bus could not produce.  Words 14 and 15 name
-	// nothing and read UNMAPPED.
+	// 6 is the machine's reset, 7, 8 and 9 are VMA, Q and MD, 13 is the
+	// light panel's button and 14 is the debug cable's role: registers,
+	// each of which must read as something a dead bus could not produce.
+	// Word 15 names nothing and reads UNMAPPED.
 	//
 	// **10, 11 and 12 ARE THE READOUT AND THIS MODEL DOES NOT CARRY
 	// THEM**, so they read UNMAPPED here and are registers on the fabric.
 	// `build/readout.pass` is what holds them; said out loud rather than
 	// left as a gap, because a sweep that called a register unmapped and
 	// was believed would be this file agreeing with itself.
-	for (unsigned k = 14; k < 16; ++k)
-		CHECK(c.read(&c, k) == CONS_UNMAPPED, "page 0 word %u is not UNMAPPED", k);
+	CHECK(c.read(&c, 15) == CONS_UNMAPPED, "page 0 word 15 is not UNMAPPED");
+	CHECK(c.read(&c, CONS_DEBUG) != CONS_UNMAPPED,
+	      "page 0 word 14 reads UNMAPPED, and it is the debug cable's role");
+	CHECK((c.read(&c, CONS_DEBUG) & 0xFFFF0000u) ==
+		      (CONS_DEBUG_CONNECT_KEY & 0xFFFF0000u),
+	      "word 14 does not carry the key's own top half as a marker");
 	for (unsigned k = 6; k < 10; ++k)
 		CHECK(c.read(&c, k) != CONS_UNMAPPED,
 		      "page 0 word %u reads UNMAPPED, and it is a register", k);
@@ -1030,6 +1073,127 @@ static void check_machine_words(void)
 
 // The address arithmetic examine and deposit use, which is
 // cadr_ddr_map::main_byte_address and not a second description of it.
+// **THE DEBUG CABLE'S ROLE**, page 0's word 14.  MIT's cable on one Pmod
+// header, and a board is a debugger or a debuggee on it and never both at
+// once.  What this holds is the program's half of it: the two keys and nothing
+// else, and that the line it prints tells the three cases apart.
+//
+// **ASKED IS NOT HAD, AND THAT IS THE CASE THE TWO BITS EXIST FOR.**  A board
+// that can see a debugger already on the connector holds its own engagement
+// down, so a console that reported what it asked for would say this board was
+// the debugger when the far one is.  The model can be put in that state and
+// the words are asserted there.
+static void check_debug_cable(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+
+	// A board that has been told nothing is a DEBUGGEE, which is what a
+	// CADR is with nothing set.
+	struct cons_debug_cable d;
+	cons_read_debug_cable(&c, &d);
+	CHECK(!d.engaged, "a board told nothing says it is the debugger");
+	CHECK(!d.asked, "a board told nothing says it asked for the role");
+	CHECK(d.connects == 0, "connects counted before any was asked");
+	CHECK((d.word >> 16) == (CONS_DEBUG_CONNECT_KEY >> 16),
+	      "the debug register's marker");
+	capture_start();
+	cons_say_debug_cable(&d);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "DEBUGGEE") != NULL, "a debuggee is not called one");
+	}
+
+	// The key asks and is taken, with nothing else on the connector.
+	m.dbg_live = 1;
+	cons_debug_cable_connect(&c);
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.engaged && d.asked, "the connect key did not take the role");
+	CHECK(d.connects == 1, "the connect was not counted");
+	capture_start();
+	cons_say_debug_cable(&d);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "DEBUGGER") != NULL, "a debugger is not called one");
+		CHECK(strstr(out, "far end is answering") != NULL,
+		      "the far end answering is not said");
+		// And the line says the window is a debugger of its own,
+		// because somebody reading DEBUGGER could otherwise think this
+		// board had stopped being debuggable.
+		CHECK(strstr(out, "never switched off") != NULL,
+		      "the page being always live is not said");
+	}
+
+	// The complement gives it back and counts nothing.
+	cons_debug_cable_disconnect(&c);
+	cons_read_debug_cable(&c, &d);
+	CHECK(!d.engaged && !d.asked, "the disconnect key did not give the role back");
+	CHECK(d.connects == 1, "a disconnect was counted as a connect");
+
+	// **ASKED AND REFUSED.**  Somebody else is the debugger on this
+	// connector, so the ask stands and the role does not.
+	m.dbg_foreign = 1;
+	m.dbg_active = 1;
+	cons_debug_cable_connect(&c);
+	cons_read_debug_cable(&c, &d);
+	CHECK(d.asked, "the ask was not recorded");
+	CHECK(!d.engaged, "the role was taken with a debugger already on the cable");
+	CHECK(d.foreign, "the connector does not say why it refused");
+	capture_start();
+	cons_say_debug_cable(&d);
+	{
+		const char *out = capture_end();
+		CHECK(strstr(out, "ASKED") != NULL, "a refused ask is not said to be an ask");
+		CHECK(strstr(out, "does not have the role") != NULL,
+		      "a refused ask is not said to be refused");
+		CHECK(strstr(out, "somebody else") != NULL,
+		      "the reason for the refusal is not said");
+		CHECK(strstr(out, "this board is the DEBUGGER") == NULL,
+		      "a board that was refused is reported as the debugger");
+	}
+	m.dbg_foreign = 0;
+	m.dbg_active = 0;
+	cons_debug_cable_disconnect(&c);
+
+	// **THE KEY.**  A write of anything else is dropped in silence, which
+	// is what stops a stuck bus, a truncated store or a wild pointer from
+	// taking a connector away from the machine using it.  The same shapes
+	// word 13 is given, plus the other two keys.
+	{
+		const uint32_t wrong[] = {
+			0u, 0xFFFFFFFFu, CONS_IDENT_WORD, CONS_UNMAPPED,
+			c.read(&c, CONS_DEBUG), 0x52474244u,
+			CONS_DEBUG_CONNECT_KEY ^ 1u,
+			CONS_DEBUG_CONNECT_KEY ^ 0x80000000u,
+			CONS_DEBUG_CONNECT_KEY & 0x00FFFFFFu,
+			CONS_DEBUG_CONNECT_KEY & 0xFFFFFF00u,
+			0x52534554u, CONS_BOOT_KEY,   /* "RSET" and "BOOT" */
+		};
+		const unsigned was = m.connects;
+		for (unsigned k = 0; k < sizeof wrong / sizeof wrong[0]; ++k) {
+			c.write(&c, CONS_DEBUG, wrong[k]);
+			CHECK(!m.dbg_asked, "a write that is not a key asked for the role");
+			CHECK(!m.dbg_engaged, "a write that is not a key took the role");
+		}
+		CHECK(m.connects == was, "a write that is not a key was counted");
+	}
+
+	// And the check itself can fail: a modelled fabric that takes any value
+	// is caught by the same twelve.
+	{
+		struct model any;
+		struct console ac;
+		model_init(&any);
+		attach(&ac, &any);
+		any.debug_deaf_to_the_key = 1;
+		ac.write(&ac, CONS_DEBUG, 0u);
+		CHECK(any.connects == 1,
+		      "the wrong-key check cannot see a fabric that connects on any value");
+	}
+}
+
 static void check_main_address(void)
 {
 	CHECK(cons_main_byte_address(0) == 0x18000000u, "word 0 is not at the region's base");
@@ -1304,6 +1468,7 @@ int main(void)
 	check_lost();
 	check_machine_words();
 	check_main_address();
+	check_debug_cable();
 	fflush(cap);
 
 	if (bad) {
@@ -1358,6 +1523,14 @@ int main(void)
 	       "      against VMA's is the entry a SRCMAP read looked at against the entry the\n"
 	       "      machine read through --- printed both ways round.  All three reading\n"
 	       "      UNMAPPED is a bitstream without these words and is refused as machine\n"
-	       "      state; two of three is NOT, a machine being able to hold that word\n", checks);
+	       "      state; two of three is NOT, a machine being able to hold that word\n"
+	       "    the debug cable's role, page 0's word 14: a board told nothing is a\n"
+	       "      DEBUGGEE, the connect key takes the role and is counted, and its\n"
+	       "      COMPLEMENT gives it back and counts nothing.  **ASKED IS NOT HAD**: with\n"
+	       "      a debugger already on the connector the ask stands and the role does\n"
+	       "      not, and the line says so rather than calling this board the debugger,\n"
+	       "      which is the one thing two bits buy over one.  Twelve values that are\n"
+	       "      not a key take nothing, and a modelled fabric that connects on any value\n"
+	       "      is caught by the same twelve\n", checks);
 	return 0;
 }

@@ -149,7 +149,7 @@ uint32_t Con(unsigned i) { return kBase + 4u * i; }
 uint32_t Spy(unsigned e) { return kBase + 0x40u + 4u * e; }
 enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
               kRegTicks = 4, kRegTicksH = 5, kRegReset = 6, kRegVma = 7,
-              kRegQ = 8, kRegMd = 9, kRegBoot = 13 };
+              kRegQ = 8, kRegMd = 9, kRegBoot = 13, kRegDebug = 14 };
 
 // What `rtl/plumbing/xilinx7/cadr_machine.xdc`'s relaxed set asks of the three
 // registers `rtl/machine/cadr_console_state.sv` holds: fifteen ticks, 75 ns.
@@ -177,6 +177,22 @@ constexpr long     kResetT    = 64;
 constexpr uint32_t kBootKey  = 0x424F4F54u;   // "BOOT"
 constexpr uint32_t kBootMark = kBootKey >> 16;
 constexpr long     kBootT    = 64;
+
+// The debug cable's role, page 0's word 14.  `DEBUG_KEY` is "DBGR" on the same
+// rule as the two above, and its COMPLEMENT gives the role back --- which
+// differs from it in every bit, so no partial write of one can be the other.
+// It is NOT a pulse: a role is held until somebody says otherwise, so the
+// write completes at once and there is no length to count.
+constexpr uint32_t kDebugKey   = 0x44424752u;   // "DBGR"
+constexpr uint32_t kDebugUnkey = ~kDebugKey;
+constexpr uint32_t kDebugMark  = kDebugKey >> 16;
+// Word 14's bits.  Bit 0 is the role this board HAS and bit 1 is the one it
+// ASKED for, and they are two facts: the connector may refuse.
+constexpr uint32_t kDbgEngaged = 1u << 0;
+constexpr uint32_t kDbgAsked   = 1u << 1;
+constexpr uint32_t kDbgForeign = 1u << 2;
+constexpr uint32_t kDbgActive  = 1u << 3;
+constexpr uint32_t kDbgLive    = 1u << 4;
 
 // muir's own two constants, tests/spy.rs:703-707: `FLAG-1` with nothing
 // wrong, running and halted.
@@ -1257,8 +1273,17 @@ int main(int argc, char **argv) {
     const uint32_t w = ReadWord(Con(kRegBoot));
     if ((w >> 16) != kBootMark) Fail("the boot register's marker", w >> 16, kBootMark);
   }
-  for (unsigned i = 14; i < 16; ++i) {
-    const uint32_t w = ReadWord(Con(i));
+  // **AND WORD 14 IS THE DEBUG CABLE'S ROLE**, which the section at the end of
+  // this file asks for and gives back; what is asserted here is only its own
+  // marker, for word 13's reason.  A board that has never been told anything
+  // is a DEBUGGEE, so the role's bit reads clear.
+  {
+    const uint32_t w = ReadWord(Con(kRegDebug));
+    if ((w >> 16) != kDebugMark) Fail("the debug cable's marker", w >> 16, kDebugMark);
+    if (w & 1u) Fail("a board that was told nothing says it has the role", 1, 0);
+  }
+  {
+    const uint32_t w = ReadWord(Con(15));
     if (w != kUnmapped) Fail("an unused page-0 word", w, kUnmapped);
     ++unmapped_seen;
   }
@@ -1801,6 +1826,141 @@ int main(int argc, char **argv) {
     if (!dut->run_o) Fail("RUN after the second console boot", 0, 1);
   }
 
+  // ------------------------------------------- the debug cable's role, word 14
+  //
+  // **WHAT THIS HOLDS AND WHAT IT DOES NOT.**  `build/dbg_cable.pass` is the
+  // check that has a real connector on it, with two boards and sixteen pads
+  // the testbench can see contention on; what a console cannot be asked about
+  // there is whether its own word works.  So the four the connector answers
+  // with are STIMULUS here and the testbench is what plays the connector ---
+  // which is the only way to ask the one question that matters about this
+  // word: it reports what the fabric HAS beside what it was TOLD, and those
+  // differ exactly when the connector refuses.
+  //
+  //   a wrong value does nothing   the same shapes as words 6 and 13, for the
+  //                                same reason, and the two keys are a value
+  //                                and its complement so that neither is a
+  //                                partial write of the other
+  //   the key asks                 `dbg_connect` rises and the connects are
+  //                                COUNTED, and the write does NOT wait --- a
+  //                                role is a level and not a pulse, and a
+  //                                write that waited for a role the fabric
+  //                                may refuse would hang the store that made
+  //                                it
+  //   the complement gives it back and does not count
+  //   **AND ASKED IS NOT HAD**     the connector held down while the console
+  //                                asks: bit 1 up, bit 0 DOWN, and bit 2
+  //                                saying why.  A console that reported one
+  //                                bit would be lying about the other.
+  long wrong_debug_writes = 0;
+  {
+    // Nothing has been asked yet, and nothing is plugged in.
+    dut->dbg_engaged = 0;
+    dut->dbg_foreign = 0;
+    dut->dbg_live = 0;
+    dut->dbg_active = 0;
+    Run(8);
+    const uint32_t w = ReadWord(Con(kRegDebug));
+    if ((w >> 16) != kDebugMark)
+      Fail("the debug register's marker", w >> 16, kDebugMark);
+    if (((w >> 8) & 0xFFu) != 0u)
+      Fail("connects counted before any was asked", (w >> 8) & 0xFFu, 0u);
+    if (w & (kDbgEngaged | kDbgAsked))
+      Fail("a board told nothing says it asked for the role or has it", w & 3u, 0u);
+    if (dut->dbg_connect) Fail("the console asks for the role unasked", 1, 0);
+  }
+
+  // A write of anything but a key does nothing at all.  The same twelve
+  // shapes the reset and the button are given, plus each key at the word
+  // either side --- which is the mistake three keyed registers on one page
+  // make possible.
+  {
+    const struct { uint32_t at; uint32_t v; uint32_t strb; } wrong[] = {
+        {Con(kRegDebug), 0u, 0xF},
+        {Con(kRegDebug), 0xFFFFFFFFu, 0xF},
+        {Con(kRegDebug), kIdent, 0xF},
+        {Con(kRegDebug), kUnmapped, 0xF},
+        {Con(kRegDebug), ReadWord(Con(kRegDebug)), 0xF},
+        {Con(kRegDebug), 0x52474244u, 0xF},              // the key, byte-reversed
+        {Con(kRegDebug), kDebugKey ^ 1u, 0xF},
+        {Con(kRegDebug), kDebugKey ^ 0x80000000u, 0xF},
+        {Con(kRegDebug), kDebugKey & 0x00FFFFFFu, 0xF},
+        {Con(kRegDebug), kDebugKey & 0xFFFFFF00u, 0xF},
+        {Con(kRegDebug), kDebugKey, 0x3},                // the key, strobes short
+        {Con(kRegDebug), kResetKey, 0xF},
+        {Con(kRegDebug), kBootKey, 0xF},
+        {Con(kRegBoot), kDebugKey, 0xF},
+        {Con(kRegReset), kDebugKey, 0xF},
+    };
+    for (const auto &t : wrong) {
+      DoWrite(t.at, t.v, t.strb);
+      Run(8);
+      ++wrong_debug_writes;
+    }
+    const uint32_t w = ReadWord(Con(kRegDebug));
+    if (((w >> 8) & 0xFFu) != 0u)
+      Fail("a write that is not a key was counted as a connect", (w >> 8) & 0xFFu, 0u);
+    if (w & kDbgAsked) Fail("a write that is not a key asked for the role", 1, 0);
+    if (dut->dbg_connect) Fail("a write that is not a key reached the connector", 1, 0);
+  }
+
+  // The key asks, and the connector refuses: somebody else has the role.
+  {
+    dut->dbg_foreign = 1;
+    dut->dbg_active = 1;
+    DoWrite(Con(kRegDebug), kDebugKey, 0xF);
+    Run(8);
+    if (!dut->dbg_connect) Fail("the key reached the connector", 0, 1);
+    const uint32_t w = ReadWord(Con(kRegDebug));
+    if (((w >> 8) & 0xFFu) != 1u)
+      Fail("connects counted after one", (w >> 8) & 0xFFu, 1u);
+    if (!(w & kDbgAsked)) Fail("word 14 says what was asked for", 0, 1);
+    if (w & kDbgEngaged)
+      Fail("word 14 says this board HAS a role the connector refused", 1, 0);
+    if (!(w & kDbgForeign)) Fail("word 14 says why it was refused", 0, 1);
+    if (!(w & kDbgActive)) Fail("word 14 reports the connector as driven", 0, 1);
+  }
+
+  // And then the connector takes it, with the far end answering.
+  {
+    dut->dbg_foreign = 0;
+    dut->dbg_active = 0;
+    dut->dbg_engaged = 1;
+    dut->dbg_live = 1;
+    Run(8);
+    const uint32_t w = ReadWord(Con(kRegDebug));
+    if ((w & (kDbgEngaged | kDbgAsked)) != (kDbgEngaged | kDbgAsked))
+      Fail("word 14 with the role taken", w & 3u, 3u);
+    if (w & kDbgForeign) Fail("word 14 says somebody else has it too", 1, 0);
+    if (!(w & kDbgLive)) Fail("word 14 reports good frames arriving", 0, 1);
+  }
+
+  // The complement gives it back, and does not count.
+  {
+    DoWrite(Con(kRegDebug), kDebugUnkey, 0xF);
+    Run(8);
+    if (dut->dbg_connect) Fail("the complement let the role go", 1, 0);
+    dut->dbg_engaged = 0;
+    dut->dbg_live = 0;
+    Run(8);
+    const uint32_t w = ReadWord(Con(kRegDebug));
+    if (w & (kDbgEngaged | kDbgAsked))
+      Fail("word 14 after giving the role back", w & 3u, 0u);
+    if (((w >> 8) & 0xFFu) != 1u)
+      Fail("a disconnect counted as a connect", (w >> 8) & 0xFFu, 1u);
+  }
+
+  // And a second connect, so that the count is a count and not a flag.
+  {
+    DoWrite(Con(kRegDebug), kDebugKey, 0xF);
+    Run(8);
+    const uint32_t w = ReadWord(Con(kRegDebug));
+    if (((w >> 8) & 0xFFu) != 2u)
+      Fail("connects counted after two", (w >> 8) & 0xFFu, 2u);
+    DoWrite(Con(kRegDebug), kDebugUnkey, 0xF);
+    Run(8);
+  }
+
   dut->final();
   delete dut;
   std::fclose(f);
@@ -2036,6 +2196,15 @@ int main(int argc, char **argv) {
       "    a write of 2 to the clock control register ran EXACTLY ONE\n"
       "      microcycle on %ld of %ld halts, with FLAG-1's SSDONE up and SRUN\n"
       "      down --- the whole road from an AXI write to MACHRUN's first term\n"
+      "    THE DEBUG CABLE'S ROLE, page 0's word 14: %ld writes that are not a\n"
+      "      key asked for nothing --- the same shapes as the reset's and the\n"
+      "      button's, each key at the words either side, and the other two\n"
+      "      keys at this one.  The key asked and was COUNTED and the write did\n"
+      "      not wait, a role being a level and not a pulse; the key's\n"
+      "      COMPLEMENT gave it back and counted nothing.  **AND ASKED IS NOT\n"
+      "      HAD**: with the connector refusing, word 14 read bit 1 up, bit 0\n"
+      "      DOWN and bit 2 saying why, which is the one thing about this word\n"
+      "      a check with no cable on it can settle\n"
       "    MEASURED, NOT ASSERTED, because the file is not this slice's:\n"
       "      a mode write at register 13 landed %ld times (muir's\n"
       "      write_strobe is `eadr & 7`, so: once)\n",
@@ -2050,6 +2219,6 @@ int main(int argc, char **argv) {
       lag_seen, lag_samples, lag_moving,
       wrong_writes, pulse, pulse2, replay_rows,
       wrong_boot_writes, press, mboot_ticks - boot_ticks_before - press,
-      step_moved, visits, alias_landed);
+      step_moved, visits, wrong_debug_writes, alias_landed);
   return 0;
 }

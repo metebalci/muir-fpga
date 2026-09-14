@@ -223,8 +223,11 @@ module cadr_debug_window #(
     output var logic        s_rvalid,
     input  var logic        s_rready,
 
-    // --- MIT's cable, to `cadr_dbgin.sv`.  Twenty signals out and eighteen
-    // --- back, every one of them a wire on the DBGIN connector.
+    // --- MIT's cable, to `cadr_dbgin.sv`.  Twenty signals out and nineteen
+    // --- back, every one of them a wire on the DBGIN connector: the
+    // --- acknowledgement, the sixteen data lines, and the two bits saying
+    // --- which bytes of them the debuggee is driving.  An earlier count of
+    // --- eighteen left the byte enables out.
     output var logic        dbg_in_req,   // -DEBUG IN REQ asserted
     output var logic        dbg_in_wr,    // DEBUG IN WR
     output var logic [1:0]  dbg_in_a,     // DEBUG IN A<1:0>

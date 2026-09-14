@@ -34,7 +34,7 @@ it, as none exists for `cadr_axi_master.sv`. It is held to the AXI3 protocol,
 to read-back, and to the layout muir's `src/fabric.rs` documents.
 
 The boundary between them is the cable itself. The window drives twenty
-signals towards the machine and reads eighteen back, and every one of them is
+signals towards the machine and reads nineteen back, and every one of them is
 a wire on MIT's connector. That is the same boundary the project already draws
 between `rtl/machine/` and `rtl/plumbing/`.
 
@@ -575,11 +575,10 @@ counts the acknowledgement and the data and misses them.
 The carrier's payload is twenty bits in each direction, so the return has one
 bit spare and sends it as zero.
 
-**ONE CONNECTOR CARRIES THE WHOLE LINK, IN BOTH DIRECTIONS.** The eight pins
-are one clock, driven from the debugger's end, and seven data pins split into
-lanes: about four forward for the twenty-two signals that go out and three back
-for the seventeen that return, which is six beats an exchange. That is far
-inside the cable's own 11.05 microsecond timeout, so the beats are free.
+**ONE CONNECTOR CARRIES THE WHOLE LINK, IN BOTH DIRECTIONS, four pins each
+way.** Each direction is one strobe and three data lines, eight beats a frame,
+and neither group is ever driven from both ends. That is far inside the cable's
+own 11.05 microsecond timeout, so the beats are free.
 
 **A board is a debugger or a debuggee by configuration and never both at
 once.** That is what makes one connector enough. Two connectors bought exactly
@@ -587,30 +586,17 @@ one thing a single one cannot: a chain of three machines, where a board is
 somebody's debuggee and somebody else's debugger at the same time. Nobody needs
 that.
 
-The clock has a pin. Digilent's master file marks exactly one clock-capable
-pair on the two headers, JA3_P and JA3_N at package pins U18 and U19, and it is
-on JA. So the connector that carries the link is the connector that can receive
-a clock.
+**The count written down before anything was built was one clock and seven data
+pins, and that is superseded.** The next section but one has the argument: a
+clocked receiver is a second clock domain across the whole carrier, and a
+shared group turned around is two sets of drivers that must agree on the
+instant with no back channel to agree on. The eighth wire is a strobe and
+nothing is clocked by it.
 
-**JB is no longer assigned.** It is a header the board has and this design has
-no opinion about.
+**JB is not assigned.** It is a header the board has and this design has no
+opinion about.
 
-### What the fabric carries today, which is not this
-
-`rtl/plumbing/cadr_dbg_pmod.sv` and `rtl/plumbing/cadr_dbg_join.sv` are a
-two-connector full-duplex carrier: four pins each way on each header, one
-strobe and three data, eight beats each way. `boards/arty-z7-20/cadr_arty.sv`
-brings out sixteen pins and `boards/arty-z7-20/cadr_arty.xdc` constrains them.
-`build/dbg_pmod.pass` holds it and mutation records are aimed at it.
-
-Replacing that with the one-connector link above is a change of its own: a new
-carrier, a new frame, a new pin map, and the checks and records that go with
-them. It has not been made. Until it is, the fabric and the decision are out of
-step, and this section is the record of which is which.
-
-The rest of this section describes the carrier that is built.
-
-### Four pins each way on the built carrier
+### Four pins each way
 
 The eight pins are split four and four. Each direction is one strobe and three
 data lines, driven by one end and sampled by the other with its own clock.
@@ -632,6 +618,12 @@ The eighth wire is therefore a strobe and not a clock. Nothing on either side
 is clocked by it. It is sampled through two flops like any other asynchronous
 input.
 
+Digilent's master file marks exactly one clock-capable pair on the two headers
+of each Zynq board, JA3_P and JA3_N, and it is on JA. That pair is in the
+debuggee's group here and is of no use to anybody. It is recorded so that
+nobody reads the choice of JA as being about it: JA is the connector because a
+board needs one, and the pair is a coincidence.
+
 ### Which four pins are this board's
 
 A Pmod ribbon joins pin one to pin one. A cable from one board's JA to
@@ -642,6 +634,42 @@ The four low pins are the debugger's. It drives them and the debuggee listens.
 The four high pins are the debuggee's. Neither group is ever driven from both
 ends while the two boards hold different roles, which is what makes this full
 duplex with no shared pin.
+
+**The pads are bidirectional and they have to be**, because the role is not
+fixed at synthesis. `cadr_dbg_cable.sv` hands out a tri-state enable a pad, so
+the group this board does not own is high-impedance and the far end has it.
+Every pad carries a pull-down: an unplugged connector must read zero and not
+float, and either group can be the one this board is listening to.
+
+**The pins, per board, from Digilent's own published files.** The index is the
+carrier's and the header pin is the one on the connector.
+
+| index | header pin | role | Arty Z7-20 | Cora Z7-07S | Arty A7-100 |
+|---|---|---|---|---|---|
+| 0 | 1 | debugger data 0 | Y18 | Y18 | G13 |
+| 1 | 2 | debugger data 1 | Y19 | Y19 | B11 |
+| 2 | 3 | debugger data 2 | Y16 | Y16 | A11 |
+| 3 | 4 | debugger strobe | Y17 | Y17 | D12 |
+| 4 | 7 | debuggee data 0 | U18 | U18 | D13 |
+| 5 | 8 | debuggee data 1 | U19 | U19 | B18 |
+| 6 | 9 | debuggee data 2 | W18 | W18 | A18 |
+| 7 | 10 | debuggee strobe | W19 | W19 | K16 |
+
+The two Zynq boards use the same package pins, so a ribbon between any two of
+the three maps every signal to its counterpart. The files are
+`Arty-Z7-20-Master.xdc`, `Cora-Z7-07S-Master.xdc` and `Arty-A7-100-Master.xdc`
+from `github.com/Digilent/digilent-xdc` at commit
+`00a3404901f35aa9567b01ecb3f2c233b6efe9f4`. Each board's own `.xdc` keeps
+Digilent's schematic names in its comments, so the mapping can be checked
+against the board rather than against memory.
+
+**A ribbon between two boards joins their supplies, and that is worth saying
+before anybody makes one.** A twelve-pin Pmod header carries ground on pins 5
+and 11 and 3.3 V on 6 and 12, and a straight ribbon joins both. The grounds
+must be joined. The supplies must not: two boards' regulators tied together is
+not something either of them is built for. A cable for this link joins pins 1
+to 4, pins 7 to 10 and the grounds, and leaves the supply pins open. **Nobody
+has made one, and nothing in this section has been shown on a board.**
 
 ### The roles must differ, and the fabric enforces it
 
@@ -672,11 +700,31 @@ A board with a cable in it and nothing said is a debuggee. It answers a
 debugger on the connector exactly as MIT's board answers one on its DBGIN.
 This is the power-on state and nothing has to be set to reach it.
 
-A board becomes the debugger by `--debug-cable-connect` in `fpgarc`, which an
-init script applies at boot through the console, or by `cadr-console
-debug-cable-connect` at any time. `cadr-console debug-cable-disconnect`
-returns it. The flag takes no argument because the connector is fixed in the
-bitstream.
+A board becomes the debugger by `--debug-cable-connect` in `fpgarc`, which
+`S80cadr-disk-packs` applies at boot through the console, or by `cadr-console
+debug-cable-connect` at any time. `cadr-console debug-cable-disconnect` returns
+it and `cadr-console debug-cable` says which role this board has. The flag
+takes no argument because the connector is fixed in the bitstream. There is no
+listen flag, here or in muir, because listening is what a CADR always does.
+
+**The role is page 0's word 14 of the console's face.** A write of
+`DEBUG_KEY` --- "DBGR" --- asks for the role and a write of its COMPLEMENT
+gives it back; every other value is dropped, which is the guard the machine's
+reset and the light panel's button already carry and is there for the same
+reason. The two keys are a value and its complement rather than two spellings,
+so that no partial write of either can be the other, which matters because they
+are opposite operations.
+
+**The word reports what this board HAS beside what it was TOLD, and they are
+two facts.** Bit 0 is the role, bit 1 the ask, bit 2 whether somebody else is
+driving the connector, and bits 3 and 4 whether the far end is driving it at
+all and whether what arrives is good frames. A board that can see a debugger
+already on the connector refuses, so a console that reported the ask alone
+would say this board was the debugger when the far one is. The write completes
+at once and does not wait for the role: a role is a level and not a pulse, and
+a write that waited for a condition that may never come would hang the store
+that made it, which is the one failure this project has already had on a
+general-purpose port. A program writes and then reads.
 
 The DBGIN page is never switched off. Only the connector changes hands, so a
 debugger board stays debuggable through its register window while it debugs
@@ -839,7 +887,24 @@ What it shows rather than argues, on its own output:
 - two boards cabled together with neither told anything and no pad driven at
   all;
 - a second board told to connect while the first has the role, refusing it;
-- a role dropped inside a cycle, held until the cycle has gone.
+- a role dropped inside a cycle, held until the cycle has gone;
+- **the role taken by the second board, and its own DBGIN page still answering
+  its own window while it holds the connector** --- which is what "only the
+  connector changes hands" means, asserted rather than argued;
+- and that board told to disconnect, going quiet with not one pad driven at
+  either end, its window still answering.
+
+**That last leg found a defect and it is worth recording.** The activity timer
+is held saying nothing while a board is the debugger, because a debugger
+listens to the return group and would otherwise be reset by its own debuggee's
+answers. Holding the timer alone is not enough: `rx_stb` is one pin while
+engaged and another after, so the role changing moves the synchroniser from one
+pin to the other, and with its two flops left running the comparison one tick
+later reads as a transition on the forward group. The board then believes a
+debugger has appeared and drives the return group on top of the debuggee still
+answering it. Measured: 2,048 pad-ticks driven from both ends --- four pads for
+the whole of `LOSS_T` --- at the tick the second board was told to disconnect.
+The synchroniser is held with the timer now.
 
 `build/busint_regs.pass` sweeps the debug block over all 262,144 Unibus
 addresses against `busint::debug_register`, with nothing plugged in and again
@@ -849,21 +914,47 @@ own convention on an ordinary cycle nothing answers and then requires a debug
 cycle to sit the same way against the other table, so what is compared is the
 count and not a constant transcribed into the check.
 
-### What is left for the attachment
+### The attachment, which is built
 
-The connector is not wired to pins yet. `boards/arty-z7-20/cadr_arty.sv` and
-`cadr_arty.xdc` carry the older two-connector arrangement, and bringing JA out
-as eight bidirectional pads, retiring JB, and giving the console its two
-commands is one commit of its own. The pins come from Digilent's published
-file for this board and not from memory.
+**All three boards carry the connector, in every configuration.**
+`boards/arty-z7-20/cadr_arty.sv`, `boards/cora-z7-07s/cadr_cora.sv` and
+`boards/arty-a7-100/cadr_arty_a7.sv` each bring JA out as eight bidirectional
+pads and instantiate `cadr_dbg_cable.sv` on them, outside the generate block
+that holds the processing system. That is not tidiness: **a board is always a
+debuggee**, so the connector has to exist on a board with no console and no
+window at all, and a top-level pin nothing drives is a PINMISSING besides. JB
+carries nothing on either Zynq board and its sixteen constraints are gone.
+
+The machine's own DBGOUT page leaves `cadr_machine` for it. Those seven ports
+used to be tied off inside that module with a note saying the wrapper change
+and its wiring were one commit; this is that commit. A board with no connector
+at all would tie `dbgout_live` low and `dbgout_dbd_in` to all ones, which is
+muir's `debug_cable` false.
+
+**The timing exception is read in every configuration too, and it used not to
+be.** `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` was gated on a general-purpose
+port being brought out, on the argument that with no window the sender folds to
+constants. The connector made that false: the machine's diagnostic mux reaches
+the carrier's frame registers on every board. Measured while the gate was still
+there, the memory-off Arty Z7-20 came out at -9.600 ns on 596 endpoints with
+the file read by nothing. Each board's flow reads it unconditionally now and
+asserts with `assert_instance_timing` that it reached a path.
+
+**Nothing here has been shown on a board.** No cable exists, the two boards
+that would take one are running Lisp and Linux, and the silicon proof is a
+later step. What holds it today is `build/dbg_cable.pass`, where the testbench
+is the cable and both boards are real.
 
 ## What is not built
 
-**The composition onto the board is done.** `rtl/machine/cadr_dbgin.sv` is
-instantiated in `rtl/machine/cadr_memory_path.sv` beside the three Unibus
-slaves, `cadr_machine.sv` passes the cable up as ports, and
-`boards/arty-z7-20/cadr_arty.sv` puts `cadr_debug_window.sv` behind the GP1
-split and joins the two. The lines are the lines
+**The composition onto the board is done, and so is the connector.**
+`rtl/machine/cadr_dbgin.sv` is instantiated in
+`rtl/machine/cadr_memory_path.sv` beside the three Unibus slaves,
+`cadr_machine.sv` passes both ends of the cable up as ports, and all three
+boards put `cadr_debug_window.sv` behind a general-purpose port,
+`cadr_dbg_cable.sv` on Pmod JA, and `cadr_dbg_join.sv` between them and the
+page. What is left is a physical cable and a board to plug it into. The lines
+are the lines
 `tb/cadr_dbgin_harness.sv` was written with, which is what that harness is
 for: it was the attachment before the attachment landed, and the arbiter it
 instantiates is the module `cadr_memory_path.sv` instantiates rather than a

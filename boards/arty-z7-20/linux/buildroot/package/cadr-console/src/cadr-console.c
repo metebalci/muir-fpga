@@ -201,6 +201,17 @@ static void do_deposit(int mem, uint32_t phys, uint32_t v)
 
 // ---- the commands -------------------------------------------------------
 
+// The debug cable's role on Pmod JA.  **ASKING IS NOT HAVING**, so this reads
+// the word back after every write rather than reporting what was asked for:
+// a board that can see a debugger already on the connector refuses, and the
+// line says which happened.
+static void do_debug_cable(struct console *c)
+{
+	struct cons_debug_cable d;
+	cons_read_debug_cable(c, &d);
+	cons_say_debug_cable(&d);
+}
+
 static void do_status(struct console *c, unsigned settle_us)
 {
 	struct cons_status st;
@@ -267,6 +278,10 @@ static void help(void)
 	say("ident           IDENT, STAT, CYCLES and TICKS");
 	say("switch          SW0, the no-auto-boot switch: what it did at the last reset,");
 	say("                and where it is now.  Exits 0 when it held the machine");
+	say("debug-cable     the role on Pmod JA: debugger, debuggee, or asked and refused");
+	say("debug-cable-connect     ask to be the debugger on it (muir's --debug-cable-connect)");
+	say("debug-cable-disconnect  give the role back.  A board is a debuggee with nothing set,");
+	say("                        and its own register window is a debugger either way");
 	say("read EADR       one diagnostic READ cycle");
 	say("write EADR VAL  one diagnostic WRITE cycle");
 	say("examine A [N]   N words of DDR from CADR physical word A --- not through the machine");
@@ -337,6 +352,16 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		do_status(c, settle_us);
 	else if (!strcmp(cmd, "ident"))
 		do_ident(c);
+	else if (!strcmp(cmd, "debug-cable-connect")) {
+		cons_debug_cable_connect(c);
+		do_debug_cable(c);
+	}
+	else if (!strcmp(cmd, "debug-cable-disconnect")) {
+		cons_debug_cable_disconnect(c);
+		do_debug_cable(c);
+	}
+	else if (!strcmp(cmd, "debug-cable"))
+		do_debug_cable(c);
 	else if (!strcmp(cmd, "switch")) {
 		struct cons_switch sw;
 		cons_read_switch(c, &sw);

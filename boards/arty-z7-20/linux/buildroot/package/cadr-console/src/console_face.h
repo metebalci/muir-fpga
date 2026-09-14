@@ -25,7 +25,13 @@
 //     8  Q        the Q register, all 32 bits, latched when VMA was read
 //     9  MD       the memory data register, all 32 bits, latched when VMA
 //                 was read
-//     10-15       UNMAPPED
+//     10-13       the readout and the light panel's button
+//     14 DEBUG    **THE DEBUG CABLE'S ROLE**, Pmod JA: a write of
+//                 `CONS_DEBUG_CONNECT_KEY` asks this board to be the debugger
+//                 on the connector and `CONS_DEBUG_DISCONNECT_KEY` gives the
+//                 role back.  It reads a marker, a count of connects, and the
+//                 role this board HAS beside the one it ASKED for
+//     15          UNMAPPED
 //
 //   page 1, +0x40, word k IS diagnostic register `EADR` k:
 //     read   a diagnostic READ cycle: `SPY<15:0>` in bits 15:0 with 31:16
@@ -95,7 +101,7 @@
 enum cons_p0 { CONS_IDENT = 0, CONS_STAT = 1, CONS_CYCLES = 2, CONS_CYCLESH = 3,
 	       CONS_TICKS = 4, CONS_TICKSH = 5, CONS_RESET = 6, CONS_VMA = 7,
 	       CONS_Q = 8, CONS_MD = 9, CONS_RO = 10, CONS_RO_LO = 11,
-	       CONS_RO_HI = 12, CONS_BOOT = 13 };
+	       CONS_RO_HI = 12, CONS_BOOT = 13, CONS_DEBUG = 14 };
 
 // **THE LIGHT PANEL'S BUTTON, page 0's word 13.**  A write of this key and of
 // nothing else holds `-BOOT2` down for a few hundred nanoseconds and lets it
@@ -122,6 +128,31 @@ enum cons_p0 { CONS_IDENT = 0, CONS_STAT = 1, CONS_CYCLES = 2, CONS_CYCLESH = 3,
 enum cons_stat_bit { CONS_ST_BUSY = 1u << 0, CONS_ST_GNT = 1u << 1,
 		     CONS_ST_ANSWERED = 1u << 2, CONS_ST_LOST = 1u << 3,
 		     CONS_ST_HELD_AT_RESET = 1u << 4, CONS_ST_SWITCH_NOW = 1u << 5 };
+
+// **THE DEBUG CABLE'S ROLE, page 0's word 14.**  MIT's cable is one Pmod
+// header, JA, carrying both directions, and a board is a debugger or a
+// debuggee on it and never both at once.  **A BOARD COMES UP A DEBUGGEE AND
+// NOTHING HAS TO BE SET FOR THAT**: it answers a debugger that plugs in,
+// exactly as MIT's board answers one on its DBGIN.  A write of the connect key
+// asks for the other role and the DISCONNECT key --- which is the same value
+// complemented, so that no partial write of either can be the other --- gives
+// it back.  `rtl/plumbing/cadr_console.sv`'s `DEBUG_KEY` is the same four
+// bytes.  `docs/debug-cable.md` has the cable.
+//
+// **THE DBGIN PAGE IS NEVER SWITCHED OFF BY ANY OF THIS.**  Only the connector
+// changes hands, so a board debugging somebody else is still debuggable
+// through its own register window, which is what a real CADR's two live
+// connectors give it.
+#define CONS_DEBUG_CONNECT_KEY     0x44424752u	/* "DBGR" */
+#define CONS_DEBUG_DISCONNECT_KEY  (~CONS_DEBUG_CONNECT_KEY)
+// Word 14's bits.  **BIT 0 AND BIT 1 ARE TWO FACTS AND NOT ONE**, for the
+// reason the switch's two bits are: the fabric may REFUSE the role, because a
+// board that can see a debugger already on the connector holds its own
+// engagement down.  A console that reported one of them would be lying about
+// the other.
+enum cons_debug_bit { CONS_DBG_ENGAGED = 1u << 0, CONS_DBG_ASKED = 1u << 1,
+		      CONS_DBG_FOREIGN = 1u << 2, CONS_DBG_ACTIVE = 1u << 3,
+		      CONS_DBG_LIVE = 1u << 4 };
 
 // Page 1: word 16 + k is diagnostic register k.
 #define CONS_PAGE1        16u
@@ -421,6 +452,30 @@ struct cons_switch {
 };
 void cons_read_switch(struct console *c, struct cons_switch *s);
 void cons_say_switch(const struct cons_switch *s);
+
+// `debug-cable-connect` and `debug-cable-disconnect`: the role on Pmod JA.
+// muir's own flag is `--debug-cable-connect` and takes no argument here,
+// because the connector is fixed in the bitstream; there is no listen flag
+// because listening is what a CADR always does.
+//
+// **ASKING IS NOT HAVING, and the caller is told both.**  The write completes
+// at once --- a role is a level and not a pulse, and a write that waited for a
+// role the fabric may refuse would hang the store that made it, which is the
+// one failure this project has already had on a general-purpose port.  So a
+// program writes and then READS, which is what `cons_read_debug_cable` is for.
+struct cons_debug_cable {
+	int engaged;		/* the role this board HAS */
+	int asked;		/* the role it was last told to take */
+	int foreign;		/* somebody else is the debugger on the connector */
+	int active;		/* the far end is driving its pin group */
+	int live;		/* and what arrives is good frames */
+	unsigned connects;	/* how many connects since the console came up */
+	uint32_t word;		/* the word all of them came out of */
+};
+void cons_debug_cable_connect(struct console *c);
+void cons_debug_cable_disconnect(struct console *c);
+void cons_read_debug_cable(struct console *c, struct cons_debug_cable *d);
+void cons_say_debug_cable(const struct cons_debug_cable *d);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
 // ClockControl and ../muir/tests/spy.rs:743-761).

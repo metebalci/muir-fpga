@@ -60,6 +60,17 @@
 # mount and the drive.  `hold_the_machine` below is the whole of it, and it
 # prefixes its one line `cadr-boot:` rather than `cadr-disk-packs:` because it
 # is the boot button's and not the pack program's.
+#
+# **AND THE DEBUG CABLE'S ROLE IS HERE FOR THE SAME TWO REASONS.**
+# `--debug-cable-connect` asks this board to be the debugger on Pmod JA, and it
+# reaches the fabric through `cadr-console` exactly as the hold does.  It is
+# read from `fpgarc`, which is on the partition this script mounts, and a step
+# of its own would have to know that this one had mounted it.  It runs AFTER
+# the hold and before the drive, which is an order and not an accident: a board
+# that is going to debug somebody else should have taken the connector before
+# its own machine starts asking a drive for a band.  `connect_the_debug_cable`
+# below is the whole of it, and it prefixes its lines `cadr-debug-cable:`
+# rather than `cadr-disk-packs:` for `hold_the_machine`'s reason.
 
 PROG=/usr/bin/cadr-disk-packs
 BOOT_DEV=/dev/mmcblk0p1
@@ -108,6 +119,7 @@ start() {
 		echo "cadr-disk-packs: no pack partition at $PACKS_DEV; the bay will be empty"
 	fi
 	hold_the_machine
+	connect_the_debug_cable
 	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS" --log /dev/console
 }
 
@@ -183,6 +195,34 @@ hold_the_machine() {
 		echo "cadr-boot: --no-auto-boot: the machine is held with RUN clear"
 	fi
 	echo "cadr-boot: \`cadr-console boot\` or BTN0 on the board presses the boot button"
+}
+
+# **THE DEBUG CABLE'S ROLE ON PMOD JA.**  A board with nothing said is a
+# DEBUGGEE: it answers a debugger that plugs into the connector, exactly as
+# MIT's board answers one on its DBGIN, and nothing has to be set for it.
+# `--debug-cable-connect` asks for the other role, and it is muir's own flag
+# with muir's own meaning.  There is no listen flag here or there, because
+# listening is what a CADR always does.
+#
+# **ASKING IS NOT HAVING, so the line says what happened and not what was
+# asked.**  A board that can see a debugger already driving the connector
+# refuses, and the first board told is the one that has it.  `cadr-console
+# debug-cable-connect` reads the role back after the write and prints it, so
+# what reaches the console at boot is the outcome.
+#
+# Nothing is printed when the flag is not there, because a board that is a
+# debuggee has nothing to say about it.
+connect_the_debug_cable() {
+	[ -f "$RC" ] && fpgarc_has "$RC" --debug-cable-connect || return 0
+	if ! command -v cadr-console > /dev/null 2>&1; then
+		echo "cadr-debug-cable: --debug-cable-connect, and no cadr-console to ask with;" \
+		     "this board is still a debuggee"
+		return 0
+	fi
+	if ! cadr-console debug-cable-connect 2>&1; then
+		echo "cadr-debug-cable: --debug-cable-connect: cadr-console could not reach the" \
+		     "console; this board is still a debuggee"
+	fi
 }
 
 stop() {

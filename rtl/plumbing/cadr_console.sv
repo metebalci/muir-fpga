@@ -83,7 +83,25 @@
 //                   bits 15:8   how many presses since the CONSOLE came up,
 //                               saturating at 255
 //                   bit 0       the button is down now
-//     14-15       read `UNMAPPED`; writes dropped
+//     14 DEBUG    **THE DEBUG CABLE'S ROLE**, Pmod JA.  A write of
+//                 `DEBUG_KEY` asks this board to be the debugger on the
+//                 connector and a write of its complement gives the role
+//                 back; every other value is dropped.  It reads
+//                   bits 31:16  `DEBUG_KEY`'s own top half, a marker
+//                   bits 15:8   how many connects since the CONSOLE came up,
+//                               saturating at 255
+//                   bit 4       good frames are arriving on the connector
+//                   bit 3       the far end is driving its pin group
+//                   bit 2       somebody else is the debugger on it
+//                   bit 1       what this console last ASKED for
+//                   bit 0       the role this board HAS
+//                 **BITS 0 AND 1 ARE TWO THINGS AND NOT ONE**, for the reason
+//                 word 1's two switch bits are: the fabric may REFUSE the
+//                 role --- a board that can see a debugger on the forward
+//                 group holds its own engagement down --- so what was asked
+//                 for and what happened are different facts and a console
+//                 that reported one of them would be lying about the other.
+//     15          reads `UNMAPPED`; writes dropped
 //
 //   page 1, `REG_BASE + 0x40`, the sixteen diagnostic registers, word k
 //   being `EADR` k:
@@ -462,7 +480,22 @@ module cadr_console #(
     // from one, and it is a floor with margin rather than a derivation.  It
     // is its own parameter and not `RESET_T` because the two lines do
     // different things and nothing says they must move together.
-    parameter int unsigned BOOT_T   = 64
+    parameter int unsigned BOOT_T   = 64,
+    // **THE DEBUG CABLE'S ROLE**, page 0's word 14: "DBGR", and a write of
+    // its COMPLEMENT gives the role back.  Chosen on `RESET_KEY`'s rule ---
+    // four distinct bytes, none `00` or `FF`, not zero, not all ones, not
+    // `IDENT`, not `UNMAPPED`, not what the word reads back, and not either
+    // of the two keys above --- and for the same reason: a value that means
+    // nothing must not be a value that changes what the connector is doing.
+    //
+    // **THE COMPLEMENT RATHER THAN A SECOND SPELLING**, which is
+    // `UNMAPPED = ~IDENT`'s own idiom one page along, and here it buys
+    // something: connect and disconnect are opposite operations, so two keys
+    // a byte apart would let a write with one byte lane masked turn one into
+    // the other.  Differing in every bit, no partial write of either can be
+    // the other.  `~DEBUG_KEY` is `0xBBBDB8AD`, which is four distinct bytes
+    // and neither `00` nor `FF` among them.
+    parameter logic [31:0] DEBUG_KEY = 32'h4442_4752
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -588,7 +621,32 @@ module cadr_console #(
     // --- The init step that holds the machine at boot reads `_held`: a
     // --- machine the switch held is already stopped, so nothing halts it.
     input  var logic        no_auto_boot_held,
-    input  var logic        no_auto_boot_now
+    input  var logic        no_auto_boot_now,
+
+    // --- **THE DEBUG CABLE'S ROLE**, page 0's word 14, and it is one output
+    // --- and four inputs because the fabric is allowed to say no.
+    // ---
+    // --- `dbg_connect` is what this console was told: a level, held until it
+    // --- is told otherwise, which `rtl/plumbing/cadr_dbg_cable.sv` takes as
+    // --- its `connect`.  A board with nothing said is a DEBUGGEE, listening
+    // --- on the connector exactly as MIT's board listens on its DBGIN, and
+    // --- that is the state this comes out of reset in.  The DBGIN page is
+    // --- never switched off by any of this: only the connector changes
+    // --- hands, so a board debugging somebody else is still debuggable
+    // --- through its own register window.
+    // ---
+    // --- The four coming back say what the connector is actually doing.
+    // --- `dbg_engaged` is the role this board HAS, which is not always the
+    // --- one it asked for: two boards told to connect are two debuggers, and
+    // --- the second may not take it.  `dbg_foreign` is why --- somebody else
+    // --- is driving the forward group --- and `dbg_active` and `dbg_live`
+    // --- are the connector's own two questions, whether anything is driving
+    // --- it at all and whether what arrives is good frames.
+    output var logic        dbg_connect,
+    input  var logic        dbg_engaged,
+    input  var logic        dbg_foreign,
+    input  var logic        dbg_live,
+    input  var logic        dbg_active
 );
 
   // spy::BASE, and "the EADR<3:0> lines just follow the Unibus address
@@ -743,6 +801,26 @@ module cadr_console #(
   localparam logic [3:0] R_RO_LO = 4'd11;
   localparam logic [3:0] R_RO_HI = 4'd12;
 
+  // Page 0's word 14: the debug cable's role on Pmod JA.
+  //
+  // **IT IS A LEVEL AND NOT A PULSE, so it takes no state of its own.**  The
+  // reset and the button above are momentary and their writes are held off
+  // until the pulse is over, so that a program's store returns with the
+  // machine already running again.  A role is not like that: it is held until
+  // somebody says otherwise, exactly as `--debug-cable-connect` on a command
+  // line is, so the write is a register load beside the state machine and
+  // completes at once --- which is how word 10's address is written.
+  //
+  // **AND THE WRITE DOES NOT WAIT FOR THE ROLE TO BE TAKEN**, which is a
+  // decision rather than an oversight.  `cadr_dbg_cable.sv` refuses the role
+  // while a request stands at either end and while somebody else has it, so a
+  // write that waited would wait for a condition that may never come and
+  // would hang the Arm store that made it --- the one failure this project
+  // has already had on a general-purpose port.  What a program does instead
+  // is write and then READ, and bits 0 and 1 tell it whether it got what it
+  // asked for.
+  localparam logic [3:0] R_DEBUG = 4'd14;
+
   // The reserved selector and the word a selector this fabric does not map
   // reads back.  **They are `cadr_microcycle.sv`'s and are repeated here
   // rather than parameterised**, because they are properties of the window
@@ -763,6 +841,12 @@ module cadr_console #(
   // has ever pressed it" when somebody has.
   logic [7:0] boots;
   logic [6:0] boot_t;
+
+  // And the role's own two: the level the connector takes, and a saturating
+  // count of the times it has been asked for --- saturating for `resets`'s
+  // reason, a counter that can read zero again being one that can say nobody
+  // ever asked.
+  logic [7:0] connects;
 
   // Which page-0 word this beat names, and whether it is the key.  The
   // address match is `w_in`, taken at AWVALID and held --- it is not computed
@@ -786,6 +870,16 @@ module cadr_console #(
   logic w_is_boot;
   assign w_is_boot = w_in && !w_idx[4] && (w_idx[3:0] == R_BOOT) &&
                      (w_full == BOOT_KEY);
+
+  // And which beat takes the debugger's role and which gives it back.  Two
+  // keys for word 6's reason --- a value that means nothing must not change
+  // what the connector is doing --- and they are a value and its complement,
+  // so no partial write of one can be the other.
+  logic w_is_connect, w_is_disconnect;
+  assign w_is_connect    = w_in && !w_idx[4] && (w_idx[3:0] == R_DEBUG) &&
+                           (w_full == DEBUG_KEY);
+  assign w_is_disconnect = w_in && !w_idx[4] && (w_idx[3:0] == R_DEBUG) &&
+                           (w_full == ~DEBUG_KEY);
 
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
@@ -1016,6 +1110,12 @@ module cadr_console #(
         // pointed somewhere else cannot look like a console with an
         // unpressed button.  The key's top half, the presses, and the line.
         R_BOOT:  r_word = {BOOT_KEY[31:16], boots, 7'd0, mach_boot};
+        // The debug cable's role.  The marker and the count for word 6's
+        // reason, and then the connector: what was asked for and what
+        // happened, which are two facts.
+        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, 3'd0,
+                           dbg_live, dbg_active, dbg_foreign,
+                           dbg_connect, dbg_engaged};
         default: r_word = UNMAPPED;
       endcase
     end
@@ -1062,6 +1162,10 @@ module cadr_console #(
       mach_boot   <= 1'b0;
       boot_t      <= 7'd0;
       boots       <= 8'd0;
+      // **A BOARD COMES UP A DEBUGGEE**, which is the power-on state of any
+      // CADR: it listens on the connector and nothing has to be set for it.
+      dbg_connect <= 1'b0;
+      connects    <= 8'd0;
     end else begin
       // --- the machine's reset, counted out.  Written first so that the
       // write channel below can arm it in the same tick and win: a pulse
@@ -1102,6 +1206,14 @@ module cadr_console #(
           // a write of word 10 completes exactly as a dropped write of word
           // 13 does and the engine is never asked for anything.
           if (w_is_ro) ro_addr <= w_full[17:0];
+          // The debug cable's role, a register load beside the state machine
+          // exactly as the readout's address is: see the declaration for why
+          // it takes no state and does not wait.
+          if (w_is_connect) begin
+            dbg_connect <= 1'b1;
+            if (connects != 8'hFF) connects <= connects + 8'd1;
+          end
+          else if (w_is_disconnect) dbg_connect <= 1'b0;
           if (w_in && w_idx[4]) wst <= W_CYCLE;
           else if (w_is_reset) begin
             mach_rst <= 1'b1;

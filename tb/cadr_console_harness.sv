@@ -134,6 +134,15 @@ module cadr_console_harness #(
     // --- the grant held off for ever, to exercise the engine's own bound
     input  var logic        gnt_inhibit,
 
+    // --- the debug cable's role: what the console asks for, and what the
+    // --- connector says back.  The four inputs are the testbench playing the
+    // --- connector, which is what lets it refuse.
+    output var logic        dbg_connect,
+    input  var logic        dbg_engaged,
+    input  var logic        dbg_foreign,
+    input  var logic        dbg_live,
+    input  var logic        dbg_active,
+
     // --- the machine's reset as `cadr_arty.sv` makes it: this harness's own
     // --- `rst` or the console's pulse, registered.  Watched every tick, so
     // --- that `RESET_T` is asserted as a length and not as "something
@@ -363,7 +372,19 @@ module cadr_console_harness #(
       // machine came up with its boot button just let go, and nobody has
       // touched a switch since.
       .no_auto_boot_held(1'b0),
-      .no_auto_boot_now (1'b0)
+      .no_auto_boot_now (1'b0),
+      // **THE DEBUG CABLE'S ROLE, page 0's word 14, AND THE CONNECTOR IS THE
+      // TESTBENCH.**  `build/dbg_cable.pass` is the check that has a real one
+      // and two real boards on it; what this check holds is the console's own
+      // half --- that the two keys and nothing else move `dbg_connect`, and
+      // that the word reports the role the fabric HAS beside the one that was
+      // asked for.  Those are different facts whenever the connector refuses,
+      // so the four come in as stimulus and the testbench is what refuses.
+      .dbg_connect(dbg_connect),
+      .dbg_engaged(dbg_engaged),
+      .dbg_foreign(dbg_foreign),
+      .dbg_live   (dbg_live),
+      .dbg_active (dbg_active)
   );
 
   // The clock control register's other four bits and the debug IR, out of

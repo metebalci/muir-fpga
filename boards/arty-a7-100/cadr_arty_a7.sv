@@ -241,7 +241,27 @@ module cadr_arty_a7 #(
     // the two dark tricolour lamps above are here by.  With the soft system
     // absent the transmitter idles high, which is a line with nothing on it.
     output var logic       uart_rxd_out,
-    input  var logic       uart_txd_in
+    input  var logic       uart_txd_in,
+
+    // **MIT'S DEBUG CABLE ON ONE PMOD HEADER, JA.**  A board is a debugger or
+    // a debuggee on this cable and never both at once, so one connector is
+    // enough; the other three headers carry nothing of this design's, and JD
+    // is where the card this board has no slot for is to go.
+    //
+    // Eight pins, four each way: one strobe and three data lines a direction,
+    // `rtl/plumbing/cadr_dbg_pmod.sv` under `rtl/plumbing/cadr_dbg_cable.sv`.
+    // A straight Pmod ribbon joins pin one to pin one, so the LOW four are
+    // the debugger's at both ends and the HIGH four the debuggee's.  The
+    // eighth wire is a STROBE and not a clock: nothing on either side is
+    // clocked by it.
+    //
+    // **THEY ARE BIDIRECTIONAL PADS AND THEY HAVE TO BE**, because the role
+    // is not fixed at synthesis.  They are in the port list whether or not
+    // `SOC` is set, for the reason the UART's two are: a board is always a
+    // DEBUGGEE and answers a debugger that plugs in, which needs no soft
+    // processing system at all.  `boards/arty-a7-100/cadr_arty_a7.xdc` has
+    // the pins, from Digilent's own published file.
+    inout  wire  [7:0]     ja
 );
 
   // ------------------------------------------------------------ the clock
@@ -528,6 +548,26 @@ module cadr_arty_a7 #(
   logic        dbg_in_ack;
   logic [1:0]  dbd_oe;
   logic [15:0] dbd_from_machine;
+  // And the same cable again, as Pmod JA carries it.  `cab_*` is a second
+  // board's debugger arriving at this machine's DBGIN page and joins the
+  // window's at `rtl/plumbing/cadr_dbg_join.sv`; `dbgout_*` is this machine's
+  // own DBGOUT page going the other way, which is CC on this board debugging
+  // a second one.  `dbg_connect` is what the console asks for and the four
+  // beside it are what the connector says back.
+  logic        cab_req, cab_wr;
+  logic [1:0]  cab_a;
+  logic [15:0] cab_dbd;
+  logic        dbg_holder;
+  logic        dbgout_req, dbgout_wr;
+  logic [1:0]  dbgout_a;
+  logic [15:0] dbgout_dbd;
+  logic        dbgout_ack, dbgout_live;
+  logic [15:0] dbgout_dbd_in;
+  logic        dbg_connect, dbg_engaged, dbg_foreign, dbg_live, dbg_active;
+  logic [7:0]  ja_o, ja_t;
+  logic        mdbg_req, mdbg_wr;
+  logic [1:0]  mdbg_a;
+  logic [15:0] mdbg_dbd;
   // The modifier register's two effects.  `debuggee_reset` is bit 1 and is
   // this processor's power-on reset, so it joins the reset OR below;
   // `timeout_inhibit` is bit 2 and nothing consumes it yet, so it folds.
@@ -786,12 +826,21 @@ module cadr_arty_a7 #(
       .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
-      // MIT's debug cable.  The request side is the unplugged connector ---
-      // see the tie-off block above --- and what the machine answers with is
-      // folded, because a page that never asks never answers.
-      .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-      .dbd_in(dbd_to_machine),
+      // MIT's debug cable, arriving at this machine's DBGIN page from two
+      // debuggers joined by `rtl/plumbing/cadr_dbg_join.sv`: the register
+      // window in `g_soc`, which is the soft processing system's, and Pmod
+      // JA, which is a second board.  With no soft system the window's arm is
+      // tied low below and the connector is all there is.
+      .dbg_in_req(mdbg_req), .dbg_in_wr(mdbg_wr), .dbg_in_a(mdbg_a),
+      .dbd_in(mdbg_dbd),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
+      // And the other end of the same cable: the DBGOUT page, this machine
+      // as somebody else's debugger.  `rtl/plumbing/cadr_dbg_cable.sv` below
+      // puts it on Pmod JA when this board has the role, and answers it with
+      // the pull-ups when nothing is plugged in.
+      .dbgout_req(dbgout_req), .dbgout_wr(dbgout_wr), .dbgout_a(dbgout_a),
+      .dbgout_dbd(dbgout_dbd), .dbgout_ack(dbgout_ack),
+      .dbgout_dbd_in(dbgout_dbd_in), .dbgout_live(dbgout_live),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
       // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN1 ---
       // and not `mach_rst`, which `debuggee_reset` is one term of.  See the
@@ -1317,7 +1366,17 @@ module cadr_arty_a7 #(
         .mach_vma(con_vma), .mach_q(con_q), .mach_md(con_md),
         .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
         .mach_rst(con_mach_rst), .mach_boot(con_boot),
-        .no_auto_boot_held(sw0_held), .no_auto_boot_now(sw0_level)
+        .no_auto_boot_held(sw0_held), .no_auto_boot_now(sw0_level),
+        // **THE DEBUG CABLE'S ROLE**, page 0's word 14: `cadr-console
+        // debug-cable-connect` and its opposite, and the four the connector
+        // answers with.  The cable itself is at the top level and not in
+        // here, because a board is always a debuggee and a board with no soft
+        // processing system still has a connector.
+        .dbg_connect(dbg_connect),
+        .dbg_engaged(dbg_engaged),
+        .dbg_foreign(dbg_foreign),
+        .dbg_live(dbg_live),
+        .dbg_active(dbg_active)
     );
 
     // ------------------------------------------- the debug cable's window
@@ -1387,6 +1446,11 @@ module cadr_arty_a7 #(
     assign dbg_in_wr     = 1'b0;
     assign dbg_in_a      = 2'd0;
     assign dbd_to_machine = 16'd0;
+    // And nobody to ask for the debugger's role, there being no console.
+    // **The connector is still there and this board is still a DEBUGGEE** ---
+    // it answers a debugger that plugs into JA, which is the power-on state
+    // of any CADR and needs nothing set.
+    assign dbg_connect   = 1'b0;
 
     // A line with nothing driving it idles high.
     assign soc_uart_tx = 1'b1;
@@ -1396,6 +1460,60 @@ module cadr_arty_a7 #(
   // What leaves on the pin.  One line and not a generate, so that the pin is
   // driven in exactly one place whichever board this is.
   assign uart_rxd_out = soc_uart_tx;
+
+  // --------------------------------------- the debug cable, on Pmod JA
+  //
+  // MIT's whole cable on ONE connector, both directions, four pins each way.
+  // `rtl/plumbing/cadr_dbg_cable.sv` is the connector and the role;
+  // `rtl/plumbing/cadr_dbg_pmod.sv` under it is the carrier.
+  //
+  // **IT IS INSTANTIATED WHATEVER `SOC` SAYS, NOT ONLY ON A BOARD WITH A SOFT
+  // PROCESSING SYSTEM.**  A board is always a DEBUGGEE: it answers a debugger
+  // on the connector exactly as MIT's board answers one on its DBGIN, and
+  // nothing has to be set for that.  So the connector cannot live inside
+  // `g_soc` with the window --- and the pins are the top level's besides,
+  // where an output nothing drives is a PINMISSING.  With no soft system
+  // `dbg_connect` is tied low above and this board is a debuggee and nothing
+  // else, which is what a CADR with one cable in it is.
+  //
+  // **AND IT TAKES THE BOARD'S RESET AND NOT THE MACHINE'S**, for the reason
+  // the DBGIN page gives about its own: modifier bit 1 resets this machine
+  // over this very cable, and a carrier reset by it would forget the request
+  // that asked for it.
+  cadr_dbg_cable u_dbg_cable (
+      .clk(clk), .rst(rst),
+      .connect(dbg_connect), .engaged(dbg_engaged), .foreign(dbg_foreign),
+      .live(dbg_live), .active(dbg_active),
+      .out_req(dbgout_req), .out_wr(dbgout_wr), .out_a(dbgout_a),
+      .out_dbd(dbgout_dbd), .out_ack(dbgout_ack),
+      .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
+      .in_req(cab_req), .in_wr(cab_wr), .in_a(cab_a), .in_dbd(cab_dbd),
+      .in_ack(dbg_in_ack), .in_dbd_out(dbd_from_machine), .in_dbd_oe(dbd_oe),
+      .pin_o(ja_o), .pin_t(ja_t), .pin_i(ja)
+  );
+
+  // The eight pads.  `pin_t` is Xilinx's sense --- HIGH is not driven --- so
+  // the group this board does not own is high-impedance and the far end has
+  // it.
+  for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
+    assign ja[i] = ja_t[i] ? 1'bz : ja_o[i];
+  end
+
+  // Two debuggers at one DBGIN page, which MIT's board cannot have and this
+  // one can.  The near arm is the window in `g_soc` and the far arm the
+  // connector, the first to assert holds until it lifts, and a tie goes to
+  // the window --- `rtl/plumbing/cadr_dbg_join.sv` has the argument.  An
+  // unplugged connector presents zeros, so with nothing in JA this is the
+  // window's cable unchanged, and on a board with no soft system it is the
+  // connector alone.
+  cadr_dbg_join u_dbg_join (
+      .clk(clk), .rst(rst),
+      .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
+      .a_dbd(dbd_to_machine),
+      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
+      .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
+      .holder(dbg_holder)
+  );
 
   // ------------------------------------------------------------ the probe
   //
@@ -1520,6 +1638,12 @@ module cadr_arty_a7 #(
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr,
                    dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit,
+                   // The debug cable's connector: who holds the DBGIN page,
+                   // and the four that say what the connector is doing rather
+                   // than what crosses it.  On a board with no console they
+                   // reach nobody; with one, page 0's word 14 reports them
+                   // and this is a second reader.
+                   dbg_holder, dbg_engaged, dbg_foreign, dbg_live, dbg_active,
                    // The pack side's unanswered memory port, folded one level
                    // down, and the switch value the console reports.
                    hp_fold, sw0_held};

@@ -236,20 +236,47 @@ module cadr_dbg_cable #(
       act_s <= 2'b00;
       act_q <= 1'b0;
       act_t <= ACT_W'(LOSS_T);
+    // **HELD SAYING NOTHING WHILE THIS BOARD IS THE DEBUGGER, AND THE
+    // SYNCHRONISER IS HELD WITH THE TIMER.**  A debugger listens to the
+    // RETURN group, so its timer would be reset by the debuggee's own answers
+    // --- and the tick it stopped being the debugger it would believe
+    // somebody was driving the FORWARD group and start driving the return
+    // one, on top of the debuggee that is still driving it.  Measured: four
+    // pads held from both ends for as long as the timer took to run out.
+    // What a board coming out of the role knows about the connector is
+    // nothing, and nothing is what this says.
+    //
+    // **HOLDING THE TIMER ALONE IS NOT ENOUGH, AND THAT WAS THE FIRST FIX.**
+    // `rx_stb` is `pin_i[RET_STB]` while engaged and `pin_i[FWD_STB]` after,
+    // so the role changing MOVES THIS SYNCHRONISER FROM ONE PIN TO ANOTHER.
+    // With `act_s` and `act_q` left running, the tick the role goes they hold
+    // the far end's return strobe and the new pin holds something else --- and
+    // the comparison one tick later reads as a transition on the forward
+    // group.  The board then believes a debugger has appeared and starts
+    // driving the return group on top of the debuggee that is still answering
+    // it, which is exactly the fault the paragraph above describes, arriving
+    // by the one route the timer's own hold does not cover.  Measured by
+    // `build/dbg_cable.pass`'s role leg: 2,048 pad-ticks driven from both
+    // ends --- four pads for the whole of `LOSS_T` --- at the tick the second
+    // board was told to disconnect.
+    //
+    // **AND WITH THE SYNCHRONISER HELD, HOLDING THE TIMER IS REDUNDANT ---
+    // MEASURED, AND RECORDED SO THAT NOBODY FILES IT AS A HOLE.**  With
+    // `act_s` and `act_q` pinned there is no transition to reset the count,
+    // so it free-runs to saturation and stays there; and `take` refuses the
+    // role unless `active` is already false, which is to say unless the count
+    // has already saturated.  The line is kept because it says what it means
+    // --- a board in the role knows nothing about the connector --- and
+    // because the redundancy is a property of the hold above it rather than
+    // of the counter.
+    end else if (engaged) begin
+      act_s <= 2'b00;
+      act_q <= 1'b0;
+      act_t <= ACT_W'(LOSS_T);
     end else begin
       act_s <= {act_s[0], rx_stb};
       act_q <= act_s[1];
-      // **HELD SATURATED WHILE THIS BOARD IS THE DEBUGGER**, and that is not
-      // tidiness.  A debugger listens to the RETURN group, so its timer would
-      // be reset by the debuggee's own answers --- and the tick it stopped
-      // being the debugger it would believe somebody was driving the FORWARD
-      // group and start driving the return one, on top of the debuggee that
-      // is still driving it.  Measured: four pads held from both ends for as
-      // long as the timer took to run out.  What a board coming out of the
-      // role knows about the connector is nothing, and nothing is what this
-      // says.
-      if (engaged) act_t <= ACT_W'(LOSS_T);
-      else if (act_s[1] != act_q) act_t <= '0;
+      if (act_s[1] != act_q) act_t <= '0;
       else if (act_t != ACT_W'(LOSS_T)) act_t <= act_t + 1'b1;
     end
   end
