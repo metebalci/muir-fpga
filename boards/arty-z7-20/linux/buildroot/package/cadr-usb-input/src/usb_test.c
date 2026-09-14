@@ -515,6 +515,8 @@ static void dump(const struct machine_model *m, unsigned from)
 #define C_MENU 127
 #define C_TAB 15
 #define C_RIGHTALT 100
+#define C_LALT 56
+#define C_DELETE 111
 
 // MIT's own positions, written out rather than looked up in the table the
 // code uses: an expectation computed from the same table would agree with a
@@ -532,6 +534,8 @@ static void dump(const struct machine_model *m, unsigned from)
 #define P_CAPSLOCK 0125
 #define P_TERMINAL 040
 #define P_TAB 022
+#define P_META_L 045
+#define P_RUBOUT 023
 
 int main(int argc, char **argv)
 {
@@ -1183,6 +1187,56 @@ int main(int argc, char **argv)
 		check(h.m.gots == 2 && saw(&h.m, 1, P_CONTROL_L, 1),
 		      "and the last viewer leaving releases it: %u words", h.m.gots);
 		h.kbd_w = h.mouse_w = -1;
+		harness_close(&h);
+	}
+
+	// ---------------------------------------------------------------
+	section("Ctrl-Alt-Del at the board boots the machine");
+	{
+		// **THE WHOLE ROAD, AND IT IS THE TERMINAL'S FIRMWARE AT THE
+		// FAR END OF IT.**  `sys/io1/ukbd.lisp`'s `check-boot` lives in
+		// `cadr-terminal`'s keyboard, because that is where the one
+		// keyboard model is; this section is what says a key pressed
+		// at the board's own USB port arrives there as a HELD key and
+		// completes the sequence.  A scan code that became the wrong
+		// keysym, or a key this program sent as a tap, would type
+		// perfectly well and never boot anything.
+		//
+		// The word is written out rather than built: bits 15-10 ones,
+		// 9-6 zero, and 0o46 in the low six for a cold boot, over the
+		// frame every word carries.  `docs/terminal.md` has the rest.
+		struct harness h;
+		harness_open(&h, work, "boot", 1);
+		h.kbd_w = add_device(&h, USB_KIND_KEYBOARD, "event0");
+		h.mouse_w = -1;
+		feed(h.kbd_w, EV_KEY, C_LCTRL, 1);
+		feed(h.kbd_w, EV_KEY, C_LALT, 1);
+		feed(h.kbd_w, EV_KEY, C_DELETE, 1);
+		settle(&h, 12);
+		check(h.m.gots == 4, "three keys held and the boot word is four words, not %u",
+		      h.m.gots);
+		check(saw(&h.m, 0, P_CONTROL_L, 0) && saw(&h.m, 1, P_META_L, 0)
+		      && saw(&h.m, 2, P_RUBOUT, 0),
+		      "Control, Meta and Rubout go down at their own positions");
+		check(h.m.gots > 3 && h.m.got[3] == 0xF9FC26u,
+		      "the cold boot word goes after Rubout's own: 0x%06x, wanting 0xf9fc26",
+		      h.m.gots > 3 ? h.m.got[3] : 0u);
+		if (h.m.gots != 4)
+			dump(&h.m, 0);
+
+		// ...and no key-up goes until the next key-down, which is the
+		// firmware's `bootflag` reaching this far: the machine has to
+		// read the word before anything lands on top of it.
+		const unsigned after_boot = h.m.gots;
+		feed(h.kbd_w, EV_KEY, C_DELETE, 0);
+		feed(h.kbd_w, EV_KEY, C_LALT, 0);
+		feed(h.kbd_w, EV_KEY, C_LCTRL, 0);
+		settle(&h, 12);
+		check(h.m.gots == after_boot,
+		      "**AND THE THREE KEY-UPS ARE HELD BACK**: %u words since, wanting none",
+		      h.m.gots - after_boot);
+		if (h.m.gots != after_boot)
+			dump(&h.m, after_boot);
 		harness_close(&h);
 	}
 

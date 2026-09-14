@@ -63,13 +63,62 @@
 //     key the machine sees depends on whether shift is down.  Both give the
 //     same character, so nothing downstream can tell.
 //
-// And one thing that is NOT a mapping limit and is worth not confusing with
-// one: **microcode 323's cold-boot test cannot be reached by typing.**  It
-// compares the low six bits of the keyboard word against `0o46`, and on the
-// new keyboard `0o46` is the Status key's position, not Rubout's --- Rubout
-// is `0o23`.  So "hold Rubout at boot for a cold boot" is the OLD Knight
-// keyboard's behaviour and does not happen here.  `input_face.h` has what
-// this program does about the test instead.
+// And one thing that is NOT a mapping limit: **microcode 323's cold-boot test
+// reads the keyboard's own BOOT WORD, and an earlier note here read it as a
+// key position and concluded the opposite.**  The microcode takes the low six
+// bits of the keyboard word and compares them against `0o46`, MIT's comment
+// reading "This is cold-boot if key is RUBOUT" --- and `0o46` is the low six
+// bits of the cold BOOT word, which `ukbd.lisp` gives as "5-0 46 (octal) if
+// cold, 62 (octal) if warm".  So the test is the far end of the boot sequence
+// this file implements: the keyboard reboots the machine through a wire of
+// its own and leaves the word in the register, and the microcode reads it to
+// learn which boot was asked for.  `0o46` is ALSO the Status key's position,
+// which is the coincidence that made the wrong reading easy; Rubout is
+// `0o23`.  `input_face.h` has the flush, which is this program's part in it.
+//
+// ## The boot sequence is the KEYBOARD's, and it is not the autoboot test
+//
+// **THE KEYBOARD BOOTS THE MACHINE, AND THE MACHINE IS NOT ASKED.**  The
+// keyboard has its own microprocessor and `sys/io1/ukbd.lisp` is its
+// firmware.  Its `check-boot` runs after every key-down: with the Controls
+// and Metas held along with Rubout it sends the COLD boot code, and with
+// Return the WARM one, and the I/O board decodes that word itself and pulls
+// `-BOOT*` --- no microcode is involved and no register is read.  The
+// firmware's own comment: "Is request to boot machine if both controls and
+// both metas are held down, along with rubout or return."
+//
+// Then it holds its tongue.  `bootflag` is set after the boot word and
+// cleared at the next key-down, and while it is set NO key-up code is sent:
+// "This gives the machine time to load microcode and read the character to
+// see whether it is a warm or cold boot, before sending any other characters,
+// such as up-codes."  That is the whole of the firmware's part and it is
+// `check_boot` and `hold_back` below, in the two places a word is queued.
+//
+// **WHICH Controls and Metas IS A SETTING**, `--keyboard-boot`, muir's
+// `BootKeys`: the keyboard's own sequence is both of each, and a host
+// keyboard rarely has two Controls and two Metas free to map, so the default
+// is either Control and either Meta --- which is Ctrl-Alt-Del pressed on any
+// keyboard anyone has, `Alt_L` being Meta in the built-in mapping.
+//
+// **IT IS NOT THE AUTOBOOT TEST, AND IT IS WHAT THAT TEST READS.**  Microcode
+// 323 at `(LOC 6)` reads the keyboard's STATUS register and takes a cold boot
+// when `KBD READY` is clear: that is the machine asking, once, as it starts,
+// whether anybody is typing, where the sequence here is the keyboard telling
+// the machine to start over at any time through a wire of its own.  They meet
+// four instructions later, where the microcode reads `764100` and cold-boots
+// on `0o46` in the low six bits --- which is the word this file sends.  So
+// the hold-back matters at both ends: the word has to still be in the
+// register when the microcode looks.  `input_face.h` has the flush, which is
+// the same register's other hazard.
+//
+// **Held keys only.**  A key tapped rather than held --- behind a prefix, or
+// with the Shift worked around it --- is not down here and does not complete
+// the sequence, which is muir's rule and the same one for the same reason: a
+// tap is a key the machine sees go down and come up in one breath, and the
+// firmware tests the keys that are DOWN.  The real firmware compares whole
+// bytes of its bit map, so on the keyboard itself another key down in the
+// same byte as one of the four --- a Shift, at 24 or 25 beside the Controls
+// --- defeats the sequence; here, as in muir, only the keys named count.
 //
 // ## The mapping is a value here, not a table
 //
@@ -101,6 +150,63 @@ static inline uint32_t key_up_down(unsigned position, int up)
 {
 	return KEY_FRAME | (up ? KEY_UP : 0u) | (position & 0177u);
 }
+
+// `keyboard::boot`: the two boot codes.  `ukbd.lisp`'s protocol section gives
+// the word as "15-10 1, 9-6 0, 5-0 46 (octal) if cold, 62 (octal) if warm",
+// over the same frame every other word carries.  The I/O board decodes bits
+// 13-6 of it and nothing else --- ones in 13-10 over zeros in 9-6 --- and
+// pulls `-BOOT*`, which is why the low six bits may say which boot without
+// the decode caring.
+#define KEY_BOOT_COLD 046u
+#define KEY_BOOT_WARM 062u
+
+static inline uint32_t key_boot_word(int cold)
+{
+	return KEY_FRAME | (077u << 10) | (cold ? KEY_BOOT_COLD : KEY_BOOT_WARM);
+}
+
+// The two keys the sequence ends on, by position.  `check-boot` names them
+// itself --- "rubout 23, return 136" --- and MIT's table has them there.
+#define KEY_POS_RUBOUT 0023u
+#define KEY_POS_RETURN 0136u
+
+// **THE KEYS THE BOOT SEQUENCE NEEDS**, `--keyboard-boot`: how many Controls
+// and how many Metas have to be held with Rubout or Return.  muir's
+// `keyboard::BootKeys`, and for muir's reason: the CADR keyboard's own
+// sequence is BOTH Controls and BOTH Metas, and a host keyboard rarely has
+// two of each free to map, so the keys to hold are a setting rather than a
+// fact.  One of a word is either key of its pair, two is both.
+struct key_boot {
+	unsigned char controls, metas;
+};
+
+// The four spellings, which are the only four settings there are, in the
+// wording a refusal prints.
+#define KEY_BOOT_SPELLINGS \
+	"`ctrl,meta`, `ctrl,ctrl,meta`, `ctrl,meta,meta` or `ctrl,ctrl,meta,meta`"
+
+// `BootKeys::parse`: `ctrl` and `meta`, comma-separated, counted, in any
+// order, and nothing else.  0, or -1 having written muir's own refusal into
+// `why`.  Rubout and Return are never in it.
+int key_boot_parse(const char *s, struct key_boot *out, char *why, unsigned n);
+
+// `BootKeys::fmt`: the spelling `key_boot_parse` reads, Controls first.
+void key_boot_spelling(struct key_boot b, char *out, unsigned n);
+
+// **What the keyboard's own firmware did with the last key**, over and above
+// the mapping: muir's `Firmware`, which its trace says on the line after what
+// the key became.  Cleared at every key event and set by the two places a
+// word is queued.
+enum key_firmware {
+	KEY_FW_NONE = 0,
+	// The sequence was complete after this key-down and the boot word
+	// went after its own word.
+	KEY_FW_BOOT_COLD,
+	KEY_FW_BOOT_WARM,
+	// The key-up was held back: `bootflag` is set, and no key-up goes
+	// until the next key-down.
+	KEY_FW_HELD_BACK
+};
 
 // How many words wait here while the machine is not reading the keyboard.
 // muir's `keyboard::BACKLOG`, and for muir's reason: the keyboard's own
@@ -148,6 +254,23 @@ struct key_state {
 	// What this has refused, for a status line: a press beyond the
 	// backlog, and a keysym nothing maps.
 	unsigned long refused, unbound;
+	// The keys the boot sequence needs: `--keyboard-boot`, the default
+	// `ctrl,meta`.  `key_state_init` sets it; `key_boot_set` moves it.
+	struct key_boot boot;
+	// **The firmware's `bootflag`**: the boot word has gone, and no key-up
+	// goes until the next key-down.  Not a fourth piece of the state
+	// machine in `key_event` --- that function never reads it.  It is the
+	// firmware's, under the mapping, read and written in the two places a
+	// word is queued, which is where the firmware keeps it.
+	int hold_back;
+	// What the firmware's part did with the last key, for the trace and
+	// for the check: `enum key_firmware`.
+	int firmware;
+	// `--keyboard-boot-trace`: say on the log when a key-up is held back.
+	int boot_trace;
+	// How many boot words have gone, and how many key-ups were held back
+	// behind them, for the summary line.
+	unsigned long boots, held_back;
 	// **AND WHAT WAS DROPPED WITHOUT BEING REFUSED, WHICH MUST STAY 0.**
 	// `push` is silent when the queue is full, so a caller that asked for
 	// room for one word and then pushed four left the machine half a
@@ -162,6 +285,17 @@ void key_state_init(struct key_state *k);
 
 // `Keyboard::with_mapping`: a mapping somebody read from a file, copied in.
 void key_state_init_with(struct key_state *k, const struct key_map *map);
+
+// `Keyboard::set_boot_keys`: the keys the boot sequence needs from now on.
+void key_boot_set(struct key_state *k, struct key_boot b);
+
+// `--keyboard-boot-trace`: say when a key-up is held back behind a boot word.
+// The boot word itself is said either way --- it is one line, it is rare, and
+// a machine asked to reboot because somebody typed a chord is exactly what
+// this program's log is for --- and this adds the key-ups, which are one line
+// a keystroke and would be noise otherwise.  muir prints both under
+// `--keyboard-mapping-trace`, whose per-keysym line this program has not got.
+void key_boot_traced(struct key_state *k, int on);
 
 // A key from the viewer, by X11 keysym, going down or coming up.
 // `muir::terminal::keyboard::Keyboard::key`.

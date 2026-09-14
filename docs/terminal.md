@@ -25,7 +25,8 @@ keyboard and mouse later, when the I/O board exists.
     cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
                   [--window ADDR] [--interval-ms N] [--no-rre]
                   [--no-guard] [--no-input] [--input ADDR]
-                  [--keyboard-mapping FILE] [--once]
+                  [--keyboard-mapping FILE] [--keyboard-boot KEYS]
+                  [--keyboard-boot-trace] [--once]
 
 It maps 128 KB at `0x1C00_0000` through `/dev/mem`. It copies the visible
 23,112 words out of that once a frame while anybody is watching. It serves them
@@ -349,11 +350,23 @@ refused into one that binds something.
 
 ### And one thing that is not a mapping limit
 
-**Microcode 323's cold-boot test cannot be reached by typing.** The microcode
-compares the low six bits of the keyboard word against `0o46`. On this keyboard
-`0o46` is the Status key's position and Rubout is `0o23`, so "hold Rubout at
-boot for a cold boot" is the old Knight keyboard's behaviour and does not
-happen here. What the test does mean for this program is in the section below.
+**Microcode 323's cold-boot test reads the BOOT WORD and not a key position,
+and this document had it the other way round.** The microcode takes the low six
+bits of the keyboard word and compares them against `0o46`, with MIT's own
+comment "This is cold-boot if key is RUBOUT". `0o46` is the low six bits of the
+keyboard's own COLD BOOT word, which `sys/io1/ukbd.lisp` gives as "5-0 46
+(octal) if cold, 62 (octal) if warm" and which the keyboard sends when its boot
+sequence ends on Rubout. So the test is the other half of the boot sequence
+below: the keyboard reboots the machine through a wire and leaves the word in
+the register, and the microcode reads it to learn which boot was asked for.
+
+What made the wrong reading easy is that `0o46` is also the Status key's
+position on this keyboard, and Rubout is `0o23`. That is a coincidence of two
+numbers rather than a mechanism, and the version of this paragraph that took
+`0o46` for a key position concluded from it that nothing anybody typed could
+reach the test. The microcode listing says otherwise:
+`(JUMP-EQUAL MD (A-CONSTANT 46) COLD-BOOT)` at control store `0o16`, four
+instructions into `(LOC 6)`.
 
 ## The autoboot trap, and the program's part in it
 
@@ -364,9 +377,10 @@ happen here. What the test does mean for this program is in the section below.
    ((VMA) (A-CONSTANT 17772045))        ;Unibus 764112, the KBD CSR
     (JUMP-IF-BIT-CLEAR (BYTE-FIELD 1 5) MD COLD-BOOT)
 
-`KBD READY` clear is a cold boot. Ready is a warm one. So a word waiting at
-that register when the microcode starts sends the machine down a path nobody
-asked for.
+`KBD READY` clear is a cold boot. Ready is a warm one, unless the word in the
+register is the cold boot word --- the microcode goes on to read `764100`, take
+its low six bits, and cold-boot on `0o46`. So a word waiting at that register
+when the microcode starts sends the machine down a path nobody asked for.
 
 The fabric's legs against that are in `rtl/plumbing/cadr_input_cables.sv`'s own
 header: nothing but an AXI write can make a strobe, and a machine reset empties
@@ -377,6 +391,115 @@ device the kernel has been buffering must also drain that device before its
 first write, because the buffering is on the far side of this seam and no
 register here can see it. `cadr-usb-input` drains every device it opens, for
 this reason.
+
+## The keyboard boots the machine: `--keyboard-boot`
+
+**A CADR is booted from its keyboard, and the machine is not asked.** Hold the
+Controls and the Metas, press Rubout, and the machine cold-boots. Press Return
+instead and it warm-boots. No program decides it: the keyboard's word reaches a
+comparator on the I/O board, and the comparator pulls a wire that presets the
+processor's `RUN` and forces the boot trap. The microcode's part comes after
+the machine has already been restarted, and it is only to read which boot was
+asked for.
+
+**The keyboard decides this, not the machine.** The keyboard has its own
+microprocessor and `sys/io1/ukbd.lisp` in the System 100 sources is its
+firmware. Its `check-boot` routine runs after every key-down. Its own comment
+says what it is for: "Is request to boot machine if both controls and both
+metas are held down, along with rubout or return." The key positions are MIT's
+own, Control at `0o20` and `0o26`, Meta at `0o45` and `0o165`, Rubout at
+`0o23` and Return at `0o136`.
+
+**The boot word is a word on the same cable as any other.** Bits 15 to 10 are
+ones, bits 9 to 6 are zero, and the low six bits are `0o46` for a cold boot and
+`0o62` for a warm one. The frame and the source identifier are the ones every
+word carries, so a cold boot word is `0xF9FC26` and a warm one `0xF9FC32`.
+The I/O board compares bits 13 to 6 of the word and nothing else, and pulls
+`-BOOT*`. So the low six bits say which boot it is and the board does not look
+at them. The microcode reads the word at `(LOC 6)` and takes `0o46` for cold.
+
+**Then the keyboard holds its tongue.** The firmware sets `bootflag` after the
+boot word and clears it at the next key-down, and while it is set no key-up
+code is sent at all. Its own comment: "This gives the machine time to load
+microcode and read the character to see whether it is a warm or cold boot,
+before sending any other characters, such as up-codes." The card's three
+74LS164s shift each word in over the last, so a key-up sent behind the boot
+word would replace it in the register the microcode is about to read.
+
+**Which Controls and Metas is a setting.** The keyboard's own sequence is both
+Controls and both Metas. A host keyboard rarely has two Controls and two Metas
+free to map, so the keys to hold are `--keyboard-boot`, exactly as they are in
+muir. `ctrl` is MIT's Control key and `meta` its Meta. One of a word is either
+key of its pair and two is both. The order does not matter and neither does
+the case or the spaces around a word.
+
+    ctrl,meta              either Control and either Meta. The default, and
+                           Ctrl-Alt-Del on any keyboard anybody has, `Alt_L`
+                           being Meta in the built-in mapping
+    ctrl,ctrl,meta         both Controls and either Meta
+    ctrl,meta,meta         either Control and both Metas
+    ctrl,ctrl,meta,meta    both of each, the CADR keyboard's own sequence
+
+Rubout and Return are never in it. They are the keys the sequence ends on.
+Anything else is refused with those four named, in muir's own words, and the
+program stops rather than falling back on a default. That is the other way
+round from `--keyboard-mapping`, which falls back and says so: a mapping is a
+file on a card that a typo must not cost the screen for, and a boot sequence
+quietly set to something else is a machine that reboots when nobody asked.
+
+**Only keys that are HELD count.** A key the program taps rather than holds
+does not complete the sequence. That is what a key reached behind a prefix is,
+and what a key whose plane the viewer is not holding is, because the Shift is
+worked around it. A viewer holding Shift with Control, Meta and Rubout
+therefore does not boot the machine, and neither does a person at the real
+keyboard: the firmware compares whole bytes of its bit map, and Shift at `0o24`
+and `0o25` sits in the same byte as the Controls at `0o20` and `0o26`.
+
+**The held keys are one set across every source.** There is one keyboard model
+in the program, and a viewer's keys and the board's own USB keyboard both go
+into it. `KeyEvent` from RFB and the input link from `cadr-usb-input` are two
+doors into the same `struct key_state`, and `check-boot` reads the keys that
+are down in it. So a chord held half at the board and half in a window is a
+chord, and a Control held at the board completes a sequence somebody finishes
+in a viewer. That is the keyboard the machine has: one cable, one shift
+register, and a machine that works out what is held from the stream on it.
+
+**What it says.** One line when a boot word goes, naming cold or warm. It is
+said whether or not anything is traced, because this program's log is a low
+rate one and a machine being asked to start over is exactly what it is for.
+`--keyboard-boot-trace` adds a line for each key-up that was held back behind
+the word, which is one line a keystroke and would be noise otherwise. muir
+says both under `--keyboard-mapping-trace`, whose line for every keysym this
+program has not got.
+
+**The other half is the fabric's, and it is what makes the machine restart.**
+This program sends the word. What turns it into a boot is a comparator on the
+I/O board: MIT's own is the 25LS2521 at IOBCSR `0A20`, whose `-EQUAL` becomes
+`-BOOT*` through a 74S04 and an open-collector 74S38, and that reaches the
+processor as `-BOOT1`, where it meets the light panel's `-BOOT2` and the debug
+cable's `PROG.BOOT`. Until `rtl/machine/cadr_io_board.sv` decodes the word, a
+boot word sent from here arrives in the card's keyboard register like any other
+word and the machine is not restarted by it. The word is right either way, and
+`muir`'s `docs/keyboard-boot.md` has the wire link by link.
+
+**It belongs in `fpgarc`** with the rest of this program's flags. That file is
+one flag a line in muir's own rc format on the packs partition, and
+`docs/chaosnet.md` describes it; the terminal reads its command line today and
+`S85cadr-terminal` does not read the file yet. When it does, the line is the
+flag as it stands:
+
+    --keyboard-boot ctrl,ctrl,meta,meta
+
+**It is not the autoboot test above, and it is what that test reads.** The two
+are different things and they meet. The autoboot test is the machine asking,
+once, as it starts, whether anybody is typing; the boot sequence is the
+keyboard telling the machine to start over, at any time, through a wire of its
+own. They meet because the keyboard leaves its boot word in the register and
+holds the up-codes back, and the microcode then reads that word: `0o46` in the
+low six bits is the cold boot the sequence asked for. So the flush this program
+does before it binds its socket matters for the sequence too --- a word left
+over from a previous run in that register is a word the microcode will read as
+an answer to a question it has not asked yet.
 
 ## The mouse
 
@@ -490,7 +613,7 @@ channel's, and nothing in the fabric has to know a viewer exists.
 `make -C boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src check`
 runs on the build host, with no board. The server is driven from screens made
 in the check, and a viewer written for the purpose sits on a real loopback
-socket. **736 checks, 0 failures**, then **42 mutations, 42 caught, 0 survived,
+socket. **952 checks, 0 failures**, then **56 mutations, 56 caught, 0 survived,
 0 broken.** The whole thing takes a few minutes.
 
 **And `make check` at the repository root runs it now**, as `terminal.pass`,
@@ -596,6 +719,41 @@ And, for the mapping file:
   built-in mapping and again under a file that rebinds it, and the two give
   different positions on the wire. Without this pair the mapping could be read
   correctly and then not used.
+
+The boot sequence has twelve of its own.
+
+- **The chord's keys against the firmware's own positions.** Control at `0o20`
+  and `0o26`, Meta at `0o45` and `0o165`, Rubout at `0o23` and Return at
+  `0o136`, which are the numbers `check-boot` names.
+- **Both words**, against the literals `0xF9FC26` and `0xF9FC32`, and against
+  the board's own decode: ones in bits 13 to 10 over zeros in 9 to 6.
+- **Ctrl-Alt-Del**, which is the default sequence, with the boot word arriving
+  after Rubout's own word and not instead of it.
+- **The right-hand Control and Meta with Return**, which is the warm boot and
+  the other key of each pair.
+- **Rubout tested first.** With Rubout and Return both down the boot is cold,
+  as the firmware's own order makes it.
+- **The key-ups held back**, and let go again by the next key-down. Three
+  releases behind the boot word send nothing at all, and the key pressed after
+  them sends its own word and then its release.
+- **A chord with too few Controls held does not boot**, and the second Control
+  completes it. The same for the Metas, because the setting is two counts and
+  each is read in a place of its own.
+- **A key tapped rather than held does not complete the sequence**, which is
+  what a viewer holding Shift with the chord does.
+- **The flag's grammar**: the four spellings, the order and the case and the
+  spaces free, and eleven refusals including `ctrl` alone, three of a word, and
+  `rubout`. Each refusal has to name the four spellings.
+- **The boot word is paced like any other word**, one at a time and no closer
+  than the interval, at a machine that reads slowly.
+- **And it asks for its own room.** It is a second word behind the key-down
+  that completed the sequence, so at a full queue it is refused and counted
+  rather than dropped into nothing with the hold-back set behind it.
+- **And a chord typed at the board's own USB keyboard boots the machine**, over
+  the input link, including one held half at the board and half in a window.
+  The `usb_input` check holds the same road from the scan codes up: the USB
+  program sends `Control_L`, `Alt_L` and `Delete` from a device, and the
+  machine gets the three positions and then the cold boot word.
 
 **And two real screens, when they are there.** `vendor/screen/` is gitignored
 like the rest of `vendor/`. So a fresh clone runs the anchors and the check's
