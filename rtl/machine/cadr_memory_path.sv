@@ -241,9 +241,12 @@ module cadr_memory_path (
     input  var logic        kbd_strobe,
     input  var logic [23:0] kbd_code,
     // `-BOOT*` off the card, the keyboard's boot word decoded: a 4 us pulse
-    // onto backplane pin `CP1`, which reaches the processor as `-BOOT1`.
-    // The gate that makes `-BOOT` of it is in `cadr_machine.sv`, where the
-    // light panel's `-BOOT2` and the debug cable's `PROG.BOOT` meet it.
+    // out of the card's slot on `CP1`, joined by a hand-run backplane wire to
+    // the bus interface's bused `CR1`, where it is `-LM BOOT` and reaches the
+    // processor as `-BOOT1`; the wire is assumed, and the join in
+    // `cadr_machine.sv` says on what.  The gate that makes `-BOOT` of it is
+    // there too, where the light panel's `-BOOT2` and the debug cable's
+    // `PROG.BOOT` meet it.
     output var logic        n_boot_star,
     input  var logic [6:0]  mouse_lines,
 
