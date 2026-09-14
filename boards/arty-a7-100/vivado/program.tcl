@@ -16,16 +16,38 @@
 # default for the same reason `tick.tcl` has no fallback period: a default
 # that is right today is a script that quietly does the wrong thing tomorrow.
 #
-# WHAT SAYS IT WORKED IS THE DONE BIT, not the absence of an error.
+# WHAT SAYS IT WORKED IS THE BUILD THE PART READS BACK, and DONE second.
 # `program_hw_devices` can complete against a device that did not take the
 # configuration, which is the same shape as every other failure in this
 # project's tooling: no error, and a plausible result.
+#
+# **AND DONE ALONE CANNOT SEE THAT, WHICH THIS BOARD PROVED.**  On a part that
+# was already configured DONE is high before the download and high after it.
+# Three downloads in six did not take here while this script reported that
+# they had, and what caught it was the memory window's identity read --- an
+# instrument in the design, not anything the programming did.
+#
+# So the flow writes the commit into `BITSTREAM.CONFIG.USERID`, the part reads
+# it back over JTAG as its USERCODE, and this compares the two.
+# `tools/build_stamp.tcl` holds the format, the two Vivado property names and
+# what was measured about them.
+#
+# WHAT THIS WITNESS CAN AND CANNOT TELL.  It says the part holds THE BUILD IN
+# THIS FILE.  It cannot tell a part that already held the same build from a
+# download that did nothing --- both leave the part holding this build, and
+# the line printed says which of the two it saw.  A bitstream that names no
+# build at all, which is anything built before the flows stamped them, falls
+# back to DONE and says so.
 #
 # **AND THERE IS NO PROCESSING SYSTEM TO START AFTERWARDS.**  On the Arty
 # Z7-20 a `.bit` over JTAG leaves the PS in reset and nothing works until
 # `ps7_init` has run.  Here the fabric is the whole design: the machine starts
 # when the MMCM locks, some tens of microseconds after DONE goes high, and
 # nobody has to be at the board.
+
+# Resolved from this file rather than from the working directory, so that the
+# script runs from anywhere and so that a copy of the tree tests its own copy.
+source [file join [file dirname [file normalize [info script]]] .. .. .. tools build_stamp.tcl]
 
 set url   [expr {[info exists ::env(BOARD_URL)] ? $::env(BOARD_URL) : "localhost:3121"}]
 set bit   [expr {[info exists ::env(BIT)] ? $::env(BIT) : "build/a7-bitstream/cadr_arty_a7.bit"}]
@@ -42,6 +64,12 @@ if {![file exists $bit]} {
     puts "PROG: $bit is missing; build it first"
     exit 1
 }
+
+# What the part must read back when this has worked.  Read before anything is
+# opened, because a bitstream whose own header and whose sidecar disagree is
+# not a file to program a board with.
+set want [build_stamp_expected "PROG:" $bit]
+if {$want eq "!"} { exit 1 }
 
 open_hw_manager
 connect_hw_server -url $url
@@ -91,20 +119,25 @@ current_hw_device $dev
 refresh_hw_device -update_hw_probes false $dev
 
 set before [get_property REGISTER.IR.BIT5_DONE $dev]
-puts "PROG: DONE before programming: $before"
+set ubefore [build_stamp_usercode $dev]
+puts "PROG: DONE before programming: $before, build [expr {$ubefore eq "" ? {not readable} : $ubefore}]"
 
 set_property PROGRAM.FILE $bit $dev
 program_hw_devices $dev
 refresh_hw_device -update_hw_probes false $dev
 
 set after [get_property REGISTER.IR.BIT5_DONE $dev]
-puts "PROG: DONE after programming:  $after"
+set uafter [build_stamp_usercode $dev]
+puts "PROG: DONE after programming:  $after, build [expr {$uafter eq "" ? {not readable} : $uafter}]"
 if {$after != 1} {
     puts "PROG: FAILED --- the device did not assert DONE. It has not taken the"
     puts "PROG: configuration, whatever program_hw_devices reported."
     exit 1
 }
-puts "PROG: programmed [file tail $bit] --- DONE is high"
+if {![build_stamp_verdict "PROG:" $want $ubefore $uafter]} { exit 1 }
+# Not "DONE is high" any more: the lines above say what was checked, and
+# DONE was never the thing worth summarising.
+puts "PROG: programmed [file tail $bit]"
 puts "PROG: **THE LAMP NUMBERS ON THIS BOARD ARE NOT THE OTHER BOARD'S.**"
 puts "PROG: This board silkscreens its four green LEDs LD4 to LD7 and its four"
 puts "PROG: tricolour ones LD0 to LD3. Expect the green LD5 blinking at about"
