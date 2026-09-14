@@ -814,7 +814,7 @@
 @mutation the-bridge-holds-the-word-past-its-cycle
 @check memory_path
 @file rtl/plumbing/cadr_xbus_ddr.sv
-@note METE'S DECISION, HELD: an unanswered read gives MD zero.  `rdata` is
+@note DECIDED AND HELD: an unanswered read gives MD zero.  `rdata` is
 @note the slave's driver onto MEM<31:0>; held across cycles it hands MD a word
 @note on every cycle nothing answered, because `cadr_memory_path.sv` falls
 @note through to `memory_rdata` and -LOADMD is asserted on the NXM timer's
