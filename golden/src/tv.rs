@@ -11,12 +11,14 @@
 //! (`CLOCK<1:0>`, `BOW`, `INTR ENB`), bit 4 the vertical flag --- a flop of
 //! its own, **preset once every [`FRAME_NS`]** by the sync program's start of
 //! frame and **clocked by a write of the register with the written bit 4 as
-//! its data** --- and bits 5 to 7 read as zero.  Registers 1 to 3 are the
-//! sync program RAM's data, pointer and enable; 4 to 7 "respond but don't do
-//! anything".  `SEND INTR`, what the board puts on `-XBUS.INTR`, is the flag
-//! with the enable up.  The device answers in no time of its own
-//! (`IDEAL_DEVICE_NS`), so a read acknowledges 140 ns after the grant and a
-//! write at 80, exactly as the disk's registers do.
+//! its data** --- and bits 5 to 7 read as zero, bit 7 because the board
+//! grounds it and bits 5 and 6 because muir models no sync generator.
+//! Registers 1 to 3 are the sync program RAM's data, pointer and enable;
+//! register 4 is the Colour register, whose map is not on the board; and only
+//! 5 to 7 "respond but don't do anything".  `SEND INTR`, what the board puts
+//! on `-XBUS.INTR`, is the flag with the enable up.  The device answers in no
+//! time of its own (`IDEAL_DEVICE_NS`), so a read acknowledges 140 ns after
+//! the grant and a write at 80, exactly as the disk's registers do.
 //!
 //! **Why a scripted program and not the band.**  Measured on muir's `rtl`
 //! engine: MIT's boot PROM never addresses the TV in its 600,000

@@ -855,6 +855,18 @@ CHECKS = {
         "tb": "tb/cadr_probe_jtag_tb.tcl",
         "golden": None,
     },
+    # The two programming scripts, against a stubbed hardware manager.  Three
+    # sources because the decision is one implementation read by both boards:
+    # a record aims at each, which is what `check_coverage` asks for and what
+    # keeps the shared file from being the one nothing tests.
+    "program_tcl": {
+        "kind": "tcl",
+        "sources": ["boards/arty-z7-20/vivado/program.tcl",
+                    "boards/arty-a7-100/vivado/program.tcl",
+                    "tools/build_stamp.tcl"],
+        "tb": "tb/cadr_program_tb.tcl",
+        "golden": None,
+    },
     # The top level, and the only check that is lint alone: Verilator has no
     # `MMCME2_BASE`, so `cadr_arty` cannot be simulated. What lint holds is
     # the port list and the `witness` fold --- an output left off the
@@ -1562,7 +1574,14 @@ def copy_tree(dest, with_golden=False, rev=None):
     # the trap CLAUDE.md records --- `git archive` refuses a pathspec matching
     # nothing, and `--since` names revisions older than the directory --- and
     # the `cat-file -e` filter below is what makes it safe.
-    dirs = ["rtl", "tb", "boards", "third_party"] + (["golden"] if with_golden else [])
+    # And `tools`: both `program.tcl`s source `tools/build_stamp.tcl` for the
+    # build a bitstream names, so a copy without it is a copy where neither
+    # script runs at all --- every record "caught" for the wrong reason and
+    # the baseline BROKEN.  It is 108 KB and `tools/` arrives at 2e54886, well
+    # inside the history `--since` reaches, so the filter earns its keep here
+    # rather than being tested by it.
+    dirs = ["rtl", "tb", "boards", "third_party",
+            "tools"] + (["golden"] if with_golden else [])
     if rev:
         # A directory that did not exist at `rev` is not an error, and this is
         # not hypothetical: `--since` names EARLIER revisions on purpose, and

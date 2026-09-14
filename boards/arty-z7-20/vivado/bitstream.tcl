@@ -523,7 +523,21 @@ if {[llength $paths]} {
     puts "BIT: no timing path reported --- timing is met"
 }
 
-# --- 3. and is it a bitstream?
+# --- 3. and is it a bitstream, and does it say which tree it came from?
+#
+# The commit goes into `BITSTREAM.CONFIG.USERID`, which the part reads back
+# over JTAG as its USERCODE, so `program.tcl` can tell that a download took on
+# a part that was already configured --- which the DONE bit cannot.  A dirty
+# tree is recorded and never refused.  `tools/build_stamp.tcl` has the format,
+# the two property names and what was measured about them, and it also sets
+# `BITSTREAM.CONFIG.USR_ACCESS` to the same value: **nothing reads that one
+# back yet**, and a `USR_ACCESSE2` in the fabric with a console word to print
+# it is a slice of its own.
+source [file join [file dirname [file normalize [info script]]] .. .. .. tools build_stamp.tcl]
+set stamp [build_stamp_of_tree]
+puts "BIT: build [lindex $stamp 0] --- commit [lindex $stamp 1], tree [lindex $stamp 2]"
+build_stamp_apply [current_design] [lindex $stamp 0]
+
 set bit $outdir/cadr_arty.bit
 write_bitstream -force $bit
 if {![file exists $bit]} {
@@ -537,5 +551,6 @@ if {$size < 3000000} {
     puts "BIT: FAILED --- $bit is $size bytes, too small to configure an xc7z020"
     exit 1
 }
+if {![build_stamp_stamped "BIT:" $bit $stamp]} { exit 1 }
 puts "BIT: wrote $bit, $size bytes"
 puts "BIT: part $part, reports in $outdir"

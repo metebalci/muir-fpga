@@ -19,6 +19,31 @@ GOLDEN := $(CARGO) run --quiet --manifest-path golden/Cargo.toml
 
 VFLAGS := --cc --exe --build -Wall
 
+# **A RECIPE THAT FAILS LEAVES NO TARGET BEHIND.**  Without this, a rule whose
+# command redirects into `$@` leaves whatever the command managed to write ---
+# and `$(BUILD)/boot_prom.hex` is written by `... --bin prom > $@`, so a cargo
+# failure left a ZERO-BYTE file that make then believed was up to date.  An
+# empty `$$readmemh` is a WARNING, not an error, so the control store
+# elaborates empty and the machine runs zeros: the check fails on the symptom
+# twenty lines below the one line that named the cause.  That is the same
+# shape as the stale binary carrying another machine's PROM path, and this
+# closes the half of it make can close.
+#
+# Surveyed before it was added: thirteen recipe lines here redirect into `$@`
+# and six compile or link into it, the two expensive traces already wrote
+# `$@.part` and renamed, no recipe anywhere reads its own target, and no rule
+# ignores an error with a `-` prefix or `|| true` after a command that has
+# already written one.  So nothing depended on a partial target surviving.
+# Make already deletes a target when it is interrupted; this extends that to a
+# recipe that fails, which is what the GNU manual says it is for.
+#
+# One target here is a DIRECTORY, `$(BUILD)`, and make deletes with `unlink`.
+# If its `mkdir -p` ever failed, the deletion would fail too and print
+# `unlink: ... Is a directory` on top of an error that had already stopped the
+# run.  That is noise in a case that is fatal anyway, which is why the
+# directory is not exempted: an exemption is a thing to keep in step.
+.DELETE_ON_ERROR:
+
 .PHONY: check cables ps7 ps7-cora ps7-init ps7-init-cora current mutants \
         mutants-selftest probe-selftest \
         disk-golden disk-boot-golden iob-golden busint-regs-golden muir-pin clean
@@ -43,7 +68,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/arty_a7.pass \
        $(BUILD)/a7_mem.pass $(BUILD)/soc.pass \
        $(BUILD)/probe.pass \
-       $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
+       $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
+       $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
        $(BUILD)/gp1_split.pass $(BUILD)/tv.pass \
@@ -1585,6 +1611,36 @@ $(BUILD)/probe.pass: $(BUILD)/obj_probe/Vcadr_probe_harness \
 $(BUILD)/probe_jtag.pass: boards/arty-z7-20/vivado/probe.tcl tb/cadr_jtag_chain.tcl \
                           tb/cadr_probe_jtag_tb.tcl | $(BUILD)
 	OUTDIR=$(BUILD)/probe_jtag $(TCLSH) tb/cadr_probe_jtag_tb.tcl
+	@touch $@
+
+# --------------------------------------------- what says a download took
+#
+# The other script that needs a board, held the same way.  Both `program.tcl`s
+# used to decide that a download had worked from the DONE bit alone, and DONE
+# is already high on a part that was configured before the run --- so the one
+# witness read the same whether the configuration took or not.  On the Arty
+# A7-100 three downloads in six did not take while the script said they had,
+# and what caught it was an identity read out of the design.
+#
+# The scripts compare the build the part reads back over JTAG with the build
+# the bitstream names, which `tools/build_stamp.tcl` writes into
+# `BITSTREAM.CONFIG.USERID` at the other end.  This runs both scripts against
+# a stubbed hardware manager, ten cases apiece, and asserts, for each, the
+# LINE it must print --- because "the part already held this build" and "the
+# download took" are two different findings with one exit status.
+#
+# IN `check`: no Vivado, no cable, no bitstream, and 0.08 s measured.  Three
+# records in `mutations/list.txt` aim at it, one at each source, so nothing
+# here needs an exemption.
+#
+# WHAT IT CANNOT SAY is in `tb/cadr_program_tb.tcl`'s header: the USERCODE is
+# a stub answering what the case says, and that a part really reads its
+# bitstream's USERID back there is read out of the BSDL and Vivado's device
+# tables and has not been measured on a board by anything in this repository.
+$(BUILD)/program_tcl.pass: boards/arty-z7-20/vivado/program.tcl \
+                           boards/arty-a7-100/vivado/program.tcl \
+                           tools/build_stamp.tcl tb/cadr_program_tb.tcl | $(BUILD)
+	OUTDIR=$(BUILD)/program_tcl $(TCLSH) tb/cadr_program_tb.tcl
 	@touch $@
 
 # ------------------------------------------- the hardware capture, checked
