@@ -52,9 +52,10 @@ were compared one at a time against `boards/arty-z7-20/cadr_arty.xdc` and
 against both master files. The system clock, all six RGB LED pins and all
 sixteen Pmod pins are identical, both boards being the same `clg400` package
 laid out alike. The two buttons are the Arty's first two with their indices
-exchanged: the Arty's `btn[0]` is D19 and this board's is D20. So the one pin a
-reader would get right from memory is the one that is wrong, which is why every
-pin here comes from the file.
+exchanged: the Arty's `btn[0]` is D19 and `btn[1]` is D20, and this board's
+`btn[0]` is D20 and `btn[1]` is D19. So the two numbers a reader would carry
+over from the other board are both wrong, which is why every pin here comes
+from the file.
 
 ## What is here
 
@@ -148,24 +149,26 @@ button here, so the two lamps are the two the panel had.
 | | |
 |---|---|
 | LD0 | `MACHRUN`, green, as a level. Lit means the machine should be running. |
-| LD1 | red for `ERRHALT`, blue for `-PROMDISABLE`, otherwise green blinking with the microcycles. |
+| LD1 | red for `ERRHALT`, blue for `PROMENABLE`, otherwise green blinking with the microcycles. |
 
 Red wins over blue and blue over green. The three read in the order a boot goes
-through them. Blue is the machine running its microcode out of the boot PROM,
-and it goes out when the machine has loaded microcode off the disk. Green
-blinking is the machine executing, and it freezes when the machine stops. Red
-is the machine halting itself under ERRSTOP, latched and cleared by any boot
-press. So blue then green is a boot, green gone still is a machine somebody
-halted, and red is a machine that fell over.
+through them. Blue is the machine fetching its microinstructions out of the
+boot PROM, and it goes out when the machine runs the microcode it loaded off
+the disk. Green blinking is the machine executing, and it freezes when the
+machine stops. Red is the machine halting itself under ERRSTOP, latched and
+cleared by any boot press. So blue then green is a boot, green gone still is a
+machine somebody halted, and red is a machine that fell over.
 
 LD0's brightness is the fraction of time the machine computes rather than
 waits, because `MACHRUN` drops during every memory stall. Dim means it is
 thrashing.
 
-**`-PROMDISABLE` is the mode register's own bit and not `PROMENABLE`.** Those
-are different nets. `PROMENABLE` is the PROM's select and follows the program
-counter, so it changes many times a boot; what reaches the pin is the bit the
-machine sets once, when it has finished loading its microcode.
+**Blue is `PROMENABLE`, the PROM's own select, and not the mode register's
+`PROMDISABLE` bit.** Those are different nets. The select follows the program
+counter, so it goes out on every control-store write while the PROM loads the
+store, and the lamp sits a little under full brightness during the load. The
+mode bit is the one the machine sets once, when it has finished loading its
+microcode, and it drives no lamp here.
 
 **Two lamps cannot carry six meanings and what is missing is said rather than
 left to be found.** The fabric's own heartbeat has no lamp here, so a board
@@ -175,11 +178,20 @@ so a pause cannot be told from the disk by looking. Both signals are still
 outputs of the machine and still in the fold that keeps the datapath alive;
 what is missing is a pin and not a wire.
 
-BTN0 is the boot button and BTN1 resets the whole fabric. There are only two
-buttons, so the control that throws the machine's state away sits next to the
-one that restarts it politely. On the Arty Z7-20 the reset is at the far end of
-a row of four, where it is hard to press by accident. That is the cost of a
-two-button board.
+BTN0 is the boot button and BTN1 resets the whole fabric. Those two are the
+same buttons on every board in this repository, and this board is the reason.
+There are only two buttons here, so the reset can only be BTN1, and the boards
+with four follow it rather than have the same control be a different button on
+each. The cost is that the control which throws the machine's state away sits
+next to the one that restarts it politely.
+
+The fabric reset resets the logic in the fabric. That is the machine, the
+console's and the disk pack's register faces, and the lamps. The processing
+system and Linux keep running across it, and it does not reload the bitstream.
+The programs under Linux keep the view of the register faces they had before,
+so after BTN1 the disk pack program and the console are out of step with the
+fabric until they are restarted. `rst -srst` over JTAG resets everything, and
+on a board with a processing system that is the reset to reach for.
 
 ## The debug cable
 

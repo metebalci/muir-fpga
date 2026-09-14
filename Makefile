@@ -34,6 +34,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/park.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass $(BUILD)/kbd_boot.pass \
        $(BUILD)/no_auto_boot.pass $(BUILD)/errhalt_lamp.pass \
+       $(BUILD)/promenable.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
@@ -564,6 +565,29 @@ $(BUILD)/obj_no_auto_boot/Vcadr_machine: $(MACHINE) tb/cadr_no_auto_boot_tb.cpp 
 
 $(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_no_auto_boot/Vcadr_machine
+	@touch $@
+
+# ------------------------------------------------------ LD5, the blue lamp
+
+# **`-PROMENABLE` AT PCTL 1C19, WHICH THE BLUE LAMP SHOWS.**  All three boards
+# drive that lamp from the net itself rather than from the mode register's
+# `PROMDISABLE` bit, and the two agree almost everywhere --- which is the trap.
+# A board's top level is reached by `arty.pass`'s lint and by nothing else, so
+# what can be held is the net as `cadr_machine` presents it at its port: up on
+# a fetch, down on the control-store writes the PROM's own clearing pass makes,
+# and dark for good once `PROMDISABLE` is set over the console's Unibus port.
+# The identity is asserted on every tick of both phases and both states are
+# counted, so neither claim is a window that caught the right instant.
+#
+# No memory, for `kbd_boot`'s reason: the PROM's first main-memory cycle is at
+# microcycle 536,303 and nothing here runs that far.  It takes a few seconds.
+$(BUILD)/obj_promenable/Vcadr_machine: $(MACHINE) tb/cadr_promenable_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_promenable \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_promenable_tb.cpp)
+
+$(BUILD)/promenable.pass: $(BUILD)/obj_promenable/Vcadr_machine $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_promenable/Vcadr_machine
 	@touch $@
 
 # ---------------------------------------------------------------- LD4

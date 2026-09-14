@@ -258,7 +258,7 @@ the poison lands. The block reads thirty-two words of filler, which looks
 exactly like a fabric that cannot write. It cost one run at `700b98a`.
 
 The machine, `DDR=1`, has no such trigger. `boards/arty-z7-20/cadr_arty.sv`
-resets it on the MMCM's lock or BTN3. It therefore starts the instant the part
+resets it on the MMCM's lock or BTN1. It therefore starts the instant the part
 configures, and reaches its memory cycles 118 ms of machine time later --- 236
 ms of real time, the tick being 10 ns --- whether or not anybody has brought
 the port up. Poisoning 256 words over JTAG takes longer than either.
@@ -495,8 +495,8 @@ at which error it was.
 The board has four push buttons and this design uses two of them.
 
     BTN0   boots the machine, as the light panel's button does
-    BTN3   resets the whole fabric
-    BTN1, BTN2   nothing
+    BTN1   resets the whole fabric
+    BTN2, BTN3   nothing
 
 BTN0 is `-BOOT2`, the button MIT put on the CADR's light panel. Pressing it
 restarts the machine from word 0 of its boot PROM. It does not clear main
@@ -505,10 +505,27 @@ a reset. Holding it down keeps the machine at the boot trap. Letting it go is
 what starts the PROM running. The fabric debounces it for 4 ms. That is what
 the Schmitt inverter on the light panel did with its own hysteresis.
 
-BTN3 is the fabric's reset. It throws away the machine's whole state and every
-register in the design. It is at the far end of the row so that it is hard to
-press by accident. The fabric is also held in reset while the clock generator
-has not locked, which is unchanged.
+BTN1 is the fabric's reset. It throws away the machine's whole state and every
+register in the design. The fabric is also held in reset while the clock
+generator has not locked, which is unchanged.
+
+BTN0 and BTN1 are the same two buttons on every board in this repository. The
+Cora Z7-07S has two buttons and no more, so the reset can only be BTN1 there,
+and the boards with four follow it. The reset was BTN3 on this board for a
+while, on the argument that the one control which throws the machine's state
+away should be hard to press by accident. That argument lost to having the same
+control be the same button everywhere.
+
+**What the fabric reset is, and what it is not.** It resets the logic in the
+fabric. That is the machine, the console's and the disk pack's register faces,
+and the lamps. The processing system and Linux keep running across it, and it
+does not reload the bitstream. So on a Zynq board the programs under Linux keep
+the view of the register faces they had before, and after BTN1 the disk pack
+program and the console are out of step with the fabric until they are
+restarted. `rst -srst` over JTAG resets everything, and it is the reset to
+reach for on a Zynq board. BTN1 exists for the Arty A7-100, which has no
+processing system and nothing else to reset it with, and for uniformity across
+the boards.
 
 Two other things press the same boot line. The first is the keyboard's boot
 chord. Holding both Controls and both Metas with Rubout cold-boots the machine,
@@ -517,7 +534,7 @@ I/O board decodes the word itself and pulses the line. The second is the
 console. `cadr-console boot` presses the button from Linux or over the
 network.
 
-The pins are `D19` for BTN0 and `L19` for BTN3, `LVCMOS33`, from Digilent's
+The pins are `D19` for BTN0 and `D20` for BTN1, `LVCMOS33`, from Digilent's
 `Arty-Z7-20-Master.xdc`.
 
 ## The switches
@@ -558,7 +575,7 @@ The six lamps read left to right as the machine's own progress.
     LD2   microcycles        the fast blink, and it freezes when the machine does
     LD3   disk activity      lit while the controller moves a block
     LD4   ERRHALT            dark normally, red once the machine halts itself
-    LD5   -PROMDISABLE       blue while the machine runs out of its boot PROM
+    LD5   PROMENABLE         blue while the machine runs out of its boot PROM
 
 **LD0 is a level and LD2 is a blink, and they say different things.** MACHRUN
 is the machine's own run signal, the 9S42 at OLORD1 1A15. It drops during
@@ -608,18 +625,23 @@ holds it. It is a module rather than four lines in the top level because the
 top level is reached by lint alone, and lint cannot tell a lamp that latches
 from one that does not. Which signal the board wires to it stays lint-only.
 
-**LD5 is `-PROMDISABLE`, the mode register's own bit inverted.** It is lit blue
-while the machine runs its microcode out of the boot PROM and dark once
-`PROMDISABLE` is set, which is the moment it leaves the PROM and starts running
-the microcode it loaded from the disk. So a lit lamp means booting and a dark
-one means booted. Blue is the only colour it takes.
+**LD5 is `PROMENABLE`, driven from the net itself.** It is lit blue while the
+machine fetches its microinstructions out of the boot PROM and dark once it
+runs the microcode it loaded from the disk. So a lit lamp means booting and a
+dark one means booted. Blue is the only colour it takes.
+
+**It is the PROM's own select and not the mode register's bit.** MIT's
+`-PROMENABLE` at PCTL 1C19 is `BOTTOM.1K` with `PROMDISABLED`, `IWRITEDA` and
+`-IDEBUG`. It says whether the microinstruction being fetched comes out of the
+PROM, so it follows the program counter. The visible consequence is that it
+goes out on every control-store write while the PROM loads the store, and the
+lamp therefore sits a little under full brightness during the load rather than
+at full. Once `PROMDISABLE` is set it is dark for good.
 
 The lamps are named for the machine's own signals: LD0 is `MACHRUN`, LD4 is
-`ERRHALT`, LD5 is `-PROMDISABLE`. **LD5 is not `PROMENABLE`.** That is a
-different net, MIT's `-PROMENABLE` at PCTL 1C19, which is `BOTTOM.1K` with
-`PROMDISABLED`, `IWRITEDA` and `-IDEBUG`. It says whether the microinstruction
-being fetched comes out of the PROM, so it follows the program counter and
-changes many times during a boot. It does not reach this pin.
+`ERRHALT`, LD5 is `PROMENABLE`. `build/promenable.pass` holds the net at the
+machine's own port, because a board's top level is reached by lint and by
+nothing else.
 
 **Every rate here is in the machine's own time, and a wristwatch reads twice as
 long.** The tick is 10 ns rather than 5, so the machine runs at half the speed
@@ -730,7 +752,7 @@ of the two did it. While it stands, `cadr-console` refuses `start` and `step`.
 `cadr-console boot` presses `-BOOT2`, which presets RUN and starts the PROM from
 zero, and removes the marker. BTN0 on the board presses the same line in the
 fabric, so a held machine can be booted by hand with nobody logged in. The
-fabric's own push-button reset is BTN3.
+fabric's own push-button reset is BTN1.
 
 The console says one of
 
@@ -1061,8 +1083,8 @@ dark throughout. Typing `(si:%halt)` in the Listener turns it red, LD0 goes
 dark and LD2 stops. Pressing BTN0 clears the lamp at the press and the machine
 boots again.
 
-**LD5 is -PROMDISABLE.** It is blue for under a second while the PROM loads
-the microcode and dark from then on.
+**LD5 is PROMENABLE.** It is blue for under a second while the PROM loads the
+microcode and dark from then on.
 
 Each step above was taken one at a time at the board and behaved as written.
 

@@ -64,7 +64,7 @@ LD0 to LD3 and the four green ones are LD4 to LD7.
 | microcycles retiring | LD2 | `led[2]` | LD6 |
 | disk activity | LD3 | `led[3]` | LD7 |
 | `ERRHALT`, red only | LD4 | `led0_*` | LD0 |
-| `-PROMDISABLE`, blue only | LD5 | `led1_*` | LD1 |
+| `PROMENABLE`, blue only | LD5 | `led1_*` | LD1 |
 | nothing, dark | --- | `led2_*`, `led3_*` | LD2, LD3 |
 
 The port names are Digilent's, so that a pin can be checked against the master
@@ -88,10 +88,19 @@ doing exactly what this board is built to do. A lamp whose normal state is red
 says nothing.
 
 BTN0 boots the machine and is `-BOOT2`, the button MIT put on the CADR's light
-panel. BTN3 resets the fabric. SW0 is the no-auto-boot switch: with it on, the
-machine comes out of reset with `RUN` and `SRUN` clear and stands as a CADR
-does when the power comes on with nobody at it, and any `-BOOT` source starts
-it. BTN1, BTN2 and SW1 to SW3 have no meaning here.
+panel. BTN1 resets the fabric. Those two are the same buttons on every board in
+this repository. SW0 is the no-auto-boot switch: with it on, the machine comes
+out of reset with `RUN` and `SRUN` clear and stands as a CADR does when the
+power comes on with nobody at it, and any `-BOOT` source starts it. BTN2, BTN3
+and SW1 to SW3 have no meaning here.
+
+On this board the fabric reset is the only reset there is. It resets the logic
+in the fabric, which is the machine, the register faces and the lamps, and it
+does not reload the bitstream. On the Zynq boards that distinction matters,
+because the processing system and Linux keep running across it and the programs
+under Linux are then out of step with the fabric until they are restarted.
+There `rst -srst` over JTAG is the reset to reach for. Here there is no
+processing system and nothing else can reset the fabric.
 
 ## What is absent, and the shape of each answer
 
@@ -118,9 +127,11 @@ is seventeen times what the CADR can address.
 card and fills the block store over `S_AXI_HP2`. The card there is wired only to
 the processing system, and Digilent's master file for this board constrains no
 card pins at all. So the answer is an SD host in fabric, reading a card through
-one of the Pmod headers, with the pack at a raw offset rather than as a file. That reopens a question this project
-settled once for a board that has Linux, which is who computes the block
-headers and checkwords.
+one of the Pmod headers, with the pack at a raw offset rather than as a file.
+The board has no card slot of its own, so the card is a microSD Pmod on
+connector JD, and the SD host this plan owes in fabric will drive JD's pins.
+That reopens a question this project settled once for a board that has Linux,
+which is who computes the block headers and checkwords.
 
 **The screen.** The display block already writes the picture into its own
 region of memory, so a screen needs something to read that region and drive a

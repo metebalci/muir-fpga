@@ -153,7 +153,7 @@ module cadr_arty #(
     // The board's two slide switches.  **SW0 IS THE NO-AUTO-BOOT SWITCH** ---
     // see the note below the buttons --- and SW1 is a pin the board has that
     // this design has no opinion about, brought out so the port list matches
-    // the board rather than the design, as BTN1 and BTN2 are.
+    // the board rather than the design, as BTN2 and BTN3 are.
     input  var logic [1:0] sw,
     output var logic [3:0] led,
     // The two tricolour LEDs. Driven high to light, one pin a colour.
@@ -234,7 +234,7 @@ module cadr_arty #(
 
   // ------------------------------------------------------------- the buttons
   //
-  // **BTN0 BOOTS THE MACHINE AND BTN3 RESETS THE FABRIC.**  Both assignments
+  // **BTN0 BOOTS THE MACHINE AND BTN1 RESETS THE FABRIC.**  Both assignments
   // are facts of this board and neither is the one this file started with.
   //
   // BTN0 was the fabric's reset, which was a bring-up convenience: the CADR's
@@ -244,27 +244,45 @@ module cadr_arty #(
   // with its memory intact --- and not the fabric reconfigured out from under
   // Linux.  So BTN0 is `-BOOT2`, the light panel's button.
   //
-  // The fabric's push-button reset moves to BTN3, the button at the far end
-  // of the row, where it is hard to press by accident; it is the one control
-  // that throws away the machine's whole state.  The other reset term, the
-  // MMCM's lock, is unchanged: the fabric is held in reset until its clock is
-  // real.
+  // **THE FABRIC'S PUSH-BUTTON RESET IS BTN1 ON EVERY BOARD IN THIS
+  // REPOSITORY**, so that a board is two buttons and nothing else: BTN0 boots
+  // the machine and BTN1 resets the fabric.  The reset was on BTN3 here for a
+  // while, on the argument that the one control which throws the machine's
+  // whole state away should be at the far end of the row where it is hard to
+  // press by accident.  That argument is a real one and it loses to the
+  // uniformity: the Cora Z7-07S has two buttons and no more, so there is no
+  // far end to put it at there, and a control that is the same button on
+  // every board is worth more than a control that is BTN3 on the boards with
+  // four buttons and BTN1 on the board with two.  BTN2 and BTN3 are pins this
+  // board has and this design does not use.  The other reset term, the MMCM's
+  // lock, is unchanged: the fabric is held in reset until its clock is real.
   //
-  // Pins: `btn[0]` is D19 and `btn[3]` is L19, both `LVCMOS33`, from
+  // **WHAT THE FABRIC RESET IS, AND WHAT IT IS NOT.**  It resets the logic in
+  // the fabric --- the machine, the console's and the disk pack's register
+  // faces, and the lamps --- while the processing system and Linux keep
+  // running, and it does not reload the bitstream.  So on a board with a
+  // processing system the programs under Linux keep the view of those faces
+  // they had before, and after BTN1 the disk pack program and the console are
+  // out of step with the fabric until they are restarted.  `rst -srst` over
+  // JTAG resets everything, and on a Zynq board that is the reset to reach
+  // for.  BTN1 exists for the Arty A7-100, which has no processing system and
+  // nothing else to reset it with, and for uniformity across the boards.
+  //
+  // Pins: `btn[0]` is D19 and `btn[1]` is D20, both `LVCMOS33`, from
   // Digilent's `Arty-Z7-20-Master.xdc`.  `boards/arty-z7-20/cadr_arty.xdc`
   // carries them and false-paths all four, a human's finger being no timing
   // constraint.
   //
-  // Reset while the MMCM has not locked, and on BTN3. Synchronised out of
+  // Reset while the MMCM has not locked, and on BTN1. Synchronised out of
   // the 100 MHz domain: `locked` is asynchronous to it by construction.
   logic [3:0] rst_sync;
   logic       rst;
-  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked || btn[3]};
+  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked || btn[1]};
   assign rst = rst_sync[3];
 
   // ------------------------------------------------------ BTN0, DEBOUNCED
   //
-  // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN3's four
+  // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN1's four
   // synchroniser stages are all its job wants: a reset asserted for a
   // millisecond of contact bounce is a reset, and the bounces land inside it.
   // `-BOOT2` is a level the machine READS the end of --- it runs the PROM
@@ -328,7 +346,7 @@ module cadr_arty #(
   // is what keeps it from being deleted along with whatever computes it.
   logic [31:0] dev_wdata;
   logic vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge, wrcyc;
-  logic device, dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn;
+  logic device, dev_rq, dev_write, promdisable, promenable, ub_msyn, ub_ssyn;
   logic n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc, nxm, unibus;
   logic memstart, timed_out, mbusy, mbusy_sync;
   logic mem_req, mem_write;
@@ -527,7 +545,7 @@ module cadr_arty #(
 
   // ------------------------------------------------------ the machine's reset
   //
-  // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN3 RATHER THAN
+  // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN1 RATHER THAN
   // REPLACING IT.**  `rst` above is the MMCM's lock and the reset button; a write of
   // `RESET_KEY` to the console's word 6 pulses `con_mach_rst` for 64 ticks,
   // and this is the OR.  A soft reboot from the processing system is wanted
@@ -546,7 +564,7 @@ module cadr_arty #(
   // **AND THE RULE FOR WHAT TAKES IT: `mach_rst` replaces `rst` wherever
   // `rst` means "since the MACHINE started", and `rst` stays wherever it
   // means "since the FABRIC was configured".**  Written down because the
-  // alternative --- folding `con_mach_rst` into `rst_sync` beside BTN3, which
+  // alternative --- folding `con_mach_rst` into `rst_sync` beside BTN1, which
   // is tidier and looks right --- is wrong in three places at once, and each
   // of the three is worth having on the record:
   //
@@ -821,7 +839,7 @@ module cadr_arty #(
       .pcs0(pcs0), .iwrited(iwrited), .clock_edge(clock_edge),
       .wrcyc(wrcyc), .device(device), .dev_rq(dev_rq),
       .dev_write(dev_write), .dev_wdata(dev_wdata),
-      .phys(phys), .promdisable(promdisable),
+      .phys(phys), .promdisable(promdisable), .promenable(promenable),
       .ub_msyn(ub_msyn), .ub_ssyn_o(ub_ssyn), .arb_stage(arb_stage),
       .n_memrq_o(n_memrq), .n_memack_o(n_memack),
       .n_memgrant_o(n_memgrant), .mbusy_o(mbusy), .mbusy_sync_o(mbusy_sync),
@@ -843,7 +861,7 @@ module cadr_arty #(
       .dbd_in(mdbg_dbd),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
-      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN3 ---
+      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN1 ---
       // and not `mach_rst`, which `debuggee_reset` is one term of.  A
       // modifier register cleared by its own bit 1 clears the bit that is
       // clearing it, and MIT's "write a 1 here then write a 0" could not be
@@ -2247,8 +2265,8 @@ module cadr_arty #(
   // It is not meant to be readable --- it is a load, and what it shows is
   // that the datapath is moving at all.
   //
-  // **All seventy-six of them, including the ones something else already
-  // reads** --- `clock_edge`, `promdisable`, `timed_out`, `n_memack` drive
+  // **Every one of them, including the ones something else already
+  // reads** --- `clock_edge`, `promenable`, `timed_out`, `n_memack` drive
   // LEDs as well and are still here, because the rule the comment states is
   // the whole specification and a fold with exceptions in it is not a rule
   // anybody can check. What checks it is `make build/arty.pass`: an output
@@ -2288,7 +2306,7 @@ module cadr_arty #(
                    vma, md, phys, ub_addr, ub_rdata, arb_stage,
                    mem_addr, mem_wdata, dev_wdata, store_rdata,
                    vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge,
-                   wrcyc, device, dev_rq, dev_write, promdisable,
+                   wrcyc, device, dev_rq, dev_write, promdisable, promenable,
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
@@ -2456,23 +2474,24 @@ module cadr_arty #(
 
   // ---------------------------------------------------------------- LD5
   //
-  // **`-PROMDISABLE`, AND THAT IS THE NAME OF THE SIGNAL ON THE PIN.**  The
+  // **`PROMENABLE`, AND THAT IS THE NAME OF THE SIGNAL ON THE PIN.**  The
   // lamps are named by the machine's own signals --- LD0 is `MACHRUN` and LD4
-  // is `ERRHALT` --- and this one is `PROMDISABLE` inverted: bit 5 of the mode
-  // register at OLORD1 1A08, which the machine sets itself once it has loaded
-  // its microcode off the disk.  So the lamp is LIT while the machine runs its
-  // microcode out of the boot PROM and DARK once `PROMDISABLE` is set, which
-  // is the way round a lamp should be: the interesting state is the one that
-  // ends.
+  // is `ERRHALT` --- and this one is MIT's `-PROMENABLE` at PCTL 1C19, the
+  // PROM's own select, driven from the net itself out of the processor.  So
+  // the lamp is LIT while the machine fetches its microinstructions from the
+  // boot PROM and DARK once it runs the microcode it loaded from the disk,
+  // which is the way round a lamp should be: the interesting state is the one
+  // that ends.
   //
-  // **IT IS NOT `PROMENABLE`, AND THE TWO ARE DIFFERENT NETS.**  MIT's
-  // `-PROMENABLE` at PCTL 1C19 is `BOTTOM.1K` with `PROMDISABLED`, `IWRITEDA`
-  // and `-IDEBUG`, which is `cadr_microcycle.sv`'s `promenable` --- it says
-  // whether THIS microinstruction is coming out of the PROM, so it follows the
-  // PC and changes many times a boot.  What reaches this pin is the mode
-  // register's own bit and nothing else.  Naming the lamp `PROMENABLE` would
-  // be naming it after a signal that does not drive it; putting `promenable`
-  // on it instead is a port out of the processor and a different lamp.
+  // **IT IS THE SELECT AND NOT THE MODE BIT, AND THE EYE CAN SEE THE
+  // DIFFERENCE.**  `-PROMENABLE` is `BOTTOM.1K` with `PROMDISABLED`,
+  // `IWRITEDA` and `-IDEBUG`, so it says whether THIS microinstruction is
+  // coming out of the PROM: it is up on every fetch and down on the
+  // control-store write cycles, which is why the lamp is blue and a little
+  // under full brightness while the PROM loads the store rather than blue at
+  // full.  Once `PROMDISABLE` is set it is dark for good.  The mode
+  // register's own bit is `promdisable`, which drives no lamp here --- the
+  // probe's sample carries it and nothing else does.
   //
   // Blue, and blue only, for the one state it carries.  A colour lamp showing
   // one thing is still the right lamp for it: this is the answer to "has it
@@ -2480,7 +2499,7 @@ module cadr_arty #(
   // ones at a glance.
   assign led5_r = 1'b0;
   assign led5_g = 1'b0;
-  assign led5_b = !promdisable;
+  assign led5_b = promenable;
 
   // **LD0 IS REGISTERED AND LD3 IS STRETCHED, AND NEITHER IS A CONVENIENCE.**
   //
@@ -2547,12 +2566,11 @@ module cadr_arty #(
   OBUFDS u_hdmi_d2  (.I(hdmi_ser[2]), .O(hdmi_tx_d_p[2]), .OB(hdmi_tx_d_n[2]));
   OBUFDS u_hdmi_clk (.I(hdmi_ser[3]), .O(hdmi_tx_clk_p), .OB(hdmi_tx_clk_n));
 
-  // btn[2:1] and sw[1] are pins the board has and this design does not use.
-  // BTN0 is the machine's boot button and BTN3 the fabric's reset; BTN1 was a
-  // `PROVE=2` board's start button until the witness learned to write back
-  // what it read, and nothing presses it now. SW0 is the no-auto-boot switch
-  // and SW1 has no meaning here. They are read here only to keep them legal
-  // without inventing behaviour for them.
+  // btn[3:2] and sw[1] are pins the board has and this design does not use.
+  // BTN0 is the machine's boot button and BTN1 the fabric's reset; BTN2 and
+  // BTN3 have no meaning here, and neither has SW1. SW0 is the no-auto-boot
+  // switch. The unused pins are read here only to keep them legal without
+  // inventing behaviour for them.
   //
   // **AND `sw0_held` IS READ HERE FOR A DIFFERENT REASON**, which is worth
   // keeping apart from theirs: it has a reader, the console, and the console
@@ -2563,7 +2581,7 @@ module cadr_arty #(
   // board that has a console, which is legal and is the honest arrangement.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = &{1'b0, btn[2:1], sw[1], sw0_held};
+  assign unused = &{1'b0, btn[3:2], sw[1], sw0_held};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

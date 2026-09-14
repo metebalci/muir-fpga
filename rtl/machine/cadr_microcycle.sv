@@ -241,6 +241,16 @@ module cadr_microcycle #(
     output var logic        pcs0,
     output var logic        iwrited,
 
+    // **`-PROMENABLE` AT PCTL 1C19, BROUGHT OUT BECAUSE A LAMP SHOWS IT.**
+    // This is the PROM's own select and not the mode register's bit: it says
+    // whether THIS microinstruction is coming out of the boot PROM, so it
+    // follows the PC and it drops on every control-store write and while the
+    // debugger holds the I bus.  The mode bit is `promdisable`, an input.  A
+    // board drives the blue lamp from this, which is why it leaves the
+    // processor at all; nothing inside the machine reads it but the I bus
+    // multiplexer below.
+    output var logic        promenable,
+
     // --- one tick per microcycle, at the boundary: the edge every register
     // --- above takes.  What stands before it is that microcycle's.
     // --- the cables to the bus interface
@@ -501,7 +511,7 @@ module cadr_microcycle #(
   assign cs_radr = pc;
 
   logic promdisabled;
-  logic bottom_1k, promenable;
+  logic bottom_1k;
   assign bottom_1k  = pc < 14'(PROM_WORDS);
   assign promenable = bottom_1k && !promdisabled && !iwrited && !idebug;
 
