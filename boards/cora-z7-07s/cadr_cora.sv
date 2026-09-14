@@ -222,7 +222,8 @@ module cadr_cora #(
     // whatever the connector is doing.
     //
     // Eight pins, four each way: one strobe and three data lines a direction,
-    // `rtl/plumbing/cadr_dbg_pmod.sv` under `rtl/plumbing/cadr_dbg_cable.sv`.
+    // `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` under
+    // `rtl/plumbing/cadr_dbg_cable.sv`.
     // A straight Pmod ribbon joins pin one to pin one, so the LOW four are
     // the debugger's at both ends and the HIGH four the debuggee's, and which
     // end drives which group follows the role. The eighth wire is a STROBE
@@ -465,6 +466,13 @@ module cadr_cora #(
   logic        dbgout_ack, dbgout_live;
   logic [15:0] dbgout_dbd_in;
   logic        dbg_connect, dbg_engaged, dbg_foreign, dbg_live, dbg_active;
+  logic        dbg_peer_far;
+  logic [23:0] dbg_frames;
+  // And which way round the ribbon was made: 0 auto, 1 straight, 2 crossover,
+  // from the console's word 14, with what came of it coming back.  Only a
+  // DEBUGGER applies it; see `rtl/plumbing/cadr_dbg_cable.sv`'s table.
+  logic [1:0]  dbg_wiring;
+  logic [2:0]  dbg_wire_state;
   logic [7:0]  ja_o, ja_t;
   logic        mdbg_req, mdbg_wr;
   logic [1:0]  mdbg_a;
@@ -947,7 +955,8 @@ module cadr_cora #(
   //
   // MIT's whole cable on ONE connector, both directions, four pins each way.
   // `rtl/plumbing/cadr_dbg_cable.sv` is the connector and the role;
-  // `rtl/plumbing/cadr_dbg_pmod.sv` under it is the carrier and says why four
+  // `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` under it are the
+  // carrier and say why four
   // and four rather than the "one clock and seven data" this was drawn as.
   //
   // **IT IS INSTANTIATED ON EVERY BOARD, NOT ONLY A `DDR` ONE.** A board is
@@ -964,7 +973,12 @@ module cadr_cora #(
   cadr_dbg_cable u_dbg_cable (
       .clk(clk), .rst(rst),
       .connect(dbg_connect), .engaged(dbg_engaged), .foreign(dbg_foreign),
-      .live(dbg_live), .active(dbg_active),
+      .peer_far(dbg_peer_far), .live(dbg_live), .active(dbg_active),
+      // Which way round the cable was made, and what the board found.
+      .wiring(dbg_wiring), .wire_state(dbg_wire_state),
+      // Frames heard and frames refused: the crosstalk instrument, page 0's
+      // word 15.
+      .frames(dbg_frames),
       .out_req(dbgout_req), .out_wr(dbgout_wr), .out_a(dbgout_a),
       .out_dbd(dbgout_dbd), .out_ack(dbgout_ack),
       .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
@@ -1880,8 +1894,12 @@ module cadr_cora #(
         // because a board is always a debuggee and a board with no processing
         // system still has a connector.
         .dbg_connect(dbg_connect),
+        .dbg_wiring(dbg_wiring),
+        .dbg_wire_state(dbg_wire_state),
+        .dbg_frames(dbg_frames),
         .dbg_engaged(dbg_engaged),
         .dbg_foreign(dbg_foreign),
+        .dbg_peer_far(dbg_peer_far),
         .dbg_live(dbg_live),
         .dbg_active(dbg_active)
     );
@@ -2019,6 +2037,10 @@ module cadr_cora #(
     // it answers a debugger that plugs into JA, which is the power-on state
     // of any CADR and needs nothing set.
     assign dbg_connect    = 1'b0;
+    // And the wiring stands at `auto`, which is what the fabric comes up
+    // with: a board with no console still finds a crossed cable, it just has
+    // nobody to tell.
+    assign dbg_wiring     = 2'd0;
     // And no port for the I/O board's two cables, so their far ends are
     // tied off: this is the board that has no processing system at all, and
     // a program is what is on the other end of either cable.  With
@@ -2192,7 +2214,8 @@ module cadr_cora #(
                    // The debug cable's own four, which say what the connector
                    // is doing rather than what crosses it. On a board with no
                    // console they reach nobody and are folded here.
-                   dbg_engaged, dbg_foreign, dbg_live, dbg_active};
+                   dbg_engaged, dbg_foreign, dbg_live, dbg_active, dbg_peer_far, dbg_frames,
+                   dbg_wire_state};
     end
   end
 
