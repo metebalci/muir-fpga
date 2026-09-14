@@ -94,7 +94,7 @@
 //      twenty-four ones, `KBD READY` was up 196 us after power-on, and the
 //      microcode took a warm boot nobody asked for.
 //   2. **A MACHINE RESET EMPTIES THE QUEUE.**  `mach_rst` is the CADR's own
-//      reset --- BTN3, the MMCM's lock, or the console's `RESET_KEY` --- and
+//      reset --- BTN1, the MMCM's lock, or the console's `RESET_KEY` --- and
 //      it is a separate port from `rst` for exactly this: a key typed at the
 //      machine that was is not a key typed at the machine that is.  Without
 //      it, a console reset of a running board would restart the microcode

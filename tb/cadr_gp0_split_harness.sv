@@ -32,7 +32,7 @@
 //
 // **THE CARD HAS A RESET OF ITS OWN HERE, AND THAT IS THE BOARD AND NOT A
 // CONVENIENCE.**  On `cadr_arty.sv` the card is inside `cadr_machine` and
-// takes `mach_rst` --- BTN3, the MMCM's lock, or the console's `RESET_KEY`
+// takes `mach_rst` --- BTN1, the MMCM's lock, or the console's `RESET_KEY`
 // --- while everything on the general purpose port takes `gp0_rst_s`.  So
 // `card_rst` is a second input here, and `cadr_input_cables.sv` takes it at
 // its own `mach_rst` port: a machine restarted under a running Linux must

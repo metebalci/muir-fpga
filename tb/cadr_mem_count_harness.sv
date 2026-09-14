@@ -174,9 +174,10 @@ module cadr_mem_count_harness #(
       // button just let go.
       .no_auto_boot(1'b0),
       // OLORD1's three and `-BOOT` itself, which this harness has no lamps for.
+      // `-PROMENABLE` goes to a lamp on a board and there is no lamp here.
       /* verilator lint_off PINCONNECTEMPTY */
       .n_boot_o(),
-      .machrun(), .errhalt(), .stathalt(),
+      .machrun(), .errhalt(), .stathalt(), .promenable(),
       /* verilator lint_on PINCONNECTEMPTY */
       .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
       .ser_cmd(ser_cmd), .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),

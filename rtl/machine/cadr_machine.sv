@@ -263,6 +263,14 @@ module cadr_machine #(
     output var logic        pcs1,
     output var logic        pcs0,
     output var logic        iwrited,
+    // **`-PROMENABLE` AT PCTL 1C19: THE PROM'S OWN SELECT.**  A board drives
+    // the blue lamp from this rather than from `promdisable` below, which is
+    // the mode register's bit.  The two are different nets and the difference
+    // is visible: the select follows the PC, so it drops on every
+    // control-store write while the PROM is loading and the lamp sits a
+    // little under full brightness, and it is dark for good once PROMDISABLE
+    // is set.  `cadr_microcycle.sv` has it at the assignment.
+    output var logic        promenable,
     output var logic        clock_edge,
 
     // --- what the bus interface reports, for a check to watch
@@ -623,6 +631,7 @@ module cadr_machine #(
       .pcs1        (pcs1),
       .pcs0        (pcs0),
       .iwrited     (iwrited),
+      .promenable  (promenable),
       .md          (md),
       .phys        (phys),
       .wdata       (wdata),

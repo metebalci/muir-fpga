@@ -259,6 +259,35 @@ CHECKS = {
         "gprom": True,
     },
 
+    # LD5, the blue lamp: MIT's `-PROMENABLE` at PCTL 1C19, which the three
+    # boards drive their blue lamp from.  A board's top level is reached by
+    # lint and by nothing else, so what is held here is the net as
+    # `cadr_machine` presents it at its port: up on a fetch, down on a
+    # control-store write, and dark for good once `PROMDISABLE` is set.  The
+    # records aimed here are the assignment in the processor and the port
+    # wiring in `cadr_machine`, which is the one no other check can see.
+    "promenable": {
+        "sources": [
+            "rtl/machine/cadr_microcycle.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        "extra": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_memory_path.sv",
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_dbgin.sv", "rtl/plumbing/cadr_bus_audit.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_promenable_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
+
     # LD4.  Four lines of fabric in a module of their own, because in the top
     # level they would be reached by the `arty` lint and by nothing else, and
     # lint cannot tell a lamp that latches from one that does not.

@@ -391,8 +391,9 @@ module cadr_dbgin_harness #(
       .rst         (mach_rst),
       .n_boot      (n_boot),
       // OLORD1's three, which reach the board's lamps and nothing here.
+      // `-PROMENABLE` goes to a lamp on a board and there is no lamp here.
       /* verilator lint_off PINCONNECTEMPTY */
-      .machrun_o (), .errhalt_o (), .stathalt_o (),
+      .machrun_o (), .errhalt_o (), .stathalt_o (), .promenable (),
       /* verilator lint_on PINCONNECTEMPTY */
       .run         (run_o),
       // The board's no-auto-boot switch, which this harness has none of: the

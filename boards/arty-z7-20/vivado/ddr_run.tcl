@@ -70,7 +70,7 @@
 # There the fabric was a witness held in reset until the port came live, so
 # the bitstream could be programmed first and `ps7_post_config` used as the
 # trigger.  The machine has no such trigger: `boards/arty-z7-20/cadr_arty.sv` resets it on
-# the MMCM's lock or on BTN3, so it starts the instant the part configures and
+# the MMCM's lock or on BTN1, so it starts the instant the part configures and
 # reaches its memory cycles 118 ms later whether or not anybody has brought
 # the port up.  Program first and the machine is finished before
 # `ps7_post_config` is typed.  So the port is brought up BEFORE the bitstream

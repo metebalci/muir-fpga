@@ -12717,3 +12717,47 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
     head_want[HEAD_W-MARK_W-1]    = ^{v, ^v};
 @end
+
+@mutation the-blue-lamp-shows-the-mode-bit-and-not-the-prom-select
+@check promenable
+@file rtl/machine/cadr_microcycle.sv
+@note **THE FAULT THIS WHOLE CHECK EXISTS FOR.**  All three boards drive their
+@note blue lamp from `-PROMENABLE` at PCTL 1C19, the PROM's own select, and the
+@note mode register's `PROMDISABLE` bit is a different net that agrees with it
+@note almost everywhere.  A board wired to the mode bit instead looks right to
+@note anybody watching: blue while the machine boots, dark once it has its
+@note microcode.  What separates them is the control-store pass, where the
+@note select goes out on every write and the mode bit does not, and the lamp
+@note therefore sits a little under full brightness during the load rather
+@note than at full.
+@note
+@note Written as the mode bit ORed OVER the select rather than as a bare
+@note replacement, because dropping `bottom_1k` would leave that signal unread
+@note and Verilator would do the catching instead of the check.  That is this
+@note project's standing rule about mutations at bit granularity.  In effect
+@note it is the mode bit: while `PROMDISABLE` is clear the term is true on
+@note every tick, the write cycles included.
+@old
+  assign promenable = bottom_1k && !promdisabled && !iwrited && !idebug;
+@new
+  assign promenable = !promdisabled || (bottom_1k && !iwrited && !idebug);
+@end
+
+@mutation the-control-store-write-does-not-put-the-prom-off-the-i-bus
+@check promenable
+@file rtl/machine/cadr_microcycle.sv
+@note **`-IWRITEDA` IS AN INPUT OF `-PROMENABLE` AT PCTL 1C19**, and dropping
+@note it is the smaller half of the record above: the lamp then stays at full
+@note brightness through the control-store pass, and the I bus takes the
+@note PROM's word on a microcycle whose business is the word just written to
+@note the RAM.
+@note
+@note `iwrited` stays read --- it is a port with its own readers at the write
+@note pulse and at `POPJ` --- so lint has nothing to say and the check is what
+@note catches this.
+@old
+  assign promenable = bottom_1k && !promdisabled && !iwrited && !idebug;
+@new
+  assign promenable = bottom_1k && !promdisabled && !idebug;
+@end
+

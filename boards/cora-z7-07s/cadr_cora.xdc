@@ -51,10 +51,10 @@ set_property -dict { PACKAGE_PIN L14   IOSTANDARD LVCMOS33 } [get_ports { led1_g
 set_property -dict { PACKAGE_PIN G14   IOSTANDARD LVCMOS33 } [get_ports { led1_b }]; #IO_0_35 Sch=led1_b
 
 ## Buttons. **BTN0 boots the machine** --- it is `-BOOT2`, the button MIT put
-## on the CADR's light panel --- and **BTN1 resets the whole fabric**. There
-## are only two, so the reset sits next to the boot button rather than at the
-## far end of a row as it does on the Arty Z7-20; `cadr_cora.sv` says at the
-## debounce what that costs.
+## on the CADR's light panel --- and **BTN1 resets the whole fabric**. Those
+## two are the same buttons on every board in this repository, and there are
+## only two here, so the reset sits next to the boot button; `cadr_cora.sv`
+## says at the debounce what that costs.
 set_property -dict { PACKAGE_PIN D20 IOSTANDARD LVCMOS33 } [get_ports { btn[0] }]; #IO_L4N_T0_35 Sch=btn[0]
 set_property -dict { PACKAGE_PIN D19 IOSTANDARD LVCMOS33 } [get_ports { btn[1] }]; #IO_L4P_T0_35 Sch=btn[1]
 

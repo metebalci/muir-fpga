@@ -21,7 +21,7 @@
 # after it and then freezes, so by the time a bitstream has been programmed
 # and a readout arranged, the window --- the first microcycles the machine
 # ever ran --- has long since been taken and cannot be overwritten. Pressing
-# BTN3 takes a fresh one.
+# BTN1 takes a fresh one.
 #
 # WHY THIS IS RAW JTAG AND NOT A DEBUG CORE.  `create_debug_core` is refused
 # by the licence on this host: `License_Tier:BASIC` in `~/.Xilinx/Xilinx.lic`,

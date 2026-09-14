@@ -55,7 +55,7 @@
 
 module cadr_lamp_errhalt (
     input  var logic clk,      // 100 MHz, one tick = 10 ns
-    input  var logic rst,      // the board's reset: MMCM lock, BTN3, the console's
+    input  var logic rst,      // the board's reset: MMCM lock, BTN1, the console's
 
     // `ERRHALT` out of `cadr_machine`, a level: the machine has halted itself
     // under ERRSTOP and is standing there.
