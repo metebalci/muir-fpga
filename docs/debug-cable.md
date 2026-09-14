@@ -533,38 +533,72 @@ What it measures rather than assumes:
 Five mutation records are aimed at the join and at the cable's place on the
 arbiter.
 
-## The cable on two Pmod connectors
+## The cable on one Pmod connector
 
-The register window is one transport. A second board is the other, and it is
-built. `rtl/plumbing/cadr_dbg_pmod.sv` puts MIT's cable on eight Pmod pins and
-`rtl/plumbing/cadr_dbg_join.sv` lets the connector and the window share one
-DBGIN page. JA carries DBGOUT and JB carries DBGIN.
+The register window is one transport. A second board is the other.
 
-### Four pins each way, not one clock and seven data
+**ONE CONNECTOR CARRIES THE WHOLE LINK, IN BOTH DIRECTIONS.** The eight pins
+are one clock, driven from the debugger's end, and seven data pins split into
+lanes: about four forward for the twenty-two signals that go out and three back
+for the seventeen that return, which is six beats an exchange. That is far
+inside the cable's own 11.05 microsecond timeout, so the beats are free.
+
+**A board is a debugger or a debuggee by configuration and never both at
+once.** That is what makes one connector enough. Two connectors bought exactly
+one thing a single one cannot: a chain of three machines, where a board is
+somebody's debuggee and somebody else's debugger at the same time. Nobody needs
+that.
+
+The clock has a pin. Digilent's master file marks exactly one clock-capable
+pair on the two headers, JA3_P and JA3_N at package pins U18 and U19, and it is
+on JA. So the connector that carries the link is the connector that can receive
+a clock.
+
+**JB is no longer assigned.** It is a header the board has and this design has
+no opinion about.
+
+### What the fabric carries today, which is not this
+
+`rtl/plumbing/cadr_dbg_pmod.sv` and `rtl/plumbing/cadr_dbg_join.sv` are a
+two-connector full-duplex carrier: four pins each way on each header, one
+strobe and three data, eight beats each way. `boards/arty-z7-20/cadr_arty.sv`
+brings out sixteen pins and `boards/arty-z7-20/cadr_arty.xdc` constrains them.
+`build/dbg_pmod.pass` holds it and mutation records are aimed at it.
+
+Replacing that with the one-connector link above is a change of its own: a new
+carrier, a new frame, a new pin map, and the checks and records that go with
+them. It has not been made. Until it is, the fabric and the decision are out of
+step, and this section is the record of which is which.
+
+The rest of this section describes the carrier that is built.
+
+### Four pins each way on the built carrier
 
 One Pmod cable joins one board's DBGOUT connector to another's DBGIN. Its
 eight wires therefore carry both directions: twenty signals towards the
-debuggee and nineteen back. The drawing described that as one clock and seven
-data, which is a half-duplex arrangement with the seven data lines shared and
-turned around. That is MIT's own arrangement one connector along, where the
-Am8304s at DBGOUT 0B21 and 0B22 face whichever way `-DEBUG > UD` says. It is
-not available here, for two reasons.
+debuggee and nineteen back. A half-duplex arrangement would share the seven
+data lines and turn them around, which is MIT's own arrangement one connector
+along, where the Am8304s at DBGOUT 0B21 and 0B22 face whichever way `-DEBUG >
+UD` says. It was not available to a carrier spread over both headers, for two
+reasons.
 
 The first is a pin. A receiver clocked by the cable needs a clock-capable
 input. Digilent's master file marks exactly one pair on the two headers:
-JA3_P and JA3_N, package pins U18 and U19. JB has none at all. The connector
-that would have to receive the clock is the one that cannot.
+JA3_P and JA3_N, package pins U18 and U19. JB has none at all. With the link
+spread over both headers, the connector that would have to receive the clock is
+the one that cannot. With the whole link on JA that argument no longer applies,
+which is part of why one connector is the better shape.
 
 The second is the turnaround. Two sets of drivers sharing seven wires must
 agree on the instant one stops and the other starts, and they have no back
 channel to agree on. A turnaround that misses does not corrupt a word. It puts
 two drivers on one wire.
 
-So the eight pins are split four and four: one strobe and three data lines in
-each direction. Nothing is shared and nothing is turned around. The eighth
-wire is a strobe rather than a clock, because nothing on either side is
-clocked by it. It is sampled through two flops like any other asynchronous
-input.
+So the eight pins of the built carrier are split four and four: one strobe and
+three data lines in each direction. Nothing is shared and nothing is turned
+around. The eighth wire is a strobe rather than a clock, because nothing on
+either side is clocked by it. It is sampled through two flops like any other
+asynchronous input.
 
 ### Eight beats each way
 
@@ -618,7 +652,10 @@ a request stands is taken to have been unplugged after `LOSS_T` ticks, and the
 levels go back to idle. On a real lashup the SIP at DBGIN 0A22 does that when
 somebody pulls the cable.
 
-### What the two connectors carry on this board
+### What the two connectors of the built carrier carry
+
+This is the carrier that is in the fabric today, not the one-connector link
+decided above.
 
 JB is a second board's debugger arriving at this machine's DBGIN page. It
 joins the window's cable at `cadr_dbg_join.sv`. The rule there is that the

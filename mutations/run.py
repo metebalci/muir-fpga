@@ -229,6 +229,47 @@ CHECKS = {
     # A mutation of the five bits' EFFECT belongs here, where the reference
     # exercises them.  A mutation of the register that HOLDS them belongs at
     # `console` or `unibus`, which build `cadr_spy_registers.sv`.
+    # **THE STATE THE MACHINE COMES UP IN**, which is the other half of the
+    # boot lines' page: the no-auto-boot switch, `RUN` clear at reset, and the
+    # button that takes the hold off.  `cadr_spy_registers.sv` decides `RUN`
+    # and `cadr_microcycle.sv` decides `SRUN`, and both read the level at
+    # their own reset arms and nowhere else --- so the records aimed here are
+    # in those two files, and the check runs the whole machine because "no
+    # microcycle was retired" is a claim about the machine and not about a
+    # register.
+    "no_auto_boot": {
+        "sources": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        "extra": [
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_busint_regs.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+            "rtl/machine/cadr_dbgin.sv", "rtl/plumbing/cadr_bus_audit.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_no_auto_boot_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
+
+    # LD4.  Four lines of fabric in a module of their own, because in the top
+    # level they would be reached by the `arty` lint and by nothing else, and
+    # lint cannot tell a lamp that latches from one that does not.
+    "errhalt_lamp": {
+        "sources": ["rtl/plumbing/cadr_lamp_errhalt.sv"],
+        "top": "cadr_lamp_errhalt",
+        "tb": "tb/cadr_lamp_errhalt_tb.cpp",
+        "flags": [],
+        "golden": None,
+    },
+
     "sstep": {
         "sources": ["rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv"],
         "top": "cadr_microcycle",

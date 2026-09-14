@@ -365,7 +365,10 @@ module cadr_dbg_pmod_harness #(
       .errstop(errstop_u), .stathenb(stathenb_u), .mode_speed(mode_speed_u),
       .prog_reset(prog_reset_u), .prog_boot(prog_boot_u),
       // `-BOOT` released: nothing in this check presses any of the three.
-      .n_boot(1'b1)
+      .n_boot(1'b1),
+      // No no-auto-boot switch here: the machine comes up as the fabric's
+      // reset leaves it, with the boot button just let go.
+      .no_auto_boot(1'b0)
   );
 
   logic unused;

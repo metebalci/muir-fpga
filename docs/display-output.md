@@ -479,7 +479,9 @@ It holds:
 `OBUFDS` are stubbed in `tb/` so that the top level lints, and the stubs tie
 their outputs low. A simulation built on them would show a dark connector
 whatever the encoder did. What stands behind the serialiser is the fitter and,
-in the end, a monitor.
+in the end, a monitor. A monitor has now been put on the connector and shows
+the machine's screen as built: 1280x1024 with the CADR's 768x963 centred in it,
+white on black. `docs/board.md` has that reading.
 
 ### `arty`
 

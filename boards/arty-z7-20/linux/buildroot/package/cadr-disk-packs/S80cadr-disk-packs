@@ -46,9 +46,9 @@
 # program is told where to write instead.
 #
 # **AND THE BOOT BUTTON'S STEP LIVES HERE, WHICH NEEDS SAYING.**  `fpgarc`'s
-# `--no-auto-boot` leaves the CADR's boot button unpressed, as a CADR is when
-# the power comes on, and the machine is held with RUN clear until somebody
-# presses it.  Two things fix where that step goes.  It must run BEFORE this
+# `--no-auto-boot`, and SW0 on the board, each leave the CADR's boot button
+# unpressed, as a CADR is when the power comes on, and the machine is held with
+# RUN clear until somebody presses it.  Two things fix where that step goes.  It must run BEFORE this
 # script starts the pack program, because the drive coming present is what
 # lets the boot PROM go on and read a band.  And it must read `fpgarc`, which
 # is on the partition this script is the one thing that mounts.  A step of its
@@ -108,40 +108,78 @@ start() {
 	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS" --log /dev/console
 }
 
-# **`--no-auto-boot`: LEAVE THE BOOT BUTTON UNPRESSED.**  muir's flag and
-# muir's words for it.  The fabric here keeps RUN preset at reset, which is
-# muir's own default and what the bring-up boards need, so a board that is not
-# to boot itself is held by halting it --- and this is the last moment before
-# the drive comes present, which is what a held machine must not see.
+# **LEAVE THE BOOT BUTTON UNPRESSED, AND THERE ARE TWO WAYS TO ASK FOR IT.**
+# muir's `--no-auto-boot` leaves a CADR as it is when the power comes on: RUN
+# clear, nothing run, and only the button starts it.  On this board that is
+# asked for by the card's flag or by the switch, and the two are an OR --- a
+# flag can never turn a switch off.
 #
-# **THE PROM HAS ALREADY RUN, AND THAT IS NOT A GAP IN THE HOLD.**  The CADR
-# starts when the bitstream is loaded, seconds before Linux reaches this
-# script, and within a few hundred milliseconds it has cleared its control
-# store and is in AWAIT-DRIVE-READY.  It can go no further, because no drive
-# is present until the program below starts.  So the machine this halts is a
-# machine that has done its PROM work and is waiting, with nothing of a band
-# loaded; `cadr-console boot` presses the button and the PROM starts again
-# from zero.
+#   SW0 on the board     THE FABRIC has already done it.  The machine came out
+#                        of reset with RUN clear and has never run a
+#                        microcycle, so there is nothing here to halt; what
+#                        this step does is leave the marker, so that
+#                        cadr-console refuses start and step and says why.
+#                        `cadr-console switch` exits 0 when the switch held it.
+#   --no-auto-boot in    NOTHING in the fabric changes for it, so the machine
+#   fpgarc               is held by halting it, and this is the last moment
+#                        before the drive comes present, which is what a held
+#                        machine must not see.
 #
-# Nothing is printed when the flag is not there, because a board that boots
+# **THE PROM HAS ALREADY RUN WHEN THE FLAG IS WHAT HOLDS IT, AND THAT IS NOT A
+# GAP IN THE HOLD.**  The CADR starts when the bitstream is loaded, seconds
+# before Linux reaches this script, and within a few hundred milliseconds it
+# has cleared its control store and is in AWAIT-DRIVE-READY.  It can go no
+# further, because no drive is present until the program below starts.  So the
+# machine this halts is one that has done its PROM work and is waiting, with
+# nothing of a band loaded; `cadr-console boot` presses the button and the PROM
+# starts again from zero.  **The switch has no such gap**: the machine never
+# ran at all.
+#
+# Nothing is printed when neither asks for it, because a board that boots
 # itself has nothing to say about it.
 hold_the_machine() {
 	rm -f "$HELD"
-	[ -f "$RC" ] || return 0
-	fpgarc_has "$RC" --no-auto-boot || return 0
-	if ! command -v cadr-console > /dev/null 2>&1; then
-		echo "cadr-boot: --no-auto-boot, and no cadr-console to halt the machine with;" \
-		     "it is running"
-		return 0
+	# The card's flag.  A card with no fpgarc has no flag.
+	no_auto_boot_flag=no
+	if [ -f "$RC" ] && fpgarc_has "$RC" --no-auto-boot; then
+		no_auto_boot_flag=yes
 	fi
-	if ! cadr-console halt > /dev/null 2>&1; then
-		echo "cadr-boot: --no-auto-boot, and cadr-console could not halt the machine;" \
-		     "it is running"
-		return 0
+	# And the switch, asked of the fabric itself rather than of any file.
+	# A console that cannot be reached answers no, which is the safe
+	# direction: it is also the console that could not have halted anything.
+	no_auto_boot_switch=no
+	if command -v cadr-console > /dev/null 2>&1 &&
+	   cadr-console switch > /dev/null 2>&1; then
+		no_auto_boot_switch=yes
 	fi
-	echo "held at boot by --no-auto-boot in $RC" > "$HELD"
-	echo "cadr-boot: --no-auto-boot: the machine is held with RUN clear;" \
-	     "\`cadr-console boot\` or BTN0 on the board presses the boot button"
+	[ "$no_auto_boot_flag" = yes ] || [ "$no_auto_boot_switch" = yes ] || return 0
+
+	if [ "$no_auto_boot_switch" = yes ]; then
+		# Already held, by the fabric, since the reset.  No halt is
+		# issued: there is nothing running to halt, and a halt here
+		# would be this script taking credit for the switch's work.
+		echo "held at boot by SW0" > "$HELD"
+		if [ "$no_auto_boot_flag" = yes ]; then
+			echo "cadr-boot: SW0: the machine came up with RUN clear and has never run;" \
+			     "--no-auto-boot in $RC asks for the same thing"
+		else
+			echo "cadr-boot: SW0: the machine came up with RUN clear and has never run"
+		fi
+	else
+		if ! command -v cadr-console > /dev/null 2>&1; then
+			echo "cadr-boot: --no-auto-boot, and no cadr-console to halt the machine with;" \
+			     "it is running"
+			return 0
+		fi
+		if ! cadr-console halt > /dev/null 2>&1; then
+			echo "cadr-boot: --no-auto-boot, and cadr-console could not halt the machine;" \
+			     "it is running"
+			return 0
+		fi
+		echo "held at boot by --no-auto-boot in $RC" > "$HELD"
+		echo "cadr-boot: --no-auto-boot: the machine is held with RUN clear"
+	fi
+	echo "cadr-boot: \`cadr-console boot\` or BTN0 on the board presses the boot button"
 }
 
 stop() {

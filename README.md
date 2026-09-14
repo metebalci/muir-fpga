@@ -188,15 +188,16 @@ puts the twenty-one wires on `M_AXI_GP1` as sixteen words. muir reaches them
 with ordinary loads and stores through `/dev/mem`. `docs/debug-cable.md` is
 the whole of it.
 
-A second board is the same cable on two Pmods, four pins each way: one strobe
-and three data lines in each direction, on each connector. A Pmod cable joins
-one board's DBGOUT to another's DBGIN and so carries both directions, and the
-half-duplex arrangement that would share seven data lines needs a clocked
-receiver on a connector that has no clock-capable pin. Twenty signals go out
-and nineteen come back. A frame is eight beats: twenty payload bits and the
-two-bit marker that tells a frame from an unplugged connector, over three
-lines. The cable's 11.05 us budget makes the beats free, and the measured
-round trip is 260 ticks against the 1,105 a debugger waits.
+A second board is the same cable on one Pmod connector, JA, which carries the
+whole link in both directions: one clock driven from the debugger's end and
+seven data pins split into lanes. A board is a debugger or a debuggee by
+configuration and never both at once, which is what makes one connector enough;
+a second one bought only a chain of three machines. JB is not assigned. The
+cable's 11.05 us budget makes the beats free either way.
+
+The fabric today carries an earlier two-connector arrangement, four pins each
+way on each header, and replacing it with the one above is a change that has
+not been made. `docs/debug-cable.md` says which is which.
 
 **The console is not this, and the difference is worth keeping.** It masters
 the machine's own Unibus to reach the diagnostic registers. No CADR had that

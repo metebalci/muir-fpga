@@ -5,16 +5,17 @@
 #
 # Taken from Digilent's own master file --- github.com/Digilent/digilent-xdc,
 # Arty-Z7-20-Master.xdc --- which lists every pin commented out, to be
-# uncommented as used. These are the four it uses, copied rather than included
+# uncommented as used. These are the ones it uses, copied rather than included
 # because the master file is 185 lines of things this design has no opinion
 # about, and a constraint file that is mostly comments is a constraint file
 # nobody reads.
 #
 # The pin assignments and the IO standard are Digilent's; the clock period is
-# the board's own crystal. Only `sysclk` is a real timing constraint. The LEDs
-# and the button are asynchronous to everything and are left unconstrained
-# deliberately: a false path on a human pressing a button is noise, and an
-# output timing constraint on an LED is a fiction about a pin nothing samples.
+# the board's own crystal. Only `sysclk` is a real timing constraint. The LEDs,
+# the buttons and the switches are asynchronous to everything and are left
+# unconstrained deliberately: a false path on a human pressing a button is
+# noise, and an output timing constraint on an LED is a fiction about a pin
+# nothing samples.
 #
 # THE MACHINE'S 100 MHz IS NOT HERE, and that is not an omission. `cadr_arty.sv`
 # makes it with an MMCM, and Vivado derives the generated clock from this one
@@ -52,9 +53,24 @@ set_property -dict { PACKAGE_PIN D20 IOSTANDARD LVCMOS33 } [get_ports { btn[1] }
 set_property -dict { PACKAGE_PIN L20 IOSTANDARD LVCMOS33 } [get_ports { btn[2] }]
 set_property -dict { PACKAGE_PIN L19 IOSTANDARD LVCMOS33 } [get_ports { btn[3] }]
 
-## Nothing samples an LED and nothing meets setup against a fingertip.
+## The two slide switches. **SW0 is the no-auto-boot switch**: with it on the
+## machine comes out of reset with RUN clear, as a CADR is when the power comes
+## on with nobody at it, and only the boot button starts it. It is read at the
+## fabric's reset and at no other instant, so moving it under a running machine
+## does nothing until the next reset. SW1 has no meaning in this design and is
+## brought out so that the port list matches the board.
+##
+## Pins from Digilent's Arty-Z7-20-Master.xdc verbatim, with that file's own
+## schematic names kept in the comments so that the mapping can be checked
+## against the board rather than against memory.
+set_property -dict { PACKAGE_PIN M20 IOSTANDARD LVCMOS33 } [get_ports { sw[0] }]; #IO_L7N_T1_AD2N_35 Sch=SW0
+set_property -dict { PACKAGE_PIN M19 IOSTANDARD LVCMOS33 } [get_ports { sw[1] }]; #IO_L7P_T1_AD2P_35 Sch=SW1
+
+## Nothing samples an LED and nothing meets setup against a fingertip, and a
+## slide switch is no more of a timing constraint than a fingertip is.
 set_false_path -to   [get_ports { led[*] }]
 set_false_path -from [get_ports { btn[*] }]
+set_false_path -from [get_ports { sw[*] }]
 
 ## `witness` has no timing requirement, and saying so is not a convenience.
 ##
@@ -78,7 +94,14 @@ set_false_path -from [get_ports { btn[*] }]
 set_false_path -to [get_cells -quiet witness_reg]
 
 ## MIT's debug cable on the two Pmod headers, JA carrying DBGOUT and JB
-## carrying DBGIN. Pins from Digilent's Arty-Z7-20-Master.xdc verbatim, with
+## carrying DBGIN.
+##
+## **THE DECISION IS ONE CONNECTOR AND THESE PINS ARE THE EARLIER
+## ARRANGEMENT.** The link is to go on JA alone, in both directions, with JB
+## unassigned; a board is a debugger or a debuggee by configuration and never
+## both at once, so the second connector bought only a chain of three machines.
+## That is not built: the carrier below is the two-connector one, and replacing
+## it is a change of its own. `docs/debug-cable.md` says which is which. Pins from Digilent's Arty-Z7-20-Master.xdc verbatim, with
 ## that file's own schematic names and header pin numbers kept in the comments
 ## so that the mapping can be checked against the board rather than against
 ## memory. Both headers are four differential pairs there; used single-ended,

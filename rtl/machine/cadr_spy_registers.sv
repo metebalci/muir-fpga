@@ -93,7 +93,30 @@ module cadr_spy_registers (
     // fact the reset arm below already states: the fabric's reset IS the boot
     // button held.  What was missing was a way to press it while the fabric
     // runs, and these three lines are it.
-    input  var logic        n_boot
+    input  var logic        n_boot,
+
+    // **THE NO-AUTO-BOOT SWITCH, AND THE ONE INSTANT IT IS READ AT.**  A CADR
+    // whose power has just come on has `RUN` clear and is running nothing: the
+    // boot button is what starts it, and until somebody presses it the machine
+    // sits there.  The reset arm below is where this fabric decides which of
+    // the two states it comes up in, so the switch is read THERE and nowhere
+    // else --- which is what makes it a power-on condition rather than a
+    // control.  High leaves `RUN` clear; low leaves it preset, which is what
+    // every trace here and every bring-up board starts from.
+    //
+    // **IT IS A LEVEL AND IT IS SAMPLED, AND THE DIFFERENCE IS THE WHOLE
+    // BEHAVIOUR.**  Nothing outside the reset arm looks at it, so flipping the
+    // switch under a running machine does nothing at all until the next fabric
+    // reset --- a machine that stopped mid-instruction because somebody moved a
+    // switch would be a control the CADR never had.  And `-BOOT` still presets
+    // `RUN` below whatever this says, because the button is what takes the hold
+    // off: that is the whole point of holding the machine at the button.
+    //
+    // `boards/arty-z7-20/cadr_arty.sv` drives it from SW0, synchronised; the
+    // console reports both this level and the value the machine came out of
+    // reset with.  muir's own `--no-auto-boot` is the same state by the same
+    // argument.
+    input  var logic        no_auto_boot
 );
 
   // busint::DIAGNOSTIC_NS, REGISTER_STROBE_NS and REGISTER_PULSE_NS.
@@ -150,14 +173,20 @@ module cadr_spy_registers (
       ub_ssyn     <= 1'b0;
       prog_reset  <= 1'b0;
       prog_boot   <= 1'b0;
-      // **RESET HERE IS THE BOOT BUTTON HELD.**  `-BOOT` presets `RUN` at
-      // OLORD1 1A14 and is one of the three inputs of `RESET` at 1C08, and
-      // "a finger holds it for many master clocks, so SRUN has followed RUN
-      // by the time it is released".  `Engine::boot` does exactly this ---
-      // reset, then `run` --- so a fabric coming out of reset is a machine
-      // whose boot button has just been let go, which is what every trace
-      // here starts from.  A separate button is what a console would add.
-      run         <= 1'b1;
+      // **RESET HERE IS THE BOOT BUTTON HELD, UNLESS THE SWITCH SAYS IT IS
+      // NOT.**  `-BOOT` presets `RUN` at OLORD1 1A14 and is one of the three
+      // inputs of `RESET` at 1C08, and "a finger holds it for many master
+      // clocks, so SRUN has followed RUN by the time it is released".
+      // `Engine::boot` does exactly this --- reset, then `run` --- so a fabric
+      // coming out of reset is a machine whose boot button has just been let
+      // go, which is what every trace here starts from.
+      //
+      // With `no_auto_boot` high it is a machine whose button has NOT been
+      // pressed: `RUN` clear, nothing running, and only `-BOOT` starts it.
+      // **This assignment is the only place the switch is read**, so the
+      // sample is taken at the last tick of reset and at no other instant; the
+      // port's own note says why that is the behaviour and not an economy.
+      run         <= !no_auto_boot;
       // The 74S175 at OLORD1 1A09 is cleared by `-RESET`, where `RUN`'s own
       // flip flop at 1A14 is preset by `-BOOT` and cleared by `-CLOCK RESET
       // A`: a console that resets the machine leaves it running or halted as
@@ -247,6 +276,12 @@ module cadr_spy_registers (
       // The bus cycle itself is NOT interrupted: `-UB SSYN` still comes and
       // the master still lets go, because `RESET` has no pin on this slave's
       // handshake.  What is lost is the word, not the answer.
+      //
+      // **AND IT IS WHAT TAKES A NO-AUTO-BOOT HOLD OFF.**  A machine held
+      // with `RUN` clear at reset is a machine waiting for its button, so the
+      // preset here is unconditional and does not consult `no_auto_boot`: the
+      // switch decides how the machine comes up and the button decides when it
+      // goes, which is the arrangement a CADR's own light panel has.
       if (booting) begin
         run         <= 1'b1;   // preset at the 74S74 at OLORD1 1A14
         step        <= 1'b0;   // the 74S175 at 1A09, cleared by -RESET

@@ -12239,3 +12239,203 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
             if (boots != 8'hFF) boots <= boots;
 @end
+
+# ---------------------------------------------------------------------------
+# THE NO-AUTO-BOOT SWITCH: THE STATE THE MACHINE COMES UP IN
+# ---------------------------------------------------------------------------
+#
+# A CADR whose power has just come on has `RUN` clear and runs nothing, and the
+# button on its light panel is what starts it.  SW0 on this board says which of
+# the two states the machine comes out of reset in, and the level is read at
+# `cadr_spy_registers.sv`'s reset arm and `cadr_microcycle.sv`'s and at no other
+# instant --- so there are three ways to be wrong and each has a record: the
+# switch ignored, the button failing to take the hold off, and the level read
+# LIVE, which turns a power-on condition into a control the CADR never had.
+
+@mutation no-auto-boot-the-switch-is-ignored
+@check no_auto_boot
+@file rtl/machine/cadr_spy_registers.sv
+@note `RUN` is preset at the 74S74 at OLORD1 1A14 by `-BOOT`, and the fabric's
+@note reset IS the boot button held and let go --- which is why it comes out
+@note set.  With the switch on there is no button, so it must come out clear.
+@note This is the fabric before the switch existed, which is exactly the
+@note mutation worth having: it is what every board here did until now.
+@note
+@note **WRITTEN AS AN OR AND NOT AS A CONSTANT**, which is the bit-granularity
+@note lesson: `run <= 1'b1` leaves `no_auto_boot` read by nothing in this module
+@note and Verilator says so, so lint would do the catching instead of the check.
+@note This keeps the read and means the same thing.  Caught on "microcycles
+@note retired by a held machine is 2271, wanted 0", on "MACHRUN was up for
+@note 99947 of 100000 ticks", and on "PC on a held machine is 130, wanted 0".
+@old
+      run         <= !no_auto_boot;
+@new
+      run         <= !no_auto_boot || 1'b1;
+@end
+
+@mutation no-auto-boot-srun-comes-up-anyway
+@check no_auto_boot
+@file rtl/machine/cadr_microcycle.sv
+@note **SRUN IS THE OTHER HALF AND IT IS NOT A DUPLICATE OF THE FIRST.**  `RUN`
+@note is the console's register and `SRUN` is it registered at the master clock,
+@note OLORD1 1A10, and `MACHRUN`'s own term is `SRUN` and not `RUN`.  So a
+@note fabric that holds `RUN` clear and lets `SRUN` come up set runs for exactly
+@note one master clock before `SRUN` follows `RUN` down --- one microcycle of a
+@note machine muir's `--no-auto-boot` says retires none.
+@note
+@note This is not hypothetical: the first build of the switch had it, and this
+@note check is what found it.  `Rtl::new` comes up with every register clear and
+@note `Engine::boot` raises the pair together, so clear is muir either way.
+@note
+@note An OR rather than a constant, for the reason the record above gives: a
+@note bare `1'b1` leaves `no_auto_boot` read by nothing in this module and lint
+@note catches it instead of the check.  Caught on "microcycles retired by a held
+@note machine is 1, wanted 0" and on "MACHRUN was up for 53 of 100000 ticks".
+@old
+      srun         <= !no_auto_boot;
+@new
+      srun         <= !no_auto_boot || 1'b1;
+@end
+
+@mutation no-auto-boot-the-button-does-not-let-go
+@check no_auto_boot
+@file rtl/machine/cadr_spy_registers.sv
+@note **THE SWITCH SAYS HOW THE MACHINE COMES UP AND THE BUTTON SAYS WHEN IT
+@note GOES**, which is the arrangement a CADR's own light panel has.  `-BOOT`
+@note presets `RUN` at 1A14 whatever the switch says, and a fabric that
+@note consulted the switch here would be one whose boot button did nothing at
+@note all while the switch was on --- a machine nobody could start without
+@note reaching for the board.
+@note
+@note The `booting` arm is written last so that it beats a write landing in the
+@note same tick, which is the 74S175's asynchronous clear; this leaves that
+@note ordering alone and changes only what is written.  Caught on "the held
+@note machine did not start the PROM at the button".
+@old
+        run         <= 1'b1;   // preset at the 74S74 at OLORD1 1A14
+@new
+        run         <= !no_auto_boot;   // preset at the 74S74 at OLORD1 1A14
+@end
+
+@mutation no-auto-boot-the-switch-is-read-live
+@check no_auto_boot
+@file rtl/machine/cadr_spy_registers.sv
+@note **A POWER-ON CONDITION READ LIVE IS A CONTROL THE CADR NEVER HAD.**  The
+@note switch is read at the reset arm and at no other instant, so moving it
+@note under a running machine does nothing until the next reset.  Read on every
+@note tick instead, the machine stops mid-instruction the moment somebody's
+@note hand brushes the board --- and, worse, a machine booted at the button
+@note stops again as soon as the button is let go, since this term is written
+@note before the `booting` arm and wins on the next tick.
+@note
+@note Written as an added statement rather than an edited one because the
+@note property is about WHERE the level is read: there is no line to change,
+@note only a line to add.  Every signal stays used.
+@note
+@note Caught FIRST on "the held machine did not start the PROM at the button",
+@note which is the second of the two ways a live read is wrong and which runs
+@note earlier in the check; the case written for this record --- the switch
+@note raised under a running machine --- catches it as well, and the first
+@note failing line is quoted because that is what a reader will see.
+@old
+      if (mclk) phase_t <= 6'd0;
+@new
+      if (no_auto_boot) run <= 1'b0;
+      if (mclk) phase_t <= 6'd0;
+@end
+
+# ---------------------------------------------------------------------------
+# LD4: THE MACHINE FELL OVER
+# ---------------------------------------------------------------------------
+#
+# Four lines of fabric with a module and a check of their own, because in
+# `boards/arty-z7-20/cadr_arty.sv` they would be reached by the `arty` lint and
+# by nothing else --- and lint cannot tell a lamp that latches from one that
+# does not.  What is NOT here, and cannot be: which signal the board wires to
+# the input.  That is the top level's, it is lint-only, and `cadr_arty.sv` says
+# so at the instantiation.
+
+@mutation errhalt-lamp-is-not-sticky
+@check errhalt_lamp
+@file rtl/plumbing/cadr_lamp_errhalt.sv
+@note **THE LATCH IS THE POINT.**  `-BOOT` clears `ERRSTOP` at the mode
+@note register, so the machine's own `ERRHALT` drops at a boot by itself --- but
+@note so does a console that writes the mode register for a reason of its own,
+@note with the machine still standing where it fell.  A lamp that merely
+@note followed the level would go out under somebody else's register write and
+@note what a person at the board saw would be erased.
+@note
+@note **THE CLEAR IS KEPT AND ONLY THE HOLD IS DROPPED**, which is the
+@note bit-granularity lesson: a bare `lit <= errhalt` leaves `rst` and `n_boot`
+@note read by nothing and Verilator says so, so lint would do the catching
+@note instead of the check.  This keeps both reads and says the same thing ---
+@note the lamp follows the level and holds nothing.
+@note
+@note Caught on "the lamp 10,000 ticks after ERRHALT went away is 0, wanted 1".
+@old
+    if (rst || !n_boot) lit <= 1'b0;
+    else if (errhalt) lit <= 1'b1;
+@new
+    if (rst || !n_boot) lit <= 1'b0;
+    else lit <= errhalt;
+@end
+
+@mutation errhalt-lamp-the-button-does-not-clear-it
+@check errhalt_lamp
+@file rtl/plumbing/cadr_lamp_errhalt.sv
+@note A board booted at the button, at the keyboard's chord or over the debug
+@note cable must start with a clean lamp, or the next person to look at it reads
+@note a fault that is over.  `-BOOT` is why the machine's own `-BOOT` comes out
+@note of `cadr_machine` at all: nothing at the board can otherwise tell that a
+@note keyboard chord was a boot.
+@note
+@note **`n_boot` IS KEPT IN THE CONE AND ONLY ITS EFFECT IS DROPPED**, for the
+@note bit-granularity reason the record above gives: a port read by nothing in
+@note the module is a lint error and lint would be doing the catching.  An
+@note `n_boot` ANDed into the set is a lamp the button no longer clears and
+@note which a held button stops from lighting, which is the same defect seen
+@note from the set side.  Caught on "the lamp one tick after -BOOT is 1,
+@note wanted 0".
+@old
+    if (rst || !n_boot) lit <= 1'b0;
+    else if (errhalt) lit <= 1'b1;
+@new
+    if (rst) lit <= 1'b0;
+    else if (errhalt && n_boot) lit <= 1'b1;
+@end
+
+@mutation errhalt-lamp-the-clear-is-not-dominant
+@check errhalt_lamp
+@file rtl/plumbing/cadr_lamp_errhalt.sv
+@note **CLEARED BY THE BUTTON MEANS CLEARED WHILE IT IS HELD.**  `-BOOT2` is a
+@note level --- a finger holds it --- and a machine standing at the boot trap
+@note under a held button is not a machine that has fallen over.  With the two
+@note arms the other way round the lamp lights under a held button and goes out
+@note when it is let go, which is the lamp saying the opposite of the truth at
+@note both instants.
+@note
+@note Caught on "the lamp while the button is held down is 1, wanted 0".
+@old
+    if (rst || !n_boot) lit <= 1'b0;
+    else if (errhalt) lit <= 1'b1;
+@new
+    if (errhalt) lit <= 1'b1;
+    else if (rst || !n_boot) lit <= 1'b0;
+@end
+
+@mutation errhalt-lamp-never-lights
+@check errhalt_lamp
+@file rtl/plumbing/cadr_lamp_errhalt.sv
+@note **A LAMP WHOSE GOOD STATE IS DARK CANNOT BE TOLD FROM A LAMP THAT IS
+@note BROKEN BY LOOKING AT IT**, which is the price of dark being the good
+@note state and is why this record exists: a board that never lights LD4 looks
+@note exactly like a board that has never fallen over, for as long as anybody
+@note cares to watch.  Nothing but a check can say which.
+@note
+@note `errhalt` stays read, so lint sees nothing.  Caught on "the lamp one tick
+@note after ERRHALT is 0, wanted 1".
+@old
+    else if (errhalt) lit <= 1'b1;
+@new
+    else if (errhalt) lit <= 1'b0;
+@end
