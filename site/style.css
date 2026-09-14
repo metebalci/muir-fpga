@@ -337,6 +337,12 @@ figure.screen img {
 .d-absent   { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 4 3; }
 .d-absent-x { fill: none; stroke: var(--st-absent); stroke-width: 1.25; }
 .d-absent-t { fill-opacity: 0.5; }
+/* THE ONE RED TEXT ON THESE DRAWINGS, and it says one thing: the debug cable's
+   supply pins are open at both ends, because a cable between two boards must not
+   join their 3.3 V rails.  It borrows the crossings' red rather than taking a
+   colour of its own, so that red on a drawing goes on meaning one thing ---
+   something that is not about how far along a block is. */
+.d-warn { fill: var(--st-absent); }
 /* A status colour on a connection, not a block: the wash a status class
    carries would fill the shape an open path implies, so lines force it off
    and keep only the stroke. */

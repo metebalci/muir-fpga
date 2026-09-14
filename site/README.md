@@ -123,6 +123,12 @@ here, as a block of token overrides under `@media (max-width: 720px)`.
 label text than muir's figures, so they scroll sooner rather than shrinking
 below legibility. `.crumb` is added for the faint line on the drawing pages.
 
+`.d-warn` is added for the one red label on the drawings. The debug cable's
+supply pins are open at both ends, because a cable between two boards must not
+join their 3.3 V rails, and the connector's own block says so. It takes the
+crossings' red rather than a colour of its own, so that red on a drawing goes on
+meaning one thing.
+
 `.d-absent`, `.d-absent-x`, `.d-absent-t` and `.d-absent-key` are added for a
 block a board does not have. The outline and the faint label use the drawing's
 own ink through `currentColor`, so they follow the reader's theme like
