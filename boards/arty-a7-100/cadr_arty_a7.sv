@@ -159,10 +159,15 @@ module cadr_arty_a7 #(
     parameter int unsigned DDR   = 0,
     parameter int unsigned PROVE = 0,
     // **THE SOFT PROCESSING SYSTEM.**  With it, `rtl/plumbing/cadr_soc.sv` is
-    // in the design and masters the same register faces the Zynq's ARM cores
-    // master on the other two boards: the console, the disk pack side, the
-    // debug cable's window and the default slave, at the addresses the Linux
-    // programs already use.  Without it this is the machine and its tie-offs,
+    // in the design and masters the register faces the Zynq's ARM cores
+    // master on the other two boards: the console, the disk pack side and the
+    // default slave, at the addresses the Linux programs already use.  **NOT
+    // the debug cable's register window**, which is the one face of the four
+    // this board does not have: it is how a PROGRAM plays the far end of MIT's
+    // cable, and this board's debugger is a second board on the Pmod instead.
+    // `rtl/plumbing/cadr_soc_axi.sv`'s parameter list has the argument, and
+    // the catch-all answers that page "NONE" like any other address nothing
+    // implements.  Without `SOC` this is the machine and its tie-offs,
     // which is what every figure in `boards/arty-a7-100/README.md` was
     // measured on.
     //
@@ -243,10 +248,33 @@ module cadr_arty_a7 #(
     output var logic       uart_rxd_out,
     input  var logic       uart_txd_in,
 
-    // **MIT'S DEBUG CABLE ON ONE PMOD HEADER, JA.**  A board is a debugger or
-    // a debuggee on this cable and never both at once, so one connector is
-    // enough; the other three headers carry nothing of this design's, and JD
-    // is where the card this board has no slot for is to go.
+    // **MIT'S DEBUG CABLE ON ONE PMOD HEADER, AND ON THIS BOARD IT IS JB.**  A
+    // board is a debugger or a debuggee on this cable and never both at once,
+    // so one connector is enough; the other three headers carry nothing of
+    // this design's, and JD is where the card this board has no slot for is to
+    // go.
+    //
+    // **JB RATHER THAN THE JA THE TWO ZYNQ BOARDS USE, AND THE BOARD DECIDES
+    // IT.**  This is the only board here with four Pmod headers and the only
+    // one where they are not all alike.  Digilent publishes JB and JC as this
+    // board's HIGH-SPEED Pmod ports and JA and JD as STANDARD ones, which is a
+    // series resistor in line with every signal; that half is the vendor's own
+    // description of the board and is not measured here.  **What IS checkable
+    // here is in the pin file, and it agrees twice over.**  That file names
+    // JB's and JC's pins `jb_p[1]`..`jb_n[4]` and `jc_p[1]`..`jc_n[4]`, which
+    // is how it names a coupled pair, and names JA's and JD's plain
+    // `ja[1]`..`ja[10]` and `jd[1]`..`jd[10]`.  And the pins bear it out: all
+    // four of JB's header rows --- pins 1 and 2, 3 and 4, 7 and 8, 9 and 10 ---
+    // are true differential pairs of bank 15, two of them clock-capable
+    // (`SRCC` on the first, `MRCC` on the second), while NOT ONE of JA's four
+    // rows is a pair at all, its differential pairs straddling the rows
+    // instead.
+    //
+    // The strobe at the far end of a ribbon is what this link rests on, so it
+    // goes on a high-speed port.  **The card stays on JD**, the other standard
+    // port, and is right there: a microSD module plugs straight into the
+    // header with no ribbon between it and the part, and SPI at tens of
+    // megahertz over an inch of board does not care about a series resistor.
     //
     // Eight pins, four each way: one strobe and three data lines a direction,
     // `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` under
@@ -262,7 +290,7 @@ module cadr_arty_a7 #(
     // DEBUGGEE and answers a debugger that plugs in, which needs no soft
     // processing system at all.  `boards/arty-a7-100/cadr_arty_a7.xdc` has
     // the pins, from Digilent's own published file.
-    inout  wire  [7:0]     ja
+    inout  wire  [7:0]     jb
 );
 
   // ------------------------------------------------------------ the clock
@@ -565,9 +593,9 @@ module cadr_arty_a7 #(
   // pack side's unanswered memory port from being trimmed.  See the
   // instantiation.
   logic        soc_uart_tx, hp_fold;
-  // MIT's debug cable arriving at the machine's DBGIN page.  With no soft
-  // processing system the window that drives them does not exist and they are
-  // the idle connector; see the tie-offs.
+  // The join's other arm, which on the two Zynq boards is the debug cable's
+  // register window and on this board is nobody at all.  It is tied idle
+  // below, whatever `SOC` says; see the tie-off.
   logic        dbg_in_req, dbg_in_wr;
   logic [1:0]  dbg_in_a;
   logic [15:0] dbd_to_machine;
@@ -579,9 +607,10 @@ module cadr_arty_a7 #(
   logic        dbg_in_ack;
   logic [1:0]  dbd_oe;
   logic [15:0] dbd_from_machine;
-  // And the same cable again, as Pmod JA carries it.  `cab_*` is a second
-  // board's debugger arriving at this machine's DBGIN page and joins the
-  // window's at `rtl/plumbing/cadr_dbg_join.sv`; `dbgout_*` is this machine's
+  // And the same cable again, as Pmod JB carries it.  `cab_*` is a second
+  // board's debugger arriving at this machine's DBGIN page, through
+  // `rtl/plumbing/cadr_dbg_join.sv` whose other arm is empty on this board;
+  // `dbgout_*` is this machine's
   // own DBGOUT page going the other way, which is CC on this board debugging
   // a second one.  `dbg_connect` is what the console asks for and the four
   // beside it are what the connector says back.
@@ -602,7 +631,7 @@ module cadr_arty_a7 #(
   // DEBUGGER applies it; see `rtl/plumbing/cadr_dbg_cable.sv`'s table.
   logic [1:0]  dbg_wiring;
   logic [2:0]  dbg_wire_state;
-  logic [7:0]  ja_o, ja_t;
+  logic [7:0]  jb_o, jb_t;
   logic        mdbg_req, mdbg_wr;
   logic [1:0]  mdbg_a;
   logic [15:0] mdbg_dbd;
@@ -704,23 +733,26 @@ module cadr_arty_a7 #(
   // both halves.
 
   // THE DEBUGGER.  MIT's debug cable reaches the machine's DBGIN page, and on
-  // the other board there are two ways to it: a register window on
-  // `M_AXI_GP1` with muir on the ARM cores playing the debugger, and a Pmod
-  // carrier that takes a second board's cable.  **The carrier is pure fabric
-  // and carries over to this board unchanged**; it is not built here because
-  // a debugger with no debuggee at the other end is not worth a connector
-  // yet, and this board's first question was whether the machine builds at
-  // all.  The cable is levels and not pulses, so holding `-DEBUG IN REQ` UP
-  // --- which is `dbg_in_req` low, the sense the whole transport uses --- is
-  // exactly what the SIP at DBGIN 0A22 does to an unplugged connector.
-  // `cadr_dbgin.sv` then makes no strobe, never asks for the bus, and the
-  // whole arm of the arbiter folds.
+  // the two Zynq boards there are two ways to it: a register window on
+  // `M_AXI_GP1`, with muir on the ARM cores playing the debugger in software,
+  // and a Pmod carrier that takes a second board's cable.  **THIS BOARD HAS
+  // ONLY THE SECOND, AND THAT IS A DECISION AND NOT A GAP.**  The window is
+  // there so that a PROGRAM can be the far end of the cable, and the only
+  // program on this board is the firmware, which is the console.  Its
+  // debugger is another board over the Pmod --- which is the whole of what
+  // the connector is for, and which needs no `SOC` at all, a CADR being
+  // always a debuggee.
   //
-  // **THE OTHER WAY TO THE PAGE IS BUILT WITH `SOC`**: the register window a
-  // debugger reaches over a general-purpose port is
-  // `rtl/plumbing/cadr_debug_window.sv`, and the soft processing system has a
-  // port for it at the address the Zynq gives it.  The Pmod carrier, which is
-  // the way a SECOND BOARD's cable arrives, is still not built here.
+  // So `rtl/plumbing/cadr_debug_window.sv` is not instantiated here in any
+  // configuration, `0x8000_1000` is an address the catch-all answers "NONE"
+  // like any other, and the join below has the connector for its only master.
+  // `rtl/plumbing/cadr_soc_axi.sv`'s parameter list carries the argument and
+  // `tb/cadr_soc_tb.cpp` asserts both halves of it.
+  //
+  // The cable is levels and not pulses, so holding `-DEBUG IN REQ` UP --- which
+  // is `dbg_in_req` low, the sense the whole transport uses --- is exactly
+  // what the SIP at DBGIN 0A22 does to an unplugged connector.
+  // `cadr_dbgin.sv` then makes no strobe and never asks for the bus.
 
   // THE I/O BOARD'S FOUR CABLES.  The keyboard, the mouse, the serial line
   // and the Chaosnet interface are all on the card inside `cadr_machine`, and
@@ -864,17 +896,18 @@ module cadr_arty_a7 #(
       .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
-      // MIT's debug cable, arriving at this machine's DBGIN page from two
-      // debuggers joined by `rtl/plumbing/cadr_dbg_join.sv`: the register
-      // window in `g_soc`, which is the soft processing system's, and Pmod
-      // JA, which is a second board.  With no soft system the window's arm is
-      // tied low below and the connector is all there is.
+      // MIT's debug cable, arriving at this machine's DBGIN page through
+      // `rtl/plumbing/cadr_dbg_join.sv`.  On the two Zynq boards that join has
+      // two arms, the register window and the connector; here it has one, Pmod
+      // JB, which is a second board.  The window's arm is tied idle below in
+      // every configuration, this board having no program that could be a
+      // debugger.
       .dbg_in_req(mdbg_req), .dbg_in_wr(mdbg_wr), .dbg_in_a(mdbg_a),
       .dbd_in(mdbg_dbd),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
       // And the other end of the same cable: the DBGOUT page, this machine
       // as somebody else's debugger.  `rtl/plumbing/cadr_dbg_cable.sv` below
-      // puts it on Pmod JA when this board has the role, and answers it with
+      // puts it on Pmod JB when this board has the role, and answers it with
       // the pull-ups when nothing is plugged in.
       .dbgout_req(dbgout_req), .dbgout_wr(dbgout_wr), .dbgout_a(dbgout_a),
       .dbgout_dbd(dbgout_dbd), .dbgout_ack(dbgout_ack),
@@ -1203,7 +1236,8 @@ module cadr_arty_a7 #(
   // slaves off them --- the disk pack side, the console, the debug cable's
   // window, and a default answering everything else.  Here
   // `rtl/plumbing/cadr_soc.sv` brings out the same four ports and the same
-  // four slaves hang off them, with the same parameters, at the same
+  // three of the same four slaves hang off them --- all but the window ---
+  // with the same parameters, at the same
   // addresses, from the same files.  **Nothing in `rtl/plumbing/` changed for
   // this board and nothing in `rtl/machine/` knows which processor is in
   // front of it.**
@@ -1238,14 +1272,6 @@ module cadr_arty_a7 #(
     logic        cn_awvalid, cn_awready, cn_wlast, cn_wvalid, cn_wready;
     logic        cn_bvalid, cn_bready, cn_arvalid, cn_arready;
     logic        cn_rlast, cn_rvalid, cn_rready;
-
-    logic [31:0] dw_awaddr, dw_wdata, dw_araddr, dw_rdata;
-    logic [3:0]  dw_awlen, dw_wstrb, dw_arlen;
-    logic [11:0] dw_awid, dw_bid, dw_arid, dw_rid;
-    logic [1:0]  dw_bresp, dw_rresp;
-    logic        dw_awvalid, dw_awready, dw_wlast, dw_wvalid, dw_wready;
-    logic        dw_bvalid, dw_bready, dw_arvalid, dw_arready;
-    logic        dw_rlast, dw_rvalid, dw_rready;
 
     logic [31:0] df_rdata;
     logic [3:0]  df_arlen;
@@ -1294,7 +1320,7 @@ module cadr_arty_a7 #(
         //
         // **AND TWO CLOCKS.**  `clk_soc` is the core's, its memory's, its
         // UART's and its timer's; `clk` is the machine's, which the AXI
-        // bridge inside and the four faces outside all run on.  What crosses
+        // bridge inside and the three faces outside all run on.  What crosses
         // is one request and one answer, at the narrowest seam there is ---
         // `rtl/plumbing/cadr_soc_cross.sv` --- and not a hundred and forty
         // wires of AXI.  The reset is the board's either way and `cadr_soc`
@@ -1327,16 +1353,6 @@ module cadr_arty_a7 #(
         .con_rdata(cn_rdata), .con_rresp(cn_rresp), .con_rid(cn_rid),
         .con_rlast(cn_rlast), .con_rvalid(cn_rvalid), .con_rready(cn_rready),
 
-        .dbg_awaddr(dw_awaddr), .dbg_awlen(dw_awlen), .dbg_awid(dw_awid),
-        .dbg_awvalid(dw_awvalid), .dbg_awready(dw_awready),
-        .dbg_wdata(dw_wdata), .dbg_wstrb(dw_wstrb), .dbg_wlast(dw_wlast),
-        .dbg_wvalid(dw_wvalid), .dbg_wready(dw_wready),
-        .dbg_bresp(dw_bresp), .dbg_bid(dw_bid), .dbg_bvalid(dw_bvalid),
-        .dbg_bready(dw_bready),
-        .dbg_araddr(dw_araddr), .dbg_arlen(dw_arlen), .dbg_arid(dw_arid),
-        .dbg_arvalid(dw_arvalid), .dbg_arready(dw_arready),
-        .dbg_rdata(dw_rdata), .dbg_rresp(dw_rresp), .dbg_rid(dw_rid),
-        .dbg_rlast(dw_rlast), .dbg_rvalid(dw_rvalid), .dbg_rready(dw_rready),
 
         .dflt_awid(df_awid), .dflt_awvalid(df_awvalid),
         .dflt_awready(df_awready),
@@ -1432,26 +1448,6 @@ module cadr_arty_a7 #(
         .dbg_active(dbg_active)
     );
 
-    // ------------------------------------------- the debug cable's window
-    cadr_debug_window #(
-        .REG_BASE(32'h8000_1000)
-    ) u_debug_window (
-        .clk(clk), .rst(rst),
-        .s_awaddr(dw_awaddr), .s_awlen(dw_awlen), .s_awid(dw_awid),
-        .s_awvalid(dw_awvalid), .s_awready(dw_awready),
-        .s_wdata(dw_wdata), .s_wstrb(dw_wstrb), .s_wlast(dw_wlast),
-        .s_wvalid(dw_wvalid), .s_wready(dw_wready),
-        .s_bresp(dw_bresp), .s_bid(dw_bid), .s_bvalid(dw_bvalid),
-        .s_bready(dw_bready),
-        .s_araddr(dw_araddr), .s_arlen(dw_arlen), .s_arid(dw_arid),
-        .s_arvalid(dw_arvalid), .s_arready(dw_arready),
-        .s_rdata(dw_rdata), .s_rresp(dw_rresp), .s_rid(dw_rid),
-        .s_rlast(dw_rlast), .s_rvalid(dw_rvalid), .s_rready(dw_rready),
-        .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-        .dbd_out(dbd_to_machine),
-        .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_from_machine), .dbd_oe(dbd_oe)
-    );
-
     // -------------------------------------------------- and everything else
     cadr_gp0_default u_dflt (
         .clk(clk), .rst(rst),
@@ -1492,16 +1488,9 @@ module cadr_arty_a7 #(
     assign con_mach_rst = 1'b0;
     assign con_boot     = 1'b0;
 
-    // The unplugged DBGIN connector: `-DEBUG IN REQ` held up, which is this
-    // signal low, is what the SIP at DBGIN 0A22 does to a cable with nothing
-    // on it.
-    assign dbg_in_req    = 1'b0;
-    assign dbg_in_wr     = 1'b0;
-    assign dbg_in_a      = 2'd0;
-    assign dbd_to_machine = 16'd0;
-    // And nobody to ask for the debugger's role, there being no console.
+    // Nobody to ask for the debugger's role, there being no console.
     // **The connector is still there and this board is still a DEBUGGEE** ---
-    // it answers a debugger that plugs into JA, which is the power-on state
+    // it answers a debugger that plugs into JB, which is the power-on state
     // of any CADR and needs nothing set.
     assign dbg_connect   = 1'b0;
     // And the wiring stands at `auto`, which is what the fabric comes up
@@ -1527,7 +1516,7 @@ module cadr_arty_a7 #(
   // driven in exactly one place whichever board this is.
   assign uart_rxd_out = soc_uart_tx;
 
-  // --------------------------------------- the debug cable, on Pmod JA
+  // --------------------------------------- the debug cable, on Pmod JB
   //
   // MIT's whole cable on ONE connector, both directions, four pins each way.
   // `rtl/plumbing/cadr_dbg_cable.sv` is the connector and the role;
@@ -1536,11 +1525,12 @@ module cadr_arty_a7 #(
   // **IT IS INSTANTIATED WHATEVER `SOC` SAYS, NOT ONLY ON A BOARD WITH A SOFT
   // PROCESSING SYSTEM.**  A board is always a DEBUGGEE: it answers a debugger
   // on the connector exactly as MIT's board answers one on its DBGIN, and
-  // nothing has to be set for that.  So the connector cannot live inside
-  // `g_soc` with the window --- and the pins are the top level's besides,
+  // nothing has to be set for that.  The pins are the top level's besides,
   // where an output nothing drives is a PINMISSING.  With no soft system
   // `dbg_connect` is tied low above and this board is a debuggee and nothing
-  // else, which is what a CADR with one cable in it is.
+  // else, which is what a CADR with one cable in it is --- and with the soft
+  // system it is the same, there being no window on this board for the other
+  // arm of the join.
   //
   // **AND IT TAKES THE BOARD'S RESET AND NOT THE MACHINE'S**, for the reason
   // the DBGIN page gives about its own: modifier bit 1 resets this machine
@@ -1560,23 +1550,44 @@ module cadr_arty_a7 #(
       .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
       .in_req(cab_req), .in_wr(cab_wr), .in_a(cab_a), .in_dbd(cab_dbd),
       .in_ack(dbg_in_ack), .in_dbd_out(dbd_from_machine), .in_dbd_oe(dbd_oe),
-      .pin_o(ja_o), .pin_t(ja_t), .pin_i(ja)
+      .pin_o(jb_o), .pin_t(jb_t), .pin_i(jb)
   );
 
   // The eight pads.  `pin_t` is Xilinx's sense --- HIGH is not driven --- so
   // the group this board does not own is high-impedance and the far end has
   // it.
-  for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
-    assign ja[i] = ja_t[i] ? 1'bz : ja_o[i];
+  for (genvar i = 0; i < 8; i = i + 1) begin : g_jb
+    assign jb[i] = jb_t[i] ? 1'bz : jb_o[i];
   end
 
-  // Two debuggers at one DBGIN page, which MIT's board cannot have and this
-  // one can.  The near arm is the window in `g_soc` and the far arm the
-  // connector, the first to assert holds until it lifts, and a tie goes to
-  // the window --- `rtl/plumbing/cadr_dbg_join.sv` has the argument.  An
-  // unplugged connector presents zeros, so with nothing in JA this is the
-  // window's cable unchanged, and on a board with no soft system it is the
-  // connector alone.
+  // **ONE DEBUGGER AT THE DBGIN PAGE ON THIS BOARD, WHERE THE ZYNQ BOARDS HAVE
+  // TWO.**  `rtl/plumbing/cadr_dbg_join.sv` exists because those boards can be
+  // reached from two directions at once: the Pmod connector, which is a second
+  // board, and `rtl/plumbing/cadr_debug_window.sv`, which is muir on their own
+  // Arm cores playing the far end of the cable in software.  **There is no
+  // window here and there is no muir here**: the only processor on this board
+  // is the soft one, which is the console and not a debugger, so the
+  // connector is the whole of it.
+  //
+  // The join stays, and it is the same module those boards use, so that this
+  // board is the same composition with one arm empty rather than a second
+  // wiring of the DBGIN page.  What an empty arm IS is the join's own word for
+  // an unplugged cable: `a_req` low --- which is `-DEBUG IN REQ` UP, the sense
+  // the whole transport uses --- with the levels beside it at zero, exactly as
+  // the SIP at DBGIN 0A22 holds a connector with nothing on it.  A request can
+  // then never be pending on that arm, so the connector holds the page
+  // whenever it asks for it and `holder` is 1 from the first tick after reset.
+  //
+  // **AND THAT IS ASSERTED RATHER THAN STATED.**  `tb/cadr_soc_tb.cpp` watches
+  // the join every tick: the window's arm never asserts, the holder never
+  // names it, and the request reaching `cadr_dbgin.sv` never rises while
+  // nothing is on the connector.  `soc-the-window-arm-of-the-join-asks-for-the-page`
+  // is the record.
+  assign dbg_in_req     = 1'b0;
+  assign dbg_in_wr      = 1'b0;
+  assign dbg_in_a       = 2'd0;
+  assign dbd_to_machine = 16'd0;
+
   cadr_dbg_join u_dbg_join (
       .clk(clk), .rst(rst),
       .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),

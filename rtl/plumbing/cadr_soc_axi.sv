@@ -14,7 +14,10 @@
 // `rtl/plumbing/cadr_console.sv`, `rtl/plumbing/cadr_disk_pack.sv` and
 // `rtl/plumbing/cadr_gp0_default.sv` are instantiated on this board with the
 // same parameters and the same wires they have on the other two, and their
-// checks are unchanged.
+// checks are unchanged.  What this board does NOT hang off it is the debug
+// cable's register window: that face is how a program plays the debugger, and
+// this board has no program that does.  The parameter list below has the
+// argument.
 //
 // **AND THE FIRMWARE AND THE LINUX PROGRAMS THEREFORE SHARE ONE MAP.**
 // `console_face.h` says the console is at `0x8000_0000` and `pack_side.h`
@@ -51,7 +54,7 @@
 // guard can catch a load that never completes.  A soft core is in exactly the
 // same position and worse, because it has no interconnect to give it a DECERR
 // at all.  So the last port here is a catch-all: every address that is none of
-// the three windows goes to it, anywhere in the four gigabytes, and
+// the two windows goes to it, anywhere in the four gigabytes, and
 // `cadr_gp0_default.sv` answers it with "NONE" and OKAY.  **A firmware on this
 // board cannot hang on a load**, and that is a property of the composition
 // rather than of the firmware's care.
@@ -72,12 +75,24 @@
 `default_nettype none
 
 module cadr_soc_axi #(
-    // The three windows, at the addresses the Linux programs already use.
-    // Each is 4 KB.  `cadr_console.sv`'s `REG_BASE`, `cadr_debug_window.sv`'s
-    // and `cadr_disk_pack.sv`'s own defaults.
+    // The two windows, at the addresses the Linux programs already use.  Each
+    // is 4 KB.  `cadr_disk_pack.sv`'s own default and `cadr_console.sv`'s
+    // `REG_BASE`.
+    //
+    // **THERE IS NO THIRD, AND THE DEBUG CABLE'S WINDOW IS WHY.**  On the two
+    // Zynq boards a third 4 KB page at `0x8000_1000` is
+    // `rtl/plumbing/cadr_debug_window.sv`, which is how muir on those boards'
+    // own Arm cores plays the far end of MIT's debug cable in software.  There
+    // is no muir here and no processor to run one on: this board's debugger is
+    // a SECOND BOARD over the Pmod, and it reaches the machine's DBGIN page
+    // through `rtl/plumbing/cadr_dbg_cable.sv` and nothing in this file.  So
+    // the window is not in the design, that page is none of the two below, and
+    // the catch-all answers it exactly as it answers every other address
+    // nothing implements.  **That is a property and not an absence**:
+    // `tb/cadr_soc_tb.cpp` asserts that a load from `0x8000_1000` comes back
+    // "NONE", and `soc-the-window-page-is-a-page-of-its-own` is the record.
     parameter logic [31:0] PACK_BASE = 32'h4000_0000,
-    parameter logic [31:0] CON_BASE  = 32'h8000_0000,
-    parameter logic [31:0] DBG_BASE  = 32'h8000_1000
+    parameter logic [31:0] CON_BASE  = 32'h8000_0000
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -149,33 +164,6 @@ module cadr_soc_axi #(
     input  var logic        con_rvalid,
     output var logic        con_rready,
 
-    // --- the debug cable's register window ---------------------------------
-    output var logic [31:0] dbg_awaddr,
-    output var logic [3:0]  dbg_awlen,
-    output var logic [11:0] dbg_awid,
-    output var logic        dbg_awvalid,
-    input  var logic        dbg_awready,
-    output var logic [31:0] dbg_wdata,
-    output var logic [3:0]  dbg_wstrb,
-    output var logic        dbg_wlast,
-    output var logic        dbg_wvalid,
-    input  var logic        dbg_wready,
-    input  var logic [1:0]  dbg_bresp,
-    input  var logic [11:0] dbg_bid,
-    input  var logic        dbg_bvalid,
-    output var logic        dbg_bready,
-    output var logic [31:0] dbg_araddr,
-    output var logic [3:0]  dbg_arlen,
-    output var logic [11:0] dbg_arid,
-    output var logic        dbg_arvalid,
-    input  var logic        dbg_arready,
-    input  var logic [31:0] dbg_rdata,
-    input  var logic [1:0]  dbg_rresp,
-    input  var logic [11:0] dbg_rid,
-    input  var logic        dbg_rlast,
-    input  var logic        dbg_rvalid,
-    output var logic        dbg_rready,
-
     // --- everything else, which answers without looking at an address.  The
     // --- port list is `cadr_gp0_default.sv`'s, signal for signal, so that an
     // --- unconnected pin is a PINMISSING rather than a silent hole --- which
@@ -202,9 +190,16 @@ module cadr_soc_axi #(
     output var logic        dflt_rready
 );
 
-  // Which of the four a transaction is for.  The order matters only in that
-  // `S_DFLT` is last and matches whatever the three windows did not.
-  typedef enum logic [1:0] { S_PACK = 2'd0, S_CON = 2'd1, S_DBG = 2'd2,
+  // Which of the three a transaction is for.  The order matters only in that
+  // `S_DFLT` is last and matches whatever the two windows did not.
+  //
+  // **AND IT IS `2'd3` WITH A GAP AT `2'd2`, WHICH IS DELIBERATE.**  `2'd2`
+  // was the debug cable's window before that face left this board, and the
+  // encoding is left where it was rather than closed up: `S_DFLT` is the
+  // catch-all and reading as the top of the range is what "last" means here.
+  // `target()` returns only the three below, so the gap is a value `sel` can
+  // never take and the `default` arm of the multiplexer covers it either way.
+  typedef enum logic [1:0] { S_PACK = 2'd0, S_CON = 2'd1,
                              S_DFLT = 2'd3 } target_e;
 
   // **THE WINDOWS ARE 4 KB AND THE COMPARISON IS ON BITS 31:12.**  A face
@@ -219,7 +214,6 @@ module cadr_soc_axi #(
   function automatic target_e target(input logic [19:0] page);
     if (page == PACK_BASE[31:12]) return S_PACK;
     else if (page == CON_BASE[31:12]) return S_CON;
-    else if (page == DBG_BASE[31:12]) return S_DBG;
     else return S_DFLT;
   endfunction
 
@@ -253,12 +247,6 @@ module cadr_soc_axi #(
         arready_sel = con_arready; rvalid_sel = con_rvalid;
         rresp_sel   = con_rresp;   rdata_sel  = con_rdata; rid_sel = con_rid;
       end
-      S_DBG: begin
-        awready_sel = dbg_awready; wready_sel = dbg_wready;
-        bvalid_sel  = dbg_bvalid;  bresp_sel  = dbg_bresp; bid_sel = dbg_bid;
-        arready_sel = dbg_arready; rvalid_sel = dbg_rvalid;
-        rresp_sel   = dbg_rresp;   rdata_sel  = dbg_rdata; rid_sel = dbg_rid;
-      end
       default: begin
         awready_sel = dflt_awready; wready_sel = dflt_wready;
         bvalid_sel  = dflt_bvalid;  bresp_sel  = dflt_bresp; bid_sel = dflt_bid;
@@ -270,7 +258,7 @@ module cadr_soc_axi #(
 
   // The valid lines, driven only at the slave the held selection names.  Every
   // other slave sees nothing at all, which is what makes this a demultiplexer
-  // and not four slaves listening to one master.
+  // and not three slaves listening to one master.
   logic aw_v, w_v, ar_v, b_r, r_r;
 
   assign aw_v = (st == W_ADDR_DATA) && !aw_done;
@@ -281,46 +269,41 @@ module cadr_soc_axi #(
 
   assign pack_awvalid = aw_v && (sel == S_PACK);
   assign con_awvalid  = aw_v && (sel == S_CON);
-  assign dbg_awvalid  = aw_v && (sel == S_DBG);
   assign dflt_awvalid = aw_v && (sel == S_DFLT);
 
   assign pack_wvalid = w_v && (sel == S_PACK);
   assign con_wvalid  = w_v && (sel == S_CON);
-  assign dbg_wvalid  = w_v && (sel == S_DBG);
   assign dflt_wvalid = w_v && (sel == S_DFLT);
 
   assign pack_arvalid = ar_v && (sel == S_PACK);
   assign con_arvalid  = ar_v && (sel == S_CON);
-  assign dbg_arvalid  = ar_v && (sel == S_DBG);
   assign dflt_arvalid = ar_v && (sel == S_DFLT);
 
   assign pack_bready = b_r && (sel == S_PACK);
   assign con_bready  = b_r && (sel == S_CON);
-  assign dbg_bready  = b_r && (sel == S_DBG);
   assign dflt_bready = b_r && (sel == S_DFLT);
 
   assign pack_rready = r_r && (sel == S_PACK);
   assign con_rready  = r_r && (sel == S_CON);
-  assign dbg_rready  = r_r && (sel == S_DBG);
   assign dflt_rready = r_r && (sel == S_DFLT);
 
   // The address, the data and the identifier are broadcast; only the valid
   // lines above choose who is being spoken to.  A slave that looked at an
   // address while its own VALID was low would not be an AXI slave.
-  assign pack_awaddr = a_hold;  assign con_awaddr = a_hold;  assign dbg_awaddr = a_hold;
-  assign pack_araddr = a_hold;  assign con_araddr = a_hold;  assign dbg_araddr = a_hold;
-  assign pack_wdata  = d_hold;  assign con_wdata  = d_hold;  assign dbg_wdata  = d_hold;
-  assign pack_wstrb  = be_hold; assign con_wstrb  = be_hold; assign dbg_wstrb  = be_hold;
+  assign pack_awaddr = a_hold;  assign con_awaddr = a_hold;
+  assign pack_araddr = a_hold;  assign con_araddr = a_hold;
+  assign pack_wdata  = d_hold;  assign con_wdata  = d_hold;
+  assign pack_wstrb  = be_hold; assign con_wstrb  = be_hold;
 
   // Single beat, always.  See the header.
-  assign pack_awlen = 4'd0; assign con_awlen = 4'd0; assign dbg_awlen = 4'd0;
-  assign pack_arlen = 4'd0; assign con_arlen = 4'd0; assign dbg_arlen = 4'd0;
+  assign pack_awlen = 4'd0; assign con_awlen = 4'd0;
+  assign pack_arlen = 4'd0; assign con_arlen = 4'd0;
   assign dflt_arlen = 4'd0;
-  assign pack_wlast = 1'b1; assign con_wlast = 1'b1; assign dbg_wlast = 1'b1;
+  assign pack_wlast = 1'b1; assign con_wlast = 1'b1;
   assign dflt_wlast = 1'b1;
 
-  assign pack_awid = id; assign con_awid = id; assign dbg_awid = id; assign dflt_awid = id;
-  assign pack_arid = id; assign con_arid = id; assign dbg_arid = id; assign dflt_arid = id;
+  assign pack_awid = id; assign con_awid = id; assign dflt_awid = id;
+  assign pack_arid = id; assign con_arid = id; assign dflt_arid = id;
 
   assign gnt = (st == IDLE) && req;
 
@@ -402,7 +385,7 @@ module cadr_soc_axi #(
   // the use, which is the rule the boards' own tie-off blocks keep.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = &{1'b0, pack_rlast, con_rlast, dbg_rlast, dflt_rlast};
+  assign unused = &{1'b0, pack_rlast, con_rlast, dflt_rlast};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

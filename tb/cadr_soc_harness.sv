@@ -9,10 +9,20 @@
 // Arty A7's top level cannot be simulated; what it gets is lint, and this is
 // what gets simulated instead.  Everything below the clock is the top level's,
 // instance for instance and wire for wire: `cadr_soc`, `cadr_machine` with
-// MIT's boot PROM, `cadr_disk_pack`, `cadr_console`, `cadr_debug_window` and
-// `cadr_gp0_default`, at the same parameters and the same addresses.  What is
-// left out is the MMCM, the lamps, the buttons and the probe, none of which a
-// firmware can see.
+// MIT's boot PROM, `cadr_disk_pack`, `cadr_console`, `cadr_gp0_default` and
+// `cadr_dbg_join`, at the same parameters and the same addresses.  What is
+// left out is the MMCM, the lamps, the buttons, the probe and the debug
+// cable's connector, none of which a firmware can see.
+//
+// **AND THE DEBUG CABLE'S REGISTER WINDOW IS NOT HERE BECAUSE IT IS NOT ON
+// THE BOARD.**  `rtl/plumbing/cadr_debug_window.sv` is how muir, on a Zynq
+// board's own ARM cores, plays the far end of MIT's debug cable in software.
+// There is no such program on an Arty A7-100: its debugger is a SECOND BOARD
+// on the Pmod, which reaches the machine's DBGIN page through the cable's own
+// carrier.  So the soft system masters three faces here and not four,
+// `0x8000_1000` is an address the catch-all answers "NONE", and
+// `rtl/plumbing/cadr_dbg_join.sv` has one arm empty --- all three of which
+// `tb/cadr_soc_tb.cpp` asserts rather than takes on trust.
 //
 // **AND THIS IS A SECOND DESCRIPTION OF ONE COMPOSITION, WHICH IS A HAZARD
 // AND IS NAMED HERE RATHER THAN HIDDEN.**  `tb/cadr_console_harness.sv` and
@@ -99,11 +109,21 @@ module cadr_soc_harness #(
     output var logic        clock_edge_o,
     output var logic        machrun_o,
     output var logic        mach_rst_o,
-    // Per slave: the pack side, the console, the debug window, the default.
-    output var logic [3:0]  aw_v_o,
-    output var logic [3:0]  ar_v_o,
-    // {aw, w, b, ar, r} handshakes this tick, ORed over the four slaves.
-    output var logic [4:0]  hs_o
+    // Per slave: the pack side, the console, the default.  THREE and not
+    // four: the debug cable's window is not on this board and the header
+    // above says why.
+    output var logic [2:0]  aw_v_o,
+    output var logic [2:0]  ar_v_o,
+    // {aw, w, b, ar, r} handshakes this tick, ORed over the three slaves.
+    output var logic [4:0]  hs_o,
+    // The join in front of the machine's DBGIN page.  `dbg_holder_o` is which
+    // arm has it --- 0 the window's, 1 the connector's --- `dbg_win_req_o` is
+    // the window's arm asking, and `dbg_req_o` is what comes out of the join
+    // and reaches `cadr_dbgin.sv`.  All three are here so that the empty arm
+    // is held to being empty every tick rather than by reading the tie-off.
+    output var logic        dbg_holder_o,
+    output var logic        dbg_win_req_o,
+    output var logic        dbg_req_o
 );
 
   logic [13:0] pc, lpc, opc;
@@ -169,12 +189,21 @@ module cadr_soc_harness #(
   // pack side's unanswered memory port from being trimmed.  See the
   // instantiation.
   logic        hp_fold;
-  // MIT's debug cable arriving at the machine's DBGIN page.  With no soft
-  // processing system the window that drives them does not exist and they are
-  // the idle connector; see the tie-offs.
+  // The join's two arms, and what comes out of it at the machine's DBGIN page.
+  // `dbg_in_*` is the arm the two Zynq boards give the register window and
+  // this board gives nobody; `cab_*` is the arm the Pmod connector drives,
+  // which is not in this harness either --- what is held here is that an
+  // empty join never asks.  See the tie-offs below.
   logic        dbg_in_req, dbg_in_wr;
   logic [1:0]  dbg_in_a;
   logic [15:0] dbd_to_machine;
+  logic        cab_req, cab_wr;
+  logic [1:0]  cab_a;
+  logic [15:0] cab_dbd;
+  logic        mdbg_req, mdbg_wr;
+  logic [1:0]  mdbg_a;
+  logic [15:0] mdbg_dbd;
+  logic        dbg_holder;
   // The console's half of the diagnostic bus.
   logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
   logic [17:0] con_addr;
@@ -314,11 +343,13 @@ module cadr_soc_harness #(
       .con_req(con_req), .con_gnt(con_gnt), .con_msyn(con_msyn),
       .con_write(con_write), .con_addr(con_addr), .con_wdata(con_wdata),
       .con_ssyn(con_ssyn), .con_rdata(con_rdata),
-      // MIT's debug cable.  The request side is the unplugged connector ---
-      // see the tie-off block above --- and what the machine answers with is
-      // folded, because a page that never asks never answers.
-      .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-      .dbd_in(dbd_to_machine),
+      // MIT's debug cable, off `cadr_dbg_join.sv` below, exactly as the top
+      // level takes it.  Both of the join's arms are idle here --- the window
+      // that drives one of them on a Zynq is not on this board at all, and
+      // there is no connector in a simulation of one board --- so nothing ever
+      // asks, and what the machine would answer with is folded.
+      .dbg_in_req(mdbg_req), .dbg_in_wr(mdbg_wr), .dbg_in_a(mdbg_a),
+      .dbd_in(mdbg_dbd),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
       // The DBGOUT page, which is this machine as somebody else's debugger.
       // No connector here, so it is tied as an unplugged cable: nothing at
@@ -393,14 +424,6 @@ module cadr_soc_harness #(
   logic        cn_bvalid, cn_bready, cn_arvalid, cn_arready;
   logic        cn_rlast, cn_rvalid, cn_rready;
 
-  logic [31:0] dw_awaddr, dw_wdata, dw_araddr, dw_rdata;
-  logic [3:0]  dw_awlen, dw_wstrb, dw_arlen;
-  logic [11:0] dw_awid, dw_bid, dw_arid, dw_rid;
-  logic [1:0]  dw_bresp, dw_rresp;
-  logic        dw_awvalid, dw_awready, dw_wlast, dw_wvalid, dw_wready;
-  logic        dw_bvalid, dw_bready, dw_arvalid, dw_arready;
-  logic        dw_rlast, dw_rvalid, dw_rready;
-
   logic [31:0] df_rdata;
   logic [3:0]  df_arlen;
   logic [11:0] df_awid, df_bid, df_arid, df_rid;
@@ -474,17 +497,6 @@ module cadr_soc_harness #(
       .con_arvalid(cn_arvalid), .con_arready(cn_arready),
       .con_rdata(cn_rdata), .con_rresp(cn_rresp), .con_rid(cn_rid),
       .con_rlast(cn_rlast), .con_rvalid(cn_rvalid), .con_rready(cn_rready),
-
-      .dbg_awaddr(dw_awaddr), .dbg_awlen(dw_awlen), .dbg_awid(dw_awid),
-      .dbg_awvalid(dw_awvalid), .dbg_awready(dw_awready),
-      .dbg_wdata(dw_wdata), .dbg_wstrb(dw_wstrb), .dbg_wlast(dw_wlast),
-      .dbg_wvalid(dw_wvalid), .dbg_wready(dw_wready),
-      .dbg_bresp(dw_bresp), .dbg_bid(dw_bid), .dbg_bvalid(dw_bvalid),
-      .dbg_bready(dw_bready),
-      .dbg_araddr(dw_araddr), .dbg_arlen(dw_arlen), .dbg_arid(dw_arid),
-      .dbg_arvalid(dw_arvalid), .dbg_arready(dw_arready),
-      .dbg_rdata(dw_rdata), .dbg_rresp(dw_rresp), .dbg_rid(dw_rid),
-      .dbg_rlast(dw_rlast), .dbg_rvalid(dw_rvalid), .dbg_rready(dw_rready),
 
       .dflt_awid(df_awid), .dflt_awvalid(df_awvalid),
       .dflt_awready(df_awready),
@@ -573,24 +585,44 @@ module cadr_soc_harness #(
       .dbg_live(1'b0), .dbg_active(1'b0)
   );
 
-  // ------------------------------------------- the debug cable's window
-  cadr_debug_window #(
-      .REG_BASE(32'h8000_1000)
-  ) u_debug_window (
+  // ------------------------------------------- the machine's DBGIN page
+  //
+  // **THE JOIN WITH BOTH ARMS EMPTY, WHICH IS WHAT THIS BOARD'S IS WITH
+  // NOTHING IN THE CONNECTOR.**  On the two Zynq boards `cadr_dbg_join.sv`
+  // has a register window on one arm and the Pmod carrier on the other; this
+  // board has no window at all, so the connector is its only master, and the
+  // connector is not in this harness --- the pins are the top level's and
+  // there is no far end in a simulation of one board.
+  //
+  // What an empty arm IS is the join's own word for an unplugged cable:
+  // `a_req` low, which is `-DEBUG IN REQ` UP --- the sense the whole transport
+  // uses --- with the levels beside it at zero, exactly as the SIP at DBGIN
+  // 0A22 holds a connector with nothing on it.  `cadr_dbgin.sv` then makes no
+  // strobe and never asks for the bus.
+  //
+  // **AND THAT IS ASSERTED AND NOT STATED.**  `tb/cadr_soc_tb.cpp` watches
+  // `dbg_win_req_o`, `dbg_holder_o` and `dbg_req_o` every tick of the whole
+  // run: the window's arm never asks, the holder never names it, and nothing
+  // ever reaches the machine's DBGIN page.  A join whose empty arm asked
+  // would take the page and hold it, and the console's own diagnostic cycles
+  // are on the other side of that arbiter.
+  assign dbg_in_req     = 1'b0;
+  assign dbg_in_wr      = 1'b0;
+  assign dbg_in_a       = 2'd0;
+  assign dbd_to_machine = 16'd0;
+
+  assign cab_req = 1'b0;
+  assign cab_wr  = 1'b0;
+  assign cab_a   = 2'd0;
+  assign cab_dbd = 16'd0;
+
+  cadr_dbg_join u_dbg_join (
       .clk(clk), .rst(rst),
-      .s_awaddr(dw_awaddr), .s_awlen(dw_awlen), .s_awid(dw_awid),
-      .s_awvalid(dw_awvalid), .s_awready(dw_awready),
-      .s_wdata(dw_wdata), .s_wstrb(dw_wstrb), .s_wlast(dw_wlast),
-      .s_wvalid(dw_wvalid), .s_wready(dw_wready),
-      .s_bresp(dw_bresp), .s_bid(dw_bid), .s_bvalid(dw_bvalid),
-      .s_bready(dw_bready),
-      .s_araddr(dw_araddr), .s_arlen(dw_arlen), .s_arid(dw_arid),
-      .s_arvalid(dw_arvalid), .s_arready(dw_arready),
-      .s_rdata(dw_rdata), .s_rresp(dw_rresp), .s_rid(dw_rid),
-      .s_rlast(dw_rlast), .s_rvalid(dw_rvalid), .s_rready(dw_rready),
-      .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
-      .dbd_out(dbd_to_machine),
-      .dbg_in_ack(dbg_in_ack), .dbd_in(dbd_from_machine), .dbd_oe(dbd_oe)
+      .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
+      .a_dbd(dbd_to_machine),
+      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
+      .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
+      .holder(dbg_holder)
   );
 
   // -------------------------------------------------- and everything else
@@ -612,20 +644,24 @@ module cadr_soc_harness #(
   assign machrun_o    = machrun;
   assign mach_rst_o   = mach_rst;
 
-  assign aw_v_o = {df_awvalid, dw_awvalid, cn_awvalid, pk_awvalid};
-  assign ar_v_o = {df_arvalid, dw_arvalid, cn_arvalid, pk_arvalid};
+  assign aw_v_o = {df_awvalid, cn_awvalid, pk_awvalid};
+  assign ar_v_o = {df_arvalid, cn_arvalid, pk_arvalid};
   assign hs_o   = {
       (pk_awvalid && pk_awready) || (cn_awvalid && cn_awready) ||
-      (dw_awvalid && dw_awready) || (df_awvalid && df_awready),
+      (df_awvalid && df_awready),
       (pk_wvalid && pk_wready) || (cn_wvalid && cn_wready) ||
-      (dw_wvalid && dw_wready) || (df_wvalid && df_wready),
+      (df_wvalid && df_wready),
       (pk_bvalid && pk_bready) || (cn_bvalid && cn_bready) ||
-      (dw_bvalid && dw_bready) || (df_bvalid && df_bready),
+      (df_bvalid && df_bready),
       (pk_arvalid && pk_arready) || (cn_arvalid && cn_arready) ||
-      (dw_arvalid && dw_arready) || (df_arvalid && df_arready),
+      (df_arvalid && df_arready),
       (pk_rvalid && pk_rready) || (cn_rvalid && cn_rready) ||
-      (dw_rvalid && dw_rready) || (df_rvalid && df_rready)
+      (df_rvalid && df_rready)
   };
+
+  assign dbg_holder_o  = dbg_holder;
+  assign dbg_win_req_o = dbg_in_req;
+  assign dbg_req_o     = mdbg_req;
 
   // Everything `cadr_machine` brings out that nothing above reads, held so
   // that Verilator does not call it unused and so that this harness's port

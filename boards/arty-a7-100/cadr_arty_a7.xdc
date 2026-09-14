@@ -116,24 +116,56 @@ set_false_path -from [get_ports { sw[*] }]
 set_property -dict { PACKAGE_PIN D10   IOSTANDARD LVCMOS33 } [get_ports { uart_rxd_out }]; #IO_L19N_T3_VREF_16 Sch=uart_rxd_out
 set_property -dict { PACKAGE_PIN A9    IOSTANDARD LVCMOS33 } [get_ports { uart_txd_in }];  #IO_L14N_T2_SRCC_16 Sch=uart_txd_in
 
-## ------------------------------------------------- MIT's debug cable, Pmod JA
+## ------------------------------------------------- MIT's debug cable, Pmod JB
 ##
 ## A board is a debugger or a debuggee on this cable and never both at once, so
 ## one connector carries the whole link in both directions and the other three
 ## headers carry nothing of this design's. JD is where this board's card is to
-## go --- it has no slot of its own --- and JB and JC are headers the board has
+## go --- it has no slot of its own --- and JA and JC are headers the board has
 ## and this design has no opinion about. `docs/debug-cable.md` has the whole of
 ## it.
 ##
-## Pins from Digilent's `Arty-A7-100-Master.xdc`, lines 43 to 50, with that
+## **JB HERE, WHERE THE TWO ZYNQ BOARDS USE JA, AND THE BOARD IS WHAT DECIDES
+## IT.** This is the only board in this repository with four Pmod headers and
+## the only one whose headers are not all alike. Digilent publishes JB and JC
+## as this board's HIGH-SPEED Pmod ports and JA and JD as STANDARD ones, which
+## is a series resistor in line with every signal. That half is the vendor's
+## own description of the board and is not measured here.
+##
+## **What IS checkable is in the pin file, and it agrees twice over.** That
+## file names JB's and JC's pins `jb_p[1]`..`jb_n[4]` and `jc_p[1]`..`jc_n[4]`,
+## which is how it names a coupled pair, and names JA's and JD's plain
+## `ja[1]`..`ja[10]` and `jd[1]`..`jd[10]`. And the pin types bear it out: all
+## four of JB's header rows --- pins 1 and 2, 3 and 4, 7 and 8, 9 and 10 --- are
+## true differential pairs of bank 15, two of them clock-capable (`SRCC` on the
+## first, `MRCC` on the second), while NOT ONE of JA's four rows is a pair at
+## all, its differential pairs straddling the rows instead.
+##
+## This link's timing rests on a strobe at the far end of a ribbon, so it goes
+## on a high-speed port. **The card stays on JD**, the other standard port, and
+## is right there: a microSD module plugs straight into the header with no
+## ribbon between, and SPI at tens of megahertz over an inch of board does not
+## care about a series resistor.
+##
+## **FOUR OF JB'S EIGHT PINS ARE DUAL-PURPOSE CONFIGURATION PINS AND THAT IS
+## WORTH KNOWING BEFORE PLUGGING ANYTHING IN.** The names below say so: J17 and
+## J18 are `FOE_B` and `FWE_B` and K15 and J15 are `RS1` and `RS0`, which the
+## part uses while it configures itself from a parallel flash. This board has
+## none: it configures from JTAG or from its own QSPI flash, so those four are
+## released to the design when configuration ends, which is what makes them
+## Digilent's own user pins on a user header. **Nothing here has been shown on
+## a board**, and it is recorded because a pin that is quiet until the instant
+## the part configures is exactly the kind that is blamed on logic.
+##
+## Pins from Digilent's `Arty-A7-100-Master.xdc`, lines 53 to 60, with that
 ## file's own schematic names kept in the comments. Digilent indexes the header
-## `ja[0]` to `ja[7]` and its schematic names run 1, 2, 3, 4, 7, 8, 9, 10 ---
-## the two signal rows of a twelve-pin Pmod, the other four being ground and
-## supply. **THAT IS THE SAME INDEXING THE TWO ZYNQ BOARDS USE**, where
-## Digilent's file names the same eight as four differential pairs; compared row
-## by row, `ja[k]` is header pin `{1,2,3,4,7,8,9,10}[k]` on all three boards, so
-## a straight ribbon between any two of them maps every signal to its
-## counterpart.
+## `jb[0]` to `jb[7]` and its schematic names run p[1], n[1], p[2], n[2], p[3],
+## n[3], p[4], n[4], which are header pins 1, 2, 3, 4, 7, 8, 9, 10 --- the two
+## signal rows of a twelve-pin Pmod, the other four being ground and supply.
+## **THAT IS THE SAME INDEXING THE TWO ZYNQ BOARDS USE**, where Digilent's file
+## names JA's eight the same way; compared row by row, index `k` is header pin
+## `{1,2,3,4,7,8,9,10}[k]` on all three boards, so a straight ribbon from this
+## board's JB to a Zynq board's JA maps every signal to its counterpart.
 ##
 ## FOUR PINS EACH WAY, one strobe and three data.
 ## `rtl/plumbing/cadr_dbg_tx.sv` has the argument for splitting them rather
@@ -145,14 +177,14 @@ set_property -dict { PACKAGE_PIN A9    IOSTANDARD LVCMOS33 } [get_ports { uart_t
 ## **THEY ARE BIDIRECTIONAL**, and they have to be: the role is not fixed at
 ## synthesis. `cadr_dbg_cable.sv` hands out a tri-state enable a pad, so the
 ## group this board does not own is high-impedance and the far end has it.
-set_property -dict { PACKAGE_PIN G13   IOSTANDARD LVCMOS33 } [get_ports { ja[0] }]; #IO_0_15 Sch=ja[1]
-set_property -dict { PACKAGE_PIN B11   IOSTANDARD LVCMOS33 } [get_ports { ja[1] }]; #IO_L4P_T0_15 Sch=ja[2]
-set_property -dict { PACKAGE_PIN A11   IOSTANDARD LVCMOS33 } [get_ports { ja[2] }]; #IO_L4N_T0_15 Sch=ja[3]
-set_property -dict { PACKAGE_PIN D12   IOSTANDARD LVCMOS33 } [get_ports { ja[3] }]; #IO_L6P_T0_15 Sch=ja[4]
-set_property -dict { PACKAGE_PIN D13   IOSTANDARD LVCMOS33 } [get_ports { ja[4] }]; #IO_L6N_T0_VREF_15 Sch=ja[7]
-set_property -dict { PACKAGE_PIN B18   IOSTANDARD LVCMOS33 } [get_ports { ja[5] }]; #IO_L10P_T1_AD11P_15 Sch=ja[8]
-set_property -dict { PACKAGE_PIN A18   IOSTANDARD LVCMOS33 } [get_ports { ja[6] }]; #IO_L10N_T1_AD11N_15 Sch=ja[9]
-set_property -dict { PACKAGE_PIN K16   IOSTANDARD LVCMOS33 } [get_ports { ja[7] }]; #IO_25_15 Sch=ja[10]
+set_property -dict { PACKAGE_PIN E15   IOSTANDARD LVCMOS33 } [get_ports { jb[0] }]; #IO_L11P_T1_SRCC_15 Sch=jb_p[1] (Pin 1)
+set_property -dict { PACKAGE_PIN E16   IOSTANDARD LVCMOS33 } [get_ports { jb[1] }]; #IO_L11N_T1_SRCC_15 Sch=jb_n[1] (Pin 2)
+set_property -dict { PACKAGE_PIN D15   IOSTANDARD LVCMOS33 } [get_ports { jb[2] }]; #IO_L12P_T1_MRCC_15 Sch=jb_p[2] (Pin 3)
+set_property -dict { PACKAGE_PIN C15   IOSTANDARD LVCMOS33 } [get_ports { jb[3] }]; #IO_L12N_T1_MRCC_15 Sch=jb_n[2] (Pin 4)
+set_property -dict { PACKAGE_PIN J17   IOSTANDARD LVCMOS33 } [get_ports { jb[4] }]; #IO_L23P_T3_FOE_B_15 Sch=jb_p[3] (Pin 7)
+set_property -dict { PACKAGE_PIN J18   IOSTANDARD LVCMOS33 } [get_ports { jb[5] }]; #IO_L23N_T3_FWE_B_15 Sch=jb_n[3] (Pin 8)
+set_property -dict { PACKAGE_PIN K15   IOSTANDARD LVCMOS33 } [get_ports { jb[6] }]; #IO_L24P_T3_RS1_15 Sch=jb_p[4] (Pin 9)
+set_property -dict { PACKAGE_PIN J15   IOSTANDARD LVCMOS33 } [get_ports { jb[7] }]; #IO_L24N_T3_RS0_15 Sch=jb_n[4] (Pin 10)
 
 ## AN UNPLUGGED CONNECTOR MUST READ ZERO AND NOT FLOAT. The carrier treats a
 ## strobe that never moves as a connector with nothing on it, so it never takes
@@ -161,7 +193,7 @@ set_property -dict { PACKAGE_PIN K16   IOSTANDARD LVCMOS33 } [get_ports { ja[7] 
 ## MIT's own board. A floating input decides that question by noise. All eight
 ## carry a pull-down and not four of them, because either group can be the one
 ## this board is listening to.
-set_property PULLTYPE PULLDOWN [get_ports { ja[*] }]
+set_property PULLTYPE PULLDOWN [get_ports { jb[*] }]
 
 ## AND THERE IS NO CLOCK ON THIS CONNECTOR, so there is no instant by which an
 ## edge on it must arrive and no setup window to meet. What makes the link safe
@@ -170,8 +202,8 @@ set_property PULLTYPE PULLDOWN [get_ports { ja[*] }]
 ## it is taken and stands for three more. That is a property of the protocol
 ## and not of the route, and an input delay constraint here would be a fiction
 ## about a clock the board does not have.
-set_false_path -from [get_ports { ja[*] }]
-set_false_path -to   [get_ports { ja[*] }]
+set_false_path -from [get_ports { jb[*] }]
+set_false_path -to   [get_ports { jb[*] }]
 
 ## **BOTH FALSE-PATHED, AND A BAUD RATE IS WHY.** At 115,200 baud one bit
 ## lasts 868 ticks of this board's clock, so neither end of this line has a

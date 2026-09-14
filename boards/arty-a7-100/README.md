@@ -154,20 +154,58 @@ system's. Here it is the fabric's, and the answer is a transmitter and a
 receiver beside `rtl/plumbing/cadr_serial_line.sv`, which already does the
 2651's framing and its baud-rate generator against a socket.
 
-**The console and the debugger. THIS PARAGRAPH IS SUPERSEDED AND IS KEPT
-BECAUSE IT SAYS WHAT THE QUESTION WAS.** It read: both are Linux programs on
-the other board, neither has a fabric shape yet, and this note does not invent
-one. They have one now. `rtl/plumbing/cadr_console.sv` and
-`rtl/plumbing/cadr_debug_window.sv` are in the design with `SOC=1`, unchanged,
-at the addresses they have on the Zynq, and what masters them is a RISC-V core
-in the fabric. The section below is the whole of it. The original text
-continues:
-What is worth knowing is that the debug cable's Pmod carrier is pure fabric and
-carries over unchanged: the cable puts its whole link on JA, so that assignment
-carries over by name, and this board has four Pmod headers where the other has
-two. It is in the design here now, in every configuration, because a board is
-always a debuggee. A second board on the other end of that cable is a debugger
-this board has with no processing system anywhere.
+**The console. THIS PARAGRAPH IS SUPERSEDED AND IS KEPT BECAUSE IT SAYS WHAT
+THE QUESTION WAS.** It read: the console and the debugger are both Linux
+programs on the other board, neither has a fabric shape yet, and this note does
+not invent one. The console has one now. `rtl/plumbing/cadr_console.sv` is in
+the design with `SOC=1`, unchanged, at the address it has on the Zynq, and what
+masters it is a RISC-V core in the fabric. The section below is the whole of
+it.
+
+**The debugger, and here the answer went the other way.** On the two Zynq
+boards it is a register window, `rtl/plumbing/cadr_debug_window.sv`, behind a
+general-purpose port, with muir on those boards' own ARM cores playing
+the far end of MIT's debug cable in software. **That window is not on this
+board and is in none of its configurations.** There is no muir here and no
+processor to run one on: the soft system is the console and not a debugger.
+What this board has instead is the cable itself --- a SECOND BOARD at the other
+end of a Pmod ribbon, reaching the machine's DBGIN page through
+`rtl/plumbing/cadr_dbg_cable.sv`, which is pure fabric and needs no processing
+system at all.
+
+So `0x8000_1000`, which is the window's page on a Zynq, is an address nothing
+implements here, and the bridge's catch-all answers it "NONE" like any other.
+The firmware reads it and holds it to that, and `build/soc.pass` asserts the
+line. `rtl/plumbing/cadr_dbg_join.sv` is what lets a window and a connector
+share one DBGIN page. It is still in the design here, with the window's arm
+tied idle, and the same check watches every tick to say that arm never asks.
+Two mutation records hold the pair.
+
+**And the connector is JB on this board where it is JA on the other two.**
+This is the only board here with four Pmod headers and the only one whose
+headers are not alike. Digilent publishes JB and JC as this board's high-speed
+Pmod ports and JA and JD as standard ones, which is a series resistor in line
+with every signal. That half is the vendor's own description of the board and
+is not measured here.
+
+**What is checkable is in the pin file, and it agrees twice over.** The file
+names JB's and JC's pins `jb_p[1]`..`jb_n[4]` and `jc_p[1]`..`jc_n[4]`, which
+is how it names a coupled pair, and names JA's and JD's plain
+`ja[1]`..`ja[10]` and `jd[1]`..`jd[10]`. The pin types bear it out as well. All
+four of JB's header rows --- pins 1 and 2, 3 and 4, 7 and 8, 9 and 10 --- are
+true differential pairs of bank 15, and two of them are clock-capable. Not one
+of JA's four rows is a pair at all: its differential pairs straddle the rows
+instead.
+
+This link's timing rests on a strobe at the far end of a ribbon, so it goes on
+a high-speed port. **The card stays on JD**, the other standard port, and is
+right there. A microSD module plugs straight into that header with no ribbon
+between it and the part, and SPI at tens of megahertz over an inch of board
+does not care about a series resistor. Every board indexes a header's eight
+signals in the same order, so a straight ribbon from this board's JB to a Zynq
+board's JA maps every signal to its counterpart. `docs/debug-cable.md` has the
+pins for all three boards. The carrier is in the design here in every
+configuration, because a board is always a debuggee.
 
 **The boot.** The Arty Z7-20 comes up because the processing system reads a
 card. Here the part reads its own 16 MB QSPI flash at power-on, and that
@@ -357,7 +395,7 @@ the default board.
 before reading the rest.** The core computes a load or a store's address in the
 cycle it uses it, and that does not settle in the machine's 10 nanosecond tick.
 The machine's tick cannot move. So the soft system takes a third output of the
-same clock manager at 50 MHz, the AXI bridge in front of the four faces stays
+same clock manager at 50 MHz, the AXI bridge in front of the three faces stays
 on the machine's clock where the faces are, and one request and one answer
 cross between the two. There are sections on the clock and on the seam below.
 
@@ -397,8 +435,15 @@ exercise: `console_face.h` says `0x8000_0000` and `pack_side.h` says
 | `0x1000_1000` | its own timer |
 | `0x4000_0000` | the disk pack face, `cadr_disk_pack.sv` |
 | `0x8000_0000` | the console, `cadr_console.sv` |
-| `0x8000_1000` | the debug cable's window, `cadr_debug_window.sv` |
 | everything else | `cadr_gp0_default.sv`, which answers "NONE" |
+
+**AND `0x8000_1000` IS NOT IN THAT TABLE, WHERE ON THE TWO ZYNQ BOARDS IT IS
+THE DEBUG CABLE'S REGISTER WINDOW.** The section above says why: that window is
+how a program plays the far end of MIT's cable, and this board has no such
+program. It is one more address nothing implements, so the catch-all answers
+it. The firmware reads it and holds it to "NONE", which is what makes the
+catch-all's coverage of a page a face used to hold a checked claim rather than
+an assumption.
 
 The two pages at `0x1000_0000` are the system's own, and they are deliberately
 not at the Zynq's peripheral addresses. Nothing in this repository has ever
@@ -423,7 +468,7 @@ account at the instruction that fixes it.
 ### The bridge
 
 `rtl/plumbing/cadr_soc_axi.sv` turns one of the core's loads or stores into one
-AXI transaction at one of four slaves. Single beat always, which is AXI4-Lite's
+AXI transaction at one of three slaves. Single beat always, which is AXI4-Lite's
 shape wearing AXI3's signal list, and that is exactly what the faces were
 written for.
 
@@ -472,20 +517,23 @@ print:
   - reads the disk pack face's identifier and holds it to "PACK" --- which is
     register 7 and not register 0;
   - reads the default slave, which must answer "NONE";
-  - reads the debug window, which must answer "DBUG";
+  - reads `0x8000_1000`, the page the debug cable's register window holds on a
+    Zynq board, which must answer "NONE" here --- there is no window on this
+    board and that page is the catch-all's like any other;
   - prints how many of those failed, and then idles taking four commands from
     the wire: `s` status, `h` halt, `c` continue, `.` step.
 
 The four commands are `cadr-console`'s and muir's prompt's, for the reason that
 program gives: somebody who knows one should know the other. It is a crude
 machine control thing and it is meant to stay one. The debugger is CC over the
-debug cable, and this board has the window for it already.
+debug cable, which on this board is another board at the far end of Pmod JB
+rather than anything this firmware can reach.
 
 ### What checks it
 
 `make build/soc.pass` runs `tb/cadr_soc_harness.sv`, which is this board's top
 level below the clock: the soft system with Ibex in it, `cadr_machine` with
-MIT's boot PROM and nothing behind its memory port, and the four faces. The
+MIT's boot PROM and nothing behind its memory port, and the three faces. The
 firmware is the one the board runs, the same hex.
 
 It asserts every line the firmware says, in order, and then three things the
@@ -509,14 +557,16 @@ The check builds the UART at a divisor of 32 rather than the board's 868, so
 that the same firmware says the same words in a fraction of the time. Nothing in
 the firmware knows the rate; it polls a ready bit.
 
-Twelve mutation records are aimed at the seam, in `mutations/list.txt` under
+Fourteen mutation records are aimed at the seam, in `mutations/list.txt` under
 `soc`. Seven are the bridge's and the soft system's own two faces: an address
 bit dropped, a write answered before it lands, the console's page sent to the
-debug window, the baud divisor doubled, the UART and the timer swapped as
-answer sources, the memory read one word along, and the timer saying the wrong
-microsecond. Five more are the crossing's, and they are described in the
-section on it below. All twelve are caught, and each record quotes the line
-that catches it.
+catch-all, the baud divisor doubled, the UART and the timer swapped as answer
+sources, the memory read one word along, and the timer saying the wrong
+microsecond. Two are this board's not having the debug cable's register window:
+a decode given back to the page that window holds on a Zynq, and the arm of the
+join it used to drive left asking for the machine's DBGIN page. Five more are
+the crossing's, and they are described in the section on it below. All fourteen
+are caught, and each record quotes the line that catches it.
 
 Others were written and are recorded there as measured equivalences rather than
 holes. The first weakened the seam's guard against granting a second request
@@ -544,6 +594,17 @@ the firmware says, verbatim, with the soft system on its own 50 MHz clock:
     cadr-soc: the debug window at 0x80001000 answers DBUG
     cadr-soc: 0 of 16 rounds of four back-to-back loads, one at each face, came back wrong
     cadr-soc: 0 failure(s); idling --- s status, h halt, c continue, . step
+
+**THAT CAPTURE IS KEPT VERBATIM AND TWO OF ITS LINES NO LONGER READ THAT WAY.**
+It was taken on a board whose bitstream still had the debug cable's register
+window in it, and the window is not on this board any more. The section above
+has the argument. So the eleventh line now says `the window's page at
+0x80001000 answers NONE`, and the twelfth says `three back-to-back loads` where
+it said four. The fourth of those loads was the window's, and its answer is now
+the same word the default slave gives. Nothing else in the capture moves and it
+is not rewritten: a measurement is worth its provenance, and what a board said
+is what a board said. **It has not been run on the board since**, this slice
+having had no board access.
 
 **AND THE SECOND LINE IS WHAT SAYS THE PART TOOK THIS BITSTREAM.** Programming
 this board is not reliably one shot, and `vivado/program.tcl`'s DONE check
@@ -608,25 +669,61 @@ firmware were right and nothing more.
 
 **The design with the soft processing system in it closes, and the soft system
 runs on a clock of its own to do it.** At `xc7a100tcsg324-1`, `SOC=1`, the
-machine's tick at 10 ns and the soft system at 50 MHz:
+machine's tick at 10 ns and the soft system at 50 MHz, built at the commit that
+took the debug cable's register window off this board:
 
 | | |
 |---|---|
-| worst slack | **+0.720 ns, MET** |
-| failing endpoints | 0 of 46,445 |
-| hold | +0.032 ns, met, 0 of 46,340 |
+| worst slack | **+0.123 ns, MET** |
+| failing endpoints | 0 of 46,476 |
+| hold | +0.043 ns, met, 0 of 46,371 |
 | pulse width | +3.000 ns, met |
-| Slice LUTs | 13,325 of 63,400 (21.02%) |
-| Slices | 4,568 of 15,850 (28.82%) |
-| Slice registers | 8,541 of 126,800 (6.74%) |
+| Slice LUTs | 13,465 of 63,400 (21.24%) |
+| Slices | 4,787 of 15,850 (30.20%) |
+| Slice registers | 8,565 of 126,800 (6.75%) |
 | block RAM tiles | 48.5 of 135 (35.93%) |
 | DSP | 5 of 240 |
-| bitstream | 3,825,992 bytes, no critical warnings |
+| multicycle exceptions | 4, over 5 clocks |
+| bitstream | 3,825,990 bytes, no critical warnings |
 
-The worst path is now the bridge's byte-enable register into the debug cable
-window's watchdog counter. It is eight and a half nanoseconds, four fifths of
-it routing, and both its ends are on the machine's own clock. Nothing about it
-is the core's.
+The worst path is `mach_rst_reg` into a reset pin of the bus interface's own
+registers: no logic levels at all and 95 per cent of it routing, which is a
+high-fanout reset net finding a long wire and not a chain of gates. It is met.
+
+**THE PREVIOUS BUILD OF THIS CONFIGURATION READ +0.720 ns AND ITS WORST PATH
+IS NOT IN THIS DESIGN.** That one was the bridge's byte-enable register into
+the debug cable window's watchdog counter, eight and a half nanoseconds of it
+with four fifths in routing. The window is gone. The figures above are of a
+different netlist and the two should not be read as one number moving: what
+they share is that both are met.
+
+**AND THE UTILISATION WENT UP BY A LITTLE, WHICH IS NOT WHAT REMOVING A FACE
+PREDICTS AND IS NOT EXPLAINED HERE.** 13,465 Slice LUTs against 13,325 and
+8,565 registers against 8,541: 140 more and 24 more, about one per cent, after
+a module came out of the design. Block RAM, DSP and the bitstream's size are
+unchanged. Nothing was added on purpose, and a fitter given a netlist that
+changed is free to pack and replicate differently --- the reset net that is now
+the worst path is exactly the kind of thing that gets replicated. It is
+recorded as measured rather than reasoned about; what would settle it is
+`report_utilization -hierarchical` on both, and nobody has run it.
+
+**AND THE WHOLE BOARD CLOSES TOO.** `SOC=1 DDR=1` is the machine with its
+memory controller behind it and the soft processing system in front of its
+register faces, which is the configuration this board is for. It reads **+0.148
+ns, MET, on 0 of 60,287 endpoints**, with hold at +0.026 and pulse width at
++0.206. It costs 18,186 Slice LUTs (28.68%), 6,184 slices (39.02%), 12,880
+registers (10.16%), 48.5 block RAM tiles and 5 DSPs, at 10 multicycle
+exceptions over 26 clocks. The drawing on the site carries the two figures it
+shows from this build.
+
+**And the exception count fell from six to four, which is the constraint
+leaving with the module it named.** `rtl/plumbing/xilinx7/cadr_debug.xdc` gives
+four ticks to one register inside the window and is a setup and a hold ---
+two of the `cycles=` entries `report_exceptions` prints. This board's flow
+does not read it any more, because a constraint naming a module that is not in
+the design applies to nothing and reads exactly like one that applied. What is
+left is two entries for `cadr_machine.xdc`'s fifteen-tick set and two for the
+Pmod carrier's four, and both are asserted to have reached a path.
 
 **What it used to be, and why that mattered.** Before the soft system had a
 clock of its own the same design read **-3.216 ns, NOT met, on 1,616 of 46,004
@@ -639,10 +736,15 @@ is one cycle of a processor and it is meant to be.
 
 Two things were tried then and neither was the answer. Reading
 `rtl/plumbing/xilinx7/cadr_debug.xdc` on this board moved the figure from
--9.236 to -3.216, and that was a real fix which is still in the design.
-Turning on Ibex's `BranchTargetALU` and `WritebackStage`, which lowRISC's own
-guidance recommends to a design short of frequency, made it **worse** at
--3.694 ns. They are off because the measurement said so.
+-9.236 to -3.216, which was a real fix at the time. **That file is not read on
+this board any more and it is not a fix that was undone.** The register it
+relaxes is inside the debug cable's window, and the window is not on this board
+at all now. What carries the other end of the same cone is the Pmod carrier,
+whose own file `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` is read in every
+configuration and always was. Turning on Ibex's `BranchTargetALU` and
+`WritebackStage`, which lowRISC's own guidance recommends to a design short of
+frequency, made it **worse** at -3.694 ns. They are off because the measurement
+said so.
 
 ### The soft system's own clock
 
@@ -741,10 +843,10 @@ down here so that nobody rediscovers it.
 ### The seam between the machine's clock and the core's
 
 **The crossing is at the narrowest place in the design and not at the AXI
-ports.** The bridge speaks to four faces over five AXI channels, which is some
-hundred and forty wires and ten handshakes. The seam in front of it is one
+ports.** The bridge speaks to three faces over five AXI channels, which is
+about a hundred wires and ten handshakes. The seam in front of it is one
 request and one answer. So `rtl/plumbing/cadr_soc_axi.sv` runs on the machine's
-clock, where the four faces already are, and `rtl/plumbing/cadr_soc_cross.sv`
+clock, where the three faces already are, and `rtl/plumbing/cadr_soc_cross.sv`
 carries the request with its payload out and the answer back. **Nothing in
 `rtl/plumbing/` or `rtl/machine/` changed for it, and the faces do not know
 there are two clocks at all.**

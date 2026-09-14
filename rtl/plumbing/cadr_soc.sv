@@ -89,8 +89,17 @@
 //     0x1000_1000  its own timer
 //     0x4000_0000  the disk pack face          `cadr_disk_pack.sv`
 //     0x8000_0000  the console                 `cadr_console.sv`
-//     0x8000_1000  the debug cable's window    `cadr_debug_window.sv`
 //     everything else                          `cadr_gp0_default.sv`, "NONE"
+//
+// **AND `0x8000_1000` IS NOT IN THAT LIST, WHERE ON THE TWO ZYNQ BOARDS IT IS
+// THE DEBUG CABLE'S REGISTER WINDOW.**  That window exists so that muir, on
+// those boards' own Arm cores, can play the far end of MIT's debug cable in
+// software.  Nothing on this board can: the debugger here is a SECOND BOARD on
+// the Pmod connector, which reaches the machine's DBGIN page through
+// `rtl/plumbing/cadr_dbg_cable.sv` and never through this bridge.  So that
+// page is one more address nothing implements, and the catch-all answers it
+// "NONE" like any other.  `rtl/plumbing/cadr_soc_axi.sv`'s parameter list has
+// the whole argument.
 //
 // **THE SoC's OWN TWO PAGES ARE AT `0x1000_0000` AND THAT IS DELIBERATE.**
 // They are not the Zynq's peripherals wearing the Zynq's addresses: nothing in
@@ -110,7 +119,7 @@
 // than the machine's tick, and not a path a constraint may relax, being one
 // cycle of a processor.  So the core, its memory, its UART and its timer run
 // on a clock of their own off the same manager, `clk`, and the bridge runs on
-// the machine's, `axi_clk`, where the four faces already are.
+// the machine's, `axi_clk`, where the three faces already are.
 // `rtl/plumbing/cadr_soc_cross.sv` is the seam between them and carries the
 // whole argument; `boards/arty-a7-100/README.md` carries the measurement that
 // made it necessary.
@@ -150,10 +159,11 @@ module cadr_soc #(
     // Where this processing system's own two pages sit.
     parameter logic [31:0] UART_BASE  = 32'h1000_0000,
     parameter logic [31:0] TIMER_BASE = 32'h1000_1000,
-    // The three faces, at the addresses the Linux programs use.
+    // The two faces, at the addresses the Linux programs use.  There is no
+    // third: the debug cable's window is not on this board, and the header
+    // above says why.
     parameter logic [31:0] PACK_BASE = 32'h4000_0000,
-    parameter logic [31:0] CON_BASE  = 32'h8000_0000,
-    parameter logic [31:0] DBG_BASE  = 32'h8000_1000
+    parameter logic [31:0] CON_BASE  = 32'h8000_0000
 ) (
     // **THE SOFT SYSTEM'S OWN CLOCK.**  Everything in here but the bridge
     // runs on it.
@@ -236,33 +246,6 @@ module cadr_soc #(
     input  var logic        con_rlast,
     input  var logic        con_rvalid,
     output var logic        con_rready,
-
-    // --- the debug cable's register window ---------------------------------
-    output var logic [31:0] dbg_awaddr,
-    output var logic [3:0]  dbg_awlen,
-    output var logic [11:0] dbg_awid,
-    output var logic        dbg_awvalid,
-    input  var logic        dbg_awready,
-    output var logic [31:0] dbg_wdata,
-    output var logic [3:0]  dbg_wstrb,
-    output var logic        dbg_wlast,
-    output var logic        dbg_wvalid,
-    input  var logic        dbg_wready,
-    input  var logic [1:0]  dbg_bresp,
-    input  var logic [11:0] dbg_bid,
-    input  var logic        dbg_bvalid,
-    output var logic        dbg_bready,
-    output var logic [31:0] dbg_araddr,
-    output var logic [3:0]  dbg_arlen,
-    output var logic [11:0] dbg_arid,
-    output var logic        dbg_arvalid,
-    input  var logic        dbg_arready,
-    input  var logic [31:0] dbg_rdata,
-    input  var logic [1:0]  dbg_rresp,
-    input  var logic [11:0] dbg_rid,
-    input  var logic        dbg_rlast,
-    input  var logic        dbg_rvalid,
-    output var logic        dbg_rready,
 
     // --- everything else ---------------------------------------------------
     output var logic [11:0] dflt_awid,
@@ -663,7 +646,7 @@ module cadr_soc #(
   //
   // **THE BRIDGE IS ON THE MACHINE'S CLOCK AND THIS IS THE SEAM.**  Everything
   // above runs on the core's own clock; everything below the crossing runs on
-  // the machine's, where the four faces are.  `cadr_soc_cross.sv` carries the
+  // the machine's, where the three faces are.  `cadr_soc_cross.sv` carries the
   // whole argument for the shape --- a four-phase handshake, a payload that
   // has stopped moving before the level that points at it, and two flip-flops
   // on each level --- and `rtl/plumbing/xilinx7/cadr_soc.xdc` is where that
@@ -686,8 +669,7 @@ module cadr_soc #(
 
   cadr_soc_axi #(
       .PACK_BASE(PACK_BASE),
-      .CON_BASE (CON_BASE),
-      .DBG_BASE (DBG_BASE)
+      .CON_BASE (CON_BASE)
   ) u_axi (
       .clk(axi_clk), .rst(axi_rst),
       .req(x_req), .we(x_we), .be(x_be), .addr(x_addr),
@@ -721,17 +703,6 @@ module cadr_soc #(
       .con_arvalid(con_arvalid), .con_arready(con_arready),
       .con_rdata(con_rdata), .con_rresp(con_rresp), .con_rid(con_rid),
       .con_rlast(con_rlast), .con_rvalid(con_rvalid), .con_rready(con_rready),
-
-      .dbg_awaddr(dbg_awaddr), .dbg_awlen(dbg_awlen), .dbg_awid(dbg_awid),
-      .dbg_awvalid(dbg_awvalid), .dbg_awready(dbg_awready),
-      .dbg_wdata(dbg_wdata), .dbg_wstrb(dbg_wstrb), .dbg_wlast(dbg_wlast),
-      .dbg_wvalid(dbg_wvalid), .dbg_wready(dbg_wready),
-      .dbg_bresp(dbg_bresp), .dbg_bid(dbg_bid), .dbg_bvalid(dbg_bvalid),
-      .dbg_bready(dbg_bready),
-      .dbg_araddr(dbg_araddr), .dbg_arlen(dbg_arlen), .dbg_arid(dbg_arid),
-      .dbg_arvalid(dbg_arvalid), .dbg_arready(dbg_arready),
-      .dbg_rdata(dbg_rdata), .dbg_rresp(dbg_rresp), .dbg_rid(dbg_rid),
-      .dbg_rlast(dbg_rlast), .dbg_rvalid(dbg_rvalid), .dbg_rready(dbg_rready),
 
       .dflt_awid(dflt_awid), .dflt_awvalid(dflt_awvalid),
       .dflt_awready(dflt_awready),

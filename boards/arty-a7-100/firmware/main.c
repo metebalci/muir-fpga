@@ -27,7 +27,10 @@
 //   the disk pack face's IDENT, which must be "PACK"
 //   the default slave, which must read "NONE" --- the proof that an address
 //     nothing implements is ANSWERED and does not hang the core
-//   the debug cable window's IDENT, which must be "DBUG"
+//   0x8000_1000, where the debug cable's register window sits on the two Zynq
+//     boards, which on THIS board must read "NONE" as well: there is no muir
+//     here to play a debugger in software, the debugger is a second board on
+//     the Pmod, and the window is not in the design
 //   a summary naming how many of the checks failed, and then an idle loop
 //     that takes four commands from the wire
 //
@@ -308,8 +311,22 @@ int main(void)
 	// at all is a firmware whose load came back.
 	expect("the default slave", PS_REG_BASE + 0x1000u, 0x4E4F4E45u);
 
-	// And the debug cable's window, muir's own `fabric::DBUG`.
-	expect("the debug window", 0x80001000u, 0x44425547u);
+	// **AND THE PAGE THE DEBUG CABLE'S WINDOW HOLDS ON THE OTHER TWO
+	// BOARDS, WHICH ON THIS ONE IS NOT A FACE AT ALL.**  This used to read
+	// `0x44425547`, "DBUG", off `cadr_debug_window.sv`.  That window exists
+	// so that a PROGRAM can be the far end of MIT's debug cable --- muir, on
+	// a Zynq board's own ARM cores --- and there is no such program here:
+	// the only processor on this board is the one saying this line, and it
+	// is the console.  This board's debugger is a SECOND BOARD on the Pmod,
+	// which reaches the machine's DBGIN page through the cable's own
+	// carrier and never through this bridge.
+	//
+	// So the window is not in the design and this page is one more address
+	// nothing implements.  Reading it is not a leftover: it is the
+	// assertion that the catch-all covers the page a face used to hold,
+	// which is the one place where "every address is answered" could have
+	// been left with a hole and nothing would have said so.
+	expect("the window's page", 0x80001000u, 0x4E4F4E45u);
 
 	// **AND THE SEAM AT THE RATE A DRIVER WOULD DRIVE IT.**  Every line
 	// above is one load with a `say()` behind it, which is the slowest
@@ -322,29 +339,37 @@ int main(void)
 	// stimulus was slowed enough for the writer to overtake.  Here the
 	// stimulus has to be made FASTER, not slower.
 	//
-	// Four loads with nothing between them: no branch, no compare, no
-	// store, so the compiler emits four `lw` instructions in a row and the
-	// core asks again as soon as it is answered.  **FOUR DIFFERENT FACES,
-	// which is what makes a wrong answer legible**: each returns a
+	// Three loads with nothing between them: no branch, no compare, no
+	// store, so the compiler emits three `lw` instructions in a row and the
+	// core asks again as soon as it is answered.  **THREE DIFFERENT
+	// ANSWERS, which is what makes a wrong one legible**: each comes back a
 	// four-letter word of its own, so a load handed the answer to the load
-	// before it comes back as the wrong face's name and not as a plausible
+	// before it comes back as the wrong slave's name and not as a plausible
 	// value.  A loop reading ONE register this way would be a check that
 	// could not tell a stale answer from a fresh one, which is the shape of
 	// exercise this project already records as testing nothing.
+	//
+	// **IT WAS FOUR AND THE FOURTH WAS 0x8000_1000, AND IT HAD TO GO WITH
+	// THE WINDOW.**  That address answers "NONE" now, which is the default
+	// slave's own word --- so a round holding both would be a round with
+	// two loads whose answers are the same constant, and a stale answer
+	// handed from one of them to the other would be invisible.  That is the
+	// memory-exercised-with-one-constant shape this repository has met
+	// twice, and it is worth more to lose a load than to keep a round that
+	// cannot tell two of its own answers apart.
 	{
 		unsigned wrong = 0;
 		for (unsigned k = 0; k < 16u; ++k) {
 			uint32_t a = soc_rd(CONS_REG_BASE);
-			uint32_t b = soc_rd(0x80001000u);
 			uint32_t c = soc_rd(PS_REG_BASE + 0x1000u);
 			uint32_t d = soc_rd(PS_REG_BASE + 4u * PS_IDENT);
-			if (a != CONS_IDENT_WORD || b != 0x44425547u ||
-			    c != 0x4E4F4E45u || d != PS_IDENT_WORD)
+			if (a != CONS_IDENT_WORD || c != 0x4E4F4E45u ||
+			    d != PS_IDENT_WORD)
 				wrong++;
 		}
 		if (wrong)
 			failures++;
-		say("%u of 16 rounds of four back-to-back loads, one at each "
+		say("%u of 16 rounds of three back-to-back loads, one at each "
 		    "face, came back wrong", wrong);
 	}
 
@@ -355,8 +380,9 @@ int main(void)
 	// STAY ONE.**  The four commands are `cadr-console`'s and muir's
 	// prompt's, for the reason that file gives: somebody who knows one
 	// should know the other.  It is not to grow into a debugger --- the
-	// debugger is CC over the debug cable, and this board has the window
-	// for it already.
+	// debugger is CC over the debug cable, and on this board that is
+	// another board on the Pmod rather than anything this firmware can
+	// reach.
 	for (;;) {
 		int ch = soc_getc();
 		if (ch < 0)
