@@ -10448,6 +10448,121 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @end
 
 # ---------------------------------------------------------------------------
+# A DISABLE DOES NOT CUT THE CHARACTER IN THE SHIFT REGISTER, AND THE THREE
+# WAYS A FABRIC CAN GET THAT WRONG.
+#
+# The sheet, on the command register: "If the transmitter is disabled, it will
+# complete the transmission of the character in the transmit shift register
+# (if any) prior to terminating operation."  muir's behavioural 2651 does
+# that --- `Pci::transmit` fixes the frame's end at the TAKE, as
+# `shifting = Some((next, start + frame))`, and delivers at that instant
+# whatever the software has since written to the command register --- and
+# muir's own netlist-level part froze its shift register instead until that
+# was fixed.  This fabric was measured against the behavioural model and was
+# already right in both halves; what was missing was anything that could tell.
+#
+# The three records below are the three joints the character travels through,
+# and they are NOT interchangeable.  Two of them were caught before the leg
+# that names them existed, by the driver walk, which loses the burst's last
+# character and says so.  The third was not caught by anything in this tree,
+# because every stimulus here leaves the RECEIVER enabled and the baud-rate
+# generator therefore has a reason to run that has nothing to do with the
+# character in flight.  Turning both halves off is what isolates `gen_on`'s
+# `tx_busy` term, and it is muir's own second test
+# (`a_disable_of_both_halves_mid_character_still_completes_it`).
+#
+# And the walk catches two of them for the wrong reason: it sees the character
+# MISSING, never the character LATE.  A shift register that stopped at the
+# disable and finished whenever something else next started its clock would
+# put the same character on the same wire and the walk would pass it.  So the
+# leg these three are aimed at measures the instant, against `Framing::frame_ns`
+# and not against the module's own arithmetic.
+
+@mutation serial-line-stops-the-crystal-under-a-frame-in-flight
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note **THE ONE OF THE THREE THAT NOTHING IN THIS TREE CAUGHT**, and the
+@note reason it is worth a record rather than a comment.  `gen_on` runs the
+@note crystal while either half of the chip is enabled AND while a frame is in
+@note flight, which is `muir::serial::Pci::generator_on`.  The third term
+@note looks redundant and is not: it is the only thing keeping the clock going
+@note for a character whose software has since turned the whole chip off, and
+@note that is the case the sheet's sentence about a disable is about.
+@note
+@note Measured at 30ed0e4 before the leg that catches it was written: with
+@note this term dropped, `gp0_split`, `iob` and `unibus` all passed.  Every
+@note stimulus in the tree left the receiver on, so `s_rx_on` clocked the
+@note character out and the missing term could not be seen from anywhere.
+@note
+@note Caught now at "the character the disable found in the shift register is
+@note 0x0 (0), wanting 0x1 (1)" --- the second leg, where the command register
+@note is written with `DTR` and `RTS` alone and the character in the shift
+@note register is the only reason the crystal has to count.  It is the ONLY
+@note failing line: the first leg, which leaves the receiver enabled, passes
+@note with this mutation in, which is exactly the blindness the leg was added
+@note for.
+@old
+  assign gen_on = s_tx_on || s_rx_on || tx_busy || in_busy;
+@new
+  assign gen_on = s_tx_on || s_rx_on || in_busy;
+@end
+
+@mutation serial-line-freezes-the-shift-register-at-a-disable
+@check gp0_split
+@file rtl/plumbing/cadr_serial_line.sv
+@note The fault muir's netlist-level 2651 had: the shift register steps only
+@note while the transmitter is enabled, so clearing `CR0` mid-character stops
+@note the character where it stands.  Here the countdown is `tx_busy` and
+@note nothing else, deliberately --- only the LOAD of the next character from
+@note the holding register is under `s_tx_on`, which is the sheet's division
+@note and muir's.
+@note
+@note Caught at "the character the disable found in the shift register is 0x0
+@note (0), wanting 0x1 (1)", and in six places besides: the driver walk loses
+@note the last character of every burst, which is what "the characters the
+@note FIRST burst put on the cable is 0x4 (4), wanting 0x5 (5)" is.  Seven
+@note failing lines in all.
+@note
+@note **The walk alone would not have been enough and this record says why.**
+@note It sees the character missing and never the character late; a shift
+@note register that froze and then finished when something else started the
+@note clock would stream the same characters in the same order.  The leg that
+@note names this one bounds the frame BOTH ways against `Framing::frame_ns`.
+@old
+      if (tx_busy) begin
+@new
+      if (tx_busy && s_tx_on) begin
+@end
+
+@mutation iob-the-disabled-transmitter-drops-the-character-it-is-shifting
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note The same fault one joint along, on the card rather than on the line: the
+@note shift register runs its frame out, and the card then refuses to put the
+@note character on the cable because the transmitter has since been disabled.
+@note `Pci::transmit` delivers unconditionally --- `self.deliver(byte, done)`
+@note comes before the match on `thr` that `tx_on()` guards --- so this
+@note disagrees with the behavioural model at the one instant that matters.
+@note Only `TxEMT` is under `s_tx_on` at this statement, and it is the line
+@note below.
+@note
+@note **`iob` AND `unibus` BOTH SURVIVE IT, MEASURED at 30ed0e4**, though both
+@note carry this file: the trace's serial seam is stimulus, and nothing in it
+@note writes the command register with `TxEN` cleared while `SDN` is still
+@note owed.  So a record on this statement has to be aimed here, at the check
+@note that can put a disable inside a frame.  Same shape as the two `TxEMT`
+@note records above, and the cross-table is what said so rather than any
+@note single run.
+@note
+@note Caught at "the character the disable found in the shift register is 0x0
+@note (0), wanting 0x1 (1)", with the driver walk's six behind it.
+@old
+      if (ser_tx_done && s_shifting) begin
+@new
+      if (ser_tx_done && s_shifting && s_tx_on) begin
+@end
+
+# ---------------------------------------------------------------------------
 # The keyboard's cable and the mouse's, `rtl/plumbing/cadr_input_cables.sv`:
 # the fourth page of `M_AXI_GP0` and the far end of the I/O board's other two
 # cables.  These break the six things this module does that nothing else can
