@@ -102,17 +102,17 @@
 //   microcycles retiring           LD2            led[2]         LD6
 //   disk activity                  LD3            led[3]         LD7
 //   `ERRHALT`, red and only red    LD4            led0_{r,g,b}   LD0
-//   `-PROMDISABLE`, blue only      LD5            led1_{r,g,b}   LD1
+//   `PROMENABLE`, blue only        LD5            led1_{r,g,b}   LD1
 //   nothing; dark                  ---            led2_*, led3_* LD2, LD3
 //
 // This board has eight lamps where the six-lamp assignment wants six, so two
 // tricolour ones are dark.  They are in the port list and driven to zero
 // rather than left out, so that the port list matches the board.
 //
-// THE BUTTONS ARE THE OTHER BOARD'S.  BTN0 is `-BOOT2`, the button MIT put on
-// the CADR's light panel, debounced; BTN3 resets the fabric, at the far end
-// of the row where it is hard to press by accident.  BTN1 and BTN2 are pins
-// the board has and this design does not use.
+// THE BUTTONS ARE THE SAME TWO ON EVERY BOARD HERE.  BTN0 is `-BOOT2`, the
+// button MIT put on the CADR's light panel, debounced; BTN1 resets the
+// fabric.  BTN2 and BTN3 are pins the board has and this design does not
+// use.
 //
 // AND SW0 HOLDS THE MACHINE AT POWER-ON.  A CADR whose power has just come on
 // has its clock stopped: `RUN` is clear, nothing is running, and the button on
@@ -204,29 +204,39 @@ module cadr_arty_a7 #(
 
   // ------------------------------------------------------------- the buttons
   //
-  // **BTN0 BOOTS THE MACHINE AND BTN3 RESETS THE FABRIC**, which is the other
-  // board's assignment carried over unchanged.  The CADR's own way to restart
-  // is the boot button on its light panel, and a person at this board
-  // pressing the button nearest to hand should get what a person at a CADR
-  // pressing the button gets --- the machine back at the boot PROM with its
-  // memory intact --- and not the fabric reconfigured out from under them.
-  // So BTN0 is `-BOOT2`, and the one control that throws away the machine's
-  // whole state is at the far end of the row.
+  // **BTN0 BOOTS THE MACHINE AND BTN1 RESETS THE FABRIC**, which is every
+  // board's assignment here.  The CADR's own way to restart is the boot
+  // button on its light panel, and a person at this board pressing the button
+  // nearest to hand should get what a person at a CADR pressing the button
+  // gets --- the machine back at the boot PROM with its memory intact --- and
+  // not the fabric reconfigured out from under them.  So BTN0 is `-BOOT2`,
+  // and BTN1 beside it is the one control that throws away the machine's
+  // whole state.  BTN2 and BTN3 are pins the board has and this design does
+  // not use.
   //
-  // Pins: `btn[0]` is D9 and `btn[3]` is B8, both `LVCMOS33`, from Digilent's
+  // **AND ON THIS BOARD THE FABRIC RESET IS THE ONLY RESET THERE IS.**  It
+  // resets the logic in the fabric --- the machine, the register faces and
+  // the lamps --- and it does not reload the bitstream.  On the Zynq boards
+  // that distinction matters, because the processing system and Linux keep
+  // running across it and the programs under Linux are then out of step with
+  // the fabric until they are restarted; there, `rst -srst` over JTAG is the
+  // reset to reach for.  Here there is no processing system, nothing else can
+  // reset the fabric, and this button is it.
+  //
+  // Pins: `btn[0]` is D9 and `btn[1]` is C9, both `LVCMOS33`, from Digilent's
   // `Arty-A7-100-Master.xdc`.  `cadr_arty_a7.xdc` carries them and false-paths
   // all four, a human's finger being no timing constraint.
   //
-  // Reset while the MMCM has not locked, and on BTN3.  Synchronised out of the
+  // Reset while the MMCM has not locked, and on BTN1.  Synchronised out of the
   // 100 MHz domain: `LOCKED` is asynchronous to it by construction.
   logic [3:0] rst_sync;
   logic       rst;
-  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked || btn[3]};
+  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked || btn[1]};
   assign rst = rst_sync[3];
 
   // ------------------------------------------------------ BTN0, DEBOUNCED
   //
-  // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN3's four
+  // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN1's four
   // synchroniser stages are all its job wants: a reset asserted for a
   // millisecond of contact bounce is a reset, and the bounces land inside it.
   // `-BOOT2` is a level the machine READS THE END OF --- it runs the PROM from
@@ -314,7 +324,7 @@ module cadr_arty_a7 #(
   // keeps it from being deleted along with whatever computes it.
   logic [31:0] dev_wdata;
   logic vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge, wrcyc;
-  logic device, dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn;
+  logic device, dev_rq, dev_write, promdisable, promenable, ub_msyn, ub_ssyn;
   logic n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc, nxm, unibus;
   logic memstart, timed_out, mbusy, mbusy_sync;
   logic mem_req, mem_write;
@@ -511,7 +521,7 @@ module cadr_arty_a7 #(
 
   // ------------------------------------------------- the machine's reset
   //
-  // `rst` above is the MMCM's lock and BTN3.  The debug cable's modifier bit
+  // `rst` above is the MMCM's lock and BTN1.  The debug cable's modifier bit
   // 1 is the second term: MIT calls it "resets the debuggee's Unibus and bus
   // interface", it crosses the debuggee's own cables to OLORD2 and is that
   // processor's power-on reset, so a debugger's reset goes down the cable and
@@ -586,7 +596,7 @@ module cadr_arty_a7 #(
       .pcs0(pcs0), .iwrited(iwrited), .clock_edge(clock_edge),
       .wrcyc(wrcyc), .device(device), .dev_rq(dev_rq),
       .dev_write(dev_write), .dev_wdata(dev_wdata),
-      .phys(phys), .promdisable(promdisable),
+      .phys(phys), .promdisable(promdisable), .promenable(promenable),
       .ub_msyn(ub_msyn), .ub_ssyn_o(ub_ssyn), .arb_stage(arb_stage),
       .n_memrq_o(n_memrq), .n_memack_o(n_memack),
       .n_memgrant_o(n_memgrant), .mbusy_o(mbusy), .mbusy_sync_o(mbusy_sync),
@@ -603,7 +613,7 @@ module cadr_arty_a7 #(
       .dbg_in_req(1'b0), .dbg_in_wr(1'b0), .dbg_in_a(2'd0), .dbd_in(16'd0),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
-      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN3 ---
+      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN1 ---
       // and not `mach_rst`, which `debuggee_reset` is one term of.  See the
       // reset above for why that distinction is not tidiness.
       .dbg_rst(rst),
@@ -693,7 +703,7 @@ module cadr_arty_a7 #(
     cadr_probe #(
         .DEPTH(PROBE_DEPTH)
     ) u_probe (
-        // The probe re-arms on a machine reset, which on this board is BTN3
+        // The probe re-arms on a machine reset, which on this board is BTN1
         // or the boot button's own path --- its words are that it "fills from
         // the first microcycle after reset and freezes", so a machine that has
         // been restarted has new first microcycles and the probe must be
@@ -723,7 +733,7 @@ module cadr_arty_a7 #(
   // the datapath is moving at all.
   //
   // **All of them, including the ones something else already reads** ---
-  // `clock_edge`, `promdisable`, `timed_out`, `machrun` drive lamps as well
+  // `clock_edge`, `promenable`, `timed_out`, `machrun` drive lamps as well
   // and are still here, because the rule the comment states is the whole
   // specification and a fold with exceptions in it is not a rule anybody can
   // check.  What checks it is `make build/arty_a7.pass`: an output left off
@@ -752,7 +762,7 @@ module cadr_arty_a7 #(
                    vma, md, phys, ub_addr, ub_rdata, arb_stage,
                    mem_addr, mem_wdata, dev_wdata, store_rdata,
                    vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge,
-                   wrcyc, device, dev_rq, dev_write, promdisable,
+                   wrcyc, device, dev_rq, dev_write, promdisable, promenable,
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
@@ -895,18 +905,21 @@ module cadr_arty_a7 #(
 
   // ---------------------------------------------------------------- LD5
   //
-  // **`-PROMDISABLE`, AND THAT IS THE NAME OF THE SIGNAL ON THE PIN.**  The
+  // **`PROMENABLE`, AND THAT IS THE NAME OF THE SIGNAL ON THE PIN.**  The
   // lamps are named by the machine's own signals --- LD0 is `MACHRUN` and LD4
-  // is `ERRHALT` --- and this one is `PROMDISABLE` inverted: bit 5 of the mode
-  // register at OLORD1 1A08, which the machine sets itself once it has loaded
-  // its microcode off the disk.
+  // is `ERRHALT` --- and this one is MIT's `-PROMENABLE` at PCTL 1C19, the
+  // PROM's own select, driven from the net itself out of the processor.  Lit
+  // while the machine fetches its microinstructions from the boot PROM, dark
+  // once it runs the microcode it loaded from the disk.
   //
-  // **IT IS NOT `PROMENABLE`, AND THE TWO ARE DIFFERENT NETS.**  MIT's
-  // `-PROMENABLE` at PCTL 1C19 is `BOTTOM.1K` with `PROMDISABLED`, `IWRITEDA`
-  // and `-IDEBUG`, which is `cadr_microcycle.sv`'s `promenable` --- it says
-  // whether THIS microinstruction is coming out of the PROM, so it follows the
-  // PC and changes many times a boot.  What reaches this pin is the mode
-  // register's own bit and nothing else.
+  // **IT IS THE SELECT AND NOT THE MODE BIT, AND THE EYE CAN SEE THE
+  // DIFFERENCE.**  `-PROMENABLE` is `BOTTOM.1K` with `PROMDISABLED`,
+  // `IWRITEDA` and `-IDEBUG`, so it says whether THIS microinstruction is
+  // coming out of the PROM: it is up on every fetch and down on the
+  // control-store write cycles, which is why the lamp sits a little under
+  // full brightness while the PROM loads the store.  The mode register's own
+  // bit is `promdisable`, which drives no lamp here --- the probe's sample
+  // carries it and nothing else does.
   //
   // Blue, and blue only, for the one state it carries.  A colour lamp showing
   // one thing is still the right lamp for it: this is the answer to "has it
@@ -914,7 +927,7 @@ module cadr_arty_a7 #(
   // ones at a glance.
   assign led1_r = 1'b0;
   assign led1_g = 1'b0;
-  assign led1_b = !promdisable;
+  assign led1_b = promenable;
 
   // The two tricolour lamps this board has and the assignment does not use.
   // Driven rather than left out of the port list, so that the port list
@@ -967,13 +980,13 @@ module cadr_arty_a7 #(
   assign led[2] = beat[19];      // microcycles retiring --- the fast blink
   assign led[3] = disk_lit;      // the disk controller is moving a block
 
-  // btn[2:1] and sw[3:1] are pins the board has and this design does not use.
-  // BTN0 is the machine's boot button, BTN3 the fabric's reset and SW0 the
+  // btn[3:2] and sw[3:1] are pins the board has and this design does not use.
+  // BTN0 is the machine's boot button, BTN1 the fabric's reset and SW0 the
   // no-auto-boot switch; the rest have no meaning here.  They are read here
   // only to keep them legal without inventing behaviour for them.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = &{1'b0, btn[2:1], sw[3:1]};
+  assign unused = &{1'b0, btn[3:2], sw[3:1]};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

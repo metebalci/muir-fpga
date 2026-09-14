@@ -17,10 +17,10 @@
 //     boot PROM.  Two cannot carry six meanings, so what this board shows is
 //     a decision and not a translation; see the lamps at the bottom.
 //   - **TWO BUTTONS AND NO SWITCHES.**  BTN0 is `-BOOT2`, the light panel's
-//     boot button, and BTN1 is the fabric's reset.  The Arty puts the reset on
-//     BTN3, at the far end of a row of four where it is hard to press by
-//     accident; there is no far end here and the reset sits next to the boot
-//     button, which is the cost of a two-button board.
+//     boot button, and BTN1 is the fabric's reset, which is what every board
+//     here uses.  This board is why: two buttons is all it has, so the reset
+//     can only be BTN1, and the boards with four follow it rather than put
+//     the reset at the far end of a row this board has not got.
 //   - **AND SO NO SW0, SO `no_auto_boot` IS TIED LOW.**  On the Arty Z7-20 a
 //     slide switch holds the machine at power-on as a CADR is held when its
 //     power comes on with nobody at it.  This board has no switch to do it
@@ -291,22 +291,31 @@ module cadr_cora #(
   // Linux.  So BTN0 is `-BOOT2`, the light panel's button.
   //
   // The fabric's push-button reset is BTN1, which is the only other button
-  // this board has.  On the Arty Z7-20 it is BTN3, at the far end of a row of
-  // four, where it is hard to press by accident; **there is no far end here
-  // and the two buttons are next to each other**, so the one control that
-  // throws the machine's whole state away sits beside the one that restarts
-  // it politely.  That is a cost of a two-button board and it is stated
+  // this board has --- **and it is BTN1 on every board here**, which is this
+  // board's doing: with two buttons the reset can only be BTN1, and the
+  // boards with four follow rather than have the same control be a different
+  // button on each.  The one that throws the machine's whole state away
+  // therefore sits beside the one that restarts it politely, which is stated
   // rather than worked around: giving the reset a press-and-hold of its own
   // would make it a control nobody could find.  The other reset term, the
   // MMCM's lock, is unchanged: the fabric is held in reset until its clock is
   // real.
   //
+  // **WHAT THE FABRIC RESET IS, AND WHAT IT IS NOT.**  It resets the logic in
+  // the fabric --- the machine, the console's and the disk pack's register
+  // faces, and the lamps --- while the processing system and Linux keep
+  // running, and it does not reload the bitstream.  The programs under Linux
+  // keep the view of those faces they had before, so after BTN1 the disk pack
+  // program and the console are out of step with the fabric until they are
+  // restarted.  `rst -srst` over JTAG resets everything, and on a board with
+  // a processing system that is the reset to reach for.
+  //
   // Pins: `btn[0]` is D20 and `btn[1]` is D19, both `LVCMOS33`, from
   // Digilent's `Cora-Z7-07S-Master.xdc`.  `boards/cora-z7-07s/cadr_cora.xdc`
   // carries them and false-paths both, a human's finger being no timing
-  // constraint.  **The Arty Z7-20's `btn[0]` is D19 and this board's is
-  // D20**, so the one pin a reader would get right from memory is the one
-  // that is wrong.
+  // constraint.  **The Arty Z7-20's `btn[0]` is D19 and `btn[1]` is D20, so
+  // the two boards' two buttons are on exactly exchanged pins**: the two
+  // numbers a reader would carry over from the other board are both wrong.
   //
   // Reset while the MMCM has not locked, and on BTN1. Synchronised out of
   // the 100 MHz domain: `locked` is asynchronous to it by construction.
@@ -317,7 +326,7 @@ module cadr_cora #(
 
   // ------------------------------------------------------ BTN0, DEBOUNCED
   //
-  // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN3's four
+  // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN1's four
   // synchroniser stages are all its job wants: a reset asserted for a
   // millisecond of contact bounce is a reset, and the bounces land inside it.
   // `-BOOT2` is a level the machine READS the end of --- it runs the PROM
@@ -381,7 +390,7 @@ module cadr_cora #(
   // is what keeps it from being deleted along with whatever computes it.
   logic [31:0] dev_wdata;
   logic vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge, wrcyc;
-  logic device, dev_rq, dev_write, promdisable, ub_msyn, ub_ssyn;
+  logic device, dev_rq, dev_write, promdisable, promenable, ub_msyn, ub_ssyn;
   logic n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc, nxm, unibus;
   logic memstart, timed_out, mbusy, mbusy_sync;
   logic mem_req, mem_write;
@@ -580,7 +589,7 @@ module cadr_cora #(
 
   // ------------------------------------------------------ the machine's reset
   //
-  // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN3 RATHER THAN
+  // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN1 RATHER THAN
   // REPLACING IT.**  `rst` above is the MMCM's lock and the reset button; a write of
   // `RESET_KEY` to the console's word 6 pulses `con_mach_rst` for 64 ticks,
   // and this is the OR.  A soft reboot from the processing system is wanted
@@ -599,7 +608,7 @@ module cadr_cora #(
   // **AND THE RULE FOR WHAT TAKES IT: `mach_rst` replaces `rst` wherever
   // `rst` means "since the MACHINE started", and `rst` stays wherever it
   // means "since the FABRIC was configured".**  Written down because the
-  // alternative --- folding `con_mach_rst` into `rst_sync` beside BTN3, which
+  // alternative --- folding `con_mach_rst` into `rst_sync` beside BTN1, which
   // is tidier and looks right --- is wrong in three places at once, and each
   // of the three is worth having on the record:
   //
@@ -843,7 +852,7 @@ module cadr_cora #(
       .pcs0(pcs0), .iwrited(iwrited), .clock_edge(clock_edge),
       .wrcyc(wrcyc), .device(device), .dev_rq(dev_rq),
       .dev_write(dev_write), .dev_wdata(dev_wdata),
-      .phys(phys), .promdisable(promdisable),
+      .phys(phys), .promdisable(promdisable), .promenable(promenable),
       .ub_msyn(ub_msyn), .ub_ssyn_o(ub_ssyn), .arb_stage(arb_stage),
       .n_memrq_o(n_memrq), .n_memack_o(n_memack),
       .n_memgrant_o(n_memgrant), .mbusy_o(mbusy), .mbusy_sync_o(mbusy_sync),
@@ -865,7 +874,7 @@ module cadr_cora #(
       .dbd_in(mdbg_dbd),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
-      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN3 ---
+      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN1 ---
       // and not `mach_rst`, which `debuggee_reset` is one term of.  A
       // modifier register cleared by its own bit 1 clears the bit that is
       // clearing it, and MIT's "write a 1 here then write a 0" could not be
@@ -2108,8 +2117,9 @@ module cadr_cora #(
   // It is not meant to be readable --- it is a load, and what it shows is
   // that the datapath is moving at all.
   //
-  // **All seventy-six of them, including the ones something else already
-  // reads** --- `clock_edge`, `promdisable`, `timed_out`, `n_memack` drive
+  // **Every one of them, including the ones something else already
+  // reads** --- `clock_edge`, `promdisable`, `promenable`, `timed_out` and
+  // `n_memack` drive
   // LEDs as well and are still here, because the rule the comment states is
   // the whole specification and a fold with exceptions in it is not a rule
   // anybody can check. What checks it is `make build/cora.pass`: an output
@@ -2149,7 +2159,7 @@ module cadr_cora #(
                    vma, md, phys, ub_addr, ub_rdata, arb_stage,
                    mem_addr, mem_wdata, dev_wdata, store_rdata,
                    vmaok, jcond, nop, pcs1, pcs0, iwrited, clock_edge,
-                   wrcyc, device, dev_rq, dev_write, promdisable,
+                   wrcyc, device, dev_rq, dev_write, promdisable, promenable,
                    ub_msyn, ub_ssyn,
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
@@ -2227,17 +2237,21 @@ module cadr_cora #(
   // **LD1 CARRIES THE ARTY Z7-20's LD2, LD4 AND LD5 ON ONE PIN, IN THE ORDER
   // A BOOT GOES THROUGH THEM.**
   //
-  //   blue    `-PROMDISABLE`, the mode register's own bit inverted: the
-  //           machine is running its microcode out of the boot PROM.  It goes
-  //           dark once the machine has loaded microcode off the disk and set
-  //           `PROMDISABLE`, so blue means BOOTING and its going out means
-  //           BOOTED, which is the way round a lamp should be.  **IT IS NOT
-  //           `PROMENABLE`**, which is a different net: MIT's `-PROMENABLE` at
-  //           PCTL 1C19 is `BOTTOM.1K` with `PROMDISABLED`, `IWRITEDA` and
-  //           `-IDEBUG` --- `cadr_microcycle.sv`'s `promenable` --- and says
-  //           whether THIS microinstruction is coming out of the PROM, so it
-  //           follows the PC and changes many times a boot.  What reaches this
-  //           pin is the mode register's bit and nothing else.
+  //   blue    `PROMENABLE`, MIT's `-PROMENABLE` at PCTL 1C19, driven from
+  //           the net itself: the machine is fetching its microinstructions
+  //           from the boot PROM.  It goes dark once the machine runs the
+  //           microcode it loaded off the disk, so blue means BOOTING and its
+  //           going out means BOOTED, which is the way round a lamp should
+  //           be.  **IT IS THE SELECT AND NOT THE MODE BIT**: `-PROMENABLE`
+  //           is `BOTTOM.1K` with `PROMDISABLED`, `IWRITEDA` and `-IDEBUG`,
+  //           so it says whether THIS microinstruction is coming out of the
+  //           PROM --- up on every fetch and down on the control-store write
+  //           cycles, which is why the lamp sits a little under full
+  //           brightness while the PROM loads the store.  The mode register's
+  //           own bit is `promdisable`, and what it drives here is the
+  //           GREEN channel below, which is the other half of the boot: blue
+  //           while the PROM is selected, green blinking once the machine has
+  //           its own microcode.
   //   green   `beat[19]`, the microcycle blink: 524,288 microcycles, about
   //           231 ms at the 10 ns tick, fast enough to be obviously alive and
   //           slow enough to count.  It FREEZES when the machine stops, which
@@ -2290,7 +2304,7 @@ module cadr_cora #(
     // would let a later reader add a fourth state without meeting the order.
     assign lamp1 = {errhalt_lit,
                     !errhalt_lit && promdisable && beat[19],
-                    !errhalt_lit && !promdisable};
+                    !errhalt_lit && promenable};
 
     // The heartbeat has no lamp here; see the note above the lamps.  It is
     // read once so that lint has nothing to say about a counter this board

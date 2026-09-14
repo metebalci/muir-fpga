@@ -41,7 +41,7 @@
 // **AND THE CONSOLE'S RESET IS WIRED HERE THE WAY `cadr_arty.sv` WIRES IT**,
 // which is the same rule as the arbiter above: the check must hold the thing
 // on the board and not a copy of it.  `mach_rst` leaves `cadr_console`, is
-// ORed with this harness's own `rst` --- the board's MMCM lock and BTN3 ---
+// ORed with this harness's own `rst` --- the board's MMCM lock and BTN1 ---
 // and the OR is REGISTERED, because a reset lands on some two thousand
 // registers spread across the machine and `cadr_arty.sv` already registers
 // `pack_rst` for exactly that reason.  What comes out drives the register
@@ -409,8 +409,9 @@ module cadr_console_harness #(
       .rst         (mach_rst),
       .n_boot      (n_boot),
       // OLORD1's three, which reach the board's lamps and nothing here.
+      // `-PROMENABLE` goes to a lamp on a board and there is no lamp here.
       /* verilator lint_off PINCONNECTEMPTY */
-      .machrun_o (), .errhalt_o (), .stathalt_o (),
+      .machrun_o (), .errhalt_o (), .stathalt_o (), .promenable (),
       /* verilator lint_on PINCONNECTEMPTY */
       .run         (run_o),
       // The board's no-auto-boot switch, which this harness has none of: the

@@ -1391,7 +1391,7 @@ int main(int argc, char **argv) {
   // ------------------------------------------------------------------ the reset
   //
   // **A CONSOLE THAT CANNOT RESTART THE MACHINE CAN ONLY WATCH IT DIE.**  On
-  // the board `boards/arty-z7-20/cadr_arty.sv`'s reset is MMCM lock or BTN3, and BTN3 is a
+  // the board `boards/arty-z7-20/cadr_arty.sv`'s reset is MMCM lock or BTN1, and BTN1 is a
   // finger on a board nobody is sitting at.  Page 0's word 6 takes
   // `RESET_KEY` and pulses the machine's reset for `RESET_T` ticks; nothing
   // else it can be written with does anything at all.

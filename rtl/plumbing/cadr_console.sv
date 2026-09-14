@@ -222,7 +222,7 @@
 // must not be a value the instrument can mean.**
 //
 // **THE RESET, WHICH IS WHY REGISTER 6 EXISTS.**  `boards/arty-z7-20/cadr_arty.sv`'s reset
-// is MMCM lock or BTN3 and nothing else, so restarting the CADR has meant a
+// is MMCM lock or BTN1 and nothing else, so restarting the CADR has meant a
 // finger on a board or a fresh bitstream.  So the machine takes a soft reboot
 // from the processing system, and this is where it belongs: the console is
 // already the thing that says whether the machine is running.
@@ -326,7 +326,7 @@
 // exercise them, and there is no mutation record aimed at the guard for that
 // reason.
 //
-// **WHERE THE PULSE GOES IS `boards/arty-z7-20/cadr_arty.sv`'s**, and it joins BTN3 rather
+// **WHERE THE PULSE GOES IS `boards/arty-z7-20/cadr_arty.sv`'s**, and it joins BTN1 rather
 // than replacing it.  What leaves here is one register, `mach_rst`, so that
 // what reaches the machine's reset pin is a flop and not a countdown's
 // comparison.
@@ -546,7 +546,7 @@ module cadr_console #(
     // --- `RESET_KEY` to page 0's word 6, and never otherwise.  A register
     // --- and not a countdown's comparison, so that what reaches the
     // --- machine's reset pin has a whole tick of its own.  `cadr_arty.sv`
-    // --- ORs it with the board's own reset --- MMCM lock and BTN3 --- and
+    // --- ORs it with the board's own reset --- MMCM lock and BTN1 --- and
     // --- gives the machine the result; it joins them and replaces neither.
     output var logic        mach_rst,
 

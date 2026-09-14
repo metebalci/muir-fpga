@@ -65,7 +65,7 @@
 // then freezes.  Nothing has to be armed and nobody has to be standing at the
 // board: by the time a bitstream is programmed and a JTAG readout is
 // arranged, the window --- the first DEPTH microcycles the machine ever ran
-// --- has long since been taken and cannot be overwritten.  Pressing BTN3
+// --- has long since been taken and cannot be overwritten.  Pressing BTN1
 // takes a fresh one.
 //
 // THE READOUT PROTOCOL, which `boards/arty-z7-20/vivado/probe.tcl` is the other half of.  One
