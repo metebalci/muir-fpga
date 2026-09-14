@@ -84,6 +84,18 @@
 #   - **And the count is asserted**, the way the machine's fifteen and the
 #     memory port's sixteen are, so an exception that reached no path is a
 #     failure and not a plausible number.
-set cable [get_pins -quiet {g_ddr.u_debug_window/sts_dbd_reg[*]/D}]
+#
+# **THE INSTANCE IS MATCHED BY A WILDCARD BECAUSE TWO BOARDS PUT IT IN TWO
+# GENERATE BLOCKS.**  On the Arty Z7-20 and the Cora Z7-07S the window is
+# `g_ddr.u_debug_window`, behind the processing system's port; on the Arty
+# A7-100 it is `g_soc.u_debug_window`, behind the soft processing system.  The
+# module, the cone and the reason are identical --- the machine's diagnostic
+# multiplexer reaching this latch, twenty-three logic levels of it --- so a
+# second copy of this file with one name changed would be a second thing to
+# keep in step, which is the failure this repository records more often than
+# any other.  The pattern is anchored on the instance name and not open at the
+# other end, and `assert_instance_timing` in each board's flow is what says it
+# reached the registers it was meant to.
+set cable [get_pins -quiet {*u_debug_window/sts_dbd_reg[*]/D}]
 set_multicycle_path -setup 4 -to $cable
 set_multicycle_path -hold  3 -to $cable

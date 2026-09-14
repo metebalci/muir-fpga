@@ -373,6 +373,27 @@ void cons_step(struct console *c, unsigned n, struct cons_step *s)
 		// CC's `CC-CLOCK`: raise STEP, lower it.  It must be lowered
 		// again before the next.
 		cons_spy_write(c, SPY_CLK, CLK_STEP);
+		// **AND IT IS NOT READ AT ONCE, WHICH IS A RACE THAT WAS AN
+		// ACCIDENT OF TWO RATES UNTIL IT WAS MEASURED.**  SSTEP and
+		// SSDONE are STEP registered once and twice on MCLK5A, so
+		// SSDONE rises TWO master clocks after the write lands --- 88
+		// ticks at extra slow, 58 at normal --- and a reader quick
+		// enough off the mark sees it still down on a machine that
+		// stepped perfectly.  An ARM through /dev/mem was never quick
+		// enough and the bit read up by luck.  A soft RISC-V core on
+		// the Arty A7-100 IS quick enough: with Ibex's branch adder
+		// turned on for timing it reported `SSDONE 0` on a step whose
+		// CYCLES moved by exactly one, and with it off, on the same
+		// firmware, `SSDONE 1`.  A bit whose value depends on how fast
+		// the processor reading it happens to be is not a witness.
+		//
+		// One microsecond is 100 ticks, more than the two master
+		// clocks at either speed, and it is a bound rather than a
+		// poll: on a fabric whose step does not work at all --- which
+		// this program shipped against for months --- a poll would not
+		// return.
+		if (c->pause)
+			c->pause(c, 1);
 		// **SSDONE IS READ WHILE STEP IS STILL UP, AND THAT IS NOT A
 		// CONVENIENCE.**  SSTEP and SSDONE are STEP registered once
 		// and twice on MCLK5A, so SSDONE rises one master clock after
