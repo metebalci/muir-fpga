@@ -110,11 +110,17 @@
 //!   even one through a real page, and neither touches `MD`.
 //! - The debug block at `0o766100`-`0o766136`. `busint::register` decodes
 //!   it to `None` and this trace says so in its `IFACENONE` runs, which is
-//!   the claim the fabric has to hold: those four registers answer over the
-//!   cable or not at all, and a slave here that answered them would be
-//!   answering for a machine that is not there.
+//!   the claim the fabric has to hold: those four registers are no register
+//!   of this board's and answer over the cable or not at all.
+//!
+//! - `DBGREG`, `DBGTMO` and `DBGOUT`, the debug block itself, APPENDED at the
+//!   end of the trace so that every row above them stays byte for byte what
+//!   it was.  They are the DBGOUT page --- this machine as somebody else's
+//!   debugger --- and they come out of `busint::Busint` rather than out of
+//!   `Machine`, which has no cable in it at all: `Machine::device` gives
+//!   `Responder::Debug(_)` no word and no error and says why.
 
-use muir::busint::{self, Register, error_status, interrupt_status};
+use muir::busint::{self, Busint, DebugOut, Register, Responder, error_status, interrupt_status};
 use muir::ioboard::{self, csr};
 use muir::simpletv::mode;
 use muir::machine::{self, Machine};
@@ -141,6 +147,11 @@ fn kind(r: Register) -> (u32, u32) {
 
 /// The card's registers this program drives, as Unibus addresses.
 const CSR: u32 = 0o764112;
+
+/// `busint::debug_register`'s range: the debug block, whose four registers
+/// repeat through it because bits 4 and 1 are not decoded.
+const DBG_LOW: u32 = 0o766100;
+const DBG_HIGH: u32 = 0o766137;
 
 /// What `Rtl::try_debug_request` answered, in the trace's own numbering:
 /// `Responder::MapBuffer`, `MapXbus`, `MapRefused` and `MapMd`. The last two
@@ -563,6 +574,93 @@ impl Gen {
         self.m.ioboard.advance(self.m.ns);
         self.lines_row();
     }
+}
+
+/// One cycle of the debugger's own into the debug block, run through muir's
+/// `busint::Busint` at `rtl` fidelity.  `cable` is whether a board is at the
+/// far end; `answer_after` is how long after the request on the cable that
+/// board's `DEBUG ACK` comes back, or `None` for one that never answers.
+///
+/// What comes out is every instant the fabric can be held to: the grant,
+/// `-UB MSYN`, the request on the cable, the acknowledgement, `-UB SSYN` and
+/// `-LMACK`, with whether the interface gave up.
+struct DbgCycle {
+    grant_ns: u64,
+    msyn_ns: u64,
+    req_ns: Option<u64>,
+    ans_ns: Option<u64>,
+    ssyn_ns: u64,
+    memack_ns: u64,
+    timed_out: bool,
+    taken: bool,
+}
+
+fn dbg_cycle(strobe: u8, write: bool, cable: bool, answer_after: Option<u64>) -> DbgCycle {
+    // The tick and the microcycle, as `golden/src/busint_xbus.rs` has them:
+    // MIT's 5 ns grid and 29 ticks at normal speed.
+    const TICK_NS: u64 = 5;
+    const MICRO: u64 = 29;
+
+    let mut bi = Busint::new(1);
+    if cable {
+        bi.attach_debug_cable();
+    }
+    let resp = Responder::Debug(strobe);
+    let mut grant_ns = None;
+    let mut req_ns = None;
+    let mut ans_ns = None;
+    let mut taken = false;
+    bi.request(write);
+
+    for tick in 0..40_000u64 {
+        let now = tick * TICK_NS;
+        if tick % MICRO == 0 {
+            bi.mclk_edge(now, resp);
+        }
+        if grant_ns.is_none() && bi.granted() {
+            grant_ns = Some(now);
+        }
+        // What this side has put on the cable.  A `Release` is the interface
+        // giving up, and it carries no new instant this trace needs.
+        match bi.debug_out_take() {
+            Some(DebugOut::Request { at, strobe: s }) => {
+                assert_eq!(s, strobe, "the cable carries the strobe the address decoded to");
+                req_ns = Some(at);
+            }
+            Some(DebugOut::Release { .. }) | None => {}
+        }
+        // The other machine's `DEBUG ACK`, at the instant this stimulus says.
+        if let (Some(r), Some(d)) = (req_ns, answer_after)
+            && ans_ns.is_none()
+            && now >= r + d
+        {
+            ans_ns = Some(r + d);
+            taken = bi.debug_out_answer(r + d);
+        }
+        if let Some(ack) = bi.poll(now, resp) {
+            let grant = grant_ns.expect("a cycle is acknowledged only after it is granted");
+            let msyn = grant + busint::UNIBUS_ADDRESS_NS;
+            if let Some(r) = req_ns {
+                assert_eq!(
+                    r - msyn,
+                    busint::DEBUG_OUT_REQUEST_NS,
+                    "the request follows -UB MSYN by DEBUG_OUT_REQUEST_NS"
+                );
+            }
+            assert_eq!(cable, req_ns.is_some(), "a cable and a request on it are the same thing");
+            return DbgCycle {
+                grant_ns: grant,
+                msyn_ns: msyn,
+                req_ns,
+                ans_ns,
+                ssyn_ns: ack.answered_at,
+                memack_ns: ack.at,
+                timed_out: ack.timed_out,
+                taken,
+            };
+        }
+    }
+    panic!("a debug cycle that neither answered nor timed out in 200 us");
 }
 
 fn main() {
@@ -1441,9 +1539,185 @@ fn main() {
         println!("{r}");
     }
 
+    // ------------------------------------------------------------------
+    // THE DEBUG BLOCK, APPENDED.
+    //
+    // Everything from here down was added after the trace above existed and
+    // is written AT THE END for that reason: every byte above it is what it
+    // was, which `cmp` says in one command and an argument does not.
+    // ------------------------------------------------------------------
+    assert_eq!(busint::DEBUG_OUT_REQUEST_NS, 100);
+    assert_eq!(busint::DEBUG_TIMEOUT_NS, 11_050);
+    assert_eq!(busint::UNIBUS_ADDRESS_NS, 100);
+    // The debug block is 32 addresses and four strobes, and they repeat: bits
+    // 4 and 1 are not decoded.
+    let mut dbg_regs: Vec<String> = Vec::new();
+    for u in DBG_LOW..=DBG_HIGH {
+        let k = busint::debug_register(u).expect("inside the debug block");
+        dbg_regs.push(format!("DBGREG {u:o} {k}"));
+    }
+    assert!(busint::debug_register(DBG_LOW - 1).is_none());
+    assert!(busint::debug_register(DBG_HIGH + 1).is_none());
+    assert_eq!(busint::debug_register(0o766100), Some(busint::DEBUG_CYCLE));
+    assert_eq!(busint::debug_register(0o766104), Some(busint::DEBUG_STATUS));
+    assert_eq!(busint::debug_register(0o766110), Some(busint::DEBUG_MODIFIER));
+    assert_eq!(busint::debug_register(0o766114), Some(busint::DEBUG_ADDRESS));
+    // And the four repeat, which is bits 4 and 1 going nowhere.
+    assert_eq!(busint::debug_register(0o766102), busint::debug_register(0o766100));
+    assert_eq!(busint::debug_register(0o766120), busint::debug_register(0o766100));
+
+    // **THE TIMEOUT DEPENDS ON THE OSCILLATOR'S PHASE AT THE GRANT AND NOT ON
+    // THE GRANT.**  The 74LS124 at REQTIM 0A01 has run since power-on and the
+    // grant only opens its output, so the wait is between thirteen and
+    // fourteen of its periods --- `busint::debug_timeout_at`.  One row a
+    // phase, so a check can look its own grant up rather than take an
+    // average, and so that a fabric restarting the oscillator at the grant
+    // fails on all but the lucky ones.
+    // **AND THE FIRST TABLE BESIDE IT, FOR THE SAME PHASES.**  A check with
+    // only the second has to know how the fabric turns muir's instant into
+    // `-MEMACK`, and would be asserting that convention rather than the
+    // table.  With both, it can measure the convention on an ordinary cycle
+    // nothing answers and apply it to a debug one: what is left is the count,
+    // thirteen intervals against five, which is the whole of the claim.
+    let mut nxm_tmo: Vec<String> = Vec::new();
+    let mut dbg_tmo: Vec<String> = Vec::new();
+    let period = muir::chip::VCO_PERIOD.0 / muir::chip::VCO_PERIOD.1;
+    let mut phase = 0u64;
+    while phase < period {
+        let n = busint::nxm_timeout_at(phase) - phase;
+        assert_eq!(
+            n + busint::DEBUG_TIMEOUT_NS - busint::TIMEOUT_NS,
+            busint::debug_timeout_at(phase) - phase,
+            "the two tables differ by their counts alone"
+        );
+        nxm_tmo.push(format!("NXMTMO {phase} {n}"));
+        // A grant a whole number of periods in, at this phase: the answer is
+        // the same at every one of them, which is asserted rather than
+        // assumed.
+        let a = busint::debug_timeout_at(phase) - phase;
+        let b = busint::debug_timeout_at(phase + 17 * period) - (phase + 17 * period);
+        assert_eq!(a, b, "the timeout's delay is a function of the phase alone");
+        dbg_tmo.push(format!("DBGTMO {phase} {a}"));
+        phase += 5;
+    }
+
+    // The cycles themselves, out of `busint::Busint`.  The last two are the
+    // instant either side of the interface's own giving up: an answer that
+    // arrives before it is taken and one that arrives after is nothing,
+    // `SELECT DEBUG` being down by then.
+    let one = dbg_cycle(busint::DEBUG_CYCLE, false, true, Some(0));
+    let tmo = one.grant_ns + busint::debug_timeout_at(one.grant_ns) - one.grant_ns;
+    let late = tmo - one.req_ns.unwrap();
+    let cases: [(u8, bool, bool, Option<u64>); 8] = [
+        // strobe, write, cable, the far end's answer after the request
+        (busint::DEBUG_STATUS, false, false, None),
+        (busint::DEBUG_ADDRESS, true, false, None),
+        (busint::DEBUG_ADDRESS, true, true, Some(200)),
+        (busint::DEBUG_MODIFIER, true, true, Some(40)),
+        (busint::DEBUG_CYCLE, false, true, Some(2_000)),
+        (busint::DEBUG_CYCLE, false, true, None),
+        (busint::DEBUG_STATUS, false, true, Some(late - 100)),
+        (busint::DEBUG_STATUS, false, true, Some(late + 100)),
+    ];
+    let mut dbg_out: Vec<String> = Vec::new();
+    let mut n = 0u32;
+    let mut answered_rows = 0u32;
+    let mut timeout_rows = 0u32;
+    for (strobe, write, cable, after) in cases {
+        let c = dbg_cycle(strobe, write, cable, after);
+        let w = u32::from(write);
+        let cab = u32::from(cable);
+        let to = u32::from(c.timed_out);
+        let tk = u32::from(c.taken);
+        let req = c.req_ns.map_or(NONE as u64, |v| v);
+        let ans = c.ans_ns.map_or(NONE as u64, |v| v);
+        if c.timed_out {
+            timeout_rows += 1;
+        } else {
+            answered_rows += 1;
+        }
+        // What the fabric is held to, said as the model's own relations: with
+        // no cable `-UB SSYN` is `-UB MSYN`, and with one it is the far end's
+        // acknowledgement, unless the interface gave up first.
+        if !cable {
+            assert_eq!(c.ssyn_ns, c.msyn_ns, "with no cable the pull-up answers at -UB MSYN");
+        } else if !c.timed_out {
+            assert_eq!(c.ssyn_ns, c.ans_ns.unwrap(), "-UB SSYN is the other machine's DEBUG ACK");
+        }
+        dbg_out.push(format!(
+            "DBGOUT {n} {cab} {w} {strobe} {:x} {} {} {req} {ans} {} {} {to} {tk}",
+            0xA5A5u32 ^ u32::from(strobe) << 8,
+            c.grant_ns,
+            c.msyn_ns,
+            c.ssyn_ns,
+            c.memack_ns
+        ));
+        n += 1;
+    }
+    assert!(answered_rows >= 5 && timeout_rows >= 2, "both outcomes are in the trace");
+
+    println!("#");
+    println!("# ---- APPENDED: the debug block, 0o766100-0o766137, page DBGOUT ----");
+    println!("#");
+    println!("# This machine as somebody else's DEBUGGER: the four registers CC writes,");
+    println!("# whose cycles go out on the cable and are answered by the other machine.");
+    println!("# busint::register gives them None because they are no register of this");
+    println!("# board's, which is why the rows above say nothing about them and these");
+    println!("# say all of it.  They are at the END of the file so that every row above");
+    println!("# is byte for byte what it was before the cable's end was built.");
+    println!("#");
+    println!("# DBGREG     uaddr strobe");
+    println!("#     busint::debug_register(uaddr): which of the four strobes this address");
+    println!("#     puts on DEBUG OUT A<1:0>.  {} the cycle, {} the status, {} the",
+             busint::DEBUG_CYCLE, busint::DEBUG_STATUS, busint::DEBUG_MODIFIER);
+    println!("#     modifier register, {} the address register.  uaddr is octal.",
+             busint::DEBUG_ADDRESS);
+    println!("# NXMTMO     phase delay");
+    println!("#     busint::nxm_timeout_at: an ORDINARY cycle granted at this phase of the");
+    println!("#     REQTIM oscillator's period is given up on this long after the grant.");
+    println!("#     The REQTIM PROM's first table, which is what every cycle but a debug");
+    println!("#     one takes, and it is here so that a check can measure the fabric's own");
+    println!("#     convention on a cycle it already holds and apply it to a debug cycle.");
+    println!("# DBGTMO     phase delay");
+    println!("#     busint::debug_timeout_at: a cycle granted at this phase of the REQTIM");
+    println!("#     oscillator's period is given up on this long after the grant.  The");
+    println!("#     oscillator free-runs from power-on, so the wait is not one number.");
+    println!("# DBGOUT     n cable write strobe wdata grant msyn req ans ssyn memack timed_out taken");
+    println!("#     one cycle of the debugger's own into the block, out of busint::Busint.");
+    println!("#     cable is whether a board is at the far end; req is -DEBUG OUT REQ on");
+    println!("#     the cable and ans the other machine's DEBUG ACK, both {NONE:x} where");
+    println!("#     there was none; taken is whether the interface took that");
+    println!("#     acknowledgement, which it does not after it has given up.  Every");
+    println!("#     instant is in nanoseconds from the same power-on.");
+    println!("#");
+    println!("# debug_out_request_ns {}", busint::DEBUG_OUT_REQUEST_NS);
+    println!("# debug_timeout_ns {}", busint::DEBUG_TIMEOUT_NS);
+    println!("# unibus_address_ns {}", busint::UNIBUS_ADDRESS_NS);
+    println!("# unibus_ack_ns {}", busint::UNIBUS_ACK_NS);
+    println!("# unibus_strobe_ns {}", busint::UNIBUS_STROBE_NS);
+    println!("# dbg_low {DBG_LOW:o}");
+    println!("# dbg_high {DBG_HIGH:o}");
+    println!("# dbg_regs {}", dbg_regs.len());
+    println!("# dbg_tmo_rows {}", dbg_tmo.len());
+    println!("# nxm_timeout_ns {}", busint::TIMEOUT_NS);
+    println!("# dbg_cycles {n}");
+    for d in &dbg_regs {
+        println!("{d}");
+    }
+    for d in &nxm_tmo {
+        println!("{d}");
+    }
+    for d in &dbg_tmo {
+        println!("{d}");
+    }
+    for d in &dbg_out {
+        println!("{d}");
+    }
+
     eprintln!(
         "busint_regs: {} rows, {} register cycles, {} mapped cycles ({} of them writes of MD), \
-         {} timeouts, {} wire rows, {iface_rows} decode rows, {win_rows} window rows",
-        g.line, g.ops, g.maps, g.md_writes, g.errs, g.lines_rows
+         {} timeouts, {} wire rows, {iface_rows} decode rows, {win_rows} window rows, \
+         {} debug addresses and {n} debug cycles",
+        g.line, g.ops, g.maps, g.md_writes, g.errs, g.lines_rows, dbg_regs.len()
     );
 }

@@ -776,6 +776,26 @@ module cadr_machine #(
       .dbg_in_ack (dbg_in_ack),
       .dbd_out    (dbd_out),
       .dbd_oe     (dbd_oe),
+      // The DBGOUT end of the same cable: this machine as the debugger, which
+      // is the four registers CC writes at `0o766100`-`0o766137`.
+      //
+      // **IT IS TIED OFF AS AN UNPLUGGED CABLE HERE AND THE CONNECTOR IS THE
+      // TOP LEVEL'S.**  `rtl/plumbing/cadr_dbg_cable.sv` is what puts it on a
+      // Pmod header and decides whether this board is the debugger, and a
+      // port of this module that the top level did not connect would be a
+      // PINMISSING that stops `build/arty.pass` --- so the wrapper change and
+      // its wiring are one commit, which this is not.  What the tie says is
+      // exactly muir's `debug_cable` false: no board at the far end, the
+      // lines all ones off the pull-ups, and the page answers its own machine
+      // at `-UB MSYN`.  A CADR with nothing plugged into it reads ones from
+      // its debug registers, which is what MIT's board does.
+      .dbgout_req   (dbgout_req),
+      .dbgout_wr    (dbgout_wr),
+      .dbgout_a     (dbgout_a),
+      .dbgout_dbd   (dbgout_dbd),
+      .dbgout_ack   (1'b0),
+      .dbgout_dbd_in(16'hFFFF),
+      .dbgout_live  (1'b0),
       .debuggee_reset (debuggee_reset),
       .timeout_inhibit(timeout_inhibit),
       .dbg_rst    (dbg_rst),
@@ -1021,13 +1041,20 @@ module cadr_machine #(
   // -PROG.RESET is the other pulse a mode-register write makes, and the
   // processor does not act on it yet. See the note at the top.
   logic unused;
+  // The DBGOUT end, folded rather than left: the tie above says there is no
+  // cable, so nothing reads what this machine would put on one.  The fold
+  // goes when the connector is attached at the top level.
+  logic        dbgout_req, dbgout_wr;
+  logic [1:0]  dbgout_a;
+  logic [15:0] dbgout_dbd;
   assign n_loadmd_o = n_loadmd;
   assign n_memrq_o  = n_memrq;
   assign n_memack_o = n_memack;
   assign n_memgrant_o = n_memgrant;
   assign rdcyc_o    = rdcyc;
   assign dev_wdata  = wdata;
-  assign unused = &{1'b0, prog_reset};
+  assign unused = &{1'b0, prog_reset,
+                    dbgout_req, dbgout_wr, dbgout_a, dbgout_dbd};
 
 endmodule
 
