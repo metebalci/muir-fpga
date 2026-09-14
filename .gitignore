@@ -49,16 +49,17 @@ NA/
 clockInfo.txt
 tight_setup_hold_pins.txt
 
-# The TFTP server's address for the card, filled into uEnv.txt by mksd.sh,
-# and the board's own cable serial, which the JTAG scripts select it by.
+# A board's private settings, read out of its own linux/ directory: the TFTP
+# server's address and the board's MAC, filled into uEnv.txt, the Chaosnet
+# numbers and the debugger's pack, written into the card's fpgarc and muirrc,
+# and the board's own JTAG cable serial, which the JTAG scripts select it by.
 # Private to this network and to these boards; the repository is public. One
-# file a board, because two boards on one network need different addresses and
-# two boards on one hub need different serials.
-boards/arty-z7-20/linux/local.conf
-boards/cora-z7-07s/linux/local.conf
+# pattern rather than one line a board, because a second board is a second
+# file and the one that got forgotten would be the one that was committed.
+boards/*/linux/local.conf
 
 # Buildroot's downloads (vendor/buildroot-dl, already under vendor/ above) and
 # its build tree, which the Makefile keeps out of the repository altogether
 # --- BR_WORK, under ~/.cache by default.  Nothing of the build lands here;
 # the staged card and server directories go under build/ like everything
-# else.  boards/arty-z7-20/linux/local.conf, above, also carries ETHADDR for the new card.
+# else.  A board's linux/local.conf, above, also carries ETHADDR for the new card.

@@ -15,9 +15,17 @@
 #                                 zynq-arty-z7-20.dtb zImage rootfs.cpio.uboot
 #                                                                     -> partition 1
 #     build/sd/buildroot/packs/   disk-pack-0.img .. disk-pack-7.img   -> partition 2
-#     build/sd/buildroot/server/  uEnv.net cadr.bit zynq-arty-z7-20.dtb
-#                                 zImage rootfs.cpio.uboot            -> /srv/tftp
+#     build/sd/buildroot/server/<board>/
+#                                 uEnv.net cadr.bit zynq-arty-z7-20.dtb
+#                                 zImage rootfs.cpio.uboot    -> /srv/tftp/<board>
 #     build/sd/buildroot/sdcard.img                                   -> dd, instead of both
+#
+# THE SERVED SET IS UNDER A DIRECTORY NAMED FOR THE BOARD, and the name is
+# the board's own directory under `boards/`.  One TFTP server serves more
+# than one board here and every board's five files carry the same five names,
+# so a flat server root would hand a Cora the Arty's bitstream --- a bitstream
+# for the wrong part, which configures nothing and says nothing about why.
+# The card is untouched by the rule: a card belongs to one board already.
 #
 # **DO NOT WRITE THE IMAGE WITH `conv=sparse`.**  It skips runs of zeros, so
 # wherever the image holds zeros the card keeps whatever was there before.
@@ -120,7 +128,10 @@ OUT=${OUT:-build/sd/buildroot}
 # must, the development allocation reserving a second pair for exactly that.
 BOARD_DIR=${BOARD_DIR:-boards/arty-z7-20}
 BOARD_DTB=${BOARD_DTB:-zynq-arty-z7-20.dtb}
-BOARD=$BOARD_DIR/linux/buildroot/board/$(basename "$BOARD_DIR")
+# The board's own name --- the last element of BOARD_DIR --- is also the name
+# of its directory on the TFTP server, so the two cannot part company.
+BOARD_NAME=$(basename "$BOARD_DIR")
+BOARD=$BOARD_DIR/linux/buildroot/board/$BOARD_NAME
 BIT=${BIT:-}
 PACKS=${PACKS:-}
 BOOT_MB=${BOOT_MB:-64}
@@ -182,7 +193,7 @@ if [ -n "$STANDALONE" ]; then
   SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
 fi
 if [ -n "${SERVERIP:-}" ]; then
-  MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp"
+  MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp/$BOARD_NAME"
 else
   MODE="the card path: uEnv.txt names no server, the five files come from the card, no network is used"
 fi
@@ -332,7 +343,7 @@ echo "mksd-buildroot: bitstream $BIT"
 echo "mksd-buildroot:   $BITLINE"
 
 rm -rf "$OUT"
-mkdir -p "$OUT/card" "$OUT/packs" "$OUT/server"
+mkdir -p "$OUT/card" "$OUT/packs" "$OUT/server/$BOARD_NAME"
 
 # The card: everything.
 cp "$IMAGES/boot.bin" "$OUT/card/BOOT.BIN"
@@ -806,10 +817,11 @@ VNC_PORT_M=${MUIR_TERMINAL_PORT:-5901}
 } > "$OUT/packs/muirrc"
 echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M port $CHAOS_PORT_M, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peer")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo " and a bridge" || echo ""); the cable is at 0x80001000 and $([ -n "${CC_PACK:-}" ] && echo "is live, with the debugger's pack at /mnt/packs/$CC_PACK_NAME" || echo "waits on the CC pack")"
 
-# The server: the same five files and the command that fetches them.
-cp "$BIT" "$OUT/server/cadr.bit"
-cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/"
-cp "$BOARD/uEnv.net" "$OUT/server/uEnv.net"
+# The server: the same five files and the command that fetches them, in the
+# directory named for this board.
+cp "$BIT" "$OUT/server/$BOARD_NAME/cadr.bit"
+cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/$BOARD_NAME/"
+cp "$BOARD/uEnv.net" "$OUT/server/$BOARD_NAME/uEnv.net"
 
 # What makes the staging believable rather than merely done.
 #
@@ -836,8 +848,20 @@ fi
 for var in "bootcmd=run cadr_boot" "cadr_card=load mmc 0:1" "cadr_net=" "cadr_bootz="; do
   strings "$OUT/card/u-boot.img" | grep -q "^$var" || die "the U-Boot in u-boot.img has no '$var' in its environment"
 done
+# BOTH ENDS OF THE SERVED-DIRECTORY RULE ARE CHECKED RATHER THAN BELIEVED.
+# The U-Boot on the card fetches this board's uEnv.net from this board's
+# directory, and the uEnv.net it then reads names the other four the same
+# way.  A U-Boot built before the rule, or a uEnv.net edited back to the flat
+# names, is a board that fetches another board's files --- which on this
+# server is a bitstream for the wrong part, and it is silent.
+strings "$OUT/card/u-boot.img" | grep -q "^cadr_net=.*$BOARD_NAME/uEnv.net" \
+  || die "the U-Boot in u-boot.img does not fetch $BOARD_NAME/uEnv.net: it predates the served-directory rule"
+for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
+  grep -q "tftpboot [^ ]* $BOARD_NAME/$f " "$OUT/server/$BOARD_NAME/uEnv.net" \
+    || die "the served uEnv.net does not fetch $BOARD_NAME/$f"
+done
 if [ -x "$HOSTBIN/mkimage" ]; then
-  "$HOSTBIN/mkimage" -l "$OUT/server/rootfs.cpio.uboot" | grep -q "RAMDisk" || die "rootfs.cpio.uboot is not a U-Boot ramdisk image"
+  "$HOSTBIN/mkimage" -l "$OUT/server/$BOARD_NAME/rootfs.cpio.uboot" | grep -q "RAMDisk" || die "rootfs.cpio.uboot is not a U-Boot ramdisk image"
 fi
 # The tree reserves the CADR's memory, no-map, and describes no PL
 # peripheral: decompiled with the dtc Buildroot built, or one on the path.
@@ -847,13 +871,19 @@ if command -v "$DTC" >/dev/null 2>&1; then
   grep -q 'cadr@18000000' "$OUT/tree.dts" || die "the tree has no cadr@18000000 node"
   grep -A4 'cadr@18000000' "$OUT/tree.dts" | grep -q 'no-map' || die "the tree's reservation is not no-map"
   grep -q 'amba_pl' "$OUT/tree.dts" && die "the tree describes PL peripherals"
-  grep -q 'Zynq Arty Z7 Development Board' "$OUT/tree.dts" || die "the tree is not this board's"
+  # Which board's tree it is, read out of the board's own source rather than
+  # written here a second time: two spellings of one model string would part
+  # company on the first board that changed it.
+  DTS=$BOARD/dts/xilinx/${BOARD_DTB%.dtb}.dts
+  MODEL=$(sed -n 's/^[[:space:]]*model = "\(.*\)";.*/\1/p' "$DTS" | head -1)
+  [ -n "$MODEL" ] || die "no model string in $DTS"
+  grep -q "\"$MODEL\"" "$OUT/tree.dts" || die "the tree's model is not \"$MODEL\": it is not this board's"
 else
   echo "mksd-buildroot: no dtc; the tree was not checked" >&2
 fi
 # The card and the server hold the same five files, byte for byte.
 for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
-  cmp -s "$OUT/card/$f" "$OUT/server/$f" || die "$f differs between card/ and server/"
+  cmp -s "$OUT/card/$f" "$OUT/server/$BOARD_NAME/$f" || die "$f differs between card/ and server/$BOARD_NAME/"
 done
 
 # The card as one image, if Buildroot built genimage: card/ becomes partition
@@ -920,7 +950,9 @@ echo "staged $OUT"
 echo "  $MODE"
 (cd "$OUT/card" && for f in *; do printf '  card/    %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 (cd "$OUT/packs" && for f in *; do [ -e "$f" ] || continue; printf '  packs/   %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
-(cd "$OUT/server" && for f in *; do printf '  server/  %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
+(cd "$OUT/server/$BOARD_NAME" && for f in *; do printf "  server/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
+echo "  the served set goes to the server's own directory for this board:"
+echo "    mkdir -p /srv/tftp/$BOARD_NAME && cp $OUT/server/$BOARD_NAME/* /srv/tftp/$BOARD_NAME/"
 [ -f "$OUT/sdcard.img" ] && printf '  %-31s %10d  %s\n' sdcard.img "$(stat -c %s "$OUT/sdcard.img")" "$(sha256sum "$OUT/sdcard.img" | cut -c1-16)"
 if [ -f "$OUT/sdcard.img" ]; then
   echo "  partition 1 at byte $P1_OFF, $P1_MB MiB, FAT32 BOOT   --- the loader and the boot files; Linux mounts it read-only"

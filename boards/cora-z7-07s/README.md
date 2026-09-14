@@ -263,15 +263,22 @@ destination would be a race decided by which was appended last.
 The card is staged by `boards/arty-z7-20/linux/mksd-buildroot.sh`, which now
 takes the board in two variables:
 
+    IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
         BIT=build/cora-ddr/cadr_cora.bit boards/arty-z7-20/linux/mksd-buildroot.sh
 
-Both default to the Arty Z7-20's, so a run that sets neither is the run that
-script has always been. The private values, which are the server address, the
-MAC and the Chaosnet numbers, come from `linux/local.conf` in this directory,
-which is gitignored as the other board's is. Two boards on one network need
-different Chaosnet addresses, and the development allocation reserves a second
-pair for exactly that.
+Both board variables default to the Arty Z7-20's, so a run that sets neither
+is the run that script has always been. `IMAGES` is set because
+`make buildroot-cora` builds into its own output directory. The private
+values, which are the server address, the MAC and the Chaosnet numbers, come
+from `linux/local.conf` in this directory, which is gitignored as the other
+board's is. Two boards on one network need different Chaosnet addresses, and
+the development allocation reserves a second pair for exactly that.
+
+The served files go to a directory on the TFTP server named for this board,
+`/srv/tftp/cora-z7-07s`, because every board's five files carry the same five
+names and a flat server root would hand this board the other's bitstream.
+`docs/boot.md`, "One server, more than one board", has the rule.
 
 ## On silicon
 
@@ -319,8 +326,17 @@ what they cannot say is whether the fabric is still clocked.
 
 ## What has not been done
 
-No image has been built from this Buildroot configuration and no card has been
-written, so nothing on this board has run Linux or served the machine a disk.
+What has been done off the board is the image and the staging. `make
+buildroot-cora` builds this configuration, and the card and the served
+directory stage from it with every check in the staging script passing: the
+boot image's own identification, the U-Boot inside `u-boot.img` and the
+environment it carries, the device tree's model string and its reservation,
+the root filesystem's image type, and the two ends of the served-directory
+rule. The card image is read back partition by partition. None of that is a
+board, and a staged card is not a booted one.
+
+No card has been written or booted yet, so nothing on this board has run Linux
+or served the machine a disk.
 
 Three Vivado flows the Arty Z7-20 has are not ported here: the probe readout,
 the two proving scripts and the memory tally's run script. The parameters they
