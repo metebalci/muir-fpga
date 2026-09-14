@@ -11,9 +11,11 @@
 # uboot/cadr.env) boots from the card by default: cadr.bit, the tree, zImage
 # and the root filesystem off the FAT partition, no network needed.  If this
 # file sets `serverip`, the loader takes the network path instead: `dhcp`,
-# fetch uEnv.net from that server, and run the netcmd it defines, which
-# fetches the same five files over TFTP.  That is this project's own card:
-# the files live in /srv/tftp and a change to any of them is a copy and a
+# fetch arty-z7-20/uEnv.net from that server, and run the netcmd it defines,
+# which fetches the same five files over TFTP.  That is this project's own
+# card: the files live in /srv/tftp/arty-z7-20 --- a directory a board,
+# because one server here serves more than one and every board's five files
+# carry the same five names --- and a change to any of them is a copy and a
 # reset.  A card for anyone else simply has no serverip line --- or no
 # uEnv.txt at all.
 #
