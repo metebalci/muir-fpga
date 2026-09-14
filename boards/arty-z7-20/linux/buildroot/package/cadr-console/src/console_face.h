@@ -101,7 +101,8 @@
 enum cons_p0 { CONS_IDENT = 0, CONS_STAT = 1, CONS_CYCLES = 2, CONS_CYCLESH = 3,
 	       CONS_TICKS = 4, CONS_TICKSH = 5, CONS_RESET = 6, CONS_VMA = 7,
 	       CONS_Q = 8, CONS_MD = 9, CONS_RO = 10, CONS_RO_LO = 11,
-	       CONS_RO_HI = 12, CONS_BOOT = 13, CONS_DEBUG = 14 };
+	       CONS_RO_HI = 12, CONS_BOOT = 13, CONS_DEBUG = 14,
+	       CONS_DEBUG_FRAMES = 15 };
 
 // **THE LIGHT PANEL'S BUTTON, page 0's word 13.**  A write of this key and of
 // nothing else holds `-BOOT2` down for a few hundred nanoseconds and lets it
@@ -145,14 +146,76 @@ enum cons_stat_bit { CONS_ST_BUSY = 1u << 0, CONS_ST_GNT = 1u << 1,
 // connectors give it.
 #define CONS_DEBUG_CONNECT_KEY     0x44424752u	/* "DBGR" */
 #define CONS_DEBUG_DISCONNECT_KEY  (~CONS_DEBUG_CONNECT_KEY)
+
+// **AND WHICH WAY ROUND THE RIBBON WAS MADE, the same word and three more
+// keys.**  A Pmod ribbon is supposed to join pin one to pin one.  One made
+// from two host sockets mirrors the header's two rows instead, so each board's
+// pins 1 to 4 reach the other's 7 to 10 --- and a debugger then drives four
+// pins the far board never listens to.  Two boards were found on exactly such
+// a cable, and it was a manufactured extension that could not be re-crimped.
+//
+// **ONLY THE DEBUGGER APPLIES THE SETTING.**  A debuggee always drives the
+// high four and listens on the low four; a debugger swaps its two groups when
+// the cable is crossed.  One end compensating is what straightens a mirrored
+// ribbon and two would cross it again.
+//
+// `auto` is the default and looks for the answer: the board drives nothing
+// while it listens on both groups, and then --- two freshly reset boards being
+// two silent debuggees whatever the cable is --- assumes straight and tries
+// the other wiring in turn until something answers.  The other two take the
+// looking out of the way when somebody is diagnosing a cable.
+//
+// **A SETTING MAY NOT MOVE UNDER A BOARD THAT IS ALREADY THE DEBUGGER**, so a
+// write is dropped while this board holds the role.  Write and then READ, as
+// with the role itself.
+#define CONS_DEBUG_WIRE_AUTO_KEY       0x4155544Fu	/* "AUTO" */
+#define CONS_DEBUG_WIRE_STRAIGHT_KEY   0x53545241u	/* "STRA" */
+#define CONS_DEBUG_WIRE_CROSSOVER_KEY  0x43524F53u	/* "CROS" */
+
 // Word 14's bits.  **BIT 0 AND BIT 1 ARE TWO FACTS AND NOT ONE**, for the
 // reason the switch's two bits are: the fabric may REFUSE the role, because a
 // board that can see a debugger already on the connector holds its own
 // engagement down.  A console that reported one of them would be lying about
 // the other.
+//
+// **AND BIT 8 IS A CROSSED CABLE, NAMED FROM THE END THAT CANNOT COMPENSATE.**
+// A debuggee listens on the low four and answers on the high four, so on a
+// straight cable nothing but this board ever drives the high four and it hears
+// nothing there, ever.  Frames arriving on them can only be the far board's
+// low four reaching the wrong pins: the two ends disagree about the cable.
 enum cons_debug_bit { CONS_DBG_ENGAGED = 1u << 0, CONS_DBG_ASKED = 1u << 1,
 		      CONS_DBG_FOREIGN = 1u << 2, CONS_DBG_ACTIVE = 1u << 3,
-		      CONS_DBG_LIVE = 1u << 4 };
+		      CONS_DBG_LIVE = 1u << 4, CONS_DBG_PEER_FAR = 1u << 8 };
+
+// **AND WORD 15 IS THE CABLE'S TWO COUNTS.**  The pins of a Pmod row are
+// routed as coupled pairs and this link drives all four of them single-ended,
+// so an edge on one line can couple into the strobe beside it and misalign the
+// frame it lands in.  A misaligned frame fails its marker or its parity, moves
+// nothing, and the next one carries the levels again --- so what crosstalk
+// costs is REFUSED FRAMES and never wrong values, unless it is frequent.  How
+// frequent is a number nobody has, and these two are it.
+//
+// Both saturate and neither can be cleared except by resetting the fabric.  A
+// marker of one byte, `0x44`, because twenty-four bits of count leave eight:
+// neither an undriven bus's ones nor a dead one's zeros can be it.
+#define CONS_DEBUG_FRAMES_MARK  0x44u
+#define CONS_DEBUG_FRAMES_HEARD(w)    (((w) >> 8) & 0xFFFFu)
+#define CONS_DEBUG_FRAMES_REFUSED(w)  ((w) & 0xFFu)
+
+// Bits 7:5, one value a meaning.  `rtl/plumbing/cadr_dbg_cable.sv` names the
+// same eight and its header has the table they come out of.
+#define CONS_DBG_WIRE_SHIFT  5
+#define CONS_DBG_WIRE_MASK   7u
+enum cons_debug_wire {
+	CONS_DBG_WIRE_AUTO_IDLE = 0,	/* auto, and not the debugger */
+	CONS_DBG_WIRE_STRAIGHT = 1,	/* straight, set */
+	CONS_DBG_WIRE_CROSSOVER = 2,	/* crossover, set */
+	CONS_DBG_WIRE_LISTENING = 3,	/* auto, listening, driving nothing */
+	CONS_DBG_WIRE_ST_FOUND = 4,	/* auto, straight, heard */
+	CONS_DBG_WIRE_CR_FOUND = 5,	/* auto, crossover, heard */
+	CONS_DBG_WIRE_ST_ASSUMED = 6,	/* auto, nothing heard, trying straight */
+	CONS_DBG_WIRE_CR_ASSUMED = 7	/* auto, nothing heard, trying crossover */
+};
 
 // Page 1: word 16 + k is diagnostic register k.
 #define CONS_PAGE1        16u
@@ -486,13 +549,23 @@ struct cons_debug_cable {
 	int engaged;		/* the role this board HAS */
 	int asked;		/* the role it was last told to take */
 	int foreign;		/* somebody else is the debugger on the connector */
+	int peer_far;		/* and on the four pins this board answers on */
 	int active;		/* the far end is driving its pin group */
 	int live;		/* and what arrives is good frames */
+	int wire;		/* enum cons_debug_wire: what came of the setting */
 	unsigned connects;	/* how many connects since the console came up */
-	uint32_t word;		/* the word all of them came out of */
+	unsigned heard;		/* frames that arrived, saturating at 65535 */
+	unsigned refused;	/* and failed their marker, parity or fill, at 255 */
+	int frames_ok;		/* word 15 carried its marker */
+	uint32_t word;		/* the role's bits came out of this one */
+	uint32_t frames;	/* and the two counts out of word 15 */
 };
 void cons_debug_cable_connect(struct console *c);
 void cons_debug_cable_disconnect(struct console *c);
+// The wiring, by `enum cons_debug_wire`'s first three values: auto, straight,
+// crossover.  Anything else writes nothing.  Refused by the fabric while this
+// board is the debugger, so write and then read.
+void cons_debug_cable_wiring(struct console *c, int wire);
 void cons_read_debug_cable(struct console *c, struct cons_debug_cable *d);
 void cons_say_debug_cable(const struct cons_debug_cable *d);
 

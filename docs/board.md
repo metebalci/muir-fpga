@@ -586,6 +586,22 @@ power-on state. `--debug-cable-connect` in the card's `fpgarc`, or
 `cadr-console debug-cable-connect` at any time, asks for the other role.
 `cadr-console debug-cable` says which role this board has.
 
+**And which way round the ribbon was made is a setting, because one was made
+the wrong way.** A Pmod header is two rows, pins 1 to 6 and 7 to 12, so a
+ribbon whose connector was pressed on the other way up joins each board's pins
+1 to 4 to the other's 7 to 10. Two boards were found on exactly such a cable on
+14 September: the one told to connect drove four pins the far board never
+listens to, and after the role was given back neither board could take it
+again.
+
+`--debug-cable-wiring auto|straight|crossover` in `fpgarc`, or `cadr-console
+debug-cable-wiring` at any time, says which. `auto` is the default: the board
+drives nothing while it listens on both pin groups, then assumes straight and
+tries the other wiring in turn until something answers. Only a debugger applies
+it. `cadr-console debug-cable` says which wiring the board found, and on the
+far board it says when what is arriving is on the four pins that board answers
+on --- which only a mirrored ribbon can do.
+
 **The connector is in every bitstream this board builds**, memory on or off,
 because a board is always a debuggee.
 
@@ -595,9 +611,18 @@ and 11 and 3.3 V on 6 and 12. The grounds must be joined and the supplies must
 not. A cable for this link joins pins 1 to 4, pins 7 to 10 and the grounds, and
 leaves the supply pins open.
 
-**Nothing of this has been shown on a board.** No cable exists and the two
-boards that would take one are running Lisp and Linux.
-`docs/debug-cable.md` is the whole of the cable.
+**And the pins of a Pmod row are coupled pairs, which this link drives
+single-ended.** An edge on one line can couple into the strobe beside it and
+misalign a frame. A misaligned frame moves nothing and the next carries the
+levels again, so what it costs is lost frames and never wrong values --- and how
+often is a number nobody has. The fabric counts frames heard and frames
+refused, and `cadr-console debug-cable` prints both. If the number turns out
+bad the fallback is one signal per pair, which is a parameter and a pin map.
+
+**A cable exists and the fabric's side of it has not been shown on silicon.**
+Two boards were joined by one on 14 September and the cable turned out to be
+mirrored, which is what the wiring setting is for; the fabric that answers it
+has not been on a board since. `docs/debug-cable.md` is the whole of the cable.
 
 ## What the LEDs say
 

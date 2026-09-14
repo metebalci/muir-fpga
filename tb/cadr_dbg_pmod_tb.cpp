@@ -5,7 +5,7 @@
 // **what goes in one end comes out the other, unchanged, whole, and in
 // bounded time.**
 //
-// The carrier is `rtl/plumbing/cadr_dbg_pmod.sv`, four pins each way, and
+// The carrier is `rtl/plumbing/cadr_dbg_tx.sv` with `cadr_dbg_rx.sv`, four pins each way, and
 // `rtl/plumbing/cadr_dbg_join.sv` is what lets two debuggers share one DBGIN
 // page.  Neither has a muir reference: muir has the cable and no wires, so
 // there is no trace to compare against and what holds these is the property.
@@ -112,6 +112,9 @@ constexpr uint8_t kErrStatus = 0x5Au;
 
 int bad = 0;
 long tick = 0;
+// Frames that arrived at either end of the carrier-alone pair, and frames
+// refused: the two numbers the connector reports to the console.
+long done_seen = 0, bad_seen = 0;
 
 void Fail(const char *what, unsigned long long got, unsigned long long want) {
   if (bad < 30) {
@@ -206,7 +209,7 @@ struct Link {
 
   // What the B end sees, and what the A end sees.  An unplugged connector
   // reads zero: the pins carry a pull-down and the strobe then never moves,
-  // which is the state `cadr_dbg_pmod.sv` calls not live.
+  // which is the state `cadr_dbg_rx.sv` calls not live.
   int BStb() const { return cut_ab ? 0 : ab[0].Get(); }
   int BD() const {
     if (cut_ab) return 0;
@@ -248,6 +251,18 @@ void EvalPoint(int clk_a, int clk_b) {
   d->clk = static_cast<uint8_t>(clk_a);
   d->clk_b = static_cast<uint8_t>(clk_b);
   d->eval();
+  // **A FRAME ARRIVED, AND WHETHER IT WAS TAKEN.**  Sampled at every eval
+  // point rather than once a tick, because the two boards are clocked apart in
+  // the asynchronous phase and a one-tick term at one end is not visible at the
+  // other's edge.  A Pmod row is routed as coupled pairs and this link drives
+  // all four single-ended, so what an edge coupling into a strobe costs is
+  // refused frames; the connector counts them for the console, and this counts
+  // the same terms so that a leg can ask whether the fault it injected was
+  // seen as one.
+  if (d->p_done_a) ++done_seen;
+  if (d->p_done_b) ++done_seen;
+  if (d->p_bad_a) ++bad_seen;
+  if (d->p_bad_b) ++bad_seen;
   link_p.Push(d->pa_stb_o, d->pa_d_o, d->pb_stb_o, d->pb_d_o);
   link_o.Push(d->oa_stb_o, d->oa_d_o, d->ob_stb_o, d->ob_d_o);
 }
@@ -641,6 +656,14 @@ int main(int argc, char **argv) {
     }
     std::fprintf(stderr, "  %d of %d shorted or crossed lines were visible\n",
                  seen, cases);
+    // **AND EVERY ONE OF THEM WAS COUNTED AS A REFUSAL**, which is the other
+    // half of what "visible" means.  A Pmod row is routed as coupled pairs and
+    // this link drives all four single-ended, so an edge on one line can couple
+    // into the strobe beside it; what that costs is refused frames, and the
+    // count is how often.  A counter that could only read zero would report a
+    // perfect cable whatever the cable was doing.
+    if (bad_seen == 0)
+      Fail("frames counted as refused over lines that were shorted and crossed", 0, 1);
   }
 
   // ================================================================ phase 4

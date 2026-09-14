@@ -1590,14 +1590,18 @@ if generate_fpgarc "" 1; then
 fi
 
 # **THE CONTROL.**  A release menu with three live lines is only a decision if
-# the development card still has its five; otherwise the same result would come
+# the development card still has its six; otherwise the same result would come
 # of turning everything off everywhere, and nothing above could tell.
-case_head "and the development card's menu is unchanged: five live lines, the cable and the line among them"
+case_head "and the development card's menu is unchanged: six live lines, the cable and the line among them"
 sandbox
 if generate_fpgarc "" ""; then
 	GEN="$WORK/gen/packs/fpgarc"
 	got=$(live_flags "$GEN" | tr '\n' '|')
-	want='--chaos-address 177101|--chaos-udp 0.0.0.0:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--serial 0.0.0.0:7641|'
+	# The sixth is the JA ribbon's wiring, which is `auto` --- the fabric's
+	# own reset value, so the line changes nothing.  It is live on a card
+	# that is being worked on so that the boot log says which wiring the
+	# board is on, and commented on a release, which keeps its three.
+	want='--chaos-address 177101|--chaos-udp 0.0.0.0:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--serial 0.0.0.0:7641|--debug-cable-wiring auto|'
 	if [ "$got" = "$want" ]; then
 		ok "the cable is plugged in and the serial line is offered, as they always were"
 	else

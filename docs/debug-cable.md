@@ -536,9 +536,10 @@ arbiter.
 ## The cable on one Pmod connector
 
 The register window is one transport. A second board is the other.
-`rtl/plumbing/cadr_dbg_pmod.sv` puts one direction of MIT's cable on four Pmod
-pins. `rtl/plumbing/cadr_dbg_cable.sv` puts one of those carriers on ONE Pmod
-header and decides which four of its eight pins this board drives.
+`rtl/plumbing/cadr_dbg_tx.sv` and `rtl/plumbing/cadr_dbg_rx.sv` are the
+carrier: one direction of MIT's cable on four Pmod pins, a sender and a
+receiver. `rtl/plumbing/cadr_dbg_cable.sv` puts one sender and two receivers
+on ONE Pmod header and decides which four of its eight pins this board drives.
 `rtl/plumbing/cadr_dbg_join.sv` lets that connector and the window share one
 DBGIN page.
 
@@ -663,6 +664,134 @@ from `github.com/Digilent/digilent-xdc` at commit
 Digilent's schematic names in its comments, so the mapping can be checked
 against the board rather than against memory.
 
+### The ribbon can be made the wrong way round, and one was
+
+A Pmod header is two rows. Pins 1 to 6 are one row and 7 to 12 the other. A
+ribbon whose connector was pressed on the other way up joins each board's pins
+1 to 4 to the other board's pins 7 to 10, in order, and its 7 to 10 to the
+other's 1 to 4.
+
+**Two boards were found on exactly such a cable on 14 September.** The board
+told to connect drove four pins the far board never listens to and reported
+that nothing was answering. The far board heard nothing at all. Then the role
+was given back, and each board ended up hearing the other's answers, calling
+them a debugger, and refusing to take the role. Neither could be the debugger
+until one of them was reset. The cable was a manufactured extension and could
+not be re-crimped.
+
+So the wiring is a setting on the console's word 14, with three values.
+
+| setting | what a DEBUGGER does |
+|---|---|
+| `auto` | drives nothing while it listens on both groups, then finds out |
+| `straight` | drives the low four, listens on the high four |
+| `crossover` | drives the high four, listens on the low four |
+
+**Only the debugger applies it.** A debuggee always drives the high four and
+listens on the low four, whatever the setting says. One end compensating is
+what straightens a mirrored ribbon, and two ends compensating would cross it
+again.
+
+**The setting is taken when the role is taken.** The console refuses a write
+while this board is the debugger, and the connector latches the setting at the
+take besides. The two are independent on purpose: the refusal is what a person
+is told, and the latch is what the fabric does whatever it is told. The wiring
+decides which four pins the board drives, so moving it inside a session would
+take the pins out from under a standing cycle.
+
+### Finding the wiring, and what it can and cannot hear
+
+Under `auto` a board that has just taken the role drives nothing at all for one
+frame and the carrier's loss interval, and listens on both groups at once. It
+can, because there are two receivers and each is nailed to its own four pins.
+
+Idle frames on the high four mean a straight cable, because a debuggee drives
+the high four and a straight ribbon lands them on the high four here. The same
+frames on the low four mean a crossover. Frames from a debugger on either group
+are the two-debuggers case, which the take's own guard refuses.
+
+**Silence names no wiring, and silence is the common case.** A debuggee sends
+nothing until it hears a debugger, so two boards freshly reset are two silent
+debuggees whatever the cable is. A board that listened, heard nothing and stood
+on `straight` for ever would never bring a mirrored ribbon up.
+
+So the fallback moves. The board assumes straight, drives, and waits one probe
+interval for an answer. With none it goes quiet for long enough that both its
+receivers are telling the truth again, flips the assumption, and drives the
+other group. An answer settles the wiring and the alternation stops. The cost
+of being wrong is one probe interval; the cost of not alternating is a cable
+that never comes up without somebody setting the wiring by hand.
+
+**The quiet interval before each flip is not tidiness.** A receiver whose group
+this board is driving is held in reset, so the moment the board lets that group
+go it knows nothing about it. Without the quiet interval the next flip but one
+would drive that group again on the strength of a counter that had not run, and
+the far end's answer would arrive on it. That was measured: 580 pad-ticks
+driven from both ends of one cable.
+
+### And a board never drives a group somebody else is driving
+
+Every pad enable is gated on that group's receiver saying nothing is on it.
+That one rule keeps one connector with two roles safe in the arrangements the
+role rules do not reach: two boards told to connect inside one listening
+interval, a probe that lands on a group the far end is still answering on, or a
+debuggee whose debugger has not compensated for a mirrored ribbon.
+
+A group being driven with nothing sensible under it is still somebody else's
+driver, so the gate is the receiver's activity and not its frames. Activity
+decays in two frames rather than in the loss interval, because a sender
+free-runs and a gap of a whole frame already means nobody is there.
+
+### What a crossed cable looks like from each end
+
+From the debugger: `cadr-console debug-cable` says `crossover, detected` once
+`auto` has found it. With the setting forced the wrong way it says nothing is
+answering, and a status read over the cable comes back all ones, which is
+exactly what an unplugged connector reads as.
+
+From the debuggee: the console says the connector's frames are arriving on the
+four pins this board answers on. That can only happen on a mirrored ribbon,
+because on a straight cable nothing but this board ever drives those four pins.
+It is bit 8 of word 14.
+
+**The lock-out the bench found cannot happen now.** A debuggee drives only when
+it hears a frame whose role bit is set, and an idle board's frames do not have
+it, so two idle boards never answer each other. The take refuses for a debugger
+and not for activity, so an idle board on the connector blocks nothing.
+
+### The pins of a row are coupled pairs, and this link drives them singly
+
+The high-speed Pmod headers on these boards route their pins as coupled
+differential pairs. Pins 1 and 2 are a pair, 3 and 4, 7 and 8, and 9 and 10,
+with 0-ohm shunts where a differential termination would go. This link drives
+all four pins of a row single-ended.
+
+So an edge on one line of a pair couples into the other, and the other may be
+the strobe. A false edge on a strobe makes a false beat, and a false beat
+misaligns the frame it lands in.
+
+**What that costs is bounded and is not a wrong word.** A misaligned frame
+fails its marker or its parity, moves nothing, and the levels stand until the
+next frame carries them again sixty-six ticks later. So crosstalk shows as lost
+frames and never as wrong values, unless it is frequent.
+
+**How frequent is a number nobody has, and the fabric counts it.** Page 0's
+word 15 of the console's face carries two: frames heard, whatever their checks
+said, and frames refused. Both saturate, at 65,535 and 255, and only a reset of
+the fabric clears them. `cadr-console debug-cable` prints both.
+
+**The fallback, if the number turns out bad, is one signal per pair.** Strobe
+on pin 1 with pin 2 left quiet, data on pin 3 with pin 4 quiet, and the same on
+the return row: one strobe and one data line each way, no pair carrying two
+signals, and nothing to couple into. Twenty-one bits over one line is
+twenty-four beats a frame against eight, which is 198 ticks against 66 --- still
+a fraction of the 11.05 microseconds a debug cycle is allowed. It is the
+carrier's `LINES` parameter and a pin map and nothing else.
+
+**Nothing here has been measured on a board.** The pairing is read off the
+schematic and the cost is arithmetic; the counters exist so that the decision
+can be taken from a measurement instead.
+
 **A ribbon between two boards joins their supplies, and that is worth saying
 before anybody makes one.** A twelve-pin Pmod header carries ground on pins 5
 and 11 and 3.3 V on 6 and 12, and a straight ribbon joins both. The grounds
@@ -702,7 +831,10 @@ This is the power-on state and nothing has to be set to reach it.
 
 A board becomes the debugger by `--debug-cable-connect` in `fpgarc`, which
 `S80cadr-disk-packs` applies at boot through the console, or by `cadr-console
-debug-cable-connect` at any time. `cadr-console debug-cable-disconnect` returns
+debug-cable-connect` at any time. `--debug-cable-wiring auto|straight|crossover`
+sets which way round the ribbon was made, and the init script applies it
+BEFORE the role, because the fabric refuses a wiring that moves under a board
+that already has it. `cadr-console debug-cable-disconnect` returns
 it and `cadr-console debug-cable` says which role this board has. The flag
 takes no argument because the connector is fixed in the bitstream. There is no
 listen flag, here or in muir, because listening is what a CADR always does.
@@ -718,7 +850,9 @@ are opposite operations.
 **The word reports what this board HAS beside what it was TOLD, and they are
 two facts.** Bit 0 is the role, bit 1 the ask, bit 2 whether somebody else is
 driving the connector, and bits 3 and 4 whether the far end is driving it at
-all and whether what arrives is good frames. A board that can see a debugger
+all and whether what arrives is good frames. Bits 7 to 5 say what came of the
+wiring, one value a meaning, and bit 8 says that what is arriving is on the
+four pins this board answers on. Bits 15 to 9 count the connects. A board that can see a debugger
 already on the connector refuses, so a console that reported the ask alone
 would say this board was the debugger when the far one is. The write completes
 at once and does not wait for the role: a role is a level and not a pulse, and

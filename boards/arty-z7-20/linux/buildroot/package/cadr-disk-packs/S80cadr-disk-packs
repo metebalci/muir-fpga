@@ -61,7 +61,8 @@
 # prefixes its one line `cadr-boot:` rather than `cadr-disk-packs:` because it
 # is the boot button's and not the pack program's.
 #
-# **AND THE DEBUG CABLE'S ROLE IS HERE FOR THE SAME TWO REASONS.**
+# **AND THE DEBUG CABLE'S ROLE AND ITS WIRING ARE HERE FOR THE SAME TWO
+# REASONS.**
 # `--debug-cable-connect` asks this board to be the debugger on Pmod JA, and it
 # reaches the fabric through `cadr-console` exactly as the hold does.  It is
 # read from `fpgarc`, which is on the partition this script mounts, and a step
@@ -71,6 +72,11 @@
 # its own machine starts asking a drive for a band.  `connect_the_debug_cable`
 # below is the whole of it, and it prefixes its lines `cadr-debug-cable:`
 # rather than `cadr-disk-packs:` for `hold_the_machine`'s reason.
+#
+# **THE WIRING IS SET BEFORE THE ROLE AND NOT AFTER**, which is an order and
+# not a tidiness: the fabric refuses a wiring that moves under a board that is
+# already the debugger, so a line that came second would be dropped and the
+# card's setting would never reach the connector.
 
 PROG=/usr/bin/cadr-disk-packs
 BOOT_DEV=/dev/mmcblk0p1
@@ -197,6 +203,38 @@ hold_the_machine() {
 	echo "cadr-boot: \`cadr-console boot\` or BTN0 on the board presses the boot button"
 }
 
+# **WHICH WAY ROUND THE JA RIBBON WAS MADE.**  A Pmod cable is supposed to join
+# pin one to pin one.  One made from two host sockets mirrors the header's two
+# rows instead, so each board's pins 1 to 4 reach the other's 7 to 10, and a
+# debugger then drives four pins the far board never listens to.  Two boards
+# were found on exactly such a cable.
+#
+# `auto` is the fabric's own default and looks for the answer, so a card that
+# says nothing is a board that finds out for itself; `straight` and `crossover`
+# take the looking out of the way when somebody is diagnosing a cable.  Only a
+# DEBUGGER applies the setting, so it changes nothing on a board that is a
+# debuggee --- but it is set anyway and before the role, because the fabric
+# refuses a wiring that moves under a board that already has the role.
+#
+# Nothing is printed when the flag is not there: a board on `auto` has nothing
+# to say about it until it takes the role.
+set_the_debug_cable_wiring() {
+	[ -f "$RC" ] && fpgarc_has "$RC" --debug-cable-wiring || return 0
+	if ! command -v cadr-console > /dev/null 2>&1; then
+		echo "cadr-debug-cable: --debug-cable-wiring, and no cadr-console to ask with;" \
+		     "the fabric's own default stands"
+		return 0
+	fi
+	# One flag, one value, and the reader hands back both words.  A spelling
+	# the console does not know is refused BY the console, which prints the
+	# three it takes.
+	eval "set -- $(fpgarc_args "$RC" --debug-cable-wiring)"
+	if ! cadr-console debug-cable-wiring "${2:-auto}" 2>&1; then
+		echo "cadr-debug-cable: --debug-cable-wiring ${2:-auto}: cadr-console could not" \
+		     "reach the console; the fabric's own default stands"
+	fi
+}
+
 # **THE DEBUG CABLE'S ROLE ON PMOD JA.**  A board with nothing said is a
 # DEBUGGEE: it answers a debugger that plugs into the connector, exactly as
 # MIT's board answers one on its DBGIN, and nothing has to be set for it.
@@ -213,6 +251,7 @@ hold_the_machine() {
 # Nothing is printed when the flag is not there, because a board that is a
 # debuggee has nothing to say about it.
 connect_the_debug_cable() {
+	set_the_debug_cable_wiring
 	[ -f "$RC" ] && fpgarc_has "$RC" --debug-cable-connect || return 0
 	if ! command -v cadr-console > /dev/null 2>&1; then
 		echo "cadr-debug-cable: --debug-cable-connect, and no cadr-console to ask with;" \

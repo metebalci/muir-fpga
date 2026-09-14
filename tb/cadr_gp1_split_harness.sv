@@ -234,6 +234,7 @@ module cadr_gp1_split_harness #(
   // than wired; `build/console.pass` is where it reaches one.
   logic        con_mach_boot;
   logic        dbg_connect;
+  logic [1:0]  dbg_wiring;
   assign con_req_o = con_req;
   assign con_gnt_o = con_gnt;
 
@@ -265,7 +266,9 @@ module cadr_gp1_split_harness #(
       // this harness --- `build/dbg_cable.pass` is the check that has one ---
       // so the four come back as a bare header: no role, nobody else driving
       // it, nothing arriving.  What the console asks for is folded below.
-      .dbg_connect(dbg_connect), .dbg_engaged(1'b0), .dbg_foreign(1'b0),
+      .dbg_connect(dbg_connect), .dbg_wiring(dbg_wiring),
+      .dbg_wire_state(3'd0), .dbg_frames(24'd0),
+      .dbg_engaged(1'b0), .dbg_foreign(1'b0), .dbg_peer_far(1'b0),
       .dbg_live(1'b0), .dbg_active(1'b0)
   );
 
@@ -397,7 +400,7 @@ module cadr_gp1_split_harness #(
                     errstop_u, stathenb_u, mode_speed_u,
                     prog_reset_u, prog_boot_u, promdisable_u,
                     step_u, nop11_u, idebug_u, ldstat_u, debug_ir_u,
-                    con_mach_boot, dbg_connect};
+                    con_mach_boot, dbg_connect, dbg_wiring};
 
 endmodule
 

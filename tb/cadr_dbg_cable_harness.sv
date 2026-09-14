@@ -22,6 +22,14 @@
 //
 // **THE TWO BOARDS HAVE TWO CLOCKS**, as two boards do, and one reset each.
 //
+// **AND THE CABLE ITSELF CAN BE MADE THE WRONG WAY ROUND**, which is what a
+// bench found: a ribbon made from two host sockets mirrors the header's two
+// rows, so each board's pins 1 to 4 reach the other's 7 to 10.  That is the
+// testbench's own variable rather than anything in the fabric, and each
+// board's SETTING --- auto, straight or crossover --- is a port beside its
+// `connect`, because in the fabric it is the console's word and not a
+// parameter.
+//
 // WHERE THIS IS NOT THE BOARD.  On `boards/arty-z7-20/cadr_arty.sv` the
 // register window sits beside the connector on the DBGIN page's join, and a
 // whole machine sits behind the DBGOUT page; here the window's arm of the
@@ -43,6 +51,16 @@ module cadr_dbg_cable_harness #(
     input  var logic        clk_a,
     input  var logic        rst_a,
     input  var logic        connect_a,
+    // Which way round board A believes the ribbon was made: 0 auto, 1
+    // straight, 2 crossover.  A PORT and not a parameter, so that one binary
+    // runs both cables against both settings and the four combinations are
+    // one run rather than four --- the wiring is a run-time setting in the
+    // fabric too, out of the console's word 14.
+    input  var logic [1:0]  wire_a,
+    output var logic [2:0]  a_wire_state,
+    // Frames heard and frames refused, sixteen bits and eight: the crosstalk
+    // instrument, and what a clean cable must read nothing in.
+    output var logic [23:0] a_frames,
     // Its own machine's Unibus, which is CC writing the four registers.
     input  var logic        a_msyn,
     input  var logic        a_write,
@@ -53,6 +71,7 @@ module cadr_dbg_cable_harness #(
     output var logic        a_select_debug,
     output var logic        a_engaged,
     output var logic        a_foreign,
+    output var logic        a_peer_far,
     output var logic        a_live,
     output var logic [7:0]  a_pin_o,
     output var logic [7:0]  a_pin_t,
@@ -62,8 +81,12 @@ module cadr_dbg_cable_harness #(
     input  var logic        clk_b,
     input  var logic        rst_b,
     input  var logic        connect_b,
+    input  var logic [1:0]  wire_b,
+    output var logic [2:0]  b_wire_state,
+    output var logic [23:0] b_frames,
     output var logic        b_engaged,
     output var logic        b_foreign,
+    output var logic        b_peer_far,
     output var logic        b_live,
     output var logic [7:0]  b_pin_o,
     output var logic [7:0]  b_pin_t,
@@ -133,7 +156,8 @@ module cadr_dbg_cable_harness #(
   ) a_cable (
       .clk(clk_a), .rst(rst_a),
       .connect(connect_a), .engaged(a_engaged), .foreign(a_foreign),
-      .live(a_live), .active(a_active_u),
+      .peer_far(a_peer_far), .live(a_live), .active(a_active_u),
+      .wiring(wire_a), .wire_state(a_wire_state), .frames(a_frames),
       .out_req(a_dbg_req), .out_wr(a_dbg_wr), .out_a(a_dbg_a), .out_dbd(a_dbg_dbd),
       .out_ack(a_dbg_ack), .out_dbd_in(a_dbg_in), .out_live(a_dbg_live),
       .in_req(a_in_req_u), .in_wr(a_in_wr_u), .in_a(a_in_a_u), .in_dbd(a_in_dbd_u),
@@ -160,7 +184,8 @@ module cadr_dbg_cable_harness #(
   ) b_cable (
       .clk(clk_b), .rst(rst_b),
       .connect(connect_b), .engaged(b_engaged), .foreign(b_foreign),
-      .live(b_live), .active(b_active_u),
+      .peer_far(b_peer_far), .live(b_live), .active(b_active_u),
+      .wiring(wire_b), .wire_state(b_wire_state), .frames(b_frames),
       .out_req(1'b0), .out_wr(1'b0), .out_a(2'b00), .out_dbd(16'd0),
       .out_ack(b_out_ack_u), .out_dbd_in(b_out_dbd_u), .out_live(b_out_live_u),
       .in_req(b_req_v), .in_wr(b_wr_v), .in_a(b_a_v), .in_dbd(b_dbd_v),

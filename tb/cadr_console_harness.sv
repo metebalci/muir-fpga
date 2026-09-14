@@ -138,8 +138,17 @@ module cadr_console_harness #(
     // --- connector says back.  The four inputs are the testbench playing the
     // --- connector, which is what lets it refuse.
     output var logic        dbg_connect,
+    // And the cable's wiring, which is the console's own register: what it
+    // holds goes out, and what the connector made of it comes back.  The
+    // refusal this check is about is the console's --- a setting may not move
+    // under a board that is already the debugger --- so `dbg_engaged` beside
+    // it is the testbench playing the connector.
+    output var logic [1:0]  dbg_wiring,
+    input  var logic [2:0]  dbg_wire_state,
+    input  var logic [23:0] dbg_frames,
     input  var logic        dbg_engaged,
     input  var logic        dbg_foreign,
+    input  var logic        dbg_peer_far,
     input  var logic        dbg_live,
     input  var logic        dbg_active,
 
@@ -381,8 +390,12 @@ module cadr_console_harness #(
       // asked for.  Those are different facts whenever the connector refuses,
       // so the four come in as stimulus and the testbench is what refuses.
       .dbg_connect(dbg_connect),
+      .dbg_wiring(dbg_wiring),
+      .dbg_wire_state(dbg_wire_state),
+      .dbg_frames(dbg_frames),
       .dbg_engaged(dbg_engaged),
       .dbg_foreign(dbg_foreign),
+      .dbg_peer_far(dbg_peer_far),
       .dbg_live   (dbg_live),
       .dbg_active (dbg_active)
   );

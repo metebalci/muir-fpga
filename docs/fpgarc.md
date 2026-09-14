@@ -163,13 +163,15 @@ program. One flag, and the section below is about it.
 SW0 on the board asks for the same thing, and the two are an OR. `docs/board.md`
 has the switch.
 
-**The debug cable**, read by the same script. One flag.
+**The debug cable**, read by the same script. Two flags.
 
     --debug-cable-connect be the debugger on Pmod JA
+    --debug-cable-wiring auto|straight|crossover
+                          which way round the JA ribbon was made
 
-A board with this line commented out is a debuggee. It answers a debugger that
-plugs into the connector, which is what a CADR is with nothing set.
-`docs/debug-cable.md` has the cable and the section below has the flag.
+A board with the first line commented out is a debuggee. It answers a debugger
+that plugs into the connector, which is what a CADR is with nothing set.
+`docs/debug-cable.md` has the cable and the sections below have the flags.
 
 ## What cannot be written here, and why
 
@@ -359,6 +361,33 @@ at any time, and `cadr-console debug-cable` says which role this board has.
 see a debugger already driving the connector holds its own engagement down, and
 the first board told is the one that has the role. So the line printed at boot
 reports the outcome and not the request.
+
+## `--debug-cable-wiring`
+
+Which way round the JA ribbon was made. It takes one word: `auto`, `straight`
+or `crossover`.
+
+A Pmod ribbon is supposed to join pin one to pin one. One made from two host
+sockets mirrors the header's two rows instead, so each board's pins 1 to 4
+reach the other board's pins 7 to 10. Two boards were found on exactly such a
+cable. `docs/debug-cable.md` has the measurement and the table.
+
+**Only a debugger applies the setting**, so it changes nothing on a board that
+is a debuggee. A debuggee always drives the high four pins and listens on the
+low four; a debugger swaps its two groups when the cable is crossed. One end
+compensating is what straightens a mirrored ribbon and two would cross it
+again.
+
+`auto` is the default and is the fabric's own reset value. The board drives
+nothing while it listens on both groups, then assumes straight and tries the
+other wiring in turn until something answers. `straight` and `crossover` take
+the looking out of the way when somebody is diagnosing a cable.
+
+**The line is applied before `--debug-cable-connect` and not after.** The
+fabric refuses a wiring that moves under a board that already holds the role,
+because the wiring decides which four pins the board drives. `cadr-console
+debug-cable-wiring auto|straight|crossover` does the same thing at any time,
+and `cadr-console debug-cable` says which wiring the board found.
 
 **The DBGIN page is never switched off by any of this.** Only the connector
 changes hands. A board debugging somebody else is still debuggable through its

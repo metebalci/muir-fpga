@@ -186,6 +186,11 @@ constexpr long     kBootT    = 64;
 constexpr uint32_t kDebugKey   = 0x44424752u;   // "DBGR"
 constexpr uint32_t kDebugUnkey = ~kDebugKey;
 constexpr uint32_t kDebugMark  = kDebugKey >> 16;
+// And which way round the JA ribbon was made: three more keys on the same
+// word, and no complement, because there are three of them.
+constexpr uint32_t kWireAuto  = 0x4155544Fu;   // "AUTO"
+constexpr uint32_t kWireStr   = 0x53545241u;   // "STRA"
+constexpr uint32_t kWireCross = 0x43524F53u;   // "CROS"
 // Word 14's bits.  Bit 0 is the role this board HAS and bit 1 is the one it
 // ASKED for, and they are two facts: the connector may refuse.
 constexpr uint32_t kDbgEngaged = 1u << 0;
@@ -1282,10 +1287,17 @@ int main(int argc, char **argv) {
     if ((w >> 16) != kDebugMark) Fail("the debug cable's marker", w >> 16, kDebugMark);
     if (w & 1u) Fail("a board that was told nothing says it has the role", 1, 0);
   }
+  // **AND WORD 15 IS THE CABLE'S TWO COUNTS.**  A Pmod row is routed as
+  // coupled pairs and this link drives all four of them single-ended, so an
+  // edge can couple into the strobe beside it and misalign a frame; what that
+  // costs is refused frames, and these two numbers are how often.  It carries
+  // a marker of one byte, twenty-four bits of count leaving eight, and what is
+  // asserted here is that and nothing else --- `build/dbg_cable.pass` is what
+  // holds the counting itself, with two boards on a cable.
   {
     const uint32_t w = ReadWord(Con(15));
-    if (w != kUnmapped) Fail("an unused page-0 word", w, kUnmapped);
-    ++unmapped_seen;
+    if ((w >> 24) != 0x44u) Fail("the frame counts' marker", w >> 24, 0x44u);
+    if (w == kUnmapped) Fail("word 15 reading as an unused word", w, 0x44000000u);
   }
   // Outside the window, across the port's gigabyte.  A read nothing answers
   // hangs both Arm cores at one PC each, measured on the board, so what is
@@ -1863,8 +1875,8 @@ int main(int argc, char **argv) {
     const uint32_t w = ReadWord(Con(kRegDebug));
     if ((w >> 16) != kDebugMark)
       Fail("the debug register's marker", w >> 16, kDebugMark);
-    if (((w >> 8) & 0xFFu) != 0u)
-      Fail("connects counted before any was asked", (w >> 8) & 0xFFu, 0u);
+    if (((w >> 9) & 0x7Fu) != 0u)
+      Fail("connects counted before any was asked", (w >> 9) & 0x7Fu, 0u);
     if (w & (kDbgEngaged | kDbgAsked))
       Fail("a board told nothing says it asked for the role or has it", w & 3u, 0u);
     if (dut->dbg_connect) Fail("the console asks for the role unasked", 1, 0);
@@ -1912,8 +1924,8 @@ int main(int argc, char **argv) {
     Run(8);
     if (!dut->dbg_connect) Fail("the key reached the connector", 0, 1);
     const uint32_t w = ReadWord(Con(kRegDebug));
-    if (((w >> 8) & 0xFFu) != 1u)
-      Fail("connects counted after one", (w >> 8) & 0xFFu, 1u);
+    if (((w >> 9) & 0x7Fu) != 1u)
+      Fail("connects counted after one", (w >> 9) & 0x7Fu, 1u);
     if (!(w & kDbgAsked)) Fail("word 14 says what was asked for", 0, 1);
     if (w & kDbgEngaged)
       Fail("word 14 says this board HAS a role the connector refused", 1, 0);
@@ -1946,8 +1958,8 @@ int main(int argc, char **argv) {
     const uint32_t w = ReadWord(Con(kRegDebug));
     if (w & (kDbgEngaged | kDbgAsked))
       Fail("word 14 after giving the role back", w & 3u, 0u);
-    if (((w >> 8) & 0xFFu) != 1u)
-      Fail("a disconnect counted as a connect", (w >> 8) & 0xFFu, 1u);
+    if (((w >> 9) & 0x7Fu) != 1u)
+      Fail("a disconnect counted as a connect", (w >> 9) & 0x7Fu, 1u);
   }
 
   // And a second connect, so that the count is a count and not a flag.
@@ -1955,9 +1967,74 @@ int main(int argc, char **argv) {
     DoWrite(Con(kRegDebug), kDebugKey, 0xF);
     Run(8);
     const uint32_t w = ReadWord(Con(kRegDebug));
-    if (((w >> 8) & 0xFFu) != 2u)
-      Fail("connects counted after two", (w >> 8) & 0xFFu, 2u);
+    if (((w >> 9) & 0x7Fu) != 2u)
+      Fail("connects counted after two", (w >> 9) & 0x7Fu, 2u);
     DoWrite(Con(kRegDebug), kDebugUnkey, 0xF);
+    Run(8);
+  }
+
+  // ---- WHICH WAY ROUND THE JA RIBBON WAS MADE ----------------------------
+  //
+  // Three more keys on the same word, and the console's own half of the rule:
+  // a setting may not move under a board that is already the debugger.  What
+  // the connector makes of the setting is `build/dbg_cable.pass`'s, with two
+  // real boards on a real cable; what is here is the register.
+  {
+    if (dut->dbg_wiring != 0)
+      Fail("the wiring a board comes up with", dut->dbg_wiring, 0);
+    DoWrite(Con(kRegDebug), kWireCross, 0xF);
+    Run(8);
+    if (dut->dbg_wiring != 2) Fail("the crossover key", dut->dbg_wiring, 2);
+    DoWrite(Con(kRegDebug), kWireStr, 0xF);
+    Run(8);
+    if (dut->dbg_wiring != 1) Fail("the straight key", dut->dbg_wiring, 1);
+    // **AND NOT WHILE THIS BOARD IS THE DEBUGGER.**  The wiring decides which
+    // four pins the connector drives, so a setting moving inside a session
+    // would take them out from under a standing cycle.
+    DoWrite(Con(kRegDebug), kDebugKey, 0xF);
+    Run(8);
+    dut->dbg_engaged = 1;
+    Run(8);
+    DoWrite(Con(kRegDebug), kWireCross, 0xF);
+    Run(8);
+    if (dut->dbg_wiring != 1)
+      Fail("a wiring moved under a board that already had the role", dut->dbg_wiring, 1);
+    dut->dbg_engaged = 0;
+    DoWrite(Con(kRegDebug), kDebugUnkey, 0xF);
+    Run(8);
+    DoWrite(Con(kRegDebug), kWireAuto, 0xF);
+    Run(8);
+    if (dut->dbg_wiring != 0) Fail("the auto key", dut->dbg_wiring, 0);
+    // **AND A KEY IS THE WHOLE WORD.**  Word 14's other writes take a key for
+    // the reason the machine's reset and the light panel's button take one: a
+    // value that means nothing must not change what the connector is doing.
+    // A board that came up `crossover` off a stray store would drive four pins
+    // nobody is listening to and report that nothing was answering.
+    {
+      const uint32_t near_miss[] = {
+          kWireStr ^ 1u, kWireStr ^ 0x80000000u, kWireStr & 0xFFFF0000u,
+          kWireCross ^ 0xFFu, kWireAuto | 0x00000100u, 0u, 0xFFFFFFFFu,
+      };
+      for (unsigned q = 0; q < sizeof near_miss / sizeof near_miss[0]; ++q) {
+        DoWrite(Con(kRegDebug), near_miss[q], 0xF);
+        Run(8);
+        if (dut->dbg_wiring != 0)
+          Fail("a write that is not a key moved the wiring", dut->dbg_wiring, 0);
+      }
+    }
+    // And what the connector made of it is reported, one value a meaning,
+    // beside the bit that says a mirrored ribbon is on the pins this board
+    // answers on.
+    dut->dbg_wire_state = 5;   // crossover, detected
+    dut->dbg_peer_far = 1;
+    Run(8);
+    const uint32_t w = ReadWord(Con(kRegDebug));
+    if (((w >> 5) & 7u) != 5u)
+      Fail("what the connector made of the wiring", (w >> 5) & 7u, 5u);
+    if (!(w & (1u << 8)))
+      Fail("the connector saying the two ends disagree about the cable", 0, 1);
+    dut->dbg_wire_state = 0;
+    dut->dbg_peer_far = 0;
     Run(8);
   }
 

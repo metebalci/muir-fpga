@@ -3,12 +3,12 @@
 //
 // Two boards, a Pmod cable between them, and a real debug cycle over it.
 //
-// `rtl/plumbing/cadr_dbg_pmod.sv` is the carrier: MIT's debug cable on eight
-// pins, four each way.  This harness is what holds it, and it holds it two
-// ways at once.
+// `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` are the carrier: MIT's
+// debug cable on eight pins, four each way, a sender and a receiver.  This
+// harness is what holds them, and it holds them two ways at once.
 //
-// **THE CARRIER ALONE, WITH THE PINS BROUGHT OUT.**  `u_pa` and `u_pb` are a
-// pair with their payloads driven from outside and their eight wires as
+// **THE CARRIER ALONE, WITH THE PINS BROUGHT OUT.**  `u_pa_*` and `u_pb_*` are
+// a pair with their payloads driven from outside and their eight wires as
 // harness ports, so the testbench IS the cable and can do to it what a cable
 // does: delay it, skew the strobe against the data, unplug it, short a line
 // high or low, cross two lines.  A carrier whose two ends are the same module
@@ -17,7 +17,7 @@
 // a line, so what goes in is poison: every value distinct, so that a value
 // arriving at the far end either was sent or was not.
 //
-// **AND THE CARRIER IN A DEBUGGER'S PATH.**  `u_out` and `u_in` carry
+// **AND THE CARRIER IN A DEBUGGER'S PATH.**  `u_out_*` and `u_in_*` carry
 // `rtl/plumbing/cadr_debug_window.sv` to `rtl/machine/cadr_dbgin.sv` and the
 // answer back, through `rtl/machine/cadr_console_bus.sv` into
 // `rtl/machine/cadr_spy_registers.sv`, which is CC's whole vocabulary.  So
@@ -101,9 +101,17 @@ module cadr_dbg_pmod_harness #(
     input  var logic [19:0] p_tx_a,
     output var logic [19:0] p_rx_a,
     output var logic        p_live_a,
+    // A frame ARRIVED at this end, whatever its checks said, and a frame was
+    // REFUSED.  One tick each: the connector counts them and the console
+    // reports the pair, because a Pmod row is routed as coupled pairs and what
+    // an edge coupling into a strobe costs is refused frames.
+    output var logic        p_done_a,
+    output var logic        p_bad_a,
     input  var logic [19:0] p_tx_b,
     output var logic [19:0] p_rx_b,
     output var logic        p_live_b,
+    output var logic        p_done_b,
+    output var logic        p_bad_b,
     output var logic        pa_stb_o,
     output var logic [2:0]  pa_d_o,
     input  var logic        pa_stb_i,
@@ -178,20 +186,44 @@ module cadr_dbg_pmod_harness #(
   // cable's meaning is here: the payload is twenty bits and which bit is
   // `-DEBUG IN REQ` is decided where it is packed, which is the point of the
   // module taking a vector.
-  cadr_dbg_pmod #(
-      .BEAT_T(BEAT_T), .GAP_T(GAP_T), .GAP_MIN(GAP_MIN), .LOSS_T(LOSS_T)
-  ) u_pa (
+  // **AND THE PAIR HERE IS TWENTY BITS WHERE THE CONNECTOR'S IS TWENTY-ONE**,
+  // on purpose: at twenty the frame has a slot left over and sends it as zero,
+  // at twenty-one it has none.  The two are different frames and both are
+  // built by the same source, so both are checked --- this pair holds the one
+  // with a fill, and the debugger and debuggee below hold the one the
+  // connector actually sends.
+  logic pa_act_u, pb_act_u;
+
+  cadr_dbg_tx #(
+      .PAYLOAD_W(20), .BEAT_T(BEAT_T), .GAP_T(GAP_T)
+  ) u_pa_tx (
       .clk(clk), .rst(rst),
-      .tx_levels(p_tx_a), .rx_levels(p_rx_a), .rx_live(p_live_a),
-      .tx_stb(pa_stb_o), .tx_d(pa_d_o), .rx_stb(pa_stb_i), .rx_d(pa_d_i)
+      .tx_levels(p_tx_a), .tx_stb(pa_stb_o), .tx_d(pa_d_o)
   );
 
-  cadr_dbg_pmod #(
-      .BEAT_T(BEAT_T), .GAP_T(GAP_T), .GAP_MIN(GAP_MIN), .LOSS_T(LOSS_T)
-  ) u_pb (
+  cadr_dbg_rx #(
+      .PAYLOAD_W(20), .GAP_MIN(GAP_MIN), .LOSS_T(LOSS_T)
+  ) u_pa_rx (
+      .clk(clk), .rst(rst),
+      .rx_stb(pa_stb_i), .rx_d(pa_d_i),
+      .rx_levels(p_rx_a), .rx_live(p_live_a), .rx_active(pa_act_u),
+      .frame_done(p_done_a), .frame_bad(p_bad_a)
+  );
+
+  cadr_dbg_tx #(
+      .PAYLOAD_W(20), .BEAT_T(BEAT_T), .GAP_T(GAP_T)
+  ) u_pb_tx (
       .clk(clk_b), .rst(rst_b),
-      .tx_levels(p_tx_b), .rx_levels(p_rx_b), .rx_live(p_live_b),
-      .tx_stb(pb_stb_o), .tx_d(pb_d_o), .rx_stb(pb_stb_i), .rx_d(pb_d_i)
+      .tx_levels(p_tx_b), .tx_stb(pb_stb_o), .tx_d(pb_d_o)
+  );
+
+  cadr_dbg_rx #(
+      .PAYLOAD_W(20), .GAP_MIN(GAP_MIN), .LOSS_T(LOSS_T)
+  ) u_pb_rx (
+      .clk(clk_b), .rst(rst_b),
+      .rx_stb(pb_stb_i), .rx_d(pb_d_i),
+      .rx_levels(p_rx_b), .rx_live(p_live_b), .rx_active(pb_act_u),
+      .frame_done(p_done_b), .frame_bad(p_bad_b)
   );
 
   // ------------------------------------------------------- the debugger
@@ -202,8 +234,9 @@ module cadr_dbg_pmod_harness #(
   logic        win_req, win_wr;
   logic [1:0]  win_a;
   logic [15:0] win_dbd;
-  logic [19:0] out_back;
+  logic [20:0] out_back;
   logic        out_live;
+  logic        out_act_u, out_done_u, out_bad_u;
   assign win_req_o    = win_req;
   assign win_wr_o     = win_wr;
   assign win_a_o      = win_a;
@@ -211,7 +244,10 @@ module cadr_dbg_pmod_harness #(
   assign win_ack_o    = out_back[18];
   assign win_oe_o     = out_back[17:16];
   assign win_dbd_in_o = out_back[15:0];
-  assign out_live_o   = out_live;
+  // **AND AN ANSWER COMES FROM A DEBUGGEE**, which is what the role bit says:
+  // `rtl/plumbing/cadr_dbg_cable.sv` reads its own `out_live` the same way, so
+  // that a second debugger's requests cannot be read as this cable's replies.
+  assign out_live_o   = out_live && !out_back[20];
 
   cadr_debug_window #(
       .REG_BASE(32'h8000_1000),
@@ -234,18 +270,29 @@ module cadr_dbg_pmod_harness #(
       .dbd_oe(out_back[17:16])
   );
 
-  cadr_dbg_pmod #(
-      .BEAT_T(BEAT_T), .GAP_T(GAP_T), .GAP_MIN(GAP_MIN), .LOSS_T(LOSS_T)
-  ) u_out (
+  // The role bit is set: these twenty-one are a DEBUGGER's frame, packed as
+  // `rtl/plumbing/cadr_dbg_cable.sv` packs them.
+  cadr_dbg_tx #(
+      .PAYLOAD_W(21), .BEAT_T(BEAT_T), .GAP_T(GAP_T)
+  ) u_out_tx (
       .clk(clk), .rst(rst),
-      .tx_levels({win_req, win_wr, win_a, win_dbd}),
-      .rx_levels(out_back), .rx_live(out_live),
-      .tx_stb(oa_stb_o), .tx_d(oa_d_o), .rx_stb(oa_stb_i), .rx_d(oa_d_i)
+      .tx_levels({1'b1, win_req, win_wr, win_a, win_dbd}),
+      .tx_stb(oa_stb_o), .tx_d(oa_d_o)
+  );
+
+  cadr_dbg_rx #(
+      .PAYLOAD_W(21), .GAP_MIN(GAP_MIN), .LOSS_T(LOSS_T)
+  ) u_out_rx (
+      .clk(clk), .rst(rst),
+      .rx_stb(oa_stb_i), .rx_d(oa_d_i),
+      .rx_levels(out_back), .rx_live(out_live), .rx_active(out_act_u),
+      .frame_done(out_done_u), .frame_bad(out_bad_u)
   );
 
   // ------------------------------------------------------- the debuggee
-  logic [19:0] in_req_v;
+  logic [20:0] in_req_v;
   logic        in_live;
+  logic        in_act_u, in_done_u, in_bad_u;
   assign in_live_o = in_live;
 
   logic        cab_req, cab_wr, cab_ack;
@@ -259,19 +306,28 @@ module cadr_dbg_pmod_harness #(
   assign cab_dbd_back_o = cab_back;
   assign cab_oe_o       = cab_oe;
 
-  cadr_dbg_pmod #(
-      .BEAT_T(BEAT_T), .GAP_T(GAP_T), .GAP_MIN(GAP_MIN), .LOSS_T(LOSS_T)
-  ) u_in (
+  // And the role bit is clear: a DEBUGGEE's frame, its own spare bit under it.
+  cadr_dbg_tx #(
+      .PAYLOAD_W(21), .BEAT_T(BEAT_T), .GAP_T(GAP_T)
+  ) u_in_tx (
       .clk(clk_b), .rst(rst_b),
-      .tx_levels({1'b0, cab_ack, cab_oe, cab_back}),
-      .rx_levels(in_req_v), .rx_live(in_live),
-      .tx_stb(ob_stb_o), .tx_d(ob_d_o), .rx_stb(ob_stb_i), .rx_d(ob_d_i)
+      .tx_levels({1'b0, 1'b0, cab_ack, cab_oe, cab_back}),
+      .tx_stb(ob_stb_o), .tx_d(ob_d_o)
+  );
+
+  cadr_dbg_rx #(
+      .PAYLOAD_W(21), .GAP_MIN(GAP_MIN), .LOSS_T(LOSS_T)
+  ) u_in_rx (
+      .clk(clk_b), .rst(rst_b),
+      .rx_stb(ob_stb_i), .rx_d(ob_d_i),
+      .rx_levels(in_req_v), .rx_live(in_live), .rx_active(in_act_u),
+      .frame_done(in_done_u), .frame_bad(in_bad_u)
   );
 
   cadr_dbg_join u_join (
       .clk(clk_b), .rst(rst_b),
       .a_req(loc_req), .a_wr(loc_wr), .a_a(loc_a), .a_dbd(loc_dbd),
-      .b_req(in_req_v[19]), .b_wr(in_req_v[18]), .b_a(in_req_v[17:16]),
+      .b_req(in_req_v[19] && in_req_v[20]), .b_wr(in_req_v[18]), .b_a(in_req_v[17:16]),
       .b_dbd(in_req_v[15:0]),
       .req(cab_req), .wr(cab_wr), .a(cab_a), .dbd(cab_dbd),
       .holder(holder_o)
@@ -372,7 +428,9 @@ module cadr_dbg_pmod_harness #(
   );
 
   logic unused;
-  assign unused = ^{timeout_inhibit_u, con_gnt_u, con_ssyn_u, con_rdata_u,
+  assign unused = ^{pa_act_u, pb_act_u, out_act_u, in_act_u,
+                    out_done_u, out_bad_u, in_done_u, in_bad_u,
+                    timeout_inhibit_u, con_gnt_u, con_ssyn_u, con_rdata_u,
                     errstop_u, stathenb_u, mode_speed_u, prog_reset_u,
                     prog_boot_u, promdisable_u,
                     step_u, nop11_u, idebug_u, ldstat_u, debug_ir_u,

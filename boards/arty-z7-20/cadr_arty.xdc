@@ -113,7 +113,7 @@ set_false_path -to [get_cells -quiet witness_reg]
 ## file uses them, it is eight signal pins.
 ##
 ## FOUR PINS EACH WAY, one strobe and three data.
-## `rtl/plumbing/cadr_dbg_pmod.sv` has the argument for splitting them rather
+## `rtl/plumbing/cadr_dbg_tx.sv` has the argument for splitting them rather
 ## than sharing seven and turning them around; `rtl/plumbing/cadr_dbg_cable.sv`
 ## is the connector that puts both directions on this one header.
 ##

@@ -11136,7 +11136,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # ---------------------------------------------------------------------------
 # The debug cable's carrier, and the two debuggers at one page
 #
-# `rtl/plumbing/cadr_dbg_pmod.sv` carries MIT's twenty-one wires over eight
+# `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` carry MIT's twenty-one wires over eight
 # pins, four each way, and `rtl/plumbing/cadr_dbg_join.sv` lets the connector
 # and the window share one DBGIN page.  Neither has a muir reference, so what
 # the records below aim at is a property rather than a column: what goes in one
@@ -11152,7 +11152,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-levels-move-before-the-frame-is-whole
 @check dbg_pmod
-@file rtl/plumbing/cadr_dbg_pmod.sv
+@file rtl/plumbing/cadr_dbg_rx.sv
 @note THE ONE PROPERTY THE CARRIER EXISTS FOR, broken. A request crosses this
 @note cable as twenty levels, and `cadr_debug_window.sv` names three hazards
 @note that follow from any one of them being late: a late address bit makes
@@ -11177,7 +11177,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation one-flop-of-synchroniser-and-not-two
 @check dbg_pmod
-@file rtl/plumbing/cadr_dbg_pmod.sv
+@file rtl/plumbing/cadr_dbg_rx.sv
 @note The strobe is the only signal on this cable that is synchronised, and
 @note the only one that needs to be: the data lines are sampled at an instant
 @note when they have been standing for two ticks. One flop instead of two
@@ -11195,7 +11195,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-frame-is-taken-a-beat-early
 @check dbg_pmod
-@file rtl/plumbing/cadr_dbg_pmod.sv
+@file rtl/plumbing/cadr_dbg_rx.sv
 @note Eight beats is what twenty signals and a two-bit marker need over three
 @note lines. Taking the frame after seven puts the marker where a payload bit
 @note should be, so no frame is ever good and the far end never comes live ---
@@ -11210,7 +11210,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-gap-does-not-put-the-receiver-back-at-beat-zero
 @check dbg_pmod
-@file rtl/plumbing/cadr_dbg_pmod.sv
+@file rtl/plumbing/cadr_dbg_rx.sv
 @note THE FRAME BOUNDARY IS THE SILENCE AND NOTHING ELSE. There is no wire and
 @note no slot spent on saying which beat is beat zero: the sender leaves the
 @note lines alone between frames and any interval longer than `GAP_MIN` is
@@ -11238,7 +11238,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-silence-a-receiver-calls-a-gap-is-shorter-than-a-beat
 @check dbg_pmod
-@file rtl/plumbing/cadr_dbg_pmod.sv
+@file rtl/plumbing/cadr_dbg_rx.sv
 @note The constant walked rather than the structure broken. `GAP_MIN` has to
 @note sit between the beat and the gap with room either side for a tick of
 @note sampling jitter --- six and eighteen at the defaults, so twelve. Below
@@ -11252,7 +11252,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation a-pulled-cable-leaves-its-levels-standing
 @check dbg_pmod
-@file rtl/plumbing/cadr_dbg_pmod.sv
+@file rtl/plumbing/cadr_dbg_rx.sv
 @note On a real lashup the SIP at DBGIN 0A22 pulls `-DEBUG IN REQ` up when
 @note somebody pulls the cable out. In fabric there is nothing to unplug, so
 @note what does it is the dead man: `LOSS_T` ticks with no good frame and the
@@ -11275,7 +11275,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation a-connector-with-nothing-on-it-is-taken-as-twenty-levels
 @check dbg_pmod
-@file rtl/plumbing/cadr_dbg_pmod.sv
+@file rtl/plumbing/cadr_dbg_rx.sv
 @note THE MARKER IS WHAT THE EIGHTH BEAT IS FOR, and this is the record that
 @note holds it. Twenty signals over three lines is seven beats and
 @note twenty-one slots; what does not fit in the one spare slot is the
@@ -11386,9 +11386,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note The same shape as `dev_wdata`, and caught the same way: UNUSEDSIGNAL at
 @note the declaration, which is the only shape of this bug lint can see.
 @old
-                   dbg_engaged, dbg_foreign, dbg_live, dbg_active};
+                   dbg_engaged, dbg_foreign, dbg_live, dbg_active, dbg_peer_far, dbg_frames,
+                   dbg_wire_state};
 @new
-                   dbg_engaged, dbg_foreign, dbg_live};
+                   dbg_engaged, dbg_foreign, dbg_live, dbg_peer_far, dbg_frames,
+                   dbg_wire_state};
 @end
 
 # ============================================================================
@@ -12460,7 +12462,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 # THE DEBUG CABLE ON ONE CONNECTOR: the role, the pads, and the DBGOUT page
 #
-# `rtl/plumbing/cadr_dbg_pmod.sv` is the carrier and its records are above.
+# `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` are the carrier and their records are above.
 # These are the two things built on it: `rtl/plumbing/cadr_dbg_cable.sv`,
 # which puts one carrier on ONE Pmod header and decides which four of its
 # eight pins this board drives, and the DBGOUT page in
@@ -12474,39 +12476,38 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # role, and a board coming OUT of the role believing it can hear a debugger.
 # ---------------------------------------------------------------------------
 
-@mutation the-cable-drives-its-pads-through-a-reset
-@check dbg_cable
-@file rtl/plumbing/cadr_dbg_cable.sv
-@note **A board in reset driving its half of the connector.**  The activity
-@note timer comes out of reset SATURATED --- nothing has been heard --- so a
-@note pad enabled before that value is loaded is a board claiming a pin group
-@note on the strength of a counter that has not run.  Two boards reset
-@note together both claim the return group and hold it until their timers run
-@note out.
-@note
-@note THIS WAS A DEFECT AND NOT A GUESS: the two-board check counted four pads
-@note held from both ends for the whole of `LOSS_T` before the `!rst` went in.
-@old
-  assign drive_fwd = engaged && !rst;
-  assign drive_ret = !engaged && tx_en && !rst;
-@new
-  assign drive_fwd = engaged;
-  assign drive_ret = !engaged && tx_en;
-@end
+# **AND `!rst` ON THE TWO PAD ENABLES IS AN EQUIVALENCE NOW, MEASURED, SO THAT
+# NOBODY FILES IT AS A HOLE.**  `the-cable-drives-its-pads-through-a-reset`
+# lived here and dropped it.  It was caught when a pad enable was
+# `engaged || active` and `active` came off a counter whose value before the
+# first clock edge is zero rather than its reset value --- a board then claimed
+# the return group on the strength of a counter that had not run, and the
+# two-board check counted four pads held from both ends for the whole of
+# `LOSS_T`.
+#
+# What drives a pad now is `engaged` for a debugger and `fwd_dbgr` --- a GOOD
+# FRAME whose role bit is set --- for a debuggee, and a board in reset has
+# neither: `engaged` is a register that resets clear, and a receiver held in
+# reset reports no frame.  So the term cannot change a pad at any instant, and
+# the mutation survives every leg of the two-board check.  The line is kept
+# because it says what it means, and because the property it states is one the
+# gates above it happen to give rather than one they promise.
 
-# **THE TIMER'S OWN HALF OF THAT RULE IS AN EQUIVALENCE, MEASURED, AND IS NOT
-# A RECORD.**  `the-cable-hears-a-debugger-in-its-own-echo` used to live here
-# and dropped `act_t <= LOSS_T` from the engaged arm.  It was caught while the
-# synchroniser ran, and it cannot be caught now that the synchroniser is held:
-# with `act_s` and `act_q` pinned at zero there is no transition to reset the
-# timer, so it free-runs to saturation and stays there --- and `take` will not
-# let a board engage unless `active` is already false, which is to say unless
-# the timer has already saturated.  So the count is saturated at every instant
-# the role can be taken and holding it is redundant given the hold above it.
-# Filed here rather than as a hole, on this project's own rule that an
-# equivalent mutant looks exactly like a finding.  The live record for the rule
-# is `the-cable-remembers-the-strobe-from-the-other-role`, whose mutation
-# restores the whole of the arrangement this one halved.
+
+# **THE HOLD USED TO BE A TIMER AND TWO SYNCHRONISER FLOPS IN THIS FILE, AND
+# IT IS THE RECEIVER'S OWN RESET NOW.**  The connector has two receivers, one
+# a pin group, and holds in reset the one whose group it is driving --- which
+# says the same thing in one mechanism instead of two and removes the hazard
+# that the old arrangement's two halves existed for: `rx_stb` no longer MOVES
+# from one pin to another when the role changes, because neither receiver's
+# pins ever move.
+#
+# Two records that lived here went with it.  `the-cable-hears-a-debugger-in-
+# its-own-echo` dropped `act_t <= LOSS_T` from an engaged arm that no longer
+# exists, and it was already an equivalence.  `the-cable-remembers-the-strobe-
+# from-the-other-role` is now `the-cable-listens-to-the-group-it-is-driving`,
+# which mutates the reset the whole arrangement was replaced by and is the live
+# record for the rule.
 
 
 @mutation the-second-board-takes-a-role-that-is-taken
@@ -12520,7 +12521,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note With this, both boards drive the forward group and the check counts it.
 @old
-  assign take = connect && !engaged && !active && !in_req && !out_req;
+  assign take = connect && !engaged && !foreign && !in_req && !out_req;
 @new
   assign take = connect && !engaged && !in_req && !out_req;
 @end
@@ -12549,11 +12550,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note is the unplugged signature at byte granularity, and a debugger that read
 @note zeros there would report a status byte that is half invented.
 @old
-                    ? {rx_levels[17] ? rx_levels[15:8] : 8'hFF,
-                       rx_levels[16] ? rx_levels[7:0]  : 8'hFF}
+                    ? {lsn_levels[17] ? lsn_levels[15:8] : 8'hFF,
+                       lsn_levels[16] ? lsn_levels[7:0]  : 8'hFF}
 @new
-                    ? {rx_levels[17] ? rx_levels[15:8] : 8'h00,
-                       rx_levels[16] ? rx_levels[7:0]  : 8'h00}
+                    ? {lsn_levels[17] ? lsn_levels[15:8] : 8'h00,
+                       lsn_levels[16] ? lsn_levels[7:0]  : 8'h00}
 @end
 
 @mutation a-cable-with-nothing-at-the-far-end-reads-as-zero
@@ -12572,15 +12573,23 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation the-connector-swaps-its-two-pin-groups
 @check dbg_cable
 @file rtl/plumbing/cadr_dbg_cable.sv
-@note **The debugger driving the debuggee's four pins.**  A straight Pmod
-@note ribbon maps pin one to pin one, so the four low pins have to be the
-@note debugger's at BOTH ends and the four high ones the debuggee's.  Swap
-@note them at one end and the two boards drive each other's groups: nothing
-@note crosses, and every pad is driven twice.
+@note **The debugger driving the debuggee's four pins.**  On a straight ribbon
+@note the four low pins have to be the debugger's at BOTH ends and the four
+@note high ones the debuggee's.  Swap them at one end and the two boards drive
+@note each other's groups: nothing crosses, and the wiring setting --- which
+@note exists to swap them DELIBERATELY at one end --- swaps them at the wrong
+@note one.
+@note
+@note This is the mutation the `crossover` setting is, applied where nobody
+@note asked for it: what makes it a defect rather than a setting is that it
+@note ignores `crossed` and so is wrong on whichever cable the setting is
+@note right about.
 @old
-  assign rx_stb = engaged ? pin_i[RET_STB]     : pin_i[FWD_STB];
+  assign want_fwd = engaged && decided && !crossed;
+  assign want_ret = engaged ? (decided && crossed) : fwd_dbgr;
 @new
-  assign rx_stb = engaged ? pin_i[FWD_STB]     : pin_i[RET_STB];
+  assign want_fwd = engaged && decided && crossed;
+  assign want_ret = engaged ? (decided && !crossed) : fwd_dbgr;
 @end
 
 @mutation the-debug-block-takes-the-last-cycles-acknowledgement
@@ -12706,7 +12715,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 
 @mutation the-frames-parity-is-not-looked-at
 @check dbg_pmod
-@file rtl/plumbing/cadr_dbg_pmod.sv
+@file rtl/plumbing/cadr_dbg_rx.sv
 @note **The parity bit written and never checked.**  The marker says a frame
 @note is a frame and says nothing about the twenty bits under it, so one line
 @note shorted, one beat sampled at the wrong instant or one bit flipped in the
@@ -13287,45 +13296,31 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 # both ends of one cable, four pads for the whole of `LOSS_T`, at the tick the
 # second board was told to disconnect.
 
-@mutation the-cable-remembers-the-strobe-from-the-other-role
+@mutation the-cable-listens-to-the-group-it-is-driving
 @check dbg_cable
 @file rtl/plumbing/cadr_dbg_cable.sv
-@note **THE SYNCHRONISER LEFT RUNNING WHILE THIS BOARD IS THE DEBUGGER.**
-@note `rx_stb` is `pin_i[RET_STB]` while engaged and `pin_i[FWD_STB]` after, so
-@note the role changing MOVES THIS SYNCHRONISER FROM ONE PIN TO ANOTHER.  With
-@note its two flops left running, the tick the role goes they hold the far
-@note end's return strobe while the new pin holds something else, and the
-@note comparison one tick later reads as a transition on the forward group.
-@note The board then believes a debugger has appeared and starts driving the
-@note return group on top of the debuggee that is still answering it.
+@note **THE RECEIVER ON A GROUP THIS BOARD IS DRIVING, LEFT RUNNING.**  Every
+@note pad is an `inout` and a driven one reads back what this board put on it
+@note --- `cadr_arty.sv`'s `assign ja[i] = ja_t[i] ? 1'bz : ja_o[i]` is a wire
+@note and not a one-way street --- so a receiver left running on a group this
+@note board drives decodes THIS BOARD'S OWN FRAMES.
 @note
-@note **THIS WAS A DEFECT, MEASURED**: the first fix held the TIMER and not the
-@note synchroniser, and the fault it was written against came back by the one
-@note route the timer's own hold does not cover.  2,048 pad-ticks from both
-@note ends --- four pads for the whole of `LOSS_T` --- at the tick the second
-@note board was told to disconnect.  It stood until the role leg of this check
-@note existed, which is the argument for the leg.
+@note What that costs is not academic.  On a mirrored ribbon two debuggees
+@note carry the same role bit, so a board that had been answering on the high
+@note four and then took the role would read its own last frames as the far
+@note end's and call the cable straight --- which is the one wiring it cannot
+@note be.  And the activity gate that stops a board driving over a neighbour
+@note would be looking at the board's own echo.
 @note
-@note **AND THE TIMER'S OWN HALF IS AN EQUIVALENCE**, which is recorded at the
-@note head of this section rather than filed as a hole: with the synchroniser
-@note held there is no transition to reset the timer, so it saturates on its
-@note own --- and a board cannot take the role at all unless it has.  This
-@note record's mutation restores the whole arrangement and is the live one.
+@note The reset is also how a board FORGETS a group it has been driving: it
+@note comes out of it saying nothing has been heard, which is the only honest
+@note thing for a board that has been listening to itself to say.
 @old
-    end else if (engaged) begin
-      act_s <= 2'b00;
-      act_q <= 1'b0;
-      act_t <= ACT_W'(LOSS_T);
-    end else begin
-      act_s <= {act_s[0], rx_stb};
-      act_q <= act_s[1];
-      if (act_s[1] != act_q) act_t <= '0;
+  ) u_rx_ret (
+      .clk(clk), .rst(rst || drive_ret),
 @new
-    end else begin
-      act_s <= {act_s[0], rx_stb};
-      act_q <= act_s[1];
-      if (engaged) act_t <= ACT_W'(LOSS_T);
-      else if (act_s[1] != act_q) act_t <= '0;
+  ) u_rx_ret (
+      .clk(clk), .rst(rst),
 @end
 
 @mutation a-debuggee-drives-before-it-hears-a-debugger
@@ -13340,10 +13335,17 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note Driving always, the two boards hold four pads from both ends from the
 @note tick they come out of reset, which the check counts on every tick of
 @note every phase.
+@note
+@note **AND WHAT IT WAITS FOR IS A DEBUGGER AND NOT A NOISE.**  The trigger was
+@note a strobe transition, and on a mirrored ribbon two idle boards then
+@note answered each other's answers for ever --- measured on two boards, and it
+@note left neither able to take the role.  A frame whose role bit is set is a
+@note debugger; anything else is not, and this mutation takes that back to
+@note anything at all.
 @old
-  assign tx_en = engaged || active;
+  assign want_ret = engaged ? (decided && crossed) : fwd_dbgr;
 @new
-  assign tx_en = 1'b1;
+  assign want_ret = engaged ? (decided && crossed) : 1'b1;
 @end
 
 @mutation a-tie-at-the-join-goes-to-the-connector
@@ -13405,11 +13407,13 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note is the same defect --- a board that says it has the role whenever it
 @note asked for it.
 @old
-        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, 3'd0,
+        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, dbg_peer_far,
+                           dbg_wire_state,
                            dbg_live, dbg_active, dbg_foreign,
                            dbg_connect, dbg_engaged};
 @new
-        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, 3'd0,
+        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, dbg_peer_far,
+                           dbg_wire_state,
                            dbg_live, dbg_active, dbg_foreign,
                            dbg_connect, dbg_connect | dbg_engaged};
 @end
@@ -13607,4 +13611,382 @@ puts "PROG: build $want, was $ubefore, now $uafter"
             wdata_q <= a_wdata;
 @new
             wdata_q <= a_wdata ^ 32'h1;
+@end
+
+# ------------------------------------------------------------------------
+# WHICH WAY ROUND THE RIBBON WAS MADE
+# ------------------------------------------------------------------------
+#
+# A Pmod header is two rows, pins 1 to 6 and 7 to 12, so a ribbon made from
+# two host sockets mirrors them: each board's pins 1 to 4 reach the other's 7
+# to 10.  Two boards were found on exactly such a cable on 14 September --- the
+# one told to connect drove four pins the far board never listens to, and after
+# the role was given back NEITHER board could take it again.
+#
+# What the fabric gained is a role bit in the frame, a setting with three
+# values, and a detection that listens on both pin groups before it drives
+# anything.  These are the records for it.  `build/dbg_cable.pass` is the
+# check: two boards, two cables, and a testbench that counts any wire driven
+# from both ends.
+
+@mutation the-frame-does-not-say-which-kind-of-board-sent-it
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE ROLE BIT STUCK CLEAR: every frame says a debuggee sent it.**  It is
+@note the twenty-first bit each way and it is what lets the far end tell a
+@note debugger driving the connector from an idle board whose frames happen to
+@note reach the same pins.  With it clear a debuggee never hears a debugger, so
+@note it never answers one, and the cable is silent in both directions.
+@note
+@note The bit cost the frame's zero fill, which is a trade
+@note `rtl/plumbing/cadr_dbg_tx.sv`'s header states rather than leaves to be
+@note discovered.  This is what the trade bought.
+@old
+  assign tx_levels = engaged ? {1'b1, out_req, out_wr, out_a, out_dbd}
+@new
+  assign tx_levels = engaged ? {1'b0, out_req, out_wr, out_a, out_dbd}
+@end
+
+@mutation an-idle-board-says-it-is-the-debugger
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE ROLE BIT STUCK SET: every frame says a debugger sent it.**  The
+@note other way round from the record above, and it breaks a different thing: a
+@note debuggee's answers read as a second debugger, so `foreign` stands on the
+@note board that is debugging and a board that heard an idle peer would call
+@note the wiring after a debugger it invented.
+@old
+                             : {1'b0, 1'b0, in_ack, in_dbd_oe, in_dbd_out};
+@new
+                             : {1'b1, 1'b0, in_ack, in_dbd_oe, in_dbd_out};
+@end
+
+@mutation the-connector-calls-an-idle-board-a-debugger
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE LOCK-OUT, PUT BACK.**  `foreign` used to be activity --- anything
+@note driving the group a debugger drives --- and on a mirrored ribbon two idle
+@note boards then locked each other out: each heard the other's answers there,
+@note called them a debugger, and refused the role.  Measured on two boards,
+@note and it stood until one of them was reset.
+@note
+@note What the take must refuse is a DEBUGGER, which is a frame that says so.
+@note This mutation is the old rule at the one term that decides it, which is
+@note why it is worth having: the record IS the bench's fault.
+@note
+@note Written at `fwd_dbgr` rather than at `foreign` because dropping the role
+@note test there leaves `ret_dbgr` read by nothing and lint does the catching.
+@note It is the same defect: a good frame on the group a debugger drives is
+@note taken for a debugger whoever sent it, so two idle boards on a mirrored
+@note ribbon answer each other and neither may engage.
+@old
+  assign fwd_dbgr = fwd_live &&  fwd_levels[ROLE_BIT];
+@new
+  assign fwd_dbgr = fwd_live;
+@end
+
+@mutation a-mirrored-ribbon-is-never-named-from-the-far-end
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE ONE BIT THAT DIAGNOSES A CROSSED CABLE FROM THE BOARD THAT CANNOT
+@note COMPENSATE, TIED OFF.**  A debuggee listens on the low four and answers on
+@note the high four, so on a straight cable nothing but this board ever drives
+@note the high four and its receiver there hears nothing, ever.  Frames arriving
+@note on it can only be the far board's low four reaching the wrong pins.
+@note
+@note With this the console on the far board says only that a debugger is on
+@note the connector, which is true on a straight cable too and tells nobody
+@note what to do about it.
+@old
+  assign peer_far  = !engaged && ret_live;
+@new
+  assign peer_far  = 1'b0;
+@end
+
+@mutation the-debugger-ignores-the-wiring-it-was-told
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE SETTING READ AND THEN NOT APPLIED.**  `crossed` is the wiring in
+@note effect and it decides which four pins a debugger drives; taken from the
+@note setting at the take and then dropped here, a board told `crossover`
+@note drives the straight cable's group and a mirrored ribbon never comes up.
+@note
+@note What makes this catchable is that the check runs BOTH cables against BOTH
+@note settings and asserts the two that match come up: a check on one cable
+@note would pass a board that ignored the setting on it.
+@old
+      crossed   <= (wiring == WIRE_CROSSOVER);
+@new
+      crossed   <= 1'b0;
+@end
+
+@mutation the-wiring-moves-under-a-board-that-is-debugging
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE SETTING READ LIVE INSTEAD OF LATCHED AT THE TAKE.**  The wiring
+@note decides which four pins this board drives, so a setting that moved inside
+@note a session would take the pins out from under a standing cycle and leave
+@note the far end answering into wires nobody is listening to.
+@note
+@note The console refuses the write as well, and the two are independent on
+@note purpose: the refusal is what a person is told, and the latch is what the
+@note fabric does whatever it is told.  This is the latch.
+@old
+    end else if (engaged && wire_q == WIRE_AUTO) begin
+@new
+    end else if (engaged && wiring == WIRE_AUTO) begin
+@end
+
+@mutation the-detection-reads-the-two-groups-the-wrong-way-round
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE LISTEN DECIDING THE WRONG WAY.**  A debuggee drives the HIGH four,
+@note so its frames arriving on this board's high four are a straight cable and
+@note on the low four a crossover.  Swapped, a board that heard the far end
+@note would drive the group nobody is listening to, and the cable it just
+@note identified would be the one it cannot talk over.
+@old
+        if (ret_idle) begin
+          decided <= 1'b1; crossed <= 1'b0; found <= 1'b1; ph_t <= '0;
+        end else if (fwd_idle) begin
+          decided <= 1'b1; crossed <= 1'b1; found <= 1'b1; ph_t <= '0;
+        end else if (ph_t != '0) begin
+@new
+        if (ret_idle) begin
+          decided <= 1'b1; crossed <= 1'b1; found <= 1'b1; ph_t <= '0;
+        end else if (fwd_idle) begin
+          decided <= 1'b1; crossed <= 1'b0; found <= 1'b1; ph_t <= '0;
+        end else if (ph_t != '0) begin
+@end
+
+@mutation the-detection-drives-before-it-has-listened
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **A BOARD DRIVING WHILE IT WORKS OUT WHICH CABLE IT IS ON.**  `decided` is
+@note what holds both pad groups off through the listening interval, and a
+@note board that drove during it would be driving four pins whose far end it has
+@note not identified --- on a cable it may have upside down, over a board that
+@note may be answering somebody.
+@note
+@note Set at the take, the listen still runs and still decides, so the levels
+@note are right in the end; what is wrong is that the board was on the wires
+@note while it was working them out.
+@old
+      decided <= (wiring != WIRE_AUTO);
+@new
+      decided <= 1'b1;
+@end
+
+@mutation the-assumption-never-moves
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE FALLBACK STANDING ON STRAIGHT FOR EVER.**  Two boards freshly reset
+@note are two silent debuggees whatever the cable is --- a debuggee sends
+@note nothing until it hears a debugger --- so silence names no wiring and the
+@note listen usually hears nothing at all.  A board that then stood on
+@note `straight` would drive four pins nobody listens to and report that nothing
+@note was answering, which is the bench's own symptom and exactly what `auto` is
+@note for.
+@note
+@note This is the thing that makes the detection work rather than merely be
+@note present, and it is invisible to any check that runs one cable.
+@old
+          crossed <= ~crossed; decided <= 1'b0; ph_t <= PH_W'(RELISTEN_T);
+@new
+          crossed <= crossed; decided <= 1'b0; ph_t <= PH_W'(RELISTEN_T);
+@end
+
+@mutation the-answer-does-not-settle-the-wiring
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE ALTERNATION THAT NEVER STOPS.**  An answer on the group this board
+@note is listening to is the far end saying the wiring is right, and it is what
+@note ends the hunt.  Without it a board that has found the cable goes on
+@note flipping every probe interval, so a debug cycle crosses or does not
+@note depending on which half of the alternation it lands in --- and the far
+@note end's answers are cut off every other interval.
+@old
+        if (lsn_idle) begin
+          found <= 1'b1; ph_t <= '0;
+@new
+        if (1'b0) begin
+          found <= 1'b1; ph_t <= '0;
+@end
+
+@mutation the-debugger-takes-another-debuggers-frames-for-an-answer
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **AN ANSWER COMES FROM A DEBUGGEE, and the role bit says which arrived.**
+@note A board that took any good frame on its listening group for an answer
+@note would read a second debugger's requests as its own cable's replies ---
+@note `DEBUG OUT ACK` out of somebody else's `-DEBUG IN REQ`, and sixteen data
+@note lines out of an address.
+@note
+@note It also breaks the wiring's own report, `lsn_idle` being what says the
+@note far end has answered and so what settles the hunt.
+@old
+  assign lsn_idle = crossed ? fwd_idle : ret_idle;
+@new
+  assign lsn_idle = crossed ? fwd_live : ret_live;
+@end
+
+@mutation a-board-drives-a-group-somebody-else-is-driving
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE ONE RULE THAT HOLDS IN EVERY ARRANGEMENT THE ROLE RULES DO NOT
+@note REACH**: a board never enables a pad on a group whose receiver says
+@note something is on it.  Two boards told to connect inside one listening
+@note interval, a probe that lands on a group the far end is still answering
+@note on, a debuggee whose debugger has not compensated for a mirrored ribbon
+@note --- none of those is covered by the roles alone.
+@note
+@note **THIS WAS A DEFECT AND NOT A GUESS.**  With the probe interval shorter
+@note than the far end's own activity interval, the answer arrived on the group
+@note this board had just released and the flip drove it anyway: 580 pad-ticks
+@note from both ends, counted by this check.
+@old
+  assign drive_ret = want_ret && !ret_act && !rst;
+@new
+  assign drive_ret = want_ret && !rst;
+@end
+
+@mutation the-console-lets-the-wiring-move-under-a-session
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **THE CONSOLE'S OWN HALF OF THE RULE.**  A setting may not move under a
+@note board that is already the debugger, and the console refuses the write
+@note rather than queueing it --- the same shape as the role's own refusal, and
+@note for the same reason: a program writes and then READS.
+@note
+@note The fabric latches the setting at the take as well, so this mutation
+@note alone does not move any pin; what it breaks is that the console would
+@note report a wiring the connector is not using, which is a console lying
+@note about the board.
+@old
+  assign w_wire = w_in && !w_idx[4] && (w_idx[3:0] == R_DEBUG) && !dbg_engaged;
+@new
+  assign w_wire = w_in && !w_idx[4] && (w_idx[3:0] == R_DEBUG);
+@end
+
+@mutation the-console-takes-any-value-for-the-wiring
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **A KEY AND NOT A VALUE.**  Word 14's other writes take a key for the
+@note reason the machine's reset and the light panel's button take one: a value
+@note that means nothing --- zero off a dead bus, all ones off an undriven one
+@note --- must not change what the connector is doing.  The wiring is no
+@note different: a board that came up `crossover` off a stray store would drive
+@note four pins nobody is listening to and report that nothing was answering.
+@old
+  assign w_is_wire_straight  = w_wire && (w_full == WIRE_STRAIGHT_KEY);
+@new
+  assign w_is_wire_straight  = w_wire && (w_full[31:16] == WIRE_STRAIGHT_KEY[31:16]);
+@end
+
+# ------------------------------------------------------------------------
+# THE PINS ARE COUPLED PAIRS, AND THE TWO COUNTS ARE THE INSTRUMENT
+# ------------------------------------------------------------------------
+#
+# A Pmod row is routed as coupled pairs --- 1 with 2, 3 with 4, 7 with 8, 9
+# with 10, with 0-ohm shunts where a differential termination would go --- and
+# this link drives all four of a row single-ended.  So an edge on one line can
+# couple into the other, and the other may be the STROBE, which is the one
+# thing here a false edge can hurt.
+#
+# What that costs is bounded: a frame with a false beat fails its marker or its
+# parity, moves nothing, and the next one carries the levels again.  Crosstalk
+# is LOST FRAMES and never wrong values, unless it is frequent --- and how
+# frequent is a number nobody has.  Frames heard and frames refused, page 0's
+# word 15, are that number.
+
+@mutation a-refused-frame-is-not-counted
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_rx.sv
+@note **THE REFUSAL COUNTER, TIED OFF.**  The whole point of the pair of counts
+@note is the ratio, so a `refused` that can only read zero is an instrument that
+@note says the cable is perfect whatever it is doing --- the
+@note never-written-DDR fault in a new place: a value that means nothing must
+@note not be a value the instrument can mean.
+@note
+@note What catches it is the leg that flips a data line on the wire for five
+@note ticks, which is one sampling instant and never two.  **That leg used to
+@note flip it for ONE tick and usually corrupted nothing**: a receiver samples
+@note once a beat, six ticks apart, so the flip landed between two samples and
+@note the frame arrived whole.  The counter is what found that out, which is
+@note the argument for having it at all.
+@old
+  assign frame_bad  = complete && !good;
+@new
+  assign frame_bad  = 1'b0;
+@end
+
+@mutation a-frame-that-arrives-is-not-counted
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_rx.sv
+@note **THE OTHER HALF OF THE RATIO.**  A refusal count means nothing without
+@note the count it is out of: three refused frames is a broken cable or a
+@note flawless one depending on whether three or thirty thousand arrived.
+@note
+@note Tied off, the console reports a connector nothing has ever crossed while
+@note a debug cycle is crossing it.
+@old
+  assign frame_done = complete;
+@new
+  assign frame_done = 1'b0;
+@end
+
+@mutation the-cable-listens-to-the-low-four-while-it-drives-them
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE OTHER RECEIVER, LEFT RUNNING ON THE GROUP ITS BOARD IS DRIVING.**
+@note `the-cable-listens-to-the-group-it-is-driving` is this one on the high
+@note four; a debugger drives the LOW four, and a receiver left running there
+@note decodes its own frames off its own pads.
+@note
+@note What it costs is everything that reads those frames: the board calls
+@note itself a foreign debugger, the frame counts report twice what crossed,
+@note and a board working out which way the cable is wired hears itself say
+@note the wiring is whatever it already assumed.  The two records are separate
+@note because the two receivers are, and a fix applied to one reset and not
+@note the other is exactly the shape of thing this list is for.
+@old
+      .clk(clk), .rst(rst || drive_fwd),
+@new
+      .clk(clk), .rst(rst),
+@end
+
+@mutation the-frames-parity-is-never-computed
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_tx.sv
+@note **THE PARITY BIT SENT AS ZERO.**  The marker says a frame is a frame and
+@note says nothing about the bits under it, so the parity is what catches a
+@note line shorted, a beat sampled at the wrong instant, or an edge coupled out
+@note of the pair beside it.  Sent as a constant it disagrees with the payload
+@note on half the frames and the far end refuses them, which is a cable that
+@note carries nothing at all --- and on the other half it agrees by luck and
+@note carries a word nobody checked.
+@old
+    frame_out[SLOTS-MARK_W-1]      = ^tx_levels;
+@new
+    frame_out[SLOTS-MARK_W-1]      = 1'b0;
+@end
+
+@mutation the-frame-goes-out-without-its-marker
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_tx.sv
+@note **THE MARKER SENT AS ZERO, which is what an unplugged connector reads
+@note as.**  Two bits reading `01` are what tell a frame from a constant: all
+@note zeros gives `00` and all ones gives `11`, so neither can be mistaken for
+@note a word.  A sender that puts `00` there is a sender whose frames are
+@note indistinguishable from a cable nobody has plugged in, and the far end
+@note refuses every one of them.
+@note
+@note Written as the marker INVERTED rather than as a constant zero, because
+@note zeroing it leaves `MARK` read by nothing and lint does the catching.  `10`
+@note is a marker's mirror: not what a frame carries, not all zeros and not all
+@note ones, so nothing but the far end's own test can refuse it.
+@old
+    frame_out[SLOTS-1 -: MARK_W]   = MARK;
+@new
+    frame_out[SLOTS-1 -: MARK_W]   = ~MARK;
 @end

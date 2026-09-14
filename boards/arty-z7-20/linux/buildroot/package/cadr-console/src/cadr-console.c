@@ -320,6 +320,10 @@ static void help(void)
 	say("debug-cable-connect     ask to be the debugger on it (muir's --debug-cable-connect)");
 	say("debug-cable-disconnect  give the role back.  A board is a debuggee with nothing set,");
 	say("                        and its own register window is a debugger either way");
+	say("debug-cable-wiring auto|straight|crossover");
+	say("                        which way round the JA ribbon was made.  Only a DEBUGGER");
+	say("                        applies it; `auto` looks for the answer and is the default.");
+	say("                        Refused while this board is the debugger");
 	say("trace-keys on|off  tell cadr-terminal and cadr-usb-input to say what each key");
 	say("                becomes --- a keysym, MIT's own key position, or nothing at all.");
 	say("                Their logs, not this one; no register is touched");
@@ -399,6 +403,27 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 	}
 	else if (!strcmp(cmd, "debug-cable-disconnect")) {
 		cons_debug_cable_disconnect(c);
+		do_debug_cable(c);
+	}
+	else if (!strcmp(cmd, "debug-cable-wiring")) {
+		// The one command here that takes a word.  A spelling nothing
+		// names writes nothing and says so, rather than picking a
+		// wiring for somebody: the fabric refuses the write while this
+		// board is the debugger, and reading it back is how the caller
+		// learns what took.
+		const char *w = (argc > 1) ? argv[1] : "";
+		int wire = -1;
+		if (!strcmp(w, "auto"))
+			wire = CONS_DBG_WIRE_AUTO_IDLE;
+		else if (!strcmp(w, "straight"))
+			wire = CONS_DBG_WIRE_STRAIGHT;
+		else if (!strcmp(w, "crossover"))
+			wire = CONS_DBG_WIRE_CROSSOVER;
+		if (wire < 0) {
+			say("debug-cable-wiring auto|straight|crossover");
+			return 0;
+		}
+		cons_debug_cable_wiring(c, wire);
 		do_debug_cable(c);
 	}
 	else if (!strcmp(cmd, "debug-cable"))

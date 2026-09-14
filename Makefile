@@ -508,8 +508,8 @@ GP1 := rtl/plumbing/cadr_gp1_split.sv
 # top-level output nothing drives is a PINMISSING.  Not in `$(MACHINE)`:
 # `cadr_machine` does not instantiate either of them, and a check that builds
 # a module nothing in it reaches is a check with a source it cannot mutate.
-DBGPMOD := rtl/plumbing/cadr_dbg_pmod.sv rtl/plumbing/cadr_dbg_join.sv \
-           rtl/plumbing/cadr_dbg_cable.sv
+DBGPMOD := rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/cadr_dbg_rx.sv \
+           rtl/plumbing/cadr_dbg_join.sv rtl/plumbing/cadr_dbg_cable.sv
 
 # The display output, named here beside the others for the same reason the
 # note above gives: `:=` is expanded where it is read and `arty.pass`'s
@@ -2305,10 +2305,13 @@ $(BUILD)/dbgin.pass: $(BUILD)/obj_dbgin/Vcadr_dbgin_harness \
 	$(BUILD)/obj_dbgin/Vcadr_dbgin_harness $(BUILD)/rtl.golden
 	@touch $@
 
-# ------------------------------------------- the debug cable on two Pmods
+# ------------------------------------------- the debug cable on one Pmod
 #
-# `rtl/plumbing/cadr_dbg_pmod.sv` is the carrier that puts MIT's twenty-one
-# wires on eight Pmod pins, four each way, and `rtl/plumbing/cadr_dbg_join.sv`
+# `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` are the carrier that puts
+# MIT's twenty-one wires on eight Pmod pins, four each way --- a sender and a
+# receiver, two modules so that the connector above them can hold a receiver
+# quiet while it drives the group that receiver watches.
+# `rtl/plumbing/cadr_dbg_join.sv`
 # is what lets the connector and the window share one DBGIN page.  Neither has
 # a muir reference --- muir has the cable and no wires --- so what holds them
 # is a property, which is the footing `cadr_axi_master.sv` is on.
@@ -2324,8 +2327,8 @@ $(BUILD)/dbgin.pass: $(BUILD)/obj_dbgin/Vcadr_dbgin_harness \
 # DBGIN page, the real arbiter and the real register block, with the carrier
 # between them, so the claim is a debugger halting this machine and reading
 # its registers over eight pins rather than bits crossing a wire.
-DBG_PMOD_SRC := tb/cadr_dbg_pmod_harness.sv rtl/plumbing/cadr_dbg_pmod.sv \
-                rtl/plumbing/cadr_dbg_join.sv \
+DBG_PMOD_SRC := tb/cadr_dbg_pmod_harness.sv rtl/plumbing/cadr_dbg_tx.sv \
+                rtl/plumbing/cadr_dbg_rx.sv rtl/plumbing/cadr_dbg_join.sv \
                 rtl/plumbing/cadr_debug_window.sv \
                 rtl/machine/cadr_dbgin.sv rtl/machine/cadr_console_bus.sv \
                 rtl/machine/cadr_spy_registers.sv
@@ -2357,7 +2360,8 @@ $(BUILD)/dbg_pmod.pass: $(BUILD)/obj_dbg_pmod/Vcadr_dbg_pmod_harness
 # driven from both ends --- which is the one thing a connector with two roles
 # on it has to make impossible.
 DBG_CABLE_SRC := tb/cadr_dbg_cable_harness.sv rtl/plumbing/cadr_dbg_cable.sv \
-                 rtl/plumbing/cadr_dbg_pmod.sv rtl/plumbing/cadr_dbg_join.sv \
+                 rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/cadr_dbg_rx.sv \
+                 rtl/plumbing/cadr_dbg_join.sv \
                  rtl/machine/cadr_dbgin.sv rtl/machine/cadr_busint_regs.sv \
                  rtl/machine/cadr_console_bus.sv rtl/machine/cadr_spy_registers.sv
 
