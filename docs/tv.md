@@ -34,18 +34,40 @@ is that file, line by line.
   `CONTROL_WORDS`, line 62). `MAIN-SCREEN-CONTROL-ADDRESS #o377760` is an
   I/O offset, and the physical address is that plus `BUFFER`. `lmtv.order` runs
   them `173777x0` to `x7`. The 74S138 at NXBCTL 0F13 decodes eight and its top
-  three outputs go nowhere, so words 4 to 7 "respond but don't do
-  anything". The four words above them, `0o17377770`--`3`, sit between the
-  display's registers and the disk controller's and answer to nothing.
+  three outputs go nowhere, so words 5 to 7 are the three that `lmtv.order`
+  says "respond but don't do anything". **Word 4 is not one of them. It is the
+  Colour register.** That output of the decoder is `-LOAD COLOR`
+  (`data/SIMPLETV.netlist`, page NXBCTL, part 0F13, pin 11), and `lmtv.order`
+  gives the register as write only, with the value for the colour map in bits
+  15 to 8, the channel in bits 7 and 6 and the colour in bits 3 to 0. MIT's
+  own `WRITE-COLOR-MAP-IMMEDIATE` writes it three times, once a gun
+  (`sys/window/color.lisp`, lines 161--163). The map itself is not on this
+  board. Page NRACOL carries the interface and no memory at all. `lmtv.order`
+  describes the map as a 64 by 9 RAM for each channel with a
+  digital-to-analogue converter on it. So a write to word 4 reaches nothing
+  here. The fabric answers it and keeps nothing, which is what muir does, and
+  the behaviour was never in question. The four words above the eight,
+  `0o17377770`--`3`, sit between the display's registers and the disk
+  controller's and answer to nothing.
 - **Register 0 is the mode register**, with four writable bits
   (`mode::WRITABLE`, line 106). They are `CLOCK MODE<1:0>` (line 95), `MODE
   BOW` (line 100, "display one bits as black and zeros as white") and `MODE
   INTR ENB` (line 102). They are the Am25LS2519 at NXBCTL 0F12. muir's note at
   `mod mode` says MIT drew this page twice, a 74S174 in 1979 and the 2519 in
   1980, and the netlist is the newer sheet. Bits 5 to 7 (`VSYNC`, `HSYNC`,
-  `SYNC PROM ENB`, lines 120--133) are read-only and read zero on this board.
-  ECO 2 of `lmtv.eco` grounds bit 7's buffer input so the window system can
-  tell old boards from new, and muir models no sync generator.
+  `SYNC PROM ENB`, lines 120--133) are read only, and all three read zero
+  here. **They read zero for two different reasons, and only one of them is a
+  property of the board.** Bit 7 is grounded. ECO 2 of `lmtv.eco`, of 18 June
+  1980, wires `GND` to that input of the read buffer so that the window system
+  can tell old boards from new. Bits 5 and 6 are wired to the sync generator.
+  The 74LS244 at NXBCTL 0F11 takes `VSYNC` on pin 4 and `HSYNC` on pin 6, and
+  the 74LS175 at NSYREG 0D02 registers both of those from the sync program's
+  own bits 0 and 1. They read zero here because muir models no sync generator
+  and this fabric has none either. That is a modelling departure and not
+  something the board does. The distinction matters to anyone who adds the
+  colour board, because MIT's `WRITE-COLOR-MAP` spins on bit 5 and its
+  `%XBUS-WRITE-SYNC` waits on bit 6 (`sys/window/color.lisp`, lines
+  139--143).
 - **Bit 4 is the vertical flag, a flop of its own** (`mode::VERT`, line 118).
   It is the 74LS74 at NXBCTL 0E14. It is **preset by `-TVMA CLR`**, the sync
   program's start of frame: "this is set by TVMA CLR, not by the start of

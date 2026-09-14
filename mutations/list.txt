@@ -13160,3 +13160,98 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
   localparam logic [31:0] TICKS_PER_US = 32'(CLK_HZ / 2_000_000);
 @end
+
+# ------------------------------------------------------ what says a download took
+#
+# THE OTHER SCRIPT THAT NEEDS A BOARD, AND THE ONE WHOSE WITNESS WAS BLIND.
+# Both `program.tcl`s decided that a download had worked from the DONE bit,
+# and DONE is already high on a part that was configured before the run.  So
+# the witness read the same whether the configuration took or not, and the
+# failure it was there to catch is exactly the one it could not see: on the
+# Arty A7-100 three downloads in six did not take while the script reported
+# success, and what found that was an identity read out of the design.
+#
+# The scripts now compare the build the part reads back over JTAG as its
+# USERCODE with the build the bitstream names in its own header, which
+# `tools/build_stamp.tcl` puts there through `BITSTREAM.CONFIG.USERID`.
+#
+# `tb/cadr_program_tb.tcl` runs both against a stubbed hardware manager on
+# ten cases apiece and asserts the LINE each must print.  That is what makes
+# the two records below catchable: "the part already held this build" and "the
+# download took" are two findings with one exit status, and a check reading
+# only the status would call the first a pass on a board that had ignored it.
+#
+# WHAT NO RECORD HERE CAN REACH is the JTAG half.  The harness's USERCODE is a
+# stub, so a mutation to what the part really does with a USERID is outside
+# every check in this tree; `tb/cadr_program_tb.tcl`'s header says so at
+# length and says what would settle it.
+
+@mutation the-download-is-not-checked-against-the-bitstream
+@check program_tcl
+@file boards/arty-z7-20/vivado/program.tcl
+@note **The verdict is printed and not acted on**, which is the shape the
+@note script had before: everything is read, nothing is decided, and a part
+@note that stayed configured with something else is reported as programmed.
+@note
+@note Written as a `puts` rather than as a deletion so that every variable the
+@note lines above compute is still used.  Tcl would not complain either way,
+@note but a mutation that leaves a dangling variable is testing the reader.
+@note
+@note Caught on seven of the ten cases, measured.  `did-not-take` and
+@note `overwritten` exit 0 where the harness wants 1, and `fresh`, `again`,
+@note `sidecar-only`, `no-usercode` and `unreadable-before` never print the
+@note line that says which of the several things happened.  The three that do
+@note not move are `no-stamp`, where there is no build to check against,
+@note `disagree`, which refuses before it opens anything, and `not-done`,
+@note which fails on DONE one condition earlier.
+@old
+if {![build_stamp_verdict "PROG:" $want $ubefore $uafter]} { exit 1 }
+@new
+puts "PROG: build $want, was $ubefore, now $uafter"
+@end
+
+@mutation the-a7-download-is-not-checked-against-the-bitstream
+@check program_tcl
+@file boards/arty-a7-100/vivado/program.tcl
+@note The same mutation on the other board's script, and it is a separate
+@note record because they are separate files and the runner's own coverage
+@note check asks that every source a check reads has a mutation aimed at it.
+@note
+@note It is this board that earned the check.  Three downloads in six did not
+@note take here while the script said they had, and the only reason anybody
+@note knew was that the design carried an identity a second instrument could
+@note read.  A programming script that cannot tell is a programming script
+@note whose report means nothing, and this restores that state.
+@old
+if {![build_stamp_verdict "PROG:" $want $ubefore $uafter]} { exit 1 }
+@new
+puts "PROG: build $want, was $ubefore, now $uafter"
+@end
+
+@mutation the-witness-reads-the-part-before-the-download
+@check program_tcl
+@file tools/build_stamp.tcl
+@note **The build is compared at the wrong end of the operation.**  Reading
+@note USERCODE before `program_hw_devices` and calling that the verdict is a
+@note witness of what the part used to hold, which is precisely as useful as
+@note DONE was.
+@note
+@note It is worth having as its own record because it is the one statement the
+@note whole repair rests on: that the identity is read AFTER the download.
+@note Everything else here is plumbing around that sentence.
+@note
+@note Caught on four cases a board, measured: `fresh`, `sidecar-only` and
+@note `unreadable-before`, where the part came up holding something else and
+@note took the download, so the mutant reports FAILED on a run that worked;
+@note and `overwritten`, where it reports success on a part that ended up
+@note holding something else.
+@note
+@note `did-not-take` is unmoved, and correctly so: there the part holds the
+@note wrong build at both ends, so reading either end gives the same verdict.
+@note A mutation of a comparison cannot be caught on every case, which is why
+@note the harness runs ten.
+@old
+    if {$after ne $want} {
+@new
+    if {$before ne $want} {
+@end

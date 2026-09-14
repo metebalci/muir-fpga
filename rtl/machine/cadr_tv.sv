@@ -11,7 +11,12 @@
 // the Am25LS2519 at NXBCTL 0F12 holding `MODE<3:0>`: `CLOCK MODE<1:0>`,
 // `MODE BOW` and `MODE INTR ENB` --- read back through the 74LS244 at 0F11
 // with `VERT FLAG` in bit 4 and bits 5 to 7 (VSYNC, HSYNC, SYNC PROM ENB)
-// undriven here and zero, as `lmtv.order` and ECO 2 say they must read.
+// reading zero.  **The three read zero for two reasons and only one is the
+// board's.**  Bit 7 is grounded at the buffer by ECO 2 of `cadrtv/lmtv.eco`,
+// so it reads zero on the hardware.  Bits 5 and 6 are wired to the sync
+// generator on the netlist --- the 74LS244 at 0F11 takes VSYNC on pin 4 and
+// HSYNC on pin 6 from the 74LS175 at NSYREG 0D02 --- and they read zero here
+// only because muir models no sync generator and this has none either.
 // **The flag is a flop of its own, the 74LS74 at 0E14: preset by `-TVMA
 // CLR`, the sync program's start of frame, once a frame; clocked by `-LOAD
 // MODE` with `XDI 4` as its data, so a write of the register puts the
@@ -21,7 +26,13 @@
 // sync program RAM --- the eight 2147s at NSYRAM, 4K by 8 --- its data at
 // the pointer, the pointer (write only, twelve bits) and the enable (write
 // only, bit 7 selecting the RAM over the PROM, bits 6 to 0 the vertical
-// spacing); 4 to 7 "respond but don't do anything".
+// spacing).  Register 4 is the COLOUR register: the 74S138 at 0F13 drives
+// `-LOAD COLOR` from it, and `lmtv.order` gives it as write only with the
+// map value in bits 15 to 8, the channel in 7 and 6 and the colour in 3 to 0.
+// The map RAMs and their converters are not on the board, so the write
+// reaches nothing here and this answers and keeps nothing, as muir does.
+// Only 5 to 7 are the three `lmtv.order` says "respond but don't do
+// anything".
 //
 // **WHAT IS NOT HERE, DELIBERATELY.**  No video timing: muir has none
 // either --- "the vertical flag is kept on a frame clock rather than a
