@@ -12761,3 +12761,180 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign promenable = bottom_1k && !promdisabled && !idebug;
 @end
 
+# ======================================================================
+# The Arty A7-100's main memory: the board's own DDR3L in place of a
+# processing system's.
+#
+# Nothing here has a muir reference, as nothing in the other board's memory
+# path did.  What the records walk is the arithmetic between a byte address and
+# a memory's own word --- which sixteen-byte block, which of its four lanes,
+# which bytes to write --- and the handshakes that carry it between two clocks
+# with no fixed relationship.  Those are the faults this family of module
+# actually makes: `cadr_axi_widen`'s header records the same list one size
+# down, and the board's proving step is written to catch exactly them.
+
+@mutation the-lane-is-one-address-bit-out
+@check a7_mem
+@file rtl/plumbing/cadr_mig_ui.sv
+@note **Which quarter of the sixteen-byte block the word belongs in.**  The
+@note controller moves 128 bits a transaction and a CADR word is 32 of them, so
+@note two bits of the byte address choose the lane --- and they are bits 3 and
+@note 2, because a word is four bytes.  Taken one bit up, every write goes to
+@note the wrong quarter and every read takes the wrong quarter back, and the
+@note two are consistent with each other: a read after a write at the same
+@note address agrees.  What does not agree is a NEIGHBOUR, which is why the
+@note check writes all four lanes of one block with four different words.
+@note
+@note This is `cadr_axi_widen`'s "a wrong half" one size up, and it is the
+@note reason the other board's proving word sits at an address whose bit 2 is
+@note set.
+@note
+@note Written as the two bits SWAPPED rather than as a slice one bit up,
+@note because a slice one bit up leaves bit 2 unread and lint does the
+@note catching instead of the check --- which is this project's standing rule
+@note about mutations at bit granularity, and which the first draft of this
+@note record broke on.  Swapped, lanes 1 and 2 change places and lanes 0 and 3
+@note do not, so the four-lane test is what has to see it.
+@old
+  assign lane_q = addr_q[3:2];
+@new
+  assign lane_q = {addr_q[2], addr_q[3]};
+@end
+
+@mutation the-reservation-lands-in-the-bottom-half
+@check a7_mem
+@file rtl/plumbing/cadr_mig_ui.sv
+@note **The machine's 128 MB put at the bottom of the chip instead of the
+@note top.**  `cadr_ddr_map` reserves 0x1800_0000 upwards, which is a Zynq
+@note layout where the bottom 384 MB is Linux's; this board has 256 MB and no
+@note Linux, so the same reservation goes at the top and the translation is one
+@note constant bit.  Dropped, the machine's memory moves 128 MB down onto the
+@note half this board leaves for whatever runs beside it --- and, again, reads
+@note and writes agree with each other, because both moved.
+@note
+@note The model is what catches it: it answers a block nothing has written with
+@note poison that is injective in the ADDRESS IT WAS ASKED FOR, so a read that
+@note went somewhere else comes back with somewhere else's word.  A model that
+@note answered zero would pass this, which is the control-store-comes-up-zero
+@note lesson in a third place.
+@old
+  assign ddr_block = {1'b1, addr_q[DDR_BYTE_BITS-2:4]};
+@new
+  assign ddr_block = {1'b0, addr_q[DDR_BYTE_BITS-2:4]};
+@end
+
+@mutation the-byte-mask-writes-everything-but-the-word
+@check a7_mem
+@file rtl/plumbing/cadr_mig_ui.sv
+@note **The data mask inverted, so a write lands in the three lanes it was not
+@note for.**  The mask is sixteen bits, one a byte, and a SET bit means DO NOT
+@note WRITE --- which is the DDR3 part's own polarity and is the sort of thing
+@note that reads as either way round in a comment.  Inverted, every write
+@note destroys its three neighbours and leaves its own word alone.
+@note
+@note Written as two constants swapped rather than as a `~`, so that `lane_q`
+@note stays read and lint does not do the catching instead of the check.
+@old
+    app_wdf_mask = {(UI_BITS/8){1'b1}};
+    app_wdf_mask[4*lane_q +: 4] = 4'b0000;
+@new
+    app_wdf_mask = {(UI_BITS/8){1'b0}};
+    app_wdf_mask[4*lane_q +: 4] = 4'b1111;
+@end
+
+@mutation the-write-data-may-follow-its-command
+@check a7_mem
+@file rtl/plumbing/cadr_mig_ui.sv
+@note **UG586's rule, which is a rule and not a preference.**  The controller
+@note allows write data to lead its command by any amount and to follow it by
+@note at most two user clocks.  A design that stops waiting for the data to be
+@note taken sends the command first whenever the write data path is busy ---
+@note and on the day it is busy for three clocks, the write is lost inside the
+@note controller with nothing anywhere saying so.
+@note
+@note It is invisible to a stimulus that never refuses a data beat, which is
+@note this project's "a stimulus more polite than the real consumer tests
+@note less" exactly; the check holds a refusal up for tens of clocks on every
+@note seventh transaction, and the model counts the clocks and says so.
+@note
+@note Written as the design GIVING UP on the write data path and going on to
+@note send its command --- which is what a design that watched the wrong ready
+@note signal would do --- rather than as the wait deleted outright, because the
+@note wait deleted leaves `app_wdf_rdy` unread and lint catches it instead of
+@note the check.
+@note
+@note **AND THE REFUSAL HAS TO BE LONG ENOUGH.**  The rule is broken at three
+@note user clocks, so a check whose stimulus refuses a data beat for two and a
+@note half cannot tell a design that keeps the rule from one that does not ---
+@note which is what the first draft of the check did, and this record was then
+@note caught by a side effect instead of by the rule it is about.  The refusal
+@note now stands for sixteen to forty-eight of the controller's own clocks.
+@old
+        WDATA:  if (app_wdf_rdy) state <= WCMD;
+@new
+        WDATA:  if (app_wdf_rdy || app_rdy) state <= WCMD;
+@end
+
+@mutation the-write-burst-never-ends
+@check a7_mem
+@file rtl/plumbing/cadr_mig_ui.sv
+@note **A write data beat that never says it is the last one.**  At a four to
+@note one physical layer ratio a user write is ONE beat of 128 bits, so
+@note `app_wdf_end` is true whenever `app_wdf_wren` is --- and a design that
+@note leaves it low is telling the controller a burst is still coming.  The
+@note controller then holds the write in its data path waiting for a beat that
+@note never arrives, and the next write's data is taken for this one's second
+@note half.
+@note
+@note It is the sort of thing that is right by accident on a two to one ratio
+@note and wrong here, and nothing but a model of the interface can see it: the
+@note signal leaves the design and no read-back is wrong until the write after
+@note the one that broke.
+@old
+  assign app_wdf_end  = (state == WDATA);
+@new
+  assign app_wdf_end  = 1'b0;
+@end
+
+@mutation the-crossing-takes-the-last-answer-for-this-one
+@check a7_mem
+@file rtl/plumbing/cadr_mem_cross.sv
+@note **A four-phase handshake with its fourth phase left out.**  The far side
+@note does not drop its acknowledgement until it has seen the request go, and
+@note the acknowledgement then takes two more clocks to come back --- so a new
+@note request raised inside that window finds the last one's acknowledgement
+@note still standing and is answered before it has been asked.  The word that
+@note comes back is the PREVIOUS transaction's, which on a read is a stale word
+@note the machine has no way to know is stale.
+@note
+@note It needs a stimulus that asks again promptly, and the consumer this seam
+@note has --- `cadr_xbus_ddr` --- does exactly that: it drops `mem_req` the
+@note tick it latches the answer.  A testbench that waited between
+@note transactions would not see it.
+@old
+      if (!req_a && !ack_a) begin
+@new
+      if (!req_a) begin
+@end
+
+@mutation the-machine-takes-the-windows-answer
+@check a7_mem
+@file rtl/plumbing/cadr_jtag_mem.sv
+@note **The debugger's window and the machine sharing one port, with the
+@note machine's answer not gated on whose transaction it is.**  The window
+@note takes the port only when the machine is not asking, but the machine may
+@note ask while a window transaction is in flight --- and then `p_done` is the
+@note window's, and a machine that takes it reads the word the DEBUGGER asked
+@note for.
+@note
+@note On this board that matters more than it would on the other one: an Artix
+@note has no debug access port onto memory, so the debugger's own words travel
+@note the machine's path, and this is the one place the two can be confused.
+@note The check runs a machine read at twelve different offsets into a window
+@note transaction for that reason --- a race check needs the stimulus that
+@note loses the race.
+@old
+  assign m_done  = (owner == MACHINE) && p_done;
+@new
+  assign m_done  = p_done;
+@end

@@ -579,6 +579,34 @@ CHECKS = {
     # checked.  The testbench runs two configurations --- the port answering
     # and the port held in reset --- and the second is what a mutation that
     # counted the fabric's own intentions falls over.
+    # ---- the Arty A7-100's main memory
+    #
+    # The three modules between the machine's memory port and the board's own
+    # DDR3L controller, against a model of that controller's native user
+    # interface.  There is no muir reference for any of it --- nothing in MIT's
+    # drawings is a DDR3 controller --- so the records below are about the
+    # arithmetic and the handshakes: which sixteen-byte block, which lane of
+    # it, which bytes to write, and the two rules a crossing between two
+    # unrelated clocks has to keep.
+    #
+    # `cadr_mem_count.sv` is in `extra` and not in `sources`: it has a check of
+    # its own on the other board, and what is asked of it here is only that the
+    # tally at the controller's edge counts what the path did.
+    "a7_mem": {
+        "sources": [
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/plumbing/cadr_mem_cross.sv",
+            "rtl/plumbing/cadr_mig_ui.sv",
+            "rtl/plumbing/cadr_jtag_mem.sv",
+            "tb/cadr_a7_mem_harness.sv",
+        ],
+        "extra": ["rtl/plumbing/cadr_mem_count.sv"],
+        "top": "cadr_a7_mem_harness",
+        "tb": "tb/cadr_a7_mem_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
+                  "-Itb"],
+        "golden": None,
+    },
     "mem_count": {
         "sources": ["rtl/plumbing/cadr_mem_count.sv"],
         "extra": [

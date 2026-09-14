@@ -139,7 +139,25 @@
 // watching it cost --- are worth keeping apart.
 module cadr_arty_a7 #(
     parameter string PROM_HEX = "build/boot_prom.hex",
-    parameter int unsigned PROBE_DEPTH = 0
+    parameter int unsigned PROBE_DEPTH = 0,
+    // ---------------------------------------------------- MAIN MEMORY
+    //
+    // `DDR` puts the board's own 256 MB of DDR3L behind the machine's memory
+    // port, through the controller `boards/arty-a7-100/cadr_a7_memory.sv`
+    // wraps.  Off by default, because the measured board this directory
+    // describes is the memory-off one and because a memory controller is much
+    // the largest thing in the design.
+    //
+    // `PROVE` is the proving witness in place of the machine, and it is the
+    // Arty Z7-20's own two steps ported: 1 writes a known word at a known
+    // address and 2 reads it and echoes it somewhere else.  On that board the
+    // observer was the debugger reading DDR through the processing system; on
+    // this one there is no such door, so the observer is the JTAG window
+    // `rtl/plumbing/cadr_jtag_mem.sv`, whose header says what that costs and
+    // what makes the instrument sharp anyway.  A `PROVE` board is a `DDR`
+    // board with the machine's own port answered by nothing.
+    parameter int unsigned DDR   = 0,
+    parameter int unsigned PROVE = 0
 ) (
     input  var logic       sysclk,   // 100 MHz, pin E3
     input  var logic [3:0] btn,
@@ -157,7 +175,40 @@ module cadr_arty_a7 #(
     output var logic       led0_r, led0_g, led0_b,
     output var logic       led1_r, led1_g, led1_b,
     output var logic       led2_r, led2_g, led2_b,
-    output var logic       led3_r, led3_g, led3_b
+    output var logic       led3_r, led3_g, led3_b,
+
+    // ------------------------------------------------------ the DDR3L
+    //
+    // **THESE ARE IN THE PORT LIST WHATEVER `DDR` SAYS**, which is the Arty
+    // Z7-20's rule for its HDMI pairs, said there as "a port that exists only
+    // in one configuration is a port list that differs between two builds of
+    // one file".  With `DDR` off they are driven to the state that holds the
+    // memory part in reset and does nothing, and
+    // `boards/arty-a7-100/cadr_a7_ddr_off.xdc` is what constrains them then.
+    // With `DDR` on the controller drives them and the generated
+    // `cadr_mig_a7.xdc` constrains them, which is where their slew rates,
+    // input terminations and the two clock pins' bufferless treatment come
+    // from --- none of which is meaningful without the controller's own
+    // physical layer behind it, and which is why there are two files and not
+    // one.
+    //
+    // The names are the generator's, so that this port list can be checked
+    // against `boards/arty-a7-100/mig/gen/.../cadr_mig_a7.veo` by eye.
+    inout  wire  [15:0]    ddr3_dq,
+    inout  wire  [1:0]     ddr3_dqs_p,
+    inout  wire  [1:0]     ddr3_dqs_n,
+    output var logic [13:0] ddr3_addr,
+    output var logic [2:0] ddr3_ba,
+    output var logic       ddr3_ras_n,
+    output var logic       ddr3_cas_n,
+    output var logic       ddr3_we_n,
+    output var logic       ddr3_reset_n,
+    output var logic [0:0] ddr3_ck_p,
+    output var logic [0:0] ddr3_ck_n,
+    output var logic [0:0] ddr3_cke,
+    output var logic [0:0] ddr3_cs_n,
+    output var logic [1:0] ddr3_dm,
+    output var logic [0:0] ddr3_odt
 );
 
   // ------------------------------------------------------------ the clock
@@ -166,6 +217,32 @@ module cadr_arty_a7 #(
   // header says why.  The VCO must sit between 600 and 1200 MHz on a -1 part:
   // 100 x 10 is 1000, in the middle of the range, and 1000 / 10 is the tick.
   logic clk_fb, clk_raw, clk, mmcm_locked;
+
+  // **AND ONE MORE OUTPUT, FOR THE MEMORY CONTROLLER, OFF THE SAME MANAGER.**
+  // The generated DDR3L controller wants a system clock and a 200 MHz
+  // reference for its input delay calibration, and it is configured "No
+  // Buffer" for both --- it is given clocks rather than pins.  Digilent's own
+  // published project file takes E3 for its system clock, which cannot be done
+  // here: this manager already has that pad, and two input buffers on one pad
+  // is an error.  `boards/arty-a7-100/mig/README.md` records that as one of the
+  // three changes made to their file.
+  //
+  // The voltage-controlled oscillator is 1000 MHz exactly, so the divider
+  // reads as a frequency: 5 is 200 MHz.
+  //
+  // **AND THE CONTROLLER'S SYSTEM CLOCK IS THE MACHINE'S OWN 100 MHz**, not a
+  // fourth output of its own.  It is the same frequency either way, the
+  // controller's phase-locked loop is one more load on a global clock net that
+  // already drives some thousands of registers, and a second net at the same
+  // frequency would be a second thing to keep in step.  What the controller
+  // makes from it is its own business: 100 x 13 = 1300 MHz, over four for a
+  // 325 MHz memory clock, over four again for its 81.25 MHz user clock.
+  //
+  // `boards/arty-z7-20/vivado/tick.tcl` reads four parameters out of this
+  // instantiation and computes the period the constraints are written
+  // against.  `CLKOUT1_DIVIDE` is not among them and cannot move the tick; the
+  // file matches `CLKOUT0_DIVIDE_F` by name.
+  logic clk_ref_raw, clk_ref;
 
   // The eleven clock outputs this design does not take are left empty on
   // purpose --- that is how the primitive is written and what Xilinx's own
@@ -185,22 +262,29 @@ module cadr_arty_a7 #(
       // are written against, so the fabric and its timing cannot describe two
       // different machines.  See the header for why every tick COUNT in the
       // design stays exactly as it was.
-      .CLKOUT0_DIVIDE_F(10.000)   // 100 MHz, one tick = 10 ns
+      .CLKOUT0_DIVIDE_F(10.000),  // 100 MHz, one tick = 10 ns
+      .CLKOUT1_DIVIDE  (5)        // 200 MHz, the controller's IDELAY reference
   ) u_mmcm (
       .CLKIN1  (sysclk),
       .CLKFBIN (clk_fb),
       .CLKFBOUT(clk_fb),
       .CLKOUT0 (clk_raw),
+      .CLKOUT1 (clk_ref_raw),
       .LOCKED  (mmcm_locked),
       .PWRDWN  (1'b0),
       .RST     (1'b0),
-      .CLKOUT0B(), .CLKOUT1(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(),
+      .CLKOUT0B(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(),
       .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
       .CLKFBOUTB()
   );
   /* verilator lint_on PINCONNECTEMPTY */
 
   BUFG u_bufg (.I(clk_raw), .O(clk));
+
+  // The controller's reference, on a global buffer of its own.  With `DDR`
+  // off nothing reads it and the fitter takes the whole branch out, buffer and
+  // clock manager output together.
+  BUFG u_bufg_ref (.I(clk_ref_raw), .O(clk_ref));
 
   // ------------------------------------------------------------- the buttons
   //
@@ -303,6 +387,22 @@ module cadr_arty_a7 #(
   logic       sw0_level;
   always_ff @(posedge clk) sw0_sync <= {sw0_sync[1:0], sw[0]};
   assign sw0_level = sw0_sync[2];
+
+  // ------------------------------------------- the proving board's three
+  //
+  // **THE OTHER BOARD'S, UNCHANGED, AND THAT IS THE POINT.**
+  // `boards/arty-z7-20/cadr_arty.sv` chose them and its header says why each
+  // one: an address that is not the region's base, whose bit 2 is set so the
+  // word is not the first lane of its beat, and whose bits alternate so a
+  // dropped one moves it somewhere unrelated; a word of four distinct bytes,
+  // neither half a rotation of the other; and an echo address seven beats away
+  // with bit 2 clear, so a read takes a high lane and the write-back opens a
+  // low one.  Every one of those arguments is about the arithmetic between a
+  // byte address and a memory's own word, which is what this board's
+  // `cadr_mig_ui` does and the other board's `cadr_axi_widen` did.
+  localparam logic [31:0] PROVE_ADDR = cadr_ddr_map::main_byte_address(22'o12345671);
+  localparam logic [31:0] PROVE_WORD = 32'h8A5C_36E1;
+  localparam logic [31:0] PROVE_ECHO = cadr_ddr_map::main_byte_address(22'o12345706);
 
   // ---------------------------------------------------------- the machine
   //
@@ -427,12 +527,13 @@ module cadr_arty_a7 #(
   // on the 4.25 us non-existent-memory timer instead of on a slave, and the
   // machine goes on running about a fifth slower; the header has the figures
   // and `make nomem` is what measured them.
-  assign mem_done      = 1'b0;
-  assign mem_rdata     = 32'd0;
-  // And no port to answer anything, so the transaction audit's port clause is
-  // silent by construction and its word 8 reads zero, which here is the truth.
-  assign port_read_ack  = 1'b0;
-  assign port_write_ack = 1'b0;
+  //
+  // **AND IT IS NO LONGER THE ONLY ANSWER.**  With `DDR` set the board's own
+  // 256 MB of DDR3L answers it, through Xilinx's Memory Interface Generator in
+  // the fabric.  The wiring is in "main memory, and the observer that can
+  // reach it" below, after the machine's reset, because it needs that reset;
+  // `mem_done`, `mem_rdata` and the audit's two port pulses are driven there
+  // and are deliberately not driven here.
 
   // THE DISK.  On the other board a Linux program reads a pack file off the
   // card and fills the block store over `S_AXI_HP2`, and the card there is
@@ -539,8 +640,16 @@ module cadr_arty_a7 #(
   // register cleared by its own bit 1 clears the bit that is clearing it, and
   // MIT's sequence could not be written at all.  That page takes `rst`
   // instead, one level down, at `.dbg_rst` below.
+  //
+  // **AND A THIRD TERM ON THE MEMORY BOARD**, `window_mach_reset`, which is
+  // the debugger holding the machine still while it poisons memory through
+  // the JTAG window.  It resets the MACHINE and not the memory controller, so
+  // what is in DDR survives it --- which is the whole reason it exists, and
+  // "main memory, and the observer that can reach it" below is where it comes
+  // from.  With no window in the design it is a constant and folds.
   logic mach_rst;
-  always_ff @(posedge clk) mach_rst <= rst || debuggee_reset;
+  logic window_mach_reset;
+  always_ff @(posedge clk) mach_rst <= rst || debuggee_reset || window_mach_reset;
 
   // ------------------------------------------------- `-BOOT2`, the button
   //
@@ -656,6 +765,277 @@ module cadr_arty_a7 #(
       // a silence to be read as agreement.
       .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
   );
+
+  // ========== main memory, and the observer that can reach it ==============
+  //
+  // **THIS IS THE FIRST MAIN MEMORY IN THIS REPOSITORY THAT IS NOT A
+  // PROCESSING SYSTEM'S.**  On the Arty Z7-20 the machine's `mem_*` goes into
+  // `cadr_axi_master`, then `cadr_axi_widen`, then `S_AXI_HP0` and the Zynq's
+  // own DDR controller.  Here the DDR3L is on the fabric's pins and the
+  // controller is Xilinx's Memory Interface Generator, generated in batch from
+  // a project file in the repository --- this project's one generated-IP
+  // exception, and `boards/arty-a7-100/mig/README.md` is the argument for it.
+  //
+  // Everything above `mem_*` is unchanged.  `cadr_xbus_ddr` asks for a word at
+  // a byte address and waits, `cadr_ddr_map`'s constants are the ones they
+  // have always been, and nothing in `rtl/machine/` knows which board it is
+  // on.  What is new is three modules, each with a testbench:
+  // `cadr_jtag_mem` in front of the port, `cadr_mem_cross` across the two
+  // clocks and `cadr_mig_ui` onto the controller's user interface.
+  //
+  // **WHERE THE MACHINE'S 128 MB LANDS, AND WHY THE MAP DOES NOT MOVE.**
+  // `cadr_ddr_map` reserves 0x1800_0000 upwards --- 64 MB of main memory and
+  // 8 MB of display inside a 128 MB reservation --- which is a Zynq layout,
+  // where the bottom 384 MB is Linux's.  This board has 256 MB and no Linux,
+  // so the same reservation goes at the TOP of the chip, which is where it is
+  // on the other board too, and the translation is one constant bit rather
+  // than a subtraction: `cadr_mig_ui` does it and its header has the
+  // arithmetic.  Main memory is therefore the sixteen megabytes at DDR byte
+  // 0x0800_0000 and the display's window the eight at 0x0C00_0000, of which
+  // the machine can reach 15 MB and 128 KB.  **The bottom 128 MB is nobody's
+  // yet** and is where a soft processor beside the machine would live.
+  //
+  // **AND THE OBSERVER IS A JTAG REGISTER BECAUSE THERE IS NOTHING ELSE.**
+  // Every claim this project has made about a memory path on silicon rests on
+  // an observer outside the design: on the other board, a debugger reading DDR
+  // through a different port of the same controller.  An Artix-7 has no debug
+  // access port onto memory and no second master anywhere, so the debugger is
+  // given a path instead --- one data register on a second `BSCANE2` user
+  // chain, in front of the port, taking it when the machine is not using it.
+  // `rtl/plumbing/cadr_jtag_mem.sv`'s header says plainly what that costs in
+  // evidence and what makes the instrument sharp anyway, and the three things
+  // that do are all the host's: an injective poison, all four lanes of a
+  // sixteen-byte block written differently, and a tally that is not on this
+  // path at all.
+  if (DDR == 0 && PROVE == 0) begin : g_no_memory
+
+    assign mem_done       = 1'b0;
+    assign mem_rdata      = 32'd0;
+    // No port to answer anything, so the transaction audit's port clause is
+    // silent by construction and its word 8 reads zero, which here is true.
+    assign port_read_ack  = 1'b0;
+    assign port_write_ack = 1'b0;
+
+    // The memory part held in reset and doing nothing: clock enable low, chip
+    // not selected, reset asserted, and the bidirectional lines let go.  This
+    // is the state a board with no controller should present to a DDR3 part,
+    // and it is not merely "zero everywhere" --- `ddr3_cs_n` and
+    // `ddr3_reset_n` are the two that are active low and the two that matter.
+    assign ddr3_addr    = 14'd0;
+    assign ddr3_ba      = 3'd0;
+    assign ddr3_ras_n   = 1'b1;
+    assign ddr3_cas_n   = 1'b1;
+    assign ddr3_we_n    = 1'b1;
+    assign ddr3_reset_n = 1'b0;
+    assign ddr3_ck_p    = 1'b0;
+    assign ddr3_ck_n    = 1'b0;
+    assign ddr3_cke     = 1'b0;
+    assign ddr3_cs_n    = 1'b1;
+    assign ddr3_dm      = 2'b11;
+    assign ddr3_odt     = 1'b0;
+    assign ddr3_dq      = 16'dz;
+    assign ddr3_dqs_p   = 2'bz;
+    assign ddr3_dqs_n   = 2'bz;
+
+    // No window, so nothing out here holds the machine still.
+    assign window_mach_reset = 1'b0;
+
+    // And the reference clock the controller would have calibrated its input
+    // delays against.  Named rather than left dangling; the fitter takes the
+    // whole branch out, the buffer and the clock manager's output with it.
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_clk;
+    assign unused_clk = &{1'b0, clk_ref};
+    /* verilator lint_on UNUSEDSIGNAL */
+
+  end else begin : g_memory
+
+    // The port behind the window: one 32-bit word a request, in the machine's
+    // own clock.  `cadr_a7_memory` is what carries it across into the
+    // controller's.
+    logic        port_req, port_write, port_done, port_error;
+    logic [31:0] port_addr, port_wdata, port_rdata;
+    logic [63:0] tally;
+    logic        calib_done, prove_arm;
+    logic        prove_has_run, prove_matched;
+
+    // ...and the window's machine-side face, which is whatever is driving the
+    // port today: the machine itself, or the proving witness in its place.
+    logic        w_req, w_write, w_done;
+    logic [31:0] w_addr, w_wdata, w_rdata;
+    logic        w_error;
+
+    // ------------------------------------------------- who drives the port
+    //
+    // THE MACHINE, or the witness that goes ahead of it.  `cadr_prove`'s
+    // header has the argument for the two steps; what belongs here is only
+    // that the witness drives `mem_*`'s own wires into the same window, the
+    // same crossing, the same user interface and the same controller that the
+    // machine will --- a witness with a path of its own would prove that path
+    // and say nothing about this one.
+    if (PROVE == 0) begin : g_machine_drives
+
+      assign w_req    = mem_req;
+      assign w_write  = mem_write;
+      assign w_addr   = mem_addr;
+      assign w_wdata  = mem_wdata;
+      assign mem_done  = w_done;
+      assign mem_rdata = w_rdata;
+
+      assign prove_has_run = 1'b0;
+      assign prove_matched = 1'b0;
+
+      // THE AUDIT'S TWO PORT PULSES.  `cadr_machine`'s transaction audit wants
+      // one pulse per transaction the port answered, in the machine's clock,
+      // so that it can say whether the port answered anything the machine did
+      // not ask for.  The port answers in ANOTHER clock here, and a pulse does
+      // not survive a clock crossing --- but a LEVEL does, and `mem_done` is
+      // the far side's acknowledgement carried back by `cadr_mem_cross`, one
+      // rise per transaction and no more.  So the rise is the pulse.
+      logic done_q;
+      always_ff @(posedge clk) done_q <= w_done;
+      assign port_read_ack  = w_done && !done_q && !w_write;
+      assign port_write_ack = w_done && !done_q &&  w_write;
+
+    end else begin : g_prove
+
+      // A LEVEL, AND WHAT HOLDS IT UP DECIDES WHETHER ANYBODY HAS TO BE HERE.
+      // `cadr_prove` runs one sequence per rise of `go` and needs it to fall
+      // before another, so a `go` tied high is exactly one sequence when the
+      // reset lets go.
+      //
+      // **AND ON THIS BOARD THE RESET IS THE DEBUGGER'S**, where on the Arty
+      // Z7-20 it was the processing system raising `SAXIHP0ARESETN`.  That is
+      // not a convenience: the debugger must poison the neighbourhood BEFORE
+      // the witness writes into it, and poisoning goes through the same window
+      // the witness's port does.  So the witness is held until the `arm` bit
+      // is scanned in, and every later rise of that bit runs the whole
+      // sequence again with no reprogramming --- which is exactly what
+      // toggling `LVL_SHFTR_EN` bought on the other board.
+      logic [3:0] arm_t;
+      logic       armed;
+      always_ff @(posedge clk) begin
+        if (rst) begin
+          armed <= 1'b0;
+          arm_t <= 4'd0;
+        end else if (prove_arm) begin
+          armed <= 1'b1;
+          arm_t <= 4'hF;
+        end else if (arm_t != 4'd0) begin
+          arm_t <= arm_t - 4'd1;
+        end
+      end
+
+      cadr_prove u_prove (
+          // The three constants the whole exercise is about, tied here
+          // because this is the file that chose them --- and they are the
+          // other board's, unchanged, so that the two boards' proving steps
+          // are one exercise and not two.
+          .addr     (PROVE_ADDR),
+          .word     (PROVE_WORD),
+          .echo_addr(PROVE_ECHO),
+          .writes   (PROVE == 1),
+          .clk(clk),
+          .rst(rst || !calib_done || !armed || (arm_t != 4'd0)),
+          .go (1'b1),
+          .mem_req(w_req), .mem_write(w_write),
+          .mem_addr(w_addr), .mem_wdata(w_wdata),
+          .mem_done(w_done), .mem_rdata(w_rdata), .mem_error(w_error),
+          .has_run(prove_has_run), .matched(prove_matched)
+      );
+
+      // THE MACHINE GETS NOTHING, exactly as on the board with no memory at
+      // all.  It reaches its first main-memory cycle at microcycle 536,303,
+      // the bus's timer ends it at about 4.25 us, and it carries on --- so
+      // every lamp reads on a `PROVE` board as `README.md` tabulates them for
+      // a board with no memory.
+      assign mem_done  = 1'b0;
+      assign mem_rdata = 32'd0;
+
+      // And the audit is told the machine asked for nothing, because it did:
+      // every transaction the port answers on a proving board is the
+      // witness's, and fed in they would read as the port answering what the
+      // machine never asked --- which is the fault that clause exists to name.
+      assign port_read_ack  = 1'b0;
+      assign port_write_ack = 1'b0;
+
+    end
+
+    // --------------------------------------------- the debugger's window
+    //
+    // The scan chain it lives on.  USER2 --- IR 000011 on a seven-series part
+    // --- where `cadr_probe` has USER1, so the two instruments can be in one
+    // bitstream and are told apart by the instruction and not by a mode.
+    //
+    // RESET, RUNTEST, TCK and TMS are left empty because nothing here reads
+    // them.  UPDATE is NOT: this register takes a command as well as giving an
+    // answer, and UPDATE is when a command has arrived.
+    logic jm_drck, jm_sel, jm_shift, jm_capture, jm_update, jm_tdi, jm_tdo;
+    /* verilator lint_off PINCONNECTEMPTY */
+    BSCANE2 #(
+        .JTAG_CHAIN(2)
+    ) u_bscan_mem (
+        .CAPTURE(jm_capture),
+        .DRCK   (jm_drck),
+        .SEL    (jm_sel),
+        .SHIFT  (jm_shift),
+        .UPDATE (jm_update),
+        .TDI    (jm_tdi),
+        .TDO    (jm_tdo),
+        .RESET(), .RUNTEST(), .TCK(), .TMS()
+    );
+    /* verilator lint_on PINCONNECTEMPTY */
+
+    cadr_jtag_mem u_window (
+        .clk(clk), .rst(rst),
+        .m_req(w_req), .m_write(w_write),
+        .m_addr(w_addr), .m_wdata(w_wdata),
+        .m_done(w_done), .m_rdata(w_rdata), .m_error(w_error),
+        .p_req(port_req), .p_write(port_write),
+        .p_addr(port_addr), .p_wdata(port_wdata),
+        .p_done(port_done), .p_rdata(port_rdata), .p_error(port_error),
+        .tally(tally), .calib_done(calib_done),
+        .prove_has_run(prove_has_run), .prove_matched(prove_matched),
+        .arm(prove_arm), .mach_reset(window_mach_reset),
+        .jtag_drck(jm_drck), .jtag_sel(jm_sel), .jtag_shift(jm_shift),
+        .jtag_capture(jm_capture), .jtag_update(jm_update),
+        .jtag_tdi(jm_tdi), .jtag_tdo(jm_tdo)
+    );
+
+    // ------------------------------------------------------ and the memory
+    //
+    // **THE RESET IS THE FABRIC'S AND NOT THE MACHINE'S.**  Pressing the boot
+    // button on a CADR does not erase its memory, and a controller reset would
+    // both erase it and cost a millisecond of retraining.  So this takes
+    // `rst`, which is the clock manager not locked or BTN3, where
+    // `cadr_machine` above takes `mach_rst`.
+    cadr_a7_memory u_memory (
+        .clk(clk), .rst(rst),
+        .sys_clk(clk), .ref_clk(clk_ref),
+        .mem_req(port_req), .mem_write(port_write),
+        .mem_addr(port_addr), .mem_wdata(port_wdata),
+        .mem_done(port_done), .mem_rdata(port_rdata), .mem_error(port_error),
+        .tally(tally), .calib_done(calib_done),
+        .ddr3_dq(ddr3_dq), .ddr3_dqs_p(ddr3_dqs_p), .ddr3_dqs_n(ddr3_dqs_n),
+        .ddr3_addr(ddr3_addr), .ddr3_ba(ddr3_ba),
+        .ddr3_ras_n(ddr3_ras_n), .ddr3_cas_n(ddr3_cas_n),
+        .ddr3_we_n(ddr3_we_n), .ddr3_reset_n(ddr3_reset_n),
+        .ddr3_ck_p(ddr3_ck_p), .ddr3_ck_n(ddr3_ck_n),
+        .ddr3_cke(ddr3_cke), .ddr3_cs_n(ddr3_cs_n),
+        .ddr3_dm(ddr3_dm), .ddr3_odt(ddr3_odt)
+    );
+
+    // `w_error` is the proving witness's alone; with the machine driving, the
+    // machine has no wire for it.  `prove_arm` is the witness's release and
+    // there is no witness on a `DDR` board.  Both named rather than left
+    // dangling --- and both are read on a `PROVE` board, where this fold is a
+    // second reader and costs nothing.
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_mem;
+    assign unused_mem = &{1'b0, w_error, prove_arm};
+    /* verilator lint_on UNUSEDSIGNAL */
+
+  end
 
   // ------------------------------------------------------------ the probe
   //
