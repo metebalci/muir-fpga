@@ -47,7 +47,12 @@
 #       from "a file with nothing of mine in it"; returns 0 otherwise.
 #
 #   fpgarc_has FILE FLAG
-#       True when FILE names FLAG.  For a bare flag like --no-auto-boot.
+#       True when FILE names FLAG, with an argument or without.  It is how a
+#       bare flag like --no-auto-boot is read, and it is also how an init
+#       script asks whether to pass its own default: see the note below.
+#       False for a file that is not there.  It claims FLAG exactly as
+#       fpgarc_args does, which is right --- a script only asks about a flag
+#       it owns.
 #
 #   fpgarc_say_unclaimed FILE
 #       Print one line naming the flags in FILE that no program on this board
@@ -70,10 +75,23 @@
 # A flag for a program that is not on this board is then reported too, which is
 # true and worth knowing.
 
-# Where the claims are remembered across a boot.  /var/run is a RAM disk
-# unpacked at every boot, so this starts empty every time and cannot go stale.
-# A `restart` of one script only adds to it, and claims that only grow can
-# only make this report quieter, never wronger.
+# WHERE THE CLAIMS ARE REMEMBERED ACROSS A BOOT, and what they are for: one
+# line a flag, appended by every script as it reads the file, so that the last
+# script to read it can name the lines no program claimed.  It is that list
+# and nothing else; no program is ever started from it and nothing is refused
+# because of it.  /var/run is a RAM disk unpacked at every boot, so this starts
+# empty every time and cannot go stale.  A `restart` of one script only adds to
+# it, and claims that only grow can only make the report quieter, never
+# wronger.
+#
+# **AND IT MAY NOT BE THERE TO BE WRITTEN, WHICH MUST BE SILENT.**  /var/run
+# belongs to the board, so a call from anywhere else --- a check on the build
+# host, somebody at a prompt --- appends to a path it may not be allowed to
+# create.  The environment names another for exactly that reason.  What is
+# lost when the write cannot happen is the report and nothing else: with no
+# claim recorded, `fpgarc_unclaimed` says nothing rather than naming every
+# flag in the file, which is the same answer it gives on a boot where it ran
+# first rather than last.
 FPGARC_CLAIMED=${FPGARC_CLAIMED:-/var/run/cadr-fpgarc.claimed}
 #
 # HOW A CALLER USES IT.  The words are quoted, so they go back through `eval`
@@ -87,6 +105,17 @@ FPGARC_CLAIMED=${FPGARC_CLAIMED:-/var/run/cadr-fpgarc.claimed}
 # The file's flags come after the script's own, so a card that names a flag
 # the script also passes wins --- which is the way round somebody editing the
 # card expects, and it is muir's own rule that a flag given later wins.
+#
+# **AND A SCRIPT PASSES ITS OWN DEFAULT ONLY WHERE THE CARD SAYS NOTHING.**
+# Both flags standing on the command line works, because the program takes the
+# last one.  It also puts `--terminal 0.0.0.0:5900 --terminal 0.0.0.0:5900` in
+# a `ps` listing on a board somebody is trying to understand, which reads as a
+# fault.  So a script asks first:
+#
+#	fpgarc_has "$RC" --terminal || set -- --terminal "$ENDPOINT"
+#
+# The card's line is then the only one, and a board with no card line runs
+# exactly what it ran before.
 #
 # **WHY ONE LINE AND NOT ONE WORD A LINE.**  A newline inside `set -- ...`
 # ends the command, so an `eval` of several lines would run the second word as
@@ -117,10 +146,18 @@ fpgarc_args() {
 	# What this caller claims, whether or not the file has any of it and
 	# whether or not the file is there at all: a claim is about the
 	# program's list and not about the card.
+	#
+	# **THE `2>/dev/null` COMES FIRST BECAUSE REDIRECTIONS ARE APPLIED IN
+	# ORDER.**  Written the other way round the append is opened while
+	# stderr is still the console, so a path this cannot create prints
+	# `cannot create ...: Permission denied` from the shell itself and the
+	# `2>/dev/null` that was meant to catch it never sees it.  Measured in
+	# dash, bash and busybox ash alike, and it was seventeen lines in this
+	# reader's own check.
 	if [ -n "${FPGARC_CLAIMED:-}" ]; then
 		for _fpgarc_claim in "$@"; do
 			printf '%s\n' "$_fpgarc_claim"
-		done >> "$FPGARC_CLAIMED" 2>/dev/null || :
+		done 2>/dev/null >> "$FPGARC_CLAIMED" || :
 	fi
 	[ -f "$_fpgarc_file" ] || return 1
 	fpgarc_lines "$_fpgarc_file" | while IFS= read -r _fpgarc_line; do

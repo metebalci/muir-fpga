@@ -246,6 +246,31 @@ passes_not() {
 	fi
 }
 
+# How many times a flag stands as a word of the command line the daemon was
+# given.  A flag passed twice works --- the program takes the last one --- so
+# nothing but a count can see it.
+given_count() {
+	tr ' ' '\n' < "$WORK/daemon.calls" | grep -cx -- "$1" || true
+}
+
+# The flag stands exactly once, and the word after it is $3 when $3 is given.
+passes_once() {
+	_n=$(given_count "$1")
+	if [ "$_n" != 1 ]; then
+		fail "$2 was given $1 $_n times and once is right; it was given: $(given)"
+		return 1
+	fi
+	if [ $# -lt 3 ]; then
+		ok "$2 was given $1 exactly once"
+		return 0
+	fi
+	if grep -q -- "$1 $3" "$WORK/daemon.calls"; then
+		ok "$2 was given $1 $3 exactly once"
+	else
+		fail "$2 was given $1 once but not with $3; it was given: $(given)"
+	fi
+}
+
 # ---------------------------------------------------------------------------
 # 1.  The reader on its own.
 # ---------------------------------------------------------------------------
@@ -361,6 +386,78 @@ else
 	else
 		fail "a file with nothing of mine in it gave [$got]"
 	fi
+
+	# **THE CLAIMS FILE IS NOT ALWAYS THERE TO BE WRITTEN, AND THE READER
+	# MUST SAY NOTHING ABOUT THAT.**  Where the claims are remembered is
+	# /var/run, which belongs to the board, so a call made anywhere else
+	# --- this check's own, or somebody's at a prompt --- appends to a path
+	# it may not be allowed to create.  A shell prints `cannot create ...:
+	# Permission denied` for a redirection it cannot open, and that message
+	# went out ahead of the `2>/dev/null` written to catch it: seventeen
+	# lines of it in this check's own output.  A reader asked a question
+	# must answer it and say nothing else.
+	#
+	# The path below cannot be created by anybody, root included, because
+	# the directory above it is not there.  That is what makes this case
+	# say the same thing whoever runs it.
+	case_head "a claims file it cannot write is silent, and nothing else changes"
+	CLAIMED_WAS=$FPGARC_CLAIMED
+	FPGARC_CLAIMED="$WORK/no-such-directory/claimed"
+	fpgarc_args "$RC" --chaos-address > "$WORK/claim.out" 2> "$WORK/claim.err"
+	if [ -s "$WORK/claim.err" ]; then
+		fail "the reader said something about the claims file:"
+		sed 's/^/        /' "$WORK/claim.err"
+	else
+		ok "the reader said nothing"
+	fi
+	got=$(eval "set -- $(cat "$WORK/claim.out")"; printf '[%s]' "$@")
+	if [ "$got" = "[--chaos-address][3050]" ]; then
+		ok "and answered the question it was asked"
+	else
+		fail "and answered [$got]"
+	fi
+	if fpgarc_has "$RC" --no-auto-boot 2> "$WORK/has.err"; then
+		ok "fpgarc_has still finds a flag the file names"
+	else
+		fail "fpgarc_has does not find --no-auto-boot when the claims file cannot be written"
+	fi
+	if [ -s "$WORK/has.err" ]; then
+		fail "and fpgarc_has said something about the claims file:"
+		sed 's/^/        /' "$WORK/has.err"
+	else
+		ok "and said nothing"
+	fi
+	# Nothing was recorded, so the report must say nothing rather than
+	# name every flag in the file as having gone to nobody.
+	got=$(fpgarc_say_unclaimed "$RC" 2>&1)
+	if [ -z "$got" ]; then
+		ok "and no claim being remembered is a silent report, not a wrong one"
+	else
+		fail "the report named lines on a boot where no claim was recorded: $got"
+	fi
+
+	case_head "and no claims file at all is the same"
+	FPGARC_CLAIMED=
+	fpgarc_args "$RC" --chaos-address > "$WORK/claim.out" 2> "$WORK/claim.err"
+	if [ -s "$WORK/claim.err" ]; then
+		fail "the reader said something with no claims file named:"
+		sed 's/^/        /' "$WORK/claim.err"
+	else
+		ok "the reader said nothing"
+	fi
+	got=$(eval "set -- $(cat "$WORK/claim.out")"; printf '[%s]' "$@")
+	if [ "$got" = "[--chaos-address][3050]" ]; then
+		ok "and answered the question it was asked"
+	else
+		fail "and answered [$got]"
+	fi
+	got=$(fpgarc_say_unclaimed "$RC" 2>&1)
+	if [ -z "$got" ]; then
+		ok "and the report is silent"
+	else
+		fail "the report named lines with no claims file: $got"
+	fi
+	FPGARC_CLAIMED=$CLAIMED_WAS
 fi
 
 # ---------------------------------------------------------------------------
@@ -450,19 +547,107 @@ if prepare cadr-terminal S85cadr-terminal; then
 	}
 fi
 
-case_head "the card's flag wins over the mapping file found beside it"
+# ---------------------------------------------------------------------------
+# 2b.  A DEFAULT IS PASSED ONLY WHERE THE CARD SAYS NOTHING.
+# ---------------------------------------------------------------------------
+#
+# **THE FAULT.**  An init script writes its own endpoint out in full so that
+# the script says what it does, and then appends the card's flags so that a
+# card naming the same flag wins.  A card that did name it therefore got both,
+# and the board ran `cadr-terminal --terminal 0.0.0.0:5900 --terminal
+# 0.0.0.0:5900`.  The program takes the last one, so nothing was wrong with
+# what ran --- and a `ps` listing on a board somebody is trying to understand
+# read as a fault.  Measured on the board, on the screen and the serial line
+# both.
+#
+# **WHAT IS HELD HERE.**  A script asks the reader whether the card names a
+# flag before passing its own value for it, so each of these flags stands on
+# the command line exactly once, with the card's value where the card has one
+# and the script's where it has not.  A count is the only thing that can see
+# this: both orderings run correctly, and every assertion in section 2 above
+# would pass either way.
+case_head "the screen's endpoint is passed once, and it is the card's when the card says one"
+sandbox
+if prepare cadr-terminal S85cadr-terminal; then
+	printf '%s\r\n' '--terminal 0.0.0.0:5999' '--bow' > "$RC"
+	run_script S85cadr-terminal
+	passes_once "--terminal" "cadr-terminal" "0.0.0.0:5999"
+	passes_not "0.0.0.0:5900" "cadr-terminal"
+	passes "--bow" "cadr-terminal"
+fi
+
+case_head "and once, the script's own, when the card says nothing about it"
+sandbox
+if prepare cadr-terminal S85cadr-terminal; then
+	printf '%s\r\n' '--bow' > "$RC"
+	run_script S85cadr-terminal
+	passes_once "--terminal" "cadr-terminal" "0.0.0.0:5900"
+fi
+
+case_head "and once with no card at all"
+sandbox
+if prepare cadr-terminal S85cadr-terminal; then
+	rm -f "$RC"
+	run_script S85cadr-terminal
+	passes_once "--terminal" "cadr-terminal" "0.0.0.0:5900"
+fi
+
+case_head "the serial line's endpoint is passed once, and it is the card's when the card says one"
+sandbox
+if prepare cadr-serial S86cadr-serial; then
+	printf '%s\r\n' '--serial 0.0.0.0:7999' '--quiet' > "$RC"
+	run_script S86cadr-serial
+	passes_once "--serial" "cadr-serial" "0.0.0.0:7999"
+	passes_not "0.0.0.0:7641" "cadr-serial"
+	passes "--quiet" "cadr-serial"
+fi
+
+case_head "and once, the script's own, when the card says nothing about it"
+sandbox
+if prepare cadr-serial S86cadr-serial; then
+	printf '%s\r\n' '--quiet' > "$RC"
+	run_script S86cadr-serial
+	passes_once "--serial" "cadr-serial" "0.0.0.0:7641"
+fi
+
+case_head "and once with no card at all"
+sandbox
+if prepare cadr-serial S86cadr-serial; then
+	rm -f "$RC"
+	run_script S86cadr-serial
+	passes_once "--serial" "cadr-serial" "0.0.0.0:7641"
+fi
+
+# The keyboard mapping is the same shape one step along: the file beside the
+# card's is the screen's other default, and a card that names the flag used to
+# get both of those too.
+case_head "the card's flag wins over the mapping file found beside it, and is the only one passed"
+sandbox
 if prepare cadr-terminal S85cadr-terminal; then
 	printf 'key 0 0\n' > "$WORK/packs/terminal.keyboard.mapping.txt"
 	printf '%s\r\n' '--keyboard-mapping /mnt/packs/from-the-card.txt' > "$RC"
 	run_script S85cadr-terminal
-	# The file found beside it is passed first and the card's after, so
-	# the program's own rule --- a flag given later wins --- settles it.
-	case "$(cat "$WORK/daemon.calls")" in
-	*"--keyboard-mapping $WORK/packs/terminal.keyboard.mapping.txt"*"--keyboard-mapping /mnt/packs/from-the-card.txt"*)
-		ok "the card's line comes last, so the program takes it" ;;
-	*)
-		fail "the two mapping flags are not in that order: $(given)" ;;
-	esac
+	passes_once "--keyboard-mapping" "cadr-terminal" "/mnt/packs/from-the-card.txt"
+	passes_not "$WORK/packs/terminal.keyboard.mapping.txt" "cadr-terminal"
+fi
+
+case_head "and the mapping file beside it is passed once when the card says nothing"
+sandbox
+if prepare cadr-terminal S85cadr-terminal; then
+	printf 'key 0 0\n' > "$WORK/packs/terminal.keyboard.mapping.txt"
+	printf '%s\r\n' '--bow' > "$RC"
+	run_script S85cadr-terminal
+	passes_once "--keyboard-mapping" "cadr-terminal" \
+	            "$WORK/packs/terminal.keyboard.mapping.txt"
+fi
+
+case_head "and no mapping flag at all when there is neither"
+sandbox
+if prepare cadr-terminal S85cadr-terminal; then
+	rm -f "$WORK/packs/terminal.keyboard.mapping.txt"
+	printf '%s\r\n' '--bow' > "$RC"
+	run_script S85cadr-terminal
+	passes_not "--keyboard-mapping" "cadr-terminal"
 fi
 
 # ---------------------------------------------------------------------------
