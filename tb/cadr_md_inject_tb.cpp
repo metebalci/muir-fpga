@@ -182,6 +182,10 @@ static int RunOne(const char *path, bool inject, Result &res) {
   std::rewind(f);
 
   auto *dut = new Vcadr_microcycle;
+  // `-BOOT` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot = 1;
   auto *root = dut->rootp;
   dut->clk = 0;
   dut->rst = 1;

@@ -31,7 +31,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/md_hold.pass $(BUILD)/md_hold_sys.pass \
        $(BUILD)/md_compose.pass \
        $(BUILD)/park.pass \
-       $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass \
+       $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass $(BUILD)/kbd_boot.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
@@ -513,6 +513,28 @@ $(BUILD)/obj_ddr_boot/Vcadr_machine: $(MACHINE) tb/cadr_ddr_boot_tb.cpp | $(BUIL
 
 $(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.hex
 	$(BUILD)/obj_ddr_boot/Vcadr_machine
+	@touch $@
+
+# ------------------------------------------ the boot lines, on the whole machine
+
+# **THE KEYBOARD BOOTS THE MACHINE, AND SO DOES THE LIGHT PANEL'S BUTTON.**
+# `iob.pass` above holds the card's own decode of the keyboard's boot word
+# against muir --- which eight bits the 25LS2521 at IOBCSR 0A20 compares, and
+# how wide a pulse it makes of a match --- and says nothing about what the
+# pulse reaches.  This is the other half: `cadr_machine` running MIT's boot
+# PROM, a word at the keyboard's cable, and the PROM running from word 0
+# again.  muir's own `tests/keyboard_boot.rs` is the same claim on `micro`,
+# `rtl` and `chip`.
+#
+# No memory is modelled, deliberately: the PROM's first main-memory cycle is
+# at microcycle 536,303 and nothing here runs that far.  It takes a second.
+$(BUILD)/obj_kbd_boot/Vcadr_machine: $(MACHINE) tb/cadr_kbd_boot_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_kbd_boot \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_kbd_boot_tb.cpp)
+
+$(BUILD)/kbd_boot.pass: $(BUILD)/obj_kbd_boot/Vcadr_machine $(BUILD)/boot_prom.hex
+	$(BUILD)/obj_kbd_boot/Vcadr_machine
 	@touch $@
 
 # --------------------------------------- the map, read through a real memory

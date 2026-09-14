@@ -92,7 +92,23 @@
 // Page 0.
 enum cons_p0 { CONS_IDENT = 0, CONS_STAT = 1, CONS_CYCLES = 2, CONS_CYCLESH = 3,
 	       CONS_TICKS = 4, CONS_TICKSH = 5, CONS_RESET = 6, CONS_VMA = 7,
-	       CONS_Q = 8, CONS_MD = 9 };
+	       CONS_Q = 8, CONS_MD = 9, CONS_RO = 10, CONS_RO_LO = 11,
+	       CONS_RO_HI = 12, CONS_BOOT = 13 };
+
+// **THE LIGHT PANEL'S BUTTON, page 0's word 13.**  A write of this key and of
+// nothing else holds `-BOOT2` down for a few hundred nanoseconds and lets it
+// go; the fabric's own key, `rtl/plumbing/cadr_console.sv`'s `BOOT_KEY`, is
+// the same four bytes.  It reads back the key's top half, the presses so far
+// and whether the line is down now.
+//
+// **IT IS `-BOOT2` AND NOT `PROG.BOOT`, AND THE DIFFERENCE IS WHOSE BUTTON IT
+// IS.**  `MODE_BOOT` below is bit 7 of the mode register and reaches the same
+// gate at OLORD2 1A07, so a console could boot the machine with it; that line
+// is the DEBUG CABLE'S, the other machine's way in, and a console pressing it
+// would be a console pretending to be a debugger.  `-BOOT2` is the button a
+// person at the machine presses, which is what a console is.  muir's prompt
+// makes the same choice: its `boot` presses `-BOOT2`.
+#define CONS_BOOT_KEY     0x424F4F54u	/* "BOOT" */
 enum cons_stat_bit { CONS_ST_BUSY = 1u << 0, CONS_ST_GNT = 1u << 1,
 		     CONS_ST_ANSWERED = 1u << 2, CONS_ST_LOST = 1u << 3 };
 
@@ -299,6 +315,72 @@ void cons_spy_write(struct console *c, unsigned eadr, uint16_t v);
 void cons_halt(struct console *c);
 // `start`: RUN.  ../muir/tests/lashup.rs:311-315.
 void cons_start(struct console *c);
+
+// `boot`: the light panel's button, page 0's word 13 with `CONS_BOOT_KEY` on
+// it.  ../muir/src/prompt.rs's `Command::Boot` --- "the boot button, which is
+// what starts a machine: it presets RUN, and the machine runs from the PROM
+// at 0".
+//
+// **WHAT THE BUTTON DOES, AND IT IS THE SAME ON A HALTED MACHINE AND A
+// RUNNING ONE.**  `-BOOT` presets RUN at the 74S74 at OLORD1 1A14, clears the
+// boot trap's 74LS109 at 1A18 so the next microcycle is nopped and the PC is
+// forced to zero, and is one of the three inputs of RESET at the 74S10 at
+// 1C08, which clears the console's own registers --- PROMDISABLE among them,
+// which is what puts the boot PROM back over the control store.  So:
+//
+//   - a RUNNING machine stops what it was doing and runs the PROM from 0;
+//   - a HALTED machine, its RUN clear, STARTS: the button presets RUN, which
+//     is the one thing that starts a CADR and the reason muir's `continue`
+//     and `step` send you here.
+//
+// It does not clear main memory, the control store, the scratchpads or the
+// map.  A boot is not a reset.
+void cons_boot(struct console *c);
+
+// What `boot` reports: the machine either side of the press.  The button is
+// let go before the write is answered --- `cadr_console.sv` holds `BVALID`
+// off for the length of the pulse --- so `after` is a machine already running
+// the PROM again and not one with a finger on it.
+struct cons_boot_report {
+	uint64_t cycles_before, cycles_after;
+	uint16_t pc_before, pc_after;
+	int lost_before, lost_after;	/* a diagnostic cycle was not answered */
+	uint32_t word;			/* word 13 read back after the press */
+	unsigned presses;		/* its count, saturating at 255 */
+	int held;			/* the line was still down when read */
+	int running;			/* CYCLES moved over the settle */
+	int promdisable;		/* FLAG-1's bit, which a boot clears */
+};
+int cons_boot_and_report(struct console *c, unsigned settle_us, struct cons_boot_report *r);
+void cons_say_boot(const struct cons_boot_report *r);
+
+// --- THE HELD MACHINE ----------------------------------------------------
+//
+// **`--no-auto-boot` LEAVES THE BUTTON UNPRESSED, AND THE MARKER IS HOW THIS
+// PROGRAM KNOWS.**  muir's own flag leaves a CADR as it is when the power
+// comes on: RUN clear, nothing run, and only the button starts it.  On the
+// board the same state is made by an init step, which halts the machine
+// before the disk pack program presents the drive and leaves this file
+// behind.  Nothing in the fabric changes for it --- RUN is still preset at
+// reset --- so the marker is the whole of the contract.
+//
+// While it exists, `start` and `step` refuse and say what muir says; `boot`
+// presses the button and removes it, because the button is what takes the
+// hold off.  A marker that is not there is the ordinary case and costs one
+// `access` per command.
+#define CONS_HELD_PATH    "/var/run/cadr-held"
+
+// muir's own sentence for a machine whose RUN is clear, ../muir/src/main.rs's
+// `say_halted`, which is what its `continue` and `step` print.
+#define CONS_HELD_SAYING  \
+	"the machine is halted, its RUN clear: boot presses the button that starts it"
+
+// Whether the marker is there.  `path` is `CONS_HELD_PATH` on the board and
+// its own file in the host test.
+int cons_held(const char *path);
+// Take the hold off: remove the marker.  Returns 0 if it is gone afterwards,
+// whether or not it was there to begin with.
+int cons_release_held(const char *path);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
 // ClockControl and ../muir/tests/spy.rs:743-761).
