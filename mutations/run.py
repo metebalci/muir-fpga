@@ -1204,7 +1204,7 @@ CHECKS = {
         "golden": "rtl.golden",
         "gprom": True,
     },
-    # The debug cable on two Pmod connectors: the carrier that puts MIT's
+    # The debug cable's carrier, the module that puts one direction of MIT's
     # twenty-one wires on eight pins, and the join that lets the connector and
     # the window share one DBGIN page.  Neither has a muir reference --- muir
     # has the cable and no wires --- so what holds them is a property, which
@@ -1224,10 +1224,15 @@ CHECKS = {
     # cannot read the other machine's register, or as a pad driven from both
     # ends, which the testbench counts on every tick.
     "dbg_cable": {
-        "sources": ["rtl/plumbing/cadr_dbg_cable.sv"],
+        # **THE JOIN IS MUTABLE HERE AS WELL AS UNDER `dbg_pmod`**, and that
+        # is deliberate.  This check is the only one with two whole boards on
+        # one cable, so it is the only one that can ask what the join does on
+        # a board that holds the cable's other role --- which is the case
+        # `docs/debug-cable.md` calls "only the connector changes hands".
+        "sources": ["rtl/plumbing/cadr_dbg_cable.sv",
+                    "rtl/plumbing/cadr_dbg_join.sv"],
         "extra": ["tb/cadr_dbg_cable_harness.sv",
                   "rtl/plumbing/cadr_dbg_pmod.sv",
-                  "rtl/plumbing/cadr_dbg_join.sv",
                   "rtl/machine/cadr_dbgin.sv",
                   "rtl/machine/cadr_busint_regs.sv",
                   "rtl/machine/cadr_console_bus.sv",

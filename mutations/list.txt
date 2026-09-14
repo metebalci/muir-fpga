@@ -4429,6 +4429,16 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `debuggee_reset` is NOT in the anchor, and that is the interesting
 @note half: it reaches the machine's own reset, so it is read whatever the
 @note fold does.
+@note
+@note **AND A TENTH TIME**, when the debug cable went onto ONE Pmod
+@note connector.  What the two-connector arrangement folded --- a second
+@note board's answer to this board's debugger, and whether either connector
+@note had anything on it --- is gone, and what folds now is the connector's
+@note own four: the role this board has, whether somebody else is driving
+@note the header, and whether it is driven at all and carrying good frames.
+@note The board's console reads all four as page 0's word 14, so on a board
+@note with a processing system this fold is a SECOND reader; on one without
+@note it is the only one.
 @old
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
@@ -4441,7 +4451,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr,
                    dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit,
-                   ja_back, ja_live, jb_live, dbg_holder};
+                   dbg_holder,
 @new
                    ch_wrote, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
@@ -4454,7 +4464,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr,
                    dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit,
-                   ja_back, ja_live, jb_live, dbg_holder};
+                   dbg_holder,
 @end
 
 @mutation the-interrupt-reaches-no-pin
@@ -11124,7 +11134,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @end
 
 # ---------------------------------------------------------------------------
-# The debug cable on two Pmod connectors
+# The debug cable's carrier, and the two debuggers at one page
 #
 # `rtl/plumbing/cadr_dbg_pmod.sv` carries MIT's twenty-one wires over eight
 # pins, four each way, and `rtl/plumbing/cadr_dbg_join.sv` lets the connector
@@ -11337,46 +11347,48 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign sel = busy ? (a_req ? 1'b0 : 1'b1) : held;
 @end
 
-@mutation the-debug-connectors-are-crossed-at-the-top-level
+@mutation the-debug-connector-drives-all-eight-pads
 @check arty
 @file boards/arty-z7-20/cadr_arty.sv
-@note The two Pmod connectors carry the same four signals in mirrored
-@note directions, so the wiring that tells them apart is at the instantiation
-@note and nowhere else. Crossed, the DBGIN end listens to the strobe coming
-@note back from JA while JB's own strobe reaches nothing.
+@note **ONE connector carries both directions, so the pads are bidirectional
+@note and the tri-state enable is what tells the two groups apart.**  The four
+@note this board does not own must be high-impedance, or the far end cannot
+@note drive them: two boards on one cable would hold all eight from both ends,
+@note which is the thing the whole design of this connector is about.
 @note
-@note **LINT CATCHES THIS ONE BECAUSE IT ORPHANS A PIN**, and it is worth
-@note saying which crossings it cannot catch. `dbgin_stb` stops being read at
-@note all, which is UNUSEDSIGNAL. Swap two signals that are BOTH still read
-@note --- the two strobes, say --- and no tool anywhere sees it, which this
-@note repository already records about `.m_awaddr` and `.m_araddr`. What
-@note covers that case is the check, where the carrier's two ends are wired by
-@note the testbench and a crossed line produces a word the poison refuses.
+@note Driven unconditionally, `ja_t` is read by nothing: UNUSEDSIGNAL at the
+@note declaration, which is the only shape of this bug lint can see.
+@note
+@note **WHAT LINT CANNOT SEE HERE IS WORTH NAMING.**  A crossing that leaves
+@note every signal read --- the two pin groups swapped inside the connector,
+@note say --- is invisible to every tool, which this repository already records
+@note about `.m_awaddr` and `.m_araddr`.  What covers that is
+@note `build/dbg_cable.pass`, where the testbench is the cable, both boards are
+@note real and every pad is counted on every tick;
+@note `the-connector-swaps-its-two-pin-groups` is the record.
 @old
-      .tx_stb(dbgin_ret_stb), .tx_d(dbgin_ret_d),
-      .rx_stb(dbgin_stb), .rx_d(dbgin_d)
+    assign ja[i] = ja_t[i] ? 1'bz : ja_o[i];
 @new
-      .tx_stb(dbgin_ret_stb), .tx_d(dbgin_ret_d),
-      .rx_stb(dbgout_ret_stb), .rx_d(dbgin_d)
+    assign ja[i] = ja_o[i];
 @end
 
-@mutation the-debug-connectors-answer-reaches-no-pin
+@mutation the-debug-connectors-role-reaches-no-pin
 @check arty
 @file boards/arty-z7-20/cadr_arty.sv
-@note What a second board answers this board's own debugger with is carried
-@note back into the fabric and folded, because consuming it would mean
-@note deciding which of two debuggees on one debugger's cable an
-@note acknowledgement came from --- and this board's own machine is always one
-@note of them. Folded, synthesis keeps the receiver; dropped from the fold,
-@note nothing reads it and the whole return half of JA is trimmed away, so the
+@note The connector's four status signals --- the role this board has, whether
+@note somebody else is driving the header, and whether it is driven at all and
+@note carrying good frames --- are read by the console as page 0's word 14 and
+@note by the `witness` fold.  On a board with no processing system there is no
+@note console, so the fold is the ONLY reader: dropped from it, nothing reads
+@note them on the default board, the fitter trims the role logic away and the
 @note connector becomes a pin count rather than a path.
 @note
 @note The same shape as `dev_wdata`, and caught the same way: UNUSEDSIGNAL at
 @note the declaration, which is the only shape of this bug lint can see.
 @old
-                   ja_back, ja_live, jb_live, dbg_holder};
+                   dbg_engaged, dbg_foreign, dbg_live, dbg_active};
 @new
-                   ja_live, jb_live, dbg_holder};
+                   dbg_engaged, dbg_foreign, dbg_live};
 @end
 
 # ============================================================================
@@ -12202,9 +12214,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the smallest magnitude that can be caught is one.  Caught at "the ticks
 @note the boot button was held for is 0x3f, the reference says 0x40".
 @old
-    parameter int unsigned BOOT_T   = 64
+    parameter int unsigned BOOT_T   = 64,
 @new
-    parameter int unsigned BOOT_T   = 63
+    parameter int unsigned BOOT_T   = 63,
 @end
 
 @mutation console-answers-the-boot-write-before-the-button-is-up
@@ -12482,24 +12494,20 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign drive_ret = !engaged && tx_en;
 @end
 
-@mutation the-cable-hears-a-debugger-in-its-own-echo
-@check dbg_cable
-@file rtl/plumbing/cadr_dbg_cable.sv
-@note **The activity timer left running while this board is the debugger.**  A
-@note debugger listens to the RETURN group, so its timer is reset by the
-@note debuggee's own answers; the tick it stops being the debugger it believes
-@note somebody is driving the FORWARD group and starts driving the return one,
-@note on top of the debuggee that is still driving it.
-@note
-@note ALSO A DEFECT THE CHECK FOUND, and the second of the three: four pads
-@note from both ends for as long as the timer took to run out.  What a board
-@note coming out of the role knows about the connector is nothing.
-@old
-      if (engaged) act_t <= ACT_W'(LOSS_T);
-      else if (act_s[1] != act_q) act_t <= '0;
-@new
-      if (act_s[1] != act_q) act_t <= '0;
-@end
+# **THE TIMER'S OWN HALF OF THAT RULE IS AN EQUIVALENCE, MEASURED, AND IS NOT
+# A RECORD.**  `the-cable-hears-a-debugger-in-its-own-echo` used to live here
+# and dropped `act_t <= LOSS_T` from the engaged arm.  It was caught while the
+# synchroniser ran, and it cannot be caught now that the synchroniser is held:
+# with `act_s` and `act_q` pinned at zero there is no transition to reset the
+# timer, so it free-runs to saturation and stays there --- and `take` will not
+# let a board engage unless `active` is already false, which is to say unless
+# the timer has already saturated.  So the count is saturated at every instant
+# the role can be taken and holding it is redundant given the hold above it.
+# Filed here rather than as a hole, on this project's own rule that an
+# equivalent mutant looks exactly like a finding.  The live record for the rule
+# is `the-cable-remembers-the-strobe-from-the-other-role`, whose mutation
+# restores the whole of the arrangement this one halved.
+
 
 @mutation the-second-board-takes-a-role-that-is-taken
 @check dbg_cable
@@ -13254,4 +13262,164 @@ puts "PROG: build $want, was $ubefore, now $uafter"
     if {$after ne $want} {
 @new
     if {$before ne $want} {
+@end
+
+# ============================================================================
+# THE DEBUG CABLE ON ONE CONNECTOR: THE ROLE, AND THE PAGE THAT IS NEVER
+# SWITCHED OFF
+# ============================================================================
+#
+# MIT's cable is Pmod JA on every board here, both directions, four pins each
+# way.  A board is a debugger or a debuggee on it and never both at once, and
+# the whole of what these records hold is that the roles cannot collide and
+# that taking one does not cost this board its own DBGIN page.
+#
+# **THE FIRST OF THEM WAS A DEFECT AND NOT A GUESS**, found by the role leg of
+# `build/dbg_cable.pass` the day it was written: 2,048 pad-ticks driven from
+# both ends of one cable, four pads for the whole of `LOSS_T`, at the tick the
+# second board was told to disconnect.
+
+@mutation the-cable-remembers-the-strobe-from-the-other-role
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE SYNCHRONISER LEFT RUNNING WHILE THIS BOARD IS THE DEBUGGER.**
+@note `rx_stb` is `pin_i[RET_STB]` while engaged and `pin_i[FWD_STB]` after, so
+@note the role changing MOVES THIS SYNCHRONISER FROM ONE PIN TO ANOTHER.  With
+@note its two flops left running, the tick the role goes they hold the far
+@note end's return strobe while the new pin holds something else, and the
+@note comparison one tick later reads as a transition on the forward group.
+@note The board then believes a debugger has appeared and starts driving the
+@note return group on top of the debuggee that is still answering it.
+@note
+@note **THIS WAS A DEFECT, MEASURED**: the first fix held the TIMER and not the
+@note synchroniser, and the fault it was written against came back by the one
+@note route the timer's own hold does not cover.  2,048 pad-ticks from both
+@note ends --- four pads for the whole of `LOSS_T` --- at the tick the second
+@note board was told to disconnect.  It stood until the role leg of this check
+@note existed, which is the argument for the leg.
+@note
+@note **AND THE TIMER'S OWN HALF IS AN EQUIVALENCE**, which is recorded at the
+@note head of this section rather than filed as a hole: with the synchroniser
+@note held there is no transition to reset the timer, so it saturates on its
+@note own --- and a board cannot take the role at all unless it has.  This
+@note record's mutation restores the whole arrangement and is the live one.
+@old
+    end else if (engaged) begin
+      act_s <= 2'b00;
+      act_q <= 1'b0;
+      act_t <= ACT_W'(LOSS_T);
+    end else begin
+      act_s <= {act_s[0], rx_stb};
+      act_q <= act_s[1];
+      if (act_s[1] != act_q) act_t <= '0;
+@new
+    end else begin
+      act_s <= {act_s[0], rx_stb};
+      act_q <= act_s[1];
+      if (engaged) act_t <= ACT_W'(LOSS_T);
+      else if (act_s[1] != act_q) act_t <= '0;
+@end
+
+@mutation a-debuggee-drives-before-it-hears-a-debugger
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **A debuggee drives nothing until it hears a debugger**, and that is what
+@note makes the power-on state of two cabled boards safe: with nobody told
+@note anything they are two debuggees, and both would otherwise drive the
+@note return group.  A board with no cable in it drives nothing at all, for
+@note ever.  The cost is one frame of silence at the start of a session.
+@note
+@note Driving always, the two boards hold four pads from both ends from the
+@note tick they come out of reset, which the check counts on every tick of
+@note every phase.
+@old
+  assign tx_en = engaged || active;
+@new
+  assign tx_en = 1'b1;
+@end
+
+@mutation a-tie-at-the-join-goes-to-the-connector
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_join.sv
+@note **A tie goes to the WINDOW, which is the debugger that is always there.**
+@note With the cable idle the selection follows whichever arm asks, and when
+@note neither does it has to rest somewhere: resting on the connector means a
+@note request appearing at the window is carried with `sel` already pointing
+@note the other way, so the page sees the connector's levels --- which, on a
+@note board that holds the cable's other role, are a hard zero.  The window's
+@note request then reaches the page never.
+@note
+@note What catches it is the role leg: a board told to connect drives the
+@note connector, and its own window writes into its own address latch while it
+@note does.  With the tie the wrong way that latch never moves.
+@old
+  assign sel = busy ? held : (a_req ? 1'b0 : 1'b1);
+@new
+  assign sel = busy ? held : 1'b1;
+@end
+
+@mutation console-connects-the-debug-cable-on-any-value
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **The key is what makes a write a role change**, for word 6's reason and
+@note the button's: a value that means nothing --- zero off a dead bus, all
+@note ones off an undriven one --- must not take a connector away from the
+@note machine using it.  Without the test every write of word 14 asks for the
+@note role, so a stuck bus makes this board a debugger.
+@note
+@note The check writes fifteen values that are not a key at that word, among
+@note them zero, all ones, IDENT, UNMAPPED, the word's own read-back, the key
+@note byte-reversed and the two other keys on the page.
+@old
+  assign w_is_connect    = w_in && !w_idx[4] && (w_idx[3:0] == R_DEBUG) &&
+                           (w_full == DEBUG_KEY);
+@new
+  assign w_is_connect    = w_in && !w_idx[4] && (w_idx[3:0] == R_DEBUG);
+@end
+
+@mutation console-reports-the-role-it-asked-for-and-not-the-one-it-has
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **BIT 0 IS THE ROLE THIS BOARD HAS AND BIT 1 IS THE ONE IT ASKED FOR, and
+@note they are two facts.**  The connector refuses the role while somebody else
+@note is driving the forward group, so a console that reported the ask in bit 0
+@note would say this board was the debugger when the far one is --- and a
+@note person reading it would go looking for a fault in the cable.  It is the
+@note same rule as SW0's two bits, one register along.
+@note
+@note Caught where the check holds the connector down while the console asks:
+@note word 14 must read bit 1 up and bit 0 DOWN.
+@note
+@note **WRITTEN AS AN OR AND NOT AS A SUBSTITUTION**, because lint catches a
+@note mutation at bit granularity: `dbg_connect, dbg_connect` leaves
+@note `dbg_engaged` read by nothing and Verilator says so, which is lint doing
+@note the catching instead of the check.  The OR keeps every signal used and
+@note is the same defect --- a board that says it has the role whenever it
+@note asked for it.
+@old
+        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, 3'd0,
+                           dbg_live, dbg_active, dbg_foreign,
+                           dbg_connect, dbg_engaged};
+@new
+        R_DEBUG: r_word = {DEBUG_KEY[31:16], connects, 3'd0,
+                           dbg_live, dbg_active, dbg_foreign,
+                           dbg_connect, dbg_connect | dbg_engaged};
+@end
+
+@mutation console-keeps-the-role-through-the-disconnect-key
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **The complement gives the role back**, and a console that could ask for
+@note it and not release it would leave a board holding a connector until the
+@note next reset --- with the far board unable to take it, since the first
+@note board told is the one that has it.  Dropped, `cadr-console
+@note debug-cable-disconnect` completes and changes nothing.
+@note
+@note The complement rather than a second spelling is what stops a partial
+@note write of one key being the other, which matters because the two are
+@note opposite operations; that is the parameter's own note.
+@old
+          else if (w_is_disconnect) dbg_connect <= 1'b0;
+@new
+          else if (w_is_disconnect) dbg_connect <= dbg_connect;
 @end

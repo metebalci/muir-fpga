@@ -116,6 +116,63 @@ set_false_path -from [get_ports { sw[*] }]
 set_property -dict { PACKAGE_PIN D10   IOSTANDARD LVCMOS33 } [get_ports { uart_rxd_out }]; #IO_L19N_T3_VREF_16 Sch=uart_rxd_out
 set_property -dict { PACKAGE_PIN A9    IOSTANDARD LVCMOS33 } [get_ports { uart_txd_in }];  #IO_L14N_T2_SRCC_16 Sch=uart_txd_in
 
+## ------------------------------------------------- MIT's debug cable, Pmod JA
+##
+## A board is a debugger or a debuggee on this cable and never both at once, so
+## one connector carries the whole link in both directions and the other three
+## headers carry nothing of this design's. JD is where this board's card is to
+## go --- it has no slot of its own --- and JB and JC are headers the board has
+## and this design has no opinion about. `docs/debug-cable.md` has the whole of
+## it.
+##
+## Pins from Digilent's `Arty-A7-100-Master.xdc`, lines 43 to 50, with that
+## file's own schematic names kept in the comments. Digilent indexes the header
+## `ja[0]` to `ja[7]` and its schematic names run 1, 2, 3, 4, 7, 8, 9, 10 ---
+## the two signal rows of a twelve-pin Pmod, the other four being ground and
+## supply. **THAT IS THE SAME INDEXING THE TWO ZYNQ BOARDS USE**, where
+## Digilent's file names the same eight as four differential pairs; compared row
+## by row, `ja[k]` is header pin `{1,2,3,4,7,8,9,10}[k]` on all three boards, so
+## a straight ribbon between any two of them maps every signal to its
+## counterpart.
+##
+## FOUR PINS EACH WAY, one strobe and three data.
+## `rtl/plumbing/cadr_dbg_pmod.sv` has the argument for splitting them rather
+## than sharing seven and turning them around; `rtl/plumbing/cadr_dbg_cable.sv`
+## is the connector that puts both directions on this one header. The LOW four
+## are the debugger's at both ends and the HIGH four the debuggee's, and the
+## roles decide who drives which group.
+##
+## **THEY ARE BIDIRECTIONAL**, and they have to be: the role is not fixed at
+## synthesis. `cadr_dbg_cable.sv` hands out a tri-state enable a pad, so the
+## group this board does not own is high-impedance and the far end has it.
+set_property -dict { PACKAGE_PIN G13   IOSTANDARD LVCMOS33 } [get_ports { ja[0] }]; #IO_0_15 Sch=ja[1]
+set_property -dict { PACKAGE_PIN B11   IOSTANDARD LVCMOS33 } [get_ports { ja[1] }]; #IO_L4P_T0_15 Sch=ja[2]
+set_property -dict { PACKAGE_PIN A11   IOSTANDARD LVCMOS33 } [get_ports { ja[2] }]; #IO_L4N_T0_15 Sch=ja[3]
+set_property -dict { PACKAGE_PIN D12   IOSTANDARD LVCMOS33 } [get_ports { ja[3] }]; #IO_L6P_T0_15 Sch=ja[4]
+set_property -dict { PACKAGE_PIN D13   IOSTANDARD LVCMOS33 } [get_ports { ja[4] }]; #IO_L6N_T0_VREF_15 Sch=ja[7]
+set_property -dict { PACKAGE_PIN B18   IOSTANDARD LVCMOS33 } [get_ports { ja[5] }]; #IO_L10P_T1_AD11P_15 Sch=ja[8]
+set_property -dict { PACKAGE_PIN A18   IOSTANDARD LVCMOS33 } [get_ports { ja[6] }]; #IO_L10N_T1_AD11N_15 Sch=ja[9]
+set_property -dict { PACKAGE_PIN K16   IOSTANDARD LVCMOS33 } [get_ports { ja[7] }]; #IO_25_15 Sch=ja[10]
+
+## AN UNPLUGGED CONNECTOR MUST READ ZERO AND NOT FLOAT. The carrier treats a
+## strobe that never moves as a connector with nothing on it, so it never takes
+## a frame, holds its levels at zero and says it is not live --- which is the
+## idle cable, `-DEBUG IN REQ` up, and is what the SIP at DBGIN 0A22 does on
+## MIT's own board. A floating input decides that question by noise. All eight
+## carry a pull-down and not four of them, because either group can be the one
+## this board is listening to.
+set_property PULLTYPE PULLDOWN [get_ports { ja[*] }]
+
+## AND THERE IS NO CLOCK ON THIS CONNECTOR, so there is no instant by which an
+## edge on it must arrive and no setup window to meet. What makes the link safe
+## is the beat: the far end holds each level for six ticks and the strobe is
+## sampled through two flops, so the data has been standing for two ticks when
+## it is taken and stands for three more. That is a property of the protocol
+## and not of the route, and an input delay constraint here would be a fiction
+## about a clock the board does not have.
+set_false_path -from [get_ports { ja[*] }]
+set_false_path -to   [get_ports { ja[*] }]
+
 ## **BOTH FALSE-PATHED, AND A BAUD RATE IS WHY.** At 115,200 baud one bit
 ## lasts 868 ticks of this board's clock, so neither end of this line has a
 ## setup relationship with anything: the transmitter holds a level for the
