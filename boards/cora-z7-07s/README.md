@@ -89,10 +89,10 @@ those figures read:
 | DSP | 4 | 66 | 6.1% |
 
 **It fits, and block RAM is what binds.** It is also by a wide margin the
-tightest of the four boards in this repository. The same design is 30.7% of the
-Arty A7-100's block RAM and 55.3% of the Arty S7-50's, and 29.6% of the Arty
-Z7-20's. So the small Zynq is the hard board, and the Artix and the Spartan are
-not, which is the opposite of what the part numbers suggest.
+tightest of the three boards in this repository. The same design is 30.7% of the
+Arty A7-100's block RAM and 29.6% of the Arty Z7-20's. So the small Zynq is the
+hard board and the Artix is not, which is the opposite of what the part numbers
+suggest.
 
 That 83% also inverts the obvious plan for making room. Dropping the debug
 cable adapter, the second general-purpose port, muir and the Pmod debugging
