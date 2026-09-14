@@ -46,6 +46,7 @@ PKG="$TREE/boards/arty-z7-20/linux/buildroot/package"
 READER="$PKG/cadr-common/src/fpgarc.sh"
 STARTER="$PKG/cadr-common/src/daemon.sh"
 MKSD="$TREE/boards/arty-z7-20/linux/mksd-buildroot.sh"
+MKSDREL="$TREE/boards/arty-z7-20/linux/mksd-release.sh"
 WORK=${WORK:-$HOME/.cache/muir-fpga-fpgarc-$$}
 
 fails=0
@@ -1364,6 +1365,292 @@ if generate_fpgarc "1"; then
 		fail "the card's file has no carriage returns"
 	fi
 fi
+
+# ---------------------------------------------------------------------------
+# 7.  The card mirrors the server: the board's four files in the board's
+#     folder, the three fixed names at the root, and a U-Boot that predates
+#     the change refused.
+# ---------------------------------------------------------------------------
+#
+# **WHY THIS IS HERE AND NOT IN A CHECK OF ITS OWN.**  This check already runs
+# the real card script's fpgarc generator by lifting it out on its own anchors,
+# because the rest of that script wants a bitstream, a Buildroot output tree
+# and genimage.  The card's LAYOUT has exactly the same shape: two small blocks
+# of the script that can be run alone against fabricated files, and no board.
+# What a staging run proves on top of this is that genimage carried the folder
+# into the image, which is read back there and cannot be read back here.
+#
+# **THE PROPERTY.**  Three files stay at the root of the boot partition because
+# their names are not ours to move --- BOOT.BIN, which the boot ROM reads from
+# the root of the first FAT partition; u-boot.img, which the SPL asks for by
+# that name at the root; and uEnv.txt, which U-Boot imports before any board
+# name is known.  The board's own four go in a folder named as the board's
+# directory under `boards/` is, which is the name the TFTP server's directory
+# for that board already has.  A card staged the old way and a U-Boot built the
+# new way is a board that loops saying it cannot find a file, so the staging
+# refuses that pair by name.
+
+# A block of a card script, lifted on its own anchors and run alone, the
+# anchors asserted so that a rename fails this check by name instead of
+# quietly testing nothing --- which is `mutations/list.txt`'s discipline
+# borrowed for a shell script, and the same thing `anchor` above does to the
+# init scripts.  $1 is a line of the first line, $2 of the last, $3 where to
+# put it, $4 the script (mksd-buildroot.sh unless said).
+lift() {
+	_first=$1; _last=$2; _out=$3; _src=${4:-$MKSD}
+	_n=$(grep -Fc -- "$_first" "$_src" 2>/dev/null || true)
+	if [ "$_n" != "1" ]; then
+		fail "the anchor '$_first' matches $_n times in $(basename "$_src")," \
+		     "not once: this check has rotted against the script it is for"
+		return 1
+	fi
+	awk -v first="$_first" -v last="$_last" '
+		!on && index($0, first) { on = 1; start = NR }
+		on { print }
+		on && NR > start && index($0, last) { exit }
+	' "$_src" > "$_out"
+	if [ ! -s "$_out" ]; then
+		fail "$(basename "$_src") has no block starting '$_first': this check has rotted"
+		return 1
+	fi
+	if ! grep -Fq -- "$_last" "$_out"; then
+		fail "the block starting '$_first' does not reach '$_last': this check has rotted"
+		return 1
+	fi
+	return 0
+}
+
+case_head "the card script puts the board's four files in the board's own folder"
+sandbox
+mkdir -p "$WORK/lay/images" "$WORK/lay/out"
+for f in boot.bin u-boot.img zImage rootfs.cpio.uboot zynq-arty-z7-20.dtb; do
+	echo "$f" > "$WORK/lay/images/$f"
+done
+echo bitstream > "$WORK/lay/the.bit"
+if lift 'cp "$IMAGES/boot.bin" "$OUT/card/BOOT.BIN"' \
+        'cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot"' \
+        "$WORK/lay/copy.sh"; then
+	( set -eu
+	  OUT="$WORK/lay/out"
+	  IMAGES="$WORK/lay/images"
+	  BIT="$WORK/lay/the.bit"
+	  BOARD_NAME=arty-z7-20
+	  BOARD_DTB=zynq-arty-z7-20.dtb
+	  mkdir -p "$OUT/card/$BOARD_NAME"
+	  . "$WORK/lay/copy.sh" ) 2>"$WORK/lay/err"
+	if [ $? != 0 ]; then
+		fail "the card script's copy block did not run: $(cat "$WORK/lay/err")"
+	else
+		root_ok=yes
+		for f in BOOT.BIN u-boot.img; do
+			[ -f "$WORK/lay/out/card/$f" ] || { fail "card/$f is not at the root"; root_ok=no; }
+		done
+		[ "$root_ok" = yes ] && ok "BOOT.BIN and u-boot.img are at the root, where their names are fixed"
+		folder_ok=yes
+		for f in cadr.bit zynq-arty-z7-20.dtb zImage rootfs.cpio.uboot; do
+			[ -f "$WORK/lay/out/card/arty-z7-20/$f" ] \
+				|| { fail "card/arty-z7-20/$f is not in the board's folder"; folder_ok=no; }
+			if [ -f "$WORK/lay/out/card/$f" ]; then
+				fail "card/$f is also at the root, where nothing reads it"
+				folder_ok=no
+			fi
+		done
+		[ "$folder_ok" = yes ] \
+			&& ok "and cadr.bit, the tree, zImage and the root filesystem are in arty-z7-20/ and nowhere else"
+	fi
+fi
+
+case_head "a U-Boot that loads from the root of the partition is refused by name"
+sandbox
+mkdir -p "$WORK/ub/card"
+if lift '# AND IT MUST LOAD THE BOARD' 'done' "$WORK/ub/refuse.sh"; then
+	# Two fabricated loaders, differing in the one thing the refusal reads.
+	# `strings` takes them as they are, being text.
+	printf 'bootcmd=run cadr_boot\ncadr_card=load mmc 0:1 ${a} arty-z7-20/cadr.bit && load mmc 0:1 ${b} arty-z7-20/zynq-arty-z7-20.dtb && load mmc 0:1 ${c} arty-z7-20/zImage && load mmc 0:1 ${d} arty-z7-20/rootfs.cpio.uboot && run cadr_bootz\n' \
+		> "$WORK/ub/new.img"
+	printf 'bootcmd=run cadr_boot\ncadr_card=load mmc 0:1 ${a} cadr.bit && load mmc 0:1 ${b} zynq-arty-z7-20.dtb && load mmc 0:1 ${c} zImage && load mmc 0:1 ${d} rootfs.cpio.uboot && run cadr_bootz\n' \
+		> "$WORK/ub/old.img"
+	run_refusal() {
+		cp "$1" "$WORK/ub/card/u-boot.img"
+		( set -eu
+		  OUT="$WORK/ub"
+		  BOARD_NAME=arty-z7-20
+		  BOARD_DTB=zynq-arty-z7-20.dtb
+		  die() { echo "mksd-buildroot: $*" >&2; exit 1; }
+		  . "$WORK/ub/refuse.sh" ) 2>"$WORK/ub/err"
+	}
+	if run_refusal "$WORK/ub/new.img"; then
+		ok "a U-Boot that loads arty-z7-20/cadr.bit and the rest is accepted"
+	else
+		fail "the staging refuses a U-Boot that IS right: $(cat "$WORK/ub/err")"
+	fi
+	if run_refusal "$WORK/ub/old.img"; then
+		fail "the staging accepts a U-Boot that loads cadr.bit from the root of the partition"
+	else
+		ok "and one that loads cadr.bit from the root is refused"
+		# **AN EXIT CODE CANNOT TELL TWO FAILURES APART**, so the
+		# message is asserted and not the status: this refusal has to
+		# say which file and what to do, because a plain stop here
+		# reads as a broken staging tool rather than a stale U-Boot.
+		if grep -q 'arty-z7-20/cadr.bit' "$WORK/ub/err"; then
+			ok "and it names the file it wanted"
+		else
+			fail "the refusal does not name the file: $(cat "$WORK/ub/err")"
+		fi
+		if grep -q 'buildroot-rebuild' "$WORK/ub/err"; then
+			ok "and it names the command that rewrites the loader"
+		else
+			fail "the refusal does not say how to fix it: $(cat "$WORK/ub/err")"
+		fi
+	fi
+fi
+
+case_head "every board's U-Boot loads its four files from its own folder"
+sandbox
+# A here-document and not a pipe: a `while` on the far end of a pipe runs in a
+# subshell, and the failure count this check exits on would be incremented
+# there and lost --- a case that prints FAIL and still leaves the run green.
+while IFS= read -r spec; do
+	env_file="$TREE/${spec%%=*}"
+	rest=${spec#*=}
+	board=${rest%%=*}
+	dtb=${rest#*=}
+	if [ ! -f "$env_file" ]; then
+		fail "no environment at $env_file: this check has rotted"
+		continue
+	fi
+	block=$(sed -n '/^cadr_card=/,/^$/p' "$env_file")
+	bad=0
+	for f in cadr.bit "$dtb" zImage rootfs.cpio.uboot; do
+		echo "$block" | grep -q "load mmc 0:1 [^ ]* $board/$f " \
+			|| { fail "$(basename "$env_file")'s cadr_card does not load $board/$f"; bad=1; }
+	done
+	# uEnv.txt is imported before any board name is known, so it must NOT
+	# be under the folder: a card whose loader looked for it there would
+	# never read the file that decides which path it takes.
+	grep -q "load mmc 0:1 \${cadr_uenv_addr} uEnv.txt" "$env_file" \
+		|| { fail "$(basename "$env_file") does not import uEnv.txt from the root of the partition"; bad=1; }
+	[ "$bad" = 0 ] && ok "$(basename "$env_file"): all four out of $board/, and uEnv.txt from the root"
+done <<'ENVS'
+boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/cadr.env=arty-z7-20=zynq-arty-z7-20.dtb
+boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/cadr_cora.env=cora-z7-07s=zynq-cora-z7-07s.dtb
+ENVS
+
+# ---------------------------------------------------------------------------
+# 8.  The release guard: it lets the card's own file through, and it still
+#     catches an address.
+# ---------------------------------------------------------------------------
+#
+# **A GUARD NOBODY RUNS IS A GUARD NOBODY KNOWS IS WRONG, AND THIS ONE WAS.**
+# mksd-release.sh greps the staged card for anything address-shaped, because
+# the flag that says a release carries nothing of ours is a flag and a flag can
+# be wrong.  When the card's file of flags became a full menu it gained the
+# loopback in its prose and RFC 5737's TEST-NET-1 in its two commented
+# examples, and the guard exempted 0.0.0.0 alone --- so a release stopped on
+# every board, naming four lines that were not private at all.  Nothing had run
+# it, so nothing said so.
+#
+# So the guard is run here, on the file the card script really writes, both
+# ways: it must pass what a release carries, and it must still catch a private
+# address and a MAC.  The second half is what keeps the first from being
+# bought by widening the exemption until nothing is caught.
+case_head "the release guard passes the card's own file of flags and still catches an address"
+sandbox
+mkdir -p "$WORK/rel/card" "$WORK/rel/packs"
+if lift 'addrs=$(grep -rEoh' '| sort -u || true)' "$WORK/rel/guard.sh" "$MKSDREL" \
+   && generate_fpgarc ""; then
+	cp "$WORK/gen/packs/fpgarc" "$WORK/rel/packs/fpgarc"
+	run_guard() {
+		( set -u
+		  OUT="$WORK/rel"
+		  . "$WORK/rel/guard.sh"
+		  printf '%s' "$addrs" )
+	}
+	got=$(run_guard)
+	if [ -z "$got" ]; then
+		ok "the file the card script writes carries nothing the guard calls an address"
+	else
+		fail "the guard stops a release on the card's own file: $(echo "$got" | tr '\n' ' ')"
+	fi
+	# The bite.  A private address and a MAC, which are the two things the
+	# guard exists for and the two shapes a card has really carried.
+	# The two values below are invented for this case and are on no network
+	# and no board: 10.0.0.7 is a private address this project does not use,
+	# and 02:00:00:00:00:01 is a locally-administered MAC nobody can have
+	# been given.  A guard that catches a MAC cannot be tested without a
+	# MAC-shaped string, and this is the least real one there is.
+	printf 'serverip=10.0.0.7\nethaddr=02:00:00:00:00:01\n' > "$WORK/rel/card/uEnv.txt"
+	got=$(run_guard)
+	if echo "$got" | grep -q '10\.0\.0\.7'; then
+		ok "and a private address on the boot partition still stops the release"
+	else
+		fail "the guard no longer catches a private address: the exemptions have eaten it"
+	fi
+	if echo "$got" | grep -qi '02:00:00:00:00:01'; then
+		ok "and so does a MAC"
+	else
+		fail "the guard no longer catches a MAC"
+	fi
+	rm -f "$WORK/rel/card/uEnv.txt"
+	# And the exemptions are only the addresses that cannot name a host: an
+	# address one away from an exempt one is not exempt.
+	printf -- '--chaos-udp-peer 3060@0.0.0.1:42043\n' > "$WORK/rel/packs/near"
+	got=$(run_guard)
+	if echo "$got" | grep -q '0\.0\.0\.1'; then
+		ok "and 0.0.0.1 is not 0.0.0.0"
+	else
+		fail "the guard exempts more than the exact strings it names"
+	fi
+	rm -f "$WORK/rel/packs/near"
+fi
+
+# ---------------------------------------------------------------------------
+# 9.  A release carries nothing from local.conf, because it does not read it.
+# ---------------------------------------------------------------------------
+#
+# **THIS IS A CHECK ON THE SOURCE AND NOT ON A RUN, AND THE REASON IS THE
+# PROPERTY'S OWN SHAPE.**  The card script used to read local.conf always and
+# then clear six values by name when STANDALONE was set.  Every card setting is
+# read as `${VAR:-<default>}`, so local.conf could set any of them, and only
+# six were ever in that list --- measured on this project's own build host, a
+# release image carried this board's Chaosnet station number, which no address
+# guard can see because it is an octal number on a private subnet.  A list of
+# names is a place to be short.  Not reading the file is not.
+#
+# So what is asserted is the structure: there is exactly one place local.conf
+# is read, and it is guarded by STANDALONE.  A run cannot show this without a
+# Buildroot output tree and a bitstream, and a run that showed it for the six
+# names in the list would have passed before the fault as well.
+case_head "a release does not read local.conf at all"
+sandbox
+n=$(grep -c '^[[:space:]]*\. "\$BOARD_DIR/linux/local.conf"' "$MKSD" 2>/dev/null || true)
+if [ "$n" != "1" ]; then
+	fail "mksd-buildroot.sh reads local.conf $n times, not once: this check has rotted"
+else
+	ok "local.conf is read in exactly one place"
+	if grep -B2 '^[[:space:]]*\. "\$BOARD_DIR/linux/local.conf"' "$MKSD" \
+	   | grep -q '\[ -z "\$STANDALONE" \]'; then
+		ok "and that place is guarded by STANDALONE, so a release cannot carry anything from it"
+	else
+		fail "local.conf is read with no STANDALONE guard: a release would carry whatever is in it"
+	fi
+fi
+# And the environment, which a file cannot be asked about: the flag still
+# clears by name the settings an exported variable could otherwise carry into
+# a release.  This is the list that can go short, so it is named here and the
+# case says which two kinds of value it is for.
+cleared=yes
+for v in SERVERIP ETHADDR CHAOS_PEER CHAOS_DEFAULT_PEER CC_PACK NO_AUTO_BOOT \
+         CHAOS_ADDR_FPGA CHAOS_ADDR_MUIR; do
+	if sed -n '/^if \[ -n "\$STANDALONE" \]; then$/,/^fi$/p' "$MKSD" | grep -q "$v="; then
+		:
+	else
+		fail "STANDALONE does not clear $v, so an exported one would reach a release"
+		cleared=no
+	fi
+done
+[ "$cleared" = yes ] \
+	&& ok "and STANDALONE clears the private values and the board's station numbers out of the environment"
 
 echo
 if [ "$fails" = 0 ]; then

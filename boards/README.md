@@ -45,6 +45,43 @@ only way to see the machine at all. A board nothing can reach is a board the
 CADR cannot be used on, so the Arty S7-50 is not a target. The Arty A7-100
 keeps its place because it has an Ethernet PHY on fabric pins.
 
+## The card
+
+**Every board's card has the same two partitions and the same layout**, so that
+a person who has learnt one card has learnt all of them.
+
+    partition 1  BOOT   BOOT.BIN, u-boot.img and uEnv.txt at the root, and a
+                        folder named as the board's directory here is ---
+                        `arty-z7-20/`, `cora-z7-07s/` --- holding that board's
+                        cadr.bit, device tree, zImage and root filesystem
+    partition 2  PACKS  the disk packs, muir-cc.img where a debugger runs,
+                        fpgarc, muirrc and a README.TXT, all at the root
+
+**The boot partition mirrors the TFTP server.** One server serves more than one
+board here, every board's files carry the same names, and a flat root would
+hand one board another's bitstream. So a board's served set lives in a
+directory named for it, and the card holds the same four files under the same
+name. A card belongs to one board, so the folder is not what keeps two boards
+apart on it; what it buys is that the card and the server hold the same thing
+in the same place.
+
+**Three files stay at the root because their names are not ours to move.** The
+boot ROM reads `BOOT.BIN` from the root of the first FAT partition and nowhere
+else, the SPL asks for `u-boot.img` by that name at the root, and `uEnv.txt` is
+imported before any board name is known.
+
+**The pack partition is flat on every board.** A pack, the README and the two
+files of flags belong to the machine rather than to the part. What differs
+between two boards' cards there is the Chaosnet address inside `fpgarc` and
+`muirrc`, which each board's own `local.conf` sets.
+
+**One staging script writes every board's card and one release script builds
+every board's image**, both taking the board in the same two variables.
+`docs/boot.md` has the recipes, the sizes and what a release carries. A board
+with no processing system gets the same card image with an empty boot
+partition, because the packs are the machine's world and not the part's; the
+Arty A7-100 is that case and its own README says what is distributed for it.
+
 ## The order
 
 The Arty Z7-20 is the board and stays the board. The other two are listed in the
