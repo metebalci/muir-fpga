@@ -576,9 +576,17 @@ The board has two Pmod headers and this design uses one of them.
 MIT's cable joins one CADR's `DBGOUT` connector to another's `DBGIN`. Here the
 whole of it is JA: four pins each way, one strobe and three data lines a
 direction. The low four are the debugger's and the high four the debuggee's, so
-a straight Pmod ribbon from one board's JA to another's JA maps every signal to
-its counterpart. The pads are bidirectional, because the role is not fixed at
-synthesis.
+a straight Pmod ribbon from this board's JA to another board's connector maps
+every signal to its counterpart. The pads are bidirectional, because the role
+is not fixed at synthesis.
+
+**The far board's connector is not always JA.** The Cora Z7-07S uses JA as
+this board does. The Arty A7-100 uses JB, because that board has four headers
+and Digilent publishes two of them as high-speed while JA and JD are its
+standard ports, with a series resistor in line with every signal. Every board
+indexes a header's eight signals in the same order, so a straight ribbon still
+maps each pin to its counterpart whichever headers the two ends are.
+`docs/debug-cable.md` has the pins for all three.
 
 **A board is a debuggee with nothing set.** It answers a debugger that plugs
 into JA exactly as MIT's board answers one on its DBGIN, and that is the

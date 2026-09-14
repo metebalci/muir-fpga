@@ -188,12 +188,14 @@ puts the twenty-one wires on `M_AXI_GP1` as sixteen words. muir reaches them
 with ordinary loads and stores through `/dev/mem`. `docs/debug-cable.md` is
 the whole of it.
 
-A second board is the same cable on one Pmod connector, JA, which carries the
-whole link in both directions: four pins each way, one strobe and three data
-lines a direction, eight beats a frame. A board is a debugger or a debuggee by
-configuration and never both at once, which is what makes one connector enough;
-a second one bought only a chain of three machines. JB is not assigned. The
-cable's 11.05 us budget makes the beats free.
+A second board is the same cable on one Pmod connector, JA on the Zynq boards
+and JB on the Arty A7-100, whose JA is a standard Pmod with series resistors.
+The connector carries the whole link in both directions: four pins each way, one
+strobe and three data lines a direction, eight beats a frame. A board is a
+debugger or a debuggee by configuration and never both at once, which is what
+makes one connector enough; a second one bought only a chain of three machines.
+The other Pmod is not assigned. The cable's 11.05 us budget makes the beats
+free.
 
 All three boards carry the connector, in every configuration, because a board
 is always a debuggee. A board becomes the debugger by `--debug-cable-connect`

@@ -543,11 +543,27 @@ on ONE Pmod header and decides which four of its eight pins this board drives.
 `rtl/plumbing/cadr_dbg_join.sv` lets that connector and the window share one
 DBGIN page.
 
-**The connector is JA. JB is unassigned and carries nothing.** A board is a
+**One connector a board, and the other headers carry nothing.** A board is a
 debugger or a debuggee on this cable and never both at once, so a second
 header would buy only the case of a board debugging one machine while another
-debugs it. The register window already covers that case: muir on this board's
-own Arm cores reaches the DBGIN page whatever the connector is doing.
+debugs it. On the two Zynq boards the register window already covers that
+case: muir on those boards' own Arm cores reaches the DBGIN page whatever the
+connector is doing.
+
+**Which connector is the board's own decision, and the two Zynq boards say JA
+where the Arty A7-100 says JB.** Those two boards have two headers each and
+nothing in their pin files tells one header from the other. JA is the connector
+there because a board needs one. The Arty A7-100 has four headers and they are not
+alike. Digilent publishes its JB and JC as high-speed Pmod ports and its JA and
+JD as standard ones, which is a series resistor in line with every signal; that
+is the vendor's own description of the board. The published pin file agrees
+twice over, and that half is checkable here. It names JB's and JC's pins as
+coupled pairs and JA's and JD's plain. And all four of JB's header rows are
+true differential pairs of one bank, two of them clock-capable, while not one
+of JA's four rows is a pair at all. This link rests on a strobe at the far end
+of a ribbon, so on that board it goes on JB. Its card stays on JD, the other
+standard port: a microSD module plugs straight into the header with no ribbon
+between it and the part.
 
 ### What actually crosses, counted off the netlist
 
@@ -594,8 +610,9 @@ shared group turned around is two sets of drivers that must agree on the
 instant with no back channel to agree on. The eighth wire is a strobe and
 nothing is clocked by it.
 
-**JB is not assigned.** It is a header the board has and this design has no
-opinion about.
+**Every other header is unassigned.** They are headers the boards have and
+this design has no opinion about, bar the Arty A7-100's JD, which is where
+that board's card goes.
 
 ### Four pins each way
 
@@ -622,14 +639,17 @@ input.
 Digilent's master file marks exactly one clock-capable pair on the two headers
 of each Zynq board, JA3_P and JA3_N, and it is on JA. That pair is in the
 debuggee's group here and is of no use to anybody. It is recorded so that
-nobody reads the choice of JA as being about it: JA is the connector because a
-board needs one, and the pair is a coincidence.
+nobody reads the choice of JA as being about it: JA is the connector on those
+boards because a board needs one, and the pair is a coincidence. The same goes
+for the Arty A7-100's JB, which carries two clock-capable pairs where its JA
+carries none: that board's connector is JB because JB is high-speed, and the
+clock-capable pins are one more thing nothing here uses.
 
 ### Which four pins are this board's
 
-A Pmod ribbon joins pin one to pin one. A cable from one board's JA to
-another's JA therefore maps each pin to the same pin at the far end, and which
-end drives it has to follow the role.
+A Pmod ribbon joins pin one to pin one. A cable between two boards' connectors
+therefore maps each pin to the same pin at the far end, and which end drives it
+has to follow the role.
 
 The four low pins are the debugger's. It drives them and the debuggee listens.
 The four high pins are the debuggee's. Neither group is ever driven from both
@@ -643,21 +663,27 @@ Every pad carries a pull-down: an unplugged connector must read zero and not
 float, and either group can be the one this board is listening to.
 
 **The pins, per board, from Digilent's own published files.** The index is the
-carrier's and the header pin is the one on the connector.
+carrier's and the header pin is the one on the connector. **The header is JA on
+the two Zynq boards and JB on the Arty A7-100**, for the reason the section
+above gives.
 
-| index | header pin | role | Arty Z7-20 | Cora Z7-07S | Arty A7-100 |
+| index | header pin | role | Arty Z7-20 JA | Cora Z7-07S JA | Arty A7-100 JB |
 |---|---|---|---|---|---|
-| 0 | 1 | debugger data 0 | Y18 | Y18 | G13 |
-| 1 | 2 | debugger data 1 | Y19 | Y19 | B11 |
-| 2 | 3 | debugger data 2 | Y16 | Y16 | A11 |
-| 3 | 4 | debugger strobe | Y17 | Y17 | D12 |
-| 4 | 7 | debuggee data 0 | U18 | U18 | D13 |
-| 5 | 8 | debuggee data 1 | U19 | U19 | B18 |
-| 6 | 9 | debuggee data 2 | W18 | W18 | A18 |
-| 7 | 10 | debuggee strobe | W19 | W19 | K16 |
+| 0 | 1 | debugger data 0 | Y18 | Y18 | E15 |
+| 1 | 2 | debugger data 1 | Y19 | Y19 | E16 |
+| 2 | 3 | debugger data 2 | Y16 | Y16 | D15 |
+| 3 | 4 | debugger strobe | Y17 | Y17 | C15 |
+| 4 | 7 | debuggee data 0 | U18 | U18 | J17 |
+| 5 | 8 | debuggee data 1 | U19 | U19 | J18 |
+| 6 | 9 | debuggee data 2 | W18 | W18 | K15 |
+| 7 | 10 | debuggee strobe | W19 | W19 | J15 |
 
-The two Zynq boards use the same package pins, so a ribbon between any two of
-the three maps every signal to its counterpart. The files are
+Every one of the three files indexes a header's eight signals in the same
+order, which is header pins 1, 2, 3, 4, 7, 8, 9, 10 --- the two signal rows of
+a twelve-pin Pmod, the other four being ground and supply. So index `k` is the
+same header pin on all three boards, and a straight ribbon between any two of
+them maps every signal to its counterpart, whichever headers the two ends are.
+The two Zynq boards use the same package pins as each other. The files are
 `Arty-Z7-20-Master.xdc`, `Cora-Z7-07S-Master.xdc` and `Arty-A7-100-Master.xdc`
 from `github.com/Digilent/digilent-xdc` at commit
 `00a3404901f35aa9567b01ecb3f2c233b6efe9f4`. Each board's own `.xdc` keeps
@@ -1051,13 +1077,13 @@ count and not a constant transcribed into the check.
 ### The attachment, which is built
 
 **All three boards carry the connector, in every configuration.**
-`boards/arty-z7-20/cadr_arty.sv`, `boards/cora-z7-07s/cadr_cora.sv` and
-`boards/arty-a7-100/cadr_arty_a7.sv` each bring JA out as eight bidirectional
-pads and instantiate `cadr_dbg_cable.sv` on them, outside the generate block
-that holds the processing system. That is not tidiness: **a board is always a
-debuggee**, so the connector has to exist on a board with no console and no
-window at all, and a top-level pin nothing drives is a PINMISSING besides. JB
-carries nothing on either Zynq board and its sixteen constraints are gone.
+`boards/arty-z7-20/cadr_arty.sv` and `boards/cora-z7-07s/cadr_cora.sv` bring JA
+out as eight bidirectional pads and `boards/arty-a7-100/cadr_arty_a7.sv` brings
+out JB, and each instantiates `cadr_dbg_cable.sv` on them, outside the generate
+block that holds the processing system. That is not tidiness: **a board is
+always a debuggee**, so the connector has to exist on a board with no console
+and no window at all, and a top-level pin nothing drives is a PINMISSING
+besides. Every unassigned header carries nothing and has no constraints.
 
 The machine's own DBGOUT page leaves `cadr_machine` for it. Those seven ports
 used to be tied off inside that module with a note saying the wrapper change
@@ -1085,9 +1111,12 @@ is the cable and both boards are real.
 `rtl/machine/cadr_dbgin.sv` is instantiated in
 `rtl/machine/cadr_memory_path.sv` beside the three Unibus slaves,
 `cadr_machine.sv` passes both ends of the cable up as ports, and all three
-boards put `cadr_debug_window.sv` behind a general-purpose port,
-`cadr_dbg_cable.sv` on Pmod JA, and `cadr_dbg_join.sv` between them and the
-page. What is left is a physical cable and a board to plug it into. The lines
+boards put `cadr_dbg_cable.sv` on a Pmod header --- JA on the two Zynq boards
+and JB on the Arty A7-100 --- with `cadr_dbg_join.sv` between it and the page.
+The two Zynq boards put `cadr_debug_window.sv` behind a general-purpose port as
+well, so the join has two arms there. The Arty A7-100 has no window and its
+join has one arm empty. The window is how a program plays the far end of this
+cable, and that board has no program that could. What is left is a physical cable and a board to plug it into. The lines
 are the lines
 `tb/cadr_dbgin_harness.sv` was written with, which is what that harness is
 for: it was the attachment before the attachment landed, and the arbiter it

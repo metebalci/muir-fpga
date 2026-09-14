@@ -915,11 +915,25 @@ CHECKS = {
     # 'ibex_cheriot_pkg' not found`.  The waiver has to be first of all, which
     # is what its own header says.
     "soc": {
+        # **THE HARNESS IS A SOURCE AND NOT AN EXTRA, WHICH `probe` AND
+        # `a7_mem` BOTH DO ALREADY.**  `tb/cadr_soc_harness.sv` is not the
+        # checker --- `tb/cadr_soc_tb.cpp` is --- it is the Arty A7-100's own
+        # composition below the clock, standing in for a top level Verilator
+        # cannot elaborate for want of an `MMCME2_BASE`.  The things only a
+        # composition can get wrong are therefore in it, and one of them is
+        # what this board does with the arm of `cadr_dbg_join.sv` that the
+        # debug cable's register window drives on a Zynq and nobody drives
+        # here.  A mutation cannot reach the top level's own copy of that
+        # tie-off, `arty_a7` being a lint with no entry in this table; the
+        # harness's copy is what a record can name, and `arty_a7.pass` linting
+        # the real top level in seven configurations is what keeps the two
+        # from coming apart in shape.
         "sources": ["rtl/plumbing/cadr_soc_axi.sv", "rtl/plumbing/cadr_soc.sv",
                     "rtl/plumbing/cadr_soc_cross.sv",
                     "rtl/plumbing/cadr_soc_uart.sv",
                     "rtl/plumbing/cadr_soc_ram.sv",
-                    "rtl/plumbing/cadr_soc_timer.sv"],
+                    "rtl/plumbing/cadr_soc_timer.sv",
+                    "tb/cadr_soc_harness.sv"],
         "extra": [
             "rtl/machine/cadr_phase_gen.sv",
             "rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_ddr_map.sv",
@@ -934,7 +948,7 @@ CHECKS = {
             "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
             "rtl/plumbing/cadr_bus_audit.sv",
             "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
-            "tb/cadr_soc_harness.sv",
+            "rtl/plumbing/cadr_dbg_join.sv",
             "third_party/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_lfsr.sv",
             "third_party/ibex/rtl/ibex_alu.sv",
             "third_party/ibex/rtl/ibex_compressed_decoder.sv",
@@ -959,7 +973,6 @@ CHECKS = {
             "third_party/ibex/rtl/ibex_wb_stage.sv",
             "third_party/ibex/rtl/ibex_core.sv",
             "rtl/plumbing/cadr_console.sv", "rtl/plumbing/cadr_disk_pack.sv",
-            "rtl/plumbing/cadr_debug_window.sv",
             "rtl/plumbing/cadr_gp0_default.sv"
         ],
         "top": "cadr_soc_harness",

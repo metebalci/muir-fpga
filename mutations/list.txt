@@ -12961,9 +12961,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # `build/soc.pass` runs the board's own firmware on an Ibex in fabric against
 # a real `cadr_machine`, and reads every line it says off the UART.  The
 # records below are aimed at the seam between the two: the bridge that turns
-# one of the core's loads or stores into one AXI transaction at one of four
+# one of the core's loads or stores into one AXI transaction at one of three
 # slaves, and the UART the firmware speaks through.  Everything else in that
-# design has a check of its own --- the four faces, the machine, and Ibex,
+# design has a check of its own --- the three faces, the machine, and Ibex,
 # which is lowRISC's.
 
 @mutation soc-bridge-drops-an-address-bit
@@ -13027,33 +13027,129 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
           if (bvalid_sel || st == W_RESP) begin
 @end
 
-@mutation soc-bridge-reads-the-wrong-window
+@mutation soc-bridge-sends-the-consoles-page-to-the-catch-all
 @check soc
 @file rtl/plumbing/cadr_soc_axi.sv
-@note **The console's page sent to the debug cable's window.**  Both are 4 KB
-@note pages on what was `M_AXI_GP1`, both answer every address they are
-@note offered, and both return a four-letter identifier --- so a decode that
-@note confused them would leave every handshake correct, every transaction
-@note completing and every slave behaving.  Nothing about the AXI protocol is
-@note wrong here; what is wrong is who is being spoken to.
+@note **The console's page answered by the default slave.**  Both answer every
+@note address they are offered and both return a four-letter identifier, so a
+@note decode that confused them would leave every handshake correct, every
+@note transaction completing and every slave behaving.  Nothing about the AXI
+@note protocol is wrong here; what is wrong is who is being spoken to.
 @note
 @note This is the crossing CLAUDE.md records as caught by nothing, anywhere,
 @note by any tool: two signals read in each other's place are both read.  What
-@note catches it is that the faces do not answer the same word --- which is
+@note catches it is that the slaves do not answer the same word --- which is
 @note the whole argument for every face in this repository having an
-@note identifier.  **Measured, the catching line is `the firmware said 11
-@note line(s), wanting 12`**: the console's identifier comes back "DBUG", and
-@note then the halt and the step are written into the debug cable's registers
-@note instead of the machine's, so the diagnostic cycles are not answered and
-@note two of the firmware's lines become one.  The identifier is what makes it
-@note visible; the line count is what the runner reports first.
+@note identifier.
+@note
+@note **IT USED TO SEND THAT PAGE TO THE DEBUG CABLE'S WINDOW**, which was the
+@note sharper form while there were two faces at `0x8000_*` and the mutant
+@note could swap one for the other.  The window is not on this board any more
+@note --- it is how a PROGRAM plays the far end of MIT's cable, and this
+@note board's debugger is a second board on the Pmod --- so the bridge has two
+@note windows and a catch-all where it had three and one, and the catch-all is
+@note what the console's page can be misdirected to.
 @note
 @note Written as a swap rather than as a deletion so that `CON_BASE` stays
 @note read and lint does not do the catching.
+@note
+@note **MEASURED, AND THE LEGIBLE LINE IS THE THIRD**: `the console at
+@note 0x80000000 answers NONE (0x4e4f4e45), wanting CONS (0x434f4e53)`.  The
+@note runner reports `the firmware said 12 line(s), wanting 13` first, because
+@note the halt and the step are then written into the default slave instead of
+@note the machine's own registers, the diagnostic cycles are not answered and
+@note two of the firmware's lines become one.  The identifier is what makes it
+@note visible; the line count is what is reported first.
 @old
     else if (page == CON_BASE[31:12]) return S_CON;
 @new
-    else if (page == CON_BASE[31:12]) return S_DBG;
+    else if (page == CON_BASE[31:12]) return S_DFLT;
+@end
+
+@mutation soc-the-window-page-is-a-page-of-its-own
+@check soc
+@file rtl/plumbing/cadr_soc_axi.sv
+@note **A decode given back to `0x8000_1000`, the page the debug cable's
+@note register window holds on the two Zynq boards.**  There is no window on
+@note this board: it exists so that muir, on a Zynq board's own ARM cores, can
+@note play the far end of MIT's debug cable in software, and the only
+@note processor here is the one running the firmware, which is the console.
+@note This board's debugger is a SECOND BOARD on Pmod JB, which reaches the
+@note machine's DBGIN page through the cable's own carrier and never through
+@note this bridge.
+@note
+@note So that page is one more address nothing implements, and what must
+@note answer it is the catch-all.  **That is exactly the kind of claim this
+@note repository has been caught making and not checking**: an address a face
+@note used to hold is the one place in a four-gigabyte window where "every
+@note address is answered" could have been left with a hole and nothing would
+@note have said so --- the GP0-hang rule being about every address and not
+@note about the ones somebody remembered.
+@note
+@note This mutant is the defect written down: somebody puts the special case
+@note back, and that page stops being the catch-all's.  It sends it to the
+@note console, which answers, so nothing hangs and no handshake is wrong ---
+@note what is wrong is the word that comes back.
+@note
+@note **MEASURED, AND IT IS CAUGHT ON THE LINE THAT IS ABOUT IT**: `line 11 is
+@note "cadr-soc: the window's page at 0x80001000 answers .... (0xbcb0b1ac),
+@note wanting NONE (0x4e4f4e45)"`, with `1 failure(s)` in the summary behind
+@note it.  The word is whatever the console makes of an address a thousand
+@note registers past its own, which is not a value anybody could read as an
+@note identifier --- and that is the point: nothing else in the run moves, so
+@note the catch is the claim and nothing else.
+@old
+    else return S_DFLT;
+@new
+    else if (page == 20'h80001) return S_CON;
+    else return S_DFLT;
+@end
+
+@mutation soc-the-window-arm-of-the-join-asks-for-the-page
+@check soc
+@file tb/cadr_soc_harness.sv
+@note **The arm of `cadr_dbg_join.sv` that nobody drives on this board, left
+@note asking for the machine's DBGIN page.**  The join gives that page to
+@note whichever of its two arms asserts first and holds it until that arm
+@note lifts, and a tie goes to arm A --- which on the two Zynq boards is
+@note `cadr_debug_window.sv`, the register window muir reaches over a
+@note general-purpose port.  There is no window on an Arty A7-100 and no
+@note program that could be a debugger, so arm A is tied idle: `a_req` low,
+@note which is `-DEBUG IN REQ` UP, exactly what the SIP at DBGIN 0A22 does to
+@note a connector with nothing on it.
+@note
+@note **AN IDLE ARM IS A CLAIM AND NOT AN ABSENCE**, which is why it is
+@note watched every tick rather than read off the tie-off.  An arm that
+@note asserted would take the page, keep it for as long as it asserted ---
+@note nothing pre-empts, on purpose --- and leave the connector unable to
+@note reach the machine at all.  It is a level and not a pulse, so the damage
+@note is permanent rather than occasional.
+@note
+@note **THE FILE IS THE HARNESS AND THAT IS DELIBERATE.**  The harness is not
+@note the checker: `tb/cadr_soc_tb.cpp` is.  It is the Arty A7-100's own
+@note composition below the clock, standing in for a top level Verilator
+@note cannot elaborate for want of an `MMCME2_BASE`, and the tie-off is a
+@note thing only a composition can get wrong.  `probe` and `a7_mem` both have
+@note their harness in `sources` for the same reason.  The top level's own
+@note copy of this tie-off is out of a mutation's reach --- `arty_a7` is a
+@note lint with no entry in the runner's table --- and what holds the two in
+@note the same shape is `arty_a7.pass` linting the real file in seven
+@note configurations.
+@note
+@note **MEASURED, AND THE THREE LINES THAT NAME IT ARE THE PROPERTY'S OWN**:
+@note `the join's window arm asked for the DBGIN page on 1037005 tick(s)`,
+@note `the join gave the DBGIN page to its window arm on 1036942 tick(s)` and
+@note `something asked for the machine's DBGIN page on 1037005 tick(s)`.  The
+@note runner reports `the firmware said 12 line(s), wanting 13` first, and the
+@note damage behind that is exactly what the note above predicts: the debug
+@note master takes the debuggee's Unibus and holds it, the console's own
+@note diagnostic cycles are not answered --- `halted, but the diagnostic cycle
+@note was not answered` --- and the step reports `CYCLES moved 296` where one
+@note was wanted.  Fourteen checks fail in all.
+@old
+  assign dbg_in_req     = 1'b0;
+@new
+  assign dbg_in_req     = 1'b1;
 @end
 
 @mutation soc-uart-runs-at-half-its-baud
