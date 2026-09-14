@@ -174,10 +174,11 @@ programs and each of them refuses a flag it does not know, so none of them is
 given it whole. A board with no `fpgarc` runs the defaults, which are System
 100's own address and CHUDP's own port.
 
-Four flags this program refuses by name are in its list all the same:
-`--chaos-file-root`, `--chaos-file-peers`, `--server-name` and `--time`. The
-program answers each by saying where the host went, and a card that named one
-would otherwise get silence.
+The four flags this program refuses by name are not in that list, and are not
+written on the card either: `--chaos-file-root`, `--chaos-file-peers`,
+`--server-name` and `--time`. A card still carrying one of those lines is named
+at boot by the report on lines no program takes, and the Chaosnet starts. In
+the list instead, the line would reach the program and stop it.
 
     --chaos-address 3050         this machine's Chaosnet address, in octal.
                                  It is the DIP switches on MIT's card, so it

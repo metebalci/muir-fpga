@@ -661,6 +661,65 @@ if [ "$ran" = yes ]; then
 	fi
 fi
 
+# **AND A FLAG THE CHAOSNET PROGRAM REFUSES BY NAME IS ONE OF THOSE LINES.**
+# `--chaos-file-root`, `--chaos-file-peers`, `--server-name` and `--time` named
+# a file host and a time host that used to live inside that program.  They were
+# in its list for a while, so that a card still carrying one got the program's
+# own answer about where the host went --- but a claimed line reaches the
+# program, and the program exits on it, so the price of that answer was the
+# whole Chaosnet.  Unclaimed, the same card gets the line named at boot and a
+# Chaosnet that runs, which is the better of the two.
+#
+# The stand-in program refuses the flag $REFUSE names, as the real one refuses
+# these four, so this bites the moment the flag is claimed again: the program
+# would then be handed it and would go.
+case_head "a flag the Chaosnet program refuses is reported, and the Chaosnet still starts"
+sandbox
+printf '%s\r\n' \
+	'--chaos-address 3050' \
+	'--chaos-file-root /mnt/packs/file-root' > "$WORK/packs/fpgarc"
+ran=yes
+for pair in "cadr-disk-packs S80cadr-disk-packs" "cadr-terminal S85cadr-terminal" \
+            "cadr-serial S86cadr-serial" "cadr-chaosnet S87cadr-chaosnet" \
+            "cadr-usb-input S88cadr-usb-input"; do
+	set -- $pair
+	prepare "$1" "$2" || ran=no
+done
+if [ "$ran" = yes ]; then
+	REFUSE=--chaos-file-root
+	export REFUSE
+	for sc in S80cadr-disk-packs S85cadr-terminal S86cadr-serial \
+	          S87cadr-chaosnet S88cadr-usb-input; do
+		run_script "$sc"
+	done
+	unset REFUSE
+	if grep -q -- '--chaos-file-root' "$WORK/out.S88cadr-usb-input"; then
+		ok "the line nobody takes is named on the console"
+	else
+		fail "the refused flag is not named as unclaimed; the last script says:"
+		sed 's/^/        /' "$WORK/out.S88cadr-usb-input"
+	fi
+	if grep -q -- '--chaos-file-root' "$WORK/out.S87cadr-chaosnet"; then
+		fail "the Chaosnet script was handed a flag its program refuses:"
+		sed 's/^/        /' "$WORK/out.S87cadr-chaosnet"
+	else
+		ok "the Chaosnet program was never handed it"
+	fi
+	if grep -q "Starting cadr-chaosnet: OK" "$WORK/out.S87cadr-chaosnet"; then
+		ok "and the Chaosnet started"
+	else
+		fail "the Chaosnet did not start; the script says:"
+		sed 's/^/        /' "$WORK/out.S87cadr-chaosnet"
+	fi
+	# And the rest of the file still reached it, so this is a card that
+	# works rather than one that says nothing.  The Chaosnet script is run
+	# once more for this, because `run_script` keeps only the last script's
+	# call and the report above needed S88 to be last.
+	run_script S87cadr-chaosnet
+	passes "--chaos-address 3050" "cadr-chaosnet"
+	passes_not "--chaos-file-root" "cadr-chaosnet"
+fi
+
 # ---------------------------------------------------------------------------
 # 5.  The boot button: --no-auto-boot holds the machine before the drive comes
 #     present.
