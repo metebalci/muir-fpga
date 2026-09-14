@@ -97,10 +97,29 @@ struct usb_set {
 	unsigned refuseds;
 	// Whether to take the devices exclusively, and which kinds are wanted.
 	int grab, want_keyboard, want_mouse;
+	// `--usb-trace`: a line on the log for every key event, whatever became
+	// of it.  Set-wide rather than per device, because it is a person
+	// watching a keyboard and not a property of one node --- and because
+	// the two signals that switch it have nowhere else to put it.  Mouse
+	// events are NOT traced; `usb_keys.h` says why.
+	int trace;
 	unsigned long opened, gone, keys, moves;
 };
 
 void usb_set_init(struct usb_set *s);
+
+// `--usb-trace`: a line for every key event, on the log.
+void usb_set_traced(struct usb_set *s, int on);
+
+// `SIGUSR1` turns the trace on and `SIGUSR2` turns it off, so that a keyboard
+// can be watched without restarting the program.  `usb_trace_signals`
+// installs the two handlers; `usb_trace_apply` acts on what they asked for
+// and says one line when it CHANGES, and is called once a pass of the
+// program's loop --- not in the handler, where `say` may not be called.
+// Idempotent: a second `SIGUSR1` says nothing.  `cadr-console trace-keys
+// on|off` is the word that sends them.
+void usb_trace_signals(void);
+void usb_trace_apply(struct usb_set *s);
 
 // A descriptor this program did not open: the scan's own way in, and the
 // check's.  The set takes the descriptor and closes it in its own time.

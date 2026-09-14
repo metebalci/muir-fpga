@@ -72,7 +72,16 @@
 //     halt | start | step [N] | regs | status | ident | switch
 //     read EADR | write EADR VALUE
 //     examine ADDR [N] | deposit ADDR VALUE
+//     trace-keys on|off
 //     help | quit
+//
+// **ONE WORD HERE IS NOT ABOUT THE FABRIC AT ALL: `trace-keys`.**  It tells
+// `cadr-terminal` and `cadr-usb-input` to say what each key becomes, which is
+// how a key that does nothing is followed from the board's USB port or a
+// viewer to MIT's own key position.  It reads their pid files and signals
+// them, touching no register --- so it runs BEFORE the guard and the IDENT
+// below and works on a board whose fabric has no console in it.
+// `console_face.h` has the whole of it.
 
 #include <errno.h>
 #include <getopt.h>
@@ -212,6 +221,34 @@ static void do_debug_cable(struct console *c)
 	cons_say_debug_cable(&d);
 }
 
+// **`trace-keys on|off`: THE TWO INPUT PROGRAMS TOLD TO SAY WHAT A KEY
+// BECOMES.**  One line a program, whether it was reached or is not running,
+// because a word that silently reached one of the two would be worse than one
+// that reached neither.  It touches no register; `console_face.h` says why it
+// lives here and why it runs before the guard.
+static int do_trace_keys(int argc, char **argv)
+{
+	if (argc < 2 || (strcmp(argv[1], "on") != 0 && strcmp(argv[1], "off") != 0)) {
+		say("trace-keys on|off   tell cadr-terminal and cadr-usb-input to say what "
+		    "each key becomes, on their own logs");
+		return 2;
+	}
+	const int on = strcmp(argv[1], "on") == 0;
+	struct cons_trace_keys r;
+	int reached = 0;
+	cons_trace_keys(CONS_TRACE_TERMINAL, CONS_TRACE_TERMINAL_PID, on, &r);
+	cons_say_trace_keys(&r, on);
+	reached += r.reached == CONS_TRACE_SIGNALLED;
+	cons_trace_keys(CONS_TRACE_USB, CONS_TRACE_USB_PID, on, &r);
+	cons_say_trace_keys(&r, on);
+	reached += r.reached == CONS_TRACE_SIGNALLED;
+	// **THE STATUS ANSWERS "DID ANYBODY HEAR IT"**, as `switch` answers a
+	// question of its own: 0 when at least one program was told, 1 when
+	// neither was.  A board with no USB keyboard runs one of the two, and
+	// that is not a failure.
+	return reached ? 0 : 1;
+}
+
 static void do_status(struct console *c, unsigned settle_us)
 {
 	struct cons_status st;
@@ -282,6 +319,9 @@ static void help(void)
 	say("debug-cable-connect     ask to be the debugger on it (muir's --debug-cable-connect)");
 	say("debug-cable-disconnect  give the role back.  A board is a debuggee with nothing set,");
 	say("                        and its own register window is a debugger either way");
+	say("trace-keys on|off  tell cadr-terminal and cadr-usb-input to say what each key");
+	say("                becomes --- a keysym, MIT's own key position, or nothing at all.");
+	say("                Their logs, not this one; no register is touched");
 	say("read EADR       one diagnostic READ cycle");
 	say("write EADR VAL  one diagnostic WRITE cycle");
 	say("examine A [N]   N words of DDR from CADR physical word A --- not through the machine");
@@ -371,6 +411,8 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		// as in the line above.
 		exit_status = sw.held_at_reset ? 0 : 1;
 	}
+	else if (!strcmp(cmd, "trace-keys"))
+		exit_status = do_trace_keys(argc, argv);
 	else if (!strcmp(cmd, "read")) {
 		if (argc < 2) {
 			say("read EADR");
@@ -448,7 +490,9 @@ static void usage(void)
 		"  --log PATH       where to write (default stdout)\n"
 		"  --settle-us N    how long `status` waits between its two reads of CYCLES (default 2000)\n"
 		"  --no-guard       touch M_AXI_GP1 without checking the EMIO tally first\n"
-		"with no command it reads lines at a `>` prompt; `help` lists them\n");
+		"with no command it reads lines at a `>` prompt; `help` lists them\n"
+		"`trace-keys on|off` is the one command that touches no register: it tells\n"
+		"cadr-terminal and cadr-usb-input to say what each key becomes\n");
 }
 
 int main(int argc, char **argv)
@@ -483,6 +527,13 @@ int main(int argc, char **argv)
 		}
 	}
 	cadr_log_init("cadr-console: ", dest);
+
+	// **THE ONE WORD THAT IS NOT ABOUT THE FABRIC, DONE BEFORE THE GUARD.**
+	// `trace-keys` reads two pid files and signals two programs; it touches
+	// no register, so a board whose window does not answer must not stop it
+	// --- and the guard below and the IDENT after it would.
+	if (optind < argc && !strcmp(argv[optind], "trace-keys"))
+		return do_trace_keys(argc - optind, argv + optind);
 
 	int mem = cadr_open_mem();
 	if (mem < 0)

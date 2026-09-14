@@ -297,6 +297,11 @@ spelling for the shared file, which is what `cadr-chaosnet` already does with
     --no-mouse
     --usb-no-mouse
 
+    --trace              a line for every key event, on the log: what each key
+    --usb-trace          became, or that its code is not in the table. Off by
+                         default, and switched while the program runs by
+                         SIGUSR1 and SIGUSR2. The mouse is not traced
+
     --log PATH           where the log goes. The init script says /dev/console
 
     --once               find the devices, say what is there, and exit. It is
@@ -315,6 +320,65 @@ and no others and refuses nothing.
 second spelling above was for. A flag in `fpgarc` names one program, and
 `--device`, `--grab` and `--no-mouse` are words another program could want.
 `docs/fpgarc.md` has this program's list and everybody else's.
+
+## What a key became: the trace
+
+**`evtest` says what a keyboard sent and nothing says what this program made of
+it**, which is the half of the road that is this program's. A key code becomes a
+keysym here --- with the shift level applied, which is the one real decision in
+the file --- and the trace is that step written down.
+
+    key 30 KEY_A down on /dev/input/event0, no shift: a (keysym 0x61)
+    key 30 KEY_A down on /dev/input/event0, Shift held: A (keysym 0x41)
+    key 30 KEY_A up on /dev/input/event0: A (keysym 0x41), the keysym its press carried
+    key 71 KEY_KP7 down on /dev/input/event0, Num Lock on: KP_7 (keysym 0xffb7)
+    key 183 KEY_F13 down on /dev/input/event0: the code is not in the table, so nothing crosses the link --- the far end never sees this key
+
+**The key code is named as the kernel names it.** `KEY_A` is what `evtest`
+prints and what `/usr/include/linux/input-event-codes.h` calls it, so a line
+here and a line from `evtest` name the same key with the same word. The number
+is there too, because a code the kernel has no name for is still a code.
+
+**The level is named and so is what chose it.** Shift for every key but the
+keypad's, and Num Lock for those; a release names no level at all, because the
+level was consulted when the key went down and the release carries what the
+press carried. That last line is worth reading twice: it is why letting Shift go
+before the key does not leave a shifted position held down at the machine.
+
+**Every event that goes nowhere says so, and each for its own reason.** The
+kernel's auto-repeat, a key already down, a press beyond the twenty this program
+can owe releases for, an up for a key it never sent, and a code with no keysym.
+A key that does nothing is exactly the key somebody turns a trace on for, so a
+trace that printed nothing for them would be silent about the only events that
+matter.
+
+**The mouse is not traced.** A mouse sends a report every few milliseconds while
+it is moving, and a line each would be the whole console. What a mouse did is in
+the counters the program already prints, and `evtest` on the node is there for
+anybody who wants the raw stream.
+
+**The two traces are one road.** `cadr-terminal --keyboard-mapping-trace` is the
+far half: it says what the keysym this program sent became on MIT's own key
+table. The two name a keysym the same way, and the check asserts that entry by
+entry over the whole table, so a key can be followed from the board's USB port
+to a position on the machine's keyboard cable.
+
+### Turning it on while the program runs
+
+    cadr-console trace-keys on
+    cadr-console trace-keys off
+
+**That word turns on both halves of the road**, this program's and the
+terminal's. It reads their pid files and sends `SIGUSR1` or `SIGUSR2`; it
+touches no register and needs no bitstream. `docs/console.md` has it.
+
+**The flag is how a run starts with the trace on**, and it is off by default: a
+line a keystroke is not something to leave running on a board's own console.
+
+**The lines go to the console.** `S88cadr-usb-input` starts the program with
+`--log /dev/console`, as every daemon in this image is started, so somebody with
+the serial console open sees each key as it is typed --- and sees the terminal's
+own line for the same key beside it.
 
 ## What the checks hold
 

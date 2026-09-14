@@ -3074,6 +3074,222 @@ static void check_keyboard_boot(const char *work_dir)
 	key_boot_set(&srv.keys, b);
 }
 
+// **THE TRACE, WHICH IS muir'S OWN LINE.**
+//
+// `--keyboard-mapping-trace` writes a line for every keysym that arrives and
+// what it became, and this holds the WORDING of it: this project's rule that
+// a check on a program asserts the line it prints, and here the line IS the
+// product --- a trace that named the wrong key would send somebody to fix a
+// mapping that is right.
+//
+// **AND IT IS HELD TO muir's WORDING AND NOT TO ITS OWN.**  Every phrase
+// below is `muir::terminal::keyboard`'s `Went` Display, word for word, and
+// the shape of the line is `Keyboard::key_traced`'s: the keysym by number and
+// by name, down or up, and what it became.  What this adds is where the
+// keysym came from, and with no source named the line is muir's exactly ---
+// which is the property asserted last.
+static void check_keyboard_trace(void)
+{
+	struct key_state k;
+	char line[KEY_TRACE_MAX];
+
+	// --- (1) OFF BY DEFAULT, AND SILENT.  A trace nobody asked for would
+	// be a line a keystroke on the board's own console.
+	key_state_init(&k);
+	CHECK(k.trace == 0, "the trace is on before anything asked for it");
+	{
+		char *buf = NULL;
+		size_t len = 0;
+		FILE *was = cadr_log_file();
+		FILE *mem = open_memstream(&buf, &len);
+		cadr_log_init("  server: ", mem);
+		key_event_from(&k, 'a', 1, "a viewer");
+		key_event_from(&k, 'a', 0, "a viewer");
+		fflush(mem);
+		cadr_log_init("  server: ", was);
+		CHECK(len == 0, "the trace said something with the trace off: %s", buf ? buf : "");
+		fclose(mem);
+		free(buf);
+	}
+
+	// --- (2) THE EIGHT ANSWERS, each in muir's own words.  The line is
+	// handed back as well as printed, which is muir's own arrangement and
+	// is why this needs no stream.
+	key_state_init(&k);
+	key_traced(&k, 1);
+
+	// A key whose plane the viewer already holds: pressed, and named as a
+	// mapping file would name it.
+	key_event_traced(&k, 'a', 1, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0x61 a down from a viewer, a") == 0,
+	      "a plain letter from a viewer traced as: %s", line);
+	key_event_traced(&k, 'a', 0, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0x61 a up from a viewer, a") == 0,
+	      "a plain letter's release traced as: %s", line);
+
+	// A character whose plane the viewer is not holding: the Shift is
+	// worked around the key, and the line says so rather than calling it a
+	// plain press.
+	key_event_traced(&k, '!', 1, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0x21 ! down from a viewer, !, "
+		     "tapped with the shift worked around it") == 0,
+	      "a shifted character traced as: %s", line);
+	// ...and its release is owed to nobody, the key having gone whole.
+	key_event_traced(&k, '!', 0, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0x21 ! up from a viewer, nothing: its key was tapped "
+		     "and has gone already") == 0,
+	      "the release of a tapped key traced as: %s", line);
+
+	// A shifting key is a key at a position of its own, and is named as
+	// one: `Left Control` and not `Control`, which is what tells a mapping
+	// that collapsed the pair from one that did not.
+	key_event_traced(&k, KS_CONTROL_L, 1, "the input link", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0xffe3 Control_L down from the input link, "
+		     "Left Control") == 0,
+	      "a modifier from the input link traced as: %s", line);
+	key_event_traced(&k, KS_CONTROL_L, 0, "the input link", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0xffe3 Control_L up from the input link, Left Control") == 0,
+	      "a modifier's release traced as: %s", line);
+
+	// A keysym the mapping has nothing for: the answer to `why does this
+	// key do nothing`, and the reason the trace exists.  `Home` is one of
+	// the keys muir's own mapping reaches only behind the prefix, so it is
+	// named and unbound both, which is the pair worth pinning.
+	key_event_traced(&k, 0xff50u, 1, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0xff50 Home down from a viewer, no binding") == 0,
+	      "an unbound keysym traced as: %s", line);
+
+	// The prefix, which sends nothing of its own --- and saying so is the
+	// point, since printing nothing would look exactly like `no binding`.
+	key_event_traced(&k, 0xff14u, 1, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0xff14 Scroll_Lock down from a viewer, held as a prefix; "
+		     "the keysym after it is looked up behind it") == 0,
+	      "a prefix traced as: %s", line);
+	key_event_traced(&k, '1', 1, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0x31 1 down from a viewer, behind Scroll_Lock: Roman I") == 0,
+	      "a key behind the prefix traced as: %s", line);
+	// ...and a pair the mapping does not name, which is a different thing
+	// from a keysym with no binding of its own.
+	key_event_traced(&k, 0xff14u, 1, "a viewer", line, sizeof line);
+	key_event_traced(&k, '9', 1, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0x39 9 down from a viewer, behind Scroll_Lock: "
+		     "no binding") == 0,
+	      "an unbound pair behind the prefix traced as: %s", line);
+	// The prefix pressed again, which is the way out of a sequence begun by
+	// mistake.
+	key_event_traced(&k, 0xff14u, 1, "a viewer", line, sizeof line);
+	key_event_traced(&k, 0xff14u, 1, "a viewer", line, sizeof line);
+	CHECK(strcmp(line, "keysym 0xff14 Scroll_Lock down from a viewer, the prefix is let go, "
+		     "and nothing is sent") == 0,
+	      "the prefix let go traced as: %s", line);
+
+	// --- (3) A KEYSTROKE THE QUEUE HAD NO ROOM FOR, which is a character
+	// that does not type.  **Said, and not folded into a press**: a trace
+	// that called this sent would be asserting the opposite of what
+	// happened to the one person reading it for exactly this.
+	{
+		struct key_state full;
+		key_state_init(&full);
+		key_traced(&full, 1);
+		// The backlog filled: one key down and up, over and over, which
+		// is two words a time and is what a machine that has stopped
+		// reading its keyboard leaves behind.  **A key held down cannot
+		// fill it** --- a press of a key that is already down queues
+		// nothing --- so the release is what makes each pass count.
+		for (unsigned i = 0; i < KEY_BACKLOG; ++i)
+			key_event(&full, 'a', (int)(i % 2u) == 0);
+		CHECK(key_pending(&full) == KEY_BACKLOG,
+		      "the queue is %u words and not the %u the backlog is",
+		      key_pending(&full), (unsigned)KEY_BACKLOG);
+		// **AND THE KEY IS WRITTEN AS A POSITION HERE, WHICH IS muir'S
+		// OWN RULE AND NOT A SLIP.**  `(` is on two keys --- shifted at
+		// `0o71` and unshifted at `0o132` --- and with no shift held it
+		// is the unshifted one that is chosen, whose name `(` would read
+		// back as the OTHER key.  `key_written` writes a name only when
+		// reading it back gives this key again, so a mapping file could
+		// be written from this line.
+		key_event_traced(&full, '(', 1, "a viewer", line, sizeof line);
+		CHECK(strcmp(line, "keysym 0x28 ( down from a viewer, position 132 refused: "
+			     "the queue is full, 256 words the machine has not read") == 0,
+		      "a refused keystroke traced as: %s", line);
+	}
+
+	// --- (4) WHAT THE KEYBOARD'S OWN FIRMWARE DID, which is muir's
+	// `Firmware` and is said after what the key became: a key-up held back
+	// behind a boot word did nothing by design, and a line calling it sent
+	// would be the opposite of the truth.
+	{
+		struct key_state boot;
+		key_state_init(&boot);
+		key_traced(&boot, 1);
+		key_event_traced(&boot, KS_CONTROL_L, 1, NULL, line, sizeof line);
+		key_event_traced(&boot, KS_ALT_L, 1, NULL, line, sizeof line);
+		key_event_traced(&boot, KS_DELETE, 1, NULL, line, sizeof line);
+		CHECK(strcmp(line, "keysym 0xffff Delete down, Rubout, and the boot sequence is "
+			     "complete: the cold boot word goes after it") == 0,
+		      "the key that completes the boot sequence traced as: %s", line);
+		key_event_traced(&boot, KS_DELETE, 0, NULL, line, sizeof line);
+		CHECK(strcmp(line, "keysym 0xffff Delete up, Rubout held back: no key-up goes "
+			     "until the next key-down, so that the machine reads the boot word "
+			     "first") == 0,
+		      "the key-up held back behind the boot word traced as: %s", line);
+	}
+
+	// --- (5) WITH NO SOURCE NAMED THE LINE IS muir'S EXACTLY, which is
+	// the property that makes somebody who has read one machine's trace
+	// able to read the other's.  `../muir/src/terminal/keyboard.rs`'s
+	// `key_traced`: `keysym {:#x} {name} {down|up}, {went}`.
+	key_state_init(&k);
+	key_traced(&k, 1);
+	key_event_traced(&k, 'B', 1, NULL, line, sizeof line);
+	CHECK(strcmp(line, "keysym 0x42 B down, B, tapped with the shift worked around it") == 0,
+	      "muir's own line, with no source, came out as: %s", line);
+	CHECK(strstr(line, " from ") == NULL,
+	      "a line with no source named one anyway: %s", line);
+
+	// --- (6) THE SIGNALS SWITCH IT WHILE THE PROGRAM RUNS.  SIGUSR1 on,
+	// SIGUSR2 off, acted on where the program's loop calls
+	// `key_trace_apply` --- and the line is said only when it CHANGES, so
+	// that `cadr-console trace-keys on` twice is not two lines.
+	{
+		struct key_state sw;
+		char *buf = NULL;
+		size_t len = 0;
+		FILE *was = cadr_log_file();
+		FILE *mem = open_memstream(&buf, &len);
+		key_state_init(&sw);
+		key_trace_signals();
+		cadr_log_init("  server: ", mem);
+
+		raise(SIGUSR1);
+		key_trace_apply(&sw);
+		CHECK(sw.trace == 1, "SIGUSR1 did not turn the trace on");
+		key_event_from(&sw, 'a', 1, "a viewer");
+		fflush(mem);
+		CHECK(strstr(buf ? buf : "", "keysym 0x61 a down from a viewer, a") != NULL,
+		      "after SIGUSR1 no traced line appeared: %s", buf ? buf : "");
+		const size_t after_on = len;
+		// Asked again: nothing said, and nothing changed.
+		raise(SIGUSR1);
+		key_trace_apply(&sw);
+		fflush(mem);
+		CHECK(len == after_on, "a second SIGUSR1 said something: %s", buf + after_on);
+
+		raise(SIGUSR2);
+		key_trace_apply(&sw);
+		CHECK(sw.trace == 0, "SIGUSR2 did not turn the trace off");
+		fflush(mem);
+		const size_t after_off = len;
+		key_event_from(&sw, 'b', 1, "a viewer");
+		key_event_from(&sw, 'b', 0, "a viewer");
+		fflush(mem);
+		CHECK(len == after_off, "a key was traced after SIGUSR2: %s", buf + after_off);
+		cadr_log_init("  server: ", was);
+		fclose(mem);
+		free(buf);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	// A viewer that is dropped mid-write must not take the check with it:
@@ -3168,6 +3384,9 @@ int main(int argc, char **argv)
 
 	printf("--- how fast key words may be handed over\n");
 	check_key_pacing();
+
+	printf("--- the trace: muir's own line for what a keysym became\n");
+	check_keyboard_trace();
 
 	printf("--- the mouse\n");
 	check_mouse();

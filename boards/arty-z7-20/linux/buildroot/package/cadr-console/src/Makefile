@@ -44,7 +44,16 @@ endif
 
 HOSTCC ?= cc
 HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
-WORK   ?= $(HOME)/.cache/muir-fpga-console
+# **AND IT IS KEYED BY THE CHECKOUT, BECAUSE TWO OF THEM SHARE THIS HOME.**
+# The path was `~/.cache/muir-fpga-console` for every tree at once, so a
+# worktree whose sources were older than the last build done in another one
+# found the binary up to date and RAN THE OTHER TREE'S CHECK --- measured:
+# `make check` here printed a count from a console_test.c this directory does
+# not have.  A check that can report on somebody else's sources is the stale
+# artefact this project keeps meeting, and the cure is the one
+# `cadr-terminal` and `cadr-chaosnet` already use: the directory's own path,
+# hashed.
+WORK   ?= $(HOME)/.cache/muir-fpga-console-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 
 CFLAGS += -Wall -Wextra -std=gnu11
 

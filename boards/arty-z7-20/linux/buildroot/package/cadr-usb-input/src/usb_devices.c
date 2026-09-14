@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -34,6 +35,44 @@ void usb_set_init(struct usb_set *s)
 	s->want_mouse = 1;
 	for (unsigned k = 0; k < USB_MAX_DEVICES; ++k)
 		s->dev[k].fd = -1;
+}
+
+void usb_set_traced(struct usb_set *s, int on)
+{
+	s->trace = on;
+}
+
+// **THE TRACE SWITCHES WHILE THE PROGRAM RUNS**, because a board restarted to
+// get a diagnostic is a board whose Lisp is lost to get it.  The handler does
+// the one thing a handler may: writes a `sig_atomic_t`.  `usb_trace_apply` is
+// what acts on it, from the program's own loop, where `say` is allowed.
+//
+// `-1` is nothing asked, so that a run started with `--usb-trace` is not
+// turned off by the first pass of the loop.
+static volatile sig_atomic_t trace_asked = -1;
+
+static void trace_signal(int sig)
+{
+	trace_asked = (sig == SIGUSR1);
+}
+
+void usb_trace_signals(void)
+{
+	signal(SIGUSR1, trace_signal);
+	signal(SIGUSR2, trace_signal);
+}
+
+void usb_trace_apply(struct usb_set *s)
+{
+	const int want = trace_asked;
+	if (want < 0 || want == (s->trace != 0))
+		return;
+	s->trace = want;
+	if (want)
+		say("the key trace is ON (SIGUSR1): every key event and what became of it is a "
+		    "line here, until SIGUSR2 --- `cadr-console trace-keys off`");
+	else
+		say("the key trace is off (SIGUSR2)");
 }
 
 int usb_set_add(struct usb_set *s, int fd, unsigned kind, const char *node, const char *label)
@@ -339,7 +378,17 @@ static int step(struct usb_set *s, struct usb_device *d, const struct usb_out *o
 			if (ev.type != EV_KEY)
 				continue;
 			struct cadr_input_event e;
-			if (usb_kbd_key(&d->kbd, ev.code, ev.value, &e)) {
+			const int go = usb_kbd_key(&d->kbd, ev.code, ev.value, &e);
+			// **THE TRACE SAYS WHAT BECAME OF EVERY KEY EVENT,
+			// INCLUDING THE ONES THAT GO NOWHERE**, which are the
+			// events somebody turns a trace on for.  The line is
+			// built only when it is wanted.
+			if (s->trace) {
+				char line[USB_TRACE_MAX];
+				say("%s", usb_kbd_line(&d->kbd, d->node, ev.code, ev.value,
+						       line, sizeof line));
+			}
+			if (go) {
 				++s->keys;
 				emit(out, &e);
 			}

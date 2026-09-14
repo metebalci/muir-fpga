@@ -16,6 +16,7 @@
 #include "input_keys.h"
 
 #include <ctype.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -120,6 +121,75 @@ static unsigned shifting(unsigned s, uint8_t *out, unsigned max)
 		if (KEY_TABLE[p].kind == KEY_SHIFT && KEY_TABLE[p].shift == s)
 			out[n++] = (uint8_t)p;
 	return n;
+}
+
+// ---- what to call a key, which is what the trace prints ------------------
+//
+// `keyboard.rs`'s `position_name`, `key_name` and `key_written`, in that
+// order and doing the same three things.  A key is named the way a MAPPING
+// FILE names it, so that a traced line says what a `key` line would have to
+// say --- and where the name would not read back as this key, the position is
+// written instead, in octal as MIT writes it.
+
+static const char *position_name(uint8_t p, int shifted, char *out, size_t n)
+{
+	snprintf(out, n, "position %o%s", p, shifted ? " shifted" : "");
+	return out;
+}
+
+// `key_name`: what to call a position, the way the mapping writes it.
+static const char *key_name(uint8_t p, int shifted, char *out, size_t n)
+{
+	const struct key_entry *e = &KEY_TABLE[p];
+	switch (e->kind) {
+	case KEY_NAMED:
+		snprintf(out, n, "%s", e->name);
+		return out;
+	case KEY_SHIFT: {
+		uint8_t at[4];
+		const unsigned m = shifting(e->shift, at, 4);
+		unsigned side = 0;
+		for (unsigned i = 0; i < m; ++i)
+			if (at[i] == p) {
+				side = i;
+				break;
+			}
+		if (m > 1)
+			snprintf(out, n, "%s %s", side == 0 ? "Left" : "Right",
+				 KEY_SHIFT_NAMES[e->shift]);
+		else
+			snprintf(out, n, "%s", KEY_SHIFT_NAMES[e->shift]);
+		return out;
+	}
+	case KEY_CHAR:
+		snprintf(out, n, "%c", shifted ? e->shifted : e->plain);
+		return out;
+	default:
+		// MIT's table has plus-minus at `0o021`, which is not ASCII, so
+		// the entry is empty and has no name to give.  muir's own
+		// `Key::None` arm writes the position with no plane, and so
+		// does this.
+		return position_name(p, 0, out, n);
+	}
+}
+
+// `key_written`: the name if reading it back gives this key again, and the
+// position if it does not.  **THE ROUND TRIP IS THE POINT.**  A name that
+// `key_key_of` would not resolve to this position and plane is a name nobody
+// could write in a mapping file, and printing it would send somebody to write
+// a line that is refused.
+static const char *key_written(uint8_t p, int shifted, char *out, size_t n)
+{
+	char name[KEY_NAME_MAX];
+	char why[KEY_MAP_ERR_MAX];
+	uint8_t back_p = 0, back_s = 0;
+	key_name(p, shifted, name, sizeof name);
+	if (key_key_of(name, &back_p, &back_s, why, sizeof why) == 0
+	    && back_p == p && (back_s != 0) == (shifted != 0)) {
+		snprintf(out, n, "%s", name);
+		return out;
+	}
+	return position_name(p, shifted, out, n);
 }
 
 // `Keyboard::holding`: whether a shifting key is down at either position.
@@ -369,16 +439,23 @@ static void check_boot(struct key_state *k)
 // `Keyboard::press`: down, if it is up and the queue has room.  A press the
 // queue has no room for is refused WHOLE, and the key stays up here too, so
 // that no release is owed for it.
-static void press(struct key_state *k, uint8_t p)
+//
+// Whether the key is down for the machine after this, which is muir's own
+// answer and is what the trace needs: so, too, for a key the viewer already
+// had down, since the machine has that press or will; not so only for the
+// press the queue refused.
+static int press(struct key_state *k, uint8_t p)
 {
-	if (k->count >= KEY_BACKLOG || has_down(k, p)) {
-		if (k->count >= KEY_BACKLOG)
-			++k->refused;
-		return;
+	if (has_down(k, p))
+		return 1;
+	if (k->count >= KEY_BACKLOG) {
+		++k->refused;
+		return 0;
 	}
 	add_down(k, p);
 	queue_down(k, p);
 	check_boot(k);
+	return 1;
 }
 
 // `Keyboard::release`: up, if it is down.  ALWAYS queued: the machine has
@@ -399,12 +476,12 @@ struct key_burst { uint8_t p, up; };
 // The machine sees shift, key, shift back, which is what a typist would have
 // done.  Refused whole beyond the backlog, as a plain press is, so that it
 // leaves nothing down.
-static void tap(struct key_state *k, uint8_t p, int wants_shift)
+static int tap(struct key_state *k, uint8_t p, int wants_shift)
 {
 	uint8_t at[4];
 	const unsigned n = shifting(SH_SHIFT, at, 4);
 	if (n == 0)
-		return;
+		return 0;
 	// **THE WHOLE KEYSTROKE IS WORKED OUT BEFORE ANY OF IT IS PUSHED, AND
 	// THE ROOM IS ASKED FOR ONCE, FOR ALL OF IT.**  A guard that tests one
 	// free slot and then pushes four is worse than no guard at all: at the
@@ -448,7 +525,7 @@ static void tap(struct key_state *k, uint8_t p, int wants_shift)
 	}
 	if (k->count + m > KEY_BACKLOG) {
 		++k->refused;
-		return;
+		return 0;
 	}
 	for (unsigned i = 0; i < m; ++i) {
 		if (burst[i].up)
@@ -456,19 +533,22 @@ static void tap(struct key_state *k, uint8_t p, int wants_shift)
 		else
 			queue_down(k, burst[i].p);
 	}
+	return 1;
 }
 
 // `Keyboard::behind_prefix`: a shifting key is held for the one key that
-// follows it, anything else is tapped.
-static void behind_prefix(struct key_state *k, uint8_t p, int wants_shift)
+// follows it, anything else is tapped.  Whether it went: a shifting key the
+// queue refused is not latched either, there being nothing down to hold for
+// the key after it.
+static int behind_prefix(struct key_state *k, uint8_t p, int wants_shift)
 {
 	if (KEY_TABLE[p].kind == KEY_SHIFT) {
-		press(k, p);
-		if (k->latches < KEY_MAX_DOWN)
+		const int went = press(k, p);
+		if (went && k->latches < KEY_MAX_DOWN)
 			k->latched[k->latches++] = p;
-	} else {
-		tap(k, p, wants_shift);
+		return went;
 	}
+	return tap(k, p, wants_shift);
 }
 
 // `BootKeys::default`: `ctrl,meta`, either Control and either Meta, which is
@@ -489,8 +569,80 @@ void key_state_init_with(struct key_state *k, const struct key_map *map)
 	k->map = *map;
 }
 
-// `Keyboard::resolve`, branch for branch.
-void key_event(struct key_state *k, uint32_t keysym, int down)
+// ---- what a keysym became -----------------------------------------------
+//
+// muir's `Went`, made here rather than printed here: `resolve` hands one back
+// at every one of its returns and the trace's line is written from it, which
+// is muir's own arrangement and is what lets the check hold the wording.
+
+static struct key_went w_of(int kind, uint8_t p, int shifted, int tapped)
+{
+	struct key_went w;
+	memset(&w, 0, sizeof w);
+	w.kind = kind;
+	w.p = p;
+	w.shifted = (uint8_t)!!shifted;
+	w.tapped = (uint8_t)!!tapped;
+	return w;
+}
+
+static struct key_went w_nothing(const char *why)
+{
+	struct key_went w = w_of(KEY_WENT_NOTHING, 0, 0, 0);
+	w.why = why;
+	return w;
+}
+
+static struct key_went w_behind(uint32_t first, int found, uint8_t p, int shifted)
+{
+	struct key_went w = w_of(KEY_WENT_BEHIND, p, shifted, 0);
+	w.first = first;
+	w.found = (uint8_t)!!found;
+	return w;
+}
+
+const char *key_went_text(const struct key_went *w, char *out, size_t n)
+{
+	char key[KEY_NAME_MAX], first[KEY_NAME_MAX];
+	switch (w->kind) {
+	case KEY_WENT_UNBOUND:
+		snprintf(out, n, "no binding");
+		break;
+	case KEY_WENT_HELD_AS_PREFIX:
+		snprintf(out, n, "held as a prefix; the keysym after it is looked up behind it");
+		break;
+	case KEY_WENT_PREFIX_LET_GO:
+		snprintf(out, n, "the prefix is let go, and nothing is sent");
+		break;
+	case KEY_WENT_BEHIND:
+		key_sym_name(w->first, first, sizeof first);
+		if (!w->found)
+			snprintf(out, n, "behind %s: no binding", first);
+		else
+			snprintf(out, n, "behind %s: %s", first,
+				 key_written(w->p, w->shifted, key, sizeof key));
+		break;
+	case KEY_WENT_SENT:
+		key_written(w->p, w->shifted, key, sizeof key);
+		if (w->tapped)
+			snprintf(out, n, "%s, tapped with the shift worked around it", key);
+		else
+			snprintf(out, n, "%s", key);
+		break;
+	case KEY_WENT_REFUSED:
+		snprintf(out, n, "%s refused: the queue is full, %u words the machine has "
+			 "not read", key_written(w->p, w->shifted, key, sizeof key),
+			 (unsigned)KEY_BACKLOG);
+		break;
+	default:
+		snprintf(out, n, "nothing: %s", w->why ? w->why : "");
+		break;
+	}
+	return out;
+}
+
+// `Keyboard::resolve`, branch for branch, and what each branch did.
+static struct key_went resolve(struct key_state *k, uint32_t keysym, int down)
 {
 	// What the firmware did is about THIS key and no other.
 	k->firmware = KEY_FW_NONE;
@@ -498,7 +650,7 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 	// A key the terminal has already sent whole: its release is not owed
 	// to the machine.
 	if (!down && take_tapped(k, keysym))
-		return;
+		return w_nothing("its key was tapped and has gone already");
 
 	// A prefix standing: this keysym is looked up behind it.
 	if (k->prefix) {
@@ -506,41 +658,47 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 		if (is_prefix(&k->map, keysym)) {
 			// The prefix's own release, or the prefix again, which
 			// is the way out of a sequence begun by mistake.
-			if (down)
+			if (down) {
 				k->prefix = 0;
-			return;
+				return w_of(KEY_WENT_PREFIX_LET_GO, 0, 0, 0);
+			}
+			return w_nothing("a prefix acts on its press");
 		}
 		if (!down)
-			return;   // the prefix stands until a key is pressed behind it
+			return w_nothing("the prefix stands until a key is pressed behind it");
 		k->prefix = 0;
 		mark_tapped(k, keysym);
 		uint8_t p, want;
-		if (after_prefix(&k->map, first, keysym, &p, &want))
-			behind_prefix(k, p, want);
-		return;
+		if (!after_prefix(&k->map, first, keysym, &p, &want))
+			return w_behind(first, 0, 0, 0);
+		if (!behind_prefix(k, p, want))
+			return w_of(KEY_WENT_REFUSED, p, want, 0);
+		return w_behind(first, 1, p, want);
 	}
 	if (is_prefix(&k->map, keysym)) {
-		if (down)
+		if (down) {
 			k->prefix = keysym;
-		return;
+			return w_of(KEY_WENT_HELD_AS_PREFIX, 0, 0, 0);
+		}
+		return w_nothing("a prefix acts on its press");
 	}
 
 	// A modifier is pressed or released at its own position and nothing
 	// more: there is no shift state in a word on this keyboard.
 	const int mp = modifier_position(&k->map, keysym);
 	if (mp >= 0) {
-		if (down)
-			press(k, (uint8_t)mp);
-		else
+		if (down && !press(k, (uint8_t)mp))
+			return w_of(KEY_WENT_REFUSED, (uint8_t)mp, 0, 0);
+		if (!down)
 			release(k, (uint8_t)mp);
-		return;
+		return w_of(KEY_WENT_SENT, (uint8_t)mp, 0, 0);
 	}
 
 	uint8_t pos[8], want[8];
 	const unsigned found = positions(&k->map, keysym, pos, want, 8);
 	if (found == 0) {
 		++k->unbound;
-		return;
+		return w_of(KEY_WENT_UNBOUND, 0, 0, 0);
 	}
 	const int shifted = holding(k, SH_SHIFT);
 
@@ -549,7 +707,7 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 	// key and no other.
 	if (k->latches) {
 		if (!down)
-			return;   // a latched shifting key holds for the press alone
+			return w_nothing("a latched shifting key holds for the press alone");
 		unsigned pick = 0;
 		for (unsigned i = 0; i < found; ++i)
 			if ((want[i] != 0) == (shifted != 0)) {
@@ -557,32 +715,126 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 				break;
 			}
 		mark_tapped(k, keysym);
-		tap(k, pos[pick], want[pick]);
+		const int went = tap(k, pos[pick], want[pick]);
 		const unsigned n = k->latches;
 		k->latches = 0;
 		for (unsigned i = 0; i < n; ++i)
 			release(k, k->latched[i]);
-		return;
+		if (!went)
+			return w_of(KEY_WENT_REFUSED, pos[pick], want[pick], 0);
+		return w_of(KEY_WENT_SENT, pos[pick], want[pick], 1);
 	}
 
 	// The position whose plane the viewer's own shift already gives.
 	for (unsigned i = 0; i < found; ++i) {
 		if ((want[i] != 0) != (shifted != 0))
 			continue;
-		if (down)
-			press(k, pos[i]);
-		else
+		if (down && !press(k, pos[i]))
+			return w_of(KEY_WENT_REFUSED, pos[i], shifted, 0);
+		if (!down)
 			release(k, pos[i]);
-		return;
+		return w_of(KEY_WENT_SENT, pos[i], shifted, 0);
 	}
 
 	// Otherwise the shift is worked around the key.
 	if (!down) {
 		release(k, pos[0]);
-		return;
+		return w_of(KEY_WENT_SENT, pos[0], want[0], 0);
 	}
 	mark_tapped(k, keysym);
-	tap(k, pos[0], want[0]);
+	if (!tap(k, pos[0], want[0]))
+		return w_of(KEY_WENT_REFUSED, pos[0], want[0], 0);
+	return w_of(KEY_WENT_SENT, pos[0], want[0], 1);
+}
+
+// ---- the trace ----------------------------------------------------------
+
+void key_traced(struct key_state *k, int on)
+{
+	k->trace = on;
+}
+
+// **THE TRACE SWITCHES WHILE THE PROGRAM RUNS**, because a diagnostic that
+// needs a restart costs the machine's Lisp to get.  The handler does the one
+// thing a handler may: writes a `sig_atomic_t`.  `key_trace_apply` is what
+// acts on it, from the program's own loop, where `say` is allowed.
+//
+// `-1` is nothing asked, so that a run started with the flag is not turned off
+// by the first pass of the loop.
+static volatile sig_atomic_t trace_asked = -1;
+
+static void trace_signal(int sig)
+{
+	trace_asked = (sig == SIGUSR1);
+}
+
+void key_trace_signals(void)
+{
+	signal(SIGUSR1, trace_signal);
+	signal(SIGUSR2, trace_signal);
+}
+
+void key_trace_apply(struct key_state *k)
+{
+	const int want = trace_asked;
+	if (want < 0 || want == (k->trace != 0))
+		return;
+	k->trace = want;
+	if (want)
+		say("the keyboard trace is ON (SIGUSR1): every keysym and what it became is a "
+		    "line here, until SIGUSR2 --- `cadr-console trace-keys off`");
+	else
+		say("the keyboard trace is off (SIGUSR2)");
+}
+
+const char *key_event_traced(struct key_state *k, uint32_t keysym, int down,
+			     const char *source, char *out, size_t n)
+{
+	const struct key_went w = resolve(k, keysym, down);
+	char sym[KEY_NAME_MAX], became[KEY_TRACE_MAX];
+	const char *firmware = "";
+	k->went = w;
+	// muir's `Firmware` Display, word for word: what the keyboard's own
+	// firmware did with the key after the mapping had chosen it.
+	switch (k->firmware) {
+	case KEY_FW_BOOT_COLD:
+		firmware = ", and the boot sequence is complete: the cold boot word goes after it";
+		break;
+	case KEY_FW_BOOT_WARM:
+		firmware = ", and the boot sequence is complete: the warm boot word goes after it";
+		break;
+	case KEY_FW_HELD_BACK:
+		firmware = " held back: no key-up goes until the next key-down, so that the "
+			   "machine reads the boot word first";
+		break;
+	default:
+		break;
+	}
+	snprintf(out, n, "keysym 0x%x %s %s%s%s, %s%s", keysym,
+		 key_sym_name(keysym, sym, sizeof sym), down ? "down" : "up",
+		 source ? " from " : "", source ? source : "",
+		 key_went_text(&w, became, sizeof became), firmware);
+	if (k->trace)
+		say("%s", out);
+	return out;
+}
+
+void key_event_from(struct key_state *k, uint32_t keysym, int down, const char *source)
+{
+	// **THE LINE IS BUILT ONLY WHEN IT IS WANTED.**  A keystroke costs two
+	// `snprintf`s and a round trip through `key_key_of` under the trace,
+	// and nothing at all without it.
+	if (k->trace) {
+		char line[KEY_TRACE_MAX];
+		key_event_traced(k, keysym, down, source, line, sizeof line);
+		return;
+	}
+	k->went = resolve(k, keysym, down);
+}
+
+void key_event(struct key_state *k, uint32_t keysym, int down)
+{
+	key_event_from(k, keysym, down, NULL);
 }
 
 void key_all_up(struct key_state *k)
