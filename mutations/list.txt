@@ -13160,9 +13160,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note to prevent.
 @note
 @note What catches it is the firmware printing the number it read: the second
-@note line becomes `UART UART, timer TIME, 50 ticks a microsecond`.  Every
-@note delay it makes then comes out half as long, which is harmless and is not
-@note what says so --- the printed number is.
+@note line becomes `UART UART, timer TIME, 25 ticks a microsecond` where the
+@note soft system's clock says 50.  Every delay it makes then comes out half as
+@note long, which is harmless and is not what says so --- the printed number is.
+@note
+@note **THE NUMBER IN THIS NOTE MOVED WHEN THE SOFT SYSTEM GOT A CLOCK OF ITS
+@note OWN**, and it is the second half of what it used to be for the same
+@note reason the first half is: the check now builds this system at 50 MHz,
+@note the board's `CLKOUT2`, where it used to build it at the machine's
+@note 100 MHz.  `tb/cadr_soc_tb.cpp` builds the line it wants from the
+@note Makefile's own figure rather than holding a copy, so the two cannot come
+@note apart again.
 @old
   localparam logic [31:0] TICKS_PER_US = 32'(CLK_HZ / 1_000_000);
 @new
@@ -13422,4 +13430,181 @@ puts "PROG: build $want, was $ubefore, now $uafter"
           else if (w_is_disconnect) dbg_connect <= 1'b0;
 @new
           else if (w_is_disconnect) dbg_connect <= dbg_connect;
+@end
+
+# ----------------- the soft system's clock, and the seam across it ----------
+#
+# The core runs slower than the machine: Ibex computes a load or a store's
+# address in the cycle it uses it, and on an `xc7a100tcsg324-1` that arc is
+# about 12.9 ns against a 10 ns tick.  The machine's clock cannot move --- every
+# instant in `rtl/machine/` is a count of ticks --- so the soft system has a
+# clock of its own and `rtl/plumbing/cadr_soc_cross.sv` is the seam.
+# `build/soc.pass` runs the whole firmware at THREE ratios, the board's own and
+# two sharing no factor with it, and the records below are aimed at that seam.
+#
+# **WHAT NO RECORD HERE CAN REACH, AND IT IS SAID ONCE RATHER THAN LEFT TO BE
+# FILED AS A HOLE.**  The DEPTH of a synchroniser is not simulable: nothing
+# models metastability, so one flip-flop behaves exactly as two and differs
+# only in latency.  And it cannot even be written as a mutation: shortening
+# either synchroniser in one hunk leaves `req_sync[0]` or `ack_sync[0]`
+# unread, which Verilator reports at BIT granularity --- measured, both ways,
+# `%Warning-UNUSEDSIGNAL: Bits of signal are not used` --- so lint does the
+# catching and the check never sees it.  That is this repository's own
+# standing rule about how a mutation has to be written, met in a place where
+# there is no way round it.  What holds the depth is the structure and
+# `rtl/plumbing/xilinx7/cadr_soc.xdc`.
+#
+# **AND THREE OTHER MUTATIONS OF THE CROSSING WERE MEASURED AND ARE
+# EQUIVALENCES, RECORDED HERE SO THAT NOBODY FILES THEM.**
+#
+#   * `b_req = req_b && !ack_b`, the `!taken` term dropped: SURVIVES, and not
+#     by luck.  The bridge's own `gnt` is `(st == IDLE) && req`, and `ack_b`
+#     rises at the very edge the bridge's `done` returns it to idle --- so the
+#     request is already down in the first cycle a second grant could happen.
+#     The term stays because it makes "one load is one transaction" a property
+#     of THIS file rather than of the bridge's state machine, which is the
+#     same argument `cadr_soc.sv` records for its own `!d_busy` guard.
+#   * `if (b_req || b_gnt) taken <= 1'b1`, the grant dropped: SURVIVES, for the
+#     same reason from the other side --- `b_gnt` is combinational off `b_req`,
+#     so the two conditions are true in the same cycle.
+#   * the payload registers made to follow the core's live address after the
+#     request is out: SURVIVES, because Ibex stalls its ID stage for the whole
+#     of a load and its `data_addr_o` therefore does not move.  It is a
+#     property of the core in front of the seam and not of the seam, and a
+#     core with a writeback stage would break it, so the registers stay.
+#
+# **AND ONE THAT IS ONE CLOCK FROM MATTERING, MEASURED RATHER THAN REASONED.**
+# Deleting the fourth phase's wait --- answering the core at the
+# acknowledgement instead of when the handshake has closed --- SURVIVES, and
+# the margin was measured by instrumenting the mutant: of 273 requests, **129
+# arrive while the acknowledgement still stands at the SECOND flip-flop of the
+# synchroniser and none while it stands at the first**.  So the guard is one
+# clock of the synchroniser away from handing a requester the previous
+# answer, and what keeps it benign is that `cadr_soc.sv` takes a clock to
+# clear its own busy flag.  It is not filed as a record because it survives;
+# it is written here because a reader who deleted the wait would find every
+# check green.
+
+@mutation soc-the-crossing-acknowledges-before-the-answer
+@check soc
+@file rtl/plumbing/cadr_soc_cross.sv
+@note **The far side acknowledges while the bridge is still working rather
+@note than when it has answered**, which is the beat taken a tick early ---
+@note here several ticks early, the bridge taking a dozen of the machine's
+@note clocks to walk an AXI transaction.  The acknowledgement then points at a
+@note payload register holding the PREVIOUS transaction's answer, or at reset
+@note nothing at all, and the asking side takes it as this transaction's.
+@note
+@note **This is the defect a crossing is for.**  The whole argument that makes
+@note two flip-flops enough is that what crosses has stopped moving before the
+@note level that announces it arrives; a level raised before the answer exists
+@note announces something that has not happened.
+@note
+@note `b_done` is kept in the condition rather than deleted: a condition that
+@note dropped it would leave the signal unread and Verilator, not the check,
+@note would be the thing that noticed --- which is this repository's standing
+@note rule about how a mutation has to be written.
+@note
+@note Measured, the catching line is the FIRST face the firmware reads:
+@note `line 3 is "cadr-soc: the console at 0x80000000 answers .... (0x00000000),
+@note wanting CONS (0x434f4e53)"`.  Zero is what the answer register holds out
+@note of reset, so the very first load comes back as nothing at all.
+@old
+        if (taken && b_done) begin
+@new
+        if (taken && !b_done) begin
+@end
+
+@mutation soc-the-crossing-never-lets-the-acknowledgement-go
+@check soc
+@file rtl/plumbing/cadr_soc_cross.sv
+@note **The far side never forgets that the bridge took the last request**, so
+@note the handshake's fourth phase never completes on that side: `taken` stands
+@note for ever, `b_req` is held down by it, and the second request the core
+@note makes is never given to the bridge at all.
+@note
+@note A four-phase handshake has four phases and this deletes the fourth.  The
+@note asking side is left waiting for an acknowledgement that will not come,
+@note the core is left waiting for a load that will not complete, and the
+@note firmware stops where it stands.
+@note
+@note Measured, the catching line is `the firmware said 2 line(s), wanting 13`:
+@note the banner and this system's own two faces come out --- the UART and the
+@note timer are on the core's own clock and not behind the crossing --- and the
+@note first load at a register face is the last thing the firmware ever does.
+@note **A HANG IS THE EXPENSIVE KIND OF CATCH**, and it is what
+@note `tb/cadr_soc_tb.cpp`'s bound and its stopping at the first failing ratio
+@note are both for: eight million of the soft system's ticks against the
+@note 730,000 the run needs, once rather than three times.
+@old
+        ack_b <= 1'b0;
+        taken <= 1'b0;
+@new
+        ack_b <= 1'b0;
+        taken <= 1'b1;
+@end
+
+@mutation soc-the-crossing-carries-the-wrong-direction
+@check soc
+@file rtl/plumbing/cadr_soc_cross.sv
+@note **A read crosses as a write and a write as a read.**  The direction is
+@note part of the payload and crosses with the address and the data; a payload
+@note register that inverted it would turn the firmware's first load into a
+@note store at the console's IDENT word and its answer into whatever the write
+@note channel returned.
+@note
+@note Measured, the catching line is `line 3 is "cadr-soc: the console at
+@note 0x80000000 answers .... (0x00000000), wanting CONS (0x434f4e53)"` --- the
+@note write is answered, as every address in the window is, and the word that
+@note comes back is not a word the console has.
+@old
+            we_q    <= a_we;
+@new
+            we_q    <= !a_we;
+@end
+
+@mutation soc-the-crossing-loses-a-bit-of-the-address
+@check soc
+@file rtl/plumbing/cadr_soc_cross.sv
+@note **Bit 2 of the address flipped on its way across**, so every register
+@note reads its neighbour.  This is `soc-bridge-drops-an-address-bit` one seam
+@note earlier: that record holds the bridge's own hold register and this holds
+@note the payload that crosses the two clocks, and a design where the address
+@note is registered twice needs both.
+@note
+@note **Written as an XOR and not as a mask**, because a mask leaves bit 2 of
+@note `a_addr` unread and Verilator catches mutations at BIT granularity: lint
+@note would do the catching and the check would never see it.
+@note
+@note Measured, the catching line is `line 3 is "cadr-soc: the console at
+@note 0x80000000 answers .... (0x00000000), wanting CONS (0x434f4e53)"`: word 0
+@note is the console's identifier and word 1 is not.
+@old
+            addr_q  <= a_addr;
+@new
+            addr_q  <= a_addr ^ 32'h4;
+@end
+
+@mutation soc-the-crossing-loses-a-bit-of-the-word
+@check soc
+@file rtl/plumbing/cadr_soc_cross.sv
+@note **Bit 0 of a stored word flipped on its way across**, and bit 0 of the
+@note console's clock control register is RUN.  So the firmware's halt starts
+@note the machine, its start stops it, and its single step asks for something
+@note else entirely.
+@note
+@note **THE CATCHING LINE IS THE MACHINE'S OWN COUNTER AND NOT A WORD THE
+@note FIRMWARE CHOSE**, which is what makes it evidence: `line 7 is
+@note "cadr-soc: stepped 1, CYCLES moved 21, SSDONE 1"`.  One step must move
+@note CYCLES by exactly one; twenty-one is a machine that was left running
+@note while the step bit stood.
+@note
+@note The byte enables were measured the same way and are caught too ---
+@note `be_q ^ 4'h1` gives `stepped 1, CYCLES moved 0, SSDONE 0`, a write that
+@note never lands --- and that is recorded here rather than filed as a sixth
+@note record saying the same thing about a third wire of one payload.
+@old
+            wdata_q <= a_wdata;
+@new
+            wdata_q <= a_wdata ^ 32'h1;
 @end

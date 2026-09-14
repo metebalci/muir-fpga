@@ -1415,7 +1415,34 @@ IBEX_VLT := $(IBEX_DIR)/ibex_lint.vlt
 
 SOC_RTL := rtl/plumbing/cadr_soc_ram.sv rtl/plumbing/cadr_soc_uart.sv \
            rtl/plumbing/cadr_soc_timer.sv rtl/plumbing/cadr_soc_axi.sv \
+           rtl/plumbing/cadr_soc_cross.sv \
            rtl/plumbing/cadr_soc.sv
+
+# **THE SOFT SYSTEM'S OWN CLOCK, READ OUT OF THE FABRIC THAT DECIDES IT.**  The
+# core runs slower than the machine --- Ibex computes a load or a store's
+# address in the cycle it uses it and that arc does not fit in a 10 ns tick ---
+# and `SOC_CLK_DIVIDE` beside the clock manager in
+# `boards/arty-a7-100/cadr_arty_a7.sv` is the one place the number is decided.
+# The transmitter's divisor and the timer's microsecond are computed from it
+# here so that the check and the board cannot describe two different clocks,
+# which is `boards/arty-z7-20/vivado/tick.tcl`'s argument in a second place.
+# The voltage controlled oscillator is 1000 MHz, so the divider IS the
+# frequency: twenty gives 50 MHz.
+#
+# **AND THE ARITHMETIC IS THE FABRIC'S OWN, TRUNCATION INCLUDED.**
+# `cadr_soc.sv` computes the timer's microsecond as `CLK_HZ / 1_000_000` in
+# integers; doing it any other way here would make the check and the board
+# disagree about a microsecond at any divider that does not give whole
+# megahertz.  So both lines below are integer divisions in the same order.
+SOC_CLK_DIVIDE := $(shell sed -n \
+    's/^ *localparam int unsigned SOC_CLK_DIVIDE *= *\([0-9][0-9]*\).*/\1/p' \
+    boards/arty-a7-100/cadr_arty_a7.sv | head -1)
+ifeq ($(strip $(SOC_CLK_DIVIDE)),)
+$(error SOC_CLK_DIVIDE could not be read out of \
+        boards/arty-a7-100/cadr_arty_a7.sv, so the soft system's clock would \
+        be two numbers that can come apart)
+endif
+SOC_CLK_HZ := $(shell echo $$(( 1000000000 / $(SOC_CLK_DIVIDE) )))
 # The four faces the soft system masters, unchanged from the boards that have
 # a processing system.
 SOC_FACES := rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_disk_pack.sv \
@@ -1519,6 +1546,18 @@ $(BUILD)/arty_a7.pass: $(MACHINE) boards/arty-a7-100/cadr_arty_a7.sv \
 # argument the five above rest on rests on this one: a branch only one build
 # reaches is a branch only one build checks.
 	$(ARTY_A7_LINT) -GSOC=1 $(ARTY_A7_SRC)
+# ...and SEVEN, WHICH IS THE ONLY ONE THAT IS THE WHOLE BOARD.  `SOC=1 DDR=1`
+# is the machine with its memory behind it AND the soft processing system in
+# front of the faces --- the configuration this board is for --- and until
+# this line nothing linted it at all.  Six passes over six partial boards is
+# exactly the shape this repository has recorded before: a runner that linted
+# the default configuration only, while everything between the adapter and the
+# processing system had no check of any kind from any tool and `make check` was
+# green.  It is also where the design's two crossings meet, the soft system's
+# clock and the memory controller's user clock being in one netlist for the
+# first time.
+	$(ARTY_A7_LINT) -GSOC=1 -GDDR=1 $(ARTY_A7_SRC) tb/cadr_mig_stub.sv \
+	    boards/arty-a7-100/cadr_a7_memory.sv $(A7MEM)
 	@touch $@
 
 # ============ the Arty A7-100's main memory =============================
@@ -2998,13 +3037,20 @@ $(BUILD)/soc_firmware.hex: $(BUILD)/soc/firmware.elf tools/bin2hex.py | $(BUILD)
 # board's, byte for byte.
 #
 # **THE RATE IS NOT THE BOARD's AND THE CHECK SAYS WHY.**  At 115,200 baud one
-# bit is 868 ticks and a dozen lines are eight million of them; at a divisor of
-# 32 the same firmware says the same words in a fraction of the time, and
-# nothing in it knows the rate.  `tb/cadr_soc_tb.cpp` measures the narrowest
-# level on the wire and asserts it IS the divisor, so a rate that never reached
-# the fabric is a failure rather than a silent pass.
+# bit is 434 of the soft system's ticks and a dozen lines are four million of
+# them; at a divisor of 32 the same firmware says the same words in a fraction
+# of the time, and nothing in it knows the rate.  `tb/cadr_soc_tb.cpp` measures
+# the narrowest level on the wire and asserts it IS the divisor, so a rate that
+# never reached the fabric is a failure rather than a silent pass.
+#
+# **AND THE DIVISOR IS IN THE SOFT SYSTEM'S TICKS.**  The transmitter is on
+# that side of the crossing, so the rate is computed from that clock and not
+# from the machine's tick.  Both numbers below follow `SOC_CLK_HZ`, which is
+# read out of the top level; a baud written here as a literal would be a
+# second place the soft clock's frequency lived.
 SOC_TB_DIVISOR := 32
-SOC_TB_BAUD    := 3125000
+SOC_TB_BAUD    := $(shell echo $$(( $(SOC_CLK_HZ) / $(SOC_TB_DIVISOR) )))
+SOC_TICKS_PER_US := $(shell echo $$(( $(SOC_CLK_HZ) / 1000000 )))
 
 SOC_HARNESS_SRC := $(MACHINE) tb/cadr_soc_harness.sv $(IBEX_SRC) $(SOC_RTL) \
                    $(SOC_FACES)
@@ -3014,9 +3060,11 @@ $(BUILD)/obj_soc/Vcadr_soc_harness: $(SOC_HARNESS_SRC) $(IBEX_VLT) \
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing \
 	    -Irtl/plumbing/xilinx7 $(IBEX_INC) -Mdir $(BUILD)/obj_soc \
 	    -CFLAGS -DUART_DIVISOR=$(SOC_TB_DIVISOR) \
+	    -CFLAGS -DSOC_TICKS_PER_US=$(SOC_TICKS_PER_US) \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GFIRMWARE_HEX='"$(abspath $(BUILD))/soc_firmware.hex"' \
 	    -GSOC_RAM_WORDS=$(SOC_RAM_WORDS) -GSOC_BAUD=$(SOC_TB_BAUD) \
+	    -GCLK_HZ=$(SOC_CLK_HZ) \
 	    --top-module cadr_soc_harness $(IBEX_VLT) $(SOC_HARNESS_SRC) \
 	    $(abspath tb/cadr_soc_tb.cpp)
 
