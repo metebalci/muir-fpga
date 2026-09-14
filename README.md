@@ -308,7 +308,8 @@ warnings.
     boards/arty-z7-20/     pins, the processing system, the operating system
     tb/                    Verilator testbenches
     golden/                Rust, depends on muir by path; writes the traces
-    mutations/             the mutation list, and the runner that applies it
+    mutations/             the mutation list, and the runner that applies it;
+                           docs/mutations.md says what it is and why
     docs/                  one document a block, and the board bring-up
     site/                  the project page: a drawing a board, and the
                            hardware the drawings are of
