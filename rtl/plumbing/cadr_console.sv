@@ -33,7 +33,8 @@
 // The window is 128 bytes; `M_AXI_GP1` decodes `0x8000_0000` upward in the
 // Zynq-7000 address map and this sits at the bottom of it.
 //
-//   page 0, `REG_BASE + 0x00`, the console's own, all read-only:
+//   page 0, `REG_BASE + 0x00`, the console's own.  **Three of its words are
+//   written** --- 6, 10 and 13 --- and the rest are read-only:
 //
 //     0  IDENT    reads `IDENT`, "CONS", so that the first read over GP1 can
 //                 tell this face from a bus that answers zeros or ones
@@ -52,9 +53,8 @@
 //                 MIT's grid: the MACHINE's own time, which runs whether or
 //                 not the machine does, so CYCLES against TICKS is a rate
 //     5  TICKSH   bits 63:32, latched when TICKS was read
-//     6  RESET    **the one word of page 0 that is written.**  A write of
-//                 `RESET_KEY` and of nothing else pulses the machine's reset
-//                 for `RESET_T` ticks; see below.  It reads
+//     6  RESET    a write of `RESET_KEY` and of nothing else pulses the
+//                 machine's reset for `RESET_T` ticks; see below.  It reads
 //                   bits 31:16  `RESET_KEY`'s own top half, a marker
 //                   bits 15:8   how many console resets since the CONSOLE
 //                               came up, saturating at 255
@@ -65,7 +65,19 @@
 //     8  Q        the `Q` register, all 32 bits, latched when VMA was read
 //     9  MD       the memory data register, all 32 bits, latched when VMA
 //                 was read
-//     10-15       read `UNMAPPED`; writes dropped
+//     10 RO       the readout's selector, written with the address wanted and
+//                 read back as the ECHO of the address the word now in 11 and
+//                 12 was actually read at.  **Reading it latches all three.**
+//     11 RO_LO    that word's bits 31:0
+//     12 RO_HI    its bits 47:32
+//     13 BOOT     **the light panel's button.**  A write of `BOOT_KEY` and of
+//                 nothing else holds `-BOOT2` down for `BOOT_T` ticks and
+//                 lets it go; see below.  It reads
+//                   bits 31:16  `BOOT_KEY`'s own top half, a marker
+//                   bits 15:8   how many presses since the CONSOLE came up,
+//                               saturating at 255
+//                   bit 0       the button is down now
+//     14-15       read `UNMAPPED`; writes dropped
 //
 //   page 1, `REG_BASE + 0x40`, the sixteen diagnostic registers, word k
 //   being `EADR` k:
@@ -204,7 +216,7 @@
 // must not be a value the instrument can mean.**
 //
 // **THE RESET, WHICH IS WHY REGISTER 6 EXISTS.**  `boards/arty-z7-20/cadr_arty.sv`'s reset
-// is MMCM lock or BTN0 and nothing else, so restarting the CADR has meant a
+// is MMCM lock or BTN3 and nothing else, so restarting the CADR has meant a
 // finger on a board or a fresh bitstream.  So the machine takes a soft reboot
 // from the processing system, and this is where it belongs: the console is
 // already the thing that says whether the machine is running.
@@ -308,7 +320,7 @@
 // exercise them, and there is no mutation record aimed at the guard for that
 // reason.
 //
-// **WHERE THE PULSE GOES IS `boards/arty-z7-20/cadr_arty.sv`'s**, and it joins BTN0 rather
+// **WHERE THE PULSE GOES IS `boards/arty-z7-20/cadr_arty.sv`'s**, and it joins BTN3 rather
 // than replacing it.  What leaves here is one register, `mach_rst`, so that
 // what reaches the machine's reset pin is a flop and not a countdown's
 // comparison.
@@ -429,7 +441,22 @@ module cadr_console #(
     // this is the smallest power of two above it so that the countdown ends
     // on a borrow.  See the header --- it is a floor with margin and is not
     // derived from anything.
-    parameter int unsigned RESET_T  = 64
+    parameter int unsigned RESET_T  = 64,
+    // What must be written to page 0's word 13, and to nothing else, for the
+    // light panel's button to be pressed: "BOOT".  Chosen on the same rule as
+    // `RESET_KEY` --- four distinct bytes, none `00` or `FF`, not zero, not
+    // all ones, not `IDENT`, not `UNMAPPED`, not what the word reads back and
+    // not `RESET_KEY` --- and for the same reason, since a boot stops what
+    // the machine was doing exactly as a reset does.
+    parameter logic [31:0] BOOT_KEY  = 32'h424F_4F54,
+    // How long `-BOOT2` is held for.  The floor is the one `RESET_T` states:
+    // a whole generator cycle at extra slow is 44 ticks, and 64 is the
+    // smallest power of two above it.  A button is a finger and is held for
+    // millions of ticks; this is the shortest press the machine cannot tell
+    // from one, and it is a floor with margin rather than a derivation.  It
+    // is its own parameter and not `RESET_T` because the two lines do
+    // different things and nothing says they must move together.
+    parameter int unsigned BOOT_T   = 64
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -513,9 +540,27 @@ module cadr_console #(
     // --- `RESET_KEY` to page 0's word 6, and never otherwise.  A register
     // --- and not a countdown's comparison, so that what reaches the
     // --- machine's reset pin has a whole tick of its own.  `cadr_arty.sv`
-    // --- ORs it with the board's own reset --- MMCM lock and BTN0 --- and
+    // --- ORs it with the board's own reset --- MMCM lock and BTN3 --- and
     // --- gives the machine the result; it joins them and replaces neither.
-    output var logic        mach_rst
+    output var logic        mach_rst,
+
+    // --- **THE LIGHT PANEL'S BUTTON**: `BOOT_T` ticks after a write of
+    // --- `BOOT_KEY` to page 0's word 13, and never otherwise.
+    // ---
+    // --- `mit/cadrwd/icmem3.wlr` puts `-BOOT2` on `1AJ2-03` and the MBCPIN
+    // --- drawing marks that connector "TO LIGHT PANEL", beside the
+    // --- parity-error and run lamps.  So this is a momentary pushbutton on
+    // --- a pulled-up line, and what a console can do that a panel cannot is
+    // --- press it from somewhere else.  It is a press and a release, not a
+    // --- request: `cadr_arty.sv` ORs it with the board's own button and the
+    // --- 74S02 at OLORD2 1A07 takes the result, where the keyboard's
+    // --- `-BOOT1` and the debug cable's `PROG.BOOT` meet it.
+    // ---
+    // --- **ACTIVE HIGH HERE AND ACTIVE LOW ON THE WIRE.**  What leaves this
+    // --- module is "the button is down"; the inversion is at the gate,
+    // --- because the line has two drivers and a pull-up and neither driver
+    // --- owns it.
+    output var logic        mach_boot
 );
 
   // spy::BASE, and "the EADR<3:0> lines just follow the Unibus address
@@ -550,7 +595,7 @@ module cadr_console #(
   // The GP1 face's state, declared before the engine that reads it
   // ------------------------------------------------------------------------
 
-  typedef enum logic [2:0] { W_ADDR, W_DATA, W_CYCLE, W_RESET,
+  typedef enum logic [2:0] { W_ADDR, W_DATA, W_CYCLE, W_RESET, W_BOOT,
                              W_RESP } wstate_e;
   typedef enum logic [2:0] { R_ADDR, R_START, R_CYCLE, R_PREP, R_PREP2,
                              R_DATA } rstate_e;
@@ -612,6 +657,25 @@ module cadr_console #(
 
   localparam logic [3:0] R_RESET = 4'd6;
 
+  // Page 0's word 13: the light panel's button.
+  //
+  // **WHY NOT A DIAGNOSTIC WRITE OF THE MODE REGISTER'S BIT 7.**  `PROG.BOOT`
+  // is already reachable from page 1 --- EADR 5, bit 7 --- and it is a third
+  // input of the same gate, so a console could boot the machine with it
+  // today.  It is the wrong one to use.  `PROG.BOOT` is the DEBUG CABLE'S
+  // line, the other machine's way in, and `busint.erface` documents it as
+  // such; a console pressing it would be a console pretending to be a
+  // debugger, and the one thing this project asks of the console is that it
+  // is the machine's own controls and not a second debugger.  `-BOOT2` is
+  // the button a person at the machine presses, which is what a console is.
+  // muir's prompt makes the same choice: its `boot` presses `-BOOT2`.
+  //
+  // **AND IT IS A LEVEL WHERE `PROG.BOOT` IS A PULSE**, which is the second
+  // reason.  A button can be HELD, and a machine with the button held sits
+  // at the boot trap; that is a state a console can put the machine in and a
+  // mode-register write cannot.
+  localparam logic [3:0] R_BOOT = 4'd13;
+
   // Page 0's words 7, 8 and 9: the virtual address register, `Q` and `MD`.
   // The read of `R_VMA` latches all three; `R_Q` and `R_MD` read what it
   // latched.  See the header for why they are here, why none is split into
@@ -628,8 +692,8 @@ module cadr_console #(
   // step with `Engine::spy_read` for ever.  The readout is not on the
   // diagnostic bus at all --- it is three wires out of `cadr_machine`, as
   // `VMA`, `Q` and `MD` are --- so it goes where those went, in the range
-  // this module's own header has always called free.  Words 13, 14 and 15
-  // still read `UNMAPPED`.
+  // this module's own header has always called free.  Word 13 is the light
+  // panel's button, below; 14 and 15 still read `UNMAPPED`.
   //
   // **WORD 10 IS WRITTEN WITH AN ADDRESS AND READ AS AN ECHO, AND THE TWO
   // ARE UNCORRELATED ON PURPOSE.**  That is the diagnostic bus's own rule
@@ -665,6 +729,13 @@ module cadr_console #(
   logic [7:0] resets;
   logic [6:0] rst_t;
 
+  // The same three, for the button: the line itself, the countdown that holds
+  // it down, and a saturating count of the presses.  Saturating for
+  // `resets`'s reason --- a counter that can read zero again can say "nobody
+  // has ever pressed it" when somebody has.
+  logic [7:0] boots;
+  logic [6:0] boot_t;
+
   // Which page-0 word this beat names, and whether it is the key.  The
   // address match is `w_in`, taken at AWVALID and held --- it is not computed
   // here --- for the reason `cadr_memory_path.sv` and the disk controller
@@ -679,6 +750,14 @@ module cadr_console #(
   // differently because the two mistakes cost differently.
   logic w_is_ro;
   assign w_is_ro = w_in && !w_idx[4] && (w_idx[3:0] == R_RO);
+
+  // And which beat presses the button.  It takes a key for word 6's reason
+  // and the same one: a value that means nothing --- zero off a dead bus,
+  // all ones off an undriven one --- must not be a value that stops the
+  // machine.
+  logic w_is_boot;
+  assign w_is_boot = w_in && !w_idx[4] && (w_idx[3:0] == R_BOOT) &&
+                     (w_full == BOOT_KEY);
 
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
@@ -903,6 +982,11 @@ module cadr_console #(
         R_RO:    r_word = {14'd0, held_ro_echo};
         R_RO_LO: r_word = held_ro_data[31:0];
         R_RO_HI: r_word = {16'd0, held_ro_data[47:32]};
+        // The button, read back as the reset register is and for the same
+        // reason: not zero when nothing has happened, so that a window
+        // pointed somewhere else cannot look like a console with an
+        // unpressed button.  The key's top half, the presses, and the line.
+        R_BOOT:  r_word = {BOOT_KEY[31:16], boots, 7'd0, mach_boot};
         default: r_word = UNMAPPED;
       endcase
     end
@@ -946,6 +1030,9 @@ module cadr_console #(
       mach_rst    <= 1'b0;
       rst_t       <= 7'd0;
       resets      <= 8'd0;
+      mach_boot   <= 1'b0;
+      boot_t      <= 7'd0;
+      boots       <= 8'd0;
     end else begin
       // --- the machine's reset, counted out.  Written first so that the
       // write channel below can arm it in the same tick and win: a pulse
@@ -954,6 +1041,11 @@ module cadr_console #(
       if (mach_rst) begin
         if (rst_t == 7'd0) mach_rst <= 1'b0;
         else rst_t <= rst_t - 7'd1;
+      end
+      // The button, counted out the same way and for the same reason.
+      if (mach_boot) begin
+        if (boot_t == 7'd0) mach_boot <= 1'b0;
+        else boot_t <= boot_t - 7'd1;
       end
 
       // --- writes
@@ -989,6 +1081,12 @@ module cadr_console #(
             if (resets != 8'hFF) resets <= resets + 8'd1;
             wst      <= W_RESET;
           end
+          else if (w_is_boot) begin
+            mach_boot <= 1'b1;
+            boot_t    <= 7'(BOOT_T - 1);
+            if (boots != 8'hFF) boots <= boots + 8'd1;
+            wst       <= W_BOOT;
+          end
           else if (s_wlast) wst <= W_RESP;
         end
         W_CYCLE: if (eng_done_w) wst <= w_last_q ? W_RESP : W_DATA;
@@ -998,6 +1096,11 @@ module cadr_console #(
         // `RESET_T` ticks --- 320 ns --- and it is what makes "reset then
         // ask" a sequence a program can write without a delay in it.
         W_RESET: if (!mach_rst) wst <= w_last_q ? W_RESP : W_DATA;
+        // **AND NEITHER DOES THE BUTTON'S WRITE**, for the same reason one
+        // line up: a program's store returns with the button already let go
+        // and the machine already running the PROM from word 0, so the read
+        // of `PC` that follows it means something.
+        W_BOOT: if (!mach_boot) wst <= w_last_q ? W_RESP : W_DATA;
         W_RESP: if (s_bready) wst <= W_ADDR;
         default: wst <= W_ADDR;
       endcase

@@ -96,7 +96,8 @@ second description of one thing, and the two would drift.
 of `M_AXI_GP1`'s window; `IDENT` is `"CONS"` (line 158) and `UNMAPPED` its
 complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
 
-    page 0, REG_BASE + 0x00, the console's own, all read-only:
+    page 0, REG_BASE + 0x00, the console's own.  Three of its words are
+    written --- 6, 10 and 13 --- and the rest are read-only:
 
      0  IDENT    "CONS", 0x434F4E53, so that the first read over GP1 can tell
                  this face from a bus that answers zeros or ones
@@ -111,7 +112,7 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  A tick is 10 ns of real time, so `cadr-console.c` divides
                  by `CONS_TICKS_PER_US` = 100 and not by 200
      5  TICKSH   bits 63:32, latched when TICKS was read
-     6  RESET    **the one word of page 0 that is written.**  A write of
+     6  RESET    a write of
                  `RESET_KEY` and of nothing else pulses the machine's reset
                  for `RESET_T` ticks.  It reads
                    bits 31:16  `RESET_KEY`'s own top half, `0x5253`, a marker
@@ -130,7 +131,14 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  latches the echo and both halves of the word together
     11  READ LO  that word's bits 31:0
     12  READ HI  that word's bits 47:32, in bits 15:0
-     13-15       read UNMAPPED; writes dropped
+    13  BOOT     **the light panel's button.**  A write of `BOOT_KEY` and of
+                 nothing else holds `-BOOT2` down for `BOOT_T` ticks and lets
+                 it go.  It reads
+                   bits 31:16  `BOOT_KEY`'s own top half, `0x424F`, a marker
+                   bits 15:8   presses since the CONSOLE came up, saturating
+                               at 255
+                   bit 0       the button is down now
+     14-15       read UNMAPPED; writes dropped
 
     page 1, REG_BASE + 0x40, the sixteen diagnostic registers, word k
     being EADR k:
@@ -177,11 +185,11 @@ be a value the instrument can mean.**
 
 ### The reset
 
-**`boards/arty-z7-20/cadr_arty.sv`'s reset was MMCM lock or BTN0 and nothing else**, so
+**`boards/arty-z7-20/cadr_arty.sv`'s reset was MMCM lock or a push button and nothing else**, so
 restarting the CADR meant a finger on a board nobody is sitting at, or a fresh
 bitstream --- on a board that runs Linux beside the machine and is reached
 over the network. So the machine takes a soft reboot from the processing
-system; page 0's word 6 is it, and **it joins BTN0 rather than replacing it.**
+system; page 0's word 6 is it, and **it joins the button rather than replacing it.**
 
 **It is a pulse of a stated length and not a level.** A level is a bit a
 program can set and then be killed, or forget, or crash holding, and a machine
@@ -251,11 +259,11 @@ two thousand registers spread across `cadr_machine`, and a LUT between the
 countdown and that fanout is a LUT on every one of their reset pins. The rule
 for what takes it: **`mach_rst` replaces `rst` wherever `rst` means "since the
 MACHINE started", and `rst` stays wherever it means "since the FABRIC was
-configured".** So `u_machine`, `u_probe`, `witness`, `beat`, `nxm_count`,
-`bus_nxm` and LD4's colours take `mach_rst`; `axi_rst`, `pack_rst`, `gp0_rst`,
+configured".** So `u_machine`, `u_probe`, `witness`, `beat`, the trouble
+lamp's own register and the disk lamp's one-shot take `mach_rst`; `axi_rst`, `pack_rst`, `gp0_rst`,
 `gp1_rst`, the tally `u_count` and `error_seen` keep `rst`.
 
-The tidier alternative --- folding `con_mach_rst` into `rst_sync` beside BTN0
+The tidier alternative --- folding `con_mach_rst` into `rst_sync` beside the button
 --- is wrong in three places at once, and each is on the record in the top
 level:
 
@@ -276,8 +284,8 @@ level:
 effect. `rtl/plumbing/xilinx7/cadr_probe.sv`'s own words are that it fills from the first
 microcycle after reset and freezes, so a machine that has been restarted has
 new first microcycles and the probe must be looking at those. Until now
-re-arming meant BTN0 or a fresh bitstream; it is a store from Linux now. The
-price is that a console reset spoils a readout in progress --- which BTN0
+re-arming meant the reset button or a fresh bitstream; it is a store from Linux now. The
+price is that a console reset spoils a readout in progress --- which the button
 already did.
 
 **WHERE THE PULSE LANDS WAS ASKED OF THE DESIGN.** CLAUDE.md's `elapsed ->
@@ -309,7 +317,7 @@ outside `cadr_machine`. Measured all the same.
 
 **A CONSOLE RESET DOES NOT CLEAR MEMORY, AND MUST NOT.** `amem`, `mmem`, `pdl`
 and `imem` in `cadr_microcycle.sv` are RAM and no reset this machine has
-clears them --- not this one, not BTN0's, and not MIT's own `RESET`, which is a
+clears them --- not this one, not the button's, and not MIT's own `RESET`, which is a
 wire into flip flops and reaches no 93425A. So a machine reset a second time
 re-executes the boot PROM's instructions from the top with the scratchpads its
 first run left. Measured: `amem` diverges on the **first** microcycle of the
@@ -750,16 +758,29 @@ nobody has decided to close. It reads, on the check's own output: *"a mode
 write at register 13 landed 0 times (muir's `write_strobe` is `eadr & 7`, so:
 once)"*. The fix is one line in that module.
 
-**The two pulses reach nothing.** `-PROG.RESET` and `PROG.BOOT` leave
-`cadr_spy_registers` and are folded into `unused` at `rtl/machine/cadr_machine.sv:425`
-at this slice. The harness brings them out and the check sees them made; what
-they should *do* --- reset the machine, raise `BOOT.TRAP` --- is the machine's and
-is not built. **This is NOT what page 0's word 6 does**, and the two must not
-be confused: `-PROG.RESET` is MIT's own, made inside the machine off a mode
-write and reaching the machine's own reset tree, and word 6 is the console's,
-made outside the machine and ORed with BTN0 in `cadr_arty.sv`. Whoever lands
-`-PROG.RESET` should say how the two meet; the obvious answer is that they
-meet at `mach_rst`, and it is not taken here.
+**`PROG.BOOT` reaches the machine now and `-PROG.RESET` does not.** Both
+pulses leave `cadr_spy_registers` on a mode-register write. `PROG.BOOT` is one
+of the three inputs of the 74S02 at OLORD2 1A07 that makes `-BOOT`, and
+`rtl/machine/cadr_machine.sv` has that gate. `-PROG.RESET` is still folded into
+`unused` there. What it should do is reach the machine's own reset tree, and
+that is not built. Whoever lands it should say how it meets page 0's word 6.
+The obvious answer is that they meet at `mach_rst`, and it is not taken here.
+
+**And page 0 now has both of the machine's buttons, which must not be
+confused.** Word 6 is the console's own reset. It is made outside the machine
+and ORed with the board's reset in `cadr_arty.sv`. Word 13 is `-BOOT2`, the
+light panel's momentary button, which the board also gives to BTN0.
+`PROG.BOOT` is a third thing again. It is the debug cable's line, the other
+machine's way in, which is why the console presses `-BOOT2` and not that.
+muir's prompt makes the same choice: its `boot` presses `-BOOT2`.
+
+**A reset and a boot are different operations.** The reset clears every
+register in `cadr_machine` and restarts CYCLES from zero. The boot presets
+`RUN`, forces the PC to zero through the boot trap, and clears the console's
+registers with `PROMDISABLE` among them. It leaves main memory, the control
+store, the scratchpads, the map and the console's own counters alone. The
+check holds that difference. Over a boot the machine's reset is not pulsed,
+CYCLES does not go backwards, and `STAT`'s sticky `lost` bit stands.
 
 **Examine and deposit of main memory do not go through the machine, and
 cannot.** In muir, CC reaches the debuggee's memory **not** through the spy
@@ -1209,7 +1230,7 @@ in. `docs/fpgarc.md` is the flag and the init step; `docs/board.md` is what to
 do at the board.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
-`start`, `step N`, `regs`, `status`, `examine` and `deposit`. `status` is the
+`start`, `boot`, `step N`, `regs`, `status`, `examine` and `deposit`. `status` is the
 question of the day and answers it the way `main.rs`'s `machrun_low` does,
 plus a positive measurement: CYCLES sampled twice a few milliseconds apart, so
 that "running" is something seen rather than inferred. `step N` is CC's
@@ -1217,6 +1238,23 @@ that "running" is something seen rather than inferred. `step N` is CC's
 `FLAG-1`'s `SSDONE`. It names either failure out loud: a machine that did not
 move, and a machine that ran more than one microcycle a step. A silent no-op
 is the failure this project keeps meeting, and so is a silent runaway.
+
+`boot` presses the light panel's button, which is page 0's word 13 with
+`BOOT_KEY` on it. It is muir's own `boot`. It reports what the machine did:
+the press counted, the PC and CYCLES either side of it, and whether the boot
+PROM is running from word 0 again with `PROMDISABLE` clear. The button is what
+starts a halted machine. That is why muir's `continue` and `step` send you here
+when `RUN` is clear.
+
+**And `boot` is what takes a hold off.** An init step can leave the machine
+unbooted, as muir's `--no-auto-boot` does: it halts the machine before the disk
+pack program presents the drive and leaves a marker at `/var/run/cadr-held`.
+While that file exists, `start` and `step` refuse. They print muir's own
+sentence for the state: "the machine is halted, its RUN clear: boot presses the
+button that starts it". `boot` presses the button and removes the marker.
+Nothing in the fabric knows about any of this, since `RUN` is still preset at
+reset. The marker is the whole of the contract, and the host check holds all
+three behaviours.
 
 **There is no init script**, and `cadr-console.mk` says why: the console is a
 person at a prompt, and started at boot it would hold a second master on the

@@ -398,6 +398,38 @@ CHECKS = {
         "golden": None,
         "gprom": True,
     },
+    # THE BOOT LINES, ON THE WHOLE MACHINE.  `iob` holds the card's own
+    # decode of the keyboard's boot word against muir --- which eight bits
+    # the 25LS2521 at IOBCSR 0A20 compares, and how wide a pulse a match
+    # makes --- and says nothing about what the pulse then reaches.  This is
+    # the other half: `cadr_machine` running MIT's boot PROM, a word at the
+    # keyboard's cable, and the PROM running from word 0 again.  muir's
+    # `tests/keyboard_boot.rs` is the same claim on `micro`, `rtl` and
+    # `chip`.  `cadr_io_board.sv` is in `sources` here as well as in `iob`'s,
+    # because a record aimed at the decode has to be able to ask which of the
+    # two checks sees it.
+    "kbd_boot": {
+        "sources": [
+            "rtl/machine/cadr_phase_gen.sv", "rtl/machine/cadr_microcycle.sv",
+            "rtl/machine/cadr_io_board.sv", "rtl/machine/cadr_spy_registers.sv",
+            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
+        ],
+        # Everything else `cadr_machine` is built out of, each with checks of
+        # its own.  `cadr_ddr_map.sv` is a PACKAGE and has to be named: the
+        # include path finds a module by its file name and does not find a
+        # package that way.
+        "extra": [
+            "rtl/plumbing/cadr_ddr_map.sv", "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv", "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_console_state.sv",
+        ],
+        "top": "cadr_machine",
+        "tb": "tb/cadr_kbd_boot_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": None,
+        "gprom": True,
+    },
     # THE MAP, WRITTEN AND THEN READ THROUGH, AGAINST A REAL MEMORY.  Same
     # module list and same reference as `machine`, and one thing different:
     # there `mem_rdata` is muir's own MD column keyed by the ROW, so the word

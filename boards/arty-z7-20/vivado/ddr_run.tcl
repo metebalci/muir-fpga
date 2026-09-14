@@ -20,9 +20,11 @@
 # again.  **AN IDENTITY COPY LEAVES NOTHING BEHIND.**  Page 0 reading back
 # unchanged afterwards says the path did no harm; it cannot say the path was
 # used, because a board whose port is dead times all 512 cycles out and leaves
-# page 0 exactly as unchanged.  Nor can any lamp: measured, LD2 blinks at the
-# same rate with DDR and without, because the 16,951 disk-controller polls
-# time out either way.
+# page 0 exactly as unchanged.  Nor can any lamp.  Memory removes exactly 512
+# timeouts, once, out of the boot PROM's 17,466 bus cycles: the other 16,951
+# are disk-controller polls and they end on the timer either way.  So the
+# lamps read the same with DDR and without, which was measured when LD2
+# carried a count of those timeouts and is the reason it no longer does.
 #
 # And the processing system ships nothing that could stand in.  Its DDR
 # controller has no performance monitors --- all 114 of its registers were
@@ -68,7 +70,7 @@
 # There the fabric was a witness held in reset until the port came live, so
 # the bitstream could be programmed first and `ps7_post_config` used as the
 # trigger.  The machine has no such trigger: `boards/arty-z7-20/cadr_arty.sv` resets it on
-# the MMCM's lock or on BTN0, so it starts the instant the part configures and
+# the MMCM's lock or on BTN3, so it starts the instant the part configures and
 # reaches its memory cycles 118 ms later whether or not anybody has brought
 # the port up.  Program first and the machine is finished before
 # `ps7_post_config` is typed.  So the port is brought up BEFORE the bitstream
@@ -552,7 +554,7 @@ if {$tally_bad > 0} {
         say "FAILED   the marker bits held, so the tally is in this bitstream"
         say "FAILED   and is reporting that the machine never reached its"
         say "FAILED   memory cycles.  It is not running, or it is not the"
-        say "FAILED   machine this bitstream was meant to hold.  LD0 and LD1"
+        say "FAILED   machine this bitstream was meant to hold.  LD1 and LD2"
         say "FAILED   on the board say which; docs/board.md tabulates them."
     } elseif {[lindex $first 4] == 0 && [lindex $first 5] == 0} {
         say "FAILED   THE MACHINE ASKED AND NOTHING ANSWERED.  Every one of"

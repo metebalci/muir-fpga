@@ -404,6 +404,10 @@ Result Run(const Config &cfg, const char *trace_path, const char *prom_path,
   };
 
   auto *dut = new Vcadr_machine;
+  // `-BOOT2` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot2 = 1;
   dut->clk = 0;
   dut->rst = 1;
   dut->boards = 32;

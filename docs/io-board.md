@@ -479,9 +479,18 @@ These are said here rather than given a column, per CLAUDE.md's rule.
 - **The keyboard's own cable.** `terminal::cable` and the 75118 at IOBKBD
   0E30 are the far end. What crosses here is a twenty-four-bit word arriving,
   which is the `KEY` row.
-- **`-BOOT*`, the keyboard's boot key.** muir's `unibus.rs` says it runs to
-  the processor board past the interface, which has no net for it, and
-  nothing presses it.
+- **`-BOOT*`, which the card decodes for itself.** The keyboard's firmware
+  sends one word when both Controls and both Metas are held with Rubout or
+  Return. The 25LS2521 at IOBCSR 0A20 compares bits 13-6 of that word, ones
+  in 13-10 over zeros in 9-6. Its `-EQUAL` becomes `-BOOT*` through the 74S04
+  at 0E13 and the open-collector 74S38 at 0F15. The card pulls the line
+  for 4 us, half a keyboard clock, and lets it go. It runs to the processor
+  board past the bus interface, which has no net for it, and reaches the
+  74S02 at OLORD2 1A07 as `-BOOT1`. Bit 16 is not one of the comparator's
+  inputs: it is qualified upstream by `REMOTE MOUSE ENABLE`. The word stays
+  in the register with `KBD READY` up, because microcode 323 reads it at
+  `(LOC 6)` to choose a cold boot from a warm one. muir's
+  `docs/keyboard-boot.md` has the path link by link.
 
 ## What the Python model found
 
@@ -1274,5 +1283,7 @@ takes one step, and the bound is there to fail rather than to hang.
   addresses therefore time out, where muir's `Responder::Debug` with no cable
   answers at `-UB MSYN` off the pull-up. That is a divergence of the cable's
   absence and goes when the cable's side is built.
-- **`-BOOT*`.** The keyboard's boot key runs to the processor board past the
-  bus interface and nothing presses it, in muir or here.
+- **`-BOOT*` is built and reaches the processor.** The card decodes the
+  keyboard's boot word itself and pulses the line. `build/iob.pass` holds the
+  decode and the pulse against muir. `build/kbd_boot.pass` holds what the pulse
+  reaches, which is the boot PROM running from word 0 again.

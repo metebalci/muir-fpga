@@ -32,7 +32,7 @@
 //
 // **THE CARD HAS A RESET OF ITS OWN HERE, AND THAT IS THE BOARD AND NOT A
 // CONVENIENCE.**  On `cadr_arty.sv` the card is inside `cadr_machine` and
-// takes `mach_rst` --- BTN0, the MMCM's lock, or the console's `RESET_KEY`
+// takes `mach_rst` --- BTN3, the MMCM's lock, or the console's `RESET_KEY`
 // --- while everything on the general purpose port takes `gp0_rst_s`.  So
 // `card_rst` is a second input here, and `cadr_input_cables.sv` takes it at
 // its own `mach_rst` port: a machine restarted under a running Linux must
@@ -375,6 +375,10 @@ module cadr_gp0_split_harness (
       // what makes the keystroke and the movement a read-back rather than a
       // register written and read again.
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .mouse_lines(mouse_lines),
+      // `-BOOT*`, which this page has no processor to send anywhere.
+      /* verilator lint_off PINCONNECTEMPTY */
+      .n_boot_star(),
+      /* verilator lint_on PINCONNECTEMPTY */
       .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
       .ser_cmd(ser_cmd), .ser_tx_strobe(ser_tx_strobe),
       .ser_tx_data(ser_tx_data), .ser_tx_take(ser_tx_take),

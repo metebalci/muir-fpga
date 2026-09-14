@@ -258,7 +258,7 @@ the poison lands. The block reads thirty-two words of filler, which looks
 exactly like a fabric that cannot write. It cost one run at `700b98a`.
 
 The machine, `DDR=1`, has no such trigger. `boards/arty-z7-20/cadr_arty.sv`
-resets it on the MMCM's lock or BTN0. It therefore starts the instant the part
+resets it on the MMCM's lock or BTN3. It therefore starts the instant the part
 configures, and reaches its memory cycles 118 ms of machine time later --- 236
 ms of real time, the tick being 10 ns --- whether or not anybody has brought
 the port up. Poisoning 256 words over JTAG takes longer than either.
@@ -339,7 +339,8 @@ failures are worth knowing before they happen:
 - **`0x18A72EE0` among the differing words.** The write opened both halves of
   the beat. The script says so and names `cadr_axi_widen.sv`'s strobes.
 
-LD4 carries the witness's own verdict on a `PROVE` board. It blinks red for a
+LD4 carries the witness's own verdict on a `PROVE` board, and only there. On
+the machine board it is the trouble lamp and carries nothing else. It blinks red for a
 port still dead, shows steady red for a live port with nothing completed, green
 for completed and right, and blue for completed and wrong. Nothing in either
 script can read a lamp. The read-back is the honest observer anyway, because a
@@ -468,7 +469,7 @@ build.
 
 That means the tally is there and the machine never reached its memory cycles.
 Either it is not running, or it is not the machine the bitstream was meant to
-hold. LD0 and LD1 say which.
+hold. LD0 and LD2 say which.
 
     RUN: FAILED   THE MACHINE ASKED AND NOTHING ANSWERED.  Every one of
 
@@ -488,147 +489,149 @@ target. **`rst -srst` recovered it.** None of the four scripts tries to recover
 on its own, because a script that reset the board on an error would be guessing
 at which error it was.
 
+## The buttons
+
+The board has four push buttons and this design uses two of them.
+
+    BTN0   boots the machine, as the light panel's button does
+    BTN3   resets the whole fabric
+    BTN1, BTN2   nothing
+
+BTN0 is `-BOOT2`, the button MIT put on the CADR's light panel. Pressing it
+restarts the machine from word 0 of its boot PROM. It does not clear main
+memory, the control store, the scratchpads or the map, so it is a boot and not
+a reset. Holding it down keeps the machine at the boot trap. Letting it go is
+what starts the PROM running. The fabric debounces it for 4 ms. That is what
+the Schmitt inverter on the light panel did with its own hysteresis.
+
+BTN3 is the fabric's reset. It throws away the machine's whole state and every
+register in the design. It is at the far end of the row so that it is hard to
+press by accident. The fabric is also held in reset while the clock generator
+has not locked, which is unchanged.
+
+Two other things press the same boot line. The first is the keyboard's boot
+chord. Holding both Controls and both Metas with Rubout cold-boots the machine,
+and with Return it warm-boots it. The keyboard sends one word for that, and the
+I/O board decodes the word itself and pulses the line. The second is the
+console. `cadr-console boot` presses the button from Linux or over the
+network.
+
+The pins are `D19` for BTN0 and `L19` for BTN3, `LVCMOS33`, from Digilent's
+`Arty-Z7-20-Master.xdc`.
+
 ## What the LEDs say
 
-    LD0   the fabric is clocked           free-running, about 1.5 Hz at 100 MHz
-    LD1   microcycles are retiring        beat[19], ~0.5 Hz with no memory
-    LD2   NXM timeouts, at their rate     nxm_count[16], not the flag itself
-    LD3   the datapath is moving          witness, a ~700-bit fold
-    LD4   where the boot has got to       red not running, blue PROM, green PROMDISABLE
-    LD5   was the last cycle answered     red the timer ended it, green a slave did,
-                                          blue if S_AXI_HP0 refused it
+The six lamps read left to right as the machine's own progress.
 
-**Every rate below LD0 is in the machine's own time, and a wristwatch reads
-twice as long.** The tick is 10 ns rather than 5, so the machine runs at 50%
-of the speed the hardware ran; every tick count in it is unchanged, which is
-why none of the simulations these figures come from moved. A period given here
-as 0.78 s is 1.56 s at the board, and 118 ms after reset is 236 ms. LD0 is the
-exception because it counts fabric ticks and not microcycles, and its line
-above is already real time.
+    LD0   MACHRUN            lit means the machine should be running
+    LD1   the fabric clock   the slow blink, about 1.5 Hz at 100 MHz
+    LD2   microcycles        the fast blink, and it freezes when the machine does
+    LD3   disk activity      lit while the controller moves a block
+    LD4   trouble            dark normally, red and sticky once something is wrong
+    LD5   booting            blue while the machine runs out of its boot PROM
 
-**LD0 and LD1 are the two that earn their place.** Between them they say
-whether the fabric is clocked and whether the machine is executing. That is the
-whole of "is it working", and it is readable across a room. The other four are
-bring-up instruments and will change as the machine grows.
+**LD0 is a level and LD2 is a blink, and they say different things.** MACHRUN
+is the machine's own run signal, the 9S42 at OLORD1 1A15. It drops during
+every memory stall, `-WAIT` being one of its terms, so the lamp's brightness is
+the fraction of time the machine computes rather than waits. A dim LD0 is a
+machine that is thrashing. A level can be held high by a fabric that has
+stopped, though. That is why LD2 carries the blink instead: motion cannot be
+faked.
 
-**LD2 shows a rate, not a flag.** `timed_out` is a level that stands only while
-an unanswered cycle is up. That is a sliver at the end of each 4.25 us timeout,
-and it integrates to a light too faint to read. The board showed exactly that.
-Counting its rising edges and lighting a bit of the count makes the rate
-visible.
+**LD4 is reserved to error and is either off or red.** No other colour and no
+other meaning ever reaches it, at power-on, during the PROM or while halted.
+Its green and blue channels are tied off. It lights for a non-existent-memory
+reference, for a block the disk's store could not supply, and for the machine
+stopping itself under ERRSTOP or on the statistics counter. It stays lit until
+the fabric is reset. Halting the machine from the console is none of those and
+does not light it.
 
-**And memory will not change it.** An earlier version of this paragraph said
-"dark means timeouts have stopped, which is what a working memory looks like".
-That was a prediction, and measured against a DDR model it is wrong. The boot
-PROM's only main-memory traffic is 512 cycles, an identity copy of page 0. The
-other 16,951 bus cycles are polls of a disk controller that DDR cannot answer.
-Memory removes exactly 512 timeouts, once, in 380 us at 118 ms after reset.
-After that, every cycle the machine makes is one of the polls. LD2's rate is
-**identical** with and without memory, at 0.78 s a period, about 168 kHz. LD5
-is green for those 380 us and red for ever after.
+Dark being the good state is the point of it. It makes LD2's freeze readable:
+LD2 stopped with LD4 dark means somebody halted the machine, and LD2 stopped
+with LD4 red means it fell over.
 
-**And nothing else on the board changes either.** That is the stronger
-statement, and it is the one that holds today. This paragraph used to end with
-a halt. If bit 0 of the last word of page 0 was set, the PROM believed the disk
-was ready, wrote one word and stopped at `ERROR-DISK-ERROR`, and LD1 and LD3
-went dark. **That halt was a bug, and it is fixed.** `cadr_xbus_ddr` held its
-`rdata` register past its own cycle, so every one of the 16,951 disk polls
-loaded MD with whatever DDR had last returned. An unanswered read gives MD zero
-now, decided and fixed at `05d28fa`. With that, 200 ms of machine time gives
-852,515 microcycles and 514 timeouts **without** memory, against 862,932 and 2
-**with**. LD1's blink moves by one part in a hundred, and nothing else moves at
-all. (Those figures are with the disk controller's registers answering the boot
-PROM's polls. Before `cadr_disk_controller.sv` existed the polls timed out, and
-the same run gave 590,925 and 13,783.)
+**LD5 is lit while the machine is still booting.** It is blue, and blue is the
+only colour it takes. It goes dark when the machine sets PROMDISABLE, which is
+the moment it leaves the boot PROM and starts running the microcode it loaded
+from the disk. So a lit lamp means booting and a dark one means booted.
 
-The lamps are therefore not how the memory path is checked, and they cannot be.
-The evidence is `boards/arty-z7-20/vivado/ddr_run.tcl`'s four counters, read by
-the debugger at the processing system's own boundary, together with page 0 read
-back against the poison that was put there. The probe cannot answer it either.
-It captures microcycles 0 to DEPTH-1, and the first `mem_req` is at 536,303.
+**Every rate here is in the machine's own time, and a wristwatch reads twice as
+long.** The tick is 10 ns rather than 5, so the machine runs at half the speed
+the hardware ran. Every tick count in it is unchanged, which is why none of the
+simulations these figures come from moved. A period given as 0.14 s is 0.28 s
+at the board. LD1 is the exception, because it counts fabric ticks rather than
+microcycles and its figure above is already real time.
+
+Read the first three in order.
+
+    LD1 dark                  not programmed, or the clock never locked
+    LD1 blinking, LD2 dark    clocked, but not retiring microcycles
+    LD1 and LD2 blinking      the machine is running
+
+**The assignment before this one was a bring-up instrument and is superseded.**
+LD0 was the fabric's clock, LD2 counted non-existent-memory timeouts, LD3 was
+the datapath fold, LD4 carried three boot states in three colours and LD5
+showed whether the last bus cycle was answered. Each of those answers a
+question nobody asks of a working machine. What is worth keeping from the
+measurements behind them is below.
+
+**The timeout rate said nothing, measured.** LD2 used to light a bit of a count
+of `timed_out` edges, on the argument that the level itself is a sliver too
+faint to read. That much was true. What was not true was the prediction that a
+working memory would put the lamp out. The boot PROM's only main-memory traffic
+is 512 cycles, an identity copy of page 0. Its other 16,951 bus cycles are
+polls of the disk controller. With 200 ms of machine time the run gives 852,515
+microcycles and 514 timeouts without memory against 862,932 and 2 with. The
+lamp read the same either way. Before the disk controller's registers existed
+the polls timed out too, and the same run gave 590,925 and 13,783.
+
+**The lamps are not how the memory path is checked, and they cannot be.** The
+evidence is `boards/arty-z7-20/vivado/ddr_run.tcl`'s four counters, read by the
+debugger at the processing system's own boundary, together with page 0 read
+back against the poison put there. The probe cannot answer it either: it
+captures microcycles 0 to DEPTH-1, and the first `mem_req` is at 536,303.
 
 **There are two signals called `nxm` and they mean opposite kinds of thing.**
-The decode's signal says the *address* is Xbus space with nothing built there.
-The bus interface's own register, carried out as `timed_out`, says *this cycle*
-ended on the timer rather than on a slave. LD5 was first wired to the decode's
-signal, and it came up **green on a board with no memory**. The reason is that
-the boot PROM's traffic is 16,951 cycles to the disk registers at `0o17377774`,
-which are in the decode's map and therefore not empty space. They are simply
-unanswered.
+The decode's signal says the address is Xbus space with nothing built there.
+The bus interface's own register, carried out as `timed_out`, says this cycle
+ended on the timer rather than on a slave. The old LD5 was first wired to the
+decode's signal and came up green on a board with no memory. The reason is that
+the boot PROM's traffic goes to the disk registers at `0o17377774`. Those are
+in the decode's map and are therefore not empty space. They are simply unanswered. LD4
+takes `timed_out` for the same reason.
 
-LD5 latches `timed_out` now, which is the question anyone actually wants. Red
-means the timer ended the cycle, and green means something replied. The signal
-was there all along. The LED was reading the wrong one.
-
-**And the same conflation explains LD2's rate.** LD2 counts `timed_out` edges.
-On a board where nothing answers the disk polls it therefore counts **16,951 in
-a boot-PROM run, not 2**. The 2 are the cycles whose *address* was empty space,
-which is a different question. LD2 blinking steadily is the machine faithfully
-polling a controller that is not built, at the rate the census predicts.
-
-**LD0 is the one to look at first, and that is why it is first.** It answers
-"is this running at all". Every other light is meaningless until it says yes.
-Without it, "not programmed", "the MMCM never locked" and "the machine stalled"
-are three different problems that all look like a dark board.
-
-Read them in order:
-
-    LD0 dark                  not programmed, or the MMCM never locked
-    LD0 blinking, LD1 dark    clocked, but not retiring microcycles
-    LD0 and LD1 blinking      the machine is running
-
-This was observed on the board, with no memory and the boot PROM only: **LD0
-blinking, LD1 blinking slowly, LD2 blinking, LD3 faint, LD4 blue, LD5 red.**
-LD3 faint is correct. `witness` only toggles when the datapath changes, and the
-machine spends almost all its time parked in timeouts. A faint LD3 is a machine
-that is mostly waiting.
-
-**With no memory behind `mem_*`**, the expected reading is **LD0 blinking, LD1
-blinking very slowly, LD2 blinking at about 0.78 s, LD3 lit**. That is what a
-`PROVE` board is, and what every build before the PS block landed was. An
-earlier version of this line said LD2 would be "lit or dim". That was true of
-the lamp while it showed `timed_out` itself, and it stopped being true when the
-lamp started counting the edges.
-
-An earlier version of this table said LD1 would be *dark*. The reasoning was
-that with nothing answering `mem_*` the machine reaches its first main-memory
-cycle and stalls there for ever. **That is wrong, and the board said so
-first.** Nothing answering does not mean the cycle never ends. The NXM timer in
-`cadr_busint_xbus.sv` expires at about 4.25 us, and the cycle completes as a
-non-existent-memory reference. The machine keeps going. The timer is a real
-part of the design doing its job, and it turns "no memory" from a stall into a
-slowdown.
-
-It was simulated afterwards to put numbers on it, with `cadr_machine` and
-`mem_done` tied low, which is the step-1 bitstream exactly:
+**No memory means slow progress, not no progress.** An earlier prediction here
+was that with nothing answering `mem_*` the machine would reach its first
+main-memory cycle and stall there for ever. The board said otherwise first. The
+NXM timer in `cadr_busint_xbus.sv` expires at about 4.25 us and the cycle
+completes as a non-existent-memory reference, and the machine keeps going. It
+was simulated afterwards to put numbers on it, with `cadr_machine` and
+`mem_done` tied low, which is the step-1 bitstream exactly.
 
     first mem_req            microcycle 536,303
     NXM timeouts             514 in 200 ms --- the parity loop's 512 plus
                              the two cycles to empty Xbus space
     after the first cycle    0.26 us a microcycle, against 0.22 normal
-    LD1 (beat[19])           toggles every 0.14 s
+    LD2 (beat[19])           toggles every 0.14 s
 
     (before the disk controller's registers answered the polls, the same run
-     gave 13,783 timeouts, 1.49 us a microcycle and LD1 every 0.79 s; the
-     16,951 polls each cost a 4.25 us timeout)
+     gave 13,783 timeouts, 1.49 us a microcycle and the blink every 0.79 s;
+     the 16,951 polls each cost a 4.25 us timeout)
 
-So LD1's period is a little over a quarter of a second. That is close to the
-0.23 s it would be at full speed, because the boot PROM's 16,951 disk polls are
-answered now and no longer each cost a timeout. LD2 is nearly dark. 514
-timeouts in 200 ms is about 2.6 kHz, and 65,536 of them a toggle is a period
-near a minute. **This is the reading the original prediction expected from
-memory and got from the disk controller's registers instead.** The timeouts
-that stopped were the polls, never the memory cycles.
+So the microcycle blink's period is a little over a quarter of a second. That
+is close to the 0.23 s it would be at full speed, because the disk polls are
+answered now and no longer each cost a timeout.
 
-`tb/cadr_nomem_tb.cpp` printed that line as `beat[23]` until `bffbe9c`. LD1 has
-been `beat[19]` since `ad4a475`, and both now agree. What the testbench
-measures is the microcycle rate. Which bit of the beat reaches the pin is
-`boards/arty-z7-20/cadr_arty.sv`'s to say, and this table takes it from there.
+`tb/cadr_nomem_tb.cpp` printed that line as `beat[23]` until `bffbe9c`. The
+lamp has been `beat[19]` since `ad4a475`, and both now agree. What the
+testbench measures is the microcycle rate. Which bit of the beat reaches the
+pin is `boards/arty-z7-20/cadr_arty.sv`'s to say, and this table takes it from
+there.
 
 **The general point is worth more than the correction.** The prediction was
 that no memory means no progress. The fabric's answer is that no memory means
-*slow* progress. That is the first behaviour anyone here observed on silicon
-that was predicted wrongly, and it was predicted wrongly in this file.
+slow progress. That is the first behaviour anyone here observed on silicon that
+was predicted wrongly, and it was predicted wrongly in this file.
 
 ## Holding the machine at boot
 
@@ -983,7 +986,7 @@ thing to look at.
 **No signal at all, or the monitor reporting no input.** The serialisers are
 not sending, which is the clock rather than the picture: either the bitstream
 is not the `HDMI=1` one, or the display's MMCM is not locked. The CADR itself
-runs either way, so LD0 and LD1 say nothing about this. The cheapest check is
+runs either way, so LD1 and LD2 say nothing about this. The cheapest check is
 that the bitstream served is the one that was built with `HDMI=1`.
 
 **A signal the monitor syncs to, showing black everywhere.** The raster is

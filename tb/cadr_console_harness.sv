@@ -41,7 +41,7 @@
 // **AND THE CONSOLE'S RESET IS WIRED HERE THE WAY `cadr_arty.sv` WIRES IT**,
 // which is the same rule as the arbiter above: the check must hold the thing
 // on the board and not a copy of it.  `mach_rst` leaves `cadr_console`, is
-// ORed with this harness's own `rst` --- the board's MMCM lock and BTN0 ---
+// ORed with this harness's own `rst` --- the board's MMCM lock and BTN3 ---
 // and the OR is REGISTERED, because a reset lands on some two thousand
 // registers spread across the machine and `cadr_arty.sv` already registers
 // `pack_rst` for exactly that reason.  What comes out drives the register
@@ -139,6 +139,9 @@ module cadr_console_harness #(
     // --- that `RESET_T` is asserted as a length and not as "something
     // --- happened".
     output var logic        mach_rst_o,
+    // The console's press of `-BOOT2`, brought out so the check can count the
+    // pulse's ticks as it counts the reset's.
+    output var logic        mach_boot_o,
 
     // --- what a check watches
     output var logic        con_req,
@@ -219,6 +222,22 @@ module cadr_console_harness #(
   logic con_mach_rst, mach_rst;
   always_ff @(posedge clk) mach_rst <= rst || con_mach_rst;
   assign mach_rst_o = mach_rst;
+
+  // **AND THE CONSOLE'S OTHER BUTTON, `-BOOT2`.**  A write of `BOOT_KEY` to
+  // page 0's word 13 holds the light panel's line down; `cadr_arty.sv` ORs it
+  // with BTN0 and gives the result to `cadr_machine`, where the 74S02 at
+  // OLORD2 1A07 makes `-BOOT` of it beside the keyboard's `-BOOT1` and the
+  // debug cable's `PROG.BOOT`.  This harness has neither of those two, so the
+  // gate here is the one input it has; `cadr_machine.sv` has the whole gate
+  // and the account of it.
+  //
+  // It is wired rather than folded for the reason the readout's ports are:
+  // the check must hold the thing on the board.  What `build/console.pass`
+  // then holds is the whole path, a store on the AXI face to the machine
+  // running the PROM from word 0 again.
+  logic con_mach_boot, n_boot;
+  assign n_boot     = !con_mach_boot;
+  assign mach_boot_o = con_mach_boot;
 
   // The third master's answers, folded: see the tie-off below.
   logic        dbg_gnt_unused, dbg_ssyn_unused;
@@ -338,7 +357,8 @@ module cadr_console_harness #(
       .ro_addr    (con_ro_addr),
       .ro_data    (con_ro_data),
       .ro_echo    (con_ro_echo),
-      .mach_rst   (con_mach_rst)
+      .mach_rst   (con_mach_rst),
+      .mach_boot  (con_mach_boot)
   );
 
   // The clock control register's other four bits and the debug IR, out of
@@ -370,7 +390,8 @@ module cadr_console_harness #(
       .stathenb   (stathenb_o),
       .mode_speed (mode_speed_o),
       .prog_reset (prog_reset_o),
-      .prog_boot  (prog_boot_o)
+      .prog_boot  (prog_boot_o),
+      .n_boot     (n_boot)
   );
 
   logic ub_md_ack_u;
@@ -380,6 +401,11 @@ module cadr_console_harness #(
   ) processor (
       .clk         (clk),
       .rst         (mach_rst),
+      .n_boot      (n_boot),
+      // OLORD1's three, which reach the board's lamps and nothing here.
+      /* verilator lint_off PINCONNECTEMPTY */
+      .machrun_o (), .errhalt_o (), .stathalt_o (),
+      /* verilator lint_on PINCONNECTEMPTY */
       .run         (run_o),
       .step        (step_w),
       .nop11       (nop11_w),

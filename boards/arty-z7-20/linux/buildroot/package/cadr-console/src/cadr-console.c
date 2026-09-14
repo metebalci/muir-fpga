@@ -224,10 +224,43 @@ static void do_step(struct console *c, unsigned n)
 	cons_say_step(&s);
 }
 
+// **THE BUTTON, AND IT IS WHAT TAKES THE HOLD OFF.**  muir's prompt does the
+// same: its `Command::Boot` presses and then clears its own hold, with the
+// comment "the button starts the machine: it presets RUN, and a finger on it
+// is all a CADR is given.  So the hold comes off with it."
+static void do_boot(struct console *c, unsigned settle_us)
+{
+	struct cons_boot_report r;
+	cons_boot_and_report(c, settle_us, &r);
+	cons_say_boot(&r);
+	if (cons_held(CONS_HELD_PATH)) {
+		if (cons_release_held(CONS_HELD_PATH) == 0)
+			say("boot: the machine was being held unbooted (%s); the hold is off",
+			    CONS_HELD_PATH);
+		else
+			say("boot: the machine was being held unbooted and %s could not be "
+			    "removed, so start and step will go on refusing", CONS_HELD_PATH);
+	}
+}
+
+// Whether a command that runs the machine must refuse.  The marker means an
+// init step halted the machine before anything presented it a drive, which is
+// what `--no-auto-boot` is on muir; only the button starts one.
+static int refuse_while_held(const char *cmd)
+{
+	if (!cons_held(CONS_HELD_PATH))
+		return 0;
+	say("%s: %s", cmd, CONS_HELD_SAYING);
+	say("%s: this machine is being held unbooted (%s); `boot` presses the button",
+	    cmd, CONS_HELD_PATH);
+	return 1;
+}
+
 static void help(void)
 {
 	say("halt            0 into the clock control register: RUN clear (CC's first act on a debuggee)");
 	say("start           1 into it: RUN");
+	say("boot            the light panel's button: it presets RUN, and the machine runs from the PROM at 0");
 	say("step [N]        CC's CC-CLOCK, 2 then 0, N times: one microcycle each, CYCLES either side");
 	say("regs            all sixteen registers by muir's names, FLAG-1 and FLAG-2 field by field");
 	say("status          running or halted, and why; PC; CYCLES measured twice");
@@ -272,11 +305,18 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		say("halt: 0 written to the clock control register (EADR 3); RUN is clear");
 		do_status(c, settle_us);
 	} else if (!strcmp(cmd, "start")) {
+		if (refuse_while_held("start"))
+			return 0;
 		cons_start(c);
 		say("start: 1 written to the clock control register (EADR 3); RUN is set");
 		do_status(c, settle_us);
-	} else if (!strcmp(cmd, "step"))
+	} else if (!strcmp(cmd, "boot"))
+		do_boot(c, settle_us);
+	else if (!strcmp(cmd, "step")) {
+		if (refuse_while_held("step"))
+			return 0;
 		do_step(c, argc > 1 ? (unsigned)strtoul(argv[1], NULL, 0) : 1);
+	}
 	else if (!strcmp(cmd, "regs"))
 		do_regs(c);
 	else if (!strcmp(cmd, "status"))
