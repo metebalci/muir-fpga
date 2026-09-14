@@ -2499,6 +2499,480 @@ static void make_dither(uint8_t pic[SCREEN_HEIGHT][SCREEN_WIDTH])
 			pic[y][x] = (uint8_t)((x + y) & 1u);
 }
 
+// ---- the keyboard's own boot sequence -----------------------------------
+//
+// **THE KEYBOARD BOOTS THE MACHINE AND THE MACHINE IS NOT ASKED.**
+// `sys/io1/ukbd.lisp`'s `check-boot` runs after every key-down: with the
+// Controls and Metas held along with Rubout it sends the cold boot code, and
+// with Return the warm one, and the I/O board decodes that word itself.  Then
+// `bootflag` holds every key-up back until the next key-down, so that the
+// machine has time to read the word.
+//
+// **EVERY EXPECTED WORD HERE IS HAND-COMPUTED**, as the rest of the keyboard
+// checks are: the boot words are written as literals and derived in the
+// comment beside them, so that the program's own expression is not what says
+// what they are.
+//
+//     frame                 0o371 << 16              0xF90000
+//     bits 15-10 all ones   0o77 << 10               0x00FC00
+//     cold, low six bits    0o46                     0x000026  -> 0xF9FC26
+//     warm, low six bits    0o62                     0x000032  -> 0xF9FC32
+#define BOOT_COLD_WORD 0xF9FC26u
+#define BOOT_WARM_WORD 0xF9FC32u
+
+// The keys the chord is typed with, by X11 keysym, in the built-in mapping:
+// `Control_L` and `Control_R` are MIT's two Controls, `Alt_L` and `Alt_R` are
+// its two Metas --- which is what makes the default sequence Ctrl-Alt-Del ---
+// and `Delete` is Rubout.
+#define KS_CONTROL_L 0xffe3u
+#define KS_CONTROL_R 0xffe4u
+#define KS_ALT_L     0xffe9u
+#define KS_ALT_R     0xffeau
+#define KS_DELETE    0xffffu
+#define KS_RETURN    0xff0du
+#define KS_SHIFT_L   0xffe1u
+
+// A spelling parsed, for the flag's own grammar.
+static int boot_keys_of(const char *spelling, struct key_boot *out, char *why, unsigned n)
+{
+	return key_boot_parse(spelling, out, why, n);
+}
+
+static void check_keyboard_boot(const char *work_dir)
+{
+	struct client c;
+	char why[256];
+	struct key_boot b;
+
+	// --- (1) THE KEYS ARE WHERE THE FIRMWARE SAYS THEY ARE.  `check-boot`
+	// names its own positions --- "both controls and both metas ... along
+	// with rubout or return", control 20 and 26, meta 45 and 165, rubout
+	// 23, return 136 --- and MIT's key table has to agree with it, or the
+	// sequence is typed at keys that are not the sequence's.
+	CHECK(KEY_TABLE[0020].kind == KEY_SHIFT && KEY_TABLE[0020].shift == SH_CONTROL,
+	      "position 0o20 is not the left Control");
+	CHECK(KEY_TABLE[0026].kind == KEY_SHIFT && KEY_TABLE[0026].shift == SH_CONTROL,
+	      "position 0o26 is not the right Control");
+	CHECK(KEY_TABLE[0045].kind == KEY_SHIFT && KEY_TABLE[0045].shift == SH_META,
+	      "position 0o45 is not the left Meta");
+	CHECK(KEY_TABLE[0165].kind == KEY_SHIFT && KEY_TABLE[0165].shift == SH_META,
+	      "position 0o165 is not the right Meta");
+	CHECK(KEY_POS_RUBOUT == 0023 && KEY_TABLE[0023].kind == KEY_NAMED
+	      && strcmp(KEY_TABLE[0023].name, "Rubout") == 0,
+	      "position 0o23 is not Rubout");
+	CHECK(KEY_POS_RETURN == 0136 && KEY_TABLE[0136].kind == KEY_NAMED
+	      && strcmp(KEY_TABLE[0136].name, "Return") == 0,
+	      "position 0o136 is not Return");
+
+	// ...and the two words, against the literals above and against the
+	// I/O board's own decode, which looks at bits 13-6 and nothing else:
+	// ones in 13-10 over zeros in 9-6.  A word that failed that would
+	// reach the machine's keyboard register and boot nothing.
+	CHECK(key_boot_word(1) == BOOT_COLD_WORD, "the cold boot word is 0x%06x, wanting 0x%06x",
+	      key_boot_word(1), BOOT_COLD_WORD);
+	CHECK(key_boot_word(0) == BOOT_WARM_WORD, "the warm boot word is 0x%06x, wanting 0x%06x",
+	      key_boot_word(0), BOOT_WARM_WORD);
+	for (int cold = 0; cold < 2; ++cold) {
+		const uint32_t w = key_boot_word(cold);
+		CHECK(((w >> 10) & 0xFu) == 0xFu && ((w >> 6) & 0xFu) == 0u,
+		      "the %s boot word 0x%06x does not carry the board's own decode: "
+		      "bits 13-10 ones over bits 9-6 zeros", cold ? "cold" : "warm", w);
+		CHECK((w >> 16) == 0371u,
+		      "the %s boot word 0x%06x has the wrong frame and source",
+		      cold ? "cold" : "warm", w);
+	}
+
+	// --- (2) THE FLAG'S GRAMMAR.  Four spellings and no others, counted,
+	// order-insensitive, `ctrl` and `meta` and nothing else --- muir's
+	// `BootKeys::parse`, refused in muir's own words.
+	static const struct { const char *spelling; unsigned controls, metas; } good[] = {
+		{ "ctrl,meta", 1, 1 },
+		{ "ctrl,ctrl,meta", 2, 1 },
+		{ "ctrl,meta,meta", 1, 2 },
+		{ "ctrl,ctrl,meta,meta", 2, 2 },
+		// The order does not matter, nor does case or the spaces
+		// around a word: the flag is a bag of keys to hold.
+		{ "meta,ctrl", 1, 1 },
+		{ "meta,ctrl,ctrl", 2, 1 },
+		{ " CTRL , Meta ", 1, 1 },
+	};
+	for (unsigned i = 0; i < sizeof good / sizeof good[0]; ++i) {
+		memset(&b, 0, sizeof b);
+		const int ok = boot_keys_of(good[i].spelling, &b, why, sizeof why);
+		CHECK(ok == 0 && b.controls == good[i].controls && b.metas == good[i].metas,
+		      "`%s` read as %u Controls and %u Metas (answer %d), wanting %u and %u",
+		      good[i].spelling, b.controls, b.metas, ok, good[i].controls, good[i].metas);
+	}
+	// ...and everything else refused, with the four named.  `ctrl` alone
+	// and `meta` alone are refused because the sequence is both; three of
+	// a word is refused because there are only two of each key; and
+	// `rubout` is refused because Rubout is never in it --- it is the key
+	// the sequence ENDS on and naming it would say the opposite.
+	static const char *const refused[] = {
+		"ctrl", "meta", "", "ctrl,", "ctrl,ctrl,ctrl,meta", "ctrl,meta,meta,meta",
+		"ctrl,alt", "control,meta", "ctrl meta", "ctrl,rubout", "rubout,return"
+	};
+	for (unsigned i = 0; i < sizeof refused / sizeof refused[0]; ++i) {
+		memset(&b, 0xAA, sizeof b);
+		why[0] = '\0';
+		const int ok = boot_keys_of(refused[i], &b, why, sizeof why);
+		CHECK(ok < 0, "`%s` was taken as the keys the boot sequence needs, wanting a "
+		      "refusal", refused[i]);
+		CHECK(strstr(why, "ctrl,ctrl,meta,meta") != NULL
+		      && strstr(why, "is not the keys the boot sequence needs") != NULL,
+		      "`%s` was refused with \"%s\", which does not name the four spellings",
+		      refused[i], why);
+	}
+	// ...and the spelling written back is the spelling read, so that a
+	// program saying what it is set to says something the flag would take.
+	for (unsigned i = 0; i < 4; ++i) {
+		char out[32];
+		struct key_boot again;
+		CHECK(boot_keys_of(good[i].spelling, &b, why, sizeof why) == 0, "unreachable");
+		key_boot_spelling(b, out, sizeof out);
+		CHECK(strcmp(out, good[i].spelling) == 0,
+		      "`%s` writes back as `%s`", good[i].spelling, out);
+		CHECK(boot_keys_of(out, &again, why, sizeof why) == 0
+		      && again.controls == b.controls && again.metas == b.metas,
+		      "`%s` does not read back as itself", out);
+	}
+
+	// --- (3) CTRL-ALT-DEL, WHICH IS THE DEFAULT SEQUENCE, AND THE WORD
+	// GOES AFTER THE KEY-DOWN'S OWN.  Every key of it is held, so each
+	// sends its position down; the boot word follows Rubout's, because
+	// `check-boot` runs after the key-down and not instead of it --- the
+	// machine sees the key as well as the request.
+	if (open_typist(&c) == 0) {
+		send_key(&c, KS_CONTROL_L, 1);
+		send_key(&c, KS_ALT_L, 1);
+		send_key(&c, KS_DELETE, 1);
+		pump(60);
+		const uint32_t w[] = {
+			word_of(020, 0),    // the left Control
+			word_of(045, 0),    // the left Meta
+			word_of(023, 0),    // Rubout
+			BOOT_COLD_WORD      // ...and the boot word after it
+		};
+		want_keys("Control, Meta and Rubout held: the cold boot word", w, 4);
+		// ...and what the firmware did with THAT key, which is what
+		// muir's trace says on the line after what the key became.
+		CHECK(srv.keys.firmware == KEY_FW_BOOT_COLD,
+		      "the firmware answered %d for the key that completed the sequence, "
+		      "wanting the cold boot", srv.keys.firmware);
+
+		// ...AND NO KEY-UP GOES UNTIL THE NEXT KEY-DOWN.  `bootflag`
+		// is set, and the three releases that follow send nothing at
+		// all: a word landing in the keyboard register before the
+		// microcode looks at it replaces the one there.
+		send_key(&c, KS_DELETE, 0);
+		send_key(&c, KS_ALT_L, 0);
+		send_key(&c, KS_CONTROL_L, 0);
+		pump(60);
+		want_keys("the three key-ups behind the boot word: held back", w, 4);
+		CHECK(srv.keys.firmware == KEY_FW_HELD_BACK,
+		      "the firmware answered %d for a key-up behind the boot word, wanting "
+		      "held back", srv.keys.firmware);
+
+		// ...and the next key-DOWN clears the flag, sends its own word,
+		// and the key-up after it goes as any key-up does.
+		send_key(&c, 'a', 1);
+		send_key(&c, 'a', 0);
+		pump(60);
+		const uint32_t after[] = {
+			w[0], w[1], w[2], w[3],
+			word_of(0123, 0),   // 'a' down, which clears `bootflag`
+			word_of(0123, 1)    // ...and its up, which is no longer held
+		};
+		want_keys("a key-down after the boot word lets key-ups go again", after, 6);
+		CHECK(srv.keys.firmware == KEY_FW_NONE,
+		      "the firmware answered %d for an ordinary key-up, wanting nothing",
+		      srv.keys.firmware);
+		CHECK(srv.keys.boots == 1, "%lu boot words went, wanting 1", srv.keys.boots);
+		CHECK(srv.keys.held_back == 3, "%lu key-ups were held back, wanting 3",
+		      srv.keys.held_back);
+		client_close(&c);
+		settle();
+	}
+
+	// --- (4) THE OTHER CONTROL, THE OTHER META, AND RETURN, WHICH IS THE
+	// WARM BOOT.  The same sequence on the right-hand keys, so that a
+	// program that had found only one of each pair is caught.
+	if (open_typist(&c) == 0) {
+		send_key(&c, KS_CONTROL_R, 1);
+		send_key(&c, KS_ALT_R, 1);
+		send_key(&c, KS_RETURN, 1);
+		pump(60);
+		const uint32_t w[] = {
+			word_of(026, 0),    // the right Control
+			word_of(0165, 0),   // the right Meta
+			word_of(0136, 0),   // Return
+			BOOT_WARM_WORD
+		};
+		want_keys("the right-hand Control and Meta with Return: the warm boot word",
+			  w, 4);
+		client_close(&c);
+		settle();
+	}
+
+	// --- (5) RUBOUT IS TESTED FIRST, AS THE FIRMWARE TESTS IT.  With both
+	// Rubout and Return down the boot is COLD, and the two are pressed
+	// before the modifiers so that neither completes the sequence on its
+	// own way in.
+	if (open_typist(&c) == 0) {
+		send_key(&c, KS_DELETE, 1);
+		send_key(&c, KS_RETURN, 1);
+		send_key(&c, KS_CONTROL_L, 1);
+		send_key(&c, KS_ALT_L, 1);
+		pump(60);
+		const uint32_t w[] = {
+			word_of(023, 0), word_of(0136, 0), word_of(020, 0), word_of(045, 0),
+			BOOT_COLD_WORD
+		};
+		want_keys("Rubout and Return both down: the cold word, Rubout tested first",
+			  w, 5);
+		client_close(&c);
+		settle();
+	}
+
+	// --- (6) A CHORD WITH TOO FEW CONTROLS HELD DOES NOT BOOT.  With
+	// `ctrl,ctrl,meta` set, one Control and a Meta and Rubout send three
+	// key-downs and nothing else; the second Control completes it.
+	if (open_typist(&c) == 0) {
+		CHECK(boot_keys_of("ctrl,ctrl,meta", &b, why, sizeof why) == 0, "unreachable");
+		key_boot_set(&srv.keys, b);
+		send_key(&c, KS_CONTROL_L, 1);
+		send_key(&c, KS_ALT_L, 1);
+		send_key(&c, KS_DELETE, 1);
+		pump(60);
+		const uint32_t w[] = { word_of(020, 0), word_of(045, 0), word_of(023, 0) };
+		want_keys("one Control where the setting asks for two: no boot word", w, 3);
+		send_key(&c, KS_CONTROL_R, 1);
+		pump(60);
+		const uint32_t both[] = { w[0], w[1], w[2], word_of(026, 0), BOOT_COLD_WORD };
+		want_keys("...and the second Control completes it", both, 5);
+		client_close(&c);
+		settle();
+	}
+
+	// --- (7) AND TOO FEW METAS, WHICH IS THE OTHER HALF OF THE SETTING.
+	if (open_typist(&c) == 0) {
+		CHECK(boot_keys_of("ctrl,meta,meta", &b, why, sizeof why) == 0, "unreachable");
+		key_boot_set(&srv.keys, b);
+		send_key(&c, KS_CONTROL_L, 1);
+		send_key(&c, KS_ALT_L, 1);
+		send_key(&c, KS_DELETE, 1);
+		pump(60);
+		const uint32_t w[] = { word_of(020, 0), word_of(045, 0), word_of(023, 0) };
+		want_keys("one Meta where the setting asks for two: no boot word", w, 3);
+		send_key(&c, KS_ALT_R, 1);
+		pump(60);
+		const uint32_t both[] = { w[0], w[1], w[2], word_of(0165, 0), BOOT_COLD_WORD };
+		want_keys("...and the second Meta completes it", both, 5);
+		client_close(&c);
+		settle();
+	}
+
+	// --- (8) HELD KEYS ONLY, WHICH IS muir's RULE AND THE KEYBOARD'S.  A
+	// viewer holding Shift sends Rubout on a plane this key has not got,
+	// so the Shift is worked around it and the key is TAPPED --- down and
+	// up in one breath --- and a tapped key is not down when `check-boot`
+	// looks.  On the keyboard itself a Shift defeats the sequence too:
+	// the firmware compares whole bytes of its bit map and Shift at 24 and
+	// 25 sits in the same byte as the Controls at 20 and 26.
+	if (open_typist(&c) == 0) {
+		send_key(&c, KS_CONTROL_L, 1);
+		send_key(&c, KS_ALT_L, 1);
+		send_key(&c, KS_SHIFT_L, 1);
+		send_key(&c, KS_DELETE, 1);
+		pump(60);
+		const uint32_t w[] = {
+			word_of(020, 0),    // Control down
+			word_of(045, 0),    // Meta down
+			word_of(024, 0),    // the Shift the viewer pressed
+			word_of(024, 1),    // ...lifted around the tapped key
+			word_of(023, 0),    // Rubout, down and up in one breath
+			word_of(023, 1),
+			word_of(024, 0)     // ...and the Shift put back
+		};
+		want_keys("Rubout tapped under a held Shift: no boot word", w, 7);
+		CHECK(srv.keys.boots == 0, "%lu boot words went for a tapped Rubout, wanting 0",
+		      srv.keys.boots);
+		client_close(&c);
+		settle();
+	}
+
+	// --- (9) AND IT IS A SECOND WORD, WHICH ASKS FOR ITS OWN ROOM.  The
+	// key-down that completes the sequence has taken the one slot it
+	// reserved, so the boot word behind it needs another --- and at a full
+	// queue it is refused and counted rather than dropped into nothing.
+	// `dropped` is the counter that says a caller pushed what it had not
+	// reserved, and it must stay zero.
+	{
+		struct key_state k;
+		key_state_init(&k);
+		key_event(&k, KS_CONTROL_L, 1);
+		key_event(&k, KS_ALT_L, 1);
+		// One free slot: Rubout's own word fits in it and the boot word
+		// does not.  The queue is filled with a word that is none of
+		// the four, so that a partial push shows as a changed tail.
+		const uint32_t filler = word_of(0177, 1);
+		k.head = 0;
+		k.queue[0] = word_of(020, 0);
+		k.queue[1] = word_of(045, 0);
+		k.count = KEY_BACKLOG - 1;
+		for (unsigned i = 2; i < KEY_BACKLOG - 1; ++i)
+			k.queue[i] = filler;
+		const unsigned long refused_before = k.refused;
+		key_event(&k, KS_DELETE, 1);
+		CHECK(key_pending(&k) == KEY_BACKLOG,
+		      "Rubout's own word did not take the last slot: %u words waiting",
+		      key_pending(&k));
+		CHECK(k.queue[KEY_BACKLOG - 1] == word_of(023, 0),
+		      "the last slot holds 0x%06x, wanting Rubout's own word",
+		      k.queue[KEY_BACKLOG - 1]);
+		CHECK(k.dropped == 0, "%lu words were dropped silently, wanting none",
+		      k.dropped);
+		CHECK(k.refused == refused_before + 1,
+		      "%lu refusals for a boot word with no room, wanting 1",
+		      k.refused - refused_before);
+		CHECK(k.boots == 0 && k.hold_back == 0,
+		      "a boot word that was refused set the flag anyway: %lu boots, hold %d",
+		      k.boots, k.hold_back);
+	}
+
+	// --- (10) THE BOOT WORD IS A WORD LIKE ANY OTHER AND IS PACED LIKE
+	// ONE.  It goes onto the same queue and through the same two rules ---
+	// the card's handshake and the machine's own interval --- so a
+	// sequence typed at a real machine arrives as four words no closer
+	// together than any other four.  A boot word that went straight to the
+	// card would land on top of Rubout's own word before the machine had
+	// read it, which is the exact thing `bootflag` exists to prevent one
+	// step further on.
+	if (open_typist(&c) == 0) {
+		expect_a_real_machine();
+		send_key(&c, KS_CONTROL_L, 1);
+		send_key(&c, KS_ALT_L, 1);
+		send_key(&c, KS_DELETE, 1);
+		pace(300, INPUT_KEY_INTERVAL_NS / 20);
+		const uint32_t w[] = {
+			word_of(020, 0), word_of(045, 0), word_of(023, 0), BOOT_COLD_WORD
+		};
+		want_got("the boot sequence at a real machine", w, 4);
+		CHECK(model.gap_min >= INPUT_KEY_INTERVAL_NS,
+		      "two words of the boot sequence arrived %llu ns apart, wanting no closer "
+		      "than %llu", (unsigned long long)model.gap_min,
+		      (unsigned long long)INPUT_KEY_INTERVAL_NS);
+		client_close(&c);
+		settle();
+	}
+
+	// --- (11) AND THE CHORD TYPED AT THE BOARD'S OWN USB KEYBOARD BOOTS
+	// THE MACHINE TOO.
+	//
+	// **THE HELD-KEY SET IS ONE SET AND NOT ONE A SOURCE.**  There is a
+	// single `struct key_state` in the server, and every source puts its
+	// keys into it: a viewer's through `KeyEvent` and the board's own
+	// keyboard through the input link, which `cadr-usb-input` writes.  So
+	// `check-boot` sees the keys everybody is holding, and a chord held
+	// half at the board and half in a window is a chord.  That is the
+	// keyboard the machine has: one cable, one shift register, and the
+	// machine decodes what is held from the stream on it.
+	if (work_dir) {
+		char path[128];
+		const char *home = getenv("HOME");
+		// A Unix socket's path is 108 bytes including the terminator
+		// and the mutation runner names a directory after each record,
+		// so the socket goes somewhere short and the length is
+		// asserted rather than hoped for.
+		snprintf(path, sizeof path, "%.80s/.cache/kbdt-%u",
+			 home && *home ? home : work_dir, (unsigned)getpid());
+		if (strlen(path) >= 100) {
+			printf("--- the boot sequence over the input link: skipped, the socket's "
+			       "path would be %u characters\n", (unsigned)strlen(path));
+		} else if (open_typist(&c) == 0) {
+			unlink(path);
+			srv.input = &face;
+			if (screen_server_link(&srv, path) < 0) {
+				fail(__LINE__, "no input link at %s", path);
+			} else {
+				struct cadr_input_link_client link;
+				const char *link_why = NULL;
+				link.fd = -1;
+				if (cadr_input_link_open(&link, path, &link_why) < 0) {
+					fail(__LINE__, "the link client could not attach: %s",
+					     link_why ? link_why : "?");
+				} else {
+					for (unsigned k = 0; k < 8 && !link.greeted; ++k) {
+						pump(2);
+						cadr_input_link_greet(&link, &link_why);
+					}
+					CHECK(link.greeted,
+					      "the link client was not greeted: %s",
+					      link_why ? link_why : "?");
+					model.nkeys = 0;
+					// The whole chord from the link, which
+					// is a key pressed at the board.
+					static const uint32_t chord[] = {
+						KS_CONTROL_L, KS_ALT_L, KS_DELETE
+					};
+					for (unsigned i = 0; i < 3; ++i) {
+						struct cadr_input_event e;
+						memset(&e, 0, sizeof e);
+						e.type = CADR_INPUT_KEY;
+						e.down = 1;
+						e.keysym = chord[i];
+						CHECK(cadr_input_link_send(&link, &e) == 0,
+						      "the link would not take key %u", i);
+						pump(8);
+					}
+					pump(60);
+					const uint32_t w[] = {
+						word_of(020, 0), word_of(045, 0),
+						word_of(023, 0), BOOT_COLD_WORD
+					};
+					want_keys("the chord typed at the board's USB keyboard",
+						  w, 4);
+
+					// ...and half at the board and half in a
+					// window, which is the same keyboard.
+					key_state_init(&srv.keys);
+					model.nkeys = 0;
+					struct cadr_input_event e;
+					memset(&e, 0, sizeof e);
+					e.type = CADR_INPUT_KEY;
+					e.down = 1;
+					e.keysym = KS_CONTROL_L;
+					CHECK(cadr_input_link_send(&link, &e) == 0,
+					      "the link would not take the Control");
+					pump(8);
+					send_key(&c, KS_ALT_L, 1);   // ...in the window
+					pump(20);
+					e.keysym = KS_DELETE;
+					CHECK(cadr_input_link_send(&link, &e) == 0,
+					      "the link would not take the Rubout");
+					pump(60);
+					want_keys("a chord held half at the board and half in a "
+						  "window", w, 4);
+					cadr_input_link_shut(&link);
+				}
+			}
+			client_close(&c);
+			settle();
+			// The listener is closed with the server at the end of
+			// the run; the file goes now so that nothing is left
+			// behind if that never happens.
+			unlink(path);
+		}
+	} else {
+		printf("--- the boot sequence over the input link: skipped, no --server-log to "
+		       "put the socket beside\n");
+	}
+
+	// Back to the default for whatever runs after this.
+	CHECK(boot_keys_of("ctrl,meta", &b, why, sizeof why) == 0, "unreachable");
+	key_boot_set(&srv.keys, b);
+}
+
 int main(int argc, char **argv)
 {
 	// A viewer that is dropped mid-write must not take the check with it:
@@ -2596,6 +3070,9 @@ int main(int argc, char **argv)
 
 	printf("--- the keyboard mapping, and a file over it\n");
 	check_keyboard_mapping(work_dir);
+
+	printf("--- the keyboard's own boot sequence: the chord, the two words, the hold-back\n");
+	check_keyboard_boot(work_dir);
 
 	// Back to read-only for the screen checks that follow, which have no
 	// business with a keyboard.

@@ -362,6 +362,13 @@ What it asserts:
   itself at once: the Menu key, which muir's mapping makes the Top key, was
   missing from the first table because the key codes file names it `<COMP>`
   and reaches `<MENU>` by an alias the generator was not following.
+- Ctrl-Alt-Del at the board boots the machine. The three scan codes become
+  Control, Meta and Rubout at MIT's own positions, the keyboard's own cold
+  boot word follows them, and the three key-ups behind it are held back. The
+  sequence itself belongs to the terminal's keyboard, where the one keyboard
+  model is, and `docs/terminal.md` describes it; what this check says is that
+  a key pressed at the board's own USB port arrives there as a key that is
+  HELD, which is what completes the sequence.
 
 Then every record in `usb_mutations.txt` is applied to a copy of the sources,
 built and run, and a record the check passes is reported and the run is red.

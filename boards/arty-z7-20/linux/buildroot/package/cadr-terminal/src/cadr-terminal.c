@@ -78,7 +78,8 @@
 //
 //     cadr-terminal [--port N] [--bind ADDR] [--log PATH] [--bow]
 //                   [--interval-ms N] [--no-rre] [--no-guard] [--no-input]
-//                   [--input ADDR] [--keyboard-mapping FILE] [--once]
+//                   [--input ADDR] [--keyboard-mapping FILE]
+//                   [--keyboard-boot KEYS] [--keyboard-boot-trace] [--once]
 
 #include <errno.h>
 #include <getopt.h>
@@ -132,6 +133,13 @@ static void usage(void)
 		"  --keyboard-mapping FILE   what a viewer's keysyms mean, over the built-in map\n"
 		"                            (muir's own `key` and `prefix` lines; `muir\n"
 		"                            --keyboard-mapping-dump` writes a starting file)\n"
+		"  --keyboard-boot KEYS      the keys the keyboard's boot sequence needs, held\n"
+		"                            with Rubout to cold-boot the machine or with Return\n"
+		"                            to warm-boot it. One of\n"
+		"    " KEY_BOOT_SPELLINGS "\n"
+		"                            the last being the CADR keyboard's own; the default\n"
+		"                            `ctrl,meta` is Ctrl-Alt-Del on any keyboard\n"
+		"  --keyboard-boot-trace     say when a key-up is held back behind a boot word\n"
 		"  --input-link PATH the socket a source that is not a viewer sends keys and\n"
 		"                    mouse movement on (default /var/run/cadr-input). That is\n"
 		"                    cadr-usb-input, the board's own USB keyboard and mouse\n"
@@ -156,7 +164,15 @@ int main(int argc, char **argv)
 	uint32_t window_phys = SCREEN_BASE;
 	uint32_t input_phys = IN_REG_BASE;
 	int bow = 0, no_guard = 0, once = 0, no_rre = 0, no_input = 0, no_link = 0;
+	int boot_trace = 0;
 	const char *link_path = CADR_INPUT_LINK_PATH;
+	// `--keyboard-boot`, whose default is muir's: either Control and either
+	// Meta.  Read here rather than at the keyboard so that a spelling
+	// nobody can type is refused before the socket is bound.
+	struct key_boot boot_keys;
+	char boot_why[256];
+	if (key_boot_parse("ctrl,meta", &boot_keys, boot_why, sizeof boot_why) != 0)
+		return 2;
 	static const struct option opts[] = {
 		{ "port", required_argument, NULL, 'p' },
 		{ "bind", required_argument, NULL, 'b' },
@@ -169,6 +185,8 @@ int main(int argc, char **argv)
 		{ "no-input", no_argument, NULL, 'I' },
 		{ "input", required_argument, NULL, 'n' },
 		{ "keyboard-mapping", required_argument, NULL, 'k' },
+		{ "keyboard-boot", required_argument, NULL, 'K' },
+		{ "keyboard-boot-trace", no_argument, NULL, 'T' },
 		{ "input-link", required_argument, NULL, 'L' },
 		{ "no-input-link", no_argument, NULL, 'N' },
 		{ "once", no_argument, NULL, 'o' },
@@ -176,7 +194,7 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGIn:k:L:Noh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "p:b:l:Bw:i:RGIn:k:K:TL:Noh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'p': port = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'b': bind_addr = optarg; break;
@@ -189,6 +207,20 @@ int main(int argc, char **argv)
 		case 'I': no_input = 1; break;
 		case 'n': input_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'k': keymap_path = optarg; break;
+		case 'K':
+			// **REFUSED AND NOT FALLEN BACK ON**, which is the
+			// other way round from the mapping file above.  A
+			// mapping is a file on a card that a typo must not
+			// cost the screen for; this is a word on the command
+			// line, and a boot sequence quietly set to something
+			// else is a machine that reboots when nobody asked or
+			// does not when somebody did.
+			if (key_boot_parse(optarg, &boot_keys, boot_why, sizeof boot_why) != 0) {
+				fprintf(stderr, "cadr-terminal: --keyboard-boot %s\n", boot_why);
+				return 2;
+			}
+			break;
+		case 'T': boot_trace = 1; break;
 		case 'L': link_path = optarg; break;
 		case 'N': no_link = 1; break;
 		case 'o': once = 1; break;
@@ -301,6 +333,14 @@ int main(int argc, char **argv)
 			    keymap_path, map.bounds, map.afters);
 		}
 		key_state_init_with(&srv.keys, &map);
+		key_boot_set(&srv.keys, boot_keys);
+		key_boot_traced(&srv.keys, boot_trace);
+		char boot_spelt[32];
+		key_boot_spelling(boot_keys, boot_spelt, sizeof boot_spelt);
+		say("the keyboard's own boot sequence is %s held with Rubout to cold-boot the "
+		    "machine, or with Return to warm-boot it --- the keyboard boots a CADR "
+		    "itself and the microcode is not asked. --keyboard-boot moves it",
+		    boot_spelt);
 		say("the keyboard and mouse are at 0x%08x; a viewer's keys go to the machine "
 		    "as MIT's own key positions, muir's mapping, and its pointer as the "
 		    "mouse's own counts. The fabric's queue was flushed before this socket "

@@ -64,7 +64,10 @@
 // **The machine asks whether anybody is typing four instructions into
 // microcode 323.**  `uc-cadr.lisp` at `(LOC 6)` reads the keyboard's status
 // register and `(JUMP-IF-BIT-CLEAR (BYTE-FIELD 1 5) MD COLD-BOOT)`: not
-// ready is a cold boot, ready is a WARM one.  So a key waiting at that
+// ready is a cold boot, ready is a WARM one --- unless the word in the
+// register is the keyboard's own COLD BOOT word, four instructions further
+// on, where the microcode reads `764100` and cold-boots on `0o46` in the low
+// six bits (`input_keys.h`, the boot sequence).  So a key waiting at that
 // register when the microcode starts sends the machine somewhere it was
 // never asked to go.
 //

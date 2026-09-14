@@ -15,7 +15,12 @@
 
 #include "input_keys.h"
 
+#include <ctype.h>
+#include <stdio.h>
 #include <string.h>
+#include <strings.h>
+
+#include <cadr/cadr_log.h>
 
 #include "input_keymap.h"
 #include "input_mapping.h"
@@ -213,6 +218,152 @@ static int after_prefix(const struct key_map *m, uint32_t first, uint32_t second
 	return 0;
 }
 
+// ---- the keyboard's own firmware ----------------------------------------
+//
+// `sys/io1/ukbd.lisp`'s `check-boot` and `bootflag`, which act on the words
+// after the mapping has chosen them.  `input_keys.h` says what they are and
+// why they are not the autoboot test; muir keeps them in the same two places,
+// `queue_down` and `queue_up`.
+
+int key_boot_parse(const char *s, struct key_boot *out, char *why, unsigned n)
+{
+	unsigned controls = 0, metas = 0;
+	const char *at = s;
+	int bad = 0;
+	while (!bad) {
+		const char *comma = strchr(at, ',');
+		const char *end = comma ? comma : at + strlen(at);
+		// A word, trimmed of the spaces around it and read without
+		// regard to case, as muir reads it.
+		while (at < end && isspace((unsigned char)*at))
+			++at;
+		const char *stop = end;
+		while (stop > at && isspace((unsigned char)stop[-1]))
+			--stop;
+		const size_t len = (size_t)(stop - at);
+		if (len == 4 && strncasecmp(at, "ctrl", 4) == 0)
+			++controls;
+		else if (len == 4 && strncasecmp(at, "meta", 4) == 0)
+			++metas;
+		else
+			bad = 1;
+		if (!comma)
+			break;
+		at = comma + 1;
+	}
+	if (bad || controls < 1 || controls > 2 || metas < 1 || metas > 2) {
+		// muir's own wording, so that somebody who has been refused by
+		// one is not refused differently by the other.
+		if (why && n)
+			snprintf(why, n,
+				 "\"%s\" is not the keys the boot sequence needs: "
+				 KEY_BOOT_SPELLINGS, s);
+		return -1;
+	}
+	out->controls = (unsigned char)controls;
+	out->metas = (unsigned char)metas;
+	return 0;
+}
+
+void key_boot_spelling(struct key_boot b, char *out, unsigned n)
+{
+	char buf[32];
+	unsigned at = 0;
+	for (unsigned i = 0; i < b.controls && at + 5 < sizeof buf; ++i)
+		at += (unsigned)snprintf(buf + at, sizeof buf - at, "%s", at ? ",ctrl" : "ctrl");
+	for (unsigned i = 0; i < b.metas && at + 5 < sizeof buf; ++i)
+		at += (unsigned)snprintf(buf + at, sizeof buf - at, "%s", at ? ",meta" : "meta");
+	snprintf(out, n, "%s", buf);
+}
+
+void key_boot_set(struct key_state *k, struct key_boot b)
+{
+	k->boot = b;
+}
+
+void key_boot_traced(struct key_state *k, int on)
+{
+	k->boot_trace = on;
+}
+
+// `Keyboard::queue_down`: a key-down's word onto the queue.  EVERY one clears
+// the firmware's `bootflag` --- `check-boot`'s `not-boot` path does, after
+// every key-down --- and `check_boot` sets it again when the key completes
+// the sequence.
+static void queue_down(struct key_state *k, uint8_t p)
+{
+	push(k, key_up_down(p, 0));
+	k->hold_back = 0;
+}
+
+// `Keyboard::queue_up`: a key-up's word, unless the firmware's `bootflag`
+// holds it back.  `ukbd.lisp`: "If booting, don't send key-up codes."
+static void queue_up(struct key_state *k, uint8_t p)
+{
+	if (k->hold_back) {
+		k->firmware = KEY_FW_HELD_BACK;
+		++k->held_back;
+		if (k->boot_trace)
+			say("the keyboard: a key-up held back, no key-up goes until the next "
+			    "key-down, so that the machine reads the boot word first");
+		return;
+	}
+	push(k, key_up_down(p, 1));
+}
+
+// **`check-boot` ITSELF**, run after every key-down that is HELD: with the
+// Controls and Metas the setting asks for down, Rubout down sends the cold
+// boot word and Return down the warm one, Rubout tested first as the firmware
+// tests it.  Then `bootflag` is set and no key-up goes until the next
+// key-down.
+static void check_boot(struct key_state *k)
+{
+	uint8_t at[4];
+	unsigned n, held;
+
+	n = shifting(SH_CONTROL, at, 4);
+	held = 0;
+	for (unsigned i = 0; i < n; ++i)
+		held += has_down(k, at[i]) ? 1u : 0u;
+	if (held < k->boot.controls)
+		return;
+	n = shifting(SH_META, at, 4);
+	held = 0;
+	for (unsigned i = 0; i < n; ++i)
+		held += has_down(k, at[i]) ? 1u : 0u;
+	if (held < k->boot.metas)
+		return;
+	int cold;
+	if (has_down(k, KEY_POS_RUBOUT))
+		cold = 1;
+	else if (has_down(k, KEY_POS_RETURN))
+		cold = 0;
+	else
+		return;
+	// **THE BOOT WORD IS A SECOND WORD AND IT ASKS FOR ITS OWN ROOM.**  The
+	// press that got here reserved one slot and has used it, so a queue
+	// that was one short of full is full now; pushing into it would drop
+	// the word silently and count it in `dropped`, which is the thing that
+	// must stay zero.  Refused instead, and counted with the keystrokes
+	// the queue had no room for, and the flag is NOT set --- no word went,
+	// so there is nothing for the key-ups to be held back behind.  A queue
+	// this full is a machine that is not reading its keyboard at all.
+	if (k->count >= KEY_BACKLOG) {
+		++k->refused;
+		return;
+	}
+	// **NOT `queue_down`**: the boot word is not a key going down and must
+	// not clear the flag it is about to set.
+	push(k, key_boot_word(cold));
+	k->hold_back = 1;
+	k->firmware = cold ? KEY_FW_BOOT_COLD : KEY_FW_BOOT_WARM;
+	++k->boots;
+	// Said whether or not the trace is on: see `key_boot_traced`.
+	say("the keyboard: the boot sequence is complete, and the %s boot word goes after "
+	    "the key-down --- the machine is being asked to start over",
+	    cold ? "cold" : "warm");
+}
+
 // ---- the keys -----------------------------------------------------------
 
 // `Keyboard::press`: down, if it is up and the queue has room.  A press the
@@ -226,7 +377,8 @@ static void press(struct key_state *k, uint8_t p)
 		return;
 	}
 	add_down(k, p);
-	push(k, key_up_down(p, 0));
+	queue_down(k, p);
+	check_boot(k);
 }
 
 // `Keyboard::release`: up, if it is down.  ALWAYS queued: the machine has
@@ -236,8 +388,11 @@ static void release(struct key_state *k, uint8_t p)
 	if (!has_down(k, p))
 		return;
 	drop_down(k, p);
-	push(k, key_up_down(p, 1));
+	queue_up(k, p);
 }
+
+// One key of a burst: a position and whether it is going up.
+struct key_burst { uint8_t p, up; };
 
 // `Keyboard::tap`: the key pressed and released at once, with the Shift key
 // worked around it when the plane it wants is not the one the viewer holds.
@@ -260,15 +415,20 @@ static void tap(struct key_state *k, uint8_t p, int wants_shift)
 	// and every character after it a different character.  Ten is the
 	// longest burst the branches below can make: four shifting keys let go
 	// around the key and put back.
-	uint32_t burst[2 * 4 + 2];
+	// **A BURST IS KEYS AND NOT WORDS**, so that every one of them goes
+	// through the firmware's own two doors below: a key-down in here
+	// clears `bootflag` exactly as a held press does, and a key-up in here
+	// is held back exactly as a held release is.  muir's `tap` queues
+	// through `queue_down` and `queue_up` for the same reason.
+	struct key_burst burst[2 * 4 + 2];
 	unsigned m = 0;
 	const uint8_t shift = at[0];
 	const int held = holding(k, SH_SHIFT);
 	if (wants_shift && !held) {
-		burst[m++] = key_up_down(shift, 0);
-		burst[m++] = key_up_down(p, 0);
-		burst[m++] = key_up_down(p, 1);
-		burst[m++] = key_up_down(shift, 1);
+		burst[m++] = (struct key_burst){ shift, 0 };
+		burst[m++] = (struct key_burst){ p, 0 };
+		burst[m++] = (struct key_burst){ p, 1 };
+		burst[m++] = (struct key_burst){ shift, 1 };
 	} else if (!wants_shift && held) {
 		// Every shift the viewer holds comes up around the key.
 		uint8_t up[4];
@@ -277,21 +437,25 @@ static void tap(struct key_state *k, uint8_t p, int wants_shift)
 			if (has_down(k, at[i]))
 				up[u++] = at[i];
 		for (unsigned i = 0; i < u; ++i)
-			burst[m++] = key_up_down(up[i], 1);
-		burst[m++] = key_up_down(p, 0);
-		burst[m++] = key_up_down(p, 1);
+			burst[m++] = (struct key_burst){ up[i], 1 };
+		burst[m++] = (struct key_burst){ p, 0 };
+		burst[m++] = (struct key_burst){ p, 1 };
 		for (unsigned i = 0; i < u; ++i)
-			burst[m++] = key_up_down(up[i], 0);
+			burst[m++] = (struct key_burst){ up[i], 0 };
 	} else {
-		burst[m++] = key_up_down(p, 0);
-		burst[m++] = key_up_down(p, 1);
+		burst[m++] = (struct key_burst){ p, 0 };
+		burst[m++] = (struct key_burst){ p, 1 };
 	}
 	if (k->count + m > KEY_BACKLOG) {
 		++k->refused;
 		return;
 	}
-	for (unsigned i = 0; i < m; ++i)
-		push(k, burst[i]);
+	for (unsigned i = 0; i < m; ++i) {
+		if (burst[i].up)
+			queue_up(k, burst[i].p);
+		else
+			queue_down(k, burst[i].p);
+	}
 }
 
 // `Keyboard::behind_prefix`: a shifting key is held for the one key that
@@ -307,21 +471,30 @@ static void behind_prefix(struct key_state *k, uint8_t p, int wants_shift)
 	}
 }
 
+// `BootKeys::default`: `ctrl,meta`, either Control and either Meta, which is
+// Ctrl-Alt-Del pressed on a keyboard anybody has.
+static const struct key_boot KEY_BOOT_DEFAULT = { 1, 1 };
+
 void key_state_init(struct key_state *k)
 {
 	memset(k, 0, sizeof *k);
+	k->boot = KEY_BOOT_DEFAULT;
 	key_map_built_in(&k->map);
 }
 
 void key_state_init_with(struct key_state *k, const struct key_map *map)
 {
 	memset(k, 0, sizeof *k);
+	k->boot = KEY_BOOT_DEFAULT;
 	k->map = *map;
 }
 
 // `Keyboard::resolve`, branch for branch.
 void key_event(struct key_state *k, uint32_t keysym, int down)
 {
+	// What the firmware did is about THIS key and no other.
+	k->firmware = KEY_FW_NONE;
+
 	// A key the terminal has already sent whole: its release is not owed
 	// to the machine.
 	if (!down && take_tapped(k, keysym))
@@ -414,6 +587,13 @@ void key_event(struct key_state *k, uint32_t keysym, int down)
 
 void key_all_up(struct key_state *k)
 {
+	// **AND A RELEASE HERE IS HELD BACK LIKE ANY OTHER IF A BOOT WORD HAS
+	// JUST GONE.**  That is the firmware's rule and not an oversight: a
+	// viewer that leaves right after asking for a boot has its keys lifted
+	// here, the machine is not told, and the next key-down anybody makes
+	// clears the flag.  The machine is being restarted, which is what
+	// `bootflag` exists to protect.
+
 	// **NOT muir's `all_keys_up` WORD.**  That exists in `keyboard.rs` and
 	// nothing in muir's runtime sends one; what it carries is a bit per
 	// shifting key still down, and a machine that has been following the
