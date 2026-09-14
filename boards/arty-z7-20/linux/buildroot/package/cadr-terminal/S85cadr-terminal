@@ -40,8 +40,10 @@
 # reason: the partition is FAT32, so a laptop with a card reader can edit what
 # is on it, which is why the name ends in `.txt`.  The option is passed only
 # when the file is there, because `--keyboard-mapping` naming a file that is
-# not is a thing to report rather than a boot with no screen.  A boot where
-# that mount failed still starts this and takes the built-in mapping.
+# not is a thing to report rather than a boot with no screen --- and only when
+# `fpgarc` says nothing about `--keyboard-mapping` itself, which is the rule at
+# start() below.  A boot where that mount failed still starts this and takes
+# the built-in mapping.
 #
 # What goes in the file is `key` and `prefix` lines, muir's own format, and
 # muir is in this image: `muir --keyboard-mapping-dump` writes the mapping
@@ -51,9 +53,10 @@ PROG=/usr/bin/cadr-terminal
 # **WHERE THE SCREEN IS SERVED, WRITTEN OUT IN FULL.**  muir's own flag and
 # muir's own grammar, one word for the address and the port together
 # (cadr/cadr_endpoint.h).  It is written as an endpoint rather than left to the
-# program's default so that this script says what it does; the card's `fpgarc`
-# may say another and wins, being passed after.  Every interface, because the
-# board has no screen of its own and the paragraph above is the whole of why.
+# program's default so that this script says what it does; a card that names
+# `--terminal` in `fpgarc` wins, and this one is then not passed at all.  Every
+# interface, because the board has no screen of its own and the paragraph above
+# is the whole of why.
 ENDPOINT=0.0.0.0:5900
 PIDFILE=/var/run/cadr-terminal.pid
 PACKS=/mnt/packs
@@ -100,18 +103,28 @@ FLAGS="--terminal
        --no-input-link"
 
 start() {
+	# **A DEFAULT OF THIS SCRIPT'S IS PASSED ONLY WHERE THE CARD SAYS
+	# NOTHING.**  Passing both and letting the program take the last one
+	# works, and it put `--terminal 0.0.0.0:5900 --terminal 0.0.0.0:5900`
+	# on the board's own command line, which reads as a fault to anybody
+	# looking at `ps` to see what the screen is doing.  So the card is
+	# asked first and its line is then the only one.  The two defaults here
+	# are the endpoint and the mapping file found beside the card's file.
 	set --
-	[ -f "$KEYS_FILE" ] && set -- --keyboard-mapping "$KEYS_FILE"
+	fpgarc_has "$RC" --terminal || set -- --terminal "$ENDPOINT"
+	if [ -f "$KEYS_FILE" ] && ! fpgarc_has "$RC" --keyboard-mapping; then
+		set -- "$@" --keyboard-mapping "$KEYS_FILE"
+	fi
+
 	# The card's flags after this script's own, so that a line in `fpgarc`
-	# wins over the mapping file found beside it --- which is muir's rule
-	# that a flag given later wins, and the way round somebody editing the
-	# card expects.
+	# wins over anything this script did pass --- which is muir's rule that
+	# a flag given later wins, and the way round somebody editing the card
+	# expects.
 	[ -f "$RC" ] && eval "set -- \"\$@\" $(fpgarc_args "$RC" $FLAGS)"
 
-	# This script's own flags first and the card's after, so a card that
-	# names one of them wins.  `--log` is last of all and is not the card's
-	# to say: where a daemon writes is this script's.
-	cadr_daemon "$PROG" "$PIDFILE" --terminal "$ENDPOINT" "$@" --log /dev/console
+	# `--log` is last of all and is not the card's to say: where a daemon
+	# writes is this script's.
+	cadr_daemon "$PROG" "$PIDFILE" "$@" --log /dev/console
 }
 
 stop() {

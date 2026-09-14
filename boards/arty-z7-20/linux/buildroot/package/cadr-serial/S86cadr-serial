@@ -38,9 +38,10 @@ PROG=/usr/bin/cadr-serial
 # **WHERE THE FAR END IS OFFERED, WRITTEN OUT IN FULL.**  muir's own flag and
 # muir's own grammar, one word for the address and the port together
 # (cadr/cadr_endpoint.h).  It is written as an endpoint rather than left to the
-# program's default so that this script says what it does; the card's `fpgarc`
-# may say another and wins, being passed after.  Every interface, because the
-# board has no terminal of its own and the paragraph above is the whole of why.
+# program's default so that this script says what it does; a card that names
+# `--serial` in `fpgarc` wins, and this one is then not passed at all.  Every
+# interface, because the board has no terminal of its own and the paragraph
+# above is the whole of why.
 ENDPOINT=0.0.0.0:7641
 PIDFILE=/var/run/cadr-serial.pid
 PACKS=/mnt/packs
@@ -82,7 +83,14 @@ FLAGS="--serial
        --quiet"
 
 start() {
-	set -- --serial "$ENDPOINT"
+	# **THIS SCRIPT'S OWN ENDPOINT ONLY WHERE THE CARD SAYS NOTHING.**
+	# Passing both and letting the program take the last one works, and it
+	# put `--serial 0.0.0.0:7641 --serial 0.0.0.0:7641` on the board's own
+	# command line, which reads as a fault to anybody looking at `ps` to see
+	# what the line is doing.  So the card is asked first and its line is
+	# then the only one.
+	set --
+	fpgarc_has "$RC" --serial || set -- --serial "$ENDPOINT"
 	# The card's flags after this script's own, so that a line in `fpgarc`
 	# wins --- muir's rule that a flag given later wins, and the way round
 	# somebody editing the card expects.
