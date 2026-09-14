@@ -883,13 +883,22 @@ CHECKS = {
     # four faces --- and the check runs the firmware the board runs and reads
     # every line it says off the wire.
     #
-    # **WHAT THE RECORDS ARE AIMED AT IS THE BRIDGE.**  Everything else in the
-    # design already has a check of its own: the faces are held by
-    # `console.pass`, `disk_pack.pass`, `dbgin.pass` and `gp0_default.pass`,
-    # the machine by six checks, and Ibex by lowRISC.  What is new here is the
-    # seam --- one of the core's loads or stores becoming one AXI transaction
-    # at one of four slaves --- and the two faces the soft system has that the
-    # Zynq does not.
+    # **WHAT THE RECORDS ARE AIMED AT IS THE BRIDGE AND THE CROSSING.**
+    # Everything else in the design already has a check of its own: the faces
+    # are held by `console.pass`, `disk_pack.pass`, `dbgin.pass` and
+    # `gp0_default.pass`, the machine by six checks, and Ibex by lowRISC.  What
+    # is new here is the seam --- one of the core's loads or stores becoming
+    # one AXI transaction at one of four slaves --- and the two faces the soft
+    # system has that the Zynq does not.
+    #
+    # **AND THE SEAM IS TWO CLOCKS APART.**  The core runs slower than the
+    # machine, its load-store address not settling in a 10 ns tick, so
+    # `rtl/plumbing/cadr_soc_cross.sv` carries the request and the answer
+    # between the two domains and the check runs the whole firmware at three
+    # ratios.  What a simulator cannot hold is the DEPTH of a synchroniser ---
+    # nothing here models metastability, so one flip-flop behaves exactly as
+    # two --- and the records say so at the constant rather than leaving a
+    # hole to be filed.
     #
     # **THE FIRMWARE IS NOT MUTATED AND THAT IS A LIMIT, NOT A CHOICE.**  Its
     # hex is built by the Makefile with a RISC-V compiler and read at
@@ -907,6 +916,7 @@ CHECKS = {
     # is what its own header says.
     "soc": {
         "sources": ["rtl/plumbing/cadr_soc_axi.sv", "rtl/plumbing/cadr_soc.sv",
+                    "rtl/plumbing/cadr_soc_cross.sv",
                     "rtl/plumbing/cadr_soc_uart.sv",
                     "rtl/plumbing/cadr_soc_ram.sv",
                     "rtl/plumbing/cadr_soc_timer.sv"],
@@ -954,9 +964,21 @@ CHECKS = {
         ],
         "top": "cadr_soc_harness",
         "tb": "tb/cadr_soc_tb.cpp",
+        # **THESE FOUR NUMBERS ARE THE MAKEFILE'S AND ARE WRITTEN TWICE.**
+        # `SOC_CLK_HZ`, `SOC_TB_DIVISOR`, `SOC_TB_BAUD` and `SOC_TICKS_PER_US`
+        # there are all derived from `SOC_CLK_DIVIDE` in
+        # `boards/arty-a7-100/cadr_arty_a7.sv`, which is the one place the soft
+        # system's clock is decided; this runner cannot ask make for them and
+        # so holds a copy.  They came apart once already --- the baseline here
+        # decoded the wire at a divisor the fabric was not transmitting at and
+        # reported `the firmware said 1 line(s), wanting 13`, which is a
+        # BASELINE failure and stops the run rather than being mistaken for a
+        # catch.  A run that starts is a run in which they agree.
         "flags": ["-O2", "-CFLAGS", "-O2",
                   "-CFLAGS", "-DUART_DIVISOR=32",
-                  "-GSOC_BAUD=3125000", "-GSOC_RAM_WORDS=8192",
+                  "-CFLAGS", "-DSOC_TICKS_PER_US=50",
+                  "-GCLK_HZ=50000000",
+                  "-GSOC_BAUD=1562500", "-GSOC_RAM_WORDS=8192",
                   "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
                   "-Ithird_party/ibex/vendor/lowrisc_ip/ip/prim/rtl",
                   "-Ithird_party/ibex/vendor/lowrisc_ip/dv/sv/dv_utils",
@@ -2119,9 +2141,11 @@ def check_makefile():
     # argument, with one difference worth stating.  That board is an Artix-7
     # and has no processing system, so its top level is not the Arty's with
     # different pins: it ties off some forty seams the other two drive, and it
-    # has six configurations of its own --- the machine, the machine with the
-    # probe, with the DDR3L controller, the two proving boards, and with the
-    # soft processing system --- as `arty` has six.  What a record aimed here
+    # has seven configurations of its own --- the machine, the machine with the
+    # probe, with the DDR3L controller, the two proving boards, with the soft
+    # processing system, and with the soft processing system AND the memory,
+    # which is the only one of the seven that is the whole board --- as `arty`
+    # has six.  What a record aimed here
     # could hold is still
     # what `arty`'s records hold, that an output of `cadr_machine` left
     # unconnected is caught, and that is a property of the SHAPE of a top

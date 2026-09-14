@@ -243,14 +243,16 @@ the things this family of module gets wrong: which sixteen-byte block, which of
 its four 32-bit lanes, which bytes to write, and the rules a crossing between
 two unrelated clocks has to keep. Seven mutation records are aimed at it.
 
-### The two clocks, and how they coexist
+### The machine's clock and the controller's, and how they coexist
 
 The board has one 100 MHz oscillator and this design has one clock manager in
 its top level, which is what the shared `tick.tcl` requires and what makes the
 tick a number the fabric and the constraints cannot disagree about. That
-manager's oscillator runs at 1000 MHz and it divides it two ways: by ten for
-the machine's 10 nanosecond tick, and by five for the 200 MHz reference the
-controller calibrates its input delays against.
+manager's oscillator runs at 1000 MHz and it divides it three ways: by ten for
+the machine's 10 nanosecond tick, by five for the 200 MHz reference the
+controller calibrates its input delays against, and by twenty for the soft
+processing system's own 50 MHz. The third has a section of its own below; the
+rest of this one is about the first two.
 
 The controller is given the machine's own 100 MHz as its system clock, and it
 makes its own clocks from it: 1300 MHz at its phase-locked loop, over four for
@@ -345,8 +347,19 @@ It is off by default. `SOC=1` puts it in the design:
     SOC=1 OUTDIR=build/a7-soc \
         vivado -mode batch -source boards/arty-a7-100/vivado/bitstream.tcl
 
+...and `SOC=1 DDR=1` is the whole board: the machine with its memory behind it
+and the soft processing system in front of the faces.
+
 Everything in the sections above was measured without it and is still true of
 the default board.
+
+**And it runs on a clock of its own, which is the one structural thing to know
+before reading the rest.** The core computes a load or a store's address in the
+cycle it uses it, and that does not settle in the machine's 10 nanosecond tick.
+The machine's tick cannot move. So the soft system takes a third output of the
+same clock manager at 50 MHz, the AXI bridge in front of the four faces stays
+on the machine's clock where the faces are, and one request and one answer
+cross between the two. There are sections on the clock and on the seam below.
 
 ### The core
 
@@ -496,15 +509,17 @@ The check builds the UART at a divisor of 32 rather than the board's 868, so
 that the same firmware says the same words in a fraction of the time. Nothing in
 the firmware knows the rate; it polls a ready bit.
 
-Seven mutation records are aimed at the seam, in `mutations/list.txt` under
-`soc`: an address bit dropped, a write answered before it lands, the console's
-page sent to the debug window, the baud divisor doubled, the UART and the timer
-swapped as answer sources, the memory read one word along, and the timer saying
-the wrong microsecond. All seven are caught, and each record quotes the line
+Twelve mutation records are aimed at the seam, in `mutations/list.txt` under
+`soc`. Seven are the bridge's and the soft system's own two faces: an address
+bit dropped, a write answered before it lands, the console's page sent to the
+debug window, the baud divisor doubled, the UART and the timer swapped as
+answer sources, the memory read one word along, and the timer saying the wrong
+microsecond. Five more are the crossing's, and they are described in the
+section on it below. All twelve are caught, and each record quotes the line
 that catches it.
 
-An eighth was written and is recorded there as a measured equivalence rather
-than a hole. It weakened the seam's guard against granting a second request
+Others were written and are recorded there as measured equivalences rather than
+holes. The first weakened the seam's guard against granting a second request
 while one is in flight, and it survived: Ibex's load-store unit drops its
 request at the grant and does not raise it again until the answer, so the seam
 is never offered a second one and the guard it lost was never what kept it
@@ -513,21 +528,36 @@ property of that file rather than of the core in front of it.
 
 ### And it ran on the board
 
-Programmed over JTAG, the board's USB-UART at 115,200 baud, the twelve lines
-the firmware says, verbatim:
+Programmed over JTAG, the board's USB-UART at 115,200 baud, the thirteen lines
+the firmware says, verbatim, with the soft system on its own 50 MHz clock:
 
     cadr-soc: the soft processing system on an Arty A7-100: ibex rv32imc in fabric
-    cadr-soc: UART UART, timer TIME, 100 ticks a microsecond
+    cadr-soc: UART UART, timer TIME, 50 ticks a microsecond
     cadr-soc: the console at 0x80000000 answers CONS
-    cadr-soc: the machine was RUNNING, 4548 microcycles in 2000 us
+    cadr-soc: the machine was RUNNING, 4551 microcycles in 2000 us
     cadr-soc: halted at PC 0o245, 0 microcycles in 1000 us
     cadr-soc: halted: FLAG-1 0xe800 SRUN 0 ERR 0 -WAIT 0 PROMDISABLE 0 STATHALT 0
     cadr-soc: stepped 1, CYCLES moved 1, SSDONE 1
-    cadr-soc: started: RUNNING, 4548 microcycles in 2000 us
+    cadr-soc: started: RUNNING, 4552 microcycles in 2000 us
     cadr-soc: the disk pack face at 0x40000000 answers PACK (register 7)
     cadr-soc: the default slave at 0x40001000 answers NONE
     cadr-soc: the debug window at 0x80001000 answers DBUG
+    cadr-soc: 0 of 16 rounds of four back-to-back loads, one at each face, came back wrong
     cadr-soc: 0 failure(s); idling --- s status, h halt, c continue, . step
+
+**AND THE SECOND LINE IS WHAT SAYS THE PART TOOK THIS BITSTREAM.** Programming
+this board is not reliably one shot, and `vivado/program.tcl`'s DONE check
+cannot tell a part that took a file from one configured a minute ago --- the
+memory window was what settled that for the `DDR=1` runs, and there is no
+window in this configuration. The firmware's own words are the identity here:
+a soft system on the machine's tick says one hundred ticks a microsecond and
+one on its own clock says fifty, and a part still holding the previous
+bitstream would say the wrong one.
+
+**The machine's rate is unchanged, which is the point.** 4,551 microcycles in
+2,000 microseconds against the 4,548 measured before the soft system had a
+clock of its own: the machine's tick did not move and nothing about it was
+meant to.
 
 So on silicon: a RISC-V core in the fabric read four register faces, each of
 which answered with its own identifier; it halted the CADR, read its program
@@ -537,14 +567,13 @@ this board has done more than blink.**
 
 The four commands answer too. Typed at the wire, one at a time:
 
-    cadr-soc: RUNNING, 3988 microcycles in 2000 us, PC 0o552
+    cadr-soc: RUNNING, 3990 microcycles in 2000 us, PC 0o552
     cadr-soc: running: FLAG-1 0xe900 SRUN 1 ERR 0 -WAIT 0 PROMDISABLE 0 STATHALT 0
     cadr-soc: halted
-    cadr-soc: NOT RUNNING, 0 microcycles in 2000 us, PC 0o546
-    cadr-soc: stopped: FLAG-1 0xe800 SRUN 0 ERR 0 -WAIT 0 PROMDISABLE 0 STATHALT 0
     cadr-soc: stepped 1, CYCLES moved 1, SSDONE 1
     cadr-soc: started
-    cadr-soc: RUNNING, 3987 microcycles in 2000 us, PC 0o544
+    cadr-soc: RUNNING, 3990 microcycles in 2000 us, PC 0o550
+    cadr-soc: running: FLAG-1 0xe900 SRUN 1 ERR 0 -WAIT 0 PROMDISABLE 0 STATHALT 0
 
 **The program counters say the machine is where it should be.** `0o541` to
 `0o553` is the boot PROM's no-drive loop --- two status reads and one disk
@@ -558,77 +587,231 @@ worth knowing before believing a capture: the first attempt at the commands
 above produced a line cut off in the middle of a word, and the cause was a
 capture left running from an earlier test rather than anything on the board.
 
-**And read all of it with the timing figure below attached.** The design does
-not close, so what this run shows is that the flow, the composition and the
-firmware are right. It is not evidence about the logic; the check in simulation
-is.
+**The step still moves the machine by exactly one microcycle with SSDONE up**,
+and that is the reading to watch when the soft clock moves. `cons_step` waits
+one microsecond between raising STEP and reading SSDONE, and the two master
+clocks it is waiting for are 880 nanoseconds at extra slow. The wait comes out
+of the timer, so it is a microsecond whatever the soft clock is; what would
+break it is a machine tick longer than 11.36 nanoseconds, not a slower core.
 
-### The timing, and it is not met
+**Two readers on one serial device split the bytes between them**, which is
+worth knowing before believing a capture: the first attempt at the commands
+above produced a line cut off in the middle of a word, and the cause was a
+capture left running from an earlier test rather than anything on the board.
 
-**The design with the soft processing system in it does not close, and this
-says so with the numbers rather than quoting a figure from the board without
-it.** At commit-time, `xc7a100tcsg324-1`, `SOC=1`, a 10 ns tick:
+**And this run is of a design that closes.** The section below has the figures.
+An earlier run of the same firmware, on a design that did not close, is not
+evidence about logic --- that one showed the flow, the composition and the
+firmware were right and nothing more.
+
+### The timing, and it is met
+
+**The design with the soft processing system in it closes, and the soft system
+runs on a clock of its own to do it.** At `xc7a100tcsg324-1`, `SOC=1`, the
+machine's tick at 10 ns and the soft system at 50 MHz:
 
 | | |
 |---|---|
-| worst slack | **-3.216 ns, NOT met** |
-| failing endpoints | 1,616 of 46,004 |
-| where they end | 1,252 in the soft system, 295 in the machine, 68 in Ibex's register file |
-| Slice LUTs | 13,303 of 63,400 (20.98%) |
-| Slice registers | 8,392 of 126,800 (6.62%) |
+| worst slack | **+0.720 ns, MET** |
+| failing endpoints | 0 of 46,445 |
+| hold | +0.032 ns, met, 0 of 46,340 |
+| pulse width | +3.000 ns, met |
+| Slice LUTs | 13,325 of 63,400 (21.02%) |
+| Slices | 4,568 of 15,850 (28.82%) |
+| Slice registers | 8,541 of 126,800 (6.74%) |
 | block RAM tiles | 48.5 of 135 (35.93%) |
 | DSP | 5 of 240 |
 | bitstream | 3,825,992 bytes, no critical warnings |
 
-The table further up this document, for the machine alone on this part, reads
-6,009 Slice LUTs and 38 block RAM tiles. So the soft processing system, its
-memory, its firmware and the four faces cost about 7,300 LUTs and ten and a
-half block RAM tiles, and the part is still two thirds empty.
+The worst path is now the bridge's byte-enable register into the debug cable
+window's watchdog counter. It is eight and a half nanoseconds, four fifths of
+it routing, and both its ends are on the machine's own clock. Nothing about it
+is the core's.
 
-**Those are the utilisation report's figures and the flow prints cell counts**
---- 12,285 LUTs, 8,392 registers, 51 block RAMs --- which do not agree with
-them by construction: the report counts sites, two LUT5 cells often sharing
-one, and counts the sites holding distributed RAM, which are not in the LUT
-group at all. Both are quoted so that neither is read as the other.
+**What it used to be, and why that mattered.** Before the soft system had a
+clock of its own the same design read **-3.216 ns, NOT met, on 1,616 of 46,004
+endpoints**. The ten worst paths all ran from Ibex's instruction register in
+the decode stage, through twenty-one logic levels and six carry chains, to the
+address pin of the block RAM a load or a store reaches. That is a load-store
+address computed in the cycle it is used, which is what Ibex does. It is about
+12.9 nanoseconds on this part, and it is not a path a constraint may relax: it
+is one cycle of a processor and it is meant to be.
 
-**The worst path is Ibex's own and it is the one that decides its frequency.**
-It runs from the instruction in the decode stage, through twenty-one logic
-levels and six carry chains --- the decoder, the operand multiplexers and the
-main ALU's adder --- to the address pin of the block RAM a load or a store
-reaches. That is a load-store address computed in the cycle it is used, which
-is what Ibex does, and 10 ns on a -1 part is not enough for it.
+Two things were tried then and neither was the answer. Reading
+`rtl/plumbing/xilinx7/cadr_debug.xdc` on this board moved the figure from
+-9.236 to -3.216, and that was a real fix which is still in the design.
+Turning on Ibex's `BranchTargetALU` and `WritebackStage`, which lowRISC's own
+guidance recommends to a design short of frequency, made it **worse** at
+-3.694 ns. They are off because the measurement said so.
 
-**Two things were tried and the record of each is worth more than the try.**
+### The soft system's own clock
 
-The first is a fix and it is in the design: the debug cable's window is a
-register a level above `cadr_machine`, so `cadr_machine.xdc` --- read `-ref
-cadr_machine` --- cannot reach it, and the machine's whole diagnostic
-multiplexer arrives at it timed at one tick. Measured at **-9.236 ns**, which
-was the whole of the worst figure. `rtl/plumbing/xilinx7/cadr_debug.xdc` is the
-other board's four-tick exception for exactly that cone; it is read here now
-and the figure moved from -9.236 to -3.216. That file's `get_pins` pattern was
-anchored on `g_ddr.u_debug_window`, the Zynq's generate block; it matches
-either board's now, rather than being copied with one name changed.
+**The machine's tick cannot move and the core's cycle will not fit in it, so
+they are two clocks.** Every instant in `rtl/machine/` is a count of ticks, and
+the shared `tick.tcl` reads the divider that sets one out of the fabric so that
+the constraints and the design cannot describe two different machines. What
+changed is that the same manager now has a third output. `CLKOUT2` is the
+1000 MHz oscillator divided by twenty, which is 50 MHz. `SOC_CLK_DIVIDE`
+beside the manager in `cadr_arty_a7.sv` is the one place that number is
+decided, and the Makefile reads it out of that file for the check's own baud
+divisor and microsecond rather than keeping a copy.
 
-The second is a measurement that refuted a reasonable expectation. Ibex's own
-guidance is that `BranchTargetALU` and `WritebackStage` are what a design short
-of frequency reaches for, so both were turned on and the board was built again:
-**-3.694 ns**, worse than the -3.216 with both off. They are off, because the
-measurement says so.
+**Which divider, and both were placed and routed.** The oscillator is
+1000 MHz, so only whole dividers exist: twenty is 50 MHz and sixteen is
+62.5 MHz, and there is nothing between them. Both close.
 
-**What would close it is a slower clock for the soft system, and that is a
-slice of its own.** The machine's tick is 10 ns and every tick count in
-`rtl/machine/` depends on it, so the fabric's clock cannot move. The soft
-system could have its own --- the MMCM has spare outputs and `CLKOUT1` at
-50 MHz costs nothing --- but the four faces are the machine's neighbours and
-run at the machine's clock, so the AXI seam between the two would become a
-clock domain crossing. That is real work and it is not begun.
+| | 50 MHz, the one built | 62.5 MHz |
+|---|---|---|
+| worst slack | +0.720 ns, met, 0 of 46,445 | +0.846 ns, met, 0 of 46,441 |
+| hold | +0.032 ns | +0.021 ns |
+| the MACHINE's own clock | +1.115 ns equivalent | +1.115 ns on 42,126 |
+| **the soft clock's own paths** | **+2.976 ns of 20, on 3,585** | **+0.846 ns of 16, on 3,591** |
+| the crossing, out / back | +6.610 / +8.344 ns | +6.161 / +4.690 ns |
+| Slice LUTs | 13,325 | 13,347 |
 
-**Until then, read anything this board says with that attached.** This
-repository's own rule is that a board which does not meet its timing cannot be
-used as evidence about its own logic. What a run of this bitstream shows is
-that the flow, the composition and the firmware are right; it is not evidence
-about the machine, and the check in simulation is.
+**The overall figures are a tie and the interesting column is the third.** At
+50 MHz the design's critical path is the machine's, and the soft system has
+fifteen per cent of its period in hand; at 62.5 MHz the soft system IS the
+critical path and has five. The two worst-slack numbers differ by 0.126 ns,
+which this repository's own rule puts inside placement noise --- a
+bit-identical netlist has moved a figure by a quarter of a nanosecond here
+before --- so they say nothing about which is the better clock. The third row
+does.
+
+**So the routed arc inside the core is about 17 nanoseconds at 50 MHz and
+about 15 at 62.5**, against the 12.9 the unrelaxed build reported. That is not
+a contradiction: a router that has met its constraint stops, and a slack figure
+is a statement about a deadline rather than a measurement of how fast a thing
+could go.
+
+**And the second thing that settles it is not slack at all.** A whole number of
+the soft system's ticks in a microsecond is what makes the timer's
+`TICKS_PER_US` exact. At 62.5 MHz it reads 62, and every delay the firmware
+makes is eight tenths of a per cent short, on the one register whose whole
+purpose is that the firmware does not keep its own copy of the board's clock.
+Fifty megahertz, and the margin where the design needs it.
+
+**THE 62.5 MHz BUILD ALSO EXPOSED A CHECK THAT CANNOT EXPRESS TWO CLOCKS, AND
+THAT IS THE MORE USEFUL FINDING.** Run through the board flow as it stands, it
+does not finish: `assert_constraints_scoped` stops it, naming one register
+outside the machine at a 16.000 ns requirement. The figures above come from the
+same build with that one assertion made to print instead of exit, which changes
+no constraint and no logic. What it printed:
+
+    DIAG: endpoint   rdata_q_reg[31]_i_4/D
+    DIAG:   startpoint g_soc.u_soc/u_cpu/if_stage_i/...instr_rdata_id_o_reg[29]/C
+    DIAG:   start clock clk_soc_raw    end clock clk_soc_raw
+    DIAG:   requirement 16.000   slack 5.922
+
+Both ends are on the soft clock and 16.000 ns is one period of it, so the path
+is healthy. `rdata_q` is Ibex's own load-store unit
+(`ibex_load_store_unit.sv:91`); synthesis flattened the cell's name out of the
+hierarchy, past the `NAME !~ g_soc.u_soc/*` filter that keeps the soft system
+out of that assertion, and the assertion then judged a 16 nanosecond
+requirement against the MACHINE's 10 nanosecond tick and called it a microcycle
+exception. **That is the false accusation `constraints_check.tcl`'s own header
+warns about, arriving by a route nobody had met: a design with two clocks in
+it.**
+
+**And the 50 MHz build passes that assertion partly by luck, which has to be
+said.** `relaxed_outside` asks for the worst 400 paths by slack. At 50 MHz the
+same flattened path has about ten nanoseconds of slack and does not make that
+cut; at 62.5 MHz it has 5.922 and does. So the pass is the query's limit and
+not evidence that no such path exists. The fix belongs in the shared proc:
+hold each path to ITS OWN capture clock's period, and stop taking only the
+worst 400. That file is read by three boards' flows and the change is not this
+directory's to make; `vivado/bitstream.tcl` says so at the call.
+
+**And the ratio is not free, which is worth knowing before anyone moves it.**
+`cons_step` raises STEP and waits one microsecond before reading SSDONE.
+SSDONE is STEP registered twice on the machine's master clock and rises two of
+them later, which is 88 of the machine's ticks at extra slow --- the speed the
+boot PROM runs at. So the wait is 880 nanoseconds against 1,000, and it holds
+whatever the soft clock is doing, because the wait comes out of the timer and
+the timer counts its own clock.
+
+In simulation there is no real time, so the same bound appears as a bound on
+the ratio: the soft clock's period must be at least 88/50 = 1.76 of the
+machine's. The board's is 2.0 and the check runs at 2.0, 2.33 and 2.5. A ratio
+the other way round, with the soft clock faster than the machine, reports
+`SSDONE 0` on a step whose CYCLES moved by exactly one. That is the firmware's
+own race and not a crossing that came apart. It was tried at 7:3 and is written
+down here so that nobody rediscovers it.
+
+### The seam between the machine's clock and the core's
+
+**The crossing is at the narrowest place in the design and not at the AXI
+ports.** The bridge speaks to four faces over five AXI channels, which is some
+hundred and forty wires and ten handshakes. The seam in front of it is one
+request and one answer. So `rtl/plumbing/cadr_soc_axi.sv` runs on the machine's
+clock, where the four faces already are, and `rtl/plumbing/cadr_soc_cross.sv`
+carries the request with its payload out and the answer back. **Nothing in
+`rtl/plumbing/` or `rtl/machine/` changed for it, and the faces do not know
+there are two clocks at all.**
+
+Its shape is `cadr_mem_cross`'s, which carries the machine's memory port to the
+controller's user clock one seam along. A four-phase handshake, a payload
+registered on the asking side so that it has stopped moving before the level
+that points at it arrives, and two flip-flops on each level.
+
+One thing it does that the memory's crossing does not have to: **the answer is
+not handed back until the handshake has closed.** A four-phase handshake is not
+finished when the acknowledgement arrives. The request has still to be dropped,
+the far side has still to see it go, and its acknowledgement has still to come
+back. The requester in front of this one may ask again one clock after it is
+answered, which is inside that window. The memory's crossing escapes the
+question because `cadr_xbus_ddr` holds its request up until it has taken the
+word.
+
+**How close that is to mattering was measured rather than reasoned about.**
+With the wait deleted, of 273 requests **129 arrive while the acknowledgement
+still stands at the second flip-flop of the synchroniser, and none while it
+stands at the first**. So the guard is one clock of the synchroniser away from
+handing a requester the previous answer, and what keeps the defect benign is
+that `cadr_soc.sv` takes a clock to clear its own busy flag.
+`mutations/list.txt` records that with the measurement, rather than leaving a
+reader to delete the wait and find every check green.
+
+**The bound is told to the fitter as a maximum delay and never as a clock
+group.** `rtl/plumbing/xilinx7/cadr_soc.xdc` bounds everything that crosses at
+one of the machine's ticks, which is the shorter of the two periods and
+therefore the conservative choice in both directions. Its header says why a
+clock group would be wrong: a grouped path is not timed at all, and a payload
+that is not timed at all is a payload the fitter may route through a swamp.
+
+**And the flow asks the design whether that worked** rather than trusting it.
+At the build above, **71 paths cross for the request and its payload and 36 for
+the answer coming back, every one of them bounded at 10.000 ns**, and the
+machine's own fifteen-tick exception still reaches 19,884 of 46,388 setup
+paths. A constraint that reached nothing would print a plausible worse number
+and finish, which is the failure this repository has met four times.
+
+**The soft system is asked a different question rather than not asked.**
+`assert_constraints_scoped` holds every register outside the machine to one
+period of the clock it is handed, and the clock it is handed is the machine's
+tick. A register on the slower clock reports its own longer period and would
+fail an assertion about a clock it does not run on. Excluding it and leaving it
+there would be an exemption too wide, which is the failure this repository
+records more often than any other. So the flow asks the same question of those
+registers against their own period instead: **1,395 registers under
+`g_soc.u_soc`, and not one asking for more than its own 20.000 ns**.
+
+**What the check holds.** `build/soc.pass` runs the whole firmware at three
+clock ratios in one process, the board's own 2:1 and two that share no factor
+with it or with each other, and asserts the same thirteen lines at every one.
+The thirteenth is new with the second clock. It is sixteen rounds of four
+back-to-back loads, one at each face, with nothing between them for the
+compiler to put an instruction into, because **a race check needs the stimulus
+that loses the race** and every other line in that firmware is one load with a
+`say()` behind it.
+
+Five mutation records are aimed at the crossing and all five are caught.
+**What no record there can reach is the depth of a synchroniser.** Nothing
+models metastability, so one flip-flop behaves exactly as two, and shortening
+either one in a single hunk leaves a bit unread and Verilator catches it at bit
+granularity rather than the check doing so. That is said once in
+`mutations/list.txt`, with three measured equivalences beside it, rather than
+being left to be filed as a hole.
 
 ### What is still absent
 

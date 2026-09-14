@@ -70,9 +70,27 @@ module cadr_soc_harness #(
     // given and asserts the divisor it computed, so a rate that did not reach
     // the fabric is a failure and not a silent pass.
     parameter int unsigned SOC_BAUD = 115_200,
-    parameter int unsigned CLK_HZ = 100_000_000
+    // The soft system's own clock in hertz --- the board's `CLKOUT2` and not
+    // its tick.  The UART's divisor and the timer's microsecond are both
+    // computed from it, and both are on the soft side of the crossing.
+    parameter int unsigned CLK_HZ = 50_000_000
 ) (
+    // **TWO CLOCKS, AND THE CHECK DRIVES THEM AT A RATIO.**  `clk` is the
+    // machine's tick and everything the board clocks with it --- the machine,
+    // the four faces and the soft system's own AXI bridge.  `clk_soc` is the
+    // soft processing system's, which on the board is `CLKOUT2` of the same
+    // clock manager and is slower, because Ibex computes a load or a store's
+    // address in the cycle it uses it and that arc does not fit in the
+    // machine's tick.  `rtl/plumbing/cadr_soc_cross.sv` is the seam.
+    //
+    // There is no clock manager under Verilator, so the RATIO is the check's
+    // to choose, and `tb/cadr_soc_tb.cpp` runs the whole firmware at
+    // several --- the
+    // board's own, and two that share no factor with it in either direction.
+    // A crossing that worked only at the number the board happens to use
+    // would be a crossing held to nothing.
     input  var logic        clk,
+    input  var logic        clk_soc,
     input  var logic        rst,
 
     output var logic        uart_tx,
@@ -412,11 +430,13 @@ module cadr_soc_harness #(
   cadr_soc #(
       .RAM_WORDS   (SOC_RAM_WORDS),
       .FIRMWARE_HEX(FIRMWARE_HEX),
-      // The board's real clock.  The MMCM above makes 100 MHz from the
-      // board's own 100 MHz oscillator, and `CLKOUT0_DIVIDE_F` is the one
-      // place the tick is decided; this is that same number said in hertz,
-      // and `boards/arty-z7-20/vivado/tick.tcl` reads the divider rather
-      // than either of them.
+      // **THE SOFT SYSTEM'S OWN CLOCK IN HERTZ, WHICH IS NOT THE MACHINE'S.**
+      // On the board it is what `CLKOUT2` of the one clock manager makes; here
+      // it is a parameter, and `tb/cadr_soc_tb.cpp` decodes the wire at
+      // `CLK_HZ / SOC_BAUD` and asserts the divisor it measures, so a value
+      // that did not reach the fabric is a failure.  It is the SOFT clock's
+      // frequency and not the tick's, because the transmitter and the timer
+      // are both on the soft side of the crossing.
       .CLK_HZ      (CLK_HZ),
       .BAUD        (SOC_BAUD)
   ) u_soc (
@@ -425,7 +445,10 @@ module cadr_soc_harness #(
       // word 6 would be in flight while the core holding it was being
       // cleared.  `cadr_console.sv`'s header has the same argument for the
       // console's own registers.
-      .clk(clk), .rst(rst),
+      .clk(clk_soc), .rst(rst),
+      // The bridge and the four faces are on the machine's tick: what crosses
+      // is one request and one answer, inside `cadr_soc`.
+      .axi_clk(clk), .axi_rst(rst),
       .uart_tx(uart_tx), .uart_rx(uart_rx),
       .ext_irq(pack_irq),
 

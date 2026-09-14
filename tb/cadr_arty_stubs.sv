@@ -44,7 +44,14 @@ module MMCME2_BASE #(
     // CLKOUT0 and the pixel clock on CLKOUT1.  Listed here for the reason
     // the header gives --- an override of a parameter this stub does not
     // name must be an elaboration error and not a silent default.
-    parameter int  CLKOUT1_DIVIDE  = 1
+    parameter int  CLKOUT1_DIVIDE  = 1,
+    // The sixth, and it arrived with the Arty A7-100's soft processing
+    // system: that board's one manager makes the machine's tick on CLKOUT0,
+    // the memory controller's delay reference on CLKOUT1 and the soft
+    // system's own clock on CLKOUT2, which is slower than the machine's
+    // because a RISC-V core's load-store address does not settle in a 10 ns
+    // tick.  Listed for the same reason as the fifth.
+    parameter int  CLKOUT2_DIVIDE  = 1
 ) (
     output var logic CLKOUT0,
     output var logic CLKOUT0B,
@@ -90,7 +97,7 @@ module MMCME2_BASE #(
   logic unused;
   assign unused = &{1'b0, CLKFBIN, CLKIN1_PERIOD != 0.0, DIVCLK_DIVIDE[0],
                     CLKFBOUT_MULT_F != 0.0, CLKOUT0_DIVIDE_F != 0.0,
-                    CLKOUT1_DIVIDE[0]};
+                    CLKOUT1_DIVIDE[0], CLKOUT2_DIVIDE[0]};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

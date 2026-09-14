@@ -311,6 +311,43 @@ int main(void)
 	// And the debug cable's window, muir's own `fabric::DBUG`.
 	expect("the debug window", 0x80001000u, 0x44425547u);
 
+	// **AND THE SEAM AT THE RATE A DRIVER WOULD DRIVE IT.**  Every line
+	// above is one load with a `say()` behind it, which is the slowest
+	// stimulus there is: between two of them the core executes hundreds of
+	// instructions and the crossing between its clock and the machine's has
+	// long since finished with the last one.  **A RACE CHECK NEEDS THE
+	// STIMULUS THAT LOSES THE RACE**, and this repository has the entry to
+	// prove it --- a record for a hazard in the disk's request path
+	// survived at the slave's usual speed and was caught the moment the
+	// stimulus was slowed enough for the writer to overtake.  Here the
+	// stimulus has to be made FASTER, not slower.
+	//
+	// Four loads with nothing between them: no branch, no compare, no
+	// store, so the compiler emits four `lw` instructions in a row and the
+	// core asks again as soon as it is answered.  **FOUR DIFFERENT FACES,
+	// which is what makes a wrong answer legible**: each returns a
+	// four-letter word of its own, so a load handed the answer to the load
+	// before it comes back as the wrong face's name and not as a plausible
+	// value.  A loop reading ONE register this way would be a check that
+	// could not tell a stale answer from a fresh one, which is the shape of
+	// exercise this project already records as testing nothing.
+	{
+		unsigned wrong = 0;
+		for (unsigned k = 0; k < 16u; ++k) {
+			uint32_t a = soc_rd(CONS_REG_BASE);
+			uint32_t b = soc_rd(0x80001000u);
+			uint32_t c = soc_rd(PS_REG_BASE + 0x1000u);
+			uint32_t d = soc_rd(PS_REG_BASE + 4u * PS_IDENT);
+			if (a != CONS_IDENT_WORD || b != 0x44425547u ||
+			    c != 0x4E4F4E45u || d != PS_IDENT_WORD)
+				wrong++;
+		}
+		if (wrong)
+			failures++;
+		say("%u of 16 rounds of four back-to-back loads, one at each "
+		    "face, came back wrong", wrong);
+	}
+
 	say("%u failure(s); idling --- s status, h halt, c continue, . step",
 	    failures);
 
