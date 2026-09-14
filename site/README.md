@@ -28,8 +28,8 @@ build step and no generator, the same way
                   processing system's own parts hold. There are no boot
                   sequence drawings on it, because nothing has yet booted that
                   board from its own flash
-    cadr.html     the real CADR's own hardware, board by board, for a reader
-                  who has never seen one. Every figure on it comes from a
+    cadr.html     the real CADR in ten drawings with one-sentence captions:
+                  the machine, its boards, cables and buses, and how it boots
                   document named at the end of the page
     full-page.html
                   a fuller draft kept for later: the architecture drawing with

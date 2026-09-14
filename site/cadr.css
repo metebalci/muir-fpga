@@ -1,0 +1,33 @@
+/* SPDX-FileCopyrightText: 2026 Mete Balci */
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+
+/* The CADR page's own drawing classes.  Everything else it needs ---
+   `d-box`, `d-t`, `d-s`, `d-m`, `d-n`, `d-line`, `d-bus`, `d-dash`,
+   `figure.fig` and its `.scroll`, `.tablewrap` and `dl.credits` --- is in
+   `style.css` and is shared with the board drawings.  This file exists so
+   that this page can be worked on without touching that one.
+
+   Nothing here carries a status colour.  The board drawings colour a block
+   by how far along it is; these figures say what the machine IS, so they
+   are drawn in `currentColor` alone and read the same in either theme. */
+
+/* An inner division of a field or a bar: lighter than the box around it,
+   so a 48-bit word reads as one word cut into fields rather than as
+   fourteen boxes in a row. */
+.d-hair { fill: none; stroke: currentColor; stroke-width: 1; }
+
+/* A filled region: the part of a buffer a picture uses, the data of a
+   block, the memory that is fitted.  Tone comes from the fill's opacity
+   rather than from a hue, which is what the rest of the site does with
+   its dither and its utilisation bars. */
+.d-tint { fill: currentColor; fill-opacity: 0.14; stroke: none; }
+
+/* The smallest label on the page, for a bit number under a field that is
+   one bit wide.  `d-n` is 11px mono; this is the same face two sizes
+   down, and it is used nowhere a reader has to read a sentence. */
+.d-x { font: 400 9.5px var(--mono); fill: currentColor; }
+
+/* The figures table at the foot: what each drawing was read from.  The
+   shared table rules already do the work; this only keeps a figure's name
+   on one line, so the two columns read as a list of pairs. */
+.figsrc td:first-child, .figsrc th:first-child { white-space: nowrap; }
