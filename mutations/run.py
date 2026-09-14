@@ -1902,10 +1902,32 @@ def check_makefile():
     # with the Arty's by hand for ever.  Naming it here is the second of
     # CLAUDE.md's two ways to close this warning and the one that stands
     # alone.
+    # `arty_a7` is the Arty A7-100's lint and is named here on the same
+    # argument, with one difference worth stating.  That board is an Artix-7
+    # and has no processing system, so its top level is not the Arty's with
+    # different pins: it ties off some forty seams the other two drive, and it
+    # has two configurations --- the machine, and the machine with the probe
+    # --- where `arty` has six.  What a record aimed here could hold is still
+    # what `arty`'s records hold, that an output of `cadr_machine` left
+    # unconnected is caught, and that is a property of the SHAPE of a top
+    # level rather than of which board it is.  What `arty`'s records do NOT
+    # cover is that board's own tie-offs, and the honest statement is that
+    # lint holds those: a tie-off removed is an undriven signal and a tie-off
+    # put on a port that has a driver is a conflict, and Verilator says so
+    # either way.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
-                           "usb_input", "fpgarc", "cora"}
-    for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
+                           "usb_input", "fpgarc", "cora", "arty_a7"}
+    # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
+    # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
+    # guard in both directions --- neither warned about nor checked.  Four
+    # names in the Makefile have one: `gp0_default`, `gp0_split` and
+    # `gp1_split`, all three of which have entries in `CHECKS` and were simply
+    # never being looked at, and `arty_a7`, which is named above.  Measured
+    # before the pattern moved: widening it produces exactly one new name and
+    # the line above closes it.  A guard that cannot see a whole class of name
+    # is the shape of failure this file is full of.
+    for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z0-9_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"
                            % found)

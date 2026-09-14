@@ -18,19 +18,24 @@ part family.
 |---|---|---|---|
 | `arty-z7-20/` | Digilent Arty Z7-20 | XC7Z020 | The board. Complete and running. |
 | `cora-z7-07s/` | Digilent Cora Z7-07S | XC7Z007S | Builds. Placed, routed and closing timing; never on silicon. |
-| `arty-a7-100/` | Digilent Arty A7-100T | XC7A100T | Preliminary. A pin file and a note. |
+| `arty-a7-100/` | Digilent Arty A7-100T | XC7A100T | Builds the machine alone. Placed, routed and closing timing; never on silicon. |
 
-**Two of the three build something.** `arty-z7-20/` is the board and is
-complete. `cora-z7-07s/` now has a top level, a pin file, a processing-system
-configuration, a device tree and a Vivado flow, and the machine has been placed
-and routed for that part; nothing in it has been on silicon.
+**All three build something now, and they build three different amounts.**
+`arty-z7-20/` is the board and is complete. `cora-z7-07s/` has a top level, a
+pin file, a processing-system configuration, a device tree and a Vivado flow,
+and the machine has been placed and routed for that part; nothing in it has
+been on silicon.
 
-**`arty-a7-100/` holds Digilent's published master pin file and a `README.md`
-saying what would have to be built.** There is no top level, no constraint file
-of ours, no Vivado script and no device tree in it. That is deliberate. A
-skeleton that looks like it works is worse than an empty directory, because
-somebody will run it. That board has no processing system, so a port to it is a
-different piece of work from the Cora's and the next section says why.
+**`arty-a7-100/` has a top level, a constraint file and a Vivado flow, and it
+builds the machine and nothing around it.** That board has no processing
+system, so a port to it is a different piece of work from the Cora's and the
+next section says what it has to answer. None of those answers exists: there is
+no memory behind the machine's port, so every main-memory cycle from microcycle
+536,303 onwards ends on the 4.25 microsecond timer instead of on a slave and
+the machine runs about a fifth slower. It does not stop. What that board can
+show is that the fabric runs, and it can have its first 1,024 microcycles read
+back over JTAG and diffed against muir. **Nothing in it has been on silicon
+either.**
 
 **There is no Spartan-7 directory, because the Digilent Arty S7-50 has no
 Ethernet.** This machine finds its time host and its file host over Chaosnet,
@@ -109,11 +114,18 @@ line and the debugger all lose the programs that implement them today. Every one
 of those costs logic and block RAM that these numbers do not include. **The part
 is not the obstacle on that board. The work is.**
 
-**And the Artix column is not a fit.** Those are percentages computed from a
-part database. No design in this repository has ever been through synthesis,
-place and route for an XC7A100T, and until one has, nothing here says whether
-the machine closes timing on it. The Cora's column above is a routed report and
-is the one number on this page that was measured rather than computed.
+**And the Artix column is a ratio rather than a fit, but the part has now been
+through the tools.** The machine WITH EVERY SEAM TIED OFF --- no memory behind
+its port and no program at the end of any cable, which is what that board can
+build today --- places and routes for the XC7A100T at commit `86d787b` and
+closes at **+1.227 nanoseconds with no failing endpoint of 27,148**, costing
+6,009 Slice LUTs, 2,403 registers and 38 block RAM tiles.
+`boards/arty-a7-100/README.md` has the table. That is a floor and not the
+column above: it is a smaller design than the one the percentages are computed
+from, because the drive, the serial chip and the mouse all constant-fold when
+nothing drives their seams, and it has none of the fabric answers this section
+lists. What it does settle is that the part builds and that the free tier will
+build it.
 
 ## Two kinds of new board
 
@@ -175,8 +187,14 @@ recorded in that directory's `README.md`. Digilent publishes them under the MIT
 licence, so each directory also holds a copy of that licence text as
 `Digilent-License.txt`.
 
-The two finished directories do it differently, and that is the convention to
-follow once a top level exists. `arty-z7-20/cadr_arty.xdc` and
-`cora-z7-07s/cadr_cora.xdc` each copy out the handful of pins that board's
-design actually uses and cite the master file in the header. A constraint file
-that is mostly commented-out pins is a constraint file nobody reads.
+Each directory's own constraint file then copies out the handful of pins that
+board's design actually uses and cites the master file in its header ---
+`arty-z7-20/cadr_arty.xdc`, `cora-z7-07s/cadr_cora.xdc` and
+`arty-a7-100/cadr_arty_a7.xdc`. A constraint file that is mostly commented-out
+pins is a constraint file nobody reads.
+
+**One of the three renames a pin and says why.** Digilent calls the Arty
+A7-100's clock `CLK100MHZ`; that board's constraint file calls the port
+`sysclk`, as the other two boards' files do, so that the debug probe's own
+constraint file --- which groups the JTAG readout's clock apart from `sysclk`
+and everything generated from it --- says the same thing on every board.
