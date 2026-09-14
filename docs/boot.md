@@ -464,10 +464,32 @@ Partition 2 holds a `README.TXT` saying what the partition is for and how to
 name a pack, and the two files of flags: `fpgarc` for the CADR in the fabric
 and `muirrc` for the CADR inside muir. Each is the same full menu the
 development card gets, every flag the board's programs take written out under
-a sentence or two saying what it does, the ones a board out of the box needs
-live and the rest commented out to be uncommented. Nothing else is on that
-partition, and the script asserts it rather than trusting the flag that says
-so.
+a sentence or two saying what it does. Nothing else is on that partition, and
+the script asserts it rather than trusting the flag that says so.
+
+**The released `fpgarc` has three live lines and the rest of the menu is
+commented out.** They are `--chaos-address`, `--terminal` and
+`--keyboard-boot`: the Chaosnet address switches, the screen, and the chord
+that cold-boots the machine. Those are what a board out of the box needs.
+
+**The Chaosnet cable and the serial line are commented out with everything
+else.** `--chaos-udp` is the cable, and a release that plugged one in would put
+a station on a network the user has not got, listening on a port nobody named,
+with no peer it could reach. `--serial` offers the far end of the CADR's RS-232
+cable on TCP, and a release that offered it would open an unauthenticated port
+on every interface for a cable hardly anybody wants. Each is one `#` away from
+being on and carries the sentence that says so.
+
+The board reads the file the same way from the other side. The Chaosnet program
+comes up with its switches set and no cable, says so on the console, and does
+not wait for a network it has nothing to reach. The serial program is not
+started at all, and its init script says the line is off and how to turn it on.
+`docs/fpgarc.md` has the rule and `fpgarc.pass` holds both menus and what a
+board does with each.
+
+`RELEASE=1` writes that menu and `mksd-release.sh` sets it. It is a separate
+flag from `STANDALONE=1`: one decides which lines are live, the other keeps
+anything private off the card.
 
 **It carries no disk pack.** The bay is empty, the program says so on the
 console, and the CADR waits for a drive exactly as the real machine did with

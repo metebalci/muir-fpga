@@ -5,6 +5,12 @@
 # The serial line at boot: cadr-serial offering the far end of the CADR's
 # RS-232 cable on TCP port 7641, which `nc <board> 7641` or telnet attaches to.
 #
+# **IT IS OFF UNLESS THE CARD ASKS FOR IT.**  A `--serial` line in `fpgarc`
+# says where the far end is offered, and a card with no such line is a board
+# with no serial line and this program not started.  A released card ships that
+# line commented out.  The section at start() is the whole of why, and the one
+# case that still takes the endpoint below is a boot with no `fpgarc` at all.
+#
 # **THE PORT IS THE UNIBUS ADDRESS.**  muir gives `--serial` no default on
 # purpose, because a number it invented would be one nobody knows.  A daemon
 # has to have one, so it is taken the way the debug cable's 7661 is taken from
@@ -35,13 +41,14 @@
 # OK with no line on it.
 
 PROG=/usr/bin/cadr-serial
-# **WHERE THE FAR END IS OFFERED, WRITTEN OUT IN FULL.**  muir's own flag and
-# muir's own grammar, one word for the address and the port together
+# **WHERE THE FAR END IS OFFERED WHEN THERE IS NO CARD TO SAY.**  muir's own
+# flag and muir's own grammar, one word for the address and the port together
 # (cadr/cadr_endpoint.h).  It is written as an endpoint rather than left to the
-# program's default so that this script says what it does; a card that names
-# `--serial` in `fpgarc` wins, and this one is then not passed at all.  Every
-# interface, because the board has no terminal of its own and the paragraph
-# above is the whole of why.
+# program's default so that this script says what it does.  It is passed only
+# when there is no `fpgarc` at all: a card that names `--serial` says where the
+# line is, and a card that does not name it says the line is off.  The
+# paragraph at start() is the whole of that.  Every interface, because the
+# board has no terminal of its own and the paragraph above is the whole of why.
 ENDPOINT=0.0.0.0:7641
 PIDFILE=/var/run/cadr-serial.pid
 PACKS=/mnt/packs
@@ -82,19 +89,49 @@ FLAGS="--serial
        --poll-us
        --quiet"
 
+# **A CARD THAT SAYS NOTHING ABOUT `--serial` IS A SERIAL LINE THAT IS OFF,
+# AND THAT IS muir'S OWN RULE.**  muir gives `--serial` no default and serves no
+# line without it, because a port it invented would be one nobody knows; this
+# program is the same program on a board, so it does the same.  A serial line
+# is a cable somebody attaches to on purpose and hardly anybody wants, and
+# offering an unauthenticated port on every interface for it is not something a
+# card should do unasked.
+#
+# **THE TWO CASES ARE THE CARD SAYING NOTHING AND THERE BEING NO CARD**, and
+# they are not the same thing.  A file that is there and has no `--serial` line
+# is a card that was asked and said no --- the released card is exactly that,
+# with the line present and commented out under the sentence that says what it
+# does.  No file at all is nobody having been asked, and then this script's own
+# endpoint is what a board has always run on, which is what keeps a boot with
+# the pack partition unmounted working the way it did.
+#
+# Said the other way: the difference between `#--serial 0.0.0.0:7641` and no
+# line at all is the difference between a decision and an accident, and only
+# the first turns the line off.
 start() {
-	# **THIS SCRIPT'S OWN ENDPOINT ONLY WHERE THE CARD SAYS NOTHING.**
-	# Passing both and letting the program take the last one works, and it
-	# put `--serial 0.0.0.0:7641 --serial 0.0.0.0:7641` on the board's own
-	# command line, which reads as a fault to anybody looking at `ps` to see
-	# what the line is doing.  So the card is asked first and its line is
-	# then the only one.
 	set --
-	fpgarc_has "$RC" --serial || set -- --serial "$ENDPOINT"
-	# The card's flags after this script's own, so that a line in `fpgarc`
-	# wins --- muir's rule that a flag given later wins, and the way round
-	# somebody editing the card expects.
-	[ -f "$RC" ] && eval "set -- \"\$@\" $(fpgarc_args "$RC" $FLAGS)"
+	if [ -f "$RC" ]; then
+		# The card's flags first, which is also what records this
+		# program's claim on them: a line read here is a line the
+		# unclaimed-lines report at the end of the boot will not name.
+		# It happens before the decision below so that the claim is
+		# recorded whether or not the line is served.
+		eval "set -- $(fpgarc_args "$RC" $FLAGS)"
+		if ! fpgarc_has "$RC" --serial; then
+			echo "cadr-serial: no --serial in $RC, so the serial line is off."
+			echo "cadr-serial: uncomment the --serial line in that file to offer it."
+			return 0
+		fi
+	else
+		# **THIS SCRIPT'S OWN ENDPOINT, AND ONLY HERE.**  Passing it
+		# alongside a card's line and letting the program take the last
+		# one works, and it put `--serial 0.0.0.0:7641 --serial
+		# 0.0.0.0:7641` on the board's own command line, which reads as
+		# a fault to anybody looking at `ps` to see what the line is
+		# doing.
+		echo "cadr-serial: no $RC; the line is offered at $ENDPOINT"
+		set -- --serial "$ENDPOINT"
+	fi
 
 	# `--log` is last of all and is not the card's to say: where a daemon
 	# writes is this script's.
