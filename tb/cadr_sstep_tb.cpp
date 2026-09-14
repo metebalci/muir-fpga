@@ -171,6 +171,10 @@ int main(int argc, char **argv) {
   }
 
   auto *dut = new Vcadr_microcycle;
+  // `-BOOT` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot = 1;
   dut->clk = 0;
   dut->rst = 1;
   dut->n_memack = 1;

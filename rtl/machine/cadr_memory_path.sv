@@ -240,6 +240,11 @@ module cadr_memory_path (
     // it.  `build/unibus.pass` drives the keyboard and the mouse from here.
     input  var logic        kbd_strobe,
     input  var logic [23:0] kbd_code,
+    // `-BOOT*` off the card, the keyboard's boot word decoded: a 4 us pulse
+    // onto backplane pin `CP1`, which reaches the processor as `-BOOT1`.
+    // The gate that makes `-BOOT` of it is in `cadr_machine.sv`, where the
+    // light panel's `-BOOT2` and the debug cable's `PROG.BOOT` meet it.
+    output var logic        n_boot_star,
     input  var logic [6:0]  mouse_lines,
 
     // --- THE SERIAL PORT'S LINE AND THE CHAOSNET'S CABLE, which the two
@@ -403,6 +408,11 @@ module cadr_memory_path (
     output var logic [1:0]  mode_speed,
     output var logic        prog_reset,
     output var logic        prog_boot,
+    // `-BOOT`, made by the 74S02 at OLORD2 1A07 out of the three boot lines.
+    // It comes back DOWN here because the console's registers are on this
+    // board now and `-BOOT` is one of the three inputs of `RESET` at 1C08,
+    // which clears them.  `cadr_machine.sv` has the gate and the account.
+    input  var logic        n_boot,
 
     // --- `UB MD LOAD`, `NOR(-UB TO MD, -UBX GRANT)` at REQLM 0B17: a
     // foreign master's mapped write whose page is the processor's `MD`.
@@ -923,7 +933,8 @@ module cadr_memory_path (
       .stathenb   (stathenb),
       .mode_speed (mode_speed),
       .prog_reset (prog_reset),
-      .prog_boot  (prog_boot)
+      .prog_boot  (prog_boot),
+      .n_boot     (n_boot)
   );
 
   // --- the I/O board, the second Unibus slave -----------------------------
@@ -981,6 +992,7 @@ module cadr_memory_path (
       .ub_init    (rst),
       .kbd_strobe (kbd_strobe),
       .kbd_code   (kbd_code),
+      .n_boot_star(n_boot_star),
       .mouse_lines(mouse_lines),
       .ser_reset  (ser_reset),
       .ser_mode1  (ser_mode1),

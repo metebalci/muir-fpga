@@ -229,6 +229,10 @@ module cadr_gp1_split_harness #(
   logic [17:0] con_ro_addr, con_ro_echo;
   logic [47:0] con_ro_data;
   logic        con_mach_rst;
+  // The console's press of `-BOOT2`.  This page is the AXI split in front of
+  // the console and has no processor behind it, so the line is folded rather
+  // than wired; `build/console.pass` is where it reaches one.
+  logic        con_mach_boot;
   assign con_req_o = con_req;
   assign con_gnt_o = con_gnt;
 
@@ -250,7 +254,9 @@ module cadr_gp1_split_harness #(
       .clock_edge(mclk),
       .mach_vma(mach_vma), .mach_q(mach_q), .mach_md(mach_md),
       .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
-      .mach_rst(con_mach_rst)
+      // `-BOOT2`, the light panel's button: this page has no processor to
+      // give it to, so it folds below with the console's reset.
+      .mach_rst(con_mach_rst), .mach_boot(con_mach_boot)
   );
 
   // The readout window's three wires belong to `build/readout.pass` and
@@ -355,7 +361,9 @@ module cadr_gp1_split_harness #(
       .debug_ir(debug_ir_u),
       .run(run_o), .promdisable(promdisable_u),
       .errstop(errstop_u), .stathenb(stathenb_u), .mode_speed(mode_speed_u),
-      .prog_reset(prog_reset_u), .prog_boot(prog_boot_u)
+      .prog_reset(prog_reset_u), .prog_boot(prog_boot_u),
+      // `-BOOT` released: nothing in this check presses any of the three.
+      .n_boot(1'b1)
   );
 
   // ---------------------------------------- everything else on the port
@@ -375,7 +383,8 @@ module cadr_gp1_split_harness #(
   assign unused = ^{modifier_u, address_u, timeout_inhibit_u,
                     errstop_u, stathenb_u, mode_speed_u,
                     prog_reset_u, prog_boot_u, promdisable_u,
-                    step_u, nop11_u, idebug_u, ldstat_u, debug_ir_u};
+                    step_u, nop11_u, idebug_u, ldstat_u, debug_ir_u,
+                    con_mach_boot};
 
 endmodule
 

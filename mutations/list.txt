@@ -4296,16 +4296,38 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation the-disks-interlock-reaches-no-pin
 @check arty
 @file boards/arty-z7-20/cadr_arty.sv
-@note `ch_active` left the machine with the pack side, and on the default
+@note The disk's seam left the machine with the pack side, and on the default
 @note board --- no `DDR`, no pack side --- the `witness` fold is the only
 @note thing that reads it.  Left out of the fold it is an output of
 @note `cadr_machine` nothing reads, which is an UNUSEDSIGNAL on the first
 @note lint pass: the same shape as `the-word-at-the-xbus-seam-reaches-no-pin`,
 @note one seam along.
+@note
+@note **IT USED TO RIDE ON `ch_active` AND IT CANNOT ANY MORE, AND THAT IS
+@note WORTH THE PARAGRAPH.**  It SURVIVED the moment LD3 became the disk's
+@note lamp: the lamp's one-shot reads `ch_active`, so taking it out of the
+@note fold leaves it read all the same and lint has nothing to say.  Nothing
+@note was wrong with the record and nothing was wrong with the lamp --- the
+@note property simply stopped being about that signal, because the property
+@note is "an output with NO reader", and `ch_active` acquired one.
+@note
+@note So the vehicle is `ch_waiting`, the other half of the same interlock:
+@note the channel waiting for a block the pack side has not put in a slot yet.
+@note It is read by the fold and by the pack side's own instantiation, which
+@note the default board does not elaborate, so the fold is again the only
+@note reader.  The name stays so that `--since` can still follow it.
+@note
+@note **AND THE FULL RUN IS WHAT FOUND IT**, not the slice's own records:
+@note the slice that moved the lamps ran every record aimed at every file it
+@note touched, and this was the one that came back SURVIVED.  CLAUDE.md's
+@note entry about a check getting weaker being visible only by comparison,
+@note met once more --- with the difference that here the design changed
+@note under the record rather than a tolerance widening, so the fix IS the
+@note record and not the check.
 @old
-                   mem_req, mem_write, store_miss, ch_active,
+                   req_valid, req_tag, req_post, ch_waiting, ch_slot,
 @new
-                   mem_req, mem_write, store_miss,
+                   req_valid, req_tag, req_post, ch_slot,
 @end
 
 @mutation the-request-path-reaches-no-pin
@@ -5364,10 +5386,16 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note CLAUDE.md's rule is to take that one.  `disk-seek-settle-a-tick-short`
 @note is the same shape one bus along.  Caught at "the ticks the machine's
 @note reset was held for is 0x3f, the reference says 0x40".
+@note
+@note **THE TRAILING COMMA IS PART OF THE ANCHOR**, because `RESET_T` stopped
+@note being the last parameter when the light panel's button was added after
+@note it.  `cadr_console.sv`'s own note at `RO_NONE` already warns that the
+@note parameter list carries an anchor with a comma on it; this is that, and
+@note `mutations/anchors.py` is what said so.
 @old
-    parameter int unsigned RESET_T  = 64
+    parameter int unsigned RESET_T  = 64,
 @new
-    parameter int unsigned RESET_T  = 63
+    parameter int unsigned RESET_T  = 63,
 @end
 
 @mutation console-answers-the-reset-write-before-the-machine-is-back
@@ -11786,4 +11814,313 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   assign ack_standing   = !n_memack && !memack_edge;
 @new
   assign ack_standing   = !n_memgrant && !memack_edge;
+@end
+
+# ===========================================================================
+# THE KEYBOARD'S BOOT WORD AND THE LIGHT PANEL'S BUTTON
+#
+# Two checks, and the split is the point.  `iob` holds the CARD --- which
+# eight bits the 25LS2521 at IOBCSR 0A20 compares and how wide a pulse a
+# match makes --- against muir's own `ioboard::boot_word` over 82 million
+# ticks.  `kbd_boot` holds what the pulse REACHES: `cadr_machine` running
+# MIT's boot PROM, a word at the keyboard's cable, and the PROM running from
+# word 0 again, which is muir's `tests/keyboard_boot.rs` one level up.  A
+# record aimed at the decode is aimed at `iob`, because that is where the
+# eight bits are compared exhaustively; a record aimed at the wire is aimed
+# at `kbd_boot`, because `iob` has no processor in it.
+# ===========================================================================
+
+@mutation boot-the-comparator-loses-its-lowest-bit
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **THE EIGHT BITS ARE EIGHT AND NOT SEVEN.**  `ukbd.lisp` describes the
+@note boot word as "bits 10-13 = 1, bits 6-9 = 0", and the 25LS2521 at IOBCSR
+@note 0A20 compares exactly those eight: `SR7`-`SR10` against ground and
+@note `SR11`-`SR14` against the pull-up `HI4`, `SR<n>` being bit `n-1`.  This
+@note drops the bottom one, so a word with bit 6 set --- which is not the boot
+@note word --- boots the machine.
+@note
+@note Written as a narrower slice against a narrower constant rather than by
+@note deleting a term, so that every bit of `kbd_code` stays read and lint
+@note does not catch this instead of the check: `kbd_code[6]` is still read by
+@note the `scancode` register beside it, so the narrowing is invisible to
+@note lint either way, and the form is chosen to be the mistake somebody would
+@note actually make.
+@note
+@note `build/iob.golden` presses the cold word with each of the eight compared
+@note bits flipped alone and requires none of them to boot, so the row that
+@note catches this is the bit-6 one.  Caught at "-BOOT* low is 0x1, muir says
+@note 0x0".
+@old
+  assign boot_match  = (kbd_code[13:6] == BOOT_MATCH);
+@new
+  assign boot_match  = (kbd_code[13:7] == BOOT_MATCH[7:1]);
+@end
+
+@mutation boot-the-comparator-takes-a-ninth-bit
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **AND BIT 16 IS NOT ONE OF THEM.**  `ukbd.lisp`'s prose names it --- "and
+@note bit 16 = 1 (bit 16 may or may not be looked at depending on remote mouse
+@note enable)" --- and reading that as a ninth input of the comparator is the
+@note obvious mistake.  It is not: `CHAR FROM MOUSE` is `SR17`, inverted by the
+@note 74LS14 at 0A27, ANDed with `REMOTE MOUSE ENABLE` by the 74LS08 at 0D26
+@note and inverted again at 0D20, and it reaches `EOC.KBD^` --- the
+@note comparator's ENABLE --- and not its inputs.  Qualified upstream, which is
+@note a different thing from compared.
+@note
+@note This is the mutation the trace's third kind of row exists for: the cold
+@note word with each of the sixteen bits OUTSIDE the window flipped alone, every
+@note one of which must still boot.  A fabric comparing a ninth bit passes the
+@note two boot words and the eight flipped compared bits and fails only there.
+@note Caught at the bit-16 row, "-BOOT* low is 0x0, muir says 0x1".
+@old
+  assign boot_match  = (kbd_code[13:6] == BOOT_MATCH);
+@new
+  assign boot_match  = ({kbd_code[16], kbd_code[13:6]} == {1'b1, BOOT_MATCH});
+@end
+
+@mutation boot-the-pulse-is-a-tick-short
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note `-BOOT*` is half a keyboard clock wide, 4 us, because the comparator's
+@note enable `EOC.KBD^` is low for exactly that half clock --- the one before
+@note the rising edge that latches the word into the 74LS374s and sets `KBD
+@note READY`.  muir measures it on the netlist board in
+@note `tests/keyboard_boot.rs`.
+@note
+@note **A BOOT WORKS AT ALMOST ANY LENGTH**, which is why the length has to be
+@note asserted rather than inferred from the machine coming back: `-BOOT` is a
+@note level into a clear pin and one tick of it clears the trap.  That is
+@note `RD_FINISH_T`, `LOST_T` and `RESET_T` a fourth time --- the constant is
+@note the claim.  ONE TICK SHORT rather than some round number, because the
+@note check counts the ticks and so the smallest magnitude that can be caught
+@note is one.  MEASURED: caught at tick 82,514,610, the last tick of the very
+@note first pulse, "-BOOT* low is 0x0, muir says 0x1", and 18 mismatches over
+@note the run --- one at the end of each of the eighteen pulses.  The summary
+@note line says it a second way, "ticks of -BOOT* low is 14382, the reference
+@note says 14400".
+@old
+  localparam int unsigned BOOT_T     = 4_000 / 5;
+@new
+  localparam int unsigned BOOT_T     = 4_000 / 5 - 1;
+@end
+
+@mutation boot-the-card-pulls-the-line-for-every-word
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note The other way round from the two above: a card that boots the machine on
+@note every keystroke.  MIT's own ECO#3 of 30 January 1980 warns about exactly
+@note this at the other end of the cable --- slowing the keyboard clock for the
+@note new keyboards "increases the chance of the old keyboard rebooting the
+@note machine accidentally" --- so it is a real failure and not an invented
+@note one.
+@note
+@note `boot_match` stays read and every bit of `kbd_code` stays read, so lint
+@note sees nothing.  Caught on the first `KBOOT` row that is not a boot word,
+@note the cold word with bit 6 flipped.
+@note
+@note **WRITTEN AS A TERNARY WITH EQUAL ARMS AND NOT BY DELETING THE TEST**,
+@note because deleting it leaves `boot_match` read by nothing and Verilator
+@note says so: the record went BROKEN on its first run with
+@note "%Warning-UNUSEDSIGNAL: Signal is not used: 'boot_match'".  That is the
+@note bit-granularity lesson exactly, and the ternary keeps every signal read
+@note so the catching is the check's.
+@old
+        if (boot_match) boot_t <= 10'(BOOT_T);
+@new
+        boot_t <= boot_match ? 10'(BOOT_T) : 10'(BOOT_T);
+@end
+
+@mutation boot-the-word-is-lost-when-the-card-boots
+@check iob
+@file rtl/machine/cadr_io_board.sv
+@note **THE WORD MUST STILL BE THERE AFTERWARDS**, because microcode 323 reads
+@note it at `(LOC 6)` to choose a cold boot from a warm one: `((VMA) (A-CONSTANT
+@note 17772045))`, then the keyboard's low half, and `JUMP-EQUAL MD (A-CONSTANT
+@note 46) COLD-BOOT`.  A card that cleared the register as it pulled the line
+@note would boot the machine and then tell it nothing about which boot was
+@note asked for, and every cold boot would come out warm.
+@note
+@note The keyboard's firmware does its half by setting `bootflag`, so no key-up
+@note goes until the next key-down; this is the card's half.  Caught by the face
+@note on the `KBOOT` row itself, `KBD READY` being bit 5 of the status
+@note register's flip-flops: "the status register's flip-flops is 0x..., muir
+@note says ...".
+@old
+        scancode  <= kbd_code;
+        kbd_ready <= 1'b1;
+        if (boot_match) boot_t <= 10'(BOOT_T);
+@new
+        scancode  <= boot_match ? 24'd0 : kbd_code;
+        kbd_ready <= !boot_match;
+        if (boot_match) boot_t <= 10'(BOOT_T);
+@end
+
+@mutation boot-the-keyboards-line-never-reaches-the-gate
+@check kbd_boot
+@file rtl/machine/cadr_machine.sv
+@note **THE PULSE HAS TO REACH THE PROCESSOR**, and `iob` cannot say whether it
+@note does: that check is the card alone and has no processor in it.  The 74S02
+@note at OLORD2 1A07 takes three inputs --- the keyboard's `-BOOT1` by way of
+@note the I/O board and the backplane, the light panel's `-BOOT2`, and the debug
+@note cable's `PROG.BOOT` --- and this drops the first.
+@note
+@note It is the shape a real mistake takes: the wire that `docs/keyboard-boot.md`
+@note in muir calls link 2, between the I/O board's `CP1` and the bus
+@note interface's `CR1`, is the one link no file in `mit/` establishes.  A
+@note fabric that simply did not make that connection would look exactly like
+@note this, and every other check in the tree would stay green.
+@note
+@note `n_boot1` stays read --- the expression still names it --- so lint sees
+@note nothing.  Caught at "the cold boot word: the PROM did not start from 0".
+@old
+  assign n_boot = !(!n_boot1 || !n_boot2 || prog_boot);
+@new
+  assign n_boot = !((!n_boot1 && 1'b0) || !n_boot2 || prog_boot);
+@end
+
+@mutation boot-the-trap-is-not-raised
+@check kbd_boot
+@file rtl/machine/cadr_microcycle.sv
+@note `-BOOT` clears the 74LS109 at OLORD2 1A18, whose `-Q` is `BOOT.TRAP`, and
+@note the trap is what nops the microcycle and forces `NPC` to zero.  Without it
+@note the boot presets `RUN` and clears the console's registers and the machine
+@note carries on from wherever it was, which is a boot that boots nothing.
+@note
+@note **AND IT IS THE ONE TERM THE OTHER CHECKS CANNOT SEE.**  `console` presses
+@note `-BOOT2` and would catch this too, since it watches the PC; `iob` cannot,
+@note having no processor, and neither can `machine`, `ddr_boot` or any of the
+@note traces, because nothing in them ever presses a boot line.  Caught at "the
+@note cold boot word: the PROM did not start from 0" with the PCs printed.
+@old
+        trap           <= 1'b1;   // the 74LS109 at OLORD2 1A18, cleared
+@new
+        trap           <= trap;   // the 74LS109 at OLORD2 1A18, cleared
+@end
+
+@mutation boot-promdisable-survives-it
+@check kbd_boot
+@file rtl/machine/cadr_spy_registers.sv
+@note `-BOOT` is one of the three inputs of `RESET` at the 74S10 at OLORD2 1C08,
+@note and `RESET` is the CLEAR pin of both 74S175s --- the mode register at 1A08
+@note with `PROMDISABLE` in it, and the clock control register's other four bits
+@note at 1A09.  Clearing `PROMDISABLE` is what puts the boot PROM back over the
+@note control store, which is the whole of what "boot" means on a machine that
+@note has already loaded its microcode: without it the machine traps to word 0
+@note of a control store holding the band's microcode and runs whatever is
+@note there.
+@note
+@note muir's `Engine::boot` calls `reset_console_registers` and
+@note `tests/keyboard_boot.rs` asserts `!f.promdisable` after the boot word on
+@note both engines, so this is held to muir and not to an argument.  Caught at
+@note "PROMDISABLE after the boot is 1, wanted 0".
+@old
+        promdisable <= 1'b0;   // the 74S175 at 1A08, the mode register
+@new
+        promdisable <= promdisable;   // the 74S175 at 1A08, the mode register
+@end
+
+@mutation boot-the-light-panels-line-never-reaches-the-gate
+@check kbd_boot
+@file rtl/machine/cadr_machine.sv
+@note The other of the two lines this fabric drives into the 74S02 at OLORD2
+@note 1A07.  `-BOOT2` is the light panel's momentary button, `1AJ2-03` on
+@note `icmem3.wlr` with the MBCPIN drawing marking the connector "TO LIGHT
+@note PANEL"; on this board it has two drivers, a debounced BTN0 and a write of
+@note `BOOT_KEY` to the console's word 13, and this drops both at once.
+@note
+@note **AND IT IS THE LEVEL HALF OF THE CHECK THAT CATCHES IT.**  `-BOOT2` is a
+@note finger on a switch, so the machine stands at the boot trap for as long as
+@note it is held and starts the PROM when it is let go; the check holds the line
+@note down for 24,000 ticks and requires `PC` to be zero throughout.  Caught at
+@note "PC while the boot button is held is ..., wanted 0", before the release is
+@note even reached.
+@note
+@note `n_boot2` stays read, so lint sees nothing.
+@old
+  assign n_boot = !(!n_boot1 || !n_boot2 || prog_boot);
+@new
+  assign n_boot = !(!n_boot1 || (!n_boot2 && 1'b0) || prog_boot);
+@end
+
+@mutation console-boots-the-machine-on-any-value
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note The key, one register along from `console-resets-the-machine-on-any-value`
+@note and for the same reason: a boot stops what the machine was doing exactly
+@note as a reset does, so a value that means nothing --- zero off a dead bus,
+@note all ones off an undriven one, a truncated store, a wild pointer --- must
+@note not be a value that presses the button.
+@note
+@note Written as `!= ~BOOT_KEY` rather than by deleting the comparison, so that
+@note every bit of `w_full` stays used and lint does not catch this instead of
+@note the check; three earlier drafts of the reset's own record died on that.
+@note `tb/cadr_console_tb.cpp` writes thirteen things that are not the key ---
+@note the reset's twelve and the RESET key at the BOOT word, which is the one
+@note mistake two keyed registers on one page make possible --- and requires
+@note each to press nothing.  Caught at "a write of zero pressed the boot
+@note button", the first of the thirteen.
+@old
+  assign w_is_boot = w_in && !w_idx[4] && (w_idx[3:0] == R_BOOT) &&
+                     (w_full == BOOT_KEY);
+@new
+  assign w_is_boot = w_in && !w_idx[4] && (w_idx[3:0] == R_BOOT) &&
+                     (w_full != ~BOOT_KEY);
+@end
+
+@mutation console-boot-press-a-tick-short
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note `BOOT_T` is 64 ticks and the module states the floor: one whole generator
+@note cycle at extra slow is 44 ticks, and 64 is the smallest power of two above
+@note it.  A press works at almost any length --- the trap is cleared by a level
+@note into a clear pin --- so a check that only asked whether the machine came
+@note back would call every length right, which is `RESET_T`'s own argument one
+@note register along.  ONE TICK SHORT, because the check counts the ticks and
+@note the smallest magnitude that can be caught is one.  Caught at "the ticks
+@note the boot button was held for is 0x3f, the reference says 0x40".
+@old
+    parameter int unsigned BOOT_T   = 64
+@new
+    parameter int unsigned BOOT_T   = 63
+@end
+
+@mutation console-answers-the-boot-write-before-the-button-is-up
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **THE WRITE MUST NOT ANSWER UNTIL THE BUTTON IS BACK UP**, so that a
+@note program's store returns with the machine already running the PROM from
+@note word 0 and the read of `PC` that follows it means something.  `W_BOOT`
+@note holds `BVALID` off for the length of the press; this goes straight to the
+@note response and leaves the line up behind it.
+@note
+@note It is `console-answers-the-reset-write-before-the-machine-is-back` one
+@note register along, and it is caught by a DIFFERENT line from
+@note `console-boot-press-a-tick-short` on purpose: the check asks first
+@note whether the write answered with the button still down and only then how
+@note many ticks it was held, so each record prints its own first line.  Caught
+@note at "the write answered with the button still down is 0x1, the reference
+@note says 0x0".
+@old
+        W_BOOT: if (!mach_boot) wst <= w_last_q ? W_RESP : W_DATA;
+@new
+        W_BOOT: wst <= w_last_q ? W_RESP : W_DATA;
+@end
+
+@mutation console-forgets-that-it-pressed-the-button
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note The press count, and it is the only thing that says a press HAPPENED: a
+@note wrong key is dropped in silence, which is what the key is for, so a
+@note program telling a press from a typo has nothing else to read.  Saturating
+@note rather than wrapping for `resets`'s reason --- a counter that can read
+@note zero again can say "nobody has ever pressed it" when somebody has.
+@note
+@note `boots` stays read by the read mux, so lint sees nothing.  Caught at
+@note "presses counted after one press is 0x0, the reference says 0x1".
+@old
+            if (boots != 8'hFF) boots <= boots + 8'd1;
+@new
+            if (boots != 8'hFF) boots <= boots;
 @end

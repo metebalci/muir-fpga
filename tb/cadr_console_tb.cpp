@@ -149,7 +149,7 @@ uint32_t Con(unsigned i) { return kBase + 4u * i; }
 uint32_t Spy(unsigned e) { return kBase + 0x40u + 4u * e; }
 enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
               kRegTicks = 4, kRegTicksH = 5, kRegReset = 6, kRegVma = 7,
-              kRegQ = 8, kRegMd = 9 };
+              kRegQ = 8, kRegMd = 9, kRegBoot = 13 };
 
 // What `rtl/plumbing/xilinx7/cadr_machine.xdc`'s relaxed set asks of the three
 // registers `rtl/machine/cadr_console_state.sv` holds: fifteen ticks, 75 ns.
@@ -168,6 +168,15 @@ constexpr long kRelaxedT = 15;
 constexpr uint32_t kResetKey  = 0x52534554u;   // "RSET"
 constexpr uint32_t kResetMark = kResetKey >> 16;
 constexpr long     kResetT    = 64;
+
+// The light panel's button, page 0's word 13.  `BOOT_KEY` is "BOOT" on the
+// same rule as "RSET", and `BOOT_T` is 64 ticks.  **It is `-BOOT2` and not
+// `PROG.BOOT`**: the mode register's bit 7 reaches the same gate and is the
+// DEBUG CABLE'S line, so a console pressing it would be a console pretending
+// to be a debugger.  muir's prompt makes the same choice.
+constexpr uint32_t kBootKey  = 0x424F4F54u;   // "BOOT"
+constexpr uint32_t kBootMark = kBootKey >> 16;
+constexpr long     kBootT    = 64;
 
 // muir's own two constants, tests/spy.rs:703-707: `FLAG-1` with nothing
 // wrong, running and halted.
@@ -413,7 +422,7 @@ int main(int argc, char **argv) {
   // **THE REPLAY AFTER A CONSOLE RESET COMPARES THE CONTROL FLOW AND NOT THE
   // DATAPATH, AND THE REASON IS A PROPERTY OF EVERY RESET THIS MACHINE HAS.**
   // `amem`, `mmem`, `pdl` and `imem` in `rtl/machine/cadr_microcycle.sv` are RAM and
-  // no reset clears them --- not this one, not BTN0's, and not MIT's own
+  // no reset clears them --- not this one, not the button's, and not MIT's own
   // `RESET`, which is a wire into flip flops and reaches no 93425A.  So a
   // machine reset a second time re-executes the boot PROM's instructions from
   // the top with the scratchpads its first run left, while muir's
@@ -433,6 +442,8 @@ int main(int argc, char **argv) {
   // write that is not the key made none at all.
   long mrst_ticks = 0, mrst_runs = 0;
   bool mrst_prev = false;
+  long mboot_ticks = 0, mboot_runs = 0;
+  bool mboot_prev = false;
 
   // **THE CAPTURE'S OWN ARC, MEASURED EVERY TICK RATHER THAN DERIVED.**
   // `rtl/machine/cadr_console_state.sv` loads `con_vma`, `con_q` and `con_md`
@@ -648,6 +659,13 @@ int main(int argc, char **argv) {
       if (!mrst_prev) ++mrst_runs;
     }
     mrst_prev = mrst_now;
+
+    const bool mboot_now = dut->mach_boot_o != 0;
+    if (mboot_now) {
+      ++mboot_ticks;
+      if (!mboot_prev) ++mboot_runs;
+    }
+    mboot_prev = mboot_now;
 
     // -- the handshakes, as they stand before the edge that consummates them
     axi.aw_hs = dut->s_awvalid && dut->s_awready;
@@ -1231,7 +1249,15 @@ int main(int argc, char **argv) {
     const uint32_t hi = ReadWord(Con(12));
     if (hi != 0xA5A5u) Fail("the readout's high half before anything is asked", hi, 0xA5A5u);
   }
-  for (unsigned i = 13; i < 16; ++i) {
+  // **AND WORD 13 IS THE LIGHT PANEL'S BUTTON**, which the section at the end
+  // of this file presses; what is asserted here is only that it reads the
+  // key's own top half and not zero, so that a window pointed somewhere else
+  // cannot look like a console with an unpressed button.
+  {
+    const uint32_t w = ReadWord(Con(kRegBoot));
+    if ((w >> 16) != kBootMark) Fail("the boot register's marker", w >> 16, kBootMark);
+  }
+  for (unsigned i = 14; i < 16; ++i) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("an unused page-0 word", w, kUnmapped);
     ++unmapped_seen;
@@ -1365,7 +1391,7 @@ int main(int argc, char **argv) {
   // ------------------------------------------------------------------ the reset
   //
   // **A CONSOLE THAT CANNOT RESTART THE MACHINE CAN ONLY WATCH IT DIE.**  On
-  // the board `boards/arty-z7-20/cadr_arty.sv`'s reset is MMCM lock or BTN0, and BTN0 is a
+  // the board `boards/arty-z7-20/cadr_arty.sv`'s reset is MMCM lock or BTN3, and BTN3 is a
   // finger on a board nobody is sitting at.  Page 0's word 6 takes
   // `RESET_KEY` and pulses the machine's reset for `RESET_T` ticks; nothing
   // else it can be written with does anything at all.
@@ -1605,6 +1631,176 @@ int main(int argc, char **argv) {
     if (!dut->run_o) Fail("RUN after the second console reset", 0, 1);
   }
 
+  // ------------------------------------------------- the light panel's button
+  //
+  // **A CONSOLE THAT CAN RESET THE MACHINE AND CANNOT BOOT IT IS MISSING THE
+  // CONTROL A CADR ACTUALLY HAS.**  Page 0's word 13 takes `BOOT_KEY` and
+  // holds `-BOOT2` down for `BOOT_T` ticks; the 74S02 at OLORD2 1A07 makes
+  // `-BOOT` of it, beside the keyboard's `-BOOT1` and the debug cable's
+  // `PROG.BOOT`, and the processor cannot tell the three apart.
+  //
+  // What is held here, and how it differs from the reset above:
+  //
+  //   a wrong value does nothing   the same twelve shapes as word 6, for the
+  //                                same reason: zero off a dead bus and all
+  //                                ones off an undriven one must not stop a
+  //                                machine.
+  //   the key presses              and the press is `BOOT_T` ticks, COUNTED,
+  //                                and the write does not answer until the
+  //                                button is back up.
+  //   RUN preset, PROMDISABLE      `Engine::boot`, which is what `-BOOT`
+  //   clear                        does at the 74S74 at OLORD1 1A14 and
+  //                                through `RESET` at the 74S10 at 1C08.
+  //   **THE PROM RUNS FROM WORD 0** the claim the reset's replay makes at
+  //                                length and this one makes cheaply: word 0
+  //                                is `jump 45`, so the PC goes 0 then `0o45`.
+  //                                muir's `starts_the_prom` in
+  //                                `tests/keyboard_boot.rs` is the same test.
+  //   **AND THE CONSOLE'S OWN      the difference that says a boot is not a
+  //   COUNTERS DO NOT RESTART**    reset: `cycles` counts the machine's
+  //                                microcycles since the CONSOLE came up and
+  //                                `-BOOT` has no pin on the console, so
+  //                                CYCLES goes on from where it was.  A
+  //                                console wired to reset itself on a boot,
+  //                                or a boot wired to the fabric's reset,
+  //                                fails here and nowhere else.
+  {
+    const uint32_t w = ReadWord(Con(kRegBoot));
+    if (w == 0u || w == 0xFFFFFFFFu)
+      Fail("the boot register before any press", w, kBootMark << 16);
+    if ((w >> 16) != kBootMark) Fail("the boot register's marker", w >> 16, kBootMark);
+    if (((w >> 8) & 0xFFu) != 0u)
+      Fail("presses counted before any was asked", (w >> 8) & 0xFFu, 0u);
+    if (w & 1u) Fail("the boot register says the button is down", 1, 0);
+  }
+
+  long wrong_boot_writes = 0;
+  {
+    const struct { const char *what; uint32_t at; uint32_t v; uint32_t strb; }
+        wrong[] = {
+            {"zero", Con(kRegBoot), 0u, 0xFu},
+            {"all ones", Con(kRegBoot), 0xFFFFFFFFu, 0xFu},
+            {"IDENT written back", Con(kRegBoot), kIdent, 0xFu},
+            {"UNMAPPED written back", Con(kRegBoot), kUnmapped, 0xFu},
+            {"the register's own read-back", Con(kRegBoot), kBootMark << 16, 0xFu},
+            {"the key byte-reversed", Con(kRegBoot), 0x544F4F42u, 0xFu},
+            {"the key with bit 0 flipped", Con(kRegBoot), kBootKey ^ 1u, 0xFu},
+            {"the key with bit 31 flipped", Con(kRegBoot), kBootKey ^ 0x80000000u, 0xFu},
+            {"the key with only the low byte strobed", Con(kRegBoot), kBootKey, 0x1u},
+            {"the key with the top byte held off", Con(kRegBoot), kBootKey, 0x7u},
+            {"the key at the word beside it", Con(kRegBoot + 1), kBootKey, 0xFu},
+            {"the key at the word before it", Con(kRegBoot - 1), kBootKey, 0xFu},
+            // And the RESET key at the BOOT word, which is the one mistake
+            // two keyed registers on one page make possible.
+            {"the reset key at the boot word", Con(kRegBoot), kResetKey, 0xFu},
+        };
+    for (const auto &t : wrong) {
+      const long runs_before = mboot_runs;
+      DoWrite(t.at, t.v, t.strb);
+      Run(kBootT * 4);
+      if (mboot_runs != runs_before) {
+        std::fprintf(stderr, "tick %ld: a write of %s pressed the boot button\n", tick, t.what);
+        ++bad;
+      }
+      const uint32_t w = ReadWord(Con(kRegBoot));
+      if (((w >> 8) & 0xFFu) != 0u) {
+        std::fprintf(stderr,
+                     "tick %ld: a write of %s pressed the button: the press count reads "
+                     "%u, the reference says 0\n", tick, t.what, (w >> 8) & 0xFFu);
+        ++bad;
+      }
+      ++wrong_boot_writes;
+    }
+  }
+
+  // ---- and the key does.  The machine is halted and PROMDISABLE set first,
+  // ---- so the button has both of the things `-BOOT` undoes to undo.
+  SpyWrite(3, 0);
+  SpyWrite(5, 0x20);
+  Run(8 * 44);
+  if (!dut->promdisable_o) Fail("PROMDISABLE before the boot", 0, 1);
+  if (dut->run_o) Fail("RUN before the boot", 1, 0);
+
+  const std::vector<uint32_t> cyc_before = DoRead(Con(kRegCycles), 1);
+  const uint64_t cycles_before_boot =
+      cyc_before.at(0) | (static_cast<uint64_t>(cyc_before.at(1)) << 32);
+
+  const long boot_runs_before  = mboot_runs;
+  const long boot_ticks_before = mboot_ticks;
+  const long mrst_runs_before_boot = mrst_runs;
+  DoWrite(Con(kRegBoot), kBootKey, 0xF);
+  const long press = mboot_ticks - boot_ticks_before;
+
+  if (mboot_runs != boot_runs_before + 1)
+    Fail("presses on a write of the key", mboot_runs - boot_runs_before, 1);
+  // The write answered with the button already up, which is what makes the
+  // reads below reads of a machine already running the PROM.
+  if (dut->mach_boot_o)
+    Fail("the write answered with the button still down", 1, 0);
+  if (press != kBootT)
+    Fail("the ticks the boot button was held for", press, kBootT);
+  if (!dut->run_o) Fail("RUN after a console boot", 0, 1);
+  if (dut->promdisable_o) Fail("PROMDISABLE after a console boot", 1, 0);
+  // **A BOOT IS NOT A RESET**, and this is the line that says so: the
+  // machine's reset must not have been pulsed by it.  `-BOOT` clears the
+  // console's own registers through `RESET` at OLORD2 1C08, which is a
+  // different wire from the one `cadr_arty.sv` gives `cadr_machine`'s `rst`.
+  if (mrst_runs != mrst_runs_before_boot)
+    Fail("machine resets over a boot", mrst_runs - mrst_runs_before_boot, 0);
+
+  // ---- THE PROM RUNS FROM WORD 0: the PC goes 0, then `0o45`.
+  {
+    std::vector<unsigned> seen;
+    const long until = tick + 12 * 44;
+    while (tick < until) {
+      if (seen.empty() || seen.back() != dut->pc) seen.push_back(dut->pc);
+      Tick();
+    }
+    bool started = false;
+    for (size_t i = 0; i + 1 < seen.size(); ++i)
+      if (seen[i] == 0 && (seen[i + 1] == 045 ||
+                           (seen[i + 1] == 1 && i + 2 < seen.size() && seen[i + 2] == 045)))
+        started = true;
+    if (!started) {
+      std::fprintf(stderr, "FAIL: after a console boot the PROM did not start from 0; PC saw:");
+      for (size_t i = 0; i < seen.size() && i < 12; ++i)
+        std::fprintf(stderr, " %o", seen[i]);
+      std::fprintf(stderr, "\n");
+      ++bad;
+    }
+  }
+
+  // ---- the press counted, and the console's own counters NOT restarted.
+  {
+    const uint32_t w = ReadWord(Con(kRegBoot));
+    if ((w >> 16) != kBootMark)
+      Fail("the boot register's marker after a press", w >> 16, kBootMark);
+    if (((w >> 8) & 0xFFu) != 1u)
+      Fail("presses counted after one press", (w >> 8) & 0xFFu, 1u);
+    if (w & 1u) Fail("the boot register says the button is still down", 1, 0);
+    const std::vector<uint32_t> c = DoRead(Con(kRegCycles), 1);
+    const uint64_t cy = c.at(0) | (static_cast<uint64_t>(c.at(1)) << 32);
+    if (cy < cycles_before_boot)
+      Fail("CYCLES went backwards over a boot, which is a reset and not a boot", cy,
+           cycles_before_boot);
+    const uint32_t s = ReadWord(Con(kRegStat));
+    if ((s & 0x8u) == 0)
+      Fail("STAT's sticky lost bit across a console boot", s, s | 8u);
+  }
+
+  // ---- a second press, so that the count is a count and not a flag.
+  {
+    const long before = mboot_ticks;
+    DoWrite(Con(kRegBoot), kBootKey, 0xF);
+    if (mboot_ticks - before != kBootT)
+      Fail("the ticks the second press was held for", mboot_ticks - before, kBootT);
+    Run(4 * 44);
+    const uint32_t w = ReadWord(Con(kRegBoot));
+    if (((w >> 8) & 0xFFu) != 2u)
+      Fail("presses counted after two presses", (w >> 8) & 0xFFu, 2u);
+    if (!dut->run_o) Fail("RUN after the second console boot", 0, 1);
+  }
+
   dut->final();
   delete dut;
   std::fclose(f);
@@ -1818,13 +2014,25 @@ int main(int argc, char **argv) {
       "      and OPC compared against the same reference on every row; the\n"
       "      DATAPATH IS NOT COMPARED THERE and must not be, because `amem`,\n"
       "      `mmem`, `pdl` and `imem` are RAM and NO reset this machine has\n"
-      "      clears them --- not this one, not BTN0's, not MIT's own RESET,\n"
+      "      clears them --- not this one, not the button's, not MIT's own RESET,\n"
       "      which is a wire into flip flops and reaches no 93425A.  A is\n"
       "      0x1fc on the replay's first row where the reference says 0, and\n"
       "      that is right: a console reset that cleared memory would be a\n"
       "      DIFFERENT reset from the button's.  The console survived its own\n"
       "      reset: IDENT, STAT's sticky lost bit and the reset count all\n"
       "      stand, and the AXI write that asked for the reset completed\n"
+      "    THE LIGHT PANEL'S BUTTON, page 0's word 13: %ld writes that are not\n"
+      "      the key pressed nothing --- the same twelve shapes as the reset's,\n"
+      "      and the RESET key at the BOOT word, which is the one mistake two\n"
+      "      keyed registers on one page make possible.  The key itself held\n"
+      "      -BOOT2 down for %ld ticks and the second press for %ld, the length\n"
+      "      `BOOT_T` states, and the write did not answer until the button was\n"
+      "      back up.  RUN was preset and PROMDISABLE cleared, and THE BOOT PROM\n"
+      "      RAN FROM WORD 0 --- PC 0 then 0o45, which is muir's own test in\n"
+      "      tests/keyboard_boot.rs.  **AND IT IS NOT A RESET**: the machine's\n"
+      "      reset was not pulsed, CYCLES did not go back to zero, and STAT's\n"
+      "      sticky lost bit stood.  It is -BOOT2 and not the mode register's\n"
+      "      PROG.BOOT, which is the debug cable's line and the other machine's\n"
       "    a write of 2 to the clock control register ran EXACTLY ONE\n"
       "      microcycle on %ld of %ld halts, with FLAG-1's SSDONE up and SRUN\n"
       "      down --- the whole road from an AXI write to MACHRUN's first term\n"
@@ -1841,6 +2049,7 @@ int main(int argc, char **argv) {
       axi_beats, axi_stalls, unmapped_seen, kUnmapped, cpu_waited,
       lag_seen, lag_samples, lag_moving,
       wrong_writes, pulse, pulse2, replay_rows,
+      wrong_boot_writes, press, mboot_ticks - boot_ticks_before - press,
       step_moved, visits, alias_landed);
   return 0;
 }

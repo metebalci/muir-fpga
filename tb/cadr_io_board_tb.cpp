@@ -103,6 +103,11 @@
 namespace {
 
 constexpr long kTick = 5;              // nanoseconds a tick
+// `-BOOT*`, the card's own boot line: half a keyboard clock, 4 us.  See THE
+// BOOT WORD in `rtl/machine/cadr_io_board.sv` and `docs/keyboard-boot.md` in
+// muir.  `kBootPulseT` is that in ticks.
+constexpr long kBootPulse  = 4000;
+constexpr long kBootPulseT = kBootPulse / kTick;
 constexpr long kUbAddresses = 1 << 18;
 constexpr unsigned kNoReg = 0xFFFF'FFFFu;
 
@@ -247,7 +252,7 @@ struct Encoders {
 };
 
 enum Tag {
-  kCyc, kKey, kMove, kBtn, kSer, kInit, kFace,
+  kCyc, kKey, kKboot, kMove, kBtn, kSer, kInit, kFace,
   // The two far ends, which are Linux's on the board: stimulus but for `kCtx`
   // and `kSout`, which are assertions about what the card hands over.
   kCtx, kCrx, kCtd, kCbl, kStk, kSdn, kSrx, kSre, kSout, kSpl
@@ -269,7 +274,8 @@ struct Row {
   unsigned uaddr, reg_;
   int write;
   unsigned wdata, rdata;
-  unsigned code;             // KEY
+  unsigned code;             // KEY, KBOOT
+  int boots;                 // KBOOT: muir's board asked to boot
   long dx, dy;               // MOVE
   unsigned mask;             // BTN
   int ready;                 // SER
@@ -463,6 +469,10 @@ int main(int argc, char **argv) {
                         &r.slip, &r.off, &r.uaddr, &r.reg_, &r.write, &r.wdata, &r.rdata,
                         FACE_ARGS);
       if (got != 10 + kFaceCols) got = 0;
+    } else if (!std::strcmp(tag, "KBOOT")) {
+      r.tag = kKboot;
+      got = std::sscanf(p, "%ld %ld %x %d" FACE_FMT, &r.n, &r.ns, &r.code, &r.boots, FACE_ARGS);
+      if (got != 4 + kFaceCols) got = 0;
     } else if (!std::strcmp(tag, "KEY") || !std::strcmp(tag, "BTN")) {
       unsigned v;
       got = std::sscanf(p, "%ld %ld %x" FACE_FMT, &r.n, &r.ns, &v, FACE_ARGS);
@@ -552,6 +562,11 @@ int main(int argc, char **argv) {
       {"ub_address_bits", want_h("ub_address_bits"), 18},
       {"first_usec_edge_ns", want_h("first_usec_edge_ns"), kFirstEdge},
       {"kb_clk_ns", want_h("kb_clk_ns"), kKbClk},
+      // Half a keyboard clock, which is how wide the 25LS2521's own enable
+      // makes `-BOOT*`.  Asserted here so that a fabric whose pulse is a
+      // different length is caught by name rather than as a mismatch of
+      // levels eight hundred ticks in.
+      {"boot_pulse_ns", want_h("boot_pulse_ns"), kBootPulse},
       {"mouse_step_ns", want_h("mouse_step_ns"), kMouseStep},
       {"interval_tick_ns", want_h("interval_tick_ns"), 16000},
       {"sixty_cycle_ns", want_h("sixty_cycle_ns"), 16666666},
@@ -613,7 +628,7 @@ int main(int argc, char **argv) {
     // already in it, and they belong on one tick with all of their inputs
     // sampled by the same edge.  Pushing them apart is what made the second
     // of two at one instant a tick late.
-    const bool mutates = (r.tag == kKey || r.tag == kInit || r.tag == kSpl);
+    const bool mutates = (r.tag == kKey || r.tag == kKboot || r.tag == kInit || r.tag == kSpl);
     const bool from_outside = mutates || r.tag == kCrx || r.tag == kCtd || r.tag == kCbl ||
                               r.tag == kStk || r.tag == kSdn || r.tag == kSrx;
     if (mutates && want == prev_cmp) {
@@ -674,8 +689,8 @@ int main(int argc, char **argv) {
   std::vector<size_t> strobes;
   for (size_t i = 0; i < rows.size(); ++i) {
     const Tag t = rows[i].tag;
-    if (t == kKey || t == kInit || t == kSpl || t == kCrx || t == kCtd || t == kCbl || t == kStk ||
-        t == kSdn || t == kSrx || t == kSre)
+    if (t == kKey || t == kKboot || t == kInit || t == kSpl || t == kCrx || t == kCtd ||
+        t == kCbl || t == kStk || t == kSdn || t == kSrx || t == kSre)
       strobes.push_back(i);
   }
 
@@ -755,6 +770,11 @@ int main(int argc, char **argv) {
 
   long answered = 0, unanswered = 0, reads = 0, writes = 0, slips = 0, serial_slips = 0;
   long presses = 0, moves = 0, inits = 0, faces = 0, sers = 0, btns = 0, ctxs = 0, sres = 0;
+  // `-BOOT*`, watched at EVERY tick of the run and not only where a row says
+  // so: the card must pull it for the boot word and for nothing else, and
+  // "for nothing else" is a claim about the 82 million ticks where nothing
+  // was typed as much as about the thirty-six where something was.
+  long boot_last = -1, boot_pulses = 0, boot_low_ticks = 0, boot_rows = 0;
   long compared_rdata = 0, compared_faces = 0, compared_syn = 0;
   std::set<long> phases;
   std::map<unsigned, long> saw_reads, saw_writes, saw_vectors;
@@ -814,6 +834,20 @@ int main(int argc, char **argv) {
           b.d->kbd_strobe = 1;
           b.d->kbd_code = r.code;
           break;
+        case kKboot:
+          b.d->kbd_strobe = 1;
+          b.d->kbd_code = r.code;
+          ++boot_rows;
+          // The pulse begins on the edge that takes the word --- the same
+          // edge that sets `KBD READY`, which the face on this row compares
+          // --- and is `kBootPulseT` ticks long.  A row muir did not decode
+          // as the boot word arms nothing, and the per-tick check below is
+          // what says the card agreed.
+          if (r.boots) {
+            boot_last = t + kBootPulseT - 1;
+            ++boot_pulses;
+          }
+          break;
         case kInit:
           b.d->ub_init = 1;
           break;
@@ -861,6 +895,26 @@ int main(int argc, char **argv) {
     b.d->ser_plugged = plugged;
 
     b.Rise();
+
+    // --- `-BOOT*`, at every tick of the run.
+    //
+    // Low exactly on the ticks a boot word's pulse covers and high on every
+    // other one.  Nothing in the trace's face carries this line: it is not a
+    // register the software can read, it is a pin on the backplane, so what
+    // holds it is the arithmetic of the pulse against the row that armed it.
+    {
+      const int want_low = (t <= boot_last) ? 1 : 0;
+      const int got_low = (b.d->n_boot_star == 0) ? 1 : 0;
+      if (got_low != want_low) {
+        nowhere.n = -1;
+        nowhere.ns = t * kTick;
+        Fail(t, nowhere, "-BOOT* low", (unsigned long)got_low, (unsigned long)want_low);
+        // Once it has disagreed, stop arming: the next eight hundred ticks
+        // would say the same thing eight hundred times.
+        boot_last = -1;
+      }
+      boot_low_ticks += got_low;
+    }
 
     // `RESET` --- `-INIT*` into the 8837 at IOBXCV 0F06 is the 2651's own
     // reset pin --- takes the chip back to its default, the SYN registers and
@@ -981,6 +1035,10 @@ int main(int argc, char **argv) {
       if (r.intr != 0) saw_vectors[r.intr]++;
       switch (r.tag) {
         case kKey: ++presses; break;
+        // A `KBOOT` row is a press too, and it is counted apart from
+        // `presses` because the trace counts them apart: `# presses` is the
+        // keyboard section's words and `# boot_rows` these.
+        case kKboot: break;
         case kInit: ++inits; break;
         case kSer: ++sers; break;
         case kFace: ++faces; break;
@@ -1276,6 +1334,13 @@ int main(int argc, char **argv) {
   same("answers off the 5 ns grid", slips, want_h("offgrid_answers"));
   same("phases of -UB MSYN", (long)phases.size(), want_h("msyn_phases"));
   same("presses", presses, want_h("presses"));
+  same("boot words decoded", boot_rows, want_h("boot_rows"));
+  same("pulses of -BOOT*", boot_pulses, want_h("boots"));
+  // Every pulse whole: nothing shortened it, nothing re-armed it, and no tick
+  // of it fell outside a window the trace asked for.  The per-tick check
+  // above already says where each one was; this says how much there was of
+  // it altogether, which is what a pulse a tick short fails on.
+  same("ticks of -BOOT* low", boot_low_ticks, boot_pulses * kBootPulseT);
   same("moves", moves, want_h("moves"));
   same("-UB INIT pulses", inits, want_h("inits"));
   same("faces between cycles", faces, want_h("faces"));
@@ -1308,12 +1373,12 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (pushed != kPushedRows || slips == 0 || presses < 10 || moves < 10 || btns < 8 ||
-      sers < 2 || ctxs < 5) {
+      sers < 2 || ctxs < 5 || boot_pulses < 2 || boot_rows - boot_pulses < 2) {
     std::fprintf(stderr,
                  "FAIL: the placement or the trace is not what this check was written against: "
                  "%ld rows pushed, %ld off-grid answers, %ld presses, %ld moves, %ld switch masks, "
-                 "%ld serial rows, %ld buffers handed over\n",
-                 pushed, slips, presses, moves, btns, sers, ctxs);
+                 "%ld serial rows, %ld buffers handed over, %ld boot words of %ld decoded\n",
+                 pushed, slips, presses, moves, btns, sers, ctxs, boot_pulses, boot_rows);
     return 1;
   }
 
@@ -1344,12 +1409,19 @@ int main(int argc, char **argv) {
       "    against Table 4 rather than against muir, which keeps them and has no accessor: %ld\n"
       "    writes, %ld wraps of the pointer, %ld reads of the command register that moved it.\n"
       "    A second configuration raises the parity and framing flags, which muir's own 2651\n"
-      "    never does, and holds CR4 clearing all three errors together and storing none of them.\n",
+      "    never does, and holds CR4 clearing all three errors together and storing none of them.\n"
+      "    THE KEYBOARD'S BOOT WORD: %ld words pressed at the card for it to decode, %ld of which\n"
+      "    the 25LS2521 at IOBCSR 0A20 matched and %ld of which it must not --- the cold and warm\n"
+      "    words, each of the eight compared bits flipped alone, each of the sixteen bits outside\n"
+      "    the comparator's window flipped alone, and ten ordinary words off the same keyboard.\n"
+      "    -BOOT* was low for %ld ticks in the whole run, %ld a pulse and none anywhere else, and\n"
+      "    every one of them was compared at every tick of %ld.\n",
       b.tick, want_h("last_ns"), rows.size(), pushed, (long)cycs.size(), reads, writes, compared_rdata,
       unanswered, slips, slips - serial_slips, (long)phases.size(), presses, moves, btns, inits,
       faces, dec_answers,
       dec_silent, (long)kUbAddresses * 2, kChaosFirst, kChaosLast, kSerialFirst, kSerialLast,
       ctxs, tx_words, rx_words, sout_seen, sres, compared_syn, syn_writes, syn_wraps,
-      syn_resets);
+      syn_resets, boot_rows, boot_pulses, boot_rows - boot_pulses, boot_low_ticks, kBootPulseT,
+      b.tick);
   return 0;
 }

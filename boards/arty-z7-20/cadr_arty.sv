@@ -223,12 +223,84 @@ module cadr_arty #(
 
   BUFG u_bufg (.I(clk_raw), .O(clk));
 
-  // Reset while the MMCM has not locked, and on BTN0. Synchronised out of
+  // ------------------------------------------------------------- the buttons
+  //
+  // **BTN0 BOOTS THE MACHINE AND BTN3 RESETS THE FABRIC.**  Both assignments
+  // are facts of this board and neither is the one this file started with.
+  //
+  // BTN0 was the fabric's reset, which was a bring-up convenience: the CADR's
+  // own way to restart is the boot button on its light panel, and a person at
+  // this board pressing the button nearest to hand should get what a person
+  // at a CADR pressing the button gets --- the machine back at the boot PROM
+  // with its memory intact --- and not the fabric reconfigured out from under
+  // Linux.  So BTN0 is `-BOOT2`, the light panel's button.
+  //
+  // The fabric's push-button reset moves to BTN3, the button at the far end
+  // of the row, where it is hard to press by accident; it is the one control
+  // that throws away the machine's whole state.  The other reset term, the
+  // MMCM's lock, is unchanged: the fabric is held in reset until its clock is
+  // real.
+  //
+  // Pins: `btn[0]` is D19 and `btn[3]` is L19, both `LVCMOS33`, from
+  // Digilent's `Arty-Z7-20-Master.xdc`.  `boards/arty-z7-20/cadr_arty.xdc`
+  // carries them and false-paths all four, a human's finger being no timing
+  // constraint.
+  //
+  // Reset while the MMCM has not locked, and on BTN3. Synchronised out of
   // the 100 MHz domain: `locked` is asynchronous to it by construction.
   logic [3:0] rst_sync;
   logic       rst;
-  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked || btn[0]};
+  always_ff @(posedge clk) rst_sync <= {rst_sync[2:0], !mmcm_locked || btn[3]};
   assign rst = rst_sync[3];
+
+  // ------------------------------------------------------ BTN0, DEBOUNCED
+  //
+  // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN3's four
+  // synchroniser stages are all its job wants: a reset asserted for a
+  // millisecond of contact bounce is a reset, and the bounces land inside it.
+  // `-BOOT2` is a level the machine READS the end of --- it runs the PROM
+  // from word 0 when the button is let go --- so every bounce on the release
+  // is another press, and a machine booted five times in two milliseconds is
+  // a machine whose first four boots ran four microcycles each.  The light
+  // panel's own switch is debounced by the hysteresis of the 74LS14 Schmitt
+  // inverter at OLORD2 1A20 that takes it; this is that inverter.
+  //
+  // The rule: the line must read the same for `DEBOUNCE_T` ticks together
+  // before the debounced level follows it.  At the 10 ns tick 400,000 ticks
+  // is 4 ms, which is past the 1 to 2 ms a tactile switch of this kind
+  // settles in and far short of the shortest press a person can make.  It
+  // costs one 19-bit counter.
+  //
+  // **PRESS AND HOLD AND THE MACHINE STAYS AT THE BOOT TRAP; LET GO AND IT
+  // RUNS.**  That is what the level means at the 74S02 at OLORD2 1A07 and it
+  // is what muir's own press and release do (`tests/keyboard_boot.rs`).  No
+  // simulation check in this repository reaches a pin, so what holds this
+  // wiring is `make build/arty.pass`, which lints every board configuration
+  // and would report a pin left unconnected or a signal nothing reads.
+  localparam int unsigned DEBOUNCE_T = 400_000;   // 4 ms at the 10 ns tick
+
+  logic [1:0]  btn0_sync;
+  logic [18:0] btn0_t;
+  logic        btn0_level;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      // A button nobody is pressing: the pin is pulled down and the machine
+      // is not being booted by anything at the board.
+      btn0_sync  <= 2'b00;
+      btn0_level <= 1'b0;
+      btn0_t     <= 19'(DEBOUNCE_T - 1);
+    end else begin
+      btn0_sync <= {btn0_sync[0], btn[0]};
+      if (btn0_sync[1] == btn0_level) begin
+        btn0_t <= 19'(DEBOUNCE_T - 1);
+      end else if (btn0_t == 19'd0) begin
+        btn0_level <= btn0_sync[1];
+        btn0_t     <= 19'(DEBOUNCE_T - 1);
+      end else begin
+        btn0_t <= btn0_t - 19'd1;
+      end
+    end
+  end
 
   // ---------------------------------------------------------- the machine
 
@@ -271,6 +343,9 @@ module cadr_arty #(
   logic [8:0]  store_addr;
   logic [31:0] store_wdata, store_rdata;
   logic        store_miss, ch_active, store_busy;
+  // OLORD1's three, for the lamps: the machine's own run signal as a level,
+  // and the two ways it stops itself.
+  logic        machrun, errhalt, stathalt;
   // -XBUS.INTR, the display's vertical interrupt ORed with the disk's
   // request inside `cadr_machine`.  Nothing on this board reads it but the
   // fold: it is the machine's own line to its own processor, and what it is
@@ -439,8 +514,8 @@ module cadr_arty #(
 
   // ------------------------------------------------------ the machine's reset
   //
-  // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN0 RATHER THAN
-  // REPLACING IT.**  `rst` above is the MMCM's lock and the button; a write of
+  // **THE CONSOLE CAN RESTART THE CADR, AND IT JOINS BTN3 RATHER THAN
+  // REPLACING IT.**  `rst` above is the MMCM's lock and the reset button; a write of
   // `RESET_KEY` to the console's word 6 pulses `con_mach_rst` for 64 ticks,
   // and this is the OR.  A soft reboot from the processing system is wanted
   // because the board runs Linux beside the machine, and restarting the CADR
@@ -458,7 +533,7 @@ module cadr_arty #(
   // **AND THE RULE FOR WHAT TAKES IT: `mach_rst` replaces `rst` wherever
   // `rst` means "since the MACHINE started", and `rst` stays wherever it
   // means "since the FABRIC was configured".**  Written down because the
-  // alternative --- folding `con_mach_rst` into `rst_sync` beside BTN0, which
+  // alternative --- folding `con_mach_rst` into `rst_sync` beside BTN3, which
   // is tidier and looks right --- is wrong in three places at once, and each
   // of the three is worth having on the record:
   //
@@ -508,14 +583,35 @@ module cadr_arty #(
   logic con_mach_rst;
   logic mach_rst;
   always_ff @(posedge clk) mach_rst <= rst || con_mach_rst || debuggee_reset;
+
+  // ------------------------------------------------- `-BOOT2`, the button
+  //
+  // **THE LIGHT PANEL'S LINE HAS TWO DRIVERS HERE AND NEITHER OWNS IT.**  On
+  // a CADR `-BOOT2` is a pulled-up line taken low by the momentary switch on
+  // the panel, through a section of the 74LS14 at OLORD2 1A20.  This board
+  // has no panel, so it gives the line the two things a panel would be: a
+  // push-button under somebody's finger (BTN0, debounced above) and a write
+  // of `BOOT_KEY` to the console's word 13, which is the same button pressed
+  // from Linux or over the network.  Either one holds it down; it comes back
+  // up when both let go, which is the pull-up.
+  //
+  // It is NOT registered, where `mach_rst` is.  That register buys a shorter
+  // path onto some two thousand reset pins; `-BOOT2` reaches one gate inside
+  // `cadr_machine`, and a tick of skew between the two drivers of a line a
+  // person holds for milliseconds is not worth a register.
+  logic con_mach_boot;
+  logic n_boot2;
+  assign n_boot2 = !(btn0_level || con_mach_boot);
   // A write or read that came back SLVERR or DECERR, held. Zero when there is
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
 
   // LD4's three colours, as {red, green, blue}. It is a wire and not three
   // assignments because WHAT LD4 SAYS DEPENDS ON THE BOARD: on the machine it
-  // is where the boot has got to, and on a `PROVE` board it is the witness's
-  // verdict. Driven from exactly one of two generate blocks, one down in the
+  // is trouble and nothing else, dark or red, and on a `PROVE` board it is
+  // the witness's verdict, which is a board with no machine behind the memory
+  // port and so no trouble to report.
+  // Driven from exactly one of two generate blocks, one down in the
   // memory and one beside the other lamps, so that neither configuration
   // leaves a signal the other one reads. Getting that wrong is an
   // UNUSEDSIGNAL and `build/arty.pass` says so.
@@ -689,7 +785,7 @@ module cadr_arty #(
       .dbd_in(mdbg_dbd),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
-      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN0 ---
+      // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN3 ---
       // and not `mach_rst`, which `debuggee_reset` is one term of.  A
       // modifier register cleared by its own bit 1 clears the bit that is
       // clearing it, and MIT's "write a 1 here then write a 0" could not be
@@ -701,7 +797,8 @@ module cadr_arty #(
       .con_ro_echo(con_ro_echo),
       // The I/O board's cables, tied off above with the slice that will
       // drive each, and what the card shows.
-      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
+      .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .n_boot2(n_boot2),
+      .machrun(machrun), .errhalt(errhalt), .stathalt(stathalt),
       .mouse_lines(mouse_lines), .ser_reset(ser_reset),
       .ser_mode1(ser_mode1), .ser_mode2(ser_mode2), .ser_cmd(ser_cmd),
       .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
@@ -946,7 +1043,7 @@ module cadr_arty #(
       // THE MACHINE GETS NOTHING, exactly as on the board with no memory at
       // all. It reaches its first main-memory cycle at microcycle 536,303,
       // the NXM timer ends it at about 4.25 us, and it carries on --- so
-      // LD0, LD1, LD2 and LD3 read on a `PROVE` board exactly as
+      // LD0, LD1, LD2, LD3 and LD5 read on a `PROVE` board exactly as
       // `docs/board.md` tabulates them for a board with no memory, and the
       // one lamp that changes is LD4.
       assign mem_done  = 1'b0;
@@ -1019,9 +1116,12 @@ module cadr_arty #(
     // is an identity copy of page 0, so page 0 reading back unchanged says
     // the path did no harm and cannot tell a machine that ran from one whose
     // port was dead --- which times out all 512 cycles and leaves page 0
-    // exactly as unchanged.  Nor can any lamp: measured, LD2 reads the same
-    // with DDR and without, because the 16,951 disk polls time out either
-    // way.  This is the positive witness, and it is four counters because
+    // exactly as unchanged.  Nor can any lamp: memory removes exactly 512
+    // timeouts out of the boot PROM's 17,466 bus cycles, the other 16,951
+    // being disk polls that end on the timer either way, so the lamps read
+    // the same with DDR and without.  That was measured when LD2 carried a
+    // count of those timeouts, and is why it no longer does.
+    // This is the positive witness, and it is four counters because
     // the processing system ships nothing that can see `S_AXI_HP0` traffic
     // --- the DDR controller has no performance monitors, and Xilinx's own
     // performance tooling puts a counter IP in the fabric for this reason.
@@ -1676,7 +1776,8 @@ module cadr_arty #(
         // The machine's reset, ORed with the board's own at the declaration
         // above.  **Not `gp1_rst` and not this instance's own `rst`**: see
         // the rule there and `rtl/plumbing/cadr_console.sv`'s header.
-        .mach_rst(con_mach_rst)
+        .mach_rst(con_mach_rst),
+        .mach_boot(con_mach_boot)
     );
 
     // ================================================= the display output
@@ -1956,8 +2057,11 @@ module cadr_arty #(
     // both answers fold below.
     assign con_ro_addr = 18'h3FFFF;
     // And no console reset either, so `mach_rst` is `rst` a tick late on
-    // this board and the whole of the OR folds away.
-    assign con_mach_rst = 1'b0;
+    // this board and the whole of the OR folds away.  Nor a console press of
+    // the boot button --- BTN0 is the only driver of `-BOOT2` on a board with
+    // no processing system, which is a light panel with one button on it.
+    assign con_mach_rst  = 1'b0;
+    assign con_mach_boot = 1'b0;
     // And no debug cable: there is no general-purpose port to put its
     // carrier on.  The cable is levels and not pulses, so holding
     // `-DEBUG IN REQ` UP --- which is `dbg_in_req` low, the sense the whole
@@ -2088,7 +2192,26 @@ module cadr_arty #(
   // talking on it, and which of the two debuggers has the DBGIN page. None of
   // the four is consumed --- the instantiations say why the answer on JA is
   // not --- and a fold with exceptions in it is not a rule anybody can check.
+  // **AND IT NO LONGER DRIVES A LAMP, SO IT SAYS SO TO THE TOOLS INSTEAD.**
+  // `witness` was LD3 until the six lamps were reassigned and LD3 became the
+  // disk's; every one of the ten lamp pins now carries a meaning of the
+  // machine's, and there is no spare one to hang a load on.  A register
+  // nothing reads is trimmed, and the whole machine behind it with it --- and
+  // then every fit and timing figure this board reports is a figure for a
+  // design that is not there, which is the loudest trap CLAUDE.md records.
+  //
+  // `DONT_TOUCH` is the one thing that keeps it without inventing a meaning
+  // for a lamp.  It propagates through the cone, which is exactly what is
+  // wanted: the fold and everything feeding it survive.  The Verilator waiver
+  // is beside it because lint's complaint is correct --- nothing reads this
+  // --- and the answer is that nothing is meant to.
+  //
+  // `cadr_arty.xdc` already false-paths `witness_reg` by name and goes on
+  // doing so; the register is still there, it simply has no reader.
+  /* verilator lint_off UNUSEDSIGNAL */
+  (* DONT_TOUCH = "true" *)
   logic witness;
+  /* verilator lint_on UNUSEDSIGNAL */
   always_ff @(posedge clk) begin
     if (mach_rst) begin
       witness <= 1'b0;
@@ -2102,6 +2225,7 @@ module cadr_arty #(
                    n_memrq, n_memack, n_memgrant, n_loadmd, rdcyc,
                    nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
                    mem_req, mem_write, store_miss, ch_active,
+                   machrun, errhalt, stathalt, ddr_error,
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
                    ch_wrote, ch_hit, con_gnt, con_ssyn, con_rdata,
                    con_vma, con_q, con_md, con_ro_data, con_ro_echo,
@@ -2140,111 +2264,159 @@ module cadr_arty #(
   // one case it exists to distinguish.
   always_ff @(posedge clk) tick <= tick + 26'd1;
 
-  // LD0 is the heartbeat and the other three are status. The heartbeat gets
-  // the first LED because it is the one to look at first: it answers "is this
-  // thing running at all", and every other light is meaningless until it says
-  // yes. A dark LD0 means the board is not programmed or the MMCM never
-  // locked; a blinking LD0 with the rest dark means the fabric is clocked and
-  // the machine is not retiring microcycles, which is a different fault
-  // entirely.
-  // LD2 counts NXM timeouts rather than showing the flag. `timed_out` is a
-  // level that stands only while an unanswered cycle is up --- a sliver at the
-  // end of each 4.25 us timeout --- so at the measured rate it integrates
-  // to a light too faint to read, which is what the board showed. Counting the
-  // rising edges and lighting a bit of the count turns it into a rate: the
-  // 168 kHz measured at a 5 ns tick is 84 kHz at 10, and bit 16 is 65,536
-  // timeouts, about 0.78 s a half-period at that rate.
+  // **THE HEARTBEAT IS LD1 NOW AND NOT LD0.**  It answers "is this thing
+  // clocked at all", which is the first question on a dark board and the last
+  // one on a working machine; the machine's own run signal is LD0.  `tick`
+  // is deliberately not reset by `rst`, because `rst` is held while the MMCM
+  // is unlocked and a heartbeat that stopped during reset would lose the one
+  // case it exists to distinguish.
   //
-  // The rate is the point. Faster means cycles are timing out more often.
-  // An earlier version of this comment said dark would mean memory is
-  // working. Measured, it does not: memory answers only the boot PROM's 512
-  // page-0 cycles, once, and the 16,951 disk-controller polls time out
-  // regardless, so this lamp reads the same with DDR and without. See
-  // docs/board.md. The memory path is checked by the debugger reading DDR
-  // from outside, not by any lamp here.
-  logic timed_out_q;
-  logic [16:0] nxm_count;
-  always_ff @(posedge clk) begin
-    timed_out_q <= timed_out;
-    if (mach_rst) nxm_count <= 17'd0;
-    else if (timed_out && !timed_out_q) nxm_count <= nxm_count + 17'd1;
-  end
+  // **AND THE NXM COUNTER IS GONE WITH THE LAMP THAT READ IT.**  LD2 used to
+  // light a bit of a count of timeouts, on the argument that `timed_out` is a
+  // sliver too faint to read; the lamp it was for is the microcycle blink
+  // now, and the timeouts reach LD4, where what matters is that one ever
+  // happened and not how often.  Measured, the rate said nothing anyway: the
+  // boot PROM's 16,951 disk polls time out with memory and without, so the
+  // lamp read the same either way.  `docs/board.md` has that account.
 
-  // ------------------------------------------------- the tricolour LEDs
+  // ================================== THE SIX LAMPS ==========================
   //
-  // LD4 is where the machine is in its own boot, and it starts red because
-  // "nothing has happened yet" must not look like "running".
+  // **THEY READ LEFT TO RIGHT AS THE MACHINE'S OWN PROGRESS, AND NOT AS THE
+  // FABRIC'S BRING-UP.**  The assignment this file carried until now was the
+  // one the bring-up wanted --- a heartbeat, a witness that the datapath had
+  // not been optimised away, a counter of timeouts --- and every one of those
+  // answers a question nobody asks of a working machine.  The CADR's own
+  // light panel carried a run lamp and a parity-error lamp beside the boot
+  // button, and BTN0 is that button now.
   //
-  //   red    the fabric is not running --- reset held or the MMCM unlocked
-  //   blue   running out of the boot PROM, which is where it is today
-  //   green  PROMDISABLE is set: running microcode out of the control store
+  //   LD0  MACHRUN          the machine's own run signal as a LEVEL: lit
+  //                         means it should be running.  `MACHRUN` is
+  //                         `(SSTEP AND -SSDONE) OR (SRUN AND -ERRHALT AND
+  //                         -WAIT AND -STATHALT)` at OLORD1 1A15, so it drops
+  //                         during every memory stall --- which makes the
+  //                         lamp's BRIGHTNESS the fraction of time the
+  //                         machine computes rather than waits.  Dim means it
+  //                         is thrashing.
+  //   LD1  the clock        `tick[25]`, the slow blink: the fabric is clocked.
+  //                         Always blinking, on any board that is alive at
+  //                         all, and it says nothing about the machine.
+  //   LD2  microcycles      `beat[19]`, the fast blink: the machine is
+  //                         executing.  It FREEZES when the machine stops,
+  //                         which is the thing a level cannot say --- motion
+  //                         cannot be faked, where a frozen fabric would
+  //                         still hold a level high.
+  //   LD3  disk activity    lit while the controller moves a block.  The
+  //                         light every computer has had, and it answers
+  //                         whether a pause is the disk or the program.
+  //   LD4  trouble          and nothing else.  See below.
+  //   LD5  -PROMDISABLE     LIT while the machine runs out of the boot PROM
+  //                         and DARK once it has loaded its microcode from
+  //                         the disk and disabled the PROM.  So lit means
+  //                         BOOTING and dark means BOOTED, which is the way
+  //                         round a lamp should be: the interesting state is
+  //                         the one that ends.
   //
-  // Blue is the honest colour for now. The boot PROM clears the control store
-  // and never sets PROMDISABLE --- issue #1 lists it as unreached --- because
-  // the microcode comes off a disk pack and there is no disk. So green is the
-  // day a pack is readable, and this light will not change before then.
+  // LD0's level and LD2's blink say different things on purpose, and neither
+  // replaces the other.
   //
-  // ON A `PROVE` BOARD LD4 SAYS SOMETHING ELSE ENTIRELY --- the witness's
-  // verdict, driven from `g_ddr.g_prove` where the numbers are. It is this
-  // lamp and not LD5 because LD4's inputs are all read somewhere else as
-  // well (`mmcm_locked` by the reset synchroniser, `promdisable` by the
-  // `witness` fold), so overriding it leaves nothing undriven and nothing
-  // unread; LD5's `bus_nxm` has no other reader and overriding that one would
-  // have meant moving its counter into a generate to keep lint quiet.
+  // ---------------------------------------------------------------- LD4
   //
-  // The colours are one axis either way: red is "nothing yet", and the two
-  // boards disagree only about what would count as something.
+  // **LD4 IS RESERVED TO ERROR, ABSOLUTELY: IT IS EITHER OFF OR RED.**  No
+  // other colour and no other meaning ever reaches it --- not at power-on,
+  // not during the PROM, not while halted.  Its green and blue channels are
+  // tied off, so there is nothing for a later meaning to be put on.
+  //
+  // **AND DARK IS THE GOOD STATE**, which is the whole argument for it: this
+  // is the one lamp nobody should have to watch, and a lamp that means one
+  // thing is read faster than one that means three.  It makes LD2's freeze
+  // readable --- LD2 stopped with LD4 dark means somebody halted the machine,
+  // LD2 stopped with LD4 red means it fell over.
+  //
+  // Red and STICKY until the fabric is reset, for three things:
+  //
+  //   an NXM          `timed_out`: a bus cycle that ended on the 4.25 us
+  //                   timer rather than on a slave.
+  //   a disk error    `store_miss`: the block store could not supply a block
+  //                   the channel asked for.  CLAUDE.md records that this
+  //                   raises no error the CADR itself can read, which is a
+  //                   defect of the controller and is exactly why the BOARD
+  //                   should show it.
+  //   a self-halt     `errhalt` or `stathalt`: the machine stopping ITSELF,
+  //                   which is `(si:%halt)` under ERRSTOP or the statistics
+  //                   counter running out.  A console halt is neither of
+  //                   those --- it clears RUN --- so halting the machine to
+  //                   look at it does not light the trouble lamp.
+  //
+  // **THE BOOT-STATE COLOURS THAT USED TO BE HERE ARE GONE**, and the half of
+  // them worth keeping, PROMDISABLE, is LD5.
+  // **AND ON A `PROVE` BOARD LD4 SAYS SOMETHING ELSE ENTIRELY** --- the
+  // witness's verdict, driven from `g_ddr.g_prove` where the numbers are.
+  // That is a board with no machine behind the memory port at all, so it has
+  // no trouble to report and the register is not built there.
   assign {led4_r, led4_g, led4_b} = lamp4;
-  if (PROVE == 0) begin : g_lamp_boot
-    assign lamp4 = {!mmcm_locked || mach_rst,
-                    mmcm_locked && !mach_rst &&  promdisable,
-                    mmcm_locked && !mach_rst && !promdisable};
+  if (PROVE == 0) begin : g_lamp_trouble
+    logic trouble;
+    always_ff @(posedge clk) begin
+      if (mach_rst) trouble <= 1'b0;
+      else if (timed_out || store_miss || errhalt || stathalt) trouble <= 1'b1;
+    end
+    assign lamp4 = {trouble, 1'b0, 1'b0};
   end
 
-  // LD5 is the bus, latched on each acknowledgement: red if that cycle was a
-  // non-existent-memory reference, green if something answered it. It starts
-  // red because before the first cycle nothing has answered, which is the
-  // same distinction LD4 makes.
+  // ---------------------------------------------------------------- LD5
   //
-  // `timed_out` and not the decode's `nxm`: there are two signals of that name
-  // and they mean opposite kinds of thing. The decode's says the *address* is
-  // Xbus space with nothing built there; the interface's register, which
-  // `timed_out` carries out, says *this cycle* ended on the timer rather than
-  // on a slave. Latching the decode's showed green on a board with no memory,
-  // because the disk registers at 0o17377774 are in the decode's map and so
-  // are not empty space --- they are simply unanswered.
+  // Blue, and blue only, for the one state it carries.  A colour lamp showing
+  // one thing is still the right lamp for it: PROMDISABLE is the answer to
+  // "has it finished booting", which is worth telling apart from the four
+  // plain green ones at a glance.
+  assign led5_r = 1'b0;
+  assign led5_g = 1'b0;
+  assign led5_b = !promdisable;
+
+  // **LD0 IS REGISTERED AND LD3 IS STRETCHED, AND NEITHER IS A CONVENIENCE.**
   //
-  // Today it is red and stays red: every cycle is the boot PROM polling a
-  // disk controller that is not there. **It goes green the first time a real
-  // slave answers**, which is what step 2 is for --- so this is the light to
-  // watch when the PS block and DDR3 land.
+  // `MACHRUN` is a six-input gate with `-WAIT`'s whole cone behind it, and a
+  // pad is the one place in this design where a long combinational path buys
+  // nothing: an LED is not sampled by anything, so a tick of delay is free
+  // and the cone stops at a flip flop.  It is the reason `mach_rst` is a
+  // register and not a gate, one lamp along.  What the eye reads is unchanged
+  // --- the lamp's brightness is still the fraction of ticks `MACHRUN` is up,
+  // which is the fraction of time the machine computes rather than waits.
   //
-  // AND IT STAYS RED ON A `PROVE` BOARD TOO, which is not a fault. The
-  // witness has the port and the machine's `mem_done` is tied low, so the
-  // machine's own cycles still end on the timer. This lamp is about the
-  // machine's memory and there is not one yet; LD4 is the one to read there.
-  logic memack_q, bus_nxm;
+  // **AND A DISK LIGHT NOBODY CAN SEE IS NOT A DISK LIGHT.**  `ch_active` is
+  // up while the channel moves a block, which is 256 bus cycles of about
+  // 150 ns --- some 38 us --- and a drive at thirty blocks a second lights it
+  // for about a thousandth of the time.  That integrates to nothing, which is
+  // exactly what the old LD2 did with `timed_out` and what `docs/board.md`
+  // records measuring.  So the lamp is a one-shot: `DISK_LIT_T` ticks, about
+  // 42 ms of real time, re-armed by every block.  Steady means the disk is
+  // busy, flickering means it is being touched, and dark means it is idle,
+  // which is the light every computer has had.
+  localparam int unsigned DISK_LIT_T = 1 << 22;   // 41.9 ms at the 10 ns tick
+
+  logic        machrun_lamp;
+  logic [21:0] disk_lit_t;
+  logic        disk_lit;
   always_ff @(posedge clk) begin
-    memack_q <= !n_memack;
     if (mach_rst) begin
-      bus_nxm <= 1'b1;                       // nothing has answered yet
-    end else if (!n_memack && !memack_q) begin
-      bus_nxm <= timed_out;                  // latch the outcome at the ack
+      machrun_lamp <= 1'b0;
+      disk_lit     <= 1'b0;
+      disk_lit_t   <= 22'd0;
+    end else begin
+      machrun_lamp <= machrun;
+      if (disk_lit_t != 22'd0) disk_lit_t <= disk_lit_t - 22'd1;
+      else disk_lit <= 1'b0;
+      if (ch_active) begin
+        disk_lit   <= 1'b1;
+        disk_lit_t <= 22'(DISK_LIT_T - 1);
+      end
     end
   end
-  assign led5_r =  bus_nxm;
-  assign led5_g = !bus_nxm;
-  // Blue is the AXI answer, held once it has ever been an error: SLVERR or
-  // DECERR from `S_AXI_HP0` is a cycle that reached the port and was refused,
-  // which is a different fault from a cycle nothing answered and must not
-  // look like one. Constant zero when `DDR` is off, so this is dark on the
-  // board this file builds by default and the light means what it says.
-  assign led5_b = ddr_error;
 
-  assign led[0] = tick[25];      // the fabric is clocked          --- heartbeat
-  assign led[1] = beat[19];      // microcycles are retiring, ~3.5 Hz
-  assign led[2] = nxm_count[16]; // NXM timeouts, blinking at their rate
-  assign led[3] = witness;       // the datapath is not optimised away
+  assign led[0] = machrun_lamp;  // the machine should be running; dim = stalling
+  assign led[1] = tick[25];      // the fabric is clocked --- the slow blink
+  assign led[2] = beat[19];      // microcycles retiring --- the fast blink
+  assign led[3] = disk_lit;      // the disk controller is moving a block
 
   // On a board with no processing system there is no `S_AXI_HP3` and so no
   // display; the connector is held at a level exactly as it is on a board
@@ -2266,13 +2438,14 @@ module cadr_arty #(
   OBUFDS u_hdmi_d2  (.I(hdmi_ser[2]), .O(hdmi_tx_d_p[2]), .OB(hdmi_tx_d_n[2]));
   OBUFDS u_hdmi_clk (.I(hdmi_ser[3]), .O(hdmi_tx_clk_p), .OB(hdmi_tx_clk_n));
 
-  // btn[3:1] are pins the board has and this design does not use. BTN1 was
-  // a `PROVE=2` board's start button until the witness learned to write back
-  // what it read; nothing presses anything now, and the pins are read here
-  // only to keep them legal without inventing behaviour for them.
+  // btn[2:1] are pins the board has and this design does not use. BTN0 is
+  // the machine's boot button and BTN3 the fabric's reset; BTN1 was a
+  // `PROVE=2` board's start button until the witness learned to write back
+  // what it read, and nothing presses it now. The two are read here only to
+  // keep them legal without inventing behaviour for them.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = &{1'b0, btn[3:1]};
+  assign unused = &{1'b0, btn[2:1]};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

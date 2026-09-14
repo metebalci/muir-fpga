@@ -179,6 +179,7 @@ use muir::ioboard::{
 use muir::chaos::board::Interface as ChaosInterface;
 use muir::chaos::interface::{self as chaos, csr as ccsr};
 use muir::serial;
+use muir::terminal::keyboard::{self, RETURN, RUBOUT, all_keys_up, up_down};
 use muir::terminal::mouse::MOUSE_STEP_NS;
 
 /// The two switch bodies at LMMYNM D10 and D12, as this trace sets them.
@@ -194,6 +195,16 @@ const CHAOS_ADDRESS: u16 = 0o003101;
 /// hands the fabric is a multiple of this; `slip` says where muir's own
 /// is not.
 const TICK_NS: u64 = 5;
+
+/// **How wide the card's own `-BOOT*` is**, which is the one thing about the
+/// boot decode muir's behavioural board has no time for.  The comparator's
+/// enable is `EOC.KBD^`, low while `KB CLK^` is low with the start marker at
+/// `SR0`: the half clock before the rising edge that latches the word into
+/// the 74LS374s and sets `KBD READY`.  So the pulse is half a keyboard clock
+/// --- muir measures it on the netlist board in `tests/keyboard_boot.rs` ---
+/// and the fabric, which takes a word as one strobe with no clock under it,
+/// makes a pulse of that width at the instant the word lands.
+const BOOT_PULSE_NS: u64 = KB_CLK_NS / 2;
 
 /// The whole of the Unibus address the bus interface can put out:
 /// `cadr_memory_path.sv` makes eighteen bits of it.
@@ -286,6 +297,14 @@ struct Gen {
     /// [`Gen::reads`]'s keys: those are the REGISTERS `answers` takes them
     /// to, and this card's two new groups have four aliases between them.
     addrs: BTreeSet<u32>,
+    /// The `KBOOT` rows, and the words they pressed. Kept apart from
+    /// [`Gen::keys`] and [`Gen::codes`] so that the assertions on those ---
+    /// injective scan codes covering all twenty-four bits --- go on being
+    /// about the words the keyboard section pressed.
+    boot_rows: u64,
+    boot_codes: BTreeSet<u32>,
+    /// Of those rows, the ones muir's board answered with a request.
+    boots: u64,
 }
 
 impl Gen {
@@ -334,6 +353,9 @@ impl Gen {
             far_slips: 0,
             serial_slips: 0,
             addrs: BTreeSet::new(),
+            boot_rows: 0,
+            boot_codes: BTreeSet::new(),
+            boots: 0,
         }
     }
 
@@ -534,6 +556,37 @@ impl Gen {
         self.codes.insert(code);
         self.keys += 1;
         self.row("KEY", format!(" {code:x}"));
+    }
+
+    /// A word off the keyboard's pair that the card is asked to DECODE: the
+    /// same press, with what the 25LS2521 at IOBCSR 0A20 made of it beside
+    /// it.
+    ///
+    /// **The request fires at the instant the word arrives**, which is what
+    /// `IoBoard::press` does: it sets `KBD READY` and, for a word the
+    /// comparator matches, raises the request `IoBoard::take_boot` hands out
+    /// once.  The board's own `-BOOT*` is a pulse ENDING on that edge, the
+    /// comparator's enable being the half clock of `KB CLK^` before it, and
+    /// the model has no time for that half clock: what it and the fabric
+    /// must agree on is the instant the word lands and whether the card
+    /// asked.  The pulse's width is the card's and is stated in the header
+    /// as `boot_pulse_ns`.
+    ///
+    /// `expect` is what the row is FOR --- the program says what each word
+    /// should do and the model is asked whether it agrees --- so a muir that
+    /// changed its decode fails here rather than writing a new trace.
+    fn key_boot(&mut self, code: u32, expect: bool, why: &str) {
+        let now = self.now;
+        self.b.advance(now);
+        self.b.press(code);
+        let boot = self.b.take_boot();
+        assert_eq!(boot, expect, "{why}: {code:o} decodes as {boot}, the program wanted {expect}");
+        assert!(!self.b.take_boot(), "{why}: the request was handed out twice");
+        assert!(self.b.keyboard_ready(), "{why}: the word did not reach the register");
+        self.boot_rows += 1;
+        self.boots += u64::from(boot);
+        self.boot_codes.insert(code);
+        self.row("KBOOT", format!(" {code:x} {}", u8::from(boot)));
     }
 
     /// The mouse moves: `dx` counts to the right and `dy` down, stepped out
@@ -2134,6 +2187,99 @@ fn main() {
     g.spl(false);
 
     // ------------------------------------------------------------------
+    // THE KEYBOARD'S BOOT WORD, which the card decodes for itself.
+    //
+    // `ukbd.lisp`'s `check-boot` sends this word when both Controls and both
+    // Metas are held with Rubout or Return, and the card boots the machine
+    // off it without the processor being asked.  The 25LS2521 at IOBCSR 0A20
+    // compares `SR7`-`SR10` against ground and `SR11`-`SR14` against the
+    // pull-up `HI4`, and `SR<n>` is bit `n-1` of the word, so what it looks
+    // at is BITS 13-6 AND NOTHING ELSE: ones in 13-10 over zeros in 9-6.
+    // Bit 16, which `ukbd.lisp`'s own prose names, is qualified upstream by
+    // `REMOTE MOUSE ENABLE` and is not one of the comparator's inputs.
+    //
+    // So the rows come in four kinds, and the third is the one that says the
+    // comparator is eight bits wide and not nine:
+    //
+    //   - the two boot words themselves, cold and warm;
+    //   - the cold word with ONE of the eight compared bits flipped, eight
+    //     rows, none of which may boot;
+    //   - the cold word with one of the SIXTEEN bits the comparator cannot
+    //     see flipped, every one of which must still boot;
+    //   - ordinary words off the same keyboard, which must not boot.
+    //
+    // A card comparing a ninth bit passes the first two kinds and fails the
+    // third; a card comparing seven fails the second.  The `boot` column is
+    // what muir's board made of each word, and the fabric's `-BOOT*` is
+    // compared against it.
+    //
+    // **The word must still be in the register afterwards**, because
+    // microcode 323 reads it at `(LOC 6)` to choose cold from warm.  Both
+    // halves are read back after each of the two boot words, in the
+    // microcode's own order, and nothing between the press and the read
+    // flushes it.
+    // ------------------------------------------------------------------
+    g.wait(20_000);
+    assert!(!g.b.take_boot(), "the card asked to boot before anything was typed");
+    let cold = keyboard::boot(true);
+    let warm = keyboard::boot(false);
+    // `terminal::keyboard`'s own frame: bits 23-19 "Reserved, must be 1's"
+    // and the new keyboard's source `001` in 18-16, over `ukbd.lisp`'s
+    // "15-10 1, 9-6 0, 5-0 46 if cold, 62 if warm".
+    assert_eq!(cold, 0o76376046, "the cold boot word");
+    assert_eq!(warm, 0o76376062, "the warm boot word");
+    assert_eq!((cold >> 6) & 0o377, 0o360, "ones in 13-10 over zeros in 9-6");
+    assert_eq!((warm >> 6) & 0o377, 0o360, "the warm word matches the same eight bits");
+    assert_eq!(cold & !0o77, warm & !0o77, "the two differ in the low six bits alone");
+
+    for (word, low6, what) in [(cold, 0o46u32, "cold"), (warm, 0o62, "warm")] {
+        g.key_boot(word, true, what);
+        // `(LOC 6)` reads the high half first and the low half second, and
+        // it is the low half's read that takes `KBD READY` down.
+        let high = g.read(KBD_HIGH);
+        let low = g.read(KBD_LOW);
+        assert_eq!((u32::from(high & 0xff) << 16) | u32::from(low), word, "{what}: reads back");
+        assert_eq!(u32::from(low) & 0o77, low6, "{what}: and says which boot it is");
+        g.wait(20_000);
+    }
+
+    // The eight bits the comparator compares, each flipped alone: four ones
+    // made zero and four zeros made one.
+    for bit in 6..14u32 {
+        g.wait(8_000);
+        g.key_boot(cold ^ (1 << bit), false, "a compared bit flipped");
+    }
+    // The sixteen it cannot see, each flipped alone.  Bits 5-0 are the cold
+    // and warm codes themselves; 15 and 14 are the top of the run of ones
+    // `ukbd.lisp` describes, above the comparator's window; 18-16 are the
+    // keyboard's source identifier, bit 16 among them; and 23-19 are the
+    // rest of the frame.
+    for bit in (0..6u32).chain(14..24) {
+        g.wait(8_000);
+        g.key_boot(cold ^ (1 << bit), true, "a bit the comparator cannot see");
+    }
+    // Ordinary words off the same keyboard.  The boot sequence's own keys
+    // are among them: a Control going down is not a boot, only the word the
+    // firmware sends after the last of them is.
+    for (word, what) in [
+        (up_down(RUBOUT, false), "Rubout down"),
+        (up_down(RUBOUT, true), "Rubout up"),
+        (up_down(0o20, false), "the left Control down"),
+        (up_down(0o26, false), "the right Control down"),
+        (up_down(0o45, false), "the left Meta down"),
+        (up_down(0o165, false), "the right Meta down"),
+        (up_down(RETURN, false), "Return down"),
+        (all_keys_up(1 << 4 | 1 << 5), "all keys up, Control and Meta still down"),
+        (all_keys_up(0o3777), "all keys up with every shifting key held"),
+        (all_keys_up(0), "all keys up"),
+    ] {
+        g.wait(8_000);
+        g.key_boot(word, false, what);
+    }
+    g.wait(8_000);
+    g.look();
+
+    // ------------------------------------------------------------------
     // What the program covered.
     // ------------------------------------------------------------------
     let end = g.now;
@@ -2154,6 +2300,10 @@ fn main() {
     assert!(g.x_seen.contains(&0) && g.x_seen.contains(&mouse::COUNT), "X did not wrap");
     assert!(g.y_seen.contains(&0) && g.y_seen.contains(&mouse::COUNT), "Y did not wrap");
     assert_eq!(g.codes.len() as u64, g.keys, "two presses shared a scan code");
+    assert_eq!(BOOT_PULSE_NS, 4_000, "the card's -BOOT* is four microseconds wide");
+    assert_eq!(g.boot_codes.len() as u64, g.boot_rows, "two KBOOT rows shared a word");
+    assert_eq!(g.boots, 18, "the cold and warm words and the sixteen bits nothing compares");
+    assert_eq!(g.boot_rows - g.boots, 18, "eight compared bits flipped and ten ordinary words");
     assert_eq!(
         g.codes.iter().fold(0u32, |a, c| a | c),
         0x00FF_FFFF,
@@ -2222,6 +2372,10 @@ fn main() {
     println!("#     slip is how many ns before ssyn muir's own answer falls: the fabric's");
     println!("#     grid cannot reach it and nothing downstream can see the difference.");
     println!("# KEY      n ns scancode <face>          a word off the keyboard's pair");
+    println!("# KBOOT    n ns scancode boot <face>     the same press, DECODED: boot 1 is the");
+    println!("#     25LS2521 at IOBCSR 0A20 matching bits 13-6 --- ones in 13-10 over zeros in");
+    println!("#     9-6 --- and the card pulsing -BOOT*, boot_pulse_ns wide, onto CP1.  The");
+    println!("#     word stays in the register with KBD READY up, for (LOC 6) to read.");
     println!("# MOVE     n ns dx dy <face>             the mouse moved, right and down");
     println!("# BTN      n ns mask <face>              the three switches, left 1 middle 2 right 4");
     println!("# SER      n ns ready <face>             the serial port's ready line at the card");
@@ -2271,6 +2425,7 @@ fn main() {
     println!("# ub_address_bits {UB_ADDRESS_BITS}");
     println!("# first_usec_edge_ns {FIRST_USEC_EDGE_NS}");
     println!("# kb_clk_ns {KB_CLK_NS}");
+    println!("# boot_pulse_ns {BOOT_PULSE_NS}");
     println!("# mouse_step_ns {MOUSE_STEP_NS}");
     println!("# interval_tick_ns {INTERVAL_TICK_NS}");
     println!("# sixty_cycle_ns {SIXTY_CYCLE_NS}");
@@ -2318,6 +2473,8 @@ fn main() {
     println!("# offgrid_answers {}", g.slips);
     println!("# msyn_phases {}", g.phases.len());
     println!("# presses {}", g.keys);
+    println!("# boot_rows {}", g.boot_rows);
+    println!("# boots {}", g.boots);
     println!("# moves {}", g.moves);
     println!("# inits {}", g.inits);
     println!("# faces {}", g.faces);

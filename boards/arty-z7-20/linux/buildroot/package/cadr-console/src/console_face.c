@@ -8,7 +8,9 @@
 
 #include <cadr/cadr_log.h>
 
+#include <errno.h>
 #include <string.h>
+#include <unistd.h>
 
 void cons_init(struct console *c)
 {
@@ -262,6 +264,75 @@ void cons_start(struct console *c)
 	cons_spy_write(c, SPY_CLK, CLK_RUN);
 }
 
+// The button.  One store; the fabric holds the write's answer off until the
+// line is back up, so this returns with the machine already running the PROM.
+void cons_boot(struct console *c)
+{
+	c->write(c, CONS_BOOT, CONS_BOOT_KEY);
+	++c->writes;
+}
+
+int cons_boot_and_report(struct console *c, unsigned settle_us,
+			 struct cons_boot_report *r)
+{
+	uint16_t pc = 0, f1 = 0;
+	memset(r, 0, sizeof *r);
+	// Before: where the machine was and how far it had got.  A machine
+	// halted from the console answers these perfectly well --- the
+	// diagnostic bus does not need the machine to be running --- so a
+	// `boot` of a halted machine reports where it was halted.
+	r->cycles_before = cons_cycles(c);
+	if (cons_spy_read(c, SPY_PC, &pc) < 0)
+		r->lost_before = 1;
+	r->pc_before = pc & 0x3FFFu;
+
+	cons_boot(c);
+
+	// After: the press's own register, then the machine.  Word 13 is read
+	// first because it is the only thing that says the press HAPPENED ---
+	// a wrong key is dropped in silence, which is what the key is for, and
+	// the count is how a caller tells a press from a typo.
+	r->word = c->read(c, CONS_BOOT);
+	r->presses = (r->word >> 8) & 0xFFu;
+	r->held = r->word & 1u;
+
+	r->cycles_after = cons_cycles(c);
+	pc = 0;
+	if (cons_spy_read(c, SPY_PC, &pc) < 0)
+		r->lost_after = 1;
+	r->pc_after = pc & 0x3FFFu;
+	if (cons_spy_read(c, SPY_FLAG_1, &f1) < 0)
+		r->lost_after = 1;
+	else
+		r->promdisable = cons_flag1_of(f1).promdisable;
+
+	// **RUNNING IS THE COUNTER MOVING AND NOTHING ELSE**, as it is in
+	// `cons_status`: the PC of a machine running the PROM is a moving
+	// target and a stopped machine has one too.
+	if (c->pause)
+		c->pause(c, settle_us);
+	{
+		const uint64_t later = cons_cycles(c);
+		r->running = later != r->cycles_after;
+		r->cycles_after = later;
+	}
+	return (r->lost_before || r->lost_after) ? -1 : 0;
+}
+
+int cons_held(const char *path)
+{
+	return access(path, F_OK) == 0;
+}
+
+int cons_release_held(const char *path)
+{
+	if (unlink(path) == 0)
+		return 0;
+	// Already gone is the answer this asks for, and is not a failure: the
+	// ordinary machine has no marker and `boot` must work on it.
+	return errno == ENOENT ? 0 : -1;
+}
+
 void cons_step(struct console *c, unsigned n, struct cons_step *s)
 {
 	memset(s, 0, sizeof *s);
@@ -425,6 +496,29 @@ void cons_say_step(const struct cons_step *s)
 		    "that the step it was asked for has run, and it is read here while STEP is still up, where it "
 		    "must be set: the count and the witness disagree");
 	}
+}
+
+void cons_say_boot(const struct cons_boot_report *r)
+{
+	say("boot: the light panel's button pressed and let go --- "
+	    "word 13 reads 0x%08x, %u press%s since the console came up, the line %s",
+	    r->word, r->presses, r->presses == 1 ? "" : "es",
+	    r->held ? "STILL DOWN" : "back up");
+	if (r->lost_before || r->lost_after) {
+		say("boot: a diagnostic cycle was not answered, so the PC either "
+		    "side of the press is not data");
+	} else {
+		say("boot: PC %o before, %o after; CYCLES %llu then %llu",
+		    r->pc_before, r->pc_after,
+		    (unsigned long long)r->cycles_before,
+		    (unsigned long long)r->cycles_after);
+	}
+	say("boot: %s, PROMDISABLE %s --- %s",
+	    r->running ? "RUNNING" : "NOT RUNNING",
+	    r->promdisable ? "set" : "clear",
+	    r->running && !r->promdisable
+		    ? "the boot PROM is running from word 0 again"
+		    : "the machine did not come back: ask `status`");
 }
 
 void cons_say_status(const struct cons_status *st)

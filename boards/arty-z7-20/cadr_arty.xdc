@@ -42,8 +42,11 @@ set_property -dict { PACKAGE_PIN M15   IOSTANDARD LVCMOS33 } [get_ports { led5_r
 set_property -dict { PACKAGE_PIN L14   IOSTANDARD LVCMOS33 } [get_ports { led5_g }]
 set_property -dict { PACKAGE_PIN G14   IOSTANDARD LVCMOS33 } [get_ports { led5_b }]
 
-## Buttons. BTN0 is reset; the rest are pins the board has and this does not
-## use, brought out so the port list matches the board rather than the design.
+## Buttons. **BTN0 boots the machine** --- it is `-BOOT2`, the button MIT put
+## on the CADR's light panel --- and **BTN3 resets the whole fabric**, at the
+## far end of the row where it is hard to press by accident. BTN1 and BTN2 are
+## pins the board has and this does not use, brought out so the port list
+## matches the board rather than the design.
 set_property -dict { PACKAGE_PIN D19 IOSTANDARD LVCMOS33 } [get_ports { btn[0] }]
 set_property -dict { PACKAGE_PIN D20 IOSTANDARD LVCMOS33 } [get_ports { btn[1] }]
 set_property -dict { PACKAGE_PIN L20 IOSTANDARD LVCMOS33 } [get_ports { btn[2] }]

@@ -108,6 +108,10 @@ uint16_t Mark(uint64_t w) { return static_cast<uint16_t>(w >> 32); }
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
   dut = new Vcadr_machine;
+  // `-BOOT2` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot2 = 1;
   auto *root = dut->rootp;
 #define A(x) root->cadr_machine__DOT__audit__DOT__##x
 

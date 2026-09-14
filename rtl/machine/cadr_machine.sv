@@ -144,6 +144,23 @@ module cadr_machine #(
     input  var logic [23:0] kbd_code,
     input  var logic [6:0]  mouse_lines,
 
+    // --- `-BOOT2`, THE LIGHT PANEL'S BUTTON.
+    //
+    // `mit/cadrwd/icmem3.wlr` puts `-BOOT2` on `1AJ2-03` and the MBCPIN
+    // drawing marks that connector "TO LIGHT PANEL", beside the parity-error
+    // and run lamps.  So a CADR boots three ways and they meet on the
+    // processor board, at the 74S02 at OLORD2 1A07: `-BOOT1` from the
+    // keyboard by way of the I/O board and the Unibus, `-BOOT2` from the
+    // button, and `PROG.BOOT` from the other machine over the debug cable.
+    // The processor cannot tell which was pressed.
+    //
+    // Active low and a level, because that is what a pulled-up line taken
+    // down by a momentary switch is: whatever presses it holds it for as long
+    // as the finger is there, and the machine sits at the boot trap until it
+    // is let go.  The board gives it two sources, a push-button and the
+    // console's own register; muir's prompt `boot` presses this one.
+    input  var logic        n_boot2,
+
     // --- THE SERIAL PORT'S LINE AND THE CHAOSNET'S CABLE, which the two
     // Linux programs own: `cadr-serial` offers the 2651's line on a TCP
     // socket as muir's `--serial` does, and `cadr-chaosnet` frames what the
@@ -276,6 +293,12 @@ module cadr_machine #(
     output var logic        unibus,       // the Unibus, which is its own slice
     output var logic        memstart,     // MEMSTART, which also addresses the map
     output var logic        timed_out,
+    // OLORD1's three, for the board's lamps: the machine's own run signal as
+    // a level, and the two ways it stops itself.  See the note at
+    // `cadr_microcycle.sv`'s ports.
+    output var logic        machrun,
+    output var logic        errhalt,
+    output var logic        stathalt,
 
     // --- THE CONSOLE'S HALF OF THE DIAGNOSTIC BUS.
     //
@@ -411,6 +434,10 @@ module cadr_machine #(
   logic [3:0]  spy_eadr;
   logic [15:0] spy_rdata;
   logic        run, errstop, stathenb, prog_reset, prog_boot;
+  // `-BOOT1`: the I/O board's `-BOOT*` on the backplane, which `cables.txt`
+  // pairs with the processor's `1AJ1-12`.  The gate that makes `-BOOT` of it
+  // is at the bottom of this file.
+  logic        n_boot1;
   // The clock control register's other four bits and the debug IR, made on
   // the bus interface and read by the processor: a single step and the
   // forced microinstruction CC reads a scratchpad with.
@@ -489,6 +516,10 @@ module cadr_machine #(
   ) processor (
       .clk         (clk),
       .rst         (rst),
+      .n_boot      (n_boot),
+      .machrun_o   (machrun),
+      .errhalt_o   (errhalt),
+      .stathalt_o  (stathalt),
       .run         (run),
       .step        (step),
       .nop11       (nop11),
@@ -607,6 +638,7 @@ module cadr_machine #(
       .ub_int     (ub_int),
       .kbd_strobe (kbd_strobe),
       .kbd_code   (kbd_code),
+      .n_boot_star(n_boot1),
       .mouse_lines(mouse_lines),
       .ser_reset  (ser_reset),
       .ser_mode1  (ser_mode1),
@@ -664,6 +696,7 @@ module cadr_machine #(
       .mode_speed (mode_speed),
       .prog_reset (prog_reset),
       .prog_boot  (prog_boot),
+      .n_boot     (n_boot),
       .con_req    (con_req),
       .con_gnt    (con_gnt),
       .con_msyn   (con_msyn),
@@ -883,10 +916,45 @@ module cadr_machine #(
       .word        (aud_word)
   );
 
+  // ----------------------------------------------------- `-BOOT`, OLORD2 1A07
+  //
+  // **A CADR BOOTS THREE WAYS AND THEY MEET HERE.**  `data/CADR.netlist`, the
+  // OLORD2 page: the 74LS14 at 1A20 inverts `-BOOT1` into pin 5 of the 74S02
+  // at 1A07; another section of the same 74LS14 inverts `-BOOT2`, the 74S32
+  // at 1C18 ORs that with `PROG.BOOT`, and its output is pin 6 of the same
+  // gate.  A 74S02 is a NOR, so `-BOOT` at pin 4 is low when ANY of the three
+  // is asserted and high when none is --- the three-way OR the drawing makes
+  // out of an inverter, an OR gate and a NOR.  **The processor cannot tell
+  // which was pressed**, and nothing downstream is given a way to.
+  //
+  //   `-BOOT1`     the keyboard's, by way of the I/O board's own decode of
+  //                the boot word and `-BOOT*` on the backplane.  That pulse
+  //                is 4 us; see `cadr_io_board.sv`.
+  //   `-BOOT2`     the light panel's momentary button, a level for as long
+  //                as it is held.  `boards/arty-z7-20/cadr_arty.sv` gives it
+  //                two sources, a push-button and the console's register.
+  //   `PROG.BOOT`  the other machine's, over the debug cable: bit 7 of a
+  //                mode-register write, a pulse `cadr_spy_registers.sv`
+  //                makes at the LEADING edge of the write strobe so that it
+  //                reaches the trap before the microcycle ends.
+  //
+  // **AND `-BOOT` DOES THREE THINGS, ALL OF THEM ON THIS PAGE.**  It presets
+  // `RUN` at the 74S74 at OLORD1 1A14, so a halted machine starts; it clears
+  // the 74LS109 at 1A18, whose `-Q` is `BOOT.TRAP`, so the next microcycle is
+  // nopped and `NPC` is forced to zero; and it is one of the three inputs of
+  // the open-collector 74S10 at 1C08 that makes `RESET`, which clears the two
+  // 74S175s of the console's registers --- `PROMDISABLE` among them, which is
+  // what puts the boot PROM back over the control store --- and the flip-flops
+  // at CONTRL, LCC, PDLCTL, VCTL1, FLAG and ACTL.  `Engine::boot` is exactly
+  // that list and `Engine::keyboard_boot` presses it, so the fabric's two
+  // takers are the processor and the register block.
+  logic n_boot;
+  assign n_boot = !(!n_boot1 || !n_boot2 || prog_boot);
+
   // RDCYC leaves the processor for the check's sake: a write must not move
   // MD, and that is the thing this composition makes visible.
-  // -PROG.RESET and PROG.BOOT: the two pulses a mode-register write makes,
-  // which the processor does not act on yet. See the note at the top.
+  // -PROG.RESET is the other pulse a mode-register write makes, and the
+  // processor does not act on it yet. See the note at the top.
   logic unused;
   assign n_loadmd_o = n_loadmd;
   assign n_memrq_o  = n_memrq;
@@ -894,7 +962,7 @@ module cadr_machine #(
   assign n_memgrant_o = n_memgrant;
   assign rdcyc_o    = rdcyc;
   assign dev_wdata  = wdata;
-  assign unused = &{1'b0, prog_reset, prog_boot};
+  assign unused = &{1'b0, prog_reset};
 
 endmodule
 

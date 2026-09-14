@@ -105,6 +105,51 @@ module cadr_microcycle #(
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,          // RESET, synchronous, active high
 
+    // --- `-BOOT`, the 74S02 at OLORD2 1A07.
+    //
+    // **THE BOOT BUTTON, AND THE KEYBOARD'S BOOT WORD, AND THE OTHER
+    // MACHINE'S.**  Three lines meet at that gate and this processor cannot
+    // tell them apart; `cadr_machine.sv` has the gate and names all three.
+    // Active low and a level: on two of the three something holds it, and the
+    // machine sits at the boot trap for as long as it is held.
+    //
+    // What it does here is what the OLORD2 page does with it.  It clears the
+    // 74LS109 at 1A18, whose `-Q` is `BOOT.TRAP`, so the next microcycle is
+    // nopped and `NPC` is forced to zero; and it is one of the three inputs
+    // of the 74S10 at 1C08 that makes `RESET`, which clears the flip-flops at
+    // CONTRL 3D26, LCC 3E12, PDLCTL 4C11, VCTL1, FLAG 3E08 and ACTL 3B26.
+    // That list is `Rtl::reset` exactly, and `Engine::boot` is that plus
+    // `RUN`, `SRUN` and `PROMDISABLE` --- the last two of which live in
+    // `cadr_spy_registers.sv`, which takes this same line.
+    //
+    // **`RESET` DOES NOT REACH EVERY REGISTER, AND THE DIFFERENCE MATTERS.**
+    // The reset arm below clears the whole machine because that is
+    // `Rtl::new`, a fabric coming up; a boot is `Rtl::boot`, which is
+    // `Rtl::reset` and no more.  So `PC`, `IR`, the scratchpads, the stack,
+    // `MD`, `VMA` and `Q` are NOT cleared by a boot: `PC` goes to zero
+    // because the trap forces `NPC` there and the next boundary loads it,
+    // which is the board's own way round and is what lets a boot be pressed
+    // on a machine with a world in it.
+    input  var logic        n_boot,
+
+    // --- OLORD1's own three, brought out for the board's lamps.
+    //
+    // `MACHRUN` is the 9S42 at 1A15 --- `(SSTEP AND -SSDONE) OR (SRUN AND
+    // -ERRHALT AND -WAIT AND -STATHALT)` --- and is what gates `-CLK0` at
+    // CLOCK2, so it is the machine's own answer to "should a microcycle run
+    // now".  It drops during every memory stall, `-WAIT` being one of its
+    // terms, so a lamp on it is dim in proportion to the time the machine
+    // waits rather than computes.
+    //
+    // `ERRHALT` and `STATHALT` are the two ways the machine stops ITSELF:
+    // `ERRSTOP AND HALTED`, which is MIT's `(si:%halt)` through `HALT-CONS`,
+    // and `STATHENB AND STATSTOP`, the statistics counter running out.  A
+    // console halt is neither --- it clears `RUN` --- which is what makes
+    // these two the trouble lamp's and not the state lamp's.
+    output var logic        machrun_o,
+    output var logic        errhalt_o,
+    output var logic        stathalt_o,
+
     // --- the console's registers: OLORD1 1A09 and 1A10.  The fabric has no
     // --- console yet, so these are driven rather than written.
     input  var logic        run,          // RUN, before OLORD1 1A10 registers it
@@ -296,6 +341,9 @@ module cadr_microcycle #(
   // in four words: "raising step clocks the machine once".  It must be
   // lowered again before the next, which is why CC writes `2` then `0`.
   logic errhalt, stathalt, machrun, stepping;
+  assign machrun_o  = machrun;
+  assign errhalt_o  = errhalt;
+  assign stathalt_o = stathalt;
   logic halted, statstop;
   logic srun, sstep, ssdone;
   assign errhalt  = errstop && halted;
@@ -1768,6 +1816,58 @@ module cadr_microcycle #(
         // the word standing before this edge, not the one it loads.  Reading
         // the new IR here is a cycle early.
         if (irdisp) dc <= ir[41:32];
+      end
+
+      // **`-BOOT` HELD, which is `Rtl::reset` and the trap.**  Written LAST
+      // so that it beats everything above it in the same tick: on the board
+      // `RESET` and the 74LS109's `CLR` are asynchronous levels and a clear
+      // beats a clock.  While it is held the trap cannot be clocked away ---
+      // the edge above that drops it on `SRUN` runs and is overridden here
+      // --- so the machine stands at the boot trap until the button is let
+      // go, and then runs the PROM from word 0.  That is what a finger on a
+      // button does and what muir's `boot` does between its press and its
+      // release.
+      //
+      // `SRUN` is raised here rather than left to follow `RUN` a master clock
+      // later, for the reason the reset arm gives: `Engine::boot` raises them
+      // together, so the first microcycle after the release runs.
+      if (!n_boot) begin
+        trap           <= 1'b1;   // the 74LS109 at OLORD2 1A18, cleared
+        srun           <= 1'b1;   // `RUN` preset at 1A14, and SRUN with it
+        // CONTRL 3D26
+        inop           <= 1'b0;
+        spushd         <= 1'b0;
+        iwrited        <= 1'b0;
+        // LCC 3E12
+        newlc          <= 1'b0;
+        sintr_d        <= 1'b0;
+        next_instrd    <= 1'b0;
+        // PDLCTL 4C11
+        pwidx          <= 1'b0;
+        pdlwrited      <= 1'b0;
+        destspcd       <= 1'b0;
+        imodd          <= 1'b0;
+        // VCTL1 1E20 and 1C23, and MBUSY through 1D28
+        memstart       <= 1'b0;
+        mbusy_sync     <= 1'b0;
+        rdcyc          <= 1'b0;
+        wrcyc          <= 1'b0;
+        mbusy          <= 1'b0;
+        // FLAG 3E08, the 25LS2519, all four of the bits this fabric has of
+        // it.  `PROG.UNIBUS.RESET` is `INTERRUPT-CONTROL<28>` and reaches
+        // nothing here yet --- on the board it crosses to the bus interface
+        // and is one of the four inputs of the `RESET` that makes `-XBUS
+        // INIT` and `-UB INIT` --- so no check can tell a fabric that clears
+        // it from one that does not.  `Rtl::reset` clears it, and a register
+        // the machine has is worth more than an absence.
+        lc_byte_mode   <= 1'b0;
+        int_enable     <= 1'b0;
+        sequence_break <= 1'b0;
+        prog_unibus_reset <= 1'b0;
+        // ACTL 3B26
+        wadr           <= 10'd0;
+        destd          <= 1'b0;
+        destmd         <= 1'b0;
       end
     end
   end

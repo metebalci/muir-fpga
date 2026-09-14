@@ -156,6 +156,10 @@ Run Simulate() {
   for (int i = 0; i < kWindowWords; ++i) mem[i] = Poison(i);
 
   auto *dut = new Vcadr_machine;
+  // `-BOOT2` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot2 = 1;
   auto *root = dut->rootp;
   dut->clk = 0;
   dut->rst = 1;

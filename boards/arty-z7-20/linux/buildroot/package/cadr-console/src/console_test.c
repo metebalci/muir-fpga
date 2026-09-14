@@ -40,6 +40,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <cadr/cadr_log.h>
 #include <cadr/cadr_mem.h>
@@ -100,6 +101,14 @@ struct model {
 	int freeze;			/* the counters stand: for a check that reads them */
 	int deaf_to_step;		/* a register block that takes bit 0 and drops the rest */
 	int step_is_a_level;		/* STEP taken as a level: the opposite defect */
+	// Page 0's word 13, the light panel's button.  `boots` counts the
+	// presses as the fabric's saturating counter does; `boot_pressed` is
+	// what the last write did, so a test can say whether a wrong key was
+	// dropped.  The modelled press does what -BOOT does: it presets RUN,
+	// forces the PC to zero and clears PROMDISABLE.
+	unsigned boots;
+	int boot_pressed;
+	int boot_deaf_to_the_key;	/* a fabric that boots on any value */
 	unsigned long diag_reads, diag_writes;
 };
 
@@ -238,7 +247,12 @@ static uint32_t model_read(struct console *c, unsigned word)
 		return m->vma;
 	case CONS_Q: return m->q_latch;
 	case CONS_MD: return m->md_latch;
-	default: return CONS_UNMAPPED;	/* words 10-15 */
+	// The light panel's button: the key's top half as a marker, the
+	// presses, and the line itself --- which is always back up by the time
+	// a read can happen, the fabric holding the write's answer off for the
+	// length of the pulse.
+	case CONS_BOOT: return (CONS_BOOT_KEY & 0xFFFF0000u) | ((m->boots & 0xFFu) << 8);
+	default: return CONS_UNMAPPED;	/* words 10-12, 14, 15 */
 	}
 }
 
@@ -246,8 +260,27 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 {
 	struct model *m = c->ctx;
 	model_advance(m, 8);
+	// Page 0's word 13 is written and the rest of the page is not.  The
+	// key is what makes it a press: a value that means nothing --- zero off
+	// a dead bus, all ones off an undriven one --- must not stop a machine.
+	if (word == CONS_BOOT) {
+		m->boot_pressed = (v == CONS_BOOT_KEY) || m->boot_deaf_to_the_key;
+		if (!m->boot_pressed)
+			return;
+		if (m->boots != 0xFFu)
+			++m->boots;
+		// What `-BOOT` does: RUN preset, the boot trap forcing the PC
+		// to zero, and the mode register cleared with PROMDISABLE in
+		// it.  Not memory, not the control store, not the scratchpads.
+		m->run = 1;
+		m->f1.srun = 1;
+		m->pc = 0;
+		m->mode = 0;
+		m->f1.promdisable = 0;
+		return;
+	}
 	if (word >= 32 || word < CONS_PAGE1)
-		return;			/* page 0 is read-only; outside is dropped */
+		return;			/* the rest of page 0 is read-only */
 	++m->diag_writes;
 	model_advance(m, TICKS_PER_DIAGNOSTIC);
 	if (!m->grant) {
@@ -358,13 +391,25 @@ static void check_ident(void)
 	CHECK(CONS_UNMAPPED == ~CONS_IDENT_WORD, "UNMAPPED is not the complement of IDENT");
 	CHECK(CONS_UNMAPPED != 0 && CONS_UNMAPPED != 0xFFFFFFFFu,
 	      "UNMAPPED is a value a dead or undriven bus could produce");
-	// 6 is the machine's reset, 7 and 8 are VMA and Q; the rest of page 0
-	// names nothing.
-	for (unsigned k = 10; k < 16; ++k)
+	// 6 is the machine's reset, 7, 8 and 9 are VMA, Q and MD, and 13 is
+	// the light panel's button: registers, each of which must read as
+	// something a dead bus could not produce.  Words 14 and 15 name
+	// nothing and read UNMAPPED.
+	//
+	// **10, 11 and 12 ARE THE READOUT AND THIS MODEL DOES NOT CARRY
+	// THEM**, so they read UNMAPPED here and are registers on the fabric.
+	// `build/readout.pass` is what holds them; said out loud rather than
+	// left as a gap, because a sweep that called a register unmapped and
+	// was believed would be this file agreeing with itself.
+	for (unsigned k = 14; k < 16; ++k)
 		CHECK(c.read(&c, k) == CONS_UNMAPPED, "page 0 word %u is not UNMAPPED", k);
 	for (unsigned k = 6; k < 10; ++k)
 		CHECK(c.read(&c, k) != CONS_UNMAPPED,
 		      "page 0 word %u reads UNMAPPED, and it is a register", k);
+	CHECK(c.read(&c, CONS_BOOT) != CONS_UNMAPPED,
+	      "page 0 word 13 reads UNMAPPED, and it is the light panel's button");
+	CHECK((c.read(&c, CONS_BOOT) & 0xFFFF0000u) == (CONS_BOOT_KEY & 0xFFFF0000u),
+	      "word 13 does not carry the key's own top half as a marker");
 	CHECK(c.read(&c, 40) == CONS_UNMAPPED, "an address past the window is not UNMAPPED");
 }
 
@@ -992,12 +1037,135 @@ static void check_main_address(void)
 	      "the reachable words have moved from cadr_ddr_map.sv's 60 boards of 64K");
 }
 
+
+// **THE LIGHT PANEL'S BUTTON**, page 0's word 13, and the three things it has
+// to do: press, take the key and nothing else, and take the hold off.
+//
+// muir's `Command::Boot` is the reference for what it means --- "the boot
+// button, which is what starts a machine: it presets RUN, and the machine runs
+// from the PROM at 0" --- and `say_halted` for what refuses while a machine is
+// held.  The fabric half is `rtl/plumbing/cadr_console.sv`'s word 13 and
+// `build/console.pass`; this is the program's half.
+static void check_boot(void)
+{
+	struct model m;
+	struct console c;
+	struct cons_boot_report r;
+	model_init(&m);
+	attach(&c, &m);
+
+	// A HALTED machine: the button is what starts one, which is the whole
+	// reason `continue` and `step` send you here on muir.
+	cons_halt(&c);
+	CHECK(m.run == 0, "halt did not clear RUN");
+	m.f1.promdisable = 1;
+	m.pc = 05163;
+	capture_start();
+	CHECK(cons_boot_and_report(&c, 2000, &r) == 0, "boot lost a diagnostic cycle");
+	cons_say_boot(&r);
+	{
+		const char *out = capture_end();
+		CHECK(m.run == 1, "the button did not preset RUN on a halted machine");
+		CHECK(m.pc == 0, "the button did not force the PC to zero");
+		CHECK(m.f1.promdisable == 0, "the button did not clear PROMDISABLE");
+		CHECK(r.presses == 1, "the press was not counted");
+		CHECK(r.held == 0, "the line was still down when the write was answered");
+		CHECK(r.pc_before == 05163, "the PC before the press is not what it was");
+		CHECK(r.pc_after == 0, "the PC after the press is not zero");
+		CHECK(r.running, "the machine did not run after the button");
+		CHECK(strstr(out, "the boot PROM is running from word 0 again") != NULL,
+		      "boot did not say the PROM is running from 0");
+		CHECK(strstr(out, "1 press since") != NULL, "boot did not count the press");
+	}
+
+	// A RUNNING machine: the same button and the same result.  The
+	// processor cannot tell one press from another and neither can this.
+	m.pc = 04321;
+	capture_start();
+	CHECK(cons_boot_and_report(&c, 2000, &r) == 0, "boot lost a diagnostic cycle");
+	cons_say_boot(&r);
+	capture_end();
+	CHECK(r.presses == 2, "the second press was not counted");
+	CHECK(m.pc == 0, "the button did not force a running machine's PC to zero");
+
+	// **THE KEY.**  A write of anything else is dropped in silence, which
+	// is what stops a stuck bus, a truncated store or a wild pointer from
+	// stopping the machine.  Twelve values that are not the key, the same
+	// twelve shapes `console-resets-the-machine-on-any-value` names for
+	// word 6: zero, all ones, IDENT, UNMAPPED, the word's own read-back,
+	// the key byte-reversed, two single-bit neighbours, and the key with a
+	// byte missing either end.
+	{
+		const uint32_t wrong[] = {
+			0u, 0xFFFFFFFFu, CONS_IDENT_WORD, CONS_UNMAPPED,
+			c.read(&c, CONS_BOOT), 0x544F4F42u,
+			CONS_BOOT_KEY ^ 1u, CONS_BOOT_KEY ^ 0x80000000u,
+			CONS_BOOT_KEY & 0x00FFFFFFu, CONS_BOOT_KEY & 0xFFFFFF00u,
+			CONS_RESET, 0x52534554u,
+		};
+		const unsigned was = m.boots;
+		m.pc = 01234;
+		for (unsigned k = 0; k < sizeof wrong / sizeof wrong[0]; ++k) {
+			c.write(&c, CONS_BOOT, wrong[k]);
+			CHECK(!m.boot_pressed, "a write that is not the key pressed the button");
+		}
+		CHECK(m.boots == was, "a write that is not the key was counted as a press");
+		CHECK(m.pc == 01234, "a write that is not the key moved the machine");
+	}
+
+	// And the check itself can fail: a modelled fabric that boots on any
+	// value is caught by the same twelve.
+	{
+		struct model any;
+		struct console ac;
+		model_init(&any);
+		attach(&ac, &any);
+		any.boot_deaf_to_the_key = 1;
+		ac.write(&ac, CONS_BOOT, 0u);
+		CHECK(any.boots == 1,
+		      "the wrong-key check cannot see a fabric that boots on any value");
+	}
+}
+
+// **THE HELD MACHINE**, `--no-auto-boot`'s marker: `start` and `step` refuse
+// while it is there, `boot` presses the button and removes it.  Nothing in the
+// fabric knows about it --- RUN is still preset at reset --- so this is the
+// whole of the contract and it is a file.
+static void check_held(void)
+{
+	char path[] = "/tmp/cadr-held-testXXXXXX";
+	const int fd = mkstemp(path);
+	CHECK(fd >= 0, "could not make the marker file the test needs");
+	if (fd >= 0)
+		close(fd);
+
+	CHECK(cons_held(path) == 1, "the marker was not seen");
+	CHECK(cons_held("/tmp/cadr-held-test-that-is-not-there") == 0,
+	      "a marker that is not there was seen");
+	CHECK(cons_release_held(path) == 0, "the marker could not be removed");
+	CHECK(cons_held(path) == 0, "the marker is still there after being removed");
+	// Removing one that is not there is the ordinary machine, and must not
+	// be an error: `boot` calls this on every press.
+	CHECK(cons_release_held(path) == 0, "removing a marker that is not there failed");
+
+	// The sentence is muir's own, `say_halted` in ../muir/src/main.rs, so
+	// that somebody who knows one knows the other.  Held as a WORD and not
+	// as a flag, which is the rule this program's printing already follows.
+	CHECK(strcmp(CONS_HELD_SAYING,
+		     "the machine is halted, its RUN clear: boot presses the button that starts it") == 0,
+	      "the held machine's sentence is not muir's");
+	CHECK(strcmp(CONS_HELD_PATH, "/var/run/cadr-held") == 0,
+	      "the marker is not where the init step leaves it");
+}
+
 int main(void)
 {
 	capture_start();		/* nothing may print to the terminal but the verdict */
 	check_ident();
 	check_guard();
 	check_halt_and_start();
+	check_boot();
+	check_held();
 	check_step();
 	check_flags();
 	check_counters();
@@ -1021,6 +1189,13 @@ int main(void)
 	       "      marker pattern (w & 0x80008000) == 0x00008000\n"
 	       "    halt then status: SRUN down, CYCLES standing, the halt attributed to the\n"
 	       "      console; start then status: CYCLES MEASURED to have moved\n"
+	       "    boot: page 0's word 13 with \"BOOT\" on it presses the light panel's button\n"
+	       "      --- RUN preset, the PC forced to zero, PROMDISABLE cleared --- on a halted\n"
+	       "      machine and on a running one alike, counted and reported with the PC and\n"
+	       "      CYCLES either side; twelve values that are not the key press nothing, and\n"
+	       "      a modelled fabric that boots on any value is caught by the same twelve\n"
+	       "    the held machine: start and step refuse while /var/run/cadr-held exists and\n"
+	       "      say muir's own sentence for it, and boot presses the button and removes it\n"
 	       "    step: ONE microcycle a step and exactly one, with SSDONE up --- read\n"
 	       "      while STEP is still up, where it must be, since it falls two master\n"
 	       "      clocks after the bit is lowered.  Both opposite failures are held as\n"

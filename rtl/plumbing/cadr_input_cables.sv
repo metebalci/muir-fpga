@@ -66,11 +66,24 @@
 // low six bits of the word are `0o46`.  **Any word waiting there at boot
 // therefore takes the machine down the warm path**, which is the path for a
 // machine being restarted into a band it already has, and is not what a
-// board coming up wants.  On the new keyboard `0o46` is not Rubout's
-// position at all --- Rubout is `0o23` and `0o46` is Status --- so no key a
-// viewer can press makes that second test true, and the only defence is that
-// nothing is waiting.  CLAUDE.md names this as the trap aimed at whatever
-// carries keys.  These are the four legs that keep it shut.
+// board coming up wants.  The only defence is that nothing is waiting, and
+// CLAUDE.md names this as the trap aimed at whatever carries keys.  These
+// are the four legs that keep it shut.
+//
+// **AND `0o46` IS THE COLD BOOT WORD'S OWN LOW SIX BITS, NOT A KEY
+// POSITION.**  An earlier version of this comment read the test backwards:
+// it said that `0o46` is the Status key's position on the new keyboard, so
+// no key a viewer could press would make the test true.  That is a
+// coincidence of two numbers and not what the microcode is doing.  The word
+// at `764100` is not a key position at all when the machine is booting ---
+// it is the word the KEYBOARD'S OWN FIRMWARE sent when somebody held both
+// Controls and both Metas with Rubout, whose low six bits are `0o46`
+// (`sys/io1/ukbd.lisp`'s `check-boot`, and muir's `docs/keyboard-boot.md`).
+// So the test at `(LOC 6)` is the far end of the boot chord: the keyboard
+// decides cold or warm, the I/O board boots the machine off the word, and
+// the microcode reads the same word back to see which was asked for.  What
+// takes the machine down the warm path is an ORDINARY word left in the
+// register, which is exactly what the four legs below are about.
 //
 //   1. **THE ONLY SOURCE OF `kbd_strobe` IS AN AXI WRITE.**  Nothing else in
 //      this module can make one: the queue is loaded at `KEY` and nowhere
@@ -81,7 +94,7 @@
 //      twenty-four ones, `KBD READY` was up 196 us after power-on, and the
 //      microcode took a warm boot nobody asked for.
 //   2. **A MACHINE RESET EMPTIES THE QUEUE.**  `mach_rst` is the CADR's own
-//      reset --- BTN0, the MMCM's lock, or the console's `RESET_KEY` --- and
+//      reset --- BTN3, the MMCM's lock, or the console's `RESET_KEY` --- and
 //      it is a separate port from `rst` for exactly this: a key typed at the
 //      machine that was is not a key typed at the machine that is.  Without
 //      it, a console reset of a running board would restart the microcode

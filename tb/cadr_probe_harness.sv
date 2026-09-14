@@ -123,6 +123,14 @@ module cadr_probe_harness #(
       .con_ro_echo(con_ro_echo),
       .device_ack(1'b0), .device_rdata(32'd0),
       .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'd0),
+      // `-BOOT2`, the light panel's button, released: nothing here presses
+      // any of the three boot lines.  **Active low**, so a pin left off is a
+      // machine held at the boot trap and not a machine that runs.
+      .n_boot2(1'b1),
+      // OLORD1's three, which this harness has no lamps for.
+      /* verilator lint_off PINCONNECTEMPTY */
+      .machrun(), .errhalt(), .stathalt(),
+      /* verilator lint_on PINCONNECTEMPTY */
       .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
       .ser_cmd(ser_cmd), .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
       .ser_tx_take(1'b0), .ser_tx_done(1'b0), .ser_rx_strobe(1'b0),

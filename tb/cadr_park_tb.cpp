@@ -122,6 +122,9 @@ class Sim {
  public:
   Sim() {
     dut_ = new Vcadr_machine;
+    // `-BOOT2` is a pulled-up line and nothing here presses it. **Active low,
+    // so an undriven input would hold the machine at the boot trap for ever.**
+    dut_->n_boot2 = 1;
     root_ = dut_->rootp;
     mem_.assign(kWindowWords, 0);
     for (int i = 0; i < kWindowWords; ++i) mem_[i] = Poison(i);

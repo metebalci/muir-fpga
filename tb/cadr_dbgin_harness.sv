@@ -227,6 +227,15 @@ module cadr_dbgin_harness #(
   // registered: see the header.
   logic debuggee_reset, mach_rst;
   always_ff @(posedge clk) mach_rst <= rst || debuggee_reset;
+
+  // **`PROG.BOOT` IS THE THIRD INPUT OF THE 74S02 AT OLORD2 1A07**, and this
+  // page is the end of the cable it comes down: bit 7 of a mode-register
+  // write, which on the board the OTHER machine makes over the debug cable.
+  // The keyboard's `-BOOT1` and the light panel's `-BOOT2` have no source in
+  // this harness --- there is no I/O board and no button here --- so the gate
+  // reduces to its one live input.  `cadr_machine.sv` has the whole gate.
+  logic n_boot;
+  assign n_boot = !prog_boot_u;
   assign mach_rst_o      = mach_rst;
   assign debuggee_reset_o = debuggee_reset;
 
@@ -365,7 +374,8 @@ module cadr_dbgin_harness #(
       .stathenb   (stathenb_u),
       .mode_speed (mode_speed_u),
       .prog_reset (prog_reset_u),
-      .prog_boot  (prog_boot_u)
+      .prog_boot  (prog_boot_u),
+      .n_boot     (n_boot)
   );
 
   logic       errstop_u, stathenb_u, prog_reset_u, prog_boot_u;
@@ -378,6 +388,11 @@ module cadr_dbgin_harness #(
   ) processor (
       .clk         (clk),
       .rst         (mach_rst),
+      .n_boot      (n_boot),
+      // OLORD1's three, which reach the board's lamps and nothing here.
+      /* verilator lint_off PINCONNECTEMPTY */
+      .machrun_o (), .errhalt_o (), .stathalt_o (),
+      /* verilator lint_on PINCONNECTEMPTY */
       .run         (run_o),
       .step        (step_w),
       .nop11       (nop11_w),

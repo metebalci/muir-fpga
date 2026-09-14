@@ -79,6 +79,10 @@
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
   auto *dut = new Vcadr_machine;
+  // `-BOOT2` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot2 = 1;
   const long TICKS = argc > 1 ? atol(argv[1]) : 40000000L;
 
   // The step-1 bitstream's configuration exactly, and that is the point: no

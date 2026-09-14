@@ -159,6 +159,10 @@ struct Arb {
 Arb RunOnce(bool stream, std::map<unsigned, unsigned> &ddr) {
   Arb out;
   auto *dut = new Vcadr_memory_path;
+  // `-BOOT` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot = 1;
   long tick = 0;
   int memrq = 1, wrcyc = 0;
   unsigned phys = 0, wdata = 0;
@@ -409,6 +413,10 @@ int main(int argc, char **argv) {
   }
 
   auto *dut = new Vcadr_memory_path;
+  // `-BOOT` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot = 1;
   dut->clk = 0;
   dut->rst = 1;
   dut->mclk = 0;

@@ -71,6 +71,8 @@ if {$after != 1} {
     exit 1
 }
 puts "PROG: programmed [file tail $bit] --- DONE is high"
-puts "PROG: expect LD0 blinking at about 3 Hz. LD1 dark is correct with no"
-puts "PROG: memory behind mem_*: the machine stalls at microcycle 535,791."
+puts "PROG: expect LD1 blinking at about 3 Hz --- the fabric's own clock ---"
+puts "PROG: and LD2 blinking with it once the machine retires microcycles."
+puts "PROG: LD0 is MACHRUN and LD5 is lit while the machine is still in its"
+puts "PROG: boot PROM. docs/board.md tabulates all six."
 close_hw_manager

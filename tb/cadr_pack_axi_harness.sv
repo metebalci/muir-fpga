@@ -312,6 +312,14 @@ module cadr_pack_axi_harness #(
       .con_ro_echo(con_ro_echo),
       .device_ack(device_ack), .device_rdata(device_rdata),
       .kbd_strobe(1'b0), .kbd_code(24'd0), .mouse_lines(7'd0),
+      // `-BOOT2`, the light panel's button, released: nothing here presses
+      // any of the three boot lines.  **Active low**, so a pin left off is a
+      // machine held at the boot trap and not a machine that runs.
+      .n_boot2(1'b1),
+      // OLORD1's three, which this harness has no lamps for.
+      /* verilator lint_off PINCONNECTEMPTY */
+      .machrun(), .errhalt(), .stathalt(),
+      /* verilator lint_on PINCONNECTEMPTY */
       // `ser_ready` and `chaos_intr` are GONE as ports: the card computes
       // `SER.IREQ` and `CHAOS.IREQ` itself, which is why a line left driving
       // either fails to compile rather than quietly doing nothing.  What is

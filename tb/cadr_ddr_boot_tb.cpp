@@ -221,6 +221,10 @@ Run Simulate(bool bit0_in_last) {
   for (int i = 0; i < kWindowWords; ++i) out.mem[i] = Poison(i, bit0_in_last);
 
   auto *dut = new Vcadr_machine;
+  // `-BOOT2` is a pulled-up line and nothing on this check presses it.
+  // **Active low, so an undriven input would hold the machine at the boot
+  // trap for ever**, which is the loud failure this line exists to avoid.
+  dut->n_boot2 = 1;
   // The DDR=1 board's configuration exactly.  Change any of these and this is
   // measuring a different board.
   dut->clk = 0;

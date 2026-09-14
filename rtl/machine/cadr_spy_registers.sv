@@ -79,7 +79,21 @@ module cadr_spy_registers (
     output var logic        stathenb,     // STATHENB, bit 3
     output var logic [1:0]  mode_speed,   // {SPEED1, SPEED0}, bits 1 and 0
     output var logic        prog_reset,   // -PROG.RESET, a pulse
-    output var logic        prog_boot     // PROG.BOOT, a pulse
+    output var logic        prog_boot,    // PROG.BOOT, a pulse
+    // **`-BOOT`, WHICH THIS BLOCK IS ONE OF THE TWO TAKERS OF.**  The 74S02
+    // at OLORD2 1A07 makes it out of the keyboard's `-BOOT1`, the light
+    // panel's `-BOOT2` and the debug cable's `PROG.BOOT`; `cadr_machine.sv`
+    // has the gate.  Here it does the two things the OLORD1 page does with
+    // it: it PRESETS `RUN` at the 74S74 at 1A14, and it is one of the three
+    // inputs of `RESET` at the 74S10 at 1C08, which is the CLEAR pin of both
+    // 74S175s --- the mode register at 1A08 with `PROMDISABLE` in it, and the
+    // clock control register's other four bits at 1A09.
+    //
+    // So a boot leaves this block exactly as `rst` does, which is the same
+    // fact the reset arm below already states: the fabric's reset IS the boot
+    // button held.  What was missing was a way to press it while the fabric
+    // runs, and these three lines are it.
+    input  var logic        n_boot
 );
 
   // busint::DIAGNOSTIC_NS, REGISTER_STROBE_NS and REGISTER_PULSE_NS.
@@ -122,6 +136,13 @@ module cadr_spy_registers (
   logic [3:0]  held_eadr;
   assign landing = mclk || (phase_t == 6'(SPEEDCLK_T));
 
+  // `-BOOT` is a LEVEL on two of its three sources --- a finger on a button,
+  // and the console's register holding the line down --- so `RESET` is held
+  // for as long as it is, and the registers are cleared on every tick of it
+  // rather than on its edge.  That is what the 74S175s' CLEAR pin does.
+  logic booting;
+  assign booting = !n_boot;
+
   always_ff @(posedge clk) begin
     if (rst) begin
       running     <= 1'b0;
@@ -157,6 +178,7 @@ module cadr_spy_registers (
     end else begin
       prog_reset <= 1'b0;
       prog_boot  <= 1'b0;
+
       if (mclk) phase_t <= 6'd0;
       else if (!(&phase_t)) phase_t <= phase_t + 6'd1;
 
@@ -213,6 +235,29 @@ module cadr_spy_registers (
         end
 
         if (running && elapsed >= 9'(SSYN_T)) ub_ssyn <= 1'b1;
+      end
+
+      // **`-BOOT` HELD IS `RESET` HELD**, and this is the reset arm above
+      // less the things `RESET` has no pin on.  It is written LAST so that it
+      // beats a write landing in the same tick, which is the board's own
+      // order: `RESET` reaches the two 74S175s' CLEAR pin, and on a 74S175
+      // the clear is asynchronous and dominant over the load.  A word already
+      // held for the machine's next look goes with the registers it was for.
+      //
+      // The bus cycle itself is NOT interrupted: `-UB SSYN` still comes and
+      // the master still lets go, because `RESET` has no pin on this slave's
+      // handshake.  What is lost is the word, not the answer.
+      if (booting) begin
+        run         <= 1'b1;   // preset at the 74S74 at OLORD1 1A14
+        step        <= 1'b0;   // the 74S175 at 1A09, cleared by -RESET
+        nop11       <= 1'b0;
+        idebug      <= 1'b0;
+        ldstat      <= 1'b0;
+        promdisable <= 1'b0;   // the 74S175 at 1A08, the mode register
+        errstop     <= 1'b0;
+        stathenb    <= 1'b0;
+        mode_speed  <= 2'b00;
+        pending     <= 1'b0;
       end
     end
   end

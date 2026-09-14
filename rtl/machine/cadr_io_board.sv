@@ -199,6 +199,13 @@ module cadr_io_board (
     // the trace's `KEY` row.  A word landing on one not yet read replaces it.
     input  var logic        kbd_strobe,
     input  var logic [23:0] kbd_code,
+    // `-BOOT*` at the 74S38 at IOBCSR 0F15 pin 6, onto backplane pin `CP1`:
+    // the card boots the machine off a word it decodes itself.  The part is
+    // open collector and the backplane pulls the line up, so what this port
+    // carries is the LINE'S LEVEL --- low while the card pulls it down, high
+    // the rest of the time because nothing else is driving it.  See THE BOOT
+    // WORD below.
+    output var logic        n_boot_star,
 
     // --- the mouse's seven lines, as the mouse drives them: bits 0 to 3
     // `HORA`, `HORB`, `VERA`, `VERB`, bits 4 to 6 the tail, middle and head
@@ -564,6 +571,65 @@ module cadr_io_board (
 
   assign csr_face = {ser_en, 1'b0, kbd_ready, mouse_ready, en175};
 
+  // ============================== THE BOOT WORD ==============================
+  //
+  // **THE CARD BOOTS THE MACHINE, AND THE PROCESSOR IS NOT ASKED.**  The
+  // keyboard's own firmware --- `sys/io1/ukbd.lisp`, whose `check-boot` runs
+  // after every key-down --- sends one word when both Controls and both Metas
+  // are held with Rubout or Return, and this card decodes that word itself
+  // and pulls a line on the backplane.  Nothing on the Unibus is involved.
+  //
+  // **WHAT IS COMPARED IS BITS 13-6 AND NOTHING ELSE.**  Page IOBCSR, the
+  // 25LS2521 at 0A20: `A0`-`A3` on ground against `B0`-`B3` on `SR7`, `SR8`,
+  // `SR9`, `SR10`, and `A4`-`A7` on the pull-up `HI4` against `B4`-`B7` on
+  // `SR14`, `SR13`, `SR12`, `SR11`.  `SR<n>` is bit `n-1` of the word --- the
+  // 74LS374 at IOBKBD 0C30 puts `SR1` on `UBO0`, the start marker riding at
+  // `SR0` --- so the window is bits 13-6 and the pattern is ones in 13-10
+  // over zeros in 9-6, which is `ukbd.lisp`'s "bits 10-13 = 1, bits 6-9 = 0"
+  // exactly.  `ioboard::boot_word` is `(word >> 6) & 0o377 == 0o360`, the
+  // same eight bits.
+  //
+  // **BIT 16 IS NOT IN THE COMPARATOR**, though `ukbd.lisp`'s prose names it.
+  // What the prose calls "bit 16 may or may not be looked at depending on
+  // remote mouse enable" is `-CHAR TO MOUSE`, qualified UPSTREAM: `CHAR FROM
+  // MOUSE` is `SR17`, inverted by the 74LS14 at 0A27, ANDed with `REMOTE
+  // MOUSE ENABLE` by the 74LS08 at 0D26 and inverted again at 0D20, and it
+  // reaches the 74LS10 at 0C28 that makes `EOC.KBD^`.  Under the enable a
+  // word with bit 16 clear is the mouse's and neither `KBD READY` nor this
+  // decode sees it; with the enable clear bit 16 is not looked at at all.
+  // This card takes every word on `kbd_strobe` as the keyboard's, as
+  // `IoBoard::press` does, so bit 16 is simply not compared here --- and
+  // `build/iob.golden` presses the cold word with each of the sixteen bits
+  // outside the window flipped in turn and requires every one of them to
+  // boot, which is what says the comparator is eight bits wide and not nine.
+  //
+  // **`-BOOT*` IS A PULSE AND NOT A LEVEL.**  The comparator's own enable is
+  // `EOC.KBD^`, low while `KB CLK^` is low with the start marker at `SR0`:
+  // the half keyboard clock before the rising edge that latches the word into
+  // the 74LS374s and sets `KBD READY`.  So the board's pulse is half a
+  // keyboard clock wide, 4 us, and it ENDS on the edge that sets `KBD READY`
+  // --- muir measures that on the netlist board in `tests/keyboard_boot.rs`.
+  // This card has no keyboard clock under its seam: a word arrives as one
+  // strobe, `KBD READY` goes up a tick later, and the pulse begins there and
+  // runs for the same 4 us.  The machine is booted and LET GO, as by the
+  // button; a boot held for as long as the word sits in the register would
+  // hold the processor at the boot trap for ever.
+  //
+  // **AND THE WORD STAYS.**  `boot` touches nothing else here: the scan code
+  // is in the register with `KBD READY` up when the pulse ends, because
+  // microcode 323 reads it at `(LOC 6)` to choose a cold boot from a warm
+  // one.  The firmware's own `bootflag` is what keeps the next word off it,
+  // and that is the keyboard's business and not this card's.
+  localparam logic [7:0]  BOOT_MATCH = 8'o360;  // ones in 13-10, zeros in 9-6
+  localparam int unsigned BOOT_T     = 4_000 / 5;
+
+  logic       boot_match;
+  logic [9:0] boot_t;
+  assign boot_match  = (kbd_code[13:6] == BOOT_MATCH);
+  // Open collector at the 74S38: the card pulls the line down and the
+  // backplane's pull-up is what makes it high again.
+  assign n_boot_star = (boot_t == 10'd0);
+
   // ============================ THE SERIAL PORT ============================
   //
   // The Signetics 2651 at IOBSER 0A12 as `serial::Pci` has it: `A1` and `A0`
@@ -924,6 +990,9 @@ module cadr_io_board (
       kbd_ready   <= 1'b0;
       mouse_ready <= 1'b0;
       scancode    <= 24'd0;
+      // The 74S38 at IOBCSR 0F15 is open collector and the backplane pulls
+      // `-BOOT*` up: a card at rest asks for nothing.
+      boot_t      <= 10'd0;
 
       // The 74LS279's latch at CLKTIM 0D09 reads SET from reset, because no
       // interval has been loaded: `interval_loaded_at` is `None`.
@@ -1206,9 +1275,14 @@ module cadr_io_board (
       end
 
       // --- the keyboard's cable -------------------------------------------
+      // The pulse's countdown is written FIRST so that a word landing on the
+      // tick it would end re-arms it rather than losing to it: two boot words
+      // in a row are two pulses, and the machine is booted twice.
+      if (boot_t != 10'd0) boot_t <= boot_t - 10'd1;
       if (kbd_strobe) begin
         scancode  <= kbd_code;
         kbd_ready <= 1'b1;
+        if (boot_match) boot_t <= 10'(BOOT_T);
       end
 
       // --- the bus cycle ---------------------------------------------------

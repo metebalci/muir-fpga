@@ -363,7 +363,9 @@ module cadr_dbg_pmod_harness #(
       .debug_ir(debug_ir_u),
       .run(run_o), .promdisable(promdisable_u),
       .errstop(errstop_u), .stathenb(stathenb_u), .mode_speed(mode_speed_u),
-      .prog_reset(prog_reset_u), .prog_boot(prog_boot_u)
+      .prog_reset(prog_reset_u), .prog_boot(prog_boot_u),
+      // `-BOOT` released: nothing in this check presses any of the three.
+      .n_boot(1'b1)
   );
 
   logic unused;
