@@ -328,7 +328,25 @@ constraints sit beside `rtl/plumbing/xilinx7/cadr_probe.sv`, which is the
 module they constrain. Moving them is a commit that touches every board
 directory and it is owed.
 
-## The recipe, which has not been run on silicon
+## The recipe, and its first run on silicon
+
+The recipe below has been run once on the board, from the probe bitstream
+built at this tree. The hardware manager found a chain of one device, the
+XC7A100T, with no bypass bits before or behind the sample. The capture of the
+first 1,024 microcycles agreed with muir's `rtl` engine on all 23 compared
+columns, aligned at microcycle 0 with no gap and no repeat, and eight columns
+that stay constant in the boot PROM's opening were checked vacuously and named
+as such. Both bitstreams built for the run reproduced the fit figures above.
+The board was left running the plain memory-off bitstream, where the machine
+runs on through its memory timeouts as `make nomem` says it does. Nothing is
+in the flash, so a power cycle clears the part.
+
+Two things the run taught. The programming script's DONE check passes on a
+part that was already configured, so it cannot prove that the part took this
+bitstream; the probe agreeing with muir is what proves it. And a failed
+`cargo run` behind `make build/boot_prom.hex` leaves an empty file that `make`
+then calls up to date, which would load a control store of nothing; the rule
+wants a temporary file moved into place, or `.DELETE_ON_ERROR`.
 
 Every step names the JTAG cable by its serial number. More than one board can
 be on one host's USB, and a target taken by position is whichever the server
