@@ -3,9 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>muir-fpga — the CADR</title>
-<meta name="description" content="What the MIT CADR Lisp Machine actually is: its two processor boards, its five cables and two buses, its memory, disk, display, I/O board, keyboard, debug cable and boot PROM, with every figure read from MIT's own files.">
+<title>muir-fpga &mdash; the CADR</title>
+<meta name="description" content="What the MIT CADR Lisp Machine is, in ten drawings: the cage and its two buses, the processor's data paths and its microinstruction, the map, the address space, the disk, the display, the I/O board, the light panel and the debug cable.">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="cadr.css">
 </head>
 <body>
 
@@ -26,452 +27,829 @@
     <div class="prose">
       <h2>The machine this project reproduces</h2>
       <p class="lede">The CADR is a 32-bit microcoded processor built at the MIT Artificial
-      Intelligence Laboratory. It is the machine the Lisp Machine system was written for, and
-      the design that the first commercial Lisp machines, from LMI and Symbolics, were built
-      on.</p>
+      Intelligence Laboratory around 1978, and published as AI Memo 528 in 1980. It is the
+      machine the Lisp Machine system was written for.</p>
 
-      <p>It was designed around 1978, and the AI Laboratory published it as AI Memo
-      528, <i>CADR</i>, in 1980. The memo calls it
-      "a general-purpose, 32-bit microprogrammable processor which is the basis of the
-      Lisp-machine system, a new computer system being developed by the Laboratory as a
-      high-performance, economical implementation of Lisp". It was a revised version of an
-      earlier machine called CONS. The engineering drawings recovered from MIT's backup tapes
-      were written between 1977 and 1981.</p>
-
-      <p>The memo is careful about two names that are often confused. The CADR machine is a
-      design of microprocessor. The Lisp machine is the CADR machine plus the microcode that
-      interprets the Lisp machine order code. One is hardware and the other is hardware with a
-      particular program in it.</p>
-
-      <p>It is a machine for one person at a time. The display controller drives one screen,
-      and the I/O board carries one keyboard and one mouse. Those three are the machine's own
-      console, and the whole of the processor runs the work of whoever is sitting at it.</p>
-
-      <p>The processor was designed to emulate other instruction sets rather than to run Lisp
-      directly. Its microcode interprets a 16-bit order code that the Lisp machine compiler
-      produces. The memo says the design deliberately avoided wiring the Lisp machine's own
-      instruction formats into the hardware, so that the software could change without the
-      boards changing. What the hardware does offer is writable microcode, flexible dispatching
-      and subroutining, good byte manipulation, and a stack kept inside the processor.</p>
-
-      <p>A CADR is not one board. The processor is two boards in a backplane of their own.
-      The bus interface is a third board, in a cage that carries the machine's two buses, and
-      everything else in the machine plugs into one of those two. Five flat cables join the
-      processor to the bus interface. The sections below take them in turn.</p>
+      <p>It is a general-purpose processor designed for convenient emulation of complex order
+      codes, and on it the microcode interprets the 16-bit order code the Lisp machine compiler
+      produces. The drawings below are read from MIT's own files, and the table at the foot
+      says which file each one came from.</p>
     </div>
-  </div>
-</section>
-
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The two processor boards</h2>
-
-      <p>The processor is two large boards, and MIT's own print sets name them. The CADR
-      section carries the data paths. The ICMEM section carries the control memory. Their wire
-      lists are separate files and their drawings are separate print sets, but they are one
-      processor and the netlist built from them is one file of 985 parts.</p>
-
-      <p>The CADR section holds the A and M scratchpads, the pushdown buffer and the microcode
-      return stack, the ALU, the shifter and the byte hardware, the Q register, the memory
-      address and memory data registers, the dispatch memory and both levels of the virtual
-      memory map. The ICMEM section holds the control store, the boot PROM that overlays the
-      bottom of it, the clock generator, the eight-deep history of the microprogram counter,
-      the statistics counter, and the registers a console writes to halt and step the machine.</p>
-
-      <h3>The microinstruction</h3>
-
-      <p>A microinstruction is 48 bits wide. Every one of them names two sources, called A and
-      M, and two of the four classes also name a destination. The class is two bits,
-      <code>IR&lt;44:43&gt;</code>, and there are four of them.</p>
-
-      <ul>
-        <li><b>ALU.</b> The destination takes the result of a boolean or arithmetic operation
-        on the two sources.</li>
-        <li><b>BYTE.</b> The destination takes a byte extraction, a byte deposit or a selective
-        field substitution from one source into the other. The field may be any non-zero width.</li>
-        <li><b>JUMP.</b> Control transfers, conditionally on any bit reachable on the M bus or
-        on a variety of internal conditions, page faults and pending interrupts among them.</li>
-        <li><b>DISPATCH.</b> Control transfers to a place named by a word of the dispatch
-        memory, selected by a field of up to seven bits taken from the M bus.</li>
-      </ul>
-
-      <p>Two functional destinations make a microinstruction's fields variable, which is how
-      the microcode reaches a computed scratchpad address or a computed rotation count. They
-      are conceptual registers, together called the OA register, and what is written to one of
-      them is ORed into the next instruction as it comes out of the control store. One covers
-      the low 26 bits and the other the high 22. Only one half of an instruction can be
-      modified this way, because the two cannot be written at once. Parity checking is disabled
-      for an instruction modified like this, because the OR happens before the check.</p>
-
-      <p>Three bits are the same in every class. <code>IR&lt;46&gt;</code> counts the
-      instruction in the statistics counter, which can stop the machine when it overflows.
-      <code>IR&lt;45&gt;</code> is ILONG and runs the read phase of the clock long.
-      <code>IR&lt;42&gt;</code> is POPJ, which returns from a microsubroutine after one more
-      instruction has run.</p>
-
-      <h3>The microcycle</h3>
-
-      <p>The processor has one clock signal, and every edge-triggered register on the board
-      takes one edge per microcycle. Between the edges the clock is a level, and the board
-      reads it as one. In the read phase the scratchpads are addressed by the instruction's own
-      source fields and the ALU settles. In the write phase the address changes to the write
-      address left by the previous instruction, and the write pulse fires.</p>
-
-      <p>The cycle is of variable length. The read phase is set by the instruction's ILONG bit
-      and by two speed bits in the mode register, which select four taps of a delay line. The
-      four speeds give microcycles of 135, 145, 160 and 220 nanoseconds. Normal speed is 145 ns.</p>
-
-      <p>The clock can also stop, in two different ways, and the difference matters. A
-      <b>wait</b> stops it at the end of the read phase, leaving the scratchpad latches open.
-      The processor's clock stops and the clock to the bus interface and the Xbus devices keeps
-      running, so they go on working while the processor stands still. A <b>hang</b> stops it at
-      the end of the write phase, and is used only for memory reads. Both clocks stop together
-      for a hang, so they restart in step with no extra delay. The effect is that the
-      processor's speed matches the memory's exactly.</p>
-
-      <h3>The control store</h3>
-
-      <p>The control store holds 16,384 microinstructions of 48 bits. The microprogram counter
-      is fourteen bits, which is what sets that size. The store is writable, and the microcode
-      loads itself off the disk at every boot.</p>
-
-      <p>How the microcode writes it is a trick, and the memo says the odd shape of the
-      instruction set here is the trick's fault. A JUMP with both its R and P bits set is a
-      WRITE. It behaves like a call to the address being modified, so the old PC goes on the
-      return stack and the PC register takes the address. Then, where the control store would
-      have fetched the instruction at that address, a write pulse fires instead and the A and M
-      sources are written into the store. The machine simultaneously behaves as though it had
-      executed a return, pops the PC back, and carries on. The write costs a word of the return
-      stack and an extra cycle.</p>
-
-      <p>The bottom 1,024 words are overlaid by the boot PROM while the mode register's
-      PROMDISABLE bit is clear. The PROM is twelve 74S472 chips of 512 by 8, two banks of 512
-      words, and the page that decodes it makes the enable from the top four bits of the PC
-      being zero.</p>
-
-      <h3>The scratchpads and the pushdown buffer</h3>
-
-      <p>The A bus is driven only from the A scratchpad, 1,024 words of 32 bits. The M bus is
-      driven from the M scratchpad, 32 words of 32 bits, and from a variety of other internal
-      registers. The M scratchpad is a copy of the first 32 locations of the A scratchpad, so
-      the two are written together.</p>
-
-      <p>The memories are 93425As and have no clock pin. What holds a word between the two
-      phases is a 74S373 latch beside each memory, not the memory itself. A scratchpad write is
-      therefore one microcycle behind the instruction that computed the word, and the hardware
-      hides that with pass-around paths: comparators match the instruction's source address
-      against the write address still pending, and put the pending word on the bus instead of
-      the memory's output. The A and M memories have those paths. The pushdown buffer does not,
-      and the memo explains why: a cycle that writes the pushdown buffer must write the M
-      scratchpad too, so the next instruction can use the M path instead.</p>
-
-      <p>The pushdown buffer is 1,024 words of 32 bits with a pointer and an index of ten bits
-      each. It holds the top of the emulated stack, in the manner of a cache. The memo says
-      this is worth the hardware because a large part of a Lisp machine's memory references are
-      to the stack.</p>
-
-      <h3>The sequencer and the dispatch memory</h3>
-
-      <p>The microprogram counter is fourteen bits and behaves much like a conventional
-      program counter. Beside it is a 32-location microcode subroutine return stack, with its
-      own five-bit pointer and a pass-around path of its own for returns, which makes a
-      two-instruction subroutine possible.</p>
-
-      <p>The dispatch memory is 2,048 words of seventeen bits. A DISPATCH instruction takes an
-      M source, rotates it left by a rotation count, masks all but the low bits of it, and ORs
-      what is left with the instruction's own dispatch address to make an eleven-bit address.
-      The word it finds there is a fourteen-bit PC and three transfer bits: one pops the new PC
-      off the return stack, one pushes a return onto it, and one inhibits the next instruction.
-      A DISPATCH can also write the memory instead of reading it, which is how the microcode
-      loads its own dispatch tables.</p>
-
-      <p>A dispatch can take its lowest address bit from the map instead of from the rotated
-      field, with the map addressed by the memory data register. The memo says this is chiefly
-      for testing a pointer just fetched from memory against the garbage collector's
-      conventions.</p>
-
-      <p>An eight-deep shift register records the PC of each of the last eight instructions.
-      MIT calls it the OPCs, and it is what a console reads to reconstruct how a halted machine
-      got where it is.</p>
-
-      <h3>The virtual memory map</h3>
-
-      <p>Memory is reached through a two-level paging system that maps a 24-bit virtual address
-      into a 22-bit physical one. A page is 256 words, so the low eight bits of the address
-      pass through untranslated.</p>
-
-      <p>The first level is 2,048 entries of five bits, addressed by
-      <code>VMA&lt;23:13&gt;</code>. Its output joins <code>VMA&lt;12:8&gt;</code> to address
-      the second level, which is 1,024 entries of 24 bits. The top two bits of a second-level
-      word are the access code and the fourteen bits under them are the physical page.</p>
-
-      <p>There is no state in the map. Both levels are asynchronous RAM chained
-      combinationally, so a lookup is a ripple through two memories inside one microcycle. The
-      access code is what refuses a read or a write, and the refusal reaches the microcode as a
-      page fault that a JUMP can test.</p>
-
-      <h3>Parity</h3>
-
-      <p>Every internal memory in the machine is parity checked. Bad parity halts the machine
-      if error halting is enabled, and the machine completes the current instruction and clocks
-      the next one into the instruction register before it stops. So one wrong instruction will
-      have run and the bad data is no longer on the buses, which is what the eight-deep PC
-      history is for. Error halting is off at power-on and the bootstrap turns it on once it
-      has filled every memory with good parity.</p>
-
-      <p>The data paths themselves carry no redundant checking. Instead the bootstrap runs
-      simple diagnostics over the memories and the data paths before it trusts them.</p>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The five cables, and the bus interface</h2>
-
-      <p>The bus interface is its own board in its own backplane. MIT's parts list heads it
-      "LISPM Bus Interface" and it runs to 33 sheets. Its own description of how it is attached
-      is short and is worth having exactly:</p>
-
-      <p>"The bus interface plugs into the Xbus and the Unibus, and is connected to the cpu by
-      5 40-wire (alternating grounds) flat cables, which carry two independent busses and the
-      master clock, which is supplied by the cpu to the bus interface."</p>
-
-      <p>Alternating grounds means twenty signals in a forty-wire cable. Read off MIT's wire
-      lists, the five cables pair 92 signal wires between the two ends. Four of them leave the
-      CADR section and one leaves the ICMEM section. Forty-eight of the 92 are driven from both
-      ends, and they are exactly the two data buses: <code>MEM&lt;31:0&gt;</code> and
-      <code>SPY&lt;15:0&gt;</code>.</p>
-
-      <h3>The memory bus</h3>
-
-      <p>The first of the two buses on the cables is the memory bus. The processor sends
-      <code>-MEMRQ</code>, a level held while it wants a cycle, <code>WRCYC</code> high to
-      write, and a 22-bit address. The address arrives already translated, because the map is
-      on the processor board. The interface sends back <code>-MEMACK</code>,
-      <code>-LOADMD</code>, which strobes the word into the memory data register, and
-      <code>-MEMGRANT</code>. The 32 data lines go both ways.</p>
-
-      <h3>The diagnostic bus</h3>
-
-      <p>The second is the diagnostic bus, and the bus interface is its master. Its signals are
-      sixteen bidirectional data lines, four address lines that select one of sixteen 16-bit
-      diagnostic registers, and a read strobe and a write strobe. The registers themselves are
-      on the processor boards.</p>
-
-      <p>Those four address lines follow the Unibus address, so the sixteen registers appear at
-      Unibus <code>0o766000</code> to <code>0o766036</code>. Reading and writing at one address
-      are unrelated: there are sixteen readable registers and eight writable ones, and a
-      readable and a writable register at the same address have nothing to do with each other.
-      The readable set is the instruction register in three halves, the PC, the OPC history,
-      both halves of the output bus, two flag registers, the A and M scratchpads in halves, and
-      the statistics counter in halves. The writable set includes the mode register, the
-      clock control register, the OPC control register and the debug instruction register.</p>
-
-      <p>This is what a console program drives, and the machine uses it on itself during
-      bootstrapping.</p>
-
-      <h3>The Xbus</h3>
-
-      <p>The Xbus is the machine's 32-bit data bus. Main memory is on it, and so are the high
-      speed peripherals: the disk controller and the display. It is open collector and
-      terminated at both ends, 390 ohms to ground and 180 ohms to five volts at each end, which
-      is an effective 123 ohm termination and a 56 milliamp load for a driver to pull down.</p>
-
-      <p>Transfers are asynchronous as far as the devices are concerned. A read puts the
-      address and its parity on the bus, lowers <code>-XBUS.RQ</code>, and waits for the device
-      to drive the data and assert <code>-XBUS.ACK</code>. The acknowledgement stays asserted
-      until the master removes the request. Deskewing is the master's job: it must have good
-      address, write and data lines up 80 nanoseconds before it lowers the request, and it must
-      wait 50 nanoseconds after the acknowledgement before it strobes the data. A device that
-      cannot produce parity, such as a register on an I/O board, asserts
-      <code>-XBUS.IGNPAR</code> and the master does not check.</p>
-
-      <p>Arbitration is the one part that is not asynchronous. A device that wants the bus
-      asserts <code>-XBUS.EXTRQ</code> and a grant is daisy chained from device to device
-      along the backplane. Whether a device passes the grant on, and the moment it becomes bus
-      master, are both clocked by a master clock distributed on the <code>-XBUS.SYNC</code>
-      line. That clock is the processor's own, sent down the cables.</p>
-
-      <h3>The Unibus</h3>
-
-      <p>The Unibus is an ordinary PDP-11 Unibus, and it is there to attach peripherals,
-      especially commercial devices built for the PDP-11 line. It is sixteen bits wide and
-      every line is open collector, low when asserted and pulled up at rest. A master puts the
-      address up, asserts <code>-MSYN</code>, and the slave answers <code>-SSYN</code> with the
-      word or having taken it.</p>
-
-      <p>The bus interface arbitrates the Unibus when there is no PDP-11 on it, which on a
-      Lisp Machine there generally is not. It also carries the interrupt paths: both buses can
-      interrupt the processor, and the interface passes both.</p>
-
-      <h3>What happens when nothing answers</h3>
-
-      <p>A cycle that no device answers is given up on. The interface has a timer for it, a
-      small PROM walked one state per tick of an oscillator on the board, and when it reaches
-      its last state the interface sets a bit in its error status register and completes the
-      cycle. There is a bit for an Xbus cycle that timed out and a bit for a Unibus one. MIT's
-      own listing of that PROM gives ten microseconds for an ordinary cycle and a longer count
-      for one arriving from the other processor over the debug cable.</p>
-
-      <h3>The Unibus map</h3>
-
-      <p>A Unibus master can reach Xbus memory, and it has to be mapped to do it, because the
-      Unibus address space is not big enough to name it. The interface holds sixteen map
-      registers at Unibus <code>0o766140</code> to <code>0o766176</code>. Bit 15 of a register
-      turns mapping on for that page, bit 14 allows a write from the Unibus, and the rest is
-      the physical page number.</p>
-
-      <p>The window those registers translate is Unibus <code>0o140000</code> to
-      <code>0o177777</code>. Four bits of the address choose the map register, eight choose the
-      word within the page, and one chooses which half of the word, because a 32-bit Lisp
-      machine word is two Unibus words and the low half has the lower Unibus address. The
-      interface buffers the halves so that two 16-bit accesses become one 32-bit cycle.</p>
-
-      <p>The interface's own Unibus block runs from <code>0o766000</code> to
-      <code>0o766176</code> and is split four ways: the sixteen diagnostic registers, an
-      interrupt and error status block, a debug block that the debug cable answers, and the
-      sixteen map registers.</p>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>Main memory</h2>
-
-      <p>Main memory is boards on the Xbus. One board is 65,536 words of 32 bits, built as four
-      banks of 4116 dynamic RAMs. Every board is the same board, and an address switch on each
-      one puts it at its place in the physical address space. Each board runs its own
-      oscillator and refreshes itself, so nothing in the processor has to.</p>
-
-      <p>The physical address is 22 bits, so the Xbus can carry four million words. A machine
-      with thirty-two boards has two million, which is what the System 100 release expects.</p>
-
-      <p>Memory parity is checked, and the mode flags in the diagnostic interface decide what
-      happens when it fails: the machine can halt, the microcode can take a trap, or it can be
-      ignored.</p>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The disk controller and the Trident drives</h2>
-
-      <p>The disk controller is one board on the Xbus, and it is a bus master as well as a
-      slave: it moves blocks into main memory itself rather than handing them to the processor
-      a word at a time. The drives are Century Data Trident disk packs in cabinets on the end
-      of its cable.</p>
-
-      <h3>The register face</h3>
-
-      <p>The controller presents four 32-bit registers on the Xbus at physical
-      <code>0o17377774</code> to <code>0o17377777</code>, just below the Unibus. Reading and
-      writing the same register are two different registers, as on the diagnostic bus.</p>
-
-      <div class="tablewrap">
-        <table>
-          <thead>
-            <tr><th class="num">Register</th><th>Read</th><th>Written</th></tr>
-          </thead>
-          <tbody>
-            <tr><td class="num">0</td><td>status</td><td>command</td></tr>
-            <tr><td class="num">1</td><td>the last memory address touched</td><td>the command list pointer</td></tr>
-            <tr><td class="num">2</td><td>the disk address</td><td>the disk address</td></tr>
-            <tr><td class="num">3</td><td>error correction: the burst pattern and its bit position</td><td>START</td></tr>
-          </tbody>
-        </table>
+
+    <figure class="fig dense wide" style="--fig-width: 1340px">
+      <div class="scroll">
+        <svg viewBox="0 0 1340 810" role="img" aria-label="The whole machine. On the left, the processor's own backplane holds two boards: the CADR board with the data paths and the ICMEM board with the control store, the boot PROM, the clock and the diagnostic registers. Five forty-wire flat cables, 92 signals of which 48 are driven from both ends, join them to the bus interface board in the bus cage; the four from the CADR board carry the memory bus and the diagnostic bus, and the one from the ICMEM board carries the master clock, the diagnostic bus's address and strobes, the boot line and three resets. The bus interface arbitrates two buses: the Xbus, which carries the memory boards, the disk controller and the display board, and the Unibus, which carries the I/O board and any PDP-11 device in an SPC slot. Outside the cage are the Trident disk packs behind the disk multiplexor, the screen, the keyboard and mouse, an RS-232 line and the Chaosnet cable. A light panel hangs off the ICMEM board, and a debug cable of 21 wires runs from the bus interface to another CADR, which is the debugger.">
+          <text class="d-t" x="10" y="18">the machine, whole</text>
+          <path class="d-dash" d="M250,14 H290"/>
+          <text class="d-s" x="298" y="18">a backplane or a cage</text>
+          <path class="d-bus" d="M440,14 H480"/>
+          <text class="d-s" x="488" y="18">a bus</text>
+          <path class="d-line" d="M540,14 H580"/>
+          <text class="d-s" x="588" y="18">a cable</text>
+
+          <!-- The processor is two boards in a backplane of their own. Which
+               drawing belongs to which board is cadr.book and icmem.book. -->
+          <rect class="d-dash" x="24" y="44" width="240" height="232"/>
+          <text class="d-s" x="32" y="62">the processor&rsquo;s backplane</text>
+          <rect class="d-box" x="38" y="72" width="212" height="88"/>
+          <text class="d-t" x="144" y="92" text-anchor="middle">CADR board</text>
+          <text class="d-s" x="144" y="110" text-anchor="middle">the data paths: A and M,</text>
+          <text class="d-s" x="144" y="124" text-anchor="middle">the ALU and byte hardware,</text>
+          <text class="d-s" x="144" y="138" text-anchor="middle">the pushdown buffer, Q,</text>
+          <text class="d-s" x="144" y="152" text-anchor="middle">VMA, MD, the map</text>
+          <rect class="d-box" x="38" y="176" width="212" height="88"/>
+          <text class="d-t" x="144" y="196" text-anchor="middle">ICMEM board</text>
+          <text class="d-s" x="144" y="214" text-anchor="middle">the control store and the</text>
+          <text class="d-s" x="144" y="228" text-anchor="middle">boot PROM, the clock, the</text>
+          <text class="d-s" x="144" y="242" text-anchor="middle">PC history, the diagnostic</text>
+          <text class="d-s" x="144" y="256" text-anchor="middle">registers</text>
+
+          <!-- The five cables, pin by pin, are data/cables.txt, read off the
+               two ends' wire lists. Each label is the pairing, the count of
+               signal wires, and what rides on them. -->
+          <path class="d-line" d="M250,86 H604"/>
+          <text class="d-n" x="272" y="81">1AJ1-J11 20 MEM&lt;31:12&gt;</text>
+          <path class="d-line" d="M250,104 H604"/>
+          <text class="d-n" x="272" y="99">1BJ1-J12 20 MEM&lt;11:0&gt;, -PMA, parity</text>
+          <path class="d-line" d="M250,122 H604"/>
+          <text class="d-n" x="272" y="117">1CJ1-J09 20 -ADR&lt;21:0&gt;, -MEMRQ, -MEMACK, -LOADMD</text>
+          <path class="d-line" d="M250,140 H604"/>
+          <text class="d-n" x="272" y="135">3AJ1-J07 20 SPY&lt;15:0&gt;, -MEMGRANT, WRCYC, INT</text>
+          <text class="d-s" x="272" y="170">five 40-wire cables, alternating grounds:</text>
+          <text class="d-s" x="272" y="184">92 signals, 48 of them driven from both ends</text>
+          <path class="d-line" d="M250,220 H604"/>
+          <text class="d-n" x="272" y="215">1AJ1-J08 12 MCLK7, EADR&lt;3:0&gt;, -DBREAD, -DBWRITE</text>
+          <text class="d-s" x="272" y="236">and on the same cable, -BOOT1 and three resets</text>
+
+          <!-- The light panel is 1AJ2 on the ICMEM board: the MBCPIN drawing
+               marks that connector "TO LIGHT PANEL". -->
+          <path class="d-line" d="M100,264 V330"/>
+          <text class="d-n" x="106" y="300">1AJ2, 12 signals</text>
+          <rect class="d-box" x="24" y="330" width="240" height="86"/>
+          <text class="d-t" x="144" y="352" text-anchor="middle">the light panel</text>
+          <text class="d-s" x="144" y="372" text-anchor="middle">ten error lamps, the run</text>
+          <text class="d-s" x="144" y="386" text-anchor="middle">lamp, and the boot button</text>
+
+          <!-- The cage. The bus interface is slot 11; the Xbus and the
+               Unibus are the two backplane buses it arbitrates. -->
+          <rect class="d-dash" x="590" y="44" width="540" height="746"/>
+          <text class="d-s" x="598" y="62">the bus cage</text>
+          <rect class="d-box" x="604" y="66" width="150" height="234"/>
+          <text class="d-t" x="679" y="88" text-anchor="middle">bus interface</text>
+          <text class="d-s" x="679" y="108" text-anchor="middle">slot 11</text>
+          <text class="d-s" x="679" y="132" text-anchor="middle">it arbitrates both buses</text>
+          <text class="d-s" x="679" y="146" text-anchor="middle">and passes both interrupts</text>
+          <text class="d-s" x="679" y="170" text-anchor="middle">master of the SPY bus</text>
+          <text class="d-s" x="679" y="194" text-anchor="middle">the Unibus map</text>
+          <text class="d-s" x="679" y="208" text-anchor="middle">the NXM timer</text>
+          <text class="d-s" x="679" y="232" text-anchor="middle">DBGOUT and DBGIN</text>
+
+          <path class="d-line" d="M754,110 H800"/>
+          <path class="d-bus" d="M800,104 V400"/>
+          <text class="d-t" x="806" y="84">Xbus</text>
+          <text class="d-s" x="806" y="98">32 bits, open collector, 22 address bits</text>
+
+          <path class="d-line" d="M800,150 H840"/>
+          <rect class="d-box" x="840" y="110" width="270" height="80"/>
+          <text class="d-t" x="975" y="132" text-anchor="middle">memory boards</text>
+          <text class="d-s" x="975" y="150" text-anchor="middle">one board is 65,536 words of 32 bits</text>
+          <text class="d-s" x="975" y="164" text-anchor="middle">four banks of 4116s, self-refreshing</text>
+          <text class="d-s" x="975" y="178" text-anchor="middle">an address switch puts each at its slot</text>
+
+          <path class="d-line" d="M800,250 H840"/>
+          <rect class="d-box" x="840" y="210" width="270" height="80"/>
+          <text class="d-t" x="975" y="232" text-anchor="middle">disk controller</text>
+          <text class="d-s" x="975" y="250" text-anchor="middle">four registers at 0o17377774</text>
+          <text class="d-s" x="975" y="264" text-anchor="middle">a bus master: it moves blocks itself</text>
+          <text class="d-s" x="975" y="278" text-anchor="middle">and selects one of eight drives</text>
+
+          <path class="d-line" d="M800,350 H840"/>
+          <rect class="d-box" x="840" y="310" width="270" height="80"/>
+          <text class="d-t" x="975" y="332" text-anchor="middle">display board &mdash; the TV</text>
+          <text class="d-s" x="975" y="350" text-anchor="middle">a frame buffer of 32,768 words</text>
+          <text class="d-s" x="975" y="364" text-anchor="middle">at 0o17000000, and eight control</text>
+          <text class="d-s" x="975" y="378" text-anchor="middle">words at 0o17377760</text>
+
+          <path class="d-line" d="M754,270 H778 V470 H800"/>
+          <path class="d-bus" d="M800,444 V760"/>
+          <text class="d-t" x="806" y="424">Unibus</text>
+          <text class="d-s" x="806" y="438">a PDP-11 Unibus, 16 bits, open collector</text>
+
+          <path class="d-line" d="M800,520 H840"/>
+          <rect class="d-box" x="840" y="460" width="270" height="200"/>
+          <text class="d-t" x="975" y="482" text-anchor="middle">I/O board</text>
+          <text class="d-n" x="975" y="500" text-anchor="middle">0o764000 - 0o764176</text>
+          <text class="d-s" x="975" y="520" text-anchor="middle">the keyboard and the mouse</text>
+          <text class="d-s" x="975" y="540" text-anchor="middle">a microsecond clock, an interval</text>
+          <text class="d-s" x="975" y="554" text-anchor="middle">timer and a sixty-cycle clock</text>
+          <text class="d-s" x="975" y="574" text-anchor="middle">a 2651 for the serial port</text>
+          <text class="d-s" x="975" y="594" text-anchor="middle">the Chaosnet interface, with two</text>
+          <text class="d-s" x="975" y="608" text-anchor="middle">packet buffers of 256 words</text>
+          <text class="d-s" x="975" y="628" text-anchor="middle">four interrupt vectors, on one chain:</text>
+          <text class="d-n" x="975" y="646" text-anchor="middle">0o260  0o264  0o270  0o274</text>
+
+          <path class="d-line" d="M800,725 H840"/>
+          <rect class="d-box" x="840" y="690" width="270" height="70"/>
+          <text class="d-t" x="975" y="712" text-anchor="middle">an SPC slot</text>
+          <text class="d-s" x="975" y="730" text-anchor="middle">any PDP-11 device, the bus being</text>
+          <text class="d-s" x="975" y="744" text-anchor="middle">an ordinary Unibus</text>
+
+          <!-- Outside the cage: what a person and a disk pack see. -->
+          <path class="d-line" d="M1110,250 H1150"/>
+          <rect class="d-box" x="1150" y="210" width="180" height="80"/>
+          <text class="d-t" x="1240" y="232" text-anchor="middle">Trident drives</text>
+          <text class="d-s" x="1240" y="250" text-anchor="middle">up to eight packs,</text>
+          <text class="d-s" x="1240" y="264" text-anchor="middle">behind the disk</text>
+          <text class="d-s" x="1240" y="278" text-anchor="middle">multiplexor</text>
+
+          <path class="d-line" d="M1110,350 H1150"/>
+          <rect class="d-box" x="1150" y="310" width="180" height="80"/>
+          <text class="d-t" x="1240" y="332" text-anchor="middle">the screen</text>
+          <text class="d-s" x="1240" y="350" text-anchor="middle">768 by 963,</text>
+          <text class="d-s" x="1240" y="364" text-anchor="middle">one bit a pixel,</text>
+          <text class="d-s" x="1240" y="378" text-anchor="middle">64.7 frames a second</text>
+
+          <path class="d-line" d="M1110,485 H1150"/>
+          <rect class="d-box" x="1150" y="450" width="180" height="70"/>
+          <text class="d-t" x="1240" y="472" text-anchor="middle">keyboard, mouse</text>
+          <text class="d-s" x="1240" y="490" text-anchor="middle">24 bits a key;</text>
+          <text class="d-s" x="1240" y="504" text-anchor="middle">seven mouse lines</text>
+
+          <path class="d-line" d="M1110,570 H1150"/>
+          <rect class="d-box" x="1150" y="540" width="180" height="60"/>
+          <text class="d-t" x="1240" y="562" text-anchor="middle">an RS-232 line</text>
+          <text class="d-s" x="1240" y="580" text-anchor="middle">through an MC1488/9</text>
+
+          <path class="d-line" d="M1110,650 H1150"/>
+          <rect class="d-box" x="1150" y="620" width="180" height="60"/>
+          <text class="d-t" x="1240" y="642" text-anchor="middle">the Chaosnet</text>
+          <text class="d-s" x="1240" y="660" text-anchor="middle">a cable to other</text>
+          <text class="d-s" x="1240" y="674" text-anchor="middle">machines</text>
+
+          <!-- A CADR is debugged by another CADR: the debugger's DBGOUT to
+               this machine's DBGIN, over MIT's cable of 21 wires. -->
+          <path class="d-line" d="M604,290 H560 V605 H324"/>
+          <text class="d-n" x="334" y="598">the debug cable, 21 wires</text>
+          <rect class="d-box" x="24" y="560" width="300" height="90"/>
+          <text class="d-t" x="174" y="582" text-anchor="middle">another CADR</text>
+          <text class="d-s" x="174" y="600" text-anchor="middle">the debugger. MIT&rsquo;s console</text>
+          <text class="d-s" x="174" y="614" text-anchor="middle">program CC runs on it, and its</text>
+          <text class="d-s" x="174" y="628" text-anchor="middle">DBGOUT drives this DBGIN</text>
+        </svg>
       </div>
-
-      <p>The disk address is one word holding the unit in bits 30 to 28, then the cylinder, the
-      head and the block. Three bits of unit is why one controller can address eight drives. A
-      board called the disk multiplexor sits between the controller and the drives and fans out
-      the nine signals that are per-unit, while the eighteen shared ones go past it to every
-      drive.</p>
-
-      <p>Writing the command register does not start anything, which the controller's
-      documentation points out is unlike most disk controllers. A transfer begins when something
-      is written to START, after the other registers have been set up. The commands are read,
-      read compare, write, read all, write all, seek, at ease, recalibrate, fault clear, offset
-      clear and reset. Reset is the exception to the rule: it takes effect as soon as it is
-      stored in the command register.</p>
-
-      <p>An operation that runs longer than about two and a half seconds is stopped with a
-      timeout error. The timer is an oscillator on the board counted down by a pair of
-      counters, and it runs whenever the controller is active.</p>
-
-      <h3>The command list</h3>
-
-      <p>A transfer is not one block to one place. The command list pointer names a list in main
-      memory, and the controller walks it. Each word of the list is a channel command word: a
-      physical page number, and a bit that says whether another command word follows. The
-      controller fetches a command word, moves one block into the page it names, advances the
-      heads to the next block, and fetches the next command word. So a single START can move a
-      run of blocks into a run of unrelated physical pages, which is what a paging system
-      wants.</p>
-
-      <h3>What a block carries</h3>
-
-      <p>A block is 256 words, which is one Lisp Machine page and 1,024 bytes. The drive
-      carries three more words for each block beyond its data: a header word, a checkword over
-      the header, and a checkword over the data. The controller compares the header against the
-      address it was told to read under a mask, runs the header through an error-correcting
-      code, and checks the data's checkword. Each of those has a bit of its own in the status
-      register, and a soft data error leaves the burst pattern and its bit position in
-      register 3 for the software to apply.</p>
-
-      <h3>The two geometries</h3>
-
-      <p>The controller was used with two drives. A T-80 has 815 cylinders, 5 heads and 16 or
-      17 blocks a track depending on how it is formatted. A T-300 has the same cylinders and
-      the same blocks a track with 19 heads. Formatted at 17 blocks a track, a T-300 holds
-      263,245 blocks, which is 257 MiB.</p>
-
-      <p>Block 0 of a pack holds its label. The label begins with the word <code>LABL</code>
-      and gives the geometry and the partition table, and a CADR reads it before it can do
-      anything else with the pack.</p>
-    </div>
+      <figcaption>The processor is two boards of its own; everything else in the machine plugs
+      into one of the two buses the bus interface arbitrates.</figcaption>
+    </figure>
   </div>
 </section>
 
 <section>
   <div class="band">
     <div class="prose">
-      <h2>The display board and the screen</h2>
-
-      <p>MIT's word for the display controller is the TV. The board this project reproduces is
-      the SIMPLE TV, the standard black-and-white one, which the window system asks for by
-      name. A colour board called the LISPM TV replaced it in 1980.</p>
-
-      <p>The screen is 768 pixels across and 963 lines down, one bit a pixel. A line is 24
-      words of 32 bits. The frame buffer is a window of 32,768 words on the Xbus at physical
-      <code>0o17000000</code>, of which the picture uses 23,112. There is no colour and no
-      grey. The picture is exactly what the software has written into those words.</p>
-
-      <p>Eight control words sit at physical <code>0o17377760</code>, and only the first four do
-      anything. Register 0 is the mode register. Registers 1, 2 and 3 are the data, the pointer
-      and the enable of a RAM holding the sync program, which the software loads and reads back
-      at every reinitialisation. The top four control words answer the bus and do nothing.</p>
-
-      <p>The mode register has four writable bits: two clock mode bits, a black-on-white bit
-      that displays one bits as black and zeros as white, and an interrupt enable. Bit 4 is the
-      vertical flag, a flip-flop of its own. It is set at the start of a frame, and a write of
-      the register puts the written bit into it, which is how the microcode clears it. The flag
-      and the enable together drive the Xbus interrupt line.</p>
-
-      <p>That is the vertical interrupt, and it is the machine's roughly-sixty-cycle clock. A
-      frame is 966 lines of 16.000 microseconds, 15,456,000 nanoseconds, which is 64.7 hertz.
-      The microcode hangs its mouse tracking and its scheduler's periodic work off it.</p>
-
-      <p>An Xbus reset clears the vertical flag and nothing else on the board. The mode register
-      and the sync enable clear on a power reset, which is a backplane wire the processor raises
-      only when the power comes on.</p>
+      <h2>The processor</h2>
+      <p>The CADR board carries the data paths and the ICMEM board the control memory. Every
+      edge-triggered register on them takes one clock edge a microcycle. Between the edges the
+      clock is a level, and the board reads it as one: a read phase and then a write phase.</p>
     </div>
+
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 740" role="img" aria-label="The processor's data paths. On the left the control side: a writable control store of 16,384 words of 48 bits whose bottom 1,024 are overlaid by the boot PROM, the instruction register, a sequencer with a 14-bit program counter, a 32-word return stack and an eight-deep history of the PC, and a dispatch memory of 2,048 words of 17 bits. On the right the data side: the A memory of 1,024 words drives the A bus; the M memory of 32 words, the pushdown buffer of 1,024 words, the Q register, VMA and MD drive the M bus; both reach the ALU and the byte hardware, whose result goes on the output bus and is written back to the scratchpads one microcycle later. VMA or MD indexes the two-level map, which puts out a 22-bit physical address. Below, a bar of one microcycle at normal speed: 145 nanoseconds, an 85 nanosecond read phase and a 60 nanosecond write phase, with the delay line's taps marked along it.">
+          <text class="d-t" x="10" y="18">the processor&rsquo;s data paths</text>
+
+          <!-- The control side: the ICMEM board's memories and the sequencer
+               the microprogram counter sits in. -->
+          <rect class="d-box" x="24" y="54" width="214" height="84"/>
+          <text class="d-t" x="131" y="76" text-anchor="middle">control store</text>
+          <text class="d-s" x="131" y="94" text-anchor="middle">16,384 words of 48 bits,</text>
+          <text class="d-s" x="131" y="108" text-anchor="middle">writable, with a parity bit</text>
+          <text class="d-s" x="131" y="128" text-anchor="middle">the bottom 1,024 are the boot PROM</text>
+
+          <path class="d-line" d="M238,96 H300"/>
+          <rect class="d-box" x="300" y="62" width="150" height="68"/>
+          <text class="d-t" x="375" y="86" text-anchor="middle">IR</text>
+          <text class="d-s" x="375" y="106" text-anchor="middle">the instruction,</text>
+          <text class="d-s" x="375" y="120" text-anchor="middle">48 bits wide</text>
+
+          <path class="d-line" d="M375,130 V150 H131 V170"/>
+          <rect class="d-box" x="24" y="170" width="214" height="100"/>
+          <text class="d-t" x="131" y="192" text-anchor="middle">the sequencer</text>
+          <text class="d-s" x="131" y="212" text-anchor="middle">PC, 14 bits</text>
+          <text class="d-s" x="131" y="226" text-anchor="middle">a return stack of 32 words</text>
+          <text class="d-s" x="131" y="240" text-anchor="middle">an 8-deep history of the PC,</text>
+          <text class="d-s" x="131" y="254" text-anchor="middle">which MIT calls the OPCs</text>
+          <path class="d-line" d="M24,220 H12 V96 H24"/>
+
+          <path class="d-line" d="M300,112 H270 V335 H238"/>
+          <rect class="d-box" x="24" y="300" width="214" height="70"/>
+          <text class="d-t" x="131" y="322" text-anchor="middle">dispatch memory</text>
+          <text class="d-s" x="131" y="340" text-anchor="middle">2,048 words of 17 bits:</text>
+          <text class="d-s" x="131" y="354" text-anchor="middle">a PC and three transfer bits</text>
+          <path class="d-line" d="M131,300 V270"/>
+
+          <!-- The data side. The A bus is driven only from the A memory; the
+               M bus from the M memory and a set of internal registers. -->
+          <rect class="d-box" x="500" y="54" width="170" height="64"/>
+          <text class="d-t" x="585" y="76" text-anchor="middle">A memory</text>
+          <text class="d-s" x="585" y="94" text-anchor="middle">1,024 words of 32 bits</text>
+          <text class="d-s" x="585" y="108" text-anchor="middle">drives the A bus alone</text>
+
+          <rect class="d-box" x="500" y="136" width="170" height="64"/>
+          <text class="d-t" x="585" y="158" text-anchor="middle">M memory</text>
+          <text class="d-s" x="585" y="176" text-anchor="middle">32 words, a copy of the</text>
+          <text class="d-s" x="585" y="190" text-anchor="middle">bottom of A memory</text>
+
+          <rect class="d-box" x="500" y="218" width="170" height="64"/>
+          <text class="d-t" x="585" y="240" text-anchor="middle">pushdown buffer</text>
+          <text class="d-s" x="585" y="258" text-anchor="middle">1,024 words of 32 bits:</text>
+          <text class="d-s" x="585" y="272" text-anchor="middle">the top of the stack</text>
+
+          <rect class="d-box" x="500" y="300" width="170" height="48"/>
+          <text class="d-t" x="585" y="322" text-anchor="middle">Q</text>
+          <text class="d-s" x="585" y="340" text-anchor="middle">for multiply and divide</text>
+
+          <rect class="d-box" x="500" y="366" width="170" height="40"/>
+          <text class="d-t" x="585" y="392" text-anchor="middle">VMA</text>
+
+          <rect class="d-box" x="500" y="424" width="170" height="44"/>
+          <text class="d-t" x="585" y="444" text-anchor="middle">MD</text>
+          <text class="d-s" x="585" y="460" text-anchor="middle">the memory data register</text>
+
+          <path class="d-line" d="M670,86 H690 V120 H720"/>
+          <text class="d-s" x="694" y="80">A bus</text>
+          <path class="d-line" d="M700,140 V446"/>
+          <path class="d-line" d="M670,168 H700"/>
+          <path class="d-line" d="M670,250 H700"/>
+          <path class="d-line" d="M670,324 H700"/>
+          <path class="d-line" d="M670,386 H700"/>
+          <path class="d-line" d="M670,446 H700"/>
+          <path class="d-line" d="M700,140 H720"/>
+          <text class="d-s" x="706" y="476">M bus</text>
+
+          <rect class="d-box" x="720" y="90" width="180" height="80"/>
+          <text class="d-t" x="810" y="114" text-anchor="middle">ALU</text>
+          <text class="d-s" x="810" y="132" text-anchor="middle">and the byte hardware:</text>
+          <text class="d-s" x="810" y="146" text-anchor="middle">extract, deposit and</text>
+          <text class="d-s" x="810" y="160" text-anchor="middle">selective field substitution</text>
+
+          <path class="d-line" d="M900,130 H930"/>
+          <rect class="d-box" x="930" y="90" width="110" height="80"/>
+          <text class="d-t" x="985" y="114" text-anchor="middle">OB</text>
+          <text class="d-s" x="985" y="134" text-anchor="middle">the output</text>
+          <text class="d-s" x="985" y="148" text-anchor="middle">bus, 32 bits</text>
+
+          <path class="d-line" d="M700,400 H720"/>
+          <rect class="d-box" x="720" y="380" width="180" height="88"/>
+          <text class="d-t" x="810" y="404" text-anchor="middle">the map</text>
+          <text class="d-s" x="810" y="422" text-anchor="middle">two levels, indexed by</text>
+          <text class="d-s" x="810" y="436" text-anchor="middle">VMA or by MD, giving</text>
+          <text class="d-s" x="810" y="450" text-anchor="middle">a physical page</text>
+
+          <path class="d-line" d="M985,170 V186 H1005 V540 H470 V86 H500"/>
+          <text class="d-s" x="478" y="556">OB writes A and M, one microcycle behind the instruction that made it</text>
+
+          <!-- One microcycle at normal speed, off the CLOCK1 delay line: the
+               instants are multiples of five nanoseconds on MIT's drawings. -->
+          <text class="d-t" x="60" y="588">one microcycle, 145 ns at normal speed</text>
+          <rect class="d-box" x="60" y="628" width="551" height="26"/>
+          <text class="d-s" x="335" y="645" text-anchor="middle">read phase, 85 ns</text>
+          <rect class="d-box" x="611" y="628" width="389" height="26"/>
+          <text class="d-s" x="805" y="645" text-anchor="middle">write phase, 60 ns</text>
+          <path class="d-line" d="M60,618 V628 M92,618 V628 M222,618 V628 M449,618 V628 M481,618 V628 M611,618 V628 M708,618 V628 M806,618 V628 M903,618 V628 M1000,618 V628"/>
+          <path class="d-line" d="M60,654 V664 M92,654 V664 M222,654 V664 M449,654 V664 M481,654 V664 M611,654 V664 M708,654 V664 M806,654 V664 M903,654 V664 M1000,654 V664"/>
+          <text class="d-n" x="60" y="612">-TPR0</text>
+          <text class="d-s" x="222" y="612" text-anchor="middle">TSE on</text>
+          <text class="d-n" x="449" y="612" text-anchor="middle">-TPR60</text>
+          <text class="d-n" x="708" y="612" text-anchor="middle">-TPR60 off</text>
+          <text class="d-n" x="903" y="612" text-anchor="middle">-TPW45</text>
+          <text class="d-s" x="92" y="678" text-anchor="middle">TSE off</text>
+          <text class="d-s" x="481" y="678" text-anchor="middle">SELECT</text>
+          <text class="d-s" x="611" y="678" text-anchor="middle">the read tap</text>
+          <text class="d-s" x="806" y="678" text-anchor="middle">the write pulse</text>
+          <text class="d-n" x="1000" y="678" text-anchor="end">-TPDONE</text>
+          <text class="d-s" x="60" y="702">fast 135 ns, normal 145, slow 160, extra slow 220; ILONG adds 40 ns to the read phase</text>
+          <text class="d-s" x="60" y="720">the clock can wait at the end of the read phase, and hang at the end of the write phase</text>
+        </svg>
+      </div>
+      <figcaption>The read phase is set by a tap of a delay line, so the machine has four speeds
+      and the instruction can ask for a long one.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>The microinstruction</h2>
+      <p>A microinstruction is 48 bits and there are four classes of it. Every one names two
+      sources, called A and M, and two of the four also name a destination. Three bits mean the
+      same thing in every class: STAT, ILONG and POPJ.</p>
+    </div>
+
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 350" role="img" aria-label="The 48-bit microinstruction in MIT's own field names, one row for each of its four classes. Bits 47 down to 26 are the same in all four: a spare bit, STAT which counts the instruction in the statistics counter, ILONG which runs the read phase long, the two-bit class code OP, POPJ which returns from a microsubroutine after one more instruction, a ten-bit A source and a six-bit M source. ALU has a destination, an output-bus select, a misc function, a six-bit ALU function, a carry in and a two-bit Q control. JUMP has a fourteen-bit target, the R, P and N bits, an invert, and five bits that are either a rotate or a condition. DISPATCH has a dispatch constant in place of the A source, an eleven-bit dispatch address, two map bits, a byte length and a rotate. BYTE has a destination, a byte function, a length less one and a rotate. The fields are drawn to the space their names need rather than to their width in bits.">
+          <text class="d-t" x="10" y="18">the microinstruction, 48 bits</text>
+          <text class="d-s" x="90" y="56">bit 47</text>
+          <text class="d-s" x="1030" y="56" text-anchor="end">bit 0</text>
+          <text class="d-t" x="84" y="96" text-anchor="end">ALU</text>
+          <rect class="d-box" x="90" y="70" width="940" height="44"/>
+          <text class="d-x" x="105" y="105" text-anchor="middle">47</text>
+          <path class="d-hair" d="M120,70 V114"/>
+          <text class="d-s" x="143.5" y="89" text-anchor="middle">STAT</text>
+          <text class="d-x" x="143.5" y="105" text-anchor="middle">46</text>
+          <path class="d-hair" d="M167,70 V114"/>
+          <text class="d-s" x="190.5" y="89" text-anchor="middle">ILONG</text>
+          <text class="d-x" x="190.5" y="105" text-anchor="middle">45</text>
+          <path class="d-hair" d="M214,70 V114"/>
+          <text class="d-s" x="239.5" y="89" text-anchor="middle">OP</text>
+          <text class="d-n" x="239.5" y="105" text-anchor="middle">44:43</text>
+          <path class="d-hair" d="M265,70 V114"/>
+          <text class="d-s" x="288.5" y="89" text-anchor="middle">POPJ</text>
+          <text class="d-x" x="288.5" y="105" text-anchor="middle">42</text>
+          <path class="d-hair" d="M312,70 V114"/>
+          <text class="d-s" x="380.5" y="89" text-anchor="middle">A SOURCE</text>
+          <text class="d-n" x="380.5" y="105" text-anchor="middle">41:32</text>
+          <path class="d-hair" d="M449,70 V114"/>
+          <text class="d-s" x="499" y="89" text-anchor="middle">M SOURCE</text>
+          <text class="d-n" x="499" y="105" text-anchor="middle">31:26</text>
+          <path class="d-hair" d="M549,70 V114"/>
+          <text class="d-s" x="617.5" y="89" text-anchor="middle">DESTINATION</text>
+          <text class="d-n" x="617.5" y="105" text-anchor="middle">25:14</text>
+          <path class="d-hair" d="M686,70 V114"/>
+          <text class="d-s" x="718" y="89" text-anchor="middle">OBUS SEL</text>
+          <text class="d-n" x="718" y="105" text-anchor="middle">13:12</text>
+          <path class="d-hair" d="M750,70 V114"/>
+          <text class="d-s" x="782" y="89" text-anchor="middle">MISC FUNC</text>
+          <text class="d-n" x="782" y="105" text-anchor="middle">11:10</text>
+          <path class="d-hair" d="M814,70 V114"/>
+          <text class="d-x" x="828" y="105" text-anchor="middle">9</text>
+          <path class="d-hair" d="M842,70 V114"/>
+          <text class="d-s" x="893.5" y="89" text-anchor="middle">ALU FUNCTION</text>
+          <text class="d-n" x="893.5" y="105" text-anchor="middle">8:3</text>
+          <path class="d-hair" d="M945,70 V114"/>
+          <text class="d-s" x="962" y="89" text-anchor="middle">CY</text>
+          <text class="d-x" x="962" y="105" text-anchor="middle">2</text>
+          <path class="d-hair" d="M979,70 V114"/>
+          <text class="d-s" x="1004.5" y="89" text-anchor="middle">Q CTL</text>
+          <text class="d-n" x="1004.5" y="105" text-anchor="middle">1:0</text>
+          <text class="d-t" x="84" y="164" text-anchor="end">JUMP</text>
+          <rect class="d-box" x="90" y="138" width="940" height="44"/>
+          <text class="d-x" x="105" y="173" text-anchor="middle">47</text>
+          <path class="d-hair" d="M120,138 V182"/>
+          <text class="d-s" x="143.5" y="157" text-anchor="middle">STAT</text>
+          <text class="d-x" x="143.5" y="173" text-anchor="middle">46</text>
+          <path class="d-hair" d="M167,138 V182"/>
+          <text class="d-s" x="190.5" y="157" text-anchor="middle">ILONG</text>
+          <text class="d-x" x="190.5" y="173" text-anchor="middle">45</text>
+          <path class="d-hair" d="M214,138 V182"/>
+          <text class="d-s" x="239.5" y="157" text-anchor="middle">OP</text>
+          <text class="d-n" x="239.5" y="173" text-anchor="middle">44:43</text>
+          <path class="d-hair" d="M265,138 V182"/>
+          <text class="d-s" x="288.5" y="157" text-anchor="middle">POPJ</text>
+          <text class="d-x" x="288.5" y="173" text-anchor="middle">42</text>
+          <path class="d-hair" d="M312,138 V182"/>
+          <text class="d-s" x="380.5" y="157" text-anchor="middle">A SOURCE</text>
+          <text class="d-n" x="380.5" y="173" text-anchor="middle">41:32</text>
+          <path class="d-hair" d="M449,138 V182"/>
+          <text class="d-s" x="499" y="157" text-anchor="middle">M SOURCE</text>
+          <text class="d-n" x="499" y="173" text-anchor="middle">31:26</text>
+          <path class="d-hair" d="M549,138 V182"/>
+          <text class="d-s" x="641" y="157" text-anchor="middle">JUMP ADDRESS</text>
+          <text class="d-n" x="641" y="173" text-anchor="middle">25:12</text>
+          <path class="d-hair" d="M733,138 V182"/>
+          <text class="d-s" x="765" y="157" text-anchor="middle">MISC FUNC</text>
+          <text class="d-n" x="765" y="173" text-anchor="middle">11:10</text>
+          <path class="d-hair" d="M797,138 V182"/>
+          <text class="d-s" x="811" y="157" text-anchor="middle">R</text>
+          <text class="d-x" x="811" y="173" text-anchor="middle">9</text>
+          <path class="d-hair" d="M825,138 V182"/>
+          <text class="d-s" x="839" y="157" text-anchor="middle">P</text>
+          <text class="d-x" x="839" y="173" text-anchor="middle">8</text>
+          <path class="d-hair" d="M853,138 V182"/>
+          <text class="d-s" x="867" y="157" text-anchor="middle">N</text>
+          <text class="d-x" x="867" y="173" text-anchor="middle">7</text>
+          <path class="d-hair" d="M881,138 V182"/>
+          <text class="d-s" x="895" y="157" text-anchor="middle">NG</text>
+          <text class="d-x" x="895" y="173" text-anchor="middle">6</text>
+          <path class="d-hair" d="M909,138 V182"/>
+          <text class="d-s" x="924" y="157" text-anchor="middle">0/1</text>
+          <text class="d-x" x="924" y="173" text-anchor="middle">5</text>
+          <path class="d-hair" d="M939,138 V182"/>
+          <text class="d-s" x="984.5" y="157" text-anchor="middle">ROTATE / COND</text>
+          <text class="d-n" x="984.5" y="173" text-anchor="middle">4:0</text>
+          <text class="d-t" x="84" y="232" text-anchor="end">DISPATCH</text>
+          <rect class="d-box" x="90" y="206" width="940" height="44"/>
+          <text class="d-x" x="105" y="241" text-anchor="middle">47</text>
+          <path class="d-hair" d="M120,206 V250"/>
+          <text class="d-s" x="143.5" y="225" text-anchor="middle">STAT</text>
+          <text class="d-x" x="143.5" y="241" text-anchor="middle">46</text>
+          <path class="d-hair" d="M167,206 V250"/>
+          <text class="d-s" x="190.5" y="225" text-anchor="middle">ILONG</text>
+          <text class="d-x" x="190.5" y="241" text-anchor="middle">45</text>
+          <path class="d-hair" d="M214,206 V250"/>
+          <text class="d-s" x="239.5" y="225" text-anchor="middle">OP</text>
+          <text class="d-n" x="239.5" y="241" text-anchor="middle">44:43</text>
+          <path class="d-hair" d="M265,206 V250"/>
+          <text class="d-s" x="288.5" y="225" text-anchor="middle">POPJ</text>
+          <text class="d-x" x="288.5" y="241" text-anchor="middle">42</text>
+          <path class="d-hair" d="M312,206 V250"/>
+          <text class="d-s" x="380.5" y="225" text-anchor="middle">DISPATCH CONSTANT</text>
+          <text class="d-n" x="380.5" y="241" text-anchor="middle">41:32</text>
+          <path class="d-hair" d="M449,206 V250"/>
+          <text class="d-s" x="499" y="225" text-anchor="middle">M SOURCE</text>
+          <text class="d-n" x="499" y="241" text-anchor="middle">31:26</text>
+          <path class="d-hair" d="M549,206 V250"/>
+          <text class="d-s" x="566" y="225" text-anchor="middle">L-PC</text>
+          <text class="d-x" x="566" y="241" text-anchor="middle">25</text>
+          <path class="d-hair" d="M583,206 V250"/>
+          <text class="d-s" x="603.5" y="225" text-anchor="middle">LC HK</text>
+          <text class="d-x" x="603.5" y="241" text-anchor="middle">24</text>
+          <path class="d-hair" d="M624,206 V250"/>
+          <text class="d-s" x="638" y="225" text-anchor="middle">xx</text>
+          <text class="d-x" x="638" y="241" text-anchor="middle">23</text>
+          <path class="d-hair" d="M652,206 V250"/>
+          <text class="d-s" x="724" y="225" text-anchor="middle">DISPATCH ADDRESS</text>
+          <text class="d-n" x="724" y="241" text-anchor="middle">22:12</text>
+          <path class="d-hair" d="M796,206 V250"/>
+          <text class="d-s" x="828" y="225" text-anchor="middle">MISC FUNC</text>
+          <text class="d-n" x="828" y="241" text-anchor="middle">11:10</text>
+          <path class="d-hair" d="M860,206 V250"/>
+          <text class="d-s" x="888" y="225" text-anchor="middle">MAPBT</text>
+          <text class="d-n" x="888" y="241" text-anchor="middle">9:8</text>
+          <path class="d-hair" d="M916,206 V250"/>
+          <text class="d-s" x="951.5" y="225" text-anchor="middle">BYTE LENGTH</text>
+          <text class="d-n" x="951.5" y="241" text-anchor="middle">7:5</text>
+          <path class="d-hair" d="M987,206 V250"/>
+          <text class="d-s" x="1008.5" y="225" text-anchor="middle">ROTATE</text>
+          <text class="d-n" x="1008.5" y="241" text-anchor="middle">4:0</text>
+          <text class="d-t" x="84" y="300" text-anchor="end">BYTE</text>
+          <rect class="d-box" x="90" y="274" width="940" height="44"/>
+          <text class="d-x" x="105" y="309" text-anchor="middle">47</text>
+          <path class="d-hair" d="M120,274 V318"/>
+          <text class="d-s" x="143.5" y="293" text-anchor="middle">STAT</text>
+          <text class="d-x" x="143.5" y="309" text-anchor="middle">46</text>
+          <path class="d-hair" d="M167,274 V318"/>
+          <text class="d-s" x="190.5" y="293" text-anchor="middle">ILONG</text>
+          <text class="d-x" x="190.5" y="309" text-anchor="middle">45</text>
+          <path class="d-hair" d="M214,274 V318"/>
+          <text class="d-s" x="239.5" y="293" text-anchor="middle">OP</text>
+          <text class="d-n" x="239.5" y="309" text-anchor="middle">44:43</text>
+          <path class="d-hair" d="M265,274 V318"/>
+          <text class="d-s" x="288.5" y="293" text-anchor="middle">POPJ</text>
+          <text class="d-x" x="288.5" y="309" text-anchor="middle">42</text>
+          <path class="d-hair" d="M312,274 V318"/>
+          <text class="d-s" x="380.5" y="293" text-anchor="middle">A SOURCE</text>
+          <text class="d-n" x="380.5" y="309" text-anchor="middle">41:32</text>
+          <path class="d-hair" d="M449,274 V318"/>
+          <text class="d-s" x="499" y="293" text-anchor="middle">M SOURCE</text>
+          <text class="d-n" x="499" y="309" text-anchor="middle">31:26</text>
+          <path class="d-hair" d="M549,274 V318"/>
+          <text class="d-s" x="617.5" y="293" text-anchor="middle">DESTINATION</text>
+          <text class="d-n" x="617.5" y="309" text-anchor="middle">25:14</text>
+          <path class="d-hair" d="M686,274 V318"/>
+          <text class="d-s" x="718" y="293" text-anchor="middle">BYTE FUNC</text>
+          <text class="d-n" x="718" y="309" text-anchor="middle">13:12</text>
+          <path class="d-hair" d="M750,274 V318"/>
+          <text class="d-s" x="782" y="293" text-anchor="middle">MISC FUNC</text>
+          <text class="d-n" x="782" y="309" text-anchor="middle">11:10</text>
+          <path class="d-hair" d="M814,274 V318"/>
+          <text class="d-s" x="865.5" y="293" text-anchor="middle">LENGTH - 1</text>
+          <text class="d-n" x="865.5" y="309" text-anchor="middle">9:5</text>
+          <path class="d-hair" d="M917,274 V318"/>
+          <text class="d-s" x="973.5" y="293" text-anchor="middle">ROTATE</text>
+          <text class="d-n" x="973.5" y="309" text-anchor="middle">4:0</text>
+          <text class="d-s" x="90" y="336">a field is drawn to the room its name needs, not to its width in bits</text>
+        </svg>
+      </div>
+      <figcaption>A JUMP with both its R and P bits set is not a jump at all: it is how the
+      microcode writes the control store.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>The map</h2>
+      <p>Memory is reached through two levels of paging that turn a 24-bit virtual address into
+      a 22-bit physical one. A page is 256 words, so the low eight bits pass through untouched.
+      There is no state in either level: a lookup is a ripple through two memories inside one
+      microcycle.</p>
+    </div>
+
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 410" role="img" aria-label="The two-level map. A 24-bit virtual address is cut three ways: bits 23 to 13 index the first level, 2,048 entries of five bits; those five bits joined with bits 12 to 8 index the second level, 1,024 entries of 24 bits; bits 7 to 0 are the word within the page and pass through untranslated. The second-level word is bit 23, which permits the access at all, bit 22, which permits a write, eight bits the map hardware does not read, and fourteen bits of physical page. The physical page and the eight untranslated bits together are the 22-bit physical address. Both levels are asynchronous RAM chained combinationally.">
+          <text class="d-t" x="10" y="18">the map, 24 virtual bits to 22 physical</text>
+
+          <text class="d-s" x="60" y="44">VMA, the virtual address</text>
+          <rect class="d-box" x="60" y="54" width="940" height="40"/>
+          <path class="d-hair" d="M491,54 V94 M687,54 V94"/>
+          <text class="d-n" x="275" y="74" text-anchor="middle">VMA&lt;23:13&gt;</text>
+          <text class="d-s" x="275" y="89" text-anchor="middle">11 bits, the level-1 index</text>
+          <text class="d-n" x="589" y="74" text-anchor="middle">VMA&lt;12:8&gt;</text>
+          <text class="d-s" x="589" y="89" text-anchor="middle">5 bits</text>
+          <text class="d-n" x="843" y="74" text-anchor="middle">VMA&lt;7:0&gt;</text>
+          <text class="d-s" x="843" y="89" text-anchor="middle">8 bits: a page is 256 words, so these pass through</text>
+
+          <path class="d-line" d="M275,94 V140"/>
+          <rect class="d-box" x="140" y="140" width="240" height="76"/>
+          <text class="d-t" x="260" y="164" text-anchor="middle">level 1</text>
+          <text class="d-s" x="260" y="182" text-anchor="middle">2,048 entries of 5 bits</text>
+          <text class="d-s" x="260" y="196" text-anchor="middle">asynchronous RAM</text>
+          <text class="d-s" x="260" y="210" text-anchor="middle">its five bits are VMAP</text>
+
+          <path class="d-line" d="M380,178 H460"/>
+          <path class="d-line" d="M589,94 V120 H430 V160 H460"/>
+          <text class="d-n" x="386" y="172">VMAP</text>
+          <text class="d-n" x="436" y="114">VMA&lt;12:8&gt;</text>
+          <rect class="d-box" x="460" y="140" width="240" height="76"/>
+          <text class="d-t" x="580" y="164" text-anchor="middle">level 2</text>
+          <text class="d-s" x="580" y="182" text-anchor="middle">1,024 entries of 24 bits</text>
+          <text class="d-s" x="580" y="196" text-anchor="middle">asynchronous too, so a</text>
+          <text class="d-s" x="580" y="210" text-anchor="middle">lookup is one ripple</text>
+
+          <path class="d-line" d="M580,216 V250"/>
+          <text class="d-s" x="340" y="240">the word the second level puts out</text>
+          <rect class="d-box" x="340" y="250" width="540" height="46"/>
+          <path class="d-hair" d="M410,250 V296 M480,250 V296 M660,250 V296"/>
+          <text class="d-s" x="375" y="270" text-anchor="middle">access</text>
+          <text class="d-x" x="375" y="286" text-anchor="middle">23</text>
+          <text class="d-s" x="445" y="270" text-anchor="middle">write</text>
+          <text class="d-x" x="445" y="286" text-anchor="middle">22</text>
+          <text class="d-s" x="570" y="270" text-anchor="middle">not read by the map</text>
+          <text class="d-n" x="570" y="286" text-anchor="middle">21:14</text>
+          <text class="d-s" x="770" y="270" text-anchor="middle">the physical page</text>
+          <text class="d-n" x="770" y="286" text-anchor="middle">13:0</text>
+
+          <path class="d-line" d="M770,296 V310 H359 V330"/>
+          <path class="d-line" d="M960,94 V318 H829 V330"/>
+          <text class="d-s" x="60" y="320">the physical address, 22 bits</text>
+          <rect class="d-box" x="60" y="330" width="940" height="40"/>
+          <path class="d-hair" d="M658,330 V370"/>
+          <text class="d-s" x="359" y="350" text-anchor="middle">the page the map gave</text>
+          <text class="d-n" x="359" y="364" text-anchor="middle">21:8</text>
+          <text class="d-s" x="829" y="350" text-anchor="middle">the word within the page</text>
+          <text class="d-n" x="829" y="364" text-anchor="middle">7:0</text>
+
+          <text class="d-s" x="60" y="394">bit 23 permits the access at all and bit 22 permits a write; a refusal reaches the microcode as a page fault</text>
+        </svg>
+      </div>
+      <figcaption>The refusal is what a page fault is, and a JUMP can test for it.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>What is where</h2>
+      <p>The physical address is 22 bits, so the Xbus can carry four million words. The top four of its
+      64 slots are not memory: two are I/O space and two are the whole of the Unibus. A cycle
+      to an address nothing answers is given up on by a timer on the bus interface.</p>
+    </div>
+
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 490" role="img" aria-label="The physical address space, 22 bits and four million words, drawn as a column with the scale broken. From the bottom of the space upwards: main memory, one 64K-word board to a slot, which with 32 boards fitted is 2,097,152 words; then the slots with no board in them, where a cycle times out as a nonexistent memory; then Xbus I/O space from octal 17000000, holding the display's frame buffer of 32,768 words, the display's eight control words at octal 17377760, four words above them that answer nothing, and the disk controller's four registers at octal 17377774; and at the top the whole Unibus from octal 17400000, holding the I/O board at octal 764000, the bus interface's own four blocks at octal 766000, and the window at octal 140000 that the bus interface's sixteen map registers translate into Xbus memory.">
+          <text class="d-t" x="10" y="18">the physical address space, 22 bits</text>
+
+          <rect class="d-box" x="86" y="60" width="360" height="320"/>
+          <path class="d-hair" d="M86,140 H446 M86,220 H446 M86,300 H446"/>
+          <rect class="d-tint" x="86" y="60" width="360" height="80"/>
+
+          <text class="d-n" x="80" y="64" text-anchor="end">0o0</text>
+          <text class="d-n" x="80" y="144" text-anchor="end">0o10000000</text>
+          <text class="d-n" x="80" y="224" text-anchor="end">0o17000000</text>
+          <text class="d-n" x="80" y="304" text-anchor="end">0o17400000</text>
+          <text class="d-n" x="80" y="384" text-anchor="end">0o17777777</text>
+
+          <text class="d-t" x="266" y="92" text-anchor="middle">main memory</text>
+          <text class="d-s" x="266" y="110" text-anchor="middle">one 64K-word board to a slot, up to 60</text>
+          <text class="d-s" x="266" y="124" text-anchor="middle">of the 64; 32 boards is 2,097,152 words</text>
+          <text class="d-t" x="266" y="172" text-anchor="middle">the slots with no board in them</text>
+          <text class="d-s" x="266" y="190" text-anchor="middle">a cycle here is answered by nothing</text>
+          <text class="d-s" x="266" y="204" text-anchor="middle">and times out as a nonexistent memory</text>
+          <text class="d-t" x="266" y="252" text-anchor="middle">Xbus I/O space</text>
+          <text class="d-s" x="266" y="270" text-anchor="middle">131,072 words, two slots</text>
+          <text class="d-t" x="266" y="332" text-anchor="middle">the Unibus</text>
+          <text class="d-s" x="266" y="350" text-anchor="middle">131,072 words, two slots, reached</text>
+          <text class="d-s" x="266" y="364" text-anchor="middle">two Unibus words at a time</text>
+
+          <path class="d-line" d="M446,260 H520"/>
+          <rect class="d-box" x="520" y="196" width="500" height="112"/>
+          <text class="d-t" x="530" y="216">in Xbus I/O space</text>
+          <text class="d-n" x="530" y="238">0o17000000</text>
+          <text class="d-s" x="650" y="238">the display&rsquo;s frame buffer, 32,768 words</text>
+          <text class="d-n" x="530" y="258">0o17377760</text>
+          <text class="d-s" x="650" y="258">the display&rsquo;s eight control words</text>
+          <text class="d-n" x="530" y="278">0o17377770</text>
+          <text class="d-s" x="650" y="278">four words that answer nothing at all</text>
+          <text class="d-n" x="530" y="298">0o17377774</text>
+          <text class="d-s" x="650" y="298">the disk controller&rsquo;s four registers</text>
+
+          <path class="d-line" d="M446,340 H520"/>
+          <rect class="d-box" x="520" y="320" width="500" height="140"/>
+          <text class="d-t" x="530" y="340">on the Unibus</text>
+          <text class="d-n" x="530" y="362">0o764000</text>
+          <text class="d-s" x="640" y="362">the I/O board, through 0o764176</text>
+          <text class="d-n" x="530" y="382">0o766000</text>
+          <text class="d-s" x="640" y="382">the bus interface, through 0o766176:</text>
+          <text class="d-s" x="640" y="396">the sixteen diagnostic registers, the</text>
+          <text class="d-s" x="640" y="410">interrupt and error status, the debug</text>
+          <text class="d-s" x="640" y="424">block, and the sixteen map registers</text>
+          <text class="d-n" x="530" y="446">0o140000</text>
+          <text class="d-s" x="640" y="446">the window those map registers translate</text>
+
+          <text class="d-s" x="86" y="412">drawn to equal heights: main memory is half</text>
+          <text class="d-s" x="86" y="426">the space, and the two I/O regions together</text>
+          <text class="d-s" x="86" y="440">a sixteenth of it</text>
+          <text class="d-s" x="86" y="464">Unibus addresses are byte addresses: a 32-bit</text>
+          <text class="d-s" x="86" y="478">word is two of them, the low half the lower</text>
+        </svg>
+      </div>
+      <figcaption>A Unibus master reaches Xbus memory through the window at the foot, because
+      the Unibus address space is not big enough to name it.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>The disk</h2>
+      <p>The disk controller is one board on the Xbus and it is a bus master as well as a
+      slave: it moves blocks into main memory itself. Writing the command register starts
+      nothing. A transfer begins when something is written to START, after the other registers
+      have been set up.</p>
+    </div>
+
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 560" role="img" aria-label="The disk. On the left, a Trident pack seen from above: 815 cylinders, five heads on a T-80 and nineteen on a T-300, seventeen blocks to a track, which on a T-300 is 263,245 blocks. Below it the disk address, one word of unit, cylinder, head and block, three bits of unit being why one controller addresses eight drives; and below that the command list, which the controller walks a channel command word at a time, each word naming a physical page and saying whether another follows. On the right, what a block is on the surface: a preamble, a VFO lock, a sync byte, a 32-bit header and its checkword, a relock, another sync and a pad, 1,024 bytes of data which is one Lisp machine page, a data checkword and a postamble. The header's own fields are the next-block code, the cylinder, the head and the block. At the foot, the four registers, at which reading and writing the same address are two different registers.">
+          <text class="d-t" x="10" y="18">the disk</text>
+
+          <!-- A pack from above: seventeen blocks to a track, one of them
+               marked, with the heads coming in from the left. -->
+          <circle class="d-box" cx="180" cy="160" r="92"/>
+          <circle class="d-box" cx="180" cy="160" r="38"/>
+          <path class="d-hair" d="M180.0,86.0 L180.0,68.0 M206.7,91.0 L213.2,74.2 M229.9,105.3 L242.0,92.0 M246.2,127.0 L262.4,119.0 M253.7,153.2 L271.6,151.5 M251.2,180.3 L268.5,185.2 M239.1,204.6 L253.4,215.4 M219.0,222.9 L228.4,238.2 M193.6,232.7 L196.9,250.4 M166.4,232.7 L163.1,250.4 M141.0,222.9 L131.6,238.2 M120.9,204.6 L106.6,215.4 M108.8,180.3 L91.5,185.2 M106.3,153.2 L88.4,151.5 M113.8,127.0 L97.6,119.0 M130.1,105.3 L118.0,92.0 M153.3,91.0 L146.8,74.2"/>
+          <path class="d-tint" d="M180.0,122.0 L180.0,68.0 A92,92 0 0 1 213.2,74.2 L193.7,124.6 A38,38 0 0 0 180.0,122.0 Z"/>
+          <path class="d-line" d="M18,160 H150"/>
+          <rect class="d-box" x="150" y="154" width="16" height="12"/>
+          <text class="d-s" x="18" y="152">a head</text>
+          <text class="d-s" x="180" y="276" text-anchor="middle">one marked block of the seventeen on a track</text>
+
+          <text class="d-t" x="300" y="112">a Trident pack</text>
+          <text class="d-s" x="300" y="134">815 cylinders</text>
+          <text class="d-s" x="300" y="152">5 heads on a T-80,</text>
+          <text class="d-s" x="300" y="166">19 on a T-300</text>
+          <text class="d-s" x="300" y="184">17 blocks a track, and a</text>
+          <text class="d-s" x="300" y="198">track is about 20,160 bytes</text>
+          <text class="d-s" x="300" y="216">a T-300 formatted at 17</text>
+          <text class="d-s" x="300" y="230">holds 263,245 blocks</text>
+
+          <text class="d-s" x="30" y="320">the disk address, one word: three bits of unit is why one controller has eight drives</text>
+          <rect class="d-box" x="30" y="330" width="490" height="46"/>
+          <path class="d-hair" d="M120,330 V376 M270,330 V376 M390,330 V376"/>
+          <text class="d-s" x="75" y="350" text-anchor="middle">unit</text>
+          <text class="d-n" x="75" y="366" text-anchor="middle">30:28</text>
+          <text class="d-s" x="195" y="350" text-anchor="middle">cylinder</text>
+          <text class="d-n" x="195" y="366" text-anchor="middle">27:16</text>
+          <text class="d-s" x="330" y="350" text-anchor="middle">head</text>
+          <text class="d-n" x="330" y="366" text-anchor="middle">15:8</text>
+          <text class="d-s" x="455" y="350" text-anchor="middle">block</text>
+          <text class="d-n" x="455" y="366" text-anchor="middle">7:0</text>
+
+          <text class="d-t" x="30" y="402">the command list</text>
+          <rect class="d-box" x="30" y="412" width="490" height="92"/>
+          <text class="d-s" x="44" y="432">the command list pointer names a list in main</text>
+          <text class="d-s" x="44" y="446">memory. Each word is a channel command word:</text>
+          <text class="d-s" x="44" y="460">bits 23 to 8 are a physical page and bit 0 says</text>
+          <text class="d-s" x="44" y="474">another follows. So one START moves a run of</text>
+          <text class="d-s" x="44" y="488">blocks into a run of unrelated physical pages.</text>
+
+          <!-- What is actually written round a track, from disk.text. -->
+          <text class="d-t" x="560" y="52">what a block is, on the surface</text>
+          <rect class="d-tint" x="554" y="193" width="476" height="16"/>
+          <text class="d-n" x="560" y="76">53 bytes</text>
+          <text class="d-s" x="660" y="76">PREAMBLE, all ones</text>
+          <text class="d-n" x="560" y="92">8 bytes</text>
+          <text class="d-s" x="660" y="92">VFO LOCK, all ones</text>
+          <text class="d-n" x="560" y="108">1 byte</text>
+          <text class="d-s" x="660" y="108">SYNC, octal 177</text>
+          <text class="d-n" x="560" y="124">32 bits</text>
+          <text class="d-s" x="660" y="124">HEADER, whose fields are below</text>
+          <text class="d-n" x="560" y="140">32 bits</text>
+          <text class="d-s" x="660" y="140">HEADER ECC</text>
+          <text class="d-n" x="560" y="156">20 bytes</text>
+          <text class="d-s" x="660" y="156">VFO RELOCK, all ones</text>
+          <text class="d-n" x="560" y="172">1 byte</text>
+          <text class="d-s" x="660" y="172">SYNC, octal 177</text>
+          <text class="d-n" x="560" y="188">1 byte</text>
+          <text class="d-s" x="660" y="188">PAD, octal 377</text>
+          <text class="d-n" x="560" y="204">1,024 bytes</text>
+          <text class="d-s" x="660" y="204">DATA: one Lisp machine page, 256 words</text>
+          <text class="d-n" x="560" y="220">32 bits</text>
+          <text class="d-s" x="660" y="220">DATA ECC</text>
+          <text class="d-n" x="560" y="236">44 bytes</text>
+          <text class="d-s" x="660" y="236">POSTAMBLE, all ones</text>
+
+          <text class="d-s" x="560" y="262">the header word, compared against the address the controller was told to read</text>
+          <rect class="d-box" x="560" y="270" width="470" height="46"/>
+          <path class="d-hair" d="M670,270 V316 M740,270 V316 M850,270 V316 M940,270 V316"/>
+          <text class="d-s" x="615" y="290" text-anchor="middle">next block</text>
+          <text class="d-n" x="615" y="306" text-anchor="middle">31:30</text>
+          <text class="d-s" x="705" y="290" text-anchor="middle">zero</text>
+          <text class="d-n" x="705" y="306" text-anchor="middle">29:28</text>
+          <text class="d-s" x="795" y="290" text-anchor="middle">cylinder</text>
+          <text class="d-n" x="795" y="306" text-anchor="middle">27:16</text>
+          <text class="d-s" x="895" y="290" text-anchor="middle">head</text>
+          <text class="d-n" x="895" y="306" text-anchor="middle">15:8</text>
+          <text class="d-s" x="985" y="290" text-anchor="middle">block</text>
+          <text class="d-n" x="985" y="306" text-anchor="middle">7:0</text>
+          <text class="d-s" x="560" y="336">everything goes low-order bit first, and the controller&rsquo;s bits</text>
+          <text class="d-s" x="560" y="350">are complemented from the ones the drive sees</text>
+
+          <text class="d-t" x="560" y="378">the four registers, at 0o17377774</text>
+          <text class="d-s" x="560" y="396">reading and writing one address are two different registers</text>
+          <text class="d-s" x="560" y="420">register</text>
+          <text class="d-s" x="620" y="420">read</text>
+          <text class="d-s" x="840" y="420">written</text>
+          <path class="d-hair" d="M560,426 H1030"/>
+          <text class="d-n" x="560" y="446">0</text>
+          <text class="d-s" x="620" y="446">status</text>
+          <text class="d-s" x="840" y="446">command</text>
+          <text class="d-n" x="560" y="466">1</text>
+          <text class="d-s" x="620" y="466">the last memory address</text>
+          <text class="d-s" x="840" y="466">the command list pointer</text>
+          <text class="d-n" x="560" y="486">2</text>
+          <text class="d-s" x="620" y="486">the disk address</text>
+          <text class="d-s" x="840" y="486">the disk address</text>
+          <text class="d-n" x="560" y="506">3</text>
+          <text class="d-s" x="620" y="506">a soft error&rsquo;s burst and its place</text>
+          <text class="d-s" x="840" y="506">START</text>
+        </svg>
+      </div>
+      <figcaption>A block is one Lisp machine page, and the drive carries three words of its own
+      beside it: a header, a checkword over the header, and a checkword over the data.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>The display</h2>
+      <p>MIT's word for the display controller is the TV, and the board this project
+      reproduces is the black-and-white SIMPLE TV. There is no colour and no grey. The picture
+      is exactly what the software has written into the frame buffer.</p>
+    </div>
+
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 390" role="img" aria-label="The display. On the left the screen, 768 pixels across and 963 lines down at one bit a pixel, with the top line drawn as the 24 words of 32 bits it is. On the right the frame buffer, 32,768 words at octal 17000000, of which the picture uses 23,112; the eight control words at octal 17377760, of which register 0 is the mode register, registers 1 to 3 are the data, pointer and enable of the sync program RAM, and registers 4 to 7 answer the bus and do nothing; and the vertical interrupt, which is bit 4 of the mode register set at the start of a frame and is the machine's roughly-sixty-cycle clock at 64.7 hertz.">
+          <text class="d-t" x="10" y="18">the display</text>
+
+          <text class="d-s" x="70" y="48">the screen, 768 by 963</text>
+          <rect class="d-box" x="70" y="60" width="200" height="250"/>
+          <path class="d-hair" d="M70,72 H270"/>
+          <path class="d-hair" d="M78.3,60 V72 M86.7,60 V72 M95.0,60 V72 M103.3,60 V72 M111.7,60 V72 M120.0,60 V72 M128.3,60 V72 M136.7,60 V72 M145.0,60 V72 M153.3,60 V72 M161.7,60 V72 M170.0,60 V72 M178.3,60 V72 M186.7,60 V72 M195.0,60 V72 M203.3,60 V72 M211.7,60 V72 M220.0,60 V72 M228.3,60 V72 M236.7,60 V72 M245.0,60 V72 M253.3,60 V72 M261.7,60 V72"/>
+          <text class="d-s" x="170" y="332" text-anchor="middle">one bit a pixel</text>
+          <text class="d-s" x="170" y="346" text-anchor="middle">a line is 24 words of 32 bits,</text>
+          <text class="d-s" x="170" y="360" text-anchor="middle">drawn here across the top</text>
+
+          <text class="d-t" x="320" y="52">the frame buffer</text>
+          <rect class="d-tint" x="320" y="66" width="395" height="32"/>
+          <rect class="d-box" x="320" y="66" width="560" height="32"/>
+          <path class="d-hair" d="M715,66 V98"/>
+          <text class="d-s" x="517" y="86" text-anchor="middle">23,112 words: the picture</text>
+          <text class="d-s" x="797" y="86" text-anchor="middle">the other 9,656</text>
+          <text class="d-s" x="320" y="116">32,768 words at 0o17000000, and the picture is exactly what the software puts there</text>
+
+          <text class="d-t" x="320" y="152">the eight control words at 0o17377760</text>
+          <text class="d-n" x="320" y="174">0</text>
+          <text class="d-s" x="370" y="174">the mode register: two clock-mode bits, black-on-white, an interrupt enable</text>
+          <text class="d-n" x="320" y="194">1</text>
+          <text class="d-s" x="370" y="194">the sync program RAM&rsquo;s data at the pointer</text>
+          <text class="d-n" x="320" y="214">2</text>
+          <text class="d-s" x="370" y="214">the pointer</text>
+          <text class="d-n" x="320" y="234">3</text>
+          <text class="d-s" x="370" y="234">the enable, over the vertical spacing</text>
+          <text class="d-n" x="320" y="254">4-7</text>
+          <text class="d-s" x="370" y="254">they answer the bus and do nothing</text>
+
+          <text class="d-t" x="320" y="290">the vertical interrupt</text>
+          <text class="d-s" x="320" y="312">Bit 4 of the mode register is a flip-flop of its own, set at the start of a frame.</text>
+          <text class="d-s" x="320" y="326">With the interrupt enable it drives the Xbus interrupt line, and that is the</text>
+          <text class="d-s" x="320" y="340">machine&rsquo;s roughly-sixty-cycle clock: 966 lines of 16.000 us is 15,456,000 ns,</text>
+          <text class="d-s" x="320" y="354">or 64.7 hertz. The microcode hangs mouse tracking and its scheduler on it.</text>
+        </svg>
+      </div>
+      <figcaption>The frame is the machine's only regular interrupt, and the microcode counts
+      time by it.</figcaption>
+    </figure>
   </div>
 </section>
 
@@ -479,329 +857,275 @@
   <div class="band">
     <div class="prose">
       <h2>The I/O board</h2>
-
-      <p>The I/O board is the machine's other half of a conversation with a person. It is a
-      Unibus board, and it carries the keyboard, the mouse, two clocks and the status register
-      they share, the serial port, and the Chaosnet interface. MIT drew the Chaosnet half as its
-      own set of sheets, but it is one board and forty-seven signals cross between the halves.</p>
-
-      <p>The board answers Unibus <code>0o764000</code> to <code>0o764176</code>, split into
-      eight groups of eight addresses. The first four groups go nowhere.</p>
-
-      <h3>The keyboard and the mouse</h3>
-
-      <p>The keyboard is at <code>0o764100</code> and <code>0o764102</code>, the low and high
-      halves of a 24-bit word shifted in by three 74LS164s. A word arriving sets KBD READY. A
-      read of the low half clears that flag and a read of the high half does not, which is why
-      the microcode's interrupt handler reads the high half first. A word arriving on one that
-      has not been read replaces it.</p>
-
-      <p>The mouse is at <code>0o764104</code> and <code>0o764106</code>: Y with the three
-      switches above it, and X with the raw quadrature lines above it, twelve bits of count on
-      each axis. Seven lines come in from the mouse, four of quadrature and three of switches.
-      They are latched twice, eight microseconds apart, and compared. Any difference sets
-      MOUSE READY. A read of Y clears that flag and a read of X does not. Each axis's direction is
-      one old line exclusive-ored with the other new one, and a step is counted only when
-      exactly one line of the pair moved, so a mouse moved faster than the sample clock loses
-      counts.</p>
-
-      <p>There is a beep at <code>0o764110</code> with no value in it. The address is not gated
-      by the write signal, so a read clicks as a write does, and it toggles a flip-flop. One
-      reference is one edge of a square wave, and the pitch is whatever rate the microcode
-      references it at.</p>
-
-      <p>The status register at <code>0o764112</code> puts eight bits on the bus: four interrupt
-      enables, the three ready flags, and the serial port's enable. Nothing drives the upper
-      byte, so it reads as ones. Five bits can be written.</p>
-
-      <h3>The clocks</h3>
-
-      <p>The microsecond clock is at <code>0o764120</code> and <code>0o764122</code>. It is a
-      32-bit counter driven by a 32 MHz crystal divided down, and it is latched: reading the low
-      half latches all 32 bits as the counter stood at the start of the bus cycle, and the high
-      half is that latch rather than the counter. It starts when the power comes on and no
-      Unibus reset stops it.</p>
-
-      <p><code>0o764124</code> is two different registers. Written, it is an interval timer:
-      four counters loaded from the bus that count down on a 16 microsecond clock and set CLOCK
-      READY when they borrow. Read, it is a sixty-cycle clock, a pair of counters that have
-      counted mains cycles since power-on and have their clears tied to ground.</p>
-
-      <p><code>0o764126</code> is a general-purpose port with nothing wired to it. It answers,
-      and it reads as ones.</p>
-
-      <h3>The serial port and the Chaosnet</h3>
-
-      <p>The serial port is at <code>0o764160</code> to <code>0o764176</code>. It is a Signetics
-      2651 with its own 5.0688 MHz baud-rate crystal beside it and an MC1488 and MC1489 out to
-      an RS-232 connector. The chip is conditioned to transmit on CTS and to receive on DCD, so
-      a device that carries bytes but does not raise the modem control lines gets nothing. The
-      rate and the character frame are whatever the machine programmed into the chip.</p>
-
-      <p>The Chaosnet interface is at <code>0o764140</code> to <code>0o764156</code>. It is the
-      five registers of the Chaosnet memo's section 7, two packet buffers of 256 words each,
-      one for transmit and one for receive, a bit counter and a lost count. Its own address
-      comes off switches on the board. Its decode is subtle and the subtlety is MIT's: the
-      decoder looks at read against write as well as at address bits, so one address is a
-      different register depending on the direction of the cycle.</p>
-
-      <h3>The interrupts</h3>
-
-      <p>The card has four interrupt vectors and one grant chain. A latch takes the four
-      requests at the grant, and two gates turn them into the low bits of the vector, so the
-      vectors are <code>0o260</code> for the keyboard and mouse, which share one,
-      <code>0o264</code> for the serial port, <code>0o270</code> for the Chaosnet and
-      <code>0o274</code> for the clock. With more than one pending the clock is named first,
-      then the Chaosnet, then the serial port, then the keyboard. Each request is a ready bit
-      ANDed with its own enable.</p>
-
-      <p>A Unibus reset reaches five flip-flops and the 2651 and nothing else. KBD READY, MOUSE
-      READY, the mouse counters, the interval timer and the microsecond counter have no
-      connection to it and carry on.</p>
+      <p>The I/O board is the machine's half of a conversation with a person. It is a Unibus
+      board carrying the keyboard, the mouse, two clocks, the serial port and the Chaosnet
+      interface. It answers a block of 64 addresses, in eight groups of eight.</p>
     </div>
-  </div>
-</section>
 
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The keyboard, and the light panel</h2>
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 560" role="img" aria-label="The I/O board. On the left its Unibus block, octal 764000 to 764176, in eight groups of eight addresses: the first four go nowhere, then the keyboard, mouse, beep and status register, then the clocks and a port with nothing wired to it, then the Chaosnet interface, then the serial port's 2651. On the right, the keyboard's 24-bit word, which is five reserved ones, a three-bit source identifier and sixteen bits of information, and for the new keyboard that information is zeroes, a bit that says whether the key is coming up or going down, and a seven-bit key position. A key is a position and nothing else: both pressing and releasing send a code, and Shift, Control and Meta are keys of their own. Then the mouse, which is seven lines rather than a pair of coordinates; the three clocks with their addresses; and the four interrupt vectors on one grant chain.">
+          <text class="d-t" x="10" y="18">the I/O board</text>
 
-      <h3>A key is a position</h3>
+          <rect class="d-box" x="60" y="60" width="240" height="320"/>
+          <path class="d-hair" d="M60,140 H300 M60,200 H300 M60,260 H300 M60,320 H300"/>
+          <text class="d-n" x="54" y="64" text-anchor="end">0o764000</text>
+          <text class="d-n" x="54" y="144" text-anchor="end">0o764100</text>
+          <text class="d-n" x="54" y="204" text-anchor="end">0o764120</text>
+          <text class="d-n" x="54" y="264" text-anchor="end">0o764140</text>
+          <text class="d-n" x="54" y="324" text-anchor="end">0o764160</text>
+          <text class="d-n" x="54" y="384" text-anchor="end">0o764176</text>
+          <text class="d-s" x="180" y="94" text-anchor="middle">the first four groups</text>
+          <text class="d-s" x="180" y="108" text-anchor="middle">of eight go nowhere</text>
+          <text class="d-t" x="180" y="166" text-anchor="middle">the keyboard and mouse</text>
+          <text class="d-s" x="180" y="184" text-anchor="middle">the beep and the status register</text>
+          <text class="d-t" x="180" y="226" text-anchor="middle">the clocks</text>
+          <text class="d-s" x="180" y="244" text-anchor="middle">and a port with nothing wired</text>
+          <text class="d-t" x="180" y="286" text-anchor="middle">the Chaosnet interface</text>
+          <text class="d-s" x="180" y="304" text-anchor="middle">five registers, two buffers</text>
+          <text class="d-t" x="180" y="346" text-anchor="middle">the serial port</text>
+          <text class="d-s" x="180" y="364" text-anchor="middle">a Signetics 2651</text>
 
-      <p>The Lisp Machine keyboard sends positions, not characters. Its own firmware says so:
-      "All key-encoding, including hacking of shifts, will be done in software in the central
-      machine, not in the keyboard. Note that both pressing and releasing a key send a code,
-      therefore the central machine knows the status of all keys."</p>
+          <!-- A key is a position and an up-or-down bit: ukbd.lisp's own
+               protocol section, which is where the 24 bits are written down. -->
+          <text class="d-t" x="340" y="52">a key is a position: the word is 24 bits</text>
+          <rect class="d-box" x="340" y="66" width="690" height="46"/>
+          <path class="d-hair" d="M490,66 V112 M660,66 V112"/>
+          <text class="d-s" x="415" y="86" text-anchor="middle">reserved, all ones</text>
+          <text class="d-n" x="415" y="102" text-anchor="middle">23:19</text>
+          <text class="d-s" x="575" y="86" text-anchor="middle">the source ID</text>
+          <text class="d-n" x="575" y="102" text-anchor="middle">18:16</text>
+          <text class="d-s" x="845" y="86" text-anchor="middle">the information, by source</text>
+          <text class="d-n" x="845" y="102" text-anchor="middle">15:0</text>
 
-      <p>So there are no modifier bits in a key event. Shift, Control, Meta, Super, Hyper, Top,
-      Greek and the rest are keys at positions of their own, and the microcode works out what
-      was meant from the stream of downs and ups. The keyboard this project models is MIT's new
-      keyboard of November 1980, which has 31 named keys and 11 shifting keys.</p>
+          <text class="d-s" x="660" y="128">for the new keyboard, source 001:</text>
+          <rect class="d-box" x="660" y="136" width="370" height="46"/>
+          <path class="d-hair" d="M790,136 V182 M900,136 V182 M960,136 V182"/>
+          <text class="d-s" x="725" y="156" text-anchor="middle">zero</text>
+          <text class="d-n" x="725" y="172" text-anchor="middle">15:9</text>
+          <text class="d-s" x="845" y="156" text-anchor="middle">up or down</text>
+          <text class="d-x" x="845" y="172" text-anchor="middle">8</text>
+          <text class="d-s" x="930" y="156" text-anchor="middle">zero</text>
+          <text class="d-x" x="930" y="172" text-anchor="middle">7</text>
+          <text class="d-s" x="995" y="156" text-anchor="middle">the key</text>
+          <text class="d-n" x="995" y="172" text-anchor="middle">6:0</text>
 
-      <p>What travels down the cable is 24 bits, low-order bit first, with a low start bit on a
-      line that is high when idle. Bits 23 to 19 are ones, bits 18 to 16 are a source
-      identifier that says which kind of keyboard this is, bit 8 is set for a key coming up and
-      clear for one going down, and the low bits are the position. A separate word, marked by
-      bit 15, reports that all keys are up, with one bit for each shifting key still held.</p>
+          <text class="d-s" x="340" y="204">Both pressing and releasing a key send a code, so the machine knows the</text>
+          <text class="d-s" x="340" y="218">state of every key. Shift, Control, Meta and the rest are keys at positions</text>
+          <text class="d-s" x="340" y="232">of their own, and all key-encoding is done in the central machine.</text>
 
-      <p>The keyboard also boots the machine. Its firmware watches for Control and Meta held
-      together with Rubout or with Return, and when it sees the combination it sends a boot
-      word instead of an ordinary key code. The I/O board recognises that word and pulls the
-      processor's boot line. The character typed along with the combination is left where the
-      bootstrap can read it, so the person at the keyboard can choose between a cold boot and a
-      warm one.</p>
+          <text class="d-t" x="340" y="268">the mouse: seven lines, and no coordinates</text>
+          <text class="d-s" x="340" y="290">Four quadrature lines and three switches come in. They are latched twice,</text>
+          <text class="d-s" x="340" y="304">eight microseconds apart, and compared: any difference sets MOUSE READY.</text>
+          <text class="d-s" x="340" y="318">Each axis counts twelve bits, and a step is counted only when exactly one</text>
+          <text class="d-s" x="340" y="332">line of a pair moved, so a fast mouse loses counts.</text>
 
-      <h3>The light panel</h3>
+          <text class="d-t" x="340" y="368">the clocks</text>
+          <text class="d-n" x="340" y="390">0o764120</text>
+          <text class="d-s" x="450" y="390">a 32-bit microsecond counter off a 32 MHz crystal, latched</text>
+          <text class="d-n" x="340" y="410">0o764124</text>
+          <text class="d-s" x="450" y="410">written, an interval timer on a 16 us clock; read, a</text>
+          <text class="d-s" x="450" y="424">sixty-cycle clock counting mains cycles since power-on</text>
+          <text class="d-n" x="340" y="444">0o764126</text>
+          <text class="d-s" x="450" y="444">a port with nothing wired to it, which reads as ones</text>
 
-      <p>A CADR has a small panel of lamps and one button, on a cable from the processor's
-      control memory board. The drawing marks its connector "TO LIGHT PANEL", and the wire list
-      says what is on it: eleven signals, and the rest of the connector unused.</p>
-
-      <ul>
-        <li><b>The boot button.</b> One wire, grounded by a push button. The memo describes it
-        as the diagnostic display panel starting a bootstrap "by grounding one wire".</li>
-        <li><b>The run lamp.</b> One wire, carrying MACHRUN, which is the signal that lets the
-        clock reach the data paths. Lit means the machine is running.</li>
-        <li><b>Nine parity lamps.</b> One for each memory that is checked: the A scratchpad, the
-        M scratchpad, the pushdown buffer, the microcode stack, the dispatch memory, the control
-        memory, main memory, and each of the two levels of the map. The same nine signals are
-        bits of the first flag register, where a console reads them.</li>
-      </ul>
-
-      <p>The processor board has a display of its own beside that. Five TIL309 LED digits show
-      the microprogram counter in octal, and the decimal point of each digit is wired to a
-      status lamp: two lamps that gather the parity errors into groups, the dispatch memory's,
-      the control memory's, and one that says the boot PROM is enabled. The bootstrap uses
-      them: if its self-test fails it goes into a loop, and the PC standing in the lights says
-      which test it was.</p>
-    </div>
-  </div>
-</section>
-
-<section>
-  <div class="band">
-    <div class="prose">
-      <h2>The debug cable, and CC</h2>
-
-      <p>A CADR is debugged by another CADR. The debugger's DBGOUT connector goes to the
-      debuggee's DBGIN connector over MIT's debug cable, twenty-one wires, and over it one
-      machine's Unibus cycles run on the other machine's bus. The console program that does the
-      debugging is called CC, and it is Lisp software running on the debugging machine.</p>
-
-      <p>The memo describes the arrangement more generally: the diagnostic interface lets "a
-      unibus operator, such as a pdp10, a pdp11, or another lisp machine" control the machine.
-      Another Lisp machine is what MIT actually used.</p>
-
-      <p>The cable carries a request line, two address bits, a write line and sixteen
-      bidirectional data lines one way, and an acknowledgement the other. The two address bits
-      are bits 3 and 2 of the debugger's own Unibus cycle into the debug block at
-      <code>0o766100</code>, and the debuggee decodes them into four strobes.</p>
-
-      <div class="tablewrap">
-        <table>
-          <thead>
-            <tr><th>Strobe</th><th>What the debuggee does</th></tr>
-          </thead>
-          <tbody>
-            <tr><td class="name">-DB NEED UB</td><td>runs a cycle on the debuggee's own Unibus at the address last latched</td></tr>
-            <tr><td class="name">-DB READ STATUS</td><td>drives the debuggee's error status onto the low byte of the data lines</td></tr>
-            <tr><td class="name">-DB ADR1 CLK</td><td>clocks three bits into the modifier register</td></tr>
-            <tr><td class="name">-DB ADR0 CLK</td><td>clocks sixteen bits into the address latches</td></tr>
-          </tbody>
-        </table>
+          <text class="d-t" x="340" y="480">the interrupts</text>
+          <text class="d-s" x="340" y="502">Four vectors on one grant chain, each a ready bit with its own enable:</text>
+          <text class="d-s" x="340" y="516">0o260 the keyboard and mouse, which share one; 0o264 the serial port;</text>
+          <text class="d-s" x="340" y="530">0o270 the Chaosnet; 0o274 the clock. With more than one pending the clock</text>
+          <text class="d-s" x="340" y="544">is named first, then the Chaosnet, then the serial port, then the keyboard.</text>
+        </svg>
       </div>
-
-      <p>Nothing on this cable carries meaning by an edge alone. Every wire is held for the
-      whole of a request, and the request itself falls one delay-line section after the other
-      lines are already standing, so the levels are settled before the debuggee looks at them.
-      The latches take the data at the trailing edge of their strobe, which is when the request
-      lifts, so the levels have to be standing then too.</p>
-
-      <p>Once a debug cycle can run on the debuggee's Unibus, everything on that bus is
-      reachable. The sixteen diagnostic registers are there, so the debugger can halt the
-      machine, single-step it and read the PC, the instruction register, the output bus and the
-      flags. Main memory is there too, through the debuggee's own Unibus map, which is what the
-      mapped window exists for. And the modifier register carries a bit that boots the debuggee,
-      which is the third of the ways a CADR can be started.</p>
-
-      <h3>Forcing an instruction</h3>
-
-      <p>The diagnostic registers do not reach the machine's own memories. There is no register
-      that reads the A scratchpad at an arbitrary address, or the pushdown buffer, or the
-      control store. CC reads them anyway, and the way it does is the interesting part of the
-      design.</p>
-
-      <p>The processor has a debug instruction register: six 74S374s holding 48 bits, which a
-      console writes sixteen bits at a time into three of the writable diagnostic addresses.
-      The clock control register has a bit called IDEBUG that puts that register on the
-      instruction bus in place of the control store. So a console can compose any
-      microinstruction it likes, load it, and clock the machine one microcycle with that
-      instruction forced in.</p>
-
-      <p>To read A memory location 3, CC builds an instruction whose A source is 3 and whose
-      destination is harmless, forces it in, steps one microcycle, and reads the output bus out
-      of the diagnostic registers. The machine reads its own scratchpad for the debugger. The
-      same trick reaches the M scratchpad, the pushdown buffer and the micro-stack, and a
-      write is the same thing with the sources and destination the other way round.</p>
-    </div>
+      <figcaption>The microsecond clock starts when the power comes on, and no Unibus reset
+      stops it.</figcaption>
+    </figure>
   </div>
 </section>
 
 <section>
   <div class="band">
     <div class="prose">
-      <h2>The boot PROM</h2>
-
-      <p>When a CADR is powered on it resets itself and the Unibus and does not start. RUN is
-      clear and the clock does not reach the data paths. What starts it is a boot signal, and
-      the memo lists the ways one can arrive: the diagnostic interface can command one, the
-      light panel's push button grounds a wire, the bus interface can ground a wire, the
-      Chaosnet interface pushes the button when it receives a certain sequence of messages from
-      the network, and the I/O board recognises the keyboard's boot combination.</p>
-
-      <p>Whichever it is, the sequence is the same. The machine is reset, which halts it if it
-      was running. RUN is turned on, which does nothing yet because the clock is stopped. The
-      speed is set to the slowest, parity traps, error halts and the statistics counter are
-      disabled, and the PROM is enabled over the bottom of the control store. The trailing edge
-      of the boot signal lets the clock start, and control arrives at location 0 of the PROM.</p>
-
-      <p>MIT's source for that program survives, with its comments. It opens by saying that
-      there are many places in it where cycles are wasted, deliberately, "since it is far more
-      important that code in a PROM be bug-free than that the boot sequence be 150 nanoseconds
-      faster". The program is version 9 and uses 454 of the 1,024 words the board decodes.</p>
-
-      <p>What it does, in order:</p>
-
-      <ul>
-        <li>Makes itself a zero and a word of all ones without depending on any memory, then
-        runs short diagnostics: that the ALU and the shifter drop and pick no bits, that the M
-        and A memories agree, that every carry in the ALU carries, and that the byte hardware
-        works a little.</li>
-        <li>Clears every internal memory, so that they all hold good parity. The control store
-        is 16,384 words and it writes them all.</li>
-        <li>Generates a reset on both buses.</li>
-        <li>Sets up the map. It writes one entry of the first level and reads it back, then
-        makes four pages: page 0 onto the first page of main memory, page 1 onto the disk
-        controller's registers, page 2 onto the diagnostic registers at
-        <code>0o766000</code>, and page 3 onto the second page of main memory, which is where
-        the system communication area lives.</li>
-        <li>Reads and rewrites every word of physical page 0, to give it good parity before the
-        disk is asked to save it.</li>
-        <li>Turns parity checking on, by writing to the mode register through the map.</li>
-        <li>Recalibrates the disk, then saves physical page 0 onto block 1 of the pack and reads
-        it back with a read compare, so that loading the microcode does not destroy it.</li>
-        <li>Reads block 0, the label, into page 0. It checks that the first word is
-        <code>LABL</code>, takes the drive's geometry out of it, and finds the microcode
-        partition.</li>
-        <li>Reads the microcode partition and loads it. The file in that partition is a series
-        of sections, each starting with three words: a section type, a starting address and a
-        count. Type 1 is the control store, 2 the dispatch memory, 3 main memory and 4 the A and
-        M memories.</li>
-        <li>Reads page 0 back off block 1 to undo the save, and copies the pushdown buffer into
-        the A and M memories, which is how it loads those two without a pass-around path.</li>
-        <li>Turns the PROM off and enters the real world. It writes to a Unibus address in the
-        diagnostic block that sets both error-stop enable and PROM disable, and jumps to
-        location 6. The PROM and the microcode that has just been loaded share a common loop at
-        that location, waiting for the Unibus cycle to happen, so the machine walks out of the
-        PROM and into its own microcode at the same instruction.</li>
-      </ul>
-
-      <p>If something goes wrong there is a halt for it, and MIT put a no-op before each one so
-      that the halts fall at even addresses and the two possible values in the PC lights differ
-      only in the low bit. A bad label, a bad address in a section, a disk error: each stops the
-      machine somewhere the light panel can be read.</p>
-
-      <p>The source's own list of work still to be done has one entry: loading the microcode
-      over the Chaosnet.</p>
+      <h2>The light panel</h2>
+      <p>A CADR has a small panel of lamps and one button, on a cable from the control memory
+      board. Twelve of the connector's wires are used and the rest are not. Every internal
+      memory in the machine is parity checked, and the panel is where the checks show.</p>
     </div>
+
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 310" role="img" aria-label="The light panel, on connector 1AJ2 of the ICMEM board, which the drawing marks TO LIGHT PANEL. Twelve wires are used: ten error lamps, the run lamp carrying MACHRUN, and the boot button, which is one wire grounded by a push button. The ten error lamps are the A memory, the M memory, the pushdown buffer, the microcode stack, the dispatch memory, the control store, main memory, both levels of the map, and the A memory's two address parity checks. Pins 15 to 22 of the connector are not connected. Beside it, on the ICMEM board itself, five TIL309 digits show the program counter in octal, and each digit's decimal point is a lamp of its own: two that gather the parity errors into groups, the dispatch memory's, the control store's, and one that says the boot PROM is selected.">
+          <text class="d-t" x="10" y="18">the light panel</text>
+          <text class="d-s" x="60" y="48">on connector 1AJ2, which the drawing marks &ldquo;TO LIGHT PANEL&rdquo;</text>
+
+          <rect class="d-box" x="60" y="60" width="700" height="90"/>
+          <text class="d-s" x="324" y="80" text-anchor="middle">ten error lamps</text>
+          <circle class="d-box" cx="90" cy="104" r="9"/>
+          <circle class="d-box" cx="142" cy="104" r="9"/>
+          <circle class="d-box" cx="194" cy="104" r="9"/>
+          <circle class="d-box" cx="246" cy="104" r="9"/>
+          <circle class="d-box" cx="298" cy="104" r="9"/>
+          <circle class="d-box" cx="350" cy="104" r="9"/>
+          <circle class="d-box" cx="402" cy="104" r="9"/>
+          <circle class="d-box" cx="454" cy="104" r="9"/>
+          <circle class="d-box" cx="506" cy="104" r="9"/>
+          <circle class="d-box" cx="558" cy="104" r="9"/>
+          <text class="d-x" x="90" y="132" text-anchor="middle">-APE</text>
+          <text class="d-x" x="142" y="132" text-anchor="middle">-MPE</text>
+          <text class="d-x" x="194" y="132" text-anchor="middle">-PDLPE</text>
+          <text class="d-x" x="246" y="132" text-anchor="middle">-DPE</text>
+          <text class="d-x" x="298" y="132" text-anchor="middle">-IPE</text>
+          <text class="d-x" x="350" y="132" text-anchor="middle">-SPE</text>
+          <text class="d-x" x="402" y="132" text-anchor="middle">-HIGHERR</text>
+          <text class="d-x" x="454" y="132" text-anchor="middle">-MEMPE</text>
+          <text class="d-x" x="506" y="132" text-anchor="middle">-V0PE</text>
+          <text class="d-x" x="558" y="132" text-anchor="middle">-V1PE</text>
+          <text class="d-s" x="622" y="80" text-anchor="middle">the run lamp</text>
+          <circle class="d-box" cx="622" cy="104" r="9"/>
+          <text class="d-x" x="622" y="132" text-anchor="middle">-MACHRUN</text>
+          <text class="d-s" x="708" y="80" text-anchor="middle">the button</text>
+          <rect class="d-box" x="688" y="94" width="40" height="20"/>
+          <text class="d-x" x="708" y="132" text-anchor="middle">-BOOT2</text>
+
+          <text class="d-n" x="60" y="182">-APE</text>
+          <text class="d-s" x="130" y="182">the A memory</text>
+          <text class="d-n" x="60" y="200">-MPE</text>
+          <text class="d-s" x="130" y="200">the M memory</text>
+          <text class="d-n" x="60" y="218">-PDLPE</text>
+          <text class="d-s" x="130" y="218">the pushdown buffer</text>
+          <text class="d-n" x="60" y="236">-SPE</text>
+          <text class="d-s" x="130" y="236">the microcode return stack</text>
+          <text class="d-n" x="60" y="254">-DPE</text>
+          <text class="d-s" x="130" y="254">the dispatch memory</text>
+          <text class="d-n" x="380" y="182">-IPE</text>
+          <text class="d-s" x="480" y="182">the control store</text>
+          <text class="d-n" x="380" y="200">-MEMPE</text>
+          <text class="d-s" x="480" y="200">main memory</text>
+          <text class="d-n" x="380" y="218">-V0PE, -V1PE</text>
+          <text class="d-s" x="480" y="218">the map, one lamp a level</text>
+          <text class="d-n" x="380" y="236">-HIGHERR</text>
+          <text class="d-s" x="480" y="236">the A memory&rsquo;s address parity</text>
+          <text class="d-s" x="60" y="284">pins 3 to 14 of the connector; pins 15 to 22 are not connected</text>
+
+          <!-- The processor carries a display of its own beside the panel. -->
+          <text class="d-s" x="800" y="48">and on the ICMEM board itself</text>
+          <rect class="d-box" x="800" y="60" width="38" height="54"/>
+          <rect class="d-box" x="844" y="60" width="38" height="54"/>
+          <rect class="d-box" x="888" y="60" width="38" height="54"/>
+          <rect class="d-box" x="932" y="60" width="38" height="54"/>
+          <rect class="d-box" x="976" y="60" width="38" height="54"/>
+          <circle class="d-tint" cx="831" cy="107" r="3"/>
+          <circle class="d-tint" cx="875" cy="107" r="3"/>
+          <circle class="d-tint" cx="919" cy="107" r="3"/>
+          <circle class="d-tint" cx="963" cy="107" r="3"/>
+          <circle class="d-tint" cx="1007" cy="107" r="3"/>
+          <text class="d-s" x="800" y="134">Five TIL309 digits show the PC in octal,</text>
+          <text class="d-s" x="800" y="148">and each decimal point is a lamp:</text>
+          <text class="d-n" x="800" y="172">TILT1</text>
+          <text class="d-s" x="866" y="172">the parity errors,</text>
+          <text class="d-n" x="800" y="190">TILT0</text>
+          <text class="d-s" x="866" y="190">gathered into two groups</text>
+          <text class="d-n" x="800" y="208">DPE</text>
+          <text class="d-s" x="866" y="208">the dispatch memory</text>
+          <text class="d-n" x="800" y="226">IPE</text>
+          <text class="d-s" x="866" y="226">the control store</text>
+          <text class="d-n" x="800" y="244">PROMENABLE</text>
+          <text class="d-s" x="800" y="262">the boot PROM is selected</text>
+        </svg>
+      </div>
+      <figcaption>The button is one wire grounded by a push button, and it is one of five ways a
+      CADR can be told to boot.</figcaption>
+    </figure>
   </div>
 </section>
 
 <section>
   <div class="band">
     <div class="prose">
-      <h2>The machine in figures</h2>
+      <h2>The debug cable</h2>
+      <p>A CADR is debugged by another CADR. The debugger's DBGOUT connector goes to the
+      debuggee's DBGIN, and over the cable one machine's Unibus cycles run on the other
+      machine's bus. The console program that does it is called CC, and it is Lisp software
+      running on the debugging machine.</p>
+    </div>
 
-      <p>Every figure here is read from the files listed in the next section. Numbers written
-      with a leading <code>0o</code> are octal, which is how MIT writes addresses.</p>
+    <figure class="fig">
+      <div class="scroll">
+        <svg viewBox="0 0 1060 410" role="img" aria-label="The debug cable between two CADRs. MIT's cable is 21 wires: four go one way, the request, the write line and two address bits, which are bits 3 and 2 of the debugger's own Unibus cycle into octal 766100 through 766137; sixteen are the data lines, which either end may drive; and one comes back, the acknowledgement. At the debuggee a 74S139 decodes the two address bits into four strobes: run a cycle on this machine's Unibus at the address last latched, drive the error status onto the low byte, clock three bits into the modifier register, and clock sixteen bits into the address latches. Everything on the debuggee's Unibus is then reachable, which is the sixteen diagnostic registers, the I/O board, and main memory through the debuggee's own Unibus map. Nothing on the cable carries meaning by an edge alone: every wire is held for the whole of a request. The bus interface's timeout PROM gives an ordinary cycle 10 microseconds and one across the cable 30.">
+          <defs>
+            <marker id="dbgarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <text class="d-t" x="10" y="18">the debug cable</text>
+
+          <rect class="d-box" x="40" y="70" width="280" height="150"/>
+          <text class="d-t" x="180" y="94" text-anchor="middle">the debugger</text>
+          <text class="d-s" x="180" y="114" text-anchor="middle">a CADR, running CC</text>
+          <text class="d-s" x="180" y="136" text-anchor="middle">its own Unibus cycle into</text>
+          <text class="d-s" x="180" y="150" text-anchor="middle">0o766100 - 0o766137 is</text>
+          <text class="d-s" x="180" y="164" text-anchor="middle">what goes out on the cable</text>
+          <text class="d-m" x="180" y="196" text-anchor="middle">DBGOUT</text>
+
+          <path class="d-line" d="M340,110 H720" marker-end="url(#dbgarr)"/>
+          <text class="d-s" x="530" y="104" text-anchor="middle">4 wires: -DEBUG OUT REQ, DEBUG OUT WR, A&lt;1:0&gt;</text>
+          <path class="d-line" d="M340,145 H720" marker-start="url(#dbgarr)" marker-end="url(#dbgarr)"/>
+          <text class="d-s" x="530" y="139" text-anchor="middle">16 wires: DBD&lt;15:0&gt;, and either end may drive them</text>
+          <path class="d-line" d="M720,180 H340" marker-end="url(#dbgarr)"/>
+          <text class="d-s" x="530" y="174" text-anchor="middle">1 wire back: DEBUG OUT ACK</text>
+          <text class="d-t" x="530" y="206" text-anchor="middle">MIT&rsquo;s debug cable, 21 wires</text>
+
+          <rect class="d-box" x="740" y="70" width="280" height="150"/>
+          <text class="d-t" x="880" y="94" text-anchor="middle">the debuggee</text>
+          <text class="d-m" x="880" y="116" text-anchor="middle">DBGIN</text>
+          <text class="d-s" x="880" y="140" text-anchor="middle">a 74S139 makes four strobes</text>
+          <text class="d-s" x="880" y="154" text-anchor="middle">out of the two address bits,</text>
+          <text class="d-s" x="880" y="168" text-anchor="middle">and one of the four makes it a</text>
+          <text class="d-s" x="880" y="182" text-anchor="middle">master on this machine&rsquo;s Unibus</text>
+
+          <path class="d-line" d="M880,220 V236 H30 V248"/>
+          <text class="d-s" x="40" y="252">the four strobes</text>
+          <text class="d-n" x="40" y="276">-DB NEED UB</text>
+          <text class="d-s" x="200" y="276">a cycle on the debuggee&rsquo;s own Unibus at the address last latched</text>
+          <text class="d-n" x="40" y="296">-DB READ STATUS</text>
+          <text class="d-s" x="200" y="296">drives the debuggee&rsquo;s error status onto the low byte of the data lines</text>
+          <text class="d-n" x="40" y="316">-DB ADR1 CLK</text>
+          <text class="d-s" x="200" y="316">clocks three bits into the modifier register, one of which boots the debuggee</text>
+          <text class="d-n" x="40" y="336">-DB ADR0 CLK</text>
+          <text class="d-s" x="200" y="336">clocks sixteen bits into the address latches</text>
+          <text class="d-s" x="40" y="358">Nothing here carries meaning by an edge alone: every wire is held for the whole of a request, and the</text>
+          <text class="d-s" x="40" y="372">latches take the data at the trailing edge of their strobe, which is when the request lifts.</text>
+          <text class="d-s" x="40" y="392">The bus interface&rsquo;s timeout PROM gives an ordinary cycle 10 microseconds, and one across the cable 30.</text>
+        </svg>
+      </div>
+      <figcaption>Once a cycle can run on the debuggee's Unibus, everything on that bus is
+      reachable, main memory included, through the debuggee's own Unibus map.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>Where each drawing came from</h2>
+      <p>Nothing above is a first-hand invention. Numbers written with a leading
+      <code>0o</code> are octal, which is how MIT writes an address.</p>
 
       <div class="tablewrap">
-        <table>
+        <table class="figsrc">
           <thead>
-            <tr><th>What</th><th class="num">Figure</th><th>Read from</th></tr>
+            <tr><th>Figure</th><th>Read from</th></tr>
           </thead>
           <tbody>
-            <tr><td>Data path width</td><td class="num">32 bits</td><td>AI Memo 528</td></tr>
-            <tr><td>Microinstruction</td><td class="num">48 bits</td><td>AI Memo 528, <code>ir.bits</code></td></tr>
-            <tr><td>Control store</td><td class="num">16,384 words</td><td>AI Memo 528, the IRAM pages</td></tr>
-            <tr><td>Boot PROM</td><td class="num">1,024 words</td><td>the PROM0 and PROM1 pages</td></tr>
-            <tr><td>Microcycle, normal speed</td><td class="num">145 ns</td><td>the CLOCK1 delay-line taps</td></tr>
-            <tr><td>Microcycle, other speeds</td><td class="num">135, 160, 220 ns</td><td>the same taps</td></tr>
-            <tr><td>A scratchpad</td><td class="num">1,024 x 32</td><td>AI Memo 528</td></tr>
-            <tr><td>M scratchpad</td><td class="num">32 x 32</td><td>AI Memo 528</td></tr>
-            <tr><td>Pushdown buffer</td><td class="num">1,024 x 32</td><td>AI Memo 528, the PDL pages</td></tr>
-            <tr><td>Microcode return stack</td><td class="num">32 words</td><td>AI Memo 528</td></tr>
-            <tr><td>Dispatch memory</td><td class="num">2,048 x 17</td><td>the DRAM pages</td></tr>
-            <tr><td>Virtual address</td><td class="num">24 bits</td><td>AI Memo 528</td></tr>
-            <tr><td>Physical address</td><td class="num">22 bits</td><td>AI Memo 528, the cable wire lists</td></tr>
-            <tr><td>Page</td><td class="num">256 words</td><td>the VMEM pages</td></tr>
-            <tr><td>Level-1 map</td><td class="num">2,048 x 5</td><td>the VMEM pages</td></tr>
-            <tr><td>Level-2 map</td><td class="num">1,024 x 24</td><td>the VMEM pages</td></tr>
-            <tr><td>Memory board</td><td class="num">65,536 words</td><td><code>CADRM</code>, the memory board's drawings</td></tr>
-            <tr><td>Cables to the bus interface</td><td class="num">5, of 40 wires</td><td><code>busint.erface</code></td></tr>
-            <tr><td>Signal wires across them</td><td class="num">92</td><td>the two ends' wire lists</td></tr>
-            <tr><td>Diagnostic registers</td><td class="num">16</td><td>AI Memo 528, <code>busint.erface</code></td></tr>
-            <tr><td>Xbus width</td><td class="num">32 bits</td><td><code>xspec.text.3</code></td></tr>
-            <tr><td>Xbus master setup</td><td class="num">80 ns</td><td><code>xspec.text.3</code></td></tr>
-            <tr><td>Screen</td><td class="num">768 x 963</td><td><code>lmtv.order</code>, <code>shwarm.lisp</code></td></tr>
-            <tr><td>Frame buffer</td><td class="num">32,768 words</td><td><code>lmtv.order</code></td></tr>
-            <tr><td>Frame</td><td class="num">15,456,000 ns</td><td>966 lines of 16.000 us, the SIMPLE TV board</td></tr>
-            <tr><td>Disk block</td><td class="num">256 words</td><td><code>disk.text</code></td></tr>
-            <tr><td>Trident T-80</td><td class="num">815 x 5 x 17</td><td><code>disk.text</code></td></tr>
-            <tr><td>Trident T-300</td><td class="num">815 x 19 x 17</td><td><code>disk.text</code>, a pack's own label</td></tr>
-            <tr><td>Drives on one controller</td><td class="num">8</td><td>the disk address register</td></tr>
-            <tr><td>Debug cable</td><td class="num">21 wires</td><td>the DBGOUT and DBGIN pages</td></tr>
+            <tr><td>the machine, whole</td><td><code>busint.erface</code>, muir's <code>data/cables.txt</code>, <code>xspec.text.3</code>, the three wire lists</td></tr>
+            <tr><td>the data paths</td><td>AI Memo 528, and the CLOCK1 delay-line taps as muir's <code>clock.rs</code> has them</td></tr>
+            <tr><td>the microinstruction</td><td><code>cadr/ir.bits</code>, and muir's <code>isa.rs</code> for the bit ranges</td></tr>
+            <tr><td>the map</td><td>AI Memo 528, <code>docs/map.md</code>, the VMEM drawings</td></tr>
+            <tr><td>the address space</td><td><code>sys/doc/unaddr.text</code>, muir's <code>busint.rs</code>, <code>cadr_xbus_decode.sv</code></td></tr>
+            <tr><td>the disk</td><td><code>sys/doc/disk.text</code>, and muir's <code>dm.rs</code> for the multiplexor</td></tr>
+            <tr><td>the display</td><td><code>cadrtv/lmtv.order</code>, <code>docs/tv.md</code>, <code>shwarm.lisp</code></td></tr>
+            <tr><td>the I/O board</td><td><code>docs/io-board.md</code>, <code>sys/io1/ukbd.lisp</code>, the <code>cadrio</code> drawings</td></tr>
+            <tr><td>the light panel</td><td><code>cadrwd/icmem3.wlr</code>, connector 1AJ2 pin by pin; AI Memo 528</td></tr>
+            <tr><td>the debug cable</td><td><code>docs/debug-cable.md</code>, <code>cadr/ir.bits</code>, the DBGOUT and DBGIN drawings</td></tr>
           </tbody>
         </table>
       </div>
@@ -814,136 +1138,98 @@
     <div class="prose">
       <h2>Sources</h2>
 
-      <p>Nothing on this page is a first-hand invention. Every claim is read from one of the
-      documents below. MIT's own files are committed unmodified in muir's <code>mit/</code>
-      directory, which has an inventory of what each one is and how it reached us.</p>
-
       <h3>MIT's own files</h3>
-
       <dl class="credits">
         <div>
           <dt>lmdoc/cadr.164</dt>
-          <dd>AI Memo 528, <i>CADR</i>, MIT Artificial Intelligence Laboratory, in the printing
-          of 15 May 1980. The machine described in MIT's own words, and the source for the data
-          paths, the microinstruction classes, the clock, error checking, self bootstrapping and
-          the diagnostic interface.</dd>
+          <dd>AI Memo 528, <i>CADR</i>, in the printing of 15 May 1980. The machine in MIT's
+          own words.</dd>
         </div>
         <div>
           <dt>cadr/ir.bits</dt>
-          <dd>MIT's microinstruction field diagram, with the functional source and destination
-          tables and the ALU and jump condition codes.</dd>
+          <dd>The microinstruction's field diagram, the functional source and destination
+          tables, and the sixteen diagnostic registers.</dd>
         </div>
         <div>
           <dt>cadr/busint.erface</dt>
-          <dd>"Interface to the Bus Interface". The five cables, the signals on them, the
-          diagnostic bus, and what WAIT and HANG mean.</dd>
+          <dd>The five cables, the two buses they carry, and what a wait and a hang are.</dd>
         </div>
         <div>
           <dt>cadr1/xspec.text.3</dt>
-          <dd>MIT's Xbus specification: the read and write cycles, the deskew delays, the
-          arbitration, and the pinout of every kind of slot in the cage.</dd>
-        </div>
-        <div>
-          <dt>cadr1/dubspc.wires</dt>
-          <dd>MIT's wiring list for the double nine-slot backplane: the Unibus strips pin by
-          pin, and the grant chains from slot to slot.</dd>
+          <dd>The Xbus specification: its cycles, its deskew delays, its arbitration, and the
+          pinout of every kind of slot in the cage.</dd>
         </div>
         <div>
           <dt>cadrwd/cadr4.wlr, cadrwd/icmem3.wlr, cadr1/busint.wlr</dt>
-          <dd>The wire lists the processor's two boards and the bus interface were wrapped
-          from, wire by wire. The light panel's connector and the cable pairings are read from
-          the first two.</dd>
-        </div>
-        <div>
-          <dt>cadr/cadr.book, cadr/icmem.book</dt>
-          <dd>The two print sets, which are what say which drawing belongs to which of the
-          processor's two boards.</dd>
+          <dd>The wire lists the two processor boards and the bus interface were wrapped from.
+          The light panel's connector is read from the second of them.</dd>
         </div>
         <div>
           <dt>cadrtv/lmtv.order</dt>
-          <dd>MIT's programming specification for the display board: the frame buffer, the
-          control words and the mode register.</dd>
+          <dd>The programming specification for the display board.</dd>
         </div>
         <div>
           <dt>cadrio/, cadrdc/, cadrm/, chaos/lispm/</dt>
           <dd>The drawings of the I/O board, the disk controller, the memory board and the
-          Chaosnet interface, each with its own wire list, stuffing list and engineering change
-          orders beside it.</dd>
+          Chaosnet interface.</dd>
         </div>
         <div>
           <dt>sys/ucadr/promh.text</dt>
-          <dd>MIT's source for the boot PROM, with its comments. The account of the boot
-          sequence above is this file.</dd>
-        </div>
-        <div>
-          <dt>sys/ubin/promh.mcr, sys/ubin/ucadr.mcr</dt>
-          <dd>The boot PROM as the machine runs it, and microcode 323 itself.</dd>
+          <dd>MIT's source for the boot PROM, with its comments.</dd>
         </div>
       </dl>
 
       <h3>Files in the System 100 release</h3>
-
       <dl class="credits">
         <div>
           <dt>sys/doc/disk.text</dt>
-          <dd>"Programming the Disk Controller". Every register and every status bit of the
-          disk controller, and the two drive geometries, in MIT's words.</dd>
+          <dd>"Programming the Disk Controller": every register, the format of a
+          block, and the two drive geometries.</dd>
+        </div>
+        <div>
+          <dt>sys/doc/unaddr.text</dt>
+          <dd>MIT's own allocation of Unibus and Xbus addresses.</dd>
         </div>
         <div>
           <dt>sys/io1/ukbd.lisp</dt>
-          <dd>The keyboard's own firmware, with the protocol documentation at the end of it:
-          the 24-bit word, the key table, and the boot combination.</dd>
+          <dd>The keyboard's firmware, with the protocol at the end of it: the 24-bit word,
+          the key table, and the boot combination.</dd>
         </div>
         <div>
-          <dt>sys/io1/serial.lisp, sys/io1/time.lisp</dt>
-          <dd>The drivers for the serial port and for the two clocks on the I/O board, which
-          are where their Unibus addresses are written down.</dd>
+          <dt>sys/io1/time.lisp, sys/io1/serial.lisp</dt>
+          <dd>The drivers for the two clocks and the serial port, which are where their Unibus
+          addresses are written down.</dd>
         </div>
         <div>
           <dt>sys/window/shwarm.lisp</dt>
-          <dd>The window system's own use of the display, which is what fixes the screen's
-          shape.</dd>
-        </div>
-        <div>
-          <dt>sys/ucadr/uc-cadr.lisp, uc-interrupt.lisp, uc-disk.lisp, uc-cold-disk.lisp</dt>
-          <dd>The microcode that reads the I/O board, takes its interrupts, and builds the disk
-          controller's command lists.</dd>
+          <dd>The window system's own use of the display, which is what fixes the shape of
+          the screen.</dd>
         </div>
       </dl>
 
       <h3>This project, and muir</h3>
-
       <dl class="credits">
         <div>
           <dt>muir, mit/README.md</dt>
-          <dd>The inventory of MIT's recovered files: what each directory is, which files are
-          read by code and which are reference, and what can be trusted.</dd>
+          <dd>The inventory of MIT's recovered files: what each one is, and how it reached
+          us.</dd>
         </div>
         <div>
-          <dt>muir, src/</dt>
-          <dd>The simulator's module headers, which cite MIT's drawings by page and part
-          reference for each behaviour they model. <code>busint.rs</code>,
-          <code>cable.rs</code>, <code>spy.rs</code>, <code>machine.rs</code>,
-          <code>clock.rs</code>, <code>disk_controller.rs</code>, <code>disk_unit.rs</code>,
-          <code>simpletv.rs</code>, <code>ioboard.rs</code>, <code>prom.rs</code> and
-          <code>terminal/keyboard.rs</code> are the ones this page draws on.</dd>
+          <dt>muir, src/ and data/cables.txt</dt>
+          <dd>The simulator's module headers, which cite MIT's drawings by page and
+          part reference for each behaviour they model, and the 92 wires of the five cables pin
+          by pin.</dd>
         </div>
         <div>
-          <dt>docs/map.md, docs/tv.md, docs/io-board.md</dt>
-          <dd>This repository's notes on the virtual memory map, the display and the I/O board,
-          each written by reading MIT's files and naming the line every claim came from.</dd>
-        </div>
-        <div>
-          <dt>docs/disk-controller.md, docs/debug-cable.md, docs/console.md</dt>
-          <dd>The same for the disk controller's registers and its command list walk, the debug
-          cable's four strobes and their timing, and what the diagnostic registers can and
-          cannot reach.</dd>
+          <dt>docs/</dt>
+          <dd>This repository's notes on the map, the display, the I/O board, the disk
+          controller and the debug cable, each written by reading MIT's files and naming
+          the line every claim came from.</dd>
         </div>
         <div>
           <dt>rtl/machine/</dt>
           <dd>The fabric this project builds, whose module headers transcribe the drawings page
-          by page. <code>cadr_microcycle.sv</code> carries the processor's own list of which
-          drawing page makes which part of a microcycle.</dd>
+          by page.</dd>
         </div>
       </dl>
     </div>
