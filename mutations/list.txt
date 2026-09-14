@@ -12938,3 +12938,225 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
   assign m_done  = p_done;
 @end
+
+# ================= THE SOFT PROCESSING SYSTEM ON THE ARTY A7-100 ===========
+#
+# `build/soc.pass` runs the board's own firmware on an Ibex in fabric against
+# a real `cadr_machine`, and reads every line it says off the UART.  The
+# records below are aimed at the seam between the two: the bridge that turns
+# one of the core's loads or stores into one AXI transaction at one of four
+# slaves, and the UART the firmware speaks through.  Everything else in that
+# design has a check of its own --- the four faces, the machine, and Ibex,
+# which is lowRISC's.
+
+@mutation soc-bridge-drops-an-address-bit
+@check soc
+@file rtl/plumbing/cadr_soc_axi.sv
+@note **Bit 2 of the address flipped on its way to the faces**, so every
+@note register reads its neighbour: the console's IDENT at word 0 comes back
+@note as STAT, and the disk pack side's IDENT --- which is REGISTER 7 and not
+@note register 0 --- comes back as PS_DIRTY.
+@note
+@note **Written as an XOR and not as a mask**, because a mask leaves bit 2 of
+@note `addr` unread and Verilator catches mutations at BIT granularity: lint
+@note would do the catching and the check would never see it.  That is this
+@note repository's standing rule about how a mutation has to be written and
+@note this record is here partly to keep exercising it.
+@note
+@note What catches it is the firmware holding each face's identifier to the
+@note constant the face's own header gives.  A firmware that printed whatever
+@note came back would say "IDENT" and look exactly like one that worked.
+@note
+@note **MEASURED, AND NOT WHAT THE FIRST DRAFT OF THIS NOTE PREDICTED.**  It
+@note is caught on the console and not on the disk pack side, at the third
+@note line: `the console at 0x80000000 answers .... (0x00000000), wanting
+@note CONS (0x434f4e53)` --- word 0 became word 1, which is STAT, and STAT is
+@note zero at that instant.  The prediction was that the pack side would be
+@note the one to say so.  The catching line is quoted rather than reasoned
+@note about, which is what this file asks of every record.
+@old
+            sel     <= target(addr[31:12]);
+            a_hold  <= addr;
+@new
+            sel     <= target(addr[31:12]);
+            a_hold  <= addr ^ 32'h4;
+@end
+
+@mutation soc-bridge-answers-a-write-before-it-lands
+@check soc
+@file rtl/plumbing/cadr_soc_axi.sv
+@note **The write answered on entering `W_RESP` rather than at `BVALID`.**
+@note The whole reason that state exists is that a store must not return until
+@note the slave has taken it: `cadr_console.sv` holds `BVALID` off for the
+@note length of the machine's reset pulse precisely so that a program's store
+@note returns with the machine running again, and a bridge that answered
+@note early would make the very next read of FLAG-1 mean nothing.
+@note
+@note It also leaves the slave's `BVALID` standing with nobody to take it, so
+@note the write channel is never drained.  **Measured, the catching line is
+@note `the firmware said 6 line(s), wanting 12`**: the firmware gets as far as
+@note halting the machine and then stops, because the console's next write
+@note never completes.  The transaction counters in the check say so too, and
+@note the line count is what the runner reports first.
+@note
+@note `bvalid_sel` is kept in the condition rather than deleted: a condition
+@note that dropped it would leave the signal unread and lint, not the check,
+@note would be the thing that noticed.
+@old
+        W_RESP: begin
+          if (bvalid_sel) begin
+@new
+        W_RESP: begin
+          if (bvalid_sel || st == W_RESP) begin
+@end
+
+@mutation soc-bridge-reads-the-wrong-window
+@check soc
+@file rtl/plumbing/cadr_soc_axi.sv
+@note **The console's page sent to the debug cable's window.**  Both are 4 KB
+@note pages on what was `M_AXI_GP1`, both answer every address they are
+@note offered, and both return a four-letter identifier --- so a decode that
+@note confused them would leave every handshake correct, every transaction
+@note completing and every slave behaving.  Nothing about the AXI protocol is
+@note wrong here; what is wrong is who is being spoken to.
+@note
+@note This is the crossing CLAUDE.md records as caught by nothing, anywhere,
+@note by any tool: two signals read in each other's place are both read.  What
+@note catches it is that the faces do not answer the same word --- which is
+@note the whole argument for every face in this repository having an
+@note identifier.  **Measured, the catching line is `the firmware said 11
+@note line(s), wanting 12`**: the console's identifier comes back "DBUG", and
+@note then the halt and the step are written into the debug cable's registers
+@note instead of the machine's, so the diagnostic cycles are not answered and
+@note two of the firmware's lines become one.  The identifier is what makes it
+@note visible; the line count is what the runner reports first.
+@note
+@note Written as a swap rather than as a deletion so that `CON_BASE` stays
+@note read and lint does not do the catching.
+@old
+    else if (page == CON_BASE[31:12]) return S_CON;
+@new
+    else if (page == CON_BASE[31:12]) return S_DBG;
+@end
+
+@mutation soc-uart-runs-at-half-its-baud
+@check soc
+@file rtl/plumbing/cadr_soc_uart.sv
+@note **The bit time doubled.**  A receiver samples in the middle of a bit and
+@note tolerates a few per cent, so a rate wrong by a little is not something a
+@note decode can see --- which is exactly why `tb/cadr_soc_tb.cpp` measures
+@note the narrowest level the transmitter ever holds and asserts that IT is
+@note the divisor.  The narrowest level on an 8N1 line with varied data is one
+@note bit time and nothing else, so that measurement is the rate.
+@note
+@note At double it the decode collapses --- **measured, the catching line is
+@note `the firmware said 1 line(s), wanting 12`**, the run's whole output
+@note arriving as one unsplittable string --- and the width assertion says 64
+@note ticks where it wants 32, which is the one that names the number.
+@note
+@note **A mutation of ONE tick would not be caught and is not written**, and
+@note that is honest rather than convenient.  A UART is specified to tolerate
+@note it and every real one does.  The property this check holds is that the
+@note rate is the rate the fabric was built for, at the resolution a wire can
+@note show; a tighter claim would need a different instrument.
+@old
+  localparam int unsigned DIVISOR = CLK_HZ / BAUD;
+@new
+  localparam int unsigned DIVISOR = CLK_HZ / (BAUD / 2);
+@end
+
+@mutation soc-the-seam-answers-from-the-wrong-source
+@check soc
+@file rtl/plumbing/cadr_soc.sv
+@note **The UART and the timer swapped as ANSWER sources, with the writes left
+@note where they were.**  `d_src` is held rather than recomputed because the
+@note core's address is not guaranteed to stand after the grant, and this
+@note mutates what it is held AS: a load of the UART's status comes back with
+@note the timer's word and a load of the timer comes back with the UART's.
+@note
+@note It is subtle in shape --- a store is selected by `uart_sel` and not by
+@note `d_src`, so the transmitter itself is untouched, and every handshake,
+@note every transaction and every slave is correct.  **It is not subtle in
+@note effect, measured: the catching line is `the firmware said 0 line(s),
+@note wanting 12`.**  The first thing `soc_putc` does is read the UART's
+@note status and wait for the transmitter to be ready, and that load now comes
+@note back with the timer's word --- which at reset is the timer's UNMAPPED,
+@note whose bit 0 is clear --- so not one character ever leaves.  The first
+@note draft of this note predicted it would print "UART TIME, timer UART" and
+@note that was reasoning rather than measurement.
+@note
+@note Written as a swap rather than a deletion so that every signal and both
+@note base parameters stay read: lint catches a mutation at bit granularity
+@note and would otherwise do the catching instead of the check.
+
+@old
+        d_src    <= in_axi   ? SRC_AXI
+                  : in_uart  ? SRC_UART
+                  : in_timer ? SRC_TIMER
+                             : SRC_RAM;
+@new
+        d_src    <= in_axi   ? SRC_AXI
+                  : in_uart  ? SRC_TIMER
+                  : in_timer ? SRC_UART
+                             : SRC_RAM;
+@end
+
+# **AN EQUIVALENCE, MEASURED, SO THAT NOBODY FILES IT AS A HOLE.**  The obvious
+# record for the bridge's single held selection --- `data_gnt = data_req &&
+# !d_busy` weakened to `data_gnt = data_req`, so the seam grants while a
+# transaction is in flight --- was written, run and SURVIVED, and it is not a
+# hole.  Ibex's load-store unit drops `data_req_o` at the grant and does not
+# raise it again until `data_rvalid_i`, so the seam is never OFFERED a second
+# request and the guard it lost was never the thing keeping it serial.  There
+# are two reasons the bridge only ever sees one transaction at a time and the
+# check can only see the one it is not testing.
+#
+# `tb/cadr_soc_tb.cpp` still asserts the property every tick --- which slaves
+# see a VALID, and how many transactions are outstanding on each channel ---
+# and that assertion is what would catch a MASTER that stopped being serial.
+# What it cannot catch is this seam losing a guard the master makes
+# unnecessary.  A live record for the same property would have to mutate Ibex,
+# which is vendored and not ours to break.
+
+@mutation soc-the-memory-is-read-one-word-along
+@check soc
+@file rtl/plumbing/cadr_soc_ram.sv
+@note **The data port's READ rotated and its WRITE left alone.**  A rotation
+@note applied to both would be a no-op by construction --- a bijection on a
+@note shared address relabels the storage consistently, which is the
+@note equivalence CLAUDE.md records for the map's two levels and which cost a
+@note night to understand.  Applied to the read alone it is not: a word stored
+@note at an address comes back from its neighbour, and the instruction port,
+@note which reads the same memory with an unrotated address, is untouched.
+@note
+@note The check runs a firmware whose every variable and whose whole stack are
+@note in this memory, so it is caught at once and comprehensively.
+@note **Measured, the catching line is `line 1 is missing`**: not one character
+@note reaches the wire, because the first thing the firmware does with a
+@note variable is set up its stack.
+@old
+      b_rdata <= mem[b_addr];
+@new
+      b_rdata <= mem[b_addr ^ 1];
+@end
+
+@mutation soc-the-timer-says-the-wrong-microsecond
+@check soc
+@file rtl/plumbing/cadr_soc_timer.sv
+@note **Half as many ticks in a microsecond as there are.**  The point of this
+@note register is that the firmware does NOT hold its own copy of the board's
+@note clock: `boards/arty-z7-20/vivado/tick.tcl` exists because a constraint
+@note file holding its own period described a machine nobody was building, and
+@note the same argument applies to a program.  A firmware that divided by a
+@note constant of its own would be the second description this register exists
+@note to prevent.
+@note
+@note What catches it is the firmware printing the number it read: the second
+@note line becomes `UART UART, timer TIME, 50 ticks a microsecond`.  Every
+@note delay it makes then comes out half as long, which is harmless and is not
+@note what says so --- the printed number is.
+@old
+  localparam logic [31:0] TICKS_PER_US = 32'(CLK_HZ / 1_000_000);
+@new
+  localparam logic [31:0] TICKS_PER_US = 32'(CLK_HZ / 2_000_000);
+@end

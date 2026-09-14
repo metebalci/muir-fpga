@@ -11,10 +11,13 @@
 # whether it can be built at all, against a real part with the board's own
 # package pins, through to a `.bit`.
 #
-# **THIS BOARD HAS NO PROCESSING SYSTEM, SO IT HAS NO SWITCHES BUT ONE.**  The
-# Arty Z7-20's flow carries `DDR`, `PROVE` and `HDMI`, and every one of the
-# three turns on a port of the Zynq's. There is no Zynq here. What is left is
-# `PROBE_DEPTH`, which is pure fabric and carries over unchanged:
+# **THIS BOARD HAS NO PROCESSING SYSTEM, AND ITS SWITCHES ARE ITS OWN:
+# `PROBE_DEPTH`, `DDR`, `PROVE` AND `SOC`.**  The Arty Z7-20's flow carries
+# `DDR`, `PROVE` and `HDMI`, and every one of the three turns on a port of the
+# Zynq's. There is no Zynq here: `DDR` and `PROVE` below mean the board's own
+# DDR3L through the generated controller, `HDMI` has no counterpart, and `SOC`
+# is the soft processing system the other board has no need of. `PROBE_DEPTH`
+# is pure fabric and carries over unchanged:
 #
 #     PROBE_DEPTH=1024 OUTDIR=build/a7-probe \
 #         vivado -mode batch -source boards/arty-a7-100/vivado/bitstream.tcl
@@ -98,9 +101,32 @@ set ddr   [expr {[info exists ::env(DDR)]   ? $::env(DDR)   : 0}]
 set prove [expr {[info exists ::env(PROVE)] ? $::env(PROVE) : 0}]
 set memory [expr {($ddr > 0 || $prove > 0) ? 1 : 0}]
 
+# **THE SOFT PROCESSING SYSTEM, THE FOURTH SWITCH.**  `SOC=1` puts
+# `rtl/plumbing/cadr_soc.sv` --- an Ibex core in fabric, its memory with the
+# firmware already in it, a UART, a timer and a bridge --- and the four
+# register faces it masters into the design, at the addresses the Linux
+# programs on the other two boards use.  Zero, the default, is the machine and
+# its tie-offs, which is what every figure in `README.md` was measured on.
+#
+#     SOC=1 OUTDIR=build/a7-soc \
+#         vivado -mode batch -source boards/arty-a7-100/vivado/bitstream.tcl
+set soc [expr {[info exists ::env(SOC)] ? $::env(SOC) : 0}]
+
 set prom build/boot_prom.hex
 if {![file exists $prom]} {
     puts "BIT: $prom is missing; run `make $prom` first"
+    exit 1
+}
+
+# **THE FIRMWARE IS PART OF THE BITSTREAM AND ITS ABSENCE IS FATAL.**  The
+# soft system's memory takes its contents at elaboration, the way the control
+# store takes MIT's boot PROM, so a bitstream built without the hex would
+# carry a memory of nothing and a core that runs zeros --- which on RISC-V is
+# an illegal instruction at the first fetch.  `$readmemh` on a missing file is
+# a warning and not an error, so this is the thing that has to notice.
+set firmware build/soc_firmware.hex
+if {$soc != 0 && ![file exists $firmware]} {
+    puts "BIT: $firmware is missing; run `make $firmware` first"
     exit 1
 }
 
@@ -108,7 +134,7 @@ if {![file exists $prom]} {
 # `.sv` files are NOT in this glob: `cadr_ps7.sv` instantiates a `PS7`, which
 # is not a primitive on an Artix, and reading it would be a black box in a
 # design that never asked for one.
-set srcs [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-a7-100/*.sv]
+set sources [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-a7-100/*.sv]
 
 # THE MEMORY CONTROLLER'S OWN VERILOG, read as Verilog and not as
 # SystemVerilog, and only when it is going to be used.
@@ -136,16 +162,44 @@ if {$memory} {
     }
     read_verilog $mig_v
 } else {
-    set srcs [lsearch -all -inline -not -exact $srcs \
-                  boards/arty-a7-100/cadr_a7_memory.sv]
+    set sources [lsearch -all -inline -not -exact $sources \
+                     boards/arty-a7-100/cadr_a7_memory.sv]
 }
 
-read_verilog -sv $srcs
-synth_design -top cadr_arty_a7 -part $part \
+set incdirs {}
+
+if {$soc != 0} {
+    # Ibex, as lowRISC publishes it.  `third_party/ibex/README.md` says which
+    # commit, which files and why, and carries a digest for each.  The two
+    # include directories are its own: `prim_assert.sv` and the macro files
+    # beside it, and `dv_fcov_macros.svh`.
+    set sources [concat $sources \
+        [glob third_party/ibex/rtl/*.sv] \
+        third_party/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_cipher_pkg.sv \
+        third_party/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_lfsr.sv]
+    set incdirs [list third_party/ibex/vendor/lowrisc_ip/ip/prim/rtl \
+                      third_party/ibex/vendor/lowrisc_ip/dv/sv/dv_utils]
+}
+read_verilog -sv $sources
+
+# `SYNTHESIS` is what makes Ibex's assertion macros empty --- `prim_assert.sv`
+# dispatches on it --- and it is passed explicitly rather than relied on:
+# whether a tool defines it for SystemVerilog is a property of the tool and
+# this repository's rule is to read rather than to guess.
+set synth_args [list -top cadr_arty_a7 -part $part \
     -generic PROM_HEX=[file normalize $prom] \
     -generic PROBE_DEPTH=$probe_depth \
     -generic DDR=$ddr \
-    -generic PROVE=$prove
+    -generic PROVE=$prove \
+    -generic SOC=$soc]
+if {$soc != 0} {
+    lappend synth_args -generic FIRMWARE_HEX=[file normalize $firmware]
+    lappend synth_args -include_dirs $incdirs
+    lappend synth_args -verilog_define SYNTHESIS=1
+    puts "BIT: SOC=1 --- the soft processing system is in this design, with"
+    puts "BIT: the firmware from $firmware."
+}
+synth_design {*}$synth_args
 if {$memory} {
     puts "BIT: DDR=$ddr PROVE=$prove --- the machine's memory port is answered"
     puts "BIT: by the board's own DDR3L through the generated controller."
@@ -172,6 +226,17 @@ read_xdc -ref cadr_machine rtl/plumbing/xilinx7/cadr_machine.xdc
 # reads exactly like a constraint which applied. The file is the other board's
 # and is read unchanged --- see the header for why it is not copied.
 if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
+# **THE DEBUG CABLE's WINDOW IS OUTSIDE `cadr_machine` AND THE MACHINE's OWN
+# FILE CANNOT REACH IT.**  `cadr_machine.xdc` is read `-ref cadr_machine`, so
+# a register a level above it is timed at one tick however deep the cone in
+# front of it --- and the cone in front of this one is the machine's whole
+# diagnostic multiplexer, twenty-three logic levels.  Measured on this board
+# without the file: -9.236 ns from `memstart_reg_replica` into
+# `sts_dbd_reg[1]`, which is the same arc and nearly the same number the other
+# board measured at -8.772.  `rtl/plumbing/xilinx7/cadr_debug.xdc` is that
+# board's file, read here unchanged; its header has the whole argument for
+# four ticks and for why it names the `/D` pins and nothing else.
+if {$soc != 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
 
 # THE DDR3L's PINS, IN EXACTLY ONE OF TWO FILES.  With the controller in the
 # design, its own generated constraints place every pin and add the slew
@@ -269,6 +334,16 @@ if {$probe_depth > 0} { lappend inside g_probe.u_probe }
 # so `cadr_mem_cross`, `cadr_mig_ui`, `cadr_jtag_mem` and the tally are all
 # still asked about.
 if {$memory} { lappend inside g_memory.u_memory.u_mig }
+# **AND THE DEBUG CABLE's WINDOW WITH `SOC=1`**, for the reason the other
+# board's flow lists `g_ddr.u_debug_window`: this assertion catches any
+# register outside the machine whose requirement is more than one period, and
+# `rtl/plumbing/xilinx7/cadr_debug.xdc` deliberately gives four ticks to one
+# register in that module.  Naming it here is what keeps the assertion about
+# everything ELSE --- a reset synchroniser or a free-running counter given a
+# whole microcycle to settle is still a failure, and the soft processing
+# system's own registers, the pack side's and the console's are all still
+# asked.
+if {$soc != 0} { lappend inside g_soc.u_debug_window }
 assert_constraints_scoped $inside $tick
 
 # --- 1. did the constraints apply?
@@ -418,6 +493,32 @@ if {[llength $paths]} {
     if {$wns < 0} {
         puts "BIT: TIMING IS NOT MET --- the bitstream below is of a design that"
         puts "BIT: does not close. It proves the flow, not the machine."
+        # **AND WHERE, NOT MERELY HOW MUCH.**  A worst-slack figure names one
+        # path and says nothing about how many others are wrong or which part
+        # of the design they are in, and this repository has spent slices on
+        # exactly that gap --- a fit figure for a module nobody was timing, a
+        # slack figure whose whole total was one endpoint.  So when the design
+        # does not close, the failing endpoints are counted by the top-level
+        # instance they end in.  It is the first question anybody asks and it
+        # costs one query.
+        set fails [get_timing_paths -quiet -max_paths 20000 -nworst 1 \
+                       -slack_lesser_than 0 -delay_type max]
+        if {[llength $fails]} {
+            array unset where
+            foreach path $fails {
+                set pin [get_property NAME [get_property ENDPOINT_PIN $path]]
+                set top [lindex [split $pin /] 0]
+                if {[info exists where($top)]} {
+                    incr where($top)
+                } else {
+                    set where($top) 1
+                }
+            }
+            puts "BIT: [llength $fails] failing endpoint(s), by where they end:"
+            foreach top [lsort [array names where]] {
+                puts "BIT:   [format %6d $where($top)]  $top"
+            }
+        }
     } else {
         puts "BIT: timing is met"
     }

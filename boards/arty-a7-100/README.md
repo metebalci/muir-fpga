@@ -142,16 +142,26 @@ is a MAC in fabric with the CHUDP encapsulation above it. That is an
 observation about the pins and not a design.
 
 **The serial line.** The board has a USB-UART bridge on two fabric pins,
-`uart_rxd_out` on D10 and `uart_txd_in` on A9. The Arty Z7-20's master file
+`uart_rxd_out` on D10 and `uart_txd_in` on A9. **Those two pins are used now,
+and not for this.** With `SOC=1` they are the soft processing system's own
+console: the firmware's words to whoever is at the board, at 115,200 baud.
+That is a different thing from the CADR's serial port, which is the 2651 on the
+I/O board and whose far end is a TCP socket on the other boards. A board that
+wanted both would need a second UART on a Pmod, and nothing here takes that
+decision. The Arty Z7-20's master file
 constrains no UART pins at all, so that board's serial port is the processing
 system's. Here it is the fabric's, and the answer is a transmitter and a
 receiver beside `rtl/plumbing/cadr_serial_line.sv`, which already does the
 2651's framing and its baud-rate generator against a socket.
 
-**The console and the debugger.** Both are Linux programs on the other board:
-the console reaches sixteen diagnostic registers over `M_AXI_GP1`, and the
-debugger is muir on the ARM cores driving MIT's debug cable through a register
-window. Neither has a fabric shape yet and **this note does not invent one.**
+**The console and the debugger. THIS PARAGRAPH IS SUPERSEDED AND IS KEPT
+BECAUSE IT SAYS WHAT THE QUESTION WAS.** It read: both are Linux programs on
+the other board, neither has a fabric shape yet, and this note does not invent
+one. They have one now. `rtl/plumbing/cadr_console.sv` and
+`rtl/plumbing/cadr_debug_window.sv` are in the design with `SOC=1`, unchanged,
+at the addresses they have on the Zynq, and what masters them is a RISC-V core
+in the fabric. The section below is the whole of it. The original text
+continues:
 What is worth knowing is that the debug cable's Pmod carrier is pure fabric and
 carries over unchanged: the debug cable adapter puts its whole link on JA, so
 that assignment carries over by name, and this board has four Pmod headers
@@ -320,6 +330,317 @@ is written, because the machine reaches its first main-memory cycle 118
 milliseconds after its own reset and poisoning a thousand words through a JTAG
 register takes seconds. The window holds the MACHINE and not the controller, so
 what is in DDR survives being let go.
+
+## The soft processing system
+
+**This board has a processor beside the CADR now, and it is in the fabric.**
+The Arty Z7-20 and the Cora Z7-07S reach the machine's register faces from
+Linux on a Zynq's ARM cores. There is no Zynq here, so a RISC-V core in the
+fabric masters the same faces, at the same addresses, through the same drivers.
+
+It is off by default. `SOC=1` puts it in the design:
+
+    make build/boot_prom.hex build/soc_firmware.hex
+    SOC=1 OUTDIR=build/a7-soc \
+        vivado -mode batch -source boards/arty-a7-100/vivado/bitstream.tcl
+
+Everything in the sections above was measured without it and is still true of
+the default board.
+
+### The core
+
+The core is Ibex, lowRISC's, vendored at a pinned commit under
+`third_party/ibex/` with its own Apache-2.0 licence. That directory's
+`README.md` says which commit, which files, why six of them are not in Ibex's
+own file list, and what each file's digest is.
+
+The configuration is **RV32IMC, two stages, no caches**. In Ibex's own
+parameters: `BaseIsaRV32I`, `RV32MFast`, `RV32BNone`, `RV32Zca`, `ICache` 0,
+`WritebackStage` 0, `PMPEnable` 0, `SecureIbex` 0, `BranchPredictor` 0.
+`rtl/plumbing/cadr_soc.sv`'s header gives the reason for each. The short
+version: the multiplier is free because the machine uses no DSP slices; a
+cache is the answer to a slow memory and this memory is one block RAM at one
+cycle; and every one of the hardening options answers a threat model a board
+on a bench does not have.
+
+**The core was chosen and not invented.** A processor written here would be a
+second machine to be wrong about, in a repository whose whole method is
+holding one machine to a reference. MicroBlaze arrives as an IP directory with
+an encrypted netlist; VexRiscv's Verilog is generated from Scala; picorv32
+takes four or five cycles an instruction. Ibex is SystemVerilog, about one
+instruction a cycle, a few thousand LUTs, and it is the core OpenTitan ships.
+
+### The map
+
+The faces keep the addresses the Linux programs use. That is the point of the
+exercise: `console_face.h` says `0x8000_0000` and `pack_side.h` says
+`0x4000_0000`, and both are true of this board.
+
+| | |
+|---|---|
+| `0x0000_0000` | 32 KB of block RAM, the firmware in it |
+| `0x1000_0000` | this system's own UART |
+| `0x1000_1000` | its own timer |
+| `0x4000_0000` | the disk pack face, `cadr_disk_pack.sv` |
+| `0x8000_0000` | the console, `cadr_console.sv` |
+| `0x8000_1000` | the debug cable's window, `cadr_debug_window.sv` |
+| everything else | `cadr_gp0_default.sv`, which answers "NONE" |
+
+The two pages at `0x1000_0000` are the system's own, and they are deliberately
+not at the Zynq's peripheral addresses. Nothing in this repository has ever
+named `0xE000_1000`, and a UART pretending to be the processing system's would
+be a lie a program could act on.
+
+**Every address is answered.** On the Zynq a read nothing answers inside a
+general-purpose window does not fault the ARM. It hangs both cores at one PC
+each, measured on the board, and no software guard can catch a load that never
+completes. A soft core is worse off, because it has no interconnect to give it
+an error response at all. So the bridge's last port is a catch-all and the
+default slave sits behind it: a load from an address nothing implements
+completes with "NONE".
+
+**And that rule has a cost worth knowing before reading a board.** A default
+slave that answers every address with a word which is not zero turns a wild
+pointer into an infinite string. The first firmware built here had no global
+pointer set up, so its log prefix was read from the catch-all, and the board
+said NONENONENONE for ever. `boards/arty-a7-100/firmware/start.S` carries that
+account at the instruction that fixes it.
+
+### The bridge
+
+`rtl/plumbing/cadr_soc_axi.sv` turns one of the core's loads or stores into one
+AXI transaction at one of four slaves. Single beat always, which is AXI4-Lite's
+shape wearing AXI3's signal list, and that is exactly what the faces were
+written for.
+
+It holds one selection where `rtl/plumbing/cadr_gp0_split.sv` holds two. The
+splitter needs two because the thing in front of it drives the read and the
+write channels independently. The thing in front of this takes one request and
+answers it before it takes another, so there is never a read and a write in
+flight together.
+
+The identifier is a counter and not a constant, so that a face which dropped it
+would not look exactly like one that did not.
+
+### The firmware
+
+`boards/arty-a7-100/firmware/` is bare-metal C. It is `cadr-console` with the
+operating system taken out: `console_face.c` and `pack_side.c` are the Arty
+Z7-20's files, compiled here unchanged, and what this board supplies is the two
+things they need from their surroundings --- an access layer that is a load and
+a store where Linux has an `mmap`, and a `say()` that is a UART where Linux has
+a `FILE *`.
+
+**Those two files are compiled where they live, under the other board's Linux
+tree.** A copy here would be a second description of one register face. They
+belong somewhere neutral and they are not there yet; this is the same debt this
+document already records for three Vivado scripts.
+
+The toolchain is `riscv64-unknown-elf-gcc` with picolibc. On Debian and Ubuntu:
+
+    sudo apt-get install gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf
+
+picolibc is not optional. It is the only C library on that toolchain which
+ships headers, and the shared drivers include `<string.h>` and `<stdio.h>`. The
+Makefile names the compiler and stops with that message when it is absent.
+
+What the first firmware does, and every step of it is an assertion and not a
+print:
+
+  - says what it is, over the UART;
+  - reads its own UART's and timer's identifiers;
+  - reads the console's identifier and holds it to "CONS";
+  - measures whether the machine is running, by reading CYCLES twice with a
+    wait between them;
+  - halts it, and reads PC and FLAG-1 off the diagnostic bus;
+  - steps it once, and checks CYCLES moved by exactly one;
+  - starts it again;
+  - reads the disk pack face's identifier and holds it to "PACK" --- which is
+    register 7 and not register 0;
+  - reads the default slave, which must answer "NONE";
+  - reads the debug window, which must answer "DBUG";
+  - prints how many of those failed, and then idles taking four commands from
+    the wire: `s` status, `h` halt, `c` continue, `.` step.
+
+The four commands are `cadr-console`'s and muir's prompt's, for the reason that
+program gives: somebody who knows one should know the other. It is a crude
+machine control thing and it is meant to stay one. The debugger is CC over the
+debug cable, and this board has the window for it already.
+
+### What checks it
+
+`make build/soc.pass` runs `tb/cadr_soc_harness.sv`, which is this board's top
+level below the clock: the soft system with Ibex in it, `cadr_machine` with
+MIT's boot PROM and nothing behind its memory port, and the four faces. The
+firmware is the one the board runs, the same hex.
+
+It asserts every line the firmware says, in order, and then three things the
+firmware cannot say about itself.
+
+**That the machine really halted and really stepped.** `clock_edge` is the
+machine's own microcycle boundary and the check counts it every tick, so the
+halt is a stretch with no microcycles in it and the step is exactly one
+microcycle inside that stretch. A firmware that printed "CYCLES moved 1" while
+the machine ran on would pass a check that read its output and fail this one.
+
+**That the bridge is serial.** The check watches which slaves see a VALID every
+tick and how many transactions are outstanding on each channel.
+
+**That the baud divisor is what the fabric was built for.** The narrowest level
+the transmitter ever holds is one bit time, so the minimum pulse width over the
+whole run is the divisor. A decoder samples in the middle of a bit and tolerates
+a few per cent, so decoding correctly is not evidence about the number.
+
+The check builds the UART at a divisor of 32 rather than the board's 868, so
+that the same firmware says the same words in a fraction of the time. Nothing in
+the firmware knows the rate; it polls a ready bit.
+
+Seven mutation records are aimed at the seam, in `mutations/list.txt` under
+`soc`: an address bit dropped, a write answered before it lands, the console's
+page sent to the debug window, the baud divisor doubled, the UART and the timer
+swapped as answer sources, the memory read one word along, and the timer saying
+the wrong microsecond. All seven are caught, and each record quotes the line
+that catches it.
+
+An eighth was written and is recorded there as a measured equivalence rather
+than a hole. It weakened the seam's guard against granting a second request
+while one is in flight, and it survived: Ibex's load-store unit drops its
+request at the grant and does not raise it again until the answer, so the seam
+is never offered a second one and the guard it lost was never what kept it
+serial. The guard stays, because it makes the bridge's single held selection a
+property of that file rather than of the core in front of it.
+
+### And it ran on the board
+
+Programmed over JTAG, the board's USB-UART at 115,200 baud, the twelve lines
+the firmware says, verbatim:
+
+    cadr-soc: the soft processing system on an Arty A7-100: ibex rv32imc in fabric
+    cadr-soc: UART UART, timer TIME, 100 ticks a microsecond
+    cadr-soc: the console at 0x80000000 answers CONS
+    cadr-soc: the machine was RUNNING, 4548 microcycles in 2000 us
+    cadr-soc: halted at PC 0o245, 0 microcycles in 1000 us
+    cadr-soc: halted: FLAG-1 0xe800 SRUN 0 ERR 0 -WAIT 0 PROMDISABLE 0 STATHALT 0
+    cadr-soc: stepped 1, CYCLES moved 1, SSDONE 1
+    cadr-soc: started: RUNNING, 4548 microcycles in 2000 us
+    cadr-soc: the disk pack face at 0x40000000 answers PACK (register 7)
+    cadr-soc: the default slave at 0x40001000 answers NONE
+    cadr-soc: the debug window at 0x80001000 answers DBUG
+    cadr-soc: 0 failure(s); idling --- s status, h halt, c continue, . step
+
+So on silicon: a RISC-V core in the fabric read four register faces, each of
+which answered with its own identifier; it halted the CADR, read its program
+counter and its first flag word off MIT's diagnostic bus, stepped it exactly
+one microcycle, and started it again. **This is the first time anything on
+this board has done more than blink.**
+
+The four commands answer too. Typed at the wire, one at a time:
+
+    cadr-soc: RUNNING, 3988 microcycles in 2000 us, PC 0o552
+    cadr-soc: running: FLAG-1 0xe900 SRUN 1 ERR 0 -WAIT 0 PROMDISABLE 0 STATHALT 0
+    cadr-soc: halted
+    cadr-soc: NOT RUNNING, 0 microcycles in 2000 us, PC 0o546
+    cadr-soc: stopped: FLAG-1 0xe800 SRUN 0 ERR 0 -WAIT 0 PROMDISABLE 0 STATHALT 0
+    cadr-soc: stepped 1, CYCLES moved 1, SSDONE 1
+    cadr-soc: started
+    cadr-soc: RUNNING, 3987 microcycles in 2000 us, PC 0o544
+
+**The program counters say the machine is where it should be.** `0o541` to
+`0o553` is the boot PROM's no-drive loop --- two status reads and one disk
+address write, eleven microcycles --- and every reading above is inside it.
+There is no drive on this board, so that is the whole of what the PROM does
+after its control-store pass, and it is what `machine.pass` compares against
+muir.
+
+**Two readers on one serial device split the bytes between them**, which is
+worth knowing before believing a capture: the first attempt at the commands
+above produced a line cut off in the middle of a word, and the cause was a
+capture left running from an earlier test rather than anything on the board.
+
+**And read all of it with the timing figure below attached.** The design does
+not close, so what this run shows is that the flow, the composition and the
+firmware are right. It is not evidence about the logic; the check in simulation
+is.
+
+### The timing, and it is not met
+
+**The design with the soft processing system in it does not close, and this
+says so with the numbers rather than quoting a figure from the board without
+it.** At commit-time, `xc7a100tcsg324-1`, `SOC=1`, a 10 ns tick:
+
+| | |
+|---|---|
+| worst slack | **-3.216 ns, NOT met** |
+| failing endpoints | 1,616 of 46,004 |
+| where they end | 1,252 in the soft system, 295 in the machine, 68 in Ibex's register file |
+| Slice LUTs | 13,303 of 63,400 (20.98%) |
+| Slice registers | 8,392 of 126,800 (6.62%) |
+| block RAM tiles | 48.5 of 135 (35.93%) |
+| DSP | 5 of 240 |
+| bitstream | 3,825,992 bytes, no critical warnings |
+
+The table further up this document, for the machine alone on this part, reads
+6,009 Slice LUTs and 38 block RAM tiles. So the soft processing system, its
+memory, its firmware and the four faces cost about 7,300 LUTs and ten and a
+half block RAM tiles, and the part is still two thirds empty.
+
+**Those are the utilisation report's figures and the flow prints cell counts**
+--- 12,285 LUTs, 8,392 registers, 51 block RAMs --- which do not agree with
+them by construction: the report counts sites, two LUT5 cells often sharing
+one, and counts the sites holding distributed RAM, which are not in the LUT
+group at all. Both are quoted so that neither is read as the other.
+
+**The worst path is Ibex's own and it is the one that decides its frequency.**
+It runs from the instruction in the decode stage, through twenty-one logic
+levels and six carry chains --- the decoder, the operand multiplexers and the
+main ALU's adder --- to the address pin of the block RAM a load or a store
+reaches. That is a load-store address computed in the cycle it is used, which
+is what Ibex does, and 10 ns on a -1 part is not enough for it.
+
+**Two things were tried and the record of each is worth more than the try.**
+
+The first is a fix and it is in the design: the debug cable's window is a
+register a level above `cadr_machine`, so `cadr_machine.xdc` --- read `-ref
+cadr_machine` --- cannot reach it, and the machine's whole diagnostic
+multiplexer arrives at it timed at one tick. Measured at **-9.236 ns**, which
+was the whole of the worst figure. `rtl/plumbing/xilinx7/cadr_debug.xdc` is the
+other board's four-tick exception for exactly that cone; it is read here now
+and the figure moved from -9.236 to -3.216. That file's `get_pins` pattern was
+anchored on `g_ddr.u_debug_window`, the Zynq's generate block; it matches
+either board's now, rather than being copied with one name changed.
+
+The second is a measurement that refuted a reasonable expectation. Ibex's own
+guidance is that `BranchTargetALU` and `WritebackStage` are what a design short
+of frequency reaches for, so both were turned on and the board was built again:
+**-3.694 ns**, worse than the -3.216 with both off. They are off, because the
+measurement says so.
+
+**What would close it is a slower clock for the soft system, and that is a
+slice of its own.** The machine's tick is 10 ns and every tick count in
+`rtl/machine/` depends on it, so the fabric's clock cannot move. The soft
+system could have its own --- the MMCM has spare outputs and `CLKOUT1` at
+50 MHz costs nothing --- but the four faces are the machine's neighbours and
+run at the machine's clock, so the AXI seam between the two would become a
+clock domain crossing. That is real work and it is not begun.
+
+**Until then, read anything this board says with that attached.** This
+repository's own rule is that a board which does not meet its timing cannot be
+used as evidence about its own logic. What a run of this bitstream shows is
+that the flow, the composition and the firmware are right; it is not evidence
+about the machine, and the check in simulation is.
+
+### What is still absent
+
+The disk pack face answers its registers and cannot move a block: its memory
+port is `S_AXI_HP2` on the Zynq and there is no memory controller on this board
+yet, so the port's ready lines are low and a block fetch would stand. That is
+said plainly rather than answered with a plausible completion. Nothing asks it
+for a block.
+
+The firmware is not mutated by `mutations/run.py`, and that is a limit rather
+than a choice: its hex is built with a RISC-V compiler and read at elaboration,
+and that runner verilates SystemVerilog. The same shape as the Linux programs,
+which carry mutation lists of their own.
 
 ## The fit, measured
 
@@ -514,10 +835,13 @@ goes through to a bitstream with **zero critical warnings and zero errors**.
 | `vivado/program.tcl` | program the part over JTAG, by cable serial |
 | `vivado/probe.tcl` | read the capture back over JTAG into a file `tools/probe_check.py` can diff |
 | `vivado/qspi.tcl` | write the bitstream into the board's flash, never run |
+| `firmware/` | the soft processing system's bare-metal C, its linker script and its reset vector |
 | `Arty-A7-100-Master.xdc` | Digilent's published pin file, byte for byte |
 | `Digilent-License.txt` | the MIT licence that file is published under |
 
-`make build/arty_a7.pass` lints the top level in both its configurations. It
+`make build/arty_a7.pass` lints the top level in all three of its
+configurations: the machine, the machine with the probe, and the machine with
+the soft processing system. It
 cannot be simulated, Verilator having no `MMCME2_BASE`, and what lint holds is
 that the port list matches, that nothing is undriven, and that the `witness`
 fold names every output of `cadr_machine`. **That last is a real check and not
