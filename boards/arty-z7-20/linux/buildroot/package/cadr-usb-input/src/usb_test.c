@@ -36,6 +36,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1269,6 +1270,200 @@ int main(int argc, char **argv)
 		rmdir(dir);
 		check(usb_scan_names("/nowhere-at-all", names, 8) == 0,
 		      "a directory that is not there is no devices and not a crash");
+	}
+
+	// ---------------------------------------------------------------
+	//
+	// **THE TRACE: WHAT EACH KEY BECAME, IN THIS PROGRAM'S OWN WORDS.**
+	// The line is the product here --- somebody watching a key that does
+	// nothing reads it and nothing else --- so what is held is the WORDING,
+	// which is this project's rule that a check on a program asserts the
+	// line it prints.
+	section("--usb-trace: the line for every key event");
+	{
+		struct usb_kbd_state k;
+		struct cadr_input_event e;
+		char line[USB_TRACE_MAX];
+		usb_kbd_init(&k);
+
+		// A plain letter, and the level that chose the keysym.
+		usb_kbd_key(&k, C_A, 1, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_A, 1, line, sizeof line);
+		check(strcmp(line, "key 30 KEY_A down on /dev/input/event0, no shift: "
+			     "a (keysym 0x61)") == 0,
+		      "a plain letter traced as: %s", line);
+		// **AND THE RELEASE CARRIES THE KEYSYM THE PRESS CARRIED**, which
+		// the line says rather than naming a level it did not consult.
+		usb_kbd_key(&k, C_A, 0, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_A, 0, line, sizeof line);
+		check(strcmp(line, "key 30 KEY_A up on /dev/input/event0: a (keysym 0x61), "
+			     "the keysym its press carried") == 0,
+		      "a release traced as: %s", line);
+
+		// With Shift held: the other plane, and the line says which
+		// held key chose it.
+		usb_kbd_key(&k, C_LSHIFT, 1, &e);
+		usb_kbd_key(&k, C_A, 1, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_A, 1, line, sizeof line);
+		check(strcmp(line, "key 30 KEY_A down on /dev/input/event0, Shift held: "
+			     "A (keysym 0x41)") == 0,
+		      "a shifted letter traced as: %s", line);
+		// ...and Shift let go before the release does not change what
+		// comes up, which is the property the line makes visible.
+		usb_kbd_key(&k, C_LSHIFT, 0, &e);
+		usb_kbd_key(&k, C_A, 0, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_A, 0, line, sizeof line);
+		check(strcmp(line, "key 30 KEY_A up on /dev/input/event0: A (keysym 0x41), "
+			     "the keysym its press carried") == 0,
+		      "the release after Shift was let go traced as: %s", line);
+
+		// The keypad, where the level is Num Lock's and not Shift's ---
+		// this program's one real decision, and the one a trace is
+		// turned on for.
+		usb_kbd_key(&k, C_KP7, 1, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_KP7, 1, line, sizeof line);
+		check(strcmp(line, "key 71 KEY_KP7 down on /dev/input/event0, Num Lock on: "
+			     "KP_7 (keysym 0xffb7)") == 0,
+		      "a keypad key traced as: %s", line);
+		usb_kbd_key(&k, C_KP7, 0, &e);
+		usb_kbd_key(&k, C_NUMLOCK, 1, &e);
+		usb_kbd_key(&k, C_NUMLOCK, 0, &e);
+		usb_kbd_key(&k, C_KP7, 1, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_KP7, 1, line, sizeof line);
+		check(strcmp(line, "key 71 KEY_KP7 down on /dev/input/event0, Num Lock off: "
+			     "KP_Home (keysym 0xff95)") == 0,
+		      "a keypad key with Num Lock off traced as: %s", line);
+		usb_kbd_key(&k, C_KP7, 0, &e);
+
+		// **A CODE THE TABLE DOES NOT HAVE**, which is the answer to
+		// `why does this key do nothing` and is the reason the kernel's
+		// own name is in every line: `KEY_F13` says more than 183.
+		usb_kbd_key(&k, 183, 1, &e);
+		usb_kbd_line(&k, "/dev/input/event0", 183, 1, line, sizeof line);
+		check(strcmp(line, "key 183 KEY_F13 down on /dev/input/event0: the code is not "
+			     "in the table, so nothing crosses the link --- the far end never "
+			     "sees this key") == 0,
+		      "a code with no keysym traced as: %s", line);
+
+		// The three events that go nowhere, each for a reason of its
+		// own: a trace that printed nothing for them would leave
+		// somebody watching a key with nothing to read.
+		usb_kbd_key(&k, C_A, 2, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_A, 2, line, sizeof line);
+		check(strcmp(line, "key 30 KEY_A repeat on /dev/input/event0: dropped, the "
+			     "kernel's auto-repeat --- this keyboard has a Repeat key of its "
+			     "own") == 0,
+		      "the kernel's auto-repeat traced as: %s", line);
+		usb_kbd_key(&k, C_D, 0, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_D, 0, line, sizeof line);
+		check(strcmp(line, "key 32 KEY_D up on /dev/input/event0: nothing, an up for a "
+			     "key this never sent down") == 0,
+		      "an up for a key never pressed traced as: %s", line);
+		usb_kbd_key(&k, C_A, 1, &e);
+		usb_kbd_key(&k, C_A, 1, &e);
+		usb_kbd_line(&k, "/dev/input/event0", C_A, 1, line, sizeof line);
+		check(strcmp(line, "key 30 KEY_A down on /dev/input/event0: dropped, it is "
+			     "already down --- a device that was not drained, or a release that "
+			     "was lost") == 0,
+		      "a second press with no release traced as: %s", line);
+	}
+
+	// ---------------------------------------------------------------
+	//
+	// **AND THE TWO TRACES MUST NOT CALL ONE KEYSYM TWO THINGS.**  This
+	// program names a keysym from its generated table and the screen's
+	// names it from muir's own list, and a key followed across the two
+	// lines would read as two keys if they ever disagreed.  Every entry of
+	// the table, both planes, wherever the screen has a word for it at all.
+	section("the two programs' names for one keysym");
+	{
+		unsigned compared = 0;
+		for (size_t i = 0; i < USB_KEYS_COUNT; ++i) {
+			const uint32_t sym[2] = { USB_KEYS[i].plain, USB_KEYS[i].shifted };
+			const char *const mine[2] = { USB_KEYS[i].plain_name,
+						      USB_KEYS[i].shifted_name };
+			for (unsigned pl = 0; pl < 2; ++pl) {
+				char theirs[64];
+				key_sym_name(sym[pl], theirs, sizeof theirs);
+				// A keysym the screen has no word for comes back
+				// as its number, and a number is not a
+				// disagreement: this program knows more names
+				// than muir's list does and says so.
+				if (strncmp(theirs, "0x", 2) == 0)
+					continue;
+				++compared;
+				check(strcmp(theirs, mine[pl]) == 0,
+				      "keysym 0x%x is \"%s\" here and \"%s\" at the screen",
+				      sym[pl], mine[pl], theirs);
+			}
+		}
+		check(compared > 100, "only %u keysyms had a name at both ends, which is too "
+		      "few for this to be holding anything", compared);
+	}
+
+	// ---------------------------------------------------------------
+	//
+	// **THE TRACE SWITCHES WHILE THE PROGRAM RUNS**, which is what makes it
+	// usable: a board restarted to get a diagnostic is a board whose Lisp
+	// is lost to get it.  Driven through a real device, so that what is
+	// under check is the program's own road and not the line builder alone.
+	section("SIGUSR1 and SIGUSR2 switch the trace");
+	{
+		struct harness h;
+		char *buf = NULL;
+		size_t len = 0;
+		harness_open(&h, work, "trace", 100000);
+		h.kbd_w = add_device(&h, USB_KIND_KEYBOARD, "event0");
+		h.mouse_w = -1;
+		usb_trace_signals();
+		FILE *mem = open_memstream(&buf, &len);
+		cadr_log_init("usb_test: ", mem);
+
+		// Off to begin with: a device may be read and nothing is said.
+		feed(h.kbd_w, EV_KEY, C_A, 1);
+		feed(h.kbd_w, EV_KEY, C_A, 0);
+		settle(&h, 8);
+		fflush(mem);
+		check(len == 0, "something was traced with the trace off: %s", buf ? buf : "");
+
+		raise(SIGUSR1);
+		usb_trace_apply(&h.set);
+		check(h.set.trace == 1, "SIGUSR1 did not turn the trace on");
+		fflush(mem);
+		const size_t after_on = len;
+		check(strstr(buf ? buf : "", "the key trace is ON") != NULL,
+		      "turning the trace on said nothing: %s", buf ? buf : "");
+		// A second ask says nothing: `cadr-console trace-keys on` twice
+		// is one line and not two.
+		raise(SIGUSR1);
+		usb_trace_apply(&h.set);
+		fflush(mem);
+		check(len == after_on, "a second SIGUSR1 said something: %s", buf + after_on);
+
+		feed(h.kbd_w, EV_KEY, C_D, 1);
+		settle(&h, 8);
+		fflush(mem);
+		check(strstr(buf ? buf : "", "key 32 KEY_D down on event0, no shift: "
+			     "d (keysym 0x64)") != NULL,
+		      "a key read from a device was not traced: %s", buf + after_on);
+
+		raise(SIGUSR2);
+		usb_trace_apply(&h.set);
+		check(h.set.trace == 0, "SIGUSR2 did not turn the trace off");
+		fflush(mem);
+		const size_t after_off = len;
+		feed(h.kbd_w, EV_KEY, C_D, 0);
+		feed(h.kbd_w, EV_KEY, C_A, 1);
+		settle(&h, 8);
+		fflush(mem);
+		check(len == after_off, "a key was traced after SIGUSR2: %s", buf + after_off);
+
+		cadr_log_init("usb_test: ", quiet ? quiet : stderr);
+		fclose(mem);
+		free(buf);
+		harness_close(&h);
+		signal(SIGUSR1, SIG_DFL);
+		signal(SIGUSR2, SIG_DFL);
 	}
 
 	// ---------------------------------------------------------------

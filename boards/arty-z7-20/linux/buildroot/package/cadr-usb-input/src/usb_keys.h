@@ -50,6 +50,36 @@
 // Lisp Machine keyboard has a Repeat key of its own, and a keyboard that sends
 // a position twice with no release between is not a keyboard MIT built.
 //
+// ## The trace, and what it is for
+//
+// **`--usb-trace` SAYS WHAT EACH KEY BECAME**, one line a key event on the
+// log: the device it came from, the key code as the KERNEL names it, the
+// level this file chose and why, and the keysym that crossed the link --- or
+// that the code is not in the table, which is the answer to "why does this
+// key do nothing".  It is `evtest` and the mapping in one line, and it is the
+// near half of the road whose far half is the screen's own
+// `--keyboard-mapping-trace`: the two together follow a key from the board's
+// USB port to MIT's own key position.
+//
+//     key 30 KEY_A down on /dev/input/event0, no shift: a (keysym 0x61)
+//     key 30 KEY_A down on /dev/input/event0, Shift held: A (keysym 0x41)
+//     key 183 KEY_F13 down on /dev/input/event0: the code is not in the table
+//
+// **THE MOUSE IS NOT TRACED.**  A mouse sends a report every few
+// milliseconds while it is moving and a line each would be the whole console;
+// what a mouse did is in the counters the program already prints.  `evtest`
+// on the node is there for anybody who wants the raw stream.
+//
+// `enum usb_went` is what became of a key, kept as a VALUE that `usb_kbd_key`
+// hands back rather than printed where it is decided --- muir's own
+// arrangement for its keyboard's trace, and the reason the check can hold the
+// wording of all seven answers without a device or a socket.
+//
+// **AND IT SWITCHES WHILE THE PROGRAM RUNS.** `SIGUSR1` turns it on and
+// `SIGUSR2` turns it off, which is what `cadr-console trace-keys on|off`
+// sends: a board that had to be restarted to watch a key would lose the
+// machine's Lisp to get the line.  The flag is how a run STARTS with it on.
+//
 // ## The mouse
 //
 // `REL_X` and `REL_Y` in counts, right and down positive, which is what the
@@ -69,6 +99,7 @@
 #ifndef USB_KEYS_H
 #define USB_KEYS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <cadr/cadr_input_link.h>
@@ -83,6 +114,32 @@
 // everything above this is a button, a switch or a media key that no CADR
 // keyboard has; the generated table's largest code is far below it.
 #define USB_KEY_CODES 256
+
+// **WHAT BECAME OF A KEY EVENT**, which is what `--usb-trace` prints.  Every
+// one of these but the first is an event that goes nowhere, and each goes
+// nowhere for a reason of its own: a trace that printed nothing for them would
+// leave somebody watching a key that does nothing with nothing to read.
+enum usb_went {
+	// Across the link: the keysym, and on a press the level that chose it.
+	USB_WENT_SENT = 0,
+	// The kernel's own auto-repeat, value 2.
+	USB_WENT_REPEAT,
+	// Down with no up between: a device that was not drained, or a release
+	// that was lost.  The first press stands.
+	USB_WENT_ALREADY_DOWN,
+	// More keys are held than this can owe releases for, so the press is
+	// refused whole.
+	USB_WENT_NO_ROOM,
+	// The code has no keysym here: past the codes this program keeps, or
+	// simply not in the table the layout gave.
+	USB_WENT_NO_KEYSYM,
+	// An up for a key this never sent down.
+	USB_WENT_NOT_SENT
+};
+
+// The longest line the trace writes.  A device node, a key name, a keysym and
+// its number, with the longest of the answers above.
+#define USB_TRACE_MAX 256
 
 struct usb_kbd_state {
 	// Shift, tracked here and ALSO sent as a key.  Both, because the level
@@ -100,6 +157,11 @@ struct usb_kbd_state {
 	// For a status line: codes with no keysym, repeats dropped, and presses
 	// refused because more keys were held than this can owe releases for.
 	unsigned long unknown, repeats, refused;
+	// What became of the last key event, for the trace and for the check:
+	// `enum usb_went`, the keysym that crossed, and the level that chose it.
+	int went;
+	uint32_t went_keysym;
+	uint8_t went_level, went_keypad;
 };
 
 void usb_kbd_init(struct usb_kbd_state *k);
@@ -116,6 +178,21 @@ unsigned usb_kbd_release_all(struct usb_kbd_state *k, struct cadr_input_event *o
 // The keysym a code would send right now, or 0.  For the check, and for the
 // line this program says about a key nothing maps.
 uint32_t usb_kbd_keysym(const struct usb_kbd_state *k, uint16_t code);
+
+// The kernel's own name for a key code --- `KEY_A` --- or NULL for a code it
+// does not name.  `usb_keymap.h`'s `USB_CODE_NAMES`, which covers every code
+// the kernel names and not only the ones with a keysym here.
+const char *usb_code_name(uint16_t code);
+
+// `--usb-trace`'s line for the key event just given to `usb_kbd_key`, written
+// into `out`, which wants `USB_TRACE_MAX` bytes.  `device` is the node it came
+// from.  Returned rather than printed so that the check can hold the wording,
+// and so that nothing in this file reaches for a log.
+//
+// **CALLED AFTER `usb_kbd_key` AND ABOUT THAT SAME EVENT**: what it prints is
+// the `went` fields that call left behind.
+const char *usb_kbd_line(const struct usb_kbd_state *k, const char *device,
+			 uint16_t code, int value, char *out, size_t n);
 
 // ---- the mouse -----------------------------------------------------------
 

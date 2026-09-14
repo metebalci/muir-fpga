@@ -79,7 +79,17 @@
 //     cadr-terminal [--terminal [<endpoint>]] [--log PATH] [--bow]
 //                   [--interval-ms N] [--no-rre] [--no-guard] [--no-input]
 //                   [--input ADDR] [--keyboard-mapping FILE]
-//                   [--keyboard-boot KEYS] [--keyboard-boot-trace] [--once]
+//                   [--keyboard-boot KEYS] [--keyboard-boot-trace]
+//                   [--keyboard-mapping-trace] [--once]
+//
+// **WHAT A KEY BECAME, WHILE SOMEBODY IS WATCHING.**  muir's
+// `--keyboard-mapping-trace` writes a line for every keysym that reaches its
+// keyboard and this writes the same line, so that a key which does nothing
+// can be followed from the viewer to MIT's own key position without guessing
+// which half is wrong.  It is OFF by default and it is not only a flag:
+// `SIGUSR1` turns it on and `SIGUSR2` turns it off while the program runs,
+// which is what `cadr-console trace-keys on` sends, so a keyboard can be
+// watched without restarting the program and losing the machine's Lisp.
 //
 // **WHERE IT LISTENS IS muir'S WORD FOR IT, `--terminal`**, and it took over
 // from a `--port` and a `--bind` of this program's own.  muir says where its
@@ -172,6 +182,10 @@ static void usage(void)
 		"                            the last being the CADR keyboard's own; the default\n"
 		"                            `ctrl,meta` is Ctrl-Alt-Del on any keyboard\n"
 		"  --keyboard-boot-trace     say when a key-up is held back behind a boot word\n"
+		"  --keyboard-mapping-trace  muir's own flag and muir's own line: every keysym\n"
+		"                            that arrives, where it came from, and what it became.\n"
+		"                            SIGUSR1 turns it on while the program runs and SIGUSR2\n"
+		"                            turns it off, which is `cadr-console trace-keys on|off`\n"
 		"  --input-link PATH the socket a source that is not a viewer sends keys and\n"
 		"                    mouse movement on (default /var/run/cadr-input). That is\n"
 		"                    cadr-usb-input, the board's own USB keyboard and mouse\n"
@@ -202,7 +216,7 @@ int main(int argc, char **argv)
 	uint32_t window_phys = SCREEN_BASE;
 	uint32_t input_phys = IN_REG_BASE;
 	int bow = 0, no_guard = 0, once = 0, no_rre = 0, no_input = 0, no_link = 0;
-	int boot_trace = 0;
+	int boot_trace = 0, key_trace = 0;
 	const char *link_path = CADR_INPUT_LINK_PATH;
 	// `--keyboard-boot`, whose default is muir's: either Control and either
 	// Meta.  Read here rather than at the keyboard so that a spelling
@@ -224,6 +238,7 @@ int main(int argc, char **argv)
 		{ "keyboard-mapping", required_argument, NULL, 'k' },
 		{ "keyboard-boot", required_argument, NULL, 'K' },
 		{ "keyboard-boot-trace", no_argument, NULL, 'T' },
+		{ "keyboard-mapping-trace", no_argument, NULL, 'M' },
 		{ "input-link", required_argument, NULL, 'L' },
 		{ "no-input-link", no_argument, NULL, 'N' },
 		{ "once", no_argument, NULL, 'o' },
@@ -231,7 +246,7 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "t::l:Bw:i:RGIn:k:K:TL:Noh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "t::l:Bw:i:RGIn:k:K:TML:Noh", opts, NULL)) != -1) {
 		switch (c) {
 		case 't': {
 			// **THE ENDPOINT IS OPTIONAL, AS muir'S IS, AND getopt
@@ -279,6 +294,7 @@ int main(int argc, char **argv)
 			}
 			break;
 		case 'T': boot_trace = 1; break;
+		case 'M': key_trace = 1; break;
 		case 'L': link_path = optarg; break;
 		case 'N': no_link = 1; break;
 		case 'o': once = 1; break;
@@ -399,6 +415,11 @@ int main(int argc, char **argv)
 		key_state_init_with(&srv.keys, &map);
 		key_boot_set(&srv.keys, boot_keys);
 		key_boot_traced(&srv.keys, boot_trace);
+		key_traced(&srv.keys, key_trace);
+		if (key_trace)
+			say("--keyboard-mapping-trace: every keysym that arrives, where it "
+			    "came from, and what it became, is a line here --- muir's own "
+			    "flag and muir's own line. SIGUSR2 turns it off");
 		char boot_spelt[32];
 		key_boot_spelling(boot_keys, boot_spelt, sizeof boot_spelt);
 		say("the keyboard's own boot sequence is %s held with Rubout to cold-boot the "
@@ -438,12 +459,21 @@ int main(int argc, char **argv)
 	signal(SIGTERM, on_stop);
 	signal(SIGINT, on_stop);
 	signal(SIGPIPE, SIG_IGN);
+	// **AND THE TWO THAT SWITCH THE TRACE WHILE THIS RUNS.**  `input_keys.c`
+	// installs them and `key_trace_apply` below acts on what they asked for,
+	// once a pass, where `say` is allowed.  `cadr-console trace-keys on|off`
+	// is what sends them; a person with the pid may send them by hand.
+	key_trace_signals();
 	time_t last_said = time(NULL);
 	unsigned long said_connects = 0, said_input = 0;
 	uint64_t last_read_ns = 0;
 	unsigned long long said_bytes = 0;
 	while (!stopping) {
 		const uint64_t now = monotonic_ns();
+		// What SIGUSR1 or SIGUSR2 asked for, if either did: acted on
+		// here rather than in the handler, and said once when it
+		// changes.
+		key_trace_apply(&srv.keys);
 		// Nothing is read while nobody is watching: the window is an
 		// uncached mapping and 92,448 bytes of it is real traffic on
 		// the DDR controller's debug port.  A machine with no viewer

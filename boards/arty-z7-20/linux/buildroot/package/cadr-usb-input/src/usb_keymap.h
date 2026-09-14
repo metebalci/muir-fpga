@@ -12,6 +12,10 @@
 //     /usr/share/X11/xkb/symbols/pc, /usr/share/X11/xkb/symbols/us and what they include
 //     /usr/include/X11/keysymdef.h and /usr/include/X11/XF86keysym.h
 //
+// ...and the kernel's own key code names, which are not X's:
+//
+//     /usr/include/linux/input-event-codes.h
+//
 // The layout is `pc+us`, which is what an X server loads for a plain US
 // keyboard --- so this is what a viewer connected to such a keyboard
 // would send, and the two sources of keys cannot disagree about what a
@@ -22,6 +26,10 @@
 // `plain` is the keysym with no shift and `shifted` the one with Shift
 // held.  A key with one keysym has the same in both.  Which of them a
 // key event uses is `usb_keys.c`'s decision and is written there.
+//
+// `plain_name` and `shifted_name` are what to CALL those two keysyms and
+// `USB_CODE_NAMES` is the kernel's own name for every key code: both are
+// for `--usb-trace` and nothing else reads them.
 
 #ifndef USB_KEYMAP_H
 #define USB_KEYMAP_H
@@ -34,129 +42,346 @@ struct usb_key {
 	uint32_t shifted;	/* ...and with Shift held */
 	uint8_t keypad;		/* on the numeric keypad: Num Lock chooses */
 	const char *name;	/* the xkb name of the key, for a message */
+	/* What to CALL each keysym, which is what `--usb-trace` prints:
+	   the character where the keysym is printable ASCII, else its X11
+	   name.  The same word the screen's `key_sym_name` writes, which
+	   the check asserts entry by entry. */
+	const char *plain_name, *shifted_name;
 };
 
 static const struct usb_key USB_KEYS[] = {
-	{   1, 0x0000ff1bu, 0x0000ff1bu, 0, "ESC" },	/* Escape */
-	{   2, 0x00000031u, 0x00000021u, 0, "AE01" },	/* 1 exclam */
-	{   3, 0x00000032u, 0x00000040u, 0, "AE02" },	/* 2 at */
-	{   4, 0x00000033u, 0x00000023u, 0, "AE03" },	/* 3 numbersign */
-	{   5, 0x00000034u, 0x00000024u, 0, "AE04" },	/* 4 dollar */
-	{   6, 0x00000035u, 0x00000025u, 0, "AE05" },	/* 5 percent */
-	{   7, 0x00000036u, 0x0000005eu, 0, "AE06" },	/* 6 asciicircum */
-	{   8, 0x00000037u, 0x00000026u, 0, "AE07" },	/* 7 ampersand */
-	{   9, 0x00000038u, 0x0000002au, 0, "AE08" },	/* 8 asterisk */
-	{  10, 0x00000039u, 0x00000028u, 0, "AE09" },	/* 9 parenleft */
-	{  11, 0x00000030u, 0x00000029u, 0, "AE10" },	/* 0 parenright */
-	{  12, 0x0000002du, 0x0000005fu, 0, "AE11" },	/* minus underscore */
-	{  13, 0x0000003du, 0x0000002bu, 0, "AE12" },	/* equal plus */
-	{  14, 0x0000ff08u, 0x0000ff08u, 0, "BKSP" },	/* BackSpace */
-	{  15, 0x0000ff09u, 0x0000fe20u, 0, "TAB" },	/* Tab ISO_Left_Tab */
-	{  16, 0x00000071u, 0x00000051u, 0, "AD01" },	/* q Q */
-	{  17, 0x00000077u, 0x00000057u, 0, "AD02" },	/* w W */
-	{  18, 0x00000065u, 0x00000045u, 0, "AD03" },	/* e E */
-	{  19, 0x00000072u, 0x00000052u, 0, "AD04" },	/* r R */
-	{  20, 0x00000074u, 0x00000054u, 0, "AD05" },	/* t T */
-	{  21, 0x00000079u, 0x00000059u, 0, "AD06" },	/* y Y */
-	{  22, 0x00000075u, 0x00000055u, 0, "AD07" },	/* u U */
-	{  23, 0x00000069u, 0x00000049u, 0, "AD08" },	/* i I */
-	{  24, 0x0000006fu, 0x0000004fu, 0, "AD09" },	/* o O */
-	{  25, 0x00000070u, 0x00000050u, 0, "AD10" },	/* p P */
-	{  26, 0x0000005bu, 0x0000007bu, 0, "AD11" },	/* bracketleft braceleft */
-	{  27, 0x0000005du, 0x0000007du, 0, "AD12" },	/* bracketright braceright */
-	{  28, 0x0000ff0du, 0x0000ff0du, 0, "RTRN" },	/* Return */
-	{  29, 0x0000ffe3u, 0x0000ffe3u, 0, "LCTL" },	/* Control_L */
-	{  30, 0x00000061u, 0x00000041u, 0, "AC01" },	/* a A */
-	{  31, 0x00000073u, 0x00000053u, 0, "AC02" },	/* s S */
-	{  32, 0x00000064u, 0x00000044u, 0, "AC03" },	/* d D */
-	{  33, 0x00000066u, 0x00000046u, 0, "AC04" },	/* f F */
-	{  34, 0x00000067u, 0x00000047u, 0, "AC05" },	/* g G */
-	{  35, 0x00000068u, 0x00000048u, 0, "AC06" },	/* h H */
-	{  36, 0x0000006au, 0x0000004au, 0, "AC07" },	/* j J */
-	{  37, 0x0000006bu, 0x0000004bu, 0, "AC08" },	/* k K */
-	{  38, 0x0000006cu, 0x0000004cu, 0, "AC09" },	/* l L */
-	{  39, 0x0000003bu, 0x0000003au, 0, "AC10" },	/* semicolon colon */
-	{  40, 0x00000027u, 0x00000022u, 0, "AC11" },	/* apostrophe quotedbl */
-	{  41, 0x00000060u, 0x0000007eu, 0, "TLDE" },	/* grave asciitilde */
-	{  42, 0x0000ffe1u, 0x0000ffe1u, 0, "LFSH" },	/* Shift_L */
-	{  43, 0x0000005cu, 0x0000007cu, 0, "BKSL" },	/* backslash bar */
-	{  44, 0x0000007au, 0x0000005au, 0, "AB01" },	/* z Z */
-	{  45, 0x00000078u, 0x00000058u, 0, "AB02" },	/* x X */
-	{  46, 0x00000063u, 0x00000043u, 0, "AB03" },	/* c C */
-	{  47, 0x00000076u, 0x00000056u, 0, "AB04" },	/* v V */
-	{  48, 0x00000062u, 0x00000042u, 0, "AB05" },	/* b B */
-	{  49, 0x0000006eu, 0x0000004eu, 0, "AB06" },	/* n N */
-	{  50, 0x0000006du, 0x0000004du, 0, "AB07" },	/* m M */
-	{  51, 0x0000002cu, 0x0000003cu, 0, "AB08" },	/* comma less */
-	{  52, 0x0000002eu, 0x0000003eu, 0, "AB09" },	/* period greater */
-	{  53, 0x0000002fu, 0x0000003fu, 0, "AB10" },	/* slash question */
-	{  54, 0x0000ffe2u, 0x0000ffe2u, 0, "RTSH" },	/* Shift_R */
-	{  55, 0x0000ffaau, 0x0000ffaau, 1, "KPMU" },	/* KP_Multiply */
-	{  56, 0x0000ffe9u, 0x0000ffe9u, 0, "LALT" },	/* Alt_L */
-	{  57, 0x00000020u, 0x00000020u, 0, "SPCE" },	/* space */
-	{  58, 0x0000ffe5u, 0x0000ffe5u, 0, "CAPS" },	/* Caps_Lock */
-	{  59, 0x0000ffbeu, 0x0000ffbeu, 0, "FK01" },	/* F1 */
-	{  60, 0x0000ffbfu, 0x0000ffbfu, 0, "FK02" },	/* F2 */
-	{  61, 0x0000ffc0u, 0x0000ffc0u, 0, "FK03" },	/* F3 */
-	{  62, 0x0000ffc1u, 0x0000ffc1u, 0, "FK04" },	/* F4 */
-	{  63, 0x0000ffc2u, 0x0000ffc2u, 0, "FK05" },	/* F5 */
-	{  64, 0x0000ffc3u, 0x0000ffc3u, 0, "FK06" },	/* F6 */
-	{  65, 0x0000ffc4u, 0x0000ffc4u, 0, "FK07" },	/* F7 */
-	{  66, 0x0000ffc5u, 0x0000ffc5u, 0, "FK08" },	/* F8 */
-	{  67, 0x0000ffc6u, 0x0000ffc6u, 0, "FK09" },	/* F9 */
-	{  68, 0x0000ffc7u, 0x0000ffc7u, 0, "FK10" },	/* F10 */
-	{  69, 0x0000ff7fu, 0x0000ff7fu, 0, "NMLK" },	/* Num_Lock */
-	{  70, 0x0000ff14u, 0x0000ff14u, 0, "SCLK" },	/* Scroll_Lock */
-	{  71, 0x0000ff95u, 0x0000ffb7u, 1, "KP7" },	/* KP_Home KP_7 */
-	{  72, 0x0000ff97u, 0x0000ffb8u, 1, "KP8" },	/* KP_Up KP_8 */
-	{  73, 0x0000ff9au, 0x0000ffb9u, 1, "KP9" },	/* KP_Prior KP_9 */
-	{  74, 0x0000ffadu, 0x0000ffadu, 1, "KPSU" },	/* KP_Subtract */
-	{  75, 0x0000ff96u, 0x0000ffb4u, 1, "KP4" },	/* KP_Left KP_4 */
-	{  76, 0x0000ff9du, 0x0000ffb5u, 1, "KP5" },	/* KP_Begin KP_5 */
-	{  77, 0x0000ff98u, 0x0000ffb6u, 1, "KP6" },	/* KP_Right KP_6 */
-	{  78, 0x0000ffabu, 0x0000ffabu, 1, "KPAD" },	/* KP_Add */
-	{  79, 0x0000ff9cu, 0x0000ffb1u, 1, "KP1" },	/* KP_End KP_1 */
-	{  80, 0x0000ff99u, 0x0000ffb2u, 1, "KP2" },	/* KP_Down KP_2 */
-	{  81, 0x0000ff9bu, 0x0000ffb3u, 1, "KP3" },	/* KP_Next KP_3 */
-	{  82, 0x0000ff9eu, 0x0000ffb0u, 1, "KP0" },	/* KP_Insert KP_0 */
-	{  83, 0x0000ff9fu, 0x0000ffaeu, 1, "KPDL" },	/* KP_Delete KP_Decimal */
-	{  86, 0x0000003cu, 0x0000003eu, 0, "LSGT" },	/* less greater */
-	{  87, 0x0000ffc8u, 0x0000ffc8u, 0, "FK11" },	/* F11 */
-	{  88, 0x0000ffc9u, 0x0000ffc9u, 0, "FK12" },	/* F12 */
-	{  90, 0x0000ff26u, 0x0000ff26u, 0, "KATA" },	/* Katakana */
-	{  91, 0x0000ff25u, 0x0000ff25u, 0, "HIRA" },	/* Hiragana */
-	{  92, 0x0000ff23u, 0x0000ff23u, 0, "HENK" },	/* Henkan */
-	{  93, 0x0000ff27u, 0x0000ff27u, 0, "HKTG" },	/* Hiragana_Katakana */
-	{  94, 0x0000ff22u, 0x0000ff22u, 0, "MUHE" },	/* Muhenkan */
-	{  96, 0x0000ff8du, 0x0000ff8du, 1, "KPEN" },	/* KP_Enter */
-	{  97, 0x0000ffe4u, 0x0000ffe4u, 0, "RCTL" },	/* Control_R */
-	{  98, 0x0000ffafu, 0x0000ffafu, 1, "KPDV" },	/* KP_Divide */
-	{  99, 0x0000ff61u, 0x0000ff15u, 0, "PRSC" },	/* Print Sys_Req */
-	{ 100, 0x0000ffeau, 0x0000ffeau, 0, "RALT" },	/* Alt_R */
-	{ 102, 0x0000ff50u, 0x0000ff50u, 0, "HOME" },	/* Home */
-	{ 103, 0x0000ff52u, 0x0000ff52u, 0, "UP" },	/* Up */
-	{ 104, 0x0000ff55u, 0x0000ff55u, 0, "PGUP" },	/* Prior */
-	{ 105, 0x0000ff51u, 0x0000ff51u, 0, "LEFT" },	/* Left */
-	{ 106, 0x0000ff53u, 0x0000ff53u, 0, "RGHT" },	/* Right */
-	{ 107, 0x0000ff57u, 0x0000ff57u, 0, "END" },	/* End */
-	{ 108, 0x0000ff54u, 0x0000ff54u, 0, "DOWN" },	/* Down */
-	{ 109, 0x0000ff56u, 0x0000ff56u, 0, "PGDN" },	/* Next */
-	{ 110, 0x0000ff63u, 0x0000ff63u, 0, "INS" },	/* Insert */
-	{ 111, 0x0000ffffu, 0x0000ffffu, 0, "DELE" },	/* Delete */
-	{ 117, 0x0000ffbdu, 0x0000ffbdu, 1, "KPEQ" },	/* KP_Equal */
-	{ 119, 0x0000ff13u, 0x0000ff6bu, 0, "PAUS" },	/* Pause Break */
-	{ 121, 0x0000ffaeu, 0x0000ffaeu, 1, "KPPT" },	/* KP_Decimal */
-	{ 122, 0x0000ff31u, 0x0000ff31u, 0, "HNGL" },	/* Hangul */
-	{ 123, 0x0000ff34u, 0x0000ff34u, 0, "HJCV" },	/* Hangul_Hanja */
-	{ 125, 0x0000ffebu, 0x0000ffebu, 0, "LWIN" },	/* Super_L */
-	{ 126, 0x0000ffecu, 0x0000ffecu, 0, "RWIN" },	/* Super_R */
-	{ 127, 0x0000ff67u, 0x0000ff67u, 0, "MENU" },	/* Menu */
-	{ 227, 0x1008ff59u, 0x1008ff59u, 0, "OUTP" },	/* XF86Display */
-	{ 228, 0x1008ff04u, 0x1008ff04u, 0, "KITG" },	/* XF86KbdLightOnOff */
-	{ 229, 0x1008ff06u, 0x1008ff06u, 0, "KIDN" },	/* XF86KbdBrightnessDown */
-	{ 230, 0x1008ff05u, 0x1008ff05u, 0, "KIUP" },	/* XF86KbdBrightnessUp */
+	{   1, 0x0000ff1bu, 0x0000ff1bu, 0, "ESC", "Escape", "Escape" },	/* Escape */
+	{   2, 0x00000031u, 0x00000021u, 0, "AE01", "1", "!" },	/* 1 exclam */
+	{   3, 0x00000032u, 0x00000040u, 0, "AE02", "2", "@" },	/* 2 at */
+	{   4, 0x00000033u, 0x00000023u, 0, "AE03", "3", "#" },	/* 3 numbersign */
+	{   5, 0x00000034u, 0x00000024u, 0, "AE04", "4", "$" },	/* 4 dollar */
+	{   6, 0x00000035u, 0x00000025u, 0, "AE05", "5", "%" },	/* 5 percent */
+	{   7, 0x00000036u, 0x0000005eu, 0, "AE06", "6", "^" },	/* 6 asciicircum */
+	{   8, 0x00000037u, 0x00000026u, 0, "AE07", "7", "&" },	/* 7 ampersand */
+	{   9, 0x00000038u, 0x0000002au, 0, "AE08", "8", "*" },	/* 8 asterisk */
+	{  10, 0x00000039u, 0x00000028u, 0, "AE09", "9", "(" },	/* 9 parenleft */
+	{  11, 0x00000030u, 0x00000029u, 0, "AE10", "0", ")" },	/* 0 parenright */
+	{  12, 0x0000002du, 0x0000005fu, 0, "AE11", "-", "_" },	/* minus underscore */
+	{  13, 0x0000003du, 0x0000002bu, 0, "AE12", "=", "+" },	/* equal plus */
+	{  14, 0x0000ff08u, 0x0000ff08u, 0, "BKSP", "BackSpace", "BackSpace" },	/* BackSpace */
+	{  15, 0x0000ff09u, 0x0000fe20u, 0, "TAB", "Tab", "ISO_Left_Tab" },	/* Tab ISO_Left_Tab */
+	{  16, 0x00000071u, 0x00000051u, 0, "AD01", "q", "Q" },	/* q Q */
+	{  17, 0x00000077u, 0x00000057u, 0, "AD02", "w", "W" },	/* w W */
+	{  18, 0x00000065u, 0x00000045u, 0, "AD03", "e", "E" },	/* e E */
+	{  19, 0x00000072u, 0x00000052u, 0, "AD04", "r", "R" },	/* r R */
+	{  20, 0x00000074u, 0x00000054u, 0, "AD05", "t", "T" },	/* t T */
+	{  21, 0x00000079u, 0x00000059u, 0, "AD06", "y", "Y" },	/* y Y */
+	{  22, 0x00000075u, 0x00000055u, 0, "AD07", "u", "U" },	/* u U */
+	{  23, 0x00000069u, 0x00000049u, 0, "AD08", "i", "I" },	/* i I */
+	{  24, 0x0000006fu, 0x0000004fu, 0, "AD09", "o", "O" },	/* o O */
+	{  25, 0x00000070u, 0x00000050u, 0, "AD10", "p", "P" },	/* p P */
+	{  26, 0x0000005bu, 0x0000007bu, 0, "AD11", "[", "{" },	/* bracketleft braceleft */
+	{  27, 0x0000005du, 0x0000007du, 0, "AD12", "]", "}" },	/* bracketright braceright */
+	{  28, 0x0000ff0du, 0x0000ff0du, 0, "RTRN", "Return", "Return" },	/* Return */
+	{  29, 0x0000ffe3u, 0x0000ffe3u, 0, "LCTL", "Control_L", "Control_L" },	/* Control_L */
+	{  30, 0x00000061u, 0x00000041u, 0, "AC01", "a", "A" },	/* a A */
+	{  31, 0x00000073u, 0x00000053u, 0, "AC02", "s", "S" },	/* s S */
+	{  32, 0x00000064u, 0x00000044u, 0, "AC03", "d", "D" },	/* d D */
+	{  33, 0x00000066u, 0x00000046u, 0, "AC04", "f", "F" },	/* f F */
+	{  34, 0x00000067u, 0x00000047u, 0, "AC05", "g", "G" },	/* g G */
+	{  35, 0x00000068u, 0x00000048u, 0, "AC06", "h", "H" },	/* h H */
+	{  36, 0x0000006au, 0x0000004au, 0, "AC07", "j", "J" },	/* j J */
+	{  37, 0x0000006bu, 0x0000004bu, 0, "AC08", "k", "K" },	/* k K */
+	{  38, 0x0000006cu, 0x0000004cu, 0, "AC09", "l", "L" },	/* l L */
+	{  39, 0x0000003bu, 0x0000003au, 0, "AC10", ";", ":" },	/* semicolon colon */
+	{  40, 0x00000027u, 0x00000022u, 0, "AC11", "'", "\"" },	/* apostrophe quotedbl */
+	{  41, 0x00000060u, 0x0000007eu, 0, "TLDE", "`", "~" },	/* grave asciitilde */
+	{  42, 0x0000ffe1u, 0x0000ffe1u, 0, "LFSH", "Shift_L", "Shift_L" },	/* Shift_L */
+	{  43, 0x0000005cu, 0x0000007cu, 0, "BKSL", "\\", "|" },	/* backslash bar */
+	{  44, 0x0000007au, 0x0000005au, 0, "AB01", "z", "Z" },	/* z Z */
+	{  45, 0x00000078u, 0x00000058u, 0, "AB02", "x", "X" },	/* x X */
+	{  46, 0x00000063u, 0x00000043u, 0, "AB03", "c", "C" },	/* c C */
+	{  47, 0x00000076u, 0x00000056u, 0, "AB04", "v", "V" },	/* v V */
+	{  48, 0x00000062u, 0x00000042u, 0, "AB05", "b", "B" },	/* b B */
+	{  49, 0x0000006eu, 0x0000004eu, 0, "AB06", "n", "N" },	/* n N */
+	{  50, 0x0000006du, 0x0000004du, 0, "AB07", "m", "M" },	/* m M */
+	{  51, 0x0000002cu, 0x0000003cu, 0, "AB08", ",", "<" },	/* comma less */
+	{  52, 0x0000002eu, 0x0000003eu, 0, "AB09", ".", ">" },	/* period greater */
+	{  53, 0x0000002fu, 0x0000003fu, 0, "AB10", "/", "?" },	/* slash question */
+	{  54, 0x0000ffe2u, 0x0000ffe2u, 0, "RTSH", "Shift_R", "Shift_R" },	/* Shift_R */
+	{  55, 0x0000ffaau, 0x0000ffaau, 1, "KPMU", "KP_Multiply", "KP_Multiply" },	/* KP_Multiply */
+	{  56, 0x0000ffe9u, 0x0000ffe9u, 0, "LALT", "Alt_L", "Alt_L" },	/* Alt_L */
+	{  57, 0x00000020u, 0x00000020u, 0, "SPCE", "space", "space" },	/* space */
+	{  58, 0x0000ffe5u, 0x0000ffe5u, 0, "CAPS", "Caps_Lock", "Caps_Lock" },	/* Caps_Lock */
+	{  59, 0x0000ffbeu, 0x0000ffbeu, 0, "FK01", "F1", "F1" },	/* F1 */
+	{  60, 0x0000ffbfu, 0x0000ffbfu, 0, "FK02", "F2", "F2" },	/* F2 */
+	{  61, 0x0000ffc0u, 0x0000ffc0u, 0, "FK03", "F3", "F3" },	/* F3 */
+	{  62, 0x0000ffc1u, 0x0000ffc1u, 0, "FK04", "F4", "F4" },	/* F4 */
+	{  63, 0x0000ffc2u, 0x0000ffc2u, 0, "FK05", "F5", "F5" },	/* F5 */
+	{  64, 0x0000ffc3u, 0x0000ffc3u, 0, "FK06", "F6", "F6" },	/* F6 */
+	{  65, 0x0000ffc4u, 0x0000ffc4u, 0, "FK07", "F7", "F7" },	/* F7 */
+	{  66, 0x0000ffc5u, 0x0000ffc5u, 0, "FK08", "F8", "F8" },	/* F8 */
+	{  67, 0x0000ffc6u, 0x0000ffc6u, 0, "FK09", "F9", "F9" },	/* F9 */
+	{  68, 0x0000ffc7u, 0x0000ffc7u, 0, "FK10", "F10", "F10" },	/* F10 */
+	{  69, 0x0000ff7fu, 0x0000ff7fu, 0, "NMLK", "Num_Lock", "Num_Lock" },	/* Num_Lock */
+	{  70, 0x0000ff14u, 0x0000ff14u, 0, "SCLK", "Scroll_Lock", "Scroll_Lock" },	/* Scroll_Lock */
+	{  71, 0x0000ff95u, 0x0000ffb7u, 1, "KP7", "KP_Home", "KP_7" },	/* KP_Home KP_7 */
+	{  72, 0x0000ff97u, 0x0000ffb8u, 1, "KP8", "KP_Up", "KP_8" },	/* KP_Up KP_8 */
+	{  73, 0x0000ff9au, 0x0000ffb9u, 1, "KP9", "KP_Prior", "KP_9" },	/* KP_Prior KP_9 */
+	{  74, 0x0000ffadu, 0x0000ffadu, 1, "KPSU", "KP_Subtract", "KP_Subtract" },	/* KP_Subtract */
+	{  75, 0x0000ff96u, 0x0000ffb4u, 1, "KP4", "KP_Left", "KP_4" },	/* KP_Left KP_4 */
+	{  76, 0x0000ff9du, 0x0000ffb5u, 1, "KP5", "KP_Begin", "KP_5" },	/* KP_Begin KP_5 */
+	{  77, 0x0000ff98u, 0x0000ffb6u, 1, "KP6", "KP_Right", "KP_6" },	/* KP_Right KP_6 */
+	{  78, 0x0000ffabu, 0x0000ffabu, 1, "KPAD", "KP_Add", "KP_Add" },	/* KP_Add */
+	{  79, 0x0000ff9cu, 0x0000ffb1u, 1, "KP1", "KP_End", "KP_1" },	/* KP_End KP_1 */
+	{  80, 0x0000ff99u, 0x0000ffb2u, 1, "KP2", "KP_Down", "KP_2" },	/* KP_Down KP_2 */
+	{  81, 0x0000ff9bu, 0x0000ffb3u, 1, "KP3", "KP_Next", "KP_3" },	/* KP_Next KP_3 */
+	{  82, 0x0000ff9eu, 0x0000ffb0u, 1, "KP0", "KP_Insert", "KP_0" },	/* KP_Insert KP_0 */
+	{  83, 0x0000ff9fu, 0x0000ffaeu, 1, "KPDL", "KP_Delete", "KP_Decimal" },	/* KP_Delete KP_Decimal */
+	{  86, 0x0000003cu, 0x0000003eu, 0, "LSGT", "<", ">" },	/* less greater */
+	{  87, 0x0000ffc8u, 0x0000ffc8u, 0, "FK11", "F11", "F11" },	/* F11 */
+	{  88, 0x0000ffc9u, 0x0000ffc9u, 0, "FK12", "F12", "F12" },	/* F12 */
+	{  90, 0x0000ff26u, 0x0000ff26u, 0, "KATA", "Katakana", "Katakana" },	/* Katakana */
+	{  91, 0x0000ff25u, 0x0000ff25u, 0, "HIRA", "Hiragana", "Hiragana" },	/* Hiragana */
+	{  92, 0x0000ff23u, 0x0000ff23u, 0, "HENK", "Henkan", "Henkan" },	/* Henkan */
+	{  93, 0x0000ff27u, 0x0000ff27u, 0, "HKTG", "Hiragana_Katakana", "Hiragana_Katakana" },	/* Hiragana_Katakana */
+	{  94, 0x0000ff22u, 0x0000ff22u, 0, "MUHE", "Muhenkan", "Muhenkan" },	/* Muhenkan */
+	{  96, 0x0000ff8du, 0x0000ff8du, 1, "KPEN", "KP_Enter", "KP_Enter" },	/* KP_Enter */
+	{  97, 0x0000ffe4u, 0x0000ffe4u, 0, "RCTL", "Control_R", "Control_R" },	/* Control_R */
+	{  98, 0x0000ffafu, 0x0000ffafu, 1, "KPDV", "KP_Divide", "KP_Divide" },	/* KP_Divide */
+	{  99, 0x0000ff61u, 0x0000ff15u, 0, "PRSC", "Print", "Sys_Req" },	/* Print Sys_Req */
+	{ 100, 0x0000ffeau, 0x0000ffeau, 0, "RALT", "Alt_R", "Alt_R" },	/* Alt_R */
+	{ 102, 0x0000ff50u, 0x0000ff50u, 0, "HOME", "Home", "Home" },	/* Home */
+	{ 103, 0x0000ff52u, 0x0000ff52u, 0, "UP", "Up", "Up" },	/* Up */
+	{ 104, 0x0000ff55u, 0x0000ff55u, 0, "PGUP", "Prior", "Prior" },	/* Prior */
+	{ 105, 0x0000ff51u, 0x0000ff51u, 0, "LEFT", "Left", "Left" },	/* Left */
+	{ 106, 0x0000ff53u, 0x0000ff53u, 0, "RGHT", "Right", "Right" },	/* Right */
+	{ 107, 0x0000ff57u, 0x0000ff57u, 0, "END", "End", "End" },	/* End */
+	{ 108, 0x0000ff54u, 0x0000ff54u, 0, "DOWN", "Down", "Down" },	/* Down */
+	{ 109, 0x0000ff56u, 0x0000ff56u, 0, "PGDN", "Next", "Next" },	/* Next */
+	{ 110, 0x0000ff63u, 0x0000ff63u, 0, "INS", "Insert", "Insert" },	/* Insert */
+	{ 111, 0x0000ffffu, 0x0000ffffu, 0, "DELE", "Delete", "Delete" },	/* Delete */
+	{ 117, 0x0000ffbdu, 0x0000ffbdu, 1, "KPEQ", "KP_Equal", "KP_Equal" },	/* KP_Equal */
+	{ 119, 0x0000ff13u, 0x0000ff6bu, 0, "PAUS", "Pause", "Break" },	/* Pause Break */
+	{ 121, 0x0000ffaeu, 0x0000ffaeu, 1, "KPPT", "KP_Decimal", "KP_Decimal" },	/* KP_Decimal */
+	{ 122, 0x0000ff31u, 0x0000ff31u, 0, "HNGL", "Hangul", "Hangul" },	/* Hangul */
+	{ 123, 0x0000ff34u, 0x0000ff34u, 0, "HJCV", "Hangul_Hanja", "Hangul_Hanja" },	/* Hangul_Hanja */
+	{ 125, 0x0000ffebu, 0x0000ffebu, 0, "LWIN", "Super_L", "Super_L" },	/* Super_L */
+	{ 126, 0x0000ffecu, 0x0000ffecu, 0, "RWIN", "Super_R", "Super_R" },	/* Super_R */
+	{ 127, 0x0000ff67u, 0x0000ff67u, 0, "MENU", "Menu", "Menu" },	/* Menu */
+	{ 227, 0x1008ff59u, 0x1008ff59u, 0, "OUTP", "XF86Display", "XF86Display" },	/* XF86Display */
+	{ 228, 0x1008ff04u, 0x1008ff04u, 0, "KITG", "XF86KbdLightOnOff", "XF86KbdLightOnOff" },	/* XF86KbdLightOnOff */
+	{ 229, 0x1008ff06u, 0x1008ff06u, 0, "KIDN", "XF86KbdBrightnessDown", "XF86KbdBrightnessDown" },	/* XF86KbdBrightnessDown */
+	{ 230, 0x1008ff05u, 0x1008ff05u, 0, "KIUP", "XF86KbdBrightnessUp", "XF86KbdBrightnessUp" },	/* XF86KbdBrightnessUp */
 };
 
 #define USB_KEYS_COUNT (sizeof USB_KEYS / sizeof USB_KEYS[0])
+
+// **THE KERNEL'S OWN NAME FOR A KEY CODE**, which is the name `evtest`
+// prints and the one `--usb-trace` writes.  It covers EVERY code the
+// kernel names and not only the ones above, which is the point of a
+// table of its own: a key this program has no keysym for is exactly the
+// key somebody is tracing, and `the code is not in the table` says more
+// with `KEY_F13` in front of it than with a bare number.
+struct usb_code_name {
+	uint16_t code;
+	const char *name;
+};
+
+static const struct usb_code_name USB_CODE_NAMES[] = {
+	{   0, "KEY_RESERVED" },
+	{   1, "KEY_ESC" },
+	{   2, "KEY_1" },
+	{   3, "KEY_2" },
+	{   4, "KEY_3" },
+	{   5, "KEY_4" },
+	{   6, "KEY_5" },
+	{   7, "KEY_6" },
+	{   8, "KEY_7" },
+	{   9, "KEY_8" },
+	{  10, "KEY_9" },
+	{  11, "KEY_0" },
+	{  12, "KEY_MINUS" },
+	{  13, "KEY_EQUAL" },
+	{  14, "KEY_BACKSPACE" },
+	{  15, "KEY_TAB" },
+	{  16, "KEY_Q" },
+	{  17, "KEY_W" },
+	{  18, "KEY_E" },
+	{  19, "KEY_R" },
+	{  20, "KEY_T" },
+	{  21, "KEY_Y" },
+	{  22, "KEY_U" },
+	{  23, "KEY_I" },
+	{  24, "KEY_O" },
+	{  25, "KEY_P" },
+	{  26, "KEY_LEFTBRACE" },
+	{  27, "KEY_RIGHTBRACE" },
+	{  28, "KEY_ENTER" },
+	{  29, "KEY_LEFTCTRL" },
+	{  30, "KEY_A" },
+	{  31, "KEY_S" },
+	{  32, "KEY_D" },
+	{  33, "KEY_F" },
+	{  34, "KEY_G" },
+	{  35, "KEY_H" },
+	{  36, "KEY_J" },
+	{  37, "KEY_K" },
+	{  38, "KEY_L" },
+	{  39, "KEY_SEMICOLON" },
+	{  40, "KEY_APOSTROPHE" },
+	{  41, "KEY_GRAVE" },
+	{  42, "KEY_LEFTSHIFT" },
+	{  43, "KEY_BACKSLASH" },
+	{  44, "KEY_Z" },
+	{  45, "KEY_X" },
+	{  46, "KEY_C" },
+	{  47, "KEY_V" },
+	{  48, "KEY_B" },
+	{  49, "KEY_N" },
+	{  50, "KEY_M" },
+	{  51, "KEY_COMMA" },
+	{  52, "KEY_DOT" },
+	{  53, "KEY_SLASH" },
+	{  54, "KEY_RIGHTSHIFT" },
+	{  55, "KEY_KPASTERISK" },
+	{  56, "KEY_LEFTALT" },
+	{  57, "KEY_SPACE" },
+	{  58, "KEY_CAPSLOCK" },
+	{  59, "KEY_F1" },
+	{  60, "KEY_F2" },
+	{  61, "KEY_F3" },
+	{  62, "KEY_F4" },
+	{  63, "KEY_F5" },
+	{  64, "KEY_F6" },
+	{  65, "KEY_F7" },
+	{  66, "KEY_F8" },
+	{  67, "KEY_F9" },
+	{  68, "KEY_F10" },
+	{  69, "KEY_NUMLOCK" },
+	{  70, "KEY_SCROLLLOCK" },
+	{  71, "KEY_KP7" },
+	{  72, "KEY_KP8" },
+	{  73, "KEY_KP9" },
+	{  74, "KEY_KPMINUS" },
+	{  75, "KEY_KP4" },
+	{  76, "KEY_KP5" },
+	{  77, "KEY_KP6" },
+	{  78, "KEY_KPPLUS" },
+	{  79, "KEY_KP1" },
+	{  80, "KEY_KP2" },
+	{  81, "KEY_KP3" },
+	{  82, "KEY_KP0" },
+	{  83, "KEY_KPDOT" },
+	{  85, "KEY_ZENKAKUHANKAKU" },
+	{  86, "KEY_102ND" },
+	{  87, "KEY_F11" },
+	{  88, "KEY_F12" },
+	{  89, "KEY_RO" },
+	{  90, "KEY_KATAKANA" },
+	{  91, "KEY_HIRAGANA" },
+	{  92, "KEY_HENKAN" },
+	{  93, "KEY_KATAKANAHIRAGANA" },
+	{  94, "KEY_MUHENKAN" },
+	{  95, "KEY_KPJPCOMMA" },
+	{  96, "KEY_KPENTER" },
+	{  97, "KEY_RIGHTCTRL" },
+	{  98, "KEY_KPSLASH" },
+	{  99, "KEY_SYSRQ" },
+	{ 100, "KEY_RIGHTALT" },
+	{ 101, "KEY_LINEFEED" },
+	{ 102, "KEY_HOME" },
+	{ 103, "KEY_UP" },
+	{ 104, "KEY_PAGEUP" },
+	{ 105, "KEY_LEFT" },
+	{ 106, "KEY_RIGHT" },
+	{ 107, "KEY_END" },
+	{ 108, "KEY_DOWN" },
+	{ 109, "KEY_PAGEDOWN" },
+	{ 110, "KEY_INSERT" },
+	{ 111, "KEY_DELETE" },
+	{ 112, "KEY_MACRO" },
+	{ 113, "KEY_MUTE" },
+	{ 114, "KEY_VOLUMEDOWN" },
+	{ 115, "KEY_VOLUMEUP" },
+	{ 117, "KEY_KPEQUAL" },
+	{ 118, "KEY_KPPLUSMINUS" },
+	{ 119, "KEY_PAUSE" },
+	{ 121, "KEY_KPCOMMA" },
+	{ 122, "KEY_HANGEUL" },
+	{ 123, "KEY_HANJA" },
+	{ 124, "KEY_YEN" },
+	{ 125, "KEY_LEFTMETA" },
+	{ 126, "KEY_RIGHTMETA" },
+	{ 127, "KEY_COMPOSE" },
+	{ 129, "KEY_AGAIN" },
+	{ 132, "KEY_FRONT" },
+	{ 141, "KEY_SETUP" },
+	{ 145, "KEY_SENDFILE" },
+	{ 146, "KEY_DELETEFILE" },
+	{ 147, "KEY_XFER" },
+	{ 148, "KEY_PROG1" },
+	{ 149, "KEY_PROG2" },
+	{ 151, "KEY_MSDOS" },
+	{ 154, "KEY_CYCLEWINDOWS" },
+	{ 155, "KEY_MAIL" },
+	{ 157, "KEY_COMPUTER" },
+	{ 160, "KEY_CLOSECD" },
+	{ 161, "KEY_EJECTCD" },
+	{ 162, "KEY_EJECTCLOSECD" },
+	{ 163, "KEY_NEXTSONG" },
+	{ 164, "KEY_PLAYPAUSE" },
+	{ 165, "KEY_PREVIOUSSONG" },
+	{ 166, "KEY_STOPCD" },
+	{ 167, "KEY_RECORD" },
+	{ 168, "KEY_REWIND" },
+	{ 170, "KEY_ISO" },
+	{ 175, "KEY_MOVE" },
+	{ 176, "KEY_EDIT" },
+	{ 177, "KEY_SCROLLUP" },
+	{ 178, "KEY_SCROLLDOWN" },
+	{ 179, "KEY_KPLEFTPAREN" },
+	{ 180, "KEY_KPRIGHTPAREN" },
+	{ 183, "KEY_F13" },
+	{ 184, "KEY_F14" },
+	{ 185, "KEY_F15" },
+	{ 186, "KEY_F16" },
+	{ 187, "KEY_F17" },
+	{ 188, "KEY_F18" },
+	{ 189, "KEY_F19" },
+	{ 190, "KEY_F20" },
+	{ 191, "KEY_F21" },
+	{ 192, "KEY_F22" },
+	{ 193, "KEY_F23" },
+	{ 194, "KEY_F24" },
+	{ 200, "KEY_PLAYCD" },
+	{ 201, "KEY_PAUSECD" },
+	{ 202, "KEY_PROG3" },
+	{ 203, "KEY_PROG4" },
+	{ 205, "KEY_SUSPEND" },
+	{ 207, "KEY_PLAY" },
+	{ 208, "KEY_FASTFORWARD" },
+	{ 209, "KEY_BASSBOOST" },
+	{ 211, "KEY_HP" },
+	{ 212, "KEY_CAMERA" },
+	{ 213, "KEY_SOUND" },
+	{ 214, "KEY_QUESTION" },
+	{ 215, "KEY_EMAIL" },
+	{ 216, "KEY_CHAT" },
+	{ 217, "KEY_SEARCH" },
+	{ 218, "KEY_CONNECT" },
+	{ 220, "KEY_SPORT" },
+	{ 221, "KEY_SHOP" },
+	{ 222, "KEY_ALTERASE" },
+	{ 224, "KEY_BRIGHTNESSDOWN" },
+	{ 225, "KEY_BRIGHTNESSUP" },
+	{ 226, "KEY_MEDIA" },
+	{ 228, "KEY_KBDILLUMTOGGLE" },
+	{ 229, "KEY_KBDILLUMDOWN" },
+	{ 230, "KEY_KBDILLUMUP" },
+	{ 235, "KEY_DOCUMENTS" },
+	{ 236, "KEY_BATTERY" },
+	{ 237, "KEY_BLUETOOTH" },
+	{ 238, "KEY_WLAN" },
+	{ 239, "KEY_UWB" },
+	{ 240, "KEY_UNKNOWN" },
+};
+
+#define USB_CODE_NAME_COUNT (sizeof USB_CODE_NAMES / sizeof USB_CODE_NAMES[0])
 
 #endif

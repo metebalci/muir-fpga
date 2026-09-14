@@ -45,7 +45,17 @@
 //
 //     cadr-usb-input [--link PATH] [--device PATH]... [--input-dir DIR]
 //                    [--scan-ms N] [--grab] [--no-keyboard] [--no-mouse]
-//                    [--log PATH] [--once]
+//                    [--trace] [--log PATH] [--once]
+//
+// **WHAT EACH KEY BECAME, WHILE SOMEBODY IS WATCHING.**  `--usb-trace` writes
+// a line for every key event: the device, the key code as the kernel names
+// it, the level this program chose, and the keysym that crossed the link ---
+// or that the code is not in the table.  It is `evtest` and the mapping in
+// one line, and it is the near half of the road whose far half is
+// `cadr-terminal --keyboard-mapping-trace`.  OFF by default, and not only a
+// flag: `SIGUSR1` turns it on and `SIGUSR2` turns it off while the program
+// runs, which is what `cadr-console trace-keys on` sends.  The mouse is not
+// traced; `usb_keys.h` says why.
 //
 // Every flag also has a `--usb-` spelling, so that these can live in the
 // card's `fpgarc` beside the Chaosnet's without two files --- `cadr-chaosnet`
@@ -129,6 +139,11 @@ static void usage(void)
 		"                    sees the keys\n"
 		"  --no-keyboard     ignore keyboards\n"
 		"  --no-mouse        ignore mice\n"
+		"  --trace           a line for every key event: the device, the code as the\n"
+		"                    kernel names it, the level, and the keysym it became --- or\n"
+		"                    that the code is not in the table. The mouse is not traced.\n"
+		"                    SIGUSR1 turns it on while the program runs and SIGUSR2 turns\n"
+		"                    it off, which is `cadr-console trace-keys on|off`\n"
 		"  --log PATH        where to write (default stdout)\n"
 		"  --once            find the devices, say what is there, and exit\n"
 		"\n"
@@ -144,7 +159,7 @@ int main(int argc, char **argv)
 	const char *named[USB_MAX_NAMED];
 	unsigned names = 0;
 	unsigned scan_ms = 1000;
-	int grab = 0, no_keyboard = 0, no_mouse = 0, once = 0;
+	int grab = 0, no_keyboard = 0, no_mouse = 0, once = 0, trace = 0;
 	static const struct option opts[] = {
 		{ "link", required_argument, NULL, 'L' },
 		{ "usb-link", required_argument, NULL, 'L' },
@@ -160,13 +175,15 @@ int main(int argc, char **argv)
 		{ "usb-no-keyboard", no_argument, NULL, 'K' },
 		{ "no-mouse", no_argument, NULL, 'M' },
 		{ "usb-no-mouse", no_argument, NULL, 'M' },
+		{ "trace", no_argument, NULL, 'T' },
+		{ "usb-trace", no_argument, NULL, 'T' },
 		{ "log", required_argument, NULL, 'l' },
 		{ "once", no_argument, NULL, 'o' },
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "L:d:D:s:gKMl:oh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "L:d:D:s:gKMTl:oh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'L': link_path = optarg; break;
 		case 'd':
@@ -182,6 +199,7 @@ int main(int argc, char **argv)
 		case 'g': grab = 1; break;
 		case 'K': no_keyboard = 1; break;
 		case 'M': no_mouse = 1; break;
+		case 'T': trace = 1; break;
 		case 'l': log_path = optarg; break;
 		case 'o': once = 1; break;
 		default: usage(); return 2;
@@ -212,6 +230,10 @@ int main(int argc, char **argv)
 	set.grab = grab;
 	set.want_keyboard = !no_keyboard;
 	set.want_mouse = !no_mouse;
+	usb_set_traced(&set, trace);
+	if (trace)
+		say("--usb-trace: every key event and what became of it is a line here. "
+		    "SIGUSR2 turns it off");
 
 	struct sender out_ctx;
 	memset(&out_ctx, 0, sizeof out_ctx);
@@ -240,6 +262,10 @@ int main(int argc, char **argv)
 	signal(SIGTERM, on_stop);
 	signal(SIGINT, on_stop);
 	signal(SIGPIPE, SIG_IGN);
+	// **AND THE TWO THAT SWITCH THE TRACE WHILE THIS RUNS.**
+	// `usb_devices.c` installs them and `usb_trace_apply` below acts on
+	// what they asked for, once a pass, where `say` is allowed.
+	usb_trace_signals();
 
 	uint64_t next_scan = monotonic_ms() + scan_ms;
 	int said_no_link = 0;
@@ -248,6 +274,10 @@ int main(int argc, char **argv)
 
 	while (!stopping) {
 		const uint64_t now = monotonic_ms();
+		// What SIGUSR1 or SIGUSR2 asked for, if either did: acted on
+		// here rather than in the handler, and said once when it
+		// changes.
+		usb_trace_apply(&set);
 
 		// The link, made or made again.  **A TERMINAL THAT IS NOT
 		// THERE IS NOT AN ERROR**: this program is started at boot and

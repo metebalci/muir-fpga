@@ -27,6 +27,12 @@
 #                      Escape, the function keys, the keypad, the arrows
 #   symbols/us         the alphanumeric keys of the US layout, over it
 #   keysymdef.h        the number of every keysym name
+#   input-event-codes.h  the kernel's own name for each key code, `KEY_A`,
+#                      which is the name `evtest` prints and the one somebody
+#                      watching a keyboard already knows.  It is the ONLY
+#                      thing here that is not X's, and it is here because the
+#                      trace names a key the way the tool a person reaches for
+#                      first names it
 #
 # `pc` then `us` is what a layout of `pc+us` is, which is what an X server
 # loads for a plain US keyboard --- so this table is what a viewer connected
@@ -47,6 +53,9 @@ KEYSYMDEF = "/usr/include/X11/keysymdef.h"
 # reach the machine as nothing and are counted as unmapped, which is the
 # truth.
 XF86KEYSYMDEF = "/usr/include/X11/XF86keysym.h"
+# The kernel's own names for the key codes, for `--usb-trace`.  It is an ABI
+# header: the numbers cannot change, and a name here is what `evtest` prints.
+EVENT_CODES = "/usr/include/linux/input-event-codes.h"
 LAYOUT = [("pc", None), ("us", "basic")]
 # X's key codes are the evdev ones plus eight: keycodes/evdev says
 # `minimum = 8` and <AE01>, which is evdev's KEY_1 = 2, is 10 there.
@@ -71,6 +80,30 @@ def keysym_numbers(path, prefix="XK_", name_prefix=""):
             # The first definition of a name wins; keysymdef.h defines none
             # twice, and an alias is a different name for the same number.
             out.setdefault(name_prefix + m.group(1), int(m.group(2), 16))
+    return out
+
+
+def kernel_names(path, limit):
+    """Each key code under `limit` and the kernel's first name for it.
+
+    **THE FIRST NUMERIC DEFINITION WINS AND THE ALIASES ARE SKIPPED.**  The
+    header defines `KEY_MUTE 113` and then `KEY_MIN_INTERESTING KEY_MUTE`,
+    which is a name for a name and not a number; taking the second would print
+    a key called MIN_INTERESTING at a keyboard.  `KEY_MAX` and `KEY_CNT` are
+    bounds rather than keys and are left out by name.
+    """
+    out = {}
+    pat = re.compile(r"^#define\s+(KEY_\w+)\s+(0x[0-9a-fA-F]+|\d+)\s*$")
+    for line in open(path):
+        m = pat.match(line.rstrip())
+        if not m:
+            continue
+        name, value = m.group(1), int(m.group(2), 0)
+        if name in ("KEY_MAX", "KEY_CNT", "KEY_MIN_INTERESTING"):
+            continue
+        if value >= limit:
+            continue
+        out.setdefault(value, name)
     return out
 
 
@@ -149,6 +182,31 @@ def read_symbols(path, want, into, seen):
         into[name] = syms
 
 
+# The one printable-ASCII keysym muir's own `KEYSYM_NAMES` gives a name to,
+# and so the one the screen's `key_sym_name` writes as a word rather than as
+# the character it is.  `written` below has to agree with that function or the
+# two traces would call one keysym two things; the check asserts it entry by
+# entry, which is what keeps this list from rotting.
+NAMED_ASCII = {0x20: "space"}
+
+
+def written(keysym, xkb_name):
+    """What to CALL a keysym, the way the screen's `key_sym_name` calls it.
+
+    muir's `keysym_name`: a name it knows, else the character it is, else its
+    number.  Here the layout has supplied the name, so what this decides is
+    only whether the character is the better word --- and for everything
+    printable but the space, it is: a trace that said `exclam` where the key
+    types `!` would be a second vocabulary for one keysym.
+    """
+    if keysym in NAMED_ASCII:
+        return NAMED_ASCII[keysym]
+    if 0x20 <= keysym <= 0x7E:
+        c = chr(keysym)
+        return "\\\\" if c == "\\" else ('\\"' if c == '"' else c)
+    return xkb_name
+
+
 def main():
     numbers = keysym_numbers(KEYSYMDEF)
     numbers.update(keysym_numbers(XF86KEYSYMDEF, "XF86XK_", "XF86"))
@@ -158,6 +216,7 @@ def main():
         if name.startswith("XF86"):
             numbers.setdefault("XF86_" + name[4:], value)
     codes = key_codes(KEYCODES)
+    knames = kernel_names(EVENT_CODES, 256)
     symbols = {}
     seen = set()
     for f, sec in LAYOUT:
@@ -213,6 +272,10 @@ def main():
     w("//     %s/pc, %s/us and what they include\n" % (SYMBOLS, SYMBOLS))
     w("//     %s and %s\n" % (KEYSYMDEF, XF86KEYSYMDEF))
     w("//\n")
+    w("// ...and the kernel's own key code names, which are not X's:\n")
+    w("//\n")
+    w("//     %s\n" % EVENT_CODES)
+    w("//\n")
     w("// The layout is `pc+us`, which is what an X server loads for a plain US\n")
     w("// keyboard --- so this is what a viewer connected to such a keyboard\n")
     w("// would send, and the two sources of keys cannot disagree about what a\n")
@@ -223,6 +286,10 @@ def main():
     w("// `plain` is the keysym with no shift and `shifted` the one with Shift\n")
     w("// held.  A key with one keysym has the same in both.  Which of them a\n")
     w("// key event uses is `usb_keys.c`'s decision and is written there.\n")
+    w("//\n")
+    w("// `plain_name` and `shifted_name` are what to CALL those two keysyms and\n")
+    w("// `USB_CODE_NAMES` is the kernel's own name for every key code: both are\n")
+    w("// for `--usb-trace` and nothing else reads them.\n")
     w("\n")
     w("#ifndef USB_KEYMAP_H\n")
     w("#define USB_KEYMAP_H\n")
@@ -235,16 +302,40 @@ def main():
     w("\tuint32_t shifted;\t/* ...and with Shift held */\n")
     w("\tuint8_t keypad;\t\t/* on the numeric keypad: Num Lock chooses */\n")
     w("\tconst char *name;\t/* the xkb name of the key, for a message */\n")
+    w("\t/* What to CALL each keysym, which is what `--usb-trace` prints:\n")
+    w("\t   the character where the keysym is printable ASCII, else its X11\n")
+    w("\t   name.  The same word the screen's `key_sym_name` writes, which\n")
+    w("\t   the check asserts entry by entry. */\n")
+    w("\tconst char *plain_name, *shifted_name;\n")
     w("};\n")
     w("\n")
     w("static const struct usb_key USB_KEYS[] = {\n")
     for code, name, plain, pn, shifted, sn in rows:
-        w("\t{ %3d, 0x%08xu, 0x%08xu, %d, \"%s\" },\t/* %s%s */\n"
-          % (code, pn, sn, 1 if code in keypad else 0, name, plain,
+        w("\t{ %3d, 0x%08xu, 0x%08xu, %d, \"%s\", \"%s\", \"%s\" },\t/* %s%s */\n"
+          % (code, pn, sn, 1 if code in keypad else 0, name,
+             written(pn, plain), written(sn, shifted), plain,
              "" if shifted == plain else " " + shifted))
     w("};\n")
     w("\n")
     w("#define USB_KEYS_COUNT (sizeof USB_KEYS / sizeof USB_KEYS[0])\n")
+    w("\n")
+    w("// **THE KERNEL'S OWN NAME FOR A KEY CODE**, which is the name `evtest`\n")
+    w("// prints and the one `--usb-trace` writes.  It covers EVERY code the\n")
+    w("// kernel names and not only the ones above, which is the point of a\n")
+    w("// table of its own: a key this program has no keysym for is exactly the\n")
+    w("// key somebody is tracing, and `the code is not in the table` says more\n")
+    w("// with `KEY_F13` in front of it than with a bare number.\n")
+    w("struct usb_code_name {\n")
+    w("\tuint16_t code;\n")
+    w("\tconst char *name;\n")
+    w("};\n")
+    w("\n")
+    w("static const struct usb_code_name USB_CODE_NAMES[] = {\n")
+    for code in sorted(knames):
+        w("\t{ %3d, \"%s\" },\n" % (code, knames[code]))
+    w("};\n")
+    w("\n")
+    w("#define USB_CODE_NAME_COUNT (sizeof USB_CODE_NAMES / sizeof USB_CODE_NAMES[0])\n")
     w("\n")
     w("#endif\n")
 
