@@ -21,4 +21,4 @@
 # what moved in the message.  A trace that changes under a muir bump is the
 # most interesting thing that can happen here and must not arrive silently in
 # somebody else's commit.
-6087a634d8254e22164e0a9cf8dcaa64809c5218
+a55b6c2e38249b7f77ccd978c3bd663bb1b15616
