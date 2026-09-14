@@ -39,7 +39,8 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass \
-       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/probe.pass \
+       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/arty_a7.pass \
+       $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
@@ -1302,6 +1303,49 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	@touch $@
+
+# ----------------------------------------------- the Arty A7-100's top level
+#
+# `boards/arty-a7-100/cadr_arty_a7.sv` is the third board and the first with no
+# processing system: an Artix-7, so no PS7, no AXI port, nothing behind the
+# machine's memory port, and every seam the other two drive from a program tied
+# off instead. Like them it cannot be simulated --- Verilator has no
+# `MMCME2_BASE` --- so lint and the fitter are all there is, and this is the
+# lint.
+#
+# **THE FOLD IS WHAT THIS EARNS, AND IT IS NOT A DUPLICATE OF THE OTHER TWO.**
+# Three top levels now instantiate `cadr_machine`, and an output added to the
+# machine and connected in only some of them is a PINMISSING in the rest. The
+# Arty's lint and the Cora's say the port list is complete for a board with a
+# processing system; this says it is complete for a board with none, where
+# forty-odd seams are tied off rather than driven --- which is a different
+# statement about the same list.
+#
+# TWICE, NOT SIX TIMES. `DDR`, `PROVE` and `HDMI` are all switches that turn a
+# Zynq port on and this part has none, so the only switch here is
+# `PROBE_DEPTH`. It is zero by default and the generate that instantiates
+# `rtl/plumbing/xilinx7/cadr_probe.sv` is then not elaborated at all, so a lint
+# of the default says nothing about the board
+# `boards/arty-a7-100/vivado/probe.tcl` builds and reads. A branch only one
+# build reaches is a branch only one build checks.
+#
+# `$(MACHINE)` COMES FIRST, as it does for the other two: a package has to be
+# parsed before the file that reads it.
+$(BUILD)/arty_a7.pass: $(MACHINE) boards/arty-a7-100/cadr_arty_a7.sv \
+                    rtl/plumbing/cadr_lamp_errhalt.sv \
+                    rtl/plumbing/xilinx7/cadr_probe.sv \
+                    tb/cadr_arty_stubs.sv | $(BUILD)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-a7-100 \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    --top-module cadr_arty_a7 tb/cadr_arty_stubs.sv $(MACHINE) \
+	    boards/arty-a7-100/cadr_arty_a7.sv rtl/plumbing/cadr_lamp_errhalt.sv
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-a7-100 \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GPROBE_DEPTH=1024 \
+	    --top-module cadr_arty_a7 tb/cadr_arty_stubs.sv $(MACHINE) \
+	    boards/arty-a7-100/cadr_arty_a7.sv rtl/plumbing/cadr_lamp_errhalt.sv \
+	    rtl/plumbing/xilinx7/cadr_probe.sv
 	@touch $@
 
 # --------------------------------------------------------------- the probe
