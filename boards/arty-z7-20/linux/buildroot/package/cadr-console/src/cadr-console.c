@@ -81,7 +81,7 @@
 // viewer to MIT's own key position.  It reads their pid files and signals
 // them, touching no register --- so it runs BEFORE the guard and the IDENT
 // below and works on a board whose fabric has no console in it.
-// `console_face.h` has the whole of it.
+// `console_host.h` has the whole of it, and says why it is not in the face.
 
 #include <errno.h>
 #include <getopt.h>
@@ -95,6 +95,7 @@
 #include <cadr/cadr_mem.h>
 
 #include "console_face.h"
+#include "console_host.h"
 
 // ---- the face over /dev/mem --------------------------------------------
 struct mmio {
@@ -224,8 +225,8 @@ static void do_debug_cable(struct console *c)
 // **`trace-keys on|off`: THE TWO INPUT PROGRAMS TOLD TO SAY WHAT A KEY
 // BECOMES.**  One line a program, whether it was reached or is not running,
 // because a word that silently reached one of the two would be worse than one
-// that reached neither.  It touches no register; `console_face.h` says why it
-// lives here and why it runs before the guard.
+// that reached neither.  It touches no register; `console_host.h` says why it
+// lives beside the face rather than in it, and why it runs before the guard.
 static int do_trace_keys(int argc, char **argv)
 {
 	if (argc < 2 || (strcmp(argv[1], "on") != 0 && strcmp(argv[1], "off") != 0)) {

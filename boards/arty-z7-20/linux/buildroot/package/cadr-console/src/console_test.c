@@ -47,6 +47,7 @@
 #include <cadr/cadr_mem.h>
 
 #include "console_face.h"
+#include "console_host.h"
 
 static int bad;
 static unsigned checks;
