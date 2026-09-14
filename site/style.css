@@ -315,6 +315,9 @@ figure.screen img {
                             itself has shown. */
   --st-wip:   #8250df;   /* being built now: somebody is in those files today --- violet, since blue sat too near the turquoise */
   --st-ext:   #d0d7de;   /* outside the project */
+  --st-absent: #d1495b;  /* not available on this board: the cross, in the same
+                            red the error lamp is drawn in.  It is the one mark
+                            on these drawings that is not about progress. */
 }
 .d-done, .d-built, .d-part, .d-wip, .d-ext { fill-opacity: 0.45; stroke-width: 2; }
 .d-done  { fill: var(--st-done);  stroke: var(--st-done);  }
@@ -322,6 +325,18 @@ figure.screen img {
 .d-part { fill: var(--st-part); stroke: var(--st-part); }
 .d-wip  { fill: var(--st-wip);  stroke: var(--st-wip);  }
 .d-ext  { fill: var(--st-ext);  stroke: var(--st-ext);  }
+/* A BLOCK THE BOARD DOES NOT HAVE.  It keeps its place instead of being taken
+   out, so that the drawings of three boards are one drawing with parts crossed
+   off, and a reader sees what a board is missing rather than inferring it from
+   a gap.  It carries no status colour, because a status says how far along a
+   thing is and the answer here is that it is not on this board at all: the
+   outline goes dashed in the drawing's own ink, the label stays and goes
+   faint, and a red cross corner to corner says it plainly.  The lines that
+   reached it stay as they are, since lines on these drawings carry no status
+   either. */
+.d-absent   { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 4 3; }
+.d-absent-x { fill: none; stroke: var(--st-absent); stroke-width: 1.25; }
+.d-absent-t { fill-opacity: 0.5; }
 /* A status colour on a connection, not a block: the wash a status class
    carries would fill the shape an open path implies, so lines force it off
    and keep only the stroke. */
@@ -332,6 +347,10 @@ figure.screen img {
    too faint to tell one colour from another, which is the one place the
    colour itself is the whole content. */
 .d-key { fill-opacity: 1; }
+/* The absent swatch is the drawing's own ink with the red cross on it, so that
+   the legend shows the mark rather than a colour.  currentColor keeps it right
+   in both themes: a black box on paper, a white one on a dark ground. */
+.d-absent-key { fill: #000; fill-opacity: 1; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: none; }  /* black in both themes, the red cross on it */
 /* The two lamps that blink on the board blink here, at the board's own rates,
    and both derive from the machine's clock: LD0 is bit 25 of a counter clocked
    at 100 MHz, so it toggles every 2^25 ticks of 10 ns --- 0.336 s, a 0.671 s
