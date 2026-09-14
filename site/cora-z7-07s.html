@@ -72,14 +72,14 @@
           <text class="d-s d-absent-t" x="-70" y="336" text-anchor="middle">at the monitor&rsquo;s rate,</text>
           <text class="d-s d-absent-t" x="-70" y="358" text-anchor="middle">TMDS out to HDMI</text>
           <path class="d-line" d="M470,274 L470,256 L-70,256 L-70,274"/>
-          <path class="d-line" d="M-70,386 L-70,464"/>
+          <path class="d-line" d="M-70,386 L-70,428"/>
           <path class="d-line" d="M-160,330 L-183,330"/>
-          <rect class="d-plate" x="-150" y="464" width="160" height="38"/>
-          <rect class="d-box d-absent" x="-150" y="464" width="160" height="38"/>
-          <path class="d-absent-x" d="M-150,464 L10,502 M10,464 L-150,502"/>
-          <text class="d-m d-absent-t" x="-70" y="482" text-anchor="middle">S_AXI_HP3</text>
-          <text class="d-s d-absent-t" x="-70" y="496" text-anchor="middle">PL masters, 64 bits, AXI3</text>
-          <path class="d-line" d="M-70,502 L-70,652"/>
+          <rect class="d-plate" x="-150" y="428" width="160" height="38"/>
+          <rect class="d-box d-absent" x="-150" y="428" width="160" height="38"/>
+          <path class="d-absent-x" d="M-150,428 L10,466 M10,428 L-150,466"/>
+          <text class="d-m d-absent-t" x="-70" y="446" text-anchor="middle">S_AXI_HP3</text>
+          <text class="d-s d-absent-t" x="-70" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <path class="d-line" d="M-70,466 L-70,652"/>
           <rect class="d-box d-absent" x="-283" y="288" width="100" height="84"/>
           <path class="d-absent-x" d="M-283,288 L-183,372 M-183,288 L-283,372"/>
           <text class="d-t d-absent-t" x="-233" y="314" text-anchor="middle">HDMI out</text>
@@ -185,7 +185,7 @@
           <text class="d-s" x="1162" y="138" text-anchor="middle">the cable both ways, 8 pins</text>
           <text class="d-s" x="1162" y="152" text-anchor="middle">registers at GP1 + 0x1000</text>
           <!-- one connector, one line out of the adapter to it -->
-          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,464 M1162,502 L1162,542"/>
+          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,428 M1162,466 L1162,542"/>
           <text class="d-s" x="959" y="114" text-anchor="middle">20 out</text>
           <text class="d-s" x="959" y="150" text-anchor="middle">19 in</text>
           <path class="d-line" d="M1256,120 L1305,120"/>
@@ -231,27 +231,36 @@
           <text class="d-s" x="725" y="376" text-anchor="middle">the cable, not the protocol</text>
 
           <!-- down to the AXI ports -->
-          <path class="d-line" d="M118,386 L118,464"/>
+          <path class="d-line" d="M118,386 L118,428"/>
           <!-- The disk's second leg: Linux writes the controller where the block is.
                Not one of the CADR's own disk registers, which are Xbus addresses
                the microcode writes; this one exists only because the pack is a file. -->
-          <path class="d-line" d="M310,386 L310,464 M725,386 L725,464 M876,238 L876,464 M380,386 L380,432.2 L660,432.2 L660,464"/>
+          <path class="d-line" d="M310,386 L310,428 M725,386 L725,428 M876,238 L876,428 M380,386 L380,407 L660,407 L660,428"/>
 
-          <!-- the PS-PL boundary, which the three ports cross -->
-          <path class="d-dash" d="M-170,486 L-150,486 M10,486 L38,486 M198,486 L230,486 M390,486 L640,486 M890,486 L1092,486 M1232,486 L1290,486"/>
-          <rect class="d-plate" x="38" y="464" width="160" height="38"/>
-          <rect class="d-box d-done" x="38" y="464" width="160" height="38"/>
-          <text class="d-m" x="118" y="482" text-anchor="middle">S_AXI_HP0</text>
-          <text class="d-s" x="118" y="496" text-anchor="middle">PL masters, 64 bits, AXI3</text>
-          <rect class="d-box d-done" x="230" y="464" width="160" height="38"/>
-          <text class="d-m" x="310" y="482" text-anchor="middle">S_AXI_HP2</text>
-          <text class="d-s" x="310" y="496" text-anchor="middle">PL masters, 64 bits, AXI3</text>
-          <rect class="d-box d-done" x="640" y="464" width="250" height="38"/>
-          <text class="d-m" x="765" y="482" text-anchor="middle">M_AXI_GP0</text>
-          <text class="d-s" x="765" y="496" text-anchor="middle">PS masters, 32 bits, AXI3</text>
-          <rect class="d-box d-done" x="1092" y="464" width="140" height="38"/>
-          <text class="d-m" x="1162" y="482" text-anchor="middle">M_AXI_GP1</text>
-          <text class="d-s" x="1162" y="496" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+          <!-- THE BOUNDARY BETWEEN THE FABRIC AND THE PROCESSING SYSTEM, and the
+               ports that cross it: the four in this row, and S_AXI_HP3 over in
+               the display's own column.  It divides the space it stands in ---
+               42 below the fabric's lowest row of blocks, which end at 386, and
+               56 above the software region, which begins at 522.  It used to sit
+               20 above that region, close enough to read as part of the software
+               rather than as the seam between the two halves.  Nothing below it
+               moved when it came up: the lines through it took the difference,
+               those from the fabric shortening and those into the controllers
+               and the region lengthening by the same 36. -->
+          <path class="d-dash" d="M-170,450 L-150,450 M10,450 L38,450 M198,450 L230,450 M390,450 L640,450 M890,450 L1092,450 M1232,450 L1290,450"/>
+          <rect class="d-plate" x="38" y="428" width="160" height="38"/>
+          <rect class="d-box d-done" x="38" y="428" width="160" height="38"/>
+          <text class="d-m" x="118" y="446" text-anchor="middle">S_AXI_HP0</text>
+          <text class="d-s" x="118" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <rect class="d-box d-done" x="230" y="428" width="160" height="38"/>
+          <text class="d-m" x="310" y="446" text-anchor="middle">S_AXI_HP2</text>
+          <text class="d-s" x="310" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <rect class="d-box d-done" x="640" y="428" width="250" height="38"/>
+          <text class="d-m" x="765" y="446" text-anchor="middle">M_AXI_GP0</text>
+          <text class="d-s" x="765" y="460" text-anchor="middle">PS masters, 32 bits, AXI3</text>
+          <rect class="d-box d-done" x="1092" y="428" width="140" height="38"/>
+          <text class="d-m" x="1162" y="446" text-anchor="middle">M_AXI_GP1</text>
+          <text class="d-s" x="1162" y="460" text-anchor="middle">PS masters, 32 bits, AXI3</text>
 
           <!-- the PS -->
           <text class="d-s" x="-164" y="520.4">PS &mdash; Arm</text>
@@ -260,7 +269,7 @@
                own silicon, which is why it stands outside the outline. -->
           <rect class="d-dot" x="220" y="522" width="1000" height="124"/>
           <text class="d-s" x="230" y="536">Linux &mdash; Buildroot</text>
-          <path class="d-line" d="M765,502 L765,513.2 M305,513.2 L1040,513.2 M305,513.2 L305,542 M452,513.2 L452,542 M599,513.2 L599,542 M746,513.2 L746,542 M893,513.2 L893,542 M1040,513.2 L1040,542"/>
+          <path class="d-line" d="M765,466 L765,513.2 M305,513.2 L1040,513.2 M305,513.2 L305,542 M452,513.2 L452,542 M599,513.2 L599,542 M746,513.2 L746,542 M893,513.2 L893,542 M1040,513.2 L1040,542"/>
 
           <!-- The boot loader, beside Linux, in two parts because only one of
                them is ours.  U-Boot itself is upstream, so it is grey like muir
@@ -356,8 +365,8 @@
                buses that reach it still land on its top edge, as the line from
                the software region above --- the Arm cores' own port --- lands on
                its side. -->
-          <path class="d-line" d="M118,502 L118,652"/>
-          <path class="d-line" d="M240,502 L240,514 L170,514 L170,652"/>
+          <path class="d-line" d="M118,466 L118,652"/>
+          <path class="d-line" d="M240,466 L240,514 L170,514 L170,652"/>
           <rect class="d-plate" x="-100" y="652" width="290" height="40"/>
           <rect class="d-box d-ext" x="-100" y="652" width="290" height="40"/>
           <text class="d-t" x="45" y="670" text-anchor="middle">DDR controller</text>

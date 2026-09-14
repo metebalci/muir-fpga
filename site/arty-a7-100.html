@@ -72,14 +72,14 @@
           <text class="d-s d-absent-t" x="-70" y="336" text-anchor="middle">at the monitor&rsquo;s rate,</text>
           <text class="d-s d-absent-t" x="-70" y="358" text-anchor="middle">TMDS out to HDMI</text>
           <path class="d-line" d="M470,274 L470,256 L-70,256 L-70,274"/>
-          <path class="d-line" d="M-70,386 L-70,464"/>
+          <path class="d-line" d="M-70,386 L-70,428"/>
           <path class="d-line" d="M-160,330 L-183,330"/>
-          <rect class="d-plate" x="-150" y="464" width="160" height="38"/>
-          <rect class="d-box d-absent" x="-150" y="464" width="160" height="38"/>
-          <path class="d-absent-x" d="M-150,464 L10,502 M10,464 L-150,502"/>
-          <text class="d-m d-absent-t" x="-70" y="482" text-anchor="middle">S_AXI_HP3</text>
-          <text class="d-s d-absent-t" x="-70" y="496" text-anchor="middle">PL masters, 64 bits, AXI3</text>
-          <path class="d-line" d="M-70,502 L-70,652"/>
+          <rect class="d-plate" x="-150" y="428" width="160" height="38"/>
+          <rect class="d-box d-absent" x="-150" y="428" width="160" height="38"/>
+          <path class="d-absent-x" d="M-150,428 L10,466 M10,428 L-150,466"/>
+          <text class="d-m d-absent-t" x="-70" y="446" text-anchor="middle">S_AXI_HP3</text>
+          <text class="d-s d-absent-t" x="-70" y="460" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <path class="d-line" d="M-70,466 L-70,652"/>
           <rect class="d-box d-absent" x="-283" y="288" width="100" height="84"/>
           <path class="d-absent-x" d="M-283,288 L-183,372 M-183,288 L-283,372"/>
           <text class="d-t d-absent-t" x="-233" y="314" text-anchor="middle">HDMI out</text>
@@ -192,7 +192,7 @@
           <text class="d-s" x="1162" y="138" text-anchor="middle">the cable both ways, 8 pins</text>
           <text class="d-s" x="1162" y="152" text-anchor="middle">registers at GP1 + 0x1000</text>
           <!-- one connector, one line out of the adapter to it -->
-          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,464 M1162,502 L1162,542"/>
+          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,428 M1162,466 L1162,542"/>
           <text class="d-s" x="959" y="114" text-anchor="middle">20 out</text>
           <text class="d-s" x="959" y="150" text-anchor="middle">19 in</text>
           <path class="d-line" d="M1256,120 L1305,120"/>
@@ -241,12 +241,12 @@
           <text class="d-s" x="725" y="376" text-anchor="middle">the cable, not the protocol</text>
 
           <!-- down to the soft processing system -->
-          <path class="d-line" d="M118,386 L118,464"/>
+          <path class="d-line" d="M118,386 L118,428"/>
           <!-- The disk's second leg: the firmware writes the controller where
                the block is.  Not one of the CADR's own disk registers, which are
                Xbus addresses the microcode writes; this one exists only because
                the pack is a file on a card. -->
-          <path class="d-line" d="M310,386 L310,464 M725,386 L725,464 M876,238 L876,464 M380,386 L380,432.2 L660,432.2 L660,464"/>
+          <path class="d-line" d="M310,386 L310,428 M725,386 L725,428 M876,238 L876,428 M380,386 L380,407 L660,407 L660,428"/>
 
           <!-- Where the larger boards have four more ports into a processing
                system, this board has the pieces that must stand in for one, each
@@ -266,19 +266,26 @@
                reads and 256 writes asked and answered.  The disk controller's channel
                takes the second and is not started: the pack face answers its own
                registers and its memory master is not joined to the controller yet. -->
-          <rect class="d-plate" x="38" y="464" width="160" height="38"/>
-          <rect class="d-box d-done" x="38" y="464" width="160" height="38"/>
-          <text class="d-m" x="118" y="482" text-anchor="middle">the machine&rsquo;s bus</text>
-          <text class="d-s" x="118" y="496" text-anchor="middle">straight into the controller</text>
-          <rect class="d-box" x="230" y="464" width="160" height="38"/>
-          <text class="d-m" x="310" y="482" text-anchor="middle">the disk&rsquo;s bus</text>
-          <text class="d-s" x="310" y="496" text-anchor="middle">the pack side, to memory</text>
-          <rect class="d-box d-done" x="640" y="464" width="250" height="38"/>
-          <text class="d-m" x="765" y="482" text-anchor="middle">the register faces</text>
-          <text class="d-s" x="765" y="496" text-anchor="middle">the same registers, the same addresses</text>
-          <rect class="d-box d-done" x="1092" y="464" width="140" height="38"/>
-          <text class="d-m" x="1162" y="482" text-anchor="middle">the debug window</text>
-          <text class="d-s" x="1162" y="496" text-anchor="middle">MIT&rsquo;s DBGIN page</text>
+          <!-- THE BOUNDARY BETWEEN THE FABRIC AND THE SOFT PROCESSING SYSTEM.
+               Nothing is drawn across it on this board, because both sides of it
+               are in the fabric and a dashed line would claim a seam in the
+               silicon that is not there.  What marks it is this row, at the
+               height the other two boards' ports and boundary sit at: 42 below
+               the fabric's lowest row of blocks, which end at 386, and 56 above
+               the software region, which begins at 522. -->
+          <rect class="d-plate" x="38" y="428" width="160" height="38"/>
+          <rect class="d-box d-done" x="38" y="428" width="160" height="38"/>
+          <text class="d-m" x="118" y="446" text-anchor="middle">the machine&rsquo;s bus</text>
+          <text class="d-s" x="118" y="460" text-anchor="middle">straight into the controller</text>
+          <rect class="d-box" x="230" y="428" width="160" height="38"/>
+          <text class="d-m" x="310" y="446" text-anchor="middle">the disk&rsquo;s bus</text>
+          <text class="d-s" x="310" y="460" text-anchor="middle">the pack side, to memory</text>
+          <rect class="d-box d-done" x="640" y="428" width="250" height="38"/>
+          <text class="d-m" x="765" y="446" text-anchor="middle">the register faces</text>
+          <text class="d-s" x="765" y="460" text-anchor="middle">the same registers, the same addresses</text>
+          <rect class="d-box d-done" x="1092" y="428" width="140" height="38"/>
+          <text class="d-m" x="1162" y="446" text-anchor="middle">the debug window</text>
+          <text class="d-s" x="1162" y="460" text-anchor="middle">MIT&rsquo;s DBGIN page</text>
 
           <!-- the soft processing system, in the place the Arm cores held -->
           <text class="d-s" x="-164" y="520.4">the soft processing system</text>
@@ -290,7 +297,7 @@
                read side by side. -->
           <rect class="d-dot" x="220" y="522" width="1000" height="124"/>
           <text class="d-s" x="230" y="536">Ibex, and the firmware on it</text>
-          <path class="d-line" d="M765,502 L765,513.2 M305,513.2 L1162,513.2 M305,513.2 L305,542 M452,513.2 L452,542 M599,513.2 L599,542 M746,513.2 L746,542 M893,513.2 L893,542 M1040,513.2 L1040,542"/>
+          <path class="d-line" d="M765,466 L765,513.2 M305,513.2 L1162,513.2 M305,513.2 L305,542 M452,513.2 L452,542 M599,513.2 L599,542 M746,513.2 L746,542 M893,513.2 L893,542 M1040,513.2 L1040,542"/>
 
           <!-- The boot, in the two parts U-Boot and its first stage occupy on
                the larger boards.  There is no boot ROM and no card controller on
@@ -392,8 +399,8 @@
                firmware's own console having been read at the wire; the MAC and the
                SD host are not started; and the USB host is crossed off, this board
                having none. -->
-          <path class="d-line" d="M118,502 L118,652"/>
-          <path class="d-line" d="M240,502 L240,514 L170,514 L170,652"/>
+          <path class="d-line" d="M118,466 L118,652"/>
+          <path class="d-line" d="M240,466 L240,514 L170,514 L170,652"/>
           <rect class="d-plate" x="-100" y="652" width="290" height="40"/>
           <rect class="d-box d-done" x="-100" y="652" width="290" height="40"/>
           <text class="d-t" x="45" y="670" text-anchor="middle">DDR3 controller</text>
