@@ -270,9 +270,9 @@ Control.
 
 ## The flags
 
-The program reads its flags from the command line today. They are named so that
-they can move into `fpgarc` beside the Chaosnet's without a second file: that
-file is one flag a line in muir's own rc format, and `docs/chaosnet.md`
+The program reads its flags from the command line, and `S88cadr-usb-input`
+takes the `--usb-` spellings out of the card's `fpgarc` and passes them on.
+That file is one flag a line in muir's own rc format and `docs/fpgarc.md`
 describes it. Each flag has the program's own short name and a prefixed
 spelling for the shared file, which is what `cadr-chaosnet` already does with
 `--udp-peer` and `--chaos-udp-peer`.
@@ -303,15 +303,18 @@ spelling for the shared file, which is what `cadr-chaosnet` already does with
                          what to run on a board to see what the program makes
                          of what is plugged in, without starting anything
 
-**What has not been settled is how one file serves several programs.** Today
-`S87cadr-chaosnet` passes every line of `fpgarc` to `cadr-chaosnet`, which
-refuses a flag it does not know by name, and that refusal is worth keeping: a
-boot that silently dropped a flag would look exactly like a boot that honoured
-it. So a file holding flags for two programs needs either a filter in each init
-script or a rule in each program about which flags are its own, and that
-decision belongs with whoever moves the screen's and the serial line's flags
-into the file. The names above are chosen so that the decision is about the
-file and not about this program.
+**How one file serves several programs is settled: a filter in each init
+script.** Every program on the board refuses a flag it does not know by name,
+and that refusal is worth keeping, because a boot that silently dropped a flag
+would look exactly like a boot that honoured it. So no program is handed the
+file whole. Each init script names the flags its own program owns and hands the
+file to the reader at `/usr/share/cadr/fpgarc.sh`, which gives back those lines
+and no others and refuses nothing.
+
+**It is the `--usb-` spellings that belong in the file**, and that is what the
+second spelling above was for. A flag in `fpgarc` names one program, and
+`--device`, `--grab` and `--no-mouse` are words another program could want.
+`docs/fpgarc.md` has this program's list and everybody else's.
 
 ## What the checks hold
 

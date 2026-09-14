@@ -35,12 +35,11 @@
 PACKS=/mnt/packs
 PIDFILE=/var/run/cadr-chaosnet.pid
 
-# **ONE FILE, IN muir'S OWN rc FORMAT, AND IT IS THE PROGRAM'S OWN FLAGS.**
-# `fpgarc` configures the CADR in the fabric and `muirrc` beside it configures
-# the CADR inside muir, so the two stations on this board are configured the
-# same way with the same flag names and somebody who has read one can read the
-# other.  Every line is passed to the program as it stands, so the file is the
-# command line and there is nothing here that parses a value.
+# **ONE FILE, IN muir'S OWN rc FORMAT, AND THIS PROGRAM TAKES ITS OWN FLAGS
+# OUT OF IT.**  `fpgarc` configures the CADR in the fabric and `muirrc` beside
+# it configures the CADR inside muir, so the two stations on this board are
+# configured the same way with the same flag names and somebody who has read
+# one can read the other.
 #
 # The format, which is muir's: one flag a line, the flag then a space then the
 # rest of the line as its argument --- so an argument with a space in it needs
@@ -55,9 +54,47 @@ PIDFILE=/var/run/cadr-chaosnet.pid
 # with a `\r` on the end of its port and was refused by name --- measured on
 # the board.  A file of flags has no values for a shell to get wrong.
 #
-# The whole file is passed to `cadr-chaosnet` today, so only its flags belong
-# in it; the screen and the serial line will move theirs into it later.
+# **THE WHOLE FILE USED TO BE PASSED TO THIS PROGRAM, AND IT CANNOT BE ANY
+# MORE.**  The screen, the serial line, the USB input and the boot button take
+# their own flags from the same file now, and this program refuses a flag it
+# does not know --- which is muir's behaviour and is the property worth
+# keeping.  So the file goes through the shared reader, which hands back only
+# the lines whose flag is in the list below and nothing else.  A flag no list
+# names goes to nobody; docs/fpgarc.md says which flags each program owns.
 RC="$PACKS/fpgarc"
+
+# The reader, cadr-common's, installed by that package on the target.  Its
+# header is the contract.  If it is not there this script dies here and the
+# shell names the file, which is the loud failure and the right one: a
+# Chaosnet started with the wrong flags is worse than one not started.
+FPGARC_SH=/usr/share/cadr/fpgarc.sh
+. "$FPGARC_SH"
+
+# **THE FLAGS THIS PROGRAM OWNS**, read off its own argument list
+# (src/cadr-chaosnet.c).  Both spellings of each, muir's `--chaos-` one and
+# this program's short one, because the program takes both.
+#
+# Three things are deliberately not here.  `--log` is passed by this script,
+# which decides where a daemon writes.  `--no-guard`, `--no-fabric` and
+# `--base` reach into the fabric and belong to somebody at a prompt rather
+# than to a card.  And nothing generic --- `--port` is the screen's and the
+# serial line's both, so no list may claim it.
+#
+# **THE FOUR FLAGS THE PROGRAM REFUSES BY NAME ARE IN THE LIST ON PURPOSE.**
+# `--chaos-file-root`, `--chaos-file-peers`, `--server-name` and `--time`
+# named services that used to live inside this program and now do not, and the
+# program answers each by saying where the host went.  Dropped here instead,
+# the card would say nothing at all, and a setting silently ignored is the
+# failure this whole file exists to avoid.
+FLAGS="--address --chaos-address
+       --udp --chaos-udp
+       --udp-peer --chaos-udp-peer
+       --udp-default-peer --chaos-udp-default-peer
+       --trace --chaos-trace
+       --file-root --chaos-file-root
+       --file-peers --chaos-file-peers
+       --server-name
+       --time"
 
 # What a board with no settings file runs: System 100's own address, and
 # CHUDP's own port on every interface.  A cable and no peers, which is a
@@ -248,27 +285,11 @@ wait_for_network() {
 start() {
 	set --
 	if [ -f "$RC" ]; then
-		# Strip carriage returns, drop comments and blank lines, trim
-		# each line and reduce the gap between a flag and its argument
-		# to one space, so that the two can be split apart below with
-		# no word-splitting of the argument itself.
-		while IFS= read -r line; do
-			[ -n "$line" ] || continue
-			flag=${line%% *}
-			value=${line#* }
-			if [ "$value" = "$flag" ]; then
-				set -- "$@" "$flag"
-			else
-				set -- "$@" "$flag" "$value"
-			fi
-		done <<-EOF
-		$(tr -d '\r' < "$RC" | sed \
-			-e '/^[[:space:]]*#/d' \
-			-e 's/^[[:space:]]*//' \
-			-e 's/[[:space:]]*$//' \
-			-e '/^$/d' \
-			-e 's/^\([^[:space:]][^[:space:]]*\)[[:space:]][[:space:]]*/\1 /')
-		EOF
+		# The reader's words are quoted, so an argument with a space
+		# in it survives the eval.  A file with no line of ours gives
+		# nothing and the program takes its own defaults, which is not
+		# the same case as no file at all.
+		eval "set -- $(fpgarc_args "$RC" $FLAGS)"
 	else
 		echo "cadr-chaosnet: no $RC; the defaults"
 		set -- --chaos-address "$DEFAULT_ADDRESS" --chaos-udp "0.0.0.0:$DEFAULT_PORT"

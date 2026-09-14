@@ -32,13 +32,12 @@
 #
 # **THE KEYBOARD MAPPING IS A FILE ON THE PACK PARTITION, AND IT IS
 # OPTIONAL.**  S80cadr-disk-packs mounts that partition at /mnt/packs before
-# this runs, and S87cadr-chaosnet reads its three settings from the same
-# place for the same reason: the partition is FAT32, so a laptop with a card
-# reader can edit what is on it, which is why the name ends in `.txt`.  The
-# option is passed only when the file is there, because
-# `--keyboard-mapping` naming a file that is not is a thing to report rather
-# than a boot with no screen.  A boot where that mount failed still starts
-# this and takes the built-in mapping.
+# this runs, and the card's `fpgarc` is read from the same place for the same
+# reason: the partition is FAT32, so a laptop with a card reader can edit what
+# is on it, which is why the name ends in `.txt`.  The option is passed only
+# when the file is there, because `--keyboard-mapping` naming a file that is
+# not is a thing to report rather than a boot with no screen.  A boot where
+# that mount failed still starts this and takes the built-in mapping.
 #
 # What goes in the file is `key` and `prefix` lines, muir's own format, and
 # muir is in this image: `muir --keyboard-mapping-dump` writes the mapping
@@ -49,9 +48,50 @@ PIDFILE=/var/run/cadr-terminal.pid
 PACKS=/mnt/packs
 KEYS_FILE="$PACKS/terminal.keyboard.mapping.txt"
 
+# **THE CARD'S ONE FILE OF FLAGS, FILTERED TO THIS PROGRAM'S.**  `fpgarc`
+# configures the CADR in the fabric the way `muirrc` beside it configures the
+# CADR inside muir: one flag a line, the flag then a space then the rest of
+# the line as its argument, `#` a comment, carriage returns stripped.  Several
+# programs serve this machine and each refuses a flag it does not know, so the
+# file is not passed to any of them whole --- cadr-common's reader hands back
+# the lines whose flag is in the list below and nothing else.  Its header is
+# the contract and docs/fpgarc.md has every program's list.
+RC="$PACKS/fpgarc"
+FPGARC_SH=/usr/share/cadr/fpgarc.sh
+. "$FPGARC_SH"
+
+# **THE FLAGS THIS PROGRAM OWNS**, read off its own argument list
+# (src/cadr-terminal.c).  `--port`, `--bind`, `--log`, `--no-guard` and
+# `--once` are not here: the first two are the serial line's words as well as
+# this program's, so no list may claim them and no `fpgarc` line can say them,
+# and the others are this script's or a person's at a prompt.
+#
+# `--terminal` and `--keyboard-boot` are this program's and nobody else's, and
+# they arrive with the terminal's own slice --- muir's spelling for the screen's
+# endpoint, and the chord a cold boot is asked for with.  They are listed now
+# so that the line goes to its own program on the day it lands rather than to
+# nobody; until then a card that names one gets this program's own refusal,
+# which is the failure that says something.
+FLAGS="--terminal
+       --keyboard-mapping
+       --keyboard-boot
+       --bow
+       --window
+       --interval-ms
+       --no-rre
+       --input
+       --no-input
+       --input-link
+       --no-input-link"
+
 start() {
 	set --
 	[ -f "$KEYS_FILE" ] && set -- --keyboard-mapping "$KEYS_FILE"
+	# The card's flags after this script's own, so that a line in `fpgarc`
+	# wins over the mapping file found beside it --- which is muir's rule
+	# that a flag given later wins, and the way round somebody editing the
+	# card expects.
+	[ -f "$RC" ] && eval "set -- \"\$@\" $(fpgarc_args "$RC" $FLAGS)"
 
 	printf "Starting cadr-terminal: "
 	start-stop-daemon -S -q -b -m -p "$PIDFILE" \

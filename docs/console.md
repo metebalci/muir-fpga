@@ -1196,6 +1196,18 @@ count. It is deliberately not written here: `boards/arty-z7-20/linux/` is anothe
 `docs/console.md` is where the next person finds the key. The host check in
 that package models the slave and would want the register modelled with it.
 
+**A held machine is a state the console has to know about.** `--no-auto-boot` in
+the card's `fpgarc` leaves the CADR's boot button unpressed, as a CADR is when
+the power comes on with nobody at it. `S80cadr-disk-packs` reads that flag,
+halts the machine before it starts the disk pack program so that no drive ever
+comes present, and leaves a marker at `/var/run/cadr-held`. While that marker
+stands, `cadr-console` refuses `start` and `step` in muir's own words, and
+`boot` is what presses the button: it presets RUN, forces the boot trap, starts
+the PROM from zero and removes the marker. BTN0 on the board presses the same
+line in the fabric, so a held machine can be booted by hand with nobody logged
+in. `docs/fpgarc.md` is the flag and the init step; `docs/board.md` is what to
+do at the board.
+
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
 `start`, `step N`, `regs`, `status`, `examine` and `deposit`. `status` is the
 question of the day and answers it the way `main.rs`'s `machrun_low` does,

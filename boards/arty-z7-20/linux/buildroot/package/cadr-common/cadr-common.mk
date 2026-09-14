@@ -29,8 +29,18 @@
 # definition and cannot do that.  `pack_ecc.h` is header-only for the
 # opposite reason: it is arithmetic and holds no state.
 #
-# So: the library and the headers go to staging, nothing goes to the target,
-# and a consumer sets `CADR_XXX_DEPENDENCIES = cadr-common`, includes
+# **AND ONE FILE DOES GO ON THE TARGET, and it is not C.**  `fpgarc.sh` is the
+# shell reader that every init script hands the card's `fpgarc` to: the file
+# is one for the whole fabric station and the programs reading it are several,
+# each of them strict about a flag it does not know, so each init script names
+# the flags its own program owns and is given those lines and no others.  One
+# reader, installed at /usr/share/cadr/fpgarc.sh, because a format read by
+# five scripts and written by one card script is a format with one definition
+# or it is several.  Its own header is the contract and docs/fpgarc.md has the
+# lists.
+#
+# So: the library and the headers go to staging, the reader goes on the
+# target, and a consumer sets `CADR_XXX_DEPENDENCIES = cadr-common`, includes
 # <cadr/cadr_mem.h> and links -lcadr-common.  $(TARGET_CONFIGURE_OPTS)
 # already carries --sysroot=$(STAGING_DIR), so no -I or -L is needed.
 #
@@ -44,7 +54,7 @@ CADR_COMMON_SITE = $(BR2_EXTERNAL_CADR_PATH)/package/cadr-common/src
 CADR_COMMON_SITE_METHOD = local
 CADR_COMMON_LICENSE = AGPL-3.0-or-later
 CADR_COMMON_INSTALL_STAGING = YES
-CADR_COMMON_INSTALL_TARGET = NO
+CADR_COMMON_INSTALL_TARGET = YES
 
 define CADR_COMMON_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
@@ -52,6 +62,10 @@ endef
 
 define CADR_COMMON_INSTALL_STAGING_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(STAGING_DIR) install-staging
+endef
+
+define CADR_COMMON_INSTALL_TARGET_CMDS
+	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) DESTDIR=$(TARGET_DIR) install
 endef
 
 $(eval $(generic-package))

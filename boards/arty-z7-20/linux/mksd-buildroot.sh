@@ -134,7 +134,7 @@ done
 # a card built with the default PACKS_MB would have squeezed it into the spare
 # room meant for one more drive and left seven megabytes --- a card that
 # stages without complaint and then has nowhere to put a band.
-SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=
+SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
 if [ -r boards/arty-z7-20/linux/local.conf ]; then
   . boards/arty-z7-20/linux/local.conf
 fi
@@ -155,8 +155,14 @@ fi
 # user's own to supply, and the debugger's band is a band.  Left in, a
 # released card would ship 257 MiB of somebody else's Lisp world and a muirrc
 # naming a pack the user is free to delete.
+#
+# **AND IT CLEARS NO_AUTO_BOOT, which is not private and is cleared anyway.**
+# A card somebody switches on has to boot its band; holding the machine at the
+# button is what a board being worked on wants, and a released card that did
+# it would look broken.  So it follows the flag rather than the rule about
+# private values.
 if [ -n "$STANDALONE" ]; then
-  SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=
+  SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
 fi
 if [ -n "${SERVERIP:-}" ]; then
   MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp"
@@ -419,6 +425,17 @@ fi
 # in it.
 CHAOS_ADDR=${CHAOS_ADDR_FPGA:-177101}
 CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
+# **THE BOOT BUTTON IS A COMMENT UNLESS local.conf ASKS FOR IT.**  A card that
+# boots its band by itself is what somebody switching a board on wants, so the
+# line is written commented out with the sentence that explains it, and a
+# board that is being worked on sets NO_AUTO_BOOT=1 in local.conf and gets the
+# same line live.  The prefix is the whole difference, so the two cards differ
+# in one character and the explanation is on both.
+if [ -n "${NO_AUTO_BOOT:-}" ] && [ "${NO_AUTO_BOOT}" != "0" ]; then
+  NO_AUTO_BOOT_PREFIX=""
+else
+  NO_AUTO_BOOT_PREFIX="#"
+fi
 {
   printf "# The flags for the CADR in the fabric, so that its programs are\r\n"
   printf "# configured the way muir is: one flag a line, the flag then a space\r\n"
@@ -426,9 +443,11 @@ CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
   printf "# or starts with # is a comment.  muirrc beside this file is the same\r\n"
   printf "# format for the CADR inside muir.\r\n"
   printf "#\r\n"
-  printf "# Today every line here goes to cadr-chaosnet, which serves the\r\n"
-  printf "# machine's Chaosnet interface, so only its flags belong in it.  The\r\n"
-  printf "# screen and the serial line will move their own flags in later.\r\n"
+  printf "# Several programs serve this machine and each takes the flags that\r\n"
+  printf "# are its own out of this file: the screen, the serial line, the\r\n"
+  printf "# network, the USB input and the boot button.  A flag names one of\r\n"
+  printf "# them, and a flag none of them owns goes to nobody.  docs/fpgarc.md\r\n"
+  printf "# lists what each one takes.\r\n"
   printf "\r\n"
   printf "# The sixteen address switches on the Chaosnet card: this machine's\r\n"
   printf "# own address, in octal.  Not a preference --- it is what the\r\n"
@@ -469,7 +488,16 @@ CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
   if [ -n "${CHAOS_DEFAULT_PEER:-}" ]; then
     printf -- "--chaos-udp-default-peer %s\r\n" "$CHAOS_DEFAULT_PEER"
   fi
+  printf "\r\n"
+  printf "# The boot button, left unpressed:\r\n"
+  printf "#\r\n"
+  printf "# With this line the machine is held at boot with RUN clear, as a\r\n"
+  printf "# CADR is when the power comes on with nobody at the button, and\r\n"
+  printf "# \`cadr-console boot\` or BTN0 on the board is what starts it.\r\n"
+  printf "# Without it the board boots its band by itself.\r\n"
+  printf -- "%s--no-auto-boot\r\n" "$NO_AUTO_BOOT_PREFIX"
 } > "$OUT/packs/fpgarc"
+echo "mksd-buildroot: the boot button: $([ -z "$NO_AUTO_BOOT_PREFIX" ] && echo "--no-auto-boot --- the machine is held at boot and cadr-console boot or BTN0 starts it" || echo "pressed at boot --- the board boots its band by itself")"
 echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
 
 # --------------------------------------------------------- muir's file of flags

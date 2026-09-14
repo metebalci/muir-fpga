@@ -1811,9 +1811,14 @@ def check_makefile():
     # together, and the pair had to land in one commit: a `.pass` added
     # without the name here warns, and a name here without the `.pass` says
     # nothing about a check nobody runs.
+    # `fpgarc` is shell: one file of flags on the card, five init scripts, and
+    # each program handed the lines of the flags it owns.  mutate.py compiles
+    # C, so a record naming a shell script would be BROKEN by construction and
+    # a record aimed at a check this runner has no entry for kills the run at
+    # parse for every record.  Naming it here is the way that stands alone.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
-                           "usb_input"}
+                           "usb_input", "fpgarc"}
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"
