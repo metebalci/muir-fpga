@@ -1889,9 +1889,22 @@ def check_makefile():
     # C, so a record naming a shell script would be BROKEN by construction and
     # a record aimed at a check this runner has no entry for kills the run at
     # parse for every record.  Naming it here is the way that stands alone.
+    # `cora` is the Cora Z7-07S's lint, the same five board configurations
+    # `arty` lints one board along, and it is named here rather than given
+    # records of its own.  What `arty`'s records hold is that a top level
+    # which leaves one of `cadr_machine`'s outputs unconnected, or brings a
+    # PS7 pin out and wires it to nothing, is caught --- and that property is
+    # about the SHAPE of a board's top level, not about which board it is.
+    # `boards/cora-z7-07s/cadr_cora.sv` is `boards/arty-z7-20/cadr_arty.sv`
+    # with this board's pins on it, so a record aimed here would be the same
+    # mutation of the same text in a second file: it would tell us nothing
+    # `arty` does not already tell us, and it would have to be kept in step
+    # with the Arty's by hand for ever.  Naming it here is the second of
+    # CLAUDE.md's two ways to close this warning and the one that stands
+    # alone.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
-                           "usb_input", "fpgarc"}
+                           "usb_input", "fpgarc", "cora"}
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

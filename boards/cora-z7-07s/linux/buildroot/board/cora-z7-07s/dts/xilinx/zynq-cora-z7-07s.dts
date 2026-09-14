@@ -1,0 +1,172 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * The Cora Z7-07S's processing system, as Linux and U-Boot see it.
+ *
+ * ONE FILE FOR BOTH.  The kernel compiles it from arch/arm/boot/dts/xilinx/
+ * and U-Boot from arch/arm/dts/, each beside its own zynq-7000.dtsi and the
+ * copy of boards/arty-z7-20/linux/cadr-reserved.dtsi the build puts there;
+ * U-Boot adds zynq-cora-z7-07s-u-boot.dtsi by name, which marks the two
+ * devices its SPL needs.  GPL-2.0-or-later because the blob is embedded in
+ * u-boot.img.
+ *
+ * THIS IS THE ARTY Z7-20's TREE WITH THREE DIFFERENCES, and they are the
+ * whole of what the two boards' processing systems do not share.  Digilent's
+ * own board preset gives this board UART0 on MIO 14..15, ENET0 on MIO 16..27
+ * with its MDIO on 52..53 and its PHY reset on MIO 9, USB0 on MIO 28..39 with
+ * its PHY reset on MIO 46, and SD0 on MIO 40..45 with card detect on MIO 47
+ * --- the same four peripherals on the same pins with the same reset lines as
+ * the Arty Z7-20, compared property by property against
+ * boards/arty-z7-20/vivado/ps7_config.tcl.  What differs:
+ *
+ *   ONE CORTEX-A9.  The XC7Z007S is a single-core part, so cpu1 is disabled.
+ *     Digilent's own tree for this board does exactly this and it is the one
+ *     line of the three that a reader would not guess.
+ *   NO QUAD SPI.  PCW_QSPI_PERIPHERAL_ENABLE is 0 in this board's preset and
+ *     1 in the Arty Z7-20's, so there is no flash node and no spi0 alias, and
+ *     the SPL's -u-boot.dtsi marks two devices rather than three.
+ *   THE BOARD's OWN NAME in model and compatible.
+ *
+ * WHERE EACH FACT COMES FROM.  Mainline has no Cora Z7 tree (Linux 6.19.14
+ * arch/arm/boot/dts/xilinx/ and U-Boot 2026.01 arch/arm/dts/ have none), so
+ * this is written like the Arty Z7-20's, which is written like
+ * zynq-zybo-z7.dts.  The board's own facts are Digilent's, from two files of
+ * theirs that agree with each other:
+ *
+ *   github.com/Digilent/Petalinux-Cora-Z7-07S,
+ *     Cora-Z7-07S/project-spec/meta-user/recipes-bsp/device-tree/files/
+ *     system-user.dtsi --- the model and compatible strings, the RTL8211E-VL
+ *     at MDIO address 1 (their own comment names the part), USB0 as a host
+ *     over a ULPI PHY with `drv-vbus`;
+ *   a zynq-coraz7s.dtsi carried in several vendor kernel trees and copyright
+ *     Digilent 2016 --- the same model and compatible, `&cpu1 { status =
+ *     "disabled" }`, ps-clk-frequency 50 MHz, 512 MB at 0, gem0 on
+ *     "rgmii-id", and aliases for ethernet0, serial0 and mmc0 and none for
+ *     spi0.
+ *
+ * and from boards/cora-z7-07s/vivado/ps7_config.tcl, which is Digilent's own
+ * processing-system configuration for this board verbatim.
+ *
+ * THE MODEL AND COMPATIBLE STRINGS ARE DIGILENT's, as the Arty Z7-20's are,
+ * and they are the same two strings for both Cora variants --- Digilent does
+ * not distinguish the 07S from the 10 in the tree.  Nothing matches on them:
+ * what a driver binds to is "xlnx,zynq-7000".
+ *
+ * NO PROGRAMMABLE-LOGIC PERIPHERALS.  The fabric here is the CADR and there
+ * is nothing at any AXI address a tree would name.  Digilent's own tree
+ * carries an XADC and an fpga-axi bus from their base design; neither is in
+ * this one.
+ *
+ * THE MAC ADDRESS IS NOT HERE.  It is private to the board and this file is
+ * public; U-Boot puts the `ethaddr` the card supplies into gem0 at boot
+ * (fdt_fixup_ethernet, on the ethernet0 alias), which is why the alias is
+ * kept and why the kernel and the loader ask DHCP with one address.
+ *
+ * NOTHING IN THIS FILE HAS BEEN BOOTED.  No Cora Z7-07S has been programmed
+ * or booted from this repository, so what holds it is the provenance above
+ * and the fact that it is the Arty Z7-20's tree, which has booted, with three
+ * differences each of which has a source.
+ */
+
+/dts-v1/;
+#include "zynq-7000.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	model = "Zynq Cora Z7 Development Board";
+	compatible = "digilent,zynq-coraz7", "xlnx,zynq-7000";
+
+	aliases {
+		ethernet0 = &gem0;
+		serial0 = &uart0;
+		mmc0 = &sdhci0;
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x20000000>;
+	};
+
+	chosen {
+		bootargs = "";
+		stdout-path = "serial0:115200n8";
+	};
+
+	usb_phy0: phy0 {
+		#phy-cells = <0>;
+		compatible = "usb-nop-xceiv";
+		reset-gpios = <&gpio0 46 GPIO_ACTIVE_LOW>;
+	};
+};
+
+/*
+ * The CADR's 128 MB at 0x18000000, `no-map`.  rtl/plumbing/cadr_ddr_map.sv is
+ * where the numbers are decided and the dtsi is the same fact in the tree's
+ * words --- and it is the ARTY Z7-20's copy of that file, included from this
+ * board's tree, because the memory map is a property of the machine and not
+ * of the board.  Both boards carry 512 MB of DDR3 and reserve the same
+ * 128 MB of it.  external.mk is where the file is put beside each build.
+ */
+#include "cadr-reserved.dtsi"
+
+/*
+ * ONE CORTEX-A9.  The XC7Z007S is a single-core part; zynq-7000.dtsi declares
+ * two and this is how Digilent's own tree for this board takes the second
+ * one away.  Without it Linux spends its boot trying to bring up a core that
+ * is not there.
+ */
+&cpu1 {
+	status = "disabled";
+};
+
+&clkc {
+	ps-clk-frequency = <50000000>;
+};
+
+&gem0 {
+	status = "okay";
+	phy-mode = "rgmii-id";
+	phy-handle = <&ethernet_phy>;
+
+	ethernet_phy: ethernet-phy@1 {
+		reg = <1>;
+	};
+};
+
+/*
+ * NO QUAD SPI NODE.  This board's preset has PCW_QSPI_PERIPHERAL_ENABLE 0
+ * where the Arty Z7-20's has 1, and Digilent's own tree for this board has no
+ * flash node and no spi0 alias.  A node here would name a device the pin
+ * multiplexing never routes.
+ */
+
+&sdhci0 {
+	status = "okay";
+};
+
+&uart0 {
+	status = "okay";
+};
+
+/*
+ * `phys`, NOT the `usb-phy` every mainline Zynq tree still carries, for the
+ * reason measured on the Arty Z7-20 (kernel 6.19.14): with `usb-phy` the
+ * ChipIdea controller's probe ends in -ENXIO with no message and no retry,
+ * because only the `phys` phandle answers -EPROBE_DEFER for a PHY that is not
+ * registered yet.  The binding says the same in its own words
+ * (chipidea,usb2-common.yaml: usb-phy "deprecated: true. Use phys instead").
+ * No `phy-names`: with CONFIG_GENERIC_PHY on, a name would make the generic
+ * lookup wait for a provider this nop PHY is not.
+ *
+ * **AND NOTHING ON THIS BOARD USES THE PORT.**  `cadr-usb-input` is not
+ * installed here, so no program reads a USB device, and the init script that
+ * tells the PHY to drive VBUS is not installed either --- see the defconfig.
+ * The node is here because the port exists and Digilent's own tree declares
+ * it as a host; a board that later wants USB input takes the package and the
+ * VBUS script together and nothing in this file changes.
+ */
+&usb0 {
+	status = "okay";
+	dr_mode = "host";
+	phys = <&usb_phy0>;
+};

@@ -103,7 +103,24 @@ set -eu
 IMAGES=${IMAGES:-$HOME/.cache/muir-fpga-buildroot/out/images}
 HOSTBIN=${HOSTBIN:-$(dirname "$IMAGES")/host/bin}
 OUT=${OUT:-build/sd/buildroot}
-BOARD=boards/arty-z7-20/linux/buildroot/board/arty-z7-20
+# WHICH BOARD, AND WHY IT IS TWO VARIABLES RATHER THAN A NAME.  This script
+# stages a card for a board, and a second Zynq board is a second device tree
+# and a second directory under `boards/` with everything else the same --- the
+# partitions, the packs, the `fpgarc`, the `muirrc`, the U-Boot environment and
+# every warning below are the machine's and not the part's.  So the board
+# enters as the two things that differ: where its `linux/` directory is, and
+# what its compiled device tree is called.  Both default to the Arty Z7-20's,
+# so a run that sets neither is the run this script has always been.
+#
+#     BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+#         BIT=build/cora-ddr/cadr_cora.bit boards/arty-z7-20/linux/mksd-buildroot.sh
+#
+# `local.conf` is read out of `$BOARD_DIR/linux/`, so each board has its own
+# server address, MAC and Chaosnet numbers --- which two boards on one network
+# must, the development allocation reserving a second pair for exactly that.
+BOARD_DIR=${BOARD_DIR:-boards/arty-z7-20}
+BOARD_DTB=${BOARD_DTB:-zynq-arty-z7-20.dtb}
+BOARD=$BOARD_DIR/linux/buildroot/board/$(basename "$BOARD_DIR")
 BIT=${BIT:-}
 PACKS=${PACKS:-}
 BOOT_MB=${BOOT_MB:-64}
@@ -113,7 +130,7 @@ DTC=${DTC:-$HOSTBIN/dtc}
 
 die() { echo "mksd-buildroot: $*" >&2; exit 1; }
 
-for f in boot.bin u-boot.img zImage zynq-arty-z7-20.dtb rootfs.cpio.uboot; do
+for f in boot.bin u-boot.img zImage "$BOARD_DTB" rootfs.cpio.uboot; do
   [ -f "$IMAGES/$f" ] || die "no $f in $IMAGES: run 'make buildroot' first"
 done
 [ -n "$BIT" ] || die "BIT is not set: name the bitstream, e.g. BIT=build/ddr/cadr_arty.bit $0"
@@ -135,8 +152,8 @@ done
 # room meant for one more drive and left seven megabytes --- a card that
 # stages without complaint and then has nowhere to put a band.
 SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
-if [ -r boards/arty-z7-20/linux/local.conf ]; then
-  . boards/arty-z7-20/linux/local.conf
+if [ -r "$BOARD_DIR/linux/local.conf" ]; then
+  . "$BOARD_DIR/linux/local.conf"
 fi
 # **STANDALONE MEANS THE CARD CARRIES NOTHING FROM local.conf**, and that is
 # wider than it used to be on purpose.  It cleared SERVERIP alone, which was
@@ -172,7 +189,7 @@ fi
 if [ -n "$STANDALONE" ]; then
   echo "mksd-buildroot: STANDALONE: no server, no MAC and no Chaosnet peers --- this card carries nothing from local.conf"
 elif [ -z "${ETHADDR:-}" ]; then
-  echo "mksd-buildroot: WARNING: no ETHADDR in boards/arty-z7-20/linux/local.conf; the board will use a random MAC and U-Boot will say so" >&2
+  echo "mksd-buildroot: WARNING: no ETHADDR in $BOARD_DIR/linux/local.conf; the board will use a random MAC and U-Boot will say so" >&2
 fi
 
 # The drive bay, resolved before anything is written: which file goes on
@@ -321,7 +338,7 @@ mkdir -p "$OUT/card" "$OUT/packs" "$OUT/server"
 cp "$IMAGES/boot.bin" "$OUT/card/BOOT.BIN"
 cp "$IMAGES/u-boot.img" "$OUT/card/"
 cp "$BIT" "$OUT/card/cadr.bit"
-cp "$IMAGES/zynq-arty-z7-20.dtb" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/"
+cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/"
 sed -e "s/@SERVERIP@/${SERVERIP:-}/" -e "s/@ETHADDR@/${ETHADDR:-}/" \
     -e '/^serverip=$/d' -e '/^ethaddr=$/d' "$BOARD/uEnv.txt.in" > "$OUT/card/uEnv.txt"
 grep -q '@' "$OUT/card/uEnv.txt" && die "uEnv.txt still carries a marker"
@@ -791,7 +808,7 @@ echo "mksd-buildroot: muir: terminal $VNC_PORT_M, Chaosnet address $CHAOS_ADDR_M
 
 # The server: the same five files and the command that fetches them.
 cp "$BIT" "$OUT/server/cadr.bit"
-cp "$IMAGES/zynq-arty-z7-20.dtb" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/"
+cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/server/"
 cp "$BOARD/uEnv.net" "$OUT/server/uEnv.net"
 
 # What makes the staging believable rather than merely done.
@@ -826,7 +843,7 @@ fi
 # peripheral: decompiled with the dtc Buildroot built, or one on the path.
 command -v "$DTC" >/dev/null 2>&1 || DTC=dtc
 if command -v "$DTC" >/dev/null 2>&1; then
-  "$DTC" -I dtb -O dts -o "$OUT/tree.dts" "$OUT/card/zynq-arty-z7-20.dtb" 2>/dev/null
+  "$DTC" -I dtb -O dts -o "$OUT/tree.dts" "$OUT/card/$BOARD_DTB" 2>/dev/null
   grep -q 'cadr@18000000' "$OUT/tree.dts" || die "the tree has no cadr@18000000 node"
   grep -A4 'cadr@18000000' "$OUT/tree.dts" | grep -q 'no-map' || die "the tree's reservation is not no-map"
   grep -q 'amba_pl' "$OUT/tree.dts" && die "the tree describes PL peripherals"
@@ -835,7 +852,7 @@ else
   echo "mksd-buildroot: no dtc; the tree was not checked" >&2
 fi
 # The card and the server hold the same five files, byte for byte.
-for f in cadr.bit zynq-arty-z7-20.dtb zImage rootfs.cpio.uboot; do
+for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
   cmp -s "$OUT/card/$f" "$OUT/server/$f" || die "$f differs between card/ and server/"
 done
 

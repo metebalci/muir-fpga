@@ -3,162 +3,310 @@
 The Digilent Cora Z7 is a small Zynq-7000 board. This directory is for the
 XC7Z007S variant of it, which is the one this project targets.
 
-**Nothing here builds anything.** This directory holds Digilent's published pin
-file and this note. There is no top level, no constraint file of ours, no
-Vivado script and no device tree.
+**The machine fits on it and closes timing.** That was a ratio out of a part
+database until this directory was built, and it is a placed and routed figure
+now. Nothing here has been on silicon: no Cora Z7-07S has been programmed from
+this repository.
 
-## What a complete board directory holds
+## What the board is
 
-Read off `boards/arty-z7-20/`, which is the finished one.
+Every fact below comes from a file Digilent publishes. The part is
+`xc7z007sclg400-1`, named in `board.xml` in Digilent's `vivado-boards`
+repository, and it has 14,400 LUTs, 28,800 flip-flops, 50 block RAMs and 66
+DSP slices against the XC7Z020's 53,200, 106,400, 140 and 220.
+
+The processing system is configured as Digilent's own board preset configures
+it. That preset is `preset.xml` beside `board.xml`, and it is what
+`vivado/ps7_config.tcl` in this directory transcribes. Read off it, the board
+has:
 
 | | |
 |---|---|
-| `cadr_arty.sv` | the top level: the clock generator, the machine, the fold, the lamps |
-| `cadr_arty.xdc` | the pins the design uses, and the board clock |
+| UART 0 | MIO 14 to 15, 115200 baud, the console |
+| Ethernet 0 | MIO 16 to 27, MDIO on MIO 52 to 53, PHY reset on MIO 9 |
+| USB 0 | MIO 28 to 39, PHY reset on MIO 46, a host port |
+| SD 0 | MIO 40 to 45, card detect on MIO 47, the microSD slot |
+| Quad SPI | disabled |
+| DDR3 | one MT41K256M16 RE-125 on a 16-bit bus at 525 MHz, 512 MB |
+| crystal | 50 MHz, with the processor at 650 MHz |
+
+**That MIO map is the Arty Z7-20's, peripheral for peripheral and pin for
+pin.** The two presets were compared property by property. The same four
+peripherals sit on the same MIO ranges with the same three reset pins, and
+both boards carry the same DDR3 device at the same width and the same speed.
+Quad SPI is the one peripheral the two do not share. So a device tree written
+for one board describes the peripherals of the other.
+
+Digilent's Ethernet PHY is a Realtek RTL8211E-VL at MDIO address 1. That comes
+from their own device tree for this board, which names the part in a comment.
+
+The programmable logic side is Digilent's master pin file,
+`Cora-Z7-07S-Master.xdc` in this directory. It gives the board a 125 MHz system
+clock on pin H16, two RGB LEDs, two push buttons, two Pmod headers named JA and
+JB, a shield connector and the analogue inputs. There are no plain LEDs, no
+slide switches, and **no HDMI section at all**, where the Arty Z7-20's master
+file has both a receiver and a transmitter.
+
+**Most of the pins this design uses are the same pins on both boards.** They
+were compared one at a time against `boards/arty-z7-20/cadr_arty.xdc` and
+against both master files. The system clock, all six RGB LED pins and all
+sixteen Pmod pins are identical, both boards being the same `clg400` package
+laid out alike. The two buttons are the Arty's first two with their indices
+exchanged: the Arty's `btn[0]` is D19 and this board's is D20. So the one pin a
+reader would get right from memory is the one that is wrong, which is why every
+pin here comes from the file.
+
+## What is here
+
+| | |
+|---|---|
+| `cadr_cora.sv` | the top level: the clock generator, the machine, the fold, the lamps |
+| `cadr_cora.xdc` | the pins the design uses, and the board clock |
 | `cadr_probe.xdc` | the debug probe's own constraints |
 | `cadr_ps7.sv` | the generated processing-system wrapper |
-| `vivado/` | fifteen scripts: synthesis, place and route, the bitstream, the `ps7_init` derivation, the proving flows and the probe readout |
-| `linux/` | the Buildroot tree, the device tree, the card image and the packages for every program that runs beside the machine |
+| `vivado/` | the board flow, the processing system's configuration and the start-up routine |
+| `linux/` | the device tree, the U-Boot environment and the Buildroot configuration |
+| `Cora-Z7-07S-Master.xdc` | Digilent's published pin file, byte for byte |
 
-That is 142 tracked files. This directory has three, one of them this note.
+**Nothing in `rtl/` changes between the two boards.** A second Zynq board is a
+top level, a pin file, a processing-system configuration and a device tree. The
+machine does not know what part it is on.
 
-## What carries over unchanged
+## The fit
 
-Everything in `rtl/`. The machine is the machine and does not know what part it
-is on.
+Measured at commit `86d787b` with `DDR=1`, which is the machine with the
+processing system and DDR3 behind its memory port. The Arty Z7-20's figures
+beside it are from the same commit with the same switch, so the two are the
+same design placed on two parts.
 
-The clock recipe carries over literally. Digilent's file puts the Cora's PL
-system clock on pin H16 at 125 MHz, which is the same pin and the same
-frequency as the Arty Z7-20's. So `cadr_arty.sv`'s MMCM arithmetic holds with
-nothing changed. It multiplies 125 MHz by 8 to get a 1000 MHz VCO and divides
-that by 10, so the divider reads literally as the tick in nanoseconds and the
-tick stays 10 ns. No tick count in the design moves and no check moves with it.
+| | Cora Z7-07S | Arty Z7-20 |
+|---|---|---|
+| worst slack | **+0.495 ns, met** | +0.236 ns, met |
+| failing endpoints | 0 of 48,104 | 0 of 47,935 |
+| hold | +0.019 ns, met | +0.036 ns, met |
+| slice LUTs | 12,352 of 14,400, **85.78%** | 12,130 of 53,200, 22.80% |
+| of which logic | 9,999 | 9,773 |
+| of which memory | 2,353 | 2,357 |
+| slice registers | 9,106 of 28,800, 31.62% | 9,041 of 106,400, 8.50% |
+| block RAM tiles | 41.5 of 50, **83.00%** | 41.5 of 140, 29.64% |
+| DSP slices | 4 of 66, 6.06% | 4 of 220, 1.82% |
+| bonded pins | 25 of 100 | 25 of 125 |
+| timing exceptions | 8 | 8 |
 
-The two Pmod headers are named JA and JB here as they are on the Arty Z7-20, so
-the debug cable's assignment of the whole link to JA carries over by name and JB
-is spare here as it is there. The pins behind those names are different and must
-be taken from the file in this directory.
+**The two block RAM figures are the same number, and that is the useful
+reading.** The design spends 41.5 tiles on either part, so what changes between
+the boards is the denominator and nothing else. The LUT counts are within two
+per cent of each other for the same reason.
 
-## What has to be built
+**The exception count is what says the constraints reached the design.**
+`rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes every register it does not
+name, so a new module joins that relaxed set in silence and its paths are then
+timed at a deadline nobody wrote for them. Eight exceptions on both boards is
+the same constraint file reaching the same design twice.
 
-A top level and a pin file for this board. A processing-system configuration,
-because the XC7Z007S is a different part with a different MIO map and a
-different DDR device, so `ps7_init` must be derived for this board rather than
-copied. A device tree and a Buildroot configuration.
+**Read the slack figures with their commit and not as precision.** A
+bit-identical netlist has moved worst slack by a quarter of a nanosecond in
+this project before, which is placement and not design.
 
-The lamp assignment has to be re-decided, because this board does not have the
-lights the assignment was written for. Digilent's file shows **two RGB LEDs and
-nothing else**, where the Arty Z7-20 has four plain LEDs and two tricolour ones.
-`docs/board.md` spends six lamps on the clock, microcycles, the boot state,
-disk activity, whether the last cycle was answered and what the machine is
-doing. Two RGB lamps cannot carry six meanings, so what the Cora shows is a
-decision and not a translation.
+**And the out-of-context flow agrees.** `cadr_machine` alone, with no top
+level, no output fold and no MMCM, placed and routed for this part reads
++0.668 ns met, 9,720 slice LUTs and 40.5 block RAM tiles. That flow and the
+board flow measure different designs and are meant to.
 
-There are two buttons here where the Arty Z7-20 has four, and no switches at
-all.
+## What is left out, and why
 
-## What is absent by the board's own shape
+**There is no display output and no `S_AXI_HP3`.** The board has no HDMI
+connector, so there is nothing for the display block to drive. `cadr_cora.sv`
+has no `HDMI` parameter, the port list has no differential pairs, and
+`cadr_ps7.sv` here does not bring that port out. The CADR's screen on this
+board is `cadr-terminal`'s RFB server over the network, which is how it is
+served on the other board as well.
 
-**There is no HDMI.** Digilent's master file has no HDMI section, where the
-Arty Z7-20's has both an RX and a TX one. So the display output block does not
-apply to this board, and neither does the plan of driving the CADR's screen
-straight from the fabric to a monitor. The screen on a Cora is the RFB server
-over the network, which is what `cadr-terminal` already does.
+**There is no USB input.** The `cadr-usb-input` package is not installed, nor
+is `evtest`, nor the init script that tells the USB PHY to drive VBUS. A
+keyboard and mouse reach the machine from a viewer over the network, through
+`cadr-terminal`, which is the one program that writes the input face's
+registers on either board. The device tree still declares the USB port as a
+host, because the port exists and Digilent's own tree declares it; a board that
+later wants USB input takes the package and the VBUS script together and
+nothing in the fabric changes.
 
-USB input is the same story one step along. The keyboard and mouse reach Linux
-over the processing system's own USB host port on the Arty Z7-20, and whether
-this board brings that port out is a question for Digilent's documentation and
-is not established here.
+**There is no `no_auto_boot` switch.** On the Arty Z7-20 a slide switch holds
+the machine at power-on as a CADR is held when its power comes on with nobody
+at it. This board has no switches, so `no_auto_boot` is tied low and the hold
+is the card's `fpgarc` flag alone. That flag works here exactly as it does
+there, the console being on `M_AXI_GP1` on both boards. What is lost is the
+hold on a board whose Linux is not up yet, which is a bring-up convenience.
 
-## The part, and what is known about the fit
+## The lamps and the buttons
 
-Vivado's own part database at 2026.1 gives the XC7Z007S as **14,400 LUTs,
-28,800 flip-flops, 50 block RAMs and 66 DSP slices**. The XC7Z020 on the Arty
-Z7-20 is 53,200, 106,400, 140 and 220.
+The board has two RGB LEDs and nothing else, so what they show is a decision
+and not a translation of the other board's six. The CADR's own light panel
+carried a run lamp and an error lamp beside the boot button, and BTN0 is that
+button here, so the two lamps are the two the panel had.
 
-Today's memory-on design, placed and routed for the XC7Z020 at commit
-`95cbb84`, is **10,909 slice LUTs, 7,390 slice registers, 41.5 block RAM tiles
-and 4 DSP slices**, closing timing at +0.914 ns. Put beside the smaller part
-those figures read:
+| | |
+|---|---|
+| LD0 | `MACHRUN`, green, as a level. Lit means the machine should be running. |
+| LD1 | red for `ERRHALT`, blue for `-PROMDISABLE`, otherwise green blinking with the microcycles. |
 
-| | used | XC7Z007S has | |
-|---|---|---|---|
-| LUTs | 10,909 | 14,400 | 75.8% |
-| flip-flops | 7,390 | 28,800 | 25.7% |
-| block RAM tiles | 41.5 | 50 | **83.0%** |
-| DSP | 4 | 66 | 6.1% |
+Red wins over blue and blue over green. The three read in the order a boot goes
+through them. Blue is the machine running its microcode out of the boot PROM,
+and it goes out when the machine has loaded microcode off the disk. Green
+blinking is the machine executing, and it freezes when the machine stops. Red
+is the machine halting itself under ERRSTOP, latched and cleared by any boot
+press. So blue then green is a boot, green gone still is a machine somebody
+halted, and red is a machine that fell over.
 
-**It fits, and block RAM is what binds.** It is also by a wide margin the
-tightest of the three boards in this repository. The same design is 30.7% of the
-Arty A7-100's block RAM and 29.6% of the Arty Z7-20's. So the small Zynq is the
-hard board and the Artix is not, which is the opposite of what the part numbers
-suggest.
+LD0's brightness is the fraction of time the machine computes rather than
+waits, because `MACHRUN` drops during every memory stall. Dim means it is
+thrashing.
 
-That 83% also inverts the obvious plan for making room. Dropping the debug
-cable adapter, the second general-purpose port, muir and the Pmod debugging
-frees lookup tables, and lookup tables are not the problem. The memory is the
-control store, the scratchpads, the disk's block store and the Chaosnet's
-packet buffers, so the honest lever if it ever comes to it is the block store,
-which is measured in whole block RAMs.
+**`-PROMDISABLE` is the mode register's own bit and not `PROMENABLE`.** Those
+are different nets. `PROMENABLE` is the PROM's select and follows the program
+counter, so it changes many times a boot; what reaches the pin is the bit the
+machine sets once, when it has finished loading its microcode.
 
-Three things make 83% less comfortable than it reads.
+**Two lamps cannot carry six meanings and what is missing is said rather than
+left to be found.** The fabric's own heartbeat has no lamp here, so a board
+that was never programmed, a board whose clock generator never locked and a
+machine that has stopped all look the same. Disk activity has no lamp either,
+so a pause cannot be told from the disk by looking. Both signals are still
+outputs of the machine and still in the fold that keeps the datapath alive;
+what is missing is a pin and not a wire.
 
-Removing HDMI and USB input saves nothing, because neither is built. The 83% is
-the floor and not a starting point to trim from.
+BTN0 is the boot button and BTN1 resets the whole fabric. There are only two
+buttons, so the control that throws the machine's state away sits next to the
+one that restarts it politely. On the Arty Z7-20 the reset is at the far end of
+a row of four, where it is hard to press by accident. That is the cost of a
+two-button board.
 
-The display output block is a scan-out path and is memory-hungry. It is exactly
-what a board with no HDMI does not need, which is why this board is worth
-settling before that work starts.
+## The debug cable
 
-The XC7Z007S has **one Cortex-A9 where the XC7Z020 has two**. muir on the board
-was measured to cost the fabric machine nothing with both cores saturated. On
-one core it would contend with `cadr-disk-packs`, which is on the machine's
-critical path.
+The decision is one connector, JA, carrying the whole link both ways, with JB
+unassigned. A board is a debugger or a debuggee by configuration and never both
+at once. The sixteen pins in `cadr_cora.xdc` are the earlier two-connector
+arrangement, which is what is built today; they are the same sixteen pins the
+Arty Z7-20 uses, so a cable between the two boards needs nothing said about it.
 
-## What is not known
+## The processing system
 
-**The table above is an indication and not a fit.** Those are the XC7Z020's
-placed-and-routed figures. A different part places and packs differently, and
-the only way to know whether this design fits and closes timing on an XC7Z007S
-is to build it for one.
+`vivado/ps7_config.tcl` is Digilent's own board preset for this board,
+transcribed verbatim, with nine properties of ours merged over it: `S_AXI_HP0`
+and `S_AXI_HP2` at 64 bits, `M_AXI_GP1`, and the fabric interrupt. Its header
+records the repository, the commit and the sha256 of the file it came from, and
+gives the command that checks the pointer has not rotted.
 
-**That is possible today and nobody has done it.** The part is in Vivado's
-database and the out-of-context flow takes its part from the environment:
+**The Arty Z7-20's routine was derived from Digilent's own Vivado project for
+that board. That route is not available for this one.** Digilent's
+`Cora-Z7-HW` repository has per-board branches and the ones for this board are
+empty root commits, which is the same rot the Arty's own superproject has
+already been through. So this comes from the board files instead, which are the
+artefact Vivado itself consumes and are maintained rather than archived.
 
-    make build/boot_prom.hex
-    PART=xc7z007sclg400-1 vivado -mode batch \
-        -source boards/arty-z7-20/vivado/fit.tcl
+**The Arty's routine also has an independent control and this one does not.**
+That board's is compared operation for operation against the one in Digilent's
+PetaLinux BSP for it, a different tool eight releases apart, and the two agree
+character for character. No such artefact was found for the Cora Z7-07S. What
+holds this one is the provenance of the preset and the committed `.ops` file.
 
-That synthesises `cadr_machine` on its own, with no top level, no output fold,
-no MMCM and no package pins, so it answers the LUT and block RAM question
-before any of the work above is started.
+### How the two routines differ
 
-It is not the whole answer. The out-of-context flow and the board flow measure
-different designs and are meant to, and `boards/arty-z7-20/vivado/fit.tcl`'s own
-header records both figures and why they differ. And the package and speed
-grade of the part Digilent actually fits should be confirmed against the board,
-rather than taken from the line above.
+Generated and compared under Vivado 2026.1. The routine is 668 operations in 25
+procedures against the Arty's 673 in 24.
 
-Whether the board's own peripherals are where the Arty Z7-20's are is not
-established here. Digilent's master file constrains PL pins only, so it says
-nothing about the microSD card, the Ethernet port or the USB port, all of which
-are on the processing system's own pins on the Arty Z7-20.
+**The DDR3 initialisation is byte-identical**, every operation of it, on all
+three silicon revisions. Both boards carry the same memory device at the same
+width and the same speed.
 
-## The Z7-10 is not the answer
+**`ps7_post_config` is byte-identical too**, which is the pair of writes that
+brings the PS-PL level shifters up. That is the measurement the other board's
+notes predict: at 64 bits, enabling an HP port changes the routine by nothing.
 
-The same Cora board exists with an XC7Z010. Vivado's database gives that part
-as 17,600 LUTs, 35,200 flip-flops, 60 block RAMs and 80 DSP slices, which would
-turn 75.8% and 83.0% into 62.0% and 69.2% and bring a second Cortex-A9 with it.
+**This board's routine has a procedure the other's does not: `ps7_apu_reset`.**
+It is one write to SLCR `A9_CPU_RST_CTRL` at `0xF8000244`, mask and value
+`0x00000022`, and Vivado emits it for a single-core part and calls it before
+anything else. That register's name is Xilinx's own, from the register
+description shipped with Vivado.
 
-**It is ruled out because it is no longer sold.** A project meant to be
-reproducible by somebody else cannot target a part they cannot buy. Nobody should rediscover
-the Z7-10 and think it solves this.
+The rest of the difference is the clock tree and the pin multiplexing, and
+every piece of it is explained by the two boards' own configurations. This
+board has no CAN and no Quad SPI, so those clocks are not enabled; it asks for
+one fabric clock where the other asks for two; its UART divisor differs; and
+its MIO pull-ups differ on the pins Quad SPI would have used.
 
-## The pin file
+## Linux
 
-`Cora-Z7-07S-Master.xdc` is Digilent's published master file, byte for byte as
-published, under Digilent's own filename. The name is kept so that "is this the
-published file" is answerable by eye and by one `sha256sum`.
+The Buildroot tree here holds the board and nothing else. **The packages are
+the Arty Z7-20's and there is one copy of them**, so a build is given both
+external trees:
+
+    BR2_EXTERNAL=boards/arty-z7-20/linux/buildroot:boards/cora-z7-07s/linux/buildroot
+
+`make buildroot-cora` does that, into an output directory of its own. The
+kernel configuration and the post-build script are the other board's files,
+named by path from this board's defconfig, because both describe a Zynq-7000
+with the same peripherals and a second copy is a second thing to keep current.
+
+The device tree is this board's. It is the Arty Z7-20's with three differences:
+`cpu1` is disabled, because this is a single-core part; there is no Quad SPI
+node, because this board's processing system has that peripheral disabled; and
+the model and compatible strings are Digilent's own for this board. The
+reserved-memory node is the other board's file included from here, because the
+CADR's 128 MB at `0x18000000` is a property of the machine and not of the
+board.
+
+The U-Boot environment file is `cadr_cora.env` rather than `cadr.env`. Both
+trees' hooks run on every build of this tree, and two hooks writing one
+destination would be a race decided by which was appended last.
+
+The card is staged by `boards/arty-z7-20/linux/mksd-buildroot.sh`, which now
+takes the board in two variables:
+
+    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+        BIT=build/cora-ddr/cadr_cora.bit boards/arty-z7-20/linux/mksd-buildroot.sh
+
+Both default to the Arty Z7-20's, so a run that sets neither is the run that
+script has always been. The private values, which are the server address, the
+MAC and the Chaosnet numbers, come from `linux/local.conf` in this directory,
+which is gitignored as the other board's is. Two boards on one network need
+different Chaosnet addresses, and the development allocation reserves a second
+pair for exactly that.
+
+## What has not been done
+
+**Nothing here has been on silicon.** No Cora Z7-07S has been programmed with a
+bitstream from this repository, no image has been built from this Buildroot
+configuration, and no card has been written.
+
+The natural first board step is the one the other board's plan starts with:
+`vivado/ddr_check.tcl` over JTAG, which starts the memory controller from the
+debugger and reads DDR back. It needs nothing in the fabric and no bitstream,
+and it says whether the start-up routine derived here is right. After it come
+the proving boards, `PROVE=1` and `PROVE=2`, and then the machine running out
+of real memory.
+
+Three Vivado flows the Arty Z7-20 has are not ported here: the probe readout,
+the two proving scripts and the memory tally's run script. The parameters they
+build are in `cadr_cora.sv` and the bitstream flow, so what is missing is the
+script that programs a board and reads it back.
+
+**Two scripts are read out of the other board's directory on purpose.**
+`vivado/tick.tcl` parses the clock generator's four parameters out of whatever
+file it is given, and `vivado/constraints_check.tcl` asks a design what setup
+requirement its paths carry. Neither knows anything about a part. They live in
+the first board's directory because that is where they were written, and a copy
+here would be a second description of one rule. When a directory shared between
+boards exists, those two move into it.
+
+## Why the pin file is vendored
+
+Pins come from Digilent's published file and never from memory. A wrong pin is
+a light that does not come on, and that reads as a design fault in the machine.
+
+`Cora-Z7-07S-Master.xdc` is that file, byte for byte as published, under
+Digilent's own filename. The name is kept so that "is this the published file"
+is answerable by eye and by one `sha256sum`.
 
 | | |
 |---|---|
@@ -170,15 +318,51 @@ published file" is answerable by eye and by one `sha256sum`.
 | sha256 | `7d689e023461834428a4f3b2b803ac94c66efb8d6994947d583bc4f5095c6eb5` |
 | board revision it names | Cora Z7-07S Rev. B |
 
-Every pin in it is commented out, which is how Digilent publishes it. Nothing
-in this repository reads the file, because every Vivado glob and every
-Verilator include path names `boards/arty-z7-20` explicitly. It is a reference.
-The convention once a top level exists is the one
-`boards/arty-z7-20/cadr_arty.xdc` follows, which is to copy out the pins the
-design uses and cite this file in the header.
+Every pin in it is commented out, which is how Digilent publishes it.
+`cadr_cora.xdc` copies out the pins the design uses and cites this file in its
+header.
 
 `Digilent-License.txt` is the MIT licence text from the same repository and the
 same commit, 1,064 bytes, sha256
 `fbdfae05e542ea6ad7e11e3818076b46d2b6bd81dac49c59bc9ac78025ba5339`. Digilent
 publishes it as `License.txt` and it is renamed here so that nobody reads it as
 the licence of this directory. Everything else here is AGPL.
+
+## The Z7-10 is not the answer
+
+The same Cora board exists with an XC7Z010. Vivado's database gives that part as
+17,600 LUTs, 35,200 flip-flops, 60 block RAMs and 80 DSP slices, which would
+turn 85.8% and 83.0% into 70.2% and 69.2% and bring a second Cortex-A9 with it.
+
+**It is ruled out because it is no longer sold.** A project meant to be
+reproducible by somebody else cannot target a part they cannot buy. Nobody
+should rediscover the Z7-10 and think it solves this.
+
+## One core, not two
+
+The XC7Z007S has one Cortex-A9 where the XC7Z020 has two. muir on the other
+board was measured to cost the fabric machine nothing with both cores
+saturated. On one core it shares that core with the disk pack program, which is
+on the machine's critical path, and nobody has measured what that costs.
+
+The device tree disables `cpu1` and the start-up routine holds it in reset, so
+Linux does not spend its boot looking for a core that is not there.
+
+## What the tight figures mean
+
+At 85.8% of the lookup tables and 83.0% of the block RAM, this is by a wide
+margin the tightest of the boards in this repository. Three things make that
+less comfortable than it reads.
+
+Removing the display output and USB input saves nothing, because neither is
+built here. Those figures are the floor and not a starting point to trim from.
+
+The display output block is a scan-out path and is memory-hungry. It is exactly
+what a board with no HDMI does not need, which is why this board was worth
+settling before that work started.
+
+And the honest lever, if it ever comes to it, is the block store. Dropping the
+debug cable, the second general-purpose port and muir frees lookup tables, and
+lookup tables are not what binds. The memory is the control store, the
+scratchpads, the disk's block store and the Chaosnet's packet buffers, and the
+block store is the one measured in whole block RAMs.

@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# NOTHING IS SOURCED HERE, AND THAT IS THE WHOLE POINT OF THIS TREE.
+#
+# The programs that run beside the CADR --- the console, the readout, the
+# checkpoint, the disk pack bay, the terminal, the serial line, Chaosnet, the
+# USB input program and muir itself --- are Buildroot packages in the ARTY
+# Z7-20's external tree, and there is one copy of them. Buildroot takes a list
+# of external trees (`BR2_EXTERNAL=a:b`), so this board's build is given both:
+#
+#     BR2_EXTERNAL=boards/arty-z7-20/linux/buildroot:boards/cora-z7-07s/linux/buildroot
+#
+# and every `BR2_PACKAGE_CADR_*` symbol comes from the first of them. What
+# this tree adds is the board: a device tree, a start-up routine, a U-Boot
+# environment and a defconfig.
+#
+# A SECOND COPY OF THE PACKAGES WOULD BE TWO PROGRAMS WITH ONE NAME. This
+# repository has met that once already, on the board rather than in the source:
+# a renamed package left its old binary and its old init script in the image
+# beside the new ones and two disk pack programs ran, each serving blocks and
+# each writing them back to the same file. Packages have one home.

@@ -1,0 +1,24 @@
+// SPDX-FileCopyrightText: 2026 Mete Balci
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * What U-Boot's SPL needs marked in the Cora Z7-07S's tree, and nothing else.
+ *
+ * U-Boot includes <board>-u-boot.dtsi by name when it compiles <board>.dts
+ * (scripts/Makefile.lib, dtsi_include_list), so this is the whole of the
+ * difference between the tree the kernel gets and the one U-Boot embeds.
+ * `bootph-all` is what puts a device in the SPL's cut-down tree: the console
+ * and the card the SPL loads u-boot.img from.  zynq-7000.dtsi already marks
+ * the bus, the SLCR, the clock controller and the timer.
+ *
+ * TWO DEVICES WHERE THE ARTY Z7-20 MARKS THREE.  That board's SPL also marks
+ * the Quad SPI the generic Zynq configuration probes; this board's processing
+ * system has Quad SPI disabled, so there is no such node to mark.
+ */
+
+&uart0 {
+	bootph-all;
+};
+
+&sdhci0 {
+	bootph-all;
+};
