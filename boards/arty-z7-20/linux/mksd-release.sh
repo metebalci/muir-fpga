@@ -51,10 +51,19 @@
 #      is for and how to name a pack, and the two files of flags --- `fpgarc`
 #      for the CADR in the fabric and `muirrc` for the CADR inside muir ---
 #      each the same full menu the development card gets, every flag present
-#      under a sentence saying what it does, the ones a board out of the box
-#      needs live and the rest commented out to be uncommented.  Nothing else
+#      under a sentence saying what it does.  Nothing else
 #      is on it, and that is asserted below rather than assumed: a released
 #      card with a band on it would be somebody else's Lisp world.
+#   1a. AND ON A RELEASE THREE OF THOSE LINES ARE LIVE, WHICH IS WHAT
+#      RELEASE=1 BELOW IS FOR.  `--chaos-address`, `--terminal` and
+#      `--keyboard-boot`: the address switches, the screen, and the chord that
+#      cold-boots the machine.  Everything else is present and commented out,
+#      the Chaosnet cable and the serial line included.  A card cannot guess a
+#      network the user has not described, and a release that plugged the
+#      cable in would put a station on one and listen on a port nobody named;
+#      a release that offered the serial line would open an unauthenticated
+#      port on every interface for a cable hardly anybody wants.  Each is one
+#      `#` away from being on and carries the sentence that says so.
 #   4. IT FITS A 4 GB CARD, AND IT HAS ROOM FOR THREE PACKS.  Both are
 #      asserted below against the smallest card sold under that name and
 #      against three T-300s --- two drives and the debugger's band --- which
@@ -99,7 +108,7 @@ BIT=${BIT:-}
 [ -z "${IMAGES:-}" ] || export IMAGES
 
 PACKS_MB=${PACKS_MB:-3584}
-OUT="$OUT" BIT="$BIT" BOOT_MB=64 PACKS_MB="$PACKS_MB" STANDALONE=1 \
+OUT="$OUT" BIT="$BIT" BOOT_MB=64 PACKS_MB="$PACKS_MB" STANDALONE=1 RELEASE=1 \
     BOARD_DIR="$BOARD_DIR" BOARD_DTB="$BOARD_DTB" \
     boards/arty-z7-20/linux/mksd-buildroot.sh
 

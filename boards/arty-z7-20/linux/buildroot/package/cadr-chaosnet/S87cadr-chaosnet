@@ -104,10 +104,28 @@ FLAGS="--address --chaos-address
        --udp-default-peer --chaos-udp-default-peer
        --trace --chaos-trace"
 
-# What a board with no settings file runs: System 100's own address, and
-# CHUDP's own port on every interface.  A cable and no peers, which is a
-# machine whose band will say its file host is not answering --- true, and
-# better than a guess.
+# **THE TWO DEFAULTS, AND THE RULE THAT DECIDES WHICH OF THEM IS EVER PASSED.**
+# System 100's own address, and CHUDP's own port on every interface.
+#
+# **THE ADDRESS SWITCHES ARE ALWAYS SET.**  A Chaosnet interface HAS an address
+# whether or not anything is plugged into it, so this one is passed wherever
+# the card says nothing about it --- with a card and without.  That is the same
+# rule the screen's endpoint follows: a default of this script's stands on the
+# command line only where the card is silent, so the flag appears exactly once
+# and it is the card's value when the card has one.
+#
+# **THE CABLE IS NOT.**  `--chaos-udp` is the cable plugged in, and a card that
+# is there and says nothing about it is a card that was asked and said no.  The
+# released card ships the line commented out under the sentence that explains
+# it, so a board out of the box has its switches set and no cable, which is a
+# machine on no network --- which is what a board that has not been told about
+# a network is.  The program accepts exactly that and says so: "no --chaos-udp,
+# so this cable reaches nothing off the board".
+#
+# **A BOARD WITH NO FILE AT ALL IS THE OTHER CASE AND KEEPS BOTH.**  No file is
+# nobody having been asked, not an answer of no, and it is also a boot where
+# the pack partition did not mount.  That board runs what this script has
+# always run: the address and the cable.
 DEFAULT_ADDRESS=3050
 DEFAULT_PORT=42042
 
@@ -292,22 +310,52 @@ wait_for_network() {
 
 start() {
 	set --
+	cable=no
 	if [ -f "$RC" ]; then
+		# The switches, where the card says nothing about them.  Both
+		# spellings are asked about, because the program takes muir's
+		# long name and its own short one and a card says the setting
+		# once, in one of them.  This goes before the card's own flags
+		# so that a card line, arriving after, still wins.
+		if ! fpgarc_has "$RC" --chaos-address && ! fpgarc_has "$RC" --address; then
+			set -- --chaos-address "$DEFAULT_ADDRESS"
+		fi
+		if fpgarc_has "$RC" --chaos-udp || fpgarc_has "$RC" --udp; then
+			cable=yes
+		fi
 		# The reader's words are quoted, so an argument with a space
 		# in it survives the eval.  A file with no line of ours gives
-		# nothing and the program takes its own defaults, which is not
-		# the same case as no file at all.
-		eval "set -- $(fpgarc_args "$RC" $FLAGS)"
+		# nothing, and the paragraph at DEFAULT_ADDRESS is what that
+		# means for each of the two defaults.
+		eval "set -- \"\$@\" $(fpgarc_args "$RC" $FLAGS)"
 	else
 		echo "cadr-chaosnet: no $RC; the defaults"
 		set -- --chaos-address "$DEFAULT_ADDRESS" --chaos-udp "0.0.0.0:$DEFAULT_PORT"
+		cable=yes
 	fi
 
-	# The names first, out of the very flags about to be passed, then the
-	# wait.  Before the line below rather than after it, so that a boot's
-	# log does not hold a half-printed "Starting" across the wait.
-	names=$(names_in "$@")
-	wait_for_network
+	# **AND A CABLE THAT IS NOT PLUGGED IN IS NOT WORTH WAITING FOR A
+	# NETWORK.**  The wait below is for the lease, and what it is really
+	# for is the resolver, because the program resolves every peer's name
+	# once at the start.  With no cable the program binds nothing, resolves
+	# nothing and sends nothing, so a board with no network would spend the
+	# whole bound waiting for one it is not going to use --- thirty seconds
+	# of every boot of a released card that has not been told about a
+	# network.  So the wait is for a cable, and the line below says what
+	# the state is either way.
+	if [ "$cable" = no ]; then
+		echo "cadr-chaosnet: no --chaos-udp in $RC, so the cable is not plugged in:"
+		echo "cadr-chaosnet: the address switches are set and nothing is sent or received."
+		echo "cadr-chaosnet: uncomment --chaos-udp in that file, and the peer lines under it,"
+		echo "cadr-chaosnet: to put this machine on a network."
+	else
+		# The names first, out of the very flags about to be passed,
+		# then the wait.  Before the line below rather than after it,
+		# so that a boot's log does not hold a half-printed "Starting"
+		# across the wait.
+		names=$(names_in "$@")
+		wait_for_network
+	fi
 
 	# `--log` is last of all and is not the card's to say: where a daemon
 	# writes is this script's.  **THIS IS THE PROGRAM THE SILENT REFUSAL

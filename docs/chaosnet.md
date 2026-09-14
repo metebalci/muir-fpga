@@ -171,8 +171,19 @@ flags; this section is the Chaosnet's own.
 `S87cadr-chaosnet` hands `fpgarc` to the shared reader and names the flags
 below, and it is given those lines and no others. The file serves several
 programs and each of them refuses a flag it does not know, so none of them is
-given it whole. A board with no `fpgarc` runs the defaults, which are System
-100's own address and CHUDP's own port.
+given it whole.
+
+**The address switches are always set and the cable is not.** A Chaosnet
+interface has an address whether or not anything is plugged into it, so the
+script passes System 100's own address wherever `fpgarc` says nothing about
+one. The cable is `--chaos-udp`, and a card that is there and does not name it
+is a card that was asked and said no: no cable is plugged in, the program says
+that this cable reaches nothing off the board, and the init script does not
+wait for a network it has nothing to reach. A released card ships in exactly
+that state, with the line commented out under the sentence that explains it.
+
+A board with no `fpgarc` at all is the other case. Nobody has been asked, so it
+runs both defaults, which are System 100's own address and CHUDP's own port.
 
 The four flags this program refuses by name are not in that list, and are not
 written on the card either: `--chaos-file-root`, `--chaos-file-peers`,
@@ -187,8 +198,9 @@ the list instead, the line would reach the program and stop it.
                                  4401.
     --chaos-udp 0.0.0.0:42042    the cable, plugged in. Without this line the
                                  program sends nothing, whatever the address
-                                 switches read. 42042 is the protocol's own
-                                 port and this machine takes it.
+                                 switches read, and no cable is plugged in on
+                                 its behalf. 42042 is the protocol's own port
+                                 and this machine takes it.
     --chaos-udp-peer 3060@<host>:<port>
                                  another station on this machine's cable, once
                                  a line. The band's file and time host goes
@@ -258,6 +270,18 @@ which names no peer at all, is never held up by a network that may never
 arrive. And when a name really cannot be resolved, the message that reaches
 the console is the program's own, with the name in it, rather than a script
 that quietly did nothing.
+
+**A board with no cable does not wait at all.** The wait is for the lease, and
+what it is really for is the resolver, so a board whose `fpgarc` says nothing
+about `--chaos-udp` has nothing to bind, nothing to resolve and nothing to
+send. It would otherwise spend the whole bound at every boot waiting for a
+network it is not going to use, which is what a released card out of the box
+would do. The script says which state the board is in instead.
+
+    cadr-chaosnet: no --chaos-udp in /mnt/packs/fpgarc, so the cable is not plugged in:
+    cadr-chaosnet: the address switches are set and nothing is sent or received.
+    cadr-chaosnet: uncomment --chaos-udp in that file, and the peer lines under it,
+    cadr-chaosnet: to put this machine on a network.
 
 The script says what it is waiting for and how long it waited. A boot on a
 working network prints one line. A boot that waits prints the reason and then

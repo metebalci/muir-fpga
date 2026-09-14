@@ -478,6 +478,7 @@ printf '%s\r\n' \
 	'--chaos-udp-peer 3060@a-host.invalid:42043' \
 	'--keyboard-mapping /mnt/packs/keys.txt' \
 	'--bow' \
+	'--serial 0.0.0.0:7641' \
 	'--poll-us 250' \
 	'--quiet' \
 	'--usb-scan-ms 500' \
@@ -516,8 +517,10 @@ if prepare cadr-serial S86cadr-serial; then
 	# **muir'S SPELLING, WHICH IS THE WHOLE OF WHY `--port` IS GONE.**  The
 	# screen and the serial line both took `--port` and `--bind`, so no
 	# list could claim either word and no `fpgarc` line could say where
-	# either program listened.  Each has muir's own flag now and the init
-	# script passes it written out in full.
+	# either program listened.  Each has muir's own flag now, and this one
+	# comes off the card: a file that says nothing about `--serial` is a
+	# serial line that is off, which is the case below, so a file testing
+	# the filter has to name it.
 	passes "--serial 0.0.0.0:7641" "cadr-serial"
 	passes_not "--port" "cadr-serial"
 	passes_not "--chaos-udp" "cadr-serial"
@@ -608,20 +611,139 @@ if prepare cadr-serial S86cadr-serial; then
 	passes "--quiet" "cadr-serial"
 fi
 
-case_head "and once, the script's own, when the card says nothing about it"
+# **AND A CARD THAT SAYS NOTHING ABOUT `--serial` IS A SERIAL LINE THAT IS
+# OFF, WHICH IS NOT THE SAME AS THERE BEING NO CARD.**  muir gives `--serial`
+# no default and serves no line without it; this program is the same program on
+# a board.  A released card ships the line commented out under the sentence
+# that says what it does, so a file that is there and does not name it is a
+# card that was asked and said no --- and then the program is not started at
+# all.  No file is nobody having been asked, and that board runs what it always
+# ran.
+#
+# The two are one line apart in the script and the difference is invisible to
+# anything but a case for each, which is why there are two.
+case_head "and the serial line is off when the card is there and says nothing about it"
 sandbox
 if prepare cadr-serial S86cadr-serial; then
 	printf '%s\r\n' '--quiet' > "$RC"
 	run_script S86cadr-serial
-	passes_once "--serial" "cadr-serial" "0.0.0.0:7641"
+	if [ -s "$WORK/daemon.calls" ]; then
+		fail "cadr-serial was started for a card that says nothing about --serial:" \
+		     "it was given: $(given)"
+	else
+		ok "cadr-serial was not started at all"
+	fi
+	if grep -q 'the serial line is off' "$WORK/out.S86cadr-serial"; then
+		ok "and the console says the line is off"
+	else
+		fail "the console does not say the line is off; it says:"
+		sed 's/^/        /' "$WORK/out.S86cadr-serial"
+	fi
+	if grep -q 'uncomment the --serial line' "$WORK/out.S86cadr-serial"; then
+		ok "and says how to turn it on"
+	else
+		fail "the console does not say how to turn the line on"
+	fi
 fi
 
-case_head "and once with no card at all"
+case_head "and once, the script's own, with no card at all"
 sandbox
 if prepare cadr-serial S86cadr-serial; then
 	rm -f "$RC"
 	run_script S86cadr-serial
 	passes_once "--serial" "cadr-serial" "0.0.0.0:7641"
+fi
+
+# **THE CHAOSNET FOLLOWS THE SAME RULE, AND ITS TWO DEFAULTS PART COMPANY
+# UNDER IT.**  The script had one branch for a card and one for no card, so a
+# card that said nothing about the address got no address at all, where the
+# screen and the serial line had long since learned to pass their own where the
+# card is silent.
+#
+# The switches and the cable are not the same kind of thing, which is what
+# makes this four cases and not two. An interface HAS an address whether or not
+# anything is plugged into it, so the address is passed wherever the card is
+# silent. The cable is plugged in or it is not, and a card that is there and
+# says nothing about it is a card that was asked and said no --- which is the
+# state a released card ships in.
+case_head "the Chaosnet's address is passed once, and it is the card's when the card says one"
+sandbox
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	printf '%s\r\n' '--chaos-address 4401' '--chaos-udp 0.0.0.0:42042' > "$RC"
+	run_script S87cadr-chaosnet
+	passes_once "--chaos-address" "cadr-chaosnet" "4401"
+	passes_not "3050" "cadr-chaosnet"
+	passes_once "--chaos-udp" "cadr-chaosnet" "0.0.0.0:42042"
+fi
+
+case_head "and once, the script's own, when the card is there and says nothing about it"
+sandbox
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	printf '%s\r\n' '--chaos-udp 0.0.0.0:42042' > "$RC"
+	run_script S87cadr-chaosnet
+	passes_once "--chaos-address" "cadr-chaosnet" "3050"
+fi
+
+case_head "and the card's short spelling counts as the card saying one"
+sandbox
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	printf '%s\r\n' '--address 4401' '--udp 0.0.0.0:42042' > "$RC"
+	run_script S87cadr-chaosnet
+	passes_once "--address" "cadr-chaosnet" "4401"
+	passes_not "--chaos-address" "cadr-chaosnet"
+fi
+
+# **AND THE CABLE IS NOT PASSED FOR A CARD THAT DID NOT ASK FOR IT.**  This is
+# the state a released card ships in: the switches set, the cable commented
+# out, and the program saying so.  The program accepts exactly that --- it
+# prints that the cable reaches nothing off the board and goes on running ---
+# so what is held here is that the script does not plug one in on the card's
+# behalf, and that somebody reading the console is told which state the board
+# is in and how to change it.
+case_head "the cable is not plugged in when the card is there and does not ask for it"
+sandbox
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	printf '%s\r\n' '--chaos-address 177101' > "$RC"
+	run_script S87cadr-chaosnet
+	passes_once "--chaos-address" "cadr-chaosnet" "177101"
+	passes_not "--chaos-udp" "cadr-chaosnet"
+	passes_not "42042" "cadr-chaosnet"
+	if grep -q 'the cable is not plugged in' "$WORK/out.S87cadr-chaosnet"; then
+		ok "and the console says the cable is not plugged in"
+	else
+		fail "the console does not say the cable is not plugged in; it says:"
+		sed 's/^/        /' "$WORK/out.S87cadr-chaosnet"
+	fi
+	if grep -q 'uncomment --chaos-udp' "$WORK/out.S87cadr-chaosnet"; then
+		ok "and says how to plug one in"
+	else
+		fail "the console does not say how to plug a cable in"
+	fi
+	# **AND IT DOES NOT SPEND THE BOUND WAITING FOR A NETWORK IT WILL NOT
+	# USE.**  The wait is for the lease and really for the resolver, and
+	# with no cable nothing is bound and no name is resolved, so a board
+	# with no network would otherwise hold every boot at it.  The stubbed
+	# `ip` answers ready here, so what this can see is that the script did
+	# not ask at all.
+	if [ -s "$WORK/ip.calls" ]; then
+		fail "the script waited for a network with no cable to use it"
+	else
+		ok "and it did not wait for a network it has no cable to reach"
+	fi
+fi
+
+case_head "and both defaults stand with no card at all"
+sandbox
+if prepare cadr-chaosnet S87cadr-chaosnet; then
+	rm -f "$RC"
+	run_script S87cadr-chaosnet
+	passes_once "--chaos-address" "cadr-chaosnet" "3050"
+	passes_once "--chaos-udp" "cadr-chaosnet" "0.0.0.0:42042"
+	if [ -s "$WORK/ip.calls" ]; then
+		ok "and a board with no card still waits for its network"
+	else
+		fail "a board with no card has a cable and did not wait for a network"
+	fi
 fi
 
 # The keyboard mapping is the same shape one step along: the file beside the
@@ -678,9 +800,13 @@ fi
 # section while saying nothing.
 refusal_case() {
 	# $1 the package, $2 the script, $3 the flag the file carries and the
-	# program refuses, $4 the program's name.
+	# program refuses, $4 the program's name, and $5 any further line the
+	# file must carry for the program to be started at all --- which is the
+	# serial line's, since a card that says nothing about `--serial` is a
+	# card that says the line is off, and a program that is not started
+	# refuses nothing.
 	sandbox
-	printf '%s\r\n' "$3" > "$WORK/packs/fpgarc"
+	printf '%s\r\n' "$3" ${5:+"$5"} > "$WORK/packs/fpgarc"
 	prepare "$1" "$2" || return 1
 
 	case_head "$4: a flag it refuses is printed, and OK is not"
@@ -725,7 +851,7 @@ refusal_case() {
 # Each program with a flag its own list claims, so that the line really
 # reaches it and the refusal is the program's rather than the reader's.
 refusal_case cadr-terminal   S85cadr-terminal  --bow          cadr-terminal
-refusal_case cadr-serial     S86cadr-serial    --quiet        cadr-serial
+refusal_case cadr-serial     S86cadr-serial    --quiet        cadr-serial '--serial 0.0.0.0:7641'
 refusal_case cadr-usb-input  S88cadr-usb-input --usb-grab     cadr-usb-input
 refusal_case cadr-chaosnet   S87cadr-chaosnet  --chaos-trace  cadr-chaosnet
 
@@ -1198,11 +1324,19 @@ generate_fpgarc() {
 	( set -u
 	  OUT="$WORK/gen"
 	  NO_AUTO_BOOT=$1
+	  # $2 is RELEASE: empty for the development card, 1 for the card a
+	  # stranger is given.  The two menus are the same file with a
+	  # different set of lines live, so both are generated from this one
+	  # block and the cases below say which is which.
+	  RELEASE=${2:-}
 	  CHAOS_PEER=""
 	  CHAOS_DEFAULT_PEER=""
 	  . "$WORK/gen/gen.sh" ) || return 1
 	return 0
 }
+
+# The lines of a written menu that are live: a flag at the start of a line.
+live_flags() { tr -d '\r' < "$1" | grep -E '^--' || true; }
 
 # **AND THE CARD'S FILE MUST NAME EVERY FLAG THE PROGRAMS TAKE FROM IT.**
 #
@@ -1364,6 +1498,155 @@ if generate_fpgarc "1"; then
 	else
 		fail "the card's file has no carriage returns"
 	fi
+fi
+
+# ---------------------------------------------------------------------------
+# 6b. THE RELEASED CARD'S MENU: THREE LIVE LINES, AND THE REST OF THE MENU
+#     STILL THERE.
+# ---------------------------------------------------------------------------
+#
+# **THE DECISION.**  A card a stranger is given carries the same whole menu the
+# development card does --- every flag every program takes, each under the
+# sentence that says what it does --- with three of them live: the address
+# switches, the screen, and the chord that cold-boots the machine.  Those are
+# what a board out of the box needs and nothing else is.
+#
+# **THE TWO THAT COME OUT ARE THINGS A USER PLUGS IN.**  A release with
+# `--chaos-udp` live would put a station on a network the user has not got,
+# listening on a port nobody named, with no peer it could reach; a release with
+# `--serial` live would offer an unauthenticated port on every interface for a
+# cable hardly anybody wants. muir's own rule for both is that they are off
+# unless asked for.
+#
+# **WHAT MAKES THIS CHECKABLE RATHER THAN A CLAIM**: the released card's file
+# and the development card's come out of one block of one script with one
+# variable between them, so both can be written here and compared. The
+# development menu is asserted as the control, because a release menu with
+# three live lines could otherwise be bought by turning the development card's
+# off as well, and every case above would still pass.
+case_head "a released card's menu has three live lines and they are the three a board needs"
+sandbox
+if generate_fpgarc "" 1; then
+	GEN="$WORK/gen/packs/fpgarc"
+	got=$(live_flags "$GEN" | tr '\n' '|')
+	want='--chaos-address 177101|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|'
+	if [ "$got" = "$want" ]; then
+		ok "the address switches, the screen and the boot chord, and nothing else"
+	else
+		fail "the released menu's live lines are [$got], not [$want]"
+	fi
+fi
+
+case_head "and the cable and the serial line are on it, commented out"
+sandbox
+if generate_fpgarc "" 1; then
+	GEN="$WORK/gen/packs/fpgarc"
+	for f in --chaos-udp --serial; do
+		if tr -d '\r' < "$GEN" | grep -qE "^#$f "; then
+			ok "$f is there as a setting to uncomment"
+		else
+			fail "$f is not on the released menu as a commented setting"
+		fi
+	done
+	# And the reader agrees, which is what the init scripts will do with it.
+	if [ "$HAVE_READER" != yes ]; then
+		fail "there is no reader to agree with the card script"
+	else
+		for f in --chaos-address --terminal --keyboard-boot; do
+			fpgarc_has "$GEN" "$f" && ok "the reader finds $f" ||
+				fail "the reader does not find $f live"
+		done
+		for f in --chaos-udp --serial; do
+			fpgarc_has "$GEN" "$f" &&
+				fail "the reader takes the commented $f as a flag" ||
+				ok "and the reader does not find $f"
+		done
+	fi
+fi
+
+case_head "and it is still the whole menu: every flag every program takes is on it"
+sandbox
+if generate_fpgarc "" 1; then
+	GEN="$WORK/gen/packs/fpgarc"
+	reqs=0
+	missing=0
+	flag_requirements > "$WORK/reqs"
+	if [ ! -s "$WORK/reqs" ]; then
+		fail "no flag lists were found in the init scripts: this check has rotted"
+	fi
+	while IFS= read -r req; do
+		[ -n "$req" ] || continue
+		reqs=$((reqs + 1))
+		n=0
+		for flag in $req; do
+			n=$((n + $(setting_lines "$GEN" "$flag")))
+		done
+		if [ "$n" = 0 ]; then
+			fail "the released menu says nothing about $req, which a program takes"
+			missing=$((missing + 1))
+		fi
+	done < "$WORK/reqs"
+	[ "$missing" = 0 ] && ok "all $reqs of them, live or commented out"
+fi
+
+# **THE CONTROL.**  A release menu with three live lines is only a decision if
+# the development card still has its five; otherwise the same result would come
+# of turning everything off everywhere, and nothing above could tell.
+case_head "and the development card's menu is unchanged: five live lines, the cable and the line among them"
+sandbox
+if generate_fpgarc "" ""; then
+	GEN="$WORK/gen/packs/fpgarc"
+	got=$(live_flags "$GEN" | tr '\n' '|')
+	want='--chaos-address 177101|--chaos-udp 0.0.0.0:42042|--terminal 0.0.0.0:5900|--keyboard-boot ctrl,meta|--serial 0.0.0.0:7641|'
+	if [ "$got" = "$want" ]; then
+		ok "the cable is plugged in and the serial line is offered, as they always were"
+	else
+		fail "the development menu's live lines are [$got], not [$want]"
+	fi
+fi
+
+# **AND THE INIT SCRIPTS READ THE RELEASED MENU THE WAY IT IS MEANT.**  The two
+# cases above are about what is written; these two are about what a board then
+# does with it, on the real file the real script writes rather than on one
+# fabricated here.  That is the join the decision actually rests on: a menu
+# whose commented lines the scripts ignored, or whose live ones they missed,
+# would be a card that says one thing and a board that does another.
+case_head "a board given the released menu has its switches set and no cable"
+sandbox
+if generate_fpgarc "" 1 && prepare cadr-chaosnet S87cadr-chaosnet; then
+	cp "$WORK/gen/packs/fpgarc" "$WORK/packs/fpgarc"
+	run_script S87cadr-chaosnet
+	passes_once "--chaos-address" "cadr-chaosnet" "177101"
+	passes_not "--chaos-udp" "cadr-chaosnet"
+	if grep -q 'the cable is not plugged in' "$WORK/out.S87cadr-chaosnet"; then
+		ok "and the console says the cable is not plugged in"
+	else
+		fail "the console does not say the cable is not plugged in"
+	fi
+fi
+
+case_head "and its serial line is off, and its screen is served"
+sandbox
+if generate_fpgarc "" 1 && prepare cadr-serial S86cadr-serial; then
+	cp "$WORK/gen/packs/fpgarc" "$WORK/packs/fpgarc"
+	run_script S86cadr-serial
+	if [ -s "$WORK/daemon.calls" ]; then
+		fail "cadr-serial was started off the released menu: $(given)"
+	else
+		ok "cadr-serial was not started"
+	fi
+	if grep -q 'the serial line is off' "$WORK/out.S86cadr-serial"; then
+		ok "and the console says the line is off"
+	else
+		fail "the console does not say the line is off"
+	fi
+fi
+sandbox
+if generate_fpgarc "" 1 && prepare cadr-terminal S85cadr-terminal; then
+	cp "$WORK/gen/packs/fpgarc" "$WORK/packs/fpgarc"
+	run_script S85cadr-terminal
+	passes_once "--terminal" "cadr-terminal" "0.0.0.0:5900"
+	passes_once "--keyboard-boot" "cadr-terminal" "ctrl,meta"
 fi
 
 # ---------------------------------------------------------------------------

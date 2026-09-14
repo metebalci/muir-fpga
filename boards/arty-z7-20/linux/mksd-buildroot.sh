@@ -152,6 +152,15 @@ PACKS=${PACKS:-}
 BOOT_MB=${BOOT_MB:-64}
 PACKS_MB=${PACKS_MB:-}          # empty means "what the packs need, plus one drive"
 STANDALONE=${STANDALONE:-}
+# **RELEASE=1 IS ABOUT THE MENU AND STANDALONE=1 IS ABOUT WHAT IS PRIVATE**,
+# and they are two flags because they are two properties.  STANDALONE says this
+# card carries nothing out of local.conf, which is what keeps an address, a MAC
+# and this board's own station numbers off a public artefact.  RELEASE says the
+# card is the one a stranger is given, so the file of flags is written with the
+# three lines a board out of the box needs live and every other flag present
+# and commented out.  mksd-release.sh sets both; a card staged here for the
+# card path sets STANDALONE alone and keeps the menu it has always had.
+RELEASE=${RELEASE:-}
 DTC=${DTC:-$HOSTBIN/dtc}
 
 die() { echo "mksd-buildroot: $*" >&2; exit 1; }
@@ -502,6 +511,44 @@ CHAOS_PORT=${CHAOS_UDP_PORT:-42042}
 TERMINAL_ENDPOINT=${TERMINAL_ENDPOINT:-0.0.0.0:5900}
 SERIAL_ENDPOINT=${SERIAL_ENDPOINT:-0.0.0.0:7641}
 KEYBOARD_BOOT=${KEYBOARD_BOOT:-ctrl,meta}
+
+# **A RELEASE CARD'S MENU HAS THREE LIVE LINES, AND THE DEVELOPMENT CARD'S IS
+# THE SAME MENU WITH MORE OF THEM LIVE.**  The file is the whole menu on both:
+# every flag every program takes is in it, each under the sentence that says
+# what it does.  What differs is which of them are live, and on a release that
+# is the three a board out of the box needs and nothing else --- the address
+# switches, the screen, and the chord that boots the machine.
+#
+#     --chaos-address     a Chaosnet interface HAS an address whether or not
+#                         anything is plugged into it, so the switches are
+#                         always set.  A band calls the machine by the number
+#                         its own host table gives, so this is the line a user
+#                         changes to suit the band they put in the bay.
+#     --terminal          the screen, which is the only way to use a board
+#                         that has no monitor of its own plugged in.
+#     --keyboard-boot     the chord that cold-boots the machine, which
+#                         somebody at a viewer needs on the first boot.
+#
+# **AND THE TWO THAT COME OUT ARE THE CABLE AND THE SERIAL LINE.**  Both are
+# things a user plugs in rather than settings a card can guess at.  A release
+# with the cable live would put a station on a network the user has not got,
+# listening on a port nobody named, and the peer lines that would make it
+# reach anything are the user's own to write.  A release with the serial line
+# live would offer an unauthenticated port on every interface for a cable
+# hardly anybody wants.  muir's own rule for both is that they are off unless
+# asked for, and this follows it.
+#
+# Each is one `#` away from being on, with the sentence explaining it on both
+# cards.  The init scripts follow the same rule from the other side: a file
+# that is present and says nothing about the cable is a cable not plugged in,
+# and one that says nothing about `--serial` is a serial line that is off.
+if [ -n "${RELEASE:-}" ]; then
+  MENU_CABLE="#"
+  MENU_SERIAL="#"
+else
+  MENU_CABLE=""
+  MENU_SERIAL=""
+fi
 # **THE BOOT BUTTON IS A COMMENT UNLESS local.conf ASKS FOR IT.**  A card that
 # boots its band by itself is what somebody switching a board on wants, so the
 # line is written commented out with the sentence that explains it, and a
@@ -552,18 +599,22 @@ fi
   printf "\r\n"
   printf "# The sixteen address switches on the Chaosnet card: this machine's\r\n"
   printf "# own address, in octal.  Not a preference --- it is what the\r\n"
-  printf "# hardware IS.  A band calls the host ITS OWN table names, so a band\r\n"
+  printf "# hardware IS, and it is set whether or not the cable below is\r\n"
+  printf "# plugged in.  A band calls the host ITS OWN table names, so a band\r\n"
   printf "# other than the one this card ships with may want another number.\r\n"
   printf -- "--chaos-address %s\r\n" "$CHAOS_ADDR"
   printf "\r\n"
-  printf "# The cable, plugged in: Chaosnet over UDP, on every interface so\r\n"
-  printf "# that another machine can reach it.  42042 is the protocol's own\r\n"
-  printf "# port and the CADR in fabric takes it; the CADR inside muir takes\r\n"
-  printf "# another in muirrc, two stations on one port being a collision\r\n"
-  printf "# rather than a network.  Without this line nothing is sent, and the\r\n"
-  printf "# peer lines below are refused: the address switches are one flag and\r\n"
-  printf "# the cable is another, as they are two things on the board.\r\n"
-  printf -- "--chaos-udp 0.0.0.0:%s\r\n" "$CHAOS_PORT"
+  printf "# The cable: Chaosnet over UDP, on every interface so that another\r\n"
+  printf "# machine can reach it.  THIS LINE IS THE CABLE PLUGGED IN, and\r\n"
+  printf "# without it nothing is sent and the peer lines below are refused ---\r\n"
+  printf "# the address switches are one flag and the cable is another, as they\r\n"
+  printf "# are two things on the board.  A machine with the switches set and\r\n"
+  printf "# no cable is a machine on no network, which is what a board out of\r\n"
+  printf "# the box is until somebody says otherwise.  42042 is the protocol's\r\n"
+  printf "# own port and the CADR in fabric takes it; the CADR inside muir\r\n"
+  printf "# takes another in muirrc, two stations on one port being a collision\r\n"
+  printf "# rather than a network.\r\n"
+  printf -- "%s--chaos-udp 0.0.0.0:%s\r\n" "$MENU_CABLE" "$CHAOS_PORT"
   printf "\r\n"
   printf "# The other stations, one a line, in muir's own syntax:\r\n"
   printf "#\r\n"
@@ -665,10 +716,13 @@ fi
   printf "\r\n"
   printf "# Where that far end is offered: a port, or address:port, which is\r\n"
   printf "# muir's own grammar for its own --serial, and the port must be\r\n"
-  printf "# named.  Every interface, so that \`nc\` or telnet on another machine\r\n"
-  printf "# reaches it; 127.0.0.1:7641 keeps it to this board.  7641 is the\r\n"
-  printf "# 2651's own Unibus address, 0o764160.\r\n"
-  printf -- "--serial %s\r\n" "$SERIAL_ENDPOINT"
+  printf "# named.  WITHOUT THIS LINE THE SERIAL LINE IS OFF and the program\r\n"
+  printf "# that serves it is not started, which is muir's own rule for its own\r\n"
+  printf "# --serial: a line nobody asked for is a port nobody was told to\r\n"
+  printf "# attach to.  Every interface, so that \`nc\` or telnet on another\r\n"
+  printf "# machine reaches it; 127.0.0.1:7641 keeps it to this board.  7641 is\r\n"
+  printf "# the 2651's own Unibus address, 0o764160.\r\n"
+  printf -- "%s--serial %s\r\n" "$MENU_SERIAL" "$SERIAL_ENDPOINT"
   printf "\r\n"
   printf "# The port's register window, and how often it is looked at while\r\n"
   printf "# idle, in microseconds.  The defaults are where the fabric puts the\r\n"
@@ -728,7 +782,8 @@ fi
   printf -- "%s--no-auto-boot\r\n" "$NO_AUTO_BOOT_PREFIX"
 } > "$OUT/packs/fpgarc"
 echo "mksd-buildroot: the boot button: $([ -z "$NO_AUTO_BOOT_PREFIX" ] && echo "--no-auto-boot --- the machine is held at boot and cadr-console boot or BTN0 starts it" || echo "pressed at boot --- the board boots its band by itself")"
-echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, port $CHAOS_PORT, $([ -n "${CHAOS_PEER:-}" ] && echo "$(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo "no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
+echo "mksd-buildroot: the Chaosnet: address $CHAOS_ADDR, $([ -z "$MENU_CABLE" ] && echo "the cable on port $CHAOS_PORT" || echo "and the cable NOT plugged in --- --chaos-udp is written commented out")$([ -n "${CHAOS_PEER:-}" ] && echo ", $(set -- ${CHAOS_PEER}; echo $#) peer(s) from local.conf" || echo ", no peers --- the network is the user's")$([ -n "${CHAOS_DEFAULT_PEER:-}" ] && echo ", and a bridge for the rest" || echo ", and no bridge")"
+echo "mksd-buildroot: the serial line: $([ -z "$MENU_SERIAL" ] && echo "offered at $SERIAL_ENDPOINT" || echo "OFF --- --serial is written commented out, and the program that serves it is not started")"
 
 # --------------------------------------------------------- muir's file of flags
 #
