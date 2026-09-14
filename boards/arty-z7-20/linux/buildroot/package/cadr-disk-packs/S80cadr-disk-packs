@@ -14,10 +14,13 @@
 # no journal, which is why the partition that would hurt to lose is the one
 # that is mounted read-only.
 #
-#   /dev/mmcblk0p1 -> /mnt/card    READ-ONLY.  BOOT.BIN, u-boot.img,
-#                                  uEnv.txt and, on a standalone card,
-#                                  cadr.bit, the tree, the kernel and the
-#                                  root filesystem.  A power cut while this
+#   /dev/mmcblk0p1 -> /mnt/card    READ-ONLY.  BOOT.BIN, u-boot.img and
+#                                  uEnv.txt at the root, whose names are
+#                                  fixed, and cadr.bit, the tree, the kernel
+#                                  and the root filesystem in a folder named
+#                                  for the board, which is what the TFTP
+#                                  server's directory for it is called too.
+#                                  A power cut while this
 #                                  is writable is a board that needs a card
 #                                  reader again, and this project's whole
 #                                  point is that it does not.  To replace a

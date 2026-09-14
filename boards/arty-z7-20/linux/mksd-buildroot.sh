@@ -11,9 +11,10 @@
 # built (output/images) and the bitstream it is told, and lays them out the
 # way the board consumes them:
 #
-#     build/sd/buildroot/card/    BOOT.BIN u-boot.img uEnv.txt cadr.bit
-#                                 zynq-arty-z7-20.dtb zImage rootfs.cpio.uboot
-#                                                                     -> partition 1
+#     build/sd/buildroot/card/    BOOT.BIN u-boot.img uEnv.txt      -> partition 1
+#     build/sd/buildroot/card/<board>/
+#                                 cadr.bit zynq-arty-z7-20.dtb zImage
+#                                 rootfs.cpio.uboot                --- the same partition
 #     build/sd/buildroot/packs/   disk-pack-0.img .. disk-pack-7.img   -> partition 2
 #     build/sd/buildroot/server/<board>/
 #                                 uEnv.net cadr.bit zynq-arty-z7-20.dtb
@@ -25,7 +26,21 @@
 # than one board here and every board's five files carry the same five names,
 # so a flat server root would hand a Cora the Arty's bitstream --- a bitstream
 # for the wrong part, which configures nothing and says nothing about why.
-# The card is untouched by the rule: a card belongs to one board already.
+#
+# **AND THE CARD MIRRORS THE SERVER.**  The same four files sit in a folder of
+# the same name on the card's boot partition, and the board's U-Boot loads them
+# from there.  A card belongs to one board, so the folder is not what keeps two
+# boards' files apart on it; what it buys is that the card and the server hold
+# the same thing in the same place, and that a file copied from one to the
+# other keeps its path.  Three files stay at the ROOT of the partition because
+# their names are not ours to move: BOOT.BIN, which the boot ROM reads from the
+# root of the first FAT partition and nowhere else; u-boot.img, which the SPL
+# asks for by that name at the root; and uEnv.txt, which U-Boot imports before
+# any board name is known.  The pack partition keeps its flat layout, because a
+# pack, a README and the two files of flags belong to the machine rather than
+# to the part --- what differs between two boards' cards there is the Chaosnet
+# address inside fpgarc and muirrc, which this script writes from each board's
+# own local.conf.
 #
 # **DO NOT WRITE THE IMAGE WITH `conv=sparse`.**  It skips runs of zeros, so
 # wherever the image holds zeros the card keeps whatever was there before.
@@ -162,8 +177,18 @@ done
 # a card built with the default PACKS_MB would have squeezed it into the spare
 # room meant for one more drive and left seven megabytes --- a card that
 # stages without complaint and then has nowhere to put a band.
+#
+# **AND STANDALONE DOES NOT READ IT AT ALL**, which is the structural half of
+# the paragraph below.  Clearing the values by name after sourcing the file
+# works only for the names somebody remembered: local.conf can set any of the
+# card's settings, because every one of them is read as `${VAR:-<default>}`,
+# and only six were ever cleared.  Measured on this project's own development
+# card: a release built here carried this board's own Chaosnet station number
+# out of local.conf, because CHAOS_ADDR_FPGA was never in the list.  Not
+# reading the file cannot go wrong that way, and it makes a release image
+# depend on this script and on nothing on whoever's build host.
 SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
-if [ -r "$BOARD_DIR/linux/local.conf" ]; then
+if [ -z "$STANDALONE" ] && [ -r "$BOARD_DIR/linux/local.conf" ]; then
   . "$BOARD_DIR/linux/local.conf"
 fi
 # **STANDALONE MEANS THE CARD CARRIES NOTHING FROM local.conf**, and that is
@@ -189,8 +214,20 @@ fi
 # button is what a board being worked on wants, and a released card that did
 # it would look broken.  So it follows the flag rather than the rule about
 # private values.
+#
+# **AND IT CLEARS THE CHAOSNET STATION NUMBERS, WHICH IT USED NOT TO.**  Those
+# two are not private in the way an address on somebody's network is --- the
+# subnet is private in the way 192.168 is --- but they are this BOARD'S
+# identity: the development allocation gives each board a pair, and a release
+# carrying one of them is a card that joins that network as a machine that
+# already exists.  Worse, it is a release that depends on who built it: the
+# same command on another build host would publish that person's numbers.  The
+# file is not read at all under this flag now, so what remains here is the
+# environment, and an exported value has to be stopped the same way.
 if [ -n "$STANDALONE" ]; then
   SERVERIP=; ETHADDR=; CHAOS_PEER=; CHAOS_DEFAULT_PEER=; CC_PACK=; NO_AUTO_BOOT=
+  CHAOS_ADDR_FPGA=; CHAOS_ADDR_MUIR=; CHAOS_UDP_PORT=; CHAOS_UDP_PORT_MUIR=
+  TERMINAL_ENDPOINT=; SERIAL_ENDPOINT=; KEYBOARD_BOOT=; MUIR_TERMINAL_PORT=
 fi
 if [ -n "${SERVERIP:-}" ]; then
   MODE="the network path: uEnv.txt names the TFTP server, the five files come from /srv/tftp/$BOARD_NAME"
@@ -343,13 +380,18 @@ echo "mksd-buildroot: bitstream $BIT"
 echo "mksd-buildroot:   $BITLINE"
 
 rm -rf "$OUT"
-mkdir -p "$OUT/card" "$OUT/packs" "$OUT/server/$BOARD_NAME"
+mkdir -p "$OUT/card/$BOARD_NAME" "$OUT/packs" "$OUT/server/$BOARD_NAME"
 
-# The card: everything.
+# The card: everything.  Three files at the root, because their names are not
+# ours to move --- the boot ROM reads BOOT.BIN from the root of the first FAT
+# partition and nowhere else, the SPL asks for u-boot.img by that name at the
+# root, and U-Boot imports uEnv.txt before it could know a board name.  The
+# board's own four go in the folder named for it, exactly as they sit in the
+# server's directory for it.
 cp "$IMAGES/boot.bin" "$OUT/card/BOOT.BIN"
 cp "$IMAGES/u-boot.img" "$OUT/card/"
-cp "$BIT" "$OUT/card/cadr.bit"
-cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/"
+cp "$BIT" "$OUT/card/$BOARD_NAME/cadr.bit"
+cp "$IMAGES/$BOARD_DTB" "$IMAGES/zImage" "$IMAGES/rootfs.cpio.uboot" "$OUT/card/$BOARD_NAME/"
 sed -e "s/@SERVERIP@/${SERVERIP:-}/" -e "s/@ETHADDR@/${ETHADDR:-}/" \
     -e '/^serverip=$/d' -e '/^ethaddr=$/d' "$BOARD/uEnv.txt.in" > "$OUT/card/uEnv.txt"
 grep -q '@' "$OUT/card/uEnv.txt" && die "uEnv.txt still carries a marker"
@@ -848,6 +890,18 @@ fi
 for var in "bootcmd=run cadr_boot" "cadr_card=load mmc 0:1" "cadr_net=" "cadr_bootz="; do
   strings "$OUT/card/u-boot.img" | grep -q "^$var" || die "the U-Boot in u-boot.img has no '$var' in its environment"
 done
+# AND IT MUST LOAD THE BOARD'S FOUR FILES FROM THE BOARD'S OWN FOLDER, which
+# is the card half of the mirror and is checked at both ends here.  A U-Boot
+# built before the card mirrored the server loads cadr.bit from the root of
+# the partition, where this script no longer puts it, so it would loop saying
+# it cannot find a file --- loudly, but at the board rather than here.  The
+# refusal names the cure, because Buildroot does not watch this repository's
+# files and a plain `make buildroot` leaves a stale environment in place once
+# the package has a build stamp.
+for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
+  strings "$OUT/card/u-boot.img" | grep -q "cadr_card=.*$BOARD_NAME/$f " \
+    || die "the U-Boot in u-boot.img does not load $BOARD_NAME/$f from the card: it predates the card mirroring the server, and 'make buildroot-rebuild' is what rewrites it"
+done
 # BOTH ENDS OF THE SERVED-DIRECTORY RULE ARE CHECKED RATHER THAN BELIEVED.
 # The U-Boot on the card fetches this board's uEnv.net from this board's
 # directory, and the uEnv.net it then reads names the other four the same
@@ -867,7 +921,7 @@ fi
 # peripheral: decompiled with the dtc Buildroot built, or one on the path.
 command -v "$DTC" >/dev/null 2>&1 || DTC=dtc
 if command -v "$DTC" >/dev/null 2>&1; then
-  "$DTC" -I dtb -O dts -o "$OUT/tree.dts" "$OUT/card/$BOARD_DTB" 2>/dev/null
+  "$DTC" -I dtb -O dts -o "$OUT/tree.dts" "$OUT/card/$BOARD_NAME/$BOARD_DTB" 2>/dev/null
   grep -q 'cadr@18000000' "$OUT/tree.dts" || die "the tree has no cadr@18000000 node"
   grep -A4 'cadr@18000000' "$OUT/tree.dts" | grep -q 'no-map' || die "the tree's reservation is not no-map"
   grep -q 'amba_pl' "$OUT/tree.dts" && die "the tree describes PL peripherals"
@@ -881,9 +935,19 @@ if command -v "$DTC" >/dev/null 2>&1; then
 else
   echo "mksd-buildroot: no dtc; the tree was not checked" >&2
 fi
-# The card and the server hold the same five files, byte for byte.
+# The card and the server hold the same four files, byte for byte, under the
+# same folder name --- which is the whole of what "the card mirrors the server"
+# claims, compared rather than asserted.
 for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
-  cmp -s "$OUT/card/$f" "$OUT/server/$BOARD_NAME/$f" || die "$f differs between card/ and server/$BOARD_NAME/"
+  cmp -s "$OUT/card/$BOARD_NAME/$f" "$OUT/server/$BOARD_NAME/$f" \
+    || die "$f differs between card/$BOARD_NAME/ and server/$BOARD_NAME/"
+done
+# And nothing of the board's is left at the root of the boot partition, where
+# a stale copy would be read by nobody and would still look like the file.
+for f in cadr.bit "$BOARD_DTB" zImage rootfs.cpio.uboot; do
+  if [ -e "$OUT/card/$f" ]; then
+    die "card/$f is at the root of the boot partition, where nothing reads it"
+  fi
 done
 
 # The card as one image, if Buildroot built genimage: card/ becomes partition
@@ -914,11 +978,34 @@ if [ -x "$HOSTBIN/genimage" ]; then
   # U-Boot and the disk pack program will read, not a listing.  A bay with no
   # pack in it is allowed, so the loop over packs/ may find nothing.
   if [ -x "$HOSTBIN/mcopy" ]; then
+    # Partition 1's root: the three files whose names are fixed, and nothing
+    # else of the board's.  Then the board's own folder, read back by the path
+    # U-Boot will use --- which is what says the mirror survived genimage, and
+    # not a listing.
     for f in "$OUT"/card/*; do
+      [ -d "$f" ] && continue
       n=$(basename "$f")
       "$HOSTBIN/mcopy" -n -i "$OUT/sdcard.img@@$P1_OFF" "::$n" "$TMP/readback" 2>/dev/null \
-        || die "$n is not in partition 1 of sdcard.img"
+        || die "$n is not at the root of partition 1 of sdcard.img"
       cmp -s "$f" "$TMP/readback" || die "$n in sdcard.img differs from card/$n"
+    done
+    for f in "$OUT/card/$BOARD_NAME"/*; do
+      n=$(basename "$f")
+      "$HOSTBIN/mcopy" -n -i "$OUT/sdcard.img@@$P1_OFF" "::/$BOARD_NAME/$n" "$TMP/readback" 2>/dev/null \
+        || die "$BOARD_NAME/$n is not in partition 1 of sdcard.img: the card does not mirror the server"
+      cmp -s "$f" "$TMP/readback" \
+        || die "$BOARD_NAME/$n in sdcard.img differs from card/$BOARD_NAME/$n"
+    done
+    # AND THE ROOT HOLDS THE THREE FIXED NAMES AND THE BOARD'S FOLDER AND
+    # NOTHING ELSE.  mdir marks a directory with a trailing slash, so this
+    # tells the folder from a file of the same name; a fourth file at the root
+    # is one nothing reads, and this is the only place that would say so.
+    for n in $("$HOSTBIN/mdir" -b -i "$OUT/sdcard.img@@$P1_OFF" :: 2>/dev/null | sed 's,^::/,,'); do
+      case "$n" in
+        BOOT.BIN|u-boot.img|uEnv.txt) ;;
+        "$BOARD_NAME"/) ;;
+        *) die "the root of partition 1 carries '$n', which is none of the three fixed names and is not $BOARD_NAME/" ;;
+      esac
     done
     for f in "$OUT"/packs/*; do
       [ -e "$f" ] || continue
@@ -948,9 +1035,12 @@ fi
 
 echo "staged $OUT"
 echo "  $MODE"
-(cd "$OUT/card" && for f in *; do printf '  card/    %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
+(cd "$OUT/card" && for f in *; do [ -f "$f" ] || continue; printf '  card/    %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
+(cd "$OUT/card/$BOARD_NAME" && for f in *; do printf "  card/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 (cd "$OUT/packs" && for f in *; do [ -e "$f" ] || continue; printf '  packs/   %-22s %10d  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
 (cd "$OUT/server/$BOARD_NAME" && for f in *; do printf "  server/$BOARD_NAME/ %-22s %10d  %s\n" "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -c1-16)"; done)
+echo "  the card mirrors the server: card/$BOARD_NAME/ holds the same four files as"
+echo "  server/$BOARD_NAME/, and only BOOT.BIN, u-boot.img and uEnv.txt are at the root"
 echo "  the served set goes to the server's own directory for this board:"
 echo "    mkdir -p /srv/tftp/$BOARD_NAME && cp $OUT/server/$BOARD_NAME/* /srv/tftp/$BOARD_NAME/"
 [ -f "$OUT/sdcard.img" ] && printf '  %-31s %10d  %s\n' sdcard.img "$(stat -c %s "$OUT/sdcard.img")" "$(sha256sum "$OUT/sdcard.img" | cut -c1-16)"

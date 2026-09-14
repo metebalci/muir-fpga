@@ -192,9 +192,11 @@ say that. This paragraph is where it is said instead.
 
 ## The card, and the two ways it boots
 
-    partition 1 BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional),
-                cadr.bit, zynq-arty-z7-20.dtb, zImage, rootfs.cpio.uboot
-    partition 2 disk-pack-0.img .. disk-pack-7.img, whichever exist, and a
+    partition 1 BOOT.BIN (U-Boot's SPL), u-boot.img, uEnv.txt (optional)
+                arty-z7-20/ cadr.bit, zynq-arty-z7-20.dtb, zImage,
+                            rootfs.cpio.uboot
+    partition 2 disk-pack-0.img .. disk-pack-7.img, whichever exist,
+                muir-cc.img where a debugger runs, fpgarc, muirrc and a
                 README.TXT; neither the boot ROM nor U-Boot ever looks here
     /srv/tftp/arty-z7-20
                 uEnv.net, cadr.bit, zynq-arty-z7-20.dtb, zImage,
@@ -202,8 +204,9 @@ say that. This paragraph is where it is said instead.
                 five files, in a directory named for the board
 
 U-Boot's built-in environment (`cadr.env`) boots **from the card by
-default**. It loads `cadr.bit` and `fpga loadb`'s it, then reads the tree,
-`zImage` and `rootfs.cpio.uboot` off the FAT partition, then runs `bootz`. No
+default**. It loads `arty-z7-20/cadr.bit` and `fpga loadb`'s it, then reads the
+tree, `zImage` and `rootfs.cpio.uboot` out of the same folder on the FAT
+partition, then runs `bootz`. No
 network is used and none is needed. DHCP is not attempted, and a board with
 no cable boots. If the card's `uEnv.txt` sets `serverip`, the loader takes
 **the network path** instead. It runs `dhcp`, fetches `arty-z7-20/uEnv.net`
@@ -252,8 +255,34 @@ The U-Boot compiled for a board fetches `<board>/uEnv.net`, and that served
 place, so a copy of it anywhere on that server still fetches the right five
 files.
 
-**The card is untouched by the rule.** A card belongs to one board already,
-so the files on partition 1 keep the names they have always had.
+**And the card mirrors the server.** The same four files sit in a folder of
+the same name on the card's boot partition, and the board's U-Boot loads them
+from there. A card belongs to one board, so the folder is not what keeps two
+boards' files apart on it. What it buys is that the card and the server hold
+the same thing in the same place, and that a file copied from one to the other
+keeps its path.
+
+**Three files stay at the root of the boot partition, because their names are
+not ours to move.** `BOOT.BIN` is what the boot ROM reads from the root of the
+first FAT partition and nowhere else. `u-boot.img` is what the SPL asks for by
+that name at the root. `uEnv.txt` is imported by U-Boot before any board name
+is known, and it is the file that decides which of the two paths the board
+takes, so it cannot be behind a name that path has not chosen yet.
+
+**The pack partition keeps its flat layout.** A pack, the README and the two
+files of flags belong to the machine rather than to the part, and a card
+belongs to one board. What differs between two boards' cards there is the
+Chaosnet address inside `fpgarc` and `muirrc`, and the staging writes those
+from each board's own `local.conf`.
+
+**A card written before this change does not boot a U-Boot built after it**,
+and the staging refuses that pair rather than letting it reach a board. The
+card script checks that the U-Boot inside `u-boot.img` loads
+`<board>/cadr.bit` and the other three the same way, names the file it wanted,
+and says that `make buildroot-rebuild` is what rewrites the loader. The image
+is then read back out of partition 1 by the path U-Boot will use, and the root
+of that partition is asserted to hold the three fixed names and the board's
+folder and nothing else.
 
 **The board this project runs crosses the change in two steps, and neither
 needs a card reader.** Its U-Boot predates the rule and fetches `uEnv.net`
@@ -388,8 +417,9 @@ addresses for exactly that.
 `build/sd/buildroot/sdcard.img` is the card as one image. It has an MBR and
 two primary FAT32 partitions of type `0x0c`, aligned to a megabyte. genimage
 makes it from the staged `card/` and `packs/` directories, and it is read
-back file by file out of each partition. The partition table itself is read
-back and checked rather than assumed. So on the laptop, run
+back file by file out of each partition, the board's own four by the path
+U-Boot will use. The partition table itself is read back and checked rather
+than assumed. So on the laptop, run
 
     D=/dev/sdX   # the line that says usb, never from memory
     sudo dd if=sdcard.img of=$D bs=4M conv=fsync
@@ -414,8 +444,30 @@ not.
 
 ## The released card, and the card this project builds for itself
 
-There is one released image and it is built for a card of **4 GB or more**.
-That is the only size anybody needs to know.
+**There is one released image a board**, and every one of them is built for a
+card of **4 GB or more**. That is the only size anybody needs to know. The
+board enters `mksd-release.sh` in the same two variables the staging script
+takes, and the image goes in a directory named for the board, so two boards'
+releases can be built one after the other and the published file says which
+board it is for.
+
+    BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
+
+    IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
+    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+    BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
+
+**What a release image carries is the boot partition complete and the pack
+partition empty.** Partition 1 holds everything the board needs to come up, in
+the layout above, with a `uEnv.txt` that names no server and carries no MAC.
+Partition 2 holds a `README.TXT` saying what the partition is for and how to
+name a pack, and the two files of flags: `fpgarc` for the CADR in the fabric
+and `muirrc` for the CADR inside muir. Each is the same full menu the
+development card gets, every flag the board's programs take written out under
+a sentence or two saying what it does, the ones a board out of the box needs
+live and the rest commented out to be uncommented. Nothing else is on that
+partition, and the script asserts it rather than trusting the flag that says
+so.
 
 **It carries no disk pack.** The bay is empty, the program says so on the
 console, and the CADR waits for a drive exactly as the real machine did with
@@ -431,14 +483,27 @@ no reason to size it more tightly: the space costs nothing to ship and a user
 who fills all eight units and keeps six spare bands beside them never has to
 rewrite the card.
 
-    BIT=<the released bitstream> boards/arty-z7-20/linux/mksd-release.sh
-
 `mksd-release.sh` holds those decisions so that a release is a command rather
 than a set of variables somebody has to remember. It refuses to run if `PACKS`
-is set. It does not trust its own standalone flag either: it greps the staged
-card for anything address-shaped afterwards and stops if it finds any, because
-a flag can be wrong and a private address on a public artefact cannot be taken
-back.
+is set. It does not trust its own standalone flag either: it greps both staged
+partitions for anything address-shaped afterwards and stops if it finds any,
+because a flag can be wrong and a private address on a public artefact cannot
+be taken back. It then checks that the pack partition holds the README and the
+two files of flags and nothing else, that the image fits the smallest card sold
+as 4 GB, and that the empty bay has room for three T-300 packs, which is two
+drives and the debugger's band.
+
+**What that guard exempts is the addresses that cannot name a host**, and only
+those: `0.0.0.0`, which is every interface on this board; `127.0.0.1`, the
+loopback, which the card's own prose names when it says how to keep the screen
+to the board; and RFC 5737's documentation ranges, which the two commented
+example lines are written in. Anything else stops the release, a MAC included.
+**The list grew because the guard stopped a release that was right.** When the
+card's file of flags became a full menu it gained the loopback and a
+documentation address, the guard exempted `0.0.0.0` alone, and no release had
+been built since, so nothing said so. `make build/fpgarc.pass` runs the guard
+both ways now: it must pass the file the card script really writes, and it must
+still catch a private address and a MAC.
 
 **The image is 3.83 GB and the download is 7.4 MB**, measured, because
 everything the bay does not hold is zeros and the kernel and the bitstream
@@ -471,6 +536,30 @@ world. And it stops if `local.conf` is missing, rather than quietly building a
 card that boots from itself, because somebody who forgot to write that file
 should be told. Neither of those belongs in a release, which is why there are
 two scripts over one staging tool rather than one script with a mode.
+
+### What is distributed for a board with no processing system
+
+**This is the plan for the Arty A7-100 and nothing here is built yet.** That
+board has no processing system, so it has no boot ROM, no card controller and
+no Linux. A 7-series FPGA configures from QSPI flash or from JTAG, and this
+board reads its own 16 MB flash at power-on. So the card cannot be what boots
+it, and the boot partition has nothing a loader would read.
+
+**What is distributed for it is two things.** The first is a **flash image**,
+which is what `write_cfgmem` makes out of the bitstream and the firmware
+beside it, written into the board's QSPI flash once. The second is **the same
+card image every other board gets**, with its boot partition empty but for a
+README saying that this board boots from its flash and that nothing on this
+partition is read, and with the pack partition exactly as above: the
+`README.TXT`, the two files of flags, and room for the packs the user copies
+in.
+
+**The card is still worth shipping for that board**, and that is the point of
+giving it the same image. The disk packs are the machine's world, not the
+part's: a card carrying a band is a CADR's disk whichever board reads it, and
+the layout being the same means a card can be moved from one board to another
+and the world moves with it. On this board the firmware reads the pack
+partition with a FAT library exactly as Linux does on the others.
 
 ## The drive bay
 
@@ -598,7 +687,9 @@ is mounted read-only.
    trying again in 10 s`. Another attempt follows ten seconds later, for as
    long as it takes. U-Boot's banner does **not** reappear, because this is a
    loop and not the stepping stone's `reset`. A missing card file is named by
-   `load` ("`** Unable to read file zImage **`") just before the message.
+   `load` ("`** Unable to read file arty-z7-20/zImage **`") just before the
+   message, and the name it prints carries the board's folder because that is
+   the path the loader asked for.
 
 5. **Linux**. The two things the first boot established are in its first
    lines and at its prompt:

@@ -2365,6 +2365,14 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
 #
 # The scripts are prerequisites, not only the reader: the flag lists are in
 # them, and a list that goes wrong is exactly what this is for.
+#
+# **AND THE TWO CARD SCRIPTS ARE PREREQUISITES BECAUSE THIS CHECK RUNS BLOCKS
+# OF THEM.**  It lifts the `fpgarc` generator, the card's copy block and the
+# stale-loader refusal out of `mksd-buildroot.sh`, and the address guard out of
+# `mksd-release.sh`, each on its own anchors, and runs them alone.  Without
+# these a change to either would leave the check stamped and unrun --- this
+# repository's stale-artefact scar in a Makefile --- and the release guard is
+# exactly the thing that sat broken because nobody ran it.
 $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(COMMON_SRC)/daemon.sh \
                       $(COMMON_SRC)/fpgarc_test.sh \
@@ -2373,10 +2381,12 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(SERIAL_PKG)/S86cadr-serial \
                       $(USB_INPUT_PKG)/S88cadr-usb-input \
                       $(DISK_PACKS_PKG)/S80cadr-disk-packs \
-                      boards/arty-z7-20/linux/mksd-buildroot.sh | $(BUILD)
+                      boards/arty-z7-20/linux/mksd-buildroot.sh \
+                      boards/arty-z7-20/linux/mksd-release.sh | $(BUILD)
 	$(MAKE) -C $(COMMON_SRC) check
 	@echo "fpgarc: one file of flags on the card reaches five programs, each gets the flags it"
-	@echo "fpgarc: owns and no others, and --no-auto-boot holds the machine before the drive"
+	@echo "fpgarc: owns and no others, --no-auto-boot holds the machine before the drive, and"
+	@echo "fpgarc: the card mirrors the server: the board's four files under the board's folder"
 	@touch $@
 
 # **cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK COMPILES

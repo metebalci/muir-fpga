@@ -292,6 +292,25 @@ The served files go to a directory on the TFTP server named for this board,
 names and a flat server root would hand this board the other's bitstream.
 `docs/boot.md`, "One server, more than one board", has the rule.
 
+**The card mirrors the server.** On the boot partition this board's `cadr.bit`,
+`zynq-cora-z7-07s.dtb`, `zImage` and `rootfs.cpio.uboot` are in a folder called
+`cora-z7-07s`, the same name the server's directory has, and `cadr_cora.env`
+loads them from there. Only `BOOT.BIN`, `u-boot.img` and `uEnv.txt` are at the
+root of that partition, because those three names are fixed: the boot ROM, the
+SPL and U-Boot's own import look for them there. The pack partition is flat and
+is the same on every board.
+
+**A release image is built for this board the same way it is for the other**,
+with the board in the same two variables:
+
+    IMAGES=$HOME/.cache/muir-fpga-buildroot/out-cora/images \
+    BOARD_DIR=boards/cora-z7-07s BOARD_DTB=zynq-cora-z7-07s.dtb \
+    BIT=<the Cora's released bitstream> boards/arty-z7-20/linux/mksd-release.sh
+
+It carries the boot partition complete and the pack partition empty but for a
+README and the two files of flags. No release for this board has been
+published, because nothing here has been on silicon.
+
 ## On silicon
 
 **The start-up routine is right and the memory controller answers.**
