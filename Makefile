@@ -2437,6 +2437,8 @@ CONSOLE_SRC_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-console/src
 # reported a fabric that no longer exists was not being run.  It is now.
 $(BUILD)/console_face.pass: $(CONSOLE_SRC_DIR)/console_face.c \
                             $(CONSOLE_SRC_DIR)/console_face.h \
+                            $(CONSOLE_SRC_DIR)/console_host.c \
+                            $(CONSOLE_SRC_DIR)/console_host.h \
                             $(CONSOLE_SRC_DIR)/console_test.c \
                             $(CONSOLE_SRC_DIR)/cadr-console.c | $(BUILD)
 	$(MAKE) -C $(CONSOLE_SRC_DIR) check
@@ -3023,11 +3025,21 @@ endef
 # --- the firmware -----------------------------------------------------------
 #
 # **TWO OF THE FIVE SOURCES ARE THE ARTY Z7-20's AND ARE COMPILED WHERE THEY
-# LIVE.**  `console_face.c` is the console's whole vocabulary and
-# `pack_side.c` is the disk pack side's, and every line of both is as true of a
-# soft core as of an ARM one: the register numbers are the fabric's and the
-# only thing that differs is how a word reaches an address.  A copy here would
-# be a second description of one register face.
+# LIVE.**  `console_face.c` is the console's register face and `pack_side.c`
+# is the disk pack side's, and every line of both is as true of a soft core as
+# of an ARM one: the register numbers are the fabric's and the only thing that
+# differs is how a word reaches an address.  A copy here would be a second
+# description of one register face.
+#
+# **AND THIS RULE IS THE ONLY THING HOLDING THAT FILE TO BEING A FACE.**  The
+# console program has words that are not cycles on the bus --- `trace-keys`
+# reads two pid files and signals two daemons --- and the day one of them was
+# written into `console_face.c` this link FAILED, nothing in the firmware
+# calling it: `fopen` alone drags picolibc's stdio in, wanting `open`,
+# `close`, `read`, `write` and `lseek`, and `sbrk` wants a `__heap_end` that
+# is not there.  Such words live in `console_host.c`, which only the Linux
+# builds compile and which no rule here names.  So `make build/soc.pass` is
+# the check on a boundary that is otherwise a matter of opinion.
 #
 # **THEY BELONG SOMEWHERE NEUTRAL AND THEY ARE NOT THERE YET.**  A file under
 # `boards/arty-z7-20/linux/` that a third board compiles is the same shape as

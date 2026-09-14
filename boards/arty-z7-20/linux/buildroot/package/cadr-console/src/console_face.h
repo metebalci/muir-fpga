@@ -434,59 +434,24 @@ int cons_held(const char *path);
 // whether or not it was there to begin with.
 int cons_release_held(const char *path);
 
-// --- THE KEY TRACE, WHICH IS THE ONE WORD THAT IS NOT ABOUT THE FABRIC -----
+// --- WHAT IS NOT IN THIS FILE, AND WHY ------------------------------------
 //
-// **`trace-keys on|off` SWITCHES THE TWO INPUT PROGRAMS' TRACES**, and it is
-// here because this is the program somebody already has open when a key does
-// nothing.  A key's road has two halves --- `cadr-usb-input` turns a key code
-// into a keysym, `cadr-terminal` turns a keysym into MIT's own key position
-// --- and each says what it did under a trace of its own.  Turning them on
-// means finding two daemons and signalling them, which is a thing to type
-// once and not twice.
+// **`trace-keys` IS NOT HERE, BECAUSE THIS FILE IS ALSO COMPILED FOR A
+// MACHINE WITH NO OPERATING SYSTEM.**  `console_face.c` is built twice: once
+// for Linux, and once by `boards/arty-a7-100/firmware/` for an Ibex core with
+// picolibc and no kernel under it.  A word that reads a pid file and calls
+// `kill` has no meaning on the second, and it does not merely go unused ---
+// `fopen` alone drags picolibc's stdio in, which wants `open`, `close`,
+// `read`, `write` and `lseek`, and `sbrk` wants a `__heap_end` the firmware
+// has not got, so the firmware stops LINKING.  Measured: it did, the day
+// `trace-keys` was written into this file, with nothing in the firmware
+// calling it.
 //
-// **IT TOUCHES NO REGISTER AND NEEDS NO BITSTREAM.**  Every other word here
-// is a cycle on the diagnostic bus; this one reads a pid file and calls
-// `kill`.  So `cadr-console trace-keys on` works on a board whose fabric has
-// no console in it at all, and the program does it before the guard rather
-// than after --- a word that cannot touch M_AXI_GP1 must not be stopped by a
-// window that does not answer.
-//
-// **THE SIGNALS ARE SIGUSR1 AND SIGUSR2**, on and off, because that is what a
-// program with no control socket has: both programs install handlers that do
-// nothing but set a flag, act on it once a pass of their own loop, and say
-// one line when it CHANGES, so a second `on` is silent rather than confusing.
-//
-// **A PID FILE IS READ AND NEVER GUESSED AT**, and the pid is REFUSED unless
-// it is at least 1: `kill(0, SIGUSR1)` signals the whole process group ---
-// this program's own shell, and whatever else is in it --- and a negative pid
-// signals a group by number.  A pid file holding `0` is a `start-stop-daemon`
-// that wrote nothing useful, not an instruction to signal everybody.
-#define CONS_TRACE_TERMINAL "cadr-terminal"
-#define CONS_TRACE_TERMINAL_PID "/var/run/cadr-terminal.pid"
-#define CONS_TRACE_USB "cadr-usb-input"
-#define CONS_TRACE_USB_PID "/var/run/cadr-usb-input.pid"
-
-enum cons_trace_reached {
-	CONS_TRACE_NOT_RUNNING = 0,	/* no pid file, or nothing at that pid */
-	CONS_TRACE_SIGNALLED = 1,	/* the signal went */
-	CONS_TRACE_REFUSED = -1		/* it is there and would not take it */
-};
-
-struct cons_trace_keys {
-	const char *program;	/* `cadr-terminal`, for the line */
-	const char *pidfile;
-	long pid;		/* what the file held, or 0 */
-	int reached;		/* `enum cons_trace_reached` */
-	char why[128];		/* what was wrong, in the system's own words */
-};
-
-// One program told to turn its trace on (`on` non-zero) or off.  The result
-// is filled in whatever happens; the return is `r->reached`, so that a caller
-// may count.  `pidfile` is the board's on the board and the check's own file
-// in the host test.
-int cons_trace_keys(const char *program, const char *pidfile, int on,
-		    struct cons_trace_keys *r);
-void cons_say_trace_keys(const struct cons_trace_keys *r, int on);
+// So the rule this file is held to: **what is in `console_face.c` drives the
+// register face and means the same thing on both hosts.**  Anything that
+// opens a file, signals a process or otherwise asks an operating system for
+// something belongs in `console_host.c`, which only the front end and the
+// host test compile.  `console_host.h` has `trace-keys`.
 
 // `switch`: what SW0 did and where it is.  The two STAT bits, read as one
 // word, so that the pair names one instant.

@@ -28,8 +28,17 @@
 # it is compiled here without Buildroot.
 
 PROGRAMS := cadr-console
+# **TWO SOURCE FILES AND THE LINE BETWEEN THEM IS LOAD-BEARING.**  `CORE` is
+# the register face, and the top-level Makefile compiles that same file for
+# the Arty A7-100's bare-metal firmware, where there is no operating system.
+# `HOST` is what needs one --- a pid file read, a signal sent --- and only the
+# two builds here compile it.  Putting a host-only word in `CORE` does not
+# merely waste space on the firmware: it stops the firmware LINKING, which is
+# what happened when `trace-keys` first landed, and what `make build/soc.pass`
+# is the check for.  `console_host.h` has the whole argument.
 CORE     := console_face.c
-HEADERS  := console_face.h
+HOST     := console_host.c
+HEADERS  := console_face.h console_host.h
 
 COMMON      ?= staging
 COMMON_DIR  := ../../cadr-common/src
@@ -59,8 +68,8 @@ CFLAGS += -Wall -Wextra -std=gnu11
 
 all: $(PROGRAMS)
 
-cadr-console: cadr-console.c $(CORE) $(HEADERS)
-	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -o $@ cadr-console.c $(CORE) $(COMMON_LINK)
+cadr-console: cadr-console.c $(CORE) $(HOST) $(HEADERS)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -o $@ cadr-console.c $(CORE) $(HOST) $(COMMON_LINK)
 
 install: all
 	install -d $(DESTDIR)/usr/bin
@@ -72,9 +81,9 @@ install: all
 check: $(WORK)/console_test
 	$(WORK)/console_test
 
-$(WORK)/console_test: console_test.c $(CORE) $(HEADERS) $(COMMON_SRC)
+$(WORK)/console_test: console_test.c $(CORE) $(HOST) $(HEADERS) $(COMMON_SRC)
 	@mkdir -p $(WORK)
-	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ console_test.c $(CORE) $(COMMON_SRC)
+	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ console_test.c $(CORE) $(HOST) $(COMMON_SRC)
 
 clean:
 	rm -f $(PROGRAMS)
