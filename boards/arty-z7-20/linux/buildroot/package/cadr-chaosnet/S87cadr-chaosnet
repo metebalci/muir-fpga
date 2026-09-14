@@ -89,21 +89,20 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 # than to a card.  And nothing generic --- `--port` is the screen's and the
 # serial line's both, so no list may claim it.
 #
-# **THE FOUR FLAGS THE PROGRAM REFUSES BY NAME ARE IN THE LIST ON PURPOSE.**
+# **AND THE FOUR FLAGS THE PROGRAM REFUSES BY NAME ARE NOT HERE EITHER.**
 # `--chaos-file-root`, `--chaos-file-peers`, `--server-name` and `--time`
-# named services that used to live inside this program and now do not, and the
-# program answers each by saying where the host went.  Dropped here instead,
-# the card would say nothing at all, and a setting silently ignored is the
-# failure this whole file exists to avoid.
+# named a file host and a time host that used to live inside this program and
+# now do not.  A flag that does not exist has no place in a list of the flags
+# this program owns, and the card no longer offers one.  A card still carrying
+# such a line is named by the unclaimed-lines report at boot, which says the
+# line went to nobody; claimed here, the line would instead stop the Chaosnet
+# from starting at all.  The program still refuses each by name, saying where
+# the host went, for somebody who passes one by hand.
 FLAGS="--address --chaos-address
        --udp --chaos-udp
        --udp-peer --chaos-udp-peer
        --udp-default-peer --chaos-udp-default-peer
-       --trace --chaos-trace
-       --file-root --chaos-file-root
-       --file-peers --chaos-file-peers
-       --server-name
-       --time"
+       --trace --chaos-trace"
 
 # What a board with no settings file runs: System 100's own address, and
 # CHUDP's own port on every interface.  A cable and no peers, which is a
