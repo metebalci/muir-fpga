@@ -12,9 +12,19 @@ build step and no generator, the same way
                   boot sequences: the board on its own from the card, and the
                   development boot from a TFTP server
     cora-z7-07s.html
-                  the same three drawings for the Cora Z7-07S, which is a
-                  smaller part with no HDMI connector, so the display output
-                  block, its port and the USB input program are not on it
+                  the same three drawings for the Cora Z7-07S. That part is
+                  smaller and the board has no HDMI connector, no USB host port
+                  and no switches, so the display output block, its port, the
+                  HDMI connector, the USB input program, the USB host port and
+                  the no-auto-boot switch are crossed off in their places
+    arty-a7-100.html
+                  the architecture drawing for the Arty A7-100. That board has
+                  no processing system at all, so everything the Arm cores and
+                  Linux do on the other two has to have an answer in fabric,
+                  and the drawing shows those answers in the positions the
+                  processing system's own parts hold. There are no boot
+                  sequence drawings on it, because nothing has yet booted that
+                  board from its own flash
     cadr.html     the real CADR's own hardware, board by board, for a reader
                   who has never seen one. Every figure on it comes from a
                   document named at the end of the page
@@ -32,7 +42,8 @@ build step and no generator, the same way
 
 ## The two kinds of page
 
-A **drawing page** is `arty-z7-20.html` or `cora-z7-07s.html`. The drawing is
+A **drawing page** is `arty-z7-20.html`, `cora-z7-07s.html` or
+`arty-a7-100.html`. The drawing is
 the page. There is no heading, no caption and no prose on it, and each drawing
 carries its own title inside it. The only text outside the drawings is one
 faint line at the top saying which board this is and linking the other pages.
@@ -50,10 +61,20 @@ They are hand-placed rather than generated, because nothing here reads the RTL.
 So **a change to the architecture is a change to the drawing**, made by hand,
 and the drawing can drift from the machine.
 
-There are now two architecture drawings, one per board, and the second was
-derived from the first by hand. Nothing joins them mechanically. A change that
-is true of both boards has to be made twice, and the two can drift from each
-other as well as from the machine.
+There are now three architecture drawings, one per board, and **they are one
+drawing**. The Arty Z7-20's is the original. The other two are that drawing
+with the same viewBox, the same translation and every block at the same
+coordinates. What a board does not have is crossed off where it stands rather
+than taken out, and on the Arty A7-100 what takes the place of the processing
+system is drawn in the positions that system's own parts hold.
+
+So a change to the Arty Z7-20's drawing is carried to the other two by the same
+edit, at the same coordinates, and the three can be compared with `diff`. The
+differences that are meant to be there are the titles, the part, the figures
+under the fabric's label, the status colours, the crossed-off blocks, the lamp
+rows, the legend's extra swatch, and on the Arty A7-100 the blocks that replace
+the processing system's. Anything else in a diff between two of these files is
+a drift, and that is the point of keeping the geometry identical.
 
 Everything the drawings assert about the machine comes from `README.md`,
 `rtl/machine/cadr_cables.map` and `rtl/machine/cadr_xbus_decode.sv`. The fit
@@ -62,9 +83,15 @@ route report at the commit its comment names.
 
 A block's colour says how far along it is, and the legend on each drawing
 carries the words. Green means the board itself has shown it. Turquoise means
-it is built and checked here and has not run on that board. The two boards
-differ: a block that is green on one may be turquoise on the other, because the
-claim is about a board and not about the code.
+it is built and checked here and has not run on that board. The boards differ:
+a block that is green on one may be turquoise on another, because the claim is
+about a board and not about the code.
+
+A block a board does not have carries no colour at all. It keeps its place,
+goes dashed, and takes a red cross corner to corner with its label left faint.
+That is the one mark on these drawings that says nothing about progress, and
+the legend calls it "not available on this board". The lines that reached such
+a block stay drawn, because a line on these drawings carries no status either.
 
 ## The one change to muir's stylesheet
 
@@ -80,6 +107,12 @@ here, as a block of token overrides under `@media (max-width: 720px)`.
 `.fig.dense` is added for the architecture drawings. Those drawings carry more
 label text than muir's figures, so they scroll sooner rather than shrinking
 below legibility. `.crumb` is added for the faint line on the drawing pages.
+
+`.d-absent`, `.d-absent-x`, `.d-absent-t` and `.d-absent-key` are added for a
+block a board does not have. The outline and the faint label use the drawing's
+own ink through `currentColor`, so they follow the reader's theme like
+everything else. Only the cross has a colour of its own, `--st-absent`, which
+is the red the error lamp is already drawn in.
 
 ## Looking at it
 
