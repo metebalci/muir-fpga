@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>muir-fpga &mdash; booting</title>
+<meta name="description" content="How each board here comes up, in three sequences: a Zynq board from its own microSD card, the same board from a TFTP server while it is being worked on, and the Arty A7-100 from its own QSPI flash.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="band">
+    <a class="home" href="index.html"><b>muir-fpga</b></a>
+    <nav>
+      <a href="arty-z7-20.html">Arty Z7-20</a>
+      <a href="cora-z7-07s.html">Cora Z7-07S</a>
+      <a href="arty-a7-100.html">Arty A7-100</a>
+      <a href="booting.html">Booting</a>
+      <a href="cadr.html">the CADR</a>
+    </nav>
+  </div>
+</header>
+
+<!-- THE SEQUENCES CARRY NO STATUS COLOUR, and that is the same rule
+     `cadr.css` states for the drawings of the real machine.  A board drawing
+     colours a block by how far along it is.  These figures say what happens
+     and in what order, which is a different claim, so they are drawn in
+     `currentColor` alone and read the same in either theme.  What is built
+     and what is not is in the caption under each one, in words. -->
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>How a board comes up</h2>
+      <p class="lede">Three sequences, one for each way a board here starts: a
+      Zynq board from its own card, the same board from a TFTP server while it
+      is being worked on, and the Arty A7-100 from its own flash.</p>
+
+      <p>The two Zynq boards come up the same way as each other, so one drawing
+      serves both. Where they differ, the drawing says so in a label. The Arty
+      A7-100 has no processing system, no loader and no operating system, so its
+      sequence is a different shape, and most of it is a plan rather than a
+      board.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>A Zynq board on its own</h2>
+      <p>This is how a board boots for anybody who is not this project.
+      Everything it needs is on the microSD card: the loader, the CADR's
+      bitstream, Linux with its root filesystem, and the disk packs. No network
+      is used and none is needed.</p>
+
+      <p>Three files keep fixed names at the root of the card's boot partition,
+      because those names are not ours to move. The boot ROM reads
+      <code>BOOT.BIN</code> there and nowhere else, that first stage asks for
+      <code>u-boot.img</code> by name beside it, and <code>uEnv.txt</code> is
+      imported before any board name is known. The four files the loader goes on
+      to read sit in a folder named for the board, which is the same name the
+      server's directory for that board carries.</p>
+    </div>
+
+    <figure class="fig dense">
+      <div class="scroll">
+        <svg viewBox="0 0 1170 672" role="img" aria-label="How a Zynq board boots on its own, as a sequence. Three lifelines: the microSD card, the processing system and the fabric. A reset starts the boot ROM, which reads the boot-mode jumper and loads BOOT.BIN from the root of the card's boot partition: U-Boot's own first stage, which runs the start-up routine, brings up the DDR3 and loads U-Boot proper, also from the root. U-Boot imports uEnv.txt if the card has one; with no server named on it the board takes the card path, and loads the CADR's bitstream out of a folder named for the board and programs it into the fabric, from which moment the CADR is running its own boot PROM out of DDR3. The loader then reads the device tree, the kernel and the root filesystem image out of the same folder and boots Linux beside the CADR, with the CADR's 128 MB kept from it. Linux mounts the card, the boot partition read-only; if the card's file of flags asks for it, the disk pack program leaves the machine held with RUN clear and takes the debug cable's connector; and then it presents the drive, after which the CADR's boot PROM reads the band off the pack and runs the microcode it finds there. Four more programs follow it: the screen over RFB, the serial line, Chaosnet, and a keyboard and mouse on the USB port, which a board with no USB host port leaves out. Linux reaches a login on the serial console. On failure the loader says so and tries again ten seconds later, for ever.">
+          <defs>
+            <marker id="arr-card" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <text class="d-t" x="10" y="18">how a Zynq board boots on its own</text>
+          <text class="d-s" x="225" y="18">everything from the microSD card; no network needed</text>
+          <rect class="d-box" x="6" y="28" width="1158" height="634"/>
+          <!-- lifelines -->
+          <rect class="d-box" x="60" y="34" width="120" height="30"/>
+          <text class="d-t" x="120" y="54" text-anchor="middle">microSD card</text>
+          <rect class="d-box" x="480" y="34" width="150" height="30"/>
+          <text class="d-t" x="555" y="54" text-anchor="middle">processing system</text>
+          <rect class="d-box" x="950" y="34" width="120" height="30"/>
+          <text class="d-t" x="1010" y="54" text-anchor="middle">fabric</text>
+          <path class="d-dash" d="M120,64 L120,650 M1010,64 L1010,258"/>
+          <!-- the PS, changing hands -->
+          <rect class="d-fill" x="540" y="64" width="30" height="50"/>
+          <text class="d-s" x="578" y="84">boot ROM</text>
+          <text class="d-s" x="578" y="100">boot-mode jumper: SD</text>
+          <rect class="d-fill" x="540" y="114" width="30" height="60"/>
+          <text class="d-s" x="578" y="136">U-Boot&rsquo;s first stage (SPL)</text>
+          <text class="d-s" x="578" y="152">ps7_init, DDR3 up</text>
+          <rect class="d-fill" x="540" y="174" width="30" height="200"/>
+          <text class="d-s" x="578" y="196">U-Boot</text>
+          <rect class="d-fill" x="540" y="374" width="30" height="276"/>
+          <text class="d-s" x="578" y="396">Linux</text>
+
+          <!-- The fabric, configured once and running from that moment.  It is
+               one column cut in two: the boot PROM until a drive is present,
+               and the band it then loads off the pack. -->
+          <rect class="d-fill" x="995" y="258" width="30" height="250"/>
+          <text class="d-s" x="1010" y="383" text-anchor="middle" transform="rotate(-90 1010 383)">the CADR, its boot PROM, out of DDR3</text>
+          <rect class="d-fill" x="995" y="508" width="30" height="142"/>
+          <text class="d-s" x="1010" y="579" text-anchor="middle" transform="rotate(-90 1010 579)">the band off the pack</text>
+
+          <line class="d-line" x1="300" y1="78" x2="540" y2="78" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="420" y="74" text-anchor="middle">reset</text>
+
+          <line class="d-line" x1="120" y1="104" x2="540" y2="104" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="330" y="100" text-anchor="middle">BOOT.BIN &mdash; U-Boot&rsquo;s first stage</text>
+          <line class="d-line" x1="120" y1="166" x2="540" y2="166" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="330" y="162" text-anchor="middle">u-boot.img &mdash; U-Boot proper</text>
+          <line class="d-line" x1="120" y1="214" x2="540" y2="214" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="330" y="210" text-anchor="middle">uEnv.txt, if there is one &mdash; names no server</text>
+          <line class="d-line" x1="120" y1="242" x2="540" y2="242" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="330" y="238" text-anchor="middle">&lt;board&gt;/cadr.bit &mdash; the CADR</text>
+          <line class="d-line" x1="570" y1="258" x2="995" y2="258" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="782" y="254" text-anchor="middle">fpga loadb: program cadr.bit into the fabric</text>
+          <line class="d-line" x1="120" y1="290" x2="540" y2="290" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="330" y="286" text-anchor="middle">&lt;board&gt;/ the device tree &mdash; the CADR&rsquo;s 128 MB reserved</text>
+          <line class="d-line" x1="120" y1="318" x2="540" y2="318" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="330" y="314" text-anchor="middle">&lt;board&gt;/zImage &mdash; the kernel</text>
+          <line class="d-line" x1="120" y1="346" x2="540" y2="346" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="330" y="342" text-anchor="middle">&lt;board&gt;/rootfs.cpio.uboot</text>
+          <text class="d-n" x="578" y="366">bootz</text>
+
+          <!-- What init does, in the order it does it.  S80 is the one script
+               that mounts the card, so the two things that have to happen
+               before a drive is present are in it: the hold, and the debug
+               cable's connector. -->
+          <line class="d-line" x1="540" y1="424" x2="120" y2="424" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="330" y="420" text-anchor="middle">S80: the card mounted, the boot partition read-only</text>
+          <line class="d-line" x1="570" y1="452" x2="995" y2="452" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="782" y="448" text-anchor="middle">S80: --no-auto-boot, if fpgarc asks &mdash; the machine held, RUN clear</text>
+          <line class="d-line" x1="570" y1="480" x2="995" y2="480" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="782" y="476" text-anchor="middle">S80: --debug-cable-connect, if fpgarc asks &mdash; this board takes Pmod JA</text>
+          <line class="d-line" x1="570" y1="508" x2="995" y2="508" marker-end="url(#arr-card)"/>
+          <text class="d-s" x="782" y="504" text-anchor="middle">S80: the drive comes present &mdash; a pack in the bay is the CADR&rsquo;s disk</text>
+          <text class="d-s" x="578" y="536">S85 the screen over RFB, S86 the serial line, S87 Chaosnet,</text>
+          <text class="d-s" x="578" y="552">S88 a USB keyboard and mouse &mdash; a board with no USB host leaves it out</text>
+
+          <text class="d-s" x="578" y="580">login on the serial console</text>
+          <text class="d-s" x="578" y="596">384 MB &mdash; 0x18000000 and up is the CADR&rsquo;s</text>
+          <text class="d-s" x="578" y="624" fill-opacity="0.62">on failure: another try every ten seconds</text>
+        </svg>
+      </div>
+      <figcaption>The card holds everything, the CADR is in the fabric before
+      the kernel is fetched, and the machine's own boot PROM waits in its
+      no-drive loop until Linux presents it a disk. The Arty Z7-20 has booted
+      this way with no network at all.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>A Zynq board for development</h2>
+      <p>This project's own boards take the same five files from a TFTP server
+      instead. A change to any of them is then a copy and a reset, and the card
+      is never rewritten. The card's <code>uEnv.txt</code> is what decides
+      between the two paths, by whether it names a server, and one U-Boot
+      environment carries both.</p>
+
+      <p>One server here serves more than one board, and every board's five
+      files carry the same five names, so each board's set sits in a directory
+      named for the board. A flat root would hand a board a bitstream for
+      another part, which configures nothing and says nothing about why. The
+      network path does not fall back to the card's own copies: booting stale
+      files silently is the thing this project decided against.</p>
+    </div>
+
+    <figure class="fig dense">
+      <div class="scroll">
+        <svg viewBox="0 0 1170 766" role="img" aria-label="How a Zynq board boots for development, as a sequence. Five lifelines: the microSD card, the processing system, the DHCP server, the TFTP server and the fabric. The reset and the two U-Boot stages come off the card as they do in the ordinary boot. U-Boot imports uEnv.txt from the card, which names a TFTP server, so it asks the DHCP server for an address, and then fetches the boot command from the TFTP server out of a directory named for the board. It fetches the CADR's bitstream from the same directory and programs it into the fabric, from which moment the CADR is running its own boot PROM out of DDR3, and then the device tree, the kernel and the root filesystem image, and boots Linux beside the CADR. Linux asks DHCP for an address of its own, mounts the card, holds the machine and takes the debug cable's connector if the card's file of flags asks for either, and presents the drive, after which the CADR reads the band off the pack. Four more programs follow it: the screen over RFB, the serial line, Chaosnet, and a keyboard and mouse on the USB port, which a board with no USB host port leaves out. From the reset to the login prompt took sixteen seconds, measured on the Arty Z7-20 on 10 September 2026. On any failure the loader says so and tries again ten seconds later, for ever, and it never falls back to the card's own copies.">
+          <defs>
+            <marker id="arr-net" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <text class="d-t" x="10" y="18">how a Zynq board boots for development</text>
+          <text class="d-s" x="256" y="18">the microSD card holds the loader; the rest comes from a TFTP server</text>
+          <rect class="d-box" x="6" y="28" width="1158" height="728"/>
+          <!-- lifelines -->
+          <rect class="d-box" x="40" y="34" width="120" height="30"/>
+          <text class="d-t" x="100" y="54" text-anchor="middle">microSD card</text>
+          <rect class="d-box" x="315" y="34" width="150" height="30"/>
+          <text class="d-t" x="390" y="54" text-anchor="middle">processing system</text>
+          <rect class="d-box" x="590" y="34" width="120" height="30"/>
+          <text class="d-t" x="650" y="54" text-anchor="middle">DHCP server</text>
+          <rect class="d-box" x="810" y="34" width="120" height="30"/>
+          <text class="d-t" x="870" y="54" text-anchor="middle">TFTP server</text>
+          <rect class="d-box" x="1030" y="34" width="120" height="30"/>
+          <text class="d-t" x="1090" y="54" text-anchor="middle">fabric</text>
+          <path class="d-dash" d="M100,64 L100,744 M650,64 L650,744 M870,64 L870,744 M1090,64 L1090,340"/>
+          <!-- the PS, changing hands -->
+          <rect class="d-fill" x="375" y="64" width="30" height="50"/>
+          <text class="d-s" x="413" y="84">boot ROM</text>
+          <text class="d-s" x="413" y="100">boot-mode jumper: SD</text>
+          <rect class="d-fill" x="375" y="114" width="30" height="60"/>
+          <text class="d-s" x="413" y="136">U-Boot&rsquo;s first stage (SPL)</text>
+          <text class="d-s" x="413" y="152">ps7_init, DDR3 up</text>
+          <rect class="d-fill" x="375" y="174" width="30" height="260"/>
+          <text class="d-s" x="413" y="196">U-Boot</text>
+          <rect class="d-fill" x="375" y="434" width="30" height="310"/>
+          <text class="d-s" x="413" y="456">Linux</text>
+
+          <rect class="d-fill" x="1075" y="340" width="30" height="278"/>
+          <text class="d-s" x="1090" y="479" text-anchor="middle" transform="rotate(-90 1090 479)">the CADR, its boot PROM, out of DDR3</text>
+          <rect class="d-fill" x="1075" y="618" width="30" height="126"/>
+          <text class="d-s" x="1090" y="681" text-anchor="middle" transform="rotate(-90 1090 681)">the band off the pack</text>
+
+          <line class="d-line" x1="200" y1="78" x2="375" y2="78" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="287" y="74" text-anchor="middle">reset, or rst -srst over JTAG</text>
+
+          <line class="d-line" x1="100" y1="104" x2="375" y2="104" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="237" y="100" text-anchor="middle">BOOT.BIN &mdash; U-Boot&rsquo;s first stage</text>
+          <line class="d-line" x1="100" y1="166" x2="375" y2="166" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="237" y="162" text-anchor="middle">u-boot.img &mdash; U-Boot proper</text>
+          <line class="d-line" x1="100" y1="214" x2="375" y2="214" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="237" y="210" text-anchor="middle">uEnv.txt &mdash; names the TFTP server</text>
+
+          <line class="d-line" x1="405" y1="242" x2="650" y2="242" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="527" y="238" text-anchor="middle">DHCP discover</text>
+          <line class="d-line" x1="650" y1="264" x2="405" y2="264" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="527" y="260" text-anchor="middle">&lt;IP&gt;</text>
+
+          <line class="d-line" x1="870" y1="292" x2="405" y2="292" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="637" y="288" text-anchor="middle">TFTP: &lt;board&gt;/uEnv.net &mdash; the boot command</text>
+          <line class="d-line" x1="870" y1="318" x2="405" y2="318" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="637" y="314" text-anchor="middle">TFTP: &lt;board&gt;/cadr.bit &mdash; the CADR&rsquo;s bitstream</text>
+          <line class="d-line" x1="405" y1="340" x2="1075" y2="340" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="740" y="336" text-anchor="middle">fpga loadb: program cadr.bit into the fabric</text>
+          <line class="d-line" x1="870" y1="366" x2="405" y2="366" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="637" y="362" text-anchor="middle">TFTP: &lt;board&gt;/ the device tree</text>
+          <line class="d-line" x1="870" y1="392" x2="405" y2="392" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="637" y="388" text-anchor="middle">TFTP: &lt;board&gt;/zImage &mdash; the kernel</text>
+          <line class="d-line" x1="870" y1="418" x2="405" y2="418" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="637" y="414" text-anchor="middle">TFTP: &lt;board&gt;/rootfs.cpio.uboot</text>
+
+          <line class="d-line" x1="405" y1="484" x2="650" y2="484" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="527" y="480" text-anchor="middle">DHCP, again &mdash; Linux&rsquo;s own</text>
+          <line class="d-line" x1="650" y1="506" x2="405" y2="506" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="527" y="502" text-anchor="middle">&lt;IP&gt;</text>
+
+          <!-- init, the same five steps the card path takes -->
+          <line class="d-line" x1="375" y1="534" x2="100" y2="534" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="237" y="530" text-anchor="middle">S80: the card mounted, the boot partition read-only</text>
+          <line class="d-line" x1="405" y1="562" x2="1075" y2="562" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="740" y="558" text-anchor="middle">S80: --no-auto-boot, if fpgarc asks &mdash; the machine held, RUN clear</text>
+          <line class="d-line" x1="405" y1="590" x2="1075" y2="590" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="740" y="586" text-anchor="middle">S80: --debug-cable-connect, if fpgarc asks &mdash; this board takes Pmod JA</text>
+          <line class="d-line" x1="405" y1="618" x2="1075" y2="618" marker-end="url(#arr-net)"/>
+          <text class="d-s" x="740" y="614" text-anchor="middle">S80: the drive comes present &mdash; a pack in the bay is the CADR&rsquo;s disk</text>
+          <text class="d-s" x="413" y="646">S85 the screen over RFB, S86 the serial line, S87 Chaosnet,</text>
+          <text class="d-s" x="413" y="662">S88 a USB keyboard and mouse &mdash; a board with no USB host leaves it out</text>
+
+          <text class="d-s" x="413" y="690">login on the serial console</text>
+          <text class="d-s" x="413" y="706">384 MB &mdash; 0x18000000 and up is the CADR&rsquo;s</text>
+          <text class="d-s" x="413" y="734" fill-opacity="0.62">on any failure: another try every ten seconds, and never the card&rsquo;s own copies</text>
+
+          <text class="d-n" x="10" y="82" fill-opacity="0.62">0 s</text>
+          <text class="d-n" x="10" y="218" fill-opacity="0.62">2 s</text>
+          <text class="d-n" x="10" y="268" fill-opacity="0.62">9 s</text>
+          <text class="d-n" x="10" y="422" fill-opacity="0.62">10 s</text>
+          <text class="d-n" x="10" y="694" fill-opacity="0.62">16 s</text>
+          <text class="d-s" x="10" y="752" fill-opacity="0.62">the times down the left are the Arty Z7-20&rsquo;s, measured</text>
+        </svg>
+      </div>
+      <figcaption>The two paths differ only in where the bytes come from: both
+      put the CADR in the fabric before the kernel, and both end in the same
+      <code>bootz</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>The Arty A7-100</h2>
+      <p>That board has no processing system. There is no boot ROM, no card
+      controller, no loader, no device tree and no operating system anywhere in
+      it. A 7-series FPGA configures from its own QSPI flash or over JTAG, so a
+      card cannot be what boots it.</p>
+
+      <p>The bitstream carries the soft processing system's firmware in its
+      block RAM, the way it already carries the CADR's boot PROM in its control
+      store. That is the whole of the answer to what a board without Linux, a
+      loader and a device tree does instead: one image, and the fabric is there
+      with its program already in it.</p>
+    </div>
+
+    <figure class="fig dense">
+      <div class="scroll">
+        <svg viewBox="0 0 1170 452" role="img" aria-label="How the Arty A7-100 comes up, as a sequence, and this one is the plan rather than the board. Four lifelines: the QSPI flash, a microSD card on Pmod JD, the part itself and the CADR in its fabric. At power on the part reads its own flash, the mode jumper being set to QSPI, and configures itself out of the bitstream: the whole fabric, with the soft processing system's firmware already in its block RAM, the way the CADR's own boot PROM is already in its control store. One bitstream starts the machine and the soft processing system together, and there is no boot ROM, no loader, no device tree and no operating system anywhere in it. The memory controller calibrates itself and main memory answers. The firmware reads the console's registers, holds their identifier to CONS, and halts, steps and starts the machine. It reads the card's pack partition with a FAT library, exactly as Linux does on the other two boards, and presents the drive, after which the CADR reads the band off the pack and runs the microcode it finds there. The UART carries the firmware's own words at 115,200 baud and takes four commands back from the wire: status, halt, continue and step. Today the fabric is configured over JTAG rather than out of the flash, and there is no card on Pmod JD, so the firmware runs with no drive to present and the machine stays in its boot PROM.">
+          <defs>
+            <marker id="arr-a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+            </marker>
+          </defs>
+          <text class="d-t" x="10" y="18">how the Arty A7-100 comes up</text>
+          <text class="d-s" x="194" y="18">from its own flash: no loader, no device tree, no operating system</text>
+          <rect class="d-box" x="6" y="28" width="1158" height="414"/>
+          <!-- lifelines.  The flash is where the bytes come from, as the card
+               is on the other two boards; the card here is the disk and
+               nothing else. -->
+          <rect class="d-box" x="40" y="34" width="130" height="30"/>
+          <text class="d-t" x="105" y="54" text-anchor="middle">QSPI flash</text>
+          <rect class="d-box" x="225" y="34" width="160" height="30"/>
+          <text class="d-t" x="305" y="54" text-anchor="middle">microSD on Pmod JD</text>
+          <rect class="d-box" x="530" y="34" width="170" height="30"/>
+          <text class="d-t" x="615" y="54" text-anchor="middle">the part</text>
+          <rect class="d-box" x="980" y="34" width="120" height="30"/>
+          <text class="d-t" x="1040" y="54" text-anchor="middle">the CADR</text>
+          <path class="d-dash" d="M105,64 L105,430 M305,64 L305,430 M1040,64 L1040,134"/>
+
+          <rect class="d-fill" x="600" y="64" width="30" height="70"/>
+          <text class="d-s" x="638" y="84">configuration</text>
+          <text class="d-s" x="638" y="100">the mode jumper: QSPI</text>
+          <rect class="d-fill" x="600" y="134" width="30" height="296"/>
+          <text class="d-s" x="638" y="162">the firmware, in 32 KB of block RAM</text>
+          <text class="d-s" x="638" y="190">the memory controller calibrates, and main memory answers</text>
+
+          <rect class="d-fill" x="1025" y="134" width="30" height="166"/>
+          <text class="d-s" x="1040" y="217" text-anchor="middle" transform="rotate(-90 1040 217)">the boot PROM, out of DDR3L</text>
+          <rect class="d-fill" x="1025" y="300" width="30" height="130"/>
+          <text class="d-s" x="1040" y="365" text-anchor="middle" transform="rotate(-90 1040 365)">the band off the pack</text>
+
+          <line class="d-line" x1="430" y1="78" x2="600" y2="78" marker-end="url(#arr-a7)"/>
+          <text class="d-s" x="515" y="74" text-anchor="middle">power on</text>
+
+          <line class="d-line" x1="105" y1="110" x2="600" y2="110" marker-end="url(#arr-a7)"/>
+          <text class="d-s" x="352" y="106" text-anchor="middle">the bitstream &mdash; the whole fabric, the firmware in its block RAM</text>
+
+          <line class="d-line" x1="630" y1="134" x2="1025" y2="134" marker-end="url(#arr-a7)"/>
+          <text class="d-s" x="827" y="130" text-anchor="middle">one bitstream: the machine and the soft system start together</text>
+
+          <line class="d-line" x1="630" y1="220" x2="1025" y2="220" marker-end="url(#arr-a7)"/>
+          <text class="d-s" x="827" y="216" text-anchor="middle">the console: CONS &mdash; halt, step, start</text>
+          <line class="d-line" x1="600" y1="258" x2="305" y2="258" marker-end="url(#arr-a7)"/>
+          <text class="d-s" x="452" y="254" text-anchor="middle">the pack partition, read with a FAT library</text>
+          <line class="d-line" x1="630" y1="300" x2="1025" y2="300" marker-end="url(#arr-a7)"/>
+          <text class="d-s" x="827" y="296" text-anchor="middle">the drive comes present &mdash; a pack on the card is the CADR&rsquo;s disk</text>
+
+          <text class="d-s" x="638" y="318">no boot ROM, no loader, no device tree, no operating system</text>
+          <text class="d-s" x="638" y="334">the firmware arrives in the bitstream, as the boot PROM does</text>
+          <text class="d-s" x="638" y="362">the UART is the console: the firmware&rsquo;s words at 115,200 baud</text>
+          <text class="d-s" x="638" y="390" fill-opacity="0.62">four commands back from the wire: status, halt, continue, step</text>
+        </svg>
+      </div>
+      <figcaption>This is the plan and not the board: today the fabric is
+      configured over JTAG, there is no card on Pmod JD, and the firmware runs
+      with no drive to present, so the machine stays in its boot PROM.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<footer>
+  <div class="band">
+    <p>&copy; 2026 Mete Balci</p>
+  </div>
+</footer>
+
+</body>
+</html>

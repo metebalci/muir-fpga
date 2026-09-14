@@ -11,11 +11,10 @@ build step and no generator, the same way
                   in front.css beside it, because the table is this project's
                   own rather than muir's
     arty-z7-20.html
-                  the Arty Z7-20's architecture drawing, and under it two
-                  boot sequences: the board on its own from the card, and the
-                  development boot from a TFTP server
+                  the Arty Z7-20's architecture drawing, and nothing else. How
+                  it boots is on booting.html with the other two boards'
     cora-z7-07s.html
-                  the same three drawings for the Cora Z7-07S. That part is
+                  the same drawing for the Cora Z7-07S. That part is
                   smaller and the board has no HDMI connector, no USB host port
                   and no switches, so the display output block, its port, the
                   HDMI connector, the USB input program, the USB host
@@ -26,9 +25,13 @@ build step and no generator, the same way
                   no processing system at all, so everything the Arm cores and
                   Linux do on the other two has to have an answer in fabric,
                   and the drawing shows those answers in the positions the
-                  processing system's own parts hold. There are no boot
-                  sequence drawings on it, because nothing has yet booted that
-                  board from its own flash
+                  processing system's own parts hold
+    booting.html  how each board comes up, in three sequences: a Zynq board
+                  from its own card, the same board from a TFTP server while
+                  it is being worked on, and the Arty A7-100 from its own
+                  flash. The two Zynq boards come up the same way, so one
+                  drawing serves both and a label says where they differ. The
+                  Arty A7-100's is a plan and its caption says so
     cadr.html     the real CADR in ten drawings with one-sentence captions:
                   the machine, its boards, cables and buses, and how it boots
                   document named at the end of the page
@@ -54,9 +57,17 @@ faint line at the top saying which board this is and linking the other pages.
 Anything that explains a drawing belongs in `full-page.html` or in `docs/`,
 not here.
 
-A **prose page** is `index.html` or `cadr.html`. Those carry the topbar, and
-they are written in brief full sentences because they are read by people who
-did not write the code.
+A **prose page** is `index.html`, `booting.html` or `cadr.html`. Those carry
+the topbar, and they are written in brief full sentences because they are read
+by people who did not write the code.
+
+`booting.html` and `cadr.html` are prose pages that carry drawings, and both
+of them draw in `currentColor` alone. **A sequence carries no status colour.**
+A board drawing colours a block by how far along it is; a sequence says what
+happens and in what order, which is a different claim, so what is built and
+what is not is in the caption under each figure, in words. The Arty A7-100's
+sequence is a plan rather than a board, and its caption is where that is
+said.
 
 ## The drawings
 
@@ -71,6 +82,14 @@ with the same viewBox, the same translation and every block at the same
 coordinates. What a board does not have is crossed off where it stands rather
 than taken out, and on the Arty A7-100 what takes the place of the processing
 system is drawn in the positions that system's own parts hold.
+
+**Every controller in the row at the foot of a drawing has the same left edge
+and the same width as the connector under it.** A controller and the thing it
+drives therefore read as one column, and the gaps in the row are what the
+connectors leave between them. Two lines pay for that: the port from the
+software region into the memory controller lands on its top edge rather than
+on its right, which the wider box would swallow; and the UART's own line comes
+down on the UART's right, the gap on its left being the SD host's now.
 
 Under the machine, each drawing is three layers. The software region is on
 top. That is the Linux programs on a Zynq board and the firmware's own services
