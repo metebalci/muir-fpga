@@ -110,6 +110,21 @@ set memory [expr {($ddr > 0 || $prove > 0) ? 1 : 0}]
 #
 #     SOC=1 OUTDIR=build/a7-soc \
 #         vivado -mode batch -source boards/arty-a7-100/vivado/bitstream.tcl
+#
+# **AND IT BRINGS A SECOND CLOCK WITH IT.**  Ibex computes a load or a store's
+# address in the cycle it uses it, and on this part that arc is about 12.9 ns
+# against a 10 ns tick; the machine's tick cannot move, every instant in
+# `rtl/machine/` being a count of them.  So the soft system runs on `CLKOUT2`
+# of the same manager at 50 MHz and the seam between it and the four faces is a
+# clock domain crossing --- `rtl/plumbing/cadr_soc_cross.sv`, bounded by
+# `rtl/plumbing/xilinx7/cadr_soc.xdc`.  Three things are asserted about that
+# below and each of them has a silent failure behind it: that there IS a second
+# clock, that the bound reached paths in both directions, and that nothing in
+# the soft system is taking a multicycle exception against its own period.
+#
+# **`SOC=1 DDR=1` IS THE WHOLE BOARD** and is the configuration to build for
+# it: the machine with its memory behind it and the soft processing system in
+# front of the faces, with both of the design's crossings in one netlist.
 set soc [expr {[info exists ::env(SOC)] ? $::env(SOC) : 0}]
 
 set prom build/boot_prom.hex
@@ -258,6 +273,15 @@ if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # board's file, read here unchanged; its header has the whole argument for
 # four ticks and for why it names the `/D` pins and nothing else.
 if {$soc != 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
+# **AND THE SOFT SYSTEM'S OWN CLOCK, WHICH IS NOT THE MACHINE'S.**  Ibex
+# computes a load or a store's address in the cycle it uses it and that arc
+# does not settle in a 10 ns tick, so the core runs on `CLKOUT2` of the same
+# manager and the seam between it and the faces is a clock domain crossing.
+# `rtl/plumbing/xilinx7/cadr_soc.xdc` bounds everything that crosses with a
+# maximum delay and deliberately does NOT group the two clocks; its header has
+# the whole argument, and the assertions that it reached anything are below,
+# where they can be written in ordinary Tcl.
+if {$soc != 0} { read_xdc rtl/plumbing/xilinx7/cadr_soc.xdc }
 
 # AND THE PMOD CARRIER'S, WHICH IS THE SAME CONE WITH A SECOND READER ON IT,
 # AND WHICH IS NOT GATED.  `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` names the
@@ -381,7 +405,146 @@ if {$soc != 0} { lappend inside g_soc.u_debug_window }
 # every board, so its sender is relaxed on every board and the invariant would
 # otherwise fail on the plain one.
 lappend inside u_dbg_cable
+# **AND THE SOFT PROCESSING SYSTEM ITSELF, WHICH IS ASKED A DIFFERENT QUESTION
+# RATHER THAN NOT ASKED.**  `assert_constraints_scoped` holds every register
+# outside the machine to ONE PERIOD of the clock it is given, and the clock it
+# is given is the machine's tick --- so a register on the soft system's slower
+# clock reports its own longer period and would fail an assertion written about
+# a clock it does not run on.  Excluding it here and leaving it at that would
+# be an exemption too wide, which is the failure this repository records more
+# often than any other, so `assert_soc_domain_timed` below asks the same
+# question of those registers against THEIR OWN period.  Everything else in
+# `g_soc` --- the four faces, which are the machine's neighbours --- stays in
+# the list and is still held to the tick.
+if {$soc != 0} { lappend inside g_soc.u_soc }
+# **AND THIS CALL IS WEAKER THAN IT LOOKS WITH TWO CLOCKS IN THE DESIGN, WHICH
+# IS MEASURED AND IS NOT THIS DIRECTORY'S TO FIX.**  `relaxed_outside` asks for
+# the WORST 400 paths by slack and holds every one of them to one period of the
+# single clock it is handed --- and a design with a second clock has healthy
+# paths asking for that clock's longer period.  The instance filter above is
+# what keeps the soft system out of the question, and **synthesis can flatten a
+# cell's name out of the hierarchy and past that filter**: at a 62.5 MHz soft
+# clock this assertion stopped the run naming `rdata_q_reg[31]_i_4/D` at
+# 16.000 ns, which is Ibex's own load-store unit, both ends on the soft clock,
+# one period of it, +5.922 ns of slack.  A false accusation of the `foreach`
+# bug this check exists to catch.
+#
+# At the 50 MHz this board builds, the same flattened path has about ten
+# nanoseconds of slack and does not make the worst-400 cut, so the call passes
+# --- which is the query's limit and not evidence that no such path exists.
+# **AND THE 62.5 MHz DESIGN ITSELF CLOSES**, +0.846 ns on 0 of 46,441 when the
+# assertion is made to print instead of exit, so what stops that build is this
+# check and not the fabric.  `README.md` has both columns and the reason the
+# board builds at 50 anyway.
+# The fix is in `boards/arty-z7-20/vivado/constraints_check.tcl`: hold each
+# path to ITS OWN capture clock's period, and stop taking only the worst 400.
+# That file is read by three boards' flows and changing it is a commit that
+# touches all of them.  `assert_soc_domain_timed` below is the question asked
+# the right way round for the one domain this slice added.
 assert_constraints_scoped $inside $tick
+
+# --- THE SOFT SYSTEM'S CLOCK AND ITS CROSSING, ASKED OF THE DESIGN
+#
+# Three questions, and every one of them has a silent failure behind it that
+# this project has already met.  Is there a second clock at all --- a pattern
+# that stopped matching leaves `cadr_soc.xdc` reaching nothing and the crossing
+# timed against whatever requirement two unrelated edges happen to make.  Did
+# the bound reach any PATH --- an exception that was created and applied to
+# nothing still appears in `report_exceptions`, which is the `foreach` trap
+# exactly.  And is anything in the soft system taking a multicycle it was not
+# given --- which is the disk controller's 3,904 of 4,000 paths, met in a new
+# module.
+proc assert_soc_domain_timed {instance period} {
+    set cells [get_cells -quiet -hier -filter \
+                   "PRIMITIVE_GROUP == FLOP_LATCH && NAME =~ ${instance}/*"]
+    if {[llength $cells] == 0} {
+        puts "XDC: FAILED --- no registers matched $instance, so the soft"
+        puts "XDC: processing system was optimised away or renamed. Either is"
+        puts "XDC: a finding and neither is a pass."
+        exit 1
+    }
+    set pins [get_pins -quiet -of_objects $cells -filter {REF_PIN_NAME == D}]
+    set caught 0
+    foreach req [get_property -quiet REQUIREMENT \
+                     [get_timing_paths -quiet -setup -to $pins \
+                          -max_paths 100000 -nworst 1]] {
+        if {$req > [expr {$period * 1.5}]} { incr caught }
+    }
+    if {$caught > 0} {
+        puts "XDC: FAILED --- $caught path(s) into $instance ask for more than"
+        puts "XDC: one and a half of that domain's own [format %.3f $period] ns"
+        puts "XDC: period. The soft system has no multicycle exception of any"
+        puts "XDC: kind and is not entitled to one; a relaxed set defined as"
+        puts "XDC: every register minus a name list swallows whatever lands"
+        puts "XDC: inside it, which is what this asks about."
+        exit 1
+    }
+    puts "XDC: $instance --- [llength $cells] registers, none asking for more"
+    puts "XDC: than its own [format %.3f $period] ns period"
+}
+
+if {$soc != 0} {
+    set soft_clk [get_clocks -quiet -of_objects \
+                      [get_pins -hier -filter {NAME =~ *u_mmcm/CLKOUT2}]]
+    set mach_clk [get_clocks -quiet -of_objects \
+                      [get_pins -hier -filter {NAME =~ *u_mmcm/CLKOUT0}]]
+    if {[llength $soft_clk] != 1 || [llength $mach_clk] != 1} {
+        puts "BIT: FAILED --- the machine has [llength $mach_clk] clock(s) and"
+        puts "BIT: the soft processing system [llength $soft_clk]. One each is"
+        puts "BIT: wanted; a name pattern here has stopped matching and every"
+        puts "BIT: crossing constraint in cadr_soc.xdc reaches nothing, which"
+        puts "BIT: leaves the two domains timed against whatever requirement"
+        puts "BIT: their edges happen to make."
+        exit 1
+    }
+    set soft_ns [get_property PERIOD $soft_clk]
+    puts "BIT: the machine's clock is [get_property NAME $mach_clk] at\
+ [format %.3f [get_property PERIOD $mach_clk]] ns"
+    puts "BIT: the soft system's is [get_property NAME $soft_clk] at\
+ [format %.3f $soft_ns] ns ([format %.2f [expr {1000.0 / $soft_ns}]] MHz)"
+
+    # **THE BOUND MUST REACH PATHS IN BOTH DIRECTIONS AND THE COUNT IS WHAT
+    # SAYS SO.**  One direction carries the request and its payload, the other
+    # the acknowledgement and its answer; a crossing with traffic one way only
+    # is a crossing half of which is unconstrained.
+    set want [format %.3f $tick]
+    foreach pair [list [list $soft_clk $mach_clk "the request and its payload"] \
+                       [list $mach_clk $soft_clk "the answer coming back"]] {
+        set from [lindex $pair 0]
+        set to   [lindex $pair 1]
+        set what [lindex $pair 2]
+        set reqs [get_property -quiet REQUIREMENT \
+                      [get_timing_paths -quiet -setup -from $from -to $to \
+                           -max_paths 100000 -nworst 1]]
+        set n 0
+        set bad 0
+        foreach r $reqs {
+            incr n
+            if {[format %.3f $r] ne $want} { incr bad }
+        }
+        if {$n == 0} {
+            puts "BIT: FAILED --- no path at all runs from\
+ [get_property NAME $from] to [get_property NAME $to] ($what)."
+            puts "BIT: Either the crossing was optimised away or the two"
+            puts "BIT: clocks are not the ones cadr_soc.xdc named. An"
+            puts "BIT: exception that reaches no path is the failure that"
+            puts "BIT: looks exactly like a build that finished."
+            exit 1
+        }
+        if {$bad > 0} {
+            puts "BIT: FAILED --- $bad of $n path(s) from\
+ [get_property NAME $from] to [get_property NAME $to] ($what)"
+            puts "BIT: do not ask for $want ns, so the maximum delay in"
+            puts "BIT: cadr_soc.xdc did not reach them and they are being"
+            puts "BIT: timed against whatever requirement the two clocks'"
+            puts "BIT: edges happen to make."
+            exit 1
+        }
+        puts "BIT: $n path(s) cross for $what, every one bounded at $want ns"
+    }
+
+    assert_soc_domain_timed g_soc.u_soc $soft_ns
+}
 
 # --- 1. did the constraints apply?
 #

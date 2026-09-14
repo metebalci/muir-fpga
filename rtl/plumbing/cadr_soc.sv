@@ -62,11 +62,15 @@
 //                       frequency reaches for, and this design is short of it
 //                       --- so they were turned on and the board was built
 //                       again: **-3.216 ns with both off, -3.694 ns with both
-//                       on**, at `xc7a100tcsg324-1` and a 10 ns tick.  They
-//                       are off because the measurement says so and not
-//                       because the smaller core was assumed to be the slower
-//                       one.  `boards/arty-a7-100/README.md` carries what the
-//                       critical path actually is and what would close it.
+//                       on**, at `xc7a100tcsg324-1` with the core on the
+//                       machine's own 10 ns tick.  They are off because the
+//                       measurement says so and not because the smaller core
+//                       was assumed to be the slower one.  **BOTH OF THOSE
+//                       FIGURES ARE HISTORY**: what closed the design was
+//                       giving this system a clock of its own, and neither
+//                       option was tried again on it, there being nothing
+//                       left to buy.  `boards/arty-a7-100/README.md` carries
+//                       what the critical path was and what it is now.
 //   `PMPEnable = 0`     no memory protection.  There is one program and no
 //                       supervisor to protect it from
 //   `SecureIbex = 0`    none of the hardening: no lockstep, no dummy
@@ -100,6 +104,21 @@
 // for ever.  That is the GP0-hang rule this project measured on silicon, kept
 // on a board whose core has no interconnect to give it a DECERR at all.
 //
+// **AND THERE ARE TWO CLOCKS IN HERE, WHICH IS THE ONE PLACE THIS PARTS FROM
+// `cadr_ps7.sv`'s shape.**  Ibex computes a load or a store's address in the
+// cycle it uses it, and on this part that arc is about 12.9 ns --- three more
+// than the machine's tick, and not a path a constraint may relax, being one
+// cycle of a processor.  So the core, its memory, its UART and its timer run
+// on a clock of their own off the same manager, `clk`, and the bridge runs on
+// the machine's, `axi_clk`, where the four faces already are.
+// `rtl/plumbing/cadr_soc_cross.sv` is the seam between them and carries the
+// whole argument; `boards/arty-a7-100/README.md` carries the measurement that
+// made it necessary.
+//
+// **THE FACES THEREFORE DO NOT KNOW THERE ARE TWO CLOCKS**, and neither does
+// anything in `rtl/machine/`.  What crosses is one request and one answer, at
+// the narrowest seam in the design, and not a hundred and forty wires of AXI.
+//
 // **ONE DATA TRANSACTION AT A TIME, AND IT COSTS A CYCLE.**  A load from the
 // block RAM answers two cycles after the request rather than one, because the
 // seam does not accept a new request in the cycle it answers the old one.  A
@@ -116,10 +135,17 @@ module cadr_soc #(
     // the first firmware needs.
     parameter int unsigned RAM_WORDS = 8192,
     parameter string FIRMWARE_HEX = "build/soc_firmware.hex",
-    // The board's real clock, for the UART's divisor and the timer's
-    // microsecond.  See `cadr_soc_uart.sv`'s header: this is the one corner of
-    // the design that is about the wall clock rather than about MIT's grid.
-    parameter int unsigned CLK_HZ = 100_000_000,
+    // **THE SOFT SYSTEM'S OWN CLOCK IN HERTZ, WHICH IS NOT THE MACHINE'S**,
+    // for the UART's divisor and the timer's microsecond.  See
+    // `cadr_soc_uart.sv`'s header: this is the one corner of the design that
+    // is about the wall clock rather than about MIT's grid, and since the
+    // clock the core runs on is slower than the machine's tick the two
+    // numbers are different.  The board passes the frequency `CLKOUT2` of its
+    // one clock manager makes; a value that did not match it would give a
+    // transmitter at the wrong rate and a microsecond that was not one, and
+    // the firmware reads the microsecond out of the timer rather than
+    // dividing by a constant of its own.
+    parameter int unsigned CLK_HZ = 50_000_000,
     parameter int unsigned BAUD   = 115_200,
     // Where this processing system's own two pages sit.
     parameter logic [31:0] UART_BASE  = 32'h1000_0000,
@@ -129,8 +155,19 @@ module cadr_soc #(
     parameter logic [31:0] CON_BASE  = 32'h8000_0000,
     parameter logic [31:0] DBG_BASE  = 32'h8000_1000
 ) (
+    // **THE SOFT SYSTEM'S OWN CLOCK.**  Everything in here but the bridge
+    // runs on it.
     input  var logic        clk,
+    // The board's reset, a level, asynchronous to `clk` --- it is made in the
+    // machine's domain and synchronised onto this one below, in the one place
+    // that has to know.
     input  var logic        rst,
+
+    // **THE MACHINE'S TICK, WHICH THE BRIDGE AND THE FOUR FACES RUN ON.**
+    // Every AXI signal in the port list below is in THIS domain; nothing that
+    // crosses between the two leaves this module.
+    input  var logic        axi_clk,
+    input  var logic        axi_rst,
 
     // --- the board's USB-UART bridge.  `tx` leaves on `uart_rxd_out` and
     // --- `rx` arrives on `uart_txd_in`; those names are from the host's point
@@ -252,6 +289,39 @@ module cadr_soc #(
 
   localparam int unsigned RAM_AW = $clog2(RAM_WORDS);
 
+  // ------------------------------------------ this domain's own reset
+
+  // **THE RESET ARRIVES FROM THE MACHINE'S DOMAIN AND IS SYNCHRONISED HERE, IN
+  // THE ONE PLACE THAT HAS TO KNOW.**  The board makes one reset --- the clock
+  // manager not locked, or the fabric-reset button --- in the machine's
+  // domain, and a reset released asynchronously to this clock is a reset some
+  // of these registers leave a clock before the others.  The alternative was a
+  // second synchroniser in the board's top level and a third in the check's
+  // harness, which is two more descriptions of one thing.
+  //
+  // **THE TWO SIDES OF THE CROSSING THEREFORE COME OUT OF RESET AT DIFFERENT
+  // INSTANTS, AND THAT IS HARMLESS BY CONSTRUCTION**: both sides are held
+  // while `rst` stands, and what each sees of the other while it is held is
+  // the other's idle level --- no request out, no acknowledgement back --- so
+  // whichever leaves first finds the far side where it would have found it
+  // anyway.
+  logic [2:0] rst_sync;
+  logic       rst_a;
+  always_ff @(posedge clk) rst_sync <= {rst_sync[1:0], rst};
+  assign rst_a = rst_sync[2];
+
+  // **AND THE PACK SIDE'S INTERRUPT IS A LEVEL FROM THE MACHINE'S DOMAIN**,
+  // into the core's external interrupt.  Two flip-flops, for the reason every
+  // level that crosses gets two.  It is the only signal that reaches this
+  // domain from the other one outside `cadr_soc_cross`, and
+  // `rtl/plumbing/xilinx7/cadr_soc.xdc` bounds its route with everything else
+  // that crosses.
+  logic [1:0] irq_sync;
+  always_ff @(posedge clk) begin
+    if (rst_a) irq_sync <= 2'b00;
+    else       irq_sync <= {irq_sync[0], ext_irq};
+  end
+
   // --------------------------------------------------------- the core's seams
 
   logic        instr_req, instr_gnt, instr_rvalid, instr_err;
@@ -300,7 +370,7 @@ module cadr_soc #(
       .DmExceptionAddr(32'h0000_0000)
   ) u_cpu (
       .clk_i (clk),
-      .rst_ni(!rst),
+      .rst_ni(!rst_a),
 
       .hart_id_i  (32'd0),
       .boot_addr_i(32'h0000_0000),
@@ -352,7 +422,7 @@ module cadr_soc #(
 
       .irq_software_i(1'b0),
       .irq_timer_i   (timer_irq),
-      .irq_external_i(ext_irq),
+      .irq_external_i(irq_sync[1]),
       .irq_fast_i    (15'd0),
       .irq_nm_i      (1'b0),
       .irq_pending_o (),
@@ -384,7 +454,7 @@ module cadr_soc #(
       .DummyInstructions(1'b0)
   ) u_rf (
       .clk_i (clk),
-      .rst_ni(!rst),
+      .rst_ni(!rst_a),
 
       .test_en_i       (1'b0),
       .dummy_instr_id_i(dummy_instr_id),
@@ -440,7 +510,7 @@ module cadr_soc #(
   assign instr_rdata  = ram_a_rdata;
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst_a) begin
       instr_rvalid <= 1'b0;
       instr_err    <= 1'b0;
     end else begin
@@ -481,6 +551,17 @@ module cadr_soc #(
   // is what makes the bridge's single held selection a property of THIS file
   // rather than of the core in front of it, and because a core that pipelined
   // its loads would otherwise break the bridge silently.
+  //
+  // **AND IT IS LOAD-BEARING IN A SECOND WAY NOW THAT THE BRIDGE IS A CLOCK
+  // AWAY.**  This flag is what holds the next request off for one clock after
+  // an answer, and one clock is exactly the margin the crossing's fourth phase
+  // has: `cadr_soc_cross.sv` records the measurement --- of 273 requests, 129
+  // arrive while the acknowledgement still stands at the second flip-flop of
+  // the synchroniser and none while it stands at the first.  The crossing is
+  // written not to need that (it holds its answer until the handshake has
+  // closed, so a requester may ask on the very next clock), and the two
+  // together are belt and braces on a seam where getting it wrong would hand
+  // a load the answer to the one before it.
   logic d_busy, d_axi, fast_ans;
 
   assign data_gnt = data_req && !d_busy;
@@ -517,7 +598,7 @@ module cadr_soc #(
   end
 
   always_ff @(posedge clk) begin
-    if (rst) begin
+    if (rst_a) begin
       d_busy   <= 1'b0;
       d_axi    <= 1'b0;
       fast_ans <= 1'b0;
@@ -544,7 +625,7 @@ module cadr_soc #(
       .BAUD  (BAUD)
   ) u_uart (
       .clk  (clk),
-      .rst  (rst),
+      .rst  (rst_a),
       .sel  (uart_sel),
       .we   (data_we),
       .be   (data_be),
@@ -559,7 +640,7 @@ module cadr_soc #(
       .CLK_HZ(CLK_HZ)
   ) u_timer (
       .clk  (clk),
-      .rst  (rst),
+      .rst  (rst_a),
       .sel  (timer_sel),
       .we   (data_we),
       .be   (data_be),
@@ -578,24 +659,46 @@ module cadr_soc #(
   assign unused = &{1'b0, instr_addr[1:0]};
   /* verilator lint_on UNUSEDSIGNAL */
 
-  // -------------------------------------------------------------- the bridge
+  // ----------------------------------------------- the crossing and the bridge
+  //
+  // **THE BRIDGE IS ON THE MACHINE'S CLOCK AND THIS IS THE SEAM.**  Everything
+  // above runs on the core's own clock; everything below the crossing runs on
+  // the machine's, where the four faces are.  `cadr_soc_cross.sv` carries the
+  // whole argument for the shape --- a four-phase handshake, a payload that
+  // has stopped moving before the level that points at it, and two flip-flops
+  // on each level --- and `rtl/plumbing/xilinx7/cadr_soc.xdc` is where that
+  // argument is told to the fitter.
+  logic        x_req, x_we, x_gnt, x_done, x_err;
+  logic [3:0]  x_be;
+  logic [31:0] x_addr, x_wdata, x_rdata;
+
+  cadr_soc_cross u_cross (
+      .a_clk(clk), .a_rst(rst_a),
+      .a_req(br_req), .a_we(data_we), .a_be(data_be), .a_addr(data_addr),
+      .a_wdata(data_wdata),
+      .a_done(br_done), .a_rdata(br_rdata), .a_err(br_err),
+
+      .b_clk(axi_clk), .b_rst(axi_rst),
+      .b_req(x_req), .b_we(x_we), .b_be(x_be), .b_addr(x_addr),
+      .b_wdata(x_wdata),
+      .b_gnt(x_gnt), .b_done(x_done), .b_rdata(x_rdata), .b_err(x_err)
+  );
 
   cadr_soc_axi #(
       .PACK_BASE(PACK_BASE),
       .CON_BASE (CON_BASE),
       .DBG_BASE (DBG_BASE)
   ) u_axi (
-      .clk(clk), .rst(rst),
-      .req(br_req), .we(data_we), .be(data_be), .addr(data_addr),
-      .wdata(data_wdata),
-      /* verilator lint_off PINCONNECTEMPTY */
-      // The bridge's own grant says the same thing `data_gnt` above already
-      // says --- it is only ever asked when the seam is idle --- so nothing
-      // reads it.  It is a port because the bridge is written to be driven by
-      // a seam that might not know that.
-      .gnt(),
-      /* verilator lint_on PINCONNECTEMPTY */
-      .done(br_done), .rdata(br_rdata), .err(br_err),
+      .clk(axi_clk), .rst(axi_rst),
+      .req(x_req), .we(x_we), .be(x_be), .addr(x_addr),
+      .wdata(x_wdata),
+      // **THE GRANT IS READ NOW, WHERE IT USED TO REACH NOTHING.**  With the
+      // seam a clock apart from the bridge, the crossing cannot know from the
+      // asking side alone that the request has been taken: it holds `req` up
+      // until this says so and drops it in the same clock, which is what stops
+      // one load becoming two transactions when the bridge comes back to idle.
+      .gnt(x_gnt),
+      .done(x_done), .rdata(x_rdata), .err(x_err),
 
       .pack_awaddr(pack_awaddr), .pack_awlen(pack_awlen), .pack_awid(pack_awid),
       .pack_awvalid(pack_awvalid), .pack_awready(pack_awready),

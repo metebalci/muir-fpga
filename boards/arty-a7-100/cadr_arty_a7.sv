@@ -297,6 +297,30 @@ module cadr_arty_a7 #(
   // file matches `CLKOUT0_DIVIDE_F` by name.
   logic clk_ref_raw, clk_ref;
 
+  // **AND A THIRD OUTPUT, FOR THE SOFT PROCESSING SYSTEM, WHICH IS SLOWER
+  // THAN THE MACHINE ON PURPOSE.**  Ibex computes a load or a store's address
+  // in the cycle it uses it --- the decoder, the operand multiplexers and the
+  // main ALU's adder between the instruction register and the memory's address
+  // pin --- and on this part that arc is about 12.9 ns.  At the machine's
+  // 10 ns tick it misses by three, and it is not a path a constraint may
+  // relax: it is one cycle of a processor and it is meant to be.  The
+  // machine's tick cannot move, every instant in `rtl/machine/` being a count
+  // of them, so the soft system gets a clock of its own and the seam between
+  // the two becomes a clock domain crossing ---
+  // `rtl/plumbing/cadr_soc_cross.sv`, with `rtl/plumbing/xilinx7/cadr_soc.xdc`
+  // telling the fitter the same thing.
+  //
+  // **THE ONE PLACE THE SOFT SYSTEM'S CLOCK IS DECIDED.**  The voltage
+  // controlled oscillator is 1000 MHz exactly, so this divider reads literally
+  // as the frequency in megahertz: 20 is 50 MHz.  `boards/arty-a7-100/README.md`
+  // carries what was measured at which divider and why this is the number.
+  // It is NOT one of the four `boards/arty-z7-20/vivado/tick.tcl` reads: it
+  // cannot move the machine's tick, and that file matches `CLKOUT0_DIVIDE_F`
+  // by name.
+  localparam int unsigned SOC_CLK_DIVIDE = 20;
+  localparam int unsigned SOC_CLK_HZ     = 1_000_000_000 / SOC_CLK_DIVIDE;
+  logic clk_soc_raw, clk_soc;
+
   // The eleven clock outputs this design does not take are left empty on
   // purpose --- that is how the primitive is written and what Xilinx's own
   // templates do --- so the style warning about it is turned off here rather
@@ -316,17 +340,19 @@ module cadr_arty_a7 #(
       // different machines.  See the header for why every tick COUNT in the
       // design stays exactly as it was.
       .CLKOUT0_DIVIDE_F(10.000),  // 100 MHz, one tick = 10 ns
-      .CLKOUT1_DIVIDE  (5)        // 200 MHz, the controller's IDELAY reference
+      .CLKOUT1_DIVIDE  (5),       // 200 MHz, the controller's IDELAY reference
+      .CLKOUT2_DIVIDE  (SOC_CLK_DIVIDE)  // the soft processing system's own
   ) u_mmcm (
       .CLKIN1  (sysclk),
       .CLKFBIN (clk_fb),
       .CLKFBOUT(clk_fb),
       .CLKOUT0 (clk_raw),
       .CLKOUT1 (clk_ref_raw),
+      .CLKOUT2 (clk_soc_raw),
       .LOCKED  (mmcm_locked),
       .PWRDWN  (1'b0),
       .RST     (1'b0),
-      .CLKOUT0B(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(),
+      .CLKOUT0B(), .CLKOUT1B(), .CLKOUT2B(),
       .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
       .CLKFBOUTB()
   );
@@ -338,6 +364,10 @@ module cadr_arty_a7 #(
   // off nothing reads it and the fitter takes the whole branch out, buffer and
   // clock manager output together.
   BUFG u_bufg_ref (.I(clk_ref_raw), .O(clk_ref));
+
+  // The soft system's, likewise: with `SOC` clear nothing reads it and the
+  // buffer and the manager's output go with the generate block.
+  BUFG u_bufg_soc (.I(clk_soc_raw), .O(clk_soc));
 
   // ------------------------------------------------------------- the buttons
   //
@@ -1239,12 +1269,13 @@ module cadr_arty_a7 #(
     cadr_soc #(
         .RAM_WORDS   (SOC_RAM_WORDS),
         .FIRMWARE_HEX(FIRMWARE_HEX),
-        // The board's real clock.  The MMCM above makes 100 MHz from the
-        // board's own 100 MHz oscillator, and `CLKOUT0_DIVIDE_F` is the one
-        // place the tick is decided; this is that same number said in hertz,
-        // and `boards/arty-z7-20/vivado/tick.tcl` reads the divider rather
-        // than either of them.
-        .CLK_HZ      (100_000_000),
+        // **THE SOFT SYSTEM'S OWN CLOCK IN HERTZ, WHICH IS NOT THE
+        // MACHINE'S.**  The transmitter's rate and the timer's microsecond
+        // are both computed from it and both are on the soft side of the
+        // crossing.  `SOC_CLK_DIVIDE` beside the clock manager above is the
+        // one place the number is decided, and this is that same number said
+        // in hertz.
+        .CLK_HZ      (SOC_CLK_HZ),
         .BAUD        (SOC_BAUD)
     ) u_soc (
         // **THE BOARD's RESET AND NOT THE MACHINE's.**  A firmware reset by
@@ -1252,7 +1283,17 @@ module cadr_arty_a7 #(
         // word 6 would be in flight while the core holding it was being
         // cleared.  `cadr_console.sv`'s header has the same argument for the
         // console's own registers.
-        .clk(clk), .rst(rst),
+        //
+        // **AND TWO CLOCKS.**  `clk_soc` is the core's, its memory's, its
+        // UART's and its timer's; `clk` is the machine's, which the AXI
+        // bridge inside and the four faces outside all run on.  What crosses
+        // is one request and one answer, at the narrowest seam there is ---
+        // `rtl/plumbing/cadr_soc_cross.sv` --- and not a hundred and forty
+        // wires of AXI.  The reset is the board's either way and `cadr_soc`
+        // synchronises it onto the soft clock itself, in the one place that
+        // has to know.
+        .clk(clk_soc), .rst(rst),
+        .axi_clk(clk), .axi_rst(rst),
         .uart_tx(soc_uart_tx), .uart_rx(uart_txd_in),
         .ext_irq(pack_irq),
 
@@ -1454,6 +1495,15 @@ module cadr_arty_a7 #(
 
     // A line with nothing driving it idles high.
     assign soc_uart_tx = 1'b1;
+
+    // And the clock the soft system would have run on.  Named rather than
+    // left dangling, exactly as the memory controller's reference is one
+    // branch above; the fitter takes the whole thing out, the buffer and the
+    // clock manager's output with it.
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_soc_clk;
+    assign unused_soc_clk = &{1'b0, clk_soc};
+    /* verilator lint_on UNUSEDSIGNAL */
 
   end
 
