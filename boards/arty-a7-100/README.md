@@ -169,11 +169,39 @@ debugger this board could have with no processing system anywhere.
 **The boot.** The Arty Z7-20 comes up because the processing system reads a
 card. Here the part reads its own 16 MB QSPI flash at power-on, and that
 carries the bitstream and nothing else. `vivado/qspi.tcl` is the recipe and it
-has never been run.
+has never been run. "The card, and what is distributed" below says what is
+published for a board that boots this way.
 
 **The keyboard and the mouse.** The other board's USB host is the processing
 system's own controller. This board has no USB host at all, so these would be a
 host in fabric. They are last in this project's order of work on any board.
+
+## The card, and what is distributed
+
+**Nothing here is built yet; this is the plan.** This board has no processing
+system, so it has no boot ROM, no card controller and no Linux. A 7-series FPGA
+configures from QSPI flash or from JTAG, and this one reads its own 16 MB flash
+at power-on. So a card cannot be what boots it.
+
+**What is distributed for this board is two things.** The first is a **flash
+image**: what `write_cfgmem` makes out of the bitstream and the firmware beside
+it, written into the board's QSPI flash once. `vivado/qspi.tcl` is the recipe
+and it has never been run. The second is **the same card image every other
+board gets**, with its boot partition empty but for a README saying that this
+board boots from its flash and that nothing on that partition is read, and with
+the pack partition exactly as the other boards have it: a `README.TXT`, the two
+files of flags, and room for the packs the user copies in.
+
+**The card is worth shipping for a board that does not boot from it.** The disk
+packs are the machine's world and not the part's: a card carrying a band is a
+CADR's disk whichever board reads it, and one layout on every board means a
+card can be moved between boards and the world moves with it. Here the firmware
+reads the pack partition with a FAT library exactly as Linux does on the
+others, which is what makes the disk step's own card the same card. The disk
+step is where this board's card is first written.
+
+`boards/README.md` has the layout every board shares and `docs/boot.md` has the
+recipes.
 
 ## The fit, measured
 

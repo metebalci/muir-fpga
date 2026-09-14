@@ -11,7 +11,12 @@
 #
 # WHAT IT DECIDES.  U-Boot's own environment (boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/
 # uboot/cadr_cora.env) boots from the card by default: cadr.bit, the tree, zImage
-# and the root filesystem off the FAT partition, no network needed.  If this
+# and the root filesystem out of the cora-z7-07s/ folder on the FAT partition,
+# no network needed.  THE CARD MIRRORS THE SERVER: that folder is named as the
+# board's directory under `boards/` is, and holds the same four files under the
+# same names as the server's directory for the board.  This file stays at the
+# root of the partition beside BOOT.BIN and u-boot.img, because U-Boot imports
+# it before any board name is known.  If this
 # file sets `serverip`, the loader takes the network path instead: `dhcp`,
 # fetch cora-z7-07s/uEnv.net from that server, and run the netcmd it
 # defines, which fetches the same five files over TFTP.  That is this
