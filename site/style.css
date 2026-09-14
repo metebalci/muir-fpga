@@ -314,7 +314,7 @@ figure.screen img {
                             program --- and green is reserved for what silicon
                             itself has shown. */
   --st-wip:   #8250df;   /* being built now: somebody is in those files today --- violet, since blue sat too near the turquoise */
-  --st-ext:   #d0d7de;   /* outside the project */
+  --st-ext:   #d0d7de;   /* an existing component */
   --st-absent: #d1495b;  /* not available on this board: the cross, in the same
                             red the error lamp is drawn in.  It is the one mark
                             on these drawings that is not about progress. */
