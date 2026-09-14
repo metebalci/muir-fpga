@@ -111,17 +111,9 @@ and names it there. **None of these is started and none of them should be
 started from this note alone.** Where a decision is needed, this says so and
 does not take it.
 
-**Main memory.** The board carries 256 MB of DDR3L on the fabric's own pins,
-where the Arty Z7-20's DDR3 is the processing system's. So this needs a memory
-controller in fabric. There are two ways and the choice is a decision: Xilinx's
-Memory Interface Generator, which arrives as a directory of generated XML, or a
-controller written here. This project has declined generated IP directories
-twice already, for the clock generator and for the debug probe, and both times
-the hand-built answer was smaller and readable. A DDR3 controller is a much
-larger thing than either. **The decision has not been taken and this note does
-not take it.** What the machine needs is modest: `rtl/plumbing/cadr_ddr_map.sv`
-reserves 128 MB and what is reachable is 3,932,160 words, about 15 MB, so 256 MB
-is seventeen times what the CADR can address.
+**Main memory is built. It has its own section below.** The decision this
+paragraph used to leave open has been taken: the controller is Xilinx's Memory
+Interface Generator, and it is this repository's one generated IP.
 
 **The disk.** On the Arty Z7-20 a Linux program reads a pack file off the SD
 card and fills the block store over `S_AXI_HP2`. The card there is wired only to
@@ -202,6 +194,132 @@ step is where this board's card is first written.
 
 `boards/README.md` has the layout every board shares and `docs/boot.md` has the
 recipes.
+## Main memory
+
+The board carries 256 MB of DDR3L on the fabric's own pins, where the Arty
+Z7-20's DDR3 belongs to its processing system. So this board needs a memory
+controller in the fabric, and it has one.
+
+### The controller is generated, and it is the only thing here that is
+
+Everything else Xilinx offers as a directory of generated XML has been declined
+in this repository and hand-built instead. A DDR3 controller is not that kind
+of thing: it is a calibration sequence, a physical layer with per-bit deskew, a
+write levelling procedure and a bank manager, and nothing here could hold a
+hand-written one to anything.
+
+`mig/README.md` is the whole argument, the provenance of the project file it is
+generated from, the four changes made to that file, and how `make current`
+checks that what is committed is what the generator writes today.
+
+### What is between the machine and it
+
+The machine is unchanged. `rtl/plumbing/cadr_xbus_ddr.sv` asks for a 32-bit
+word at a byte address and waits, exactly as it does on the other board, and
+`rtl/plumbing/cadr_ddr_map.sv`'s constants have not moved. Three modules are
+new and each has a testbench.
+
+| | |
+|---|---|
+| `rtl/plumbing/cadr_mem_cross.sv` | the memory port across two clocks |
+| `rtl/plumbing/cadr_mig_ui.sv` | that port onto the controller's native user interface |
+| `rtl/plumbing/cadr_jtag_mem.sv` | the debugger's own way into memory, in front of the port |
+| `cadr_a7_memory.sv` | the four of those and the generated controller, wired together |
+
+`make build/a7_mem.pass` is the check. It runs the first three against a model
+of the controller's user interface, at two clock ratios, and it holds them to
+the things this family of module gets wrong: which sixteen-byte block, which of
+its four 32-bit lanes, which bytes to write, and the rules a crossing between
+two unrelated clocks has to keep. Seven mutation records are aimed at it.
+
+### The two clocks, and how they coexist
+
+The board has one 100 MHz oscillator and this design has one clock manager in
+its top level, which is what the shared `tick.tcl` requires and what makes the
+tick a number the fabric and the constraints cannot disagree about. That
+manager's oscillator runs at 1000 MHz and it divides it two ways: by ten for
+the machine's 10 nanosecond tick, and by five for the 200 MHz reference the
+controller calibrates its input delays against.
+
+The controller is given the machine's own 100 MHz as its system clock, and it
+makes its own clocks from it: 1300 MHz at its phase-locked loop, over four for
+a 325 MHz memory clock, over four again for an 81.25 MHz user clock.
+
+**So the machine's tick and the controller's user clock have no fixed
+relationship**, and the design crosses between them at exactly one place:
+`cadr_mem_cross`, on the `mem_*` handshake, which was already a four-phase
+handshake with one transaction in flight. The payload never needs a
+synchroniser and the argument for that is made good by construction rather than
+assumed: the address is registered on the near side and the level that
+announces it goes out a clock later, so it has stopped moving before anything
+on the far side looks at it.
+
+**That argument is told to the fitter as a maximum delay and not as a clock
+group**, which is a distinction with a reason. A grouped path is not timed at
+all, and a payload that is not timed at all is a payload the fitter may route
+through a swamp. `boards/arty-a7-100/cadr_a7_ddr.xdc` and the flow beside it
+say why, and the flow asserts that the bound reached the design rather than
+trusting it.
+
+### Where the machine's memory lands
+
+`rtl/plumbing/cadr_ddr_map.sv` reserves 128 MB at `0x1800_0000`, which is a
+Zynq layout where the bottom 384 MB belongs to Linux. This board has 256 MB and
+no Linux, so the same reservation goes at the top of the chip, which is where it
+is on the other board too.
+
+| | |
+|---|---|
+| main memory | DDR byte `0x0800_0000`, 64 MB reserved, 15 MB reachable |
+| the display's window | DDR byte `0x0C00_0000`, 8 MB reserved, 128 KB reachable |
+| the bottom 128 MB | nobody's yet |
+
+The translation is one constant bit rather than a subtraction, and the map's
+constants do not move. An address outside the reservation is refused with a
+zero word and a flag, not wrapped: wrapping it would put a wild write in DDR
+and let the machine carry on.
+
+### The observer, which is the hard part on a board with no processing system
+
+Every claim this project has made about a memory path on silicon rests on an
+observer outside the design under test. On the Arty Z7-20 that observer is the
+JTAG debugger reading DDR through the processing system, on a controller port
+the fabric never touches.
+
+**There is no such door here.** An Artix-7 has no debug access port onto memory
+and no second master anywhere: the DDR3L is on the fabric's pins and the only
+thing that can reach it is the fabric. So the debugger is given a path ---
+`rtl/plumbing/cadr_jtag_mem.sv`, one register on a second `BSCANE2` user chain,
+in front of the memory port, taking it when the machine is not using it.
+
+That module's header says plainly what is lost by the debugger's words
+travelling the machine's own path, and what recovers it. The three things that
+do are all the host's and not the fabric's: a poison injective in the address,
+all four lanes of a sixteen-byte block written differently and read back, and a
+tally that is not on this path at all. The tally counts what the controller's
+own user interface accepted and returned, which a fabric that issued nothing
+cannot fabricate.
+
+### The three scripts
+
+| | |
+|---|---|
+| `vivado/ddr_check.tcl` | can the debugger reach memory, and does what it writes come back |
+| `vivado/prove.tcl` | does the fabric write real memory (`PROVE=1`), and does it read it (`PROVE=2`) |
+| `vivado/ddr_run.tcl` | the machine running MIT's boot PROM out of real DDR3L |
+
+Every one names the JTAG cable by its serial number and none has a default, for
+the reason the recipe below gives.
+
+The last of those is the Arty Z7-20's step four. The boot PROM's only
+main-memory traffic is an identity copy of page 0 --- 256 reads and 256 writes,
+and it never looks at the data --- so against zero-filled memory not one word
+changes and a run compared against zero would test nothing. The poison is the
+script's, injective in the address, and the machine is held in reset while it
+is written, because the machine reaches its first main-memory cycle 118
+milliseconds after its own reset and poisoning a thousand words through a JTAG
+register takes seconds. The window holds the MACHINE and not the controller, so
+what is in DDR survives being let go.
 
 ## The fit, measured
 
@@ -278,6 +396,69 @@ interface folds with its address switches at zero, and the mouse's counters
 fold because nothing on its seven lines ever changes. Every fabric answer in
 the section above adds logic and block RAM that these figures do not include,
 and a DDR3 controller adds a great deal of it.
+
+### With the memory in it
+
+Placed and routed by the same flow at the commit these files land at, `DDR=1`
+against the same tree with `DDR` off, so the two rows are one comparison.
+
+| | memory-off | memory-on |
+|---|---|---|
+| worst slack | **+1.103 ns**, met | **+0.232 ns**, met |
+| failing endpoints | 0 of 27,156 | 0 of 40,343 |
+| hold | +0.093 ns, met | +0.008 ns, met |
+| pulse width | +3.000 ns, met | +0.206 ns, met |
+| Slice LUTs | 6,032 of 63,400 (9.51%) | 10,400 of 63,400 (16.40%) |
+| Slice registers | 2,405 of 126,800 (1.90%) | 6,541 of 126,800 (5.16%) |
+| block RAM tiles | 38 of 135 (28.15%) | 38 of 135 (28.15%) |
+| DSP | 0 of 240 | 0 of 240 |
+| clocks | 4 | 25 |
+| paths at the relaxed requirement | 18,862 of 27,274 | 18,860 of 40,505 |
+| bitstream | 3,825,992 bytes | 3,825,992 bytes |
+
+So main memory on this board costs **4,368 Slice LUTs and 4,136 registers**,
+which is 6.9% and 3.3% of the part, and **not one block RAM tile** --- the
+controller's queues and its physical layer's buffers are in the input and
+output tiles and in distributed memory, not in block RAM. That last row is
+worth having before anyone reaches for a smaller part, because block RAM is
+what binds on the Cora Z7-07S.
+
+**The memory-off figures moved by 23 LUTs and 2 registers** against the
+`86d787b` ones in the table above, which is the DDR3L's own ports arriving in
+the port list of both configurations and being driven to their safe state in
+one of them. The slack moved 0.124 ns, which is inside this project's own
+quarter-nanosecond placement noise and is not a finding.
+
+**Read the memory-on slack with what closed it attached.** Two constraints were
+missing from the first build that met every assertion in this flow and still
+reported **-5.367 ns**, and each is worth knowing because neither is visible in
+a timing report until it is written:
+
+The bus's own 80 nanosecond contract. `u_machine/processor/vma_reg[13]/C ->
+u_cross/addr_q_reg[13]/D` is twelve logic levels through the level-1 map and
+`main_byte_address`, 10.342 nanoseconds of which seven are routing, and it
+reported **-0.499 ns** timed at one tick. The machine's own bus specification
+gives it sixteen: "it is the responsibility of the bus master to assert good
+address, write, and data lines 80 ns. prior to asserting -XBUS.RQ". The Arty
+Z7-20 met the identical wall one module along.
+
+The tally into the debugger's shift register. The tally counts in the
+controller's clock and the shift register captures it in the test access port's,
+and an unconstrained pair of clocks asks for whatever period they happen to
+share --- 1.538 nanoseconds here, and **-5.367 ns**, the worst path in the
+design. The Arty Z7-20's debugger reads its tally off pins while the fabric is
+still counting and that board's notes call it a count that was true at some
+instant; this says the same thing to the fitter.
+
+The two proving boards are the same design with the witness in the machine's
+place on the port, so they are a shade smaller and a shade faster: `PROVE=1`
+closes at **+1.316 ns** on 0 of 39,961 endpoints with 10,320 Slice LUTs and
+6,366 registers, and `PROVE=2` at **+1.161 ns** on 0 of 40,071 with 10,354 and
+6,403. **Their multicycle exception count is six where the memory board's is
+eight**, and that is the right answer rather than a missing constraint: the two
+that are absent are the bus's 80 nanosecond contract, whose exception starts at
+the machine's own registers --- and on a proving board the machine does not
+drive the port at all, so it reaches no path and is not listed.
 
 The out-of-context flow, `vivado/fit.tcl`, synthesises `cadr_machine` on its
 own with no top level, no output fold, no MMCM and no package pins:
@@ -366,6 +547,79 @@ already puts the vendor-specific pieces that are not a board's in
 constraints sit beside `rtl/plumbing/xilinx7/cadr_probe.sv`, which is the
 module they constrain. Moving them is a commit that touches every board
 directory and it is owed.
+
+### On silicon
+
+Run on the board with the `DDR=1` bitstream above, twice, the second time to
+reproduce the first.
+
+**The debugger reaches this board's DDR3L.** `vivado/ddr_check.tcl` found one
+device in the chain, IDCODE `0x13631093`, selected USER2 with the instruction
+register capturing `0x35`, and read `0x4d454d57` --- `MEMW` --- out of the
+window. The controller reported its calibration finished. Four different words
+written one 32-bit lane at a time into one sixteen-byte block came back in
+their own lanes, and 64 words poisoned injectively in the address read back as
+the poison written at their own address.
+
+**And the machine ran MIT's boot PROM out of it.** `vivado/ddr_run.tcl` held
+the machine in reset, poisoned 1,024 words at `0x18000000` upwards, read them
+back to establish that the debugger's own path was good, let the machine go,
+and waited 400 milliseconds:
+
+    MEM: the machine asked for 256 read(s) and 256 write(s); the controller
+    MEM: answered 256 and 256
+    MEM: all 1024 words are byte-identical to their poison, page 0 and its
+    MEM: margin
+
+256 and 256 is exactly the boot PROM's `PAGE-0-PARITY-FIX`: it reads each of
+page 0's 256 words and writes the same word straight back, and it never looks
+at the data. **Both halves are needed and neither would do on its own.** The
+words say the path did no harm, and cannot say the machine used it, because a
+machine whose port was dead times every cycle out and leaves the same words
+untouched. The tally says how many transactions the controller itself accepted
+and answered, which a fabric that issued nothing cannot fabricate --- and it is
+not on the path the debugger's own words travel.
+
+The second run reported the same figures.
+
+**The lamps say almost nothing about any of this, and that is expected.** With
+the memory answering, 512 of the boot PROM's 17,466 bus cycles end in about a
+hundred and fifty nanoseconds instead of on the 4.25 microsecond timer, and the
+other 16,951 are disk polls the disk controller's own registers answer either
+way. So LD5 blinks at 1.5 Hz as it always did, LD6 blinks with the microcycles a
+hair faster, LD4 is `MACHRUN` at very nearly the brightness it had, LD7 is dark
+for want of a drive, the tricolour LD1 is blue because the machine never leaves
+its boot PROM without a disk, and the tricolour LD0 is dark. The Arty Z7-20's
+own notes reached the same conclusion about its memory and say so: there is no
+lamp-visible difference between memory working and memory absent.
+
+What a person at the board WILL see is the scripts holding the machine: LD6
+stops blinking and LD4 goes out while the debugger poisons memory, and both
+come back when it lets go. All three scripts let go before they exit.
+
+**Both proving steps passed too.** `PROVE=1`: the debugger poisoned 64 words
+around the proving address, released the witness, and read back the fabric's
+own word at its own address with the three lanes it shares a sixteen-byte block
+with untouched. `PROVE=2`: the debugger put the word there itself, released the
+witness, and read what the fabric had read and written back, raw, seven blocks
+away --- "with no constant in between", which is the difference between this
+and a match bit the fabric holds.
+
+**AND PROGRAMMING THIS BOARD IS NOT RELIABLY ONE SHOT, WHICH THE WINDOW FOUND
+AND THE DONE CHECK CANNOT.** Three of the six programmings in this session did
+not take: `vivado/program.tcl` reported `DONE after programming: 1` and the
+window then answered `0x00000000` --- which is what an unselected user scan
+chain reads --- on every run until the same file was programmed a second time,
+after which it answered `MEMW` and everything passed. Re-running the readout
+without re-programming never helped, so it is the configuration that did not
+happen and not a settling time.
+
+That script's own note already says its DONE check cannot prove a part took
+THIS bitstream, because DONE is already high on a part configured a minute ago.
+**The window is the first thing on this board that can**: a register that says
+its own name cannot be mistaken for a chain nobody selected. Anything run here
+should read `MEMW` before it believes a word of what follows, and all three
+scripts do.
 
 ## The recipe, and its first run on silicon
 
