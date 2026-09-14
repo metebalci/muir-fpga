@@ -1180,12 +1180,14 @@ module cadr_io_board (
         // what the board did.  `tb/cadr_gp0_split_tb.cpp` runs two bursts
         // at 9600 and at 300 baud and fails without this term.
         //
-        // muir's `Pci::transmit` sets the flag here whatever the
-        // transmitter is doing, and its `status()` masks it with `CR0`, so
-        // the flag survives a disable there; muir's own netlist-level 2651
-        // in `src/part.rs` raises it only inside `if tx_on`, which is this.
-        // The two models disagree and the sheet settles it; `docs/io-board.md`
-        // carries the reading and an issue asks muir to take the same one.
+        // muir agrees, in both of its models, since a55b6c2: `Pci::transmit`
+        // sets the flag on a drain only while the transmitter is on
+        // (`self.tx_empty = self.tx_on()`) and its `status()` masks it with
+        // `CR0`; the netlist-level 2651 in `src/part.rs` raises it under
+        // `tx_on && !thr_full` and keeps its generator running while a frame
+        // is in flight.  Before that the behavioural model set the flag
+        // whatever the transmitter was doing, the two models disagreed, and
+        // the sheet settled it; `docs/io-board.md` carries the reading.
         if (s_tx_on && !(s_thr_full && s_cts)) s_tx_empty <= 1'b1;
       end
       if (ser_tx_take && s_thr_full && s_tx_on && s_cts && (!s_shifting || ser_tx_done)) begin

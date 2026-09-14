@@ -992,14 +992,19 @@ handler runs. `tb/cadr_gp0_split_tb.cpp` runs MIT's walk through two
 transmissions with the turn-off between them, at 9600 baud and at 300. Two
 mutation records break one term each.
 
-**muir's two models of this chip disagree here and the sheet decides.** Its
-behavioural `serial::Pci::transmit` raises the flag whenever the shift
-register runs out, whatever the transmitter is doing. Its `status()` masks
-the flag with `CR0`, so the flag survives a disable and is presented at the
-next enable. Its netlist-level 2651 in `src/part.rs` raises the flag only
-inside `if tx_on`, and so agrees with the sheet. Driving muir's own `IoBoard`
-through MIT's walk twice, unmodified, wedges on the second burst with the
-status register reading `0o305`. That is the board's own value.
+**muir's two models of this chip disagreed here, and the sheet decided.** At
+the time its behavioural `serial::Pci::transmit` raised the flag whenever the
+shift register ran out, whatever the transmitter was doing. Its `status()`
+masked the flag with `CR0`, so the flag survived a disable and was presented
+at the next enable. Its netlist-level 2651 in `src/part.rs` raised the flag
+only while the transmitter was on, and so agreed with the sheet. Driving that
+muir's own `IoBoard` through MIT's walk twice, unmodified, wedged on the
+second burst with the status register reading `0o305`. That is the board's own
+value. muir has since taken the sheet's reading in both models. The
+behavioural model sets the flag on a drain only while the transmitter is on.
+The netlist part raises it under the enable with the holding register empty,
+and keeps its generator running while a frame is in flight. The pinned muir
+carries both changes.
 `build/iob.pass` compares this card against the behavioural model over
 82,509,813 ticks and cannot see the difference. Nothing in that trace
 disables a transmitter with a character still in its shift register and then
