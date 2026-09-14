@@ -97,6 +97,34 @@ set_false_path -to   [get_ports { led0_* led1_* led2_* led3_* }]
 set_false_path -from [get_ports { btn[*] }]
 set_false_path -from [get_ports { sw[*] }]
 
+## -------------------------------------------------- the board's USB-UART
+##
+## **THE NAMES ARE FROM THE HOST's POINT OF VIEW AND THEY READ BACKWARDS.**
+## `uart_rxd_out` is what the FPGA DRIVES and the USB bridge receives;
+## `uart_txd_in` is what the bridge drives and the FPGA receives. Digilent's
+## master file names them that way and the names are kept so that a pin can be
+## checked against the board by eye.
+##
+## **THE ARTY Z7-20 CONSTRAINS NO UART PINS AT ALL**, which is worth knowing
+## before looking for these there: on that board the serial hardware belongs to
+## the processing system and the fabric cannot reach it. Here the line is the
+## fabric's, and it is the soft processing system's console --- not the CADR's
+## own serial port, which is the 2651 on the I/O board and a different thing
+## entirely.
+##
+## Pins from Digilent's `Arty-A7-100-Master.xdc`, lines 83 and 84.
+set_property -dict { PACKAGE_PIN D10   IOSTANDARD LVCMOS33 } [get_ports { uart_rxd_out }]; #IO_L19N_T3_VREF_16 Sch=uart_rxd_out
+set_property -dict { PACKAGE_PIN A9    IOSTANDARD LVCMOS33 } [get_ports { uart_txd_in }];  #IO_L14N_T2_SRCC_16 Sch=uart_txd_in
+
+## **BOTH FALSE-PATHED, AND A BAUD RATE IS WHY.** At 115,200 baud one bit
+## lasts 868 ticks of this board's clock, so neither end of this line has a
+## setup relationship with anything: the transmitter holds a level for the
+## whole of a bit time, and the receiver synchronises the pin through two
+## stages before it looks at it and then samples in the middle of a bit. A
+## timing constraint here would be a claim about a wire nothing is racing on.
+set_false_path -to   [get_ports { uart_rxd_out }]
+set_false_path -from [get_ports { uart_txd_in }]
+
 ## `witness` has no timing requirement, and saying so is not a convenience.
 ##
 ## It is a reduction of every one of `cadr_machine`'s outputs into one bit, and
