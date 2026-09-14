@@ -375,6 +375,31 @@ module cadr_machine #(
     output var logic        dbg_in_ack,
     output var logic [15:0] dbd_out,
     output var logic [1:0]  dbd_oe,
+    // **AND THE OTHER END OF THE SAME CABLE: THE DBGOUT PAGE.**  This machine
+    // as somebody else's debugger, which is CC on this board writing
+    // `0o766100`-`0o766137`.  `rtl/machine/cadr_busint_regs.sv` holds those
+    // four registers; what leaves here is the four control lines and the
+    // sixteen data lines they drive, and what comes back is the
+    // acknowledgement and the lines RESOLVED --- a byte nobody drives reads
+    // as ones, the SIP at DBGIN 0A22 being on the far board.
+    //
+    // **`dbgout_live` IS THE WHOLE OF THE DIFFERENCE BETWEEN muir's TWO
+    // ARMS.**  `debug_cable` false answers the cycle at `-UB MSYN` with the
+    // pull-ups, and true waits for `DEBUG OUT ACK`.  So a top level with no
+    // connector ties it low, `dbgout_dbd_in` to all ones and `dbgout_ack`
+    // low, and this machine reads ones from its debug registers and carries
+    // on --- which is what MIT's board does with a bare connector.
+    //
+    // These SEVEN used to be tied off inside this module, with a note saying
+    // the wrapper change and its wiring were one commit.  This is that
+    // commit: `rtl/plumbing/cadr_dbg_cable.sv` on Pmod JA is what they reach.
+    output var logic        dbgout_req,
+    output var logic        dbgout_wr,
+    output var logic [1:0]  dbgout_a,
+    output var logic [15:0] dbgout_dbd,
+    input  var logic        dbgout_ack,
+    input  var logic [15:0] dbgout_dbd_in,
+    input  var logic        dbgout_live,
     // The modifier register's two effects.  `debuggee_reset` is bit 1, a
     // LEVEL that is this processor's power-on reset --- it goes out here and
     // comes back as `rst`, which the top level makes out of the board's own
@@ -788,23 +813,20 @@ module cadr_machine #(
       // The DBGOUT end of the same cable: this machine as the debugger, which
       // is the four registers CC writes at `0o766100`-`0o766137`.
       //
-      // **IT IS TIED OFF AS AN UNPLUGGED CABLE HERE AND THE CONNECTOR IS THE
-      // TOP LEVEL'S.**  `rtl/plumbing/cadr_dbg_cable.sv` is what puts it on a
-      // Pmod header and decides whether this board is the debugger, and a
-      // port of this module that the top level did not connect would be a
-      // PINMISSING that stops `build/arty.pass` --- so the wrapper change and
-      // its wiring are one commit, which this is not.  What the tie says is
-      // exactly muir's `debug_cable` false: no board at the far end, the
-      // lines all ones off the pull-ups, and the page answers its own machine
-      // at `-UB MSYN`.  A CADR with nothing plugged into it reads ones from
-      // its debug registers, which is what MIT's board does.
+      // **IT LEAVES THIS MODULE AND THE CONNECTOR IS THE TOP LEVEL'S.**
+      // `rtl/plumbing/cadr_dbg_cable.sv` is what puts it on a Pmod header and
+      // decides whether this board is the debugger.  A board with no
+      // connector at all ties `dbgout_live` low and `dbgout_dbd_in` to all
+      // ones out there, which is exactly muir's `debug_cable` false: no board
+      // at the far end, the lines carried by the pull-ups, and the page
+      // answering its own machine at `-UB MSYN`.
       .dbgout_req   (dbgout_req),
       .dbgout_wr    (dbgout_wr),
       .dbgout_a     (dbgout_a),
       .dbgout_dbd   (dbgout_dbd),
-      .dbgout_ack   (1'b0),
-      .dbgout_dbd_in(16'hFFFF),
-      .dbgout_live  (1'b0),
+      .dbgout_ack   (dbgout_ack),
+      .dbgout_dbd_in(dbgout_dbd_in),
+      .dbgout_live  (dbgout_live),
       .debuggee_reset (debuggee_reset),
       .timeout_inhibit(timeout_inhibit),
       .dbg_rst    (dbg_rst),
@@ -1050,20 +1072,13 @@ module cadr_machine #(
   // -PROG.RESET is the other pulse a mode-register write makes, and the
   // processor does not act on it yet. See the note at the top.
   logic unused;
-  // The DBGOUT end, folded rather than left: the tie above says there is no
-  // cable, so nothing reads what this machine would put on one.  The fold
-  // goes when the connector is attached at the top level.
-  logic        dbgout_req, dbgout_wr;
-  logic [1:0]  dbgout_a;
-  logic [15:0] dbgout_dbd;
   assign n_loadmd_o = n_loadmd;
   assign n_memrq_o  = n_memrq;
   assign n_memack_o = n_memack;
   assign n_memgrant_o = n_memgrant;
   assign rdcyc_o    = rdcyc;
   assign dev_wdata  = wdata;
-  assign unused = &{1'b0, prog_reset,
-                    dbgout_req, dbgout_wr, dbgout_a, dbgout_dbd};
+  assign unused = &{1'b0, prog_reset};
 
 endmodule
 

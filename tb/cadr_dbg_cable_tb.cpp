@@ -425,6 +425,118 @@ int main(int argc, char **argv) {
     if (dut->a_engaged) failures += Fail("A's role dropped once the cycle had gone", 1, 0);
   }
 
+  // ---- 7. THE ROLE IS A BOARD'S OWN, AND THE DBGIN PAGE IS NEVER SWITCHED
+  // ---- OFF BY IT ---------------------------------------------------------
+  //
+  // A board becomes the debugger by being told to, and it stays a DEBUGGEE
+  // through its own register window while it does --- which is what
+  // `docs/debug-cable.md` means by "only the connector changes hands".  A
+  // real CADR has both connectors live for the same reason, so this is the
+  // fabric being faithful rather than being convenient.
+  //
+  // What can go wrong, and what is asserted:
+  //
+  //   a board told to connect drives the connector, and the other end sees
+  //   it --- which is leg 2 for A and is asked here of B, so that the role
+  //   is a property of the module and not of which board the check happens
+  //   to have wired as the debugger;
+  //
+  //   its own DBGIN page still answers its window while it does.  The window
+  //   arm is stimulus here, as it is on the board a debugger is: what is
+  //   watched is the ADDRESS latch inside `cadr_dbgin.sv`, which takes the
+  //   word the holder drove;
+  //
+  //   and a board told to disconnect goes QUIET --- it drives no pad at all
+  //   with nothing else on the cable --- while its window goes on answering.
+  long b_role_ticks = 0, win_writes = 0, short_sessions = 0;
+  {
+    // A has let the role go at the end of leg 6.  Give the cable a frame to
+    // settle so that neither board believes anything is on it.
+    Idle(600);
+    const long a_before = a_drove, b_before = b_drove;
+    dut->connect_b = 1;
+    Idle(600);
+    if (!dut->b_engaged) failures += Fail("B engaged after connect", 0, 1);
+    if (dut->a_engaged) failures += Fail("A engaged after it let the role go", 1, 0);
+    if (!dut->a_foreign)
+      failures += Fail("A seeing the debugger that took the cable", 0, 1);
+    if (b_drove == b_before)
+      failures += Fail("B driving the connector with the role", 0, 1);
+    if (a_drove == a_before)
+      failures += Fail("A answering the debugger that took the cable", 0, 1);
+    b_role_ticks = tick;
+
+    // And B's own DBGIN page still answers its window, with B holding the
+    // cable's other role.  `a = 3` is `-DB ADR2 CLK`, the address latch, and
+    // the word is poison: both halves distinct, neither `0x0000` nor
+    // `0xFFFF`, and not a value anything else in this run drives.
+    dut->b_win_a = 3;
+    dut->b_win_wr = 1;
+    dut->b_win_dbd = 0x5C3A;
+    dut->b_win_req = 1;
+    Idle(64);
+    if (dut->b_holder != 0)
+      failures += Fail("B's window holding its own page while B is the debugger",
+                       dut->b_holder, 0);
+    dut->b_win_req = 0;
+    Idle(64);
+    ++win_writes;
+    if (dut->b_address != 0x5C3A)
+      failures += Fail("B's DBGIN page answering its window while B debugs somebody",
+                       dut->b_address, 0x5C3A);
+
+    // Told to disconnect, B goes quiet: with A a debuggee that has stopped
+    // hearing anybody, NOTHING on this cable is driven.
+    dut->connect_b = 0;
+    Idle(1200);
+    if (dut->b_engaged) failures += Fail("B let the role go", 1, 0);
+    const long a_quiet = a_drove, b_quiet = b_drove;
+    Idle(600);
+    if (a_drove != a_quiet || b_drove != b_quiet)
+      failures += Fail("pads driven by two boards that have both let go",
+                       (unsigned long)((a_drove - a_quiet) + (b_drove - b_quiet)), 0);
+    if (dut->a_foreign || dut->b_foreign)
+      failures += Fail("a debugger still on a cable nobody is driving", 1, 0);
+
+    // And the window goes on answering a board that is nobody's debugger.
+    dut->b_win_dbd = 0xA3C5;
+    dut->b_win_req = 1;
+    Idle(64);
+    dut->b_win_req = 0;
+    Idle(64);
+    ++win_writes;
+    if (dut->b_address != 0xA3C5)
+      failures += Fail("B's DBGIN page answering its window after the role was given back",
+                       dut->b_address, 0xA3C5);
+    dut->b_win_wr = 0;
+    dut->b_win_a = 0;
+    dut->b_win_dbd = 0;
+
+    // **AND A SHORT SESSION, WHICH IS A DIFFERENT QUESTION FROM A LONG ONE.**
+    // What a board coming out of the role knows about the connector is
+    // nothing, and there are two ways to forget: the activity timer, and the
+    // two synchroniser flops in front of it.  A board that held the role for
+    // longer than `LOSS_T` has a timer that has saturated on its own, so the
+    // long session above cannot tell a held timer from a free-running one.
+    // Connect and disconnect again inside `LOSS_T` and it can: a timer left
+    // running is still near zero, so the board comes out of the role
+    // believing somebody is driving the forward group and drives the return
+    // one --- on top of the debuggee that is driving it.
+    //
+    // A race check needs the stimulus that loses the race, and the stimulus a
+    // testbench reaches for first is the comfortable one.
+    {
+      Idle(1200);
+      dut->connect_b = 1;
+      Idle(120);
+      if (!dut->b_engaged) failures += Fail("B engaged on a short session", 0, 1);
+      dut->connect_b = 0;
+      Idle(400);
+      if (dut->b_engaged) failures += Fail("B let a short session go", 1, 0);
+      ++short_sessions;
+    }
+  }
+
   // ---- and nothing was ever driven from both ends -------------------------
   if (contention)
     failures += Fail("pads driven from both ends of the cable at once", (unsigned long)contention,
@@ -448,6 +560,9 @@ int main(int argc, char **argv) {
   least("cycles over a cable with a beat flipped in it", corrupted, 4);
   least("cables pulled under a standing request", pulled, 1);
   least("roles held under a cycle", held_under_cycle, 1);
+  least("ticks with the second board holding the role", b_role_ticks, 1);
+  least("window writes through a page whose board held a role", win_writes, 2);
+  least("roles taken and given back inside the loss interval", short_sessions, 1);
   least("ticks with two boards cabled together and nobody told anything", quiet_ticks, 600);
   if (thin) return 1;
 
@@ -470,8 +585,18 @@ int main(int argc, char **argv) {
       "    with two boards cabled together and neither told anything, where a debuggee drives\n"
       "    nothing until it hears a debugger; a second board told to connect while the first\n"
       "    had the role, which it refused because it could see a debugger on the forward group;\n"
-      "    and a role dropped inside a cycle, which was held until the cycle had gone.\n",
-      tick, peeks, 0xFF00u | kErrStatus, delayed, corrupted, quiet_ticks);
+      "    and a role dropped inside a cycle, which was held until the cycle had gone.\n"
+      "    AND THE ROLE IS A BOARD'S OWN AND THE DBGIN PAGE IS NEVER SWITCHED OFF BY IT: the\n"
+      "    SECOND board was told to connect and took the role, drove the connector and was\n"
+      "    heard by the first, which saw a foreign debugger and answered it; %ld write(s) went\n"
+      "    through that board's OWN window into its OWN DBGIN page while it held the cable's\n"
+      "    other role, and the address latch took each word, which is what `only the connector\n"
+      "    changes hands` means; told to disconnect it went quiet, with not one pad driven at\n"
+      "    either end over 600 ticks, and its window went on answering.  AND ONCE MORE IN A\n"
+      "    SHORT SESSION --- the role taken and given back inside the loss interval, where a\n"
+      "    board's timer has not had time to saturate on its own and only its being HELD\n"
+      "    makes it forget the connector.  A long session cannot tell those two apart.\n",
+      tick, peeks, 0xFF00u | kErrStatus, delayed, corrupted, quiet_ticks, win_writes);
   dut->final();
   delete dut;
   return 0;

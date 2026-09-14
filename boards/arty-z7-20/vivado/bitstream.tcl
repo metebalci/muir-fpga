@@ -212,7 +212,26 @@ if {![file exists $prom]} {
     exit 1
 }
 
-read_verilog -sv [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]
+# **THE GLOB DROPS THE SOFT PROCESSING SYSTEM, AND IT HAS TO.**
+# `rtl/plumbing/cadr_soc*.sv` is the Arty A7-100's Ibex core and the four
+# modules around it: a part with no processing system of its own needs one in
+# fabric, and this board has a hard one. Those files name Ibex's own packages,
+# which live under `third_party/ibex/` and are read only by that board's flow,
+# so a glob that took them in stops synthesis with `'ibex_pkg' is not
+# declared` --- measured, and it is what a glob does the moment somebody adds
+# a file to a shared directory for another board.
+#
+# Read rather than filtered would be the other way round, and it is worth
+# saying why this way. A list would have to be kept in step with `rtl/` by
+# hand, which is the thing the glob exists to avoid; naming what does NOT
+# belong is one line and rots loudly, because a soft-system file that stopped
+# matching would stop the build with the same error.
+set sources {}
+foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv] {
+    if {[string match */cadr_soc*.sv $f]} { continue }
+    lappend sources $f
+}
+read_verilog -sv $sources
 synth_design -top cadr_arty -part $part \
     -generic PROM_HEX=[file normalize $prom] \
     -generic PROBE_DEPTH=$probe_depth \
@@ -310,9 +329,13 @@ if {$hdmi > 0} {
 if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
 # And the Pmod carrier's, which is the same cone with a second reader on it:
 # `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` names the frame registers of the
-# DBGIN connector's sender. Gated the same way, because with no window
-# `dbg_in_req` is tied low and the whole sender folds to constants.
-if {$port > 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc }
+# connector's sender. **NOT GATED, where the window's is.** A board is always
+# a DEBUGGEE --- Pmod JA is instantiated whatever the switches say, because a
+# CADR answers a debugger that plugs in and nothing has to be set for it ---
+# so the machine's diagnostic mux reaches that sender on every board. Gated,
+# the memory-off board came out at -9.600 ns on 596 endpoints with the file
+# read by nothing; that file's own header has the measurement.
+read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
 
 # ...and then ask the design whether that worked, rather than trusting it.
 source boards/arty-z7-20/vivado/constraints_check.tcl
@@ -349,8 +372,12 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 # feeds it is the window's own fast registers and not the machine's mux.
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
-if {$port > 0}        { lappend inside g_ddr.u_axi g_ddr.u_debug_window \
-                                      u_dbgin_pmod }
+if {$port > 0}        { lappend inside g_ddr.u_axi g_ddr.u_debug_window }
+# **AND THE CONNECTOR IS IN THE LIST WHATEVER THE SWITCHES SAY**, for the
+# reason its constraint file is read unconditionally: a board is always a
+# debuggee, so the cable's sender is relaxed on every board and the invariant
+# would otherwise fail on the memory-off one.
+lappend inside u_dbg_cable
 assert_constraints_scoped $inside $tick
 
 # --- 1. did the constraints apply?
@@ -446,13 +473,14 @@ if {$port > 0} { assert_multicycle_applied $tick 16 }
 # that it reached a path at all.
 if {$port > 0} {
     assert_instance_timing $tick 4 *g_ddr.u_debug_window/* {*sts_dbd_reg*}
-    # And the Pmod carrier's, the same two halves. The frame registers of the
-    # DBGIN connector's sender may carry it; the strobe's synchroniser, the
-    # beat counter, the gap counter and the dead man may not, because a
-    # counter given four ticks to settle is a counter that no longer counts.
-    assert_instance_timing $tick 4 *u_dbgin_pmod/* {*tx_frame_reg* *tx_d_reg*}
-    assert_multicycle_applied $tick 4
 }
+# And the Pmod carrier's, the same two halves, and ASSERTED ON EVERY BOARD
+# because the connector is on every board. The frame registers of the
+# carrier's sender may carry it; the strobe's synchroniser, the beat counter,
+# the gap counter and the dead man may not, because a counter given four ticks
+# to settle is a counter that no longer counts.
+assert_instance_timing $tick 4 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
+assert_multicycle_applied $tick 4
 
 opt_design
 place_design

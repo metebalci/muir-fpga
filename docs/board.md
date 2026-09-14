@@ -566,6 +566,39 @@ has the whole of how the two work together.
 The pin is `M20`, `LVCMOS33`, from Digilent's `Arty-Z7-20-Master.xdc`. SW1 is
 `M19` and is brought out so that the design's port list matches the board.
 
+## The Pmod headers
+
+The board has two Pmod headers and this design uses one of them.
+
+    JA   MIT's debug cable, both directions
+    JB   nothing
+
+MIT's cable joins one CADR's `DBGOUT` connector to another's `DBGIN`. Here the
+whole of it is JA: four pins each way, one strobe and three data lines a
+direction. The low four are the debugger's and the high four the debuggee's, so
+a straight Pmod ribbon from one board's JA to another's JA maps every signal to
+its counterpart. The pads are bidirectional, because the role is not fixed at
+synthesis.
+
+**A board is a debuggee with nothing set.** It answers a debugger that plugs
+into JA exactly as MIT's board answers one on its DBGIN, and that is the
+power-on state. `--debug-cable-connect` in the card's `fpgarc`, or
+`cadr-console debug-cable-connect` at any time, asks for the other role.
+`cadr-console debug-cable` says which role this board has.
+
+**The connector is in every bitstream this board builds**, memory on or off,
+because a board is always a debuggee.
+
+**A ribbon between two boards joins their supplies, and that has to be dealt
+with before one is made.** A twelve-pin Pmod header carries ground on pins 5
+and 11 and 3.3 V on 6 and 12. The grounds must be joined and the supplies must
+not. A cable for this link joins pins 1 to 4, pins 7 to 10 and the grounds, and
+leaves the supply pins open.
+
+**Nothing of this has been shown on a board.** No cable exists and the two
+boards that would take one are running Lisp and Linux.
+`docs/debug-cable.md` is the whole of the cable.
+
 ## What the LEDs say
 
 The six lamps read left to right as the machine's own progress.

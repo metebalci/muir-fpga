@@ -195,11 +195,16 @@ on a board with a processing system that is the reset to reach for.
 
 ## The debug cable
 
-The decision is one connector, JA, carrying the whole link both ways, with JB
+MIT's cable is one connector, JA, carrying the whole link both ways, and JB is
 unassigned. A board is a debugger or a debuggee by configuration and never both
-at once. The sixteen pins in `cadr_cora.xdc` are the earlier two-connector
-arrangement, which is what is built today; they are the same sixteen pins the
-Arty Z7-20 uses, so a cable between the two boards needs nothing said about it.
+at once. The eight pins in `cadr_cora.xdc` are bidirectional, and they are the
+same eight package pins the Arty Z7-20 uses, so a cable between the two boards
+needs nothing said about it.
+
+A board with nothing said is a debuggee. `--debug-cable-connect` in `fpgarc`,
+or `cadr-console debug-cable-connect`, asks for the other role.
+`docs/debug-cable.md` is the whole of it. Nothing of it has been shown on a
+board.
 
 ## The processing system
 

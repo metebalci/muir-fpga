@@ -214,28 +214,26 @@ module cadr_cora #(
     // the assignment and the argument for it.
     output var logic       led0_r, led0_g, led0_b,
     output var logic       led1_r, led1_g, led1_b,
-    // MIT's debug cable on the two Pmod headers, JA carrying DBGOUT and JB
-    // DBGIN.  **THE DECISION IS ONE CONNECTOR, JA, CARRYING THE WHOLE LINK
-    // BOTH WAYS, WITH JB UNASSIGNED** --- a board is a debugger or a debuggee
-    // by configuration and never both at once --- and these sixteen pins are
-    // the earlier arrangement, which is what is built.  `docs/debug-cable.md`
-    // says which is which. Eight pins a connector, four each way: one strobe
-    // and three data lines, `rtl/plumbing/cadr_dbg_pmod.sv`. A cable joins one
-    // board's JA to another's JB, and the pin roles are mirrored between the
-    // two headers so that a straight Pmod cable maps pin one to pin one ---
-    // which also makes a cable from this board's JA to its own JB a loopback
-    // of the whole carrier. The eighth wire is a STROBE and not a clock:
-    // nothing on either side is clocked by it, which is just as well, because
-    // JB has no clock-capable pin.  `boards/cora-z7-07s/cadr_cora.xdc` has the
-    // pins, and all sixteen are the same pins the Arty Z7-20 uses.
-    output var logic       dbgout_stb,
-    output var logic [2:0] dbgout_d,
-    input  var logic       dbgout_ret_stb,
-    input  var logic [2:0] dbgout_ret_d,
-    input  var logic       dbgin_stb,
-    input  var logic [2:0] dbgin_d,
-    output var logic       dbgin_ret_stb,
-    output var logic [2:0] dbgin_ret_d
+    // **MIT'S DEBUG CABLE ON ONE PMOD HEADER, JA, AND JB CARRIES NOTHING.**
+    // A board is a debugger or a debuggee on this cable and never both at
+    // once, so a second connector bought only a chain of three machines ---
+    // and the register window already covers the case it looked like it
+    // bought, muir on this board's own Arm cores reaching the DBGIN page
+    // whatever the connector is doing.
+    //
+    // Eight pins, four each way: one strobe and three data lines a direction,
+    // `rtl/plumbing/cadr_dbg_pmod.sv` under `rtl/plumbing/cadr_dbg_cable.sv`.
+    // A straight Pmod ribbon joins pin one to pin one, so the LOW four are
+    // the debugger's at both ends and the HIGH four the debuggee's, and which
+    // end drives which group follows the role. The eighth wire is a STROBE
+    // and not a clock: nothing on either side is clocked by it.
+    //
+    // **THEY ARE BIDIRECTIONAL PADS AND THEY HAVE TO BE**, because the role
+    // is not fixed at synthesis: the same four pins are driven on a debugger
+    // and listened to on a debuggee.  `boards/cora-z7-07s/cadr_cora.xdc` has
+    // the pins, and all eight are the same package pins the Arty Z7-20 uses,
+    // so a cable between the two boards needs nothing said about it.
+    inout  wire  [7:0]     ja
 );
 
   // ------------------------------------------------------------ the clock
@@ -451,14 +449,23 @@ module cadr_cora #(
   logic        dbg_in_req, dbg_in_wr, dbg_in_ack;
   logic [1:0]  dbg_in_a, dbd_oe;
   logic [15:0] dbd_to_machine, dbd_from_machine;
-  // And the same cable again, as the two Pmod connectors carry it. `jb_req`
-  // is a second board's debugger arriving at this machine's DBGIN page and
-  // joins the window's at `rtl/plumbing/cadr_dbg_join.sv`; `ja_back` is what
-  // a second board answers this board's own debugger with, and is folded ---
-  // see the instantiation. The packing is the carrier's twenty bits and is
-  // the same packing `tb/cadr_dbg_pmod_harness.sv` uses.
-  logic [19:0] jb_req, ja_back;
-  logic        ja_live, jb_live, dbg_holder;
+  // And the same cable again, as Pmod JA carries it. `cab_*` is a second
+  // board's debugger arriving at this machine's DBGIN page and joins the
+  // window's at `rtl/plumbing/cadr_dbg_join.sv`; `dbgout_*` is this machine's
+  // own DBGOUT page going the other way, which is CC on this board debugging
+  // a second one. `dbg_connect` is what the console asks for and the four
+  // beside it are what the connector says back.
+  logic        cab_req, cab_wr;
+  logic [1:0]  cab_a;
+  logic [15:0] cab_dbd;
+  logic        dbg_holder;
+  logic        dbgout_req, dbgout_wr;
+  logic [1:0]  dbgout_a;
+  logic [15:0] dbgout_dbd;
+  logic        dbgout_ack, dbgout_live;
+  logic [15:0] dbgout_dbd_in;
+  logic        dbg_connect, dbg_engaged, dbg_foreign, dbg_live, dbg_active;
+  logic [7:0]  ja_o, ja_t;
   logic        mdbg_req, mdbg_wr;
   logic [1:0]  mdbg_a;
   logic [15:0] mdbg_dbd;
@@ -873,6 +880,13 @@ module cadr_cora #(
       .dbg_in_req(mdbg_req), .dbg_in_wr(mdbg_wr), .dbg_in_a(mdbg_a),
       .dbd_in(mdbg_dbd),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
+      // And the other end of the same cable: the DBGOUT page, this machine
+      // as somebody else's debugger. `rtl/plumbing/cadr_dbg_cable.sv` below
+      // puts it on the connector when this board has the role, and answers
+      // it with the pull-ups when nothing is plugged in.
+      .dbgout_req(dbgout_req), .dbgout_wr(dbgout_wr), .dbgout_a(dbgout_a),
+      .dbgout_dbd(dbgout_dbd), .dbgout_ack(dbgout_ack),
+      .dbgout_dbd_in(dbgout_dbd_in), .dbgout_live(dbgout_live),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
       // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN1 ---
       // and not `mach_rst`, which `debuggee_reset` is one term of.  A
@@ -929,74 +943,54 @@ module cadr_cora #(
       .port_read_ack(port_read_ack), .port_write_ack(port_write_ack)
   );
 
-  // ------------------------------------------ the debug cable's two Pmods
+  // --------------------------------------- the debug cable, on Pmod JA
   //
-  // MIT's cable on eight pins a connector, four each way.
-  // `rtl/plumbing/cadr_dbg_pmod.sv` says why four and four rather than the
-  // "one clock and seven data" this was drawn as: one Pmod cable joins one
-  // DBGOUT to one DBGIN and so carries both directions, the half-duplex
-  // arrangement that would share seven data lines needs a clocked receiver
-  // and JB has no clock-capable pin, and a shared line turned around is two
-  // sets of drivers that must agree with no back channel to agree on. The
-  // frame is eight beats, which is twenty signals and the two-bit marker over
-  // three lines.
+  // MIT's whole cable on ONE connector, both directions, four pins each way.
+  // `rtl/plumbing/cadr_dbg_cable.sv` is the connector and the role;
+  // `rtl/plumbing/cadr_dbg_pmod.sv` under it is the carrier and says why four
+  // and four rather than the "one clock and seven data" this was drawn as.
   //
-  // **BOTH ARE INSTANTIATED ON EVERY BOARD, NOT ONLY A `DDR` ONE.** The pins
-  // are the top level's and a top-level output nothing drives is a
-  // PINMISSING, so the carrier cannot live inside `g_ddr` with the window.
-  // Without a window the cable it carries is the tie-off below, which is the
-  // idle connector, and the fitter folds the sender to a frame of zeros ---
-  // which is what a board with a connector and no debugger is.
+  // **IT IS INSTANTIATED ON EVERY BOARD, NOT ONLY A `DDR` ONE.** A board is
+  // always a DEBUGGEE: it answers a debugger on the connector exactly as
+  // MIT's board answers one on its DBGIN, and nothing has to be set for that.
+  // So the connector cannot live inside `g_ddr` with the window --- and the
+  // pins are the top level's besides, where an output nothing drives is a
+  // PINMISSING.
   //
-  // JA, DBGOUT: this board as somebody else's debugger. What goes out is the
-  // window's own twenty, so a second board plugged in here sees the requests
-  // muir makes. **What comes back is folded and not consumed**, and that is a
-  // decision rather than an oversight: this board's window already has a
-  // debuggee --- its own machine, on the near arm of the join below --- and
-  // taking a second one's answer as well would mean deciding which of two
-  // debuggees on one debugger's cable an acknowledgement came from. MIT's
-  // `DBD<15:0>` is an open-collector bus and would simply give the OR of
-  // them; that is a lashup and not a design, and the decision is not the
-  // carrier's to take. Building the connector whole and saying what is not
-  // consumed is this project's own rule about a register the fabric does not
-  // have, one level out.
-  cadr_dbg_pmod u_dbgout_pmod (
+  // **AND IT TAKES THE BOARD'S RESET AND NOT THE MACHINE'S**, for the reason
+  // the window and the DBGIN page give about theirs: modifier bit 1 resets
+  // this machine over this very cable, and a carrier reset by it would forget
+  // the request that asked for it.
+  cadr_dbg_cable u_dbg_cable (
       .clk(clk), .rst(rst),
-      .tx_levels({dbg_in_req, dbg_in_wr, dbg_in_a, dbd_to_machine}),
-      .rx_levels(ja_back), .rx_live(ja_live),
-      .tx_stb(dbgout_stb), .tx_d(dbgout_d),
-      .rx_stb(dbgout_ret_stb), .rx_d(dbgout_ret_d)
+      .connect(dbg_connect), .engaged(dbg_engaged), .foreign(dbg_foreign),
+      .live(dbg_live), .active(dbg_active),
+      .out_req(dbgout_req), .out_wr(dbgout_wr), .out_a(dbgout_a),
+      .out_dbd(dbgout_dbd), .out_ack(dbgout_ack),
+      .out_dbd_in(dbgout_dbd_in), .out_live(dbgout_live),
+      .in_req(cab_req), .in_wr(cab_wr), .in_a(cab_a), .in_dbd(cab_dbd),
+      .in_ack(dbg_in_ack), .in_dbd_out(dbd_from_machine), .in_dbd_oe(dbd_oe),
+      .pin_o(ja_o), .pin_t(ja_t), .pin_i(ja)
   );
 
-  // JB, DBGIN: this board as somebody else's debuggee. What arrives is a
-  // second board's debugger and it joins the window's cable at the page; what
-  // goes back is what `cadr_dbgin.sv` answers, the acknowledgement, the lines
-  // and which bytes of them this board drives.
-  //
-  // **IT TAKES THE BOARD'S RESET AND NOT THE MACHINE'S**, for the reason the
-  // window and the DBGIN page give about theirs: modifier bit 1 resets this
-  // machine over this very cable, and a carrier reset by it would forget the
-  // request that asked for it.
-  cadr_dbg_pmod u_dbgin_pmod (
-      .clk(clk), .rst(rst),
-      .tx_levels({1'b0, dbg_in_ack, dbd_oe, dbd_from_machine}),
-      .rx_levels(jb_req), .rx_live(jb_live),
-      .tx_stb(dbgin_ret_stb), .tx_d(dbgin_ret_d),
-      .rx_stb(dbgin_stb), .rx_d(dbgin_d)
-  );
+  // The eight pads. `pin_t` is Xilinx's sense --- HIGH is not driven --- so
+  // the group this board does not own is high-impedance and the far end has
+  // it.
+  for (genvar i = 0; i < 8; i = i + 1) begin : g_ja
+    assign ja[i] = ja_t[i] ? 1'bz : ja_o[i];
+  end
 
   // Two debuggers at one DBGIN page, which MIT's board cannot have and this
   // one can. The near arm is the window and the far arm the connector, the
   // first to assert holds until it lifts, and a tie goes to the window ---
   // `rtl/plumbing/cadr_dbg_join.sv` has the argument. An unplugged connector
-  // presents zeros, so with nothing in JB this is the window's cable
+  // presents zeros, so with nothing in JA this is the window's cable
   // unchanged.
   cadr_dbg_join u_dbg_join (
       .clk(clk), .rst(rst),
       .a_req(dbg_in_req), .a_wr(dbg_in_wr), .a_a(dbg_in_a),
       .a_dbd(dbd_to_machine),
-      .b_req(jb_req[19]), .b_wr(jb_req[18]), .b_a(jb_req[17:16]),
-      .b_dbd(jb_req[15:0]),
+      .b_req(cab_req), .b_wr(cab_wr), .b_a(cab_a), .b_dbd(cab_dbd),
       .req(mdbg_req), .wr(mdbg_wr), .a(mdbg_a), .dbd(mdbg_dbd),
       .holder(dbg_holder)
   );
@@ -1879,7 +1873,17 @@ module cadr_cora #(
         // are tied rather than left out: the console is the same module on
         // both boards and a board without the switch must still answer.
         .no_auto_boot_held(1'b0),
-        .no_auto_boot_now(1'b0)
+        .no_auto_boot_now(1'b0),
+        // **THE DEBUG CABLE'S ROLE**, page 0's word 14: `cadr-console
+        // debug-cable-connect` and its opposite, and the four the connector
+        // answers with. The cable itself is at the top level and not in here,
+        // because a board is always a debuggee and a board with no processing
+        // system still has a connector.
+        .dbg_connect(dbg_connect),
+        .dbg_engaged(dbg_engaged),
+        .dbg_foreign(dbg_foreign),
+        .dbg_live(dbg_live),
+        .dbg_active(dbg_active)
     );
 
     cadr_ps7 u_ps7 (
@@ -2010,6 +2014,11 @@ module cadr_cora #(
     assign dbg_in_wr      = 1'b0;
     assign dbg_in_a       = 2'd0;
     assign dbd_to_machine = 16'd0;
+    // And nobody to ask for the debugger's role, there being no console.
+    // **The connector is still there and this board is still a DEBUGGEE** ---
+    // it answers a debugger that plugs into JA, which is the power-on state
+    // of any CADR and needs nothing set.
+    assign dbg_connect    = 1'b0;
     // And no port for the I/O board's two cables, so their far ends are
     // tied off: this is the board that has no processing system at all, and
     // a program is what is on the other end of either cable.  With
@@ -2126,11 +2135,13 @@ module cadr_cora #(
   // left off the instantiation is a Verilator PINMISSING, which is how
   // `dev_wdata` was found missing from both.
   //
-  // The two Pmod connectors put four more in it: what a second board answers
-  // this board's own debugger with, whether either connector has anything
-  // talking on it, and which of the two debuggers has the DBGIN page. None of
-  // the four is consumed --- the instantiations say why the answer on JA is
-  // not --- and a fold with exceptions in it is not a rule anybody can check.
+  // The debug cable's ONE connector puts five more in it: which of the two
+  // debuggers has the DBGIN page, and the connector's own four --- the role
+  // this board has, whether somebody else is driving the header, and whether
+  // it is driven at all and carrying good frames. On a board with a console
+  // the four are page 0's word 14 as well and this is a second reader; on a
+  // board without one this is the only reader, and a fold with exceptions in
+  // it is not a rule anybody can check.
   // **AND IT NO LONGER DRIVES A LAMP, SO IT SAYS SO TO THE TOOLS INSTEAD.**
   // `witness` was LD3 until the six lamps were reassigned and LD3 became the
   // disk's; every one of the ten lamp pins now carries a meaning of the
@@ -2177,7 +2188,11 @@ module cadr_cora #(
                    mouse_x, mouse_y, clock_ready, interval, ub_ssyn_by,
                    sintr,
                    dbg_in_ack, dbd_from_machine, dbd_oe, timeout_inhibit,
-                   ja_back, ja_live, jb_live, dbg_holder};
+                   dbg_holder,
+                   // The debug cable's own four, which say what the connector
+                   // is doing rather than what crosses it. On a board with no
+                   // console they reach nobody and are folded here.
+                   dbg_engaged, dbg_foreign, dbg_live, dbg_active};
     end
   end
 

@@ -136,6 +136,27 @@ if {$soc != 0 && ![file exists $firmware]} {
 # design that never asked for one.
 set sources [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-a7-100/*.sv]
 
+# **AND THE SOFT PROCESSING SYSTEM COMES OUT AGAIN WHEN IT IS NOT IN THE
+# DESIGN**, for `cadr_a7_memory.sv`'s reason one paragraph down and for a
+# sharper one: `rtl/plumbing/cadr_soc*.sv` names Ibex's own packages, and those
+# are read below only when `SOC` is set. Left in the list with `SOC` clear,
+# synthesis stops with `'ibex_pkg' is not declared` --- measured, on the
+# board's own default configuration, which is the one every figure in
+# `boards/arty-a7-100/README.md` was taken on.
+#
+# A glob over a shared directory does this the moment somebody adds a file to
+# it for one board, and the answer is the same here as in the two Zynq flows:
+# name what does not belong, in one line, where a soft-system file that stopped
+# matching would stop the build with the same error rather than quietly.
+if {$soc == 0} {
+    set soc_free {}
+    foreach f $sources {
+        if {[string match */cadr_soc*.sv $f]} { continue }
+        lappend soc_free $f
+    }
+    set sources $soc_free
+}
+
 # THE MEMORY CONTROLLER'S OWN VERILOG, read as Verilog and not as
 # SystemVerilog, and only when it is going to be used.
 #
@@ -237,6 +258,17 @@ if {$probe_depth > 0} { read_xdc boards/arty-z7-20/cadr_probe.xdc }
 # board's file, read here unchanged; its header has the whole argument for
 # four ticks and for why it names the `/D` pins and nothing else.
 if {$soc != 0} { read_xdc rtl/plumbing/xilinx7/cadr_debug.xdc }
+
+# AND THE PMOD CARRIER'S, WHICH IS THE SAME CONE WITH A SECOND READER ON IT,
+# AND WHICH IS NOT GATED.  `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` names the
+# frame registers of the debug cable's sender on Pmod JA.  A board is always a
+# DEBUGGEE --- the connector is instantiated whatever `SOC` says, because a
+# CADR answers a debugger that plugs in and nothing has to be set for it --- so
+# the machine's diagnostic mux reaches that sender on every configuration of
+# this board, including the ones with no soft processing system at all.  That
+# is the file's own header, and it is why this read has no `if` on it where the
+# window's above does.
+read_xdc rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
 
 # THE DDR3L's PINS, IN EXACTLY ONE OF TWO FILES.  With the controller in the
 # design, its own generated constraints place every pin and add the slew
@@ -344,6 +376,11 @@ if {$memory} { lappend inside g_memory.u_memory.u_mig }
 # system's own registers, the pack side's and the console's are all still
 # asked.
 if {$soc != 0} { lappend inside g_soc.u_debug_window }
+# **AND THE DEBUG CABLE'S CONNECTOR WHATEVER `SOC` SAYS**, for the reason its
+# constraint file is read unconditionally one screen up: the carrier is on
+# every board, so its sender is relaxed on every board and the invariant would
+# otherwise fail on the plain one.
+lappend inside u_dbg_cable
 assert_constraints_scoped $inside $tick
 
 # --- 1. did the constraints apply?
@@ -389,6 +426,15 @@ if {$clocks < 2} {
 # lists one that reached ten thousand paths. What separates them is the setup
 # requirement the paths ask for.
 assert_multicycle_applied $tick 15
+
+# And the debug cable's four ticks, the two halves the other boards' flows
+# assert and for the same reasons.  The instance assertion is the narrow half
+# --- the carrier's two frame registers may carry it and no other register of
+# it may, because a counter given four ticks to settle is a counter that no
+# longer counts --- and the count is the `foreach` half, that the exception
+# reached a path at all.
+assert_instance_timing $tick 4 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
+assert_multicycle_applied $tick 4
 
 # --- the memory board's own two questions
 #

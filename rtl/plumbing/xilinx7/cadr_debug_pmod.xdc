@@ -5,22 +5,29 @@
 # takes the same word the register window takes, and it is outside the machine
 # for the same reason.
 #
-# READ ONLY BY A BOARD THAT BRINGS A GENERAL-PURPOSE PORT OUT, on
-# `rtl/plumbing/xilinx7/cadr_debug.xdc`'s precedent and for its reason. The
-# cone this relaxes starts at the machine's own diagnostic mux and reaches the
-# carrier through `cadr_dbgin.sv`'s `DBD<15:0>`. On a board with no processing
-# system there is no window, `dbg_in_req` is tied low, every strobe is false,
-# `dbd_out` is a constant and the whole sender folds --- so the exception would
-# be real, legal and connected to nothing, which is the one shape of
-# constraint this project has already been bitten by.
+# **READ BY EVERY CONFIGURATION OF EVERY BOARD, AND IT USED NOT TO BE.**  It
+# was gated on a general-purpose port being brought out, on
+# `rtl/plumbing/xilinx7/cadr_debug.xdc`'s precedent, and the reasoning was that
+# with no window `dbg_in_req` is tied low and the whole sender folds to
+# constants.  **That reasoning was made false by the connector.**  A board is
+# always a DEBUGGEE --- Pmod JA is instantiated whatever the switches say ---
+# so `cadr_dbgin.sv`'s page is driven by the cable on every board, `dbd_out` is
+# live on every board, and the arc this file exists for is real on every board.
+#
+# Measured while the gate was still there: the memory-off Arty Z7-20 came out
+# at **-9.600 ns on 596 endpoints**, every one of them in the carrier, with the
+# constraint file read by nothing.  That is exactly the failure this project
+# keeps meeting --- a constraint that applies to nothing, and a report of a
+# design nobody was timing.  The gate is gone and `assert_instance_timing` in
+# each board's flow is what says it reached a path.
 #
 # WHY THERE IS A DEADLINE HERE AT ALL, MEASURED RATHER THAN FORESEEN. The
-# first board with the two Pmod connectors on it came out at **-9.779 ns on
-# the memory-on flow**, 3,905 failing endpoints, and the ten worst paths were
-# all one register:
+# first board with a Pmod carrier on it came out at **-9.779 ns on the
+# memory-on flow**, 3,905 failing endpoints, and the ten worst paths were all
+# one register:
 #
 #     u_machine/processor/vma_reg[14]_replica_2/C
-#       -> u_dbgin_pmod/tx_frame_reg[3]/D
+#       -> <the carrier>/tx_frame_reg[3]/D
 #     25 logic levels, requirement 10.000 ns
 #
 # That is `VMA` through both levels of the map to `-VMAOK`, into FLAG-2, into
@@ -59,19 +66,25 @@
 #     must keep its tick. That is `cadr_ddr.xdc`'s split between the address
 #     and `-XBUS.RQ` and the `elapsed -> md/CE` lesson underneath both.
 #
-#   - **The DBGIN connector's sender and nothing else.** The DBGOUT sender is
-#     fed by the register window's own outputs, which are fast registers a few
-#     levels away, and it is not relaxed. The two modules are the same module
-#     and only one of them has the machine's mux in front of it, which is the
-#     whole of the reason they are constrained differently.
+#   - **ONE CARRIER NOW CARRIES BOTH DIRECTIONS, so the split that used to be
+#     between two instances is gone.** With two connectors the DBGOUT sender
+#     was fed by the register window's own fast registers and was not relaxed,
+#     and only the DBGIN one had the machine's mux in front of it. One
+#     connector has a mux on `tx_levels` instead --- the debuggee's twenty or
+#     the debugger's --- and the slowest input decides, which is the
+#     debuggee's. So the relaxation is the same arc it always was, and what it
+#     now also covers is the debugger's half, which needed none. That is a
+#     widening and it is stated rather than hidden: it relaxes registers that
+#     were meeting their deadline anyway, and `assert_instance_timing` still
+#     holds it to those two register names and no others.
 #
 #   - **And the receivers are untouched.** The strobe's synchroniser, the
 #     frame counter, the gap counter and the dead man all count ticks, and a
 #     counter given four of them is a counter that no longer counts.
-#     `boards/arty-z7-20/vivado/bitstream.tcl` asserts exactly that with
+#     Each board's `vivado/bitstream.tcl` asserts exactly that with
 #     `assert_instance_timing`: no path into any other register of this
 #     carrier may ask for 40 ns, and at least one path into these must.
-set pmod [get_pins -quiet {u_dbgin_pmod/tx_frame_reg[*]/D
-                           u_dbgin_pmod/tx_d_reg[*]/D}]
+set pmod [get_pins -quiet {u_dbg_cable/u_pmod/tx_frame_reg[*]/D
+                           u_dbg_cable/u_pmod/tx_d_reg[*]/D}]
 set_multicycle_path -setup 4 -to $pmod
 set_multicycle_path -hold  3 -to $pmod

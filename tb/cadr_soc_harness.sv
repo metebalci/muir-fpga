@@ -165,6 +165,10 @@ module cadr_soc_harness #(
   logic        dbg_in_ack;
   logic [1:0]  dbd_oe;
   logic [15:0] dbd_from_machine;
+  logic        dbg_connect;
+  logic        dbgout_req, dbgout_wr;
+  logic [1:0]  dbgout_a;
+  logic [15:0] dbgout_dbd;
   // The modifier register's two effects.  `debuggee_reset` is bit 1 and is
   // this processor's power-on reset, so it joins the reset OR below;
   // `timeout_inhibit` is bit 2 and nothing consumes it yet, so it folds.
@@ -297,6 +301,13 @@ module cadr_soc_harness #(
       .dbg_in_req(dbg_in_req), .dbg_in_wr(dbg_in_wr), .dbg_in_a(dbg_in_a),
       .dbd_in(dbd_to_machine),
       .dbg_in_ack(dbg_in_ack), .dbd_out(dbd_from_machine), .dbd_oe(dbd_oe),
+      // The DBGOUT page, which is this machine as somebody else's debugger.
+      // No connector here, so it is tied as an unplugged cable: nothing at
+      // the far end, the lines carried by the pull-ups, and the page answers
+      // its own machine at `-UB MSYN`.  That is muir's `debug_cable` false.
+      .dbgout_req(dbgout_req), .dbgout_wr(dbgout_wr), .dbgout_a(dbgout_a),
+      .dbgout_dbd(dbgout_dbd), .dbgout_ack(1'b0),
+      .dbgout_dbd_in(16'hFFFF), .dbgout_live(1'b0),
       .debuggee_reset(debuggee_reset), .timeout_inhibit(timeout_inhibit),
       // The DBGIN page's own reset: the BOARD's --- MMCM lock and BTN3 ---
       // and not `mach_rst`, which `debuggee_reset` is one term of.  See the
@@ -528,7 +539,12 @@ module cadr_soc_harness #(
       .mach_vma(con_vma), .mach_q(con_q), .mach_md(con_md),
       .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
       .mach_rst(con_mach_rst), .mach_boot(con_boot),
-      .no_auto_boot_held(sw0_held), .no_auto_boot_now(sw0_level)
+      .no_auto_boot_held(sw0_held), .no_auto_boot_now(sw0_level),
+      // The debug cable's role, page 0's word 14.  No connector in this
+      // harness, so the four come back as a bare header and what the console
+      // asks for is folded.
+      .dbg_connect(dbg_connect), .dbg_engaged(1'b0), .dbg_foreign(1'b0),
+      .dbg_live(1'b0), .dbg_active(1'b0)
   );
 
   // ------------------------------------------- the debug cable's window
@@ -608,7 +624,8 @@ module cadr_soc_harness #(
                     con_ssyn, con_rdata, con_vma, con_q, con_md, con_ro_data,
                     con_ro_echo, req_valid, req_tag, req_post, ch_waiting,
                     ch_slot, ch_wrote, ch_hit, dbg_in_ack, dbd_from_machine,
-                    dbd_oe};
+                    dbd_oe, dbgout_req, dbgout_wr, dbgout_a, dbgout_dbd,
+                    dbg_connect};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule
