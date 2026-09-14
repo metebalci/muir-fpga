@@ -2779,27 +2779,77 @@ BR_GEN_PS7  := boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/gen_ps7_
 # `=` rather than `:=`, so the grep runs only when a buildroot target does.
 BR_LOCAL_PKGS = $(sort $(notdir $(patsubst %/,%,$(dir $(shell \
     grep -l '_SITE_METHOD = local' $(BR_EXTERNAL)/package/*/*.mk)))))
-BR_RECONFIGURE = uboot-reconfigure linux-reconfigure cadr-common-reconfigure \
-    $(patsubst %,%-reconfigure,$(filter-out cadr-common,$(BR_LOCAL_PKGS)))
+BR_FORCE_PKGS = uboot linux cadr-common \
+    $(filter-out cadr-common,$(BR_LOCAL_PKGS))
+
+# AND A PACKAGE THIS BOARD'S .config DOES NOT SELECT MUST NOT BE FORCED.
+# `<pkg>-reconfigure` builds and installs a package whatever the configuration
+# says --- Buildroot defines those targets for every package in the tree, not
+# for the selected ones --- and Buildroot never removes what it installed.
+# Measured on this build host: the Cora Z7-07S's output directory carried
+# `usr/bin/cadr-usb-input` and `etc/init.d/S88cadr-usb-input`, installed by a
+# forcing run typed by hand, on a board whose defconfig has no USB input.  That
+# is the ghost `board/arty-z7-20/post-build.sh` stops the build for, made by
+# the rebuild itself --- and it did stop the build, at `target-finalize`, which
+# is why the image beside it was never written again and went to the board a
+# commit behind its own target tree.
+#
+# So the list is filtered against the `.config` the defconfig line has just
+# written, in the shell, at the moment it is used.  It is ONE list for both
+# boards for the reason a second forcing target was refused before it existed:
+# two lists rot apart.  The filter is what makes one list safe for a board that
+# leaves a package out.
+define BR_FORCE
+	set -e; force=; \
+	for name in $(BR_FORCE_PKGS); do \
+	    cfg=$(BR_EXTERNAL)/package/$$name/Config.in; \
+	    if [ -f $$cfg ]; then \
+	        sym=`sed -n 's/^config \(BR2_PACKAGE_[A-Z0-9_]*\)[[:space:]]*$$/\1/p' $$cfg | head -1`; \
+	        [ -n "$$sym" ] || { \
+	            echo "$$cfg declares no BR2_PACKAGE_ symbol, so this cannot tell"; \
+	            echo "whether the package is in this board's image"; exit 1; }; \
+	        grep -qx "$$sym=y" $(1)/.config || { \
+	            echo "buildroot: $$name is not in this board's image, so it is not forced"; \
+	            continue; }; \
+	    fi; \
+	    force="$$force $$name-reconfigure"; \
+	done; \
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(1) $$force
+endef
+
+# The image is opened and compared against the target tree it was made from,
+# after it is written, on every one of the four targets below.  Its header says
+# what went wrong without it; in one line, an image can be older than the
+# packages in its own output directory and nothing anywhere says so.  It is
+# the counterpart of `post-build.sh`, which runs BEFORE the image and asks a
+# question this one cannot: whether the TARGET holds only what the packages
+# install.  Neither sees the other's fault.
+BR_ROOTFS_CHECK := boards/arty-z7-20/linux/rootfs_check.py
 # Not written as $(MAKE) in the recipe: GNU make runs any recipe line that
 # names $(MAKE) even under -n, so `make -n buildroot` would start the build.
 # The inner make gets a clean MAKEFLAGS anyway (see above), so nothing the
 # sub-make convention would have carried is lost.
 BR_MAKE     := $(MAKE)
 
-.PHONY: buildroot buildroot-check buildroot-rebuild buildroot-cora
+.PHONY: buildroot buildroot-check buildroot-packages-check buildroot-rebuild \
+        buildroot-cora buildroot-cora-check buildroot-cora-rebuild
 
 # The generated start-up routine has to be what boards/arty-z7-20/vivado/ps7_init.ops gives
 # today, or U-Boot would be built from a stale claim.  Pure Python, no
 # Vivado, so it runs anywhere the repository does.
-buildroot-check:
+buildroot-check: buildroot-packages-check
 	@python3 $(BR_GEN_PS7) --check
+
 # Both ways the derivation above can come out short are failures here rather
 # than quiet omissions.  A .mk that declares no site method at all cannot be
 # classified, and a grep that matched nothing would leave the list empty and
 # force no package of ours --- which is the shape of every silent-omission bug
 # this repository has recorded, from an XDC foreach that applied to nothing to
-# a package that went on building its old sources.
+# a package that went on building its old sources.  It is a target of its own
+# because the packages are one tree and every board's image is built from
+# them, so every board's build asserts it while neither board's build asserts
+# the other's start-up routine.
+buildroot-packages-check:
 	@for mk in $(BR_EXTERNAL)/package/*/*.mk; do \
 	    grep -q '_SITE_METHOD = ' $$mk || { \
 	        echo "$$mk declares no _SITE_METHOD, so buildroot-rebuild cannot tell"; \
@@ -2820,6 +2870,7 @@ buildroot: buildroot-check
 	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
+	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL) $(BR_OUT) $(BR_OUT)/images/rootfs.cpio.uboot
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
 
@@ -2828,13 +2879,15 @@ buildroot: buildroot-check
 # sources of our own programs is not seen by a plain `make buildroot` once the
 # package has a build stamp.  This forces every package that reads them to
 # reconfigure and rebuild, then finishes the image as `buildroot` does.  Which
-# packages those are is derived at BR_RECONFIGURE above rather than named here,
-# so that a package cannot be left out of it.
+# packages those are is derived at BR_FORCE above rather than named here, so
+# that a package cannot be left out of it, and filtered there against this
+# board's own .config so that one cannot be forced into an image that does not
+# have it.
 buildroot-rebuild: buildroot-check
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) BR2_EXTERNAL=$(BR_EXTERNAL) arty_z7_20_defconfig
-	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT) \
-	    $(BR_RECONFIGURE)
+	$(call BR_FORCE,$(BR_OUT))
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT)
+	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL) $(BR_OUT) $(BR_OUT)/images/rootfs.cpio.uboot
 	@echo "buildroot: images in $(BR_OUT)/images:"
 	@ls -l $(BR_OUT)/images/ | grep -v '^total'
 
@@ -2845,17 +2898,25 @@ buildroot-rebuild: buildroot-check
 # `boards/cora-z7-07s/linux/buildroot/configs/cora_z7_07s_defconfig` says what
 # it leaves out and why --- there is no USB input on this board.
 #
-# **IT HAS NEVER BEEN BUILT OR BOOTED.**  No Cora Z7-07S has been programmed
-# from this repository.  What holds this configuration is that it is the other
-# board's with the differences its own header names, and the `--check` below,
-# which says the start-up routine the SPL would run is what this board's
-# committed `.ops` gives.
+# The board boots this image from its card and runs the machine on it.  What
+# holds the configuration beyond that is that it is the other board's with the
+# differences its own header names, and `buildroot-cora-check`, which says the
+# start-up routine the SPL would run is what this board's committed `.ops`
+# gives.
 #
-# There is no `buildroot-cora-rebuild` beside it: the packages it builds are
-# the other tree's, so `buildroot-rebuild` is what forces them, and a second
-# forcing target would be a second list to keep in step.
-buildroot-cora:
+# **AND IT HAS A REBUILD TARGET OF ITS OWN, BECAUSE `buildroot-rebuild` DOES
+# NOT REACH IT.**  What stood here said there was no need for one --- that the
+# packages are the other tree's, so `buildroot-rebuild` forces them --- and
+# that is false: `buildroot-rebuild` acts on `O=$(BR_OUT)` and this board's
+# output directory keeps its own build stamps, so it forces nothing here.  The
+# image that went to the board carried a `cadr-console` and three init scripts
+# from an earlier commit because of it.  The second list the old comment was
+# afraid of does not exist: both rebuild targets call `BR_FORCE` above, which
+# is one list, derived, and filtered by the board's own `.config`.
+buildroot-cora-check: buildroot-packages-check
 	@python3 $(BR_GEN_PS7_CORA) --check
+
+buildroot-cora: buildroot-cora-check
 	@test -f $(BR_TARBALL) || { \
 	    echo "no Buildroot at $(BR_TARBALL); fetch it with"; \
 	    echo "  curl -o $(BR_TARBALL) $(BR_URL)"; exit 1; }
@@ -2866,6 +2927,19 @@ buildroot-cora:
 	@test -d $(BR_SRC) || tar xJf $(BR_TARBALL) -C $(BR_WORK)
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA) BR2_EXTERNAL=$(BR_EXTERNAL_CORA) cora_z7_07s_defconfig
 	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA)
+	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_CORA) $(BR_OUT_CORA) $(BR_OUT_CORA)/images/rootfs.cpio.uboot
+	@echo "buildroot-cora: images in $(BR_OUT_CORA)/images:"
+	@ls -l $(BR_OUT_CORA)/images/ | grep -v '^total'
+
+# The counterpart of `buildroot-rebuild`, in this board's output directory and
+# with both external trees: the same three steps --- apply the defconfig, force
+# every package that reads our files and is in this image, finish the image ---
+# and the same check of the image afterwards.
+buildroot-cora-rebuild: buildroot-cora-check
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA) BR2_EXTERNAL=$(BR_EXTERNAL_CORA) cora_z7_07s_defconfig
+	$(call BR_FORCE,$(BR_OUT_CORA))
+	PATH=$(BR_WORK)/bin:$$PATH MAKEFLAGS= $(BR_MAKE) -C $(BR_SRC) O=$(BR_OUT_CORA)
+	@python3 $(BR_ROOTFS_CHECK) $(BR_EXTERNAL_CORA) $(BR_OUT_CORA) $(BR_OUT_CORA)/images/rootfs.cpio.uboot
 	@echo "buildroot-cora: images in $(BR_OUT_CORA)/images:"
 	@ls -l $(BR_OUT_CORA)/images/ | grep -v '^total'
 
