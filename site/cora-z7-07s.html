@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>muir-fpga — the MIT CADR on a Cora Z7-07S</title>
-<meta name="description" content="The MIT CADR Lisp Machine in fabric at rtl level on a Digilent Cora Z7-07S: what is fabric, what is Linux on the PS, and where the two meet on the smaller part.">
+<meta name="description" content="The MIT CADR Lisp Machine in fabric at rtl level on a Digilent Cora Z7-07S: what is fabric, what is Linux on the PS, and where the two meet on the smaller part. The drawing is the Arty Z7-20's, with what this board does not have crossed off in place.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,6 +15,7 @@
     <nav>
       <a href="arty-z7-20.html">Arty Z7-20</a>
       <a href="cora-z7-07s.html">Cora Z7-07S</a>
+      <a href="arty-a7-100.html">Arty A7-100</a>
       <a href="cadr.html">the CADR</a>
     </nav>
   </div>
@@ -22,9 +23,9 @@
 
 <section>
   <div class="band">
-    <figure class="fig dense wide" style="--fig-width: 1697px">
+    <figure class="fig dense wide">
       <div class="scroll">
-<svg viewBox="0 0 1697 865" role="img" aria-label="The CADR mapped onto one XC7Z007S, the small Zynq on a Cora Z7-07S. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface. The ICMEM board's own cable is 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carry MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 100 MHz, 29 ticks to the microcycle, 290 nanoseconds of real time for the 145 the drawings name. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system. S_AXI_HP0 is the one the memory bridge masters. S_AXI_HP2 is the one the disk controller masters to fetch a block out of DDR itself. M_AXI_GP0 is how the processing system reaches the disk controller, the Chaosnet buffers, the serial port and the keyboard and mouse registers, one 4 KB page each behind a decode that answers every address on the port. M_AXI_GP1 carries the console, which is the sixteen diagnostic registers in muir's own spy vocabulary, and the debug cable's register block beside it. This board has no HDMI connector. So it has no display output block and no fifth port to feed one, and there is no USB input program either. The machine's screen, keyboard and mouse are the RFB server over the network and nothing else. Beside the bus interface is a debug cable adapter. It puts the cable's wires onto one Pmod connector, JA, and presents the same registers on M_AXI_GP1. It is the same fabric the larger board carries, where MIT's own debugger has halted the machine and read it back through those registers. Nothing has driven it on this board, so it is drawn as checked rather than shown. Two status lights at the board's right, drawn in the colour each shows when it is lit. LD0 is MACHRUN, the machine's own run signal as a level, and it dims in proportion to the time the machine waits for memory. LD1 is one lamp with three meanings, in priority order: red when the machine has halted itself on an error, blue while it fetches its microinstructions out of the boot PROM, and otherwise green, blinking with the retiring microcycles. Blue then green is a boot, green gone still is a machine somebody halted, and red is a machine that fell over. Two lamps cannot carry what six carry on the larger board, and what is missing is the fabric's own clock and the disk's activity. Above them, BTN0 is the machine's boot button, the light panel's own -BOOT2, debounced in fabric and pressed by the console's boot command through a register as well. BTN1 beside it resets the whole fabric, which is the same pair of buttons on every board here. This board has no switches, so the hold that keeps the machine from booting by itself is the card's own flag file alone. On the Linux side, from the left: the RFB server, which serves the machine's screen and carries a viewer's keys and pointer to the card's own registers; Chaosnet routing over the board's Ethernet; the CADR's serial line offered on a TCP socket; the disk packs as files on the microSD card, one file a drive and up to eight of them; the console; and muir, which runs on the Arm side and carries MIT's own CC as the debugger. Below the ports is the processing system: an outline for Linux, which boots from the card beside the running CADR with the CADR's 128 MB kept from it, and beside it the boot loader in two parts, U-Boot itself drawn grey as upstream work with its first stage, the SPL, inside it, drawn green because the board boots from it and because the start-up routine that first stage runs is generated here. Beside them a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm side from the Linux group, and one line out of the chip to the DRAM. The microSD card holds everything the board needs: U-Boot with its first stage, the CADR's bitstream, Linux with its root filesystem, and the disk packs. The two sequence drawings below say how the board boots, on its own from the card and, for development, from a TFTP server. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer. Under the fabric's label are the figures for this board, place and routed with the processing system and DDR3 behind the machine's memory port: 12,352 of the 14,400 lookup tables, 85.8 per cent; 9,106 of the 28,800 registers, 31.6 per cent; and 187 KB of the 225 KB of block RAM, 83.0 per cent. The machine spends the same 41.5 block RAM tiles here as it does on the larger part, so what changes between the two boards is the denominator. The timing of this build is met: the fabric runs at 100 megahertz with a tick of 10 nanoseconds, worst slack plus 0.495 nanoseconds against that, and none of its 48,104 endpoints failing. How far along each block is, which the drawing otherwise says in colour: green only for what this board itself has shown, turquoise for what is checked and has not run on it. The machine is green. It has booted MIT's Lisp Machine system on this board out of real memory off a real disk, and it has run past twelve billion microcycles with no error: the clock generator, the two processor boards, the bus interface, the Xbus-to-DDR bridge and the port behind it, the disk controller and its own port, the TV and the I/O board are all in that. The disk controller is green because the machine read its band off the pack on this board and wrote blocks back to it. The TV is green because the screen is painted: the window system, a Lisp Listener and the who-line, read off over the network. The I/O board is green because the who-line's clock advances off the machine's own microsecond clock and the mouse the machine tracks is the card's registers being read. The console is green, having answered on this board and reported the machine running. The RFB server is green, having served this board's screen; a viewer's keys and pointer have not been tried here, and on this board they are the only way in. Chaosnet is green: the machine took its date from the file and time host on the network, which is the only way a machine with no clock of its own can have one. The disk packs program is green, and so are the first stage and Linux, the board having booted from its own card. The serial line and the debug cable adapter are turquoise, both built and checked and neither yet exercised on this board. ">
+<svg viewBox="0 0 1810 865" role="img" aria-label="The CADR mapped onto one XC7Z007S, the small Zynq on a Cora Z7-07S. This drawing is the Arty Z7-20's: every block is in the same place, and what this board does not have is crossed off where it stands rather than taken out, with a red cross and a faint label, so that the two boards can be read against each other. In the programmable logic: the ICMEM board carrying the control store and the CADR board below it, joined by five cables to the bus interface — the ICMEM board's own cable of 12 wires carrying the clock, the SPY control and the resets, and four cables of 80 wires carrying MEM and SPY, 48 of them driven from both ends. A clock generator at the left runs at 100 MHz, 29 ticks to the microcycle, 290 nanoseconds of real time for the 145 the drawings name. The bus interface fans out to the Xbus, carrying the DDR bridge, the disk controller and the TV, and to the Unibus, carrying the I/O board. Four AXI ports cross into the processing system: S_AXI_HP0, which the memory bridge masters; S_AXI_HP2, which the disk controller masters to fetch a block out of DDR itself; M_AXI_GP0, over which the PS reaches the disk controller, the Chaosnet buffers, the serial port and the keyboard and mouse registers, one 4 KB page each behind a decode that answers every address on the port; and M_AXI_GP1, carrying the console --- the sixteen diagnostic registers, in muir's own spy vocabulary --- and the debug cable's register block beside it. Six things are crossed off as not available on this board: the display output block, the fifth port that fed it, the HDMI out connector, the USB input program, the USB host connector and the no-auto-boot switch, this board having no HDMI connector, no USB host port and no switches. The lines that reached them stay drawn, as every line on this drawing does, carrying no status of their own. So the machine's screen, keyboard and mouse are the RFB server over the network and nothing else, and the hold that keeps the machine from booting by itself is the card's own flag file alone. Beside the bus interface, a debug cable adapter puts the cable's 21 wires as sixteen --- 20 signals out and 17 in, the data bus going both ways --- onto one Pmod connector of 8 pins --- one clock from the debugger's end and seven data split into lanes --- and presents the same registers on M_AXI_GP1. It is the same fabric the larger board carries, where MIT's own CC has halted the machine over the cable and read back its registers, its main memory and its scratchpads. Nothing has driven it on this board, so it is drawn as checked rather than shown. Two status lights at the board's right, drawn in the colour each shows when it is lit. LD0 is MACHRUN, the machine's own run signal as a level, dim in proportion to the time it waits for memory. LD1 is one lamp with three meanings, each on a row of its own in the colour it shows, in priority order: red when the machine has halted itself on an error, blue while it fetches its microinstructions out of the boot PROM, and otherwise green, blinking with the retiring microcycles. Blue then green is a boot, green gone still is a machine somebody halted, and red is a machine that fell over. The last two rows of the block are crossed off in the same way, because two lamps cannot carry what six carry on the larger board: there is no lamp here for the fabric's own clock and none for the disk's activity. Above them, BTN0 is the machine's boot button, the light panel's own -BOOT2, debounced in fabric and pressed by the console's boot command through a register as well, and it restarts the machine; BTN1 below it in the same block resets the whole fabric, which is the same pair of buttons on every board here. On the Linux side, from the left: the RFB server, which serves the machine's screen to a viewer and carries the viewer's keys and mouse to the card's own shift register and quadrature counters; Chaosnet routing over the board's Ethernet, which carries the machine's packets to the network and answers nothing itself; the CADR's serial line offered on a TCP socket as muir offers it; the disk packs as files on the microSD card, one file a drive and up to eight of them, served to the controller by a program on the board; the console; and, at the room's right, muir, which runs on the Arm cores and carries MIT's own CC as the debugger. Below the ports is the processing system: an outline for Linux on the Arm cores, which boots from the card beside the running CADR with the CADR's 128 MB kept from it and holds the programs that run under it, each coloured for itself; beside it the boot loader in two parts, U-Boot itself, which is upstream and drawn grey as outside the project, and inside it its first stage, the SPL, drawn green because the board boots from it and because the start-up routine that first stage runs is generated here; and beside them a DDR controller with four arbitrated ports, fed by the two fabric ports from above and by the Arm cores from the Linux group beside it, and one line out of the chip to the DRAM. The microSD card holds everything the board needs: U-Boot with its first stage, the CADR's bitstream, Linux with its root filesystem, and the disk packs as files, one a drive. The two sequence drawings below say how the board boots, on its own from the card and, for development, from a TFTP server. The 512 MB of DDR3 sits outside the chip, holding main memory and the display's frame buffer; the RFB server reaches it through the processor's own port on the controller, like any other software. How far along each block is, which the drawing otherwise says in colour --- green only for what this board itself has shown, turquoise for what is checked here and has not run on it, and the red cross for what this board does not have at all. The machine is green: it has booted MIT's Lisp Machine system on this board out of real memory off a real disk and run past twelve billion microcycles with no error, which takes in the clock generator, the two processor boards, the bus interface, the Xbus-to-DDR bridge and the port behind it, the disk controller and its own port, the TV and the I/O board. The disk controller is green because the machine read its band off the pack on this board and wrote blocks back to it. The TV is green because the screen is painted: the window system, a Lisp Listener and the who-line, read off over the network. The I/O board is green because the who-line's clock advances off the machine's own microsecond clock and the mouse the machine tracks is the card's registers being read. The console is green, having answered on this board and reported the machine running. The RFB server is green, having served this board's screen; a viewer's keys and pointer have not been tried here, and on this board they are the only way in. Chaosnet is green: the machine took its date from the file and time host on the network, which is the only way a machine with no clock of its own can have one. The disk packs program is green, and so are the first stage and Linux, the board having booted from its own card. Two blocks are turquoise: the serial line, whose program runs and listens here though nothing shows a character has crossed the machine's serial line on this board, and the debug cable adapter, which no debugger has driven here. Under the fabric's label, figures for this board, place and routed with the processing system and DDR3 behind the machine's memory port: 12,352 of the 14,400 lookup tables, 85.8 per cent; 9,106 of the 28,800 registers, 31.6 per cent; and 187 KB of the 225 KB of block RAM, 83.0 per cent. The machine spends the same 41.5 block RAM tiles here as it does on the larger part, so what changes between the two boards is the denominator. The timing of this build is met: the fabric runs at 100 megahertz with a tick of 10 nanoseconds, worst slack plus 0.495 nanoseconds against that, and none of its 48,104 endpoints failing. ">
           <text class="d-t" x="10" y="18">muir-fpga</text>
 
           <!-- How far along each block is. Nothing here says a block is
@@ -42,26 +43,61 @@
           <text class="d-s" x="832" y="18">not started</text>
           <rect class="d-box d-ext d-key" x="912" y="8" width="13" height="13"/>
           <text class="d-s" x="932" y="18">outside the project</text>
+          <!-- The one mark on the drawing that is not about progress: a block
+               this board does not have, kept in its place and crossed off.  The
+               swatch is the drawing's own ink with the cross on it, because
+               what the legend has to show here is the mark and not a colour. -->
+          <rect class="d-box d-absent-key d-key" x="1070" y="8" width="13" height="13"/>
+          <path class="d-absent-x" d="M1070,8 L1083,21 M1083,8 L1070,21"/>
+          <text class="d-s" x="1090" y="18">not available on this board</text>
           <!-- The board, and everything on it: the chip, the memory beside it, and the
        connectors along its edges. -->
-          <rect class="d-box" x="6" y="34" width="1667" height="819"/>
+          <rect class="d-box" x="6" y="34" width="1780" height="819"/>
           <text class="d-s" x="16" y="52">Cora Z7-07S</text>
-          <g transform="translate(197,36)">
+          <g transform="translate(310,36)">
           <rect class="d-box" x="-170" y="28" width="1460" height="668.5"/>
           <text class="d-s" x="-164" y="24">XC7Z007S-1CLG400C</text>
+          <!-- The left column, crossed off: this board has no HDMI connector,
+               so it has no display output block and no fifth port to feed one.
+               All three keep their places, because the drawing is the larger
+               board's and what a reader wants to see is which parts this board
+               does not have, not a gap where they were.  The lines between them
+               stay for the same reason, and because a line on these drawings
+               carries no status of its own. -->
+          <rect class="d-plate" x="-160" y="274" width="180" height="112"/>
+          <rect class="d-box d-absent" x="-160" y="274" width="180" height="112"/>
+          <path class="d-absent-x" d="M-160,274 L20,386 M20,274 L-160,386"/>
+          <text class="d-t d-absent-t" x="-70" y="300" text-anchor="middle">display output</text>
+          <text class="d-s d-absent-t" x="-70" y="322" text-anchor="middle">scans the display&rsquo;s buffer</text>
+          <text class="d-s d-absent-t" x="-70" y="336" text-anchor="middle">at the monitor&rsquo;s rate,</text>
+          <text class="d-s d-absent-t" x="-70" y="358" text-anchor="middle">TMDS out to HDMI</text>
+          <path class="d-line" d="M470,274 L470,256 L-70,256 L-70,274"/>
+          <path class="d-line" d="M-70,386 L-70,464"/>
+          <path class="d-line" d="M-160,330 L-183,330"/>
+          <rect class="d-plate" x="-150" y="464" width="160" height="44"/>
+          <rect class="d-box d-absent" x="-150" y="464" width="160" height="44"/>
+          <path class="d-absent-x" d="M-150,464 L10,508 M10,464 L-150,508"/>
+          <text class="d-m d-absent-t" x="-70" y="483" text-anchor="middle">S_AXI_HP3</text>
+          <text class="d-s d-absent-t" x="-70" y="499" text-anchor="middle">PL masters, 64 bits, AXI3</text>
+          <path class="d-line" d="M-70,508 L-70,610 L-22,610"/>
+          <rect class="d-box d-absent" x="-283" y="288" width="100" height="84"/>
+          <path class="d-absent-x" d="M-283,288 L-183,372 M-183,288 L-283,372"/>
+          <text class="d-t d-absent-t" x="-233" y="314" text-anchor="middle">HDMI out</text>
+          <text class="d-s d-absent-t" x="-233" y="336" text-anchor="middle">the display,</text>
+          <text class="d-s d-absent-t" x="-233" y="350" text-anchor="middle">from the fabric</text>
 
           <text class="d-s" x="-164" y="48">PL &mdash; fabric</text>
           <!-- What the machine costs on this part, place-and-routed at commit
-               86d787b with the processing system and DDR3 behind the
-               machine's memory port.  This is the same design the larger board
-               carries, less the display output block the board has no
-               connector for, placed on a part with a quarter of the logic:
-               12,352 slice LUTs of 14,400, 9,106 slice registers of 28,800 and
-               41.5 block RAM tiles of 50, which is the same 41.5 tiles the
-               larger part spends.  What changes between the two boards is the
-               denominator.  Lookup tables and registers rather than occupied
-               slices, because the slice count is the one figure this board's
-               report and the other's do not share. -->
+               86d787b with the processing system and DDR3 behind the machine's
+               memory port.  This is the same design the larger board carries,
+               less the display output block this board has no connector for,
+               placed on a part with a quarter of the logic: 12,352 slice LUTs
+               of 14,400, 9,106 slice registers of 28,800 and 41.5 block RAM
+               tiles of 50, which is the same 41.5 tiles the larger part
+               spends.  What changes between the two boards is the denominator.
+               Lookup tables and registers rather than occupied slices, because
+               the slice count is the one figure this board's report and the
+               other's do not share. -->
           <text class="d-s" x="-164" y="68">LUTs 12,352 of 14,400</text>
           <rect class="d-box" x="-164" y="74" width="136" height="13"/>
           <rect x="-164" y="74" width="116.7" height="13" fill="currentColor" fill-opacity="0.42"/>
@@ -80,7 +116,7 @@
                request, for now, with the count beside it because the
                worst path alone says nothing about how much is wrong, and with
                the clock above it because a slack in nanoseconds means nothing
-               without the period it is slack against: +0.204 ns of a 10 ns
+               without the period it is slack against: +0.495 ns of a 10 ns
                tick is room over the deadline, and of a 5 ns tick it would
                not be. -->
           <text class="d-s" x="-164" y="180">100 MHz, 10 ns a tick</text>
@@ -136,19 +172,19 @@
                the larger board carries, where a debugger has run through it.
                Nothing has yet run a debugger through it on THIS board, so it
                is turquoise here and green there: the colour is a claim about
-               a board.  The connector half is the decided shape and not yet
-               the built one: ONE connector, JA, carrying the whole link both
-               ways, with JB unassigned.  What is in the fabric today is an
-               earlier carrier spread over both headers, four pins each way;
-               replacing it is a change of its own and docs/debug-cable.md
-               says which is which.  Either way it waits on a second board to
-               drive. -->
+               a board.
+               The connector half is the decided shape and not yet the built
+               one: ONE connector, JA, carrying the whole link both ways, with
+               JB unassigned.  What is in the fabric today is an earlier
+               carrier spread over both headers, four pins each way; replacing
+               it is a change of its own and docs/debug-cable.md says which is
+               which.  Either way it waits on a second board to drive. -->
           <rect class="d-box d-built" x="1068" y="96" width="188" height="64"/>
           <text class="d-t" x="1162" y="118" text-anchor="middle">debug cable adapter</text>
           <text class="d-s" x="1162" y="138" text-anchor="middle">the cable both ways, 8 pins</text>
           <text class="d-s" x="1162" y="152" text-anchor="middle">registers at GP1 + 0x1000</text>
           <!-- one connector, one line out of the adapter to it -->
-          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,464 M1162,508 L1162,524 L1015,524 L1015,562"/>
+          <path class="d-line" d="M850,120 L1068,120 M850,136 L1068,136 M1162,160 L1162,464 M1162,508 L1162,562"/>
           <text class="d-s" x="959" y="114" text-anchor="middle">20 out</text>
           <text class="d-s" x="959" y="150" text-anchor="middle">17 in</text>
           <path class="d-line" d="M1256,120 L1305,120"/>
@@ -201,7 +237,7 @@
           <path class="d-line" d="M310,386 L310,464 M725,386 L725,464 M876,238 L876,464 M380,386 L380,432.2 L660,432.2 L660,464"/>
 
           <!-- the PS-PL boundary, which the three ports cross -->
-          <path class="d-dash" d="M-170,486 L38,486 M198,486 L230,486 M390,486 L640,486 M890,486 L1092,486 M1232,486 L1290,486"/>
+          <path class="d-dash" d="M-170,486 L-150,486 M10,486 L38,486 M198,486 L230,486 M390,486 L640,486 M890,486 L1092,486 M1232,486 L1290,486"/>
           <rect class="d-plate" x="38" y="464" width="160" height="44"/>
           <rect class="d-box d-done" x="38" y="464" width="160" height="44"/>
           <text class="d-m" x="118" y="483" text-anchor="middle">S_AXI_HP0</text>
@@ -221,9 +257,9 @@
           <!-- Everything inside this outline is a program on the A9s.  The
                controller to its left is not: it is the processing system's
                own silicon, which is why it stands outside the outline. -->
-          <rect class="d-dot" x="220" y="542" width="853" height="128"/>
+          <rect class="d-dot" x="220" y="542" width="1000" height="128"/>
           <text class="d-s" x="230" y="556">Linux</text>
-          <path class="d-line" d="M765,508 L765,533.2 M305,533.2 L893,533.2 M305,533.2 L305,562 M452,533.2 L452,562 M599,533.2 L599,562 M746,533.2 L746,562 M893,533.2 L893,562"/>
+          <path class="d-line" d="M765,508 L765,533.2 M305,533.2 L1040,533.2 M305,533.2 L305,562 M452,533.2 L452,562 M599,533.2 L599,562 M746,533.2 L746,562 M893,533.2 L893,562 M1040,533.2 L1040,562"/>
 
           <!-- The boot loader, beside Linux, in two parts because only one of
                them is ours.  U-Boot itself is upstream, so it is grey like muir
@@ -236,16 +272,16 @@
                in docs/boot.md, and two of them are read by U-Boot proper
                rather than by the first stage, which is why the grey box is not
                simply somebody else's. -->
-          <rect class="d-plate" x="1085" y="542" width="54" height="128"/>
-          <rect class="d-dot d-ext" x="1085" y="542" width="54" height="128"/>
-          <rect class="d-plate" x="1090" y="547" width="44" height="30"/>
-          <rect class="d-box d-done" x="1090" y="547" width="44" height="30"/>
-          <text class="d-t" x="1112" y="567" text-anchor="middle">SPL</text>
+          <rect class="d-plate" x="1226" y="542" width="54" height="128"/>
+          <rect class="d-dot d-ext" x="1226" y="542" width="54" height="128"/>
+          <rect class="d-plate" x="1231" y="547" width="44" height="30"/>
+          <rect class="d-box d-done" x="1231" y="547" width="44" height="30"/>
+          <text class="d-t" x="1253" y="567" text-anchor="middle">SPL</text>
           <!-- Stacked rather than rotated: the strip is 54 wide and
                93 tall under the SPL box, and six lines
                at 14 fill 84 of it.  A reader tilts their head for a rotated
                label and does not for this one. -->
-          <text class="d-t" text-anchor="middle"><tspan x="1112" y="592">U</tspan><tspan x="1112" y="606">-</tspan><tspan x="1112" y="620">B</tspan><tspan x="1112" y="634">o</tspan><tspan x="1112" y="648">o</tspan><tspan x="1112" y="662">t</tspan></text>
+          <text class="d-t" text-anchor="middle"><tspan x="1253" y="592">U</tspan><tspan x="1253" y="606">-</tspan><tspan x="1253" y="620">B</tspan><tspan x="1253" y="634">o</tspan><tspan x="1253" y="648">o</tspan><tspan x="1253" y="662">t</tspan></text>
           <rect class="d-plate" x="240" y="562" width="130" height="96"/>
           <rect class="d-box d-done" x="240" y="562" width="130" height="96"/>
           <text class="d-t" x="305" y="586" text-anchor="middle">terminal</text>
@@ -286,13 +322,25 @@
           <text class="d-s" x="893" y="620" text-anchor="middle">over M_AXI_GP1</text>
           <text class="d-s" x="893" y="642" text-anchor="middle">a Unibus master</text>
 
+          <!-- Crossed off: this board has no USB host port, so there is
+               nothing for this program to read and it is not on this board.
+               The keyboard and the mouse reach the machine from a viewer over
+               the network, through the RFB server, which is the one program
+               that writes those registers on either board. -->
+          <rect class="d-plate" x="975" y="562" width="130" height="96"/>
+          <rect class="d-box d-absent" x="975" y="562" width="130" height="96"/>
+          <path class="d-absent-x" d="M975,562 L1105,658 M1105,562 L975,658"/>
+          <text class="d-t d-absent-t" x="1040" y="586" text-anchor="middle">USB input</text>
+          <text class="d-s d-absent-t" x="1040" y="606" text-anchor="middle">the keyboard and mouse,</text>
+          <text class="d-s d-absent-t" x="1040" y="620" text-anchor="middle">onto the I/O board</text>
+          <text class="d-s d-absent-t" x="1040" y="642" text-anchor="middle">through the terminal</text>
 
-          <rect class="d-plate" x="975" y="562" width="80" height="96"/>
-          <rect class="d-box d-ext" x="975" y="562" width="80" height="96"/>
-          <text class="d-t" x="1015" y="586" text-anchor="middle">muir</text>
-          <text class="d-s" x="1015" y="606" text-anchor="middle">on the PS,</text>
-          <text class="d-s" x="1015" y="620" text-anchor="middle">running CC</text>
-          <text class="d-s" x="1015" y="642" text-anchor="middle">the debugger</text>
+          <rect class="d-plate" x="1122" y="562" width="80" height="96"/>
+          <rect class="d-box d-ext" x="1122" y="562" width="80" height="96"/>
+          <text class="d-t" x="1162" y="586" text-anchor="middle">muir</text>
+          <text class="d-s" x="1162" y="606" text-anchor="middle">on the PS,</text>
+          <text class="d-s" x="1162" y="620" text-anchor="middle">running CC</text>
+          <text class="d-s" x="1162" y="642" text-anchor="middle">the debugger</text>
 
           <!-- main memory: through the PS's own memory controller, which is
                Xilinx silicon and not ours, out to the DRAM.  The controller is
@@ -337,61 +385,88 @@
                Written as the lamps are written: one row at their own left
                margin, the glyph on their centre line and the text 14 to the
                right of it, so the block is one row where the lamp block is
-               four.  The glyph is a square and not a dot, and carries no lit
+               six.  The glyph is a square and not a dot, and carries no lit
                colour, because a momentary button is not a light; its 8 by 8
                is the area of a lamp's 4.5 radius.  Its line reaches the
                fabric as the lamps' does, from that rectangle's right edge to
                this block's left edge at the block's own centre. -->
-          <rect class="d-box d-ext" x="1305" y="300" width="150" height="30"/>
-          <rect x="1315" y="311" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
-          <text class="d-s" x="1333" y="319">BTN0 &mdash; BOOT</text>
-          <path class="d-line" d="M1290,315 L1305,315"/>
-          <!-- The two lamps. This board has two RGB LEDs and nothing else, so
-               what they show is a decision rather than a translation of the
-               larger board's six.  The CADR's own light panel carried a run
-               lamp and an error lamp beside its boot button, and BTN0 is that
-               button here, so the two lamps are the two the panel had.  LD0 is
-               MACHRUN as a level, and its brightness is the fraction of time
-               the machine computes rather than waits for memory.  LD1 is one
-               lamp with three meanings, in priority order: red for ERRHALT,
-               the machine halting itself under ERRSTOP, latched until a boot
-               press; blue for PROMENABLE, MIT's net at PCTL 1C19, lit while
-               the machine fetches its microinstructions out of the boot PROM
-               and dark once it runs the microcode it loaded from the disk;
-               and otherwise green, blinking with the retiring microcycles.
-               So blue then green is a boot, green gone still is a machine
-               somebody halted, and red is a machine that fell over.  Each of
-               the three is drawn on its own row in the colour it shows.  What
-               two lamps cannot carry is here said rather than left to be
-               found: the fabric's own clock and the disk's activity have no
-               lamp on this board.  docs/board.md carries the same table in
-               prose. -->
-          <rect class="d-box d-ext" x="1305" y="372" width="150" height="108"/>
-          <circle cx="1319" cy="392" r="4.5" fill="#2da44e" fill-opacity="0.45" stroke="currentColor" stroke-width="1"/>
-          <text class="d-s" x="1333" y="396">LD0 &mdash; MACHRUN</text>
-          <circle cx="1319" cy="414" r="4.5" fill="#d1495b" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
-          <text class="d-s" x="1333" y="418">LD1 &mdash; ERRHALT</text>
-          <circle cx="1319" cy="436" r="4.5" fill="#0969da" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
-          <text class="d-s" x="1333" y="440">LD1 &mdash; PROMENABLE</text>
-          <circle cx="1319" cy="458" r="8" fill="none" stroke="#2da44e" stroke-width="1" stroke-opacity="0.5"/>
-          <circle class="d-lamp-fast" cx="1319" cy="458" r="4.5" fill="#2da44e" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
-          <text class="d-s" x="1333" y="462">LD1 &mdash; microcycles</text>
-          <path class="d-line" d="M1290,426 L1305,426"/>
-          <!-- BTN1 resets the whole fabric: the machine, the console's and the
-               disk pack's register faces, and the lamps.  The processing
-               system and Linux keep running across it and the bitstream stays,
-               so the programs' view of those faces is stale until they are
-               restarted, which is why a reset over JTAG is the one to reach
-               for on a board with a processing system.  BTN1 exists on every
-               board here so that the same control is the same button on each,
-               and this board is the reason: it has two buttons, so the reset
-               can only be the second one.  Written as BTN0 above is written,
-               one row with the glyph on the lamps' own centre line. -->
-          <rect class="d-box d-ext" x="1305" y="336" width="150" height="30"/>
-          <rect x="1315" y="347" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
-          <text class="d-s" x="1333" y="355">BTN1 &mdash; FABRIC RESET</text>
-          <path class="d-line" d="M1290,351 L1305,351"/>
+          <rect class="d-box d-ext" x="1305" y="264" width="150" height="66"/>
+          <rect x="1315" y="275" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="283">BTN0 &mdash; BOOT</text>
+          <rect x="1315" y="307" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="315">BTN1 &mdash; RESET</text>
+          <path class="d-line" d="M1290,297 L1305,297"/>
+          <!-- The lamps.  The block is the larger board's, at its own place and
+               its own size, and its six rows are the larger board's six.  This
+               board has two tricolour lamps where that one has six single ones,
+               so what they show is a decision rather than a translation: LD0 is
+               the run lamp as a level, dim in proportion to the time the machine
+               waits for memory, and LD1 is one lamp with three meanings, each on
+               a row of its own in the colour it shows, in priority order --- red
+               for ERRHALT, the machine halting itself under ERRSTOP, latched
+               until a boot press; blue for PROMENABLE, MIT's net at PCTL 1C19
+               driven from the net itself, lit while the machine fetches its
+               microinstructions out of the boot PROM and dark once it runs the
+               microcode it loaded from the disk, which is the PROM's own SELECT
+               and not the mode register's PROMDISABLE bit and is why it goes out
+               on every control-store write while the PROM loads the store; and
+               otherwise green, blinking with the retiring microcycles.  So blue
+               then green is a boot, green gone still is a machine somebody
+               halted, and red is a machine that fell over.  The last two rows
+               are the two meanings two lamps cannot carry, crossed off in their
+               places rather than left out: this board has no lamp for the
+               fabric's own clock and none for the disk's activity.
+               docs/board.md carries the same table in prose. -->
+          <rect class="d-box d-ext" x="1305" y="336" width="150" height="152"/>
+          <circle cx="1319" cy="356" r="4.5" fill="#2da44e" fill-opacity="0.45" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="360">LD0 &mdash; MACHRUN</text>
+          <circle cx="1319" cy="378" r="4.5" fill="#d1495b" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="382">LD1 &mdash; ERRHALT</text>
+          <circle cx="1319" cy="400" r="4.5" fill="#0969da" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="404">LD1 &mdash; PROMENABLE</text>
+          <circle cx="1319" cy="422" r="8" fill="none" stroke="#2da44e" stroke-width="1" stroke-opacity="0.5"/>
+          <circle class="d-lamp-fast" cx="1319" cy="422" r="4.5" fill="#2da44e" fill-opacity="1" stroke="currentColor" stroke-width="1"/>
+          <text class="d-s" x="1333" y="426">LD1 &mdash; microcycles</text>
+          <circle class="d-absent" cx="1319" cy="444" r="4.5"/>
+          <path class="d-absent-x" d="M1314.5,439.5 L1323.5,448.5 M1323.5,439.5 L1314.5,448.5"/>
+          <text class="d-s d-absent-t" x="1333" y="448">the fabric clock</text>
+          <circle class="d-absent" cx="1319" cy="466" r="4.5"/>
+          <path class="d-absent-x" d="M1314.5,461.5 L1323.5,470.5 M1323.5,461.5 L1314.5,470.5"/>
+          <text class="d-s d-absent-t" x="1333" y="470">disk activity</text>
+          <path class="d-line" d="M1290,412 L1305,412"/>
+          <!-- The no-auto-boot switch, above the boot button because that is
+               the order they are used in: the switch decides how the machine
+               comes up and the button decides when it goes.  With it on the
+               machine comes out of reset with RUN clear, as a CADR is when the
+               power comes on with nobody at it, and only -BOOT starts it; the
+               card's fpgarc has a flag that asks for the same thing and the two
+               are an OR.  It is read at the fabric's reset and nowhere else, so
+               moving it under a running machine does nothing until the next one.
+               Written as BTN0 below is written: one row at the lamps' own left
+               margin, the glyph on their centre line and the text 14 to the
+               right of it.  The glyph is a slide switch --- a body 10 wide with
+               its lever at the left, which is off --- and carries no lit colour,
+               a switch not being a light; it is centred on 1319 like every lamp
+               and like BTN0's square.  Its line reaches the fabric as theirs
+               do.  CROSSED OFF HERE: this board has no switches at all, so the
+               hold that keeps the machine from booting by itself is the card's
+               own flag file alone. -->
+          <rect class="d-box d-absent" x="1305" y="228" width="150" height="30"/>
+          <path class="d-absent-x" d="M1305,228 L1455,258 M1455,228 L1305,258"/>
+          <rect x="1314" y="239" width="10" height="8" rx="1" fill="none" stroke="currentColor" stroke-width="1" stroke-opacity="0.5"/>
+          <rect x="1315" y="240" width="4" height="6" fill="currentColor" fill-opacity="0.22" stroke="none"/>
+          <text class="d-s d-absent-t" x="1333" y="247">SW0 &mdash; NO AUTO BOOT</text>
+          <path class="d-line" d="M1290,243 L1305,243"/>
 
+          <!-- Crossed off with the program above it: this board has no USB
+               host port, so nothing is plugged into it and nothing reads it.
+               What a person at this board uses is a viewer over the network. -->
+          <rect class="d-box d-absent" x="970" y="712" width="140" height="84"/>
+          <path class="d-absent-x" d="M970,712 L1110,796 M1110,712 L970,796"/>
+          <text class="d-t d-absent-t" x="1040" y="738" text-anchor="middle">USB host</text>
+          <text class="d-s d-absent-t" x="1040" y="760" text-anchor="middle">keyboard and mouse,</text>
+          <text class="d-s d-absent-t" x="1040" y="774" text-anchor="middle">on the board&rsquo;s USB host port</text>
+          <path class="d-line" d="M1040,658 L1040,712"/>
 
 
           <!-- The connectors on the board itself. The pack is a file on the
