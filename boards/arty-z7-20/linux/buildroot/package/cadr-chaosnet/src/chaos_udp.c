@@ -4,38 +4,49 @@
 // Chaosnet over UDP: `muir::chaos::udp` ported.  `chaos_udp.h` says what the
 // frame is, which of it is unverified, and what every function here must do.
 //
-// The whole of the byte order lives in `put_word`, `get_word` and `odd_word`
-// below, driven by `CHUDP_PACKET_ORDER` and `CHUDP_TRAILER_ORDER`.  That is
-// deliberate and it is muir's reason: **the order is unverified**, the
-// protocol's author has said a version 2 may differ from version 1 in nothing
-// but byte order, and a correction should be a change to two constants and to
-// one test --- `chaos_test_udp.c` pins one whole datagram's bytes for exactly
-// that, as muir pins one in `tests/chudp.rs`.
+// The whole of the byte order lives in `put_word` and `get_word` below,
+// driven by `CHUDP_PACKET_ORDER` and `CHUDP_TRAILER_ORDER`.  Both are network
+// order: every 16-bit word goes most significant byte first, in the header,
+// in the data and in the trailer.  The two names are kept rather than folded
+// into one because the protocol's author has said a version 2 may differ from
+// version 1 in nothing but byte order, and a version that moved one and not
+// the other should be two constants to change.
 //
-// **WHAT IS BELIEVED, AND WHAT WOULD SETTLE IT.**  The Chaos packet's own
-// sixteen-bit words are least significant byte first; the hardware trailer's
-// three words are network order.  A mixed frame.  The packet's order is what
-// the protocol's own documentation says in as many words ("I'm really sorry
-// about this, and might develop version 2 of the protocol with the only
-// change being big-endian byte order"), and it fits AIM-628 §3.6, which puts
-// the first byte of a pair in the word's least significant half --- so the
-// data bytes come out of a little-endian frame in the order they were
-// written and out of a big-endian one swapped in pairs.  The trailer's order
-// is belief and not knowledge: the reference implementation was read BY A
-// PERSON as taking the trailer through `ntohs`, and how the packet's own
-// bytes are assembled there was not traced.  What would settle either: a
-// capture of a live exchange, or one interoperation.  **The wrong order fails
-// loudly on the first packet** --- an absurd twelve-bit data count against
-// the datagram's own length, which `chudp_unwrap` refuses by name, and
-// addresses that match nothing configured --- so it does not fail quietly.
+// **THIS IS WHAT `cbridge` SPEAKS, AND IT WAS ESTABLISHED BY RUNNING IT.**
+// `cbridge` was run with a test configuration and watched through its own log
+// and a packet capture.  Frames with their words least significant byte first
+// were rejected as bogus, with the source address reported byte-swapped and
+// the opcode as 0.  Frames in network order carrying the CADR's CRC in the
+// trailer were rejected with a bad checksum, and the value `cbridge` printed
+// was exactly the one's complement sum below taken over the frame as sent.
+// Frames in network order carrying the Internet checksum were accepted and
+// forwarded, and `cbridge`'s own frames verify with the same checksum.
+// `cbridge`'s code was not read: its author forbids language models to read
+// or process it, and that is the author's decision about the author's own
+// work, kept here as it is kept in muir.
+//
+// **AND THE CHECK WORD IS CONVERTED HERE AND NOWHERE ELSE.**  The trailer's
+// third word is the Internet checksum on the wire and the 9401's CRC-16 on
+// the machine's seam, so `chudp_wrap` puts the checksum in and `chudp_unwrap`
+// puts the CRC back.  The fabric computes the CRC on transmit and does not
+// verify one on receipt, so the frame this hands the machine has to carry a
+// CRC this program made: `cadr_chaos_cable.sv` streams the trailer's three
+// words into the machine's buffer as they are given, and the machine reads
+// them back.  The Chaos packet's own words --- the header, the data and the
+// trailer's two addresses --- are never touched.
+//
+// **A FRAME WHOSE WORDS DO NOT SUM RIGHT IS DROPPED**, which is what
+// `cbridge` does with one.  It is not carried with the CRC made for it
+// anyway: that would tell the machine a frame arrived whole when it did not,
+// and the machine has no other way to know, the interface's CRC Error bit
+// being held low on this board for want of a seam bit to carry it.
 //
 // Read from the Wireshark dissector published at
 // `gist.github.com/ams/6bde1da514479e27c9f70c161b5537c1` and the protocol
 // page at `chaosnet.net/protocol`, cross-read against the Computer History
-// Wiki's Chaosnet page.  **Not** from `bictorv/chaosnet-bridge`, the
-// reference implementation, whose author forbids language models to read or
-// process it; that is the author's decision about the author's own work and
-// it is kept here, as it is kept in muir.
+// Wiki's Chaosnet page.  `chaosnet.net/protocol` names an Internet checksum
+// too, and says that `cbridge` sends words least significant byte first,
+// which the running `cbridge` does not.
 //
 // **THIS BOARD IS A LEAF, NOT A ROUTER**, as muir is.  AIM-628 chapter 6's
 // routing is a bridge's job and `cbridge` is the thing to put beside this.
@@ -60,6 +71,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,12 +105,31 @@ static uint16_t get_word(enum chudp_order order, const uint8_t *at)
 				     : (uint16_t)((unsigned)at[0] << 8 | (unsigned)at[1]);
 }
 
-// The word a lone trailing byte makes: it is the half that comes first, and
-// the other half is not there.  A peer that does not pad an odd data count to
-// a whole word produces one of these, and whether a peer pads is unverified.
-static uint16_t odd_word(enum chudp_order order, uint8_t b)
+// --- the Internet checksum ------------------------------------------------
+
+// The one's complement of the one's complement sum of `n` words.  The carry
+// is folded back in at every step, which is the same answer as folding it
+// once at the end and does not need a wider accumulator to be right for the
+// longest frame.
+uint16_t chudp_checksum(const uint16_t *words, unsigned n)
 {
-	return order == CHUDP_LITTLE ? (uint16_t)b : (uint16_t)((unsigned)b << 8);
+	uint32_t sum = 0;
+	for (unsigned k = 0; k < n; ++k) {
+		sum += words[k];
+		sum = (sum & 0xffffu) + (sum >> 16);
+	}
+	return (uint16_t)(~sum & 0xffffu);
+}
+
+// A frame is good when all of its words, the checksum among them, sum to
+// 0xFFFF --- which is what `chudp_checksum` returning 0 over the whole frame
+// says.  Written this way rather than as "recompute and compare" because it
+// is the property the protocol states, and because it is the one a frame
+// whose checksum field is 0xFFFF and whose body sums to 0 does not satisfy by
+// accident.
+int chudp_checksum_ok(const uint16_t *words, unsigned n)
+{
+	return n > 0 && chudp_checksum(words, n) == 0;
 }
 
 // --- the frame's bytes ----------------------------------------------------
@@ -126,15 +157,28 @@ unsigned chudp_wrap(const uint16_t *words, unsigned n, uint8_t *out, unsigned ma
 	out[3] = 0;
 	for (unsigned k = 0; k < body; ++k)
 		put_word(CHUDP_PACKET_ORDER, words[k], out + CHUDP_HEADER + 2u * k);
-	for (unsigned k = 0; k < CHAOS_PKT_TRAILER_WORDS; ++k)
+	// The trailer's destination and source go out as they stand: they are
+	// the two words the machine's own interface put there.
+	for (unsigned k = 0; k < CHAOS_PKT_TRAILER_WORDS - 1u; ++k)
 		put_word(CHUDP_TRAILER_ORDER, words[body + k],
 			 out + CHUDP_HEADER + body * 2u + 2u * k);
+	// **AND THE THIRD IS THE INTERNET CHECKSUM, NOT THE CHECK WORD THE
+	// FABRIC COMPUTED.**  `words[body + 2]` is the 9401's CRC-16 and is
+	// what the machine's seam carries; CHUDP carries a checksum over the
+	// eight header words, the data words, and the trailer's destination
+	// and source --- everything before it.
+	put_word(CHUDP_TRAILER_ORDER, chudp_checksum(words, body + 2u),
+		 out + CHUDP_HEADER + body * 2u + 4u);
 	return len;
 }
 
 unsigned chudp_unwrap(const uint8_t *datagram, unsigned len, uint16_t *out,
-		      unsigned max, const char **why)
+		      unsigned max, const char **why, int *bad_checksum)
 {
+	static int unread_flag;
+	if (!bad_checksum)
+		bad_checksum = &unread_flag;
+	*bad_checksum = 0;
 	// The sentence a refusal carries.  A static buffer, good until the next
 	// call: one socket, one datagram at a time, and the caller either
 	// prints it or drops it before asking again.  `chaos_frame_parse`'s
@@ -174,9 +218,8 @@ unsigned chudp_unwrap(const uint8_t *datagram, unsigned len, uint16_t *out,
 		return 0;
 	}
 	// **The trailer is found from the END of the datagram**, not from the
-	// data count, so where it starts is not a guess --- which is what lets
-	// both a peer that pads an odd data count to a whole word and one that
-	// does not be read.  The length is then held to one of the two.
+	// data count, so where it starts is not a guess.  The length is then
+	// held to the data count rounded up to a whole word.
 	const unsigned body = len - CHUDP_HEADER - CHUDP_TRAILER;
 	const unsigned count = get_word(CHUDP_PACKET_ORDER, datagram + CHUDP_HEADER + 2u) & 07777u;
 	if (count > CHAOS_PKT_MAX_DATA) {
@@ -185,8 +228,15 @@ unsigned chudp_unwrap(const uint8_t *datagram, unsigned len, uint16_t *out,
 		*why = said;
 		return 0;
 	}
-	if (body != CHUDP_SOFTWARE_HEADER + ((count + 1u) & ~1u) &&
-	    body != CHUDP_SOFTWARE_HEADER + count) {
+	// **AN ODD DATA COUNT MUST BE PADDED, AND AN UNPADDED ONE IS REFUSED.**
+	// The data is whole 16-bit words on the cable, so an odd count leaves
+	// a zero in the last word's high half --- which, the word going out
+	// most significant byte first, is the byte that comes FIRST of that
+	// pair on the wire.  `cbridge` always pads.  A datagram that does not
+	// ends in a lone byte sitting exactly where the pad byte would be, so
+	// whether it is data or padding cannot be told from the datagram, and
+	// reading it either way is a guess about a case nothing produces.
+	if (body != CHUDP_SOFTWARE_HEADER + ((count + 1u) & ~1u)) {
 		snprintf(said, sizeof said, "%u bytes of packet against a data count of %u",
 			 body, count);
 		*why = said;
@@ -199,20 +249,34 @@ unsigned chudp_unwrap(const uint8_t *datagram, unsigned len, uint16_t *out,
 		*why = said;
 		return 0;
 	}
-	for (unsigned k = 0; k < body_words; ++k) {
-		const uint8_t *at = datagram + CHUDP_HEADER + 2u * k;
-		out[k] = 2u * k + 1u < body ? get_word(CHUDP_PACKET_ORDER, at)
-					    : odd_word(CHUDP_PACKET_ORDER, at[0]);
-	}
+	for (unsigned k = 0; k < body_words; ++k)
+		out[k] = get_word(CHUDP_PACKET_ORDER, datagram + CHUDP_HEADER + 2u * k);
 	for (unsigned k = 0; k < CHAOS_PKT_TRAILER_WORDS; ++k)
 		out[body_words + k] =
 			get_word(CHUDP_TRAILER_ORDER, datagram + len - CHUDP_TRAILER + 2u * k);
-	// **Nothing is dropped on the check word here**, and the caller should
-	// not either: what a CHUDP peer puts in the trailer's third word is
-	// unverified --- the hardware trailer's is the 9401's CRC-16, and the
-	// trailer has also been described as carrying an Internet checksum ---
-	// so `chaos_frame_parse` reports the answer and leaves the frame alone.
-	// One interoperation settles it.
+	// **THE INTERNET CHECKSUM IS VERIFIED AND A BAD ONE IS DROPPED**, which
+	// is what `cbridge` does with one.  Carrying the frame anyway would
+	// mean handing the machine a CRC this program made for it, and the
+	// machine would then have no way at all to know the frame was damaged:
+	// the interface's CRC Error bit is held low on this board for want of
+	// a seam bit to carry it.
+	if (!chudp_checksum_ok(out, n)) {
+		snprintf(said, sizeof said,
+			 "the words do not sum right: the checksum is 0x%04x and they want 0x%04x",
+			 (unsigned)out[n - 1u], (unsigned)chudp_checksum(out, n - 1u));
+		*why = said;
+		*bad_checksum = 1;
+		return 0;
+	}
+	// **AND THE MACHINE'S OWN CHECK WORD IS MADE FOR THE FRAME.**  The
+	// trailer's third word is the Internet checksum on the wire and the
+	// 9401's CRC-16 on the seam, and the machine reads the trailer's three
+	// words back out of its own buffer.  The fabric computes that word on
+	// transmit and does not compute one on receipt, so this is where it
+	// comes from: `chaos_check_word` over the header, the data and the
+	// trailer's two addresses, which is the same arithmetic over the same
+	// words as `chaos_packet_frame`.
+	out[n - 1u] = chaos_check_word(out, n - 1u);
 	return n;
 }
 
@@ -575,9 +639,17 @@ int chudp_poll(struct chudp *u, unsigned max,
 		}
 		uint16_t words[CHAOS_PKT_MAX_WORDS];
 		const char *why = NULL;
+		int bad_checksum = 0;
 		const unsigned n = chudp_unwrap(datagram, (unsigned)got, words,
-						CHAOS_PKT_MAX_WORDS, &why);
+						CHAOS_PKT_MAX_WORDS, &why, &bad_checksum);
 		if (n == 0) {
+			// A bad checksum is counted as well as traced: it is
+			// the one refusal that says the network between here
+			// and the far end is damaging packets, and a person
+			// watching the report line has to be able to see it
+			// without turning the trace on.
+			if (bad_checksum && u->bad_checksum != ULONG_MAX)
+				++u->bad_checksum;
 			if (u->trace)
 				say("udp: from %s: %s", where(&from), why ? why : "not a frame");
 			continue;

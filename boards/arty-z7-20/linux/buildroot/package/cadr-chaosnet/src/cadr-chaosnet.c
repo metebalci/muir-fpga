@@ -559,11 +559,17 @@ int main(int argc, char **argv)
 			const unsigned long moved = e.from_machine + e.to_machine
 						  + e.from_udp + e.to_udp;
 			if (moved != reported) {
+				// The bad-checksum count is the link's own: the
+				// Internet checksum is checked at the UDP edge
+				// and a frame that fails it never reaches the
+				// counters here.
 				say("%lu from the machine, %lu to it, %lu in and %lu out over UDP; "
 				    "%lu with nowhere to go, %lu malformed, "
+				    "%lu with a bad checksum, "
 				    "%lu refused because the machine had not emptied its buffer",
 				    e.from_machine, e.to_machine, e.from_udp, e.to_udp,
 				    e.dropped_no_route, e.dropped_bad_frame,
+				    e.have_udp ? e.udp.bad_checksum : 0ul,
 				    e.refused_busy);
 				reported = moved;
 			}
