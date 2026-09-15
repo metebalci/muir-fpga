@@ -534,12 +534,15 @@
           <text class="d-s" x="30" y="292">strobe, a late data line is latched instead of the intended word, and a write flag that moves inside a request inverts the cycle.</text>
         </svg>
       </div>
-      <figcaption>This is the form a slice under way is moving to: one signal
-      to a pair of pins, the partner driven low as a guard, because the
+      <figcaption>The frame drawn here is the one the fabric builds now: one
+      signal to a pair of pins, the partner driven low as a guard, because the
       header&rsquo;s pins are routed as coupled pairs and an edge on one couples
-      into the other. What the boards run today is three data lines and eight
-      beats a frame, sixty-six ticks. Either is a fraction of the 11.05
-      microseconds a debug cycle is allowed.</figcaption>
+      into the other. That is twenty-four beats, 162 ticks. The carrier before
+      it, which is what the two boards were running when they debugged each
+      other, put three data lines on each group and made a frame eight beats,
+      sixty-six ticks; a board carries whichever its bitstream was built with.
+      Either is a fraction of the 11.05 microseconds a debug cycle is
+      allowed.</figcaption>
     </figure>
 
     <div class="prose">
@@ -603,9 +606,11 @@
   <div class="band">
     <div class="prose">
       <h2>What has run on a board</h2>
-      <p>Two of the three pieces have run on silicon. The window has carried CC
-      into a machine that was running Lisp, and the ribbon has carried frames
-      between two boards. CC over the ribbon is the step not yet taken.</p>
+      <p>All three pieces have run on silicon. The window has carried CC into a
+      machine that was running Lisp, the ribbon has carried frames between two
+      boards, and CC has crossed the ribbon: the debugger board halting the
+      machine in the other board&rsquo;s fabric and reading it back, both ways
+      round. What has not crossed it is a write.</p>
     </div>
 
     <div class="tablewrap">
@@ -650,7 +655,17 @@
           </tr>
           <tr>
             <th scope="row">CC over the ribbon</th>
-            <td>The debugger board running CC out of its own Lisp world and reading the other machine over the ribbon rather than over a window. The next step.</td>
+            <td>One board&rsquo;s CC, running in its own Lisp world, halted the machine in the other board&rsquo;s fabric over the ribbon, read it back and started it again. Both ways round. The program counter, all 48 bits of the instruction register, the output bus and the first flag word each equal the far board&rsquo;s own console at the same halt, and four scratchpad words each way equal that board&rsquo;s readout program. The second flag word differs by the one bit CC itself corrects, and the other direction, where the correction does not apply, is the control for it.</td>
+            <td class="name">yes</td>
+          </tr>
+          <tr>
+            <th scope="row">Every microcycle accounted for</th>
+            <td>A scratchpad read is one forced microinstruction, and the far machine&rsquo;s cycle counter moved by exactly one for each of them. CC&rsquo;s own program counter is what the console reads after the entry, less five, which is the five instructions its full save forces on the way in. The debuggee&rsquo;s own register window, read while it held that role, reported no requests and no faults at all, so what carried the cycle was the ribbon.</td>
+            <td class="name">yes</td>
+          </tr>
+          <tr>
+            <th scope="row">A write over the ribbon</th>
+            <td>CC can write a scratchpad, main memory and the machine&rsquo;s own registers, and it has done so over the window. None of that has crossed a ribbon yet.</td>
             <td class="name">not yet</td>
           </tr>
         </tbody>
@@ -661,7 +676,10 @@
       <p><code>yes</code> means a board itself has shown it, which is the same
       claim the colours on the board drawings make. The console&rsquo;s own line
       carries two counters, frames heard and frames refused, and the second is
-      how much of the cable&rsquo;s time a bad ribbon costs.</p>
+      how much of the cable&rsquo;s time a bad ribbon costs. Both saturate
+      within a third of a second of a connect and only a reset of the fabric
+      clears them, so what they can give is a trajectory rather than a
+      rate.</p>
     </div>
   </div>
 </section>
