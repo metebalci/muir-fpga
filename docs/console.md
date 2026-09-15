@@ -1202,12 +1202,11 @@ ones nor a gated clock's all zeros can produce), then IDENT. A read nothing
 answers on a GP port hangs both cores.
 
 **`cadr-common` is a static library in the staging tree and not a header of
-`static inline`s, and the reason is `say()`.** It writes to one destination a
-program chooses once --- `--log /dev/console` for the disk's init script ---
-and that destination is a file-static. Inline in a header it would be one
-file-static per translation unit, so a two-file program would have two log
-destinations and an init call in one would move only its own. A library has
-one definition and cannot do that. `pack_ecc.h` is header-only for the
+`static inline`s, and the reason is `say()`.** It writes to the destinations a
+program chooses once, and those are file-statics. Inline in a header they would
+be one set per translation unit, so a two-file program would have two logs and
+an init call in one would move only its own. A library has one definition and
+cannot do that. `pack_ecc.h` is header-only for the
 opposite reason: arithmetic, and no state. Buildroot's `SITE_METHOD = local`
 rsyncs only a package's own `src/`, so a relative include of a sibling
 package builds on the host and fails on the target; each consumer's
@@ -1327,7 +1326,7 @@ processor's own cycles with nobody reading what it said.
 
 **The host check** is `make -C boards/arty-z7-20/linux/buildroot/package/cadr-console/src
 check`, on the build host, needing nothing but a C compiler; scratch under
-`~/.cache/muir-fpga-console`. It runs the program's core against a model of
+`~/.cache/muir-fpga-console-<the checkout, hashed>`. It runs the program's core against a model of
 the slave --- the two pages, the latch, the lost bit, `UNMAPPED`, and a
 modelled machine whose CYCLES advances only while RUN is set, and whose STEP
 is an edge and not a level --- and the count is printed by the run. **It is in
@@ -1337,11 +1336,30 @@ check was named in the Makefile. The model is a model and not the RTL, and says 
 `feeder_test.c` does; the RTL is held to the same contract by
 `tb/cadr_console_tb.cpp`.
 
-**The mutation runner cannot reach a C program** --- it copies `rtl/`, `tb/`
-and `boards/arty-z7-20/vivado/` by pathspec and has no check for one, and a record naming a
-check the runner has no entry for kills the whole run at parse, for every
-record. So the substitute is eight mutations applied by hand to a scratch
-copy and reverted, and this table is the record of them. All eight caught:
+**The repository's own mutation runner cannot reach a C program** --- it copies
+`rtl/`, `tb/` and `boards/arty-z7-20/vivado/` by pathspec and has no check for
+one, and a record naming a check the runner has no entry for kills the whole
+run at parse, for every record. So this package has a runner of its own beside
+`cadr-serial`'s and `cadr-terminal`'s: `src/mutate.py` over
+`src/console_mutations.txt`, run by `make -C ... check` and so by
+`build/console_face.pass`. It aims at `cadr-common/src/cadr_log.c` as well as
+at this package's own files, because this check builds that file and the
+logging's own package has a shell check and no C one --- which is what
+`serial_mutations.txt` already does with the endpoint grammar.
+
+The ten records there hold the printing: a reply to a person bare and a kept
+line prefixed, both ways round; `--log` given twice reaching both
+destinations; a second destination remembered beside the first and not on top
+of it; the cap applied, and applied at the size it says; a log appended to and
+not truncated; a log that cannot be opened refused rather than carried on
+without; and the fan-out stream reaching every destination and counting
+against the cap. One equivalence is recorded in the list rather than left to
+be found: clearing the rotated file's size is written over by the next line's
+`ftell`.
+
+**The eight mutations below were applied BY HAND** before that runner existed,
+to a scratch copy and reverted, and this table is the record of them. They are
+still to be written as records. All eight caught:
 
     register index off by one              console_test.c:322
     the guard's marker test as `!= 0`      console_test.c:298
@@ -1356,6 +1374,80 @@ copy and reverted, and this table is the record of them. All eight caught:
 what it was before the move --- 76 requests, 72 answered, 4 denied, 67 blocks
 --- re-run from a cleared work directory so that it was a build and not a
 stale binary.
+
+## What a line says, and where it goes
+
+**A reply to a person is bare; a line written to a log carries the program's
+name.** `say()` puts `cadr-console: ` in front of every line, and that prefix
+is for the boot log, where five programs write to one serial console and a
+line has to say which of them said it. At the prompt, and in a command typed
+in a session over ssh, there is nobody else talking: the person asked this
+program, and the name in front of every line of a `regs` table is noise
+between them and the answer.
+
+`ssh board cadr-console status` without a terminal is the other case and it
+gets the prefix, because standard output there is a pipe and what comes out of
+a pipe is usually on its way into something that keeps it. `ssh -t` is a
+terminal and is bare.
+
+The test is the one the rule is about: is anybody there. Standard output a
+terminal means a person is reading the lines as they come, so they are bare.
+A pipe or a file means the lines are being kept, and a kept line names its
+program. `--log PATH` is the same question answered by the caller, so a line
+written through one is prefixed whatever standard output is.
+
+**And `/dev/console` is a terminal, which the test cannot tell from a person.**
+An init script's standard output at boot is the console, and `isatty` says yes
+to it, so a line let through from a script would go bare into the log five
+programs share. `S80cadr-disk-packs` therefore calls the console with `--log
+/dev/console` on the two commands whose output it lets through --- the debug
+cable's wiring and its connect --- which is the script saying outright that
+these lines are a log. The other two calls send their output to `/dev/null`,
+so nothing there depends on it. `fpgarc_test.sh` holds the flag on those
+calls, because a rule with a case it cannot see is a rule that will be broken
+by somebody adding a third call.
+
+muir's prompt is the reference. Its answers carry no program name at all, and
+even the `muir: ` it writes while the machine is held goes only to a terminal:
+"a pipe or a file gets muir's answers alone" (`../muir/src/prompt.rs`). Only
+`cadr-console` does this. The other five programs are daemons whose every line
+is kept, so every line of theirs is prefixed.
+
+**And `--log` may be given more than once, in every one of these programs.**
+Each line then goes to every destination named. `cadr_daemon` starts each
+daemon with two:
+
+    --log /dev/console --log /var/log/cadr-<program>.log
+
+So what a program says is on the serial console, where a boot is watched, and
+in a file, where somebody with nothing but ssh can read it. That is what the
+key trace needed: `cadr-console trace-keys on` switches on a trace in
+`cadr-terminal` and `cadr-usb-input`, and the person who asks for it is
+usually the person over ssh who cannot see the console at all.
+
+    tail -F /var/log/cadr-terminal.log
+    tail -F /var/log/cadr-usb-input.log
+
+**`tail -F` and not `tail -f`.** A file that has been rotated is a new file
+under the old name, and `tail -f` follows the one it opened; `-F` follows the
+name.
+
+**One program writes its lines through a `FILE *` of its own and it fans out
+too.** `cadr-disk-packs` hands its feeder a stream --- eighteen kinds of line
+go through it, `denied block ...` among them --- and `cadr_log_stream()` is a
+stream of the library's own that reaches every destination and counts against
+the cap. The first destination alone would have put exactly the lines somebody
+over ssh most wants on the console and nowhere else.
+
+**A file destination is capped at 1 MiB and rotated, because the root
+filesystem is a RAM disk.** The image is unpacked into memory at every boot,
+`/var/log` is a symlink to `/tmp` in this Buildroot skeleton, and `/tmp` is
+that same memory. So a log that grew without bound would take the board down,
+and the board has five of them. A file that has reached `CADR_LOG_MAX` is
+renamed to `<name>.1`, replacing any earlier `.1`, and a fresh file is
+started. A program's log is therefore at most two of these and the five
+programs at most ten megabytes, however long the board is up. The logs are
+lost at a reboot, which is right for a log of this kind.
 
 ## What is not built
 

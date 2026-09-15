@@ -71,7 +71,7 @@
 // counter --- printed on every status line --- is what says whether it needed
 // shortening.  A pass that finds nothing costs one register read.
 //
-//     cadr-serial [--serial <endpoint>] [--log PATH] [--regs ADDR]
+//     cadr-serial [--serial <endpoint>] [--log PATH]... [--regs ADDR]
 //                 [--poll-us N] [--no-guard] [--quiet] [--once]
 //
 // **WHERE THE FAR END IS OFFERED IS muir'S WORD FOR IT, `--serial`**, and it
@@ -94,7 +94,6 @@
 // writes its endpoint out in full so that nothing rests on which default is
 // which.
 
-#include <errno.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
@@ -129,7 +128,10 @@ static void usage(void)
 		"                 and the port must be named (default 0.0.0.0:7641, every\n"
 		"                 interface at the 2651's Unibus address 0o764160;\n"
 		"                 --serial 127.0.0.1:7641 is the loopback alone)\n"
-		"  --log PATH     where to write (default stdout)\n"
+		"  --log PATH     where to write; may be given more than once, and every line\n"
+		"                 then goes to every destination named.  With none, stdout.\n"
+		"                 A file destination is capped at 1 MiB and rotated to\n"
+		"                 <name>.1, the root filesystem being a RAM disk\n"
 		"  --regs ADDR    the port's register window (default 0x40002000)\n"
 		"  --poll-us N    how often the port is looked at while idle (default 2000)\n"
 		"  --no-guard     do not check the EMIO tally first\n"
@@ -152,7 +154,6 @@ static void say_settings(struct serial_face *f)
 
 int main(int argc, char **argv)
 {
-	const char *log_path = NULL;
 	unsigned poll_us = 2000;
 	// Where the far end is offered. The default is this board's own --- every
 	// interface at the 2651's Unibus address --- and `--serial` reads muir's
@@ -193,7 +194,7 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			break;
-		case 'l': log_path = optarg; break;
+		case 'l': cadr_log_dest(optarg); break;
 		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'u': poll_us = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'G': no_guard = 1; break;
@@ -215,15 +216,8 @@ int main(int argc, char **argv)
 	// and the register window.
 	if (poll_us == 0)
 		poll_us = 1;
-	FILE *dest = stdout;
-	if (log_path) {
-		dest = fopen(log_path, "a");
-		if (!dest) {
-			fprintf(stderr, "cadr-serial: %s: %s\n", log_path, strerror(errno));
-			return 2;
-		}
-	}
-	cadr_log_init("cadr-serial: ", dest);
+	if (cadr_log_open("cadr-serial: ") < 0)
+		return 2;
 
 	int mem = cadr_open_mem();
 	if (mem < 0)

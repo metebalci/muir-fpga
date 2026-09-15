@@ -15,6 +15,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+const char *cons_log_prefix(int logs_named, int stdout_is_a_terminal)
+{
+	// The header has the rule.  A `--log` wins over the terminal: the
+	// caller has said where the lines are being kept, and a kept line
+	// names its program.
+	return (logs_named == 0 && stdout_is_a_terminal) ? "" : CONS_LOG_PREFIX;
+}
+
 int cons_trace_keys(const char *program, const char *pidfile, int on,
 		    struct cons_trace_keys *r)
 {
@@ -65,8 +73,9 @@ void cons_say_trace_keys(const struct cons_trace_keys *r, int on)
 	switch (r->reached) {
 	case CONS_TRACE_SIGNALLED:
 		say("trace-keys: %s (pid %ld) was told to turn its key trace %s; what it "
-		    "traces goes to its own log, which on this board is the console",
-		    r->program, r->pid, on ? "ON" : "off");
+		    "traces goes to its own log, which on this board is the serial console "
+		    "and /var/log/%s.log --- `tail -F` that file to follow it over ssh",
+		    r->program, r->pid, on ? "ON" : "off", r->program);
 		break;
 	case CONS_TRACE_REFUSED:
 		say("trace-keys: %s (pid %ld) would not take the signal: %s",
