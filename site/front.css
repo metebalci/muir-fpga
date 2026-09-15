@@ -54,12 +54,15 @@ table.boardtable {
   text-align: left;
   vertical-align: top;
   padding: 10px 14px 10px 0;
-  border-bottom: 1px solid var(--front-ink);
+  /* Faint lines between every cell, both ways: a row of yes and no is read
+     by column as much as by row, and a thin rule under each row alone let
+     the eye slide across.  The line is the ink at a fraction of its
+     strength, so it follows the theme like the text does. */
+  border: 1px solid color-mix(in srgb, var(--front-ink) 22%, transparent);
   line-height: 1.4;
 }
 .boardtable thead th { font-weight: 600; }
 .boardtable tbody tr:last-child th,
-.boardtable tbody tr:last-child td { border-bottom: 0; }
 
 /* The board's name is the row's heading, and it stays in view while the rest
    of the row scrolls under it: a cell reading `built` says nothing without
