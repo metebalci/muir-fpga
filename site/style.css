@@ -331,12 +331,27 @@ figure.screen img {
    a gap.  It carries no status colour, because a status says how far along a
    thing is and the answer here is that it is not on this board at all: the
    outline goes dashed in the drawing's own ink, the label stays and goes
-   faint, and a red cross corner to corner says it plainly.  The lines that
-   reached it stay as they are, since lines on these drawings carry no status
-   either. */
+   faint, and a red cross corner to corner says it plainly.  A wire that exists
+   only to reach it goes faint with it. */
 .d-absent   { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 4 3; }
 .d-absent-x { fill: none; stroke: var(--st-absent); stroke-width: 1.25; }
 .d-absent-t { fill-opacity: 0.5; }
+/* A WIRE THAT REACHES A BLOCK THE BOARD DOES NOT HAVE, faded as that block's
+   own label is faded, though not by the same number: 0.35 against the label's
+   0.5, because a solid stroke at a given opacity reads stronger than a glyph
+   does at it.  The number is a judgement about how the two sit together on the
+   page and nothing measures it.  The line is still drawn, because the drawing
+   is one drawing and a reader should see what would have been connected; it is
+   no longer drawn at the strength of a wire that carries something.
+   HOW FAR THE FADE REACHES is the whole of the rule: from the
+   absent block outwards to the first junction where another line's end lands
+   on it, or to the first box it meets.  A junction is where the wire stops
+   being that block's alone --- past it the same segment serves whatever else
+   hangs there --- so a stub from an absent block down to a shared rail fades
+   and the rail does not.  It keeps currentColor and moves only the stroke's
+   opacity, so it stays the drawing's own ink in either theme and takes no
+   status colour: this says what a line is for and not how far along it is. */
+.d-absent-l { stroke-opacity: 0.35; }
 /* THE ONE RED TEXT ON THESE DRAWINGS, and it says one thing: the debug cable's
    supply pins are open at both ends, because a cable between two boards must not
    join their 3.3 V rails.  It borrows the crossings' red rather than taking a
