@@ -856,8 +856,10 @@ than to one board or one role, and under `crossover` both ends drive the same
 group, which means the wiring does not explain it.
 
 That is a reason to take the coupling out of the design and not a measurement
-of it. One signal a pair removes the suspect; whether it removes the bursts is
-a board question and nobody has asked it yet.
+of it. One signal a pair removes the suspect. The two boards have since run the
+guarded carrier over that same ribbon, and the bursts are gone: the section on
+what two boards have shown carries the counters, and the two frames they do not
+account for.
 
 ### The budget a frame is spent out of
 
@@ -1256,6 +1258,89 @@ Neither machine noticed any of it. Both ran at the rate they run at with no
 cable in them while the role was taken, swapped and given back, and neither
 Lisp world lost its place.
 
+### The carrier with one signal to a pair
+
+Both carriers have run on these two boards and this ribbon. Three data lines a
+group is what CC crossed, and the guarded carrier the section above describes,
+one signal to a pair with the other pin of the pair driven low, has since run
+on both boards with the cable untouched.
+
+**Two resting boards drive nothing.** Both consoles read a debuggee with the
+wiring `auto` and nothing on the connector. That is the lock-out gone. On the
+earlier carrier each board heard the other's idle frames on this same mirrored
+ribbon, called them a debugger's, and would not take the role until it was
+reset. The role bit in the frame's fill slot is what removed it, and this is
+the measurement of that rather than the argument for it.
+
+**The wiring is found on this carrier too.** Each board took the role in turn
+and read `crossover, detected`, while the far board reported a debugger on the
+connector and not a disagreement. Forced to `straight` from a disconnected
+board, the debugger read that nothing was answering and the far board read that
+what is on the connector is arriving on the four pins it answers on. Set back
+to `auto` after the role had been given back, the detection found the crossover
+again and the far board's disagreement was gone. A wiring written while the
+board holds the role changes nothing, so giving the role back before setting it
+is the recovery order.
+
+**The refused frames are gone.** As the debugger the Arty Z7-20 read 0 refused
+against a saturated 65,535 heard on every one of twenty-four readings, taken
+ten seconds apart from fifty-seven seconds after the connect to four minutes
+and forty-eight seconds after it, and on the first reading after the connect as
+well. On the earlier carrier the same board in the same role refused 163 frames
+on one connect and 185 on the other, in bursts, with the counter at its ceiling
+of 255 within 300 milliseconds. So the guards removed the asymmetry the section
+on coupled pairs measured, which is what they were put there for. The bursts
+stopped when each pair carried one signal with its partner driven low as a
+guard, which is consistent with coupling between the two unrelated signals a
+pair carried on the earlier carrier; nothing was measured on the lines
+themselves, so the coupling is inferred from the change and not seen.
+
+**Two frames are not accounted for.** The Cora Z7-07S read 0 refused as the
+debugger over two minutes, as it had before, and ended the session at 2 against
+a saturated 65,535 heard. Five disconnect and reconnect cycles of the far end
+added none, a repeat of the forced `straight` control added none, and 5,020
+debug cycles added none. The two arrived at moments nobody caught. Two
+candidates, named as candidates and not measured: a partial frame caught as a
+driver starts or stops at a role change, and the tail of the forced `straight`
+control, where the four pins one board drives sit on four the other is driving.
+Neither has been reproduced on demand and no cause is claimed. Against the
+earlier carrier's bursts it is a different quantity, and it is not zero.
+
+### A debug cycle over the ribbon, without CC
+
+The cheapest statement that this carrier carries a cycle needs no CC at all. A
+Unibus read of `0o766104` is `-DB READ STATUS`, the strobe the section on the
+status byte is about, and it can be made from the debugger board's own Lisp
+Listener:
+
+    (format t "~&STATUS ~O~%" (si:%unibus-read #o766104))
+
+| the debugger | connected | disconnected |
+|---|---|---|
+| the Arty Z7-20 | `0o177400` | `0o177777` |
+| the Cora Z7-07S | `0o177400` | `0o177777` |
+
+`0o177400` is `0xff00 | status` with every live bit clear, which is what a far
+end that answers gives. `0o177777` is the debugger's own timeout, which is what
+an unplugged connector gives. Reconnecting put the first value back. So the
+strobe crosses the ribbon, the far board decodes it, drives its status byte on
+the return group and acknowledges, and the debugger's own Unibus cycle
+completes with that word, in both directions.
+
+**And the byte is the far board's.** Sixteen reads in one form gave `0o177400`
+thirteen times and `0o177500` three times. The bit that moves is bit 6, the far
+bus interface's own `-FREE`, and the far machine is running Lisp and making bus
+cycles all the while, so a strobe lands on a busy interface some of the time.
+The section on the status byte says the debugger's strobe is not a cycle of the
+interface's own, so it finds the bus as it stands. A pull-up, a stuck wire or a
+constant cannot vary, and this byte varies with the far machine's work.
+
+**What this does not show is a register of the far machine.** No word of the
+far machine's state crossed on this carrier, and no `-DB NEED UB` cycle, which
+is the one that runs a cycle on the debuggee's own Unibus, was made. It is the
+carrier answering a strobe rather than a debugging session. The 5,020 cycles it
+took to watch the counters cost no refused frame on either board.
+
 ### CC halting the far machine, and the readings compared
 
 MIT's own CC, running in the Lisp world of the CADR in one board's fabric,
@@ -1397,11 +1482,13 @@ the halt, the reads and the start. CC can write a scratchpad, main memory and
 the machine's own registers, and none of that has crossed a ribbon.
 
 **The frame counters cannot give a rate.** Page 0's word 15 carries frames
-heard and frames refused; the first saturates at 65,535 within a tenth of a
-second of a connect and the second at 255 within about a third, and only a
-fabric reset clears either. So both were already saturated before the first
-debug cycle and said the same thing after the last. A counter that can be
-cleared without a reset, or a wider one, is what would measure this.
+heard and frames refused, and only a fabric reset clears either. The first
+saturates at 65,535 within a tenth of a second of a connect, so it was already
+saturated before the first debug cycle and said the same thing after the last.
+The second reached its own ceiling of 255 within about a third of a second on
+the earlier carrier; on the guarded one it stands at nought or two, which is a
+total and still not a rate. A counter that can be cleared without a reset, or a
+wider one, is what would measure this.
 
 **Nothing has been measured about the cable's timing.** No beat rate, no round
 trip, and no comparison against the 11.05 microseconds the debugger's own
@@ -1415,10 +1502,17 @@ the machine on the first call, so it is not reproduced. The one difference in
 the failing case is that reads had been made before CC had done a full save.
 No mechanism is claimed and it is written down because somebody will meet it.
 
-**The refused frames are unexplained.** As the debugger the Arty Z7-20 refuses
-frames and the Cora Z7-07S does not, and the Arty as a debuggee refuses none.
-It belongs to one configuration rather than to one board or one role. It
-stopped nothing: every read was answered and every word was right.
+**Two refused frames are unexplained.** The asymmetry that made the earlier
+carrier refuse frames in bursts is gone with the guards, and what is left is
+two frames on one board in half an hour, at moments nobody caught. The
+subsection above says what was measured and names the two candidates, neither
+of which is a measurement. It stopped nothing: every cycle was answered and
+every word was right.
+
+**CC has not crossed the guarded carrier.** The halt, the reads and the start
+were made on the carrier with three data lines a group, which is not the one
+either board carries now. What has crossed the guarded one is a status strobe,
+which is the carrier and not the debugger.
 
 ## What is not built
 
