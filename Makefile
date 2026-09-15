@@ -2948,13 +2948,17 @@ BR_GEN_PS7  := boards/arty-z7-20/linux/buildroot/board/arty-z7-20/uboot/gen_ps7_
 # BR2_EXTERNAL options and external.mk's hooks, so they are named.  cadr-common
 # is named ahead of the derived list and filtered out of it, because its
 # consumers link the library it puts in the staging tree and a stale one would
-# be linked into every program.
+# be linked into every program.  cadr-readout is the second library package
+# and is hoisted for the same reason: cadr-checkpoint compiles against the
+# headers it stages, and the derived list is alphabetical, so left in place it
+# would be reconfigured after its consumer and the consumer would build
+# against the headers of the previous build.
 #
 # `=` rather than `:=`, so the grep runs only when a buildroot target does.
 BR_LOCAL_PKGS = $(sort $(notdir $(patsubst %/,%,$(dir $(shell \
     grep -l '_SITE_METHOD = local' $(BR_EXTERNAL)/package/*/*.mk)))))
-BR_FORCE_PKGS = uboot linux cadr-common \
-    $(filter-out cadr-common,$(BR_LOCAL_PKGS))
+BR_FORCE_PKGS = uboot linux cadr-common cadr-readout \
+    $(filter-out cadr-common cadr-readout,$(BR_LOCAL_PKGS))
 
 # AND A PACKAGE THIS BOARD'S .config DOES NOT SELECT MUST NOT BE FORCED.
 # `<pkg>-reconfigure` builds and installs a package whatever the configuration
