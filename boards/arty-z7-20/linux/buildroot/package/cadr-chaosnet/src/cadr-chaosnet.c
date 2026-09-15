@@ -311,7 +311,10 @@ static void usage(void)
 "                               the destination in its trailer for the bridge\n"
 "                               to route on.  A broadcast is not sent here.\n"
 "                               It needs the cable, --chaos-udp\n"
-"  --chaos-trace                every frame, as it goes by\n"
+"  --chaos-trace                every frame, as it goes by, and every datagram\n"
+"                               refused.  SIGUSR1 turns it on while the program\n"
+"                               runs and SIGUSR2 turns it off, which is what\n"
+"                               `cadr-console trace-chaos on|off` sends\n"
 "  --base <hex>                 the register face's address; 0x%08x by default\n"
 "  --no-guard                   skip the EMIO tally guard.  Only for a board\n"
 "                               somebody knows: see <cadr/cadr_mem.h>\n"
@@ -445,6 +448,14 @@ int main(int argc, char **argv)
 	// A peer that has gone away makes a UDP socket give EPIPE on some
 	// paths; the program says so rather than dying of it.
 	signal(SIGPIPE, SIG_IGN);
+	// **AND THE TWO THAT SWITCH THE TRACE**, SIGUSR1 on and SIGUSR2 off,
+	// so that a link quietly refusing datagrams can be watched without
+	// stopping the program --- which on this board means booting the
+	// machine's world off the disk again.  `cadr-console trace-chaos
+	// on|off` is what sends them.  Installed here, beside the other three,
+	// rather than at the start: a signal that arrived before the log was
+	// open would have nowhere to say so.
+	chaos_trace_signals();
 
 	say("this machine is %o", e.machine);
 
@@ -529,6 +540,20 @@ int main(int argc, char **argv)
 		int did = 0;
 		const uint64_t now = now_ns();
 
+		// What SIGUSR1 or SIGUSR2 asked for, if either did: acted on
+		// here, in the program's own loop, where `say` is allowed.
+		// **BOTH FLAGS MOVE TOGETHER**, the ether's line for a frame
+		// going by and the link's for a datagram refused, because they
+		// are one trace to the person who asked for it.
+		{
+			const int want = chaos_trace_apply(e.trace);
+			if (want >= 0) {
+				e.trace = want;
+				if (e.have_udp)
+					e.udp.trace = want;
+			}
+		}
+
 		// What the machine transmitted.  The fabric holds one frame at
 		// a time --- the interface's outgoing buffer is one packet ---
 		// so this drains until it says there is none.
@@ -556,20 +581,44 @@ int main(int argc, char **argv)
 		}
 
 		if (now - last_report >= REPORT_NS) {
-			const unsigned long moved = e.from_machine + e.to_machine
-						  + e.from_udp + e.to_udp;
+			// **WHAT COUNTS AS SOMETHING HAVING HAPPENED INCLUDES A
+			// DATAGRAM THAT WAS REFUSED**, which is the whole
+			// point of counting the refusals.  This was the
+			// delivered count, so a link hearing datagrams and
+			// throwing every one of them away printed nothing at
+			// all and looked exactly like a link hearing nothing:
+			// the report line was silent about the one case
+			// somebody would be reading it for.  The link's
+			// `received` covers its delivered frames as well, so
+			// it takes their place here rather than being added
+			// to them.
+			const unsigned long moved = e.from_machine + e.to_machine + e.to_udp
+						  + (e.have_udp ? e.udp.received : 0ul);
 			if (moved != reported) {
-				// The bad-checksum count is the link's own: the
-				// Internet checksum is checked at the UDP edge
-				// and a frame that fails it never reaches the
-				// counters here.
+				// **THE LINK'S OWN FOUR COUNTS, AND THEY ADD
+				// UP.**  A datagram refused at the UDP edge
+				// never reaches the counters here, so the edge
+				// keeps its own and this line prints them:
+				// what arrived, and the three ways a datagram
+				// can fail to come in.  The arithmetic closes,
+				// which is what it is for --- `%lu datagrams
+				// arrived` is the `%lu in` above plus the
+				// three that follow it, so a line where they
+				// do not add up says a road is uncounted, and
+				// a line where they do says that a link
+				// reporting nothing in really did hear
+				// nothing.
 				say("%lu from the machine, %lu to it, %lu in and %lu out over UDP; "
+				    "%lu datagrams arrived, %lu refused for their shape, "
+				    "%lu with a bad checksum, %lu not for this cable; "
 				    "%lu with nowhere to go, %lu malformed, "
-				    "%lu with a bad checksum, "
 				    "%lu refused because the machine had not emptied its buffer",
 				    e.from_machine, e.to_machine, e.from_udp, e.to_udp,
-				    e.dropped_no_route, e.dropped_bad_frame,
+				    e.have_udp ? e.udp.received : 0ul,
+				    e.have_udp ? e.udp.bad_shape : 0ul,
 				    e.have_udp ? e.udp.bad_checksum : 0ul,
+				    e.have_udp ? e.udp.not_this_cable : 0ul,
+				    e.dropped_no_route, e.dropped_bad_frame,
 				    e.refused_busy);
 				reported = moved;
 			}

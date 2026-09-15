@@ -173,11 +173,66 @@ struct chudp {
 	int have_default;
 	unsigned npeers;
 	struct chudp_peer peers[CHUDP_MAX_PEERS];
+	// **EVERY DATAGRAM THAT ARRIVES IS ACCOUNTED FOR, AND THE SUM CLOSES.**
+	// `received` is bumped once for each datagram the socket hands over,
+	// before anything has looked at it, and every road out of `chudp_poll`
+	// bumps exactly one of the four below.  So at every moment
+	//
+	//     received == delivered + bad_shape + bad_checksum + not_this_cable
+	//
+	// and `chaos_test_udp.c` asserts that identity over a stimulus that
+	// takes every road once.  It is the property, rather than any one
+	// counter, that says a refusal has not been left uncounted: a road
+	// added later that counts nothing breaks the sum and the check says so.
+	//
+	// **THE REASON IT IS COUNTED AT ALL IS THAT ONLY ONE OF THESE USED TO
+	// BE.**  A bad checksum was counted and the other seven refusals were
+	// printed under `--chaos-trace` and nowhere else, so a report line
+	// reading "0 in, 0 with a bad checksum" could not be told from one
+	// where datagrams were arriving and being thrown away, and telling
+	// those two apart at the board took hours.  A refusal a person
+	// cannot see is a refusal that gets diagnosed as silence.
+	//
+	// **muir COUNTS NONE OF THIS AND HAS NO WORDS TO FOLLOW.**  Its
+	// `chaos::udp::Chudp` traces a refusal when `--chaos-trace` is on and
+	// keeps no tally at all, having a prompt somebody is sitting at rather
+	// than a daemon writing one line a minute to a log.  So the four names
+	// here are this program's own, and they are the fewest that make the
+	// sum close: one road each.
+	//
+	// **THEY SATURATE RATHER THAN WRAP**, as `bad_checksum` always has: a
+	// count that came back round to a small number reads as a link with
+	// nothing wrong with it, which is the one thing these exist to show.
+	// The identity above therefore holds for any run that has not
+	// saturated a counter, which at one packet at a time is longer than
+	// any board has run.
+	unsigned long received;		// datagrams off the socket
+	unsigned long delivered;	// frames handed to `deliver`
+	// Refused by `chudp_unwrap` for its shape: too long, too short, a
+	// version this does not speak, a function that is not a packet, an
+	// absurd data count, or a length that does not answer that count.
+	// Six rules under one count, because what a person does with this
+	// number is notice that it is not zero and turn the trace on, and the
+	// trace names the rule and the sender.
+	//
+	// `chudp_unwrap` has a seventh refusal, for a frame that will not fit
+	// where the caller put it, and the link never sees it: `chudp_poll`
+	// hands over the largest buffer a Chaos packet can fill, so no
+	// datagram short enough to get past the first rule is long enough to
+	// trip that one.  It is there for a caller with a smaller buffer,
+	// which is the check.
+	unsigned long bad_shape;
 	// Datagrams whose words did not sum right and were dropped, which is
-	// what `cbridge` does with one.  Counted rather than only traced: a
-	// link that is quietly losing frames to a checksum is the one fault a
-	// person watching the report line has to be able to see.
+	// what `cbridge` does with one.  Kept apart from the shape refusals
+	// because it says something they do not: the far end is speaking
+	// CHUDP and the network between here and it is damaging packets.
 	unsigned long bad_checksum;
+	// A whole frame that is not this cable's: one claiming to come from an
+	// address this cable already carries, or addressed on the cable to a
+	// station a peer line names.  Kept apart from the shape refusals
+	// because nothing is wrong with the datagram --- it is somebody else's,
+	// and a leaf does not forward it.
+	unsigned long not_this_cable;
 };
 
 // Binds the socket.  `port` of 0 asks the host for one.  0, or -1 having said
@@ -227,6 +282,40 @@ int chudp_send(struct chudp *u, const uint16_t *words, unsigned n, uint16_t cabl
 int chudp_poll(struct chudp *u, unsigned max,
 	       void (*deliver)(void *ctx, const uint16_t *words, unsigned n),
 	       void *ctx);
+
+// --- THE TRACE, SWITCHED WHILE THE PROGRAM RUNS --------------------------
+//
+// **A BOARD RESTARTED TO GET A DIAGNOSTIC IS A BOARD WHOSE LISP IS LOST TO
+// GET IT.**  `--chaos-trace` says every frame and every refusal as it goes
+// by, and until now it was a flag read once at the start: a link quietly
+// refusing datagrams could only be watched by stopping the program, adding
+// the flag and starting it again, which on this board means the machine's
+// world has to be booted from the disk afterwards.  So the two signals switch
+// it, exactly as `cadr-terminal` and `cadr-usb-input` switch their key traces:
+// `SIGUSR1` on, `SIGUSR2` off, and `cadr-console trace-chaos on|off` is what
+// finds the pid file and sends one.
+//
+// **THE FLAG STAYS**, because a run that wants the trace from its first line
+// is a real case and is muir's own spelling of it.  The signals are the
+// second way in and not a replacement.
+//
+// **IT IS THE PROGRAM'S TRACE AND NOT THE LINK'S ALONE.**  Two things print
+// under it --- this file's refusals and `cadr-chaosnet.c`'s line for a frame
+// going by --- so the switch owns neither flag and the caller sets both from
+// what `chaos_trace_apply` returns.  It is in this file because this is the
+// file the check builds: `cadr-chaosnet.c` is in neither the check's binary
+// nor the mutation runner's, and a switch nothing exercises is not a switch.
+//
+// `chaos_trace_signals` installs the two handlers, which do the one thing a
+// handler may: write a `sig_atomic_t`.  `chaos_trace_apply` is what acts on
+// it, from the program's own loop, where `say` is allowed.  It takes what the
+// program is doing now and returns the new setting, or **-1 when nothing was
+// asked or the trace is already that way** --- so a run started with
+// `--chaos-trace` is not turned off by the first pass of the loop, and a
+// second `on` is silent rather than confusing.  It says one line at the
+// change and none otherwise.
+void chaos_trace_signals(void);
+int chaos_trace_apply(int now_on);
 
 // The two halves on their own, so that `chaos_test.c` can hold a whole
 // datagram's bytes without a socket --- which is the test muir pins in

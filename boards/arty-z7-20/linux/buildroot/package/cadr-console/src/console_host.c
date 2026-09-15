@@ -23,12 +23,13 @@ const char *cons_log_prefix(int logs_named, int stdout_is_a_terminal)
 	return (logs_named == 0 && stdout_is_a_terminal) ? "" : CONS_LOG_PREFIX;
 }
 
-int cons_trace_keys(const char *program, const char *pidfile, int on,
-		    struct cons_trace_keys *r)
+int cons_trace_signal(const char *program, const char *pidfile, const char *what, int on,
+		      struct cons_trace *r)
 {
 	memset(r, 0, sizeof *r);
 	r->program = program;
 	r->pidfile = pidfile;
+	r->what = what;
 	r->reached = CONS_TRACE_NOT_RUNNING;
 
 	FILE *f = fopen(pidfile, "r");
@@ -68,21 +69,30 @@ int cons_trace_keys(const char *program, const char *pidfile, int on,
 	return r->reached;
 }
 
-void cons_say_trace_keys(const struct cons_trace_keys *r, int on)
+void cons_say_trace(const struct cons_trace *r, int on)
 {
+	// The word that was typed, so that the line begins with what somebody
+	// asked for.  `key trace` belongs to `trace-keys` and `packet trace`
+	// to `trace-chaos`; the pairing is written out rather than derived,
+	// because the two names are names and not one made from the other.
+	// A caller that named no trace gets a neutral word rather than a null
+	// pointer through `say`.
+	const char *what = r->what ? r->what : "trace";
+	const char *word = r->what && !strcmp(r->what, CONS_TRACE_WHAT_CHAOS)
+				   ? "trace-chaos" : "trace-keys";
 	switch (r->reached) {
 	case CONS_TRACE_SIGNALLED:
-		say("trace-keys: %s (pid %ld) was told to turn its key trace %s; what it "
+		say("%s: %s (pid %ld) was told to turn its %s %s; what it "
 		    "traces goes to its own log, which on this board is the serial console "
 		    "and /var/log/%s.log --- `tail -F` that file to follow it over ssh",
-		    r->program, r->pid, on ? "ON" : "off", r->program);
+		    word, r->program, r->pid, what, on ? "ON" : "off", r->program);
 		break;
 	case CONS_TRACE_REFUSED:
-		say("trace-keys: %s (pid %ld) would not take the signal: %s",
-		    r->program, r->pid, r->why);
+		say("%s: %s (pid %ld) would not take the signal: %s",
+		    word, r->program, r->pid, r->why);
 		break;
 	default:
-		say("trace-keys: %s is not running (%s: %s)", r->program, r->pidfile, r->why);
+		say("%s: %s is not running (%s: %s)", word, r->program, r->pidfile, r->why);
 		break;
 	}
 }

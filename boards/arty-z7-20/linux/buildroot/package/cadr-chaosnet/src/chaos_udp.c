@@ -73,6 +73,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <netdb.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -103,6 +104,49 @@ static uint16_t get_word(enum chudp_order order, const uint8_t *at)
 {
 	return order == CHUDP_LITTLE ? (uint16_t)((unsigned)at[0] | (unsigned)at[1] << 8)
 				     : (uint16_t)((unsigned)at[0] << 8 | (unsigned)at[1]);
+}
+
+// --- the counters ---------------------------------------------------------
+
+// One more, and never round to zero.  `chaos_udp.h`'s struct has the whole
+// argument: these saturate because a count that wrapped would read as a link
+// with nothing wrong with it, and they are bumped one to a road so that
+// `received` equals the four of them added up.
+static void bump(unsigned long *c)
+{
+	if (*c != ULONG_MAX)
+		++*c;
+}
+
+// --- the trace, switched while the program runs ---------------------------
+
+// `-1` is nothing asked, so that a run started with `--chaos-trace` is not
+// turned off by the first pass of the loop.  The handler writes this and does
+// nothing else, which is the one thing a handler may do.
+static volatile sig_atomic_t trace_asked = -1;
+
+static void trace_signal(int sig)
+{
+	trace_asked = (sig == SIGUSR1);
+}
+
+void chaos_trace_signals(void)
+{
+	signal(SIGUSR1, trace_signal);
+	signal(SIGUSR2, trace_signal);
+}
+
+int chaos_trace_apply(int now_on)
+{
+	const int want = trace_asked;
+	if (want < 0 || want == (now_on != 0))
+		return -1;
+	if (want)
+		say("the packet trace is ON (SIGUSR1): every frame and every datagram "
+		    "refused is a line here, until SIGUSR2 --- `cadr-console trace-chaos off`");
+	else
+		say("the packet trace is off (SIGUSR2)");
+	return want;
 }
 
 // --- the Internet checksum ------------------------------------------------
@@ -637,19 +681,27 @@ int chudp_poll(struct chudp *u, unsigned max,
 			say("udp: the socket: %s", strerror(errno));
 			break;
 		}
+		// **COUNTED HERE, BEFORE ANYTHING HAS LOOKED AT IT**, which
+		// is what makes the sum below close: from this point every
+		// road out of this loop bumps exactly one of the four, and a
+		// road added later that bumps none of them breaks the
+		// identity the check asserts.
+		bump(&u->received);
 		uint16_t words[CHAOS_PKT_MAX_WORDS];
 		const char *why = NULL;
 		int bad_checksum = 0;
 		const unsigned n = chudp_unwrap(datagram, (unsigned)got, words,
 						CHAOS_PKT_MAX_WORDS, &why, &bad_checksum);
 		if (n == 0) {
-			// A bad checksum is counted as well as traced: it is
-			// the one refusal that says the network between here
-			// and the far end is damaging packets, and a person
-			// watching the report line has to be able to see it
-			// without turning the trace on.
-			if (bad_checksum && u->bad_checksum != ULONG_MAX)
-				++u->bad_checksum;
+			// **A REFUSAL IS COUNTED WHETHER OR NOT ANYBODY IS
+			// TRACING.**  The checksum is its own count because it
+			// says something the other six do not --- the far end
+			// is speaking CHUDP and the network between here and
+			// it is damaging packets --- and the six shape rules
+			// share one, because what a person does with that
+			// number is notice it is not zero and turn the trace
+			// on, which names the rule and the sender.
+			bump(bad_checksum ? &u->bad_checksum : &u->bad_shape);
 			if (u->trace)
 				say("udp: from %s: %s", where(&from), why ? why : "not a frame");
 			continue;
@@ -680,6 +732,7 @@ int chudp_poll(struct chudp *u, unsigned max,
 		// off: before, a stranger was turned away at the door and this
 		// case could not arise from one.
 		if (cable_source == 0 || cable_source == u->local) {
+			bump(&u->not_this_cable);
 			if (u->trace)
 				say("udp: from %s: %o is on this cable", where(&from),
 				    (unsigned)cable_source);
@@ -701,11 +754,13 @@ int chudp_poll(struct chudp *u, unsigned max,
 		// say --- is dropped there rather than here, counted rather
 		// than traced, and goes no further either way.
 		if (cable_dest != 0 && peer_for(u, cable_dest) >= 0) {
+			bump(&u->not_this_cable);
 			if (u->trace)
 				say("udp: from %s: %o is another peer's, not this cable's",
 				    where(&from), (unsigned)cable_dest);
 			continue;
 		}
+		bump(&u->delivered);
 		deliver(ctx, words, n);
 		++delivered;
 	}

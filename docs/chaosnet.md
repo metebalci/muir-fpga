@@ -397,6 +397,91 @@ already carries. A frame saying it came from the machine itself is one the
 interface would take for its own, so it is dropped. muir refuses it in the
 same place.
 
+## Every datagram that arrives is counted
+
+The program says how it is getting on once a minute, when anything has moved.
+The line names what the machine sent and received, what went out over the
+network, and what the link did with everything that arrived:
+
+    N from the machine, N to it, N in and N out over UDP; N datagrams
+    arrived, N refused for their shape, N with a bad checksum, N not for this
+    cable; N with nowhere to go, N malformed, N refused because the machine
+    had not emptied its buffer
+
+**The middle group adds up, taking `N in` from the group before it.** What
+arrived equals what came in plus the three ways a datagram can fail to come
+in. That is the point of counting them, and the check asserts the identity
+over a stimulus that drives every road once.
+
+The three refusals are the link's own, and they are three because they say
+three different things.
+
+**Refused for their shape** is `chudp_unwrap` turning a datagram away for one
+of six rules: it is longer than any Chaos packet, it is too short to be one,
+it carries a version this does not speak, it carries a function that is not
+"here is a Chaos packet", its data count is absurd, or its length does not
+answer that count. Six rules share one count because what a person does with
+the number is notice that it is not zero and turn the trace on, and the trace
+names the rule and the sender.
+
+**With a bad checksum** is a datagram whose words do not sum right. It is kept
+apart because it says something the shape refusals do not: the far end is
+speaking CHUDP and the network between here and it is damaging packets.
+
+**Not for this cable** is a whole frame that belongs to somebody else. Either
+it claims to come from an address this cable already carries, which is a frame
+the interface would take for its own, or it is addressed on the cable to a
+station a peer line names. Nothing is wrong with either datagram, and a leaf
+does not forward them.
+
+**Only the bad checksum used to be counted.** The other seven refusals were
+printed under `--chaos-trace` and nowhere else, so a line reading "0 in, 0
+with a bad checksum" said the same thing whether nothing had arrived or
+everything had arrived and been thrown away. Those are the two states somebody
+reads the line to tell apart, and telling them apart at the board took hours.
+
+**A datagram that was refused now counts as something having happened.** The
+line is printed when anything has moved, and that used to mean a frame
+delivered or sent. A link hearing datagrams and throwing every one of them
+away therefore printed nothing at all, which is what a link hearing nothing
+prints.
+
+muir counts none of this and has no words to follow here. Its CHUDP link
+traces a refusal when `--chaos-trace` is on and keeps no tally, because it has
+a prompt somebody is sitting at rather than a daemon writing one line a minute
+to a log. So the four names are this program's own.
+
+## The trace switches while the program runs
+
+`--chaos-trace` says every frame as it goes by and every datagram refused,
+with the reason and the endpoint it came from. It used to be a flag read once
+at the start. Watching a link that was quietly refusing datagrams therefore
+meant stopping the program, adding the flag and starting it again, and on this
+board that means the machine's world has to be booted off the disk afterwards.
+
+So the trace is switched by signal as well. `SIGUSR1` turns it on and
+`SIGUSR2` turns it off, which is what `cadr-terminal` and `cadr-usb-input`
+already do for their key traces.
+
+    cadr-console trace-chaos on
+    cadr-console trace-chaos off
+
+That word reads `/var/run/cadr-chaosnet.pid` and sends one of the two signals.
+It touches no register, so it works on a board whose fabric has no console in
+it. `docs/console.md` has it beside `trace-keys`.
+
+The handler does the one thing a handler may, which is set a flag. The program
+acts on it once a pass of its own loop and says one line when the setting
+changes, so asking twice is not two lines. A run started with `--chaos-trace`
+is not turned off by the first pass of its own loop, because "nothing was
+asked" and "turn it off" are different answers. The flag stays, since a run
+that wants the trace from its first line is a real case and is muir's own
+spelling of it.
+
+The card's `fpgarc` carries `--chaos-trace` commented out, which is how a
+board is told to trace from its first line. There is no line for the switch,
+because a signal is not a setting.
+
 ## What the checks hold to
 
 `iob` compares the card against muir's model over a scripted trace at the
@@ -414,7 +499,10 @@ address space in both directions, read out of muir's two traces rather than
 transcribed.
 
 `chaosnet` and `serial` hold the two programs on the build host with no board:
-514 checks and 30 mutation records for the first, 115 and 19 for the second.
+548 checks and 37 mutation records for the first, 115 and 19 for the second.
+Thirty-four of those checks and seven of those records are the counters and
+the trace switch above: every road out of the link driven once, the four
+counts added up, and the two signals told apart.
 The first figures were 772 and 61 while the program carried services. The
 checks and records that went are the ones written for the connection protocol
 and for STATUS, TIME, UPTIME and FILE. A check for code that should not exist
