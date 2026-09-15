@@ -79,6 +79,8 @@ int main(int argc, char **argv)
 	chaos_test_packet();
 	chaos_test_note("-- the register face, against a model of the fabric");
 	chaos_test_face();
+	chaos_test_note("-- a burst of frames against a machine with one packet buffer");
+	chaos_test_inject();
 	chaos_test_note("-- Chaosnet over UDP, on a loopback socket");
 	chaos_test_udp();
 

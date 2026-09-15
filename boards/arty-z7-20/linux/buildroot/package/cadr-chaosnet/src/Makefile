@@ -29,9 +29,10 @@
 # the build host.
 
 PROGRAMS := cadr-chaosnet
-CORE     := chaos_packet.c chaos_udp.c chaos_face.c
-HEADERS  := chaos_face.h chaos_packet.h chaos_udp.h
-TESTS    := chaos_test.c chaos_test_packet.c chaos_test_udp.c chaos_test_face.c
+CORE     := chaos_packet.c chaos_udp.c chaos_face.c chaos_inject.c
+HEADERS  := chaos_face.h chaos_packet.h chaos_udp.h chaos_inject.h
+TESTS    := chaos_test.c chaos_test_packet.c chaos_test_udp.c chaos_test_face.c \
+            chaos_test_model.c chaos_test_inject.c
 BOOTTEST := chaos_test_boot.sh
 
 COMMON      ?= staging
@@ -85,7 +86,8 @@ check: $(WORK)/chaos_test
 check-only: $(WORK)/chaos_test
 	$(WORK)/chaos_test
 
-$(WORK)/chaos_test: $(TESTS) $(CORE) $(HEADERS) chaos_test.h $(COMMON_SRC)
+$(WORK)/chaos_test: $(TESTS) $(CORE) $(HEADERS) chaos_test.h chaos_test_model.h \
+                    $(COMMON_SRC)
 	@mkdir -p $(WORK)
 	$(HOSTCC) $(HOSTCFLAGS) -I$(COMMON_DIR) -o $@ $(TESTS) $(CORE) $(COMMON_SRC)
 
