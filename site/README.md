@@ -32,6 +32,12 @@ build step and no generator, the same way
                   flash. The two Zynq boards come up the same way, so one
                   drawing serves both and a label says where they differ. The
                   Arty A7-100's is a plan and its caption says so
+    debugging.html
+                  how one CADR debugs another, in five drawings: MIT's cable
+                  of twenty-one wires and what CC reaches over it, the two
+                  ways into a board's own debuggee end, the ribbon between two
+                  Pmod headers, and the frame the eight pins carry. It ends
+                  with a table of what has run on a board and what has not
     cadr.html     the real CADR in ten drawings with one-sentence captions:
                   the machine, its boards, cables and buses, and how it boots
                   document named at the end of the page
@@ -57,12 +63,13 @@ faint line at the top saying which board this is and linking the other pages.
 Anything that explains a drawing belongs in `full-page.html` or in `docs/`,
 not here.
 
-A **prose page** is `index.html`, `booting.html` or `cadr.html`. Those carry
-the topbar, and they are written in brief full sentences because they are read
-by people who did not write the code.
+A **prose page** is `index.html`, `booting.html`, `debugging.html` or
+`cadr.html`. Those carry the topbar, and they are written in brief full
+sentences because they are read by people who did not write the code.
 
-`booting.html` and `cadr.html` are prose pages that carry drawings, and both
-of them draw in `currentColor` alone. **A sequence carries no status colour.**
+`booting.html`, `debugging.html` and `cadr.html` are prose pages that carry
+drawings, and all three of them draw in `currentColor` alone. **A sequence
+carries no status colour.**
 A board drawing colours a block by how far along it is; a sequence says what
 happens and in what order, which is a different claim, so what is built and
 what is not is in the caption under each figure, in words. The Arty A7-100's
@@ -161,6 +168,14 @@ supply pins are open at both ends, because a cable between two boards must not
 join their 3.3 V rails, and the connector's own block says so. It takes the
 crossings' red rather than a colour of its own, so that red on a drawing goes on
 meaning one thing.
+
+`debugging.css` is the same arrangement as `cadr.css`: what that page's
+drawings need beyond the shared classes, kept beside it so that the cable page
+and the page on the real machine can be changed one at a time. Three of its
+four rules are `cadr.css`'s repeated, on purpose, because two pages wanting the
+same small thing is not a reason to put it in the stylesheet every page loads.
+The fourth is `.d-x.d-warn`, which is there because a `font:` shorthand read
+after `style.css` would otherwise take the red out of the smallest label.
 
 `.d-absent`, `.d-absent-x`, `.d-absent-t`, `.d-absent-l` and `.d-absent-key`
 are added for a block a board does not have and for the wires that reach it.
