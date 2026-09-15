@@ -150,6 +150,29 @@ module cadr_arty #(
     // itself.  `docs/display-output.md` is the design.
     parameter int unsigned HDMI = 0,
 
+    // **WHICH VIDEO MODE THE DISPLAY OUTPUT DRIVES, AND IT IS A PARAMETER
+    // RATHER THAN A SETTING.**  A video mode is a pixel clock; the pixel clock
+    // comes from the MMCM in `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv`; and
+    // changing an MMCM's frequency at run time means rewriting its dividers
+    // through its reconfiguration port along with the lock and filter registers
+    // that go with them --- two tables of Xilinx's own empirical values with no
+    // published arithmetic behind them, whose only copy on this machine is
+    // inside the clocking wizard under a notice that forbids taking it.  A
+    // fixed oscillator cannot serve the three either: a 10:1 serializer makes
+    // the pixel divider a multiple of five, so one VCO gives only the ratios
+    // 1, 2/3 and 1/2, and these three are 1, 0.93 and 0.69.
+    // `docs/display-output.md` has both measurements.
+    //
+    // So three bitstreams carry the three modes and the console reports which
+    // one this fabric is; what is SHOWN and which way up stay settings the card
+    // writes at every boot.
+    //
+    //   0  VESA DMT 1280x1024 at 60 Hz, both syncs positive
+    //   1  CVT reduced blanking 1400x1050 at 60 Hz, HSYNC positive and VSYNC
+    //      negative, which is how a sink knows reduced blanking
+    //   2  CEA-861 1920x1080 at 30 Hz, both syncs positive
+    parameter int unsigned HDMI_MODE = 0,
+
     // **THE SECOND DISPLAY BOARD, THE COLOR TV**, `lmtv.order`'s "for the
     // color TV, x is 5": a LISPM TV strapped to 0o17200000 with its control
     // words at 0o17377750, carrying a color monitor of its own.  One means
@@ -420,6 +443,16 @@ module cadr_arty #(
   logic        con_tv_lispm, con_color_tv;
   logic [3:0]  con_tv_map_a;
   logic [23:0] con_tv_map_q, con_tv_color_map_q;
+  // **AND THE COLOR BOARD'S MAP ON ITS SECOND PORT**, which is the display
+  // output's: `lmtv.order` puts the map RAMs and their converters off the TV
+  // board, so the block that turns a four-bit pixel into three channels is that
+  // hardware and this is the cable to it.  `disp_map_a` is driven from the pixel
+  // clock's domain and the word comes back combinationally, which
+  // `rtl/plumbing/xilinx7/cadr_hdmi.xdc` bounds.
+  logic [3:0]  disp_map_a;
+  logic [23:0] con_disp_color_map_q;
+  // What the display output shows and which way up, page 2's word 34.
+  logic [1:0]  con_hdmi_out, con_hdmi_rotate;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the twenty-one wires of the DBGIN connector.
@@ -827,6 +860,26 @@ module cadr_arty #(
   //                  It differs from `PROVE_ADDR` in bits 2 through 8, so a
   //                  dropped or doubled bit among the low nine moves the
   //                  write-back somewhere the block still shows.
+  // ------------------------------------------------ the video mode's figures
+  //
+  // The three modes, as their own specifications give them, and the MMCM
+  // dividers that make each pixel clock out of the board's 125 MHz.  The
+  // arithmetic and what each one costs a lane are in `docs/display-output.md`;
+  // the numbers here are the specifications' and this file's job is only to
+  // pick a column.
+  //
+  // **MODE 0'S DIVIDERS ARE UNCHANGED FROM THE BOARD THAT HAS RUN**, which is
+  // why it is the one that divides by one: 125 x 8.625 and 125 x 17.25 / 2 are
+  // one VCO, and a board whose default clocking is bit for bit what a monitor
+  // has already locked to is worth a line of asymmetry.
+  // **THE RASTER'S OWN FIGURES ARE NOT HERE**, they are in
+  // `rtl/plumbing/cadr_display_out.sv` where the mode is a column of one
+  // table; this file passes the number and nothing else.  What IS here is the
+  // pair of MMCM dividers, because those are about the BOARD's 125 MHz crystal
+  // rather than about the mode, and a board with another crystal needs others.
+  localparam int          HM_VCO_DIV   = (HDMI_MODE == 0) ? 1 : 2;
+  localparam real         HM_VCO_MULT  = (HDMI_MODE == 1) ? 16.125 : (HDMI_MODE == 2) ? 11.875 : 8.625;
+
   localparam logic [31:0] PROVE_ADDR = cadr_ddr_map::main_byte_address(22'o12345671);
   localparam logic [31:0] PROVE_WORD = 32'h8A5C_36E1;
   localparam logic [31:0] PROVE_ECHO = cadr_ddr_map::main_byte_address(22'o12345706);
@@ -878,6 +931,7 @@ module cadr_arty #(
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
       .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
       .tv_color_map_q(con_tv_color_map_q),
+      .disp_map_a(disp_map_a), .disp_color_map_q(con_disp_color_map_q),
       // The memory, or the absence of one: see the `DDR` generate below.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -1922,6 +1976,10 @@ module cadr_arty #(
         .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
         .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
         .tv_color_map_q(con_tv_color_map_q),
+        // What the display output shows and which way up, page 2's word 34,
+        // and the mode this bitstream was built with coming the other way.
+        .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
+        .hdmi_mode(2'(HDMI_MODE)),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -2020,13 +2078,16 @@ module cadr_arty #(
       end
 
       logic pclk, prst;
-      logic disp_de, disp_hsync, disp_vsync, disp_white;
+      logic disp_de, disp_hsync, disp_vsync;
+      logic [7:0] disp_red, disp_green, disp_blue;
       logic disp_underrun, disp_rd_error;
       logic [9:0] tmds0, tmds1, tmds2, tmds_clk;
       logic [3:0] ser;
 
       cadr_display_out #(
-          .BASE(cadr_ddr_map::DISPLAY_BASE)
+          .BASE(cadr_ddr_map::DISPLAY_BASE),
+          .COLOR_BASE(cadr_ddr_map::COLOR_DISPLAY_BASE),
+          .MODE(HDMI_MODE)
       ) u_display (
           .clk(clk), .rst(disp_rst),
           .m_araddr(hp3_araddr), .m_arlen(hp3_arlen), .m_arsize(hp3_arsize),
@@ -2034,21 +2095,24 @@ module cadr_arty #(
           .m_arready(hp3_arready),
           .m_rdata(hp3_rdata), .m_rresp(hp3_rresp), .m_rlast(hp3_rlast),
           .m_rvalid(hp3_rvalid), .m_rready(hp3_rready),
+          // What is shown and which way up, out of the console face.
+          .out_sel(con_hdmi_out), .rotate(con_hdmi_rotate),
           .pclk(pclk), .prst(prst),
+          // The color board's map, an entry a raster line.
+          .map_a(disp_map_a), .map_q(con_disp_color_map_q),
           .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
-          .white(disp_white),
+          .red(disp_red), .green(disp_green), .blue(disp_blue),
           .underrun(disp_underrun), .rd_error(disp_rd_error)
       );
 
-      // One bit becomes three channels of eight.  The CADR's screen is
-      // black and white and the border is black, so every channel carries
-      // the same byte and full range is what a monitor assumes of DVI.
-      logic [7:0] shade;
-      assign shade = {8{disp_white}};
-
+      // **THE THREE CHANNELS COME OUT OF THE DISPLAY NOW AND ARE NOT MADE
+      // HERE.**  They were one bit spread over three bytes while the block drew
+      // one black-and-white screen; the color board's pixels are map entries of
+      // three different bytes, so the lookup is the display's and what arrives
+      // here is already a color.
       cadr_hdmi_tx u_tx (
           .pclk(pclk), .prst(prst),
-          .red(shade), .green(shade), .blue(shade),
+          .red(disp_red), .green(disp_green), .blue(disp_blue),
           .de(disp_de), .hsync(disp_hsync), .vsync(disp_vsync),
           .tmds0(tmds0), .tmds1(tmds1), .tmds2(tmds2), .tmds_clk(tmds_clk)
       );
@@ -2069,8 +2133,8 @@ module cadr_arty #(
       // cannot collide.
       cadr_hdmi_phy #(
           .CLKIN_PERIOD_NS(8.000),
-          .VCO_DIVIDE     (1),
-          .VCO_MULT_F     (8.625),
+          .VCO_DIVIDE     (HM_VCO_DIV),
+          .VCO_MULT_F     (HM_VCO_MULT),
           .SERIAL_DIVIDE_F(2.000),
           .PIXEL_DIVIDE   (10)
       ) u_phy (
@@ -2102,6 +2166,10 @@ module cadr_arty #(
       assign hp3_arvalid = 1'b0;
       assign hp3_rready  = 1'b1;
       assign hdmi_ser    = 4'd0;
+      // No display output: nothing reads the color board's second map port and
+      // nothing shows the two settings.  The console still answers word 34 with
+      // what it would show, which is what a console is for.
+      assign disp_map_a  = 4'd0;
 
       /* verilator lint_off UNUSEDSIGNAL */
       logic unused_hp3;
@@ -2233,6 +2301,9 @@ module cadr_arty #(
     // a SIMPLE TV and no color board.
     assign con_tv_lispm = 1'b0;
     assign con_color_tv = 1'b0;
+    assign con_hdmi_out    = 2'b01;
+    assign con_hdmi_rotate = 2'd0;
+    assign disp_map_a      = 4'd0;
     assign con_tv_map_a = 4'd0;
     assign con_write = 1'b0;
     assign con_addr = 18'd0;
@@ -2446,7 +2517,8 @@ module cadr_arty #(
                    // The two display boards' color maps, which the console
                    // reads on pages 4 and 5. On a board with no console they
                    // reach nobody and are folded here.
-                   con_tv_map_q, con_tv_color_map_q,
+                   con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
+                   con_hdmi_out, con_hdmi_rotate,
                    dbg_wire_state};
     end
   end

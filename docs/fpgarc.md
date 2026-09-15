@@ -175,6 +175,28 @@ is how `COLOR-EXISTS-P` in the band finds out whether it has one. So
 `--color-tv` is off unless the card asks for it, and the color screen is
 served with `--color-terminal` above.
 
+**The display output**, read by `S80cadr-disk-packs` before it starts the disk
+pack program, and written into the console face. `docs/display-output.md` is the
+design.
+
+    --hdmi-output tv|color-tv|both
+                          which screens go to the monitor
+    --hdmi-rotate 0|90|-90
+                          which way up, for a monitor on its side
+    --hdmi-mode 1280x1024|1400x1050|1920x1080
+                          which video mode the bitstream carries
+
+Whatever is shown is centered on the monitor at 1:1 with the rest black. Where
+both screens overlap the color one is drawn over the first. Neither is scaled: a
+one-bit picture scaled by anything but a whole number turns single-pixel strokes
+into gray, and the CADR's screen is single-pixel strokes almost everywhere.
+
+**`--hdmi-mode` asks rather than sets.** A video mode is a pixel clock, the pixel
+clock comes from an MMCM, and an MMCM's dividers are fixed in the bitstream. So
+three bitstreams carry the three modes and this line is compared against what the
+fabric reports. A card naming a mode the bitstream does not carry gets a line
+saying so rather than a setting that quietly does nothing.
+
 **The boot button**, read by `S80cadr-disk-packs` before it starts the disk pack
 program. One flag, and the section below is about it.
 

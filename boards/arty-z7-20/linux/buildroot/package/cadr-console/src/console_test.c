@@ -146,6 +146,11 @@ struct model {
 	int tv_lispm, color_tv;
 	int display_deaf_to_the_key;	/* a fabric that takes any value */
 	int display_unmarked;		/* a fabric older than word 33 */
+	// **AND WHAT THE DISPLAY OUTPUT SHOWS**, page 2's word 34: which
+	// screens go to the monitor and which way up, and the mode the
+	// bitstream carries, which nothing here can move.
+	int hdmi_first, hdmi_color, hdmi_rot, hdmi_mode;
+	int hdmi_unmarked;		/* a fabric older than word 34 */
 	uint8_t map[2][CONS_MAP_COLORS][CONS_MAP_CHANNELS];
 };
 
@@ -255,6 +260,16 @@ static uint32_t model_read(struct console *c, unsigned word)
 			   : ((uint32_t)CONS_TV_MARK << 16)
 				 | (m->color_tv ? CONS_TV_COLOR : 0u)
 				 | (m->tv_lispm ? CONS_TV_LISPM : 0u);
+	// Page 2's word 34: what the display output shows, with a marker of its
+	// own for word 33's reason.
+	if (word == CONS_HDMI)
+		return m->hdmi_unmarked
+			   ? 0u
+			   : ((uint32_t)CONS_HDMI_MARK << 16)
+				 | ((uint32_t)m->hdmi_mode << CONS_HDMI_MODE_SHIFT)
+				 | ((uint32_t)m->hdmi_rot << CONS_HDMI_ROT_SHIFT)
+				 | (m->hdmi_color ? CONS_HDMI_COLOR : 0u)
+				 | (m->hdmi_first ? CONS_HDMI_FIRST : 0u);
 	// Pages 4 and 5: the two color maps, one word a color.
 	if (word >= CONS_PAGE4 && word < CONS_PAGE5 + CONS_MAP_COLORS) {
 		const int board = word >= CONS_PAGE5;
@@ -375,6 +390,18 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 			m->color_tv = 1;
 		return;
 	}
+	// Page 2's word 34, what the display output shows.  Six keys, three for
+	// the screens and three for the rotation, and each leaves the other
+	// alone.
+	if (word == CONS_HDMI) {
+		if (v == CONS_HDMI_TV_KEY)         { m->hdmi_first = 1; m->hdmi_color = 0; }
+		else if (v == CONS_HDMI_COLOR_KEY) { m->hdmi_first = 0; m->hdmi_color = 1; }
+		else if (v == CONS_HDMI_BOTH_KEY)  { m->hdmi_first = 1; m->hdmi_color = 1; }
+		else if (v == CONS_HDMI_UP_KEY)    m->hdmi_rot = CONS_HDMI_UPRIGHT;
+		else if (v == CONS_HDMI_CW_KEY)    m->hdmi_rot = CONS_HDMI_CW;
+		else if (v == CONS_HDMI_CCW_KEY)   m->hdmi_rot = CONS_HDMI_CCW;
+		return;
+	}
 	// Page 0's word 14, the debug cable's role.  Two keys and nothing else,
 	// and the second is the first complemented, so no partial write of
 	// either can be the other.  **THE ROLE IS NOT THE ASK**: the connector
@@ -478,6 +505,15 @@ static void model_init(struct model *m)
 	// nothing would answer with.
 	m->tv_lispm = 0;
 	m->color_tv = 0;
+	// A board comes up showing the first display, upright, and this model
+	// is a bitstream built for the middle mode --- which is not the
+	// fabric's default, so that a program printing "1280x1024" from a
+	// constant rather than from the word would be caught.
+	m->hdmi_first = 1;
+	m->hdmi_color = 0;
+	m->hdmi_rot = CONS_HDMI_UPRIGHT;
+	m->hdmi_mode = CONS_HDMI_1400;
+	m->hdmi_unmarked = 0;
 	for (int b = 0; b < 2; ++b)
 		for (int k = 0; k < CONS_MAP_COLORS; ++k)
 			for (int ch = 0; ch < CONS_MAP_CHANNELS; ++ch)
@@ -2082,6 +2118,93 @@ static void check_build(void)
 
 // **THE BACKPLANE'S DISPLAY BOARDS**, page 2's word 33, and the two color
 // maps on pages 4 and 5.
+// **WHAT THE DISPLAY OUTPUT SHOWS, page 2's word 34.**
+//
+// Two settings on one word and six keys, as the display boards' three are, and
+// a mode that is read only because a mode is a pixel clock.
+static void check_hdmi(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+	{
+		struct cons_hdmi h;
+		cons_read_hdmi(&c, &h);
+		CHECK(h.mark_ok == 1, "the hdmi word did not carry its marker (0x%08x)", h.word);
+		CHECK(h.first == 1, "a board came up not showing the first display");
+		CHECK(h.color == 0, "a board came up showing the color board");
+		CHECK(h.rotate == CONS_HDMI_UPRIGHT, "a board came up rotated");
+		CHECK(h.mode == CONS_HDMI_1400, "the mode read %d, and the model is built for %d",
+		      h.mode, CONS_HDMI_1400);
+	}
+	// The three screen keys, each leaving the rotation alone.
+	cons_set_hdmi_rotate(&c, CONS_HDMI_CW);
+	cons_set_hdmi_output(&c, 0, 1);
+	{
+		struct cons_hdmi h;
+		cons_read_hdmi(&c, &h);
+		CHECK(h.first == 0 && h.color == 1, "the color board alone was not set");
+		CHECK(h.rotate == CONS_HDMI_CW, "setting the screens moved the rotation");
+	}
+	cons_set_hdmi_output(&c, 1, 1);
+	{
+		struct cons_hdmi h;
+		cons_read_hdmi(&c, &h);
+		CHECK(h.first == 1 && h.color == 1, "both screens were not set");
+	}
+	// And the three rotations, each leaving the screens alone.
+	cons_set_hdmi_rotate(&c, CONS_HDMI_CCW);
+	{
+		struct cons_hdmi h;
+		cons_read_hdmi(&c, &h);
+		CHECK(h.rotate == CONS_HDMI_CCW, "the other quarter turn was not set");
+		CHECK(h.first == 1 && h.color == 1, "setting the rotation moved the screens");
+	}
+	cons_set_hdmi_rotate(&c, CONS_HDMI_UPRIGHT);
+	{
+		struct cons_hdmi h;
+		cons_read_hdmi(&c, &h);
+		CHECK(h.rotate == CONS_HDMI_UPRIGHT, "upright was not set");
+	}
+	// **A MONITOR SHOWING NOTHING IS NOT A SETTING**, so a call that asks
+	// for neither screen writes nothing and says so.
+	CHECK(cons_set_hdmi_output(&c, 0, 0) == -1, "asking for neither screen was accepted");
+	CHECK(cons_set_hdmi_rotate(&c, 3) == -1, "a rotation that is not one of three was accepted");
+	{
+		struct cons_hdmi h;
+		cons_read_hdmi(&c, &h);
+		CHECK(h.first == 1 && h.color == 1, "a refused call moved the screens");
+	}
+	// **AND A VALUE THAT MEANS NOTHING CHANGES NOTHING**, the same list
+	// word 33 is held to and for the same reason.
+	{
+		const uint32_t nothing[] = {
+			0u, 0xFFFFFFFFu, 0x434F4E53u /* IDENT */,
+			CONS_TV_SIMPLE_KEY, CONS_COLOR_TV_KEY, CONS_HDMI_TV_KEY ^ 1u,
+			CONS_HDMI_CW_KEY >> 8, ((uint32_t)CONS_HDMI_MARK << 16) | 7u};
+		for (unsigned i = 0; i < sizeof(nothing) / sizeof(nothing[0]); ++i) {
+			model_write(&c, CONS_HDMI, nothing[i]);
+			struct cons_hdmi h;
+			cons_read_hdmi(&c, &h);
+			CHECK(h.first == 1 && h.color == 1 && h.rotate == CONS_HDMI_UPRIGHT,
+			      "a value that means nothing moved what the monitor shows");
+		}
+	}
+	// A fabric older than the word reads zero, and the marker is what says
+	// so rather than a board showing nothing upright.
+	{
+		struct model old;
+		struct console oc;
+		model_init(&old);
+		old.hdmi_unmarked = 1;
+		attach(&oc, &old);
+		struct cons_hdmi h;
+		cons_read_hdmi(&oc, &h);
+		CHECK(h.mark_ok == 0, "an unmarked word read as a setting");
+	}
+}
+
 static void check_display(void)
 {
 	struct model m;
@@ -2507,6 +2630,7 @@ int main(int argc, char **argv)
 	check_debug_cable();
 	check_build();
 	check_display();
+	check_hdmi();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.
 	check_log_prefix();

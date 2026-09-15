@@ -303,6 +303,44 @@ enum cons_display_bit { CONS_TV_LISPM = 1u << 0, CONS_TV_COLOR = 1u << 1 };
 // has to carry the map muir would have kept, `tv::Tv::color_map`.  The RAMs
 // and their converters are off the board, so nothing on the Xbus can read one
 // back and this port is the only way to ask.
+// **AND WHAT THE BOARD'S OWN DISPLAY OUTPUT SHOWS, page 2's word 34.**
+//
+// The display output scans the display's region of DDR at a monitor's rate and
+// drives the HDMI connector, with no software in the path.  What it SHOWS is a
+// setting: the first display, the color board, or both --- and which way up,
+// for a monitor stood on its side.  Both are written at boot by the disk pack
+// program's init step, as `--tv-board` and `--color-tv` are.
+//
+// **THE MODE IS READ ONLY, AND THAT IS A FACT ABOUT AN MMCM RATHER THAN A
+// DECISION.**  A video mode is a pixel clock; the pixel clock comes from an
+// MMCM whose dividers are fixed in the bitstream; and moving one at run time
+// means rewriting the lock and filter registers that go with them, which are
+// Xilinx's own empirical values with no arithmetic behind them.  So three
+// bitstreams carry the three modes and this word says which one is loaded.
+// `docs/display-output.md` has the measurement.
+//
+// Six keys, on word 33's argument: three values and not two, so three keys and
+// no complement, each four printable bytes and none of them zero, all ones,
+// `IDENT`, `UNMAPPED` or what the word reads back.  The two settings are two
+// facts on one word, so each key leaves the other alone.
+#define CONS_HDMI           (CONS_PAGE2 + 2u)
+#define CONS_HDMI_TV_KEY    0x48545631u	/* "HTV1" */
+#define CONS_HDMI_COLOR_KEY 0x48545632u	/* "HTV2" */
+#define CONS_HDMI_BOTH_KEY  0x48545642u	/* "HTVB" */
+#define CONS_HDMI_UP_KEY    0x48555052u	/* "HUPR" */
+#define CONS_HDMI_CW_KEY    0x48524357u	/* "HRCW" */
+#define CONS_HDMI_CCW_KEY   0x48524343u	/* "HRCC" */
+#define CONS_HDMI_MARK      0x4844u	/* "HD" */
+#define CONS_HDMI_MARK_OF(w) ((w) >> 16)
+enum cons_hdmi_bit { CONS_HDMI_FIRST = 1u << 0, CONS_HDMI_COLOR = 1u << 1 };
+#define CONS_HDMI_ROT_SHIFT   2
+#define CONS_HDMI_ROT_MASK    3u
+#define CONS_HDMI_MODE_SHIFT  4
+#define CONS_HDMI_MODE_MASK   3u
+enum cons_hdmi_rot { CONS_HDMI_UPRIGHT = 0, CONS_HDMI_CW = 1, CONS_HDMI_CCW = 2 };
+// The three modes a bitstream can carry, in the order `HDMI_MODE` names them.
+enum cons_hdmi_mode { CONS_HDMI_1280 = 0, CONS_HDMI_1400 = 1, CONS_HDMI_1920 = 2 };
+
 #define CONS_PAGE4        64u
 #define CONS_PAGE5        80u
 #define CONS_COLOR_MAP_WORD(board, color) \
@@ -729,6 +767,30 @@ void cons_set_color_tv(struct console *c, int on);
 // is 0 for the first display and 1 for the color TV.
 void cons_read_color_map(struct console *c, int board,
 			 uint8_t map[CONS_MAP_COLORS][CONS_MAP_CHANNELS]);
+
+// --- what the display output shows, page 2's word 34 ---------------------
+
+struct cons_hdmi {
+	uint32_t word;		/* word 34 as it read */
+	int mark_ok;		/* it carried `CONS_HDMI_MARK` */
+	int first;		/* the first display goes to the monitor */
+	int color;		/* the color board does */
+	int rotate;		/* `enum cons_hdmi_rot` */
+	int mode;		/* `enum cons_hdmi_mode`, read only */
+};
+
+void cons_read_hdmi(struct console *c, struct cons_hdmi *h);
+void cons_say_hdmi(const struct cons_hdmi *h);
+// Which screens go to the monitor, and which way up.  Each is a keyed write of
+// word 34 and each leaves the other alone, so a caller that wants both writes
+// twice.  Write and then READ: a wrong key is dropped in silence, which is what
+// the key is for.  `first` and `color` may not both be zero --- a monitor
+// showing nothing is not a setting anybody asks for --- and a call that says so
+// writes nothing and returns -1.
+int cons_set_hdmi_output(struct console *c, int first, int color);
+int cons_set_hdmi_rotate(struct console *c, int rot);
+// The mode's own name, for a program printing what a bitstream carries.
+const char *cons_hdmi_mode_name(int mode);
 
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
 // ClockControl and ../muir/tests/spy.rs:743-761).

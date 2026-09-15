@@ -43,20 +43,40 @@ set_clock_groups -asynchronous \
     -group [get_clocks clk_raw] \
     -group [get_clocks {pixel_raw serial_raw}]
 
-# AND THE ONE BUS THAT CROSSES IS BOUNDED RATHER THAN LEFT OPEN. `req_line` is
-# ten bits handed from the raster to the memory side beside the toggle. It is
-# safe because it is stable for a whole raster line --- 1,688 pixel clocks ---
-# before anything reads it, and the toggle that says to read it takes two
-# clocks to arrive. So a few nanoseconds of skew between its bits cannot
-# matter. But "cannot matter" is not "is not measured": an asynchronous clock
-# group makes every path between the two domains a false path, including this
-# one, and a false path is a route the fitter may make as long as it likes.
+# AND THE TWO BUSES THAT CROSS ARE BOUNDED RATHER THAN LEFT OPEN.
+#
+# The first is the fetch job: the byte address the raster wants and whether it
+# is a strided band, handed to the memory side beside the toggle. It is safe
+# because it is stable for a whole raster line --- 1,688 pixel clocks --- before
+# anything reads it, and the toggle that says to read it takes two clocks to
+# arrive. So a few nanoseconds of skew between its bits cannot matter. But
+# "cannot matter" is not "is not measured": an asynchronous clock group makes
+# every path between the two domains a false path, including this one, and a
+# false path is a route the fitter may make as long as it likes.
 # `-datapath_only` puts a ceiling back on it without asking for the two clocks
 # to be related.
 #
 # The filter is on the register's own name and not on its hierarchy, because
-# the hierarchy a generate block gets is the tool's to spell and the register
-# is ours. `req_line` exists in exactly one module. `bitstream.tcl` asserts
-# that this matched something, which is the half an XDC cannot do for itself.
+# the hierarchy a generate block gets is the tool's to spell and the register is
+# ours. Both names exist in exactly one module. `bitstream.tcl` asserts that
+# this matched something, which is the half an XDC cannot do for itself.
 set_max_delay -datapath_only \
-    -from [get_cells -hier -filter {NAME =~ *req_line_reg*}] 10.000
+    -from [get_cells -hier -filter {NAME =~ *req_addr_reg* || \
+                                    NAME =~ *req_strided_reg*}] 10.000
+
+# **AND THE SECOND IS THE COLOR MAP, WHICH IS A ROUND TRIP AND NOT A HANDOFF.**
+# The display output names a color from the pixel clock's domain on `map_a`, the
+# word comes back combinationally out of the color board's map inside
+# `cadr_machine` --- the machine's own clock domain, and physically the other
+# side of the die --- and the pixel side takes it eight pixel clocks later. So
+# the path leaves a register here, crosses, passes through sixteen-to-one of
+# multiplexing there, crosses back, and ends at a register here.
+#
+# It is safe for the reason the job above is: the index changes once a raster
+# line and the word is taken 74 ns after it went out. It is bounded for the same
+# reason too, and generously --- 20 ns, which is two pixel clocks of the four the
+# handshake leaves spare, because this path crosses the die and a ceiling that
+# cannot be met is a ceiling that gets relaxed rather than believed.
+set_max_delay -datapath_only \
+    -from [get_cells -hier -filter {NAME =~ *map_idx_reg*}] \
+    -to   [get_cells -hier -filter {NAME =~ *cmap_reg*}] 20.000

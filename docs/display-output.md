@@ -5,8 +5,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # The display output
 
-The CADR's screen, scanned out of DDR by the fabric and driven onto the board's
-HDMI connector, with no software in the path.
+The CADR's two screens, scanned out of DDR by the fabric and driven onto the
+board's HDMI connector, with no software in the path.
 
 The display block writes nothing and reads nothing of the machine's. It takes
 the bitmap out of the display's own region of DDR over `S_AXI_HP3`, turns it
@@ -20,16 +20,66 @@ beside it.
 
 ## What it is driving, and what it is driving it from
 
-The picture is `rtl/machine/cadr_tv.sv`'s frame buffer. That is 768 pixels
-across and 963 lines, one bit a pixel, 24 words to a line, at `0x1C00_0000` in
-DDR. Those are muir's `tv::WIDTH`, `HEIGHT` and `WORDS_PER_LINE` and
+There are two pictures, because a CADR carries one display board or two.
+
+The first is `rtl/machine/cadr_tv.sv`'s frame buffer. That is 768 pixels across
+and 963 lines, one bit a pixel, 24 words to a line, at `0x1C00_0000` in DDR.
+Those are muir's `tv::WIDTH`, `HEIGHT` and `WORDS_PER_LINE` and
 `cadr_ddr_map::DISPLAY_BASE`.
 
+The second is the color TV, `lmtv.order`'s "for the color TV, x is 5": 576
+pixels across and 454 lines, **four** bits a pixel, 72 words to a line, at
+`cadr_ddr_map::COLOR_DISPLAY_BASE`. Those four bits are not a color. They are an
+address into a sixteen-entry map of three eight-bit channels, and the map is
+where the color is.
+
+**The map is not on the bus.** `lmtv.order` gives the COLOR register as write
+only and puts the map RAMs and their digital-to-analog converters OFF the board,
+so nothing on the Xbus can read a color back. `rtl/machine/cadr_tv.sv` keeps the
+map because the picture cannot be drawn without it; the display output reads it
+on a second port of that board and does the lookup in the pixel domain, where a
+pixel is. **The block that turns a four-bit pixel into three channels is the
+off-board hardware that board describes**, so a port to it is the cable the real
+board had rather than a hole in this one.
+
+The copy is refreshed one entry a raster line, so the whole map is never more
+than sixteen lines old, and it is refreshed rather than loaded once because
+`WRITE-COLOR-MAP` writes the map while the machine runs.
+
+### What is shown, and which way up
+
+Two settings, written at boot by the disk pack program's init step exactly as
+`--tv-board` and `--color-tv` are, and changeable at run time from the console.
+
+`--hdmi-output tv|color-tv|both` names the screens. Whatever is shown is
+centered on the active area at 1:1 with the rest black, and **where both overlap
+the color screen is drawn over the first**. Centered and not side by side,
+because the two are two views of one machine rather than a desktop, and because
+768 + 576 is 1344, which the narrowest mode's 1280 does not hold. Centered, the
+color screen falls wholly inside the first, so the overlap is the whole of it.
+
+Neither is scaled. A one-bit picture scaled by anything other than a whole
+number turns single-pixel strokes into gray, and the CADR's screen is
+single-pixel strokes almost everywhere.
+
+`--hdmi-rotate 0|90|-90` turns the picture a quarter turn, for a monitor stood
+on its side. The CADR's screen is 768 by 963 --- taller than it is wide --- and
+every monitor made since is wider than it is tall, so upright it wastes the
+sides and a turned one holds it with room. Section 2a has how that is done.
+
+Both are latched at the top of a frame, so a setting written while a frame is
+being drawn takes at the next one and cannot move the geometry under a picture
+half drawn. A change costs one frame, during which the buffers hold the other
+shape; the block treats that as starting up rather than as falling behind, which
+is why it does not raise `underrun`.
+
 Bit 0 of a word is the leftmost of the 32 pixels that word carries. A lit bit
-shows white unless `MODE BOW` is set. Both rules are muir's
-`Tv::pixel` and `Tv::shows_white`, and both are already written out
-in `screen_geom.h`, which is the remote viewer's copy of the same facts. This
-block is the third expression of them.
+shows white unless `MODE BOW` is set. On the color screen the LOW NIBBLE is the
+leftmost of the 8 pixels a word carries, which is `lmtv.order`'s own
+low-order-bit-first. All three rules are muir's `Tv::pixel`,
+`Tv::shows_white` and `Tv::color_pixel`, and all three are already written out in
+`screen_geom.h`, which is the remote viewer's copy of the same facts. This block
+is the third expression of them.
 
 `rtl/machine/cadr_tv.sv` has no raster. It runs the board's sync program, so
 the vertical flag is preset where that program's `-TVMA CLR` falls and the
@@ -86,43 +136,256 @@ wizard's own validation messages against this part.
 
 ### The decision
 
-**VESA DMT 1280x1024 at 60 Hz.** Its pixel clock is 108 MHz and its lane rate
-is 1.08 Gb/s, which is inside the 1.2 Gb/s the part will do, with about ten per
-cent to spare.
+**Three modes, one a bitstream**, and the default is the one the board has run.
 
-CVT reduced blanking was the alternative and is not needed. It would have run
-at about 90.75 MHz, and the only argument for it was that its serial clock
-would have fitted on a global clock buffer. That turns out not to be a reason
-to give up the mode every monitor accepts. See the clocks below.
+| mode | pixel clock | a lane's bit rate | syncs |
+|---|---|---|---|
+| VESA DMT 1280x1024 at 60 Hz | 108 MHz | 1.08 Gb/s | H+ V+ |
+| CVT reduced blanking 1400x1050 at 60 Hz | 101 MHz | 1.01 Gb/s | H+ V- |
+| CEA-861 VIC 34, 1920x1080 at 30 Hz | 74.25 MHz | 0.74 Gb/s | H+ V+ |
 
-The timings are VESA's.
+All three are inside the 1.2 Gb/s a lane the part will do. The two that are not
+offered are ruled out by the same figure: 1400x1050 with NORMAL blanking is
+1.22 Gb/s and 1920x1080 at 60 Hz is 1.485. 1280x720 holds neither orientation of
+a 768 by 963 screen and is not offered either.
 
-| | Active | Front porch | Sync | Back porch | Total |
+Reduced blanking is accepted by flat-panel monitors and not by televisions;
+30 Hz is accepted by televisions and not by every PC monitor. That is why both
+are there.
+
+The timings are the specifications':
+
+| | Active | Front | Sync | Back | Total |
 |---|---|---|---|---|---|
-| Horizontal | 1280 | 48 | 112 | 248 | 1688 |
-| Vertical | 1024 | 1 | 3 | 38 | 1066 |
+| 1280x1024 H | 1280 | 48 | 112 | 248 | 1688 |
+| 1280x1024 V | 1024 | 1 | 3 | 38 | 1066 |
+| 1400x1050 H | 1400 | 48 | 32 | 80 | 1560 |
+| 1400x1050 V | 1050 | 3 | 4 | 23 | 1080 |
+| 1920x1080 H | 1920 | 88 | 44 | 148 | 2200 |
+| 1920x1080 V | 1080 | 4 | 5 | 36 | 1125 |
 
-Both syncs are positive. A monitor reads the pair of polarities as part of how
-it identifies the mode, so they are not free.
+The middle one is CVT reduced blanking's own arithmetic rather than a table
+lookup: reduced blanking fixes the horizontal blanking at 160 pixels whatever
+the width, which gives 1560; its minimum vertical blanking is 460 microseconds,
+which at 1560/101 MHz = 15.446 microseconds a line is 29.8 lines and rounds up
+to 30, which gives 1080; and 1560 x 1080 x 60 is 101.088 MHz, which CVT rounds
+down to the quarter megahertz at 101.00. **Its VSYNC is negative and its HSYNC
+positive**, and that pair is how a sink tells reduced blanking from an ordinary
+mode of the same size, so it is not free. The last is CEA-861's VIC 34, whose
+2200 x 1125 x 30 is 74.25 MHz exactly.
 
-The board builds this at 107.8125 MHz rather than 108. An MMCM multiplies the
-board's 125 MHz by a multiple of one eighth, and no such multiple gives 108
-exactly. The nearest that keeps the arithmetic simple multiplies by 8.625 for a
-VCO of 1078.125 MHz, which divides by two to 539.0625 MHz and by ten to
-107.8125 MHz. That is 0.17 per cent low, and the frame arrives at 59.90 Hz
-instead of 60.02. Monitors accept far more than that.
+**THE FIGURES LIVE IN ONE PLACE**, `rtl/plumbing/cadr_display_out.sv`'s own
+parameter table, and the board passes a column number and nothing else.
+`tb/cadr_display_out_tb.cpp` carries a second transcription of the same three
+specifications and compares against it, so the two are two descriptions and can
+disagree.
+
+### Why the mode is a parameter and not a setting
+
+This was measured before it was built, and the answer is that changing it at run
+time is not available to this project.
+
+A video mode is a pixel clock; the pixel clock and its serializer clock come
+from an MMCM; and an MMCM's dividers are fixed in the bitstream. Moving them at
+run time means writing its reconfiguration port --- which needs `MMCME2_ADV`
+rather than `MMCME2_BASE`, and that part is present in the unisim library and
+costs no licence feature.
+
+**The blocker is the data and not the primitive.** Rewriting an MMCM's
+multiplier and divider also means rewriting its LOCK and FILTER registers, which
+are empirical values of Xilinx's with no published arithmetic behind them. The
+only copy on this machine is inside the clocking wizard, at
+`data/ip/xilinx/clk_wiz_v6_0/mmcm_pll_drp_func_7s_mmcm.vh`, under a notice that
+begins "This file contains confidential and proprietary information of AMD" and
+ends "THIS COPYRIGHT NOTICE AND DISCLAIMER MUST BE RETAINED AS PART OF THIS FILE
+AT ALL TIMES". That is not a file an AGPL repository can take, and writing the
+tables from memory is the thing this project refuses everywhere else.
+
+**And a fixed oscillator cannot serve the three, so the tables cannot be
+avoided.** A 10:1 serializer needs the serial clock to be exactly five times the
+pixel clock. `CLKOUT0_DIVIDE_F` moves in eighths and `CLKOUT1_DIVIDE` is an
+integer, so if the pixel divider is `D` and the serial divider `D/5`, then `D`
+must be a multiple of five. One oscillator therefore offers the pixel ratios
+1, 2/3, 1/2 and no others --- and the three modes want 1, 0.93 and 0.69.
+
+So the mode is chosen when the bitstream is built, three bitstreams carry the
+three, and the console's page 2 word 34 reports which one the fabric is. A card
+that names another mode is told which bitstream it wants rather than given a
+setting that quietly does nothing.
+
+The MMCM dividers are in `boards/arty-z7-20/cadr_arty.sv` and not in the block,
+because they are about the BOARD's 125 MHz crystal rather than about the mode:
+
+| mode | DIVCLK | CLKFBOUT | VCO | pixel | refresh |
+|---|---|---|---|---|---|
+| 1280x1024 | 1 | 8.625 | 1078.125 MHz | 107.8125 MHz | 59.92 Hz |
+| 1400x1050 | 2 | 16.125 | 1007.8125 MHz | 100.78125 MHz | 59.82 Hz |
+| 1920x1080 | 2 | 11.875 | 742.1875 MHz | 74.21875 MHz | 29.99 Hz |
+
+No multiple of an eighth gives any of the three exactly. The errors are 0.17,
+0.22 and 0.04 per cent, and monitors accept far more than that. **Mode 0's
+dividers are unchanged from the board that has run**, which is why it is the one
+that divides by one.
+
+### Why three modes are three bitstreams
+
+This is the whole of the mode's cost, and it is worth setting out rather than
+asserting, because it is the one place where a decision was made for us.
+
+**The serializer ties the two clocks together.** Ten bits leave a serializer for
+every pixel and a serializer clocked on both edges moves two bits a period, so
+the serial clock is exactly five times the pixel clock. Both come from one clock
+manager, so if the pixel output divides the oscillator by `D` and the serial
+output by `d`, then `D` is five times `d`. The serial divider moves in eighths
+and the pixel divider is a whole number, so `D` is a whole multiple of five.
+
+**One oscillator therefore reaches very few pixel clocks.** It reaches its own
+frequency over 5, 10, 15, 20 and so on, which as ratios between modes is 1, 2/3,
+1/2, 2/5. The three modes want 108, 101 and 74.25 MHz, whose ratios are 1.0693
+and 1.4545, and neither is among them.
+
+Ask what oscillator would serve the first two together. The dividers would have
+to be in the ratio 101 to 108, and both must be multiples of five, so the
+smallest pair is 505 and 540. An oscillator of 108 MHz times 540 is 58.3 GHz.
+The clock manager's own range is 600 to 1200 MHz. The question answers itself.
+
+**Two clock managers and a switch do not rescue it.** The pixel clock could be
+switched, because the buffer that carries it has a glitch-free select. The
+serial clock cannot: it rides a regional buffer, which has no select at all, and
+the global buffer that does have one will not take a period shorter than
+2.155 ns on this speed grade --- 464 MHz, measured from the tool's own speed
+file and recorded in section 1. The three serial clocks are 539, 504 and
+371 MHz, so the fastest two are beyond it. A switch that works for one mode and
+not the others is not a switch.
+
+### Why the clock manager is the constraint, and where it stops
+
+A clock cannot be made in fabric logic. It has to come from the part's own clock
+manager, and that manager's multiplier is fixed when the bitstream loads.
+
+Changing it while the design runs is possible in principle: the manager has a
+reconfiguration port, and the primitive that exposes it is in the tool's own
+library and costs no licence feature. That is not where this stops.
+
+It stops at the data. The vendor's own procedure for reprogramming the
+multiplier requires writing two further registers whose values come from
+empirical tables with no published arithmetic behind them. The only copy of
+those tables on this machine is a generated file inside the tool's
+installation, at `data/ip/xilinx/clk_wiz_v6_0/mmcm_pll_drp_func_7s_mmcm.vh`,
+which declares the two functions `mmcm_pll_lock_lookup` and
+`mmcm_pll_filter_lookup`; the reconfiguration template that calls them is
+`data/ip/xilinx/clk_wiz_v6_0/ttcl/mmcm_pll_drp_v.ttcl`. That file is headed as
+the vendor's confidential and proprietary information and requires its notice to
+be kept with it, so this repository cannot carry it or a transcription of it, and
+writing the tables from memory is the thing this project refuses everywhere
+else. A reader who wants to see them can look at the path above.
+
+### What would make run-time switching possible
+
+Worth recording, because it is narrower than "not possible".
+
+Both tables are indexed by the multiplier alone: each is a lookup whose only
+argument is the divide value, and the vendor's reconfiguration template passes
+it the multiplier and never an output divider. So **reprogramming the output
+dividers alone touches neither table**, and a small writer of our own could do
+it with arithmetic this project is allowed to write down.
+
+That buys a set of modes whose pixel clocks are all one oscillator over a
+multiple of five. None of the three standard modes wanted here share an
+oscillator, so taking that route would mean choosing modes for that property
+rather than for what a monitor expects. That is a decision about which modes to
+offer, not a fix for these three.
 
 ### How the picture sits in the raster
 
-Centered, with the rest black.
+Centered, with the rest black, and each picture centered on its own.
 
-The picture is 768 wide in 1280, so there are 256 columns of border on each
-side. It is 963 high in 1024, so there are 61 rows of border: 30 above and 31
-below, the odd row going to the bottom.
+Upright in 1280x1024 the first display is 768 wide in 1280, so 256 columns of
+border each side, and 963 high in 1024, so 61 rows: 30 above and 31 below, the
+odd row going to the bottom. The color screen is 576 by 454 in the same raster,
+so it falls wholly inside the first and the overlap is the whole of it.
 
 The border is black whatever `MODE BOW` says. The border is not the CADR's
-screen at all, so it does not follow a bit that decides how the CADR's own
-zeros are shown.
+screen at all, so it does not follow a bit that decides how the CADR's own zeros
+are shown.
+
+## 2a. Rotation
+
+`--hdmi-rotate 90` turns the picture a quarter turn clockwise and `-90` the
+other way. A quarter turn clockwise puts the source's top-left corner at the
+picture's top-right: source (column, row) is drawn at raster (H-1-row, column).
+
+**So one output line is one source COLUMN, and that is why it needs a different
+buffer.** Upright, a raster line is a source line: 24 consecutive words, one
+burst, and the next line is the next 96 bytes. Rotated, a raster line is one bit
+out of each of the picture's 963 rows. The bit's position inside its word is the
+source column modulo 32, so **32 adjacent output lines are the 32 bits of one
+word** from each row --- and the words those 32 lines need are one word column,
+963 words at a stride of 96 bytes.
+
+So the block reads one word column into a band buffer and scans that buffer once
+per output line, picking bit k of each word. The color screen is the same with
+nibbles: 8 pixels to a word, so 8 adjacent output lines are one word column of
+454 words at a stride of 288 bytes.
+
+**The picture is still read exactly once a frame.** The first display is 24
+words wide, so it is 24 word columns of 963 words, which is 23,112 --- the whole
+picture. The color screen is 72 columns of 454, which is 32,688, which is
+`COLOR:MAKE-SCREEN`'s own count. Rotation costs block RAM and costs nothing in
+bandwidth.
+
+Rotated, the pictures are 963 by 768 and 454 by 576, and both fit every one of
+the three modes at 1:1.
+
+### What the band fetch costs the port
+
+A band's words are one out of each source row, so every word is a transaction of
+its own: 963 single-beat reads where an upright line is one or two bursts.
+**The address channel therefore runs ahead of the data**, up to eight reads in
+flight. One at a time it does not finish in time: a color band is 454 words and
+has eight raster lines, which is about 12,500 clocks, and 454 round trips at the
+port's own latency is more than that. All of them are single beats to one
+identifier, so they come back in the order they were asked for and the word that
+arrives is the word the take counter names --- which is why this needs a counter
+and not a queue.
+
+### The line address is an addition and not a product
+
+A screen's byte address for a line is a register that adds one stride each
+line. It is not the clamped line number multiplied by the line's bytes.
+
+Written as a product it is a DSP and a chain of clamps hanging off the line
+counter. It is combinational, it is recomputed on every pixel, and it feeds the
+comparator that drives the request register's own clock enable. That put
+twenty-two levels of logic between the line counter and that enable and missed
+the pixel clock by 8.430 ns. The depth is the arithmetic's own and not a
+placement figure.
+
+The row moves by one a line and the address by one stride, so the addition is
+the product. The same trick makes the phase generator's taps and the disk's
+block position, and this block's own strided fetch already walks its address by
+a source line. What stands in front of the comparator is now a register.
+
+Rotated there is no product to begin with, because a word column is the source
+column shifted. The step is four bytes every 32 lines, or every 8 for the color
+board. A quarter turn the other way walks the word columns backwards, so its
+step is minus four from the last column rather than a rule of its own.
+
+### The frame a setting changes in reports nothing
+
+A change of geometry makes the fetcher ask afresh. The raster's first look of
+that frame can take a bank fetched under the old shape, and two fills of the new
+shape can then land between two looks.
+
+The handshake is one bit, so two fills toggle it back to where it was and read
+as none. The raster shows black and calls the port slow. That is the changeover
+and not the port, so the frame in which a setting changed neither primes nor
+complains, and the frame after it does both.
+
+It was measured on a quarter turn anticlockwise and not on the one clockwise.
+Only the anticlockwise picture's first band sits at an address the upright frame
+had not already asked for, which is an accident of the margins. That is what
+makes a fault of this kind look like one rotation being special.
 
 ## 2. The clocks
 
@@ -175,9 +438,38 @@ closes.
 The memory side runs on the machine's 100 MHz. The raster runs on the pixel
 clock. They are unrelated and nothing tries to relate them.
 
-They meet at the line buffer. There are two buffers of 24 words. The raster
-reads one while the memory side fills the other, and they change places at the
-first pixel of every raster line.
+They meet at the buffers. There is one a screen, each of two banks. The raster
+reads one bank while the memory side fills the other, and they change places
+when what is being shown has to change --- every raster line upright, every 32
+lines rotated for the first display and every 8 for the color screen.
+
+**Each entry is a whole 64-bit beat and not a 32-bit word**, and that is what
+makes one memory serve both shapes. A contiguous fetch brings two words in one
+beat: written as two 32-bit entries that is two writes in one cycle, which no
+block RAM does and which would force the buffer into lookup tables. One 64-bit
+entry a beat is one write, the read picks its half by the low bit of the word
+index, and the strided fetch --- which uses one word of each beat --- writes one
+half at a time, which is a byte-enabled write and is what a block RAM is for.
+
+| | entries a bank | upright | rotated | two banks |
+|---|---|---|---|---|
+| first display | 512 | 12 of them | 482 | 65,536 bits, two RAMB36 |
+| color board | 256 | 36 | 227 | 32,768 bits, one RAMB36 |
+
+The fitter agrees, and the table above is a prediction it confirms rather than
+a claim about it. Synthesis maps `mbuf` as 1K by 64 into two RAMB36 and `cbuf`
+as 512 by 64 into one, and the routed board's block RAM goes from 42.5 tiles to
+45.5. The three tiles are the whole of the increase: no RAMB18 moves.
+
+Registers fall by 1,258 at the same time, and that is the same change seen from
+the other side. The line buffer this replaces could not be block RAM at all ---
+synthesis said so, `Trying to implement RAM 'lbuf_reg' in registers` --- so it
+was flip-flops, and a band buffer is not.
+
+So the buffers are **three block RAM tiles** where the one line buffer of 24
+words was a handful of lookup tables. Upright the two hold 24 and 72 words,
+which is 96 words a raster line against the 24 this block read when it drew one
+screen.
 
 The handshake is one toggle each way. The raster sets the line number it wants
 and flips a request toggle on the same pixel-clock edge. The memory side sees
@@ -401,7 +693,7 @@ display.
 
 | File | What it is | What holds it |
 |---|---|---|
-| `rtl/plumbing/cadr_display_out.sv` | the AXI master, the line buffer and the raster | `build/display_out.pass` |
+| `rtl/plumbing/cadr_display_out.sv` | the AXI master, the buffers, the raster, the compositor and the map | `build/display_out.pass` |
 | `rtl/plumbing/cadr_hdmi_tx.sv` | the three channels and the clock channel | `build/hdmi_tx.pass` |
 | `rtl/plumbing/cadr_tmds_encode.sv` | one channel's 8b/10b encoder | `build/hdmi_tx.pass` |
 | `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` | the MMCM, the serializers, the output buffers | lint and the fitter only |
@@ -417,6 +709,13 @@ So everything that can be plain SystemVerilog is, and the Xilinx-specific file
 is four primitives and a clock with no logic in it at all.
 
 ### `display_out`
+
+**IT IS BUILT THREE TIMES, ONE A MODE**, because the mode is a parameter: the
+raster's widths, the two margins that center each picture and one sync polarity
+are all elaboration-time constants, so a check that ran one of them would hold
+the code and say nothing about the other two columns of the table. The testbench
+takes the mode as its argument and carries its own transcription of the three
+specifications.
 
 It found three faults in the first draft, and all three would have been
 invisible against a memory of zeros.
@@ -454,9 +753,26 @@ It holds:
   independently by the check, exactly one address handshake and one `RLAST`
   per burst, and at least one line actually split so that the second burst is
   not dead code;
-- the line buffer handoff, by running the memory side slow enough to lose the
-  race and requiring that the underrun is reported and the line goes black
-  rather than showing the wrong words.
+- the buffer handoff, by running the memory side slow enough to lose the race
+  and requiring that the underrun is reported and the screen goes black rather
+  than showing the wrong words;
+- the color screen's four-bit pixels through a map the check supplies, against
+  the three channels the encoder is given --- the map injective in the color
+  with no two channels of one color equal, so a channel order the other way
+  round, an index off by one and a map read off the other screen are each
+  visible;
+- both screens at once, with the color one over the first where they overlap;
+- both quarter turns, by the same pictures read the other way: an output line
+  against the source column it is, and the band fetch's own walk --- every read
+  a source line apart until the band is done, and no more reads in flight than
+  the master may hold;
+- **the picture read exactly once a frame**, counted in beats per frame against
+  the arithmetic for each of the four shapes, so a band fetched twice or a line
+  fetched for the border shows as a number.
+
+**The two windows are poisoned with DIFFERENT constants**, so a color pixel
+fetched out of the first display's window cannot come back right, and the check
+asserts that neither window is read at all when its screen is not being shown.
 
 The last of those is there because a stimulus fast enough hides the race it
 exists to show. At the port's real speed the fetcher is never behind, so the
@@ -494,6 +810,26 @@ white on black. `docs/board.md` has that reading.
 `build/arty.pass` gains a sixth board configuration, `HDMI=1` with `DDR=1`,
 which lints the whole top level with the display output in it. That is what
 catches a pin that is brought out and not connected.
+
+## The settings
+
+Two of the three are settings and one is a build.
+
+| | where | what |
+|---|---|---|
+| `--hdmi-output tv\|color-tv\|both` | `fpgarc`, console word 34 | which screens |
+| `--hdmi-rotate 0\|90\|-90` | `fpgarc`, console word 34 | which way up |
+| `--hdmi-mode ...` | `HDMI_MODE` at build; the card's line only ASKS | which mode |
+
+The two settings are written into the console's page 2 word 34 by
+`S80cadr-disk-packs` before the drive is presented, exactly as `--tv-board` and
+`--color-tv` are written into word 33, and `cadr-console hdmi-output`,
+`hdmi-rotate` and `hdmi-mode` reach them at run time. `docs/console.md` has the
+word and `docs/fpgarc.md` the flags.
+
+**A card that names a mode the bitstream does not carry gets a line saying which
+bitstream it wants.** It is not a setting that quietly does nothing, which is
+what a word that accepted the key and changed nothing would be.
 
 ## What it costs, and whether it is being timed
 
@@ -579,7 +915,13 @@ display output will not follow it. Making it follow would be one output on
 `rtl/machine/` is held to muir and neither reference program ever writes the
 register.
 
-There is no way to turn the output off from the machine or from Linux.
+There is no way to turn the output off from the machine or from Linux, and
+nothing sleeps the monitor: a source puts a digital monitor to sleep by stopping
+the link, and nothing here stops it. The connector's CEC pin is wired on this
+board and would let a television be told to stand by; it is not built either.
+
+**The mode cannot be changed without a new bitstream**, for the two measured
+reasons in section 1.
 
 ## Looking at it
 

@@ -321,7 +321,8 @@ module cadr_soc_harness #(
 
   logic        con_tv_lispm, con_color_tv;
   logic [3:0]  con_tv_map_a;
-  logic [23:0] con_tv_map_q, con_tv_color_map_q;
+  logic [23:0] con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q;
+  logic [1:0]  con_hdmi_out, con_hdmi_rotate;
 
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
@@ -354,6 +355,9 @@ module cadr_soc_harness #(
       // here writes word 33, so this is the default backplane throughout.
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv), .tv_map_a(con_tv_map_a),
       .tv_map_q(con_tv_map_q), .tv_color_map_q(con_tv_color_map_q),
+      // The color board's map on its second port, which is the display
+      // output's on a board that has one.  This board has none.
+      .disp_map_a(4'd0), .disp_color_map_q(con_disp_color_map_q),
       // The absence of a memory: see the tie-offs above.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -618,7 +622,9 @@ module cadr_soc_harness #(
       // The backplane's display boards, page 2's word 33, and the two color
       // maps on pages 4 and 5, wired to the machine as the board wires them.
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv), .tv_map_a(con_tv_map_a),
-      .tv_map_q(con_tv_map_q), .tv_color_map_q(con_tv_color_map_q)
+      .tv_map_q(con_tv_map_q), .tv_color_map_q(con_tv_color_map_q),
+      // What a display output would show, on a board that has none.
+      .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate), .hdmi_mode(2'd0)
   );
 
   // ------------------------------------------- the machine's DBGIN page
@@ -708,7 +714,7 @@ module cadr_soc_harness #(
                     vma, md, phys, ub_addr, ub_rdata, arb_stage, mem_addr,
                     mem_wdata, dev_wdata, vmaok, jcond, nop, pcs1, pcs0,
                     iwrited, wrcyc, device, dev_rq, dev_write, promdisable,
-                    promenable,
+                    promenable, con_disp_color_map_q, con_hdmi_out, con_hdmi_rotate,
                     ub_msyn, ub_ssyn, n_memrq, n_memack, n_memgrant, n_loadmd,
                     rdcyc, nxm, unibus, memstart, timed_out, mbusy, mbusy_sync,
                     mem_req, mem_write, errhalt, stathalt, n_boot, sintr,

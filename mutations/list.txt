@@ -11657,14 +11657,16 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                    // The two display boards' color maps, which the console
                    // reads on pages 4 and 5. On a board with no console they
                    // reach nobody and are folded here.
-                   con_tv_map_q, con_tv_color_map_q,
+                   con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
+                   con_hdmi_out, con_hdmi_rotate,
                    dbg_wire_state};
 @new
                    dbg_engaged, dbg_foreign, dbg_live, dbg_peer_far, dbg_frames,
                    // The two display boards' color maps, which the console
                    // reads on pages 4 and 5. On a board with no console they
                    // reach nobody and are folded here.
-                   con_tv_map_q, con_tv_color_map_q,
+                   con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
+                   con_hdmi_out, con_hdmi_rotate,
                    dbg_wire_state};
 @end
 
@@ -11896,91 +11898,230 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # `docs/display-output.md` is the design and what each check holds.
 # ---------------------------------------------------------------------------
 
-@mutation the-acknowledge-synchroniser-starts-where-nothing-has-been-fetched
+@mutation the-bank-the-raster-takes-never-moves-on
 @check display_out
 @file rtl/plumbing/cadr_display_out.sv
-@note A synchronizer must come out of reset holding what its source comes
-@note out of reset holding. `ack_tog` resets to one, so these resetting to
-@note zero make the first line's readiness test true for the two or three
-@note clocks before the real value arrives: the first line takes a bank
-@note nothing filled, and every bank after it is one out.
+@note The raster takes the bank the memory side has just filled, and it knows
+@note one landed because the fill toggle has moved away from what it last
+@note consumed. Leaving what it consumed where it is makes the first fill the
+@note only one it ever takes, and the screen then holds one line's words for
+@note the whole picture.
 @note
-@note THIS WAS THE REAL BUG AND THE CHECK FOUND IT. The picture came out
-@note drawn one line early, for ever --- raster line 30 holding picture line
-@note 1's words. It is here so that it cannot come back, and it is caught
-@note only because the modeled memory is poisoned injectively in the
-@note address: against a memory of zeros a picture one line out is the same
-@note black screen.
+@note **THIS REPLACES A RESET MISMATCH THAT IS EQUIVALENT HERE, MEASURED
+@note RATHER THAN ARGUED.** The record that stood here reset the acknowledge
+@note synchronizer to one where its source resets to zero, and said that the
+@note first line would take a bank nothing filled and every bank after it
+@note would be one out. It is NOT caught. Neither is the same mismatch made
+@note from the other side, `fill_n` reset to one, nor the crossing read a
+@note stage early at `ack_sync[1]`. All three survive for one reason:
+@note `consumed` is ASSIGNED the synchronizer's value rather than stepped, so
+@note the bank shown is always the one the last completed fill wrote and a
+@note one-off phase error heals itself within a frame. And both banks come up
+@note ZERO, so a bank taken before anything has landed draws the same black
+@note screen as a bank correctly withheld --- which is this repository's own
+@note lesson about a memory of zeros, one level in.
+@note
+@note So the live property is not where the handshake starts but that it keeps
+@note MOVING, and that is what this holds. `ack_sync` stays read by the test
+@note in front of it, so lint has nothing to say.
 @old
-      ack_sync <= '1;
+            consumed[MONO] <= ack_sync[MONO][2];
 @new
-      ack_sync <= '0;
+            consumed[MONO] <= consumed[MONO];
 @end
 
 @mutation the-burst-runs-past-the-page-boundary
 @check display_out
 @file rtl/plumbing/cadr_display_out.sv
-@note AXI forbids a burst crossing a 4 KB boundary, and a 96-byte line does
-@note not tile 4 KB: a few lines in every 128 begin close enough to one that
-@note twelve beats run over it. Taking the whole line whatever the address
-@note says is what the first draft did.
+@note AXI forbids a burst crossing a 4 KB boundary, and neither line tiles it:
+@note 96 and 4096 meet at 12,288 and 288 and 4096 at 36,864, so a few lines in
+@note every 128 begin close enough to a boundary that a whole line's beats run
+@note over it. Taking what the line owes whatever the address says is what the
+@note first draft did.
 @note
 @note `to_bound` stays read in the comparison, so this is not caught by lint
 @note --- which is the point, since lint catching a mutation is a mutation
 @note that tested the tool and not the check.
 @old
-  assign blen     = ({5'd0, to_bound} >= {10'd0, owed}) ? 4'(owed) : to_bound[3:0];
+    if ({6'd0, to_bound} < {11'd0, blen}) blen = 5'(to_bound);
 @new
-  assign blen     = ({5'd0, to_bound} >= {10'd0, owed}) ? 4'(owed) : 4'(owed);
+    if (({6'd0, to_bound} < {11'd0, blen}) && 1'b0) blen = 5'(to_bound);
 @end
 
 @mutation the-raster-reads-the-bank-being-filled
 @check display_out
 @file rtl/plumbing/cadr_display_out.sv
-@note Two line buffers, one being read while the other is filled. Reading
-@note the one being filled is the whole of what ping-pong exists to stop,
-@note and it does not show as a crash: it shows as a picture made of two
-@note different lines, which on a one-bit screen looks like noise.
-@note
-@note The first word of a line is still read from the right bank, so a
-@note check that only looked at the start of a line would pass this.
+@note Two buffers a screen, one being read while the other is filled. Reading
+@note the one being filled is the whole of what ping-pong exists to stop, and
+@note it does not show as a crash: it shows as a picture made of two different
+@note lines, which on a one-bit screen looks like noise.
 @old
-        shreg <= lbuf[{show_n, wi}];
+    m_entry  <= mbuf[{show_n[MONO], m_ridx[ME_W:1]}];
 @new
-        shreg <= lbuf[{~show_n, wi}];
+    m_entry  <= mbuf[{~show_n[MONO], m_ridx[ME_W:1]}];
 @end
 
 @mutation the-line-asked-for-is-the-one-already-being-drawn
 @check display_out
 @file rtl/plumbing/cadr_display_out.sv
-@note The raster asks at the first pixel of line v for line v+1, because the
-@note fill has to land before line v+1 is drawn. Asking for line v instead
-@note fetches what is already on the screen and the picture comes out one
-@note line late everywhere.
+@note The raster asks for what the line a fixed distance ahead will want ---
+@note one line upright, thirty-two rotated --- because the fill has to land
+@note before it is drawn. Asking for what THIS line wants fetches what is
+@note already on the screen: the fill cannot have arrived when the bank is
+@note taken, so the screen goes black and says the port fell behind.
 @note
-@note `vc` stays read, so lint has nothing to say about it.
+@note It is the address the request CARRIES that is mutated and not the test
+@note in front of it, so `m_ask_addr` stays read and lint has nothing to say
+@note --- and both shapes are reached, because the two addresses differ by a
+@note line upright and by a band rotated.
 @old
-    next_vc = (vc == VC_W'(V_TOTAL - 1)) ? '0 : vc + 1'b1;
+          asked[MONO]       <= m_ask_addr;
+          req_addr[MONO]    <= m_ask_addr;
 @new
-    next_vc = (vc == VC_W'(V_TOTAL - 1)) ? '0 : vc;
+          asked[MONO]       <= m_show_addr;
+          req_addr[MONO]    <= m_show_addr;
 @end
 
 @mutation the-underrun-is-never-reported
 @check display_out
 @file rtl/plumbing/cadr_display_out.sv
-@note A line the raster reached before its words did is shown black and
-@note said so. The saying so is the half that can rot silently: the line
-@note still goes black, the picture still looks plausible, and nothing
-@note anywhere says the port could not keep up.
+@note A bank the raster reached before its words did is shown black and said
+@note so. The saying so is the half that can rot silently: the screen still
+@note goes black, the picture still looks plausible, and nothing anywhere says
+@note the port could not keep up.
 @note
-@note **AND IT IS ONLY CATCHABLE BECAUSE THE CHECK RUNS A SECOND
-@note CONFIGURATION WITH THE PORT SLOWED DOWN.** At the port's real speed
-@note the fetcher is a whole line ahead and this branch never runs, so a
-@note stimulus fast enough would hide the race it exists to show.
+@note **AND IT IS ONLY CATCHABLE BECAUSE THE CHECK RUNS A CONFIGURATION WITH
+@note THE PORT SLOWED DOWN.** At the port's real speed the fetcher is a whole
+@note line ahead and this branch never runs, so a stimulus fast enough would
+@note hide the race it exists to show.
 @old
-          if (primed) underrun <= 1'b1;
+            if (primed[MONO]) underrun <= 1'b1;
 @new
-          if (primed && 1'b0) underrun <= 1'b1;
+            if (primed[MONO] && 1'b0) underrun <= 1'b1;
+@end
+
+@mutation the-map-is-applied-to-the-wrong-screen
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note A color pixel is four bits, an address into the sixteen-entry map the
+@note color board keeps. Indexing that map with the FIRST display's word
+@note instead draws the color screen in colors taken from a black-and-white
+@note bitmap --- which is a picture, and a plausible one, and not the
+@note machine's.
+@note
+@note **WRITTEN PLAINLY IT DOES NOT BUILD, AND THE NOTE HERE ONCE SAID THE
+@note OPPOSITE.** `c_word` is read at exactly one place --- this one --- so
+@note indexing the map with `m_word` instead orphans it, and `c_entry` and
+@note `c_half_q` behind it, and lint rejects the mutant before the check ever
+@note sees it. A mutation lint catches is a mutation that tested the tool.
+@note The ternary keeps both words read and cannot change the value: `cfg_sel`
+@note zero is neither screen shown, so `c_show` is false and nothing is drawn
+@note from this at all, and the map is indexed by the first display's word
+@note everywhere it matters.
+@note
+@note The check catches it because the two windows are poisoned with DIFFERENT
+@note constants, so no word of one can be a word of the other.
+@old
+  assign c_rgb  = cmap[c_word[nib_base +: 4]];
+@new
+  assign c_rgb  = cmap[(cfg_sel == 2'd0) ? c_word[nib_base +: 4]
+                                         : m_word[nib_base +: 4]];
+@end
+
+@mutation the-picture-is-centered-one-row-low
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note Whatever is shown is centered on the active area at 1:1. An odd margin
+@note loses its half pixel at the bottom, which is where a reader expects it;
+@note one row further down is a picture whose last row falls off the raster
+@note and whose first row shows the border.
+@note
+@note It is the vertical margin and not the horizontal because the vertical is
+@note the tight one: 963 lines in 1024 leaves 61, where 768 columns in 1280
+@note leaves 512.
+@old
+  localparam int unsigned MY0  = (V_ACTIVE - PIC_H)  / 2;
+@new
+  localparam int unsigned MY0  = ((V_ACTIVE - PIC_H) / 2) + 1;
+@end
+
+@mutation the-first-display-is-drawn-over-the-color-screen
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note Where both screens are shown and both cover a pixel, the COLOR screen is
+@note drawn over the first. The other way round hides the color screen
+@note entirely wherever the first display has a lit bit, which on a machine
+@note that has painted a window system is most of it --- and leaves a picture
+@note that is still a picture.
+@note
+@note Both terms stay read, so this is the compositor's order and not a
+@note deletion.
+@old
+      if (c_show) begin
+        red <= c_rgb[23:16]; green <= c_rgb[15:8]; blue <= c_rgb[7:0];
+      end else if (m_show && m_lit) begin
+        red <= 8'hFF; green <= 8'hFF; blue <= 8'hFF;
+      end else begin
+@new
+      if (m_show && m_lit) begin
+        red <= 8'hFF; green <= 8'hFF; blue <= 8'hFF;
+      end else if (c_show) begin
+        red <= c_rgb[23:16]; green <= c_rgb[15:8]; blue <= c_rgb[7:0];
+      end else begin
+@end
+
+@mutation the-rotated-band-is-the-wrong-word-column
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note Rotated, one output line is one source COLUMN and 32 adjacent output
+@note lines are the 32 bits of one word from each row, so the band moves on
+@note once every 32 lines --- which is the address being divided by the pixels
+@note a word carries, written as the step it is. Moving on every SIXTEEN takes
+@note each band from the wrong word column and runs off the end of the
+@note picture: half the machine's screen, stretched.
+@note
+@note The line is the first display's own; the color board's tests seven bits
+@note of its own and is untouched, so a run that catches this one catches the
+@note first display's arithmetic and not both at once.
+@old
+             (((v - VC_W'(RMY0)) & VC_W'(31)) == VC_W'(0));
+@new
+             (((v - VC_W'(RMY0)) & VC_W'(15)) == VC_W'(0));
+@end
+
+@mutation the-modes-back-porch-is-one-pixel-out
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note The three modes' figures are one table and the board passes nothing but
+@note a column number. A back porch one pixel wide of the specification's puts
+@note the picture one pixel across and the line one pixel long, which a monitor
+@note reads as a mode it does not know.
+@note
+@note **THE MUTATION IS ON MODE 0's COLUMN, AND THAT IS DELIBERATE.** The
+@note runner builds one binary of a check and runs it with no argument, which
+@note is mode 0; the Makefile builds all three and runs each with its own.
+@note So a mutation aimed at mode 1 or 2 would survive the runner while the
+@note Makefile caught it, which is a hole that looks like a finding.
+@old
+    parameter int unsigned H_BACK   = (MODE == 1) ?   80 : (MODE == 2) ?  148 :  248,
+@new
+    parameter int unsigned H_BACK   = (MODE == 1) ?   80 : (MODE == 2) ?  148 :  249,
+@end
+
+@mutation the-output-setting-is-ignored-for-the-color-screen
+@check display_out
+@file rtl/plumbing/cadr_display_out.sv
+@note What is shown is a setting the card writes through the console before
+@note the drive is presented. A fabric that shows the color board whatever it
+@note was told draws it over the machine's own screen on every board, and on a
+@note machine with no color board that is a window of DDR nothing has written.
+@note
+@note `cfg_sel` stays read by the first display's own term, so lint has
+@note nothing to say.
+@old
+  assign en_c   = cfg_sel[1];
+@new
+  assign en_c   = 1'b1;
 @end
 
 @mutation the-disparity-moves-the-wrong-way-on-an-inverted-symbol

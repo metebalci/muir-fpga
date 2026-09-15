@@ -125,6 +125,7 @@ start() {
 		echo "cadr-disk-packs: no pack partition at $PACKS_DEV; the bay will be empty"
 	fi
 	set_the_display_boards
+	set_the_display_output
 	hold_the_machine
 	connect_the_debug_cable
 	# `--log` is not here and not the card's: `cadr_daemon` gives every
@@ -182,6 +183,64 @@ set_the_display_boards() {
 			echo "cadr-display: --color-tv: cadr-console could not reach the console;" \
 			     "this machine has no color TV"
 		fi
+	fi
+}
+
+# **WHAT THE BOARD'S OWN DISPLAY OUTPUT SHOWS, AND WHICH WAY UP.**  Here for
+# `set_the_display_boards`'s reasons, and read from the same file: the display
+# output scans the display's region of DDR at a monitor's rate with no software
+# in the path, so what it shows is the fabric's business and the card's, not a
+# program's.
+#
+# `--hdmi-output` names the screens: the first display, the color board, or
+# both --- centered at 1:1 with the color one drawn over the first where they
+# overlap.  `--hdmi-rotate` turns the picture a quarter turn for a monitor stood
+# on its side, which is what a screen 768 by 963 wants.
+#
+# **AND `--hdmi-mode` ASKS RATHER THAN SETS.**  A video mode is a pixel clock
+# and a pixel clock comes from an MMCM whose dividers are fixed in the
+# bitstream, so three bitstreams carry the three modes.  A card that names one
+# is compared against what the fabric says it is, and a mismatch is a line
+# saying which bitstream the card wants --- not a setting that quietly does
+# nothing.  `docs/display-output.md` has the measurement behind that.
+#
+# Nothing is printed when none of the three is there, because a board showing
+# the machine's own screen upright has nothing to say about it.
+set_the_display_output() {
+	[ -f "$RC" ] || return 0
+	fpgarc_has "$RC" --hdmi-output || fpgarc_has "$RC" --hdmi-rotate ||
+		fpgarc_has "$RC" --hdmi-mode || return 0
+	if ! command -v cadr-console > /dev/null 2>&1; then
+		echo "cadr-display: --hdmi-output, --hdmi-rotate or --hdmi-mode, and no" \
+		     "cadr-console to ask with; the monitor shows the machine's own screen upright"
+		return 0
+	fi
+	if fpgarc_has "$RC" --hdmi-output; then
+		eval "set -- $(fpgarc_args "$RC" --hdmi-output)"
+		if ! cadr-console --log /dev/console hdmi-output "${2:-tv}" 2>&1; then
+			echo "cadr-display: --hdmi-output ${2:-tv}: cadr-console could not reach" \
+			     "the console; the monitor shows whatever the fabric came up with"
+		fi
+	fi
+	if fpgarc_has "$RC" --hdmi-rotate; then
+		eval "set -- $(fpgarc_args "$RC" --hdmi-rotate)"
+		if ! cadr-console --log /dev/console hdmi-rotate "${2:-0}" 2>&1; then
+			echo "cadr-display: --hdmi-rotate ${2:-0}: cadr-console could not reach" \
+			     "the console; the picture is whichever way up the fabric came up"
+		fi
+	fi
+	if fpgarc_has "$RC" --hdmi-mode; then
+		# **ASKED AND NOT SET**, so what this does is compare and say.
+		eval "set -- $(fpgarc_args "$RC" --hdmi-mode)"
+		want="${2:-1280x1024}"
+		have=$(cadr-console hdmi-mode 2>/dev/null | head -1)
+		case "$have" in
+			*"$want"*) ;;
+			*)
+				echo "cadr-display: --hdmi-mode $want, and this bitstream is not it:" \
+				     "$have.  A mode is a pixel clock and a pixel clock is fixed in the" \
+				     "bitstream, so another mode is another bitstream" ;;
+		esac
 	fi
 }
 

@@ -248,7 +248,24 @@ module cadr_tv #(
     // reads them so that an RFB server can render a four-bit picture and a
     // checkpoint can carry the map muir would have kept.
     input  var logic [3:0]  map_a,
-    output var logic [23:0] map_q
+    output var logic [23:0] map_q,
+
+    // **AND A SECOND READ PORT OF THE SAME MAP, FOR THE DISPLAY OUTPUT.**  The
+    // console's port above is read one entry at a time by a program; the display
+    // output needs an entry for every pixel it draws, in a clock domain of its
+    // own, so it keeps a copy and refreshes it one entry a raster line.  Two
+    // ports rather than one arbitrated between them because the two readers have
+    // nothing to do with each other and an arbiter would be a thing that can be
+    // wrong.
+    //
+    // **AND THE DISPLAY OUTPUT IS WHAT THE OFF-BOARD MAP WAS.**  `lmtv.order`
+    // puts the map RAMs and their digital-to-analog converters off this board,
+    // which is why the COLOR register is write only and why nothing on the Xbus
+    // can read a color back.  The block that turns a four-bit pixel into three
+    // channels is that hardware, so a port to it is the cable the real board
+    // had rather than a hole in this one.
+    input  var logic [3:0]  disp_map_a,
+    output var logic [23:0] disp_map_q
 );
 
   // This board's strap, from the parameters above.
@@ -319,6 +336,8 @@ module cadr_tv #(
   logic [7:0] color_map [COLORS][CHANNELS];
 
   assign map_q = {color_map[map_a][0], color_map[map_a][1], color_map[map_a][2]};
+  assign disp_map_q = {color_map[disp_map_a][0], color_map[disp_map_a][1],
+                       color_map[disp_map_a][2]};
 
   // --- the sync program's two stores -------------------------------------
   //

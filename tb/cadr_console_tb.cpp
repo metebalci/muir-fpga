@@ -167,6 +167,14 @@ enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
 // color maps, sixteen words each.
 constexpr unsigned kRegBuild = 32;
 constexpr unsigned kRegDisplay = 33;
+constexpr unsigned kRegHdmi = 34;
+constexpr uint32_t kHdmiTvKey = 0x48545631u;     /* "HTV1" */
+constexpr uint32_t kHdmiColorKey = 0x48545632u;  /* "HTV2" */
+constexpr uint32_t kHdmiBothKey = 0x48545642u;   /* "HTVB" */
+constexpr uint32_t kHdmiUpKey = 0x48555052u;     /* "HUPR" */
+constexpr uint32_t kHdmiCwKey = 0x48524357u;     /* "HRCW" */
+constexpr uint32_t kHdmiCcwKey = 0x48524343u;    /* "HRCC" */
+constexpr uint32_t kHdmiMark = 0x4844u;          /* "HD" */
 // `cadr_console.sv`'s own three keys and the word's marker.
 constexpr uint32_t kTvSimpleKey = 0x534D504Cu;  /* "SMPL" */
 constexpr uint32_t kTvLispmKey = 0x4C53504Du;   /* "LSPM" */
@@ -1343,10 +1351,11 @@ int main(int argc, char **argv) {
   }
   // **AND EVERY OTHER WORD OF PAGES 2 AND 3 READS `UNMAPPED`**, which is what
   // an address outside the face reads too.  The face gained one readable
-  // address when the stamp arrived and one more when the backplane's display
-  // boards took word 33, and it gained nothing else: the end of page 2 past
-  // the two, and the two ends of page 3.
-  for (unsigned i : {34u, 47u, 48u, 63u}) {
+  // address when the stamp arrived, one more when the backplane's display
+  // boards took word 33 and a third when the display output took word 34, and
+  // it gained nothing else: the end of page 2 past the three, and the two ends
+  // of page 3.
+  for (unsigned i : {35u, 47u, 48u, 63u}) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("a word of pages 2 and 3 that is not the build", w, kUnmapped);
     ++unmapped_seen;
@@ -1427,6 +1436,80 @@ int main(int argc, char **argv) {
     DoWrite(Con(kRegDisplay), kTvSimpleKey, 0xF);
     DoWrite(Con(kRegDisplay), ~kColorTvKey, 0xF);
     backplane("the backplane at the end", 0, 0);
+  }
+
+  // **WHAT THE DISPLAY OUTPUT SHOWS, page 2's word 34.**
+  //
+  // Which screens the board's own display output sends to the monitor and which
+  // way up.  Two settings on one word and six keys, as the display boards' are,
+  // and the two are compared BOTH as the word reads and as the level the fabric
+  // holds --- a console that reported the key it was given rather than the
+  // setting it made would agree with itself and with nothing else.
+  //
+  // **AND THE MODE IS READ ONLY.**  A video mode is a pixel clock and a pixel
+  // clock comes from an MMCM whose dividers are fixed in the bitstream, so the
+  // word says which of three bitstreams is loaded and no key can move it.  The
+  // harness is built for mode zero, so the field must read zero throughout ---
+  // including after every key below, which is what says no key reaches it.
+  {
+    auto shown = [&](const char *what, int want_first, int want_color, int want_rot) {
+      const uint32_t w = ReadWord(Con(kRegHdmi));
+      if ((w >> 16) != kHdmiMark) Fail("the hdmi word's marker", w >> 16, kHdmiMark);
+      if ((w & 1u) != (uint32_t)want_first) Fail(what, w & 1u, (uint32_t)want_first);
+      if (((w >> 1) & 1u) != (uint32_t)want_color) Fail(what, (w >> 1) & 1u, (uint32_t)want_color);
+      if (((w >> 2) & 3u) != (uint32_t)want_rot) Fail(what, (w >> 2) & 3u, (uint32_t)want_rot);
+      if (((w >> 4) & 3u) != 0u) Fail("the mode a key moved", (w >> 4) & 3u, 0u);
+      if (dut->hdmi_out != ((want_color << 1) | want_first))
+        Fail("the level the fabric holds for the screens", dut->hdmi_out,
+             (uint32_t)((want_color << 1) | want_first));
+      if (dut->hdmi_rotate != want_rot)
+        Fail("the level the fabric holds for the rotation", dut->hdmi_rotate,
+             (uint32_t)want_rot);
+    };
+    // A board comes up showing the machine's own screen, upright, which is what
+    // this block has always drawn.
+    shown("the monitor out of reset", 1, 0, 0);
+    // The three screen keys and the three rotation keys, **EACH LEAVING THE
+    // OTHER SETTING ALONE**: the two are two facts on one word and a card's two
+    // lines are applied in whatever order the init script takes them.
+    DoWrite(Con(kRegHdmi), kHdmiCwKey, 0xF);
+    shown("the monitor after HRCW", 1, 0, 1);
+    DoWrite(Con(kRegHdmi), kHdmiColorKey, 0xF);
+    shown("the monitor after HTV2", 0, 1, 1);
+    DoWrite(Con(kRegHdmi), kHdmiCcwKey, 0xF);
+    shown("the monitor after HRCC", 0, 1, 2);
+    DoWrite(Con(kRegHdmi), kHdmiBothKey, 0xF);
+    shown("the monitor after HTVB", 1, 1, 2);
+    DoWrite(Con(kRegHdmi), kHdmiUpKey, 0xF);
+    shown("the monitor after HUPR", 1, 1, 0);
+    DoWrite(Con(kRegHdmi), kHdmiTvKey, 0xF);
+    shown("the monitor after HTV1", 1, 0, 0);
+    // **AND A VALUE THAT MEANS NOTHING CHANGES NOTHING**, the list word 33 is
+    // held to with this word's own keys among it.
+    DoWrite(Con(kRegHdmi), kHdmiBothKey, 0xF);
+    DoWrite(Con(kRegHdmi), kHdmiCwKey, 0xF);
+    const uint32_t nothing_hdmi[] = {
+        0u, 0xFFFFFFFFu, kIdent, kUnmapped, kTvSimpleKey, kColorTvKey,
+        0x4442'4752u /* DEBUG_KEY */, kHdmiTvKey ^ 1u, kHdmiCwKey >> 8,
+        kHdmiBothKey + 1u, ((uint32_t)kHdmiMark << 16) | 0x3Fu};
+    for (uint32_t v : nothing_hdmi) {
+      DoWrite(Con(kRegHdmi), v, 0xF);
+      shown("the monitor after a value that means nothing", 1, 1, 1);
+    }
+    // **AND A BYTE-WIDE WRITE IS NOT A KEY**, for word 33's reason.
+    DoWrite(Con(kRegHdmi), kHdmiTvKey, 0x1);
+    shown("the monitor after a byte of a key", 1, 1, 1);
+    // **AND ONLY PAGE 2'S OWN COMPARATOR REACHES IT.**  Word 2 of page 0 is
+    // CYCLES, the same index in another window; a face that took this key off
+    // page 0's match would let any program that echoed a counter set what the
+    // monitor shows.
+    DoWrite(Con(2u), kHdmiTvKey, 0xF);
+    shown("the monitor after HTV1 written at page 0's word 2", 1, 1, 1);
+    // Back to what a board comes up with, so that nothing after this runs on a
+    // monitor it did not expect.
+    DoWrite(Con(kRegHdmi), kHdmiTvKey, 0xF);
+    DoWrite(Con(kRegHdmi), kHdmiUpKey, 0xF);
+    shown("the monitor at the end", 1, 0, 0);
   }
 
   // **AND THE TWO DISPLAY BOARDS' COLOR MAPS, pages 4 and 5.**

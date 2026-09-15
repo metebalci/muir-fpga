@@ -198,6 +198,24 @@ set prove [expr {[info exists ::env(PROVE)] ? $::env(PROVE) : 0}]
 #
 #     DDR=1 HDMI=1 OUTDIR=build/hdmi vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
 set hdmi [expr {[info exists ::env(HDMI)] ? $::env(HDMI) : 0}]
+# **AND WHICH VIDEO MODE IT DRIVES, `HDMI_MODE`.**  A video mode is a pixel
+# clock and a pixel clock comes from an MMCM, whose dividers are fixed in the
+# bitstream; `boards/arty-z7-20/cadr_arty.sv` says at the parameter why that
+# cannot be moved at run time, and `docs/display-output.md` has the two
+# measurements behind it.  So the mode is chosen here and the console reports
+# which one the fabric is.
+#
+#   0  VESA DMT 1280x1024 at 60 Hz      1.08 Gb/s a lane
+#   1  CVT reduced blanking 1400x1050   1.01 Gb/s a lane
+#   2  CEA-861 1920x1080 at 30 Hz       0.74 Gb/s a lane
+#
+#     DDR=1 HDMI=1 HDMI_MODE=2 OUTDIR=build/hdmi1080 vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
+set hdmi_mode [expr {[info exists ::env(HDMI_MODE)] ? $::env(HDMI_MODE) : 0}]
+if {$hdmi_mode != 0 && $hdmi_mode != 1 && $hdmi_mode != 2} {
+    puts "BIT: FAILED --- HDMI_MODE=$hdmi_mode is not a mode. 0 is 1280x1024,"
+    puts "BIT: 1 is 1400x1050 reduced blanking, 2 is 1920x1080 at 30 Hz."
+    exit 1
+}
 # **THE SECOND DISPLAY BOARD, `LMTV=1`.**  MIT's color TV --- `lmtv.order`'s
 # "for the color TV, x is 5" --- a second `rtl/machine/cadr_tv.sv` strapped to
 # 0o17200000 with its control words at 0o17377750, its frame buffer a second
@@ -262,6 +280,7 @@ synth_design -top cadr_arty -part $part \
     -generic DDR=$ddr \
     -generic PROVE=$prove \
     -generic HDMI=$hdmi \
+    -generic HDMI_MODE=$hdmi_mode \
     -generic LMTV=$lmtv
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
@@ -335,16 +354,30 @@ if {$hdmi > 0} {
             exit 1
         }
     }
-    set hdmi_cross [get_cells -quiet -hier -filter {NAME =~ *req_line_reg*}]
+    set hdmi_cross [get_cells -quiet -hier -filter {NAME =~ *req_addr_reg* || \
+                                                    NAME =~ *req_strided_reg*}]
     if {[llength $hdmi_cross] == 0} {
-        puts "BIT: FAILED --- no `req_line` register was found, so the"
+        puts "BIT: FAILED --- no `req_addr` register was found, so the"
         puts "BIT: set_max_delay in rtl/plumbing/xilinx7/cadr_hdmi.xdc applied"
-        puts "BIT: to nothing and the one bus that crosses between the machine's"
-        puts "BIT: clock and the pixel clock has no bound on it."
+        puts "BIT: to nothing and the fetch job that crosses between the"
+        puts "BIT: machine's clock and the pixel clock has no bound on it."
         exit 1
     }
-    puts "BIT: the display's clocks are grouped apart from the machine's, and"
-    puts "BIT: [llength $hdmi_cross] register(s) of the line-number crossing are bounded"
+    # And the color map's round trip, which is the other crossing and the
+    # longer one: out of the pixel domain, through the color board's map inside
+    # `cadr_machine`, and back.
+    set hdmi_map [get_cells -quiet -hier -filter {NAME =~ *map_idx_reg*}]
+    if {[llength $hdmi_map] == 0} {
+        puts "BIT: FAILED --- no `map_idx` register was found, so the color"
+        puts "BIT: map's round trip through rtl/machine/cadr_tv.sv is timed by"
+        puts "BIT: nothing at all: the clock group above makes it a false path"
+        puts "BIT: and the set_max_delay meant to put a ceiling back on it"
+        puts "BIT: applied to no object."
+        exit 1
+    }
+    puts "BIT: the display's clocks are grouped apart from the machine's, mode"
+    puts "BIT: $hdmi_mode, and [llength $hdmi_cross] register(s) of the fetch job"
+    puts "BIT: and [llength $hdmi_map] of the color map's round trip are bounded"
 }
 # And the debug cable's, by the same rule: `rtl/plumbing/xilinx7/cadr_debug.xdc`
 # names one register of `cadr_debug_window`, which is inside `g_ddr` too. What

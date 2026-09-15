@@ -184,7 +184,33 @@
 //                 the same kind of fact as the build stamp beside it, and
 //                 the reason the rule about pages 2 and 3 below names one
 //                 word rather than none.
-//     34-47       `UNMAPPED`
+//     34 HDMI     **what the board's own display output is showing, and
+//                 which way up.**  A write of `HDMI_TV_KEY`, `HDMI_COLOR_KEY`
+//                 or `HDMI_BOTH_KEY` says which screens go to the monitor; a
+//                 write of `HDMI_UP_KEY`, `HDMI_CW_KEY` or `HDMI_CCW_KEY`
+//                 says which way up.  It reads back:
+//
+//                   bits 31:16  `HDMI_MARK`, a marker
+//                   bits 5:4    the mode the FABRIC WAS BUILT WITH, read only
+//                   bits 3:2    0 upright, 1 a quarter turn clockwise, 2 the
+//                               other way
+//                   bit 1       the color board goes to the monitor
+//                   bit 0       the first display does
+//
+//                 **THE MODE IS READ ONLY AND THE OTHER TWO ARE NOT**, which
+//                 is a fact about an MMCM rather than a decision: a video mode
+//                 is a pixel clock, and changing one at run time means
+//                 rewriting an MMCM's dividers along with the lock and filter
+//                 registers that go with them, which are Xilinx's own
+//                 empirical values with no arithmetic behind them.
+//                 `docs/display-output.md` has the measurement.  So three
+//                 bitstreams carry the three modes and this says which one
+//                 this fabric is; a card that asks for another is told which
+//                 bitstream it wants.
+//
+//                 It is on this page beside the display boards for the same
+//                 reason they are: it is what the BOARD is.
+//     35-47       `UNMAPPED`
 //
 //   page 3, `REG_BASE + 0xC0`: all sixteen read `UNMAPPED`.
 //
@@ -594,6 +620,19 @@ module cadr_console #(
     // is a marker for their reason, that a word reading zero when nothing has
     // been set cannot be told from a window pointed somewhere else.
     parameter logic [15:0] TV_MARK = 16'h5456,
+    // **AND WHAT THE DISPLAY OUTPUT SHOWS**, page 2's word 34.  Six keys and a
+    // marker of its own, on word 33's argument: three keys and no complement
+    // because there are three values and not two, each four printable bytes,
+    // none of them zero, all ones, `IDENT`, `UNMAPPED` or what the word reads
+    // back.  The two settings are two facts on one word, as the display
+    // boards' are, so each key leaves the other alone.
+    parameter logic [31:0] HDMI_TV_KEY    = 32'h4854_5631,
+    parameter logic [31:0] HDMI_COLOR_KEY = 32'h4854_5632,
+    parameter logic [31:0] HDMI_BOTH_KEY  = 32'h4854_5642,
+    parameter logic [31:0] HDMI_UP_KEY    = 32'h4855_5052,
+    parameter logic [31:0] HDMI_CW_KEY    = 32'h4852_4357,
+    parameter logic [31:0] HDMI_CCW_KEY   = 32'h4852_4343,
+    parameter logic [15:0] HDMI_MARK      = 16'h4844,
     // **AND THE CABLE'S WIRING**, the same word and three more keys: "AUTO",
     // "STRA" and "CROS".  A Pmod ribbon is supposed to join pin one to pin
     // one; one made from two host sockets mirrors the header's two rows
@@ -785,6 +824,15 @@ module cadr_console #(
     output var logic [3:0]  tv_map_a,
     input  var logic [23:0] tv_map_q,
     input  var logic [23:0] tv_color_map_q,
+    // --- **WHAT THE DISPLAY OUTPUT SHOWS AND WHICH WAY UP**, page 2's word
+    // --- 34.  The two settings leave the console for the display output in the
+    // --- board's own memory generate; the mode comes back in from the
+    // --- parameter the bitstream was built with, because that is a thing only
+    // --- a build can decide.  A board with no display output leaves them where
+    // --- they are and the word still says what it would show.
+    output var logic [1:0]  hdmi_out,
+    output var logic [1:0]  hdmi_rotate,
+    input  var logic [1:0]  hdmi_mode,
     // --- and the cable's two counts, page 0's word 15: frames heard and
     // --- frames refused.  See the word's own entry above.
     input  var logic [23:0] dbg_frames,
@@ -1104,6 +1152,12 @@ module cadr_console #(
   assign w_is_color_on  = w_is_tv && (w_full == COLOR_TV_KEY);
   assign w_is_color_off = w_is_tv && (w_full == ~COLOR_TV_KEY);
 
+  // And which beat says what the display output shows.  Page 2's word 34, an
+  // index of its own and six keys, and a register load beside the state machine
+  // exactly as word 33's is.
+  logic w_is_hdmi;
+  assign w_is_hdmi = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd2);
+
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
   // ------------------------------------------------------------------------
@@ -1324,6 +1378,9 @@ module cadr_console #(
     else if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build
                              : (r_hi_q && r_idx_q == 5'd1)
                                  ? {TV_MARK, 14'd0, color_tv, tv_lispm}
+                             : (r_hi_q && r_idx_q == 5'd2)
+                                 ? {HDMI_MARK, 10'd0, hdmi_mode, hdmi_rotate,
+                                    hdmi_out}
                                  : UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
     else begin
@@ -1400,6 +1457,11 @@ module cadr_console #(
       // program writes it here before the drive is presented.
       tv_lispm    <= 1'b0;
       color_tv    <= 1'b0;
+      // **AND THE MONITOR SHOWS THE FIRST DISPLAY, UPRIGHT**, which is the
+      // machine's own screen the way this board has always drawn it.  A card
+      // that wants otherwise says so in `fpgarc`.
+      hdmi_out    <= 2'b01;
+      hdmi_rotate <= 2'd0;
       r_idx_q     <= 5'd0;
       r_spy       <= 16'd0;
       r_lost      <= 1'b0;
@@ -1496,6 +1558,17 @@ module cadr_console #(
           else if (w_is_tv_lispm)  tv_lispm <= 1'b1;
           if (w_is_color_on)       color_tv <= 1'b1;
           else if (w_is_color_off) color_tv <= 1'b0;
+          // What the display output shows and which way up, page 2's word 34.
+          // Two settings on one word and six keys, each leaving the other
+          // alone, for the reason the two above do.
+          if (w_is_hdmi) begin
+            if (w_full == HDMI_TV_KEY)         hdmi_out    <= 2'b01;
+            else if (w_full == HDMI_COLOR_KEY) hdmi_out    <= 2'b10;
+            else if (w_full == HDMI_BOTH_KEY)  hdmi_out    <= 2'b11;
+            else if (w_full == HDMI_UP_KEY)    hdmi_rotate <= 2'd0;
+            else if (w_full == HDMI_CW_KEY)    hdmi_rotate <= 2'd1;
+            else if (w_full == HDMI_CCW_KEY)   hdmi_rotate <= 2'd2;
+          end
           if (w_in && w_idx[4]) wst <= W_CYCLE;
           else if (w_is_reset) begin
             mach_rst <= 1'b1;

@@ -957,6 +957,85 @@ void cons_set_color_tv(struct console *c, int on)
 	++c->writes;
 }
 
+void cons_read_hdmi(struct console *c, struct cons_hdmi *h)
+{
+	h->word = c->read(c, CONS_HDMI);
+	h->mark_ok = CONS_HDMI_MARK_OF(h->word) == CONS_HDMI_MARK;
+	h->first = (h->word & CONS_HDMI_FIRST) != 0;
+	h->color = (h->word & CONS_HDMI_COLOR) != 0;
+	h->rotate = (int)((h->word >> CONS_HDMI_ROT_SHIFT) & CONS_HDMI_ROT_MASK);
+	h->mode = (int)((h->word >> CONS_HDMI_MODE_SHIFT) & CONS_HDMI_MODE_MASK);
+}
+
+int cons_set_hdmi_output(struct console *c, int first, int color)
+{
+	uint32_t key;
+	if (first && color)
+		key = CONS_HDMI_BOTH_KEY;
+	else if (color)
+		key = CONS_HDMI_COLOR_KEY;
+	else if (first)
+		key = CONS_HDMI_TV_KEY;
+	else
+		return -1;
+	c->write(c, CONS_HDMI, key);
+	++c->writes;
+	return 0;
+}
+
+int cons_set_hdmi_rotate(struct console *c, int rot)
+{
+	uint32_t key;
+	if (rot == CONS_HDMI_UPRIGHT)
+		key = CONS_HDMI_UP_KEY;
+	else if (rot == CONS_HDMI_CW)
+		key = CONS_HDMI_CW_KEY;
+	else if (rot == CONS_HDMI_CCW)
+		key = CONS_HDMI_CCW_KEY;
+	else
+		return -1;
+	c->write(c, CONS_HDMI, key);
+	++c->writes;
+	return 0;
+}
+
+const char *cons_hdmi_mode_name(int mode)
+{
+	switch (mode) {
+	case CONS_HDMI_1280: return "1280x1024 at 60 Hz";
+	case CONS_HDMI_1400: return "1400x1050 at 60 Hz, reduced blanking";
+	case CONS_HDMI_1920: return "1920x1080 at 30 Hz";
+	default: return "a mode this program does not know";
+	}
+}
+
+void cons_say_hdmi(const struct cons_hdmi *h)
+{
+	if (!h->mark_ok) {
+		say("hdmi: word 34 did not carry its marker (0x%08x);"
+		    " this fabric is older than it is", h->word);
+		return;
+	}
+	if (h->first && h->color)
+		say("hdmi: both screens, the color board drawn over the first");
+	else if (h->color)
+		say("hdmi: the color board alone");
+	else if (h->first)
+		say("hdmi: the first display alone");
+	else
+		say("hdmi: neither screen --- the monitor is black");
+	switch (h->rotate) {
+	case CONS_HDMI_CW:  say("hdmi: a quarter turn clockwise"); break;
+	case CONS_HDMI_CCW: say("hdmi: a quarter turn anticlockwise"); break;
+	default:            say("hdmi: upright"); break;
+	}
+	// **THE MODE IS WHAT THE BITSTREAM CARRIES AND NOTHING HERE CAN MOVE
+	// IT**, so it is said as a fact about the fabric rather than as a
+	// setting somebody forgot to change.
+	say("hdmi: %s --- the mode this bitstream was built with",
+	    cons_hdmi_mode_name(h->mode));
+}
+
 void cons_read_color_map(struct console *c, int board,
 			 uint8_t map[CONS_MAP_COLORS][CONS_MAP_CHANNELS])
 {

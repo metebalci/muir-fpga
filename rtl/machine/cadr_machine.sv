@@ -265,6 +265,12 @@ module cadr_machine #(
     output var logic [23:0] tv_map_q,
     output var logic [23:0] tv_color_map_q,
 
+    // And the color board's map on a second port, for the display output, which
+    // is the off-board map hardware `lmtv.order` describes.  See
+    // `rtl/machine/cadr_tv.sv` for why the board offers two.
+    input  var logic [3:0]  disp_map_a,
+    output var logic [23:0] disp_color_map_q,
+
     // --- the machine, as `Rtl::signals` and `Rtl::spy` name it
     output var logic [13:0] pc,
     output var logic [13:0] lpc,
@@ -744,6 +750,8 @@ module cadr_machine #(
       .tv_map_a   (tv_map_a),
       .tv_map_q   (tv_map_q),
       .tv_color_map_q(tv_color_map_q),
+      .disp_map_a (disp_map_a),
+      .disp_color_map_q(disp_color_map_q),
       .ch_req     (ch_req),
       .ch_write   (ch_write),
       .ch_addr    (ch_addr),
