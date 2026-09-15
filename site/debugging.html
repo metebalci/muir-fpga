@@ -541,7 +541,8 @@
       into the other. That is twenty-four beats, 162 ticks. The carrier before
       it, which is what the two boards were running when they debugged each
       other, put three data lines on each group and made a frame eight beats,
-      sixty-six ticks; a board carries whichever its bitstream was built with.
+      sixty-six ticks; a board carries whichever its bitstream was built with,
+      and both boards carry the guarded one now.
       Either is a fraction of the 11.05 microseconds a debug cycle is
       allowed.</figcaption>
     </figure>
@@ -611,7 +612,8 @@
       machine that was running Lisp, the ribbon has carried frames between two
       boards, and CC has crossed the ribbon: the debugger board halting the
       machine in the other board&rsquo;s fabric and reading it back, both ways
-      round. What has not crossed it is a write.</p>
+      round. Both carriers have run on the same two boards and the same cable.
+      What has not crossed either is a write.</p>
     </div>
 
     <div class="tablewrap">
@@ -650,6 +652,11 @@
             <td class="name">yes</td>
           </tr>
           <tr>
+            <th scope="row">Two idle boards on that ribbon</th>
+            <td>Both consoles read a debuggee with nothing driving the connector. On the carrier before this one each board heard the other&rsquo;s idle frames on the same ribbon, called them a debugger&rsquo;s, and would not take the role until it was reset; the role bit in the frame removed that.</td>
+            <td class="name">yes</td>
+          </tr>
+          <tr>
             <th scope="row">Neither machine noticing</th>
             <td>Both boards ran Lisp throughout, at the rate they run at with no cable in them, while the role was taken, swapped and given back.</td>
             <td class="name">yes</td>
@@ -665,6 +672,21 @@
             <td class="name">yes</td>
           </tr>
           <tr>
+            <th scope="row">The guards, and the frames refused</th>
+            <td>With one signal to a pair and the partner driven low, the debugger board read 0 frames refused against a saturated 65,535 heard on all twenty-four readings over four minutes and forty-eight seconds. On the carrier before it the same board in the same role refused 163 frames on one connect and 185 on the other, in bursts. That the bursts stopped when each pair carried one signal is consistent with coupling between the two unrelated signals a pair carried before, but nothing was measured on the lines themselves, so the coupling is inferred from the change and not seen. Separately, two frames on the other board, in half an hour of connects and cycles, are still unaccounted for.</td>
+            <td class="name">yes</td>
+          </tr>
+          <tr>
+            <th scope="row">A debug cycle over the carrier that runs now</th>
+            <td>A status read typed at the debugger board&rsquo;s own Listener: the far end&rsquo;s status byte while connected, the debugger&rsquo;s own timeout while not, both ways round. The one bit that varied across sixteen reads is the far interface&rsquo;s own busy, so the byte is the far machine&rsquo;s work and not a pull-up. No register of the far machine crossed.</td>
+            <td class="name">yes</td>
+          </tr>
+          <tr>
+            <th scope="row">CC over the carrier that runs now</th>
+            <td>CC crossed the carrier with three data lines a group. On the guarded one, which is what both boards carry now, what has crossed is a status strobe.</td>
+            <td class="name">not yet</td>
+          </tr>
+          <tr>
             <th scope="row">A write over the ribbon</th>
             <td>CC can write a scratchpad, main memory and the machine&rsquo;s own registers, and it has done so over the window. None of that has crossed a ribbon yet.</td>
             <td class="name">not yet</td>
@@ -677,10 +699,10 @@
       <p><code>yes</code> means a board itself has shown it, which is the same
       claim the colours on the board drawings make. The console&rsquo;s own line
       carries two counters, frames heard and frames refused, and the second is
-      how much of the cable&rsquo;s time a bad ribbon costs. Both saturate
-      within a third of a second of a connect and only a reset of the fabric
-      clears them, so what they can give is a trajectory rather than a
-      rate.</p>
+      how much of the cable&rsquo;s time a bad ribbon costs. Frames heard
+      saturates at 65,535 within a tenth of a second of a connect and only a
+      reset of the fabric clears it, so what the pair can give is a trajectory
+      rather than a rate.</p>
     </div>
   </div>
 </section>

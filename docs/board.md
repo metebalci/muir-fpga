@@ -1036,6 +1036,9 @@ Nobody has typed at a keyboard plugged into the board. The USB input program is
 built and checked. `docs/usb-input.md` says how it is arranged, and the section
 below says what has to be in place first.
 
+Both have been shown since. A monitor on the HDMI connector shows the
+machine's screen, and a keyboard and a mouse on the USB host reach Lisp.
+
 ### One fault still open
 
 The machine can deadlock when a debugger halts it while a memory read is
@@ -1060,6 +1063,10 @@ joins the machine's own.
 It is a race rather than a consequence: the same halt wedged about one entry in
 three, with the cable in the same state after each. The exact race is not
 established.
+
+This fault has been found and fixed since. The acknowledgement's level, and
+not its edge alone, now holds the countdown flags cleared, and forty console
+halts and eleven debugger entries have run on the board without a deadlock.
 
 ## A keyboard at the board
 
@@ -1278,8 +1285,61 @@ a full save, and no mechanism is claimed.
 
 **What the cable has not shown.** Nothing has been written to the far machine
 over it: what has run is the halt, the reads and the start. Nothing has been
-measured about its timing, because the frame counters saturate within a third
-of a second of a connect and only a fabric reset clears them.
+measured about its timing either. The frames-heard counter saturates within a
+tenth of a second of a connect and only a fabric reset clears it, so what the
+console's two counters give is a trajectory rather than a rate.
+
+## The cable with one signal to a pair, 15 September
+
+The carrier on the ribbon was rebuilt so that each signal has a pair of the
+header's pins to itself, with the other pin of the pair driven low as a guard.
+Both boards were served that fabric and the ribbon between them was not
+touched. `docs/debug-cable.md` says why the pairs matter and what the guards
+cost.
+
+**The refused frames are gone.** As the debugger the Arty Z7-20 read 0 refused
+against a saturated 65,535 heard on every one of twenty-four readings, taken
+ten seconds apart over four minutes and forty-eight seconds, and on the first
+reading after the connect as well. With the earlier carrier the same board in
+the same role refused 163 frames on one connect and 185 on the other, in
+bursts, with the counter at its ceiling within 300 milliseconds. The Cora
+Z7-07S refused none as the debugger over two minutes, as it had before.
+
+**Two frames on the Cora Z7-07S are not accounted for.** It ended the session
+at 2 refused against a saturated 65,535 heard. Five disconnect and reconnect
+cycles added none, a repeat of the forced `straight` control added none, and
+5,020 debug cycles added none, so the two arrived at moments nobody caught.
+`docs/debug-cable.md` names the two candidates. Neither is a measurement and no
+cause is claimed.
+
+**Two resting boards now drive nothing.** Both consoles read a debuggee with
+nothing on the connector. On the earlier carrier each board on this same
+mirrored ribbon heard the other's idle frames, called them a debugger's, and
+could not take the role until it was reset.
+
+**The wiring was found again, both ways round.** Each board took the role in
+turn and read `crossover, detected`, while the far board reported a debugger on
+the connector. Forced to `straight`, the debugger read that nothing was
+answering and the far board read that what is on the connector arrives on the
+four pins it answers on. Set back to `auto` after the role had been given back,
+the detection found the crossover again.
+
+**A debug cycle crossed without CC.** A Unibus read of `0o766104` from the
+debugger board's own Listener is the `-DB READ STATUS` strobe, and
+`(si:%unibus-read #o766104)` read `0o177400` while connected and `0o177777`
+while disconnected, on each board in turn. The first is what a far end that
+answers gives and the second is the debugger's own timeout, which is what an
+unplugged connector reads as. Sixteen reads in one form gave `0o177400`
+thirteen times and `0o177500` three, and the bit that moves is the far bus
+interface's own busy, so the byte is the far machine's work rather than a
+pull-up. No register of the far machine was read over this carrier, and CC has
+not been run on it.
+
+**A board says which build it carries.** The USERCODE register read over JTAG
+gave the previous bitstream's stamp on both parts before they were served and
+the new one afterwards. The fabric is configured by the loader through the
+processing system rather than over JTAG, so this is the reading that says a
+board which has been running for hours still names the build in it.
 
 ## Looking at the display output
 
