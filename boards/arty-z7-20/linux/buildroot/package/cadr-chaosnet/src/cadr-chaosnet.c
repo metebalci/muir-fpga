@@ -189,7 +189,7 @@ struct ether {
 	int have_udp;
 	// The sending station's end of the machine's buffer: a frame the buffer
 	// refused waits here for a turn and is offered again, as an interface's
-	// driver retries on Transmit Abort.  It carries the four counts of
+	// driver retries on Transmit Abort.  It carries the five counts of
 	// what became of every frame headed for the machine.
 	struct chaos_inject inject;
 	uint16_t machine;		// the CADR's own address
@@ -240,6 +240,15 @@ static void trace_frame(struct ether *e, const char *way, const uint16_t *words,
 // and is given up after the three offers the CADR's own driver allows.
 // Without it a burst of frames from one host delivered exactly one frame,
 // however long the burst was.
+//
+// **A BROADCAST IS NOT RETRIED, AND THE ROUTING ABOVE DOES NOT DECIDE THAT.**
+// AIM-628 §2.5's abort goes out only for a frame "specifically addressed"
+// to the receiver, so a broadcast into a full buffer is counted by the
+// interface and nobody is told; the rule is `chaos_inject.c`'s, which reads
+// the cable destination out of the frame's own words.  `carry` hands a
+// broadcast down exactly as it hands down a frame by name, because a
+// broadcast does still have to be OFFERED --- what differs is only what
+// happens when the buffer refuses it.
 //
 // **A BAD CHECK WORD IS NOT FILTERED HERE.**  The cable carries what it
 // carries and the interface has a CRC Error bit for exactly this; muir's
@@ -661,6 +670,13 @@ int main(int argc, char **argv)
 				// sum, being OFFERS and not frames: they are the
 				// twin of the interface's own Lost Count, which
 				// counts a commit and not a packet.
+				// **AND A BROADCAST HAS A ROAD OF ITS OWN**,
+				// because a busy receiver counts one and does
+				// not abort it, so nothing on the cable was
+				// ever told to send it again.  It is not folded
+				// into the frames given up, which mean a
+				// machine that has stopped listening: a count
+				// that can mean two things is one nobody reads.
 				say("%lu from the machine, %lu to it, %lu in and %lu out over UDP; "
 				    "%lu datagrams arrived, %lu refused for their shape, "
 				    "%lu with a bad checksum, %lu not for this cable; "
@@ -668,6 +684,7 @@ int main(int argc, char **argv)
 				    "%lu offers refused because the machine had not emptied "
 				    "its buffer and %lu in the interface's own Lost Count, "
 				    "%lu frames given up after three, "
+				    "%lu broadcasts lost to a full buffer, "
 				    "%lu with no room to wait, %lu waiting",
 				    e.from_machine, e.inject.stored, e.from_udp, e.to_udp,
 				    e.have_udp ? e.udp.received : 0ul,
@@ -687,7 +704,7 @@ int main(int argc, char **argv)
 				    // in this line that is read out of the
 				    // fabric rather than kept here.
 				    e.have_face ? (unsigned long)chaos_face_lost(&e.face) : 0ul,
-				    e.inject.given_up,
+				    e.inject.given_up, e.inject.broadcasts_lost,
 				    e.inject.no_room, (unsigned long)e.inject.waiting);
 				reported = moved;
 			}
