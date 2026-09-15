@@ -464,10 +464,29 @@ static int run_one(const Ratio &r)
 	std::snprintf(timer_line, sizeof timer_line,
 		      "cadr-soc: UART UART, timer TIME, %d ticks a microsecond",
 		      (int)SOC_TICKS_PER_US);
+	// **WHICH BUILD THE FABRIC SAYS IT IS**, and the line is built from the
+	// number the harness was given rather than written out here: on the
+	// board this comes out of the part's AXSS register, which
+	// `tools/build_stamp.tcl` loaded from the bitstream, and under Verilator
+	// there is no such register, so `SOC_TB_BUILD` is what the harness
+	// drives into the console's page 2 and this is a COMPARISON against it.
+	// Nibble 3 is a tree that was both modified and carrying an untracked
+	// file, so the compound case is what the firmware has to spell out.
+	char build_line[192], build_warn[128];
+	std::snprintf(build_line, sizeof build_line,
+		      "cadr-soc: fabric: build %08x --- commit %07x, tree modified and "
+		      "carrying an untracked file",
+		      (unsigned)SOC_TB_BUILD, (unsigned)(SOC_TB_BUILD >> 4));
+	// And a dirty build is said to be one twice, because its commit names
+	// where the build started and not what it is.
+	std::snprintf(build_warn, sizeof build_warn,
+		      "cadr-soc: fabric: so the commit names where this build STARTED");
 	const char *const want[] = {
 		"cadr-soc: the soft processing system on an Arty A7-100",
 		timer_line,
 		"cadr-soc: the console at 0x80000000 answers CONS",
+		build_line,
+		build_warn,
 		"cadr-soc: the machine was RUNNING,",
 		"cadr-soc: halted at PC 0o",
 		"cadr-soc: halted: FLAG-1 0x",
@@ -691,7 +710,7 @@ int main(int argc, char **argv)
 		"machine at %d clock ratios ---\n"
 		"    the board's own 2:1 and two that share no factor with it "
 		"or with each other --- and\n"
-		"    said the same thirteen lines at every one, so the crossing "
+		"    said the same fifteen lines at every one, so the crossing "
 		"between the core's clock\n"
 		"    and the machine's tick does not depend on the number.\n",
 		nratio);

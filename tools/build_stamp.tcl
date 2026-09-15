@@ -136,6 +136,17 @@ proc build_stamp_pack {commit nibble tree} {
     return [list $id $commit $tree]
 }
 
+# **AND A STAMP MUST NEVER GO THROUGH `expr`.**  Eight hex digits are a
+# perfectly good Tcl FLOATING-POINT literal whenever the fifth is `e` and the
+# rest are decimal, so `expr {$cond ? $stamp : ""}` hands back `8.108e+236`
+# for the build `8108e233` --- which is a real commit of this repository with
+# a dirty tree, and it is what the value looked like when this was found: a
+# board refused with "the bitstream names build 8108e233 and its sidecar names
+# 8.108e+236", from two readers of one file.  `expr` converts, and a ternary is
+# the shape that makes it easy to miss; `if` does not.  Every conditional below
+# that carries a stamp is therefore written out, and `tb/cadr_program_tb.tcl`
+# has a case with exactly that shape.
+#
 # Eight lower-case hex digits, from whatever shape a tool hands back:
 # `32'hDEADBEEF`, `0xDEADBEEF`, `deadbeef`.  Empty in, empty out.
 proc build_stamp_norm {v} {
@@ -250,7 +261,10 @@ proc build_stamp_usercode {dev} {
 proc build_stamp_expected {prefix bit} {
     set named [build_stamp_of_bitstream $bit]
     set side  [build_stamp_read $bit]
-    set sid   [expr {[llength $side] ? [lindex $side 0] : ""}]
+    # Not `expr`: see the note at `build_stamp_norm`.  A ternary here turned
+    # `8108e233` into `8.108e+236` and refused a good bitstream.
+    set sid ""
+    if {[llength $side]} { set sid [lindex $side 0] }
     if {$named ne "" && $sid ne "" && $named ne $sid} {
         puts "$prefix FAILED --- the bitstream names build $named and its sidecar names $sid."
         puts "$prefix One of the two was copied without the other. Neither can say"
@@ -273,7 +287,8 @@ proc build_stamp_expected {prefix bit} {
     if {[llength $side]} {
         puts "$prefix   commit [lindex $side 1], tree [lindex $side 2]"
     }
-    return [expr {$named ne "" ? $named : $sid}]
+    if {$named ne ""} { return $named }
+    return $sid
 }
 
 # The verdict, printed.  Returns 1 to carry on and 0 to stop.

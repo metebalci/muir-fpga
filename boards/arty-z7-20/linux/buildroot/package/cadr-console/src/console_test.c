@@ -135,6 +135,10 @@ struct model {
 	int debug_deaf_to_the_key;	/* a fabric that takes any value */
 	int debug_frames_unmapped;	/* a fabric older than word 15's counts */
 	unsigned long diag_reads, diag_writes;
+	// **WHICH BUILD THE FABRIC SAYS IT IS**, page 2's word 32.  On a board
+	// a primitive reads the part's AXSS register; here the test sets it,
+	// so that a read is a comparison against a value the check chose.
+	uint32_t build;
 };
 
 static void model_advance(struct model *m, uint64_t t)
@@ -229,7 +233,12 @@ static uint32_t model_read(struct console *c, unsigned word)
 	struct model *m = c->ctx;
 	// Time passes over a register read whatever it names.
 	model_advance(m, 8);
-	if (word >= 32)
+	// Page 2's word 32, which is the only word of pages 2 and 3 that is a
+	// word: everything else up there reads `UNMAPPED`, as an address
+	// outside the face does.
+	if (word == CONS_BUILD)
+		return m->build;
+	if (word >= CONS_PAGE1 + 16u)
 		return CONS_UNMAPPED;
 	if (word >= CONS_PAGE1) {
 		const unsigned eadr = word - CONS_PAGE1;
@@ -415,6 +424,12 @@ static void model_init(struct model *m)
 	m->q = 0x00129C42u;		/* page 0x129C = 0o11234 */
 	// A word that shares no page with either, so that a crossing shows.
 	m->md = 0x0038B10Fu;		/* page 0x38B1 = 0o34261 */
+	// Which build the fabric says it is: commit `c0ffee2` with a tree that
+	// had a modified file.  Not a commit of this repository, so a check
+	// that reads it back knows it is reading the model; not `0xFFFFFFFF`,
+	// which is the value the stamp's format reserves for a bitstream that
+	// names no build at all.
+	m->build = 0xC0FFEE21u;
 	m->q_latch = 0;
 	m->md_latch = 0;
 }
@@ -500,6 +515,8 @@ static void check_ident(void)
 	CHECK((c.read(&c, CONS_BOOT) & 0xFFFF0000u) == (CONS_BOOT_KEY & 0xFFFF0000u),
 	      "word 13 does not carry the key's own top half as a marker");
 	CHECK(c.read(&c, 40) == CONS_UNMAPPED, "an address past the window is not UNMAPPED");
+	CHECK(c.read(&c, CONS_BUILD) != CONS_UNMAPPED,
+	      "page 2 word 32 reads UNMAPPED, and it is which build the fabric is");
 }
 
 // The guard, on words already in hand, so that no /dev/mem is needed.  The
@@ -1768,6 +1785,169 @@ static const char *first_line(const char *path)
 	return line;
 }
 
+// ---- WHICH BUILD THE FABRIC IS, page 2's word 32 ------------------------
+//
+// `tools/build_stamp.tcl` is the authority on the format and this holds the
+// decode to it: seven hex digits of commit and a nibble, the five nibbles the
+// tcl writes and no others, and `0xFFFFFFFF` for a bitstream that names no
+// build --- which is the value the tcl guarantees no build can ever be.
+//
+// **THE VALUES ARE THE CHECK'S AND NOT THE TREE'S.**  A test that read the
+// repository's own stamp and then agreed with it would be confirming; these
+// are commits this repository does not have, so every line is a comparison.
+static void check_build(void)
+{
+	struct model m;
+	struct console c;
+
+	// 1.  All five nibbles the stamp's format defines, each with a commit
+	//     of its own so that a decode which took the nibble from the wrong
+	//     end would name a different commit as well as a different tree.
+	static const struct {
+		uint32_t word;
+		uint32_t commit;
+		unsigned tree;
+		int modified, untracked, known, no_git;
+		const char *words;
+	} t[] = {
+		{ 0xC0FFEE20u, 0x0C0FFEE2u, 0x0, 0, 0, 1, 0, "clean" },
+		{ 0xC0FFEE21u, 0x0C0FFEE2u, 0x1, 1, 0, 1, 0, "modified" },
+		{ 0x1234ABC2u, 0x01234ABCu, 0x2, 0, 1, 1, 0, "carrying an untracked file" },
+		{ 0x5A1B2C33u, 0x05A1B2C3u, 0x3, 1, 1, 1, 0,
+		  "modified and carrying an untracked file" },
+		// A commit git could name with a tree it could not read.  Not
+		// the same thing as the entry below, and the two must not be
+		// run together: this one HAS a commit.
+		{ 0x0ABCDEFFu, 0x00ABCDEFu, 0xF, 0, 0, 1, 0, "unknown --- git could not say" },
+		// `0000000f`, which the tcl writes when git said nothing at
+		// all: not a checkout, and there is no commit to print.
+		{ 0x0000000Fu, 0x00000000u, 0xF, 0, 0, 1, 1, "unknown --- git could not say" },
+		// A nibble the format does not define.  The flows write none
+		// of these, so a word carrying one did not come from here and
+		// the decode says so rather than guessing which half is true.
+		{ 0xDEADBEE7u, 0x0DEADBEEu, 0x7, 0, 0, 0, 0,
+		  "a state this program does not know" },
+	};
+	for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
+		const struct cons_build b = cons_build_of(t[i].word);
+		CHECK(b.word == t[i].word, "the build word is not what was read (%u)", i);
+		CHECK(b.stamped == 1, "a stamped build reads as unstamped (%u)", i);
+		CHECK(b.commit == t[i].commit, "commit %07x wanting %07x (%u)",
+		      b.commit, t[i].commit, i);
+		CHECK(b.tree == t[i].tree, "tree nibble %x wanting %x (%u)",
+		      b.tree, t[i].tree, i);
+		CHECK(b.modified == t[i].modified, "modified %d wanting %d (%u)",
+		      b.modified, t[i].modified, i);
+		CHECK(b.untracked == t[i].untracked, "untracked %d wanting %d (%u)",
+		      b.untracked, t[i].untracked, i);
+		CHECK(b.known == t[i].known, "known %d wanting %d (%u)",
+		      b.known, t[i].known, i);
+		CHECK(b.no_git == t[i].no_git, "no_git %d wanting %d (%u)",
+		      b.no_git, t[i].no_git, i);
+		CHECK(strcmp(cons_build_tree_words(&b), t[i].words) == 0,
+		      "the tree in words is \"%s\" wanting \"%s\" (%u)",
+		      cons_build_tree_words(&b), t[i].words, i);
+	}
+
+	// 2.  **ALL ONES IS NOT A BUILD**, and the line must not name a commit.
+	//     It is what an unprogrammed part reads and what a bitstream built
+	//     before the flows stamped them leaves in the register, and a
+	//     console that printed `commit fffffff` would be inventing one.
+	{
+		const struct cons_build b = cons_build_of(CONS_BUILD_NONE);
+		CHECK(b.stamped == 0, "all ones read as a build");
+		capture_start();
+		cons_say_build(&b);
+		{
+			const char *said = capture_end();
+			CHECK(strstr(said, "no build stamp") != NULL,
+			      "the line did not say there is no stamp: %s", said);
+			CHECK(strstr(said, "commit") == NULL,
+			      "the line named a commit where there is none: %s", said);
+		}
+	}
+
+	// 3.  The line a person reads, for a clean build and for a dirty one.
+	//     **A DIRTY TREE IS SAID TWICE ON PURPOSE**: the commit then names
+	//     where the build started and not what it is, and somebody reading
+	//     the commit off the first line and checking out that commit would
+	//     not get this fabric.
+	{
+		const struct cons_build clean = cons_build_of(0xC0FFEE20u);
+		capture_start();
+		cons_say_build(&clean);
+		{
+			const char *said = capture_end();
+			CHECK(strstr(said, "c0ffee2") != NULL,
+			      "the line did not name the commit: %s", said);
+			CHECK(strstr(said, "tree clean") != NULL,
+			      "the line did not say the tree was clean: %s", said);
+			CHECK(strstr(said, "STARTED") == NULL,
+			      "a clean build was warned about as a dirty one: %s", said);
+		}
+	}
+	{
+		const struct cons_build dirty = cons_build_of(0x5A1B2C33u);
+		capture_start();
+		cons_say_build(&dirty);
+		{
+			const char *said = capture_end();
+			CHECK(strstr(said, "5a1b2c3") != NULL,
+			      "the dirty line did not name the commit: %s", said);
+			CHECK(strstr(said, "STARTED") != NULL,
+			      "a dirty build was not said to be one: %s", said);
+		}
+	}
+	{
+		const struct cons_build nogit = cons_build_of(0x0000000Fu);
+		capture_start();
+		cons_say_build(&nogit);
+		{
+			const char *said = capture_end();
+			CHECK(strstr(said, "no git information") != NULL,
+			      "a build from no checkout was not said to be one: %s", said);
+			CHECK(strstr(said, "commit 0000000") == NULL,
+			      "a build with no commit printed one anyway: %s", said);
+		}
+	}
+
+	// 4.  Through the face: the word is read from page 2 and `status`
+	//     carries it, so a console on a board answers the question with
+	//     one command and not two.
+	model_init(&m);
+	attach(&c, &m);
+	m.build = 0x1234ABC2u;
+	CHECK(cons_build_word(&c) == 0x1234ABC2u,
+	      "the build word did not come back off page 2");
+	{
+		struct cons_status st;
+		capture_start();
+		CHECK(cons_status(&c, 2000, &st) == 0, "status failed");
+		cons_say_status(&st);
+		{
+			const char *said = capture_end();
+			CHECK(st.build.word == 0x1234ABC2u,
+			      "status did not carry the build word");
+			CHECK(strstr(said, "1234abc") != NULL,
+			      "status did not name the fabric's commit: %s", said);
+		}
+	}
+
+	// 5.  **AND WHICH BUILD THE PROGRAM IS, WHICH IS THE OTHER HALF.**
+	//     muir's shape is name, version, commit, build kind, and the
+	//     commit is dropped rather than guessed when there is none.  What
+	//     is asserted here is the shape and not the commit, since the
+	//     commit is whatever compiled this.
+	{
+		const char *v = cons_version();
+		CHECK(strncmp(v, "cadr-console ", 13) == 0,
+		      "the version does not name the program: %s", v);
+		CHECK(strstr(v, "-release") != NULL,
+		      "the version does not say which kind of build it is: %s", v);
+		CHECK(strchr(v, '\n') == NULL, "the version is more than one line: %s", v);
+	}
+}
+
 static void check_log_prefix(void)
 {
 	// **THE RULE, AS A FUNCTION OF THE TWO THINGS IT IS ABOUT.**  A
@@ -2022,6 +2202,7 @@ int main(int argc, char **argv)
 	check_machine_words();
 	check_main_address();
 	check_debug_cable();
+	check_build();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.
 	check_log_prefix();
@@ -2036,7 +2217,7 @@ int main(int argc, char **argv)
 	}
 	printf("ok: the console program drives the register face rtl/plumbing/cadr_console.sv defines, and\n"
 	       "    says what it found\n"
-	       "    %u checks against a model of the slave --- two pages of sixteen, the high\n"
+	       "    %u checks against a model of the slave --- four pages of sixteen, the high\n"
 	       "      halves latched by the low reads, UNMAPPED outside, bit 16 for a cycle\n"
 	       "      nothing answered --- with a modelled machine behind the diagnostic bus\n"
 	       "    IDENT \"CONS\", and \"NONE\", UNMAPPED, zeros and ones all refused\n"
@@ -2095,6 +2276,15 @@ int main(int argc, char **argv)
 	       "      which is the one thing two bits buy over one.  Twelve values that are\n"
 	       "      not a key take nothing, and a modelled fabric that connects on any value\n"
 	       "      is caught by the same twelve\n"
+	       "    WHICH BUILD THE FABRIC IS, page 2's word 32: the stamp's five tree\n"
+	       "      nibbles and a sixth the format does not define, each with a commit\n"
+	       "      of its own, and all ones --- which is what an unprogrammed part reads\n"
+	       "      and the one value no build can be --- reported as no stamp and never\n"
+	       "      as a commit.  A dirty build is said to be one TWICE, because its\n"
+	       "      commit names where it started and not what it is.  The word comes\n"
+	       "      back off page 2 and `status` carries it, so one command answers it\n"
+	       "    and WHICH BUILD THE PROGRAM IS, which is the other half: muir's shape,\n"
+	       "      the commit dropped rather than guessed when there is none\n"
 	       "    the logging, which is cadr-common's routine held by the check that builds\n"
 	       "      it: a reply to a person at a terminal is BARE and a line that is kept ---\n"
 	       "      a pipe, a file, an init script\'s --log --- names its program; --log given\n"

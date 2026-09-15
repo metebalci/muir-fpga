@@ -14354,3 +14354,115 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @new
   localparam int unsigned BEATS  = (PAYLOAD_W + MARK_W + LINES - 1) / LINES;
 @end
+
+# --- WHICH BUILD THE FABRIC IS, page 2's word 32 --------------------------
+#
+# `tools/build_stamp.tcl` writes the commit and the tree's state into
+# `BITSTREAM.CONFIG.USR_ACCESS` before every `write_bitstream`, the part loads
+# them at configuration, and `rtl/plumbing/xilinx7/cadr_usr_access.sv` reads
+# them back from inside the fabric.  This is the road from that primitive to
+# the word Linux and the firmware read, and the three ways it can be wrong.
+#
+# **A WRONG ANSWER HERE IS WORSE THAN NONE**, which is why the records are
+# worth having: the word exists so that a board running for hours can say
+# which bitstream it is carrying, and somebody who believes a commit goes and
+# reads that commit's sources.  Twice this project has had to reconstruct that
+# from a file's timestamp, and once a bitstream ran for two and a half hours
+# while eight commits landed.
+
+@mutation console-the-build-is-decoded-a-word-out
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note The build is page 2's word 0 and every other word of pages 2 and 3 reads
+@note `UNMAPPED`, so a decode aimed a word out answers the build's address
+@note with `UNMAPPED` --- `0xBCB0B1AC`, which is a perfectly plausible stamp
+@note to look at: commit `bcb0b1a` with a tree nibble of 12.  That nibble is
+@note not one of the five the format defines, so the DECODE in `console_face.c`
+@note would say so; what catches it here is the word itself.
+@note
+@note Same shape as `console-reads-the-register-after-the-one-asked` one page
+@note along, and the same reason it is worth a record: an index is the easiest
+@note thing in a register face to get off by one and the hardest to see.
+@note `tb/cadr_console_tb.cpp` drives 0xC0FFEE21 in and reads word 32.
+@note Caught at "the build the fabric says it is".
+@old
+    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build : UNMAPPED;
+@new
+    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd1) ? build : UNMAPPED;
+@end
+
+@mutation console-the-build-word-crosses-its-halves
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **THE PORT REACHING THE WORD IS THE WHOLE OF WHAT THIS MODULE DOES WITH
+@note THE STAMP**, and a crossing is the defect it can have that leaves every
+@note bit read --- which is the point.  CLAUDE.md records, measured, that lint
+@note sees a signal nobody reads and that two signals read in each other's
+@note place are both read; here it is one signal's two halves, and no tool
+@note anywhere catches it.  Only a check that knows what went in can.
+@note
+@note Written as a rotation rather than as a constant or a tie, so that
+@note `build` stays used and the compiler has nothing to say --- the
+@note bit-granularity lesson.  A board carrying build `782e3a90` would report
+@note `2e90782a`: commit `2e90782`, tree nibble 10, a state the format does
+@note not define.  Caught at "the build the fabric says it is".
+@old
+    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build : UNMAPPED;
+@new
+    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? {build[15:0], build[31:16]} : UNMAPPED;
+@end
+
+@mutation console-pages-two-and-three-take-writes
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note **THIS IS THE MUTATION THE SECOND ADDRESS MATCH EXISTS FOR**, and it is
+@note the widening that would have been the obvious way to make room for the
+@note stamp.  `w_in` gates every write term and every latch of pages 0 and 1,
+@note and each of them tests the page as `w_idx[4]` --- one bit, because one
+@note bit was all there was.  Let `w_in` cover pages 2 and 3 as well and
+@note `w_idx[4]` stops meaning "page 1": page 2's word 6 then carries
+@note `RESET_KEY` to the machine's reset, page 2's word 13 presses the boot
+@note button, and the whole of page 3 runs diagnostic cycles --- from a page
+@note that is supposed to be read-only.
+@note
+@note So the record does not test the build word at all.  It tests that
+@note reaching for the build did not quietly give a read-only page the
+@note writes of the two pages below it, which is a thing that would have
+@note passed every check this file had before `tb/cadr_console_tb.cpp` was
+@note asked to write the two keys at their own offsets within pages 2 and 3.
+@note Caught at "a key written on page 2 reset the machine".
+@old
+          w_in <= in_window(s_awaddr[31:7]);
+@new
+          w_in <= in_window(s_awaddr[31:7]) || in_window2(s_awaddr[31:7]);
+@end
+
+@mutation the-sidecar-is-read-through-expr
+@check program_tcl
+@file tools/build_stamp.tcl
+@note **EIGHT HEX DIGITS ARE A TCL FLOAT WHENEVER THE FIFTH IS `e`**, and
+@note `expr` converts.  This is the line the mutation restores, and it is how
+@note the defect was found rather than how it was imagined: a bitstream built
+@note from a dirty tree at `8108e23` carries the build `8108e233`, the ternary
+@note handed back `8.108e+236`, and `program.tcl` refused a perfectly good file
+@note saying "the bitstream names build 8108e233 and its sidecar names
+@note 8.108e+236" --- two readers of ONE file, disagreeing because one of them
+@note did arithmetic on it.
+@note
+@note **A whole class of legitimate builds could not be programmed**, and
+@note nothing said so until one came up: `4a585e10`, the build every case in
+@note the harness used, is not float-shaped, so ten cases passed over it.
+@note That is this file's own lesson about a check written around the values
+@note it happens to meet, and the repair is two cases with the shape in them.
+@note
+@note The same conversion was in three more places --- both `program.tcl`s
+@note printing what the part read back, and the harness's own model of
+@note `REGISTER.USERCODE` --- so a stub that could not present a legal value
+@note was testing a script that could not read one.  Caught at
+@note `float-shaped-build FAIL exit 1, wanting 0` on both boards.
+@old
+    set sid ""
+    if {[llength $side]} { set sid [lindex $side 0] }
+@new
+    set sid   [expr {[llength $side] ? [lindex $side 0] : ""}]
+@end

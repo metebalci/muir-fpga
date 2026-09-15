@@ -124,8 +124,13 @@ proc get_property {args} {
                 if {$quiet} { return "" }
                 error "no such property"
             }
-            return [expr {$::model(programmed) ? $::model(code_after)
-                                               : $::model(code_before)}]
+            # **NOT `expr`**, and this stub is where the defect it now tests
+            # was reproduced a third time: eight hex digits whose fifth is
+            # `e` are a Tcl float, so a ternary here handed the script
+            # `8.108e+236` and `build_stamp_norm` refused it as unreadable.
+            # A model that cannot present a legal value cannot test one.
+            if {$::model(programmed)} { return $::model(code_after) }
+            return $::model(code_before)
         }
     }
     return "model"
@@ -155,6 +160,21 @@ proc write_fake_bitstream {path userid} {
     close $fh
 }
 
+# What `tools/build_stamp.tcl` would have written for a stamp's nibble.  The
+# sidecar's commit and tree used to be two constants here, which made every
+# case's `commit ... , tree ...` line the same sentence whatever the build
+# was: a line that cannot differ is a line no case can be wrong about.
+proc sidecar_tree_words {userid} {
+    switch -- [string index $userid 7] {
+        0 { return "clean" }
+        1 { return "modified" }
+        2 { return "untracked" }
+        3 { return "modified and untracked" }
+        f { return "git could not read the tree" }
+    }
+    return "clean"
+}
+
 proc write_sidecar {path userid commit tree} {
     set fh [open $path w]
     puts $fh "# a model sidecar"
@@ -171,6 +191,21 @@ proc write_sidecar {path userid commit tree} {
 # `header` and `sidecar` are the build each names, or `-` for absent.  A case
 # that must refuse BEFORE the hardware manager is opened says so with
 # `no-program`, which is checked from the marker file rather than from a line.
+#
+# **THE LIST IS A TCL LIST AND HAS NO COMMENTS IN IT.**  A `#` line inside
+# those braces is an element and not a remark, and one with a backtick in it
+# stops the whole file parsing.  So what a case is for is said here.
+#
+# `float-shaped-build` and `float-shaped-usercode` are **a build that is also
+# a floating-point literal**, which is every stamp whose fifth hex digit is
+# `e` and whose others are decimal.  `8108e233` is a real commit of this
+# repository with a dirty tree, and it is how the defect was found: a ternary
+# in `expr` returned `8.108e+236`, the bitstream and its sidecar were declared
+# to disagree, and a good file was refused before the hardware manager was
+# even opened.  Tcl's `expr` converts and `if` does not.  There are two cases
+# because two different readers touched such a value --- the one that compares
+# the header with the sidecar, and the one that prints what the part read back
+# --- which is why the second carries the shape in `code_before` as well.
 set CASES {
     {fresh 0 {4a585e10 4a585e10}
         {code_before ffffffff code_after 4a585e10}
@@ -225,6 +260,19 @@ set CASES {
         {"PROG: the part holds build 4a585e10; what it held before could not"
          "PROG: be read, so this does not say whether the download changed it."
          "PROG: programmed"}}
+
+    {float-shaped-build 0 {8108e233 8108e233}
+        {code_before ffffffff code_after 8108e233}
+        {"PROG: this bitstream is build 8108e233"
+         "PROG:   commit 8108e23, tree modified and untracked"
+         "PROG: the part holds build 8108e233 and held ffffffff before, so the"
+         "PROG: download took."}}
+
+    {float-shaped-usercode 0 {8108e233 8108e233}
+        {code_before 8108e233 code_after 8108e233}
+        {"PROG: DONE before programming: 1, build 8108e233"
+         "PROG: DONE after programming:  1, build 8108e233"
+         "PROG: the part holds build 8108e233, and held it before this run too, so"}}
 }
 
 # ------------------------------------------------------------- a single case
@@ -250,9 +298,17 @@ if {[lindex $argv 0] eq "--case"} {
         if {$name ne $case} { continue }
         lassign $files header sidecar
         set bit [file join $outdir $which-$case.bit]
-        write_fake_bitstream $bit [expr {$header eq "-" ? "" : $header}]
+        # Not `expr`, for the reason the model's USERCODE gives: a ternary
+        # turns a float-shaped build into a double and the header would then
+        # name a build no reader could parse.
+        set hdr ""
+        if {$header ne "-"} { set hdr $header }
+        write_fake_bitstream $bit $hdr
         file delete -force $bit.stamp
-        if {$sidecar ne "-"} { write_sidecar $bit.stamp $sidecar 4a585e1 clean }
+        if {$sidecar ne "-"} {
+            write_sidecar $bit.stamp $sidecar [string range $sidecar 0 6] \
+                [sidecar_tree_words $sidecar]
+        }
         foreach {k v} $settings { if {$k ne "no-program"} { set ::model($k) $v } }
         set ::model(marker) [file join $outdir $which-$case.programmed]
         file delete -force $::model(marker)

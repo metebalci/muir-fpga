@@ -527,6 +527,18 @@ DBGPMOD := rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/cadr_dbg_rx.sv \
 DISPLAY := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_tmds_encode.sv \
            rtl/plumbing/cadr_hdmi_tx.sv rtl/plumbing/xilinx7/cadr_hdmi_phy.sv
 
+# The Xilinx primitives every board instantiates, as shells, so that a top
+# level can be elaborated and linted.  Two files and not one: the first says
+# of itself that nothing in it models anything and that lint is all it is for,
+# and the second returns a value, which is the only behaviour
+# `USR_ACCESSE2` has.  Named here for the reason GP0, GP1 and DISPLAY are
+# named here --- `:=` is expanded where it is read and `arty.pass`'s
+# prerequisites are read before the rules further down.  **Neither may move
+# to `rtl/`**: the board flows glob that tree and would hand synthesis a stub
+# in place of a primitive, which is a board that reports a build compiled in
+# rather than the one in its own bitstream.
+BOARD_STUBS := tb/cadr_arty_stubs.sv tb/cadr_usr_access_stub.sv
+
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -1255,22 +1267,22 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
                     rtl/plumbing/cadr_lamp_errhalt.sv \
                     $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
                     $(DBGPMOD) $(DISPLAY) \
-                    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
+                    $(BOARD_STUBS) tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) boards/arty-z7-20/cadr_arty.sv $(DBGPMOD)
+	    --top-module cadr_arty $(BOARD_STUBS) $(MACHINE) boards/arty-z7-20/cadr_arty.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) \
+	    --top-module cadr_arty $(BOARD_STUBS) $(MACHINE) \
 	    boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilinx7/cadr_probe.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
@@ -1279,7 +1291,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=1 \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
@@ -1288,7 +1300,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=2 \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
@@ -1304,7 +1316,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 -GHDMI=1 \
-	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
@@ -1337,11 +1349,12 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 # set, `cadr_ps7.sv` here does not bring `S_AXI_HP3` out, and there is nothing
 # between a display and a PS7 on this board to be left unlinted.
 #
-# **AND IT USES THE ARTY's STUBS**, `tb/cadr_arty_stubs.sv` and
-# `tb/cadr_ps7_stub.sv`, because both name primitives and pins rather than a
-# board: `MMCME2_BASE`, `BUFG`, `OBUFDS`, `BSCANE2` and every one of the PS7's
-# 620 pins are the same on both parts.  A second pair of stubs would be a
-# second description of one hard block, and `tb/` is not a board's directory.
+# **AND IT USES THE ARTY's STUBS**, `$(BOARD_STUBS)` and
+# `tb/cadr_ps7_stub.sv`, because all of them name primitives and pins rather
+# than a board: `MMCME2_BASE`, `BUFG`, `OBUFDS`, `BSCANE2`, `USR_ACCESSE2` and
+# every one of the PS7's 620 pins are the same on both parts.  A second set of
+# stubs would be a second description of one hard block, and `tb/` is not a
+# board's directory.
 $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xilinx7/cadr_probe.sv \
                     boards/cora-z7-07s/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
                     rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv \
@@ -1349,24 +1362,24 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
                     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
                     $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
                     $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
-                    tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
+                    $(BOARD_STUBS) tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    --top-module cadr_cora tb/cadr_arty_stubs.sv $(MACHINE) boards/cora-z7-07s/cadr_cora.sv \
+	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE) boards/cora-z7-07s/cadr_cora.sv \
 	    rtl/plumbing/cadr_lamp_errhalt.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
-	    --top-module cadr_cora tb/cadr_arty_stubs.sv $(MACHINE) \
+	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE) \
 	    boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xilinx7/cadr_probe.sv \
 	    rtl/plumbing/cadr_lamp_errhalt.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 \
-	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
@@ -1376,7 +1389,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=1 \
-	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
@@ -1386,7 +1399,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=2 \
-	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
+	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
@@ -1549,7 +1562,7 @@ SOC_FACES := rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_disk_pack.sv \
 A7MEM := rtl/plumbing/cadr_mem_cross.sv rtl/plumbing/cadr_mig_ui.sv \
          rtl/plumbing/cadr_jtag_mem.sv rtl/plumbing/cadr_mem_count.sv
 
-ARTY_A7_SRC := tb/cadr_arty_stubs.sv $(MACHINE) \
+ARTY_A7_SRC := $(BOARD_STUBS) $(MACHINE) \
                boards/arty-a7-100/cadr_arty_a7.sv \
                rtl/plumbing/cadr_lamp_errhalt.sv \
                $(IBEX_SRC) $(SOC_RTL) $(SOC_FACES)
@@ -1566,7 +1579,7 @@ $(BUILD)/arty_a7.pass: $(MACHINE) boards/arty-a7-100/cadr_arty_a7.sv \
                     boards/arty-a7-100/cadr_a7_memory.sv $(A7MEM) \
                     tb/cadr_mig_stub.sv \
                     $(IBEX_SRC) $(IBEX_VLT) $(SOC_RTL) $(SOC_FACES) \
-                    tb/cadr_arty_stubs.sv | $(BUILD)
+                    $(BOARD_STUBS) | $(BUILD)
 	$(ARTY_A7_LINT) $(ARTY_A7_SRC)
 	$(ARTY_A7_LINT) -GPROBE_DEPTH=1024 $(ARTY_A7_SRC) \
 	    rtl/plumbing/xilinx7/cadr_probe.sv
@@ -3226,6 +3239,22 @@ SOC_TB_DIVISOR := 32
 SOC_TB_BAUD    := $(shell echo $$(( $(SOC_CLK_HZ) / $(SOC_TB_DIVISOR) )))
 SOC_TICKS_PER_US := $(shell echo $$(( $(SOC_CLK_HZ) / 1000000 )))
 
+# **WHICH BUILD THE CHECK TELLS THE FABRIC IT IS**, page 2's word 32.  On the
+# board a primitive reads the part's AXSS register; there is none under
+# Verilator, so this is the number the harness drives and `tb/cadr_soc_tb.cpp`
+# asserts the firmware's banner against.
+#
+# **IT IS DELIBERATELY NOT THIS TREE'S OWN STAMP**: commit `5a1b2c3` with a
+# tree that was both modified and carrying an untracked file, which is a
+# commit this repository does not have.  A check that took the real stamp and
+# then agreed with it would be confirming; this one compares the sentence the
+# firmware printed against a number nothing but this line could have supplied.
+# Both compound halves of the nibble are exercised by the choice of 3.
+# One number in one place: the parameter and the check's own constant are both
+# written from it, because two spellings of one value are two chances to
+# disagree.
+SOC_TB_BUILD_HEX := 5A1B2C33
+
 # **AND THE JOIN, WHICH THE HARNESS INSTANTIATES AND THE FACES DO NOT
 # INCLUDE.**  `rtl/plumbing/cadr_dbg_join.sv` is what sits in front of the
 # machine's DBGIN page on every board in this repository; on this one it has
@@ -3247,7 +3276,8 @@ $(BUILD)/obj_soc/Vcadr_soc_harness: $(SOC_HARNESS_SRC) $(IBEX_VLT) \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GFIRMWARE_HEX='"$(abspath $(BUILD))/soc_firmware.hex"' \
 	    -GSOC_RAM_WORDS=$(SOC_RAM_WORDS) -GSOC_BAUD=$(SOC_TB_BAUD) \
-	    -GCLK_HZ=$(SOC_CLK_HZ) \
+	    -GCLK_HZ=$(SOC_CLK_HZ) -GBUILD_STAMP="32'h$(SOC_TB_BUILD_HEX)" \
+	    -CFLAGS -DSOC_TB_BUILD=0x$(SOC_TB_BUILD_HEX)u \
 	    --top-module cadr_soc_harness $(IBEX_VLT) $(SOC_HARNESS_SRC) \
 	    $(abspath tb/cadr_soc_tb.cpp)
 

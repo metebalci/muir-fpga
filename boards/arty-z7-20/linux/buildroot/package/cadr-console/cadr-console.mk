@@ -37,8 +37,28 @@ CADR_CONSOLE_SITE_METHOD = local
 CADR_CONSOLE_LICENSE = AGPL-3.0-or-later
 CADR_CONSOLE_DEPENDENCIES = cadr-common
 
+# **WHICH BUILD THE PROGRAM IS, PASSED IN BECAUSE THE BUILD CANNOT ASK.**
+# `local` rsyncs `src/` into `output/build` and compiles there, so a `git`
+# inside the package's own Makefile answers nothing under Buildroot --- the
+# same hole `muir.mk` fills by handing cargo the pin.  These two are read HERE,
+# where `$(BR2_EXTERNAL_CADR_PATH)` is a path inside the repository, and
+# handed to the compile as `-D`s.  `:=` and not `=`, because Buildroot expands
+# a package's variables many times over and each expansion would run the two
+# git commands again.
+#
+# Empty when this is not a checkout, and the program then prints its version
+# with no commit, as muir does with no `MUIR_GIT`.  `--dirty` rides on the
+# commit for muir's reason: it is a fact about what was compiled against that
+# commit rather than a field of its own.
+CADR_CONSOLE_GIT := $(shell git -C $(BR2_EXTERNAL_CADR_PATH) rev-parse --short=7 HEAD 2>/dev/null)
+CADR_CONSOLE_GIT_DIRTY := $(shell git -C $(BR2_EXTERNAL_CADR_PATH) status --porcelain 2>/dev/null | head -c 1)
+ifneq ($(CADR_CONSOLE_GIT),)
+CADR_CONSOLE_BUILD_GIT := $(CADR_CONSOLE_GIT)$(if $(CADR_CONSOLE_GIT_DIRTY),-dirty,)
+endif
+
 define CADR_CONSOLE_BUILD_CMDS
-	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D)
+	$(TARGET_MAKE_ENV) $(MAKE) $(TARGET_CONFIGURE_OPTS) -C $(@D) \
+		BUILD_GIT=$(CADR_CONSOLE_BUILD_GIT) PKG_VERSION=$(CADR_CONSOLE_VERSION)
 endef
 
 define CADR_CONSOLE_INSTALL_TARGET_CMDS

@@ -209,6 +209,23 @@ int main(void)
 
 	expect("the console", CONS_REG_BASE, CONS_IDENT_WORD);
 
+	// **AND WHICH BUILD THIS FABRIC IS**, page 2's word 32, straight after
+	// the face has been shown to be there.  `tools/build_stamp.tcl` wrote
+	// the commit and the tree's state into `BITSTREAM.CONFIG.USR_ACCESS`
+	// before this bitstream was written; `cadr_usr_access.sv` reads them
+	// back out of the part's AXSS register and the console's page 2 carries
+	// them here.  The same eight digits are in the JTAG USERCODE register,
+	// so somebody with a cable and this banner have compared two registers
+	// loaded from one value over paths that share nothing.
+	//
+	// The line is `cons_say_build`'s and not this file's, so the banner and
+	// `cadr-console status` on a Zynq board print the same words --- one
+	// sentence in one place, which cannot drift.
+	{
+		const struct cons_build b = cons_build_of(cons_build_word(&con));
+		cons_say_build(&b);
+	}
+
 	// **RUNNING IS MEASURED AND NOT INFERRED**, which is `cons_status`'s own
 	// rule: `Machine::cycles` does not advance on a halted master clock, so
 	// nothing but the counter can answer this.

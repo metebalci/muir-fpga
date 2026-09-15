@@ -1418,6 +1418,21 @@ module cadr_arty_a7 #(
     end
 
     // ------------------------------------------------------------- the console
+    // **WHICH BUILD THIS FABRIC IS**, page 2's word 32.  One primitive and one
+    // wire: `tools/build_stamp.tcl` writes the commit and the tree's state
+    // into `BITSTREAM.CONFIG.USR_ACCESS` before every `write_bitstream`, the
+    // part loads it at configuration, and this reads it back from inside.
+    // The same eight digits go into `BITSTREAM.CONFIG.USERID`, which JTAG's
+    // USERCODE register holds --- so a board with a cable on it and a program
+    // on the processing system are asking two registers loaded from one
+    // value, over paths that share nothing.
+    //
+    // It is beside the console because the console is the only thing that
+    // reads it; a board built without one has no reader and instantiates no
+    // primitive.
+    logic [31:0] con_build;
+    cadr_usr_access u_usr_access (.build(con_build));
+
     cadr_console u_console (
         .clk(clk), .rst(rst),
         .s_awaddr(cn_awaddr), .s_awlen(cn_awlen), .s_awid(cn_awid),
@@ -1435,6 +1450,9 @@ module cadr_arty_a7 #(
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
         .mach_vma(con_vma), .mach_q(con_q), .mach_md(con_md),
+        // **WHICH BUILD THIS FABRIC IS**, page 2's word 32, out of the
+        // part's own AXSS register.
+        .build(con_build),
         .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
         .mach_rst(con_mach_rst), .mach_boot(con_boot),
         .no_auto_boot_held(sw0_held), .no_auto_boot_now(sw0_level),

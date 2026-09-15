@@ -29,9 +29,17 @@
 // register 5 is `PC`.  `cc.rs` reads exactly that --- "`if b.spy_read(
 // spy::FLAG_1) & 0x100 != 0 { "running" } else { "halted" }`".
 //
-// **WHAT LINUX SEES**, thirty-two words at `REG_BASE`, two pages of sixteen.
-// The window is 128 bytes; `M_AXI_GP1` decodes `0x8000_0000` upward in the
+// **WHAT LINUX SEES**, sixty-four words at `REG_BASE`, four pages of sixteen.
+// The window is 256 bytes; `M_AXI_GP1` decodes `0x8000_0000` upward in the
 // Zynq-7000 address map and this sits at the bottom of it.
+//
+// **IT WAS TWO PAGES AND IS FOUR BECAUSE PAGE 0 FILLED UP.**  The build stamp
+// wanted a word and the console's own page had none left, so a SECOND address
+// match was put beside the first rather than the first made wider --- the
+// module says at `in_window2` what widening it would have done to the writes.
+// **Nothing else moved and nothing else could**: an address outside the face
+// reads `UNMAPPED` and so does every word of pages 2 and 3 but the one, so the
+// only address in the whole gigabyte whose value changed is `REG_BASE + 0x80`.
 //
 //   page 0, `REG_BASE + 0x00`, the console's own.  **Three of its words are
 //   written** --- 6, 10 and 13 --- and the rest are read-only:
@@ -138,6 +146,33 @@
 //   on the board and reads the open bus, all ones; that is a fact about the
 //   machine and it comes back through here unchanged.
 //
+//   page 2, `REG_BASE + 0x80`, what the FABRIC is rather than what the
+//   machine is doing, read-only:
+//
+//     32 BUILD    the eight hex digits `tools/build_stamp.tcl` wrote into
+//                 `BITSTREAM.CONFIG.USR_ACCESS` before this bitstream was
+//                 written: the commit's first seven and a nibble saying how
+//                 the tree stood.  `rtl/plumbing/xilinx7/cadr_usr_access.sv`
+//                 reads them out of the part's AXSS register, so a board that
+//                 has been running for hours can still say which build it is
+//                 carrying --- which this project has twice not known and
+//                 twice been bitten by.
+//
+//                 **ALL ONES MEANS THERE IS NO STAMP**, which is what a
+//                 bitstream built before the flows stamped them leaves in the
+//                 register, and `build_stamp_pack` makes sure no build can
+//                 ever be called that.  So the word distinguishes "this is
+//                 build X" from "this fabric cannot say", and a console that
+//                 printed all ones as a commit would be inventing one.
+//
+//                 The same number is in `BITSTREAM.CONFIG.USERID`, which the
+//                 JTAG USERCODE register holds: two registers off one value,
+//                 read by two observers that share no path.
+//
+//     33-47       `UNMAPPED`
+//
+//   page 3, `REG_BASE + 0xC0`: all sixteen read `UNMAPPED`.
+//
 // **THE HIGH HALF IS LATCHED BY THE LOW HALF'S READ, and that is not a
 // convenience.**  A 64-bit counter read as two 32-bit loads is wrong across
 // a carry: the low half wraps between the two loads and the pair names a
@@ -236,7 +271,7 @@
 // read nothing answers on a GP port does not fault the Arm, it hangs both
 // cores at one PC each --- measured on the board, and
 // `rtl/plumbing/cadr_gp0_default.sv` says so at length.  So a read outside
-// the thirty-two words completes with `UNMAPPED` and a write outside them
+// the sixty-four words completes with `UNMAPPED` and a write outside them
 // completes and is dropped, in the window and out of it, however wide the
 // address it is handed.  **OKAY and not SLVERR**, which is where this differs
 // from `rtl/plumbing/cadr_disk_pack.sv`'s face: an error response to a
@@ -250,7 +285,7 @@
 // now gives this face the 4 KB page at `REG_BASE`, the carrier the page
 // above it, and `cadr_gp0_default.sv` the other 262,142 --- so the promise
 // above is kept by the composition and not by this file, exactly as it is on
-// GP0.  Nothing here moved for it: the window is still thirty-two words at
+// GP0.  Nothing here moved for it: the window is still the words at
 // `REG_BASE`, the address handed in is still the whole of it, and
 // `build/console.pass` is unchanged.  `build/gp1_split.pass` is what holds
 // the arrangement.
@@ -459,7 +494,7 @@
 `default_nettype none
 
 module cadr_console #(
-    // Where the thirty-two words sit.  `0x8000_0000` is the first address
+    // Where the sixty-four words sit.  `0x8000_0000` is the first address
     // `M_AXI_GP1` decodes to the fabric in the Zynq-7000 PS address map,
     // as `0x4000_0000` is `M_AXI_GP0`'s.
     parameter logic [31:0] REG_BASE = 32'h8000_0000,
@@ -603,6 +638,14 @@ module cadr_console #(
     input  var logic [31:0] mach_q,
     input  var logic [31:0] mach_md,
 
+    // --- page 2's word 32: what the FABRIC is.  The eight hex digits
+    // --- `tools/build_stamp.tcl` put in the bitstream, out of the part's own
+    // --- AXSS register through `rtl/plumbing/xilinx7/cadr_usr_access.sv`.
+    // --- It is a constant from configuration onward, so it is read straight
+    // --- into the mux with no latch: there is nothing for a latch to make
+    // --- consistent, unlike the three words above.
+    input  var logic [31:0] build,
+
     // --- the readout of the machine's memories, page 0's words 10, 11 and
     // --- 12.  `ro_addr` is `{sel<3:0>, word<13:0>}` and is written by word
     // --- 10; `ro_data` is the word and `ro_echo` the address it was read
@@ -744,17 +787,40 @@ module cadr_console #(
   logic [3:0]  r_left;          // beats still owed on the read
   logic        w_last_q;        // the beat now in hand was WLAST
 
-  // Whether the beat's address is one of the thirty-two words, and which.
-  // Two pages of sixteen: bit 4 of the index is the page, bits 3:0 are
+  // Whether the beat's address is one of pages 0 and 1, and which of their
+  // thirty-two words.  Bit 4 of the index is the page, bits 3:0 are
   // `EADR<3:0>` on page 1.
   function automatic logic in_window(input logic [31:7] page);
     return page == REG_BASE[31:7];
   endfunction
-  logic        w_in, r_in;
+
+  // And whether it is one of pages 2 and 3, which are the 128 bytes above.
+  //
+  // **A SECOND MATCH AND NOT A WIDER FIRST ONE, AND THE DIFFERENCE IS NOT
+  // COSMETIC.**  `w_in` gates every write term and every latch on pages 0 and
+  // 1, and each of those tests the page as `w_idx[4]` --- one bit, because
+  // one bit was all there was.  Widen `in_window` instead of adding this and
+  // `w_idx[4]` stops meaning "page 1": page 2's word 6 would then carry
+  // `RESET_KEY` to the machine's reset and the whole of page 3 would run
+  // diagnostic cycles, from a face that is supposed to be read-only.  Two
+  // comparators are a handful of LUTs and cannot do that, which is the same
+  // argument `cadr_memory_path.sv` makes for two decode instances rather than
+  // one muxed decode.
+  //
+  // So `w_in` and `r_in` mean exactly what they meant, every line built on
+  // them is untouched, and a write anywhere in pages 2 and 3 is answered OKAY
+  // and does nothing --- which is what a read-only page should do.
+  localparam logic [31:0] BASE2 = REG_BASE + 32'h0000_0080;
+  function automatic logic in_window2(input logic [31:7] page);
+    return page == BASE2[31:7];
+  endfunction
+
+  logic        w_in, r_in, r_hi;
   logic [4:0]  w_idx, r_idx;
   logic [31:0] w_next;
   assign w_next = w_at + 32'd4;
   assign r_in   = in_window(r_at[31:7]);
+  assign r_hi   = in_window2(r_at[31:7]);
   assign w_idx  = w_at[6:2];
   assign r_idx  = r_at[6:2];
 
@@ -830,7 +896,11 @@ module cadr_console #(
   // diagnostic bus at all --- it is three wires out of `cadr_machine`, as
   // `VMA`, `Q` and `MD` are --- so it goes where those went, in the range
   // this module's own header has always called free.  Word 13 is the light
-  // panel's button, below; 14 and 15 still read `UNMAPPED`.
+  // panel's button, below, 14 the debug cable's role and 15 its two counts
+  // --- so page 0 is full, and the build stamp that came after them is on
+  // page 2 for exactly the reason this paragraph gives about page 1: a page
+  // whose numbering means something may not be extended to hold something
+  // else.
   //
   // **WORD 10 IS WRITTEN WITH AN ADDRESS AND READ AS AN ECHO, AND THE TWO
   // ARE UNCORRELATED ON PURPOSE.**  That is the diagnostic bus's own rule
@@ -1099,6 +1169,10 @@ module cadr_console #(
   // registers the compare and the index, `R_PREP2` the word.
   logic [31:0] rdata_q;
   logic        r_in_q;
+  // Page 2 or 3, latched beside `r_in_q` and for the same reason: the read
+  // mux answers the beat whose address was taken at `R_START`, and `r_at`
+  // has walked on by then.
+  logic        r_hi_q;
   logic [4:0]  r_idx_q;
   logic [15:0] r_spy;      // what the cycle brought back
   logic        r_lost;
@@ -1150,7 +1224,16 @@ module cadr_console #(
   logic        ro_arm;
 
   always_comb begin
-    if (!r_in_q) r_word = UNMAPPED;
+    // **PAGE 2's WORD 0 IS THE ONLY WORD OUTSIDE THE FIRST THIRTY-TWO THAT IS
+    // A WORD AT ALL**, and every other address of pages 2 and 3 falls through
+    // to `UNMAPPED` --- the same value an address outside the face reads, so
+    // the face grew by exactly one readable address and by nothing else.
+    //
+    // It is taken straight off the pin with no latch, where the three words
+    // below are latched: `build` is loaded from the bitstream at
+    // configuration and cannot move, so there is no instant for a latch to
+    // name and nothing a second read could disagree with.
+    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build : UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
     else begin
       unique case (r_idx_q[3:0])
@@ -1214,6 +1297,7 @@ module cadr_console #(
       w_spy_q     <= 16'd0;
       rdata_q     <= 32'd0;
       r_in_q      <= 1'b0;
+      r_hi_q      <= 1'b0;
       r_idx_q     <= 5'd0;
       r_spy       <= 16'd0;
       r_lost      <= 1'b0;
@@ -1347,6 +1431,7 @@ module cadr_console #(
         // instant across the carry.
         R_START: begin
           r_in_q  <= r_in;
+          r_hi_q  <= r_hi;
           r_idx_q <= r_idx;
           if (r_in && !r_idx[4] && r_idx[3:0] == 4'd2) cycles_hi_q <= cycles[63:32];
           if (r_in && !r_idx[4] && r_idx[3:0] == 4'd4) ticks_hi_q  <= ticks[63:32];
