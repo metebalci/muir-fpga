@@ -187,6 +187,13 @@ module cadr_memory_path #(
     output var logic [23:0] tv_map_q,
     output var logic [23:0] tv_color_map_q,
 
+    // And the color board's map again, on a port of its own, for the display
+    // output --- which is the off-board map hardware `lmtv.order` describes and
+    // needs an entry a pixel.  `rtl/plumbing/cadr_display_out.sv` says what it
+    // does with it; `rtl/machine/cadr_tv.sv` says why the board has two ports.
+    input  var logic [3:0]  disp_map_a,
+    output var logic [23:0] disp_color_map_q,
+
     // `XBUS INTR IN`, the backplane's one interrupt line as it arrives at the
     // bus interface: the disk controller's request ORed with the display's.
     // The display's is made here and the disk's in `cadr_machine.sv`, so the
@@ -1237,6 +1244,9 @@ module cadr_memory_path #(
   logic        tv_ack, tv_drives, tv_fb;
   logic [31:0] tv_rdata;
   logic        tv_intr_n, tvc_intr_n;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [23:0] unused_first_map;
+  /* verilator lint_on UNUSEDSIGNAL */
 
   cadr_tv #(
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
@@ -1259,7 +1269,13 @@ module cadr_memory_path #(
       .fb_sel     (tv_fb),
       .intr       (tv_intr_n),
       .map_a      (tv_map_a),
-      .map_q      (tv_map_q)
+      .map_q      (tv_map_q),
+      // The first display's map has no second reader: the display output shows
+      // that screen as one bit a pixel, which is what MIT's software draws there
+      // and what `Tv::pixel` reads.  Tied to one entry so that the mux folds
+      // away rather than standing for a reader that does not exist.
+      .disp_map_a (4'd0),
+      .disp_map_q (unused_first_map)
   );
 
   // --- and the second display board, the color TV -------------------------
@@ -1301,7 +1317,9 @@ module cadr_memory_path #(
         .fb_sel     (tvc_fb),
         .intr       (tvc_intr_n),
         .map_a      (tv_map_a),
-        .map_q      (tv_color_map_q)
+        .map_q      (tv_color_map_q),
+        .disp_map_a (disp_map_a),
+        .disp_map_q (disp_color_map_q)
     );
   end else begin : g_no_color_tv
     // No slot: the color addresses reach nothing, which `color_fitted`
@@ -1313,6 +1331,14 @@ module cadr_memory_path #(
     assign tvc_rdata      = 32'd0;
     assign tvc_intr_n     = 1'b0;
     assign tv_color_map_q = 24'd0;
+    assign disp_color_map_q = 24'd0;
+    // And the display output's own index reaches nothing, there being no board
+    // to read a map off.  Folded here rather than left unread, so that a part
+    // built without the slot lints as cleanly as one built with it.
+    /* verilator lint_off UNUSEDSIGNAL */
+    logic unused_disp_map_a;
+    assign unused_disp_map_a = ^disp_map_a;
+    /* verilator lint_on UNUSEDSIGNAL */
   end
 
   // `-XBUS.INTR` is open collector and every board on it pulls the one line.

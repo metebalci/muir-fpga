@@ -86,8 +86,8 @@ the packs on microSD, Chaosnet routing and the console are on the processing
 system. Main memory is the only seam that runs at machine speed, and it is the
 one with no software in it.
 
-Four of the Zynq's nine ports cross the boundary today, and a fifth is planned
-for the display's own output.
+Five of the Zynq's nine ports cross the boundary today. The fifth is the
+display's own output.
 
 `S_AXI_HP0` is the memory bridge's, and it is the one at machine speed.
 

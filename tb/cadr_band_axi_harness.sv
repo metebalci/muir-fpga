@@ -318,6 +318,10 @@ module cadr_band_axi_harness #(
       // second display board has `build/color_tv.pass` of its own.
       .tv_lispm(1'b0), .color_tv(1'b0), .tv_map_a(4'd0),
       .tv_map_q(tv_map_q), .tv_color_map_q(tv_color_map_q),
+      // The color board's map on its second port, which on the board
+      // is the display output's.  There is none here, so the index is
+      // tied and the word is folded with the rest.
+      .disp_map_a(4'd0), .disp_color_map_q(disp_color_map_q),
       // The port's own handshakes, which `cadr_bus_audit` compares against
       // the machine's own count of what it asked for.  This harness HAS a
       // real port, so they are the real thing rather than tied low, and
@@ -383,10 +387,10 @@ module cadr_band_axi_harness #(
   // The two display boards' color maps, which go to the console face on the
   // board and to nobody here; folded below with everything else this harness
   // does not read.
-  logic [23:0] tv_map_q, tv_color_map_q;
+  logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
 
   logic unused;
-  assign unused = &{1'b0, tv_map_q, tv_color_map_q,
+  assign unused = &{1'b0, tv_map_q, tv_color_map_q, disp_color_map_q,
                     ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
                     ser_status, ser_syn_face,
                     chaos_tx_go, chaos_tx_len, chaos_tx_valid,
