@@ -12,6 +12,17 @@
 // direction's levels on its four.  `rtl/plumbing/cadr_dbg_rx.sv` is the other
 // half and takes them off again.
 //
+// **TWO OF THOSE FOUR PINS CARRY SIGNALS AND TWO ARE GUARDS**, which is why
+// `LINES` is one and not three.  The high-speed Pmod headers on these boards
+// route their pins as coupled pairs --- 1 with 2, 3 with 4, 7 with 8, 9 with
+// 10 --- so a row driven single-ended has an edge on one line coupling into
+// its partner, and the partner may be the strobe.  This link therefore puts
+// one signal on each pair and drives the other line of it LOW: the strobe
+// alone on the first pair of a group and one data line alone on the second.
+// The pin map is `rtl/plumbing/cadr_dbg_cable.sv`'s and the guards never
+// reach this module; what reaches it is `LINES`, and one data line is what
+// makes the frame twenty-four beats.
+//
 // **NO muir REFERENCE EXISTS FOR THIS MODULE.**  muir has the cable, and
 // `rtl/machine/cadr_dbgin.sv` is held to it tick for tick; muir has no
 // serialiser, because a model with no wires needs none.  What holds this is a
@@ -40,8 +51,11 @@
 // word.  `cadr_debug_window.sv` uses it in `STS` for the same reason.
 //
 // So a frame is `PAYLOAD_W + 3` bits at least --- the marker and a parity bit
-// --- and at twenty-one over three lines that is eight beats, twenty-four
-// slots with nothing over.  **That is the beat count: eight, each way.**
+// --- and at twenty-one over ONE line that is twenty-four beats, twenty-four
+// slots with nothing over.  **That is the beat count: twenty-four, each
+// way**, a frame of `24 * BEAT_T + GAP_T` ticks, which is 162 at the
+// defaults.  It was eight beats and sixty-six ticks over three lines, and
+// three lines a group is what the coupled pairs took away.
 //
 // **THE PARITY IS OVER THE WHOLE PAYLOAD AND CATCHES WHAT THE MARKER CANNOT.**
 // The marker says a frame is a frame; it says nothing about the bits under
@@ -50,23 +64,26 @@
 // of bits wrong in the payload moves nothing at the far end and the previous
 // levels stand, which is the same refusal a bad marker gets.  It is not a
 // code that can correct anything, and it should not be: the far end sends the
-// levels again sixty-six ticks later, so refusing a frame costs one frame.
+// levels again one frame later, so refusing a frame costs one frame.
 //
-// **THERE WAS A ZERO FILL AND THE CONNECTOR SPENT IT ON THE SENDER'S ROLE.**
-// At a payload of twenty the twenty-four slots left one over, and it went out
-// as zero so that a line stuck high failed it whatever the payload was.
-// `rtl/plumbing/cadr_dbg_cable.sv` now sends twenty-one, the extra bit being
-// `engaged` --- whether the board that sent this frame is the DEBUGGER --- and
-// the fill is gone.  What that costs, exactly: a line stuck high still fails
-// the MARKER on two of the three lines and the parity on the third, because
-// the marker's zero and the fill sat on the same line; what is no longer
-// caught is the fill bit and one payload bit both wrong at once, which the
-// parity reads as even.  What it buys is that two boards can tell a debugger's
-// frames from an idle debuggee's, which is what a crossed cable is diagnosed
-// with and what stops two idle boards holding each other's carriers up.  A
-// ninth beat would have kept both and cost six ticks a frame; it is not taken,
-// and this paragraph is here so that the trade is visible rather than
-// discovered.
+// **THERE WAS A ZERO FILL ONCE AND AT ONE DATA LINE THERE CANNOT BE ONE.**
+// The frame is `PAYLOAD_W + 3` slots exactly when `LINES` is one, so the head
+// is the marker and the parity bit and nothing else, at every payload.  The
+// fill survives in the source because it is what lets the head be one
+// expression rather than three cases, and it is unreachable in every
+// configuration any board builds.  Nothing checks it and nothing can; saying
+// so here is cheaper than leaving it to be found from a mutation that
+// survives.
+//
+// It mattered while a group carried three data lines.  Twenty payload bits
+// left a slot over then, and the connector spent it on the sender's ROLE ---
+// `engaged`, whether the board that sent this frame is the DEBUGGER --- which
+// is what lets two boards tell a debugger's frames from an idle debuggee's,
+// diagnoses a crossed cable, and stops two idle boards holding each other's
+// carriers up.  What that cost was the fill bit and one payload bit both wrong
+// at once, which the parity reads as even.  The trade is recorded because the
+// bit is still in the payload and the reason for it is not obvious from the
+// code.
 //
 // ## The gap is the frame marker
 //
@@ -112,8 +129,11 @@ module cadr_dbg_tx #(
     // connector: the debugger's `{ENGAGED, REQ, WR, A<1:0>, DBD<15:0>}` and
     // the debuggee's `{ENGAGED, spare, ACK, DRIVEN<1:0>, DBD<15:0>}`.
     parameter int unsigned PAYLOAD_W = 21,
-    // Data lines a direction.  Eight pins, one strobe each way, three left.
-    parameter int unsigned LINES     = 3,
+    // Data lines a direction.  ONE, because the four pins of a group are two
+    // coupled pairs and this link puts one signal on each: the strobe on one
+    // pair and this data line on the other, with the partner of each driven
+    // low as a guard.  See the header.
+    parameter int unsigned LINES     = 1,
     // Ticks a beat.  What this buys is the margin either side of the instant
     // the receiver samples the data lines; `cadr_dbg_rx.sv` has the sum.
     parameter int unsigned BEAT_T    = 6,
@@ -127,7 +147,8 @@ module cadr_dbg_tx #(
     // --- the cable's levels, as this end has them
     input  var logic [PAYLOAD_W-1:0] tx_levels,
 
-    // --- the connector.  One strobe and three data lines.
+    // --- the connector.  One strobe and one data line; the two guard pins
+    // --- of the group are the connector's and never reach this module.
     output var logic                 tx_stb,
     output var logic [LINES-1:0]     tx_d
 );

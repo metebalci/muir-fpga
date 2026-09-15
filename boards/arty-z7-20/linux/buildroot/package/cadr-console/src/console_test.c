@@ -1277,8 +1277,9 @@ static void check_debug_cable(void)
 
 	// **AND THE CABLE'S TWO COUNTS**, which are the instrument for the one
 	// thing about these pins nobody has measured: a Pmod row is routed as
-	// coupled pairs and this link drives all four of them single-ended, so an
-	// edge can couple into the strobe beside it and misalign a frame.  A
+	// coupled pairs and this link drives one signal a pair with the partner
+	// held low as a guard; an edge that still couples into the strobe beside
+	// it misaligns a frame.  A
 	// misaligned frame moves nothing and the next carries the levels again,
 	// so what it costs is refused frames --- and how often is the number.
 	m.dbg_heard = 40000;

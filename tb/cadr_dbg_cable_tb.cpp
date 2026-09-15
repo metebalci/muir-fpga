@@ -80,15 +80,37 @@ const int kWsAutoIdle = 0, kWsStraight = 1, kWsCrossover = 2, kWsListening = 3,
           kWsStFound = 4, kWsCrFound = 5, kWsStAssumed = 6, kWsCrAssumed = 7;
 
 // The two intervals the detection is made of, from the harness's own
-// parameters: eight beats of six and a gap of eighteen is a frame of
-// sixty-six, the listen is a frame and the loss interval, and a probe is the
-// loss interval.  `LOSS_T` is 512 here and 1024 on a board.
-const long kFrameT = 8 * 6 + 18;
+// parameters: TWENTY-FOUR beats of six and a gap of eighteen is a frame of
+// 162, the listen is a frame and the loss interval, and a probe is the loss
+// interval.  `LOSS_T` is 512 here and 1024 on a board.
+//
+// **TWENTY-FOUR BEATS AND NOT EIGHT, BECAUSE A GROUP CARRIES ONE DATA LINE.**
+// The Pmod's pins are coupled pairs and this link puts one signal on each,
+// with the partner of each driven low as a guard; twenty-one payload bits, a
+// two-bit marker and a parity bit over one line is twenty-four beats.
+const long kFrameT = 24 * 6 + 18;
 const long kLossT = 512;
 const long kDetectT = kFrameT + kLossT;
 const long kActT = 2 * kFrameT;
 const long kProbeT = kActT + 6 * kFrameT;
 const long kRelistenT = kActT + kFrameT;
+
+// **THE DEADLINE THE WHOLE TRANSPORT IS AGAINST**, and it is a tick count
+// because the thing that counts it is in the fabric.
+// `rtl/machine/cadr_busint_xbus.sv` runs the REQTIM oscillator at
+// `425 / TICK_NS` ticks a half period and takes the PROM's SECOND table for a
+// debug cycle, thirteen whole periods --- so a debugger gives up 13 * 170 =
+// 2,210 ticks after the gated oscillator's first rise, which is
+// `busint::DEBUG_TIMEOUT_NS`, 11.05 microseconds on MIT's 5 ns grid and 22.1
+// of real time at this board's 10 ns tick.
+//
+// What this check holds the round trip to is HALF of it.  A cycle over the
+// cable is a request frame, the far machine's own bus cycle and an answer
+// frame, and a bound with a factor of two in hand is a bound that says
+// something when the frame's length next moves; 2,210 would pass a transport
+// three times slower than this one.
+const long kDebugTimeoutT = 2210;
+const long kRoundTripBound = kDebugTimeoutT / 2;
 
 int failures = 0;
 const int kMaxFailures = 20;
@@ -125,10 +147,25 @@ int main(int argc, char **argv) {
   int crossed = 0;
   int delay = 0;
   long corrupt = -1;
+  // Which pin the corruption lands on.  Index 2 is the forward group's one
+  // data line; index 1 is the guard beside its strobe.
+  int corrupt_pin = 2;
   long contention = 0;   // pads driven from both ends, ever
   long a_drove = 0, b_drove = 0;
   // And a pad driven outside the group the board says it is on, ever.
   long pin_group_bad = 0, pin_group_ticks = 0;
+  // **AND THE GUARDS.**  Each group of four is two coupled pairs of the Pmod
+  // header, and the link puts one signal on each pair: the strobe on header
+  // pin 1 (index 0) and the data line on pin 3 (index 2), with pins 2 and 4 ---
+  // indices 1 and 3 --- DRIVEN LOW beside them, and the same on the return
+  // row.  Three things follow and all three are asserted on every tick of
+  // every phase: a group is enabled whole or not at all, a guard that is
+  // enabled is at zero, and a board listening to a group drives no pin of it,
+  // guard included.  A floating guard is not a guard --- it is a capacitor the
+  // neighbour charges --- so "not driven" is a failure here and not a
+  // tidiness.
+  const int kGuardPins[4] = {1, 3, 5, 7};
+  long guard_part_group = 0, guard_high = 0, guard_low_ticks = 0;
 
   // A wire is a little shift register, one a pad, so a delay is a real delay
   // and not a relabelling.  Sixteen pads, eight a board, and the two
@@ -206,7 +243,12 @@ int main(int argc, char **argv) {
       // frames-refused counter said none ever was.  Five consecutive ticks
       // cover exactly one sampling instant and never two, so one bit of one
       // frame is wrong and the frame is refused on its parity.
-      if (corrupt >= 0 && corrupt <= 4 && w == 1) lvl ^= 1;
+      // **AND IT IS THE DATA LINE, INDEX 2, AND NOT INDEX 1.**  Index 1 is a
+      // GUARD now: nothing reads it, so a flip there would be a stimulus that
+      // could not fail, which is this project's own trap about a check written
+      // to confirm.  The guard is corrupted too, in a leg of its own below,
+      // and what that leg asserts is the opposite --- that nothing moves.
+      if (corrupt >= 0 && corrupt <= 4 && w == corrupt_pin) lvl ^= 1;
       for (int k = kMaxDelay; k > 0; --k) wire_ab[w][k] = wire_ab[w][k - 1];
       wire_ab[w][0] = lvl;
       // With the connector unplugged the far end of every pin is this board's
@@ -285,6 +327,37 @@ int main(int argc, char **argv) {
         ++pin_group_bad;
       }
       if (eng) ++pin_group_ticks;
+
+      // **THE GUARDS, ON EVERY TICK.**  A group is four pads and they go out
+      // together, so a group enabled at all must have all four of its pads
+      // enabled --- a guard left out of the enable is a floating line beside a
+      // switching one, which is the thing the pairs made this link avoid.  And
+      // an enabled guard must be LOW: it is there to be quiet, and a guard
+      // carrying anything is a second signal on the pair.
+      const unsigned o = e ? dut->b_pin_o : dut->a_pin_o;
+      for (int g = 0; g < 2; ++g) {
+        const unsigned grp = ((~t) >> (4 * g)) & 0x0Fu;
+        if (grp != 0x0u && grp != 0xFu) {
+          if (!guard_part_group)
+            std::fprintf(stderr,
+                         "FAIL: board %c drives a part of a group, 0x%02x, at tick %ld\n",
+                         e ? 'B' : 'A', (unsigned)((~t) & 0xFFu), tick);
+          ++guard_part_group;
+        }
+      }
+      for (int k = 0; k < 4; ++k) {
+        const int gp = kGuardPins[k];
+        if (((t >> gp) & 1u) != 0u) continue;   // not driven by this board
+        if (((o >> gp) & 1u) != 0u) {
+          if (!guard_high)
+            std::fprintf(stderr,
+                         "FAIL: board %c drives guard pin %d high at tick %ld\n",
+                         e ? 'B' : 'A', gp, tick);
+          ++guard_high;
+        } else {
+          ++guard_low_ticks;
+        }
+      }
     }
 
     dut->clk_a = 1;
@@ -321,6 +394,10 @@ int main(int argc, char **argv) {
     unsigned word = 0;
     int answered = 0;
   };
+  // The longest a debug cycle on board A's own Unibus has taken, over every
+  // phase of the run: `-UB MSYN` to `-UB SSYN`, which is what the REQTIM
+  // counter beside it would be counting on a board.
+  long worst_ssyn = -1;
   auto Run = [&](unsigned uaddr, int write, unsigned wdata, long guard) {
     Res r;
     dut->a_addr = uaddr;
@@ -333,6 +410,7 @@ int main(int argc, char **argv) {
         r.ssyn = k;
         r.answered = 1;
         r.word = dut->a_rdata;
+        if (k > worst_ssyn) worst_ssyn = k;
         break;
       }
     }
@@ -340,7 +418,18 @@ int main(int argc, char **argv) {
     // The master holds the strobe a delay-line section past the answer ---
     // `busint::UNIBUS_STROBE_NS` --- and the levels stand past the lift,
     // which is what the far end's latches clock on.
-    Idle(24);
+    //
+    // **AND THEN A HOLD THAT IS THE CARRIER'S AND NOT THE BUS'S.**  On MIT's
+    // cable the lift is seen at the far end within nanoseconds; over a
+    // serialised one it is a level like any other and has to cross a frame, so
+    // a debugger that lifted and asked again inside that would have the far
+    // end see one request where it made two.  It is written as frames rather
+    // than as a constant because it IS frames: at eight beats twenty-four
+    // ticks happened to be enough and at twenty-four beats it is not, which is
+    // a stimulus that would have gone on passing while measuring less.
+    // `tb/cadr_dbg_pmod_tb.cpp` sweeps the shortest hold that still latches
+    // and reports it; this one only has to be longer than that.
+    Idle(24 + 2 * kFrameT);
     return r;
   };
 
@@ -516,11 +605,18 @@ int main(int argc, char **argv) {
   // ---- 4. a cable with a delay in it, and a beat flipped on the wire ------
   //
   // Three ticks of wire either way is thirty nanoseconds on this board, which
-  // is a long Pmod ribbon and then some; the corruption is one data line
-  // inverted for one tick, in the middle of a frame.  Neither may change a
-  // word: the frame that carries the bad beat fails its parity and moves
-  // nothing, and the next one --- sixty-six ticks later --- carries the same
+  // is a long Pmod ribbon and then some; the corruption is the forward group's
+  // one data line inverted for five ticks, in the middle of a frame.  Neither
+  // may change a word: the frame that carries the bad beat fails its parity
+  // and moves nothing, and the next one --- a frame later --- carries the same
   // levels.
+  //
+  // **AND THEN THE SAME FAULT ON A GUARD PIN, WHICH MUST COST NOTHING.**  That
+  // is the whole of what one signal per pair buys, stated as a check: a pin
+  // whose only job is to sit at zero beside a signal has nobody reading it, so
+  // a fault on it moves neither the word nor the refusal count.  It is the
+  // opposite assertion from the one above and the two together say the pin
+  // roles are what this file believes they are.
   delay = 3;
   Idle(400);
   long delayed = 0, corrupted = 0;
@@ -550,8 +646,72 @@ int main(int argc, char **argv) {
   long counted_bad = (long)(((dut->b_frames & 0xFFu) - bad_before) & 0xFFu);
   if (counted_bad == 0)
     failures += Fail("frames counted as refused after a beat was flipped in each", 0, 1);
+
+  // The guard beside the forward strobe, flipped the same way and for the same
+  // five ticks.  Nothing reads it, so nothing may move: not the word, and not
+  // the far board's count of refused frames.
+  long guarded = 0;
+  {
+    const unsigned guard_bad_before = dut->b_frames & 0xFFu;
+    corrupt_pin = 1;
+    for (unsigned e = 8; e < 12 && failures < kMaxFailures; ++e) {
+      dut->b_spy_rdata = SpyWord(e);
+      corrupt = 40 + 7 * (long)e;
+      const Res r = Peek(kSpyBase + 2 * e, 8000);
+      corrupt = -1;
+      if (!r.answered || r.word != SpyWord(e))
+        failures += Fail("a debug cycle over a cable with a GUARD pin flipped in it", r.word,
+                         SpyWord(e));
+      else
+        ++guarded;
+    }
+    corrupt_pin = 2;
+    const unsigned guard_bad = (dut->b_frames & 0xFFu) - guard_bad_before;
+    if (guard_bad)
+      failures += Fail("frames refused after a guard pin was flipped, which nothing reads",
+                       guard_bad, 0);
+  }
   delay = 0;
   Idle(400);
+
+  // ---- 4b. a cycle at an address nothing answers -------------------------
+  //
+  // **THE FRAME'S LENGTH IS SPENT OUT OF A BUDGET, AND THIS IS THE WORST CASE
+  // IN IT.**  A debug cycle is a request frame, the far machine's own bus
+  // cycle and an answer frame.  The far machine's half is under a microsecond
+  // when a slave answers; when nothing does, MIT's board runs it out on ITS
+  // own timer.  Here the debuggee's Unibus has one slave, the diagnostic
+  // block, so a cycle anywhere else is a cycle nothing answers at all.
+  //
+  // What must happen is that it does NOT come back with a word: the debuggee
+  // never acknowledges, the debugger's own interface gives up, and the cable
+  // carries on afterwards.  **What ends it is not in this DUT**: the REQTIM
+  // counter is in `rtl/machine/cadr_busint_xbus.sv` and `build/unibus.pass` is
+  // what holds it to the PROM's second table.  What this leg shows is that the
+  // carrier neither answers such a cycle nor is left broken by one, over more
+  // ticks than that counter would have taken.
+  long unanswered = 0;
+  {
+    const long before = contention;
+    // `0o760000` is below the diagnostic block and nothing in this harness
+    // decodes it.  The address latch carries `UAO<16:1>`, so bit 17 is the
+    // modifier's and is already set.
+    const Res r = Peek(0760000, kDebugTimeoutT + 4 * kFrameT);
+    if (r.answered)
+      failures += Fail("a debug cycle at an address nothing answers came back", r.word, 0);
+    else
+      ++unanswered;
+    if (contention != before)
+      failures += Fail("pads driven from both ends over a cycle nothing answered",
+                       (unsigned long)(contention - before), 0);
+    // And the cable is still a cable: the next cycle reads the register it
+    // names.  A carrier that had latched the abandoned request would answer
+    // this one out of it.
+    dut->b_spy_rdata = SpyWord(3);
+    const Res good = Peek(kSpyBase + 2 * 3, 8000);
+    if (!good.answered || good.word != SpyWord(3))
+      failures += Fail("the cycle after one that nothing answered", good.word, SpyWord(3));
+  }
 
   // ---- 5. the cable pulled under a standing request ----------------------
   //
@@ -1230,6 +1390,26 @@ int main(int argc, char **argv) {
   if (pin_group_bad)
     failures += Fail("ticks with a pad driven outside the group the board says it is on",
                      (unsigned long)pin_group_bad, 0);
+  if (guard_part_group)
+    failures += Fail("ticks with part of a pin group driven and the rest of it floating",
+                     (unsigned long)guard_part_group, 0);
+  if (guard_high)
+    failures += Fail("ticks with a guard pin driven anything but low",
+                     (unsigned long)guard_high, 0);
+
+  // **AND EVERY ONE OF THEM FINISHED INSIDE THE DEBUGGER'S OWN TIMEOUT.**
+  // This is the budget the frame's length is spent out of, measured rather
+  // than computed: a cycle is two frames and the far machine's bus cycle, and
+  // the interface beside this master gives up at `kDebugTimeoutT` ticks.
+  std::fprintf(stderr,
+               "the slowest debug cycle over the cable took %ld ticks; a frame is %ld, "
+               "the debugger gives up at %ld and this check at %ld\n",
+               worst_ssyn, kFrameT, kDebugTimeoutT, kRoundTripBound);
+  if (worst_ssyn < 0)
+    failures += Fail("debug cycles measured against the debugger's timeout", 0, 1);
+  else if (worst_ssyn >= kRoundTripBound)
+    failures += Fail("the slowest debug cycle over the cable",
+                     (unsigned long)worst_ssyn, (unsigned long)kRoundTripBound);
 
   if (failures) {
     std::fprintf(stderr, "FAIL: %d mismatches over %ld ticks\n", failures, tick);
@@ -1268,6 +1448,9 @@ int main(int argc, char **argv) {
   least("frames counted as refused when a beat was flipped in them", counted_bad, 1);
   least("boards that changed their mind while the far end was driving", over_a_driver, 2);
   least("ticks with a board holding the role, its pads watched", pin_group_ticks, 20000);
+  least("pin-ticks with a guard driven low beside a signal", guard_low_ticks, 20000);
+  least("cycles over a cable with a guard pin flipped in it", guarded, 4);
+  least("cycles at an address nothing answered", unanswered, 1);
   if (thin) return 1;
 
   std::printf(
@@ -1280,11 +1463,21 @@ int main(int argc, char **argv) {
       "    and the high byte the open cable's pull-ups, which is the one place a byte nobody\n"
       "    drives has to arrive as ones.\n"
       "    THE CABLE WAS MADE TO MISBEHAVE: %ld cycles over three ticks of wire each way, and %ld\n"
-      "    with a data line inverted for a tick inside the request --- the frame fails its\n"
-      "    parity, moves nothing, and the next one sixty-six ticks later carries the same\n"
+      "    with the one DATA line inverted for five ticks inside the request --- the frame fails\n"
+      "    its parity, moves nothing, and the next one %ld ticks later carries the same\n"
       "    levels, so a bad cable costs a frame and never a word.  Pulled under a standing\n"
       "    request, the debugger's own page answered at once with all ones rather than waiting,\n"
       "    and heard the far board again when it was plugged back in.\n"
+      "    ONE SIGNAL A COUPLED PAIR, AND THE OTHER LINE OF EACH DRIVEN LOW: the strobe on header\n"
+      "    pin 1 with pin 2 held at zero beside it, the data line on pin 3 with pin 4, and the\n"
+      "    same on the return row.  Every group a board drove went out whole --- all four pads,\n"
+      "    never a subset, %ld pin-ticks of guard at zero --- and %ld cycles ran with a GUARD pin\n"
+      "    inverted the way the data line was, moving neither a word nor the far board's count of\n"
+      "    refused frames, which nothing reading that pin is what that means.  The slowest debug\n"
+      "    cycle of the whole run took %ld ticks, against a frame of %ld and the %ld the\n"
+      "    debugger's own REQTIM table gives it; and %ld cycle(s) at an address nothing\n"
+      "    answers came back with no word at all over more ticks than that table allows,\n"
+      "    with the cable still carrying the cycle after them.\n"
       "    AND NO PAD WAS EVER DRIVEN FROM BOTH ENDS, over every tick of every phase: %ld ticks\n"
       "    with two boards cabled together and neither told anything, where a debuggee drives\n"
       "    nothing until it hears a debugger; a second board told to connect while the first\n"
@@ -1320,7 +1513,8 @@ int main(int argc, char **argv) {
       "    twice in either case; with no cable at all the board fell back to straight and\n"
       "    then tried the other wiring; and a setting moved under a board that was already\n"
       "    debugging moved nothing, the cycle after it carrying the right word.\n",
-      tick, peeks, 0xFF00u | kErrStatus, delayed, corrupted, quiet_ticks, win_writes,
+      tick, peeks, 0xFF00u | kErrStatus, delayed, corrupted, kFrameT, guard_low_ticks,
+      guarded, worst_ssyn, kFrameT, kDebugTimeoutT, unanswered, quiet_ticks, win_writes,
       crossed_sessions, crossed_peeks, far_seen, phases, forced_up, forced_quiet);
   dut->final();
   delete dut;

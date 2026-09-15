@@ -188,8 +188,9 @@ enum cons_debug_bit { CONS_DBG_ENGAGED = 1u << 0, CONS_DBG_ASKED = 1u << 1,
 		      CONS_DBG_LIVE = 1u << 4, CONS_DBG_PEER_FAR = 1u << 8 };
 
 // **AND WORD 15 IS THE CABLE'S TWO COUNTS.**  The pins of a Pmod row are
-// routed as coupled pairs and this link drives all four of them single-ended,
-// so an edge on one line can couple into the strobe beside it and misalign the
+// routed as coupled pairs; this link drives one signal a pair, the strobe and
+// one data line, with the partner pin held low as a guard, and the counts are
+// what says whether an edge still couples into the strobe and misaligns the
 // frame it lands in.  A misaligned frame fails its marker or its parity, moves
 // nothing, and the next one carries the levels again --- so what crosstalk
 // costs is REFUSED FRAMES and never wrong values, unless it is frequent.  How

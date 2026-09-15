@@ -45,18 +45,24 @@
 #
 # AND THE DEADLINE IS THE CARRIER'S OWN, WRITTEN DOWN, NOT CHOSEN. The sender
 # takes the cable's levels once at the first beat of each frame and shifts
-# them out over the seven that follow, so the two ways into these registers
-# are a snapshot every sixty-six ticks and a shift every six. Four ticks is
+# them out over the twenty-three that follow, so the two ways into these
+# registers are a snapshot every 162 ticks and a shift every six. Four ticks is
 # below the tighter of those by a third, and it is the number
 # `cadr_debug.xdc` already uses for the same cone, so nothing new has to be
 # defended. The measured need is two.
+#
+# **AND THE FRAME GREW WITHOUT THE DEADLINE MOVING**, which is worth saying
+# because the two look linked. The snapshot got three times rarer when the
+# carrier went to one data line a group; the SHIFT is still one beat, six
+# ticks, and the shift is the tighter of the two and always was. So this file
+# is unchanged by the pin map bar the arithmetic in this paragraph.
 #
 # WHAT THE RELAXATION DOES NOT EXCUSE. The word on `DBD<15:0>` is driven live
 # while a cycle runs, and MIT's own note is that read and write at one
 # diagnostic address are uncorrelated because the 74LS244s drive `SPY<15:0>`
 # asynchronously. A word a tick or two stale on a running machine is already
 # the semantics of this bus, and CC halts the debuggee before it does anything
-# else. A two-tick arrival inside a frame of sixty-six is invisible to it.
+# else. A two-tick arrival inside a frame of 162 is invisible to it.
 #
 # HOW THIS IS KEPT FROM BEING TOO WIDE.
 #

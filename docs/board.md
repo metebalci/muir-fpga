@@ -574,11 +574,29 @@ The board has two Pmod headers and this design uses one of them.
     JB   nothing
 
 MIT's cable joins one CADR's `DBGOUT` connector to another's `DBGIN`. Here the
-whole of it is JA: four pins each way, one strobe and three data lines a
-direction. The low four are the debugger's and the high four the debuggee's, so
-a straight Pmod ribbon from this board's JA to another board's connector maps
-every signal to its counterpart. The pads are bidirectional, because the role
-is not fixed at synthesis.
+whole of it is JA: four pins each way, of which two carry signals. The low four
+are the debugger's and the high four the debuggee's, so a straight Pmod ribbon
+from this board's JA to another board's connector maps every signal to its
+counterpart. The pads are bidirectional, because the role is not fixed at
+synthesis.
+
+**The header's rows are coupled pairs, so each pair carries one signal.** Pins
+1 and 2 are a pair, 3 and 4, 7 and 8, and 9 and 10. The strobe of a group is on
+the first pair and its one data line on the second, and the other line of each
+pair is a guard driven low beside it. A guard is driven and not left floating,
+because a quiet line beside a switching one is only quiet if something holds
+it. So the odd pin of each pair carries the signal and the even one is the
+guard:
+
+    pin 1   the debugger's strobe      pin 2   guard, driven low
+    pin 3   the debugger's data line   pin 4   guard, driven low
+    pin 7   the debuggee's strobe      pin 8   guard, driven low
+    pin 9   the debuggee's data line   pin 10  guard, driven low
+
+A group of four pads is driven whole or not at all, and a board listening to a
+group drives no pin of it. One data line a direction makes a frame twenty-four
+beats, 162 ticks, against the 2,210 the debugger's own interface allows a
+cycle. `docs/debug-cable.md` has the reason and the budget.
 
 **The far board's connector is not always JA.** The Cora Z7-07S uses JA as
 this board does. The Arty A7-100 uses JB, because that board has four headers
@@ -619,18 +637,20 @@ and 11 and 3.3 V on 6 and 12. The grounds must be joined and the supplies must
 not. A cable for this link joins pins 1 to 4, pins 7 to 10 and the grounds, and
 leaves the supply pins open.
 
-**And the pins of a Pmod row are coupled pairs, which this link drives
-single-ended.** An edge on one line can couple into the strobe beside it and
-misalign a frame. A misaligned frame moves nothing and the next carries the
-levels again, so what it costs is lost frames and never wrong values --- and how
-often is a number nobody has. The fabric counts frames heard and frames
-refused, and `cadr-console debug-cable` prints both. If the number turns out
-bad the fallback is one signal per pair, which is a parameter and a pin map.
+**And the pins of a Pmod row are coupled pairs, so no pair carries two
+signals.** An edge on one line couples into the other, and the other could have
+been the strobe. So each pair carries one signal with its partner held at zero,
+which is the table above. A frame that catches a false edge moves nothing and
+the next carries the levels again, so what a bad cable costs is lost frames and
+never wrong values. The fabric counts frames heard and frames refused anyway,
+and `cadr-console debug-cable` prints both: a guarded pair is an argument and a
+count is a measurement.
 
-**A cable exists and the fabric's side of it has not been shown on silicon.**
-Two boards were joined by one on 14 September and the cable turned out to be
-mirrored, which is what the wiring setting is for; the fabric that answers it
-has not been on a board since. `docs/debug-cable.md` is the whole of the cable.
+**A cable exists and the link has come up over it.** Two boards were joined by
+one on 14 September and the cable turned out to be mirrored, which is what the
+wiring setting is for. On 15 September the fabric found the mirror by itself
+and the two boards heard each other. `docs/debug-cable.md` is the whole of the
+cable, and it has what the frame counters said on that run.
 
 ## What the LEDs say
 
