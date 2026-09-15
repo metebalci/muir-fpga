@@ -110,6 +110,18 @@ rows, the legend's extra swatch, and on the Arty A7-100 the blocks that replace
 the processing system's. Anything else in a diff between two of these files is
 a drift, and that is the point of keeping the geometry identical.
 
+The Arty A7-100 has one more difference, and it is a gap rather than a block.
+Two of the five port positions are empty there. A port box on a Zynq drawing
+is a hard boundary, the place the fabric's wires stop and the processing
+system's silicon begins. What crosses at two of those places on the Arty
+A7-100 is a wire and not a component, the memory controller being in the
+fabric with everything else. So the machine's memory path and the disk
+controller's channel each run as one line from the block that masters it into
+that controller, straight through the position the port box holds on the other
+two drawings, and nothing is drawn in the position itself. A crossed-out box
+says the board lacks a part the drawing's original has; an empty position says
+the drawing's original had no part there to lack.
+
 Everything the drawings assert about the machine comes from `README.md`,
 `rtl/machine/cadr_cables.map` and `rtl/machine/cadr_xbus_decode.sv`. The fit
 and timing figures under each fabric label come from that board's own place and
