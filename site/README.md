@@ -25,7 +25,8 @@ build step and no generator, the same way
                   no processing system at all, so everything the Arm cores and
                   Linux do on the other two has to have an answer in fabric,
                   and the drawing shows those answers in the positions the
-                  processing system's own parts hold
+                  processing system's own parts hold. It draws nothing the
+                  board has not got, and nothing on it is crossed off
     booting.html  how each board comes up, in three sequences: a Zynq board
                   from its own card, the same board from a TFTP server while
                   it is being worked on, and the Arty A7-100 from its own
@@ -83,12 +84,22 @@ They are hand-placed rather than generated, because nothing here reads the RTL.
 So **a change to the architecture is a change to the drawing**, made by hand,
 and the drawing can drift from the machine.
 
-There are now three architecture drawings, one per board, and **they are one
-drawing**. The Arty Z7-20's is the original. The other two are that drawing
-with the same viewBox, the same translation and every block at the same
-coordinates. What a board does not have is crossed off where it stands rather
-than taken out, and on the Arty A7-100 what takes the place of the processing
-system is drawn in the positions that system's own parts hold.
+There are now three architecture drawings, one per board. The Arty Z7-20's is
+the original, and the other two are derived from it. They share its viewBox and
+its translation, and a block two boards both have is at the same coordinates in
+both.
+
+**The two are derived in two different ways, because the two boards differ from
+the original in two different ways.** The Cora Z7-07S is the same architecture
+on a smaller part. Its drawing is the Arty Z7-20's with what that board does
+not have crossed off where it stands rather than taken out, so that a reader
+can see what is missing. The Arty A7-100 has no processing system at all, which
+makes it a different architecture around the same CADR rather than a smaller
+version of the same one. Its drawing therefore shows what is on that board and
+nothing else. Nothing on it is crossed off, what the board has not got is not
+drawn, and its legend has no row for the mark. What takes the place of the
+processing system is drawn in the positions that system's own parts hold, and
+that is what keeps the two pages readable side by side.
 
 **Every controller in the row at the foot of a drawing has the same left edge
 and the same width as the connector under it.** A controller and the thing it
@@ -109,25 +120,27 @@ connector it drives. On the two Zynq boards every controller in the row is the
 part's own silicon, so the whole row is grey. On the Arty A7-100 every one of
 them is in the fabric, so each carries a colour of its own.
 
-So a change to the Arty Z7-20's drawing is carried to the other two by the same
-edit, at the same coordinates, and the three can be compared with `diff`. The
+So a change to a block the Arty Z7-20 shares with another board is carried to
+that board's drawing by the same edit, at the same coordinates, and the three
+can be compared with `diff`. The
 differences that are meant to be there are the titles, the part, the figures
-under the fabric's label, the status colours, the crossed-off blocks, the lamp
-rows, the legend's extra swatch, and on the Arty A7-100 the blocks that replace
-the processing system's. Anything else in a diff between two of these files is
+under the fabric's label, the status colours and the lamp rows, and then
+whatever the derivation itself adds. On the Cora Z7-07S that is the crossed-off
+blocks and the legend's extra swatch. On the Arty A7-100 it is the blocks that
+replace the processing system's, the blocks that are not drawn at all, and the
+legend one row shorter. Anything else in a diff between two of these files is
 a drift, and that is the point of keeping the geometry identical.
 
-The Arty A7-100 has one more difference, and it is a gap rather than a block.
-Two of the five port positions are empty there. A port box on a Zynq drawing
-is a hard boundary, the place the fabric's wires stop and the processing
-system's silicon begins. What crosses at two of those places on the Arty
-A7-100 is a wire and not a component, the memory controller being in the
-fabric with everything else. So the machine's memory path and the disk
-controller's channel each run as one line from the block that masters it into
-that controller, straight through the position the port box holds on the other
-two drawings, and nothing is drawn in the position itself. A crossed-out box
-says the board lacks a part the drawing's original has; an empty position says
-the drawing's original had no part there to lack.
+The Arty A7-100's largest difference is the band under the machine. The other
+two drawings have a row of five port boxes there, and each of those is a hard
+boundary: the place the fabric's wires stop and the processing system's silicon
+begins. The Arty A7-100 has no such boundary anywhere, so that band holds one
+box and two wires and is otherwise empty. The box is the soft system's AXI
+bridge, which is a component. The two wires are the machine's memory path and
+the disk controller's channel, each running as one line from the block that
+masters it into the memory controller at the foot of the drawing. Nothing is
+drawn where they pass, because naming a wire in a box would invent a part the
+board has not got.
 
 Everything the drawings assert about the machine comes from `README.md`,
 `rtl/machine/cadr_cables.map` and `rtl/machine/cadr_xbus_decode.sv`. The fit
@@ -140,13 +153,15 @@ it is built and checked here and has not run on that board. The boards differ:
 a block that is green on one may be turquoise on another, because the claim is
 about a board and not about the code.
 
-A block a board does not have carries no colour at all. It keeps its place,
-goes dashed, and takes a red cross corner to corner with its label left faint.
-That is the one mark on these drawings that says nothing about progress, and
-the legend calls it "not available on this board". A line that exists only to
-reach such a block stays drawn and goes faint with it, as far as the first
-junction where another line joins it or the first box it meets, because past
-that junction the same wire serves something the board does have.
+On a drawing derived by crossing off, a block that board does not have carries
+no colour at all. It keeps its place, goes dashed, and takes a red cross corner
+to corner with its label left faint. That is the one mark on these drawings
+that says nothing about progress, and the legend calls it "not available on
+this board". A line that exists only to reach such a block stays drawn and goes
+faint with it, as far as the first junction where another line joins it or the
+first box it meets, because past that junction the same wire serves something
+the board does have. The Arty A7-100's drawing uses none of this. It is not the
+original with pieces struck out, so it draws only what is there.
 
 ## The one change to muir's stylesheet
 
