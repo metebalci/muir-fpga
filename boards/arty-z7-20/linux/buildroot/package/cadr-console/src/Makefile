@@ -7,7 +7,7 @@
 # DESTDIR for install, and `all` makes the program that goes on the board.
 #
 # The host build, `make check`: the console program's core linked against a
-# model of the slave, with a modelled machine behind the diagnostic bus, on
+# model of the slave, with a modeled machine behind the diagnostic bus, on
 # the build host --- no board, no fabric, nothing but a C compiler.  Scratch
 # goes under ~/.cache, never /tmp, which is a RAM disk on the build host.
 #
@@ -59,7 +59,7 @@ HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 # found the binary up to date and RAN THE OTHER TREE'S CHECK --- measured:
 # `make check` here printed a count from a console_test.c this directory does
 # not have.  A check that can report on somebody else's sources is the stale
-# artefact this project keeps meeting, and the cure is the one
+# artifact this project keeps meeting, and the cure is the one
 # `cadr-terminal` and `cadr-chaosnet` already use: the directory's own path,
 # hashed.
 WORK   ?= $(HOME)/.cache/muir-fpga-console-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
@@ -86,7 +86,7 @@ CFLAGS += -Wall -Wextra -std=gnu11
 # IS**, so a Buildroot output directory carried across a commit that changed
 # no source of this package keeps the older number.  `make buildroot-rebuild`
 # is what forces it, which is what the image procedure already does; a
-# program that claimed otherwise would be the stale-artefact failure in its
+# program that claimed otherwise would be the stale-artifact failure in its
 # own version string.
 BUILD_GIT ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null)$(shell \
 	git status --porcelain 2>/dev/null | head -c 1 | sed 's/.\+/-dirty/')
@@ -107,7 +107,7 @@ install: all
 
 # The check, and the mutations that say it can fail.  Its own object
 # directory, so a target build and a host build never share a binary --- and a
-# build artefact that outlived a move would name a home directory that no
+# build artifact that outlived a move would name a home directory that no
 # longer exists.
 #
 # **THE MUTATIONS REACH `cadr-common/src/cadr_log.c` AS WELL AS THIS

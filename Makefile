@@ -357,7 +357,7 @@ $(BUILD)/busint_regs.pass: $(BUILD)/obj_busint_regs/Vcadr_busint_regs $(BUILD)/b
 # **NO OTHER CHECK RUNS A UNIBUS READ.**  Measured: MIT's boot PROM runs one
 # Unibus cycle in 17,466 and it is the write of the mode register, so
 # `cadr_busint_xbus.sv`'s MD strobe --- the one instant on either bus where the
-# word and the acknowledgement come apart --- had never carried a word anybody
+# word and the acknowledgment come apart --- had never carried a word anybody
 # compared.
 #
 # The reference is `iob.golden`, for its decode table: that trace carries
@@ -530,7 +530,7 @@ DISPLAY := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_tmds_encode.sv \
 # The Xilinx primitives every board instantiates, as shells, so that a top
 # level can be elaborated and linted.  Two files and not one: the first says
 # of itself that nothing in it models anything and that lint is all it is for,
-# and the second returns a value, which is the only behaviour
+# and the second returns a value, which is the only behavior
 # `USR_ACCESSE2` has.  Named here for the reason GP0, GP1 and DISPLAY are
 # named here --- `:=` is expanded where it is read and `arty.pass`'s
 # prerequisites are read before the rules further down.  **Neither may move
@@ -715,8 +715,8 @@ $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
 # **PHONY, AND NOT YET IN `check`.**  A `.pass` file here would make
 # `mutations/run.py`'s `check_makefile` report a check that nothing mutates,
 # and aiming a record at it first needs an entry in that runner's `CHECKS` ---
-# which is the booby trap CLAUDE.md records, a record naming a check the runner
-# has no entry for killing the whole run at parse.  Promoting this is those two
+# which is the booby trap in it, a record naming a check the runner has no
+# entry for killing the whole run at parse.  Promoting this is those two
 # changes together, and `docs/band.md` writes both of them out.
 #
 # It skips, and says so, when the System 100 release is not here, as its
@@ -872,7 +872,7 @@ $(BUILD)/axi_channel.pass: $(BUILD)/obj_axi_channel/Vcadr_band_axi_harness \
 # `0o101`, with strobes `0f` for the even word and `f0` for the odd one.  The
 # write lands two microcycles before the word store put it, and that difference
 # is the instrument working rather than a discrepancy: the word store recorded
-# a write at muir's own acknowledgement instant, while the AXI address channel
+# a write at muir's own acknowledgment instant, while the AXI address channel
 # takes the address as soon as the request rises and only the RESPONSE is held
 # to that instant.  `STOP=<microcycles>` bounds the comparison,
 # `OBSERVE=<microcycles>` runs that many past it, `FLOOR=0` is needed by any
@@ -1095,7 +1095,7 @@ $(BUILD)/mem_count.pass: $(BUILD)/obj_mem_count/Vcadr_mem_count_harness \
 
 # ------------------------------------------- one transaction per bus cycle
 
-# THE CHECK THE BOARD'S OWN BUG HAS BEEN LIVING BEHIND.  CLAUDE.md's account
+# THE CHECK THE BOARD'S OWN BUG HAS BEEN LIVING BEHIND.  The account of it
 # establishes that a word in MIT's page hash table is the faulting virtual
 # address rather than a page table word, that MD is exonerated by measurement,
 # and therefore that main memory already held the wrong word --- so the
@@ -2563,7 +2563,7 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 #      merely a legal one.  It catches the mutant that drops a byte, and the
 #      two that describe a display this machine has not got: muir's own
 #      cross-check of the board against `--tv-board`, and the short read that
-#      follows a colour board claimed on a backplane with none.
+#      follows a color board claimed on a backplane with none.
 #   2. muir's own REPORT of what it resumed names the microcycle count and
 #      the nanoseconds the synthetic machine was given.  Two fields the
 #      window really does read, asserted in muir's words rather than through
@@ -2574,7 +2574,7 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 #      it read, so any valid value survives it.  Four of the seven mutants ---
 #      the mouse's quadrature phases written 0 where a fresh mouse has 2,
 #      `Machine::opc` taken from the OPC shift register instead of LPC, the
-#      colour map written all ones, and the sync program's origin written at
+#      color map written all ones, and the sync program's origin written at
 #      the machine's clock --- load, re-save identically, and are caught here
 #      and nowhere else.
 #
@@ -3049,12 +3049,11 @@ buildroot-cora-rebuild: buildroot-cora-check
 #
 # `md_hold` and `md_inject` ask whether MD can be left holding a stale word,
 # of `cadr_microcycle`, where the bus is muir's stimulus.  This asks it of the
-# WHOLE machine with only DDR modeled, and walks the acknowledgement across
-# the microcycle so the strobe lands at every phase.  It answers the question
-# CLAUDE.md left open --- whether the DESTMDR/-LOADMD coincidence can be
-# placed at all --- and the answer is no, with the reason named: -LOADMD
-# cannot fall before -MEMACK on either bus, and MBUSY clears six ticks after
-# it.
+# WHOLE machine with only DDR modeled, and walks the acknowledgment across
+# the microcycle so the strobe lands at every phase.  It answers the open
+# question of whether the DESTMDR/-LOADMD coincidence can be placed at all ---
+# and the answer is no, with the reason named: -LOADMD cannot fall before
+# -MEMACK on either bus, and MBUSY clears six ticks after it.
 #
 # It also compares the direction of every DDR transaction against the
 # processor's own WRCYC, which nothing else in `make check` does.
@@ -3101,8 +3100,8 @@ $(BUILD)/park.pass: $(BUILD)/obj_park/Vcadr_machine $(BUILD)/boot_prom.hex $(BUI
 # **THE TOOLCHAIN IS NAMED AND ITS ABSENCE IS FATAL.**  A firmware is the one
 # thing here that needs a compiler this repository does not otherwise want, and
 # a rule that skipped quietly would leave a bitstream carrying whatever hex was
-# last built --- which is CLAUDE.md's stale-artifact entry waiting to happen.
-# So the recipe checks, and says what to install.
+# last built --- which is the stale-artifact trap waiting to happen.  So the
+# recipe checks, and says what to install.
 
 RISCV_CC      ?= riscv64-unknown-elf-gcc
 RISCV_OBJCOPY ?= riscv64-unknown-elf-objcopy
@@ -3145,8 +3144,8 @@ endef
 # **THEY BELONG SOMEWHERE NEUTRAL AND THEY ARE NOT THERE YET.**  A file under
 # `boards/arty-z7-20/linux/` that a third board compiles is the same shape as
 # the three Vivado scripts this repository reads out of that directory from two
-# others, and CLAUDE.md already says those are owed a move.  This is one more
-# and it is recorded rather than done here.
+# others, and those are owed a move.  This is one more and it is recorded
+# rather than done here.
 #
 # `-Wno-format` on those two and on nothing else: `uint32_t` is `long` on this
 # target and `int` on the ARM, both 32 bits, so their `%08x` is right and the

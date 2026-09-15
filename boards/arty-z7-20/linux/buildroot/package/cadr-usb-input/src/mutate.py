@@ -14,10 +14,10 @@
 # skipped.
 #
 # THE BUILD FAILING IS NOT A MUTATION SURVIVING AND NOT A MUTATION CAUGHT.
-# CLAUDE.md records that two mutations of the fabric were reported as
-# surviving when they had never been built: lint rejected them and a stale
-# binary ran.  So each record is built in a directory of its own, a build that
-# fails is BROKEN, and BROKEN fails the run.
+# Two mutations of the fabric were once reported as surviving when they had
+# never been built: lint rejected them and a stale binary ran.  So each record
+# is built in a directory of its own, a build that fails is BROKEN, and BROKEN
+# fails the run.
 #
 # **THIS ONE MUTATES THREE PACKAGES, BECAUSE THE CHECK BUILDS THREE.**  A key
 # from the board's keyboard goes through this package, over the link in
@@ -189,8 +189,8 @@ def main():
             continue
         if run.returncode != 0:
             # **A RUN THAT FAILED WITH NOTHING TO SAY IS BROKEN AND NOT
-            # CAUGHT.**  CLAUDE.md records a mutation counted as caught
-            # because a syntax error in its own `@new` stopped the build; this
+            # CAUGHT.**  A mutation was once counted as caught because a
+            # syntax error in its own `@new` stopped the build; this
             # is the same trap one step later, and it happened here: a socket
             # path grown past what a Unix socket allows made the check exit
             # before it had asserted anything, and every record with a long

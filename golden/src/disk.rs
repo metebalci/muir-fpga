@@ -32,8 +32,8 @@
 //!   which of the `BLK` rows a START depends on, so a testbench can hold
 //!   that every one of them was fetched before the transfer ran.
 //! - `MEMPAGE` and `MEMW`, main memory as the *program* sets it, never as
-//!   the controller leaves it. CLAUDE.md's rule twice over: a shadow
-//!   filled from the DUT moves with the bug.
+//!   the controller leaves it. The shadow-memory rule twice over: a
+//!   shadow filled from the DUT moves with the bug.
 //! - `CYC`, one bus cycle on one of the four registers, with the whole
 //!   observable face of the controller sampled after it.
 //! - `PAGE`, a page the transfer put into main memory, with its content.

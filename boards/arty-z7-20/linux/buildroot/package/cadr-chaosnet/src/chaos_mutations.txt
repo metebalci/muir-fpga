@@ -7,8 +7,8 @@
 # the check against it, and runs it.  A mutation the check FAILS on is a check
 # doing its job; one the check passes is reported as SURVIVED and the run is
 # red.  A record whose `@old` no longer matches its file exactly once, or that
-# does not compile, is BROKEN and also fails the run --- CLAUDE.md records two
-# fabric mutations reported as surviving that had never been built.
+# does not compile, is BROKEN and also fails the run --- two fabric mutations
+# were once reported as surviving that had never been built.
 #
 # THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
 # can read this one:

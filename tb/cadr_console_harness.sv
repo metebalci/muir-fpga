@@ -172,7 +172,7 @@ module cadr_console_harness #(
     // --- what a check watches
     output var logic        con_req,
     output var logic        con_gnt,
-    // The microcycle boundary and the console's acknowledgement, which are
+    // The microcycle boundary and the console's acknowledgment, which are
     // the two instants the read-back's lag is measured between: `con_rdata`
     // is loaded at `mclk` and the console takes it at `-UB SSYN`.
     output var logic        mclk_o,
@@ -478,7 +478,7 @@ module cadr_console_harness #(
       .rdata       (rdata),
       // `UB MD LOAD`, MD's third writer: a foreign master's mapped write
       // through the Unibus map, which this harness has no register block to
-      // make.  Tied off, and the acknowledgement is then never asked for.
+      // make.  Tied off, and the acknowledgment is then never asked for.
       .ub_md_req   (1'b0),
       .ub_md_data  (32'd0),
       .ub_md_ack   (ub_md_ack_u),

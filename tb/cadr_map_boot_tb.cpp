@@ -20,10 +20,10 @@
 // Neither of them runs the two together.  This does.
 //
 // WHAT THE BOOT PROM ACTUALLY DOES WITH THE MAP, MEASURED AGAINST muir AND
-// NOT ASSUMED.  CLAUDE.md said "rtl.golden is the boot PROM, which never uses
-// the map that way".  It does.  `SET-UP-FOUR-PAGES` writes FOUR second-level
-// entries and the first main-memory cycle follows three microcycles after the
-// last of them:
+// NOT ASSUMED.  It had been written down that `rtl.golden` is the boot PROM,
+// which never uses the map that way.  It does.  `SET-UP-FOUR-PAGES` writes
+// FOUR second-level entries and the first main-memory cycle follows three
+// microcycles after the last of them:
 //
 //     microcycle 536290   l2 <- 0o60000000   physical page 0        MAP-ACCESS-CODE 3
 //     microcycle 536293   l2 <- 0o60036777   physical page 0o36777        the same
@@ -54,14 +54,15 @@
 // AND THE WRITE HALF, which the zero page cannot hold on its own: the parity
 // loop writes back what it read, so against a page of zeros a write that
 // landed a page wide would put a zero somewhere harmless and read back
-// unchanged --- CLAUDE.md's control-store lesson in main memory.  So a write
-// anywhere but page 0 is a failure named at the address, and at the end page 0
-// must be zero and NOTHING outside it may have been written.  Each of the 256
-// words must have been read exactly once and written exactly once, which is
-// what closes an aliasing mistranslation INSIDE the page: two virtual pages
-// folded onto one physical page read the same word twice and another never.
+// unchanged --- `docs/mutations.md`'s control-store lesson in main memory.  So
+// a write anywhere but page 0 is a failure named at the address, and at the
+// end page 0 must be zero and NOTHING outside it may have been written.  Each
+// of the 256 words must have been read exactly once and written exactly once,
+// which is what closes an aliasing mistranslation INSIDE the page: two virtual
+// pages folded onto one physical page read the same word twice and another
+// never.
 //
-// THE ANSWER IS PLACED WHERE muir PLACED IT.  The acknowledgement instants
+// THE ANSWER IS PLACED WHERE muir PLACED IT.  The acknowledgment instants
 // come from the trace's own `ack` column, as `tb/cadr_machine_tb.cpp` places
 // them, so MD lands on the row muir's own row-keying rule says and the timing
 // under the comparison is muir's.  A memory answering at a delay of its own is
@@ -173,7 +174,7 @@ int main(int argc, char **argv) {
   }
 
   // The trace is streamed, not held: it is 84 MB for the boot PROM and the
-  // only things needing to be known before their row are the acknowledgement
+  // only things needing to be known before their row are the acknowledgment
   // instants and where the map is written.
   std::vector<uint64_t> ack_for;
   std::vector<char> arbitrated;
@@ -440,7 +441,7 @@ int main(int argc, char **argv) {
         answered = false;
         if (arbitrated[k]) ++arb;
         // Rounded up, for the reason `tb/cadr_machine_tb.cpp` gives: muir's
-        // acknowledgement is not on the five-nanosecond grid and the fabric
+        // acknowledgment is not on the five-nanosecond grid and the fabric
         // can only see it at a tick at or after it.
         ack_at_tick =
             t + static_cast<long>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);

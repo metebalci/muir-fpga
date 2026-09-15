@@ -100,7 +100,7 @@ module cadr_xbus_ddr
       // selected and answering; the register is a stand-in for that driver
       // and not a place to keep a word.  Held across cycles it was one:
       // `cadr_memory_path.sv` falls through to `memory_rdata` when nothing
-      // acknowledges, and -LOADMD is asserted on every acknowledgement
+      // acknowledges, and -LOADMD is asserted on every acknowledgment
       // including the NXM timer's, so every cycle nothing answered strobed MD
       // with whatever this slave last returned.  On the DDR board that is the
       // last word of page 0, and bit 0 of it is what the boot PROM's

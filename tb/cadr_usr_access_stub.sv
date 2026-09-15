@@ -15,7 +15,7 @@
 // **IT IS ITS OWN FILE AND NOT ONE MORE MODULE IN `tb/cadr_arty_stubs.sv`**,
 // because that file says of itself that nothing in it models anything and
 // that lint is all it is for, and this one does model something: it returns a
-// value, which is the only behaviour the primitive has.  A check may want it,
+// value, which is the only behavior the primitive has.  A check may want it,
 // and a file whose header forbids simulation is the wrong place to put the
 // one stub a simulation could use.
 //

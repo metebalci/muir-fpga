@@ -12,7 +12,7 @@
 # every boot after it started TWO disk pack programs, each mapping the same
 # registers, each serving blocks and each writing blocks back to the same
 # file.  The pack did not survive it, and the investigation blamed the disk
-# channel for a day.  CLAUDE.md's entry is "THE CHANNEL WAS INNOCENT".
+# channel for a day.  The channel was innocent.
 #
 # So: a program or an init script in the target that no package in this tree
 # installs is a FAILURE, not a warning, and it fails here --- during

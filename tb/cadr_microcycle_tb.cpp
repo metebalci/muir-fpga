@@ -199,7 +199,7 @@ int main(int argc, char **argv) {
   // THE TRACE IS STREAMED, NOT HELD.  The pack trace is 2.2 million
   // microcycles and 297 MB; holding it as parsed rows is 686 MB of a machine
   // three sessions are building on.  So it is read twice instead: once for
-  // the acknowledgement times, which are the only thing needing to be known
+  // the acknowledgment times, which are the only thing needing to be known
   // before their row, and once to drive the DUT.
   bool pack_trace = false;
   std::vector<uint64_t> ack_for;
@@ -397,11 +397,11 @@ int main(int argc, char **argv) {
     const bool acking = bus_outstanding && t >= ack_at_tick;
     dut->n_memack = acking ? 0 : 1;
     // "-LOADMD equals MEMACK and RDCYC": the interface puts it out on every
-    // acknowledgement and the processor's own RDCYC decides. So it is driven
+    // acknowledgment and the processor's own RDCYC decides. So it is driven
     // here exactly as -MEMACK is, direction and all, and a write that moved
     // MD would show.
     dut->n_loadmd = acking ? 0 : 1;
-    // POISON ON A WRITE.  -LOADMD is asserted on every acknowledgement and it
+    // POISON ON A WRITE.  -LOADMD is asserted on every acknowledgment and it
     // is RDCYC on the processor's side that keeps a write from strobing MD.
     // Handing back the word MD should hold makes that gate unobservable ---
     // an extra load is then a no-op, and dropping the gate survives, measured
@@ -496,9 +496,9 @@ int main(int argc, char **argv) {
       if (r.v[kBus]) {
         bus_outstanding = true;
         // Rounded *up*: a memory board answers on its own refresh clock, so
-        // muir's acknowledgement is not on the five-nanosecond grid, and the
+        // muir's acknowledgment is not on the five-nanosecond grid, and the
         // fabric can only see it at a tick at or after it. Truncating instead
-        // ends a wait one 220 ns cycle early wherever the acknowledgement
+        // ends a wait one 220 ns cycle early wherever the acknowledgment
         // falls within a tick of a master clock edge.
         ack_at_tick =
             t + static_cast<long>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);

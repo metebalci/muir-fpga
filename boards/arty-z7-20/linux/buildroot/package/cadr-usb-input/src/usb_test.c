@@ -234,7 +234,7 @@ static void viewer_open(struct viewer *v, const struct screen_server *srv)
 	// **WITHOUT THIS THE SECOND SMALL MESSAGE WAITS FORTY MILLISECONDS**,
 	// and this check's clock is its own: forty passes of the loop take
 	// microseconds of real time, so a key held back by Nagle's algorithm
-	// until the far end's delayed acknowledgement looks exactly like a key
+	// until the far end's delayed acknowledgment looks exactly like a key
 	// the server never got.  Measured here, and it cost an hour.  The
 	// server sets the same option on its own side; a real viewer sets it
 	// or does not, and on a real keyboard's timescale it does not matter.

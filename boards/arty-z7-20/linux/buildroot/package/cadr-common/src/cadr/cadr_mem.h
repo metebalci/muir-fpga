@@ -6,11 +6,11 @@
 // **THE GUARD IS NOT OPTIONAL AND NO SOFTWARE CAN CATCH ITS FAILURE.**  A
 // read on `M_AXI_GP0` or `M_AXI_GP1` that nothing in the fabric answers does
 // not fault the Arm: it hangs both cores at one PC each, measured on the
-// board (CLAUDE.md, and `rtl/plumbing/cadr_gp0_default.sv` says it at length).  So the
-// one thing a program may read first is somewhere the processing system can
-// always reach --- the EMIO tally at 0xE000A068 and 0xE000A06C, `DATA_2_RO`
-// and `DATA_3_RO`, which report the pin whatever the direction registers say
-// and whose clock `ps7_init` has already turned on (bit 22 of the write to
+// board (`rtl/plumbing/cadr_gp0_default.sv` says it at length).  So the one
+// thing a program may read first is somewhere the processing system can always
+// reach --- the EMIO tally at 0xE000A068 and 0xE000A06C, `DATA_2_RO` and
+// `DATA_3_RO`, which report the pin whatever the direction registers say and
+// whose clock `ps7_init` has already turned on (bit 22 of the write to
 // APER_CLK_CTRL at 0xF800012C).
 //
 // **AND THE TALLY CARRIES MARKER BITS, because a value that means nothing

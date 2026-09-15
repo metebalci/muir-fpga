@@ -212,7 +212,7 @@ module cadr_busint_xbus (
   //
   // **AND THEY ARE HELD ONE TICK EARLY**, which is the rest of that move and
   // arrived later: the comparisons that read them are registers now, not
-  // gates on the acknowledgement's path.  See the note at `ub_ack_due`.
+  // gates on the acknowledgment's path.  See the note at `ub_ack_due`.
   logic [9:0] ub_ack_at;      // when -LMACK is due
   logic [9:0] ub_md_at;       // when the MD strobe is due
   logic       write;            // WRCYC latched for the cycle being run
@@ -230,7 +230,7 @@ module cadr_busint_xbus (
   assign ub_write = write;
 
   // "MSYN OUT drops at SSYN T100 and -LOADMD rises with it, so the word lands
-  // 50 ns *before* the acknowledgement, where an Xbus word lands with it."
+  // 50 ns *before* the acknowledgment, where an Xbus word lands with it."
   //
   // Registers, compared one tick early, for the reason the read deskew below
   // is one: `ub_loadmd` is -LOADMD on a Unibus cycle and lands on the same two
@@ -275,7 +275,7 @@ module cadr_busint_xbus (
   // `elapsed >= X` at tick t is `elapsed >= X - 1` at tick t-1, because
   // `elapsed` counts by one and the deskew never lands on its saturation ---
   // so registering the earlier comparison puts the same value on the same
-  // tick with the carry chain off the acknowledgement's path entirely.  This
+  // tick with the carry chain off the acknowledgment's path entirely.  This
   // is the second of the two remedies `rtl/plumbing/xilinx7/cadr_machine.xdc` sets out: the
   // signal is read every tick, so it is not a candidate for holding, and what
   // is left is to make the path shorter.
@@ -288,7 +288,7 @@ module cadr_busint_xbus (
   // **AND IT IS NAMED IN `rtl/plumbing/xilinx7/cadr_machine.xdc`**, unlike the two holdings
   // that file describes.  Those are stable across a microcycle and read at the
   // end of one, so they fall in `slow` by its own test.  This is an
-  // acknowledgement, read every tick; left unnamed it would take the fifteen
+  // acknowledgment, read every tick; left unnamed it would take the fifteen
   // tick exception written for the datapath, and the one path this change
   // exists to shorten would stop being timed at all.
   logic deskewed, deskew_due;
@@ -302,10 +302,10 @@ module cadr_busint_xbus (
 
   assign n_memgrant = !(state == GRANTED || state == UB || state == ACKED);
   assign n_memack   = !acked;
-  // On the Xbus the word lands with the acknowledgement, which the deskew has
+  // On the Xbus the word lands with the acknowledgment, which the deskew has
   // already accounted for, so -LOADMD and -MEMACK coincide. They do not on the
   // Unibus, where the word comes UNIBUS_STROBE_NS after -UB SSYN and so
-  // *before* the acknowledgement, which is why this is a port of its own.
+  // *before* the acknowledgment, which is why this is a port of its own.
   assign n_loadmd   = !(acked || (state == UB && ub_loadmd));
   // The flag belongs to the cycle standing, as `Ack::timed_out` does: it goes
   // when the cpu lifts -MEMRQ and the cycle is over. What outlives the cycle is
@@ -494,7 +494,7 @@ module cadr_busint_xbus (
 
         // -XBUS.ACK "remains asserted until the -XBUS.RQ signal is removed by
         // the master", and the cpu removes -MEMRQ MFINISHD_NS after the
-        // acknowledgement. That delay is the cpu's, not the interface's.
+        // acknowledgment. That delay is the cpu's, not the interface's.
         ACKED: begin
           if (n_memrq) begin
             state <= IDLE;

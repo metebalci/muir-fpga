@@ -56,8 +56,8 @@
 # used to try 3 to 12 bits of padding until a sample came back valid. When
 # every one of them failed it could say only that --- not which had been
 # right, which is the thing worth knowing, and not that the padding was never
-# what was wrong. CLAUDE.md's first inherited rule is read, do not guess, and
-# a sweep is the same guess made seven times.
+# what was wrong. The rule is read, do not guess, and a sweep is the same
+# guess made seven times.
 #
 # WHAT IT HAS NOT BEEN RUN AGAINST.  A board. Everything above this line is
 # checked in simulation by `tb/cadr_probe_tb.cpp`, which shifts all 1,024

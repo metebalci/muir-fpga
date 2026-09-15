@@ -43,7 +43,7 @@ if {![file exists $prom]} {
 # And MIT's TV sync PROM, which the display runs from power-on.  Checked here
 # for the reason the boot PROM is: `$readmemh` on a file that is not there is
 # a WARNING, and a sync program of zeros is a display that never interrupts
-# --- which synthesises, routes and writes a bitstream.
+# --- which synthesizes, routes and writes a bitstream.
 set sync_prom build/sync_prom.hex
 if {![file exists $sync_prom]} {
     puts "fit: $sync_prom is missing; run `make $sync_prom` first"
@@ -86,9 +86,9 @@ read_xdc rtl/plumbing/xilinx7/cadr_machine.xdc
 # reads cleanly, applies to nothing, and reports a plausible worse number
 # --- -16.405 ns unconstrained, where the constrained design is -0.484 at
 # 712909e. (The constrained figure recorded beside that -16.405 at the time is
-# -6.602 in `bitstream.tcl` and -6.542 in CLAUDE.md; they are two reports of
-# two revisions and both predate the timing holdings, so neither is quoted
-# here as the pair.)
+# -6.602 in `bitstream.tcl` and -6.542 in the notes made at the time; they are
+# two reports of two revisions and both predate the timing holdings, so neither
+# is quoted here as the pair.)
 #
 # The count of exception objects is the weaker test, and that is why the
 # assertion is not one: `report_exceptions` lists a `set_multicycle_path`

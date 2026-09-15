@@ -5,7 +5,7 @@
 //
 // **WHERE THESE ADDRESSES COME FROM IS IBEX AND NOT A CONVENTION.**  The core
 // fetches its first instruction from `{boot_addr_i[31:8], 8'h80}` and
-// initialises `mtvec` to `{boot_addr_i[31:8], 6'b0, 2'b01}` --- base zero,
+// initializes `mtvec` to `{boot_addr_i[31:8], 6'b0, 2'b01}` --- base zero,
 // MODE vectored.  `rtl/plumbing/cadr_soc.sv` gives it `boot_addr_i` = 0, so
 // the trap table is the 128 bytes at 0 and the reset address is 0x80, and
 // `link.ld` puts the two sections exactly there.  Ibex asserts that the low
@@ -67,7 +67,7 @@ _start:
 	j	1b
 2:
 	// There is no `.data` to copy: this memory is both the image and the
-	// working store, so an initialised variable is already initialised.
+	// working store, so an initialized variable is already initialized.
 	// That is what a firmware in block RAM buys and it is why there is no
 	// load-address arithmetic here.
 	call	main

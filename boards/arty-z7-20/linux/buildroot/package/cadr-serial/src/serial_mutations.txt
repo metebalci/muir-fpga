@@ -7,8 +7,8 @@
 # the check against it, and runs it.  A mutation the check FAILS on is a check
 # doing its job; one the check passes is reported as SURVIVED and the run is
 # red.  A record whose `@old` no longer matches its file exactly once, or that
-# does not compile, is BROKEN and also fails the run --- CLAUDE.md records two
-# fabric mutations reported as surviving that had never been built.
+# does not compile, is BROKEN and also fails the run --- two fabric mutations
+# were once reported as surviving that had never been built.
 #
 # THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
 # can read this one:
@@ -28,12 +28,12 @@
 # what was on the wire --- and then every rule `serial_face.h` states about
 # the register face, because a rule nothing exercises is not a rule.
 #
-# **THE MUTATIONS KEEP EVERY SIGNAL USED.**  CLAUDE.md's lint lesson, one
-# language along: a mutation that leaves a variable unread is caught by the
-# compiler and not by the check, and a record caught by its own build failure
-# is a record that tests nothing.  So a guard is disabled by weakening its
-# condition rather than by deleting the code that reads the guarded thing, and
-# a value is changed rather than a call removed.
+# **THE MUTATIONS KEEP EVERY SIGNAL USED.**  `docs/mutations.md`'s rule that
+# lint must not do the catching, one language along: a mutation that leaves a
+# variable unread is caught by the compiler and not by the check, and a record
+# caught by its own build failure is a record that tests nothing.  So a guard
+# is disabled by weakening its condition rather than by deleting the code that
+# reads the guarded thing, and a value is changed rather than a call removed.
 
 @mutation the-cable-is-crossed-machine-to-client
 @file serial_endpoint.c
@@ -247,7 +247,7 @@
 @why a character at a time is the whole traffic here, and coalescing it only adds latency
 @note muir sets TCP_NODELAY on every device it accepts and says so at the
 @note line.  Left on, a person typing at the far end waits for the delayed
-@note acknowledgement of what they typed before, which reads as the machine
+@note acknowledgment of what they typed before, which reads as the machine
 @note being slow.  The option is swapped rather than removed so that every
 @note variable stays used and lint does not catch this instead of the check.
 @old

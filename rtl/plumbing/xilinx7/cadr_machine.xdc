@@ -29,9 +29,9 @@
 # (That register count is of the design as it then was. At 712909e the machine
 # is 769 registers placed and routed out of context, and the experiment has
 # not been repeated at that size.)
-# That is the pessimistic version CLAUDE.md says not to spread, and it
-# distorts placement as well as the report: the placer spends itself on 6,637
-# impossible paths.
+# That is the pessimistic version, which is not to be spread, and it distorts
+# placement as well as the report: the placer spends itself on 6,637 impossible
+# paths.
 #
 # **But relaxing everything outside the generator is wrong**, and an earlier
 # version of this file did exactly that and reported all timing met. It is
@@ -49,7 +49,7 @@
 #     the next tick. `n_memack_q`, `n_loadmd_q`, `n_tpwpiram_q`, `n_tpwp_q`,
 #     `tpclk_q`. Note these are named, not matched on `_q`, because the
 #     scratchpad latches share that suffix and must not be caught.
-#   - Nor does an acknowledgement. `deskewed`, `ub_acked` and `ub_loadmd` are
+#   - Nor does an acknowledgment. `deskewed`, `ub_acked` and `ub_loadmd` are
 #     the bus interface's three taps --- the 60 ns tap of the TD100 at REQLM
 #     0C09, and the Unibus's 150 and 100 ns instants --- written as registers
 #     rather than as comparisons against `elapsed`; the long notes in
@@ -62,7 +62,7 @@
 #
 # Paths *into* the generator are already tick-rate and must stay so: they are
 # slow-to-fast, which `-from $slow -to $slow` does not match. `speed`
-# especially --- the synchroniser updates it at phase 12 and the 74S151 samples
+# especially --- the synchronizer updates it at phase 12 and the 74S151 samples
 # it at phase 13, one tick.
 
 # NO `create_clock` HERE, and that is the point of the file.  This is timing
@@ -101,9 +101,9 @@
 # and the longest of them was 20.1 ns, seventeen logic levels from
 # `ch_state_reg[1]` back into `ch_state_reg[2]`.  Every timing figure that
 # board reported with the drive in it was of a design a quarter of which was
-# not being timed.  This is the too-wide exemption CLAUDE.md warns looks
-# exactly like one that is right, found by asking the checkpoint what
-# requirement the paths carried rather than reading the summary.
+# not being timed.  This is the too-wide exemption that looks exactly like one
+# that is right, found by asking the checkpoint what requirement the paths
+# carried rather than reading the summary.
 #
 # The two that stay are `mine` and `which`: the slave's address match and
 # register number, taken once from the far end of the map and constant for
@@ -203,7 +203,7 @@
 # `ub_ssyn` is out of the set by the module clause above.  The DIAGNOSTIC
 # REGISTER BLOCK's is the same signal on the same wired-OR --- both pull
 # `-UB SSYN`, which `cadr_busint_xbus.sv` watches every tick for its rise ---
-# and it is named nowhere, so it falls into `slow` by default.  Synthesised at
+# and it is named nowhere, so it falls into `slow` by default.  Synthesized at
 # this slice with this file read scoped, on the memory-off board, at the
 # 6.25 ns tick of that afternoon (one tick and fifteen, as everywhere else):
 #
@@ -284,7 +284,7 @@
 # here first said the enable was not relaxed at all, because `mclk` is made
 # from `tpclk` and `tpclk_q` and both are excluded above. `get_property
 # REQUIREMENT` says otherwise, and it is the third startpoint that does it.
-# Synthesised at this slice with this file read scoped, every path into
+# Synthesized at this slice with this file read scoped, every path into
 # `con_rdata_reg[*]/CE`:
 #
 #     5.000 ns   u_machine/processor/u_phase_gen/tpclk_reg   x64
@@ -424,7 +424,7 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 #              8.349 ns (logic 2.349, route 6.001)
 #
 # `memstart` reaching the synchronous reset of the -RDFINISH counter, 72% of
-# it routing. Everything else met. Utilisation was not the problem then and is
+# it routing. Everything else met. Utilization was not the problem then and is
 # not now: 2,795 LUTs of 53,200 and 28 block RAM tiles of 140 at 712909e.
 #
 # A later report named a second endpoint of the same family:
@@ -498,12 +498,12 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 # last two are the -WAIT decode: `ir` through DESTM, DESTLC and NEEDFETCH into
 # MACHRUN, and MACHRUN into a countdown's reset.
 #
-#   - The deskew is read every tick. It *is* the acknowledgement, so holding
+#   - The deskew is read every tick. It *is* the acknowledgment, so holding
 #     it is wrong at any depth and the path is shortened instead: the
 #     comparison is made one tick early and registered, which is the move
 #     `cadr_phase_gen.sv` makes for its own taps. `elapsed >= X` at tick t is
 #     `elapsed >= X - 1` at t-1, so the value arrives on the same tick with
-#     the carry chain off the acknowledgement's path. The Unibus's two
+#     the carry chain off the acknowledgment's path. The Unibus's two
 #     instants took the same treatment once the deskew stopped being worst,
 #     which is the rest of the move begun when `ssyn_at` became `ub_ack_at`.
 #   - MACHRUN is read at one instant and one only --- `cpu_edge` is
@@ -519,7 +519,7 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 # Same rule, same file, opposite answers, and the three taps are the reason
 # this file now names registers that are not edge detectors.
 #
-# AND THAT WAS ASKED OF THE DESIGN RATHER THAN ASSUMED, synthesised out of
+# AND THAT WAS ASKED OF THE DESIGN RATHER THAN ASSUMED, synthesized out of
 # context with this file read: every path out of `deskewed`, `ub_acked` and
 # `ub_loadmd` asks for 5.000 ns, so the naming took; 181 of the first 200 out
 # of `destmem_q`, `use_md_q` and `ifetch_q` ask for 75.000 and the other 19 for
@@ -543,8 +543,8 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 # moved to the phase generator's TPCLK into the control store's write address,
 # a family this file has never had to argue about. The board with the memory
 # on does not, by twelve picoseconds on six endpoints --- which is inside the
-# quarter of a nanosecond CLAUDE.md calls placement noise, so it is reported
-# as a number and not as closure.
+# quarter of a nanosecond that counts as placement noise, so it is reported as
+# a number and not as closure.
 #
 # AND WHAT IS LEFT CANNOT TAKE EITHER REMEDY, which is worth writing down
 # before somebody tries. All six are
@@ -556,7 +556,7 @@ set_multicycle_path -hold  14 -from $slow -to $slow
 # combinationally, and `write && answering` making -MEMACK on a write. That
 # last gate is the 74S64 at REQLM 0C11 and it is a gate on purpose:
 # `cadr_busint_xbus.sv` says so and `memack-registered-on-a-write` is the
-# mutation that holds it, because registering it puts the acknowledgement a
+# mutation that holds it, because registering it puts the acknowledgment a
 # tick late on every write. Holding is refused by the rule and registering is
 # refused by the machine.
 #

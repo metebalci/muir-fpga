@@ -96,7 +96,7 @@
 // How long the loop sleeps when nothing happened.  A packet at a time is the
 // whole traffic and the transport at the far end acknowledges every one, so
 // the round trip this bounds is what a file transfer moves at: muir measures
-// "some three milliseconds a packet" at that end's acknowledgement rate, and
+// "some three milliseconds a packet" at that end's acknowledgment rate, and
 // a millisecond of polling under that is not what limits it.  A turn that did
 // something does not sleep at all, so a burst drains at the speed of the
 // fabric.

@@ -59,12 +59,12 @@
 //
 //   1. THE GUARD.  A read on M_AXI_GP0 that nothing in the fabric answers
 //      hangs both Arm cores, and no software guard can catch it afterwards
-//      (CLAUDE.md; measured on the board).  The one thing a program can
-//      read first is the EMIO tally at 0xE000A068/6C, which carries marker
-//      bits --- `(w & 0x80008000) == 0x00008000` --- only on a bitstream
-//      with the processing system in it, and reads all ones or zero
-//      otherwise.  Without the markers this program stops before its first
-//      GP0 access and says why.  `--no-guard` is for a board somebody knows.
+//      (measured on the board).  The one thing a program can read first is the
+//      EMIO tally at 0xE000A068/6C, which carries marker bits --- `(w &
+//      0x80008000) == 0x00008000` --- only on a bitstream with the processing
+//      system in it, and reads all ones or zero otherwise.  Without the
+//      markers this program stops before its first GP0 access and says why.
+//      `--no-guard` is for a board somebody knows.
 //   2. IDENT.  Register 7 reads "PACK" for the pack side; "NONE" is the
 //      proving boards' default slave (`rtl/plumbing/cadr_gp0_default.sv`), a board
 //      with GP0 and no disk.  Either is a reason to stop and say so.

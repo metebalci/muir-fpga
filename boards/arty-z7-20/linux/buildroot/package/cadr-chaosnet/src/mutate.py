@@ -14,10 +14,10 @@
 # run rather than being quietly skipped.
 #
 # THE BUILD FAILING IS NOT A MUTATION SURVIVING AND NOT A MUTATION CAUGHT.
-# CLAUDE.md records that two mutations of the fabric were reported as
-# surviving when they had never been built: lint rejected them and a stale
-# binary ran.  So each record is built in a directory of its own, a build that
-# fails is BROKEN, and BROKEN fails the run.
+# Two mutations of the fabric were once reported as surviving when they had
+# never been built: lint rejected them and a stale binary ran.  So each record
+# is built in a directory of its own, a build that fails is BROKEN, and BROKEN
+# fails the run.
 #
 # AND A MUTATION IN A FILE THE CHECK DOES NOT BUILD IS NOT A MUTATION EITHER.
 # `chaos_test` links the core and the suites; `cadr-chaosnet.c` is the
@@ -133,7 +133,7 @@ def build_and_run(here, cc, cflags):
     # order writes whatever those bytes are to stderr, which need not be
     # UTF-8.  Without this the runner dies of a UnicodeDecodeError in the
     # middle of a record and reports NOTHING: not caught, not survived, no
-    # summary line.  CLAUDE.md's rule is that a gate's output must end in the
+    # summary line.  The rule is that a gate's output must end in the
     # runner's own summary line or it did not finish, and this is the failure
     # that rule is about, met from inside.  It was the FILE service's 0215
     # line separator that found it; the rule outlives the service.

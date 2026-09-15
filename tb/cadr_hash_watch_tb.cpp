@@ -14,15 +14,15 @@
 //
 // **THE HOLE THIS IS AIMED AT.**  Every processor check in this repository
 // compares `cadr_microcycle` against muir with the bus, the memory and the
-// acknowledgements supplied from muir's own columns; `machine.pass` and
+// acknowledgments supplied from muir's own columns; `machine.pass` and
 // `map_boot.pass` compare the whole machine, but on MIT's boot PROM, which is
 // a different program and stops before the microcode is loaded.  So the
 // composed machine --- processor, bus interface, memory path, real memory,
 // disk controller --- has never been asked to agree with muir while running
-// the microcode it loads off its own disk.  CLAUDE.md states the gap twice,
-// once as "NO CHECK HAS EVER MOVED A REAL PACK BLOCK INTO MAIN MEMORY" and
-// once as "map-write-then-read-through-it across `cadr_machine` has never been
-// compared to muir".
+// the microcode it loads off its own disk.  The gap stands twice over: no
+// check has ever moved a real pack block into main memory, and
+// map-write-then-read-through-it across `cadr_machine` has never been compared
+// to muir.
 //
 // ====================================================================
 // HOW FAR THIS REACHES, AND WHY IT STOPS WHERE IT DOES.  MEASURED.
@@ -36,8 +36,8 @@
 // and part there, so 524,650 of those microcycles are a program nothing else
 // runs on the whole machine, and the disk controller answers them out of a
 // real drive --- unit selection, the spindle, on-line, on-cylinder, seek and
-// attention --- instead of the no-drive constant `0x2321` that CLAUDE.md says
-// a wire would pass.
+// attention --- instead of the no-drive constant `0x2321` that a wire would
+// pass.
 //
 // **It stops at the machine's FIRST DISK TRANSFER, and the reason is that
 // muir's channel does not exist.**  `Controller::timed` is `false` by default
@@ -82,8 +82,9 @@
 //     89 microcycles in all, every one of them confined to `STATUS<28:24>`.
 //     At N = 512 it reaches 1,276,905 --- **and a burst appears that moves PC,
 //     IR and VMA**, which is the exemption beginning to hide the machine
-//     rather than the clock.  That is CLAUDE.md's standing hazard caught in
-//     the act, and it is why the default is zero.
+//     rather than the clock.  That is the standing hazard --- an exemption
+//     too wide tests nothing and looks exactly like one that is right ---
+//     caught in the act, and it is why the default is zero.
 //
 // **AND EVEN WITH A PERFECT CLOCK THIS SHAPE CANNOT REACH THE WINDOW.**  The
 // band's machine reads its own microsecond clock --- Unibus `0o764120` and
@@ -129,10 +130,11 @@
 // block the machine writes is kept in memory for the run exactly as muir's
 // `Unit::written` keeps it.  The header and both checkwords are computed from
 // the address and the data at the move, as `disk_unit::header_of` and `Ecc`
-// compute them and as CLAUDE.md's sidecar decision settled.  **The feeder is
-// stimulus and never a shadow**: what it serves comes from the pack file at
-// the disk address the controller posted, and an address off the pack is
-// DENIED rather than invented.
+// compute them, headers and checkwords being computed at the move rather than
+// kept in a file beside the pack.  **The feeder is stimulus and never a
+// shadow**: what it serves comes from the pack file at the disk address the
+// controller posted, and an address off the pack is DENIED rather than
+// invented.
 //
 // THE DRIVE.  One unit present, not read-only, and `drive_timed` LOW --- which
 // is `Controller::timed` false, the way the reference was generated.  A drive
@@ -397,9 +399,9 @@ int main(int argc, char **argv) {
 
   // ============================= THE WATCHPOINT ==============================
   //
-  // CLAUDE.md's "THE BOARD PUT A STALE MEMORY DATA WORD INTO THE PAGE HASH
-  // TABLE" says the corruption is a WRITE that should not have happened, and
-  // that `cadr_memory_path.sv` loads `wdata <= md` at MEMGO REGARDLESS OF
+  // THE BOARD PUT A STALE MEMORY DATA WORD INTO THE PAGE HASH TABLE, the
+  // corruption is a WRITE that should not have happened, and
+  // `cadr_memory_path.sv` loads `wdata <= md` at MEMGO REGARDLESS OF
   // DIRECTION --- so on every read the whole of MD stands on `mem_wdata` at
   // the bridge and one wrong bit of `mem_write` replaces the word being read.
   // Three instruments, all of them free:
@@ -407,10 +409,10 @@ int main(int argc, char **argv) {
   //   1. `--watch <octal physical word>`, repeatable: every transaction that
   //      touches the word, with the microcycle, the direction, the data, the
   //      processor's own WRCYC and whether the channel owned the bus.
-  //   2. ONE TRANSACTION PER BUS CYCLE, over the whole run.  CLAUDE.md:
-  //      "nothing in the tree counts transactions per bus cycle ... That is
-  //      the next check to build, and it is the one this bug has been living
-  //      behind."  `mem_req` stands until the bridge has taken the word, so
+  //   2. ONE TRANSACTION PER BUS CYCLE, over the whole run.  Nothing in the
+  //      tree counted transactions per bus cycle before this, and it is the
+  //      check the bug had been living behind.  `mem_req` stands until the
+  //      bridge has taken the word, so
   //      re-serving inside one `mem_req` is a duplicated transaction.
   //   3. A WRITE NOBODY ASKED FOR: `mem_write` up while the processor's own
   //      `dev_write` (which is `cpu_write`, off the WRCYC flip flop) is down
@@ -420,11 +422,11 @@ int main(int argc, char **argv) {
   uint64_t halt_quiet = 100000;           // ticks with no microcycle = stopped
   uint64_t mem_delay = 0;                 // ticks the memory takes past the trace
   uint64_t progress = 0;                  // say where the machine is, this often
-  // WHAT AN UNWRITTEN WORD OF DDR READS AS.  CLAUDE.md, measured on the board
-  // before anything was written: "Uninitialized DDR reads as alternating bands
-  // of zeros and ones, not as zero ... So an unwritten word reads 0x00000000
+  // WHAT AN UNWRITTEN WORD OF DDR READS AS.  Measured on the board before
+  // anything was written, uninitialized DDR reads as alternating bands of
+  // zeros and ones rather than as zero, so an unwritten word reads 0x00000000
   // in some places and 0xFFFFFFFF in others, and anything taking either as
-  // evidence a write happened is testing nothing."  muir's memory is zero and
+  // evidence a write happened is testing nothing.  muir's memory is zero and
   // so is this model's, so the two machines differ wherever the CADR reads a
   // word nothing has written --- which is a difference the board has and no
   // check in this repository has ever had.  Applied PAST THE COMPARISON only,
@@ -456,11 +458,11 @@ int main(int argc, char **argv) {
     // Past it there is no column, and the default is to answer as soon as
     // asked --- which is NOT the board, where the word crosses
     // `cadr_axi_master`, `cadr_axi_widen`, a PS7 and a DDR3 controller.
-    // CLAUDE.md's own note that "a DDR round trip takes FEWER ticks at a
-    // longer tick and the acknowledgement lands on a different tick entirely"
-    // says the instant matters, so the delay is a knob and a run says which
-    // one it used.  muir's own `Responder::Memory` answers 573 to 608 ns
-    // after the grant, which is about 115 of these ticks.
+    // A DDR round trip takes FEWER ticks at a longer tick and the
+    // acknowledgment lands on a different tick entirely, so the instant
+    // matters and the delay is a knob, with a run saying which one it used.
+    // muir's own `Responder::Memory` answers 573 to 608 ns after the grant,
+    // which is about 115 of these ticks.
     if (!std::strcmp(argv[i], "--mem-delay") && i + 1 < argc) {
       mem_delay = std::strtoull(argv[++i], nullptr, 0);
       continue;
@@ -738,7 +740,7 @@ int main(int argc, char **argv) {
   bool halted = false;
   uint64_t halt_cycle = 0;
   long fingerprint_hits = 0;
-  // DOES THE MODEL EXERCISE THE SUSPECT PATH AT ALL?  CLAUDE.md names three
+  // DOES THE MODEL EXERCISE THE SUSPECT PATH AT ALL?  The suspect has three
   // places: `PGF-RL` at 0o24074, whose `((MD) A-PGF-VMA)` puts the faulting
   // VMA in MD and whose `((VMA-START-READ) ADD VMA (A-CONSTANT 1))` two
   // instructions later runs a bus cycle at the page hash table's second word
@@ -1090,10 +1092,10 @@ int main(int argc, char **argv) {
 
     // ------------------------------------------- the halt, and its fingerprint
     //
-    // THE BOARD'S OWN FINGERPRINT, from CLAUDE.md: `PC 0o23555` with
-    // `OPC 0o23560` is `PGF-W-1+7` having returned into the `DISPATCH-XCT-NEXT
-    // MAP-STATUS-CODE` at `0o23553` and landed on case 4, which `D-PGF` sends
-    // to `ILLOP`.  A write fault whose map says the page is writable.
+    // THE BOARD'S OWN FINGERPRINT: `PC 0o23555` with `OPC 0o23560` is
+    // `PGF-W-1+7` having returned into the `DISPATCH-XCT-NEXT MAP-STATUS-CODE`
+    // at `0o23553` and landed on case 4, which `D-PGF` sends to `ILLOP`.  A
+    // write fault whose map says the page is writable.
     if (dut->clock_edge) {
       if (dut->pc == 0023555u && dut->opc == 0023560u) {
         ++fingerprint_hits;
@@ -1135,11 +1137,11 @@ int main(int argc, char **argv) {
         {
           // THE SCREEN.  `cadr_xbus_ddr` answers the display's window at
           // `DISPLAY_BASE`, so every frame-buffer word the machine writes is
-          // in `elsewhere`.  CLAUDE.md dates muir's painting: the first pixel
-          // at microcycle 1,422,167, the first CHARACTER at 4,441,390, the
-          // picture complete at about 6,880,000 --- and the BOARD, at its
-          // halt 169 million microcycles in, has never painted a character.
-          // So this number is the instrument that says whether the fabric is
+          // in `elsewhere`.  muir paints its first pixel at microcycle
+          // 1,422,167, its first CHARACTER at 4,441,390, and the picture is
+          // complete at about 6,880,000 --- and the BOARD, at its halt 169
+          // million microcycles in, has never painted a character.  So this
+          // number is the instrument that says whether the fabric is
           // following muir's program or the board's.
           long lit_words = 0, lit_bits = 0;
           for (const auto &kv : elsewhere) {
@@ -1396,7 +1398,7 @@ int main(int argc, char **argv) {
           }
         }
         // WHERE muir's OWN INTERFACE ANSWERS THIS CYCLE.  Rounded up, for
-        // the reason `tb/cadr_machine_tb.cpp` gives: muir's acknowledgement is
+        // the reason `tb/cadr_machine_tb.cpp` gives: muir's acknowledgment is
         // not on the five-nanosecond grid and the fabric can only see it at a
         // tick at or after it.
         if (r.v[kBus]) {

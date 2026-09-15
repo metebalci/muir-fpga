@@ -60,7 +60,7 @@ on silicon" below has that run's account.
 
 This project assigns six lamps by meaning. This board numbers its lamps the
 other way round from the Arty Z7-20, which numbers four plain green LEDs LD0
-to LD3 and two tricolour ones LD4 and LD5. Here the four tricolour LEDs are
+to LD3 and two tricolor ones LD4 and LD5. Here the four tricolor LEDs are
 LD0 to LD3 and the four green ones are LD4 to LD7.
 
 | meaning | this project | port | this board's silkscreen |
@@ -75,7 +75,7 @@ LD0 to LD3 and the four green ones are LD4 to LD7.
 
 The port names are Digilent's, so that a pin can be checked against the master
 file by eye. This board has eight lamps where the assignment wants six, so two
-tricolour ones are dark.
+tricolor ones are dark.
 
 On a memory-off board the lamps read as follows, in this board's own
 silkscreen numbers. LD5 blinks at about 1.5 Hz for ever, because it counts the
@@ -83,10 +83,10 @@ fabric's own clock and nothing else. LD6 blinks with the microcycles and keeps
 blinking, every 0.28 seconds at the board's 10 nanosecond tick. LD4 is
 `MACHRUN` and dims from microcycle 536,303 onwards, because every main-memory
 cycle from then on spends 4.25 microseconds on the timer rather than 140
-nanoseconds on a slave. LD7 is dark, there being no drive. The tricolour LD1 is
+nanoseconds on a slave. LD7 is dark, there being no drive. The tricolor LD1 is
 blue for ever, because the machine never leaves its boot PROM.
 
-**And the tricolour LD0 stays dark, which is the point of what it now means.**
+**And the tricolor LD0 stays dark, which is the point of what it now means.**
 It lights for the machine's own error halt and for nothing else. The lamp used
 to light for a bus timeout as well, and on this board every main-memory cycle is
 a timeout --- so it would be red within a second of every power-on, on a fabric
@@ -267,7 +267,7 @@ controller in the fabric, and it has one.
 Everything else Xilinx offers as a directory of generated XML has been declined
 in this repository and hand-built instead. A DDR3 controller is not that kind
 of thing: it is a calibration sequence, a physical layer with per-bit deskew, a
-write levelling procedure and a bank manager, and nothing here could hold a
+write leveling procedure and a bank manager, and nothing here could hold a
 hand-written one to anything.
 
 `mig/README.md` is the whole argument, the provenance of the project file it is
@@ -313,7 +313,7 @@ a 325 MHz memory clock, over four again for an 81.25 MHz user clock.
 relationship**, and the design crosses between them at exactly one place:
 `cadr_mem_cross`, on the `mem_*` handshake, which was already a four-phase
 handshake with one transaction in flight. The payload never needs a
-synchroniser and the argument for that is made good by construction rather than
+synchronizer and the argument for that is made good by construction rather than
 assumed: the address is registered on the near side and the level that
 announces it goes out a clock later, so it has stopped moving before anything
 on the far side looks at it.
@@ -357,7 +357,7 @@ thing that can reach it is the fabric. So the debugger is given a path ---
 in front of the memory port, taking it when the machine is not using it.
 
 That module's header says plainly what is lost by the debugger's words
-travelling the machine's own path, and what recovers it. The three things that
+traveling the machine's own path, and what recovers it. The three things that
 do are all the host's and not the fabric's: a poison injective in the address,
 all four lanes of a sixteen-byte block written differently and read back, and a
 tally that is not on this path at all. The tally counts what the controller's
@@ -415,7 +415,7 @@ cross between the two. There are sections on the clock and on the seam below.
 ### The core
 
 The core is Ibex, lowRISC's, vendored at a pinned commit under
-`third_party/ibex/` with its own Apache-2.0 licence. That directory's
+`third_party/ibex/` with its own Apache-2.0 license. That directory's
 `README.md` says which commit, which files, why six of them are not in Ibex's
 own file list, and what each file's digest is.
 
@@ -713,7 +713,7 @@ with four fifths in routing. The window is gone. The figures above are of a
 different netlist and the two should not be read as one number moving: what
 they share is that both are met.
 
-**AND THE UTILISATION WENT UP BY A LITTLE, WHICH IS NOT WHAT REMOVING A FACE
+**AND THE UTILIZATION WENT UP BY A LITTLE, WHICH IS NOT WHAT REMOVING A FACE
 PREDICTS AND IS NOT EXPLAINED HERE.** 13,465 Slice LUTs against 13,325 and
 8,565 registers against 8,541: 140 more and 24 more, about one per cent, after
 a module came out of the design. Block RAM, DSP and the bitstream's size are
@@ -874,17 +874,17 @@ that points at it arrives, and two flip-flops on each level.
 
 One thing it does that the memory's crossing does not have to: **the answer is
 not handed back until the handshake has closed.** A four-phase handshake is not
-finished when the acknowledgement arrives. The request has still to be dropped,
-the far side has still to see it go, and its acknowledgement has still to come
+finished when the acknowledgment arrives. The request has still to be dropped,
+the far side has still to see it go, and its acknowledgment has still to come
 back. The requester in front of this one may ask again one clock after it is
 answered, which is inside that window. The memory's crossing escapes the
 question because `cadr_xbus_ddr` holds its request up until it has taken the
 word.
 
 **How close that is to mattering was measured rather than reasoned about.**
-With the wait deleted, of 273 requests **129 arrive while the acknowledgement
-still stands at the second flip-flop of the synchroniser, and none while it
-stands at the first**. So the guard is one clock of the synchroniser away from
+With the wait deleted, of 273 requests **129 arrive while the acknowledgment
+still stands at the second flip-flop of the synchronizer, and none while it
+stands at the first**. So the guard is one clock of the synchronizer away from
 handing a requester the previous answer, and what keeps the defect benign is
 that `cadr_soc.sv` takes a clock to clear its own busy flag.
 `mutations/list.txt` records that with the measurement, rather than leaving a
@@ -924,7 +924,7 @@ stimulus that loses the race** and every other line in that firmware is one load
 with a `say()` behind it.
 
 Five mutation records are aimed at the crossing and all five are caught.
-**What no record there can reach is the depth of a synchroniser.** Nothing
+**What no record there can reach is the depth of a synchronizer.** Nothing
 models metastability, so one flip-flop behaves exactly as two, and shortening
 either one in a single hunk leaves a bit unread and Verilator catches it at bit
 granularity rather than the check doing so. That is said once in
@@ -1023,7 +1023,7 @@ seam tied off, and a tie-off is not free: the drive constant-folds, the serial
 chip constant-folds, the Chaosnet interface folds with its address switches at
 zero, and the mouse's counters fold because nothing on its seven lines ever
 changes. Every fabric answer in "What is absent" above adds logic and block RAM
-that row does not include. Utilisation answers "does it fit", which is about
+that row does not include. Utilization answers "does it fit", which is about
 the design's shape; slack answers "is this build finished".
 
 ### The memory-off board against the Arty Z7-20's, and why that row is history
@@ -1117,7 +1117,7 @@ that are absent are the bus's 80 nanosecond contract, whose exception starts at
 the machine's own registers --- and on a proving board the machine does not
 drive the port at all, so it reaches no path and is not listed.
 
-The out-of-context flow, `vivado/fit.tcl`, synthesises `cadr_machine` on its
+The out-of-context flow, `vivado/fit.tcl`, synthesizes `cadr_machine` on its
 own with no top level, no output fold, no MMCM and no package pins:
 
 | | |
@@ -1153,8 +1153,8 @@ is the board this repository calls the hard one. This variant is the right one.
 
 **The free tier places and routes this part.** That was an open question too.
 `get_parts` listing a part says the device data is installed; it does not say
-the licence will build it, and the only way to find out is to run a build,
-because a refusal is an unmistakable licence error in the tool's own words. The
+the license will build it, and the only way to find out is to run a build,
+because a refusal is an unmistakable license error in the tool's own words. The
 fit above is the answer. The log reads `A valid Vivado Design Suite BASIC
 license has been detected`, then `Got license for feature 'Vivado_Synthesis'
 and/or device 'xc7a100t'` and the same for `Vivado_Implementation`, and the run
@@ -1183,7 +1183,7 @@ goes through to a bitstream with **zero critical warnings and zero errors**.
 | `vivado/qspi.tcl` | write the bitstream into the board's flash, never run |
 | `firmware/` | the soft processing system's bare-metal C, its linker script and its reset vector |
 | `Arty-A7-100-Master.xdc` | Digilent's published pin file, byte for byte |
-| `Digilent-License.txt` | the MIT licence that file is published under |
+| `Digilent-License.txt` | the MIT license that file is published under |
 
 `make build/arty_a7.pass` lints the top level in all seven of its
 configurations: the machine, the machine with the probe, the machine with its
@@ -1262,8 +1262,8 @@ hundred and fifty nanoseconds instead of on the 4.25 microsecond timer, and the
 other 16,951 are disk polls the disk controller's own registers answer either
 way. So LD5 blinks at 1.5 Hz as it always did, LD6 blinks with the microcycles a
 hair faster, LD4 is `MACHRUN` at very nearly the brightness it had, LD7 is dark
-for want of a drive, the tricolour LD1 is blue because the machine never leaves
-its boot PROM without a disk, and the tricolour LD0 is dark. The Arty Z7-20's
+for want of a drive, the tricolor LD1 is blue because the machine never leaves
+its boot PROM without a disk, and the tricolor LD0 is dark. The Arty Z7-20's
 own notes reached the same conclusion about its memory and say so: there is no
 lamp-visible difference between memory working and memory absent.
 
@@ -1318,7 +1318,7 @@ wants a temporary file moved into place, or `.DELETE_ON_ERROR`.
 Every step names the JTAG cable by its serial number. More than one board can
 be on one host's USB, and a target taken by position is whichever the server
 enumerated first, which is not a fault anybody sees until the wrong board
-changes behaviour. None of these scripts has a default cable, for the same
+changes behavior. None of these scripts has a default cable, for the same
 reason `tick.tcl` has no fallback period.
 
 Build the instrumented bitstream, program it, and read the capture back:
@@ -1382,11 +1382,11 @@ which is not an omission either: the DDR3L pins come from Digilent's board
 definition in `github.com/Digilent/vivado-boards`, which is the file a memory
 controller's generator would read.
 
-`Digilent-License.txt` is the MIT licence text from the same repository and the
+`Digilent-License.txt` is the MIT license text from the same repository and the
 same commit, 1,064 bytes, sha256
 `fbdfae05e542ea6ad7e11e3818076b46d2b6bd81dac49c59bc9ac78025ba5339`. Digilent
 publishes it as `License.txt` and it is renamed here so that nobody reads it as
-the licence of this directory. Everything else here is AGPL.
+the license of this directory. Everything else here is AGPL.
 
 ## This is still not a port
 

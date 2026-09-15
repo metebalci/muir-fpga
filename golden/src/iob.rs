@@ -186,9 +186,9 @@ use muir::terminal::mouse::MOUSE_STEP_NS;
 /// `chaos::interface::switches` is how they are closed; what the fabric
 /// takes is the word they read back, and it is a PORT of the card and not
 /// a constant inside it, so a module ignoring it fails here.  Subnet 6,
-/// host 0o101: a legal address --- CLAUDE.md records what muir's own
-/// default 0o177001 costs, subnet 255 trapping in `RESET-ROUTING-TABLE`
-/// --- with both bytes different and neither 0 nor 0o377.
+/// host 0o101: a legal address --- muir's own default 0o177001 is subnet
+/// 255, which traps in `RESET-ROUTING-TABLE` --- with both bytes
+/// different and neither 0 nor 0o377.
 const CHAOS_ADDRESS: u16 = 0o003101;
 
 /// Five nanoseconds, the master clock's period. Every instant the trace

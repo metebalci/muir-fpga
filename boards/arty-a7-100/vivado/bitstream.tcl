@@ -136,7 +136,7 @@ if {![file exists $prom]} {
 # And MIT's TV sync PROM, which the display runs from power-on.  Checked here
 # for the reason the boot PROM is: `$readmemh` on a file that is not there is
 # a WARNING, and a sync program of zeros is a display that never interrupts
-# --- which synthesises, routes and writes a bitstream.
+# --- which synthesizes, routes and writes a bitstream.
 set sync_prom build/sync_prom.hex
 if {![file exists $sync_prom]} {
     puts "BIT: $sync_prom is missing; run `make $sync_prom` first"
@@ -523,7 +523,7 @@ if {$soc != 0} {
 
     # **THE BOUND MUST REACH PATHS IN BOTH DIRECTIONS AND THE COUNT IS WHAT
     # SAYS SO.**  One direction carries the request and its payload, the other
-    # the acknowledgement and its answer; a crossing with traffic one way only
+    # the acknowledgment and its answer; a crossing with traffic one way only
     # is a crossing half of which is unconstrained.
     set want [format %.3f $tick]
     foreach pair [list [list $soft_clk $mach_clk "the request and its payload"] \

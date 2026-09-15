@@ -339,7 +339,7 @@ figure.screen img {
 /* A WIRE THAT REACHES A BLOCK THE BOARD DOES NOT HAVE, faded as that block's
    own label is faded, though not by the same number: 0.35 against the label's
    0.5, because a solid stroke at a given opacity reads stronger than a glyph
-   does at it.  The number is a judgement about how the two sit together on the
+   does at it.  The number is a judgment about how the two sit together on the
    page and nothing measures it.  The line is still drawn, because the drawing
    is one drawing and a reader should see what would have been connected; it is
    no longer drawn at the strength of a wire that carries something.

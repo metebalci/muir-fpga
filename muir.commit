@@ -7,9 +7,9 @@
 # a commit here means nothing without the commit of muir it was generated
 # against: the same generator over a different muir is a different reference,
 # and a check that passes against one may fail against the other for reasons
-# that have nothing to do with the fabric.  CLAUDE.md carried this as a rule
-# about when to pull --- "at slice boundaries, never mid-slice" --- which is
-# discipline where it should be a fact in a file.
+# that have nothing to do with the fabric.  The rule about when to pull ---
+# at slice boundaries, never mid-slice --- is discipline where this should be
+# a fact in a file.
 #
 # `make muir-pin` says whether the muir beside this repository is this commit,
 # and `make check` runs it and warns.  CI checks this commit out rather than

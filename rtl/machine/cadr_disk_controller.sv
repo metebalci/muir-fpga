@@ -163,7 +163,7 @@
 // about why that is a different thing and why the fitter insists on it.
 //
 // **THE STORE IS HELD TWO TICKS, AND THE TIMERS IT LOADS ARE LOADED TWO TICKS
-// SHORT.**  The acknowledgement stays a gate; what lands two ticks after the
+// SHORT.**  The acknowledgment stays a gate; what lands two ticks after the
 // request is the REGISTERS' update --- the command, the disk address, the
 // pointer, and everything a START does.  Measured with the drive present in
 // the fitter for the first time (the pack side gives it a real seam, so it
@@ -731,7 +731,7 @@ module cadr_disk_controller #(
   // `busint/FSM_sequential_state_reg[1]/C -> processor/mfinish_t_reg[*]/CE`,
   // six logic levels and 4.98 ns on the DDR=1 board at ef9dee9, of which
   // one level and two crossings were -XBUS.RQ arriving here to be ANDed with
-  // `mine` and leaving again as the acknowledgement.  Fourteen of the
+  // `mine` and leaving again as the acknowledgment.  Fourteen of the
   // board's failing endpoints, all of them the processor's two countdowns,
   // which are counters and rightly outside the microcycle exception.  The
   // data lines are still driven only while `asked` --- `drives` below keeps

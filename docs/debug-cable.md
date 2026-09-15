@@ -148,7 +148,7 @@ zeros gives `00` and a word of all ones gives `11`, so neither can be mistaken
 for an answer. The marker has to live outside the data field, because all ones
 in `DBD` is what an open cable reads and is a legal answer.
 
-`STS` reports the acknowledgement and the word as they were latched at the
+`STS` reports the acknowledgment and the word as they were latched at the
 instant `DEBUG IN ACK` first rose, not as they stand at the load. By the time
 the Arm gets round to reading, the fabric has run for however long the core
 took, and the word the debuggee drove may be long gone.
@@ -158,13 +158,13 @@ read cycle's word is driven live by `cadr_dbgin.sv`, as the transceivers drive
 it from `UDI` while the cycle runs. MIT's own note about the diagnostic
 registers is that read and write at the same address are uncorrelated: the
 74LS244s drive `SPY<15:0>` asynchronously, so a running machine moves the lines
-under a standing acknowledgement. Whoever is watching is the one that has to
+under a standing acknowledgment. Whoever is watching is the one that has to
 latch, which is what `cable::DebugIn::observe` does on the simulated side. Two
 latches in one path would be two places a mutation could be made and neither
 caught.
 
 A four-bit sequence number crosses in `CTL` and comes back in `STS`. An
-acknowledgement left standing from a previous transaction reads exactly like
+acknowledgment left standing from a previous transaction reads exactly like
 an answer to the present one, and the sequence is what tells them apart.
 
 ## The status read drives only the low byte
@@ -587,11 +587,11 @@ count of twenty-two outgoing signals included them and was wrong.
 A serialized carrier has no shared bus, so the sixteen data lines are sent in
 each direction separately. Outgoing is therefore twenty: the four control
 signals and the sixteen data values. Coming back is nineteen: the
-acknowledgement, the sixteen data values, and **two bits saying which bytes of
+acknowledgment, the sixteen data values, and **two bits saying which bytes of
 them this end is driving**. The two extra bits are needed because `-DB READ
 STATUS` drives only `DBD<7:0>` and MIT's cable carries the byte above it on
 pull-ups that a Pmod ribbon does not have. A count of seventeen coming back
-counts the acknowledgement and the data and misses them.
+counts the acknowledgment and the data and misses them.
 
 The carrier's payload is twenty-one bits in each direction: MIT's twenty, with
 the return's one spare bit going out as zero, and a twenty-first that says
@@ -1087,16 +1087,16 @@ board the decode knows nothing of who the master is and such a cycle would go
 out on this board's cable to a third machine. muir does not model a chain of
 debuggers and neither does this.
 
-### The acknowledgement must belong to this cycle
+### The acknowledgment must belong to this cycle
 
 `DEBUG OUT ACK` is a level. On MIT's cable it falls within nanoseconds of the
 request it belongs to being lifted, because the far end's gate is a NAND of
 the three register strobes and they go with the request.
 
 A carrier that serializes the cable does not give that for free. The fall
-takes a frame to cross, so the acknowledgement of the cycle just finished is
+takes a frame to cross, so the acknowledgment of the cycle just finished is
 still standing when the next one starts. A page that took it would answer its
-own machine in no time with a word nobody drove. So the acknowledgement is
+own machine in no time with a word nobody drove. So the acknowledgment is
 taken only after it has been seen down with this cycle's strobe already up.
 This was a defect, and the two-board check below is what found it.
 

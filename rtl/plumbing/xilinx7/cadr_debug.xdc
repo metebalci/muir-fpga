@@ -27,13 +27,13 @@
 # arbiter and MIT's DBGIN page, out of `cadr_machine` on `DBD<15:0>` and into
 # the carrier's latch.
 #
-# **IT IS THIS PROJECT'S OWN RECORDED TRAP, ONE SIGNAL ALONG.** CLAUDE.md:
-# "A module a level above `cadr_machine` gets none of `cadr_machine.xdc`, so
-# an arc into it is timed at one tick however slow both its ends are." The
-# console read the machine's `MD` into a register in the top level and the
-# board read -12.837 ns. **The deadline was wrong, not the depth**: every
-# register on this arc inside the machine is in `cadr_machine.xdc`'s relaxed
-# set, and the one that ends it is not, because it is in the carrier.
+# **IT IS THIS PROJECT'S OWN RECORDED TRAP, ONE SIGNAL ALONG.** A module a
+# level above `cadr_machine` gets none of `cadr_machine.xdc`, so an arc into
+# it is timed at one tick however slow both its ends are. The console read
+# the machine's `MD` into a register in the top level and the board read
+# -12.837 ns. **The deadline was wrong, not the depth**: every register on
+# this arc inside the machine is in `cadr_machine.xdc`'s relaxed set, and
+# the one that ends it is not, because it is in the carrier.
 #
 # THE CARRIER'S LATCH CANNOT SIMPLY MOVE INSIDE, and that is decided rather
 # than assumed. `docs/debug-cable.md`: a read cycle's word is driven LIVE by
@@ -54,7 +54,7 @@
 #
 # WHAT THE RELAXATION DOES NOT EXCUSE, and it is worth saying because MIT
 # said it first. The 74LS244s drive `SPY<15:0>` asynchronously, so a RUNNING
-# machine moves the lines under a standing acknowledgement and read and write
+# machine moves the lines under a standing acknowledgment and read and write
 # at one address are uncorrelated. A word a tick or two stale on a running
 # machine is therefore already the semantics of this bus, stated in
 # `cadr_console_bus.sv` for the console's own read-back --- "exact on a halted
@@ -68,7 +68,7 @@
 #
 #   - **The `/D` pins and not the cells.** `-to [get_cells ...]` is every
 #     input pin of the register, `CE` among them, and this register's `CE` is
-#     `dbg_in_req && dbg_in_ack && !sts_ack` --- the acknowledgement, which is
+#     `dbg_in_req && dbg_in_ack && !sts_ack` --- the acknowledgment, which is
 #     the signal that says the word is good and the one thing that must NOT be
 #     relaxed. That is `cadr_ddr.xdc`'s split between the address and
 #     `-XBUS.RQ`, made for the same reason, and the `elapsed -> md/CE` lesson

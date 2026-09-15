@@ -61,11 +61,11 @@
 # PART OF THE `half` CASE.  In that case the witness reads 0x75A3C91E --- the
 # block's filler --- and writes it out; if `PROVE_ECHO` already held
 # 0x75A3C91E, a write-back that happened and one that never happened would
-# read back identically.  That is CLAUDE.md's "a memory whose only exercise
-# writes one constant tests nothing", one move along, and it is why the two
-# words of the echo beat get a third value: 0x3C7A91D6 is none of the three
-# words the witness can possibly echo (0x8A5C36E1, 0x8A5C36E0, 0x75A3C91E),
-# has four distinct bytes and none of them 0x00 or 0xFF.
+# read back identically.  That is a memory whose only exercise writes one
+# constant testing nothing, one move along, and it is why the two words of
+# the echo beat get a third value: 0x3C7A91D6 is none of the three words the
+# witness can possibly echo (0x8A5C36E1, 0x8A5C36E0, 0x75A3C91E), has four
+# distinct bytes and none of them 0x00 or 0xFF.
 #
 # WHAT EACH CASE CHECKS, BEYOND THE ONE WORD.
 #
@@ -513,8 +513,8 @@ foreach c $cases {
     # it writes PROVE_WORD there when the port comes live.  Measured, by
     # running exactly that.  Without this the run would name the write-back
     # reaching the word it read, which is a suspect that is not in the room
-    # --- CLAUDE.md's lesson about a diagnostic naming a suspect its own
-    # check will never see, met from the other side.
+    # --- the lesson about a diagnostic naming a suspect its own check will
+    # never see, met from the other side.
     set at_addr    [expr {[lindex $first 9] & 0xFFFFFFFF}]
     set wrote_word [expr {$PROVE_WORD & 0xFFFFFFFF}]
     set put_here   [expr {$put_addr == $PROVE_ADDR && \

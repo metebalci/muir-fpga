@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The serial half of the display output: the pixel clock, four 10:1
-// serialisers and four differential output buffers.
+// serializers and four differential output buffers.
 //
 // **EVERYTHING XILINX-SPECIFIC IN THE DISPLAY OUTPUT IS IN THIS FILE, AND
 // NOTHING ELSE IS.**  `rtl/plumbing/cadr_display_out.sv` and
@@ -29,8 +29,8 @@
 //
 // THE CLOCKS.  One `MMCME2_BASE` off the board's 125 MHz makes two outputs
 // from one voltage-controlled oscillator: the serial clock at five times the
-// pixel rate, and the pixel clock itself.  Ten bits leave a serialiser for
-// every pixel, and a serialiser clocked on both edges moves two bits a
+// pixel rate, and the pixel clock itself.  Ten bits leave a serializer for
+// every pixel, and a serializer clocked on both edges moves two bits a
 // period, so five times the pixel rate is exactly right and the two are
 // phase-aligned by construction, being divisions of one oscillator.
 //
@@ -48,13 +48,13 @@
 // WORKS AT ALL.**  All eight of the connector's pins are in bank 35 and,
 // measured, all eight are in clock region X1Y2, which has four `BUFIO`
 // sites.  Had Digilent spread the four pairs across two regions the
-// serialisers could not have shared one regional clock and this would be a
+// serializers could not have shared one regional clock and this would be a
 // different design.  A board that moves those pins has to check this again.
 //
 // The pixel clock stays on a `BUFG`, because everything upstream --- the
 // raster, the line buffer's read side, the encoders --- is ordinary fabric
 // and must be reachable from anywhere on the die.  So the two clocks a
-// serialiser sees arrive by different networks, which is the one thing in
+// serializer sees arrive by different networks, which is the one thing in
 // this file the fitter has to be asked about rather than assumed: the
 // answer is in `docs/display-output.md` with the report it came from.
 //
@@ -63,7 +63,7 @@
 // make it differently; `cadr_display_out.sv` carries the raster figures for
 // the same mode and the two must be set together.
 //
-// **THEY ARE DELIBERATELY NOT SPELT AS `MMCME2_BASE` SPELLS THEM**, which
+// **THEY ARE DELIBERATELY NOT SPELLED AS `MMCME2_BASE` SPELLS THEM**, which
 // was the first draft and was wrong.  `boards/arty-z7-20/vivado/tick.tcl`
 // reads the machine's tick by counting occurrences of `DIVCLK_DIVIDE` and
 // `CLKFBOUT_MULT_F` in `boards/arty-z7-20/cadr_arty.sv`, and stops the flow
@@ -73,7 +73,7 @@
 // ambiguous.  It did, at the first bitstream.  So the VCO's two numbers are
 // named for what they do to the VCO and the collision cannot recur.
 //
-// THE SERIALISER.  An `OSERDESE2` does at most 8:1 alone, so ten bits needs
+// THE SERIALIZER.  An `OSERDESE2` does at most 8:1 alone, so ten bits needs
 // a master and a slave with the slave's `SHIFTOUT` into the master's
 // `SHIFTIN` --- the cascade UG471 describes, and the reason the slave takes
 // the top two bits on `D3` and `D4` rather than on `D1` and `D2`.  Getting
@@ -81,7 +81,7 @@
 // sends nine of its ten bits and locks on nothing.
 //
 // **THE RESET IS RELEASED SYNCHRONOUSLY TO THE PIXEL CLOCK, AND BOTH
-// SERIALISERS OF A PAIR SEE THE SAME RELEASE.**  A master and a slave that
+// SERIALIZERS OF A PAIR SEE THE SAME RELEASE.**  A master and a slave that
 // come out of reset on different cycles are ten bits that never align again
 // until the next reset, which on a display is a picture that is stable,
 // wrong, and looks like a wiring error.
@@ -163,9 +163,9 @@ module cadr_hdmi_phy #(
   BUFIO u_bufio_serial (.I(serial_raw), .O(serial_clk));
   BUFG  u_bufg_pixel   (.I(pixel_raw),  .O(pclk));
 
-  // `LOCKED` is asynchronous to everything, so it is synchronised into the
+  // `LOCKED` is asynchronous to everything, so it is synchronized into the
   // pixel domain and only then released.  Three stages rather than two
-  // because this reset reaches four serialiser pairs and the cost is three
+  // because this reset reaches four serializer pairs and the cost is three
   // flip-flops.
   logic [2:0] lock_sync;
   always_ff @(posedge pclk) begin
@@ -173,7 +173,7 @@ module cadr_hdmi_phy #(
   end
   assign prst = !lock_sync[2];
 
-  // ------------------------------------------------------- the serialisers
+  // ------------------------------------------------------- the serializers
 
   logic [9:0] word [4];
   assign word[0] = tmds0;

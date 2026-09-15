@@ -46,7 +46,7 @@
 //     [4]      source address
 //     [5]      source index
 //     [6]      packet number
-//     [7]      acknowledgement
+//     [7]      acknowledgment
 //     [8..]    the data, two bytes a word, LOW byte first (§3.6)
 //     [n-3]    the cable destination, or 0 for a broadcast
 //     [n-2]    the cable source, which the transmitting hardware inserted

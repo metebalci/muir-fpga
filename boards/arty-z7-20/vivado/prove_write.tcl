@@ -35,8 +35,8 @@
 #      some places and `0xFFFFFFFF` in others and neither is evidence of
 #      anything.  Thirty-two words around the address are filled with
 #      `0x75A3C91E`, the word's own complement, so every word that should not
-#      have changed differs from `PROVE_WORD` in every bit.  CLAUDE.md's "a
-#      stimulus that poisons cannot move with the bug".
+#      have changed differs from `PROVE_WORD` in every bit: a stimulus that
+#      poisons cannot move with the bug.
 #   4. `ps7_post_config`, which is the trigger.  It sets LVL_SHFTR_EN at
 #      `0xF8000900` and clears FPGA_RST_CTRL at `0xF8000240`; the witness is
 #      held in reset until the port answers, so nothing goes out before this
@@ -318,9 +318,9 @@ if {[catch {fpga -file [file normalize $bit]} err]} {
 # run against a healthy board: `fpga -state` answers "FPGA is configured" and
 # `fpga -ir-status` a six-line decode, so a check written as `$state != 1`
 # stopped a part that had taken the configuration and printed the very lines
-# that said so.  CLAUDE.md's "a check on a program must assert the line it
-# prints", met from the other side --- the line was there and the check was
-# reading a register that did not exist.
+# that said so.  A check on a program must assert the line it prints, met
+# from the other side --- the line was there and the check was reading a
+# register that did not exist.
 set state [fpga -state]
 say "fpga -state reads: $state"
 set irstat "unavailable"

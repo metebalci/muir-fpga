@@ -10,15 +10,15 @@
 // slice is the two pages of sixteen words, the latch of each counter's high
 // half by the read of its low half, UNMAPPED for an address in neither page,
 // the sticky lost bit in STAT and bit 16 of a page-1 read meaning the
-// diagnostic cycle was not answered; and behind the diagnostic bus a modelled
+// diagnostic cycle was not answered; and behind the diagnostic bus a modeled
 // machine whose CYCLES counter advances only while RUN is set.  What it holds
 // the program to is the face's CONTRACT, and the RTL is held to the same
 // contract by `tb/cadr_console_tb.cpp`.  `feeder_test.c` says the same of
 // itself at its lines 51-62 and this is the same seam one program along.
 //
-// **THE MODELLED REGISTER BLOCK DROPS BITS 4:1 OF A CLOCK CONTROL WRITE**,
+// **THE MODELED REGISTER BLOCK DROPS BITS 4:1 OF A CLOCK CONTROL WRITE**,
 // because `cadr_spy_registers.sv` does and `cadr_microcycle.sv` has neither
-// `SSTEP` nor `SSDONE`.  So `step` cannot move the modelled machine either,
+// `SSTEP` nor `SSDONE`.  So `step` cannot move the modeled machine either,
 // and the test's job there is to hold that the program SAYS the machine did
 // not move rather than returning quietly.
 //
@@ -85,7 +85,7 @@ static void fail(int line, const char *fmt, ...)
 #define TICKS_PER_DIAGNOSTIC 52u
 
 struct model {
-	// The modelled machine.
+	// The modeled machine.
 	int run;			/* the clock control register's bit 0 */
 	uint64_t cycles, ticks;
 	uint16_t ir[3], opc, pc, ob[2], m[2], a[2], st[2];
@@ -109,7 +109,7 @@ struct model {
 	// Page 0's word 13, the light panel's button.  `boots` counts the
 	// presses as the fabric's saturating counter does; `boot_pressed` is
 	// what the last write did, so a test can say whether a wrong key was
-	// dropped.  The modelled press does what -BOOT does: it presets RUN,
+	// dropped.  The modeled press does what -BOOT does: it presets RUN,
 	// forces the PC to zero and clears PROMDISABLE.
 	unsigned boots;
 	int boot_pressed;
@@ -192,7 +192,7 @@ static void model_spy_write(struct model *m, unsigned eadr, uint16_t v)
 		// STEP registered once and twice on MCLK5A, and MACHRUN's
 		// first term is SSTEP AND -SSDONE, so the machine runs for
 		// exactly the one master clock in which the first is set and
-		// the second is not.  Modelling it as a level would let a
+		// the second is not.  Modeling it as a level would let a
 		// console that wrote 2 and never wrote 0 look correct here
 		// and run away on the board.
 		m->clk_written = v;
@@ -383,7 +383,7 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 	model_spy_write(m, word - CONS_PAGE1, (uint16_t)v);
 }
 
-// The wall clock, modelled: a real microsecond of waiting is that many ticks
+// The wall clock, modeled: a real microsecond of waiting is that many ticks
 // of the fabric.  `CONS_TICKS_PER_US` rather than a literal, so this and the
 // program's own printing cannot come apart --- 100 at the 10 ns tick, 200
 // while it was 5 ns.
@@ -669,7 +669,7 @@ static void check_step(void)
 	// **A STEP THAT CLOCKS NOTHING MUST BE NAMED.**  The fabric this
 	// console was written against did exactly that, so the words are held
 	// as well as the number: a register block that takes bit 0 and drops
-	// the rest is modelled by refusing STEP.
+	// the rest is modeled by refusing STEP.
 	struct model dead;
 	struct console dc;
 	model_init(&dead);
@@ -1348,7 +1348,7 @@ static void check_debug_cable(void)
 		}
 	}
 
-	// And the check itself can fail: a modelled fabric that takes any value
+	// And the check itself can fail: a modeled fabric that takes any value
 	// is caught by the same twelve.
 	{
 		struct model any;
@@ -1366,7 +1366,7 @@ static void check_main_address(void)
 {
 	CHECK(cons_main_byte_address(0) == 0x18000000u, "word 0 is not at the region's base");
 	CHECK(cons_main_byte_address(1) == 0x18000004u, "a word is not four bytes");
-	// The word the proving boards used, from CLAUDE.md: 0o12345671.
+	// The word the proving boards used: 0o12345671.
 	CHECK(cons_main_byte_address(012345671u) == 0x18A72EE4u,
 	      "main_byte_address(22'o12345671) is 0x%08x, wanting 0x18A72EE4 --- the address the proving "
 	      "boards wrote on the board", cons_main_byte_address(012345671u));
@@ -1432,7 +1432,7 @@ static void check_boot(void)
 	// stopping the machine.  Twelve values that are not the key, the same
 	// twelve shapes `console-resets-the-machine-on-any-value` names for
 	// word 6: zero, all ones, IDENT, UNMAPPED, the word's own read-back,
-	// the key byte-reversed, two single-bit neighbours, and the key with a
+	// the key byte-reversed, two single-bit neighbors, and the key with a
 	// byte missing either end.
 	{
 		const uint32_t wrong[] = {
@@ -1452,7 +1452,7 @@ static void check_boot(void)
 		CHECK(m.pc == 01234, "a write that is not the key moved the machine");
 	}
 
-	// And the check itself can fail: a modelled fabric that boots on any
+	// And the check itself can fail: a modeled fabric that boots on any
 	// value is caught by the same twelve.
 	{
 		struct model any;
@@ -2219,7 +2219,7 @@ int main(int argc, char **argv)
 	       "    says what it found\n"
 	       "    %u checks against a model of the slave --- four pages of sixteen, the high\n"
 	       "      halves latched by the low reads, UNMAPPED outside, bit 16 for a cycle\n"
-	       "      nothing answered --- with a modelled machine behind the diagnostic bus\n"
+	       "      nothing answered --- with a modeled machine behind the diagnostic bus\n"
 	       "    IDENT \"CONS\", and \"NONE\", UNMAPPED, zeros and ones all refused\n"
 	       "    the EMIO tally guard refuses all ones and all zeros and takes only the\n"
 	       "      marker pattern (w & 0x80008000) == 0x00008000\n"
@@ -2229,7 +2229,7 @@ int main(int argc, char **argv)
 	       "      --- RUN preset, the PC forced to zero, PROMDISABLE cleared --- on a halted\n"
 	       "      machine and on a running one alike, counted and reported with the PC and\n"
 	       "      CYCLES either side; twelve values that are not the key press nothing, and\n"
-	       "      a modelled fabric that boots on any value is caught by the same twelve\n"
+	       "      a modeled fabric that boots on any value is caught by the same twelve\n"
 	       "    trace-keys: the pid file read and the right signal sent --- SIGUSR1 for on\n"
 	       "      and SIGUSR2 for off, this process playing the daemon --- and a file\n"
 	       "      holding 0, -1, nothing or a word REFUSED with nothing signalled, since\n"
@@ -2274,7 +2274,7 @@ int main(int argc, char **argv)
 	       "      a debugger already on the connector the ask stands and the role does\n"
 	       "      not, and the line says so rather than calling this board the debugger,\n"
 	       "      which is the one thing two bits buy over one.  Twelve values that are\n"
-	       "      not a key take nothing, and a modelled fabric that connects on any value\n"
+	       "      not a key take nothing, and a modeled fabric that connects on any value\n"
 	       "      is caught by the same twelve\n"
 	       "    WHICH BUILD THE FABRIC IS, page 2's word 32: the stamp's five tree\n"
 	       "      nibbles and a sixth the format does not define, each with a commit\n"

@@ -228,7 +228,7 @@ rather than about the processor, and two things there are worth measuring.
 `!acked`, and `ub_loadmd` and `ub_acked` are two registers loaded from two
 different due times. The Unibus is where the two signals come apart, and the
 `DESTMEM` gate above says nothing about a strobe that arrives without the
-acknowledgement its `MBUSY` is waiting on. Count, on `memory_path` or on the
+acknowledgment its `MBUSY` is waiting on. Count, on `memory_path` or on the
 composed machine, how many ticks separate `n_loadmd` falling from `n_memack`
 falling, over every Unibus cycle in `busint_xbus.golden`.
 

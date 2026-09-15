@@ -114,7 +114,7 @@
 // `tb/cadr_map_boot_tb.cpp`'s shape: the whole machine from reset, nothing
 // driven nearer than `mem_req`/`mem_done`, a store keyed by `mem_addr` with
 // page 0 holding muir's zeros and every other address a poison injective in
-// it.  The acknowledgement instants come from the trace's own `ack` column.
+// it.  The acknowledgment instants come from the trace's own `ack` column.
 // `device_ack` is low: the disk controller inside the machine answers the boot
 // PROM's polls for itself.
 //
@@ -122,9 +122,9 @@
 // way.  Both are registered off the microinstruction at the boundary ---
 // `memstart <= memop`, `wrcyc <= memwr` --- so they are UPSTREAM of the map
 // and no mutation of the permission logic can move them.  That is what makes
-// it safe to key the accounting off the DUT here: CLAUDE.md's rule is that
-// keying a stimulus off the DUT is dangerous only when it hands over something
-// a correct DUT could plausibly be right about, and the instruction stream is
+// it safe to key the accounting off the DUT here: the rule is that keying a
+// stimulus off the DUT is dangerous only when it hands over something a
+// correct DUT could plausibly be right about, and the instruction stream is
 // compared against muir on the same run.
 
 #include <cstdarg>
@@ -359,7 +359,7 @@ Result Run(const Config &cfg, const char *trace_path, const char *prom_path,
     std::exit(2);
   }
 
-  // The acknowledgement instants, as `tb/cadr_map_boot_tb.cpp` takes them.
+  // The acknowledgment instants, as `tb/cadr_map_boot_tb.cpp` takes them.
   std::vector<uint64_t> ack_for;
   size_t total_rows = 0;
   {

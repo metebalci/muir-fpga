@@ -115,8 +115,8 @@
 #                     0xFFFFFFFF in others.**  Anything that would take
 #                     either as evidence a write happened is testing nothing,
 #                     which is the same trap as the control store coming up
-#                     zero in CLAUDE.md.  The two blocks sampled below sit on
-#                     opposite sides of one of those boundaries on purpose:
+#                     zero.  The two blocks sampled below sit on opposite
+#                     sides of one of those boundaries on purpose:
 #                     0x18000000 lands in a zero band and 0x19000000 in a
 #                     ones band.
 #

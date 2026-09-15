@@ -131,7 +131,7 @@ impl Trace {
         // both zero on a row whose `MD` has moved.  Draining at a finer grain
         // cannot help: the stretch is not a length to subdivide.  Measured on
         // the band: this is microcycle 2,247,076, PC `0o5414`, where the
-        // acknowledgement lands two nanoseconds into a 185 ns microcycle.
+        // acknowledgment lands two nanoseconds into a 185 ns microcycle.
         //
         // So `MD` is not read back at all.  It is taken off the **`M` bus**,
         // which muir records in the read phase that ran and which *is* `MD`

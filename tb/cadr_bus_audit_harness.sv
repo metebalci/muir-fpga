@@ -4,15 +4,15 @@
 // The machine, the bridge, the adapter and the widening, with every signal the
 // transaction audit needs brought out as a port.
 //
-// WHAT THIS EXISTS FOR.  CLAUDE.md records a board bug whose shape is now
-// established: a word in MIT's page hash table is the faulting virtual address
-// rather than a page table word, MD has been exonerated by measurement, and so
-// main memory already held the wrong word --- which means the corruption is a
-// WRITE that should not have happened.  And `cadr_microcycle.sv` loads `wdata`
-// from MD at MEMGO REGARDLESS OF DIRECTION, so on every read the whole of the
-// memory data register is standing on `mem_wdata` at the bridge.  One unwanted
-// write therefore replaces a memory word with MD, at the read's own address,
-// and nothing downstream can tell that from a legitimate store.
+// WHAT THIS EXISTS FOR.  There is a board bug whose shape is now established:
+// a word in MIT's page hash table is the faulting virtual address rather than
+// a page table word, MD has been exonerated by measurement, and so main memory
+// already held the wrong word --- which means the corruption is a WRITE that
+// should not have happened.  And `cadr_microcycle.sv` loads `wdata` from MD at
+// MEMGO REGARDLESS OF DIRECTION, so on every read the whole of the memory data
+// register is standing on `mem_wdata` at the bridge.  One unwanted write
+// therefore replaces a memory word with MD, at the read's own address, and
+// nothing downstream can tell that from a legitimate store.
 //
 // The shape that fits is an EXTRA transaction beside a correct one, and
 // nothing in this repository counted transactions per bus cycle.
@@ -39,11 +39,11 @@
 // reach.
 //
 // **WHAT IS BROUGHT OUT AND WHY EACH ONE.**  The audit's anchor is the
-// PROCESSOR'S own bus cycle and never the bridge's: CLAUDE.md's shadow-memory
-// rule says a check keyed by the thing under test moves with the bug, and the
-// bug being hunted here is a duplicated request at exactly that boundary.  So
-// the cycle is counted at `mbusy`, which `cadr_microcycle.sv` sets at MEMGO
-// and clears MFINISHD_T ticks after -MEMACK, and its direction is read from
+// PROCESSOR'S own bus cycle and never the bridge's: The shadow-memory rule
+// says a check keyed by the thing under test moves with the bug, and the bug
+// being hunted here is a duplicated request at exactly that boundary.  So the
+// cycle is counted at `mbusy`, which `cadr_microcycle.sv` sets at MEMGO and
+// clears MFINISHD_T ticks after -MEMACK, and its direction is read from
 // `wrcyc`, the 74S175 at 1C23 that holds the STARTING instruction's direction
 // for the whole cycle.  What the decode made of the address --- `nxm`,
 // `unibus`, `device` --- says whether the cycle should have reached main

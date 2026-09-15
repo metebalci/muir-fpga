@@ -25,8 +25,8 @@
 # both impossible.
 #
 # AND IT FAILS LOUDLY RATHER THAN DEFAULTING.  There is no fallback period
-# here on purpose.  A default that is right today is CLAUDE.md's
-# "two ways to invoke one file" trap rebuilt: the flow keeps working after the
+# here on purpose.  A default that is right today is the
+# two-ways-to-invoke-one-file trap rebuilt: the flow keeps working after the
 # RTL moves, and reports a design nobody meant to build.  If the parse cannot
 # find exactly one of each parameter, the run stops and names the file.
 #

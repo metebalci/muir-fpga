@@ -16,7 +16,7 @@
 //!    later, which is the 60 ns tap of the TD100 at REQLM 0C09 deskewing the
 //!    word into `MD`;
 //! 5. `-MEMACK` stays low until the cpu lifts `-MEMRQ`, which it does
-//!    `MFINISHD_NS` --- 30 ns --- after the acknowledgement.
+//!    `MFINISHD_NS` --- 30 ns --- after the acknowledgment.
 //!
 //! The responder here is `Responder::Device` and not `Responder::Memory`.
 //! That is the target's shape and not a simplification: `MemoryBoard` models
@@ -72,7 +72,7 @@ fn device_ns(cycle: u64) -> u64 {
     }
 }
 
-/// Read or write, which decides whether the acknowledgement is deskewed.
+/// Read or write, which decides whether the acknowledgment is deskewed.
 fn writing(cycle: u64) -> bool {
     cycle % 3 == 2
 }
@@ -142,7 +142,7 @@ fn wdata(cycle: u64) -> u32 {
 /// Never zero: `-MEMRQ` has to rise between cycles or the interface never
 /// sees the first one end, and on the board it does --- `MEMRQ` off the 9S42
 /// at VCTL1 1E25 is `MEMSTART AND VMAOK OR MBUSY`, and `MBUSY` clears
-/// `MFINISHD_NS` after the acknowledgement, before any new `MEMSTART`. The
+/// `MFINISHD_NS` after the acknowledgment, before any new `MEMSTART`. The
 /// gaps then put the next request at every offset against the master clock
 /// edge, which is the only place the priority logic looks at it.
 fn gap_ticks(cycle: u64) -> u64 {
@@ -181,7 +181,7 @@ fn main() {
         let now = tick * TICK_NS;
         let mclk = tick % MICROCYCLE_TICKS == 0;
 
-        // The cpu lifts -MEMRQ MFINISHD_NS after the acknowledgement, and
+        // The cpu lifts -MEMRQ MFINISHD_NS after the acknowledgment, and
         // the interface lifts -XBUS RQ with it. `rtl.rs` does exactly this.
         if let Some(at) = release_at
             && now >= at

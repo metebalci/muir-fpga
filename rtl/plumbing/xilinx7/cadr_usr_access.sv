@@ -21,12 +21,12 @@
 // ------------------------------------------------------------------ the wire
 //
 // One primitive and one wire, which is why this file is in `xilinx7/` beside
-// `cadr_probe.sv`'s scan primitive and `cadr_hdmi_phy.sv`'s serialisers: it is
+// `cadr_probe.sv`'s scan primitive and `cadr_hdmi_phy.sv`'s serializers: it is
 // the part's and not the machine's, and the promise that `rtl/machine/` is
 // plain SystemVerilog is kept by keeping this out of it.
 //
 // **NOTHING SIMULATES THIS AND THAT IS STATED RATHER THAN WORKED AROUND**, as
-// `cadr_hdmi_phy.sv` states the same for its serialisers.  The three board
+// `cadr_hdmi_phy.sv` states the same for its serializers.  The three board
 // lints elaborate it against `tb/cadr_usr_access_stub.sv`, which returns a
 // value of its own; what the console does with the thirty-two bits is checked
 // by `build/console.pass` and `build/soc.pass`, both of which drive the

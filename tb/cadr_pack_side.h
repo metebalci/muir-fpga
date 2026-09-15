@@ -19,12 +19,12 @@
 //              nowhere else, a response per burst and one only, no burst
 //              crossing 4 KB, beats aligned to their size.  A slave that only
 //              recorded the address could not see a duplicate handshake,
-//              which is CLAUDE.md's `awvalid-held-up-after-awready` lesson.
-//              Ready and valid come with a delay that either VARIES, so that a
-//              master which assumed one shape of handshake fails, or is
-//              FIXED, for the trace testbench whose rows sit on a 5 ns grid
-//              and need every move to cost the same ticks.  It can be told to
-//              answer one burst with SLVERR.
+//              which is what `awvalid-held-up-after-awready` holds.  Ready and
+//              valid come with a delay that either VARIES, so that a master
+//              which assumed one shape of handshake fails, or is FIXED, for
+//              the trace testbench whose rows sit on a 5 ns grid and need
+//              every move to cost the same ticks.  It can be told to answer
+//              one burst with SLVERR.
 //
 //   Gp0Master  Linux, on the other face: writes and reads of the pack side's
 //              registers as single-beat 32-bit AXI3 transactions, run to
@@ -218,8 +218,8 @@ struct Hp2Slave {
   void drive(Vcadr_disk_harness *dut) {
     // AW: TAKEN WHENEVER IT IS OFFERED, open burst or not.  A slave that
     // withheld ready while a burst was open could never see a master
-    // offering a second address, which is CLAUDE.md's
-    // `awvalid-held-up-after-awready` lesson; taking it and counting it is
+    // offering a second address, which is what
+    // `awvalid-held-up-after-awready` holds; taking it and counting it is
     // what makes the duplicate a failure rather than a stall.
     if (dut->hp2_awvalid) {
       if (aw_wait > 0) { --aw_wait; dut->hp2_awready = 0; }

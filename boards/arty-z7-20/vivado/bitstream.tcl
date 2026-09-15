@@ -215,7 +215,7 @@ if {![file exists $prom]} {
 # And MIT's TV sync PROM, which the display runs from power-on.  Checked here
 # for the reason the boot PROM is: `$readmemh` on a file that is not there is
 # a WARNING, and a sync program of zeros is a display that never interrupts
-# --- which synthesises, routes and writes a bitstream.
+# --- which synthesizes, routes and writes a bitstream.
 set sync_prom build/sync_prom.hex
 if {![file exists $sync_prom]} {
     puts "BIT: $sync_prom is missing; run `make $sync_prom` first"
@@ -301,8 +301,8 @@ if {$hdmi > 0} { read_xdc rtl/plumbing/xilinx7/cadr_hdmi.xdc }
 # AND THE ASSERTIONS THAT FILE CANNOT MAKE FOR ITSELF, because an XDC is a
 # restricted Tcl subset that rejects `if` and `foreach`. The first draft of
 # `cadr_hdmi.xdc` guarded itself with both and both were refused, so the guard
-# read as protection and applied to nothing --- CLAUDE.md's own loudest trap,
-# met in a new file. This is plain Tcl and the checks belong here.
+# read as protection and applied to nothing --- the loudest trap this project
+# has met, in a new file. This is plain Tcl and the checks belong here.
 #
 # What they hold: that the display's two clocks exist and are not the
 # machine's, and that the `set_max_delay` on the one bus crossing between them

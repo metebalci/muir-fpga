@@ -39,7 +39,7 @@
 // hanging.
 //
 // **THE WHOLE REQUEST CROSSES IN ONE STORE, AND THAT IS THE POINT.**  The
-// cable has no parity, no framing and no acknowledgement of the request
+// cable has no parity, no framing and no acknowledgment of the request
 // itself, and three ways of getting it wrong are undetectable by anything on
 // it.  A late address bit makes the 74S139 decode the wrong strobe, so a
 // request meant for the address latch fires `-DB NEED UB` and runs a Unibus
@@ -107,7 +107,7 @@
 // lift stops the lead, no strobe is made, `STS` says the adapter is not
 // holding the request, and muir treats the cycle as unanswered.
 //
-// **THE ANSWER IS LATCHED AT THE ACKNOWLEDGEMENT AND NOT READ AT THE LOAD.**
+// **THE ANSWER IS LATCHED AT THE ACKNOWLEDGMENT AND NOT READ AT THE LOAD.**
 // `ACK`, `DBD` and `DRV` are taken at the instant `DEBUG IN ACK` first rises
 // for the standing request and held until it is lifted.  By the time the Arm
 // gets round to loading `STS`, the fabric has run for however long the core
@@ -130,7 +130,7 @@
 // load and not only the first.  It has to live outside `DBD`, because all
 // ones there is what an open cable reads and is a perfectly legal answer.
 // The four-bit sequence crosses in `CTL` and comes back in `STS`: an
-// acknowledgement left standing from a previous transaction reads exactly
+// acknowledgment left standing from a previous transaction reads exactly
 // like an answer to the present one, and the sequence is what tells them
 // apart.
 //
@@ -225,7 +225,7 @@ module cadr_debug_window #(
 
     // --- MIT's cable, to `cadr_dbgin.sv`.  Twenty signals out and nineteen
     // --- back, every one of them a wire on the DBGIN connector: the
-    // --- acknowledgement, the sixteen data lines, and the two bits saying
+    // --- acknowledgment, the sixteen data lines, and the two bits saying
     // --- which bytes of them the debuggee is driving.  An earlier count of
     // --- eighteen left the byte enables out.
     output var logic        dbg_in_req,   // -DEBUG IN REQ asserted

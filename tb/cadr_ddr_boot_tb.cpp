@@ -31,13 +31,13 @@
 // for: real words crossing `mem_*`, a memory that answers at a delay of its
 // own, and what the machine does after muir has stopped being able to say.
 //
-// AN IDENTITY COPY AGAINST ZEROED MEMORY TESTS NOTHING.  CLAUDE.md's
-// control-store entry verbatim: the loop writes back what it read, so against
-// memory that comes up zero a bridge that never wrote reads back exactly like
-// one that did.  So page 0 is poisoned from outside, injectively in the
-// address --- and the injectivity is ASSERTED below rather than claimed,
-// because a poison with a collision in it tests less than it looks like it
-// does.
+// AN IDENTITY COPY AGAINST ZEROED MEMORY TESTS NOTHING.
+// `docs/mutations.md`'s control-store lesson verbatim: the loop writes back
+// what it read, so against memory that comes up zero a bridge that never
+// wrote reads back exactly like one that did.  So page 0 is poisoned from
+// outside, injectively in the address --- and the injectivity is ASSERTED
+// below rather than claimed, because a poison with a collision in it tests
+// less than it looks like it does.
 //
 // THE TWO CONFIGURATIONS, AND WHY THE SECOND ASSERTS THAT NOTHING HAPPENS.
 // Configuration A poisons page 0 with bit 0 clear in all 256 words.
@@ -232,9 +232,8 @@ Run Simulate(bool bit0_in_last) {
   // `sintr` was driven here and the line is DELETED rather than left: the
   // machine's -XBUS.INTR is its own now --- the display's interrupt ORed with
   // the disk's inside `cadr_machine` --- and it comes out as `sintr_o`.
-  // CLAUDE.md's `md` trap is exactly this: a driven input that becomes an
-  // output goes on being driveable, and the check goes green with the signal
-  // unchecked.
+  // The `md` trap is exactly this: a driven input that becomes an output goes
+  // on being driveable, and the check goes green with the signal unchecked.
   dut->boards = 32;
   dut->device_ack = 0;
   dut->device_rdata = 0;

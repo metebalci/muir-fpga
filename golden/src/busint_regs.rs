@@ -200,7 +200,7 @@ fn uw(page: u32, word: u32, high: bool) -> u32 {
 /// `Gen::mapped` then asserts every branch of it against what
 /// `Machine::mapped_read` and `mapped_write` themselves did, and the
 /// generator writes no trace where the two disagree --- which is the
-/// derivation and the check that CLAUDE.md says settle a number between them.
+/// derivation and the check that together settle a number.
 fn responder(m: &Machine, a: busint::MapAccess, write: bool) -> (u32, Option<u32>) {
     if a.high != write && !(write && m.write_through && a.page >= 0o10) {
         return (RESP_BUFFER, None);
@@ -582,7 +582,7 @@ impl Gen {
 /// board's `DEBUG ACK` comes back, or `None` for one that never answers.
 ///
 /// What comes out is every instant the fabric can be held to: the grant,
-/// `-UB MSYN`, the request on the cable, the acknowledgement, `-UB SSYN` and
+/// `-UB MSYN`, the request on the cable, the acknowledgment, `-UB SSYN` and
 /// `-LMACK`, with whether the interface gave up.
 struct DbgCycle {
     grant_ns: u64,
@@ -1638,7 +1638,7 @@ fn main() {
         }
         // What the fabric is held to, said as the model's own relations: with
         // no cable `-UB SSYN` is `-UB MSYN`, and with one it is the far end's
-        // acknowledgement, unless the interface gave up first.
+        // acknowledgment, unless the interface gave up first.
         if !cable {
             assert_eq!(c.ssyn_ns, c.msyn_ns, "with no cable the pull-up answers at -UB MSYN");
         } else if !c.timed_out {
@@ -1687,7 +1687,7 @@ fn main() {
     println!("#     cable is whether a board is at the far end; req is -DEBUG OUT REQ on");
     println!("#     the cable and ans the other machine's DEBUG ACK, both {NONE:x} where");
     println!("#     there was none; taken is whether the interface took that");
-    println!("#     acknowledgement, which it does not after it has given up.  Every");
+    println!("#     acknowledgment, which it does not after it has given up.  Every");
     println!("#     instant is in nanoseconds from the same power-on.");
     println!("#");
     println!("# debug_out_request_ns {}", busint::DEBUG_OUT_REQUEST_NS);

@@ -9,10 +9,11 @@
 # One that survives is a hole, and it stays in the list until the check is
 # fixed --- it is never quietly dropped.
 #
-# WHERE THE LIST CAME FROM.  CLAUDE.md's "What went wrong, and what caught it"
-# records eight bugs, every one of which passed something before it was found.
-# Those are the seed, because a check that would not catch a bug that was
-# really made is not a check.  In order, and by the name each has here:
+# WHERE THE LIST CAME FROM.  This project's record of what went wrong and what
+# caught it names eight bugs, every one of which passed something before it
+# was found.  Those are the seed, because a check that would not catch a bug
+# that was really made is not a check.  In order, and by the name each has
+# here:
 #
 #   -MEMACK on a write is combinational
 #       memack-registered-on-a-write
@@ -118,9 +119,9 @@
 # The reason to have it at all is that a target red by design cannot report a
 # fifth survivor: red for four known reasons looks exactly like red for five.
 # A recorded exception with a reason is this repository's existing idiom ---
-# CLAUDE.md's "Where the fabric parts from muir", and the testbench not
-# comparing -TPR60 while RESET is high. An unrecorded one is what nothing here
-# tolerates.
+# the places where the fabric parts from muir are written down, the testbench
+# not comparing -TPR60 while RESET is high among them. An unrecorded one is
+# what nothing here tolerates.
 
 #
 # ------------------------------------------------------------------------
@@ -394,8 +395,8 @@
 #
 # Two targets hold this one, and it takes both. `cables.pass` is lint, which
 # catches a direction or a name; `current` regenerates from muir and catches
-# anything else, which is what CLAUDE.md means by "both netlists via
-# part::pinout". The runner does the same to its copy.
+# anything else, which together is what `cadr_cables.svh` is held to: both
+# netlists via part::pinout. The runner does the same to its copy.
 #
 # These are mutations of a *generated* file, so regenerate-and-diff catches
 # them by construction. What that proves is that the committed copy cannot
@@ -457,15 +458,15 @@
 
 # ============================================================ busint, Xbus ===
 #
-# Held to muir's busint::Busint tick for tick. Three of the four bugs CLAUDE.md
-# records against the bus interface are here; the fourth is in the bridge.
+# Held to muir's busint::Busint tick for tick. Three of the four bugs on record
+# against the bus interface are here; the fourth is in the bridge.
 
 @mutation memack-registered-on-a-write
 @check busint_xbus
 @file rtl/machine/cadr_busint_xbus.sv
 @note XACK is made from XBUS ACK IN by the 74S64 at REQLM 0C11 --- a gate.
 @note Only a read goes through the 60 ns tap of the TD100 at 0C09. Registering
-@note both puts the acknowledgement a tick late on every write.
+@note both puts the acknowledgment a tick late on every write.
 @old
               || (state == GRANTED && ((write && answering) || deskewed))
 @new
@@ -532,7 +533,7 @@
 @check busint_xbus
 @file rtl/machine/cadr_busint_xbus.sv
 @note "-XBUS.ACK ... remains asserted until the -XBUS.RQ signal is removed by
-@note the master": the request stays out through the acknowledgement, and the
+@note the master": the request stays out through the acknowledgment, and the
 @note slave holds its answer against it. A master that dropped it the moment
 @note the cycle was acknowledged would break every slave that obeys the
 @note specification.
@@ -646,7 +647,7 @@
 @mutation no-loadmd-on-a-write
 @check busint_xbus
 @file rtl/machine/cadr_busint_xbus.sv
-@note On the Xbus the word lands with the acknowledgement, so -LOADMD and
+@note On the Xbus the word lands with the acknowledgment, so -LOADMD and
 @note -MEMACK coincide --- on a write as well, where MD is strobed with
 @note nothing new in it. Suppressing it on writes is the plausible-looking
 @note economy that the reference does not make.
@@ -665,7 +666,7 @@
 @check busint_xbus
 @file rtl/machine/cadr_busint_xbus.sv
 @note -MEMACK stays low until the cpu lifts -MEMRQ, MFINISHD_NS after the
-@note acknowledgement. Leaving ACKED at once makes it one tick wide.
+@note acknowledgment. Leaving ACKED at once makes it one tick wide.
 @old
           if (n_memrq) begin
             state <= IDLE;
@@ -818,7 +819,7 @@
 @note the slave's driver onto MEM<31:0>; held across cycles it hands MD a word
 @note on every cycle nothing answered, because `cadr_memory_path.sv` falls
 @note through to `memory_rdata` and -LOADMD is asserted on the NXM timer's
-@note acknowledgement too.  On the DDR board that word is the last word of
+@note acknowledgment too.  On the DDR board that word is the last word of
 @note page 0 and bit 0 of it is what the boot PROM reads as a ready disk
 @note controller, so what happened to be in main memory decided where the
 @note machine went.
@@ -833,7 +834,7 @@
 @note A check aimed at a program's incidental behavior has a shelf life.
 @note
 @note IT IS AIMED AT THE STIMULUS NOW.  `tb/cadr_memory_path_tb.cpp` asserts
-@note the rule directly --- at the acknowledgement of every cycle nothing
+@note the rule directly --- at the acknowledgment of every cycle nothing
 @note answered, MEM<31:0> must read zero --- on the 20 unanswered reads and 9
 @note unanswered writes `build/busint_xbus.golden` already carries, and the
 @note testbench fails the run if the stimulus ever stops carrying them.  The
@@ -966,7 +967,7 @@
 @note Worth not re-deriving: latching on a WRITE as well --- dropping the
 @note `!dev_write` guard --- is EQUIVALENT at this boundary, and it was
 @note filed as a hole (#5) before it was understood. -LOADMD is asserted by
-@note the interface on every acknowledgement whatever the direction, and the
+@note the interface on every acknowledgment whatever the direction, and the
 @note gate that stops a write strobing MD is the processor's, `if
 @note !self.wrcyc`, not the bridge's. So the bridge latching on a write
 @note changes nothing anything downstream can see. It is NOT the same as
@@ -1255,8 +1256,9 @@
 @note The only mutation here that the read-back property cannot catch, and the
 @note reason the testbench compares the address directly: a model memory keyed
 @note by the address the DUT presented would write consistent nonsense at the
-@note wrong beat and read it back from the same wrong beat. CLAUDE.md's shadow
-@note memory lesson, in the one place in this module where it applies.
+@note wrong beat and read it back from the same wrong beat. The rule that a
+@note shadow memory must come from the stimulus and never from the DUT, in the
+@note one place in this module where it applies.
 @old
   assign m_awaddr = {s_awaddr[31:3], 3'b000};
 @new
@@ -1381,12 +1383,12 @@
 @mutation the-addresses-share-a-factor-with-the-write-period
 @check busint_gen
 @file golden/src/busint_xbus.rs
-@note CLAUDE.md's fifth lesson, and the one bug of the eight with no mutation
-@note of the fabric: addresses visited in rotation with a write every third
-@note cycle, and an address count sharing a factor with three puts writes on
-@note one residue and reads on the others. The integrity check then passes
-@note while testing nothing, with every timing comparison green. Dropping one
-@note of the sixteen leaves fifteen, and fifteen shares three.
+@note The fifth of the eight bugs that seeded this list, and the one with no
+@note mutation of the fabric: addresses visited in rotation with a write
+@note every third cycle, and an address count sharing a factor with three
+@note puts writes on one residue and reads on the others. The integrity check
+@note then passes while testing nothing, with every timing comparison green.
+@note Dropping one of the sixteen leaves fifteen, and fifteen shares three.
 @old
     0o777,
 @new
@@ -1767,7 +1769,7 @@
 @note to a testbench placing -MEMACK a tick late, and that correcting the
 @note placement would make `- 2` exact. **That has been measured and it is
 @note false.** The placement really was a tick late, on every write, and
-@note correcting it collapses the acknowledgement error to sub-tick; `- 2` is
+@note correcting it collapses the acknowledgment error to sub-tick; `- 2` is
 @note still five nanoseconds long on all 11,301 reads either way, and `- 3`
 @note is exact either way. The name went with the story.
 @note
@@ -2025,7 +2027,7 @@
 @note `cadr_busint_xbus.sv` has `assign n_memack = !acked;` and `assign
 @note n_loadmd = !acked;`, the same expression twice. They coincide on the
 @note Xbus by construction, and only the Unibus tells them apart, where the
-@note word comes before the acknowledgement. Until that path exists there is
+@note word comes before the acknowledgment. Until that path exists there is
 @note no mutation of the crossing to write.
 @note
 @note IT SURVIVED ONCE AND DOES NOT NOW, and the record is kept for what
@@ -2047,7 +2049,7 @@
 @mutation the-mbusy-tap-is-charged-at-the-full-delay
 @check microcycle
 @file rtl/machine/cadr_microcycle.sv
-@note The other of the two countdowns off the acknowledgement, and the one
+@note The other of the two countdowns off the acknowledgment, and the one
 @note that had no mutation against it while `-RDFINISH` did. `MBUSY` clears
 @note on `-MFINISHD`, the 30 ns tap of the TD50 at VCTL1 1D23 --- a number
 @note read off the part, where RD_FINISH_T is a number chosen. Both deserve
@@ -2201,9 +2203,9 @@
 @note processor's read-finish counters. Holding an instant is only the same
 @note arithmetic if the sum is still made: dropping it acknowledges the
 @note cycle where the MD strobe belongs and strobes MD where the
-@note acknowledgement belongs, fifty nanoseconds apart the wrong way --- which
+@note acknowledgment belongs, fifty nanoseconds apart the wrong way --- which
 @note is exactly the distinction the comment above them draws: "the word
-@note lands 50 ns *before* the acknowledgement, where an Xbus word lands
+@note lands 50 ns *before* the acknowledgment, where an Xbus word lands
 @note with it". Written as an exchange rather than as dropping a sum,
 @note because dropping one leaves its parameter unread and lint rejects the
 @note mutation before the check ever sees it --- twice, on the way to this.
@@ -2223,13 +2225,13 @@
 @note `build/unibus.pass` uses one.  It runs the machine's own Unibus cycle at
 @note both slaves and compares both instants against `-UB SSYN` on every
 @note answered cycle --- `unibus_strobe_ns` out of the trace's own header for
-@note the MD strobe, `busint::UNIBUS_ACK_NS` for the acknowledgement --- and
+@note the MD strobe, `busint::UNIBUS_ACK_NS` for the acknowledgment --- and
 @note it is caught on the first one, at "-MEMACK, in ticks after -UB SSYN is
 @note 20, wanting 30".  It stays `@check unibus` and carries no `@hole`.
 @note
 @note The anchor follows the line: both instants are held one tick early now,
 @note because the comparisons that read them are registers rather than gates
-@note on the acknowledgement's path. Exchanging them is unchanged by that ---
+@note on the acknowledgment's path. Exchanging them is unchanged by that ---
 @note the `- 1` is on both.
 @old
             ub_ack_at   <= elapsed + 10'(UB_ACK_T) - 10'd1;
@@ -2296,7 +2298,7 @@
 #                                        moves a write from DA to CLP and a
 #                                        read of nothing to a read of nothing
 #   START                                stored into never
-#   an acknowledgement a tick LATE ON A
+#   an acknowledgment a tick LATE ON A
 #   WRITE                                invisible: 5,650 device writes
 #                                        acknowledged a tick late is exactly
 #                                        what this check passed with while the
@@ -2402,9 +2404,9 @@
 @note later, and MD takes zero where muir has 0x2321.
 @note
 @note Written as an XOR rather than as a different constant so that every bit
-@note of `phys` stays read: CLAUDE.md's rule that lint catches a mutation at
-@note bit granularity, and that where lint does the catching the check never
-@note sees it.
+@note of `phys` stays read: `docs/mutations.md`'s rule that lint must not do
+@note the catching: lint catches a mutation at bit granularity, and where
+@note lint does the catching the check never sees it.
 @old
   assign mine_c  = sel && (phys[21:2] == REGS_PAGE);
 @new
@@ -2423,7 +2425,7 @@
 @note
 @note A READ IS WHAT CATCHES THIS AND A WRITE IS NOT, which is worth stating
 @note so the next person does not read the survivor list wrongly. A read's
-@note acknowledgement ends a hang, and `RD_FINISH_T` counts from it, so a
+@note acknowledgment ends a hang, and `RD_FINISH_T` counts from it, so a
 @note tick moves the microcycle's length and the length check has no
 @note tolerance. A write's does not: this same check passed for months with
 @note all 5,650 device writes acknowledged a tick late by the testbench that
@@ -2447,7 +2449,7 @@
 @check machine
 @file rtl/machine/cadr_microcycle.sv
 @note "-LOADMD equals MEMACK and RDCYC". The interface asserts -LOADMD on
-@note every acknowledgement, read or write --- `Busint` and
+@note every acknowledgment, read or write --- `Busint` and
 @note `cadr_busint_xbus.sv` both do --- and it is this gate, on the
 @note processor's side where MIT put it, that keeps a write from strobing MD.
 @note
@@ -2526,11 +2528,11 @@
 @note addresses this slave's write as well as its read, so a bijection
 @note applied to both relabels the storage consistently --- written to the
 @note wrong entry, read from the same wrong entry --- and nothing downstream
-@note can tell.  CLAUDE.md records that as the second class of equivalent
-@note mutant found in this project, one step from being filed as a hole
-@note against a check doing its job.  Here the memory is the testbench's and
-@note the address sequence is known from `promh.text` before the machine
-@note runs, so the read alone is what has to move.
+@note can tell.  That is the second class of equivalent mutant found in this
+@note project, one step from being filed as a hole against a check doing its
+@note job.  Here the memory is the testbench's and the address sequence is
+@note known from `promh.text` before the machine runs, so the read alone is
+@note what has to move.
 @note
 @note Written as a rotation rather than a truncation so that every bit of
 @note `phys` stays used and lint does not do the catching.
@@ -2664,7 +2666,8 @@
 #   anything, so a counter that wrapped would be identical here. The
 #   saturation is for a machine that runs microcode, where a wrapped counter
 #   reading a small number would be a false negative of exactly the kind this
-#   module exists to rule out, and CLAUDE.md's `-XBUS.RQ` entry is the same
+#   module exists to rule out, and the ten-bit counter that wrapped and
+#   dropped `-XBUS.RQ` for sixteen ticks, in `docs/mutations.md`, is the same
 #   fact.
 #
 # AND THE PACKING IS MUTATED TOO, because it moved into this module from
@@ -2683,9 +2686,10 @@
 @note
 @note Written as an OR rather than as a replacement so that `bvalid` and
 @note `bready` stay read: replacing the term outright leaves both unused and
-@note Verilator does the catching, which is CLAUDE.md's rule about lint at
-@note bit granularity. It is the same bug either way --- an event the fabric
-@note generates by itself increments a counter of what came back.
+@note Verilator does the catching, which is `docs/mutations.md`'s rule that
+@note lint must not do the catching, at bit granularity. It is the same bug
+@note either way --- an event the fabric generates by itself increments a
+@note counter of what came back.
 @note
 @note DEAD is what catches it, at "the tally counted 256 writes answered on a
 @note port that answers nothing"; LIVE catches it too, at 512 for 256.
@@ -2929,11 +2933,10 @@
 # `rtl/plumbing/cadr_prove.sv` is what goes on the board ahead of the machine, and it is
 # the first thing here whose OTHER half is not fabric at all: a debugger
 # reading and writing DDR from outside the design.  That is the whole reason
-# the two steps exist --- CLAUDE.md's shadow-memory lesson says a model taken
-# from the DUT moves with the bug, and an observer on the far side of the
-# processing system cannot move at all --- and it is also why the check here
-# has to bite.  A witness that is quietly wrong reports a memory fault that
-# is its own.
+# the two steps exist --- the shadow-memory rule says a model taken from the
+# DUT moves with the bug, and an observer on the far side of the processing
+# system cannot move at all --- and it is also why the check here has to bite.
+# A witness that is quietly wrong reports a memory fault that is its own.
 #
 # WHAT THE CHECK IS.  `tb/cadr_prove_tb.cpp` runs the harness --- the state
 # machine with `cadr_axi_master` and `cadr_axi_widen` under it, wired as
@@ -3015,7 +3018,8 @@
 @note which is a different fault from a wrong word and must not light the
 @note same lamp. Inverting the term rather than deleting it, because deleting
 @note leaves `mem_error` unread and Verilator rejects the mutation instead of
-@note the check catching it --- CLAUDE.md's bit-granularity lesson.
+@note the check catching it --- `docs/mutations.md`'s rule that lint must not
+@note do the catching.
 @note
 @note On the board this is the worst kind of wrong: step two would show green
 @note for a write the memory controller never accepted, and the next step
@@ -3045,8 +3049,8 @@
 @note a verdict on the record and never on the check. Mixed in instead, both
 @note stay read and the verdict still depends on an input it must not: with
 @note the testbench scribbling the complement over `word`, `want ^ word` is
-@note all ones and no read can match. CLAUDE.md's bit-granularity lesson, met
-@note for the third time in this list.
+@note all ones and no read can match. `docs/mutations.md`'s rule that lint
+@note must not do the catching, met for the third time in this list.
 @note
 @note It moved from `matched` to `read_agreed` when the write-back arrived,
 @note because the read is no longer the last thing that happens in a sequence
@@ -3093,8 +3097,9 @@
 @note
 @note It is the mutation the neighbor check exists for. A testbench that only
 @note read back the address it wrote would follow the word into the wrong
-@note lane and call it a pass --- which is CLAUDE.md's shadow memory, in the
-@note one place in this module where it could happen.
+@note lane and call it a pass --- which is the shadow-memory rule, a model
+@note keyed off the DUT moving with the bug, in the one place in this module
+@note where it could happen.
 @old
             mem_addr    <= addr;
 @new
@@ -3133,10 +3138,11 @@
 @note
 @note Written as an XOR and not as the splice it is. The plain
 @note `{mem_addr[31:3], echo[2:0]}` says exactly what this means and leaves
-@note `echo[31:3]` unread, which Verilator rejects --- CLAUDE.md's
-@note bit-granularity lesson for the fourth time in this list, and the fourth
-@note time it has cost a draft. The XOR is the same value with every bit of
-@note `echo` still read: the high bits cancel and the low three come through.
+@note `echo[31:3]` unread, which Verilator rejects --- `docs/mutations.md`'s
+@note rule that lint must not do the catching, for the fourth time in this
+@note list, and the fourth time it has cost a draft. The XOR is the same
+@note value with every bit of `echo` still read: the high bits cancel and the
+@note low three come through.
 @note
 @note Caught two ways --- the write-back's `awaddr` is not the second
 @note address's beat, and the beat the read came out of no longer holds what
@@ -3181,12 +3187,12 @@
 # WHAT IS NOT HERE, and why. The mutation that matters most --- dropping the
 # tick of holding, so the sample is the microcycle *after* the one it claims
 # --- cannot be written as a record. Removing the hold leaves `data` unread
-# and Verilator rejects it, which is the bit-granularity lesson in CLAUDE.md
-# again: lint catches the mutation instead of the check. It was measured by
-# hand instead, by deleting the register and its assignment together, and it
-# fails at microcycle 3 on `pc`, `ir`, `nop` and `lpc` --- 21 mismatches in
-# 110 comparisons. The two below reach the same property from the sides lint
-# will allow.
+# and Verilator rejects it, which is `docs/mutations.md`'s rule that lint
+# must not do the catching, again: lint catches the mutation instead of the
+# check. It was measured by hand instead, by deleting the register and its
+# assignment together, and it fails at microcycle 3 on `pc`, `ir`, `nop` and
+# `lpc` --- 21 mismatches in 110 comparisons. The two below reach the same
+# property from the sides lint will allow.
 
 @mutation the-sample-carries-the-next-microcycles-number
 @check probe
@@ -3284,9 +3290,9 @@
 # THE REASONING BELOW WAS TRUE AT ace4131, which is where `boards/arty-z7-20/vivado/probe.tcl`
 # reached its present shape and where the chain was measured on silicon: both
 # IDCODEs exact, the part at the TDO end, IR total 10, first bit out least
-# significant, DONE high. CLAUDE.md's rule is that `@old`/`@new` rots loudly
-# and prose rots silently, so the commit is named rather than the reasoning
-# left to read as true for ever.
+# significant, DONE high. `docs/mutations.md`'s rule is that a record's text
+# rots loudly and its reasoning rots silently, so the commit is named rather
+# than the reasoning left to read as true for ever.
 #
 # ONE THING IS NOT HERE. Restoring the IR-padding sweep the fix deleted is
 # the obvious extra record and is not written: the sweep would find a
@@ -3429,7 +3435,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # `ddr_boot` and `probe` --- measured, not reasoned.  It cannot be told apart:
 # muir gates both `<11>` and the transfer lossage with not-active anyway, and
 # the board's flop is not set until the timer has run out, which IS not-active.
-# CLAUDE.md named it as a candidate before this slice was written.
+# It was named as a candidate equivalence before this slice was written.
 #
 # And `-RESET ERR` clearing BUSY as well as the error flops also survives, for
 # a reason about the PROGRAM rather than about the structure: every store into
@@ -3574,14 +3580,15 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note HEADER SAYS SO: clearing BUSY here as well survives, because every
 @note command store the trace makes while the sequencer is hung is code 0o16,
 @note which clears BUSY on purpose.  This is the live mutation that tests the
-@note same property, which is the rule CLAUDE.md sets --- replace an
-@note equivalent mutant with the smallest magnitude that is caught.
-@note **THE ANCHOR MOVED AT 69a2246**: the store into register 0 gained the
-@note seven other transfer error flops and the Reset-0o16 arm, and the block
-@note re-aligned its `<=`.  **And again with the pack side**, when the store
-@note was held two ticks and the word became `st_wdata`, the copy taken at
-@note the request.  The mutation is unchanged --- `-RESET ERR` given a reach
-@note into the drive's own two flags that it does not have.
+@note same property, which is `docs/mutations.md`'s rule --- where a sweep of
+@note the magnitude shows an equivalence, the record keeps the smallest
+@note magnitude that is caught.  **THE ANCHOR MOVED AT 69a2246**: the store
+@note into register 0 gained the seven other transfer error flops and the
+@note Reset-0o16 arm, and the block re-aligned its `<=`.  **And again with
+@note the pack side**, when the store was held two ticks and the word became
+@note `st_wdata`, the copy taken at the request.  The mutation is unchanged
+@note --- `-RESET ERR` given a reach into the drive's own two flags that it
+@note does not have.
 @old
           2'd0: begin
             cmd       <= st_wdata;
@@ -3708,15 +3715,15 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note trace has one block whose burst is five bits wide and locatable and one
 @note twenty wide and not, and register 3 says where the first one is.
 @note
-@note A checkword computed over the wrong words is the shape CLAUDE.md's
-@note control-store entry warns about read the other way round: a block that
-@note was never checked reads back exactly like one that was, unless the
-@note checkword is over exactly the bytes the board writes it over.
-@note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the last-word
-@note test is a register, `ch_i_last`, made every tick and read by every
-@note state that walks a page --- so this now stops every move a word short
-@note as well as the code.  The Read's data field is still checked before
-@note anything moves, so it is still caught there first.
+@note A checkword computed over the wrong words is `docs/mutations.md`'s
+@note control-store lesson read the other way round: a block that was never
+@note checked reads back exactly like one that was, unless the checkword is
+@note over exactly the bytes the board writes it over.  **THE ANCHOR MOVED
+@note WITH THE TIMING WORK AFTER ef9dee9**: the last-word test is a
+@note register, `ch_i_last`, made every tick and read by every state that
+@note walks a page --- so this now stops every move a word short as well as
+@note the code.  The Read's data field is still checked before anything
+@note moves, so it is still caught there first.
 @old
       ch_i_last     <= (ch_i == 9'(BLOCK_WORDS-1));
 @new
@@ -3850,8 +3857,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note point of having both: this is caught at the HEADER COMPARE, before a
 @note word has moved, because the header is indexed by the same slot number
 @note the data is.  Two mutations of one memory's addressing that report the
-@note same failure would be the stale-artifact trap CLAUDE.md records, so
-@note they are written to report different ones.
+@note same failure would be the stale-artifact trap the runner's own
+@note self-test plants against --- two generator mutations must report two
+@note different failures --- so they are written to report different ones.
 @note **THE ANCHOR MOVED WITH THE TIMING WORK AFTER ef9dee9**: the header is
 @note read into `hdr_q` by `ch_slot` a tick ahead of the compare, so the slot
 @note is rotated at that read.  Still caught at the header compare, before a
@@ -3885,7 +3893,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note 488 the mutation is a real equivalence on anything this format lays
 @note down, and no stimulus made of well-formed sectors could tell 64 from
 @note 63.  This is written at eight, which is inside every run the decoy
-@note leaves, and CLAUDE.md's rule applies: where a sweep shows an
+@note leaves, and `docs/mutations.md`'s rule applies: where a sweep shows an
 @note equivalence, the record is the smallest magnitude that is caught.
 @note
 @note Written as a subtraction from `F_ONES` rather than as a bare 8 so that
@@ -4007,8 +4015,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # to see the pack side and not merely to build it.
 #
 # EVERY RECORD IS CAUGHT ON ITS OWN LINE, and the lines are named in the notes:
-# two mutations of one master reported by one message would be CLAUDE.md's
-# stale-artifact trap --- one verdict counted twice.
+# two mutations of one master reported by one message would be the
+# stale-artifact trap the runner's own self-test plants against --- one verdict
+# counted twice.
 
 @mutation pack-stores-a-read-beat-two-words-along
 @check disk_pack
@@ -4045,14 +4054,15 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `cadr_axi_widen.sv`'s check exists for, one port along, and the one a
 @note fetch-then-write-back round trip could not see if the write side made
 @note it too.  Mixed in rather than substituted so that both halves of the
-@note beat stay read and lint has nothing to say: CLAUDE.md's "the address
-@note mixed into the word" idiom.  The write side is untouched here and the
-@note block is read back by the CADR.  Caught at the header CHECKWORD: word
-@note 257 of the record is the high half of beat 128 and comes in mixed with
-@note the header, so it no longer checks the header and the Read stops with
-@note `<17>` --- "an error bit after a Read of a fetched block is 0x22001".
-@note A different bit from the record above and from the one below, which
-@note is what tells the three apart on one message.
+@note beat stay read and lint has nothing to say: the
+@note address-mixed-into-the-word idiom this list uses for exactly that.
+@note The write side is untouched here and the block is read back by the
+@note CADR.  Caught at the header CHECKWORD: word 257 of the record is the
+@note high half of beat 128 and comes in mixed with the header, so it no
+@note longer checks the header and the Read stops with `<17>` --- "an error
+@note bit after a Read of a fetched block is 0x22001". A different bit from
+@note the record above and from the one below, which is what tells the three
+@note apart on one message.
 @old
               hi_word    <= rb_data[63:32];
 @new
@@ -4145,10 +4155,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @file rtl/plumbing/cadr_disk_pack.sv
 @note AWVALID held up into the first data beat's state offers the burst's
 @note address a second time after it was taken, and a slave that only
-@note recorded the address could not tell --- CLAUDE.md's
-@note `awvalid-held-up-after-awready`.  `tb/cadr_pack_side.h`'s slave takes
-@note every address it is offered, open burst or not, and counts: caught at
-@note "a second write address before the response".
+@note recorded the address could not tell --- the fault
+@note `awvalid-held-up-after-awready` holds one port along.
+@note `tb/cadr_pack_side.h`'s slave takes every address it is offered, open
+@note burst or not, and counts: caught at "a second write address before
+@note the response".
 @old
   assign m_awvalid = (pst == P_AW);
 @new
@@ -4319,11 +4330,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note **AND THE FULL RUN IS WHAT FOUND IT**, not the slice's own records:
 @note the slice that moved the lamps ran every record aimed at every file it
-@note touched, and this was the one that came back SURVIVED.  CLAUDE.md's
-@note entry about a check getting weaker being visible only by comparison,
-@note met once more --- with the difference that here the design changed
-@note under the record rather than a tolerance widening, so the fix IS the
-@note record and not the check.
+@note touched, and this was the one that came back SURVIVED.
+@note `docs/mutations.md`'s point that a weakened check is visible only by
+@note comparison, met once more --- with the difference that here the design
+@note changed under the record rather than a tolerance widening, so the fix
+@note IS the record and not the check.
 @old
                    req_valid, req_tag, req_post, ch_waiting, ch_slot,
 @new
@@ -4840,7 +4851,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # `rtl/machine/cadr_tv.sv` against `build/tv.golden`, through `cadr_memory_path`.  The
 # five the slice was asked for --- the frame a tick off, the enable ignored,
 # the window's base a word off, a bit lane of the bitmap swapped, the
-# acknowledgement a tick late --- and the rest of the register face, the
+# acknowledgment a tick late --- and the rest of the register face, the
 # flag's three sources and their order, the sync RAM, the window's two edges
 # and the joins in the path.  Every one is caught on a line of its own.
 
@@ -5059,9 +5070,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @file rtl/machine/cadr_tv.sv
 @note The pointer's top bit inverted on the READ alone.  Not on both: a
 @note bijection on an address that indexes the write as well as the read
-@note relabels the storage consistently and is an equivalence, which
-@note CLAUDE.md records having filed as nearly a hole once.  Broken one way
-@note only, the byte written at 0xFFF reads back as the one at 0x7FF.
+@note relabels the storage consistently and is an equivalence, which was
+@note one step from being filed as a hole here once.  Broken one way only,
+@note the byte written at 0xFFF reads back as the one at 0x7FF.
 @old
     ram_face <= sync_ram[pointer];
 @new
@@ -5562,9 +5573,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the check counts the ticks the line is up.  ONE TICK SHORT rather than
 @note some round number, because a sweep here is trivial --- the check asserts
 @note the number, so the smallest magnitude that can be caught is one, and
-@note CLAUDE.md's rule is to take that one.  `disk-seek-settle-a-tick-short`
-@note is the same shape one bus along.  Caught at "the ticks the machine's
-@note reset was held for is 0x3f, the reference says 0x40".
+@note `docs/mutations.md`'s rule is to take that one.
+@note `disk-seek-settle-a-tick-short` is the same shape one bus along.  Caught
+@note at "the ticks the machine's reset was held for is 0x3f, the reference
+@note says 0x40".
 @note
 @note **THE TRAILING COMMA IS PART OF THE ANCHOR**, because `RESET_T` stopped
 @note being the last parameter when the light panel's button was added after
@@ -6185,9 +6197,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note bytes and fails at "the last memory address after a Read All is
 @note 001003ff, wanting 001013ff".  So the check that sees it is not the
 @note trace's lists but the testbench's, which is worth knowing before
-@note somebody quotes the trace at it.  CLAUDE.md's own entry: prose about
-@note why a mutation is the right one ages faster than the mutation, and
-@note this one was wrong the day it was written.
+@note somebody quotes the trace at it.  `docs/mutations.md`'s own point: a
+@note record's reasoning ages faster than its text, and this one was wrong
+@note the day it was written.
 @note
 @note `ch_moved` is the count of pages already moved and is incremented in
 @note the same tick, so `>= 3` stops the walk once four have gone.
@@ -6680,7 +6692,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation iob-the-write-lands-at-the-register-strobe
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note **muir lands a Unibus write to this card at the acknowledgement**, not
+@note **muir lands a Unibus write to this card at the acknowledgment**, not
 @note at the card's own load pulse: `busint.rs`'s `Responder::Unibus` arm makes
 @note `answered` equal to `ssyn` for every register here, where
 @note `Responder::Interface` --- the diagnostic block --- lands at
@@ -6918,19 +6930,18 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # cycles", and that one cycle is MIT's boot PROM WRITING the mode register.
 # `busint_xbus.golden`'s addresses are main memory and empty Xbus space and it
 # runs no Unibus cycle at all.  So `cadr_busint_xbus.sv`'s MD strobe --- the
-# one instant on either bus where the word and the acknowledgement come apart
+# one instant on either bus where the word and the acknowledgment come apart
 # --- had never carried a word anybody compared, and the records below are the
 # first thing that holds it.
 #
 # **AND THERE IS NO DECODE IN FRONT OF THE TWO SLAVES, WHICH IS WHAT MAKES
-# THESE RECORDS LIVE.**  CLAUDE.md records the display's
-# `tv-answers-its-neighbours` surviving because it honored a guard that was
-# exhaustively checked elsewhere: a mutation downstream of such a guard tests
-# the guard and not the thing.  Here each slave matches the whole address for
-# itself, as a board on the backplane does, so a match widened in either of
-# them is visible --- and `ub_ssyn_by` says which slave pulled the line, so two
-# answering at once is measured rather than inferred from the word that came
-# back.
+# THESE RECORDS LIVE.**  The display's `tv-answers-its-neighbours` survived
+# because it honored a guard that was exhaustively checked elsewhere: a
+# mutation downstream of such a guard tests the guard and not the thing.  Here
+# each slave matches the whole address for itself, as a board on the backplane
+# does, so a match widened in either of them is visible --- and `ub_ssyn_by`
+# says which slave pulled the line, so two answering at once is measured rather
+# than inferred from the word that came back.
 
 @mutation unibus-the-word-comes-from-the-other-slave
 @check unibus
@@ -6969,7 +6980,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note Written as an AND rather than as a dropped operand deliberately:
 @note dropping one leaves the other slave's answer read nowhere and Verilator
 @note stops the build, which is lint doing the catching instead of the check.
-@note CLAUDE.md's rule about bit granularity, one bus along.
+@note `docs/mutations.md`'s rule that lint must not do the catching, one bus
+@note along.
 @note
 @note **Three slaves pull it now**, `cadr_busint_regs.sv` having joined them,
 @note and the AND is over all three for the same reason: no address is any
@@ -7068,9 +7080,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @check unibus
 @file rtl/machine/cadr_busint_xbus.sv
 @note **"MSYN OUT drops at SSYN T100 and -LOADMD rises with it, so the word
-@note lands 50 ns BEFORE the acknowledgement, where an Xbus word lands with
+@note lands 50 ns BEFORE the acknowledgment, where an Xbus word lands with
 @note it."**  That is the one place on either bus where the word and the
-@note acknowledgement come apart, and it is what `n_loadmd` is a port of its
+@note acknowledgment come apart, and it is what `n_loadmd` is a port of its
 @note own for.  Moved to 150, the two coincide and the Unibus stops being
 @note different from the Xbus.
 @note
@@ -7094,12 +7106,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # poison injective in it, so a read the map sends a page wide takes a word muir
 # never had and MD says so on the microcycle it happens.
 #
-# THE PROPERTY IS LIVE IN THE BOOT PROM, measured against muir and against
-# CLAUDE.md, which said it was not: `SET-UP-FOUR-PAGES` writes four
-# second-level entries at microcycles 536,290, 536,293, 536,297 and 536,299,
-# each from ZERO --- no access --- to MAP-ACCESS-CODE 3, and the first bus
-# cycle is at 536,302.  Twelve microcycles after the first and three after the
-# last.  `PDL-BUFFER-REFILL`'s `((VMA-WRITE-MAP) IOR M-PGF-TEM ...)` is seven
+# THE PROPERTY IS LIVE IN THE BOOT PROM, measured against muir and contrary to
+# what had been written down: `SET-UP-FOUR-PAGES` writes four second-level
+# entries at microcycles 536,290, 536,293, 536,297 and 536,299, each from ZERO
+# --- no access --- to MAP-ACCESS-CODE 3, and the first bus cycle is at
+# 536,302.  Twelve microcycles after the first and three after the last.
+# `PDL-BUFFER-REFILL`'s `((VMA-WRITE-MAP) IOR M-PGF-TEM ...)` is seven
 # microcycles ahead of `P-R-1`, which is where the board halted on 2026-09-10;
 # this is the same shape on a program that needs no pack.
 #
@@ -7152,9 +7164,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note decode calls it Xbus space with nothing in it, the cycle ends on the
 @note 4.25 us NXM timer, and `machine.pass` fails on MD and on the
 @note microcycle's length rather than on the address.  Same catch, wrong
-@note reason, which CLAUDE.md's `probe.tcl` entry says is worth writing down.
-@note `the-physical-page-is-one-too-high` below is the same family kept
-@note INSIDE main memory, and that one only this check sees.
+@note reason, which is worth writing down: an exit code cannot tell two
+@note failures apart, so the same catch for the wrong reason is a check that
+@note has stopped working.  `the-physical-page-is-one-too-high` below is the
+@note same family kept INSIDE main memory, and that one only this check sees.
 @note
 @note **A STALER `lvmo_eff` IS AN EQUIVALENCE AND IS NOT FILED AS A HOLE.**
 @note Dropping the 74S373's transparency --- `assign lvmo_eff = lvmo;` ---
@@ -7182,10 +7195,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note **WRITTEN AS AN AND RATHER THAN AS A SUBSTITUTION, and lint is why.**
 @note `assign pfr = lvmo_eff[13];` leaves bit 23 read nowhere and Verilator
-@note stops the build --- CLAUDE.md's bit-granularity lesson, met again: lint
-@note would be doing the catching and the check would not.  Keeping bit 23 in
-@note the expression makes the permission depend on a bit of the page half
-@note without taking any bit out of use.
+@note stops the build --- `docs/mutations.md`'s rule that lint must not do
+@note the catching, met again: lint would be doing the catching and the check
+@note would not.  Keeping bit 23 in the expression makes the permission
+@note depend on a bit of the page half without taking any bit out of use.
 @note
 @note **THE SWAP OF THE TWO ACCESS BITS IS AN EQUIVALENCE ON THIS PROGRAM AND
 @note IS NOT FILED AS A HOLE.**  `pfr` from bit 22 with `pfw` from bit 23,
@@ -7247,8 +7260,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note address.
 @note
 @note Written as an XOR of one bit rather than as a dropped bit, which is
-@note CLAUDE.md's rule: dropping it leaves `phys<8>` read nowhere and lint
-@note does the catching instead of the check.
+@note `docs/mutations.md`'s rule that lint must not do the catching:
+@note dropping it leaves `phys<8>` read nowhere and lint does the catching
+@note instead of the check.
 @old
     return MAIN_BASE + (32'(phys) << 2);
 @new
@@ -7367,20 +7381,20 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 #   - **The held match.**  `sel`, `in_int`, `in_map`, `in_win`, `which`,
 #     `mapk`, `mp_page`, `mp_word`, `mp_high` and `wr` are registers off
 #     `ub_addr` because a combinational match carries the map's ripple into
-#     the countdowns' clock enables --- the disk controller's -6.195 ns, which
-#     CLAUDE.md records.  Computing them instead is a TIMING fault and not a
-#     behavioral one: the earliest answer is fifty ticks after `-UB MSYN`,
-#     the earliest thing the block does at all is the Xbus request at twenty,
-#     and the address is up before the strobe in every master this repository
-#     has.  **Measured, not reasoned**: the six that existed before the window
-#     landed, rewritten as `assign`s off `ub_addr`, passed `busint_regs` over
-#     all 38,319,186 of its ticks then and `unibus` over all 13,192,237 of
-#     its, with both summaries byte-identical to the held design's.  So it is
-#     an equivalence and is recorded here rather than filed as a hole.  **That
-#     measurement was made at `8e9e94e`, both tick counts have moved since ---
-#     `busint_regs` runs 57,139,860 now --- and the four fields the window
-#     added have not been measured the same way**, which is the citation
-#     CLAUDE.md asks for rather than a claim that they were.
+#     the countdowns' clock enables --- the disk controller's -6.195 ns.
+#     Computing them instead is a TIMING fault and not a behavioral one: the
+#     earliest answer is fifty ticks after `-UB MSYN`, the earliest thing the
+#     block does at all is the Xbus request at twenty, and the address is up
+#     before the strobe in every master this repository has.  **Measured, not
+#     reasoned**: the six that existed before the window landed, rewritten as
+#     `assign`s off `ub_addr`, passed `busint_regs` over all 38,319,186 of its
+#     ticks then and `unibus` over all 13,192,237 of its, with both summaries
+#     byte-identical to the held design's.  So it is an equivalence and is
+#     recorded here rather than filed as a hole.  **That measurement was made
+#     at `8e9e94e`, both tick counts have moved since --- `busint_regs` runs
+#     57,139,860 now --- and the four fields the window added have not been
+#     measured the same way**, which is the citation a record's reasoning owes
+#     rather than a claim that they were.
 #   - **NOTHING ABOUT `MD` ITSELF.**  `Responder::MapMd` is built, and this
 #     module's half of it --- the decode with `UBXRQ` in the gate, the
 #     thirty-two lines and `-LOADMD ACK`'s instant --- has records below.  The
@@ -7526,13 +7540,13 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation busint-regs-the-map-is-read-a-register-along
 @check busint_regs
 @file rtl/machine/cadr_busint_regs.sv
-@note **The map's READ index rotated, and the read alone.**  CLAUDE.md's
-@note second class of equivalent mutant is exactly this memory: `mapk`
-@note addresses the write as well as the read, so a bijection on it relabels
-@note the storage consistently --- written to the wrong entry, read from the
-@note same wrong entry --- and survives a check that only ever goes through
-@note the bus.  The map's two map mutations rotate at the READ for the same
-@note reason the level-1 and level-2 map's do.
+@note **The map's READ index rotated, and the read alone.**  The second
+@note class of equivalent mutant found in this project is exactly this
+@note memory: `mapk` addresses the write as well as the read, so a bijection
+@note on it relabels the storage consistently --- written to the wrong
+@note entry, read from the same wrong entry --- and survives a check that
+@note only ever goes through the bus.  The map's two map mutations rotate at
+@note the READ for the same reason the level-1 and level-2 map's do.
 @note
 @note Caught at the aliasing pass, where each of the thirty-one addresses is
 @note read back against the register muir's own `Register::Map(n)` names.
@@ -7648,9 +7662,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note it is the sort of thing a fabric gets wrong by writing the obvious
 @note thing.
 @note
-@note And it is the same family as the Unibus read whose top half CLAUDE.md
-@note records as a live disagreement, one level down: what nothing drives is
-@note not zero because zero is convenient.
+@note And it is the same family as the Unibus read whose top half is a live
+@note disagreement with muir, one level down: what nothing drives is not
+@note zero because zero is convenient.
 @note
 @note Re-aimed when the mapped window landed and bit 5 stopped being a
 @note constant zero, and again when the debug cable's byte made the seven
@@ -7738,9 +7752,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note **Written as a SWAP and not as a drop, because a drop is lint's to
 @note catch.**  Loading the buffer from `map_rdata[15:0]` alone leaves the top
 @note sixteen bits of the port unread and `%Warning-UNUSEDSIGNAL` stops the
-@note build, so the check never sees it --- measured, and it is CLAUDE.md's
-@note own rule about bit-granularity met a second time.  Swapped, every bit
-@note stays used and the fault is the one a transcription makes.
+@note build, so the check never sees it --- measured, and it is
+@note `docs/mutations.md`'s rule that lint must not do the catching, met a
+@note second time.  Swapped, every bit stays used and the fault is the one a
+@note transcription makes.
 @note
 @note Caught on the window's own sweep, where all 8,192 words are taken out in
 @note two halves and put back together, and on the very first mapped read.
@@ -7900,8 +7915,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @file rtl/machine/cadr_busint_regs.sv
 @note **`UBXRQ` a tick before `busint::UB_XBUS_REQUEST_NS`.**  One tick out of
 @note a hundred nanoseconds, on a constant the module's own comment
-@note documents --- which is `RD_FINISH_T` again, and the reason that entry is
-@note in CLAUDE.md: a correct derivation with a blind check still drifts.
+@note documents --- which is `RD_FINISH_T` again, and the reason that constant
+@note is on record: a correct derivation with a blind check still drifts.
 @note
 @note The instant is not cosmetic.  It is the same one that clocks the 74LS74
 @note at REQERR 0D03, so a request a tick early is a `UB MAP ERROR` a tick
@@ -7927,13 +7942,13 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note 60 ns tap of the TD100 at 0C09, one bus along.
 @note
 @note One tick out of a hundred nanoseconds on a constant the module's own
-@note comment documents is `RD_FINISH_T` again, and CLAUDE.md's reason for
-@note that entry is this one: a correct derivation with a blind check still
-@note drifts.
+@note comment documents is `RD_FINISH_T` again, and the reason that
+@note constant is on record is this one: a correct derivation with a blind
+@note check still drifts.
 @note
 @note **The testbench's seam answers at a latency that MOVES from cycle to
 @note cycle**, so nothing here can be caught by counting ticks from `-UB
-@note MSYN`: what is compared is the distance from the ACKNOWLEDGEMENT, which
+@note MSYN`: what is compared is the distance from the ACKNOWLEDGMENT, which
 @note is the only thing the constant is about.  Zeroing the term instead
 @note would leave `READ_ACK_T` unused and lint would do the catching, which is
 @note the wrong place --- measured.
@@ -8042,7 +8057,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note The form is a subtraction rather than a zeroing, so `MD_ACK_T` stays
 @note read and lint does not do the catching --- the same shape the Xbus
-@note half's own read-acknowledgement record uses, and for the same measured
+@note half's own read-acknowledgment record uses, and for the same measured
 @note reason.
 @old
   assign answer_md  = md_loaded && (t_md >= 7'(MD_ACK_T));
@@ -8099,10 +8114,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the card's request where it is an OUTPUT, `build/busint_regs.pass`
 @note drives it where it is an INPUT, and only here are they the same wire.
 @note
-@note That is CLAUDE.md's own worst case written out: a crossing that leaves
-@note every signal read is caught by nothing, anywhere, by any tool, and the
-@note only cure is a check that drives one end and looks at the other.
-@note Caught at "UB INT once ENABLE UB INTS is set over a request is 0x0".
+@note That is the worst case written out: a crossing that leaves every
+@note signal read is caught by nothing, anywhere, by any tool, and the only
+@note cure is a check that drives one end and looks at the other.  Caught at
+@note "UB INT once ENABLE UB INTS is set over a request is 0x0".
 @old
       .iob_intr  (iob_intr),
       .iob_vector(iob_vector),
@@ -8184,7 +8199,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note built, CC's `CC-WRITE-MD` over the debug cable returned T, clocked
 @note nothing and left `MD` where it was, so `cc-read-pdl-buffer` read the
 @note index the machine happened to be holding.  A cycle nothing loads is a
-@note cycle nothing answers: the master waits for an acknowledgement that
+@note cycle nothing answers: the master waits for an acknowledgment that
 @note cannot come.
 @note
 @note Caught by the cable's own write of `MD` never reaching `UB MD LOAD` and
@@ -8289,12 +8304,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation dbgin-reports-the-lines-at-the-load
 @check dbgin
 @file rtl/plumbing/cadr_debug_window.sv
-@note **THE ANSWER IS LATCHED AT THE ACKNOWLEDGEMENT AND NOT READ AT THE
+@note **THE ANSWER IS LATCHED AT THE ACKNOWLEDGMENT AND NOT READ AT THE
 @note LOAD.**  `cadr_dbgin.sv` drives a read cycle's word LIVE, as the
 @note transceivers do --- MIT's own note about the diagnostic registers is
 @note that "read and write at the same address are uncorrelated", the 74LS244s
 @note driving `SPY<15:0>` asynchronously --- so with the machine running the
-@note lines move under a standing acknowledgement.  By the time the Arm gets
+@note lines move under a standing acknowledgment.  By the time the Arm gets
 @note round to loading `STS`, the word the debuggee drove is long gone.
 @note `cable::DebugIn::observe` records the same instant on the simulated side.
 @note
@@ -8303,14 +8318,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note caught.  The check's phase 4b reads `PC` with the machine RUNNING and
 @note requires the run to have moved the lines, so it cannot pass by nothing
 @note happening.  Caught at "the word STS gives against the word on DBD at the
-@note acknowledgement".
+@note acknowledgment".
 @note
 @note **THE OBVIOUS WAY TO WRITE IT DIES ON LINT**, which is why it is written
 @note as the latch losing its hold rather than as the read going round it.
 @note Reading `dbd_seen` in `STS` leaves `sts_dbd` written and never used and
 @note Verilator refuses the build --- lint doing the catching, and the check
 @note never seeing it.  Dropping `!sts_ack` reloads the latch on every tick the
-@note acknowledgement stands, which is the same defect from the other end and
+@note acknowledgment stands, which is the same defect from the other end and
 @note leaves every signal read.
 @note
 @note **AND IT HOLDS A CONSTRAINT AS WELL AS THE FABRIC.**
@@ -8319,7 +8334,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note leaves `cadr_machine` and lands outside everything
 @note `cadr_machine.xdc` can reach --- 23 logic levels, -8.772 ns on the first
 @note board that composed the cable.  The exception's whole argument is that
-@note the latch fires ONCE, at the acknowledgement, by which time the word has
+@note the latch fires ONCE, at the acknowledgment, by which time the word has
 @note stood for twenty-five ticks: `busint::DIAGNOSTIC_NS` is 250 ns after
 @note `-UB MSYN` and `dbg_addr` has not moved since the previous lift.  A
 @note latch that reloaded every tick would be capturing a word with no such
@@ -8358,7 +8373,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @file rtl/plumbing/cadr_debug_window.sv
 @note **WHAT MAKES A TRANSACTION UNAMBIGUOUS.**  muir increments the sequence
 @note on every request and the adapter reports the sequence of the request it
-@note is holding, so an acknowledgement left standing from a previous
+@note is holding, so an acknowledgment left standing from a previous
 @note transaction --- which reads exactly like an answer to the present one ---
 @note is caught.  `cable::DebugIn::observe` guards the same hazard on the
 @note simulated side and its comment says why.  Reported as a constant, every
@@ -8406,7 +8421,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note The check measures the lag at the CABLE and not through a load, because
 @note an AXI round trip is several ticks either way and a poll cannot tell the
-@note two apart.  Caught at "the quickest -DB NEED UB acknowledgement is 0x0,
+@note two apart.  Caught at "the quickest -DB NEED UB acknowledgment is 0x0,
 @note the reference says 0x47", and again at "a cycle at an address nothing
 @note answers was acknowledged".
 @old
@@ -8585,7 +8600,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # ONE TRANSACTION PER BUS CYCLE, IN THE DIRECTION WRCYC NAMES, AND NONE
 # ANYWHERE ELSE.
 #
-# These are aimed at the property CLAUDE.md's page-hash-table corruption has
+# These are aimed at the property the board's page-hash-table corruption has
 # been narrowed to.  Its chain, in one paragraph: a word in MIT's page hash
 # table is the faulting virtual address rather than a page table word; MD is
 # exonerated by measurement, so main memory already held it; so the corruption
@@ -8680,8 +8695,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note every request in IDLE, so every read duplicates exactly once, and
 @note nothing in this check reads `mem_error` --- the harness folds it.  The
 @note alternative, `aw_sent`, is cleared only on the write path and would have
-@note duplicated the FIRST read alone.  CLAUDE.md's rule about mutations that
-@note lint would otherwise reject is the same rule: the bug is the extra
+@note duplicated the FIRST read alone.  `docs/mutations.md`'s rule that lint
+@note must not do the catching is the same rule: the bug is the extra
 @note transaction, and the flag is only what stops it repeating for ever.
 @note
 @note Caught at the second transaction going out with no request standing at
@@ -8733,9 +8748,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note Written as an OR rather than by deleting `sel`, so that both terms stay
 @note read and lint does not do the catching.  It is the ungated form on
-@note purpose: CLAUDE.md's `tv-answers-its-neighbours` records that a widened
-@note match which still honors the decode's own `device` tests the decode
-@note and not the slave, and a board on the backplane has no such wire.
+@note purpose: `tv-answers-its-neighbours` showed that a widened match which
+@note still honors the decode's own `device` tests the decode and not the
+@note slave, and a board on the backplane has no such wire.
 @old
   assign asked = sel && dev_rq;
 @new
@@ -8751,7 +8766,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note It is silent to every check that watches main memory.  The disk
 @note controller still answers its own cycle and still drives the word back,
-@note so the machine runs on unchanged; the two acknowledgements join as the
+@note so the machine runs on unchanged; the two acknowledgments join as the
 @note open-collector line joins them.  And the address is the DEVICE'S ---
 @note physical 0o17377776, the disk's DA register --- which in DDR is millions
 @note of words past anything the boot PROM reads, so no memory check can see
@@ -8823,10 +8838,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @check bus_audit_unit
 @file rtl/plumbing/cadr_bus_audit.sv
 @note A counter that wraps reads a small number after a large one, which is
-@note the false negative this whole module exists to rule out --- CLAUDE.md's
-@note `-XBUS.RQ` entry is the same fact one module along, and
-@note `cadr_mem_count.sv` carries its own record for it.  Here it is worse than
-@note there: a fault count that wrapped to zero reads exactly like a clean run.
+@note the false negative this whole module exists to rule out --- the ten-bit
+@note counter that wrapped and dropped `-XBUS.RQ`, in `docs/mutations.md`, is
+@note the same fact one module along, and `cadr_mem_count.sv` carries its own
+@note record for it.  Here it is worse than there: a fault count that wrapped
+@note to zero reads exactly like a clean run.
 @old
         if (!(&faults)) faults <= faults + 15'd1;
 @new
@@ -8978,11 +8994,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note program would notice at once.
 @note
 @note **WRITTEN AS AN AND BECAUSE THE PURE FORM DOES NOT BUILD**, which is
-@note CLAUDE.md's own rule that lint catches a mutation at BIT granularity:
-@note `assign s_rdata = s_awaddr[2] ? ...` leaves `s_araddr[2]` read nowhere,
-@note the module's `unused` fold covers only `s_araddr[1:0]`, and Verilator
-@note reports UNUSEDSIGNAL.  Measured: that form is BROKEN.  The AND keeps
-@note every bit used and is wrong in exactly the case the header names.
+@note `docs/mutations.md`'s rule that lint must not do the catching, at BIT
+@note granularity: `assign s_rdata = s_awaddr[2] ? ...` leaves `s_araddr[2]`
+@note read nowhere, the module's `unused` fold covers only `s_araddr[1:0]`,
+@note and Verilator reports UNUSEDSIGNAL.  Measured: that form is BROKEN.
+@note The AND keeps every bit used and is wrong in exactly the case the
+@note header names.
 @old
   assign s_rdata = s_araddr[2] ? m_rdata[63:32] : m_rdata[31:0];
 @new
@@ -8993,12 +9010,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation the-widening-swaps-two-bits-of-the-beat-address
 @check axi_channel
 @file rtl/plumbing/cadr_axi_widen.sv
-@note A BIJECTION ON THE ADDRESS, WHICH IS THE SHAPE CLAUDE.md RECORDS AS
-@note SURVIVING A CHECK THAT KEYS ITS MEMORY OFF THE DUT.  "Mutating a shared
-@note address expression is a no-op by construction ... written to the wrong
-@note entry, read from the same wrong entry."  Both directions are swapped
-@note together here on purpose, so a model memory keyed by the slave's own
-@note address is relabeled consistently and reads back everything it wrote.
+@note A BIJECTION ON THE ADDRESS, WHICH IS THE SHAPE THAT SURVIVES A CHECK
+@note KEYING ITS MEMORY OFF THE DUT.  Mutating a shared address expression
+@note is a no-op by construction: written to the wrong entry, read from the
+@note same wrong entry.  Both directions are swapped together here on
+@note purpose, so a model memory keyed by the slave's own address is
+@note relabeled consistently and reads back everything it wrote.
 @note
 @note What is NOT invariant is where a 256-word page lands: bits 3 and 4 of the
 @note beat address permute the words of every eight in a way that no
@@ -9346,7 +9363,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @check pack_channel
 @file rtl/plumbing/cadr_disk_pack.sv
 @note THE BOARD'S OWN FAULT SHAPE, ON THE ONE MASTER NOTHING HAD EVER WATCHED.
-@note CLAUDE.md's page hash table word is one word of the machine's memory
+@note The board's page hash table word is one word of the machine's memory
 @note replaced by something that had no business being written there.  The
 @note pack side is a 64-bit master on the same DRAM, moving 1,036 bytes at a
 @note time, and until this check existed NOTHING in this tree could see where
@@ -9362,8 +9379,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note they were a block; a write-back would overwrite them.
 @note
 @note Written as an XOR so that every bit of `base` stays used, which is
-@note CLAUDE.md's rule that lint catches a mutation at BIT granularity: a
-@note constant substituted for the top byte leaves `base[31:24]` read nowhere.
+@note `docs/mutations.md`'s rule that lint must not do the catching, at BIT
+@note granularity: a constant substituted for the top byte leaves
+@note `base[31:24]` read nowhere.
 @old
     return (burst == 4'(DATA_BURSTS)) ? base + META_OFFSET
                                       : base + {21'd0, burst[2:0], 7'd0};   // + 128 * burst
@@ -9379,9 +9397,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note own numbering of the record --- `2 * (16 * burst + beat)` for the data
 @note --- and the block RAM it addresses is read back by the CADR's own CCW
 @note walk, which numbers the words itself.  So this is NOT the shared address
-@note expression CLAUDE.md records as an equivalent mutant: the write is the
-@note pack side's and the read is the controller's, and a permutation of one
-@note is not a relabeling of the other.
+@note expression that is an equivalent mutant by construction: the write is
+@note the pack side's and the read is the controller's, and a permutation of
+@note one is not a relabeling of the other.
 @note
 @note Bit 2 of the store index swaps the words of the block in fours ---
 @note (0,1) with (4,5), (2,3) with (6,7), and so on --- inside the right slot,
@@ -9412,20 +9430,20 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note which, on a slot that has just been taken away, is the previous block's
 @note words.
 @note
-@note **THAT IS EXACTLY THE BOARD'S OWN FIRST BUG IN MINIATURE.** CLAUDE.md
-@note records the cold boot arriving with block 0 present and blocks 1 and 2
-@note absent, physical `0o400`-`0o1177` zero where muir has 348 non-zero
-@note words, and a halt eleven microcycles later in a routine that touches no
-@note device at all.  A block that is seven-eighths there is the same failure
-@note with nothing to say so.
+@note **THAT IS EXACTLY THE BOARD'S OWN FIRST BUG IN MINIATURE.** The cold
+@note boot arrived with block 0 present and blocks 1 and 2 absent, physical
+@note `0o400`-`0o1177` zero where muir has 348 non-zero words, and a halt
+@note eleven microcycles later in a routine that touches no device at all.  A
+@note block that is seven-eighths there is the same failure with nothing to
+@note say so.
 @note
 @note The meta burst still runs, so the header, its checkword and the data
 @note checkword all arrive and the CONTROLLER'S OWN HEADER COMPARE PASSES: the
 @note header is about the disk address and not about the data.  The data
 @note checkword is wrong, and `Ecc::trap` does not fire on a read the way it
-@note might be expected to --- CLAUDE.md's own note that a denied block raises
-@note no error the CADR can read is the same family.  Two clauses see it: the
-@note page decode, and the count of nine read bursts a record.
+@note might be expected to --- a denied block raising no error the CADR can
+@note read is the same family.  Two clauses see it: the page decode, and the
+@note count of nine read bursts a record.
 @old
   localparam int unsigned DATA_BURSTS = 8;            // of 16 beats
 @new
@@ -10817,17 +10835,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @check gp0_split
 @file rtl/plumbing/cadr_input_cables.sv
 @note a key typed at the machine that was is not a key typed at the machine that is
-@note **THE AUTOBOOT TRAP, WHICH CLAUDE.md AIMS AT WHATEVER CARRIES KEYS.**
-@note Four instructions into microcode 323, `uc-cadr.lisp` at `(LOC 6)` reads
-@note `0o764112` and `(JUMP-IF-BIT-CLEAR (BYTE-FIELD 1 5) MD COLD-BOOT)`:
-@note `KBD READY` clear is a COLD boot and ready is a WARM one.  The console
-@note can restart the CADR while Linux runs, so a queue that survived the
-@note restart would put a word under that test and send the machine down a
-@note path nobody asked for --- and `0o46`, the only word the second test
-@note takes as a cold boot, is the Status key's position and not Rubout's, so
-@note no key a viewer can press makes it true.  `mach_rst` stays read, on the
-@note pending flag, so lint has nothing to say.  Caught at "the queue after
-@note the machine was reset".
+@note **THE AUTOBOOT TRAP, WHICH IS AIMED AT WHATEVER CARRIES KEYS.** Four
+@note instructions into microcode 323, `uc-cadr.lisp` at `(LOC 6)` reads
+@note `0o764112` and `(JUMP-IF-BIT-CLEAR (BYTE-FIELD 1 5) MD COLD-BOOT)`: `KBD
+@note READY` clear is a COLD boot and ready is a WARM one.  The console can
+@note restart the CADR while Linux runs, so a queue that survived the restart
+@note would put a word under that test and send the machine down a path nobody
+@note asked for --- and `0o46`, the only word the second test takes as a cold
+@note boot, is the Status key's position and not Rubout's, so no key a viewer
+@note can press makes it true.  `mach_rst` stays read, on the pending flag, so
+@note lint has nothing to say.  Caught at "the queue after the machine was
+@note reset".
 @old
       if (flush || mach_rst) begin
         head       <= '0;
@@ -11193,9 +11211,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # **AND THE OBVIOUS MUTATION IS NOT WRITABLE**, which is worth recording so
 # that nobody adds it: dropping `-FREE` from the join leaves `busint_busy`
 # unread and `NOT_FREE` unused, and Verilator refuses the build with two
-# warnings rather than running the check.  That is CLAUDE.md's bit-
-# granularity lesson, so the record below inverts the term instead and every
-# signal stays read.
+# warnings rather than running the check.  That is `docs/mutations.md`'s
+# rule that lint must not do the catching, so the record below inverts the
+# term instead and every signal stays read.
 
 @mutation the-cable-reads-free-inverted
 @check unibus
@@ -12026,16 +12044,16 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note which are DELAY LINES: they carry the whole waveform, so while -MEMACK
 @note stands its delayed copy stands and READ IN PROGRESS is held cleared.
 @note This takes that away and leaves only the countdown loaded at the
-@note acknowledgement's rising edge, which is what the module had until this
+@note acknowledgment's rising edge, which is what the module had until this
 @note deadlock was met on silicon.
 @note
 @note What it costs is not a wrong number anywhere: every cycle a RUNNING
-@note machine makes is identical, because the acknowledgement always falls
+@note machine makes is identical, because the acknowledgment always falls
 @note there. It costs a halted machine, whose frozen MEMSTART stands -MEMRQ
 @note and holds the interface acknowledging: the next single step arms READ
 @note IN PROGRESS off that frozen MEMSTART with the countdown zeroed and no
 @note second rising edge left to fall, so -HANG parks the ring, a parked
-@note ring makes no master clock, no grant can be taken, no acknowledgement
+@note ring makes no master clock, no grant can be taken, no acknowledgment
 @note can arrive, and no console write can land. Only a reset is left.
 @note
 @note Six checks, two processor traces and a hardware capture pass over it,
@@ -12768,7 +12786,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note cycle.**  It is a LEVEL, and on MIT's cable it falls within nanoseconds
 @note of the request it belongs to being lifted.  A carrier that serializes
 @note the cable does not give that for free: the fall takes a frame to cross,
-@note so the acknowledgement of the cycle just finished is still standing when
+@note so the acknowledgment of the cycle just finished is still standing when
 @note the next one starts.
 @note
 @note THE THIRD DEFECT THIS CHECK FOUND: every cycle after the first answered
@@ -13086,9 +13104,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @check a7_mem
 @file rtl/plumbing/cadr_mem_cross.sv
 @note **A four-phase handshake with its fourth phase left out.**  The far side
-@note does not drop its acknowledgement until it has seen the request go, and
-@note the acknowledgement then takes two more clocks to come back --- so a new
-@note request raised inside that window finds the last one's acknowledgement
+@note does not drop its acknowledgment until it has seen the request go, and
+@note the acknowledgment then takes two more clocks to come back --- so a new
+@note request raised inside that window finds the last one's acknowledgment
 @note still standing and is answered before it has been asked.  The word that
 @note comes back is the PREVIOUS transaction's, which on a read is a stale word
 @note the machine has no way to know is stale.
@@ -13205,11 +13223,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note transaction completing and every slave behaving.  Nothing about the AXI
 @note protocol is wrong here; what is wrong is who is being spoken to.
 @note
-@note This is the crossing CLAUDE.md records as caught by nothing, anywhere,
-@note by any tool: two signals read in each other's place are both read.  What
-@note catches it is that the slaves do not answer the same word --- which is
-@note the whole argument for every face in this repository having an
-@note identifier.
+@note This is the crossing that is caught by nothing, anywhere, by any tool:
+@note two signals read in each other's place are both read.  What catches it
+@note is that the slaves do not answer the same word --- which is the whole
+@note argument for every face in this repository having an identifier.
 @note
 @note **IT USED TO SEND THAT PAGE TO THE DEBUG CABLE'S WINDOW**, which was the
 @note sharper form while there were two faces at `0x8000_*` and the mutant
@@ -13406,10 +13423,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note **The data port's READ rotated and its WRITE left alone.**  A rotation
 @note applied to both would be a no-op by construction --- a bijection on a
 @note shared address relabels the storage consistently, which is the
-@note equivalence CLAUDE.md records for the map's two levels and which cost a
-@note night to understand.  Applied to the read alone it is not: a word stored
-@note at an address comes back from its neighbor, and the instruction port,
-@note which reads the same memory with an unrotated address, is untouched.
+@note equivalence the map's two levels showed and which cost a night to
+@note understand.  Applied to the read alone it is not: a word stored at an
+@note address comes back from its neighbor, and the instruction port, which
+@note reads the same memory with an unrotated address, is untouched.
 @note
 @note The check runs a firmware whose every variable and whose whole stack are
 @note in this memory, so it is caught at once and comprehensively.
@@ -13744,9 +13761,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 #
 # **AND ONE THAT IS ONE CLOCK FROM MATTERING, MEASURED RATHER THAN REASONED.**
 # Deleting the fourth phase's wait --- answering the core at the
-# acknowledgement instead of when the handshake has closed --- SURVIVES, and
+# acknowledgment instead of when the handshake has closed --- SURVIVES, and
 # the margin was measured by instrumenting the mutant: of 273 requests, **129
-# arrive while the acknowledgement still stands at the SECOND flip-flop of the
+# arrive while the acknowledgment still stands at the SECOND flip-flop of the
 # synchronizer and none while it stands at the first**.  So the guard is one
 # clock of the synchronizer away from handing a requester the previous
 # answer, and what keeps it benign is that `cadr_soc.sv` takes a clock to
@@ -13760,7 +13777,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note **The far side acknowledges while the bridge is still working rather
 @note than when it has answered**, which is the beat taken a tick early ---
 @note here several ticks early, the bridge taking a dozen of the machine's
-@note clocks to walk an AXI transaction.  The acknowledgement then points at a
+@note clocks to walk an AXI transaction.  The acknowledgment then points at a
 @note payload register holding the PREVIOUS transaction's answer, or at reset
 @note nothing at all, and the asking side takes it as this transaction's.
 @note
@@ -13793,7 +13810,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note makes is never given to the bridge at all.
 @note
 @note A four-phase handshake has four phases and this deletes the fourth.  The
-@note asking side is left waiting for an acknowledgement that will not come,
+@note asking side is left waiting for an acknowledgment that will not come,
 @note the core is left waiting for a load that will not complete, and the
 @note firmware stops where it stands.
 @note
@@ -14396,10 +14413,10 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @file rtl/plumbing/cadr_console.sv
 @note **THE PORT REACHING THE WORD IS THE WHOLE OF WHAT THIS MODULE DOES WITH
 @note THE STAMP**, and a crossing is the defect it can have that leaves every
-@note bit read --- which is the point.  CLAUDE.md records, measured, that lint
-@note sees a signal nobody reads and that two signals read in each other's
-@note place are both read; here it is one signal's two halves, and no tool
-@note anywhere catches it.  Only a check that knows what went in can.
+@note bit read --- which is the point.  It is measured that lint sees a signal
+@note nobody reads and that two signals read in each other's place are both
+@note read; here it is one signal's two halves, and no tool anywhere catches
+@note it.  Only a check that knows what went in can.
 @note
 @note Written as a rotation rather than as a constant or a tie, so that
 @note `build` stays used and the compiler has nothing to say --- the

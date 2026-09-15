@@ -15,7 +15,7 @@
 // That builds, programs, and runs the machine at 125 MHz with 8 ns taps: a
 // different machine that still lights LEDs, which is the failure this project
 // keeps meeting.  Nothing globs `tb/`, which is the whole reason this is here.
-// CLAUDE.md and `docs/pending-rules.md` both say the same.
+// `docs/pending-rules.md` said the same.
 //
 // **AND NOTHING HERE MODELS ANYTHING.**  `boards/arty-z7-20/cadr_arty.sv` cannot be
 // simulated and this does not make it simulable: the MMCM below multiplies

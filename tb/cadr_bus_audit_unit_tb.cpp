@@ -59,10 +59,10 @@
 //             untouched.
 //   MARKER    every one of the eight words carries `B05A` in its top sixteen
 //             bits, so that neither an all-zeros nor an all-ones reading can
-//             be mistaken for this module's answer.  Measured against both, as
-//             CLAUDE.md's EMIO entry says it must be: that lesson was learned
-//             from a board reading `0xFFFFFFFF` where four saturated counters
-//             would have read the same.
+//             be mistaken for this module's answer.  Measured against both,
+//             as the EMIO reading requires: that lesson was learned from a
+//             board reading `0xFFFFFFFF` where four saturated counters would
+//             have read the same.
 
 #include <cstdarg>
 #include <cinttypes>
@@ -539,7 +539,8 @@ int main(int argc, char **argv) {
 
   // THE COUNT SATURATES AND THE RECORD DOES NOT MOVE.  A counter that wrapped
   // back to a small number is the false negative this module exists to rule
-  // out; CLAUDE.md's `-XBUS.RQ` entry is the same fact one module along.
+  // out; the ten-bit `-XBUS.RQ` counter that wrapped is the same fact one
+  // module along.
   {
     Dut d;
     d.reset();

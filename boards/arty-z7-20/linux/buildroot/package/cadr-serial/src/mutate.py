@@ -14,10 +14,10 @@
 # rather than being quietly skipped.
 #
 # THE BUILD FAILING IS NOT A MUTATION SURVIVING AND NOT A MUTATION CAUGHT.
-# CLAUDE.md records that two mutations of the fabric were reported as
-# surviving when they had never been built: lint rejected them and a stale
-# binary ran.  So each record is built in a directory of its own, a build that
-# fails is BROKEN, and BROKEN fails the run.
+# Two mutations of the fabric were once reported as surviving when they had
+# never been built: lint rejected them and a stale binary ran.  So each record
+# is built in a directory of its own, a build that fails is BROKEN, and BROKEN
+# fails the run.
 #
 # **ONLY THE FILES THE CHECK ACTUALLY BUILDS ARE COPIED.**  `cadr-serial.c` is
 # the program's own `main` and is not linked into `serial_test`, so a record

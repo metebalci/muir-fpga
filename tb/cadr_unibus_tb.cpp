@@ -23,8 +23,8 @@
 // runs no Unibus cycle at all; the band trace runs against `Vcadr_microcycle`,
 // where `-MEMACK` and `-LOADMD` are muir's stimulus.  So
 // `cadr_busint_xbus.sv`'s `ub_md_at` --- the MD strobe, `UNIBUS_STROBE_NS`
-// after `-UB SSYN` and fifty nanoseconds BEFORE the acknowledgement, which is
-// the one place on either bus where the word and the acknowledgement come
+// after `-UB SSYN` and fifty nanoseconds BEFORE the acknowledgment, which is
+// the one place on either bus where the word and the acknowledgment come
 // apart --- had never carried a word anybody looked at.  It does here, on
 // every answered read the run makes, and the count is printed.
 //
@@ -42,8 +42,8 @@
 //     twenty-four-bit scan code it strobed, the seven mouse lines it drove,
 //     the interval and the interrupt enables it wrote.  A word that came from
 //     the stimulus cannot move with a bug in the card, in the mux or in the
-//     bus interface --- which is CLAUDE.md's rule about a shadow that must
-//     come from the stimulus and never from the DUT.
+//     bus interface --- which is the rule that a shadow must come from the
+//     stimulus and never from the DUT.
 //   - **The register block's word is a poison injective in the register
 //     number**, driven on `spy_rdata` from the address this testbench is
 //     driving and never from `spy_eadr`, for the same reason.  So a mux that
@@ -927,8 +927,8 @@ int main(int argc, char **argv) {
   // compares the card's `intr_request` against muir, because at that seam
   // they are outputs.  Only here are they the same wire, so only here can a
   // crossed or dropped connection between the two modules show --- and
-  // `.m_awaddr` swapped with `.m_araddr` is the crossing CLAUDE.md records
-  // as caught by nothing, anywhere, by any tool.
+  // `.m_awaddr` swapped with `.m_araddr` is the crossing that is caught by
+  // nothing, anywhere, by any tool.
   //
   // The CSR write above set all five writable bits, `CLOCK INT ENABLE` among
   // them, and `CLOCK READY` has been up since reset with no interval loaded.

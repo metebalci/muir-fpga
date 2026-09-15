@@ -8,14 +8,13 @@
 // **THIS IS NOT THE CADR's SERIAL LINE AND MUST NOT BE CONFUSED WITH IT.**
 // `rtl/plumbing/cadr_serial_line.sv` is the far end of the 2651 on the I/O
 // board: its framing, its baud rate and the instant it says a frame has ended
-// are all held to muir tick for tick, and CLAUDE.md records what happened the
-// one time that file divided against the board's real clock instead of MIT's
-// 5 ns grid.  This is the other kind of line entirely.  It carries the
-// FIRMWARE's own words to whoever is at the board, it answers to nothing in
-// muir, and it has to agree with the wall clock because the thing at the other
-// end of it is a terminal program on somebody's laptop.  So `CLK_HZ` here is
-// the board's real clock and that is correct, where one file along it was the
-// bug.
+// are all held to muir tick for tick, and it wedged the machine the one time
+// that file divided against the board's real clock instead of MIT's 5 ns grid.
+// This is the other kind of line entirely.  It carries the FIRMWARE's own
+// words to whoever is at the board, it answers to nothing in muir, and it has
+// to agree with the wall clock because the thing at the other end of it is a
+// terminal program on somebody's laptop.  So `CLK_HZ` here is the board's real
+// clock and that is correct, where one file along it was the bug.
 //
 // **THE PINS ARE DIGILENT'S AND THEIR NAMES ARE FROM THE HOST's POINT OF
 // VIEW**, which is worth saying once because it reads backwards.

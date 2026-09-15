@@ -145,8 +145,8 @@ program, which is not here.
 ### What is ours inside the loader
 
 The loader is mainline U-Boot and this project does not write it. Four files
-in it are ours, and they are the reason `CLAUDE.md` carries a licensing note
-about GPL compatibility:
+in it are ours, and they are the reason this project carries a licensing
+note about GPL compatibility:
 
     ps7_init_gpl.c                  the start-up routine: 660 operations,
                                     generated here and byte-identical to the

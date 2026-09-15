@@ -250,7 +250,8 @@ else is `map_boot`'s entry.
 
 The records themselves are below. Each was applied by hand to a copy of the
 tree, built and run, and all five are caught. The catching lines were read
-rather than the exit codes counted, which is what CLAUDE.md asks for.
+rather than the exit codes counted, since an exit code cannot tell two
+failures apart.
 
 | record | verdict | the line that caught it |
 |---|---|---|

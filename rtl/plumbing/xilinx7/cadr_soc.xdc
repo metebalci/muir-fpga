@@ -57,9 +57,9 @@
 # a period that can come apart, and a literal here would be a third copy of it.
 #
 # WHAT IS COVERED.  Everything that crosses, which is: the request level and
-# its payload going out, the acknowledgement and its answer coming back, and
+# its payload going out, the acknowledgment and its answer coming back, and
 # the disk pack side's interrupt, which is a level from the machine's domain
-# into the core's external interrupt and is synchronised in `cadr_soc.sv`.
+# into the core's external interrupt and is synchronized in `cadr_soc.sv`.
 # Naming the two CLOCKS rather than the registers is what makes that complete
 # --- a signal added to the crossing later is covered by construction, where a
 # list of pins would have to be remembered.

@@ -22,18 +22,19 @@
 // DDR this testbench seeded with poison, and the record there is compared.
 //
 // **THE MODEL MEMORY, THE DDR AND THE BLOCK STORE COME FROM THE STIMULUS AND
-// NEVER FROM THE DUT.** CLAUDE.md's rule, three times over. Main memory here
-// is filled from the trace's `MEMPAGE` and `MEMW` rows --- what the PROGRAM
-// put there, never what the controller wrote --- and every destination page
-// is filled before the read that is meant to overwrite it, with a word that
-// is a function of both the page and the offset. So a transfer that never
-// happened reads back as poison and not as the data, and a transfer that went
-// to the wrong page reads back as some other page's poison. The block store
-// is filled from `BLK load` and `BLK lay` rows, which are what a formatter
-// and the pack's vendor put on the pack: each row's 259 words are put in the
-// modeled DDR at the address the ROW names --- the generator's choice,
-// spread across the address bits --- and the fabric is told that address over
-// `M_AXI_GP0` and fetches them itself. Nothing here writes the store.
+// NEVER FROM THE DUT.** The shadow-memory rule, three times over. Main memory
+// here is filled from the trace's `MEMPAGE` and `MEMW` rows --- what the
+// PROGRAM put there, never what the controller wrote --- and every
+// destination page is filled before the read that is meant to overwrite it,
+// with a word that is a function of both the page and the offset. So a
+// transfer that never happened reads back as poison and not as the data, and
+// a transfer that went to the wrong page reads back as some other page's
+// poison. The block store is filled from `BLK load` and `BLK lay` rows, which
+// are what a formatter and the pack's vendor put on the pack: each row's 259
+// words are put in the modeled DDR at the address the ROW names --- the
+// generator's choice, spread across the address bits --- and the fabric is
+// told that address over `M_AXI_GP0` and fetches them itself. Nothing here
+// writes the store.
 //
 // **THE PACK SIDE'S EVERY MOVE COSTS THE SAME TICKS, AND THE COST IS
 // MEASURED, NOT ASSUMED.** A fetch is nine AXI bursts and some hundreds of

@@ -37,7 +37,7 @@
 # arc at 23 levels and -8.772 ns when the register window latched it. **It is
 # the same cone with a second reader on it**, and the remedy is the same.
 #
-# THE READER CANNOT SIMPLY MOVE INSIDE THE MACHINE. A Pmod serialiser is a
+# THE READER CANNOT SIMPLY MOVE INSIDE THE MACHINE. A Pmod serializer is a
 # board's carrier and not the CADR: `rtl/machine/` is what muir is the
 # reference for, and a transport that exists because a connector has eight
 # pins has no place in it. The cable is the boundary and the deadline belongs
@@ -87,7 +87,7 @@
 #   - **And the receivers are untouched, BOTH OF THEM.** The connector has one
 #     sender and a receiver a pin group, because a board listening for which
 #     way round the ribbon was made has to hear both at once. The strobe's
-#     synchroniser, the frame counter, the gap counter and the dead man all
+#     synchronizer, the frame counter, the gap counter and the dead man all
 #     count ticks, and a counter given four of them is a counter that no longer
 #     counts.
 #     Each board's `vivado/bitstream.tcl` asserts exactly that with
