@@ -26,7 +26,9 @@
 // and so is a bitstream without the input cables: the events are counted and
 // dropped and one line says so.
 //
-// HOW IT RUNS.  `S85cadr-terminal` starts it at boot with `--log /dev/console`.
+// HOW IT RUNS.  `S85cadr-terminal` starts it at boot, and `cadr_daemon` gives it
+// two logs: the serial console and `/var/log/cadr-terminal.log`, which is where a
+// person with nothing but ssh follows the key trace.
 // In order:
 //
 //   0. THE FLUSH, before anything can be typed at this program.  **The
@@ -76,7 +78,7 @@
 // when the screen goes blank or stops being blank, and NOTHING per frame.  A
 // summary at most once a minute, and only while the counts move.
 //
-//     cadr-terminal [--terminal [<endpoint>]] [--log PATH] [--bow]
+//     cadr-terminal [--terminal [<endpoint>]] [--log PATH]... [--bow]
 //                   [--interval-ms N] [--no-rre] [--no-guard] [--no-input]
 //                   [--input ADDR] [--keyboard-mapping FILE]
 //                   [--keyboard-boot KEYS] [--keyboard-boot-trace]
@@ -113,7 +115,6 @@
 // the loopback is asked for, and the card writes its endpoint out in full so
 // that nothing rests on which default is which.
 
-#include <errno.h>
 #include <getopt.h>
 #include <signal.h>
 #include <stdio.h>
@@ -164,7 +165,10 @@ static void usage(void)
 		"                            grammar (default 0.0.0.0:5900, every interface at\n"
 		"                            VNC's display :0; --terminal 127.0.0.1:5900 is the\n"
 		"                            loopback alone)\n"
-		"  --log PATH        where to write (default stdout)\n"
+		"  --log PATH        where to write; may be given more than once, and every\n"
+		"                    line then goes to every destination named.  With none,\n"
+		"                    stdout.  A destination that is a file is capped at 1 MiB\n"
+		"                    and rotated to <name>.1 (the root filesystem is a RAM disk)\n"
 		"  --bow             the display's MODE BOW: one bits are black (default: white)\n"
 		"  --window ADDR     the display's region (default 0x1C000000)\n"
 		"  --interval-ms N   how often the window is read while anybody watches (default 16)\n"
@@ -205,7 +209,7 @@ static const char *blank_word(int blank)
 
 int main(int argc, char **argv)
 {
-	const char *log_path = NULL, *keymap_path = NULL;
+	const char *keymap_path = NULL;
 	unsigned interval_ms = 16;
 	// Where the screen is served. The default is this board's own --- every
 	// interface at VNC's display :0 --- and `--terminal` reads muir's four
@@ -271,7 +275,7 @@ int main(int argc, char **argv)
 			}
 			break;
 		}
-		case 'l': log_path = optarg; break;
+		case 'l': cadr_log_dest(optarg); break;
 		case 'B': bow = 1; break;
 		case 'w': window_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'i': interval_ms = (unsigned)strtoul(optarg, NULL, 0); break;
@@ -315,15 +319,8 @@ int main(int argc, char **argv)
 			argv[optind]);
 		return 2;
 	}
-	FILE *dest = stdout;
-	if (log_path) {
-		dest = fopen(log_path, "a");
-		if (!dest) {
-			fprintf(stderr, "cadr-terminal: %s: %s\n", log_path, strerror(errno));
-			return 2;
-		}
-	}
-	cadr_log_init("cadr-terminal: ", dest);
+	if (cadr_log_open("cadr-terminal: ") < 0)
+		return 2;
 
 	int mem = cadr_open_mem();
 	if (mem < 0)

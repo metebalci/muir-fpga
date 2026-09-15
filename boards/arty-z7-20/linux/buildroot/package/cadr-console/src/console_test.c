@@ -36,11 +36,14 @@
 // register index off by one has nowhere to hide.  And a lost cycle reported
 // as lost and never mistaken for data.
 
+#include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <cadr/cadr_log.h>
@@ -1706,8 +1709,302 @@ static void check_switch(void)
 	CHECK(CONS_ST_SWITCH_NOW == (1u << 5), "the switch bit is not STAT bit 5");
 }
 
-int main(void)
+// ---- the logging: who a line is for, and where it goes --------------------
+//
+// **THE ROUTINE UNDER CHECK HERE IS `cadr-common`'s AND NOT THIS PACKAGE'S**,
+// and it is checked from here for the reason `serial_mutations.txt` already
+// aims records at `cadr-common/src/cadr_endpoint.c`: a shared file is held by
+// the check that BUILDS it, and this check builds `cadr_log.c`.  Three
+// properties, each of which cost this board something or could:
+//
+//   the prefix   a reply to a person is bare and a line that is kept names
+//                its program.  `console_host.h` has the rule
+//   two logs     `--log` may be given more than once and every line goes to
+//                every destination, which is how the board's daemons write
+//                to the serial console AND to a file somebody over ssh can
+//                follow
+//   the cap      a file destination is rotated at CADR_LOG_MAX, because the
+//                root filesystem is a RAM disk and five unbounded logs are a
+//                way to take the board down
+//
+// The scratch is beside this binary --- under ~/.cache either way, whether
+// the Makefile built it or the mutation runner did --- and never /tmp, which
+// on the build host is a RAM disk of its own.
+static char log_dir[512];
+
+static void log_scratch(const char *argv0)
 {
+	const char *slash = strrchr(argv0, '/');
+	const size_t n = slash ? (size_t)(slash - argv0) : 1;
+	snprintf(log_dir, sizeof log_dir, "%.*s/logs", (int)n, slash ? argv0 : ".");
+	mkdir(log_dir, 0777);
+}
+
+static const char *log_path(const char *name)
+{
+	static char p[640];
+	snprintf(p, sizeof p, "%s/%s", log_dir, name);
+	return p;
+}
+
+static long file_size(const char *path)
+{
+	struct stat st;
+	return stat(path, &st) == 0 ? (long)st.st_size : -1;
+}
+
+// The first line of a file, without its newline, or "" if there is none.
+static const char *first_line(const char *path)
+{
+	static char line[256];
+	FILE *f = fopen(path, "r");
+	line[0] = 0;
+	if (!f)
+		return line;
+	if (fgets(line, sizeof line, f))
+		line[strcspn(line, "\n")] = 0;
+	fclose(f);
+	return line;
+}
+
+static void check_log_prefix(void)
+{
+	// **THE RULE, AS A FUNCTION OF THE TWO THINGS IT IS ABOUT.**  A
+	// terminal and no --log is a person, and only that.
+	CHECK(strcmp(cons_log_prefix(0, 1), "") == 0,
+	      "a reply to a terminal is not bare: it reads \"%s\"", cons_log_prefix(0, 1));
+	CHECK(strcmp(cons_log_prefix(0, 0), CONS_LOG_PREFIX) == 0,
+	      "a line to a pipe or a file does not name the program");
+	CHECK(strcmp(cons_log_prefix(1, 1), CONS_LOG_PREFIX) == 0,
+	      "a line written through --log does not name the program, though the caller "
+	      "said where it was being kept");
+	CHECK(strcmp(cons_log_prefix(2, 1), CONS_LOG_PREFIX) == 0,
+	      "two --log destinations and a terminal gave a bare line");
+	CHECK(strcmp(CONS_LOG_PREFIX, "cadr-console: ") == 0,
+	      "the program's name in front of a kept line is not its own");
+
+	// **AND THROUGH `say` ITSELF**, which is what the program calls: the
+	// chooser and the routine together, since a chooser that is right and
+	// a routine that ignores it would pass the four above.
+	char *buf = NULL;
+	size_t len = 0;
+	FILE *m = open_memstream(&buf, &len);
+	cadr_log_init(cons_log_prefix(0, 1), m);
+	say("PC 0o5163");
+	fflush(m);
+	CHECK(buf && strcmp(buf, "PC 0o5163\n") == 0,
+	      "a reply at a terminal came out as \"%s\", wanting the answer alone", buf ? buf : "");
+	// The buffer belongs to the stream until it is closed, so the close
+	// comes first.
+	fclose(m);
+	free(buf);
+	buf = NULL;
+	len = 0;
+
+	m = open_memstream(&buf, &len);
+	cadr_log_init(cons_log_prefix(0, 0), m);
+	say("PC 0o5163");
+	fflush(m);
+	CHECK(buf && strcmp(buf, "cadr-console: PC 0o5163\n") == 0,
+	      "a line into a pipe came out as \"%s\", wanting the program's name in front",
+	      buf ? buf : "");
+	fclose(m);
+	free(buf);
+	// Back to the capture the checks above use, so that nothing is left
+	// pointing at a stream that has been closed.
+	cadr_log_init("cadr-console: ", cap);
+}
+
+static void check_log_destinations(void)
+{
+	const char a[] = "two-a.log", b[] = "two-b.log";
+	char pa[640], pb[640];
+	snprintf(pa, sizeof pa, "%s", log_path(a));
+	snprintf(pb, sizeof pb, "%s", log_path(b));
+	unlink(pa);
+	unlink(pb);
+
+	// **TWO DESTINATIONS, ONE LINE, BOTH RECEIVE IT.**  This is the board:
+	// /dev/console for whoever is watching the boot and a file for
+	// whoever has only ssh.
+	cadr_log_dest(pa);
+	cadr_log_dest(pb);
+	CHECK(cadr_log_dests() == 2, "two --log destinations were counted as %u",
+	      cadr_log_dests());
+	CHECK(cadr_log_open("cadr-console: ") == 0, "two log files could not be opened");
+	say("the machine is RUNNING");
+	CHECK(strcmp(first_line(pa), "cadr-console: the machine is RUNNING") == 0,
+	      "the first destination reads \"%s\"", first_line(pa));
+	CHECK(strcmp(first_line(pb), "cadr-console: the machine is RUNNING") == 0,
+	      "the SECOND destination reads \"%s\": a line went to one of the two, which is "
+	      "the board writing to the console and not to the file over ssh", first_line(pb));
+
+	// **AND A LOG IS APPENDED TO AND NEVER TRUNCATED.**  A program
+	// restarted by hand must not take away what the one before it said.
+	cadr_log_dest(pa);
+	CHECK(cadr_log_open("cadr-console: ") == 0, "the log could not be reopened");
+	say("and again");
+	CHECK(strcmp(first_line(pa), "cadr-console: the machine is RUNNING") == 0,
+	      "reopening a log threw away what was in it: the first line is now \"%s\"",
+	      first_line(pa));
+
+	// **A LOG NOBODY CAN WRITE IS NOT A LOG.**  The program returns 2 on
+	// this, and the message goes to stderr under the prefix; stderr is put
+	// aside for the one call so that a passing run says nothing.
+	cadr_log_dest(log_path("no-such-directory/x.log"));
+	const int saved = dup(2), nul = open("/dev/null", O_WRONLY);
+	if (nul >= 0)
+		dup2(nul, 2);
+	const int refused = cadr_log_open("cadr-console: ");
+	if (saved >= 0)
+		dup2(saved, 2);
+	if (nul >= 0)
+		close(nul);
+	if (saved >= 0)
+		close(saved);
+	CHECK(refused < 0, "a --log that could not be opened was accepted, so the program "
+	      "would go on with a log it has not got");
+
+	unlink(pa);
+	unlink(pb);
+}
+
+// **THE STREAM SOMETHING ELSE WRITES ITS OWN LINES THROUGH.**  The disk pack
+// program hands its feeder a `FILE *` and the feeder writes eighteen kinds of
+// line through it, the denied block among them.  Handed the first destination
+// it would put those on the console and not in the file somebody over ssh is
+// reading, so the library has a stream that fans out, and what goes through it
+// is counted against the cap like everything else.
+static void check_log_stream(void)
+{
+	const char a[] = "fan-a.log", b[] = "fan-b.log";
+	char pa[640], pb[640];
+	snprintf(pa, sizeof pa, "%s", log_path(a));
+	snprintf(pb, sizeof pb, "%s", log_path(b));
+	char one[700];
+	snprintf(one, sizeof one, "%s.1", pa);
+	unlink(pa);
+	unlink(pb);
+	unlink(one);
+
+	cadr_log_dest(pa);
+	cadr_log_dest(pb);
+	CHECK(cadr_log_open("cadr-disk-packs: ") == 0, "two log files could not be opened");
+	FILE *fan = cadr_log_stream();
+	CHECK(fan != NULL, "there is no fan-out stream at all");
+	if (!fan)
+		return;
+	// The caller's own line, prefix and all: what the feeder writes.
+	fprintf(fan, "cadr-disk-packs: denied block 281/17/1 on unit 0\n");
+	fflush(fan);
+	CHECK(strcmp(first_line(pa), "cadr-disk-packs: denied block 281/17/1 on unit 0") == 0,
+	      "the first destination reads \"%s\"", first_line(pa));
+	CHECK(strcmp(first_line(pb), "cadr-disk-packs: denied block 281/17/1 on unit 0") == 0,
+	      "the SECOND destination reads \"%s\": a line written through the stream went "
+	      "to the console and not to the file over ssh", first_line(pb));
+
+	// **AND WHAT GOES THROUGH IT IS COUNTED AGAINST THE CAP.**  The
+	// feeder's lines are the bulk of that program's log, so a road to the
+	// file that the cap did not watch would be the RAM disk filling by the
+	// back door.
+	const char *filler = "................................................"
+			     "................................................";
+	unsigned n = 0;
+	while (file_size(one) < 0 && n < 200000u) {
+		fprintf(fan, "line %u %s\n", n++, filler);
+		fflush(fan);
+	}
+	CHECK(file_size(one) >= 0,
+	      "%u lines went through the stream and nothing was rotated: the cap does not "
+	      "watch the road the feeder's lines take", n);
+
+	cadr_log_init("cadr-console: ", cap);
+	unlink(pa);
+	unlink(pb);
+	unlink(one);
+	char also[700];
+	snprintf(also, sizeof also, "%s.1", pb);
+	unlink(also);
+}
+
+// **THE CAP, WRITTEN PAST FOR REAL.**  The constant is 1 MiB and the check
+// writes more than that rather than asking the routine to use a smaller one:
+// a cap a check can lower is a cap the check does not hold.
+static void check_log_cap(void)
+{
+	const char *p = log_path("capped.log");
+	char one[700];
+	snprintf(one, sizeof one, "%s.1", p);
+	char two[700];
+	snprintf(two, sizeof two, "%s.2", p);
+	unlink(p);
+	unlink(one);
+	unlink(two);
+
+	// A line of about a hundred characters, numbered, so that the FIRST
+	// line of `<name>.1` says which generation it holds --- which is how a
+	// rotation that appends to `.1` is told from one that replaces it.
+	const char *filler = "................................................"
+			     "................................................";
+	cadr_log_dest(p);
+	CHECK(cadr_log_open("") == 0, "the capped log could not be opened");
+
+	unsigned n = 0;
+	while (file_size(one) < 0 && n < 200000u)
+		say("line %u %s", n++, filler);
+	CHECK(file_size(one) >= 0,
+	      "%u lines went in and nothing was rotated: a log with no cap is what fills "
+	      "the board's RAM disk", n);
+	CHECK(file_size(one) >= (long)CADR_LOG_MAX,
+	      "the rotated file holds %ld bytes, under the %u the cap is: it was rotated "
+	      "early", file_size(one), CADR_LOG_MAX);
+	CHECK(file_size(p) >= 0 && file_size(p) < (long)CADR_LOG_MAX,
+	      "the fresh file holds %ld bytes", file_size(p));
+	CHECK(file_size(two) < 0, "a third generation %s was made: the cap is two files a "
+	      "program and no more", two);
+	CHECK(strncmp(first_line(one), "line 0 ", 7) == 0,
+	      "the rotated file starts \"%.20s\", not at the first line written",
+	      first_line(one));
+
+	// **A SECOND ROTATION REPLACES THE FIRST AND MAKES NOTHING NEW.**
+	const unsigned was = n;
+	while (file_size(p) > 0 && strncmp(first_line(one), "line 0 ", 7) == 0 && n < 400000u)
+		say("line %u %s", n++, filler);
+	CHECK(strncmp(first_line(one), "line 0 ", 7) != 0,
+	      "the second rotation did not replace %s: it still starts at the first line "
+	      "ever written", one);
+	CHECK(file_size(two) < 0, "a third generation appeared at the second rotation");
+	CHECK(file_size(one) >= (long)CADR_LOG_MAX,
+	      "the second generation was rotated at %ld bytes, not at the cap: the size is "
+	      "not being counted from the rotation", file_size(one));
+	CHECK(n > was, "the second rotation was not reached");
+
+	// **AND A DESTINATION THIS LIBRARY DID NOT OPEN IS NEVER ROTATED**,
+	// which is the /dev/console case seen from the side a check can see:
+	// there is no name to rename.  A megabyte into a memory stream, and
+	// the only thing asserted is that it is all still there.
+	char *buf = NULL;
+	size_t len = 0;
+	FILE *m = open_memstream(&buf, &len);
+	cadr_log_init("cadr-console: ", m);
+	for (unsigned k = 0; k < 12000u; ++k)
+		say("%s", filler);
+	fflush(m);
+	CHECK(len > CADR_LOG_MAX, "a stream this library did not open was capped at %zu "
+	      "bytes: the cap reached a destination that has no name to rename", len);
+	cadr_log_init("cadr-console: ", cap);
+	fclose(m);
+	free(buf);
+
+	unlink(p);
+	unlink(one);
+	unlink(two);
+}
+
+int main(int argc, char **argv)
+{
+	(void)argc;
+	log_scratch(argv[0]);
 	capture_start();		/* nothing may print to the terminal but the verdict */
 	check_ident();
 	check_guard();
@@ -1724,6 +2021,12 @@ int main(void)
 	check_machine_words();
 	check_main_address();
 	check_debug_cable();
+	// The logging last: these take the destinations away from the capture
+	// above and put them back on files of their own.
+	check_log_prefix();
+	check_log_destinations();
+	check_log_stream();
+	check_log_cap();
 	fflush(cap);
 
 	if (bad) {
@@ -1790,6 +2093,18 @@ int main(void)
 	       "      not, and the line says so rather than calling this board the debugger,\n"
 	       "      which is the one thing two bits buy over one.  Twelve values that are\n"
 	       "      not a key take nothing, and a modelled fabric that connects on any value\n"
-	       "      is caught by the same twelve\n", checks);
+	       "      is caught by the same twelve\n"
+	       "    the logging, which is cadr-common's routine held by the check that builds\n"
+	       "      it: a reply to a person at a terminal is BARE and a line that is kept ---\n"
+	       "      a pipe, a file, an init script\'s --log --- names its program; --log given\n"
+	       "      twice puts every line in both places, which is the board writing to the\n"
+	       "      serial console and to a file somebody over ssh can follow; a log is\n"
+	       "      appended to and never truncated, and one that cannot be opened is\n"
+	       "      refused rather than carried on without; a stream handed to something\n"
+	       "      that writes its own lines --- the disk pack program's feeder --- reaches\n"
+	       "      every destination and is counted against the cap like everything else;\n"
+	       "      and a file destination is\n"
+	       "      rotated to <name>.1 at 1 MiB with no third generation ever made, written\n"
+	       "      past for real, because the root filesystem is a RAM disk\n", checks);
 	return 0;
 }

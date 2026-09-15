@@ -2441,6 +2441,16 @@ READOUT_SRC := boards/arty-z7-20/linux/buildroot/package/cadr-readout/src
 
 CONSOLE_SRC_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-console/src
 
+# **cadr-common IS DEFINED HERE, ABOVE THE FIRST RULE THAT NAMES IT, AND NOT
+# BESIDE THE OTHER PACKAGES FURTHER DOWN.**  A prerequisite list is expanded
+# when the rule is READ, so a `$(wildcard $(COMMON_SRC)/*.c)` above the
+# assignment expands against an empty variable and the rule quietly has no
+# prerequisite at all --- the shape that left `arty_a7.pass` not re-running on
+# a change to the memory path, and which the recipe cannot show because a
+# recipe is expanded at run time.
+COMMON_PKG   := boards/arty-z7-20/linux/buildroot/package/cadr-common
+COMMON_SRC   := $(COMMON_PKG)/src
+
 # ---------------------------------------------- the console program's own core
 #
 # **`cadr-console`'s HOST TEST HAD NEVER BEEN RUN BY `make check`.**  The
@@ -2450,14 +2460,28 @@ CONSOLE_SRC_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-console/src
 # `cadr-readout`, `cadr-chaosnet`, `cadr-serial` and `cadr-terminal` all have
 # theirs here.  So the one test that could have said the console's `step`
 # reported a fabric that no longer exists was not being run.  It is now.
+#
+# **AND cadr-common's SOURCES ARE PREREQUISITES BECAUSE THIS CHECK BUILDS
+# THEM.**  The logging every one of these programs says its lines through is
+# there --- who a line is for, how many places it goes, and the cap that keeps
+# a log off the board's RAM disk --- and this package's mutation list aims at
+# it by name, as `serial.pass` and `terminal.pass` already do with the
+# endpoint grammar.  Without these a change to `cadr_log.c` would leave this
+# check stamped and unrun, which is this project's stale-artefact scar in a
+# Makefile.
 $(BUILD)/console_face.pass: $(CONSOLE_SRC_DIR)/console_face.c \
                             $(CONSOLE_SRC_DIR)/console_face.h \
                             $(CONSOLE_SRC_DIR)/console_host.c \
                             $(CONSOLE_SRC_DIR)/console_host.h \
                             $(CONSOLE_SRC_DIR)/console_test.c \
+                            $(CONSOLE_SRC_DIR)/console_mutations.txt \
+                            $(CONSOLE_SRC_DIR)/mutate.py \
+                            $(wildcard $(COMMON_SRC)/*.c) \
+                            $(wildcard $(COMMON_SRC)/cadr/*.h) \
                             $(CONSOLE_SRC_DIR)/cadr-console.c | $(BUILD)
 	$(MAKE) -C $(CONSOLE_SRC_DIR) check
-	@echo "console: the program's core agrees with a modelled slave"
+	@echo "console: the program's core agrees with a modelled slave, a reply to a person is"
+	@echo "console: bare, and a --log goes to every destination named and is capped at 1 MiB"
 	@touch $@
 
 $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
@@ -2603,8 +2627,6 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # in it now, and the half of them that is a MAPPING has no other reference:
 # `input_keymap.h` is generated from muir but the state machine over it is
 # written out by hand, and this is what holds it.
-COMMON_PKG   := boards/arty-z7-20/linux/buildroot/package/cadr-common
-COMMON_SRC   := $(COMMON_PKG)/src
 DISK_PACKS_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs
 CHAOSNET_PKG := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet
 CHAOSNET_SRC := $(CHAOSNET_PKG)/src

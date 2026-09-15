@@ -75,10 +75,22 @@ install: all
 	install -d $(DESTDIR)/usr/bin
 	install -m 0755 $(PROGRAMS) $(DESTDIR)/usr/bin/
 
-# The check.  Its own object directory, so a target build and a host build
-# never share a binary --- and a build artefact that outlived a move would
-# name a home directory that no longer exists.
+# The check, and the mutations that say it can fail.  Its own object
+# directory, so a target build and a host build never share a binary --- and a
+# build artefact that outlived a move would name a home directory that no
+# longer exists.
+#
+# **THE MUTATIONS REACH `cadr-common/src/cadr_log.c` AS WELL AS THIS
+# DIRECTORY**, because this check builds it: the logging is shared by all six
+# programs and the package it lives in has a shell check and no C one.
+# `serial_mutations.txt` already aims at the endpoint grammar the same way.
 check: $(WORK)/console_test
+	$(WORK)/console_test
+	@python3 mutate.py --list console_mutations.txt --work $(WORK)/mutants \
+	    --cc "$(HOSTCC)" --cflags "$(HOSTCFLAGS)"
+
+# The check alone, without the mutations: what a failing mutant runs.
+check-only: $(WORK)/console_test
 	$(WORK)/console_test
 
 $(WORK)/console_test: console_test.c $(CORE) $(HOST) $(HEADERS) $(COMMON_SRC)
@@ -88,4 +100,4 @@ $(WORK)/console_test: console_test.c $(CORE) $(HOST) $(HEADERS) $(COMMON_SRC)
 clean:
 	rm -f $(PROGRAMS)
 
-.PHONY: all install check clean
+.PHONY: all install check check-only clean

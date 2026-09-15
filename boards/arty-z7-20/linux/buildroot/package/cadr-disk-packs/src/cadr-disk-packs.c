@@ -53,7 +53,8 @@
 // retried on the next poll, which is a quarter of a millisecond.
 //
 // HOW IT RUNS.  `S80cadr-disk-packs` mounts the card's second partition at
-// /mnt/packs and starts this at boot with `--log /dev/console`.
+// /mnt/packs and starts this at boot; `cadr_daemon` gives it the serial console
+// and `/var/log/cadr-disk-packs.log` as its two logs.
 // In order:
 //
 //   1. THE GUARD.  A read on M_AXI_GP0 that nothing in the fabric answers
@@ -128,7 +129,7 @@
 // line says which block, which slot, which address and what the face
 // answered, and a failure repeating is said once a minute.
 //
-//     cadr-disk-packs [--packs DIR] [--regs ADDR] [--log PATH] [--timed]
+//     cadr-disk-packs [--packs DIR] [--regs ADDR] [--log PATH]... [--timed]
 //                      [--poll-us N] [--scan-ms N] [--irq PATH]
 //                      [--no-guard] [--selftest] [--once]
 
@@ -207,7 +208,10 @@ static void usage(void)
 		"usage: cadr-disk-packs [options]\n"
 		"  --packs DIR     the drive bay: disk-pack-0.img .. disk-pack-7.img (default " BAY_DIR ")\n"
 		"  --regs ADDR     the pack side's registers (default 0x40000000)\n"
-		"  --log PATH      where to write (default stdout)\n"
+		"  --log PATH      where to write; may be given more than once, and every line\n"
+		"                  then goes to every destination named.  With none, stdout.\n"
+		"                  A file destination is capped at 1 MiB and rotated to\n"
+		"                  <name>.1, the root filesystem being a RAM disk\n"
 		"  --timed         charge the drives' own seek and rotational times (default: untimed, muir's default)\n"
 		"  --poll-us N     how often REQ and DIRTY are polled (default 250)\n"
 		"  --scan-ms N     how often the bay is looked at (default 250)\n"
@@ -263,7 +267,6 @@ static int selftest(struct feeder *f, unsigned unit)
 int main(int argc, char **argv)
 {
 	const char *packs_dir = BAY_DIR;
-	const char *log_path = NULL;
 	const char *irq_path = NULL;
 	uint32_t regs_phys = PS_REG_BASE;
 	unsigned poll_us = 250, scan_ms = 250;
@@ -287,7 +290,7 @@ int main(int argc, char **argv)
 		switch (c) {
 		case 'p': packs_dir = optarg; break;
 		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
-		case 'l': log_path = optarg; break;
+		case 'l': cadr_log_dest(optarg); break;
 		case 't': timed = 1; break;
 		case 'P': poll_us = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'S': scan_ms = (unsigned)strtoul(optarg, NULL, 0); break;
@@ -302,15 +305,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "cadr-disk-packs: --poll-us 0 would spin\n");
 		return 2;
 	}
-	FILE *dest = stdout;
-	if (log_path) {
-		dest = fopen(log_path, "a");
-		if (!dest) {
-			fprintf(stderr, "cadr-disk-packs: %s: %s\n", log_path, strerror(errno));
-			return 2;
-		}
-	}
-	cadr_log_init("cadr-disk-packs: ", dest);
+	if (cadr_log_open("cadr-disk-packs: ") < 0)
+		return 2;
 
 	// The mappings.  O_SYNC gives an uncached mapping of all of them: the
 	// registers must be, and the records the fabric reads and writes must
@@ -348,7 +344,12 @@ int main(int argc, char **argv)
 	struct bay bay;
 	bay_init(&bay, packs_dir);
 	struct feeder f;
-	if (feeder_init(&f, &bay, &ps, spare, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES, cadr_log_file()) < 0) {
+	// **THE FAN-OUT STREAM AND NOT `cadr_log_file()`.**  The feeder writes
+	// whole lines of its own through a `FILE *` --- the denied block among
+	// them --- and the first destination alone would put those on the
+	// console and not in the file somebody over ssh is reading.
+	if (feeder_init(&f, &bay, &ps, spare, FEEDER_SPARE_BASE, FEEDER_MAP_BYTES,
+			cadr_log_stream()) < 0) {
 		say("the mapped region does not cover the records");
 		return 1;
 	}

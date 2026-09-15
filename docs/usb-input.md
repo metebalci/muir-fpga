@@ -302,7 +302,10 @@ spelling for the shared file, which is what `cadr-chaosnet` already does with
                          default, and switched while the program runs by
                          SIGUSR1 and SIGUSR2. The mouse is not traced
 
-    --log PATH           where the log goes. The init script says /dev/console
+    --log PATH           where the log goes. It may be given more than once, and
+                         every line then goes to every destination named. The
+                         init script gives it the console and a file under
+                         /var/log, which is capped at 1 MiB
 
     --once               find the devices, say what is there, and exit. It is
                          what to run on a board to see what the program makes
@@ -375,10 +378,14 @@ touches no register and needs no bitstream. `docs/console.md` has it.
 **The flag is how a run starts with the trace on**, and it is off by default: a
 line a keystroke is not something to leave running on a board's own console.
 
-**The lines go to the console.** `S88cadr-usb-input` starts the program with
-`--log /dev/console`, as every daemon in this image is started, so somebody with
-the serial console open sees each key as it is typed --- and sees the terminal's
-own line for the same key beside it.
+**The lines go to the console and to a file.** `cadr_daemon` starts every daemon
+in this image with `--log /dev/console --log /var/log/<name>.log`. So somebody
+with the serial console open sees each key as it is typed, beside the terminal's
+own line for the same key. And somebody with nothing but ssh reads the same
+lines with `tail -F /var/log/cadr-usb-input.log`. The file is capped at 1 MiB
+and rotated to `cadr-usb-input.log.1`, because the root filesystem is a RAM
+disk; `tail -F` rather than `tail -f` is what follows a file across that
+rotation. `docs/console.md` has the rule and the reason.
 
 ## What the checks hold
 

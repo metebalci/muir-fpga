@@ -126,7 +126,10 @@ start() {
 	fi
 	hold_the_machine
 	connect_the_debug_cable
-	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS" --log /dev/console
+	# `--log` is not here and not the card's: `cadr_daemon` gives every
+	# program the same two destinations, the console and a file under
+	# /var/log that somebody over ssh can follow.
+	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS"
 }
 
 # **LEAVE THE BOOT BUTTON UNPRESSED, AND THERE ARE TWO WAYS TO ASK FOR IT.**
@@ -229,7 +232,13 @@ set_the_debug_cable_wiring() {
 	# the console does not know is refused BY the console, which prints the
 	# three it takes.
 	eval "set -- $(fpgarc_args "$RC" --debug-cable-wiring)"
-	if ! cadr-console debug-cable-wiring "${2:-auto}" 2>&1; then
+	# **`--log /dev/console` AND NOT JUST THE SCRIPT'S OWN OUTPUT.**  The
+	# console writes a bare reply to a person at a terminal and a line
+	# naming its program to a log, and `/dev/console` IS a terminal, so a
+	# line let through from here would go into the boot log with nothing
+	# saying which of six programs said it.  The flag is this script saying
+	# that these lines are a log.
+	if ! cadr-console --log /dev/console debug-cable-wiring "${2:-auto}" 2>&1; then
 		echo "cadr-debug-cable: --debug-cable-wiring ${2:-auto}: cadr-console could not" \
 		     "reach the console; the fabric's own default stands"
 	fi
@@ -258,7 +267,9 @@ connect_the_debug_cable() {
 		     "this board is still a debuggee"
 		return 0
 	fi
-	if ! cadr-console debug-cable-connect 2>&1; then
+	# `--log /dev/console` for the reason the wiring's call gives: these
+	# lines are a log and a line in a log names its program.
+	if ! cadr-console --log /dev/console debug-cable-connect 2>&1; then
 		echo "cadr-debug-cable: --debug-cable-connect: cadr-console could not reach the" \
 		     "console; this board is still a debuggee"
 	fi

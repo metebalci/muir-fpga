@@ -587,8 +587,12 @@ trace. It is off by default: a line a keystroke on the board's own console is
 not something to leave running.
 
 **The lines go where every other line of this program goes.** On the board that
-is the console, because `S85cadr-terminal` starts it with `--log /dev/console`.
-So somebody with the serial console open sees each key as it is typed.
+is two places: the serial console and `/var/log/cadr-terminal.log`, because
+`cadr_daemon` starts every daemon in this image with both. So somebody with the
+serial console open sees each key as it is typed, and somebody with nothing but
+ssh reads the same lines with `tail -F /var/log/cadr-terminal.log`. The file is
+capped at 1 MiB and rotated, the root filesystem being a RAM disk, and `tail -F`
+rather than `tail -f` is what follows it across a rotation.
 
 ## The mouse
 

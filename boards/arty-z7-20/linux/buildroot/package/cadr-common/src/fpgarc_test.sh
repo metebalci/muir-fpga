@@ -538,6 +538,43 @@ if prepare cadr-usb-input S88cadr-usb-input; then
 	passes_not "--bow" "cadr-usb-input"
 fi
 
+# ---------------------------------------------------------------------------
+# **WHERE A DAEMON WRITES IS `cadr_daemon`'s, AND IT IS TWO PLACES.**  Every
+# one of these programs is started with `--log /dev/console --log
+# /var/log/<name>.log`, so what it says is on the serial console, where a boot
+# is watched, and in a file, where somebody with nothing but ssh can read it
+# and follow it.  It used to be the console alone and each script said so
+# itself, which is two ways for five scripts to disagree and one way for the
+# key trace to go somewhere the person who asked for it could not see.
+#
+# The count is asserted as well as the two destinations: `--log` given once is
+# the old board, and given three times would mean a script had gone on passing
+# one of its own.
+# ---------------------------------------------------------------------------
+logs_to() {
+	_n=$(given_count "--log")
+	if [ "$_n" != 2 ]; then
+		fail "$1 was given --log $_n times, wanting two --- the console and a" \
+		     "file; it was given: $(given)"
+	else
+		ok "$1 was given --log twice"
+	fi
+	passes "--log /dev/console" "$1"
+	passes "--log /var/log/$1.log" "$1"
+}
+
+case_head "every program is given both logs: the console and a file under /var/log"
+for _pair in "cadr-chaosnet:S87cadr-chaosnet" "cadr-terminal:S85cadr-terminal" \
+             "cadr-serial:S86cadr-serial" "cadr-usb-input:S88cadr-usb-input" \
+             "cadr-disk-packs:S80cadr-disk-packs"; do
+	_pkg=${_pair%%:*}
+	_script=${_pair#*:}
+	if prepare "$_pkg" "$_script"; then
+		run_script "$_script"
+		logs_to "$_pkg"
+	fi
+done
+
 # **AND THIS CHECK CAN SEE A LIST THAT IS WRONG.**  Everything above is an
 # absence --- a program not given somebody else's flag --- and an absence is
 # what a check that is looking at the wrong thing also reports.  So one script
@@ -1178,6 +1215,27 @@ fi
 # there is nothing for this script to halt --- a halt here would be the script
 # taking credit for the switch's work, and it would also be a write to the
 # clock control register on a machine nobody has touched.  What the step does
+# **AND WHEN THIS SCRIPT LETS THE CONSOLE'S OWN LINES THROUGH, THEY GO INTO
+# THE BOOT LOG AND MUST NAME THE PROGRAM.**  `cadr-console` writes a bare reply
+# to a person at a terminal and a prefixed line to a log, and `/dev/console` IS
+# a terminal --- so the script says which it is with `--log /dev/console`
+# rather than leaving six programs' lines in one log with nothing to tell them
+# apart.  The two calls that let output through are the debug cable's; `halt`
+# and `switch` send theirs to /dev/null and are asserted bare elsewhere.
+case_head "the console's lines into the boot log name the program"
+sandbox
+if prepare cadr-disk-packs S80cadr-disk-packs; then
+	printf '%s\r\n' '--debug-cable-wiring auto' > "$WORK/packs/fpgarc"
+	: > "$WORK/daemon.calls"
+	FPGARC_CLAIMED="$WORK/run/claimed" PATH="$WORK/bin:$PATH" \
+		"$WORK/S80cadr-disk-packs" start > "$WORK/out.cable" 2>&1
+	if grep -qx -- "--log /dev/console debug-cable-wiring auto" "$WORK/console.calls"; then
+		ok "the wiring is asked for with --log /dev/console, so the reply names its program"
+	else
+		fail "the console was told: $(cat "$WORK/console.calls")"
+	fi
+fi
+
 # is leave the marker, so that cadr-console refuses `start` and `step` and says
 # why.
 case_head "SW0 holds the machine, and nothing is halted"

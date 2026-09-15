@@ -6,7 +6,7 @@
 //     cadr-chaosnet [--chaos-address <octal>] [--chaos-udp [<endpoint>]]
 //                   [--chaos-udp-peer <address>@<host>[:<port>]]
 //                   [--chaos-udp-default-peer <host>[:<port>]] [--chaos-trace]
-//                   [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]
+//                   [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]...
 //
 // **WHAT THIS PROGRAM IS: THE ETHER, AND NOTHING ABOVE IT.**  The CADR's
 // Chaosnet interface is in fabric --- the registers at `0o764140`-`0o764156`
@@ -78,7 +78,6 @@
 // no host table in either release names.  `muir::chaos`'s own header has the
 // whole argument.
 
-#include <errno.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -289,7 +288,7 @@ static void usage(void)
 "usage: cadr-chaosnet [--chaos-address <octal>] [--chaos-udp [<endpoint>]]\n"
 "                     [--chaos-udp-peer <address>@<host>[:<port>]]\n"
 "                     [--chaos-udp-default-peer <host>[:<port>]] [--chaos-trace]\n"
-"                     [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]\n"
+"                     [--base <hex>] [--no-guard] [--no-fabric] [--log <file>]...\n"
 "\n"
 "  --chaos-address <octal>      this machine's Chaosnet address, in octal or\n"
 "                               subnet:host.  System 100's band wants 3050 and\n"
@@ -318,7 +317,11 @@ static void usage(void)
 "                               somebody knows: see <cadr/cadr_mem.h>\n"
 "  --no-fabric                  no board at all --- CHUDP alone, which is how\n"
 "                               this is exercised off the board\n"
-"  --log <file>                 where lines go; /dev/console for the init script\n"
+"  --log <file>                 where lines go; may be given more than once, and\n"
+"                               every line then goes to every destination named.\n"
+"                               The init script gives it the console and a file\n"
+"                               under /var/log, which is capped at 1 MiB and\n"
+"                               rotated (the root filesystem is a RAM disk)\n"
 "\n"
 "The prefix is optional: --address, --udp, --udp-peer, --udp-default-peer and\n"
 "--trace are the same flags.\n",
@@ -348,7 +351,6 @@ int main(int argc, char **argv)
 	memset(&e, 0, sizeof e);
 	e.machine = 0177001;
 
-	const char *log_path = NULL;
 	const char *udp_endpoint = NULL;
 	uint32_t base = CHAOS_REG_BASE;
 	int guard = 1, fabric = 1, want_udp = 0;
@@ -410,7 +412,7 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "--no-fabric")) {
 			fabric = 0;
 		} else if (!strcmp(a, "--log") && v) {
-			log_path = argv[++i];
+			cadr_log_dest(argv[++i]);
 		} else {
 			usage();
 			return 2;
@@ -435,15 +437,8 @@ int main(int argc, char **argv)
 		}
 	}
 
-	FILE *dest = NULL;
-	if (log_path) {
-		dest = fopen(log_path, "w");
-		if (!dest) {
-			fprintf(stderr, "cadr-chaosnet: %s: %s\n", log_path, strerror(errno));
-			return 1;
-		}
-	}
-	cadr_log_init("cadr-chaosnet: ", dest);
+	if (cadr_log_open("cadr-chaosnet: ") < 0)
+		return 1;
 
 	signal(SIGINT, on_signal);
 	signal(SIGTERM, on_signal);
@@ -586,7 +581,8 @@ int main(int argc, char **argv)
 		chaos_face_close(&e.face);
 	if (fd >= 0)
 		close(fd);
-	if (dest)
-		fclose(dest);
+	// The log's files are not closed here: there is more than one of them
+	// now and they belong to `cadr_log_open`.  Every line is flushed as it
+	// is said, so there is nothing standing in a buffer to lose.
 	return 0;
 }
