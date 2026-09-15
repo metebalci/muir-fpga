@@ -1808,7 +1808,18 @@ def build_and_run(args, work, check, build_fails=False):
     if check == "arty":
         return arty_check(args, work, build_fails)
 
-    for src, dest in spec.get("files", []):
+    # MIT's TV sync PROM, placed for EVERY check rather than named check by
+    # check.  `cadr_tv.sv` reads it at elaboration and its `SYNC_PROM_HEX`
+    # defaults to a relative `build/sync_prom.hex`, which the mutant's own
+    # working directory is what resolves; the display reaches this runner
+    # through six tops and a dozen harnesses, and a list of which ones would
+    # have to be kept in step with `rtl/` by hand.  512 bytes a mutant is
+    # cheaper than that list being wrong, and a check that does not build the
+    # display simply does not read it.  A sync program of zeros is a display
+    # that never interrupts, which is why the module makes a missing file
+    # loud rather than letting it pass as a check that caught something.
+    placed = list(spec.get("files", [])) + [("sync_prom.hex", "build/sync_prom.hex")]
+    for src, dest in placed:
         # `exist_ok`, because the two processor checks place the same image
         # and the baseline runs them at once: two threads reaching the same
         # missing directory is a race, and it lost one.

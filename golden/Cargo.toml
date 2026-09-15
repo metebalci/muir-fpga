@@ -34,6 +34,10 @@ name = "prom"
 path = "src/prom.rs"
 
 [[bin]]
+name = "sync_prom"
+path = "src/sync_prom.rs"
+
+[[bin]]
 name = "rtl_sys"
 path = "src/rtl_sys.rs"
 

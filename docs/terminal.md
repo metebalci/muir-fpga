@@ -10,7 +10,9 @@ display to a VNC viewer and carries the viewer's keys and pointer back to the
 machine. The screen was written at the first slice, against muir at
 `dad7249` and the fabric at the commit that added this file. The keyboard and
 the mouse came at a second slice, against muir at `ff5de42`, once the I/O
-board was in the fabric.
+board was in the fabric. The citations into muir below were renumbered when
+the pin moved to `bfba7f3`, which renamed the display model from `simpletv`
+to `tv`.
 
 The display block is built and checked (`docs/tv.md`), and nothing could look
 at what it draws. **It needs no new fabric to fix that**, which is why this
@@ -112,7 +114,8 @@ message.
 while the copy is being made, so a copy can hold the top of the screen from
 before a write and the bottom from after it. There is no interlock to take.
 muir's terminal has the same seam, and the vertical flag the microcode uses is
-a counter in the fabric with no path to Linux. A torn frame is one frame.
+the sync program's own in the fabric, with no path to Linux. A torn frame is
+one frame.
 
 ## The geometry, and where every number came from
 
@@ -123,17 +126,17 @@ pins the mapping on hand-computed pixels.
 
 | | | from |
 |---|---|---|
-| 768 pixels across | `WIDTH` | muir `src/simpletv.rs:65`, `(DEFVAR MAIN-SCREEN-WIDTH (:CADR 768.))` |
-| 963 lines | `HEIGHT` | muir `src/simpletv.rs:69`, `(:CADR 963.)`, "was 896. for CPT" |
-| 24 words to a line | `WORDS_PER_LINE` | muir `src/simpletv.rs:73`, `MAIN-SCREEN-LOCATIONS-PER-LINE` |
-| one bit a pixel | | muir `src/simpletv.rs:7`; `docs/tv.md` |
-| 32,768 words in the window | `BUFFER_WORDS` | muir `src/simpletv.rs:43`; `rtl/plumbing/cadr_ddr_map.sv:71` |
+| 768 pixels across | `WIDTH` | muir `src/tv.rs:100`, `(DEFVAR MAIN-SCREEN-WIDTH (:CADR 768.))` |
+| 963 lines | `HEIGHT` | muir `src/tv.rs:104`, `(:CADR 963.)`, "was 896. for CPT" |
+| 24 words to a line | `WORDS_PER_LINE` | muir `src/tv.rs:108`, `MAIN-SCREEN-LOCATIONS-PER-LINE` |
+| one bit a pixel | | muir `src/tv.rs:7`; `docs/tv.md` |
+| 32,768 words in the window | `BUFFER_WORDS` | muir `src/tv.rs:78`; `rtl/plumbing/cadr_ddr_map.sv:71` |
 | 23,112 of them are the screen | `visible()` | muir `src/terminal/mod.rs:88`; 963 x 24 |
 | the window is at `0x1C00_0000` | `DISPLAY_BASE` | `rtl/plumbing/cadr_ddr_map.sv:67` |
 | word *n* is at base + 4*n* | `display_byte_address` | `rtl/plumbing/cadr_ddr_map.sv:83`; `rtl/plumbing/cadr_xbus_ddr.sv:87` |
-| a frame is 15,456,000 ns | `FRAME_NS` | muir `src/simpletv.rs:145`; `rtl/machine/cadr_tv.sv:123` |
+| a frame is 15,456,000 ns | `FRAME_NS` | muir `src/tv.rs:331`; `rtl/machine/cadr_tv.sv:123` |
 
-**Which bit is which pixel.** muir `src/simpletv.rs:254-257`:
+**Which bit is which pixel.** muir `src/tv.rs:554-557`:
 
     pub fn pixel(&self, x: usize, y: usize) -> bool {
         let bit = y * WORDS_PER_LINE * 32 + x;
@@ -154,9 +157,9 @@ what a whole-width Raw rectangle actually goes through. **Both are mutated in
 encodings**, which is what says the check reaches both.
 
 **Which way round black and white are.** muir says it at
-`src/simpletv.rs:247-250` and `:268-270`. A lit bit shows **white** unless
+`src/tv.rs:547-550` and `:607-609`. A lit bit shows **white** unless
 `MODE BOW` is set, and the other way round when it is. That is `MODE<2>`, at
-`simpletv.rs:100`, "display one bits as black and zeros as white". So a screen
+`tv.rs:260`, "display one bits as black and zeros as white". So a screen
 of zeros with BOW clear is **black**, and that is what a real machine looks
 like. muir drawing MIT's System 100 band at microcycle 200,000,000 has mode 0
 and 7,572 of its 739,584 pixels lit: **white text on black, one per cent of
@@ -863,7 +866,7 @@ own patterns, and says the real ones are absent. That is the same shape as
 That takes 57 seconds. The two are 25 million microcycles apart and differ
 only in the blinking cursor, 84 pixels of 739,584. That is **a real incremental
 update of an ordinary screen**, which is the case no synthetic pattern
-supplies. They are muir's own PNG (`SimpleTv::png`), which is the monitor's
+supplies. They are muir's own PNG (`Tv::png`), which is the monitor's
 picture and not the frame buffer. So the check turns each back into
 frame-buffer words and compares the viewer's pixels against the PNG's. The
 decoder is thirty lines, because muir writes stored deflate blocks and says so.

@@ -195,6 +195,8 @@
 // any kind --- and `boards/cora-z7-07s/vivado/bitstream.tcl` builds that board with `DDR=1`.
 module cadr_cora #(
     parameter string PROM_HEX = "build/boot_prom.hex",
+    // MIT's TV sync PROM, for the display: `rtl/machine/cadr_tv.sv`.
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
     parameter int unsigned PROBE_DEPTH = 0,
     parameter int unsigned DDR = 0,
     // 0 the machine, 1 the fabric writes a word, 2 the fabric reads one back
@@ -822,7 +824,8 @@ module cadr_cora #(
   localparam logic [31:0] PROVE_ECHO = cadr_ddr_map::main_byte_address(22'o12345706);
 
   cadr_machine #(
-      .PROM_HEX(PROM_HEX)
+      .PROM_HEX(PROM_HEX),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO

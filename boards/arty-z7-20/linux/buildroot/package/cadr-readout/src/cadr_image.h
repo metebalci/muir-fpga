@@ -34,7 +34,7 @@
 #define IMG_L1_WORDS    2048u
 #define IMG_L2_WORDS    1024u
 #define IMG_OPCS        8u
-// simpletv::BUFFER_WORDS, 0o100000.
+// tv::BUFFER_WORDS, 0o100000.
 #define IMG_TV_WORDS    32768u
 // A memory board is 64K words and `boards(7'd32)` is what
 // `boards/arty-z7-20/cadr_arty.sv` gives the machine.

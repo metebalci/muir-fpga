@@ -4844,29 +4844,45 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # flag's three sources and their order, the sync RAM, the window's two edges
 # and the joins in the path.  Every one is caught on a line of its own.
 
-@mutation tv-frame-a-tick-long
+@mutation tv-sync-instruction-a-tick-long
 @check tv
 @file rtl/machine/cadr_tv.sv
-@note `simpletv::FRAME_NS` is 15,456,000 ns, 3,091,200 ticks: 966 lines of
-@note 16.000 us, measured on the netlist board.  One tick more and the second
-@note frame's preset --- the first the trace watches with the enable up ---
-@note lands a tick late on -XBUS.INTR, which the testbench compares at every
-@note tick.  The frame counter is what makes `-TVMA CLR` here, and a period
-@note off by a tick drifts a tick a frame: caught on the first.
+@note An instruction of the sync program is 500 ns in clock modes 0 and 1,
+@note `sync::INSTRUCTION_NS`, measured on the netlist LISPM TV --- exactly
+@note 100 ticks of MIT's 5 ns grid, and the whole frame is 30,912 of them.
+@note One tick more and every instant the program makes drifts: the sync
+@note bits in the mode register, which change 1,932 times a frame, and
+@note `-TVMA CLR`, which presets the vertical flag 32 instructions in.  The
+@note frame used to be a counter here and these two records used to be its
+@note period; the program is what makes the frame now.
 @old
-  localparam logic [21:0] FRAME_T = 22'd3_091_200;
+  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd100;
 @new
-  localparam logic [21:0] FRAME_T = 22'd3_091_201;
+  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd101;
 @end
 
-@mutation tv-frame-a-tick-short
+@mutation tv-sync-instruction-a-tick-short
 @check tv
 @file rtl/machine/cadr_tv.sv
 @note The other side of the same tick.
 @old
-  localparam logic [21:0] FRAME_T = 22'd3_091_200;
+  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd100;
 @new
-  localparam logic [21:0] FRAME_T = 22'd3_091_199;
+  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd99;
+@end
+
+@mutation tv-slow-sync-instruction-is-the-fast-one
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note Clock modes 2 and 3 run an instruction in 625 ns and not 500: 32
+@note instructions a line at 20.000 us against 16.000, measured on the
+@note netlist LISPM TV.  The trace puts the machine in clock mode 3 for a
+@note whole frame, so a generator that ran the slow modes at the fast rate
+@note puts `-TVMA CLR` a fifth of a frame early.
+@old
+  localparam logic [6:0] INSTRUCTION_T_SLOW = 7'd125;
+@new
+  localparam logic [6:0] INSTRUCTION_T_SLOW = 7'd100;
 @end
 
 @mutation tv-interrupt-enable-ignored
@@ -4933,15 +4949,15 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation tv-flag-not-preset-while-the-interrupt-is-enabled
 @check tv
 @file rtl/machine/cadr_tv.sv
-@note `-TVMA CLR` presets the flag every frame whatever the mode register
-@note holds; a preset gated on the enable being OFF never raises the
-@note interrupt from a frame, only from a write.  Written as a gate rather
-@note than a deletion so that `frame_start` stays read.  Caught at frame 2,
-@note the first the trace expects the boundary to raise -XBUS.INTR.
+@note `-TVMA CLR` presets the flag whatever the mode register holds; a
+@note preset gated on the enable being OFF never raises the interrupt from
+@note the sync program, only from a write.  Written as a gate rather than a
+@note deletion so that `tvma_clr` stays read.  Caught at the first `-TVMA
+@note CLR` the trace expects to raise -XBUS.INTR.
 @old
-      else if (frame_start)                flag <= 1'b1;
+      else if (tvma_clr)                   flag <= 1'b1;
 @new
-      else if (frame_start && !mode[3])    flag <= 1'b1;
+      else if (tvma_clr && !mode[3])       flag <= 1'b1;
 @end
 
 @mutation tv-write-cannot-clear-the-flag
@@ -4961,19 +4977,19 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation tv-preset-beats-the-write
 @check tv
 @file rtl/machine/cadr_tv.sv
-@note The order at one edge.  A write landing on the tick a frame begins
-@note keeps the written bit: muir's `written_at` is that instant and
-@note `vert_flag` asks for a frame STRICTLY since.  Swapping the two
+@note The order at one edge.  A write landing on the tick a `-TVMA CLR`
+@note falls keeps the written bit: muir's `written_at` is that instant and
+@note `vert_flag` asks for a field STRICTLY since.  Swapping the two
 @note branches is invisible on every tick but that one, and reaching it
-@note needs the grant edge, the setup and the landing tick to sum to a
-@note frame boundary, which first happens at frame 25 --- the reason the
-@note trace is twenty-five frames long.  Caught there and nowhere earlier,
-@note so this record is the yardstick for the trace's length.
+@note needs the grant edge, the setup and the landing tick to sum to the
+@note instant the preset falls, which first happens at frame 25 --- the
+@note reason the trace is twenty-five frames long.  Caught there and
+@note nowhere earlier, so this record is the yardstick for its length.
 @old
       else if (store_now && which == 3'd0) flag <= wdata[4];
-      else if (frame_start)                flag <= 1'b1;
+      else if (tvma_clr)                   flag <= 1'b1;
 @new
-      else if (frame_start)                flag <= 1'b1;
+      else if (tvma_clr)                   flag <= 1'b1;
       else if (store_now && which == 3'd0) flag <= wdata[4];
 @end
 
@@ -5020,19 +5036,22 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
           3'd0:    mode    <= {wdata[3:2], wdata[0], wdata[1]};
 @end
 
-@mutation tv-sync-ram-reads-back-without-the-enable
+@mutation tv-register-one-does-not-read-the-prom
 @check tv
 @file rtl/machine/cadr_tv.sv
 @note The 2147s' chip select is `SYNC PROM ENB` and the 74S472's its
-@note complement, so with the enable clear a read of register 1 is the
-@note PROM's word --- zero here, its program not being loaded on this path
-@note --- and never the RAM's.  Read regardless, with the enable shown in
-@note bit 8 so that it stays read, the program's first read of register 1
-@note gives the byte it just wrote where muir gives zero.
+@note complement, so with the enable clear a read of register 1 is MIT's
+@note PROM's word at the pointer, and zero only above the 512 words of the
+@note chip.  Swapped, the two halves of the PROM's range answer each other's
+@note word: the trace's very first read of register 1 asks for word 0 of
+@note `cpt.prom`, which is the first loop's repeat count, and gets zero.
+@note Both arms stay read, so lint is not what catches this.
 @old
-      3'd1:    word = sync_on ? {24'd0, sync_q} : 32'd0;
+  assign face_word = sync_on ? ram_face
+                             : ((pointer[11:9] == 3'd0) ? prom_face : 8'd0);
 @new
-      3'd1:    word = {23'd0, sync_on, sync_q};
+  assign face_word = sync_on ? ram_face
+                             : ((pointer[11:9] == 3'd0) ? 8'd0 : prom_face);
 @end
 
 @mutation tv-sync-ram-read-from-the-wrong-half
@@ -5044,9 +5063,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note CLAUDE.md records having filed as nearly a hole once.  Broken one way
 @note only, the byte written at 0xFFF reads back as the one at 0x7FF.
 @old
-    sync_q <= sync_ram[pointer];
+    ram_face <= sync_ram[pointer];
 @new
-    sync_q <= sync_ram[pointer ^ 12'h800];
+    ram_face <= sync_ram[pointer ^ 12'h800];
 @end
 
 @mutation tv-answers-its-neighbours
@@ -5241,6 +5260,156 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # failure output --- a register read off by one, a write that does not land,
 # IDENT wrong, an address that does not answer, a bound that is not one, and a
 # status bit that lies.
+
+# And the sync generator itself, which is what makes the frame: the program's
+# two sync bits, the `-TVMA CLR` that presets the flag, the loop rules of
+# `lmtv.order` and the three writes that run the program afresh.  The trace
+# reaches all of it --- MIT's `cpt.prom` from power-on, both clock rates, a
+# RAM program loaded and selected, and the enable off and on again.
+
+@mutation tv-flag-preset-at-the-end-of-the-program
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note `lmtv.order`: the vertical flag "is set by TVMA CLR, not by the start
+@note of Vertical Sync", and `-TVMA CLR` is Special Function 1.  Preset on
+@note Special Function 3 instead --- End of Program, where control returns to
+@note location 0 --- and the flag is preset at the frame's boundary rather
+@note than 16,000 ns into it, which is exactly what this module did while it
+@note counted frames instead of running the program.  15,440,000 ns of
+@note -XBUS.INTR in the wrong place, compared at every tick.
+@old
+  assign tvma_clr = seq_fire && !seq_past && (seq_word[7:6] == 2'b01);
+@new
+  assign tvma_clr = seq_fire && !seq_past && (seq_word[7:6] == 2'b11);
+@end
+
+@mutation tv-sync-bits-swapped
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note `VSYNC` and `HSYNC` in the mode register are the sync program's own
+@note bits 1 and 0, read off the netlist SIMPLE TV: the 74LS175 at NSYREG
+@note 0D02 into the 74LS244 at NXBCTL 0F11, pin 4 and pin 6.  Swapped, every
+@note read of the mode register whose two bits differ comes back wrong ---
+@note and they differ often, the pair changing 1,932 times a frame.  Caught
+@note on the trace's first read of the register.
+@old
+          sync_h <= seq_word[0];
+          sync_v <= seq_word[1];
+@new
+          sync_h <= seq_word[1];
+          sync_v <= seq_word[0];
+@end
+
+@mutation tv-clock-mode-does-not-restart-the-program
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note `Tv::write_control` runs the program afresh when a write changes
+@note `CLOCK MODE<1:0>`, because the rate it is fetched at has changed;
+@note `Tv::restart` sets the origin to that instant, so the flag's phase is
+@note not fixed to power-on.  Compared against itself the term is always
+@note false and no clock-mode write restarts anything.  The trace changes
+@note the clock mode four times and reads the register after each.
+@old
+      && ( (which == 3'd0 && ((wdata[1:0] ^ mode[1:0]) != 2'd0))
+@new
+      && ( (which == 3'd0 && ((wdata[1:0] ^ wdata[1:0]) != 2'd0))
+@end
+
+@mutation tv-a-sync-ram-write-does-not-restart-the-program
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note A write of a RAM word while the RAM is the program being run changes
+@note the program under the generator, so muir runs it afresh.  Aimed at the
+@note pointer's register instead --- a write that changes no program word at
+@note all --- the restart happens on the wrong cycles and not on the right
+@note ones.  The trace writes a RAM word with the RAM selected once, for
+@note this, and writes the pointer thirty times.
+@old
+        || (which == 3'd1 && sync_on)
+@new
+        || (which == 3'd2 && sync_on)
+@end
+
+@mutation tv-the-enable-does-not-restart-the-program
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note Bit 7 of register 3 chooses between the 2147s and the 74S472, so a
+@note write that changes it changes the program.  Inverted, the restart
+@note happens on every write of register 3 that leaves the enable alone and
+@note on none that moves it: the trace turns the sync RAM on, off and on
+@note again and writes the enable's own value twice over.
+@old
+        || (which == 3'd3 && (wdata[7] != sync_on)) );
+@new
+        || (which == 3'd3 && (wdata[7] == sync_on)) );
+@end
+
+@mutation tv-the-repeat-count-is-executed-as-an-instruction
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note `lmtv.order`: "A loop starts with a word containing the number of times
+@note it is to be executed.  This word is never executed as an instruction,
+@note and does not cause a time delay."  With the loop's first instruction
+@note put at the count word rather than after it, every iteration but the
+@note first executes the count --- which for `cpt.prom`'s second loop is
+@note `0o65`, a word with `Cycle::EndOfLine` in it --- 53 times over.
+@old
+            seq_first <= seq_a + 13'd1;
+@new
+            seq_first <= seq_a;
+@end
+
+@mutation tv-the-loop-runs-one-instruction-too-far
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note `lmtv.order`: "The second to last instruction of a loop contains
+@note Special Function 2 or 3; one more instruction is executed
+@note (JUMP-XCT-NEXT) and then control returns to the first instruction of
+@note the loop."  ONE more.  Two, and every line of `cpt.prom` is 33
+@note instructions instead of 32 and the loop leaves from the next loop's
+@note repeat count.
+@old
+            seq_after    <= seq_a + 13'd1;
+          end
+
+          if (seq_end_of_iteration) begin
+@new
+            seq_after    <= seq_a + 13'd2;
+          end
+
+          if (seq_end_of_iteration) begin
+@end
+
+@mutation tv-end-of-program-does-not-return-to-location-zero
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note `lmtv.order`: "if the function was End of Program control returns to
+@note location 0 of the Sync Program (by a JUMP-XCT-NEXT), which is expected
+@note to contain a repeat count", where End of Loop "takes the location after
+@note next as the repeat count of the next loop".  Treating the one as the
+@note other, `cpt.prom` runs once and then walks off the end of MIT's 297
+@note words: no frame, no `-TVMA CLR` and no sync bit moves again.
+@old
+              // End of Program: "control returns to location 0 of the Sync
+              // Program ... which is expected to contain a repeat count".
+              seq_a    <= 13'd0;
+@new
+              // End of Program: "control returns to location 0 of the Sync
+              // Program ... which is expected to contain a repeat count".
+              seq_a    <= seq_after + 13'd1;
+@end
+
+@mutation tv-a-zero-repeat-count-is-one-and-not-256
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note "Each loop is executed a fixed number of times between 1 and 256", in
+@note an eight-bit word, so a zero is the counter's 256.  The sync program
+@note the trace loads into the RAM has such a count in it.
+@old
+            seq_left  <= (seq_word == 8'd0) ? 9'd256 : {1'b0, seq_word};
+@new
+            seq_left  <= {1'b0, seq_word};
+@end
 
 @mutation console-reads-the-register-after-the-one-asked
 @check console
