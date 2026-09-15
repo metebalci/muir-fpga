@@ -922,9 +922,11 @@
 @note arm --- the one this record names --- is the last of the three and is
 @note untouched by that.
 @old
-  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb);
+  assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
+                                                : (is_memory || tv_fb || tvc_fb);
 @new
-  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb || nxm);
+  assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
+                                                : (is_memory || tv_fb || tvc_fb || nxm);
 @end
 
 @mutation every-cycle-is-a-read-on-the-xbus
@@ -5103,9 +5105,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note --- and `cadr_machine.sv` says nothing can enforce the discipline for
 @note a slave it cannot see.  So the mutation is that slave.
 @old
-  assign ctl_c   = sel && (phys[21:3] == CONTROL_PAGE);
+  assign ctl_c   = sel && fitted && (phys[21:3] == CONTROL_PAGE);
 @new
-  assign ctl_c   = (sel && phys[21:3] == CONTROL_PAGE) || phys[21:3] == CONTROL_PAGE + 19'd1;
+  assign ctl_c   = (sel && fitted && phys[21:3] == CONTROL_PAGE)
+                   || phys[21:3] == CONTROL_PAGE + 19'd1;
 @end
 
 @mutation tv-window-half-size
@@ -5116,9 +5119,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note bits, and the upper 16,384 words of the screen --- lines 512 to 962
 @note --- answer to nothing: the trace's write at offset 0x4000 times out.
 @old
-  assign fb_c    = sel && (phys[21:15] == BUFFER_SLOT);
+  assign fb_c    = sel && fitted && (phys[21:15] == BUFFER_SLOT);
 @new
-  assign fb_c    = sel && (phys[21:14] == {BUFFER_SLOT, 1'b0});
+  assign fb_c    = sel && fitted && (phys[21:14] == {BUFFER_SLOT, 1'b0});
 @end
 
 @mutation tv-store-repeats-while-the-request-stands
@@ -5147,9 +5150,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the first frame-buffer read, whose byte address is asserted against
 @note the stimulus's before the model answers it.
 @old
-  assign mem_addr     = display ? display_addr : main_addr;
+  assign mem_addr     = display ? (display_color ? color_addr : display_addr) : main_addr;
 @new
-  assign mem_addr     = (display && dev_write) ? display_addr : main_addr;
+  assign mem_addr     = (display && dev_write) ? (display_color ? color_addr : display_addr)
+                                               : main_addr;
 @end
 
 @mutation tv-window-select-dropped-in-the-path
@@ -5165,9 +5169,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `&& !mp_own`, a third master on the Xbus whose cycles are never the
 @note display's.
 @old
-  assign bus_display = !ch_own && !mp_own && tv_fb;
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
 @new
-  assign bus_display = ch_own && !mp_own && tv_fb;
+  assign bus_display       = ch_own && !mp_own && (tv_fb || tvc_fb);
 @end
 
 @mutation tv-register-word-not-selected-in-the-path
@@ -5180,8 +5184,10 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note a select that can never be true while every signal stays read.
 @old
                  : tv_drives    ? tv_rdata
+                 : tvc_drives   ? tvc_rdata
 @new
                  : (tv_drives && dev_write) ? tv_rdata
+                 : tvc_drives   ? tvc_rdata
 @end
 
 # THE WINDOW READ BACK, which is the half of the display nothing outside this
@@ -8789,10 +8795,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note Re-aimed when the Unibus map's window landed and the mux gained a third
 @note arm: the processor's is the last of the three and is what this breaks.
 @old
-  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb);
+  assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
+                                                : (is_memory || tv_fb || tvc_fb);
 @new
-  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb
-                                             || (device && cpu_write));
+  assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
+                                                : (is_memory || tv_fb || tvc_fb
+                                                   || (device && cpu_write));
 @end
 
 # ----------------------------------------------------------- bus_audit_unit
@@ -9169,9 +9177,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note written down here rather than filed as a hole against a check doing its
 @note job.
 @old
-  assign cpu_memory_o   = is_memory || tv_fb;
+  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb;
 @new
-  assign cpu_memory_o   = is_memory && tv_fb;
+  assign cpu_memory_o   = is_memory && (tv_fb || tvc_fb);
 @end
 
 @mutation the-audit-stops-watching-the-port
@@ -11574,9 +11582,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note the declaration, which is the only shape of this bug lint can see.
 @old
                    dbg_engaged, dbg_foreign, dbg_live, dbg_active, dbg_peer_far, dbg_frames,
+                   // The two display boards' color maps, which the console
+                   // reads on pages 4 and 5. On a board with no console they
+                   // reach nobody and are folded here.
+                   con_tv_map_q, con_tv_color_map_q,
                    dbg_wire_state};
 @new
                    dbg_engaged, dbg_foreign, dbg_live, dbg_peer_far, dbg_frames,
+                   // The two display boards' color maps, which the console
+                   // reads on pages 4 and 5. On a board with no console they
+                   // reach nobody and are folded here.
+                   con_tv_map_q, con_tv_color_map_q,
                    dbg_wire_state};
 @end
 
@@ -14403,9 +14419,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note `tb/cadr_console_tb.cpp` drives 0xC0FFEE21 in and reads word 32.
 @note Caught at "the build the fabric says it is".
 @old
-    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build : UNMAPPED;
+    else if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build
 @new
-    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd1) ? build : UNMAPPED;
+    else if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd1) ? build
 @end
 
 @mutation console-the-build-word-crosses-its-halves
@@ -14424,9 +14440,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note `2e90782a`: commit `2e90782`, tree nibble 10, a state the format does
 @note not define.  Caught at "the build the fabric says it is".
 @old
-    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build : UNMAPPED;
+    else if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build
 @new
-    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? {build[15:0], build[31:16]} : UNMAPPED;
+    else if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? {build[15:0], build[31:16]}
 @end
 
 @mutation console-pages-two-and-three-take-writes
@@ -14482,4 +14498,420 @@ puts "PROG: build $want, was $ubefore, now $uafter"
     if {[llength $side]} { set sid [lindex $side 0] }
 @new
     set sid   [expr {[llength $side] ? [lindex $side 0] : ""}]
+@end
+
+# ===================================================================
+# THE SECOND DISPLAY BOARD, THE COLOR TV
+# ===================================================================
+#
+# MIT's second display board: `cadrtv/lmtv.order`'s "Note: For the normal TV,
+# x is 6.  For the color TV, x is 5", which is a LISPM TV strapped to
+# `tv::COLOR_TV` --- the frame buffer at `0o17200000` and the eight control
+# words at `0o17377750` --- with a color monitor on it.  `build/color_tv.pass`
+# is the check; `golden/src/color_tv.rs` says what the program is.
+#
+# **THE MATCH RECORDS ARE UNGATED BY THE DECODE, AND THAT IS NOT A STYLE.**
+# `tv-answers-its-neighbours` above records, measured, that a widened match
+# which still honors the decode's own `device` tests the DECODE and not the
+# slave: `device` is exhaustively checked over all 4,194,304 addresses, so a
+# slave that honors it cannot answer an empty address however wide its own
+# match is.  A board on the real backplane has no such wire.  So a record
+# about either instance's own address match is written as a second match
+# outside `sel`, exactly as that one is.
+#
+# **AND `color_tv` ITSELF IS HELD IN TWO PLACES ON PURPOSE.**  The decode says
+# whether the color ranges are anything at all --- `busint::decode_with`,
+# exhaustively --- and the instance's own `fitted` says whether the board is in
+# the backplane.  The two agree by construction, both coming from one console
+# word; the mutations below reach each of them where it can be seen.
+
+@mutation the-color-ranges-answer-without-a-color-board
+@check xbus_decode
+@file rtl/machine/cadr_xbus_decode.sv
+@note `COLOR-EXISTS-P` in `sys/window/color.lisp` is how System 100 finds out
+@note whether a machine has the second display board: it writes one into the
+@note first buffer word with the error stop off and reads it back, and a
+@note machine with none has to give it the NXM.  A decode that answered
+@note regardless would walk every cold boot into `COLOR:SETUP`, whose
+@note `WRITE-COLOR-MAP` spins on VSYNC and HSYNC.
+@note
+@note Caught by the sweep of both backplanes: `busint::decode` is
+@note `decode_with` with no color board, and the check walks every address of
+@note each.
+@note Written so that `color_tv` stays READ --- the term is always true and
+@note the input reaches it --- because a mutation that leaves a signal unread
+@note is caught by lint and not by the check, which is a record that tests
+@note nothing.
+@old
+  assign device = xbus_io && (tv_buffer || tv_control || disk_regs
+                              || (color_tv && (color_buffer || color_control)));
+@new
+  assign device = xbus_io && (tv_buffer || tv_control || disk_regs
+                              || ((color_tv || !color_tv)
+                                  && (color_buffer || color_control)));
+@end
+
+@mutation the-color-board-answers-nothing-when-it-is-fitted
+@check xbus_decode
+@file rtl/machine/cadr_xbus_decode.sv
+@note The other direction, and it is the one a machine WITH the board meets:
+@note the color ranges have to answer when `--color-tv` fitted one, or every
+@note write the window system makes to the color screen ends on the NXM timer
+@note 4.25 us later and the machine sees a display that is not there.
+@note Written as a ternary rather than by dropping the term, so that
+@note `color_buffer` stays read: a mutation lint rejects is a mutation the
+@note check never sees.
+@old
+                              || (color_tv && (color_buffer || color_control)));
+@new
+                              || (color_tv && (color_buffer ? 1'b0 : color_control)));
+@end
+
+@mutation the-color-buffer-is-at-the-first-boards-slot
+@check xbus_decode
+@file rtl/machine/cadr_xbus_decode.sv
+@note `lmtv.order`: the normal TV's x is 6 and the color TV's is 5, which is
+@note `0o17000000` and `0o17200000` --- slots 120 and 122 of the 22-bit
+@note space's sixty-four.  One slot number for both is a machine whose two
+@note display boards are one board, and the color picture lands on the
+@note monochrome screen.
+@old
+  assign color_buffer  = phys[21:15] == 7'd122;      // 0o17200000, 32768 words
+@new
+  assign color_buffer  = phys[21:15] == 7'd120;      // 0o17200000, 32768 words
+@end
+
+@mutation the-color-control-block-is-the-first-boards
+@check xbus_decode
+@file rtl/machine/cadr_xbus_decode.sv
+@note `0o17377750` and `0o17377760`, eight words apart: `COLOR:MAKE-SCREEN`'s
+@note `:CONTROL-ADDRESS 377750`.  One page for both puts the color board's
+@note mode register on top of the first board's.
+@old
+  assign color_control = phys[21:3]  == 19'd507901;  // 0o17377750, 8 words
+@new
+  assign color_control = phys[21:3]  == 19'd507902;  // 0o17377750, 8 words
+@end
+
+@mutation the-color-board-answers-its-neighbors
+@check color_tv
+@file rtl/machine/cadr_tv.sv
+@note The color board's own match, a page wider, in the UNGATED form
+@note `tv-answers-its-neighbours` above is written in and for that record's
+@note measured reason: a match that still honors `sel` tests the decode.
+@note The eight words below the color board's control block are Xbus space
+@note with nothing in it on either backplane, and the trace reads and writes
+@note them.
+@note
+@note **BOTH `cadr_tv` INSTANCES TAKE THIS MUTATION**, the file being one
+@note module, so what it makes is a machine whose two display boards each
+@note answer a page too wide.  The color board's is what the check sees
+@note first, its neighbors being read at the very top of the program.
+@old
+  assign ctl_c   = sel && fitted && (phys[21:3] == CONTROL_PAGE);
+@new
+  assign ctl_c   = (sel && fitted && phys[21:3] == CONTROL_PAGE)
+                   || phys[21:3] == CONTROL_PAGE - 19'd1;
+@end
+
+@mutation the-color-board-is-fitted-whatever-the-backplane-says
+@check color_tv
+@file rtl/machine/cadr_tv.sv
+@note `fitted` is whether the board is in the backplane, and the second
+@note instance takes it from the console's page 2 word 33.  Tied high, a
+@note machine with no color board answers at the color addresses --- and
+@note configuration B is the backplane that has none, where every one of
+@note those cycles must end on the NXM timer with MD zero.
+@note
+@note **THE DECODE DOES NOT MASK THIS ONE, WHICH IS WHY IT IS A RECORD.**
+@note `sel` is the held `device` and the decode is given the same
+@note `color_fitted`, so on the backplane with no board `sel` is false at
+@note those addresses and this mutation alone changes nothing --- which is
+@note exactly `tv-answers-its-neighbours`'s trap.  So it is written in the
+@note ungated form too: the board answers its own addresses whatever the
+@note interface thinks, which is what a board plugged into a backplane does.
+@old
+  assign fb_c    = sel && fitted && (phys[21:15] == BUFFER_SLOT);
+@new
+  assign fb_c    = (sel && fitted && phys[21:15] == BUFFER_SLOT)
+                   || (phys[21:15] == BUFFER_SLOT && CONTROL_PAGE == 19'd507901);
+@end
+
+@mutation the-two-display-boards-share-one-window-in-memory
+@check color_tv
+@file rtl/plumbing/cadr_xbus_ddr.sv
+@note The two boards' frame buffers are two regions of the display's 8 MB:
+@note the first at `DISPLAY_BASE` and the second 128 KB above it, which is
+@note the first board's own 32,768 words.  One base for both is two screens
+@note written over each other, and neither is the picture the machine drew.
+@note Written as the two windows EXCHANGED rather than by dropping either
+@note name, so that `display_color` and `color_addr` both stay read: a
+@note mutation lint rejects is a mutation the check never sees, and a mask of
+@note zero is folded away before lint looks.  What the mutation makes is a
+@note backplane whose two boards write into each other's region, which is the
+@note same defect from the other side.
+@old
+  assign mem_addr     = display ? (display_color ? color_addr : display_addr) : main_addr;
+@new
+  assign mem_addr     = display ? (display_color ? display_addr : color_addr) : main_addr;
+@end
+
+@mutation the-color-window-goes-to-main-memory
+@check color_tv
+@file rtl/machine/cadr_memory_path.sv
+@note `bus_display` is what tells the bridge a cycle is a display board's;
+@note without the color board in it, a color-window cycle is answered at
+@note main memory's base --- `main_byte_address(0o17200000)` --- which is
+@note past the reachable end of main memory and is a word the machine's own
+@note program could be using.
+@old
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
+@new
+  assign bus_display       = !ch_own && !mp_own && tv_fb;
+@end
+
+@mutation the-color-board-never-acknowledges
+@check color_tv
+@file rtl/machine/cadr_memory_path.sv
+@note `-XBUS.ACK` is open collector and whichever slave owns the address
+@note pulls it.  Without the color board's term every cycle to its control
+@note words ends on the NXM timer 4.25 us later, where the reference has it
+@note answered 140 ns after the grant.
+@note `tvc_ack` is ANDed with the first board's rather than dropped, so that
+@note it stays read and can never add anything: a mutation that leaves a
+@note signal unread is caught by lint and not by the check.
+@old
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || device_ack);
+@new
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || (tvc_ack && tv_ack)
+                                          || device_ack);
+@end
+
+@mutation the-color-boards-word-comes-from-the-other-board
+@check color_tv
+@file rtl/machine/cadr_memory_path.sv
+@note The word a read gives back has to come from whichever board answered.
+@note With the color board's arm gone, a read of its mode register gives
+@note back main memory's word --- the bridge's, which is what the mux falls
+@note through to.
+@note Written as a CROSSING rather than by dropping an arm, which is
+@note `unibus-the-word-comes-from-the-other-slave`'s own shape one slave
+@note along and keeps both words read.
+@old
+                 : tv_drives    ? tv_rdata
+                 : tvc_drives   ? tvc_rdata
+@new
+                 : tv_drives    ? tvc_rdata
+                 : tvc_drives   ? tv_rdata
+@end
+
+@mutation the-interrupt-is-the-first-boards-alone
+@check color_tv
+@file rtl/machine/cadr_memory_path.sv
+@note `-XBUS.INTR` is open collector and every board on it pulls the one
+@note line: muir's `Machine::xbus_interrupt` is `self.tv.interrupt() ||
+@note self.color_tv...interrupt()`.  With the OR dropped a color board's
+@note vertical interrupt reaches nothing.
+@note
+@note **AND MICROCODE 323 HAS NOTHING TO TAKE ONE**, which is why the trace
+@note raises it deliberately rather than waiting for a program to: `INTRX0`
+@note clears the flag by reading and writing the NORMAL TV's register alone.
+@note The line is joined because the backplane joins it.
+@note ANDed with the first board's rather than dropped, so that the color
+@note board's line stays read and can never raise the wire on its own.
+@old
+  assign tv_intr = tv_intr_n || tvc_intr_n;
+@new
+  assign tv_intr = tv_intr_n || (tvc_intr_n && tv_intr_n);
+@end
+
+@mutation mode-bit-7-reads-the-enable-on-both-boards
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note **THE ONE BIT THE TWO DISPLAY BOARDS DIFFER IN.**  On the LISPM TV the
+@note 74LS244 at XBCTL 0F11 takes bit 7 from pin 19 of the 74LS273 at TVINC
+@note 0A07, which is the sync enable; on the SIMPLE TV the same pin is
+@note ground, by ECO 2 of `cadrtv/lmtv.eco`, 18 June 1980 --- "on old TV
+@note boards the check if TV is in PROM mode (extant only on new TV boards)
+@note reads an unused input".
+@note
+@note Caught by the SIMPLE TV's trace, which is the machine every reference
+@note here was taken on: three reads of the mode register with the sync RAM
+@note selected, where a SIMPLE TV reads 0o14 and this reads 0o214.
+@note `board_lispm` is kept in an always-true term rather than dropped, so
+@note that the strap stays read and lint does not do the catching.
+@old
+  assign prom_enable = board_lispm && sync_on;
+@new
+  assign prom_enable = (board_lispm || !board_lispm) && sync_on;
+@end
+
+@mutation mode-bit-7-is-ground-on-both-boards
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note The other direction, and the LISPM TV's trace is what sees it: `--tv-board
+@note lispm-tv` reads the enable back through bit 7 and this reads zero.
+@note **THE TWO RECORDS TOGETHER ARE WHAT SAYS THE STRAP IS A STRAP**: either
+@note alone is caught by one of the two traces and survives the other, which
+@note would be a board setting that does nothing in one direction.
+@note The strap stays read, for the record above's reason.
+@old
+  assign prom_enable = board_lispm && sync_on;
+@new
+  assign prom_enable = board_lispm && sync_on && 1'b0;
+@end
+
+@mutation the-color-register-keeps-nothing
+@check color_tv
+@file rtl/machine/cadr_tv.sv
+@note Register 4 is the COLOR register: `lmtv.order`'s "173777x4 Color
+@note (write only), 15-8 Value to write into color map, 7-6 Select which
+@note color map (up to 4 channels), 3-0 Color".  The map's RAMs are off the
+@note board and no bus cycle can read one back, so a fabric that answered
+@note the write and kept nothing would pass every check that only ever
+@note reads the bus --- which is what this one used to be and is why the map
+@note has a port of its own.
+@note The value is masked rather than replaced, so that `wdata[15:8]` stays
+@note read: a mutation lint rejects is a mutation the check never sees.
+@old
+          3'd4:    if (wdata[7:6] != 2'd3) color_map[wdata[3:0]][wdata[7:6]] <= wdata[15:8];
+@new
+          3'd4:    if (wdata[7:6] != 2'd3) color_map[wdata[3:0]][wdata[7:6]] <= wdata[15:8] & 8'd0;
+@end
+
+@mutation the-color-registers-fourth-channel-strobes-something
+@check color_tv
+@file rtl/machine/cadr_tv.sv
+@note The 74S139 at 0E10 decodes `XDI7` and `XDI6` into `-LOAD COLOR 0`, `1`
+@note and `2` and leaves its fourth output UNCONNECTED, so a write naming the
+@note fourth channel strobes nothing --- measured on both netlists.  Taking
+@note it puts a byte into a channel the board has not got, and the trace
+@note writes one with a value no entry holds.
+@old
+          3'd4:    if (wdata[7:6] != 2'd3) color_map[wdata[3:0]][wdata[7:6]] <= wdata[15:8];
+@new
+          3'd4:    color_map[wdata[3:0]][wdata[7:6] == 2'd3 ? 2'd2 : wdata[7:6]] <= wdata[15:8];
+@end
+
+@mutation the-color-register-takes-six-bits-of-color
+@check color_tv
+@file rtl/machine/cadr_tv.sv
+@note `lmtv.order` gives the color four bits, 3 to 0, and `WRITE-COLOR-MAP`
+@note writes `(LOGAND LOC 17)`.  `XDI4` and `XDI5` DO leave the board, on
+@note `COLOR 4` and `COLOR 5`, where a 64-entry map would take them as
+@note address --- "we only use a 16x8 subset of it" --- and what an off-board
+@note map does with them is unverified, so muir masks them off and so does
+@note this.  The trace writes an entry with both set and reads the map back.
+@note Written as an XOR of the two bits into the four rather than as a wider
+@note index, because the map is sixteen deep and a six-bit index is a width
+@note warning rather than a mutation the check sees.
+@old
+          3'd4:    if (wdata[7:6] != 2'd3) color_map[wdata[3:0]][wdata[7:6]] <= wdata[15:8];
+@new
+          3'd4:    if (wdata[7:6] != 2'd3)
+                     color_map[wdata[3:0] ^ {2'b00, wdata[5:4]}][wdata[7:6]] <= wdata[15:8];
+@end
+
+@mutation the-color-maps-channels-come-out-in-the-wrong-order
+@check color_tv
+@file rtl/machine/cadr_tv.sv
+@note `WRITE-COLOR-MAP` writes red on channel 0, green on 1 and blue on 2,
+@note and the word the console reads carries them red first.  Reversed, every
+@note color is there and the picture is drawn in the wrong ones --- which is
+@note the quiet failure a screen server cannot see for itself.
+@old
+  assign map_q = {color_map[map_a][0], color_map[map_a][1], color_map[map_a][2]};
+@new
+  assign map_q = {color_map[map_a][2], color_map[map_a][1], color_map[map_a][0]};
+@end
+
+@mutation the-color-map-is-read-at-the-wrong-color
+@check color_tv
+@file rtl/machine/cadr_tv.sv
+@note The map's read port is a mux of sixteen, and an index off by one hands
+@note back the color next door: a picture drawn through it is the right
+@note shapes in shifted colors.  Rotated rather than truncated so that every
+@note bit of the index stays read and lint does not do the catching.
+@old
+  assign map_q = {color_map[map_a][0], color_map[map_a][1], color_map[map_a][2]};
+@new
+  assign map_q = {color_map[map_a ^ 4'd1][0], color_map[map_a ^ 4'd1][1],
+                  color_map[map_a ^ 4'd1][2]};
+@end
+
+@mutation the-display-word-takes-any-value
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Page 2's word 33 is which display boards the backplane has, and it
+@note takes keys for word 6's reason: a value that means nothing --- zero off
+@note a dead bus, all ones off an undriven one --- must not change what a
+@note machine has fitted.  The check writes thirteen such values at it and
+@note requires the backplane to stand.
+@old
+  assign w_is_color_on  = w_is_tv && (w_full == COLOR_TV_KEY);
+@new
+  assign w_is_color_on  = w_is_tv && (w_full != ~COLOR_TV_KEY);
+@end
+
+@mutation the-display-word-is-written-from-page-0
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note `w_hi` is page 2's own address match and `w_in` is page 0 and 1's.  With
+@note `w_in` here, page 0's word 1 --- STAT, which a program reads and can
+@note write back --- would set the backplane's display boards, and the second
+@note comparator this module argues for at `in_window2` would have bought
+@note nothing.
+@note Written as the OR of the two windows rather than by swapping them, so
+@note that `w_hi` stays read: what the mutation makes is a face where page
+@note 0's word 1 --- STAT, which a program reads and can write back --- sets
+@note the backplane's display boards too.
+@old
+  assign w_is_tv        = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd1);
+@new
+  assign w_is_tv        = (w_hi || w_in) && !w_idx[4] && (w_idx[3:0] == 4'd1);
+@end
+
+@mutation the-first-boards-strap-moves-with-the-color-board
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note The two settings are two facts on one word and each key leaves the
+@note other alone: a card's `--tv-board` and `--color-tv` lines are applied in
+@note whatever order the init script takes them, so a write of either that
+@note moved the other would make them fight.
+@old
+          if (w_is_color_on)       color_tv <= 1'b1;
+          else if (w_is_color_off) color_tv <= 1'b0;
+@new
+          if (w_is_color_on)       {color_tv, tv_lispm} <= 2'b10;
+          else if (w_is_color_off) color_tv <= 1'b0;
+@end
+
+@mutation the-console-reads-the-maps-off-the-wrong-boards
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note Pages 4 and 5 are the two boards' maps and `r_idx_q[4]` picks between
+@note them.  Exchanged, an RFB server renders the color screen through the
+@note FIRST board's map --- which MIT's software never writes, so on a real
+@note machine it is all zeros and the picture is black.
+@note Written as the two pages exchanged rather than as one page for both, so
+@note that `tv_color_map_q` stays read: a mutation lint rejects is a mutation
+@note the check never sees.  The harness's pattern is injective in the board,
+@note so neither page can come back right off the other.
+@old
+          map_word <= r_idx_q[4] ? tv_color_map_q : tv_map_q;
+@new
+          map_word <= r_idx_q[4] ? tv_map_q : tv_color_map_q;
+@end
+
+@mutation the-map-pages-read-unmapped
+@check console
+@file rtl/plumbing/cadr_console.sv
+@note The third window is pages 4 and 5, the two color maps; without it they
+@note fall through to `UNMAPPED`, which is what an address outside the face
+@note reads --- and a program that took that for a map would render every
+@note color as `0xB0B1AC`.
+@old
+    if (r_map_q) r_word = {8'd0, map_word};
+@new
+    if (r_map_q && 1'b0) r_word = {8'd0, map_word};
 @end

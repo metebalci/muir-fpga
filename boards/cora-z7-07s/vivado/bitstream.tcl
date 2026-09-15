@@ -125,6 +125,19 @@ set ddr [expr {[info exists ::env(DDR)] ? $::env(DDR) : 0}]
 # complete instruction and everything below that asks "is the processing
 # system in this design" has to ask about both.
 set prove [expr {[info exists ::env(PROVE)] ? $::env(PROVE) : 0}]
+# **THE SECOND DISPLAY BOARD, `LMTV=1`.**  MIT's color TV --- `lmtv.order`'s
+# "for the color TV, x is 5" --- a second `rtl/machine/cadr_tv.sv` strapped to
+# 0o17200000 with its control words at 0o17377750, its frame buffer a second
+# window of the display's region of DDR, and its color map read by the
+# console face.  On by default: whether a MACHINE has the board is the
+# console's page 2 word 33 and a backplane with none gives the NXM at those
+# addresses, so a fabric that carries the slot is still a one-display machine
+# until somebody says otherwise.  Zero leaves the slot out of the fabric, for
+# a part with no room for it.
+#
+#     LMTV=0 DDR=1 OUTDIR=build/ddr vivado -mode batch -source boards/cora-z7-07s/vivado/bitstream.tcl
+set lmtv [expr {[info exists ::env(LMTV)] ? $::env(LMTV) : 1}]
+
 
 # **THERE IS NO `HDMI` SWITCH ON THIS BOARD.**  The Cora Z7-07S has no HDMI
 # connector, so there is no display output to build and `cadr_cora.sv` has no
@@ -181,7 +194,8 @@ synth_design -top cadr_cora -part $part \
     -generic SYNC_PROM_HEX=[file normalize $sync_prom] \
     -generic PROBE_DEPTH=$probe_depth \
     -generic DDR=$ddr \
-    -generic PROVE=$prove
+    -generic PROVE=$prove \
+    -generic LMTV=$lmtv
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilization and timing prose below describes."

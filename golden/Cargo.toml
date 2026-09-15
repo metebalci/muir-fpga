@@ -57,6 +57,10 @@ name = "tv"
 path = "src/tv.rs"
 
 [[bin]]
+name = "color_tv"
+path = "src/color_tv.rs"
+
+[[bin]]
 name = "iob"
 path = "src/iob.rs"
 

@@ -72,7 +72,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
        $(BUILD)/disk_boot.pass \
        $(BUILD)/gp0_default.pass $(BUILD)/gp0_split.pass \
-       $(BUILD)/gp1_split.pass $(BUILD)/tv.pass \
+       $(BUILD)/gp1_split.pass $(BUILD)/tv.pass $(BUILD)/color_tv.pass \
        $(BUILD)/display_out.pass $(BUILD)/hdmi_tx.pass \
        $(BUILD)/console.pass $(BUILD)/readout.pass \
        $(BUILD)/dbgin.pass $(BUILD)/dbg_pmod.pass $(BUILD)/dbg_cable.pass \
@@ -255,13 +255,45 @@ $(BUILD)/memory_path.pass: $(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/b
 $(BUILD)/tv.golden: golden/src/tv.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin tv > $@
 
+# **AND THE SAME PROGRAM ON THE OTHER BOARD.**  muir has one display model
+# and `--tv-board` says which board it is playing; the two differ in one bit
+# a bus cycle can see, mode bit 7, so the two traces are the same program and
+# part only on reads of the mode register with the sync RAM selected.  The
+# testbench straps the fabric from the trace's own header, so a trace and a
+# strap cannot be paired wrongly.
+$(BUILD)/tv_lispm.golden: golden/src/tv.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin tv -- lispm-tv > $@
+
 $(BUILD)/obj_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_tv_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_tv \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_tv_tb.cpp)
 
-$(BUILD)/tv.pass: $(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden $(BUILD)/sync_prom.hex
-	$(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden
+$(BUILD)/tv.pass: $(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden \
+                  $(BUILD)/tv_lispm.golden $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden $(BUILD)/tv_lispm.golden
+	@touch $@
+
+# ------------------------------------------------------- the second display
+
+# The color TV --- MIT's second display board, `lmtv.order`'s "for the color
+# TV, x is 5" --- against muir's `tv::Tv::color()` on a backplane that also
+# carries the first board.  Two instances of `rtl/machine/cadr_tv.sv` at two
+# straps, two windows in DDR, one `-XBUS.INTR` between them, and the color
+# map, which is write only on the bus and is read out of the fabric's own map
+# port.  Configuration B is the backplane with no second board, which is what
+# `COLOR-EXISTS-P` probes for.
+$(BUILD)/color_tv.golden: golden/src/color_tv.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin color_tv > $@
+
+$(BUILD)/obj_color_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_color_tv_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_color_tv \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_color_tv_tb.cpp)
+
+$(BUILD)/color_tv.pass: $(BUILD)/obj_color_tv/Vcadr_memory_path $(BUILD)/color_tv.golden \
+                        $(BUILD)/sync_prom.hex
+	$(BUILD)/obj_color_tv/Vcadr_memory_path $(BUILD)/color_tv.golden
 	@touch $@
 
 # --------------------------------------------------------------- the I/O board
@@ -1345,6 +1377,12 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 # all there is, and this is the lint.
 #
 # FIVE BOARDS, NOT SIX.  The Arty's rule lints a sixth with `HDMI=1`, and the
+# **AND A SIXTH, `LMTV=0`.**  The second display board is the one thing on this
+# board whose slot may have to come out: the Cora fits and closes with it, at
+# 96.1% of its slices, and the switch is there for the day something else has
+# to go in beside it.  A configuration nothing lints is a configuration nobody
+# has checked, and `LMTV=0` is a generate arm with five assignments in it.
+#
 # Cora Z7-07S has no HDMI connector: `cadr_cora.sv` has no `HDMI` parameter to
 # set, `cadr_ps7.sv` here does not bring `S_AXI_HP3` out, and there is nothing
 # between a display and a PS7 on this board to be left unlinted.
@@ -1394,6 +1432,16 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    -GDDR=1 -GLMTV=0 \
+	    --top-module cadr_cora $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
+	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
+	    rtl/plumbing/cadr_axi_master.sv \
+	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
+	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
@@ -1893,6 +1941,7 @@ mutants-anchors:
 mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
          $(BUILD)/disk.golden $(BUILD)/disk_boot.golden $(BUILD)/tv.golden \
+         $(BUILD)/tv_lispm.golden $(BUILD)/color_tv.golden \
          $(BUILD)/iob.golden $(BUILD)/busint_regs.golden \
          $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
@@ -1907,7 +1956,7 @@ mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
 mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
                   $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
                   $(BUILD)/disk.golden $(BUILD)/disk_boot.golden \
-                  $(BUILD)/tv.golden \
+                  $(BUILD)/tv.golden $(BUILD)/tv_lispm.golden \
                   $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden \
              $(BUILD)/soc_firmware.hex | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
@@ -2578,7 +2627,7 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 #      the machine's clock --- load, re-save identically, and are caught here
 #      and nowhere else.
 #
-# **THE SEVEN ARE STATED TWICE AND BOTH MOVE TOGETHER**: `MUTANTS` in the
+# **THE EIGHT ARE STATED TWICE AND BOTH MOVE TOGETHER**: `MUTANTS` in the
 # package's own Makefile builds them and the loop below judges them, so one
 # added in the first place alone is built and never run, and in the second
 # alone is run and never built.
@@ -2592,7 +2641,21 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 # states for a trace, because this is one.
 CHECKPOINT_SRC  := boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src
 CHECKPOINT_WORK := $(HOME)/.cache/muir-fpga-checkpoint
-CHECKPOINT_SHA  := b6f82f67742cff0c06061370f123e42e8af825680273705d88eb503c120cd9cf
+# **MOVED WHEN THE COLOR MAP STOPPED BEING ZEROS.**  The fabric keeps the
+# sixteen entries now and offers them on the console face's page 4, so
+# `chk_rtl.c` writes the board's own map where it used to write forty-eight
+# zeros --- and the host check's synthetic machine poisons the map for the
+# reason it poisons main memory and the picture: a check that only ever ran
+# it at zero would pass a program that wrote zeros, which is what this one
+# used to do.  **The file also grew by 50 bytes, 561,465 to 561,515, and that
+# is the packing and not a format change**: `chk.c` collapses a run of zeros
+# the way muir's own `pack` does, so forty-eight zero bytes were a short run
+# marker and forty-eight poisoned ones are forty-eight bytes behind a literal
+# header.  Measured by writing the file both ways from one work directory ---
+# the pack binding carries paths, so two directories give two sizes for
+# reasons that have nothing to do with this.  muir still takes the file and
+# still resumes at the same microcycle.
+CHECKPOINT_SHA  := 79f8d00f301e348e3f52c5166851f33708452df0e06e56bae13af917dfca0973
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of five nanoseconds each, the two the model sets.
 CHECKPOINT_RESUMED := at 78187493520 microcycles, 3274101291600 ns, 1 memory boards
@@ -2634,7 +2697,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	 echo "checkpoint: muir loaded $$(stat -c%s $$W/out.chk) bytes and saved them back identically,"; \
 	 echo "checkpoint: resumed $$(grep '^resumed' $$W/muir.log | sed 's/^resumed: [^ ]* //'),"; \
 	 echo "checkpoint: and the file is the one the digest was recorded for."; \
-	 for m in 1 2 3 4 5 6 7; do \
+	 for m in 1 2 3 4 5 6 7 8; do \
 	   $$W/checkpoint_test-$$m $$W $$W/mut-$$m.chk > $$W/mut-$$m.out 2>&1 \
 	     || { echo "checkpoint: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \

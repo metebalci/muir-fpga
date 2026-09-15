@@ -4,6 +4,23 @@
 // The display controller: MIT's TV, muir's `tv::Tv`, as an Xbus
 // slave --- the register face, the sync program and the vertical interrupt.
 //
+// **ONE MODULE, TWO BOARDS, AND A MACHINE CAN CARRY TWO OF THEM.**  muir has
+// one display model and `--tv-board` says which board it is playing; this is
+// the same, and `board_lispm` is that flag.  The two boards differ in ONE bit
+// of the interface --- mode bit 7, `SYNC PROM ENB`, which the LISPM TV reads
+// the sync enable back through and the SIMPLE TV grounds by ECO 2 of
+// `cadrtv/lmtv.eco` --- and in nothing else a bus cycle can see.  Everything
+// below is both boards.
+//
+// A second instance is **the color TV**: `lmtv.order`, "For the normal TV, x
+// is 6.  For the color TV, x is 5", which is a LISPM TV strapped to
+// `tv::COLOR_TV` --- the buffer at `0o17200000` and the control words at
+// `0o17377750` --- carrying a monitor of its own.  `STRAP_CONTROL` and
+// `STRAP_BUFFER` are that strap and default to the normal TV's, and `fitted`
+// is whether the board is in the backplane at all.  `sys/window/color.lisp`
+// draws 576 by 454 at four bits a pixel there, each pixel an address into the
+// color map below.
+//
 // What the board is, from `src/tv.rs` and the sources it cites
 // (`sys/window/shwarm.lisp`, `cadrtv/lmtv.order`, `data/SIMPLETV.netlist`):
 // a 32,768-word frame buffer at `0o17000000`, eight control words at
@@ -11,8 +28,9 @@
 // the Am25LS2519 at NXBCTL 0F12 holding `MODE<3:0>`: `CLOCK MODE<1:0>`,
 // `MODE BOW` and `MODE INTR ENB` --- read back through the 74LS244 at 0F11
 // with `VERT FLAG` in bit 4, `VSYNC` and `HSYNC` in bits 5 and 6 off the
-// sync generator, and bit 7 reading zero because ECO 2 of `cadrtv/lmtv.eco`
-// grounds it on this board.
+// sync generator, and bit 7 THE ONE BIT THE TWO BOARDS DIFFER IN --- the
+// sync enable on a LISPM TV and ground on a SIMPLE TV, ECO 2 of
+// `cadrtv/lmtv.eco`.  `board_lispm` below is which board this is.
 // **The flag is a flop of its own, the 74LS74 at 0E14: preset by `-TVMA
 // CLR`, the sync program's start of field; clocked by `-LOAD MODE` with
 // `XDI 4` as its data, so a write of the register puts the written bit 4
@@ -22,17 +40,26 @@
 // sync program RAM --- the eight 2147s at NSYRAM, 4K by 8 --- its data at
 // the pointer, the pointer (write only, twelve bits) and the enable (write
 // only, bit 7 selecting the RAM over the PROM, bits 6 to 0 the vertical
-// spacing).  Register 4 is the COLOUR register: the 74S138 at 0F13 drives
+// spacing).  Register 4 is the COLOR register: the 74S138 at 0F13 drives
 // `-LOAD COLOR` from it, and `lmtv.order` gives it as write only with the
-// map value in bits 15 to 8, the channel in 7 and 6 and the colour in 3 to 0.
+// map value in bits 15 to 8, the channel in 7 and 6 and the color in 3 to 0.
 // The map RAMs and their converters are off the board, so the write reaches
-// nothing here: this answers the write and keeps nothing, because nothing on
-// this board can read the map back.  muir's model keeps the sixteen entries
-// --- three channels each, `tv::Tv::color_map` --- for its colour board and
-// its checkpoint; the register is write only on both boards, so no check
-// here reads one back.
+// nothing on the board itself --- and the sixteen entries are KEPT all the
+// same, for the reason the paragraph below gives.
 // Only 5 to 7 are the three `lmtv.order` says "respond but don't do
 // anything".
+//
+// **THE COLOR MAP IS KEPT, BECAUSE THE PICTURE CANNOT BE DRAWN WITHOUT IT.**
+// The RAMs and their converters are off the board and the register is write
+// only, so no bus cycle here can read an entry back and no check drives one
+// out of the bus --- and muir keeps the sixteen entries all the same
+// (`tv::Tv::color_map`), because a four-bit pixel is an address into them and
+// whatever draws the screen has to know what a color is.  So this keeps them
+// too, on both boards as muir does and as both boards' netlists strobe them,
+// and offers them on `map_a`/`map_q` to the console face --- read only, and
+// never on the Xbus.  The channel is `XDI7` and `XDI6` through the 74S139 at
+// 0E10, whose fourth output is unconnected, so a write naming channel 3
+// strobes nothing.
 //
 // **THE SYNC PROGRAM IS RUN, AND IT IS WHAT MAKES THE FRAME.**  `lmtv.order`,
 // `>Sync Program`: "The Sync Program executes an instruction every (32, 16,
@@ -54,7 +81,7 @@
 //   and 0**, latched at the instruction boundary AFTER the instruction that
 //   carries them --- read off the netlist SIMPLE TV, `src/tv/sync.rs`.  On
 //   MIT's own `cpt.prom` the pair changes 1,932 times in one frame, which is
-//   what `%XBUS-WRITE-SYNC` in the colour software waits on.
+//   what `%XBUS-WRITE-SYNC` in the color software waits on.
 //
 //   **`-TVMA CLR`, the program's Special Function 1, presets the vertical
 //   flag** --- `lmtv.order`: "this is set by TVMA CLR, not by the start of
@@ -109,7 +136,7 @@
 // what main memory already costs: muir's TV answers a buffer word in no time
 // of its own and the board's DDR answers when it answers, so the composed
 // machine waits on the frame buffer as it waits on memory.  In the check the
-// modelled DDR answers at once and the timing agrees with muir tick for tick.
+// modeled DDR answers at once and the timing agrees with muir tick for tick.
 //
 // THE ANSWER IS A GATE, as the disk's is and for the same measured reason:
 // muir's TV takes 0 ns of its own (`IDEAL_DEVICE_NS`), so a read
@@ -157,7 +184,17 @@ module cadr_tv #(
     // root.  A file that is not there is a WARNING and leaves a program of
     // zeros, which is a display that never interrupts, so the guard below
     // makes it loud where a simulator can say so.
-    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
+
+    // This board's strap: which page its eight control words are on and which
+    // 32,768-word slot its frame buffer is.  `tv::NORMAL_TV` by default ---
+    // `0o17377760` in eights and `0o17000000` in 32,768s --- and
+    // `tv::COLOR_TV`, `0o17377750` and `0o17200000`, for the second board.
+    // The same constants `rtl/machine/cadr_xbus_decode.sv` makes `device`
+    // from, held here because a board decodes its own address and the
+    // decode's `device` is one signal for every slave.
+    parameter logic [18:0] STRAP_CONTROL = 19'd507902,
+    parameter logic [6:0]  STRAP_BUFFER  = 7'd120
 ) (
     input  var logic        clk,        // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -166,6 +203,19 @@ module cadr_tv #(
     // nothing else on this board --- the mode register and the sync RAM's
     // enable clear on `-POWER RESET`, which is `rst` here.
     input  var logic        xbus_init,
+
+    // **WHICH OF THE TWO BOARDS THIS IS**: zero a SIMPLE TV, one a LISPM TV,
+    // muir's `--tv-board`.  It reaches one bit of one register --- mode bit 7
+    // reads the sync enable back on the LISPM TV and zero on the SIMPLE TV,
+    // `tv::mode::SYNC_PROM_ENABLE` --- and nothing else on either board.
+    input  var logic        board_lispm,
+
+    // **AND WHETHER THIS BOARD IS IN THE BACKPLANE AT ALL.**  A machine
+    // carries one display board or two; the second is the color TV and a
+    // machine with none must give the NXM at its addresses, because that is
+    // how `COLOR-EXISTS-P` finds out.  The first board is always fitted and
+    // ties this to one.
+    input  var logic        fitted,
 
     // The Xbus slave side, exactly as `cadr_disk_controller.sv` takes it.
     input  var logic        sel,        // the decode says this cycle is a device's
@@ -185,15 +235,26 @@ module cadr_tv #(
 
     // `SEND INTR`: the vertical flag with the interrupt enable, onto
     // `-XBUS.INTR`.
-    output var logic        intr
+    output var logic        intr,
+
+    // The color map, read only and off the bus: `map_a` names a color and
+    // `map_q` hands back its three channels, red in bits 23 to 16, green in
+    // 15 to 8 and blue in 7 to 0, which is `WRITE-COLOR-MAP`'s own order ---
+    // it writes red on channel 0, green on 1 and blue on 2.  The console face
+    // reads them so that an RFB server can render a four-bit picture and a
+    // checkpoint can carry the map muir would have kept.
+    input  var logic [3:0]  map_a,
+    output var logic [23:0] map_q
 );
 
-  // tv::CONTROL, 0o17377760, in eights; tv::BUFFER,
-  // 0o17000000, in 32,768s.  The same constants `cadr_xbus_decode.sv`
-  // makes `device` from, held here because a board decodes its own
-  // address and the decode's `device` is one signal for every slave.
-  localparam logic [18:0] CONTROL_PAGE = 19'd507902;
-  localparam logic [6:0]  BUFFER_SLOT  = 7'd120;
+  // This board's strap, from the parameters above.
+  localparam logic [18:0] CONTROL_PAGE = STRAP_CONTROL;
+  localparam logic [6:0]  BUFFER_SLOT  = STRAP_BUFFER;
+
+  // The color map: sixteen colors of three channels, `tv::COLORS` and
+  // `tv::CHANNELS`.
+  localparam int COLORS   = 16;
+  localparam int CHANNELS = 3;
 
   // The sync program's three stores, and the two lengths that matter.
   //
@@ -222,8 +283,8 @@ module cadr_tv #(
   // --- the held match --------------------------------------------------
   logic       ctl_c, fb_c, ctl, fb;
   logic [2:0] which_c, which;
-  assign ctl_c   = sel && (phys[21:3] == CONTROL_PAGE);
-  assign fb_c    = sel && (phys[21:15] == BUFFER_SLOT);
+  assign ctl_c   = sel && fitted && (phys[21:3] == CONTROL_PAGE);
+  assign fb_c    = sel && fitted && (phys[21:15] == BUFFER_SLOT);
   assign which_c = phys[2:0];
 
   assign fb_sel  = fb;
@@ -245,6 +306,15 @@ module cadr_tv #(
   // make --- nothing reads them back, in muir or here, so they have no
   // register and lint agrees.
   logic        sync_on;
+
+  // The color map, `tv::Tv::color_map`: sixteen colors of three channels,
+  // written a byte at a time through register 4 and read back by nothing on
+  // this bus.  Flops rather than a memory, because the console reads one
+  // entry combinationally and a 16-deep store is cheaper as a mux than as a
+  // block RAM with a port nobody clocks.
+  logic [7:0] color_map [COLORS][CHANNELS];
+
+  assign map_q = {color_map[map_a][0], color_map[map_a][1], color_map[map_a][2]};
 
   // --- the sync program's two stores -------------------------------------
   //
@@ -323,10 +393,17 @@ module cadr_tv #(
   assign face_word = sync_on ? ram_face
                              : ((pointer[11:9] == 3'd0) ? prom_face : 8'd0);
 
+  // Mode bit 7, `SYNC PROM ENB`, and **the one bit of the interface the two
+  // boards differ in**: on the LISPM TV the 74LS244 at XBCTL 0F11 takes it
+  // from pin 19 of the 74LS273 at TVINC 0A07, which is register 3's bit 7 and
+  // so the sync enable; on the SIMPLE TV the same pin is ground.
+  logic prom_enable;
+  assign prom_enable = board_lispm && sync_on;
+
   logic [31:0] word;
   always_comb begin
     unique case (which)
-      3'd0:    word = {25'd0, sync_h, sync_v, flag, mode};
+      3'd0:    word = {24'd0, prom_enable, sync_h, sync_v, flag, mode};
       3'd1:    word = {24'd0, face_word};
       default: word = 32'd0;
     endcase
@@ -393,6 +470,13 @@ module cadr_tv #(
       seq_t        <= 7'd0;
       sync_h       <= 1'b0;
       sync_v       <= 1'b0;
+
+      // `Tv::default`'s `color_map: [[0; CHANNELS]; COLORS]`, the power-on
+      // map.  On the board the RAMs are off it and come up undefined; zero is
+      // the convention muir's checkpoint carries and the one a resumed
+      // machine is given.
+      for (int c = 0; c < COLORS; c++)
+        for (int ch = 0; ch < CHANNELS; ch++) color_map[c][ch] <= 8'd0;
     end else begin
       ctl   <= ctl_c;
       fb    <= fb_c;
@@ -411,6 +495,16 @@ module cadr_tv #(
           3'd0:    mode    <= wdata[3:0];
           3'd2:    pointer <= wdata[11:0];
           3'd3:    sync_on <= wdata[7];
+          // Register 4, the COLOR register: the value in bits 15 to 8, the
+          // channel in 7 and 6, the color in 3 to 0.  A write naming the
+          // fourth channel strobes nothing, the 74S139's fourth output being
+          // unconnected.  Bits 5 and 4 leave the board on `COLOR 4` and
+          // `COLOR 5`, where a 64-entry map would take them as address;
+          // MIT's own `WRITE-COLOR-MAP` writes `(LOGAND LOC 17)` and never
+          // sets them, and what an off-board map does with them is
+          // unverified, so they reach nothing here as they reach nothing in
+          // muir.
+          3'd4:    if (wdata[7:6] != 2'd3) color_map[wdata[3:0]][wdata[7:6]] <= wdata[15:8];
           default: ;
         endcase
       end
@@ -497,7 +591,8 @@ module cadr_tv #(
     end
   end
 
-  // The word's bits above the widest register here go nowhere, and the
+  // The word's bits above the widest register here go nowhere --- register
+  // 4's value is bits 15 to 8, the widest a write reaches --- and the
   // reference says so: a write of 0xFFFFFFE5 to the mode register reads
   // back as 0o5.
   logic unused;
@@ -505,7 +600,7 @@ module cadr_tv #(
   // Buffer Cycle Type: this module makes no video cycles and drives no
   // monitor, so nothing here reads them, and a bit nothing reads is a lint
   // error unless it is said out loud.
-  assign unused = &{1'b0, wdata[31:12], seq_word[5:2]};
+  assign unused = &{1'b0, wdata[31:16], seq_word[5:2]};
 
 endmodule
 

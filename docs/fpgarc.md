@@ -116,6 +116,8 @@ went, for somebody who passes one by hand.
 one means. `--terminal` takes nothing, a port, an address, or address:port.
 
     --terminal            the endpoint the screen is served on
+    --color-terminal      the endpoint the SECOND screen is served on
+    --color-window        the color TV's region
     --keyboard-mapping    what a viewer's keysyms mean
     --keyboard-boot       the chord a cold boot is asked for with
     --keyboard-boot-trace say when a key-up is held behind a boot word
@@ -154,6 +156,24 @@ what each one means.
     --usb-grab            take the devices exclusively
     --usb-no-keyboard     ignore keyboards
     --usb-no-mouse        ignore mice
+
+**The display boards**, read by `S80cadr-disk-packs` before it starts the disk
+pack program, and written into the console face. `docs/tv.md` has the boards.
+
+    --tv-board simple-tv|lispm-tv
+                          which display board the first one is
+    --color-tv            fit the second board, the color TV
+
+Both are muir's flags with muir's meanings. A card that says nothing is a
+machine with one SIMPLE TV and no color board, which is muir's own default.
+The two are set before the drive comes present, for the reason the boot
+button's flag is: a machine that has read a band may already have looked at a
+display board.
+
+**A MACHINE WITH NO COLOR BOARD MUST GIVE THE NXM AT ITS ADDRESSES**, which
+is how `COLOR-EXISTS-P` in the band finds out whether it has one. So
+`--color-tv` is off unless the card asks for it, and the color screen is
+served with `--color-terminal` above.
 
 **The boot button**, read by `S80cadr-disk-packs` before it starts the disk pack
 program. One flag, and the section below is about it.

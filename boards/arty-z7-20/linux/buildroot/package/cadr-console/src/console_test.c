@@ -139,6 +139,14 @@ struct model {
 	// a primitive reads the part's AXSS register; here the test sets it,
 	// so that a read is a comparison against a value the check chose.
 	uint32_t build;
+	// **WHICH DISPLAY BOARDS THE BACKPLANE HAS**, page 2's word 33, and
+	// the two boards' color maps on pages 4 and 5.  The fabric holds the
+	// two bits and the maps; here the test sets them, so that a read is a
+	// comparison against a value the check chose.
+	int tv_lispm, color_tv;
+	int display_deaf_to_the_key;	/* a fabric that takes any value */
+	int display_unmarked;		/* a fabric older than word 33 */
+	uint8_t map[2][CONS_MAP_COLORS][CONS_MAP_CHANNELS];
 };
 
 static void model_advance(struct model *m, uint64_t t)
@@ -238,6 +246,23 @@ static uint32_t model_read(struct console *c, unsigned word)
 	// outside the face does.
 	if (word == CONS_BUILD)
 		return m->build;
+	// Page 2's word 33: the backplane's display boards, with a marker so
+	// that a fabric older than the word is not read as a machine with
+	// nothing set.
+	if (word == CONS_DISPLAY)
+		return m->display_unmarked
+			   ? 0u
+			   : ((uint32_t)CONS_TV_MARK << 16)
+				 | (m->color_tv ? CONS_TV_COLOR : 0u)
+				 | (m->tv_lispm ? CONS_TV_LISPM : 0u);
+	// Pages 4 and 5: the two color maps, one word a color.
+	if (word >= CONS_PAGE4 && word < CONS_PAGE5 + CONS_MAP_COLORS) {
+		const int board = word >= CONS_PAGE5;
+		const unsigned k = word - (board ? CONS_PAGE5 : CONS_PAGE4);
+		return ((uint32_t)m->map[board][k][0] << 16)
+		     | ((uint32_t)m->map[board][k][1] << 8)
+		     | (uint32_t)m->map[board][k][2];
+	}
 	if (word >= CONS_PAGE1 + 16u)
 		return CONS_UNMAPPED;
 	if (word >= CONS_PAGE1) {
@@ -335,6 +360,21 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 		m->f1.promdisable = 0;
 		return;
 	}
+	// Page 2's word 33, the backplane's display boards.  Three keys, and
+	// the color board's two are a value and its complement.
+	if (word == CONS_DISPLAY) {
+		if (v == CONS_TV_SIMPLE_KEY)
+			m->tv_lispm = 0;
+		else if (v == CONS_TV_LISPM_KEY)
+			m->tv_lispm = 1;
+		else if (v == CONS_COLOR_TV_KEY)
+			m->color_tv = 1;
+		else if (v == CONS_NO_COLOR_TV_KEY)
+			m->color_tv = 0;
+		else if (m->display_deaf_to_the_key)
+			m->color_tv = 1;
+		return;
+	}
 	// Page 0's word 14, the debug cable's role.  Two keys and nothing else,
 	// and the second is the first complemented, so no partial write of
 	// either can be the other.  **THE ROLE IS NOT THE ASK**: the connector
@@ -430,6 +470,19 @@ static void model_init(struct model *m)
 	// which is the value the stamp's format reserves for a bitstream that
 	// names no build at all.
 	m->build = 0xC0FFEE21u;
+	// A backplane with one SIMPLE TV and no color board, which is muir's
+	// own default and what every reference trace was taken on.  The two
+	// maps are filled with values injective in the board, the color and
+	// the channel, so that a read of the wrong word cannot come back
+	// right --- and none of them is zero, which is what a fabric keeping
+	// nothing would answer with.
+	m->tv_lispm = 0;
+	m->color_tv = 0;
+	for (int b = 0; b < 2; ++b)
+		for (int k = 0; k < CONS_MAP_COLORS; ++k)
+			for (int ch = 0; ch < CONS_MAP_CHANNELS; ++ch)
+				m->map[b][k][ch] =
+					(uint8_t)(1u + (unsigned)(b * 61 + k * 7 + ch * 29) % 250u);
 	m->q_latch = 0;
 	m->md_latch = 0;
 }
@@ -1948,6 +2001,176 @@ static void check_build(void)
 	}
 }
 
+// **THE BACKPLANE'S DISPLAY BOARDS**, page 2's word 33, and the two color
+// maps on pages 4 and 5.
+static void check_display(void)
+{
+	struct model m;
+	struct console c;
+
+	// 1.  A machine comes up with one SIMPLE TV and no color board, which
+	//     is muir's own default, and the word says so with its marker on.
+	model_init(&m);
+	attach(&c, &m);
+	{
+		struct cons_display d;
+		cons_read_display(&c, &d);
+		CHECK(d.mark_ok == 1, "the display word did not carry its marker (0x%08x)", d.word);
+		CHECK(d.lispm == 0, "a machine came up with a LISPM TV");
+		CHECK(d.color == 0, "a machine came up with a color board fitted");
+	}
+
+	// 2.  The three keys, each leaving the other setting alone.  **THE
+	//     SECOND BOARD AND THE FIRST BOARD'S STRAP ARE TWO FACTS ON ONE
+	//     WORD**, so a write of either that moved the other would make a
+	//     card's two lines fight.
+	cons_set_tv_board(&c, 1);
+	{
+		struct cons_display d;
+		cons_read_display(&c, &d);
+		CHECK(d.lispm == 1, "the first board did not become a LISPM TV");
+		CHECK(d.color == 0, "setting the board fitted a color board");
+	}
+	cons_set_color_tv(&c, 1);
+	{
+		struct cons_display d;
+		cons_read_display(&c, &d);
+		CHECK(d.lispm == 1, "fitting the color board changed the first board");
+		CHECK(d.color == 1, "the color board was not fitted");
+	}
+	cons_set_tv_board(&c, 0);
+	{
+		struct cons_display d;
+		cons_read_display(&c, &d);
+		CHECK(d.lispm == 0, "the first board did not go back to a SIMPLE TV");
+		CHECK(d.color == 1, "setting the board took the color board away");
+	}
+	cons_set_color_tv(&c, 0);
+	{
+		struct cons_display d;
+		cons_read_display(&c, &d);
+		CHECK(d.color == 0, "the color board was not taken away");
+	}
+
+	// 3.  **A VALUE THAT MEANS NOTHING CHANGES NOTHING.**  Twelve words
+	//     written at the display register, none of them a key, and the
+	//     backplane must stand: zero off a dead bus, all ones off an
+	//     undriven one, the word's own read-back, and the other words'
+	//     keys, which name other things entirely.
+	cons_set_color_tv(&c, 1);
+	cons_set_tv_board(&c, 1);
+	{
+		struct cons_display before, after;
+		static const uint32_t nothing[] = {
+			0u, 0xFFFFFFFFu, CONS_IDENT_WORD, CONS_UNMAPPED,
+			CONS_BOOT_KEY, 0x52534554u /* "RSET" */, CONS_DEBUG_CONNECT_KEY,
+			CONS_DEBUG_WIRE_AUTO_KEY, CONS_TV_SIMPLE_KEY ^ 1u,
+			CONS_TV_LISPM_KEY >> 8, CONS_COLOR_TV_KEY + 1u,
+			((uint32_t)CONS_TV_MARK << 16) | 3u,
+		};
+		cons_read_display(&c, &before);
+		for (unsigned i = 0; i < sizeof nothing / sizeof nothing[0]; ++i) {
+			c.write(&c, CONS_DISPLAY, nothing[i]);
+			cons_read_display(&c, &after);
+			CHECK(after.word == before.word,
+			      "writing 0x%08x at the display register changed it to 0x%08x",
+			      nothing[i], after.word);
+		}
+	}
+
+	// 4.  **A FABRIC OLDER THAN THE WORD IS NOT A BACKPLANE WITH NOTHING
+	//     SET**, and the marker is what tells them apart: both read zero
+	//     in the two bits.
+	{
+		struct cons_display d;
+		m.display_unmarked = 1;
+		cons_read_display(&c, &d);
+		CHECK(d.mark_ok == 0, "an unmarked word was read as a backplane");
+		capture_start();
+		cons_say_display(&d);
+		{
+			const char *said = capture_end();
+			CHECK(strstr(said, "older") != NULL,
+			      "the line did not say the fabric is older than the word: %s", said);
+		}
+		m.display_unmarked = 0;
+	}
+
+	// 5.  The lines a person reads: both boards named, and the absence of
+	//     the second said rather than left silent.
+	{
+		struct cons_display d;
+		cons_set_tv_board(&c, 1);
+		cons_set_color_tv(&c, 1);
+		cons_read_display(&c, &d);
+		capture_start();
+		cons_say_display(&d);
+		{
+			const char *said = capture_end();
+			CHECK(strstr(said, "LISPM TV") != NULL,
+			      "the line did not name the first board: %s", said);
+			CHECK(strstr(said, "color TV is fitted") != NULL,
+			      "the line did not say the color board is there: %s", said);
+		}
+		cons_set_color_tv(&c, 0);
+		cons_read_display(&c, &d);
+		capture_start();
+		cons_say_display(&d);
+		{
+			const char *said = capture_end();
+			CHECK(strstr(said, "no color TV") != NULL,
+			      "the line did not say there is no color board: %s", said);
+			CHECK(strstr(said, "NXM") != NULL,
+			      "the line did not say what a machine with none does: %s", said);
+		}
+	}
+
+	// 6.  **THE TWO COLOR MAPS, AND THEY ARE TWO.**  Sixteen colors of
+	//     three channels each, out of pages 4 and 5; the values are
+	//     injective in the board as well as the color, so a reader that
+	//     took one board's page for the other's reads the wrong byte.
+	{
+		uint8_t got[2][CONS_MAP_COLORS][CONS_MAP_CHANNELS];
+		int nonzero = 0, differ = 0;
+		cons_read_color_map(&c, 0, got[0]);
+		cons_read_color_map(&c, 1, got[1]);
+		for (int b = 0; b < 2; ++b)
+			for (int k = 0; k < CONS_MAP_COLORS; ++k)
+				for (int ch = 0; ch < CONS_MAP_CHANNELS; ++ch) {
+					CHECK(got[b][k][ch] == m.map[b][k][ch],
+					      "the %s board's map at %d/%d is %u wanting %u",
+					      b ? "color" : "first", k, ch,
+					      got[b][k][ch], m.map[b][k][ch]);
+					if (got[b][k][ch] != 0)
+						++nonzero;
+					if (b == 1 && got[1][k][ch] != got[0][k][ch])
+						++differ;
+				}
+		// A map of zeros is what a face that answered nothing would
+		// give, and two identical maps are what one store answering
+		// both pages would give.
+		CHECK(nonzero == 2 * CONS_MAP_COLORS * CONS_MAP_CHANNELS,
+		      "only %d of the 96 map bytes came back non-zero", nonzero);
+		CHECK(differ > 0, "the two boards' maps came back identical");
+	}
+
+	// 7.  And the channel order is red, green, blue --- `WRITE-COLOR-MAP`
+	//     writes red on channel 0 --- which is the one thing about the map
+	//     a renderer cannot get wrong quietly.
+	{
+		uint8_t got[CONS_MAP_COLORS][CONS_MAP_CHANNELS];
+		const uint32_t w = ((uint32_t)0x11u << 16) | ((uint32_t)0x22u << 8) | 0x33u;
+		m.map[1][5][0] = 0x11; m.map[1][5][1] = 0x22; m.map[1][5][2] = 0x33;
+		CHECK(CONS_MAP_RED(w) == 0x11u, "CONS_MAP_RED is not the top byte");
+		CHECK(CONS_MAP_GREEN(w) == 0x22u, "CONS_MAP_GREEN is not the middle byte");
+		CHECK(CONS_MAP_BLUE(w) == 0x33u, "CONS_MAP_BLUE is not the bottom byte");
+		cons_read_color_map(&c, 1, got);
+		CHECK(got[5][0] == 0x11 && got[5][1] == 0x22 && got[5][2] == 0x33,
+		      "the channels came back in another order: %u %u %u",
+		      got[5][0], got[5][1], got[5][2]);
+	}
+}
+
 static void check_log_prefix(void)
 {
 	// **THE RULE, AS A FUNCTION OF THE TWO THINGS IT IS ABOUT.**  A
@@ -2203,6 +2426,7 @@ int main(int argc, char **argv)
 	check_main_address();
 	check_debug_cable();
 	check_build();
+	check_display();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.
 	check_log_prefix();

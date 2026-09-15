@@ -126,6 +126,16 @@ set memory [expr {($ddr > 0 || $prove > 0) ? 1 : 0}]
 # it: the machine with its memory behind it and the soft processing system in
 # front of the faces, with both of the design's crossings in one netlist.
 set soc [expr {[info exists ::env(SOC)] ? $::env(SOC) : 0}]
+# **THE SECOND DISPLAY BOARD, `LMTV=1`.**  MIT's color TV --- `lmtv.order`'s
+# "for the color TV, x is 5" --- a second `rtl/machine/cadr_tv.sv` strapped to
+# 0o17200000 with its control words at 0o17377750, its frame buffer a second
+# window of the display's region of memory, and its color map read by the
+# console face.  On by default: whether a MACHINE has the board is the
+# console's page 2 word 33, so a fabric that carries the slot is still a
+# one-display machine until somebody says otherwise.  Zero leaves the slot
+# out of the fabric, for a part with no room for it.
+set lmtv [expr {[info exists ::env(LMTV)] ? $::env(LMTV) : 1}]
+
 
 set prom build/boot_prom.hex
 if {![file exists $prom]} {
@@ -238,7 +248,8 @@ set synth_args [list -top cadr_arty_a7 -part $part \
     -generic PROBE_DEPTH=$probe_depth \
     -generic DDR=$ddr \
     -generic PROVE=$prove \
-    -generic SOC=$soc]
+    -generic SOC=$soc \
+    -generic LMTV=$lmtv]
 if {$soc != 0} {
     lappend synth_args -generic FIRMWARE_HEX=[file normalize $firmware]
     lappend synth_args -include_dirs $incdirs

@@ -164,9 +164,10 @@ a block that is green on one may be turquoise on another, because the claim is
 about a board and not about the code.
 
 A block with no color at all has not been started. It is drawn so that the
-shape of the machine is known before the work begins, which is why the LISPM
-TV, MIT's color display, stands on the Xbus beside the monochrome TV on all
-three pages with nothing built in it yet.
+shape of the machine is known before the work begins. The Color TV --- MIT's
+second display board, on the Xbus beside the monochrome one on all three
+pages --- was drawn that way for a while and is turquoise now: it is built and
+checked here, and no monitor has shown its picture.
 
 On a drawing derived by crossing off, a block that board does not have carries
 no color at all. It keeps its place, goes dashed, and takes a red cross corner

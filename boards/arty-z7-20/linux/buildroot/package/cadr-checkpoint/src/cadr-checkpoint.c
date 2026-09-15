@@ -5,7 +5,7 @@
 // its disks bound to it.
 //
 //     cadr-checkpoint [-o FILE] [--boards N] [--pack FILE[,UNIT]] [--no-packs]
-//                     [--pack-dir DIR] [--chaos-address N] [--no-display]
+//                     [--pack-dir DIR] [--chaos-address OCTAL] [--no-display]
 //                     [--already-halted] [--leave-halted] [--packs-stopped]
 //                     [--no-guard]
 //     cadr-checkpoint --halt | --start
@@ -102,7 +102,7 @@ static void usage(void)
 {
 	fprintf(stderr,
 		"usage: cadr-checkpoint [-o FILE] [--boards N] [--pack FILE[,UNIT]]\n"
-		"                       [--no-packs] [--pack-dir DIR] [--chaos-address N]\n"
+		"                       [--no-packs] [--pack-dir DIR] [--chaos-address OCTAL]\n"
 		"                       [--no-display] [--already-halted] [--leave-halted]\n"
 		"                       [--packs-stopped] [--no-guard]\n"
 		"       cadr-checkpoint --halt | --start\n"
@@ -299,7 +299,15 @@ int main(int argc, char **argv)
 		} else if (!strcmp(a, "--no-packs")) {
 			no_packs = 1;
 		} else if (!strcmp(a, "--chaos-address") && i + 1 < argc) {
-			chaos = strtoul(argv[++i], NULL, 0);
+			unsigned v = 0;
+			if (chk_chaos_address(argv[++i], &v) != 0) {
+				say("--chaos-address %s: an address is OCTAL, as muir's own "
+				    "flag takes it --- a bare octal number or subnet:host, "
+				    "both halves non-zero and neither above 377",
+				    argv[i]);
+				return 2;
+			}
+			chaos = v;
 		} else if (!strcmp(a, "--no-display")) {
 			want_display = 0;
 		} else if (!strcmp(a, "--packs-stopped")) {
@@ -446,6 +454,24 @@ int main(int argc, char **argv)
 		    r.stale);
 		img_free(&img);
 		return 1;
+	}
+
+	// **THE FIRST DISPLAY BOARD'S COLOR MAP**, off the console face's page
+	// 4.  It is not DDR and it is not the readout window: register 4 is
+	// write only on the Xbus, the RAMs and their converters being off the
+	// board, so the fabric keeps the sixteen entries as muir's
+	// `tv::Tv::color_map` does and that page is the only way to ask.  A
+	// fabric older than the page reads its own UNMAPPED there, whose bytes
+	// are not zero --- so a map is taken only when the read looks like one,
+	// and a machine that has written none leaves the power-on map of zeros
+	// muir comes up with.
+	if (ro_color_map(&r, 0, img.tv_map)) {
+		unsigned n = 0;
+		for (unsigned c = 0; c < IMG_MAP_COLORS; ++c)
+			for (unsigned k = 0; k < IMG_MAP_CHANNELS; ++k)
+				n += img.tv_map[c][k] != 0;
+		say("the first display board's color map: %u of its %u channels are not zero",
+		    n, IMG_MAP_COLORS * IMG_MAP_CHANNELS);
 	}
 
 	// Main memory and the display, straight out of DDR.  **Not through the

@@ -12,7 +12,7 @@
 // WHAT THIS HOLDS TO, at every one of the trace's 77 million ticks:
 //
 //   - -MEMGRANT, -MEMACK, -LOADMD and NXM TIMEOUT against `Busint`, which is
-//     what puts the acknowledgement of a control-word read 140 ns after the
+//     what puts the acknowledgment of a control-word read 140 ns after the
 //     grant and of a write 80 --- muir's TV answers in no time of its own
 //     --- and the four dead words between the display's registers and the
 //     disk's on the NXM timer;
@@ -29,7 +29,7 @@
 //     `DISPLAY_BASE` plus four times the window offset, and every main
 //     memory cycle at `MAIN_BASE` plus four times the address, with the
 //     trace's own word --- asserted at the port on the tick, and read back
-//     through a modelled DDR keyed by the STIMULUS's address and filled
+//     through a modeled DDR keyed by the STIMULUS's address and filled
 //     from the STIMULUS's word, never the DUT's.  CLAUDE.md's rule, and the
 //     reason `bridge-writes-the-address-instead-of-the-data` is in the list.
 //
@@ -64,8 +64,8 @@
 //
 // AND THEN CONFIGURATION B: THE WINDOW AGAINST A MEMORY THAT TAKES TIME.
 // The trace above is muir's, and muir's TV answers a buffer word in no time
-// of its own, so the modelled DDR must answer in the same tick for the
-// acknowledgement to land where the reference puts it.  That leaves one
+// of its own, so the modeled DDR must answer in the same tick for the
+// acknowledgment to land where the reference puts it.  That leaves one
 // thing unexercised anywhere in `make check`: this is the only check that
 // ever puts the display's base on the memory port, and it was also the only
 // one whose memory answered at once --- `tb/cadr_memory_path_tb.cpp` waits
@@ -75,7 +75,7 @@
 // at main memory's base is caught twice.
 //
 // So after the trace the run builds a second machine and drives window
-// cycles at it directly, with a modelled DDR thirty-seven ticks behind the
+// cycles at it directly, with a modeled DDR thirty-seven ticks behind the
 // request:
 //
 //   - a word written and read back at the window's first word, at the last
@@ -84,7 +84,7 @@
 //     at the last word of the window;
 //   - the reads taken in the reverse order of the writes, so that a read
 //     giving the word before it cannot come back right;
-//   - a word the program never wrote, which must come back as the modelled
+//   - a word the program never wrote, which must come back as the modeled
 //     DDR's poison rather than as zero: a bridge answering out of its own
 //     idea of an unwritten word would pass a check that only ever read
 //     words it had written;
@@ -138,7 +138,7 @@ constexpr long kSyncInstructionSlowNs = 625;
 // screen ends, so configuration B reads the word on each side of it.
 constexpr uint32_t kVisibleWords = 23112u;
 
-// How far behind the request configuration B's modelled DDR answers.  Not a
+// How far behind the request configuration B's modeled DDR answers.  Not a
 // multiple of the microcycle, so the answer lands at a different phase on
 // every cycle, and far inside the NXM timer's own thousand ticks.
 constexpr long kLatency = 37;
@@ -161,7 +161,7 @@ uint32_t ByteAddress(unsigned phys) {
   return InWindow(phys) ? kDisplayBase + ((phys - kBuffer) << 2) : kMainBase + (phys << 2);
 }
 
-// What the modelled DDR holds at a byte address nothing wrote: injective
+// What the modeled DDR holds at a byte address nothing wrote: injective
 // in the address, as `tb/cadr_memory_path_tb.cpp`'s is.
 uint32_t Untouched(uint32_t byte_addr) {
   return (0x9E3779B9u * ((byte_addr >> 2) + 1u)) ^ 0xA5A5A5A5u;
@@ -190,7 +190,7 @@ int Fail(long tick, const char *what, unsigned long got, unsigned long want, con
 // ------------------------------------------------------------------------
 //
 // The head of this file has the argument.  In short: the trace above is
-// muir's and its modelled DDR must answer in the same tick, so the one
+// muir's and its modeled DDR must answer in the same tick, so the one
 // thing it cannot hold is what happens between a window cycle's request and
 // DDR's answer --- and this is the only check in the tree that ever puts
 // the display's base on the memory port at all.
@@ -235,6 +235,12 @@ int ConfigurationB() {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // The backplane configuration B runs on: one SIMPLE TV and no color
+  // board, which is what `busint::decode` describes and what every trace
+  // here was taken on.  `build/color_tv.pass` is the other backplane.
+  dut->tv_lispm = 0;
+  dut->color_tv = 0;
+  dut->tv_map_a = 0;
   dut->device_ack = 0;
   dut->device_rdata = 0;
   dut->spy_rdata = 0;
@@ -250,7 +256,7 @@ int ConfigurationB() {
   long tick = 0, port_cycles = 0, port_display = 0, port_main = 0;
   int bad = 0;
 
-  // The modelled DDR's one transaction: taken at the request, answered
+  // The modeled DDR's one transaction: taken at the request, answered
   // `kLatency` ticks later, and the port required to hold still between the
   // two --- which is the bus's own 80 ns rule seen from the other end.
   bool in_flight = false;
@@ -431,7 +437,7 @@ int ConfigurationB() {
   }
 
   // A word of the window the program never wrote: it must come back as what
-  // the modelled DDR holds there.  A bridge answering out of its own idea
+  // the modeled DDR holds there.  A bridge answering out of its own idea
   // of an unwritten word --- zero, or the word it last returned --- passes
   // a check that only ever reads words it has written.
   {
@@ -485,10 +491,14 @@ int ConfigurationB() {
 
 }  // namespace
 
-int main(int argc, char **argv) {
-  Verilated::commandArgs(argc, argv);
-
-  const char *path = (argc > 1) ? argv[1] : "build/tv.golden";
+// One trace, against the board its own header names.  **THE CHECK RUNS ONCE
+// A TRACE AND THE TRACES ARE THE TWO DISPLAY BOARDS**: muir has one display
+// model and `--tv-board` says which board it is playing, so the same program
+// is written out twice and the fabric is strapped from each trace's header.
+// Called once per path on the command line, so that `make check` and the
+// mutation runner both exercise both straps --- a runner that ran one of them
+// would let a mutation of the one bit they differ in survive.
+static int run_trace(const char *path) {
   std::FILE *f = std::fopen(path, "r");
   if (!f) {
     std::fprintf(stderr, "cannot read %s: %s\n", path, std::strerror(errno));
@@ -498,9 +508,28 @@ int main(int argc, char **argv) {
   // ---- the trace and its header ------------------------------------------
   std::map<std::string, std::vector<long>> hdr;
   std::vector<Row> rows;
+  // Which of the two display boards the trace is of, out of its own header:
+  // `--tv-board`'s two words. The fabric is strapped from this and never
+  // from an argument of its own, so a trace and a strap cannot be paired
+  // wrongly by whoever runs the check.
+  int board_lispm = -1;
   char line[512];
   while (std::fgets(line, sizeof line, f)) {
     if (line[0] == '#') {
+      // **THE KEY IS MATCHED WHOLE.** A format of `"# board %31s"` reads
+      // the `s` of `# boards 32` as the value, because a space in a scanf
+      // format matches ZERO or more whitespace characters: the two keys are
+      // one prefix apart and this check ran on the wrong word once.
+      char hkey[32], board[32];
+      if (std::sscanf(line, "# %31s %31s", hkey, board) == 2 &&
+          std::strcmp(hkey, "board") == 0) {
+        if (std::strcmp(board, "simple-tv") == 0) board_lispm = 0;
+        else if (std::strcmp(board, "lispm-tv") == 0) board_lispm = 1;
+        else {
+          std::fprintf(stderr, "%s: `%s` is not a display board\n", path, board);
+          return 2;
+        }
+      }
       char key[64];
       int used = 0;
       if (std::sscanf(line, "# %63s%n", key, &used) == 1) {
@@ -529,6 +558,10 @@ int main(int argc, char **argv) {
   std::fclose(f);
   if (rows.empty() || rows[0].tick != 0) {
     std::fprintf(stderr, "FAIL: the trace does not start at tick 0\n");
+    return 1;
+  }
+  if (board_lispm < 0) {
+    std::fprintf(stderr, "FAIL: %s does not say which display board it is of\n", path);
     return 1;
   }
 
@@ -581,6 +614,12 @@ int main(int argc, char **argv) {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // **THE BOARD THE TRACE IS OF**, out of its own header, and no second
+  // display: the color TV has a check of its own and `busint::decode` is the
+  // backplane without one.
+  dut->tv_lispm = board_lispm;
+  dut->color_tv = 0;
+  dut->tv_map_a = 0;
   // The seam for the slaves outside, the register block's read side and the
   // channel, all quiet and said so.
   dut->device_ack = 0;
@@ -784,16 +823,29 @@ int main(int argc, char **argv) {
   }
 
   std::printf(
-      "ok: %ld ticks, %ld frames, agree with muir's Tv through Busint at every tick\n"
+      "ok: the %s, %ld ticks, %ld frames, agree with muir's Tv through Busint at every tick\n"
       "    %ld cycles: %ld reads and %ld writes of the mode register, %ld and %ld of the sync RAM's data,\n"
       "    %ld and %ld of the frame buffer through DDR at the display's base, %ld and %ld of main memory,\n"
       "    %ld that nothing answered; %ld answered reads compared at -LOADMD; -XBUS.INTR up %ld times and\n"
       "    down %ld, to the tick, over %ld -XBUS INIT pulses\n"
       "    of those, %ld reads of the window compared against muir's own word, every one with a bit set,\n"
       "    and all %ld window cycles at the display's base with none in main memory's region\n",
-      checked, last_tick / frame_ticks, cycles, reg_reads[0], reg_writes[0], reg_reads[1], reg_writes[1],
+      board_lispm ? "LISPM TV" : "SIMPLE TV", checked, last_tick / frame_ticks, cycles, reg_reads[0], reg_writes[0], reg_reads[1], reg_writes[1],
       fb_reads, fb_writes, main_reads, main_writes, nxm_cycles, reads_checked, intr_rises, intr_falls, inits,
       fb_reads_checked, fb_port_display);
 
-  return ConfigurationB();
+  // Configuration B is about the window against a memory that takes time,
+  // which is the same on either board --- mode bit 7 reaches no memory
+  // cycle --- so it runs once, on the SIMPLE TV's pass.
+  return board_lispm ? 0 : ConfigurationB();
+}
+
+int main(int argc, char **argv) {
+  Verilated::commandArgs(argc, argv);
+  if (argc <= 1) return run_trace("build/tv.golden");
+  for (int i = 1; i < argc; ++i) {
+    const int rc = run_trace(argv[i]);
+    if (rc != 0) return rc;
+  }
+  return 0;
 }

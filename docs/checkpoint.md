@@ -59,9 +59,9 @@ wire in this fabric carries any of them.
 | field | what this program writes | why |
 |---|---|---|
 | `Tv::board`, which of the two display boards it is | `0`, the SIMPLE TV | `cadr_tv.sv` is MIT's SIMPLE TV. muir compares the loaded board with `--tv-board` and refuses a resume that disagrees, so a wrong tag is a message and not a machine |
-| `Tv::color_map`, sixteen colours of three channels | 48 zero bytes, the power-on map | register 4 is a write-only port whose map RAMs and converters are off the board. The fabric answers the write and keeps nothing, so there is nothing to read back |
+| `Tv::color_map`, sixteen colors of three channels | 48 zero bytes, the power-on map | register 4 is a write-only port whose map RAMs and converters are off the board. The fabric answers the write and keeps nothing, so there is nothing to read back |
 | `Tv::origin`, when the running sync program last started from its location 0 | `0` | the fabric has no sync generator at all, so its program has never been changed and never restarted. Zero says it has been running since the machine came up |
-| whether a colour display board is on the backplane | `false`, and no board after it | this backplane has one screen. The colour board's addresses `17200000` and `17377750` answer with an NXM, which is how `COLOR-EXISTS-P` finds out which machine it is on |
+| whether a color display board is on the backplane | `false`, and no board after it | this backplane has one screen. The color board's addresses `17200000` and `17377750` answer with an NXM, which is how `COLOR-EXISTS-P` finds out which machine it is on |
 
 The first and the last are **declared** rather than missing: they are facts
 about this fabric that no wire carries, and muir cross-checks both. The middle
@@ -181,10 +181,10 @@ The list, with what is written and what it costs a resume.
 | the debug IR, 48 bits | zero | nothing: IDEBUG is not built, so nothing would look at it |
 | the bus interface's own registers — the sixteen Unibus map entries, their read and write buffers, the error register, WRITE-THROUGH | clear, with the interrupt status at its power-on LOCAL-ENABLE | the interrupt status register, the error status register and the sixteen map entries are in the fabric now, and a checkpoint puts each of them back where a power-on leaves it. **The read and write buffers are in the fabric too and a checkpoint does NOT carry them**, so a restore leaves them at whatever the last mapped cycle put there; nothing can reach them yet, the debug cable's master being tied off, and nothing the boot PROM does touches any of them |
 | the disk controller, whole: command, command-list pointer, disk address, eight error flops, the channel, and the eight drives' head positions and attention timers | a controller that has just been built, heads at cylinder 0 | **a transfer in flight when the board was halted is lost.** The resumed machine's next look at the controller finds it idle with no error. The microcode's own retry covers a lost transfer; a half-walked command list it does not. Halt between transfers — the disk light is the instrument — or expect the cold boot to be re-driven |
-| the display's mode register, its sync RAM, its color map, its vertical-interrupt flag | clear | the **picture** is read, out of DDR, word for word. The sync RAM is muir's model of a sync generator the fabric does not have; the color map is a write-only port whose RAMs are off the board; the flag is set again at the next frame |
+| the display's mode register, its sync RAM, its vertical-interrupt flag | clear | the **picture** is read, out of DDR, word for word, and so is **the color map**, off the console face's page 4. Register 4 is write only on the Xbus, the RAMs being off the board, so that page is the only way to ask what a color is, and the fabric keeps the sixteen entries as muir does. The sync program is 4,096 bytes and no readout reaches it, so a resumed machine runs MIT's PROM from its power-on instant; the flag is set again at the next frame |
 | the I/O board, whole: the keyboard, the mouse, the sixty-cycle interval, and the microsecond clock | idle, with the mouse's two quadrature phases at 2, which is what a fresh mouse has | **the microsecond clock is the one that matters.** `(TIME)` is that counter shifted, and off it hang the wall clock, `PROCESS-SLEEP`, every Chaosnet timer and the scheduler, so a resumed machine's time of day starts again from zero. Nothing it computes depends on the clock being continuous; what it will see is one very long or very short interval at the seam |
 | the serial line's registers | idle | the CADR's serial line is in `cadr_io_board.sv` and has no readout |
-| the Chaosnet interface | idle, with its switches at the address `--chaos-address` names | `IoBoard::load` refuses a checkpoint whose address is not the resuming machine's, so the two have to agree; muir's own default is used unless told otherwise |
+| the Chaosnet interface | idle, with its switches at the address `--chaos-address` names | `IoBoard::load` refuses a checkpoint whose address is not the resuming machine's, so the two have to agree; muir's own default is used unless told otherwise. **The address is OCTAL**, as muir's own flag takes it — see below |
 | the bus cycle in flight — the address and word in the air, the responder, three absolute deadlines | idle | nothing, and this is what makes the whole thing possible: muir's own rule for a netlist checkpoint is that it is taken "between cycles with nothing in flight", and a machine the console has halted at a microcycle boundary is such a point |
 | the bus interface's memory-board refresh model and its own state | a machine that has just been built | **the resumed machine's clock is not the board's.** The elapsed time is real — it is the fabric's own tick count on MIT's five-nanosecond grid — but the refresh one-shot fires once, early, for nothing. This is the one place the file knowingly hands muir a machine that is not bit-for-bit the board's |
 | how long the machine has stalled, and how many bus cycles it has made | zero | nothing computes from either; they are totals muir keeps |
@@ -194,6 +194,27 @@ The list, with what is written and what it costs a resume.
 The two that change what a resumed machine *does* are the disk controller and
 the microsecond clock. Everything else in the table either has no reader or is
 written at the value the fabric behaves as.
+
+## `--chaos-address` is octal, as muir's is
+
+muir's flag "wants one address in octal or subnet:host", and
+`chaos::parse_address` is the whole of what it takes. A bare octal number, with
+no prefix of any kind: not `0o`, not `0x`, and a leading `0` changes nothing
+because the string is octal already. Or `subnet:host`, each an octal byte of at
+most `0o377`. In both forms both halves must be non-zero, so `0`, `377` and
+`177000` are not addresses.
+
+This program takes exactly that, and it used to take decimal. `strtoul` with a
+base of 0 reads a plain string of digits as decimal, so `--chaos-address
+177100` put `0o131714` — the low sixteen bits of one hundred and seventy-seven
+thousand — into the checkpoint's switches. muir then refused the file and said
+which two addresses disagreed. Only the spelling `0177100` worked. It was found
+on the board.
+
+Twenty-three spellings are held in the package's own check, including the one
+that was wrong, a value with a digit 8, both prefixes, and every form muir
+refuses. The eighth mutant is the defect itself: it reads the address as
+decimal, and muir refuses the file it writes.
 
 ## The proof, and what each leg of it proves
 
@@ -218,15 +239,24 @@ all three:
 | the mouse's quadrature phases written 0 where a fresh mouse has 2 | the recorded digest, and nothing else |
 | `Machine::opc` taken from the OPC shift register instead of LPC | the recorded digest, and nothing else |
 
-There are seven now. Format 25's four fields have one mutant each, for the
+There are eight now. Format 25's four fields have one mutant each, for the
 same reason: a field nothing is aimed at is a field the check does not hold.
+The eighth is the address's own spelling.
 
 | mutant | caught by |
 |---|---|
 | the display board written as the LISPM TV where the fabric is the SIMPLE TV | muir refuses it: "a lispm-tv checkpoint, and `--tv-board` is simple-tv" |
-| a colour display board claimed on a backplane that has none | muir refuses it at the short read, having tried to take a second display out of the eight hundred bytes that are left |
-| the colour map written all ones where a power-on map is all zeros | the recorded digest, and nothing else |
+| a color display board claimed on a backplane that has none | muir refuses it at the short read, having tried to take a second display out of the eight hundred bytes that are left |
+| the color map written all ones where the board's own map is read | the recorded digest, and nothing else |
 | the sync program's origin written at the machine's clock instead of zero | the recorded digest, and nothing else |
+| `--chaos-address` read as decimal, which is what `strtoul(.., 0)` does | muir refuses it, naming the two addresses that disagree |
+
+**The eighth is a mutation of a PARSER and the loop judges files**, so the
+check's own twenty-three spellings are skipped while a mutant is built ---
+they would be asserting the function the mutant replaced, the test would exit
+non-zero, and the loop would call it BROKEN rather than caught. The two hold
+different halves: the spellings hold the parser, and the mutant holds that the
+field in the file comes down it. `checkpoint_test.c` says so at the skip.
 
 The round trip cannot see a wrong value in a right-shaped slot, by
 construction: muir re-saves whatever it read, so any valid value survives it.

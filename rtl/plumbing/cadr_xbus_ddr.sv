@@ -48,6 +48,11 @@ module cadr_xbus_ddr
     // is; `rtl/machine/cadr_tv.sv` decodes the window and says why the bridge
     // answers it rather than a second master.
     input  var logic        display,
+
+    // ...and, of the two display boards, which one: the color TV's window is
+    // the second board's 32,768 words, at its own base in the same reserved
+    // region.  Meaningless while `display` is low.
+    input  var logic        display_color,
     input  var logic        dev_rq,     // -XBUS.RQ, as a positive level
     input  var logic        dev_write,
     input  var logic [21:0] phys,       // -XADDR21..0, a word address
@@ -82,10 +87,11 @@ module cadr_xbus_ddr
   // 32 bits, so two places left. cadr_ddr_map has both regions; which one is
   // the held decode's say, and the mux is on the address alone --- the
   // request, the direction and the word are the same either way.
-  logic [31:0] main_addr, display_addr;
+  logic [31:0] main_addr, display_addr, color_addr;
   assign main_addr    = main_byte_address(phys);
   assign display_addr = display_byte_address(phys[14:0]);
-  assign mem_addr     = display ? display_addr : main_addr;
+  assign color_addr   = color_display_byte_address(phys[14:0]);
+  assign mem_addr     = display ? (display_color ? color_addr : display_addr) : main_addr;
   assign mem_wdata    = wdata;
 
   always_ff @(posedge clk) begin

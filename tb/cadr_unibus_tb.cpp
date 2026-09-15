@@ -563,6 +563,13 @@ int main(int argc, char **argv) {
   dut->phys = 0;
   dut->wdata = 0;
   dut->boards = 32;
+  // **THE BACKPLANE THIS CHECK RUNS ON: one SIMPLE TV and no color TV**,
+  // which is muir's own default and the machine `busint::decode` describes.
+  // Driven rather than left to Verilator's zero, for the reason the `md`
+  // trap taught: an input nobody drives is an input nobody has decided.
+  dut->tv_lispm = 0;
+  dut->color_tv = 0;
+  dut->tv_map_a = 0;
   dut->device_ack = 0;
   dut->device_rdata = 0;
   dut->spy_rdata = 0;

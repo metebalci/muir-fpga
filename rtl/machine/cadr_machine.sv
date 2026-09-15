@@ -21,7 +21,7 @@
 //
 // **`-LOADMD` is gated by RDCYC on the processor's side**, which is where MIT
 // put it: "-LOADMD equals MEMACK and RDCYC".  The interface asserts it on
-// every acknowledgement, read or write --- `Busint` and `cadr_busint_xbus.sv`
+// every acknowledgment, read or write --- `Busint` and `cadr_busint_xbus.sv`
 // both do --- so a write leaves MD alone whatever the bridge has on `rdata`.
 // `cadr_microcycle.sv` says the same at the register.
 //
@@ -55,7 +55,15 @@
 module cadr_machine #(
     parameter string PROM_HEX = "build/boot_prom.hex",
     // MIT's TV sync PROM, for the display inside `cadr_memory_path`.
-    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
+
+    // Whether the second display board --- the color TV --- is built into
+    // this fabric at all.  `rtl/machine/cadr_memory_path.sv` says what it
+    // does; a board whose part has no room for the slot builds with it zero
+    // and is then a machine with one display, which is what
+    // `busint::decode` describes and what every reference trace but
+    // `color_tv.golden` was taken on.
+    parameter int LMTV = 1
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -243,6 +251,19 @@ module cadr_machine #(
     // --- how many 64K-word memory boards are fitted, 1 to 60
     input  var logic [6:0]  boards,
 
+    // --- AND WHICH DISPLAY BOARDS ARE, which is the same kind of fact: what
+    // is in the backplane rather than what the machine is doing.  `tv_lispm`
+    // says the first display is a LISPM TV rather than a SIMPLE TV, muir's
+    // `--tv-board`; `color_tv` fits the second board, the color TV at
+    // `0o17200000`, muir's `--color-tv`.  Both come from the console face ---
+    // `rtl/plumbing/cadr_console.sv`'s page 2 word 33 --- and the maps below
+    // go back the other way.  `rtl/machine/cadr_tv.sv` is the board.
+    input  var logic        tv_lispm,
+    input  var logic        color_tv,
+    input  var logic [3:0]  tv_map_a,
+    output var logic [23:0] tv_map_q,
+    output var logic [23:0] tv_color_map_q,
+
     // --- the machine, as `Rtl::signals` and `Rtl::spy` name it
     output var logic [13:0] pc,
     output var logic [13:0] lpc,
@@ -382,7 +403,7 @@ module cadr_machine #(
     // `0o766100`-`0o766137`.  `rtl/machine/cadr_busint_regs.sv` holds those
     // four registers; what leaves here is the four control lines and the
     // sixteen data lines they drive, and what comes back is the
-    // acknowledgement and the lines RESOLVED --- a byte nobody drives reads
+    // acknowledgment and the lines RESOLVED --- a byte nobody drives reads
     // as ones, the SIP at DBGIN 0A22 being on the far board.
     //
     // **`dbgout_live` IS THE WHOLE OF THE DIFFERENCE BETWEEN muir's TWO
@@ -693,6 +714,7 @@ module cadr_machine #(
   );
 
   cadr_memory_path #(
+      .LMTV(LMTV),
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) memory (
       .clk        (clk),
@@ -716,6 +738,11 @@ module cadr_machine #(
       .device_ack (dev_ack_joined),
       .device_rdata(dev_rdata_joined),
       .tv_intr    (tv_intr),
+      .tv_lispm   (tv_lispm),
+      .color_tv   (color_tv),
+      .tv_map_a   (tv_map_a),
+      .tv_map_q   (tv_map_q),
+      .tv_color_map_q(tv_color_map_q),
       .ch_req     (ch_req),
       .ch_write   (ch_write),
       .ch_addr    (ch_addr),

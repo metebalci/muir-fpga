@@ -102,12 +102,12 @@
 @note The copy is what makes one pass's diff and one pass's pixels come from
 @note one screen; keeping it for ever is the way that goes wrong.
 @old
-	for (unsigned i = 0; i < SCREEN_VISIBLE_WORDS; ++i)
+	for (unsigned i = 0; i < f->visible_words; ++i)
 		f->words[i] = window[i];
 	++f->reads;
 @new
 	if (f->reads == 0)
-		for (unsigned i = 0; i < SCREEN_VISIBLE_WORDS; ++i)
+		for (unsigned i = 0; i < f->visible_words; ++i)
 			f->words[i] = window[i];
 	++f->reads;
 @end
@@ -1050,4 +1050,153 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 	trace_asked = (sig == SIGUSR1);
 @new
 	trace_asked = (sig == SIGUSR2);
+@end
+
+# --- the second screen, the color TV's --------------------------------------
+
+@mutation the-color-screens-nibbles-are-read-the-other-way-round
+@file screen_geom.h
+@why muir's `Tv::color` takes the pixel at x from nibble `x % 8` of a word, from the LOW
+@why end; a screen read from the high end is mirrored eight pixels at a time
+@note The first screen's bit order has a record of its own and this is the
+@note same failure one board along: a picture served mirrored is the classic
+@note way a program like this one is wrong, and it is cheap to get right by
+@note reading muir.
+@old
+	return (words[at] >> (x % 8u * SCREEN_COLOR_BPP)) & 0xFu;
+@new
+	return (words[at] >> ((7u - x % 8u) * SCREEN_COLOR_BPP)) & 0xFu;
+@end
+
+@mutation the-color-screen-has-the-first-boards-line-length
+@file screen_geom.h
+@why the color screen is 72 words a line and the first board 24; a reader using the
+@why wrong one walks diagonally across the picture
+@old
+	const unsigned at = y * SCREEN_COLOR_WORDS_PER_LINE + x / 8u;
+@new
+	const unsigned at = y * SCREEN_WORDS_PER_LINE + x / 8u;
+@end
+
+@mutation the-color-map-comes-back-in-the-wrong-order
+@file screen_rfb.c
+@why `WRITE-COLOR-MAP` writes red on channel 0, green on 1 and blue on 2, and a viewer
+@why sent them the other way round draws the right picture in wrong colors
+@note The one thing about the map that goes wrong quietly: every color is
+@note there, every pixel is the color the machine chose, and the screen is
+@note simply not the screen the machine drew.
+@old
+			for (unsigned k = 0; k < 3; ++k) {
+				const uint16_t b = map[v][k];
+				be16(e + k * 2, (uint16_t)(b << 8 | b));
+			}
+@new
+			for (unsigned k = 0; k < 3; ++k) {
+				const uint16_t b = map[v][2 - k];
+				be16(e + k * 2, (uint16_t)(b << 8 | b));
+			}
+@end
+
+@mutation a-color-maps-byte-is-not-repeated-into-both-halves
+@file screen_rfb.c
+@why RFB's map entries are sixteen bits a gun and the CADR's are eight, so a byte is
+@why repeated into both halves: 0xFF must come out 0xFFFF and not 0xFF00
+@note A gun at full that arrives as 0xFF00 is a color 0.4% dark, which
+@note nobody would see; what it breaks is the equality a check can state, and
+@note a rule that is only nearly right is a rule nothing holds.
+@old
+				be16(e + k * 2, (uint16_t)(b << 8 | b));
+@new
+				be16(e + k * 2, (uint16_t)(b << 8));
+@end
+
+@mutation a-true-color-viewer-gets-the-color-index-instead-of-the-color
+@file screen_rfb.c
+@why a four-bit pixel is an ADDRESS into the map, not a color: a viewer sent the index
+@why sees sixteen shades of almost-black where the machine drew a picture
+@old
+	if (values == 2)
+		return value ? rfb_white(f) : rfb_black(f);
+@new
+	if (values == 2 || values == 16)
+		return value ? rfb_white(f) : rfb_black(f);
+@end
+
+@mutation the-rre-background-is-the-first-color-rather-than-the-commonest
+@file screen_server.c
+@why RRE sends everything that is NOT the background as subrectangles, so a background
+@why nothing has much of is a rectangle sent a pixel at a time
+@note It still draws the right picture, which is what makes it worth a record:
+@note the check measures what RRE cost against what Raw would have, and a
+@note background chosen badly shows there and nowhere else.
+@note **AND IT IS THE LAST COLOR PRESENT RATHER THAN THE FIRST**, measured:
+@note written as the first, the mutant picks the color the rectangle has
+@note most of anyway --- the background is color 0 in the check's picture and
+@note it is also the lowest --- and the two are indistinguishable.  The last
+@note is a background a quarter of the rectangle has, which the check's own
+@note comparison against the map sees.
+@old
+	unsigned best = 0;
+	for (unsigned v = 1; v < 16u; ++v)
+		if (n[v] > n[best])
+			best = v;
+	return best;
+@new
+	unsigned best = 0;
+	for (unsigned v = 1; v < 16u; ++v)
+		if (n[v] > 0)
+			best = v;
+	return best;
+@end
+
+@mutation an-rre-run-is-everything-that-is-not-the-background
+@file screen_server.c
+@why a run is a run of ONE color: on a sixteen-color screen a band of red beside a band
+@why of green is two subrectangles, and a walk that joined them sends one color for both
+@note This is the two-color rule left standing on a screen that has sixteen,
+@note and it is exactly right on the first display board --- which is why it
+@note needs a record on the second: a mutation that is correct where the old
+@note code ran is the one a check written for that code cannot see.
+@old
+			while (x < rx + rw && screen_value(f, x, y) == v)
+				++x;
+@new
+			while (x < rx + rw && screen_value(f, x, y) != background)
+				++x;
+@end
+
+@mutation the-color-screen-is-served-the-first-boards-size
+@file screen_server.c
+@why a viewer is told the size of the screen it is watching; told the other board's it
+@why asks for pixels that are not there or never asks for the ones that are
+@old
+			const size_t n = rfb_server_init(init, (uint16_t)s->frame->width,
+							 (uint16_t)s->frame->height, name);
+@new
+			const size_t n = rfb_server_init(init, (uint16_t)SCREEN_WIDTH,
+							 (uint16_t)SCREEN_HEIGHT, name);
+@end
+
+@mutation a-frame-byte-is-eight-pixels-whatever-the-screen-is
+@file screen_server.c
+@why a frame-buffer byte is eight pixels on the first board and TWO on the color one;
+@why a table built for eight sends four times the row and runs off the end of it
+@old
+	px->per_byte = 8u / fr->bpp;
+@new
+	px->per_byte = 8u;
+@end
+
+@mutation the-color-map-is-read-off-the-first-boards-page
+@file color_map.c
+@why the two display boards keep two maps, on two pages; a server rendering the color
+@why screen through the first board's map draws it in colors nothing wrote
+@note MIT's software writes the color board's map and never the first
+@note board's, so on a real machine the wrong page is all zeros and the
+@note picture is black --- which looks exactly like a machine that has not
+@note drawn yet.
+@old
+		const uint32_t w = f->read(f, CMAP_WORD(1, c));
+@new
+		const uint32_t w = f->read(f, CMAP_WORD(0, c));
 @end

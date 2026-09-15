@@ -161,10 +161,17 @@ uint32_t Spy(unsigned e) { return kBase + 0x40u + 4u * e; }
 enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
               kRegTicks = 4, kRegTicksH = 5, kRegReset = 6, kRegVma = 7,
               kRegQ = 8, kRegMd = 9, kRegBoot = 13, kRegDebug = 14 };
-// Page 2's word 32 is the build; every other word of pages 2 and 3 reads
-// `UNMAPPED`, which is also what an address outside the face reads --- so
-// this is the ONE address the face gained.
+// Page 2's word 32 is the build and its word 33 is the backplane's display
+// boards; every other word of pages 2 and 3 reads `UNMAPPED`, which is also
+// what an address outside the face reads.  Pages 4 and 5 are the two boards'
+// color maps, sixteen words each.
 constexpr unsigned kRegBuild = 32;
+constexpr unsigned kRegDisplay = 33;
+// `cadr_console.sv`'s own three keys and the word's marker.
+constexpr uint32_t kTvSimpleKey = 0x534D504Cu;  /* "SMPL" */
+constexpr uint32_t kTvLispmKey = 0x4C53504Du;   /* "LSPM" */
+constexpr uint32_t kColorTvKey = 0x434F4C52u;   /* "COLR" */
+constexpr uint32_t kTvMark = 0x5456u;           /* "TV" */
 
 // What `rtl/plumbing/xilinx7/cadr_machine.xdc`'s relaxed set asks of the three
 // registers `rtl/machine/cadr_console_state.sv` holds: fifteen ticks, 75 ns.
@@ -1335,14 +1342,131 @@ int main(int argc, char **argv) {
     if (again != kBuild) Fail("the build after writes at its own word", again, kBuild);
   }
   // **AND EVERY OTHER WORD OF PAGES 2 AND 3 READS `UNMAPPED`**, which is what
-  // an address outside the face reads too --- so the face gained exactly one
-  // readable address when the stamp arrived and gained nothing else.  The two
-  // ends of page 2 past the stamp and the two ends of page 3.
-  for (unsigned i : {33u, 47u, 48u, 63u}) {
+  // an address outside the face reads too.  The face gained one readable
+  // address when the stamp arrived and one more when the backplane's display
+  // boards took word 33, and it gained nothing else: the end of page 2 past
+  // the two, and the two ends of page 3.
+  for (unsigned i : {34u, 47u, 48u, 63u}) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("a word of pages 2 and 3 that is not the build", w, kUnmapped);
     ++unmapped_seen;
     DoWrite(Con(i), 0xFFFFFFFFu, 0xF);   // dropped, and it must still answer
+  }
+  // **THE BACKPLANE'S DISPLAY BOARDS, page 2's word 33.**
+  //
+  // A CADR carries one display board or two, and which is what the console
+  // says: `--tv-board` picks the first board and `--color-tv` fits the
+  // second, muir's own two flags, written at boot by the disk pack program's
+  // init step before the drive is presented.
+  //
+  // **WHAT THE WORD SAYS AND WHAT THE FABRIC HOLDS ARE TWO FACTS**, so the
+  // harness brings the two settings out as levels and both are compared: a
+  // console that reported the key it was given rather than the setting it
+  // made would agree with itself and with nothing else.
+  {
+    auto backplane = [&](const char *what, int want_lispm, int want_color) {
+      const uint32_t w = ReadWord(Con(kRegDisplay));
+      if ((w >> 16) != kTvMark) Fail("the display word's marker", w >> 16, kTvMark);
+      if (((w >> 0) & 1u) != (uint32_t)want_lispm)
+        Fail(what, (w >> 0) & 1u, (uint32_t)want_lispm);
+      if (((w >> 1) & 1u) != (uint32_t)want_color)
+        Fail(what, (w >> 1) & 1u, (uint32_t)want_color);
+      if (dut->tv_lispm != want_lispm) Fail("the level the fabric holds for the first board",
+                                            dut->tv_lispm, want_lispm);
+      if (dut->color_tv != want_color) Fail("the level the fabric holds for the color board",
+                                            dut->color_tv, want_color);
+    };
+    // A machine comes up with one SIMPLE TV and no color board, which is
+    // muir's own default and the backplane every reference trace was taken
+    // on.
+    backplane("the backplane out of reset", 0, 0);
+    // The three keys, and **EACH LEAVES THE OTHER SETTING ALONE**: the two
+    // are two facts on one word, and a card's two `fpgarc` lines are applied
+    // in whatever order the init script takes them.
+    DoWrite(Con(kRegDisplay), kTvLispmKey, 0xF);
+    backplane("the first board after LSPM", 1, 0);
+    DoWrite(Con(kRegDisplay), kColorTvKey, 0xF);
+    backplane("the backplane after COLR", 1, 1);
+    DoWrite(Con(kRegDisplay), kTvSimpleKey, 0xF);
+    backplane("the backplane after SMPL", 0, 1);
+    DoWrite(Con(kRegDisplay), ~kColorTvKey, 0xF);
+    backplane("the backplane after ~COLR", 0, 0);
+    // **AND A VALUE THAT MEANS NOTHING CHANGES NOTHING.**  Zero off a dead
+    // bus, all ones off an undriven one, the word's own read-back, and the
+    // other words' keys, which name other things entirely --- the same list
+    // words 6 and 13 are held to and for the same reason.
+    DoWrite(Con(kRegDisplay), kColorTvKey, 0xF);
+    DoWrite(Con(kRegDisplay), kTvLispmKey, 0xF);
+    const uint32_t nothing[] = {
+        0u, 0xFFFFFFFFu, kIdent, kUnmapped, 0x424F'4F54u /* BOOT_KEY */,
+        0x5253'4554u /* RESET_KEY */, 0x4442'4752u /* DEBUG_KEY */,
+        0x4155'544Fu /* AUTO */, kTvSimpleKey ^ 1u, kTvLispmKey >> 8,
+        kColorTvKey + 1u, ((uint32_t)kTvMark << 16) | 3u};
+    for (uint32_t v : nothing) {
+      DoWrite(Con(kRegDisplay), v, 0xF);
+      backplane("the backplane after a value that means nothing", 1, 1);
+    }
+    // **AND A BYTE-WIDE WRITE IS NOT A KEY.**  The face merges a beat against
+    // zero, so a `writeb` of one lane carries three zero bytes: a key that
+    // could be assembled a byte at a time would be a key any program could
+    // hit by accident.
+    DoWrite(Con(kRegDisplay), kTvSimpleKey, 0x1);
+    backplane("the backplane after a byte of a key", 1, 1);
+    // **AND ONLY PAGE 2'S OWN COMPARATOR REACHES THE WORD.**  Word 1 of page
+    // 0 is STAT, which a program reads and can write straight back.  The two
+    // words are the same index in two windows, so a face that took this key
+    // off page 0's match as well would let any program that echoed STAT set
+    // the backplane's display boards.  Both keys are tried, and each names
+    // the setting that is currently on, so either would show.
+    DoWrite(Con(kRegStat), kTvSimpleKey, 0xF);
+    backplane("the backplane after SMPL written at page 0's STAT", 1, 1);
+    DoWrite(Con(kRegStat), ~kColorTvKey, 0xF);
+    backplane("the backplane after ~COLR written at page 0's STAT", 1, 1);
+    // Back to the default backplane, so that nothing after this section is
+    // run on a machine it did not expect.
+    DoWrite(Con(kRegDisplay), kTvSimpleKey, 0xF);
+    DoWrite(Con(kRegDisplay), ~kColorTvKey, 0xF);
+    backplane("the backplane at the end", 0, 0);
+  }
+
+  // **AND THE TWO DISPLAY BOARDS' COLOR MAPS, pages 4 and 5.**
+  //
+  // The map is write only on the Xbus --- the RAMs and their converters are
+  // off the board --- so this port is the only way to ask what a color is,
+  // and an RFB server rendering the color screen and a checkpoint carrying
+  // what muir would have kept both read it here.  The harness offers a
+  // pattern injective in the board, the color and the channel, so a page
+  // read off the wrong board, a color off by one, or a channel order the
+  // other way round all come back wrong.
+  {
+    int differ = 0;
+    for (unsigned c = 0; c < 16u; ++c) {
+      uint32_t got[2] = {0, 0};
+      for (int board = 0; board < 2; ++board) {
+        const uint32_t red   = 1u + c + (board ? 97u : 0u);
+        const uint32_t green = 2u + c * 2u + (board ? 53u : 0u);
+        const uint32_t blue  = 3u + c * 4u + (board ? 29u : 0u);
+        const uint32_t want = ((red & 0xFFu) << 16) | ((green & 0xFFu) << 8) | (blue & 0xFFu);
+        got[board] = ReadWord(Con((board ? 80u : 64u) + c));
+        if (got[board] != want)
+          Fail(board ? "the color board's map entry" : "the first board's map entry",
+               got[board], want);
+      }
+      if (got[0] != got[1]) ++differ;
+      // A write at a map word reaches nothing: the pages are read only, and
+      // a face that took a write here would be a color map a program could
+      // set without the machine's own register 4.
+      DoWrite(Con(64u + c), 0xFFFFFFFFu, 0xF);
+      DoWrite(Con(80u + c), 0xFFFFFFFFu, 0xF);
+      const uint32_t after = ReadWord(Con(80u + c));
+      const uint32_t want_after =
+          (((1u + c + 97u) & 0xFFu) << 16) | (((2u + c * 2u + 53u) & 0xFFu) << 8)
+          | ((3u + c * 4u + 29u) & 0xFFu);
+      if (after != want_after) Fail("a map entry after a write at its own word", after, want_after);
+    }
+    // The two boards' maps must not be one map: a face answering both pages
+    // out of one store would pass everything above.
+    if (differ != 16) Fail("colors where the two boards' maps differ", differ, 16);
   }
   // **AND A WRITE ANYWHERE IN PAGES 2 AND 3 REACHES NOTHING**, which is the
   // thing a second address match buys over a wider first one: page 2's word 6
@@ -1367,7 +1491,9 @@ int main(int argc, char **argv) {
   // recognize.  **`kBase + 0x80` WAS IN THIS LIST AND IS THE BUILD NOW**: it
   // was outside a face of thirty-two words and is page 2's first word since,
   // which is the one address in the whole port whose value the stamp moved.
-  const uint32_t outside[] = {kBase + 0x100u, kBase + 0x1000u, kBase + 0x10000000u,
+  // **AND `kBase + 0x100` WENT THE SAME WAY** when the two color maps took
+  // pages 4 and 5, so the first address outside the face is `kBase + 0x180`.
+  const uint32_t outside[] = {kBase + 0x180u, kBase + 0x1000u, kBase + 0x10000000u,
                               kBase - 4u, 0xBFFFFFFCu, 0x00000000u, 0x40000000u};
   for (uint32_t a : outside) {
     const uint32_t w = ReadWord(a);

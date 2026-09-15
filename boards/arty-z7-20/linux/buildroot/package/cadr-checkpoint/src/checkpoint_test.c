@@ -455,7 +455,13 @@ int main(int argc, char **argv)
 	// round trip runnable with nothing but a muir.
 	struct chk_declared decl;
 	memset(&decl, 0, sizeof decl);
-	decl.chaos_address = 0177001u;
+	// **THE ADDRESS IS PARSED AND NOT WRITTEN AS A LITERAL**, so that the
+	// parser is in the path the checkpoint's own field comes down.  muir's
+	// spelling for muir's default: a bare octal number.  A parser that read
+	// it as decimal would put 0o131551 in the switches and muir would
+	// refuse the file, which is exactly what happened on the board.
+	if (chk_chaos_address("177001", &decl.chaos_address) != 0)
+		fail("muir's own default address parsed", 1, 0);
 
 	if (ro_read_machine(&r, &img) != 0) {
 		fail("the window would not give the machine up", r.stale, 0);
@@ -492,6 +498,17 @@ int main(int argc, char **argv)
 		img.main[i] = (uint32_t)poison(12, (unsigned)i, 32);
 	for (size_t i = 0; i < IMG_TV_WORDS; ++i)
 		img.tv[i] = (uint32_t)poison(13, (unsigned)i, 32);
+	// **AND THE FIRST DISPLAY BOARD'S COLOR MAP, WHICH IS NOT DDR AND IS NOT
+	// ZERO EITHER.**  It comes off the console face's page 4 on the board ---
+	// register 4 is write only on the Xbus, so that page is the only way to
+	// ask what a color is --- and a check that only ever ran it at zero
+	// would pass a program that wrote zeros, which is what this one used to
+	// do.  Poisoned in the color and the channel, none of the forty-eight
+	// bytes zero, so a byte taken from the wrong slot cannot come back right.
+	for (unsigned c = 0; c < IMG_MAP_COLORS; ++c)
+		for (unsigned k = 0; k < IMG_MAP_CHANNELS; ++k)
+			img.tv_map[c][k] =
+				(uint8_t)(1u + (unsigned)poison(14, c * 4u + k, 8) % 250u);
 
 	struct chk body;
 	chk_init(&body);
@@ -579,6 +596,80 @@ int main(int argc, char **argv)
 		printf("checkpoint: wrote %s --- muir opening it is the proof, and "
 		       "`make build/checkpoint.pass` is where that happens\n", out);
 	chk_free(&body);
+	// ---- **AN ADDRESS IS OCTAL** ----------------------------------------
+	//
+	// `--chaos-address 177100` went through `strtoul(.., 0)` and put
+	// 0o131714 --- the low sixteen bits of one hundred and seventy-seven
+	// thousand --- into the checkpoint's switches, and muir refused the
+	// file saying exactly that.  Only `0177100` worked.  muir's flag
+	// "wants one address in octal or subnet:host", and
+	// `chaos::parse_address` is the whole of what it takes; this is that
+	// parser in C, so the spellings are compared against muir's rules and
+	// not against this program's own habits.
+	//
+	// **SKIPPED UNDER A MUTANT, AND THAT IS NOT A CHECK LOOKING AWAY.**
+	// Mutant 8 REPLACES this parser, so these vectors would be asserting
+	// the thing the mutant took out: they fail by construction, the test
+	// exits non-zero, and the loop that judges the mutants would call it
+	// BROKEN rather than caught.  What holds the mutant is the file ---
+	// the address in it comes down this parser, so a decimal reader puts
+	// 0o131551 in the switches and muir refuses it by name, which is the
+	// first leg of that loop and is exactly how the defect was found on
+	// the board.  The two hold different halves: the vectors hold the
+	// parser, the mutant holds that the FIELD comes through it.
+	if (!chk_rtl_mutation()) {
+		static const struct { const char *s; int ok; unsigned want; } t[] = {
+			// The board's own, which is the spelling that was wrong.
+			{ "177100", 1, 0177100u },
+			// A leading zero changes nothing: the string is octal
+			// already, and both spellings are the same address.
+			{ "0177100", 1, 0177100u },
+			{ "3050", 1, 03050u },
+			{ "177001", 1, 0177001u },
+			// subnet:host, muir's other form --- and `376:1` is the
+			// same address as `177001` written the other way, which
+			// is what says the two forms are one number.
+			{ "376:1", 1, 0177001u },
+			{ "1:1", 1, 0401u },
+			// **A DIGIT 8 OR 9 IS NOT OCTAL.**  This is the whole of
+			// the defect: a decimal reader takes these and an octal
+			// one refuses them.
+			{ "177108", 0, 0 },
+			{ "9", 0, 0 },
+			{ "18:1", 0, 0 },
+			// No prefix of any kind, which muir has none of either.
+			{ "0x1234", 0, 0 },
+			{ "0o177100", 0, 0 },
+			// Both halves non-zero, which is muir's `both`.
+			{ "0", 0, 0 },
+			{ "377", 0, 0 },
+			{ "177000", 0, 0 },
+			{ "1:0", 0, 0 },
+			{ "0:1", 0, 0 },
+			// A byte of a pair is at most 0o377.
+			{ "400:1", 0, 0 },
+			{ "1:400", 0, 0 },
+			// And nothing at all is nothing.
+			{ "", 0, 0 },
+			{ ":", 0, 0 },
+			{ "177100:", 0, 0 },
+			{ "177777", 1, 0177777u },
+			{ "200000", 0, 0 },
+		};
+		for (unsigned i = 0; i < sizeof t / sizeof t[0]; ++i) {
+			unsigned got = 0xFFFFFFFFu;
+			const int rc = chk_chaos_address(t[i].s, &got);
+			if (t[i].ok) {
+				if (rc != 0)
+					fail("an address this program must take", 1, 0);
+				else if (got != t[i].want)
+					fail(t[i].s, got, t[i].want);
+			} else if (rc == 0) {
+				fail("an address this program must refuse", got, 1);
+			}
+		}
+	}
+
 	img_free(&img);
 	free(m);
 

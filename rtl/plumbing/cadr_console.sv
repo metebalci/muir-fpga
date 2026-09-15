@@ -29,7 +29,7 @@
 // register 5 is `PC`.  `cc.rs` reads exactly that --- "`if b.spy_read(
 // spy::FLAG_1) & 0x100 != 0 { "running" } else { "halted" }`".
 //
-// **WHAT LINUX SEES**, sixty-four words at `REG_BASE`, four pages of sixteen.
+// **WHAT LINUX SEES**, ninety-six words at `REG_BASE`, six pages of sixteen.
 // The window is 256 bytes; `M_AXI_GP1` decodes `0x8000_0000` upward in the
 // Zynq-7000 address map and this sits at the bottom of it.
 //
@@ -169,9 +169,36 @@
 //                 JTAG USERCODE register holds: two registers off one value,
 //                 read by two observers that share no path.
 //
-//     33-47       `UNMAPPED`
+//     33 DISPLAY  **which display boards are in the backplane.**  A write of
+//                 `TV_SIMPLE_KEY` or `TV_LISPM_KEY` says which board the
+//                 first display is, muir's `--tv-board`; a write of
+//                 `COLOR_TV_KEY` fits the second board and its complement
+//                 takes it out, muir's `--color-tv`.  It reads back:
+//
+//                   bits 31:16  `TV_MARK`, a marker
+//                   bit 1       a color TV is fitted
+//                   bit 0       the first display is a LISPM TV
+//
+//                 **IT IS ON THIS PAGE AND NOT ON PAGE 0 BECAUSE IT IS WHAT
+//                 THE BACKPLANE IS** and not what the machine is doing ---
+//                 the same kind of fact as the build stamp beside it, and
+//                 the reason the rule about pages 2 and 3 below names one
+//                 word rather than none.
+//     34-47       `UNMAPPED`
 //
 //   page 3, `REG_BASE + 0xC0`: all sixteen read `UNMAPPED`.
+//
+//   page 4, `REG_BASE + 0x100`, the FIRST display board's color map: word
+//   64 + c is color c, red in bits 23 to 16, green in 15 to 8 and blue in 7
+//   to 0, which is `WRITE-COLOR-MAP`'s own channel order.  Read only.
+//
+//   page 5, `REG_BASE + 0x140`, the COLOR TV's, the same sixteen words.
+//   **THE MAP IS WRITE ONLY ON THE BUS AND THE PICTURE CANNOT BE DRAWN
+//   WITHOUT IT**: a pixel of the color screen is four bits, an address into
+//   these sixteen, so an RFB server has to be told what a color is and a
+//   checkpoint has to carry what muir would have kept.
+//   `rtl/machine/cadr_tv.sv` says why the board keeps a map whose RAMs are
+//   off it.
 //
 // **THE HIGH HALF IS LATCHED BY THE LOW HALF'S READ, and that is not a
 // convenience.**  A 64-bit counter read as two 32-bit loads is wrong across
@@ -552,6 +579,21 @@ module cadr_console #(
     // the other.  `~DEBUG_KEY` is `0xBBBDB8AD`, which is four distinct bytes
     // and neither `00` nor `FF` among them.
     parameter logic [31:0] DEBUG_KEY = 32'h4442_4752,
+    // **WHICH DISPLAY BOARDS THE BACKPLANE HAS**, page 2's word 33.  Two keys
+    // for the first board --- "SMPL" and "LSPM", muir's own `simple-tv` and
+    // `lispm-tv` in four letters --- and a key and its complement for the
+    // second, so that no partial write of one can be the other, which is the
+    // rule `DEBUG_KEY` is written to.  Each is four printable bytes, none of
+    // them zero, all ones, `IDENT`, `UNMAPPED` or what the word reads back.
+    parameter logic [31:0] TV_SIMPLE_KEY = 32'h534D_504C,
+    parameter logic [31:0] TV_LISPM_KEY  = 32'h4C53_504D,
+    parameter logic [31:0] COLOR_TV_KEY  = 32'h434F_4C52,
+    // The word's own marker: "TV", the board's name, where words 6, 13 and 14
+    // use their key's top half.  There are three keys here and no one of them
+    // is the word's, so the marker is named rather than borrowed --- and it
+    // is a marker for their reason, that a word reading zero when nothing has
+    // been set cannot be told from a window pointed somewhere else.
+    parameter logic [15:0] TV_MARK = 16'h5456,
     // **AND THE CABLE'S WIRING**, the same word and three more keys: "AUTO",
     // "STRA" and "CROS".  A Pmod ribbon is supposed to join pin one to pin
     // one; one made from two host sockets mirrors the header's two rows
@@ -733,6 +775,16 @@ module cadr_console #(
     output var logic        dbg_connect,
     output var logic [1:0]  dbg_wiring,
     input  var logic [2:0]  dbg_wire_state,
+    // --- **THE BACKPLANE'S DISPLAY BOARDS**, page 2's word 33 and pages 4
+    // and 5.  The two settings go out to `cadr_machine`, which hands them to
+    // the two `cadr_tv` instances and to the three address decodes; the maps
+    // come back, indexed by `tv_map_a`, which this module drives from the
+    // registered read index so that no address cone reaches a display board.
+    output var logic        tv_lispm,
+    output var logic        color_tv,
+    output var logic [3:0]  tv_map_a,
+    input  var logic [23:0] tv_map_q,
+    input  var logic [23:0] tv_color_map_q,
     // --- and the cable's two counts, page 0's word 15: frames heard and
     // --- frames refused.  See the word's own entry above.
     input  var logic [23:0] dbg_frames,
@@ -809,18 +861,31 @@ module cadr_console #(
   //
   // So `w_in` and `r_in` mean exactly what they meant, every line built on
   // them is untouched, and a write anywhere in pages 2 and 3 is answered OKAY
-  // and does nothing --- which is what a read-only page should do.
+  // and does nothing EXCEPT page 2's word 33, which is the only word outside
+  // page 0 a write reaches --- `w_hi` below, its own comparator and its own
+  // three keys, and never `w_in`.
   localparam logic [31:0] BASE2 = REG_BASE + 32'h0000_0080;
   function automatic logic in_window2(input logic [31:7] page);
     return page == BASE2[31:7];
   endfunction
 
-  logic        w_in, r_in, r_hi;
+  // And the third window, pages 4 and 5: the two display boards' color maps,
+  // thirty-two words, read only.  A third comparator for the reason the
+  // second one is a comparator and not a widened `w_in`: the pages have
+  // different rules and one match a rule is what keeps them apart.
+  localparam logic [31:0] BASE3 = REG_BASE + 32'h0000_0100;
+  function automatic logic in_window3(input logic [31:7] page);
+    return page == BASE3[31:7];
+  endfunction
+
+  logic        w_in, w_hi, r_in, r_hi, r_map;
+  logic        r_map_q;
   logic [4:0]  w_idx, r_idx;
   logic [31:0] w_next;
   assign w_next = w_at + 32'd4;
   assign r_in   = in_window(r_at[31:7]);
   assign r_hi   = in_window2(r_at[31:7]);
+  assign r_map  = in_window3(r_at[31:7]);
   assign w_idx  = w_at[6:2];
   assign r_idx  = r_at[6:2];
 
@@ -1027,6 +1092,18 @@ module cadr_console #(
   assign w_is_wire_straight  = w_wire && (w_full == WIRE_STRAIGHT_KEY);
   assign w_is_wire_crossover = w_wire && (w_full == WIRE_CROSSOVER_KEY);
 
+  // And which beat says what the backplane's display boards are.  Page 2's
+  // word 33, `w_hi` and not `w_in`, and three keys for word 6's reason: a
+  // value that means nothing must not change what a machine has fitted.  A
+  // register load beside the state machine, as the readout's address and the
+  // cable's role are, so it takes no state and waits for nothing.
+  logic w_is_tv, w_is_tv_simple, w_is_tv_lispm, w_is_color_on, w_is_color_off;
+  assign w_is_tv        = w_hi && !w_idx[4] && (w_idx[3:0] == 4'd1);
+  assign w_is_tv_simple = w_is_tv && (w_full == TV_SIMPLE_KEY);
+  assign w_is_tv_lispm  = w_is_tv && (w_full == TV_LISPM_KEY);
+  assign w_is_color_on  = w_is_tv && (w_full == COLOR_TV_KEY);
+  assign w_is_color_off = w_is_tv && (w_full == ~COLOR_TV_KEY);
+
   // ------------------------------------------------------------------------
   // The diagnostic engine: one Unibus cycle at a time
   // ------------------------------------------------------------------------
@@ -1223,17 +1300,31 @@ module cadr_console #(
   logic [47:0] held_ro_data;
   logic        ro_arm;
 
+  // The word of a color map a read of pages 4 and 5 answers with: the entry
+  // `tv_map_a` names, registered one state before `r_word` is taken so that
+  // the mux inside `cadr_tv` --- two modules down, and past
+  // `rtl/plumbing/xilinx7/cadr_machine.xdc`'s reach --- is not in the path
+  // that feeds `rdata_q`.  `r_idx_q[4]` picks the board: page 4 is the first
+  // display's map and page 5 the color TV's.
+  logic [23:0] map_word;
+  assign tv_map_a = r_idx_q[3:0];
+
   always_comb begin
-    // **PAGE 2's WORD 0 IS THE ONLY WORD OUTSIDE THE FIRST THIRTY-TWO THAT IS
-    // A WORD AT ALL**, and every other address of pages 2 and 3 falls through
-    // to `UNMAPPED` --- the same value an address outside the face reads, so
-    // the face grew by exactly one readable address and by nothing else.
+    // **PAGE 2's WORD 0 AND ITS WORD 1 ARE THE ONLY WORDS OF PAGES 2 AND 3
+    // THAT ARE WORDS AT ALL**, and every other address of them falls through
+    // to `UNMAPPED` --- the same value an address outside the face reads.
+    // Pages 4 and 5 are the two color maps, thirty-two words of their own.
     //
-    // It is taken straight off the pin with no latch, where the three words
-    // below are latched: `build` is loaded from the bitstream at
+    // `build` is taken straight off the pin with no latch, where the three
+    // words below are latched: it is loaded from the bitstream at
     // configuration and cannot move, so there is no instant for a latch to
-    // name and nothing a second read could disagree with.
-    if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build : UNMAPPED;
+    // name and nothing a second read could disagree with.  The display word
+    // is two flops read straight, for the same reason.
+    if (r_map_q) r_word = {8'd0, map_word};
+    else if (!r_in_q) r_word = (r_hi_q && r_idx_q == 5'd0) ? build
+                             : (r_hi_q && r_idx_q == 5'd1)
+                                 ? {TV_MARK, 14'd0, color_tv, tv_lispm}
+                                 : UNMAPPED;
     else if (r_idx_q[4]) r_word = {15'd0, r_lost, r_spy};
     else begin
       unique case (r_idx_q[3:0])
@@ -1292,12 +1383,23 @@ module cadr_console #(
       r_id        <= 12'd0;
       r_left      <= 4'd0;
       w_in        <= 1'b0;
+      w_hi        <= 1'b0;
       w_last_q    <= 1'b0;
       w_eadr_q    <= 4'd0;
       w_spy_q     <= 16'd0;
       rdata_q     <= 32'd0;
       r_in_q      <= 1'b0;
       r_hi_q      <= 1'b0;
+      r_map_q     <= 1'b0;
+      map_word    <= 24'd0;
+      // **A MACHINE COMES UP WITH ONE SIMPLE TV AND NO COLOR BOARD**, which
+      // is muir's own default --- `Board::default` is `SimpleTv` and
+      // `Machine::new` leaves `color_tv` at `None` --- and is the backplane
+      // every check written before the second board was built ran against.
+      // A card that wants otherwise says so in `fpgarc` and the disk pack
+      // program writes it here before the drive is presented.
+      tv_lispm    <= 1'b0;
+      color_tv    <= 1'b0;
       r_idx_q     <= 5'd0;
       r_spy       <= 16'd0;
       r_lost      <= 1'b0;
@@ -1352,6 +1454,7 @@ module cadr_console #(
         W_ADDR: if (s_awvalid) begin
           w_at <= s_awaddr;
           w_in <= in_window(s_awaddr[31:7]);
+          w_hi <= in_window2(s_awaddr[31:7]);
           w_id <= s_awid;
           wst  <= W_DATA;
         end
@@ -1361,6 +1464,7 @@ module cadr_console #(
           w_spy_q  <= w_spy;
           w_at     <= w_next;
           w_in     <= in_window(w_next[31:7]);
+          w_hi     <= in_window2(w_next[31:7]);
           // Page 1 is a diagnostic write and takes a bus cycle.  Page 0's
           // word 6 with the key on it resets the machine and takes the
           // pulse.  Every other page-0 word is read-only, everything
@@ -1385,6 +1489,13 @@ module cadr_console #(
           if (w_is_wire_auto)           dbg_wiring <= 2'd0;
           else if (w_is_wire_straight)  dbg_wiring <= 2'd1;
           else if (w_is_wire_crossover) dbg_wiring <= 2'd2;
+          // The backplane's display boards, a register load for the role's
+          // own reason.  The first board's two keys and the second board's
+          // key and its complement, all four on one word.
+          if (w_is_tv_simple)      tv_lispm <= 1'b0;
+          else if (w_is_tv_lispm)  tv_lispm <= 1'b1;
+          if (w_is_color_on)       color_tv <= 1'b1;
+          else if (w_is_color_off) color_tv <= 1'b0;
           if (w_in && w_idx[4]) wst <= W_CYCLE;
           else if (w_is_reset) begin
             mach_rst <= 1'b1;
@@ -1430,6 +1541,7 @@ module cadr_console #(
         // read of the low half, so that the pair a program reads names one
         // instant across the carry.
         R_START: begin
+          r_map_q <= r_map;
           r_in_q  <= r_in;
           r_hi_q  <= r_hi;
           r_idx_q <= r_idx;
@@ -1454,6 +1566,10 @@ module cadr_console #(
           rst_r  <= R_PREP;
         end
         R_PREP: begin
+          // The entry `r_idx_q` names, taken here so that `R_PREP2` has it
+          // as a register.  Both boards are read at one index and the page
+          // picks between them.
+          map_word <= r_idx_q[4] ? tv_color_map_q : tv_map_q;
           if (held_arm) begin
             held_vma <= mach_vma;
             held_q   <= mach_q;

@@ -109,6 +109,68 @@
 // `MODE<2>`, `MODE BOW`, for whoever quotes the number: muir tv.rs:260.
 #define SCREEN_MODE_BOW         0004u
 
+// ---- THE SECOND SCREEN, the color TV --------------------------------------
+//
+// MIT's second display board, `cadrtv/lmtv.order`'s "For the normal TV, x is
+// 6.  For the color TV, x is 5": a LISPM TV strapped to 0o17200000 with its
+// control words at 0o17377750, carrying a color monitor of its own.  Its
+// numbers, each read out of a source as the first screen's were:
+//
+//   576 pixels across             muir src/tv.rs, `COLOR_WIDTH`, from
+//                                   `COLOR:MAKE-SCREEN`'s `(:WIDTH 576.)`
+//   454 lines                     muir src/tv.rs, `COLOR_HEIGHT`, from
+//                                   `(:HEIGHT 454.)`, the 227 picture lines
+//                                   of each of COLOR:SYNC's two NTSC fields
+//   four bits a pixel             muir src/tv.rs, `COLOR_BITS_PER_PIXEL`,
+//                                   from `(:BITS-PER-PIXEL 4)`: a pixel is a
+//                                   color, an address into the sixteen the
+//                                   color map holds
+//   72 words to a line            muir src/tv.rs, `COLOR_WORDS_PER_LINE`,
+//                                   576 * 4 / 32
+//   32,768 words in the window    the same `BUFFER_WORDS` as the first
+//                                   board: the board answers all of them
+//                                   whatever the picture uses
+//   0x1C02_0000 in memory         rtl/plumbing/cadr_ddr_map.sv,
+//                                   `COLOR_DISPLAY_BASE`: the first board's
+//                                   own 32,768 words above it, in the same
+//                                   reserved region
+//
+// **WHICH NIBBLE IS WHICH PIXEL.**  muir `src/tv.rs`'s `Tv::color`:
+//
+//     let at = y * COLOR_WORDS_PER_LINE + x / 8;
+//     (self.buffer[at] >> (x % 8 * COLOR_BITS_PER_PIXEL)) as u8 & 0o17
+//
+// So a line is 72 consecutive words, the first line first; within a word the
+// pixels run from the LOW nibble, and the low nibble is the LEFTMOST of the
+// eight pixels that word carries --- which is the first screen's rule with
+// four bits where it has one.
+//
+// **AND `MODE BOW` DOES NOT REACH IT.**  A four-bit pixel is an address into
+// the map and there is no bit to invert; `Tv::color` takes no notice of the
+// mode register, and neither does this.  A color screen's "black" is
+// whatever color 0 is in the map the machine wrote.
+#define SCREEN_COLOR_WIDTH          576u
+#define SCREEN_COLOR_HEIGHT         454u
+#define SCREEN_COLOR_WORDS_PER_LINE 72u
+#define SCREEN_COLOR_BPP            4u
+#define SCREEN_COLORS               16u
+#define SCREEN_COLOR_VISIBLE_WORDS  (SCREEN_COLOR_HEIGHT * SCREEN_COLOR_WORDS_PER_LINE)
+#define SCREEN_COLOR_BASE           0x1C020000u
+
+// The larger of the two screens, in frame-buffer words: 963 x 24 = 23,112
+// against 454 x 72 = 32,688.  **The color screen is the bigger one**, which
+// is worth knowing before sizing anything by the first board's figure.
+#if SCREEN_COLOR_VISIBLE_WORDS > SCREEN_VISIBLE_WORDS
+#define SCREEN_MAX_VISIBLE_WORDS SCREEN_COLOR_VISIBLE_WORDS
+#else
+#define SCREEN_MAX_VISIBLE_WORDS SCREEN_VISIBLE_WORDS
+#endif
+#if SCREEN_COLOR_HEIGHT > SCREEN_HEIGHT
+#define SCREEN_MAX_HEIGHT SCREEN_COLOR_HEIGHT
+#else
+#define SCREEN_MAX_HEIGHT SCREEN_HEIGHT
+#endif
+
 // Whether the bit at `x`, `y` is set --- muir's `Tv::pixel`.
 static inline int screen_lit(const uint32_t *words, unsigned x, unsigned y)
 {
@@ -120,6 +182,14 @@ static inline int screen_lit(const uint32_t *words, unsigned x, unsigned y)
 static inline int screen_shows_white(const uint32_t *words, unsigned x, unsigned y, int bow)
 {
 	return screen_lit(words, x, y) != (bow != 0);
+}
+
+// The color at `x`, `y` on the second screen --- muir's `Tv::color` --- as
+// an index into the sixteen the map holds.
+static inline unsigned screen_color_index(const uint32_t *words, unsigned x, unsigned y)
+{
+	const unsigned at = y * SCREEN_COLOR_WORDS_PER_LINE + x / 8u;
+	return (words[at] >> (x % 8u * SCREEN_COLOR_BPP)) & 0xFu;
 }
 
 #endif

@@ -158,7 +158,32 @@ CHECKS = {
         "top": "cadr_memory_path",
         "tb": "tb/cadr_tv_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
-        "golden": "tv.golden",
+        # **TWO TRACES, ONE A BOARD.**  muir has one display model and
+        # `--tv-board` says which board it is playing; the testbench takes
+        # each path in turn and straps the fabric from that trace's own
+        # header.  A runner that ran one of them would let a mutation of the
+        # one bit the two boards differ in --- mode bit 7 --- survive.
+        "golden": ["tv.golden", "tv_lispm.golden"],
+    },
+    # **THE SECOND DISPLAY BOARD**, the color TV, on a backplane that also
+    # carries the first.  `golden/src/color_tv.rs` says what the program is;
+    # the check holds two instances of `cadr_tv` at two straps, two windows in
+    # DDR, the OR of two `-XBUS.INTR`s and the color map --- and, in its
+    # configuration B, the backplane with no second board, which is what
+    # `COLOR-EXISTS-P` probes for.
+    "color_tv": {
+        "sources": [
+            "rtl/plumbing/cadr_ddr_map.sv",
+            "rtl/machine/cadr_xbus_decode.sv",
+            "rtl/machine/cadr_busint_xbus.sv",
+            "rtl/plumbing/cadr_xbus_ddr.sv",
+            "rtl/machine/cadr_tv.sv",
+            "rtl/machine/cadr_console_bus.sv", "rtl/machine/cadr_memory_path.sv",
+        ],
+        "top": "cadr_memory_path",
+        "tb": "tb/cadr_color_tv_tb.cpp",
+        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7", "-Iboards/arty-z7-20"],
+        "golden": "color_tv.golden",
     },
     "axi_master": {
         # No muir reference, so no trace: the testbench is the stimulus.

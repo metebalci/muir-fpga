@@ -238,6 +238,9 @@ module cadr_gp1_split_harness #(
   assign con_req_o = con_req;
   assign con_gnt_o = con_gnt;
 
+  logic       tv_lispm, color_tv;
+  logic [3:0] tv_map_a;
+
   cadr_console u_console (
       .clk(clk), .rst(rst),
       .s_awaddr(c_awaddr), .s_awlen(c_awlen), .s_awid(c_awid),
@@ -276,7 +279,14 @@ module cadr_gp1_split_harness #(
       .dbg_connect(dbg_connect), .dbg_wiring(dbg_wiring),
       .dbg_wire_state(3'd0), .dbg_frames(24'd0),
       .dbg_engaged(1'b0), .dbg_foreign(1'b0), .dbg_peer_far(1'b0),
-      .dbg_live(1'b0), .dbg_active(1'b0)
+      .dbg_live(1'b0), .dbg_active(1'b0),
+      // The backplane's display boards, page 2's word 33, and the two color
+      // maps on pages 4 and 5.  There are no display boards in this harness
+      // --- `build/color_tv.pass` is the check that has them --- so the
+      // settings go nowhere and the maps read zero, which is the map a board
+      // that is not there holds.
+      .tv_lispm(tv_lispm), .color_tv(color_tv), .tv_map_a(tv_map_a),
+      .tv_map_q(24'd0), .tv_color_map_q(24'd0)
   );
 
   // The readout window's three wires belong to `build/readout.pass` and
@@ -407,7 +417,10 @@ module cadr_gp1_split_harness #(
                     errstop_u, stathenb_u, mode_speed_u,
                     prog_reset_u, prog_boot_u, promdisable_u,
                     step_u, nop11_u, idebug_u, ldstat_u, debug_ir_u,
-                    con_mach_boot, dbg_connect, dbg_wiring};
+                    con_mach_boot, dbg_connect, dbg_wiring,
+                    // The backplane's display boards, which go to
+                    // `cadr_machine` on the board and to nobody here.
+                    tv_lispm, color_tv, tv_map_a};
 
 endmodule
 
