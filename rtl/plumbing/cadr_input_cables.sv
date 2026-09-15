@@ -66,7 +66,7 @@
 // low six bits of the word are `0o46`.  **Any word waiting there at boot
 // therefore takes the machine down the warm path**, which is the path for a
 // machine being restarted into a band it already has, and is not what a
-// board coming up wants.  The only defence is that nothing is waiting, and
+// board coming up wants.  The only defense is that nothing is waiting, and
 // CLAUDE.md names this as the trap aimed at whatever carries keys.  These
 // are the four legs that keep it shut.
 //

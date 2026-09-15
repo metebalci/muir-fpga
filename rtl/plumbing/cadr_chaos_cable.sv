@@ -147,7 +147,7 @@
 //              stream has reached --- one read port serves both and the
 //              stream has it
 //
-// **THE TWO WINDOWS TAKE WHOLE WORDS.**  The byte strobes are honoured on
+// **THE TWO WINDOWS TAKE WHOLE WORDS.**  The byte strobes are honored on
 // the registers and not inside the buffers: a read-modify-write in a RAM's
 // own process is not a template Vivado infers --- `Synth 8-2914 Unsupported
 // RAM template`, which this project has already met once and which Verilator

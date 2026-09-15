@@ -280,7 +280,7 @@ static void a_frame_that_is_not_one_is_refused(void)
 
 	// A byte count that disagrees with the frame's length, both ways round.
 	// This is the meter AIM-628 §5.1 counts as "rejected for a length that
-	// is not a multiple of 16 bits" and its neighbours.
+	// is not a multiple of 16 bits" and its neighbors.
 	chaos_packet_frame(&p, 0003050, 0003050, f, CHAOS_PKT_MAX_WORDS);
 	f[1] = 6;
 	why = NULL;

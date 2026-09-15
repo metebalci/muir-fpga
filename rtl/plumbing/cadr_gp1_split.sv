@@ -29,7 +29,7 @@
 // state machines, the held match, the two independent selections and the
 // carried-through responses are that module's, because it is the same
 // problem and a second shape would be a second thing to be wrong.  What is
-// not shared is the module itself.  One parameterised splitter would be a
+// not shared is the module itself.  One parameterized splitter would be a
 // generate loop over a port list, and the two ports have different slaves,
 // different page counts and different checks.  Two small modules that read
 // alike are cheaper to hold than one that reads for neither.

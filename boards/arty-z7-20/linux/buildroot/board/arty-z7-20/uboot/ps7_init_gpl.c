@@ -11,7 +11,7 @@
  * GPL-2.0-or-later rather than the repository's AGPL-3.0-or-later because
  * this file is compiled into U-Boot's SPL, which is GPL-2.0-or-later, and
  * because the tables are Digilent's board configuration as written out by
- * Xilinx's tool, whose own ps7_init_gpl.c carries that licence.
+ * Xilinx's tool, whose own ps7_init_gpl.c carries that license.
  *
  * The data is what a first-stage loader must write before DDR answers:
  * the pin multiplexing, the three PLLs, the clock tree, the memory

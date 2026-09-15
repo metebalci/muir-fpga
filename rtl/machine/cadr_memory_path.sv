@@ -43,7 +43,7 @@
 //   arbiter is PER WORD and the processor wins: the channel may begin a word
 //   only while `-XBUS.RQ` is down, and a processor cycle waits at most one
 //   memory access --- twenty to a hundred and thirty nanoseconds on the
-//   modelled DDR --- for a word already in flight.  That, and not throughput,
+//   modeled DDR --- for a word already in flight.  That, and not throughput,
 //   is what `tb/cadr_memory_path_tb.cpp`'s second configuration holds.
 //
 // **THE CHANNEL REACHES MAIN MEMORY AND NOTHING ELSE**, which is why the
@@ -95,7 +95,7 @@
 // would make both of the mutations that matter here untestable.  CLAUDE.md
 // records the shape: the display's `tv-answers-its-neighbours`, written as a
 // wider address match gated by the decode's `device`, SURVIVED, because a
-// slave that honours a guard checked exhaustively elsewhere cannot answer an
+// slave that honors a guard checked exhaustively elsewhere cannot answer an
 // address the guard refuses --- so the mutation tests the guard and not the
 // slave.  On the backplane each board decodes the whole address for itself
 // and pulls `-SSYN` if it is its own; that is what both of these do, and a
@@ -725,7 +725,7 @@ module cadr_memory_path (
   //
   // **ONLY A MAIN-MEMORY PAGE TAKES THE BUS, BY muir'S OWN WORDS.**
   // `Busint::debug_xbus_edge`: "The processor asking for the Xbus meanwhile,
-  // and a mapped page nothing answers, are **not modelled**: the debuggee CC
+  // and a mapped page nothing answers, are **not modeled**: the debuggee CC
   // works on is halted, and its map points at memory."  So a mapped page that
   // is a device, the Unibus or nothing never asks for the bus at all: the
   // cycle is never acknowledged and stands until its master gives up, which
@@ -984,7 +984,7 @@ module cadr_memory_path (
   // `READ-MICROSECOND-CLOCK` is at microcycle 2,087,379 and `TRACK-MOUSE`
   // reads `0o764104` and `0o764106` six thousand microcycles later.  Unwired,
   // those reads are answered by nothing and MD takes zero, which is the
-  // decided behaviour for an unanswered cycle and not a fault --- but a
+  // decided behavior for an unanswered cycle and not a fault --- but a
   // machine whose clock reads zero for ever is not one that can run a
   // scheduler.
   //

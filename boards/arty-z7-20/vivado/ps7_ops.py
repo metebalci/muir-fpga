@@ -9,7 +9,7 @@
 #     python3 boards/arty-z7-20/vivado/ps7_ops.py --from F   # extract from an existing routine
 #
 # WHY THE OPS AND NOT THE ROUTINE.  `boards/arty-z7-20/vivado/gen_ps7_init.tcl` writes an 853
-# line `ps7_init.tcl` whose text carries the tool's formatting and no licence
+# line `ps7_init.tcl` whose text carries the tool's formatting and no license
 # header of any kind.  Committing that would put an unheadered generated file
 # in a tree whose rule is SPDX on every source file, and would compare two
 # tools' formatting rather than their effect.  What matters is the ordered
@@ -30,7 +30,7 @@
 # it is redone: extract both, diff the two .ops files.
 #
 # THE EXTRACTION IS NOT TAKEN ON TRUST.  It was cross-checked against a second
-# method --- whitespace-normalised comparison of whole proc bodies --- which
+# method --- whitespace-normalized comparison of whole proc bodies --- which
 # agreed, and self-tested against two mutations of a generated routine: a
 # one-bit change to a DDR value and a deleted `0xF8000900` line are both
 # reported, the second on all three revisions.  A comparison that cannot fail
@@ -139,7 +139,7 @@ def rendered(ops):
             "#",
             "# This is the claim.  The routine itself is regenerated into"
             " $OUTDIR and is not",
-            "# committed: it carries no licence header of any kind, and its"
+            "# committed: it carries no license header of any kind, and its"
             " text would",
             "# compare two tools' formatting rather than their effect.  See"
             " boards/arty-z7-20/vivado/ps7_ops.py",

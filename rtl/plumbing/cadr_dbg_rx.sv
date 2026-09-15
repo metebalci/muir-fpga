@@ -25,7 +25,7 @@
 // `BEAT_T` minus three more.  At the default six that is twenty nanoseconds of
 // margin on the early side and thirty on the late, against a cable and a pad
 // that contribute single-digit nanoseconds.  The strobe is the only thing on
-// this cable that is synchronised, and the only thing that needs to be.
+// this cable that is synchronized, and the only thing that needs to be.
 //
 // ## Two questions, and they are not the same question
 //
@@ -40,7 +40,7 @@
 // with nothing sensible under it is still somebody else's driver, and two
 // drivers on one wire is the failure the whole one-connector design is
 // arranged to prevent.  A board that took the second question for the first
-// would drive over a neighbour that was merely sending badly.
+// would drive over a neighbor that was merely sending badly.
 //
 // **BOTH COME OUT OF RESET SAYING NOTHING HAS BEEN HEARD**, which is not a
 // detail.  The connector holds this module in reset for as long as the board

@@ -31,7 +31,7 @@
 // visible. A memory of zeros would hide both: the first read of any lane would
 // return zero whichever half it took. The stimulus keeps the invariant across
 // writes too, perturbing a word that would otherwise come to equal its
-// neighbour, and every read asserts that the beat it is reading has two
+// neighbor, and every read asserts that the beat it is reading has two
 // different halves. A stimulus that mirrors what the DUT expects cannot catch
 // a direction bug; this one always offers a wrong answer beside the right one.
 //
@@ -208,7 +208,7 @@ int main(int argc, char **argv) {
       // Keep the beat's two halves different, so that every later read of it
       // can tell a right lane from a wrong one. Flipping a strobed byte is
       // enough: it changes the word that will land, which was the only value
-      // equal to the neighbour.
+      // equal to the neighbor.
       const int idx = 2 * aw_beat + aw_half, sib = 2 * aw_beat + (1 - aw_half);
       if (apply32(shadow[idx], wdata, wstrb) == shadow[sib]) {
         int byte = 0;
@@ -369,7 +369,7 @@ int main(int argc, char **argv) {
       "ok: %ld conversions over %ld beats, address and length held at every "
       "one\n"
       "    %ld writes --- %ld low half, %ld high, %ld beside a written "
-      "neighbour, %ld of part of a word\n"
+      "neighbor, %ld of part of a word\n"
       "    %ld reads --- %ld low half, %ld high, %ld of a word an earlier "
       "write put there, %ld of a poisoned one\n"
       "    %ld reads of a beat with two written halves; the channels selected "

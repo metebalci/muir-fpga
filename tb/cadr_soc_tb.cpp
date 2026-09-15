@@ -232,7 +232,7 @@ static bool has(const std::string &hay, const char *needle)
 // recorded here rather than left for somebody to rediscover.
 //
 // What this does NOT model is metastability, and nothing in any simulator
-// does: a synchroniser one flip-flop deep behaves here exactly as one two
+// does: a synchronizer one flip-flop deep behaves here exactly as one two
 // flip-flops deep, differing only in latency.  What holds the depth is the
 // structure and `rtl/plumbing/xilinx7/cadr_soc.xdc`; what this holds is the
 // handshake --- that a request crosses once, that its payload has stopped
@@ -410,7 +410,7 @@ static int run_one(const Ratio &r)
 		}
 
 		// **BOTH DOMAINS ARE HELD IN RESET UNTIL BOTH HAVE HAD EDGES
-		// ENOUGH.**  The soft system synchronises this level onto its
+		// ENOUGH.**  The soft system synchronizes this level onto its
 		// own clock inside `cadr_soc`, so a reset let go after sixteen
 		// of the machine's ticks would, at the slowest ratio here, be
 		// a reset the soft side had seen seven times.

@@ -162,19 +162,19 @@ int main(int argc, char **argv) {
   // every phase: a group is enabled whole or not at all, a guard that is
   // enabled is at zero, and a board listening to a group drives no pin of it,
   // guard included.  A floating guard is not a guard --- it is a capacitor the
-  // neighbour charges --- so "not driven" is a failure here and not a
+  // neighbor charges --- so "not driven" is a failure here and not a
   // tidiness.
   const int kGuardPins[4] = {1, 3, 5, 7};
   long guard_part_group = 0, guard_high = 0, guard_low_ticks = 0;
 
   // A wire is a little shift register, one a pad, so a delay is a real delay
-  // and not a relabelling.  Sixteen pads, eight a board, and the two
+  // and not a relabeling.  Sixteen pads, eight a board, and the two
   // directions of the join are separate wires.
   const int kMaxDelay = 8;
   // Ticks a released wire holds its last level before the pull-downs have it.
   // A weak pull-down at either end against a ribbon's capacitance is hundreds
   // of nanoseconds on a bench; forty ticks is four hundred here, and what the
-  // number has to be is longer than the two ticks a synchroniser needs to see
+  // number has to be is longer than the two ticks a synchronizer needs to see
   // the edge it makes.
   const int kDecayT = 40;
   unsigned char wire_ab[8][kMaxDelay + 1] = {{0}};
@@ -198,7 +198,7 @@ int main(int argc, char **argv) {
 
     // **THE CABLE, AND THE ASSERTION THAT MAKES IT ONE CABLE.**  Eight wires
     // with two ends each, or sixteen pins with nobody on the other side.  A
-    // wire driven from both ends is not modelled --- it is counted, and a run
+    // wire driven from both ends is not modeled --- it is counted, and a run
     // that counts one has found the thing this connector's whole design is
     // about.  It is a WIRE and not a pad index: with a mirrored ribbon A's pin
     // `w` and B's pin `w ^ 4` are the two ends of one of them.
@@ -421,7 +421,7 @@ int main(int argc, char **argv) {
     //
     // **AND THEN A HOLD THAT IS THE CARRIER'S AND NOT THE BUS'S.**  On MIT's
     // cable the lift is seen at the far end within nanoseconds; over a
-    // serialised one it is a level like any other and has to cross a frame, so
+    // serialized one it is a level like any other and has to cross a frame, so
     // a debugger that lifted and asked again inside that would have the far
     // end see one request where it made two.  It is written as frames rather
     // than as a constant because it IS frames: at eight beats twenty-four
@@ -890,7 +890,7 @@ int main(int argc, char **argv) {
     // **AND A SHORT SESSION, WHICH IS A DIFFERENT QUESTION FROM A LONG ONE.**
     // What a board coming out of the role knows about the connector is
     // nothing, and there are two ways to forget: the activity timer, and the
-    // two synchroniser flops in front of it.  A board that held the role for
+    // two synchronizer flops in front of it.  A board that held the role for
     // longer than `LOSS_T` has a timer that has saturated on its own, so the
     // long session above cannot tell a held timer from a free-running one.
     // Connect and disconnect again inside `LOSS_T` and it can: a timer left

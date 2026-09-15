@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// `cadr_display_out` against a modelled DDR, for a whole frame, read the way
+// `cadr_display_out` against a modeled DDR, for a whole frame, read the way
 // a monitor reads it.
 //
 // **THE CHECK RECOVERS THE RASTER FROM THE SYNCS AND NOT FROM ANY COUNTER
 // INSIDE THE MODULE.**  It watches `de`, `hsync` and `vsync` exactly as a
 // monitor does, counts pixels from the leading edge of `de` and lines from
-// the leading edge of `vsync`, and only then asks what colour the pixel at
+// the leading edge of `vsync`, and only then asks what color the pixel at
 // that position should be.  So the module's pipeline depth is not something
 // this has to know, and a change to it is not a change here.  A check that
 // reached into the device for `hc` and `vc` would agree with the device

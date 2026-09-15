@@ -101,7 +101,7 @@
 # and has BIT 0 CLEAR IN EVERY WORD, and that bit is load-bearing: bit 0 of
 # what an unanswered read leaves in MD is what the boot PROM's disk poll takes
 # for "the controller is ready", and a poison with it set once made the
-# machine write a CCW to physical 777 and halt at PC 40.  That behaviour was
+# machine write a CCW to physical 777 and halt at PC 40.  That behavior was
 # decided against --- an unanswered read gives MD zero --- but the poison
 # stays clear of the bit so that this script measures the machine and not that
 # decision.
@@ -291,7 +291,7 @@ say "  device identity              [hex $device]  wanted 0x03727093 (XC7Z020)"
 if {$device != 0x03727093} {
     say "FAILED at 0xF8000530 --- PSS_IDCODE is not an XC7Z020's."
     say "FAILED   read [hex $idcode], device identity [hex $device], wanted"
-    say "FAILED   0x03727093.  Nothing below is initialised or programmed"
+    say "FAILED   0x03727093.  Nothing below is initialized or programmed"
     say "FAILED   against a part this routine was not written for."
     bye 1
 }

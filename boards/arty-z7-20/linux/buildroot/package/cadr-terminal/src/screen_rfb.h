@@ -22,7 +22,7 @@
 // every server to have Raw and every viewer to take it, so Raw is what a
 // viewer that offers nothing else gets and is the floor under everything
 // here.  RRE, section 7.7.2, is the one that compresses runs: a background
-// pixel and a list of subrectangles of the other colour.  muir declined it
+// pixel and a list of subrectangles of the other color.  muir declined it
 // --- "the screen is one bit a pixel and the updates are whole rows, so there
 // is nothing here that a run-length encoding would win enough to pay for" ---
 // and that was written of a server inside the engine's own process on a
@@ -35,9 +35,9 @@
 // a dither, where every pixel is its own subrectangle at twelve bytes each
 // --- goes Raw and costs the comparison and nothing else.
 //
-// **A PIXEL IS ONE OF TWO VALUES, AND THAT IS THE WHOLE OF THE COLOUR
+// **A PIXEL IS ONE OF TWO VALUES, AND THAT IS THE WHOLE OF THE COLOR
 // HANDLING.**  A viewer may ask for 8, 16 or 32 bits a pixel, either byte
-// order, true colour with any shifts, or a colour map; of all that, only
+// order, true color with any shifts, or a color map; of all that, only
 // `rfb_white()` and `rfb_black()` differ, so every format a viewer can ask
 // for is answered by computing two pixel values once and copying them.
 
@@ -77,7 +77,7 @@ unsigned rfb_bytes_per_pixel(const struct rfb_format *f);
 // viewer sending such a format is refused as one naming 24 bits a pixel is.
 int rfb_format_fits(const struct rfb_format *f);
 
-// Every colour at its maximum, or colour map entry 1 where the viewer wants
+// Every color at its maximum, or color map entry 1 where the viewer wants
 // a map; and zero, which is entry 0 either way.
 uint32_t rfb_white(const struct rfb_format *f);
 uint32_t rfb_black(const struct rfb_format *f);
@@ -86,10 +86,10 @@ uint32_t rfb_black(const struct rfb_format *f);
 // Writes `rfb_bytes_per_pixel(f)` bytes and returns how many.
 unsigned rfb_put(const struct rfb_format *f, uint8_t *out, uint32_t value);
 
-// The colour map entry white takes when a viewer asks for a mapped format.
+// The color map entry white takes when a viewer asks for a mapped format.
 #define RFB_WHITE_INDEX 1
 
-// `SetColourMapEntries`, section 7.6.2: the two colours this screen has,
+// `SetColourMapEntries`, section 7.6.2: the two colors this screen has,
 // black at 0 and white at 1.  Writes RFB_COLOUR_MAP_BYTES bytes.
 #define RFB_COLOUR_MAP_BYTES 18
 void rfb_colour_map(uint8_t out[RFB_COLOUR_MAP_BYTES]);

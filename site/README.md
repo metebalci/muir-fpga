@@ -9,7 +9,7 @@ build step and no generator, the same way
                   what it does, each board's name linking its own page, and a
                   link to the page on the real machine. The table's styles are
                   in front.css beside it, because the table is this project's
-                  own rather than muir's. It ends with the project's licence
+                  own rather than muir's. It ends with the project's license
                   and a list of the third-party material the boards use, each
                   entry naming whose it is and under what terms
     arty-z7-20.html
@@ -77,8 +77,8 @@ code.
 
 `booting.html`, `debugging.html` and `cadr.html` are prose pages that carry
 drawings, and all three of them draw in `currentColor` alone. **A sequence
-carries no status colour.**
-A board drawing colours a block by how far along it is; a sequence says what
+carries no status color.**
+A board drawing colors a block by how far along it is; a sequence says what
 happens and in what order, which is a different claim, so what is built and
 what is not is in the caption under each figure, in words. The Arty A7-100's
 sequence is a plan rather than a board, and its caption is where that is
@@ -127,14 +127,14 @@ the UART, and on the Arty Z7-20 the USB host. Under that row are the board's own
 connectors, one under each controller. A line that leaves a program ends on a
 controller and never on a connector. Each controller has one line down to the
 connector it drives. On the two Zynq boards every controller in the row is the
-part's own silicon, so the whole row is grey. On the Arty A7-100 every one of
-them is in the fabric, so each carries a colour of its own.
+part's own silicon, so the whole row is gray. On the Arty A7-100 every one of
+them is in the fabric, so each carries a color of its own.
 
 So a change to a block the Arty Z7-20 shares with another board is carried to
 that board's drawing by the same edit, at the same coordinates, and the three
 can be compared with `diff`. The
 differences that are meant to be there are the titles, the part, the figures
-under the fabric's label, the status colours and the lamp rows, and then
+under the fabric's label, the status colors and the lamp rows, and then
 whatever the derivation itself adds. On the Cora Z7-07S that is the crossed-off
 blocks and the legend's extra swatch. On the Arty A7-100 it is the blocks that
 replace the processing system's, the blocks that are not drawn at all, and the
@@ -157,19 +157,19 @@ Everything the drawings assert about the machine comes from `README.md`,
 and timing figures under each fabric label come from that board's own place and
 route report at the commit its comment names.
 
-A block's colour says how far along it is, and the legend on each drawing
+A block's color says how far along it is, and the legend on each drawing
 carries the words. Green means the board itself has shown it. Turquoise means
 it is built and checked here and has not run on that board. The boards differ:
 a block that is green on one may be turquoise on another, because the claim is
 about a board and not about the code.
 
-A block with no colour at all has not been started. It is drawn so that the
+A block with no color at all has not been started. It is drawn so that the
 shape of the machine is known before the work begins, which is why the LISPM
-TV, MIT's colour display, stands on the Xbus beside the monochrome TV on all
+TV, MIT's color display, stands on the Xbus beside the monochrome TV on all
 three pages with nothing built in it yet.
 
 On a drawing derived by crossing off, a block that board does not have carries
-no colour at all. It keeps its place, goes dashed, and takes a red cross corner
+no color at all. It keeps its place, goes dashed, and takes a red cross corner
 to corner with its label left faint. That is the one mark on these drawings
 that says nothing about progress, and the legend calls it "not available on
 this board". A line that exists only to reach such a block stays drawn and goes
@@ -196,7 +196,7 @@ below legibility. `.crumb` is added for the faint line on the drawing pages.
 `.d-warn` is added for the one red label on the drawings. The debug cable's
 supply pins are open at both ends, because a cable between two boards must not
 join their 3.3 V rails, and the connector's own block says so. It takes the
-crossings' red rather than a colour of its own, so that red on a drawing goes on
+crossings' red rather than a color of its own, so that red on a drawing goes on
 meaning one thing.
 
 `faq.css` is one rule, for the line under each answer that names the file
@@ -218,7 +218,7 @@ after `style.css` would otherwise take the red out of the smallest label.
 are added for a block a board does not have and for the wires that reach it.
 The outline, the faint label and the faded line use the drawing's own ink
 through `currentColor`, so they follow the reader's theme like everything else.
-Only the cross has a colour of its own, `--st-absent`, which is the red the
+Only the cross has a color of its own, `--st-absent`, which is the red the
 error lamp is already drawn in.
 
 ## Looking at it

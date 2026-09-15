@@ -133,7 +133,7 @@ void rfb_colour_map(uint8_t out[RFB_COLOUR_MAP_BYTES])
 {
 	out[0] = 1;			/* message type: SetColourMapEntries */
 	out[1] = 0;			/* padding */
-	be16(out + 2, 0);		/* first colour */
+	be16(out + 2, 0);		/* first color */
 	be16(out + 4, 2);		/* how many */
 	be16(out + 6, 0);		/* black: red */
 	be16(out + 8, 0);		/*        green */

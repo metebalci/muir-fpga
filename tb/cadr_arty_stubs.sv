@@ -5,7 +5,7 @@
 // top level can be elaborated and linted.  `boards/arty-z7-20/cadr_arty.sv` has the
 // MMCM, the global buffer and the probe's scan primitive;
 // `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` has a second MMCM, a regional clock
-// buffer, the two serialisers of each channel and the four differential
+// buffer, the two serializers of each channel and the four differential
 // output buffers.
 //
 // **THIS FILE MUST NEVER MOVE TO `rtl/`.**  `boards/arty-z7-20/vivado/fit.tcl` and
@@ -152,7 +152,7 @@ module BSCANE2 #(
   /* verilator lint_on UNUSEDSIGNAL */
 endmodule
 
-// The serialiser, and the one primitive in this project whose absence from
+// The serializer, and the one primitive in this project whose absence from
 // the checks is stated rather than worked around.  Ten bits a pixel needs a
 // master and a slave cascaded, `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` has
 // the wiring, and NOTHING HERE SHIFTS ANYTHING: the output is tied low, so a

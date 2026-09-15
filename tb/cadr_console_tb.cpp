@@ -138,7 +138,7 @@ bool ParseRow(const char *line, Row &r) {
   return true;
 }
 
-// The window on `M_AXI_GP1`, as `rtl/plumbing/cadr_console.sv` parameterises it.
+// The window on `M_AXI_GP1`, as `rtl/plumbing/cadr_console.sv` parameterizes it.
 constexpr uint32_t kBase     = 0x80000000u;
 constexpr uint32_t kIdent    = 0x434F4E53u;   // "CONS"
 constexpr uint32_t kUnmapped = ~kIdent;
@@ -161,7 +161,7 @@ enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
 constexpr long kRelaxedT = 15;
 
 // The reset register's key and the pulse it makes, as `rtl/plumbing/cadr_console.sv`
-// parameterises them.  `RESET_KEY` is "RSET" --- four distinct bytes, none of
+// parameterizes them.  `RESET_KEY` is "RSET" --- four distinct bytes, none of
 // them `00` or `FF`, so a write that does not strobe all four lanes cannot
 // equal it however the lanes are merged, and neither a dead bus's zeros nor
 // an undriven bus's ones can arrive at it.  `RESET_T` is 64 ticks, 320 ns.
@@ -471,7 +471,7 @@ int main(int argc, char **argv) {
   // at `mclk` and nowhere else, and being registers of `cadr_machine` with no
   // name in the fast list they are in `cadr_machine.xdc`'s relaxed set --- so
   // the FABRIC is told each of those three arcs has fifteen ticks.  That is a
-  // claim about this machine's own behaviour and this is where it can be
+  // claim about this machine's own behavior and this is where it can be
   // checked: the tick of the last change of each source, the tick of each
   // capture, and the shortest distance between them over the whole run.
   //
@@ -1302,7 +1302,7 @@ int main(int argc, char **argv) {
   // Outside the window, across the port's gigabyte.  A read nothing answers
   // hangs both Arm cores at one PC each, measured on the board, so what is
   // held is that these complete at all --- and with a word a program can
-  // recognise.
+  // recognize.
   const uint32_t outside[] = {kBase + 0x80u, kBase + 0x1000u, kBase + 0x10000000u,
                               kBase - 4u, 0xBFFFFFFCu, 0x00000000u, 0x40000000u};
   for (uint32_t a : outside) {
@@ -1440,7 +1440,7 @@ int main(int argc, char **argv) {
   //                                what an undriven one reads, so neither may
   //                                be a value the instrument can mean.
   //                                Twelve writes below --- the key
-  //                                byte-reversed, two single-bit neighbours
+  //                                byte-reversed, two single-bit neighbors
   //                                of it, the key with the strobes short, and
   //                                the key at the words either side.
   //   the key pulses               and the pulse is `RESET_T` ticks, COUNTED.
@@ -2239,7 +2239,7 @@ int main(int argc, char **argv) {
       "      halves so the latch's shape is exercised and its value is not\n"
       "    the reset: %ld writes that are not the key pulsed nothing --- zero,\n"
       "      all ones, IDENT, UNMAPPED, the register's own read-back, the key\n"
-      "      byte-reversed, two single-bit neighbours of it, the key with the\n"
+      "      byte-reversed, two single-bit neighbors of it, the key with the\n"
       "      strobes short, and the key at the words either side.  The key\n"
       "      itself held the machine's reset for %ld ticks and the second one\n"
       "      for %ld, which is the length `RESET_T` states, and the write did\n"

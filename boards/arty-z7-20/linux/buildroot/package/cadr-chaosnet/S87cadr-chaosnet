@@ -58,7 +58,7 @@ PIDFILE=/var/run/cadr-chaosnet.pid
 # **THE WHOLE FILE USED TO BE PASSED TO THIS PROGRAM, AND IT CANNOT BE ANY
 # MORE.**  The screen, the serial line, the USB input and the boot button take
 # their own flags from the same file now, and this program refuses a flag it
-# does not know --- which is muir's behaviour and is the property worth
+# does not know --- which is muir's behavior and is the property worth
 # keeping.  So the file goes through the shared reader, which hands back only
 # the lines whose flag is in the list below and nothing else.  A flag no list
 # names goes to nobody; docs/fpgarc.md says which flags each program owns.
@@ -132,7 +132,7 @@ DEFAULT_PORT=42042
 
 # **HOW LONG TO WAIT FOR THE NETWORK, IN SECONDS**, and why there is a wait at
 # all.  cadr-chaosnet resolves every peer's name once, at the start, and
-# refuses a name that has no address --- muir's behaviour, and right: a name
+# refuses a name that has no address --- muir's behavior, and right: a name
 # with no address is a refusal at the start rather than a peer that is never
 # reached.  But this script runs during init, and on this image the network is
 # not up when it does.

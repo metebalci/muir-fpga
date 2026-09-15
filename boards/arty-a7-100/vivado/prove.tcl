@@ -60,8 +60,8 @@ if {![dict get $st calib]} {
     window_fail "MEM: FAILED --- the controller has not calibrated the DDR3L."
 }
 
-# ---- the neighbourhood, poisoned.  Sixteen blocks around the address, so that
-# every lane of its own block and both its neighbours are recognisable.
+# ---- the neighborhood, poisoned.  Sixteen blocks around the address, so that
+# every lane of its own block and both its neighbors are recognizable.
 set base [expr {$prove_addr & ~0xFF}]
 for {set i 0} {$i < 64} {incr i} {
     set a [expr {$base + 4 * $i}]
@@ -97,7 +97,7 @@ if {$prove == 1} {
             "MEM: [format 0x%08x $got] and the fabric was to write" \
             "MEM: [format 0x%08x $prove_word]." \
             "MEM: If it reads this address's own poison the write never" \
-            "MEM: happened; if it reads a NEIGHBOUR's poison the write went to" \
+            "MEM: happened; if it reads a NEIGHBOR's poison the write went to" \
             "MEM: the wrong lane or the wrong block, and the poison is a" \
             "MEM: function of the address, so which one says which."
     }

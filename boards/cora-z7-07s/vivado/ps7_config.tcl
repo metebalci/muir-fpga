@@ -23,7 +23,7 @@
 # commit, which is the same rot `boards/arty-z7-20/vivado/ps7_config.tcl`
 # records for the Arty's own superproject.
 #
-# So this comes from Digilent's BOARD FILES instead, which are the artefact
+# So this comes from Digilent's BOARD FILES instead, which are the artifact
 # Vivado itself consumes and are maintained rather than archived:
 #
 #     repository  github.com/Digilent/vivado-boards

@@ -49,7 +49,7 @@ different path through the whole handler.
 
 **`LOCAL-ENABLE` is a jumper and not a software setting.** No microcode
 anywhere writes it. It is strapped on a real board, so it comes up set, and
-muir models it that way: `Machine::new` initialises the register to
+muir models it that way: `Machine::new` initializes the register to
 `LOCAL_ENABLE` and nothing clears it.
 
 So an implementation that does not answer `766040` gives the handler a zero.

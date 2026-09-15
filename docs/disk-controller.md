@@ -21,7 +21,7 @@ Every other block here is held to a muir structure with a clock in it.
 `cadr_microcycle.sv` to `Rtl::signals()` microcycle for microcycle. The disk
 has **two** models, and neither is the middle one:
 
-- **`src/disk_controller.rs`, behavioural**, is what muir's own `rtl` engine
+- **`src/disk_controller.rs`, behavioral**, is what muir's own `rtl` engine
   uses. It has no clock beyond `now`/`done_at`, no sequencer, no channel and
   no fifo. Its own doc says "the transfer completes inside the store to START
   rather than taking milliseconds, so the controller is never seen busy". The
@@ -38,7 +38,7 @@ There is nothing between them. **This is why the fidelity question exists at
 all**, and it is worth knowing before starting rather than after.
 
 `tests/disk.rs` is the property list worth mining. It holds about fifty named
-behaviours, each a candidate row of a generated stimulus.
+behaviors, each a candidate row of a generated stimulus.
 
 ## What the two reference programs actually ask of it
 
@@ -113,7 +113,7 @@ boot. It is the generated program that proves the controller is right.
 
 ## The two decisions
 
-**Port the behavioural controller, behind a seam the gate-level one could
+**Port the behavioral controller, behind a seam the gate-level one could
 replace.** Everything here is held to what muir's `rtl` engine uses, and `Rtl`
 uses `Controller`. Holding the disk to the CADRDC netlist instead would hold
 one block to a fidelity the machine it plugs into does not have. The composed
@@ -241,7 +241,7 @@ beat goes out with its low half strobed and its high half not, so the word
 after the record is never written. **The address must be 128-byte aligned** so
 that no burst crosses 4 KB, and an unaligned one is refused rather than
 masked. The Python model reproduced every `BLK write` and `PAGE` row of the
-trace with the store filled only through modelled records, before a line of
+trace with the store filled only through modeled records, before a line of
 the RTL was written; it was `~/.cache/pack/packmodel.py` at the slice, and was
 thrown away.
 
@@ -559,7 +559,7 @@ that (six, or the arm is vacuous), and a header laid again is carried for the
 run.
 
 **AND THE DRIVE BAY, AGAINST A REAL DIRECTORY OF REAL FILES.** There is no
-modelling a rename and a delete, so the check makes a directory under its work
+modeling a rename and a delete, so the check makes a directory under its work
 directory and puts the trace's pack in it as unit 2's. A second drive is then
 put on unit 5: a T-80 where the trace's is a T-300, so a geometry read off the
 wrong drive reads wrong. It is denied while its name does not exist. It is
@@ -649,7 +649,7 @@ untimed**, in this order, and nothing else at the same rate:
     cadr-disk-packs: headers and checkwords are the format's own until a transfer lays others, and are the run's, as muir's are
     cadr-disk-packs: 24 slots taken away; the bay is /mnt/packs and the drives are untimed, which is muir's default
     cadr-disk-packs: unit 0: /mnt/packs/disk-pack-0.img is a drive: 815 cylinders, 19 heads, 17 blocks a track, 263245 blocks, writable
-    cadr-disk-packs: unit 0: block 0 word 0 is 0x4c42414c (LABL: a labelled pack); header 0x00000000
+    cadr-disk-packs: unit 0: block 0 word 0 is 0x4c42414c (LABL: a labeled pack); header 0x00000000
     cadr-disk-packs: the bay is looked at every 250 ms, and never in the middle of a transfer
     cadr-disk-packs: polling REQ and DIRTY every 250 us
 
@@ -940,7 +940,7 @@ untimed, and about data.
 There are eleven transfers and 52 CCWs, the longest list sixteen. 43 pages and
 11,008 words are compared word for word against what `Controller::transfer`
 put in muir's own main memory. 46 blocks of the real System 100 pack are
-placed in a modelled DDR and fetched over `S_AXI_HP2` on demand, and three are
+placed in a modeled DDR and fetched over `S_AXI_HP2` on demand, and three are
 written back and compared. The cold boot's own two lists are the first two.
 The rest are a list of one (the control --- what the board did get right),
 lists that walk off the end of a track and off the end of a cylinder, a list
@@ -969,7 +969,7 @@ of the 421 polls.
 
 ### The hole this closed, stated plainly
 
-Three checks touch the channel and none of them could see a walk that honours
+Three checks touch the channel and none of them could see a walk that honors
 the first CCW of a list and not the rest:
 
 * `disk` walks lists of three CCWs, but pre-fills every block. The request
@@ -999,10 +999,10 @@ and quoting the trace at this question gives the wrong answer.
 This was measured on 2026-09-10, three ways, none of which reproduces it:
 
 1. `disk_boot` passes at HEAD --- the controller with `rtl/plumbing/cadr_disk_pack.sv`
-   under it over a modelled `S_AXI_HP2`, walking the cold boot's own lists
+   under it over a modeled `S_AXI_HP2`, walking the cold boot's own lists
    over the real pack, with the feeder delayed by anything from a tick to
    50,000 and the processor polling as often as every 40 ticks.
-2. `cadr_machine` was run with a modelled DDR behind `mem_*` and a feeder
+2. `cadr_machine` was run with a modeled DDR behind `mem_*` and a feeder
    driving the block-store seam directly, from reset through MIT's boot PROM
    and the microcode off the pack. Physical `0o400` first goes non-zero at
    microcycle 1,441,677, and **physical words 0 to 1023 come out
@@ -1010,7 +1010,7 @@ This was measured on 2026-09-10, three ways, none of which reproduces it:
    PC `0o25333` at four million microcycles, where the board halted at
    `0o5163`.
 3. The same was run again with `rtl/plumbing/cadr_disk_pack.sv` under the
-   machine over a modelled `S_AXI_HP2` and a feeder on `M_AXI_GP0`, which is
+   machine over a modeled `S_AXI_HP2` and a feeder on `M_AXI_GP0`, which is
    `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` short of the PS7. It is also
    byte-identical to muir over 0 to 1023, with `store_miss` low, nothing
    denied and no protocol error on the port.

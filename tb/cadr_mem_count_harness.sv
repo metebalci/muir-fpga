@@ -14,7 +14,7 @@
 //
 // IT IS IN `tb/` FOR THE REASON `tb/cadr_arty_stubs.sv` GIVES.  Both Vivado
 // scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`, so a wiring harness in `rtl/` would join
-// the bitstream --- a second copy of the memory path, in the synthesised
+// the bitstream --- a second copy of the memory path, in the synthesized
 // design, that nothing on the board would ever reach.
 //
 // **`hp0_aresetn` IS AN INPUT HERE AND IT IS THE POINT OF THE SECOND
@@ -26,7 +26,7 @@
 // reading the whole instrument exists to make possible, and a counter of the
 // fabric's own intentions would read 256 and 256 there.
 //
-// AND IT IS SYNCHRONISED IN, three stages, exactly as the top level does it:
+// AND IT IS SYNCHRONIZED IN, three stages, exactly as the top level does it:
 // the release is asynchronous to this clock by construction.
 //
 // The mutations are aimed at `rtl/plumbing/cadr_mem_count.sv`; everything else here is
@@ -229,7 +229,7 @@ module cadr_mem_count_harness #(
       .port_read_ack(1'b0), .port_write_ack(1'b0)
   );
 
-  // The port's reset, synchronised in as the top level synchronises it.
+  // The port's reset, synchronized in as the top level synchronizes it.
   logic [2:0] port_rst_sync;
   always_ff @(posedge clk) begin
     port_rst_sync <= {port_rst_sync[1:0], hp0_aresetn};

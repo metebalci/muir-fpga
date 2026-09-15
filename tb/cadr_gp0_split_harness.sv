@@ -100,7 +100,7 @@ module cadr_gp0_split_harness (
     // thing entirely: `IRQ_F2P` is the processing system's, this is the
     // Unibus interrupt request MIT's own driver is written around.  Brought
     // out so that a check can model `sys/io1/serial.lisp`'s channel walk ---
-    // the walk cannot be modelled off the status register, because reading
+    // the walk cannot be modeled off the status register, because reading
     // that register clears DSCHG and a model that polled it would be
     // clearing the very bit the walk exists to absorb.
     output var logic        intr_request,

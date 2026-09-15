@@ -42,7 +42,7 @@ struct Drive {
 /// everything moving at once.
 ///
 /// Reset is held only before the first cycle, but that does not avoid the
-/// `-TPR60` artefact: `apply_clock` derives it from `phase_ns`, which is
+/// `-TPR60` artifact: `apply_clock` derives it from `phase_ns`, which is
 /// `time - cycle_start`, and reset moves neither `cycle_start` nor the clock.
 /// Time runs on, so even a reset held from power-on sweeps `phase_ns` through
 /// 60..100 and emits a read tap --- here at ticks 11 to 18. The testbench

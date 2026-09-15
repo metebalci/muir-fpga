@@ -212,7 +212,7 @@ class Capture:
     def __init__(self):
         self.meta = {}
         self.raw_names = []
-        self.names = []          # normalised, per raw column, '' where dropped
+        self.names = []          # normalized, per raw column, '' where dropped
         self.rows = []           # list of tuples of ints, one per sample
         self.radix = 16
         self.radix_declared = False

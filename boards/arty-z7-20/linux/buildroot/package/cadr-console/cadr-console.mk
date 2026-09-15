@@ -28,7 +28,7 @@
 # package/cadr-common/cadr-common.mk's header has the argument in full.
 #
 # And `make -C src check` on the build host, which needs nothing but a C
-# compiler: the program's core against a model of the slave, with a modelled
+# compiler: the program's core against a model of the slave, with a modeled
 # machine behind the diagnostic bus.
 
 CADR_CONSOLE_VERSION = 0

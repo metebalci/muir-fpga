@@ -421,7 +421,7 @@ int main(int argc, char **argv) {
   uint64_t mem_delay = 0;                 // ticks the memory takes past the trace
   uint64_t progress = 0;                  // say where the machine is, this often
   // WHAT AN UNWRITTEN WORD OF DDR READS AS.  CLAUDE.md, measured on the board
-  // before anything was written: "Uninitialised DDR reads as alternating bands
+  // before anything was written: "Uninitialized DDR reads as alternating bands
   // of zeros and ones, not as zero ... So an unwritten word reads 0x00000000
   // in some places and 0xFFFFFFFF in others, and anything taking either as
   // evidence a write happened is testing nothing."  muir's memory is zero and

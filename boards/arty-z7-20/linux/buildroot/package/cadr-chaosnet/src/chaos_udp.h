@@ -122,7 +122,7 @@ struct chudp {
 	int trace;
 	// The one address this cable carries in this process: the machine's,
 	// which the fabric's interface answers to.  muir's node is handed the
-	// same thing as `Chudp::local` and a list, having a modelled cable
+	// same thing as `Chudp::local` and a list, having a modeled cable
 	// with more than one station on it; here there is one.  A datagram
 	// claiming to be FROM it is a forgery and is dropped, because the
 	// interface would take the frame for its own --- Transmit Done and

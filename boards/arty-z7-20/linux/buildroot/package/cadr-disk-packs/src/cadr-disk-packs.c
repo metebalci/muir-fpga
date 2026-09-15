@@ -21,7 +21,7 @@
 // it on the pack file, so the pack persists.  `pack_file.c` is the pack in muir's
 // terms, `pack_bay.c` the eight names, `pack_side.c` the register face,
 // `pack_feeder.c` the cache, the moves and the drive bay's rules;
-// `feeder_test.c` holds all five, on the build host, to a modelled
+// `feeder_test.c` holds all five, on the build host, to a modeled
 // controller that asks.
 //
 // **THE DRIVE BAY: EIGHT NAMES, AND THE CARD NEVER LEAVES THE BOARD.**
@@ -377,7 +377,7 @@ int main(int argc, char **argv)
 					uint32_t rec[PACK_RECORD_WORDS];
 					if (pack_record(bay_pack(&bay, u), 0, rec, err, sizeof err) == 0)
 						say("unit %u: block 0 word 0 is 0x%08x%s; header 0x%08x", u, rec[0],
-						    rec[0] == 0x4C42414Cu ? " (LABL: a labelled pack)" : "", rec[256]);
+						    rec[0] == 0x4C42414Cu ? " (LABL: a labeled pack)" : "", rec[256]);
 				}
 	}
 	say("the bay is looked at every %u ms, and never in the middle of a transfer", scan_ms);

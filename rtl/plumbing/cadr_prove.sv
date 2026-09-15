@@ -24,7 +24,7 @@
 //   `writes` high    STEP TWO.  The fabric writes.  As soon as the port comes
 //                    live it puts `word` at `addr` and stops.  Then somebody
 //                    reads that address from the debugger, and reads its
-//                    NEIGHBOURS, which is the half that catches a strobe
+//                    NEIGHBORS, which is the half that catches a strobe
 //                    pattern that opens both halves of the beat.
 //
 //   `writes` low     STEP THREE.  The fabric reads --- and then WRITES BACK
@@ -41,7 +41,7 @@
 // witness that held the wrong constant agree with each other, and the lamp is
 // green either way.  Writing the word out raw moves the comparison to the
 // observer that already has to be there --- and a lane swap, a shift or a
-// byte reversal is then visible IN THE VALUE, not merely as a colour.
+// byte reversal is then visible IN THE VALUE, not merely as a color.
 //
 // It also takes the person out.  The first version started the read on BTN1
 // and answered on LD4, so both halves of step three needed somebody in the
@@ -78,7 +78,7 @@
 // happens once, at the moment `SAXIHP0ARESETN` says the port is live,
 // whenever that is, and the next one needs a reset and not a finger.
 //
-// THE 80 ns SETUP IS HONOURED ON BOTH TRANSACTIONS, and it is not ceremony.
+// THE 80 ns SETUP IS HONORED ON BOTH TRANSACTIONS, and it is not ceremony.
 // `rtl/plumbing/xilinx7/cadr_ddr.xdc` relaxes the adapter's address and data registers to
 // sixteen ticks on the strength of `cadr_busint_xbus.sv`'s `SETUP_T` --- the
 // bus specification's "the responsibility of the bus master to assert good
@@ -100,7 +100,7 @@ module cadr_prove #(
 ) (
     input  var logic        clk,
     // Held while the port is dead, so this cannot start before the port can
-    // answer.  On the board that is `rst || !SAXIHP0ARESETN`, synchronised.
+    // answer.  On the board that is `rst || !SAXIHP0ARESETN`, synchronized.
     // It is also the RE-ARM: dropping and raising `SAXIHP0ARESETN` from the
     // debugger runs the whole sequence again.
     input  var logic        rst,

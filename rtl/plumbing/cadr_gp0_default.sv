@@ -21,7 +21,7 @@
 // completes with OKAY and is dropped.  OKAY and not DECERR or SLVERR on
 // purpose: an error response to a Cortex-A9's write is a posted write's
 // error, which arrives as an imprecise external abort that the kernel cannot
-// attribute to a process, and a constant a program can recognise is the
+// attribute to a process, and a constant a program can recognize is the
 // safer failure.  A read's response could be an error and be attributed,
 // but one rule for both halves is one rule.
 //

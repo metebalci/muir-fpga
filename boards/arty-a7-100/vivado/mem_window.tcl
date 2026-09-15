@@ -242,7 +242,7 @@ proc window_read  {addr}      { return [window_go 0 $addr 0] }
 # HOLD THE MACHINE STILL, or let it go.  A LEVEL, and it resets the MACHINE and
 # not the memory controller --- so what is in DDR survives it, which is the
 # whole reason the debugger has it.  Without it the machine reaches its first
-# main-memory cycle 118 ms after reset, and poisoning a neighbourhood through
+# main-memory cycle 118 ms after reset, and poisoning a neighborhood through
 # this register takes seconds, so the poison would always arrive after the
 # machine had read.
 proc window_hold {held} {

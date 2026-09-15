@@ -143,7 +143,7 @@ static int encode_raw(struct buf *out, const struct screen_frame *f, const struc
 	return 0;
 }
 
-// Which colour the rectangle has more of.
+// Which color the rectangle has more of.
 static int rre_background(const struct screen_frame *f, unsigned rx, unsigned ry,
 			  unsigned rw, unsigned rh)
 {
@@ -155,7 +155,7 @@ static int rre_background(const struct screen_frame *f, unsigned rx, unsigned ry
 }
 
 // RRE, section 7.7.2: a background pixel and a list of subrectangles of
-// everything that is not it.  The screen is two colours, so every
+// everything that is not it.  The screen is two colors, so every
 // subrectangle is the other one, and each is one row of a run --- a
 // rectangular decomposition that joined runs across rows would be smaller
 // still and is not built: this one is a single pass and the measurement says
@@ -221,7 +221,7 @@ struct screen_viewer {
 	uint32_t was[SCREEN_VISIBLE_WORDS];
 	int seen;
 	// One outstanding request: a viewer that asks again before being
-	// answered gets one answer, and the later ask is the one honoured.
+	// answered gets one answer, and the later ask is the one honored.
 	int have_request, incremental;
 	unsigned rx, ry, rw, rh;
 	uint64_t full_at_ns;

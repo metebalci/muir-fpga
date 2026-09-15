@@ -83,7 +83,7 @@
 
 // `INLK`, as `INPT`, `CONS`, `PACK` and `NONE` are printable words elsewhere
 // in this project: a link pointed at the wrong socket reads as a word rather
-// than as a number nobody recognises.
+// than as a number nobody recognizes.
 #define CADR_INPUT_LINK_MAGIC 0x494E4C4Bu
 #define CADR_INPUT_LINK_VERSION 1u
 #define CADR_INPUT_LINK_HELLO 8u

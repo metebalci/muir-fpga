@@ -608,7 +608,7 @@ int main(int argc, char **argv) {
   if (halts) {
     std::fprintf(stderr,
                  "FAIL: the machine halted on %ld microcycles; MACHRUN going "
-                 "down is not modelled here\n",
+                 "down is not modeled here\n",
                  halts);
     ++thin;
   }

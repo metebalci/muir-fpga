@@ -47,7 +47,7 @@
 //
 // **WHAT IS CHECKED.**  The mapping, on the eight anchors and in both
 // directions of `MODE BOW`.  A whole screen, pixel for pixel, in five pixel
-// formats --- 32, 16 and 8 bits, both byte orders, and a colour-mapped one
+// formats --- 32, 16 and 8 bits, both byte orders, and a color-mapped one
 // whose `SetColourMapEntries` must arrive.  An incremental update after part
 // of the buffer changes: the rows sent are the rows that changed, the
 // viewer's canvas comes out equal to the whole screen, and a viewer whose
@@ -349,13 +349,13 @@ static void client_set_format(struct client *c, const struct rfb_format *f)
 	client_send(c, m, sizeof m);
 	client_format(c, f);
 	if (!f->true_colour) {
-		// SetColourMapEntries, section 7.6.2: two colours from 0.
+		// SetColourMapEntries, section 7.6.2: two colors from 0.
 		if (client_need(c, 18) == 0 && c->in[0] == 1) {
 			CHECK(be16at(c->in + 2) == 0 && be16at(c->in + 4) == 2,
-			      "the colour map named %u colours from %u, wanting 2 from 0",
+			      "the color map named %u colors from %u, wanting 2 from 0",
 			      be16at(c->in + 4), be16at(c->in + 2));
 			CHECK(be16at(c->in + 12) == 0xFFFF,
-			      "colour map entry 1 is not white");
+			      "color map entry 1 is not white");
 			c->got_colour_map = 1;
 			client_take(c, 18);
 		}
@@ -482,7 +482,7 @@ static int client_update(struct client *c, int32_t *encodings, unsigned max)
 				const unsigned sx = be16at(p + c->n), sy = be16at(p + c->n + 2);
 				const unsigned sw = be16at(p + c->n + 4), sh = be16at(p + c->n + 6);
 				if (v < 0) {
-					fail(__LINE__, "an RRE subrectangle's pixel is neither colour");
+					fail(__LINE__, "an RRE subrectangle's pixel is neither color");
 					return -1;
 				}
 				if (sx + sw > w || sy + sh > h) {
@@ -547,9 +547,9 @@ static unsigned canvas_differs(const char *what)
 
 // ---- muir's PNG ---------------------------------------------------------
 //
-// `SimpleTv::png` (muir src/simpletv.rs:277) writes 1-bit greyscale, filter
+// `SimpleTv::png` (muir src/simpletv.rs:277) writes 1-bit grayscale, filter
 // none on every row, and STORED deflate blocks --- "the encoder is here
-// rather than a crate: a 1-bit greyscale PNG is a header, the rows behind
+// rather than a crate: a 1-bit grayscale PNG is a header, the rows behind
 // stored deflate blocks, and two checksums."  So this reads exactly that and
 // refuses anything else loudly rather than pulling in zlib for a file whose
 // shape is known.  A PNG row is packed MSB first, left to right, which is
@@ -589,7 +589,7 @@ static int png_read(const char *path, uint8_t out[SCREEN_HEIGHT][SCREEN_WIDTH])
 			width = be32at(data);
 			height = be32at(data + 4);
 			if (data[8] != 1 || data[9] != 0 || data[12] != 0) {
-				fail(__LINE__, "%s is %u-bit colour type %u interlace %u, not muir's 1-bit greyscale",
+				fail(__LINE__, "%s is %u-bit color type %u interlace %u, not muir's 1-bit grayscale",
 				     path, data[8], data[9], data[12]);
 				free(b);
 				free(idat);
@@ -785,10 +785,10 @@ static void check_whole_screen(const uint8_t pic[SCREEN_HEIGHT][SCREEN_WIDTH], i
 		{ 32, 24, 1, 1, 255, 255, 255, 0, 8, 16 },	/* big-endian, shifts moved */
 		{ 16, 16, 0, 1, 31, 63, 31, 11, 5, 0 },		/* 5-6-5 */
 		{ 8, 8, 0, 1, 3, 3, 3, 4, 2, 0 },		/* 2-2-2 */
-		{ 8, 8, 0, 0, 0, 0, 0, 0, 0, 0 },		/* a colour map */
+		{ 8, 8, 0, 0, 0, 0, 0, 0, 0, 0 },		/* a color map */
 	};
 	static const char *names[] = { "32bpp little", "32bpp big", "16bpp 5-6-5", "8bpp 2-2-2",
-				       "8bpp colour-mapped" };
+				       "8bpp color-mapped" };
 	words_from_picture(window, pic, bow);
 	screen_frame_init(&frame, bow);
 	screen_frame_read(&frame, window);
@@ -1265,7 +1265,7 @@ static void check_blank(void)
 //                        DIGESTS them at its own rate, which no register
 //                        here can see.
 //
-// The third is what the board measured and what nothing modelled: twenty
+// The third is what the board measured and what nothing modeled: twenty
 // characters handed over with no gap arrived as nineteen while the fabric's
 // `LOST` stayed zero, because nothing was lost in the fabric --- the machine
 // read all forty words and its software kept nineteen characters' worth.  So
@@ -1326,7 +1326,7 @@ static struct input_face face;
 static void model_step(void)
 {
 	struct model_face *m = &model;
-	// The modelled machine runs on the check's own clock, read here rather
+	// The modeled machine runs on the check's own clock, read here rather
 	// than handed over, so that a pass taken anywhere --- `pump`, or the
 	// polling inside `client_write` --- sees the same time.
 	m->now = clock_ns;
@@ -1442,7 +1442,7 @@ static void model_reset(void)
 	face.ctx = &model;
 }
 
-// A pass costs the modelled clock this much.  A real poll loop takes time,
+// A pass costs the modeled clock this much.  A real poll loop takes time,
 // and the pacing rule the program follows is measured on the clock its caller
 // hands it --- so a check of what a key MEANS needs the clock to move at all,
 // or the first word of a burst would be the only one.  A MICROSECOND, which
@@ -1850,7 +1850,7 @@ static void check_keyboard(void)
 // that reads every word the card offers and keeps only those far enough
 // apart, which is the board's symptom written down.
 
-// A pass, with the modelled clock moved on by `step_ns`.  The pacing rule is
+// A pass, with the modeled clock moved on by `step_ns`.  The pacing rule is
 // measured on the clock the caller hands the server, so a check of it has to
 // drive that clock.
 static void pace(unsigned passes, uint64_t step_ns)

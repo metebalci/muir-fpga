@@ -16,7 +16,7 @@
 // The shape that fits is an EXTRA transaction beside a correct one, and
 // nothing in this repository counted transactions per bus cycle.
 //
-// WHAT THE NEIGHBOURING CHECKS DO AND DO NOT SEE, measured rather than
+// WHAT THE NEIGHBORING CHECKS DO AND DO NOT SEE, measured rather than
 // asserted, by aiming each of this check's five records at every other check
 // that builds the same file.  `tb/cadr_axi_master_tb.cpp` DOES catch an extra
 // transaction born inside the adapter --- two of the five --- and it was wrong
@@ -34,7 +34,7 @@
 // WHAT IS HELD HERE, in four clauses.  The DUT is
 // `tb/cadr_bus_audit_harness.sv`: `cadr_machine`, `cadr_axi_master` and
 // `cadr_axi_widen`, wired as `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` wires
-// them, with a 64-bit AXI3 slave modelled here.
+// them, with a 64-bit AXI3 slave modeled here.
 //
 //   1  ONE ANSWER PER REQUEST.  Every rise of `mem_req` is followed by exactly
 //      one transaction completed and then by `mem_req` falling.  No request is
@@ -58,7 +58,7 @@
 //      address channel, which is what puts the adapter and the widening inside
 //      the claim.  Keeping both is deliberate and costs one line: with the two
 //      of them, a direction that is right at the port and wrong at the channel
-//      is localised to the adapter rather than merely reported.  And
+//      is localized to the adapter rather than merely reported.  And
 //      `md_compose`'s subject is MD's staleness, not the port; none of that is
 //      repeated here.
 //
@@ -731,7 +731,7 @@ void CheckRun(const Run &r) {
   // WHERE THEY LANDED.
   Check(r.misaligned == 0, "%ld transactions at an address that is not a "
         "64-bit beat", r.misaligned);
-  Check(r.outside_window == 0, "%ld transactions outside the modelled window",
+  Check(r.outside_window == 0, "%ld transactions outside the modeled window",
         r.outside_window);
   Check(r.bad_strobes == 0, "%ld writes whose strobes were not one half of a "
         "beat", r.bad_strobes);

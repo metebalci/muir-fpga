@@ -221,7 +221,7 @@ figure.fig { margin: 34px 0 36px; }
 /* The architecture drawing carries far more label text than muir's figures do,
    and it is the whole point of the page rather than an illustration beside the
    prose. So it is let out of the reading column: a fifth wider than the band,
-   centred on the viewport, and scrolling inside its own box once the window is
+   centered on the viewport, and scrolling inside its own box once the window is
    narrower than that. At this width its 11px labels land at about 12px. */
 .fig.dense {
   width: 1272px;
@@ -290,7 +290,7 @@ figure.screen img {
    the board.  Dashed is a boundary: the fabric from the processing system on
    the architecture drawing, and a lifeline on the sequences.  Dotted is
    software on the Arm cores: Linux, the room the programs sit in, and U-Boot
-   beside it.  What makes a thing external is its GREY FILL, not its outline,
+   beside it.  What makes a thing external is its GRAY FILL, not its outline,
    which is why the connectors and the memory stopped being dashed. */
 .d-dot  { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 1 4; stroke-linecap: round; }
 .d-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
@@ -328,7 +328,7 @@ figure.screen img {
 /* A BLOCK THE BOARD DOES NOT HAVE.  It keeps its place instead of being taken
    out, so that the drawings of three boards are one drawing with parts crossed
    off, and a reader sees what a board is missing rather than inferring it from
-   a gap.  It carries no status colour, because a status says how far along a
+   a gap.  It carries no status color, because a status says how far along a
    thing is and the answer here is that it is not on this board at all: the
    outline goes dashed in the drawing's own ink, the label stays and goes
    faint, and a red cross corner to corner says it plainly.  A wire that exists
@@ -350,26 +350,26 @@ figure.screen img {
    hangs there --- so a stub from an absent block down to a shared rail fades
    and the rail does not.  It keeps currentColor and moves only the stroke's
    opacity, so it stays the drawing's own ink in either theme and takes no
-   status colour: this says what a line is for and not how far along it is. */
+   status color: this says what a line is for and not how far along it is. */
 .d-absent-l { stroke-opacity: 0.35; }
 /* THE ONE RED TEXT ON THESE DRAWINGS, and it says one thing: the debug cable's
    supply pins are open at both ends, because a cable between two boards must not
    join their 3.3 V rails.  It borrows the crossings' red rather than taking a
-   colour of its own, so that red on a drawing goes on meaning one thing ---
+   color of its own, so that red on a drawing goes on meaning one thing ---
    something that is not about how far along a block is. */
 .d-warn, .d-s.d-warn { fill: var(--st-absent); font-weight: 700; }  /* the compound selector outranks .d-s, which sets currentColor later in this file */
-/* A status colour on a connection, not a block: the wash a status class
+/* A status color on a connection, not a block: the wash a status class
    carries would fill the shape an open path implies, so lines force it off
    and keep only the stroke. */
 .d-line.d-done, .d-line.d-built, .d-line.d-part,
 .d-line.d-wip,  .d-line.d-ext { fill: none; }
-/* The legend's own swatches, solid.  A block carries its colour at 0.18 so
+/* The legend's own swatches, solid.  A block carries its color at 0.18 so
    the label inside it stays readable; a 13px swatch with nothing in it is
-   too faint to tell one colour from another, which is the one place the
-   colour itself is the whole content. */
+   too faint to tell one color from another, which is the one place the
+   color itself is the whole content. */
 .d-key { fill-opacity: 1; }
 /* The absent swatch is the drawing's own ink with the red cross on it, so that
-   the legend shows the mark rather than a colour.  currentColor keeps it right
+   the legend shows the mark rather than a color.  currentColor keeps it right
    in both themes: a black box on paper, a white one on a dark ground. */
 .d-absent-key { fill: #000; fill-opacity: 1; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: none; }  /* black in both themes, the red cross on it */
 /* The two lamps that blink on the board blink here, at the board's own rates,

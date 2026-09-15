@@ -6,7 +6,7 @@
 //
 // **EVERY NUMBER HERE WAS READ OUT OF A SOURCE, AND THE SOURCE IS NAMED
 // BESIDE IT.**  A picture served upside down, mirrored, or in the wrong
-// colours is this program's classic failure, and it is cheap to get right
+// colors is this program's classic failure, and it is cheap to get right
 // by reading: muir's `src/simpletv.rs` is the model the fabric is checked
 // against and `rtl/machine/cadr_tv.sv` and `rtl/plumbing/cadr_ddr_map.sv` are the fabric.
 // The line numbers are muir at the commit `muir.commit` pins, dad7249, and

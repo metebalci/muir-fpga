@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Synthesise, place and route the composed machine for the Artix part, and
+# Synthesize, place and route the composed machine for the Artix part, and
 # report what it costs.
 #
 #     make build/boot_prom.hex
@@ -24,7 +24,7 @@
 # prose kept.
 #
 # Nothing in `make check` runs this. The checks prove the fabric agrees with
-# muir, and a checkout without Vivado should not try to synthesise anything.
+# muir, and a checkout without Vivado should not try to synthesize anything.
 
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7a100tcsg324-1"}]
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/a7-vivado"}]

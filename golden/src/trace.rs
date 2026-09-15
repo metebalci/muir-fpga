@@ -194,7 +194,7 @@ impl Trace {
             self.line.push_str(&format!(" {v:x}"));
         }
         // The mode register as it stands at the end of this microcycle, which
-        // is what the next one's SPEEDCLK takes into the synchroniser and
+        // is what the next one's SPEEDCLK takes into the synchronizer and
         // what its own fetch is gated by.
         let mode = &e.machine().mode;
         self.line.push_str(&format!(

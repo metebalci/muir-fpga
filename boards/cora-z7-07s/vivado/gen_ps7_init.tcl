@@ -15,10 +15,10 @@
 # LVL_SHFTR_EN at 0xF8000900 and clears FPGA_RST_CTRL at 0xF8000240, and until
 # then the PS-PL level shifters are off and `S_AXI_HP0` is dead.
 #
-# THE IP ROUTE IS AVAILABLE AT THE BASIC LICENCE: DECLINED FOR THE FABRIC,
+# THE IP ROUTE IS AVAILABLE AT THE BASIC LICENSE: DECLINED FOR THE FABRIC,
 # TAKEN FOR THIS. `boards/cora-z7-07s/cadr_ps7.sv` instantiates the PS7 primitive rather than
 # the IP, because the IP adds nothing a hard block needs. But `create_ip` and
-# `generate_target` check out no licence feature at all, and `ps7_init` is the
+# `generate_target` check out no license feature at all, and `ps7_init` is the
 # one thing the IP produces that cannot be had any other way --- no XSA, no
 # Vitis, no PetaLinux. Say which it is: declined there, taken here.
 #
@@ -55,7 +55,7 @@ generate_target all [get_files $ipdir/cadr_ps7_ip/cadr_ps7_ip.xci]
 
 # The routine, and the two C forms of the same table beside it: `ps7_init.c`
 # is Xilinx's under MIT, `ps7_init_gpl.c` the same data under GPL-2.0-or-later,
-# and an FSBL of our own would take one of them. The .tcl carries no licence
+# and an FSBL of our own would take one of them. The .tcl carries no license
 # header of any kind; it is the one XSDB sources.
 set src $ipdir/cadr_ps7_ip
 foreach f {ps7_init.tcl ps7_init.c ps7_init.h ps7_init_gpl.c ps7_init_gpl.h} {

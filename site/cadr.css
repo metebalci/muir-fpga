@@ -7,7 +7,7 @@
    `style.css` and is shared with the board drawings.  This file exists so
    that this page can be worked on without touching that one.
 
-   Nothing here carries a status colour.  The board drawings colour a block
+   Nothing here carries a status color.  The board drawings color a block
    by how far along it is; these figures say what the machine IS, so they
    are drawn in `currentColor` alone and read the same in either theme. */
 
@@ -19,7 +19,7 @@
 /* A filled region: the part of a buffer a picture uses, the data of a
    block, the memory that is fitted.  Tone comes from the fill's opacity
    rather than from a hue, which is what the rest of the site does with
-   its dither and its utilisation bars. */
+   its dither and its utilization bars. */
 .d-tint { fill: currentColor; fill-opacity: 0.14; stroke: none; }
 
 /* The smallest label on the page, for a bit number under a field that is

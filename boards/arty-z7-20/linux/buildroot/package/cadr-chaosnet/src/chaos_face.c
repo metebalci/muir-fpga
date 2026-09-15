@@ -245,7 +245,7 @@ int chaos_face_give(struct chaos_face *f, const uint16_t *words, unsigned n)
 	const uint32_t stat = f->read(f, CHAOS_STAT);
 	if (stat & CHAOS_ST_LOOPED) {
 		// `csr::LOOP_BACK`: the fabric is carrying the machine's own
-		// packets back to it and the cable is not in use.  Honoured
+		// packets back to it and the cable is not in use.  Honored
 		// rather than ignored --- a frame injected here would arrive as
 		// though the machine had sent it to itself.
 		if (!looped_said) {

@@ -21,7 +21,7 @@
 // sequence through the device first.  The check reports how many states it
 // found and refuses to pass on fewer than the whole reachable set.
 //
-// What this cannot hold is the serialiser: `OSERDESE2` and `OBUFDS` are
+// What this cannot hold is the serializer: `OSERDESE2` and `OBUFDS` are
 // primitives, their stubs in `tb/cadr_arty_stubs.sv` tie their outputs low,
 // and a check built on a stub confirms rather than compares.  See
 // `docs/display-output.md`.
@@ -75,7 +75,7 @@ struct Ref {
       }
     }
 
-    // Stage one: transition minimisation.
+    // Stage one: transition minimization.
     const int n1d = Ones(D, 8);
     const bool xnor_mode = (n1d > 4) || (n1d == 4 && ((D & 1u) == 0u));
     int qm[9];
