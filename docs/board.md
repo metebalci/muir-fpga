@@ -1341,6 +1341,109 @@ the new one afterwards. The fabric is configured by the loader through the
 processing system rather than over JTAG, so this is the reading that says a
 board which has been running for hours still names the build in it.
 
+## The build stamp, the sync program and a checkpoint, 15 September
+
+Both Zynq boards were served the set built at commit `261547d` and left
+running on it. The measurements below were taken on the two boards over half
+an hour.
+
+**A board says which build it carries, and four readers of that one value
+agree.** The last line of `cadr-console status` reads the same on both boards:
+
+    fabric: build 261547d0 --- commit 261547d, tree clean
+
+That figure is read out of the configuration logic by the fabric itself, so it
+is the bitstream in the part naming itself from inside. `cadr-console
+--version` prints `cadr-console 0-261547d-release` on both boards, which is the
+same commit arriving by another route: Vivado stamped the one and Buildroot
+stamped the other, and the two toolchains share nothing but the commit. The
+USERCODE register read over JTAG moved from `782e3a90` to `261547d0` on both
+parts. The loader's own reading of the bitstream header at boot says
+`UserID=261547D0`. So four readers now name one value and all four agree.
+Neither board could say any of this on the set before it, where `cadr-console
+--version` was an unrecognized option and `status` ended at the `FLAG-1` line
+with no fabric line at all.
+
+**The display's sync program runs on silicon, and nothing about the machine's
+timekeeping moved.** The vertical flag and the sync bits now come from the
+program the display block runs rather than from a fixed frame boundary. Both
+boards boot to a Lisp Listener with a dated who-line. The who-line's rate was
+read off the screen twice on each board, 137.9 real seconds apart with nothing
+touching either machine: 0.5077 of real time on the Arty Z7-20 and 0.5150 on
+the Cora Z7-07S. The who-line ticks once a machine second, so a reading of that
+length resolves to about seven parts in a thousand, and both figures are the
+half rate of 0.508 this file measures above, within that resolution.
+
+The rate was measured a second way, off the fabric's own tick counter, which
+touches neither the screen nor the network. Two readings 118.3 real seconds
+apart give 99.9989 MHz on the Arty Z7-20 and 99.9934 MHz on the Cora Z7-07S,
+against the 100 MHz a 10 ns tick is by design. The CADR's microsecond clock
+counts one per 200 ticks, so those are 0.499994 and 0.499967 of real time. The
+two methods agree, and the second one does not depend on the screen, the
+network or anything outside the board.
+
+**The mouse tracks on both boards, which is the vertical interrupt's own
+witness.** MIT's `TRACK-MOUSE` runs from `60CYC-1` out of `INTRX0`, which tests
+the vertical flag the sync program now presets, so a pointer that follows the
+hand says the interrupt is arriving from the program. On each board
+`tv:mouse-x` and `tv:mouse-y` moved in the direction the pointer moved and
+saturated at the screen's own limits, and the arrow glyph followed. `MOUSE
+READY` in the input face's status register is clear at rest on both, so the
+machine is reading the card. The screens hold 18,170 lit pixels of 739,584 on
+the Arty Z7-20 and 18,033 on the Cora Z7-07S, which is a System 304 Listener.
+
+**A checkpoint written on the board was opened by the muir in the same image on
+the same board.** The Arty Z7-20's machine was halted from its console with the
+disk idle, and `cadr-checkpoint` wrote a format 25 file in 16.4 seconds: 32
+memory boards, 3,084,509,683 microcycles retired, PC `0o313`, and 8,694,566
+bytes of body packed, read out over the console's window in 74,052 reads and
+24,669 writes. Its sidecar binds the one pack by name, geometry and SHA-256,
+and `cadr-checkpoint --verify` said the binding holds.
+
+The pack was copied before the resume, so that muir could not write the pack
+the running CADR reads, and the live pack's digest was unchanged afterwards.
+muir in this image is the pinned commit, and its own line reads:
+
+    resumed: 20260915-143001.chk at 3084509683 microcycles,
+    648946286205 ns, 32 memory boards
+
+It then ran 30,000,000 microcycles in 88.428 seconds and stopped at PC `0o313`.
+The resumed screen, read over muir's own RFB port, is the board's own Lisp
+world: it carries the three forms typed at the board minutes earlier with their
+answers. Nothing else could have put those lines inside muir.
+
+**Lisp resumed after the halt.** `cadr-console start` put the machine back at
+6,592 microcycles per 2,000 microseconds, and the who-line went on advancing.
+The machine had been halted for 7 minutes and 26 seconds and its Lisp world
+did not lose its place.
+
+**The who-line advances through a halt, which looks like a jump and is not
+one.** Across that halt the who-line gained about three minutes and forty-seven
+seconds more than the running time accounts for, and three minutes and
+forty-three seconds is the halt itself at the half rate. The microsecond clock
+is in fabric and counts ticks, so it free-runs while `MACHRUN` is down. A
+machine restarted after a halt therefore reads a clock that never stopped.
+
+**The cable held at zero refused frames a second time.** Each board took the
+debugger's role in turn over the same mirrored ribbon, found the wiring, and
+read 0 refused against a saturated 65,535 heard on every reading over a minute.
+Both machines ran Lisp throughout. The section above has the first session on
+this carrier and the counts it replaced.
+
+**One defect was found, and it is in the checkpoint program's reading of a
+flag.** `cadr-checkpoint --chaos-address` reads its number in decimal, where
+muir reads the same flag in octal. So `--chaos-address 177100` writes
+`0o131714` into the checkpoint, and muir refuses to resume the file, naming
+both addresses:
+
+    checkpoint: the Chaosnet interface's switches read 131714, this
+    machine's 177100
+
+The refusal is the guard working as it should, on a value that should never
+have been written. The spelling that works today is `cadr-checkpoint
+--chaos-address 0177100`, and with it the two programs agreed and the resume
+ran. The behavior predates this set, and a fix is in hand.
+
 ## Looking at the display output
 
 The display output block scans the CADR's screen out of DDR and drives the
