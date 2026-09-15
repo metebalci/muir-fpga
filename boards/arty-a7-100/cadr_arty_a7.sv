@@ -677,7 +677,7 @@ module cadr_arty_a7 #(
   logic [7:0]  ser_rx_data;
   logic        ser_rx_end, ser_rx_parity, ser_rx_framing;
   logic [15:0] chaos_address, chaos_rx_word;
-  logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc;
+  logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc, chaos_rx_lost;
   logic [12:0] chaos_rx_bits;
   logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
   logic [2:0]  ub_ssyn_by;
@@ -804,6 +804,7 @@ module cadr_arty_a7 #(
   assign chaos_rx_done  = 1'b0;
   assign chaos_rx_bits  = 13'd0;
   assign chaos_rx_crc   = 1'b0;
+  assign chaos_rx_lost  = 1'b0;
   assign chaos_tx_done  = 1'b0;
   assign chaos_tx_abort = 1'b0;
   assign chaos_cbl_busy = 1'b0;
@@ -972,6 +973,7 @@ module cadr_arty_a7 #(
       .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word),
       .chaos_rx_done(chaos_rx_done), .chaos_rx_bits(chaos_rx_bits),
       .chaos_rx_crc(chaos_rx_crc), .chaos_tx_done(chaos_tx_done),
+      .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_abort(chaos_tx_abort), .chaos_cbl_busy(chaos_cbl_busy),
       .chaos_bits(chaos_bits),
       .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),

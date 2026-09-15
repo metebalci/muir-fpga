@@ -909,6 +909,28 @@ makes a transmit abort. A frame goes out as a burst: a read of START pulses
 tick from the tick after. A frame comes in the same way, with
 `chaos_rx_done` committing it.
 
+A frame the far end had for this interface and the buffer had no room for
+crosses as `chaos_rx_lost` instead. The card counts it in its Lost Count and
+stores nothing of it, which is the early return muir's own `arrive` takes.
+It is a wire of its own rather than a second meaning for `chaos_rx_done`,
+because that strobe already says that the words streamed before it are a
+packet. One wire carrying both would leave the card choosing between them
+from a register the far end read a tick earlier, and a machine that wrote
+Clear Receiver in between would be handed a packet of no words.
+
+This seam has no abort and no frame duration at all, and that is a deliberate
+structural difference rather than an omission. A frame crosses it as one bus
+write, not as something with a beginning and an end. So muir's rules that are
+written in a frame's own time have no counterpart here: the receive-active
+latch it takes sixty nanoseconds into a frame, the instant one cell past the
+destination word at which a refused frame is counted, and the rule that a
+Clear Receiver written inside a frame's first twelve microseconds does not let
+that frame in. The fabric decides once, at the instant of the commit, from
+Receive Done as it stands then. A busy receiver here also does not abort the
+sender, because there is no sender on this side of the seam to abort: the
+retry that AIM-628 gives the sending interface is carried by the Linux
+program instead.
+
 The serial port's line is the `cadr-serial` program's, offered on a TCP socket
 as muir's `--serial` does. **The baud-rate generator is deliberately not on
 this card.** The 5.0688 MHz can at IOBSER 0A15 divides to instants that are
@@ -1023,7 +1045,7 @@ muir at all**: a packet written into the outgoing buffer and started comes
 back to the same interface's receiver, so muir plays the far end and the
 instants it acts at go into the trace as `CBL`, `CTD` and `CRX` rows. The
 program then writes and reads every register of both groups, runs the five
-directions of the Chaosnet's group that answer nothing, wraps the lost count
+directions of the Chaosnet's group that answer nothing, raises the lost count
 three times on a buffer nobody emptied, writes three hundred words into a
 buffer that holds 256, and takes a `-UB INIT` through both chips.
 

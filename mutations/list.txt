@@ -9686,6 +9686,43 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
                     ch_lost  <= ch_lost;
 @end
 
+@mutation iob-the-lost-count-stops-at-fifteen
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note AIM-628's Lost Count is four bits of a 74LS161 and WRAPS at sixteen:
+@note muir's `arrive` is `(self.lost + 1) & 0o17`.  A counter that stopped
+@note at fifteen instead would part company with the part at the sixteenth
+@note loss and read fifteen for ever after.  The run of refusals goes to
+@note twenty for this: the two agree until the sixteenth, so a shorter run
+@note cannot tell them apart.  Caught at "the card's Lost Count over a run
+@note of refusals".
+@old
+      if (chaos_rx_lost) begin
+        ch_lost <= ch_lost + 4'd1;
+      end
+@new
+      if (chaos_rx_lost) begin
+        if (ch_lost != 4'd15) ch_lost <= ch_lost + 4'd1;
+      end
+@end
+
+@mutation iob-a-reset-leaves-the-lost-count
+@check gp0_split
+@file rtl/machine/cadr_io_board.sv
+@note Reset "completely resets the interface, just as at power up and Unibus
+@note Initialize", and muir's `reset` clears the count with everything else.
+@note A count that survived it would be read by the driver's own
+@note `INTERFACE-RESET-AND-ENABLE` as losses on a buffer that has never held
+@note a packet.  Clear Receiver is the sister record above; this is the other
+@note event, and nothing held it before --- the trace resets the interface
+@note before it has lost anything.  Caught at "the card's Lost Count after a
+@note Reset".
+@old
+        ch_lost     <= 4'd0;
+@new
+        ch_lost     <= ch_lost;
+@end
+
 @mutation iob-a-lost-frame-lands-in-the-buffer
 @check iob
 @file rtl/machine/cadr_io_board.sv
@@ -9696,11 +9733,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note lost count exists to say did not happen.
 @old
         if (ch_rdone) begin
-          if (ch_lost != 4'd15) ch_lost <= ch_lost + 4'd1;
+          ch_lost <= ch_lost + 4'd1;
         end else begin
 @new
         if (1'b0) begin
-          if (ch_lost != 4'd15) ch_lost <= ch_lost + 4'd1;
+          ch_lost <= ch_lost + 4'd1;
         end else begin
 @end
 
@@ -10334,10 +10371,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note frame it successfully gave and retry every frame that was refused, for
 @note ever.  Caught at "LOST moved for a frame the machine's buffer was empty
 @note for".
+@note Both counts take this one condition, so a mutation here moves the card's
+@note four-bit Lost Count onto the wrong event with it.
 @old
-        if (wr_data[1] && wr_mask[1] && !commit_ok && lost != 32'hFFFF_FFFF) begin
+  assign rx_refused    = cmd_wr && wr_data[1] && wr_mask[1] && !commit_ok;
 @new
-        if (wr_data[1] && wr_mask[1] && commit_ok && lost != 32'hFFFF_FFFF) begin
+  assign rx_refused    = cmd_wr && wr_data[1] && wr_mask[1] && commit_ok;
 @end
 
 @mutation chaos-cable-clears-the-lost-count-on-a-reset
@@ -10355,6 +10394,39 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @new
         if (resets != 24'hFFFFFF) resets <= resets + 24'd1;
         lost <= 32'd0;
+@end
+
+@mutation chaos-cable-keeps-the-refusal-from-the-card
+@check gp0_split
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note THE BOARD'S OWN DEFECT, WRITTEN DOWN.  This module refused a frame the
+@note machine had no room for, counted it in `LOST`, and told the card
+@note nothing --- so `CHAOS:PKTS-LOST` in the band read zero while `LOST`
+@note read twenty-three, and the machine could not see a loss a real CADR
+@note could.  AIM-628 section 7's four bits are the machine's only sight of
+@note it.  Lint has nothing to say about this one: `rx_refused` is still read
+@note by the counter below.  Caught at "the card's Lost Count for the frame
+@note the cable refused".
+@old
+  assign chaos_rx_lost = rx_refused;
+@new
+  assign chaos_rx_lost = 1'b0;
+@end
+
+@mutation chaos-cable-tells-the-card-about-a-frame-it-stored
+@check gp0_split
+@file rtl/plumbing/cadr_chaos_cable.sv
+@note The other way round, and worse than losing the count: a card told that
+@note a frame it STORED was lost counts a loss that did not happen, and the
+@note driver reads `CHAOS:PKTS-LOST` going up on a cable that is delivering
+@note every packet.  The two counts are compared to the unit on the same
+@note events for exactly this reason.  Caught at "the card's Lost Count for
+@note the frame the cable refused", which reads two where the run has made
+@note one loss and one store.
+@old
+  assign chaos_rx_lost = rx_refused;
+@new
+  assign chaos_rx_lost = rx_refused || commit_ok;
 @end
 
 @mutation chaos-cable-streams-one-word-short

@@ -305,6 +305,7 @@ module cadr_band_axi_harness #(
       .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset),
       .chaos_csr(chaos_csr), .chaos_rx_valid(1'b0), .chaos_rx_word(16'd0),
       .chaos_rx_done(1'b0), .chaos_rx_bits(13'd0), .chaos_rx_crc(1'b0),
+      .chaos_rx_lost(1'b0),
       .chaos_tx_done(1'b0), .chaos_tx_abort(1'b0), .chaos_cbl_busy(1'b0),
       .chaos_bits(chaos_bits),
       .iob_intr(iob_intr), .iob_vector(iob_vector), .audio(audio),

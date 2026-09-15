@@ -288,6 +288,9 @@ module cadr_io_board (
     input  var logic        chaos_rx_done,  // that was the packet
     input  var logic [12:0] chaos_rx_bits,  // its length, what the bit counter loads
     input  var logic        chaos_rx_crc,   // its check word failed
+    input  var logic        chaos_rx_lost,  // ...or the far end had one for
+                                            // this interface and the buffer
+                                            // was busy: counted, not stored
     input  var logic        chaos_tx_done,  // the frame is away
     input  var logic        chaos_tx_abort, // ...or a collision took it
     input  var logic        chaos_cbl_busy, // `-CBLBSY`, which bit 14 reads out beside the CRC
@@ -1114,7 +1117,7 @@ module cadr_io_board (
       if (chaos_rx_done) begin
         ch_fill <= 9'd0;
         if (ch_rdone) begin
-          if (ch_lost != 4'd15) ch_lost <= ch_lost + 4'd1;
+          ch_lost <= ch_lost + 4'd1;
         end else begin
           ch_rlen  <= ch_fill;
           ch_rbits <= chaos_rx_bits;
@@ -1123,6 +1126,23 @@ module cadr_io_board (
           ch_crc   <= chaos_rx_crc;
           ch_rdone <= 1'b1;
         end
+      end
+      // A frame the far end had for this interface and the receiver had no
+      // room for.  It is COUNTED AND NOTHING ELSE HAPPENS OF IT --- no
+      // words, no commit, no bit counter --- which is the early return
+      // `arrive` takes in muir once the loss is in the count.  The far end
+      // raises this rather than pulsing `chaos_rx_done`, because that
+      // strobe's other meaning is "these words are a packet" and one wire
+      // cannot carry both without the card choosing between them from a
+      // register the far end has already read a tick earlier;
+      // `cadr_chaos_cable.sv`'s header carries that measurement.  The count
+      // WRAPS at sixteen rather than stopping: AIM-628's four bits are a
+      // 74LS161 and muir's `arrive` is `(self.lost + 1) & 0o17`.  A Clear
+      // Receiver on this same tick is written further down and stands,
+      // which is muir's own order: `write` advances to the instant first
+      // and applies the store after.
+      if (chaos_rx_lost) begin
+        ch_lost <= ch_lost + 4'd1;
       end
       if (chaos_tx_done) begin
         ch_tdone  <= 1'b1;
