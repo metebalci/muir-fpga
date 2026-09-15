@@ -94,6 +94,51 @@
 // Gating here would make `LOST` read zero on a board where frames really were
 // arriving faster than the machine takes them, which is the one thing that
 // count exists to show.
+//
+// ## A BROADCAST IS COUNTED AND NOT RETRIED, AND THE TWO CONDITIONS DIFFER
+//
+// **The frames a busy receiver COUNTS and the frames it ABORTS are different
+// sets, and this is the easiest thing here to get wrong.**  AIM-628 §2.5,
+// having described the abort: "Note that a receiver whose packet buffer is
+// full will only generate an abort signal if the packet was specifically
+// addressed to it."  So:
+//
+//     the frame                       counted in Lost Count   sender aborted
+//     addressed to this interface     yes                     YES
+//     a broadcast, destination zero   yes                     no
+//     anything taken under Spy        yes                     no
+//     another station's frame         no                      no
+//
+// MIT's card wires the two apart at one gate: the 74S10 at LMMYNM 0D02 takes
+// `MATCH SO FAR` --- mine, or zero, or spying --- for the count, and the
+// abort flip-flop at LMMODU 0A09 is preset only when `ITS.ME` is true with
+// it.  muir's ether makes the same split in two lines, the counting test
+// admitting a broadcast and the aborting test not.
+//
+// **AND THE ABORT IS THE ONLY THING A RETRY CAN STAND ON.**  A retry here
+// stands in for the sending station's driver answering Transmit Abort; a
+// broadcast into a full buffer produces no abort, so no interface on the
+// cable is told and no driver anywhere sends it again.  Retrying one would
+// invent traffic the hardware never carried, and would delay the frames
+// behind it while it did.  So a broadcast is offered ONCE, and if the buffer
+// refuses it it is counted in `broadcasts_lost` and gone --- no wait, no
+// second offer, and no place in the queue for anything to wait behind.
+//
+// **THE MACHINE'S OWN COUNT DOES NOT FOLLOW THIS SPLIT**, and that is the
+// point of writing the table out.  The fabric counts a refused commit in
+// `LOST` whatever the frame was addressed to, and the card's four-bit Lost
+// Count counts a broadcast exactly as it counts a frame by name, because
+// counting is the wider condition.  It is the ABORT, and therefore the
+// RETRY, that is by name alone.
+//
+// **A broadcast touches no state of the queue's** --- not the head, not its
+// offers, not its deadline, and not the latched `RX_FREE` bit, which exists
+// only to make the head's turn an edge.  One consequence is worth stating
+// rather than discovering: a broadcast that takes a buffer the machine has
+// just emptied can cost a frame waiting behind it one of its three offers,
+// refused against a buffer the broadcast filled.  That is what the cable
+// charged the sender too, which retried blind into a busy receiver and was
+// aborted again.
 
 #ifndef CHAOS_INJECT_H
 #define CHAOS_INJECT_H
@@ -132,7 +177,7 @@ struct chaos_inject_frame {
 // **THE COUNTS CLOSE, AND THE IDENTITY IS THE PROPERTY.**  Every frame this
 // edge is handed for the machine ends in exactly one of four places:
 //
-//     taken == stored + given_up + no_room + waiting
+//     taken == stored + given_up + broadcasts_lost + no_room + waiting
 //
 // `chaos_test_inject.c` asserts it after every case, so a road added later
 // that counts nothing breaks the sum and the check says so.  This is
@@ -155,6 +200,13 @@ struct chaos_inject {
 	unsigned long stored;		// frames the machine's buffer took
 	unsigned long refused;		// OFFERS the fabric refused: `LOST`'s twin
 	unsigned long given_up;		// frames past `CHAOS_INJECT_OFFERS`
+	// Broadcasts a full buffer refused: offered once, counted, and gone,
+	// because no abort went out for them and so no sender was ever told.
+	// **It is its own count and not part of `given_up`**, which means a
+	// machine that has stopped listening; folding the two together would
+	// make that reading mean either that or ordinary broadcast loss on a
+	// busy link, and a count that can mean two things is one nobody reads.
+	unsigned long broadcasts_lost;
 	unsigned long no_room;		// frames with no room to wait a turn
 };
 
@@ -162,7 +214,14 @@ void chaos_inject_init(struct chaos_inject *q);
 
 // A frame for the machine.  Offered at once when nothing is waiting, which is
 // the common case and adds no latency to a cable that is keeping up; queued
-// behind whatever is waiting otherwise, so that order is kept.  A frame of a
+// behind whatever is waiting otherwise, so that order is kept.
+//
+// **A BROADCAST NEVER QUEUES AND NEVER WAITS**, whatever is waiting: it is
+// offered once, and counted in `broadcasts_lost` if the buffer refuses it.
+// The destination is read out of the frame's own words rather than passed in,
+// which is what the card's destination comparator does with the word as it
+// goes by, and which means no caller can tell this file a frame is something
+// it is not.  A frame of a
 // length this seam cannot carry is neither queued nor counted: `chaos_face.c`
 // has said what is wrong with it and no waiting will make it carryable.
 void chaos_inject_give(struct chaos_inject *q, struct chaos_face *f,

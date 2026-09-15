@@ -18,6 +18,8 @@
 
 #include <cadr/cadr_log.h>
 
+#include "chaos_packet.h"
+
 // Saturating, as every count in this program is: a count that came back round
 // to a small number reads as a link with nothing wrong with it, which is the
 // one thing these exist to show.
@@ -33,34 +35,72 @@ void chaos_inject_init(struct chaos_inject *q)
 }
 
 // The one place a frame leaves this edge for the fabric, and the only place
-// the counts of what the fabric did are moved.
-//
-// **`RX_FREE` IS THROWN AWAY FIRST**, so that a drain from BEFORE this offer
-// cannot be read as the turn to go again after it.  What a retry waits for is
-// the machine emptying its buffer at or after the commit below, and
-// `chaos_face_rx_freed` answers an edge since it was last asked.
+// the counts of what the fabric did are moved.  It belongs to no frame in
+// particular: a frame at the head of the queue and a broadcast that will
+// never join it both go through here, and neither the head's offers nor its
+// deadline are touched.
 //
 // **ANYTHING THAT IS NOT A STORE IS A REFUSAL HERE.**  The fabric refuses a
 // commit while Receive Done is set, which is the abort AIM-628 §2.5 describes
 // and the case this whole file is for; it also answers nought for a length it
 // will not carry and while the interface is in Loop Back.  All three are
-// counted and retried the same way, because the sending station at the far end
-// of a real cable could not have told them apart either --- its interface read
-// Transmit Abort and its driver tried again --- and because a frame that is
-// never counted anywhere is a frame that goes missing in silence.
-static int offer(struct chaos_inject *q, struct chaos_face *f,
-		 const uint16_t *words, unsigned n, uint64_t now)
+// counted the same way, because the sending station at the far end of a real
+// cable could not have told them apart either --- its interface read Transmit
+// Abort and its driver tried again --- and because a frame that is never
+// counted anywhere is a frame that goes missing in silence.
+static int commit(struct chaos_inject *q, struct chaos_face *f,
+		  const uint16_t *words, unsigned n)
 {
-	(void)chaos_face_rx_freed(f);
 	if (chaos_face_give(f, words, n) == 1) {
 		bump(&q->stored);
 		return 1;
 	}
 	bump(&q->refused);
+	return 0;
+}
+
+// An offer of the frame at the HEAD, which is the only frame that may be
+// offered a second time, and which therefore has to be remembered: when it
+// was refused, that it is held, and how many offers it has had of its three.
+//
+// **`RX_FREE` IS THROWN AWAY FIRST**, so that a drain from BEFORE this offer
+// cannot be read as the turn to go again after it.  What a retry waits for is
+// the machine emptying its buffer at or after the commit below, and
+// `chaos_face_rx_freed` answers an edge since it was last asked.  Only a
+// frame that may go again has any use for that bit, which is why nothing else
+// in this file reads it.
+static int offer(struct chaos_inject *q, struct chaos_face *f,
+		 const uint16_t *words, unsigned n, uint64_t now)
+{
+	(void)chaos_face_rx_freed(f);
+	if (commit(q, f, words, n) == 1)
+		return 1;
 	q->refused_at = now;
 	q->held = 1;
 	++q->offers;
 	return 0;
+}
+
+// Whether the frame is addressed to everybody, which is the one thing about a
+// frame this file asks.  **The two conditions differ**: a busy receiver COUNTS
+// a broadcast and does not ABORT it (AIM-628 §2.5, "will only generate an
+// abort signal if the packet was specifically addressed to it"), and a retry
+// here stands in for a driver answering an abort that was never sent.
+//
+// It is read out of the frame's own words, as the card's destination
+// comparator reads the word as it goes by, rather than being passed in by a
+// caller who might be wrong about it.
+//
+// A frame too short to carry a trailer has no cable destination at all and so
+// cannot be a broadcast; it is left to the ordinary road, where
+// `chaos_face_give` refuses it wherever it is offered and the bound retires
+// it like any other frame the machine will not take.
+static int broadcast(const uint16_t *words, unsigned n)
+{
+	// The hardware trailer is destination, source, check, so the cable
+	// destination is the third word from the end.
+	return n >= CHAOS_PKT_TRAILER_WORDS &&
+	       words[n - CHAOS_PKT_TRAILER_WORDS] == 0u;
 }
 
 // The head is done with, whichever way it went: the next frame's turn comes
@@ -104,6 +144,31 @@ void chaos_inject_give(struct chaos_inject *q, struct chaos_face *f,
 	}
 
 	bump(&q->taken);
+
+	// **A BROADCAST IS OFFERED ONCE AND THEN IT IS GONE.**  No abort went
+	// out for it on the cable, so no sender was told and no driver would
+	// have sent it again; holding it here would invent a retransmission
+	// the hardware never made, and would put a frame nobody is waiting for
+	// in front of frames somebody is.  So it does not join the queue, it
+	// does not wait behind one, and it goes at once whatever is waiting ---
+	// which is the cable too, where a broadcast passes the receiver at the
+	// instant it is on the wire and a frame being retried is still in some
+	// other station's transmit buffer.
+	//
+	// The refusal is counted twice over, as every refusal here is: in
+	// `refused`, which is the twin of the interface's own Lost Count and
+	// counts a broadcast exactly as it counts a frame by name, and in
+	// `broadcasts_lost`, which is this frame's one road out of the sum.
+	if (broadcast(words, n)) {
+		if (commit(q, f, words, n) == 0) {
+			bump(&q->broadcasts_lost);
+			if (q->trace)
+				say("the machine's buffer was full: a broadcast "
+				    "of %u words is lost, the cable having told "
+				    "nobody to send it again", n);
+		}
+		return;
+	}
 
 	// Nothing is waiting, so this frame's turn is now.  A cable the machine
 	// is keeping up with never reaches the queue at all, and no latency is

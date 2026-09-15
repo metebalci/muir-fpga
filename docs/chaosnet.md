@@ -508,20 +508,75 @@ and never reaches this queue.
 
 ### The counts, and the sum that closes
 
-The traffic line carries four counts for the machine's side:
+The traffic line carries five counts for the machine's side:
 
 - **offers refused because the machine had not emptied its buffer.** These are
   offers and not frames, which is what makes them comparable with the
   interface's own Lost Count: one frame offered three times moves both by
   three.
 - **frames given up after three.**
+- **broadcasts lost to a full buffer.** These are their own count and not part
+  of the frames given up, which mean a machine that has stopped listening. A
+  count that can mean two things is one nobody reads. The subsection below says
+  why a broadcast is never retried.
 - **frames with no room to wait.**
 - **frames waiting.**
 
-Every frame the program took for the machine is stored, given up, dropped for
-want of room, or still waiting. The check asserts that identity after every
-case, so a road out that counts nothing breaks the sum and the check says so.
-It is the same rule as the datagram counts above and for the same reason.
+Every frame the program took for the machine is stored, given up, lost as a
+broadcast, dropped for want of room, or still waiting. The check asserts that
+identity after every case, so a road out that counts nothing breaks the sum and
+the check says so. It is the same rule as the datagram counts above and for the
+same reason.
+
+### A broadcast is counted and not retried
+
+The frames a busy receiver counts and the frames it aborts are different sets.
+AIM-628 section 2.5, having described the abort, adds this. "Note that a
+receiver whose packet buffer is full will only generate an abort signal if the
+packet was specifically addressed to it."
+
+So a broadcast into a full buffer is counted in Lost Count and no abort goes
+out. No sending interface reads Transmit Abort for it, and no driver anywhere
+sends it again.
+
+| the frame | counted in Lost Count | sender aborted |
+|---|---|---|
+| addressed to this interface | yes | yes |
+| a broadcast, destination zero | yes | no |
+| anything taken under Spy | yes | no |
+| another station's frame | no | no |
+
+MIT's card wires the two conditions apart at one gate. The 74S10 at LMMYNM
+0D02 takes `MATCH SO FAR`, which is mine or zero or spying, for the count. The
+abort flip-flop at LMMODU 0A09 is preset only when `ITS.ME` is true with it.
+
+The retry in this program stands in for a driver answering an abort. A
+broadcast produces no abort, so retrying one would invent a retransmission the
+hardware never made, and it would delay the frames behind it while it did. A
+broadcast is therefore offered once. If the buffer refuses it, it is counted
+and dropped there and then. It never joins the queue, so nothing waits behind
+it, and it never waits behind anything else.
+
+The counting does not follow this split, and that is the easiest thing here to
+get wrong. The fabric counts a refused commit in `LOST` whatever the frame was
+addressed to, and the card's four-bit Lost Count counts a broadcast exactly as
+it counts a frame addressed by name. It is the abort, and therefore the retry,
+that is by name alone.
+
+The rule is `chaos_inject.c`'s. It reads the cable destination out of the
+frame's own words, which is the word the card's destination comparator reads as
+the frame goes by. The routing hands a broadcast down exactly as it hands down
+a frame addressed by name, because a broadcast does still have to be offered.
+What differs is only what happens when the buffer refuses it.
+
+A broadcast touches no state of the queue's. It does not take the head. It
+spends none of a waiting frame's three offers. It does not restart a waiting
+frame's deadline. It does not read the latched bit that makes a waiting frame's
+turn an edge. One consequence is worth stating rather than discovering. A
+broadcast that takes a buffer the machine has just emptied can cost a frame
+waiting behind it one of its three offers, refused against a buffer the
+broadcast filled. That is what the cable charged the sender too, which retried
+blind into a busy receiver and was aborted again.
 
 ### What it measures, on the build host
 
