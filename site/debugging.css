@@ -1,0 +1,51 @@
+/* SPDX-FileCopyrightText: 2026 Mete Balci */
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+
+/* The debugging page's own drawing classes.  Everything else it needs ---
+   `d-box`, `d-t`, `d-s`, `d-m`, `d-n`, `d-line`, `d-bus`, `d-dash`,
+   `d-absent`, `d-absent-x`, `d-warn`, `figure.fig` and its `.scroll`,
+   `.tablewrap` and `dl.credits` --- is in `style.css` and is shared with the
+   board drawings.  This file exists so that this page can be worked on
+   without touching that one, which is the same reason `cadr.css` exists.
+
+   The three classes below are `cadr.css`'s, repeated here rather than moved
+   into `style.css`.  Two pages wanting the same small thing is not a reason
+   to put it in the stylesheet every page loads, and a page that draws the
+   real machine and a page that draws the cable between two of them can then
+   be changed one at a time.
+
+   Nothing here carries a status colour.  The board drawings colour a block by
+   how far along it is; these figures say what the cable IS and what crosses
+   it, so they are drawn in `currentColor` alone and read the same in either
+   theme.  What has run on a board and what has not is in the table at the
+   foot of the page, in words.
+
+   No `font-size` here is in px except inside the drawings.  Text in an SVG is
+   drawn in the drawing's own coordinates and scales with the figure, so it is
+   a drawing unit and not a reader-facing size; every size the reader's
+   browser lays out comes from `style.css`, in rem. */
+
+/* A filled region: the marker and parity slots of a frame, the ground pins of
+   a header.  Tone comes from the fill's opacity rather than from a hue, which
+   is what the rest of the site does with its dither and its utilisation
+   bars. */
+.d-tint { fill: currentColor; fill-opacity: 0.14; stroke: none; }
+
+/* An inner division of a bar: lighter than the box around it, so a frame of
+   twenty-one bits reads as one frame cut into fields rather than as five
+   boxes in a row. */
+.d-hair { fill: none; stroke: currentColor; stroke-width: 1; }
+
+/* The smallest label on the page, for a bit number under a field that is one
+   bit wide and for a pin number under a cell.  `d-n` is 11px mono; this is
+   the same face two sizes down, and it is used nowhere a reader has to read a
+   sentence. */
+.d-x { font: 400 9.5px var(--mono); fill: currentColor; }
+
+/* The one red label on this page, and it is the same red as the crossings on
+   the board drawings: the cable's two supply pins, which are open at both
+   ends.  `style.css` has `.d-warn` and a `.d-s.d-warn` beside it for exactly
+   this reason --- the shorthand above sets a fill and a weight of its own and
+   is read after it --- so the compound selector is what makes the smallest
+   label red as well. */
+.d-x.d-warn { fill: var(--st-absent); font-weight: 700; }
