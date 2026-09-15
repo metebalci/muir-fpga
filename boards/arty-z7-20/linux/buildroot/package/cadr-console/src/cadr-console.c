@@ -353,6 +353,14 @@ static void help(void)
 	say("color-tv [on|off]       whether the second display board --- the color TV at");
 	say("                0o17200000 --- is in the backplane.  A machine with none gives");
 	say("                the NXM there, which is how the band finds out.  Exits 0 when fitted");
+	say("hdmi-output [tv|color-tv|both]");
+	say("                which screens the board's own display output sends to the");
+	say("                monitor.  With no word it reports.  The color screen is drawn");
+	say("                over the first where they overlap");
+	say("hdmi-rotate [0|90|-90]  which way up, for a monitor stood on its side");
+	say("hdmi-mode       which video mode this BITSTREAM carries.  Read only: a mode is");
+	say("                a pixel clock and a pixel clock comes from an MMCM whose");
+	say("                dividers are fixed in the bitstream");
 	say("color-map [first|color] one board's sixteen colors, three guns each: the map the");
 	say("                machine wrote through register 4, which no bus cycle can read back");
 	say("trace-keys on|off  tell cadr-terminal and cadr-usb-input to say what each key");
@@ -505,6 +513,52 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		cons_say_display(&d);
 		// The answer, for a script: 0 when a color board is fitted.
 		exit_status = d.color ? 0 : 1;
+	}
+	else if (!strcmp(cmd, "hdmi-output")) {
+		struct cons_hdmi h;
+		if (argc > 1) {
+			int first = 0, color = 0;
+			if (!strcmp(argv[1], "tv")) first = 1;
+			else if (!strcmp(argv[1], "color-tv")) color = 1;
+			else if (!strcmp(argv[1], "both")) { first = 1; color = 1; }
+			else {
+				say("hdmi-output tv|color-tv|both");
+				return 0;
+			}
+			cons_set_hdmi_output(c, first, color);
+		}
+		cons_read_hdmi(c, &h);
+		cons_say_hdmi(&h);
+	}
+	else if (!strcmp(cmd, "hdmi-rotate")) {
+		struct cons_hdmi h;
+		if (argc > 1) {
+			int rot;
+			if (!strcmp(argv[1], "0")) rot = CONS_HDMI_UPRIGHT;
+			else if (!strcmp(argv[1], "90")) rot = CONS_HDMI_CW;
+			else if (!strcmp(argv[1], "-90")) rot = CONS_HDMI_CCW;
+			else {
+				say("hdmi-rotate 0|90|-90");
+				return 0;
+			}
+			cons_set_hdmi_rotate(c, rot);
+		}
+		cons_read_hdmi(c, &h);
+		cons_say_hdmi(&h);
+	}
+	else if (!strcmp(cmd, "hdmi-mode")) {
+		// **READ ONLY, AND THE WORD SAYS WHICH BITSTREAM IS LOADED.**  A
+		// card that wants another mode wants another bitstream, so this
+		// reports rather than sets and there is no argument to give it.
+		struct cons_hdmi h;
+		cons_read_hdmi(c, &h);
+		if (!h.mark_ok)
+			cons_say_hdmi(&h);
+		else
+			say("hdmi: %s --- the mode this bitstream was built with;"
+			    " another mode is another bitstream",
+			    cons_hdmi_mode_name(h.mode));
+		exit_status = h.mark_ok ? 0 : 1;
 	}
 	else if (!strcmp(cmd, "color-map")) {
 		// One board's sixteen colors, out of a port no bus cycle can

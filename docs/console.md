@@ -164,7 +164,24 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  stamp**, which is what a bitstream built before the flows
                  stamped them leaves behind and the one value a build can
                  never be
-    33-47        read UNMAPPED; writes dropped
+    33 DISPLAY  **which display boards are in the backplane.**  A write of
+                 `TV_SIMPLE_KEY` or `TV_LISPM_KEY` says which board the first
+                 display is, muir's `--tv-board`; a write of `COLOR_TV_KEY`
+                 fits the second board and its complement takes it out,
+                 muir's `--color-tv`.  It reads back a marker of `TV` in the
+                 top half, the color board in bit 1 and a LISPM TV in bit 0
+    34 HDMI     **what the board's own display output shows, and which way
+                 up.**  Six keys: three for the screens --- the first
+                 display, the color board, or both --- and three for the
+                 rotation.  It reads back a marker of `HD` in the top half,
+                 the mode the FABRIC WAS BUILT WITH in bits 5 and 4, the
+                 rotation in bits 3 and 2, and the two screens in bits 1 and
+                 0.  **The mode is read only**: a video mode is a pixel clock
+                 and a pixel clock comes from an MMCM whose dividers are fixed
+                 in the bitstream, so three bitstreams carry the three modes
+                 and this says which one is loaded.  `docs/display-output.md`
+                 has the measurement behind that
+    35-47        read UNMAPPED; writes dropped
 
     page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 

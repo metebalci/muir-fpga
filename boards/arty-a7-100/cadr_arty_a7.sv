@@ -624,7 +624,8 @@ module cadr_arty_a7 #(
   // taken before the second board was built was taken on.
   logic        con_tv_lispm, con_color_tv;
   logic [3:0]  con_tv_map_a;
-  logic [23:0] con_tv_map_q, con_tv_color_map_q;
+  logic [23:0] con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q;
+  logic [1:0]  con_hdmi_out, con_hdmi_rotate;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the DBGIN connector's twenty-one wires.
@@ -908,6 +909,9 @@ module cadr_arty_a7 #(
       .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
       .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
       .tv_color_map_q(con_tv_color_map_q),
+      // The color board's map on its second port, which is the display
+      // output's on a board that has one.  This board has none.
+      .disp_map_a(4'd0), .disp_color_map_q(con_disp_color_map_q),
       // The absence of a memory: see the tie-offs above.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -1477,6 +1481,11 @@ module cadr_arty_a7 #(
         .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
         .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
         .tv_color_map_q(con_tv_color_map_q),
+        // What a display output would show, page 2's word 34.  This board has
+        // no HDMI connector, so the word says what it would show and nothing
+        // reads it.
+        .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
+        .hdmi_mode(2'd0),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -1540,6 +1549,12 @@ module cadr_arty_a7 #(
     // a SIMPLE TV and no color board.
     assign con_tv_lispm = 1'b0;
     assign con_color_tv = 1'b0;
+    // And what a display output would show, page 2's word 34.  This board has
+    // no HDMI connector at all, so the two settings reach nothing whichever
+    // arm this is; they are driven here so that a board with no console holds
+    // them at what a board comes up with rather than at nothing.
+    assign con_hdmi_out    = 2'b01;
+    assign con_hdmi_rotate = 2'd0;
     assign con_tv_map_a = 4'd0;
     assign con_write   = 1'b0;
     assign con_addr    = 18'd0;
@@ -1789,7 +1804,8 @@ module cadr_arty_a7 #(
                    dbg_wire_state,
                    // The two display boards' color maps, which the console
                    // reads on pages 4 and 5.
-                   con_tv_map_q, con_tv_color_map_q,
+                   con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
+                   con_hdmi_out, con_hdmi_rotate,
                    // The pack side's unanswered memory port, folded one level
                    // down, and the switch value the console reports.
                    hp_fold, sw0_held};

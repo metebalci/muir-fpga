@@ -215,6 +215,10 @@ module cadr_mem_count_harness #(
       // second display board has `build/color_tv.pass` of its own.
       .tv_lispm(1'b0), .color_tv(1'b0), .tv_map_a(4'd0),
       .tv_map_q(tv_map_q), .tv_color_map_q(tv_color_map_q),
+      // The color board's map on its second port, which on the board
+      // is the display output's.  There is none here, so the index is
+      // tied and the word is folded with the rest.
+      .disp_map_a(4'd0), .disp_color_map_q(disp_color_map_q),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
@@ -329,10 +333,10 @@ module cadr_mem_count_harness #(
   // The two display boards' color maps, which go to the console face on the
   // board and to nobody here; folded below with everything else this harness
   // does not read.
-  logic [23:0] tv_map_q, tv_color_map_q;
+  logic [23:0] tv_map_q, tv_color_map_q, disp_color_map_q;
 
   logic unused;
-  assign unused = &{1'b0, tv_map_q, tv_color_map_q, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
+  assign unused = &{1'b0, tv_map_q, tv_color_map_q, disp_color_map_q, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
                     store_rdata, store_miss, ch_active,
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,

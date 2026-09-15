@@ -1353,6 +1353,28 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY)
+# AND THE OTHER TWO VIDEO MODES, which are three bitstreams and not a setting:
+# `HDMI_MODE` reaches the raster's widths, the two margins that center each
+# picture and one sync polarity, so each column of the table elaborates to a
+# different design and a column nothing lints is a column nobody has checked.
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    -GDDR=1 -GHDMI=1 -GHDMI_MODE=1 \
+	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
+	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
+	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
+	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY)
+	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
+	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
+	    -GDDR=1 -GHDMI=1 -GHDMI_MODE=2 \
+	    --top-module cadr_arty $(BOARD_STUBS) tb/cadr_ps7_stub.sv \
+	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
+	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
+	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) $(DISPLAY)
 # AND THE DEBUG CABLE'S TWO, AT THEIR OWN DEFAULT PARAMETERS, WHICH IS STILL
 # WORTH A PASS OF ITS OWN. Both are composed now --- `cadr_dbgin.sv` is in
 # `$(MACHINE)`, so every pass above elaborates it, and
@@ -2238,14 +2260,29 @@ $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 # a 4 KB boundary that a 96-byte line forces; and a second configuration slows
 # the port until it loses the race, because a stimulus fast enough hides the
 # race it exists to show.
-$(BUILD)/obj_display_out/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
-                                            tb/cadr_display_out_tb.cpp | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_display_out \
-	    --top-module cadr_display_out \
+# **THREE BUILDS, ONE A MODE, BECAUSE THE MODE IS A PARAMETER.**  A video mode
+# is a pixel clock and a pixel clock comes from an MMCM whose dividers are fixed
+# in the bitstream, so the three modes are three bitstreams and the raster's
+# figures are elaboration-time constants.  A check that ran one of them would
+# hold the code and say nothing about the other two columns of the table ---
+# and the centering, whose margins are different in all three, is exactly where
+# an off-by-one lives.
+#
+# The testbench carries its own transcription of the three specifications and
+# takes the mode as its argument, so the module's table and the check's are two
+# descriptions that can disagree.
+$(BUILD)/obj_display_out%/Vcadr_display_out: rtl/plumbing/cadr_display_out.sv \
+                                             tb/cadr_display_out_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_display_out$* \
+	    -GMODE=$* --top-module cadr_display_out \
 	    rtl/plumbing/cadr_display_out.sv $(abspath tb/cadr_display_out_tb.cpp)
 
-$(BUILD)/display_out.pass: $(BUILD)/obj_display_out/Vcadr_display_out
-	$(BUILD)/obj_display_out/Vcadr_display_out
+$(BUILD)/display_out.pass: $(BUILD)/obj_display_out0/Vcadr_display_out \
+                           $(BUILD)/obj_display_out1/Vcadr_display_out \
+                           $(BUILD)/obj_display_out2/Vcadr_display_out
+	$(BUILD)/obj_display_out0/Vcadr_display_out 0
+	$(BUILD)/obj_display_out1/Vcadr_display_out 1
+	$(BUILD)/obj_display_out2/Vcadr_display_out 2
 	@touch $@
 
 # The DVI transmitter: three TMDS channels and the clock channel.
