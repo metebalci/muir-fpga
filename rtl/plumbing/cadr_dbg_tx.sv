@@ -25,7 +25,7 @@
 //
 // **NO muir REFERENCE EXISTS FOR THIS MODULE.**  muir has the cable, and
 // `rtl/machine/cadr_dbgin.sv` is held to it tick for tick; muir has no
-// serialiser, because a model with no wires needs none.  What holds this is a
+// serializer, because a model with no wires needs none.  What holds this is a
 // property --- what goes in one end comes out the other, unchanged, in
 // bounded time --- and that is why it is here and not in `rtl/machine/`, the
 // same footing `cadr_axi_master.sv` and `cadr_debug_window.sv` are on.
@@ -90,7 +90,7 @@
 // A receiver with no clock has to know which beat is beat zero.  It is told
 // by the silence: the sender emits its beats back to back, `BEAT_T` ticks
 // apart, and then leaves the lines alone for `GAP_T`.  That costs no wire and
-// no slot, and it resynchronises a receiver that has just come up, or that has
+// no slot, and it resynchronizes a receiver that has just come up, or that has
 // been reset while this end kept running, within one frame.
 //
 // The marker and the gap catch different things and both are kept.  The gap
@@ -107,7 +107,7 @@
 //
 // **AND A FRAME IS PRESENTED WHOLE OR NOT AT ALL**, which is the promise that
 // matters most.  `cadr_debug_window.sv`'s header names three hazards the
-// cable has no defence against: a late address bit makes the 74S139 decode the
+// cable has no defense against: a late address bit makes the 74S139 decode the
 // wrong strobe, a late data line is latched instead of the intended word, and
 // a write flag that moves inside a request inverts the cycle.  The window
 // answers all three by making a request one 32-bit store.  A carrier that

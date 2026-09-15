@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Synthesise, place and route the composed machine, and report what it costs.
+# Synthesize, place and route the composed machine, and report what it costs.
 #
 #     make build/boot_prom.hex
 #     vivado -mode batch -source boards/arty-z7-20/vivado/fit.tcl
@@ -28,7 +28,7 @@
 # it, and the two were never meant to agree.
 #
 # Nothing in `make check` runs this. The checks prove the fabric agrees with
-# muir, and a checkout without Vivado should not try to synthesise anything.
+# muir, and a checkout without Vivado should not try to synthesize anything.
 
 set part   [expr {[info exists ::env(PART)]   ? $::env(PART)   : "xc7z020clg400-1"}]
 set outdir [expr {[info exists ::env(OUTDIR)] ? $::env(OUTDIR) : "build/vivado"}]

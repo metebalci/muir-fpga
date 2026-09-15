@@ -147,7 +147,7 @@ sheets, from which `data/CADRIO.netlist` is made. What follows is that file.
   the interval timer and the microsecond counter have no pin on it and count
   on.**
 - **The card answers `-UB MSYN` in its own time, and it is not one number.**
-  `busint::IoBoardTiming` is a behavioural twin measured on the netlist board.
+  `busint::IoBoardTiming` is a behavioral twin measured on the netlist board.
   The clocks, the GPIO and the counter's high half answer 250 ns after
   `-MSYN` through the TD250 at IOBADR 0E09. The keyboard, mouse, status and
   beep registers select through **two** stages of the microsecond clock and
@@ -446,7 +446,7 @@ These are said here rather than given a column, per CLAUDE.md's rule.
   Signetics sheet instead, in a model the check feeds from the trace's own
   cycles. That is the only thing on this card held to something other than
   muir.
-- **The 2651's parity and framing flags.** muir's behavioural chip raises
+- **The 2651's parity and framing flags.** muir's behavioral chip raises
   neither and says so in its own header, because both are properties of the
   frame's bits and it is handed whole characters. The trace therefore holds
   `SR3` and `SR5` at zero over its whole length, which catches a card whose
@@ -578,7 +578,7 @@ however wide the DM8136s' match is. The live form of that mutation is the
 other direction, reaching a page lower, `0o763000`. That puts `0o763776` into
 group 7 and is caught at row 24, on the first cycle the card is not supposed
 to answer. It is the same family as the equivalences CLAUDE.md already
-catalogues.
+catalogs.
 
 ## What slice two built
 
@@ -685,7 +685,7 @@ records holding it open.
 Slice two expected one. It would make the two mutations that matter
 untestable. CLAUDE.md records the shape: the display's
 `tv-answers-its-neighbours`, written as a wider address match gated by the
-decode's `device`, survived. A slave that honours a guard which is checked
+decode's `device`, survived. A slave that honors a guard which is checked
 exhaustively elsewhere cannot answer an address the guard refuses, so the
 mutation tests the guard and not the slave.
 
@@ -854,7 +854,7 @@ early, `t_msyn` and `t_edge` count since the strobe and since the last edge,
 `usec` is a counter read by a latch at an arbitrary tick, `ub_ssyn` is the
 answer itself, and `busy`, `first` and `edges` are one tick deep.
 
-That was measured and not read off the filter expression. Synthesised with the
+That was measured and not read off the filter expression. Synthesized with the
 file read scoped at the 6.25 ns tick of that afternoon, every path out of every
 one of those registers asks for 6.250 ns, which is one tick; none asks for
 93.750. The two requirements are one tick and fifteen, and at the 10 ns tick
@@ -993,7 +993,7 @@ transmissions with the turn-off between them, at 9600 baud and at 300. Two
 mutation records break one term each.
 
 **muir's two models of this chip disagreed here, and the sheet decided.** At
-the time its behavioural `serial::Pci::transmit` raised the flag whenever the
+the time its behavioral `serial::Pci::transmit` raised the flag whenever the
 shift register ran out, whatever the transmitter was doing. Its `status()`
 masked the flag with `CR0`, so the flag survived a disable and was presented
 at the next enable. Its netlist-level 2651 in `src/part.rs` raised the flag
@@ -1001,11 +1001,11 @@ only while the transmitter was on, and so agreed with the sheet. Driving that
 muir's own `IoBoard` through MIT's walk twice, unmodified, wedged on the
 second burst with the status register reading `0o305`. That is the board's own
 value. muir has since taken the sheet's reading in both models. The
-behavioural model sets the flag on a drain only while the transmitter is on.
+behavioral model sets the flag on a drain only while the transmitter is on.
 The netlist part raises it under the enable with the holding register empty,
 and keeps its generator running while a frame is in flight. The pinned muir
 carries both changes.
-`build/iob.pass` compares this card against the behavioural model over
+`build/iob.pass` compares this card against the behavioral model over
 82,509,813 ticks and cannot see the difference. Nothing in that trace
 disables a transmitter with a character still in its shift register and then
 enables it again. An issue records the finding for muir. Nothing here changes
@@ -1086,7 +1086,7 @@ left driving either of these fails to compile.
 
 ### What the two groups cost, measured out of context
 
-Synthesised alone at `xc7z020clg400-1`, `-mode out_of_context`, so that every
+Synthesized alone at `xc7z020clg400-1`, `-mode out_of_context`, so that every
 seam is live and nothing constant-folds: **624 LUTs, 470 flip-flops and two
 RAMB18E1**, with no critical warning and no unsupported template.
 
@@ -1143,9 +1143,9 @@ it against the port on every row. Five mutation records are aimed at it.
 `SR3` and `SR5` are latched with the character they belong to, whatever the
 mode, and `CR4` clears them with the overrun.
 
-**muir's behavioural 2651 raises neither, and says so in its own header.** A
+**muir's behavioral 2651 raises neither, and says so in its own header.** A
 parity bit that did not agree and a stop bit that was low are properties of the
-frame's bits, and the behavioural chip is handed whole characters. The netlist
+frame's bits, and the behavioral chip is handed whole characters. The netlist
 chip in `src/part.rs` is where the two live there. So the trace holds them at
 zero over its whole length, which catches a card whose flags are stuck up and
 nothing else.

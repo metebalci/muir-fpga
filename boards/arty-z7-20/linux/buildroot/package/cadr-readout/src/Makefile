@@ -83,7 +83,7 @@ install-staging: $(LIB)
 	install -m 0644 $(HEADERS) $(DESTDIR)/usr/include/cadr/
 
 # The check. Its own object directory, so a target build and a host build
-# never share a binary --- and a build artefact that outlived a move would
+# never share a binary --- and a build artifact that outlived a move would
 # name a home directory that no longer exists.
 #
 check: $(WORK)/readout_test

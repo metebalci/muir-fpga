@@ -30,7 +30,7 @@
 #
 # THE TWO ARE PROVED TO AGREE, NOT ASSUMED TO.  `--compare` extracts the
 # EMIT_* operations of any ps7_init_gpl.c --- Vivado's encoding or U-Boot's,
-# the parser reads both --- normalises them to (register, mask, value) with
+# the parser reads both --- normalizes them to (register, mask, value) with
 # EMIT_WRITE as a full-mask write, and requires the same tables to hold the
 # same operations in the same order.  Measured against build/ps7/ps7_init_gpl.c
 # at the commit that added this file: identical, 660 operations in 18 tables.
@@ -96,7 +96,7 @@ def die(msg):
 def read_ops(path):
     """The .ops file as {table: [(verb, addr, mask, value)]}, in file order.
 
-    Every operation is normalised to the same four fields: a mask_poll and a
+    Every operation is normalized to the same four fields: a mask_poll and a
     mask_delay have no value and carry None there; a full-mask write is a
     write.
     """
@@ -169,7 +169,7 @@ HEADER = """\
  * GPL-2.0-or-later rather than the repository's AGPL-3.0-or-later because
  * this file is compiled into U-Boot's SPL, which is GPL-2.0-or-later, and
  * because the tables are Digilent's board configuration as written out by
- * Xilinx's tool, whose own ps7_init_gpl.c carries that licence.
+ * Xilinx's tool, whose own ps7_init_gpl.c carries that license.
  *
  * The data is what a first-stage loader must write before DDR answers:
  * the pin multiplexing, the three PLLs, the clock tree, the memory

@@ -22,7 +22,7 @@
 // disk" --- so what crosses the channel is the 1,164 bytes a sector actually
 // carries, gaps, syncs, pad and checkwords included, and what comes back is
 // whatever a program chose to put there.  `disk_unit::sector_image_laid` is
-// the serialiser and `disk_unit::parse_sector` the parser, and the two are
+// the serializer and `disk_unit::parse_sector` the parser, and the two are
 // inverses over a whole track: `tb/cadr_disk_tb.cpp` runs one into the other
 // as well as comparing both against the reference trace, because a trace
 // that reaches 3,072 bytes of 20,160 cannot hold either alone.
@@ -57,7 +57,7 @@
 //                                      BLOCK.CLK^.  Zero with nothing on the
 //                                      selected unit's cable, because the
 //                                      pulses come off the drive
-//   <23>    internal parity        - : not in the behavioural model at all
+//   <23>    internal parity        - : not in the behavioral model at all
 //   <22>    read compare diff      LIVE: a read-compare found a word in
 //                                      memory that the block does not carry.
 //                                      It does NOT stop the transfer
@@ -68,7 +68,7 @@
 //                                      trace reads the register during one
 //   <20>    NXM error              LIVE: a command list word, or a page, that
 //                                      main memory does not answer for
-//   <19>    memory parity          - : not in the behavioural model
+//   <19>    memory parity          - : not in the behavioral model
 //   <18>    header compare         LIVE: the block's header against the disk
 //                                      address register, under the mask below
 //   <17>    header ECC             LIVE: the header's own checkword, and a
@@ -98,7 +98,7 @@
 //                                      write to a read-only pack and taken
 //                                      away by a fault clear
 //   <5>     no unit selected       LIVE: nothing on the selected unit's cable
-//   <4>     multiple units         - : not in the behavioural model
+//   <4>     multiple units         - : not in the behavioral model
 //   <3>     interrupt request      LIVE, as `interrupt()`: not-active with
 //                                      the done enable, or an attention with
 //                                      the attention enable
@@ -436,7 +436,7 @@ module cadr_disk_controller #(
   // `disk_controller::REGS`, 0o17377774, four words.  MIT: "These are
   // normally at physical addresses 17377774-17377777, which is just below the
   // Unibus.  The address can be changed by changing jumpers."  The jumpers
-  // are not modelled; muir's constant is not either.
+  // are not modeled; muir's constant is not either.
   localparam logic [19:0] REGS_PAGE = 20'd1015807;   // 0o17377774 >> 2
 
   // --- the drive's geometry and the spindle's numbers ---------------------
@@ -564,7 +564,7 @@ module cadr_disk_controller #(
   localparam logic [7:0]  F_PADB     = 8'o377;
 
   // **A SECTOR IS 291 WHOLE WORDS AND THE LEFTOVER 93**, so every boundary
-  // this slice counts is a word boundary and neither the serialiser nor the
+  // this slice counts is a word boundary and neither the serializer nor the
   // parser ever straddles one.  `lay_down_track` cuts the written bytes at
   // 1,164-byte strides and knows nothing of the leftover, which is why the
   // parser counts words and not sectors of the track.
@@ -646,7 +646,7 @@ module cadr_disk_controller #(
   // The reset is at the END of this process so that only `s_valid` carries
   // it: the tag, the header and the checkwords are not reset --- a slot is
   // valid by its bit and not by its contents --- and written with the reset
-  // in front of them, every one of their enables took the synchroniser's net.
+  // in front of them, every one of their enables took the synchronizer's net.
   always_ff @(posedge clk) begin
     if (store_we && store_addr >= 9'(BLOCK_WORDS)) begin
       unique case (store_addr[1:0])
@@ -784,7 +784,7 @@ module cadr_disk_controller #(
 
   // **THE RESET IS TAKEN INTO A REGISTER OF THIS MODULE'S OWN, AND THE
   // SPINDLE STARTS A TICK ON TO PAY FOR IT.**  `rst` is the board's
-  // synchroniser, one net into some two and a half thousand reset pins here,
+  // synchronizer, one net into some two and a half thousand reset pins here,
   // and the fitter could not bring a copy of it within reach of them all:
   // 4.7 ns of routing into the ECC register's clear with no logic on the
   // path at all.  `rst_q` is a tick behind, so this module comes out of
@@ -1193,7 +1193,7 @@ module cadr_disk_controller #(
   // the memory channel pointed the other way."  **They do not seek**, which
   // is not an omission: `Controller::start` reaches neither `transfer` nor
   // `transfer_all` for them and charges the access time alone --- and 03
-  // raises the overrun, measured on the netlist board and modelled from that
+  // raises the overrun, measured on the netlist board and modeled from that
   // measurement.  12 hangs and is with the reserved codes below.
   assign is_reversed = (code == 4'o01) || (code == 4'o03);
   assign ro_fault    = ((code == 4'o11) || (code == 4'o13)) && read_only;
@@ -1299,7 +1299,7 @@ module cadr_disk_controller #(
   // write data and the hang timer.  With no pack side there is no drive,
   // `can_start` is `present || cmd[2]` and only the hang can fire, so the
   // walk is unreachable and deleting it is LEGAL --- and a board a third of
-  // whose disk has been optimised away is not the board any figure was
+  // whose disk has been optimized away is not the board any figure was
   // meant to describe.  A timing improvement whose mechanism is that the
   // logic went away is this repository's oldest failure in a new costume,
   // and the tell is never the slack.
@@ -1342,7 +1342,7 @@ module cadr_disk_controller #(
   //
   // **THE BIT RATE IS THE DRIVE'S AND THIS IS NOT IT.**  `BIT_NS` is 104, so
   // a bit on the pack is 20.8 ticks of this clock and a whole track is a
-  // revolution: 16,666,667 ns, 3,333,334 ticks.  The serialiser takes a BYTE
+  // revolution: 16,666,667 ns, 3,333,334 ticks.  The serializer takes a BYTE
   // a tick and the parser a BIT a tick, and both pay a bus cycle a word on
   // top.  MEASURED on the property check's twenty pages, 5,120 words:
   //
@@ -1414,7 +1414,7 @@ module cadr_disk_controller #(
   // counts, for `ps_at` and the word's end.
   assign ps_bitv    = blk_w[0];
 
-  // A byte is taken out of the track only while the serialiser is filling a
+  // A byte is taken out of the track only while the serializer is filling a
   // word, which is four ticks in every bus cycle.
   //
   // Whether the byte is the sector's last, or the leftover's, is a register
@@ -2775,14 +2775,14 @@ module cadr_disk_controller #(
       // it, and on the board `xbus_init` is the power-on reset: `rst_sync_
       // reg[3]/C -> disk/u_blk_reg[*]/CE`, six logic levels and 5.05 ns,
       // 36 of the DDR=1 board's failing endpoints at ef9dee9 --- three
-      // quarters of it the reset synchroniser's net crossing the disk.  The
+      // quarters of it the reset synchronizer's net crossing the disk.  The
       // init block now follows the store, so on the flops it has a pin on it
       // wins by coming last, and on the ones it has no pin on --- the disk
       // address, the pointer, the drive --- a store landing in the same tick
       // lands, which is what a level on `-XINIT` and a strobe on `-LOAD DA`
       // would do to two 74LS chips.  Nothing exercises the tick they meet
       // in: `rst` holds the whole process in its reset branch on the board,
-      // and the trace never stores into a controller being initialised.
+      // and the trace never stores into a controller being initialized.
       if (st_go) begin
         unique case (st_which)
           // "Writing the command register does NOT initiate a transfer,

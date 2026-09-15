@@ -13,7 +13,7 @@
 //
 // **WHAT THIS HOLDS TO, AND IT IS muir'S OWN TEST ONE LEVEL UP.**
 // `tests/keyboard_boot.rs`'s `boots_again` runs the PROM on `micro` and on
-// `rtl`, delivers the boot word through a `Keyboard` and the behavioural I/O
+// `rtl`, delivers the boot word through a `Keyboard` and the behavioral I/O
 // board, and sees `RUN` preset, `PROMDISABLE` clear, the PC at 0 and then 45,
 // and the boot word still readable in the card's register.  Its
 // `the_boot_word_boots_the_netlist_machine_through_the_far_end` does the same

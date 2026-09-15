@@ -25,7 +25,7 @@
 // the *leading* edge of that write pulse, `REGISTER_PULSE_NS` before the
 // register loads.  The processor depends on that gap: a mode-register write
 // carrying `PROG.BOOT` has to reach `BOOT.TRAP` before the edge that ends the
-// microcycle, and the speed synchroniser samples the register sixty
+// microcycle, and the speed synchronizer samples the register sixty
 // nanoseconds into every generator cycle.
 //
 // WHAT IS NOT HERE.  The other Unibus slaves.  Two of them are modules beside
@@ -105,14 +105,14 @@ module cadr_spy_registers (
     // every trace here and every bring-up board starts from.
     //
     // **IT IS A LEVEL AND IT IS SAMPLED, AND THE DIFFERENCE IS THE WHOLE
-    // BEHAVIOUR.**  Nothing outside the reset arm looks at it, so flipping the
+    // BEHAVIOR.**  Nothing outside the reset arm looks at it, so flipping the
     // switch under a running machine does nothing at all until the next fabric
     // reset --- a machine that stopped mid-instruction because somebody moved a
     // switch would be a control the CADR never had.  And `-BOOT` still presets
     // `RUN` below whatever this says, because the button is what takes the hold
     // off: that is the whole point of holding the machine at the button.
     //
-    // `boards/arty-z7-20/cadr_arty.sv` drives it from SW0, synchronised; the
+    // `boards/arty-z7-20/cadr_arty.sv` drives it from SW0, synchronized; the
     // console reports both this level and the value the machine came out of
     // reset with.  muir's own `--no-auto-boot` is the same state by the same
     // argument.
@@ -144,7 +144,7 @@ module cadr_spy_registers (
   // **THE WRITE LANDS WHERE THE MACHINE NEXT LOOKS, NOT AT THE STROBE.**
   // `Rtl::land_write` is called at the microcycle boundary and again
   // `SPEEDCLK_NS` into every generator cycle --- the second because the speed
-  // synchroniser samples the mode register there --- and the register takes
+  // synchronizer samples the mode register there --- and the register takes
   // its word at the first of those instants at or after the strobe. So a
   // write whose strobe falls just after a boundary waits for the next
   // opportunity, which is up to a microcycle away. Applying it at the strobe
@@ -185,7 +185,7 @@ module cadr_spy_registers (
       // pressed: `RUN` clear, nothing running, and only `-BOOT` starts it.
       // **This assignment is the only place the switch is read**, so the
       // sample is taken at the last tick of reset and at no other instant; the
-      // port's own note says why that is the behaviour and not an economy.
+      // port's own note says why that is the behavior and not an economy.
       run         <= !no_auto_boot;
       // The 74S175 at OLORD1 1A09 is cleared by `-RESET`, where `RUN`'s own
       // flip flop at 1A14 is preset by `-BOOT` and cleared by `-CLOCK RESET

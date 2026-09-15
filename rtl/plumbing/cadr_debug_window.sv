@@ -86,7 +86,7 @@
 // of the lift's own write beat; and this port cannot deliver a second beat
 // until four ticks later, the write channel having to pass W_RESP and W_ADDR
 // to get there.  A twenty-tick guard in front of a four-tick structural
-// margin is an exemption nothing exercises, which this project has learnt
+// margin is an exemption nothing exercises, which this project has learned
 // looks exactly like one that is right.  What replaces it is the rule --- the
 // levels are written once, at the request, and never cleared --- and
 // `tb/cadr_dbgin_tb.cpp` measuring the margin every run rather than assuming
@@ -158,7 +158,7 @@
 // dropped, over the whole gigabyte the port decodes.  OKAY and not SLVERR,
 // for the reason the console gives: an error response to a Cortex-A9's
 // posted write arrives as an imprecise external abort the kernel cannot
-// attribute to a process, and a constant a program can recognise is the safer
+// attribute to a process, and a constant a program can recognize is the safer
 // failure.
 //
 // **WHERE THE WINDOW SITS IS NOT DECIDED.**  `REG_BASE` is a parameter and

@@ -69,7 +69,7 @@
 //     `ser_syn_face`, which is what keeps synthesis from trimming them.
 //   - **The parity and framing flags, `SR3` and `SR5`.**  Built, and held by
 //     the check's second configuration.  They cannot be held to muir at all:
-//     muir's behavioural 2651 raises neither, saying so in its own header,
+//     muir's behavioral 2651 raises neither, saying so in its own header,
 //     and the netlist chip that does is a different engine.  What raises
 //     them here is the seam, `ser_rx_parity` and `ser_rx_framing`, and
 //     nothing on this board drives either --- a TCP socket carries bytes and
@@ -118,7 +118,7 @@
 // trace, which is a master with no setup at all, and a card that needed the
 // address at the strobe would have to compute it.
 //
-// THE TIMING IS `busint::IoBoardTiming`, a behavioural twin measured on the
+// THE TIMING IS `busint::IoBoardTiming`, a behavioral twin measured on the
 // netlist board, and it is not one number:
 //
 //   - the clocks and the GPIO answer 250 ns after `-UB MSYN` (`IOB_STRAIGHT_NS`);
@@ -245,7 +245,7 @@ module cadr_io_board (
     input  var logic        ser_rx_end,   // that character's last stop bit ends
     // `SR3` and `SR5`.  A parity bit that did not agree and a stop bit that
     // was low are properties of the FRAME, so they belong to whatever counts
-    // the bits, which on this board is past the seam: muir's behavioural
+    // the bits, which on this board is past the seam: muir's behavioral
     // 2651 raises neither and says so, and the netlist chip in `part.rs` is
     // where they live there.  The card latches what it is handed, which is
     // what the chip does with what its own receiver hands it.
@@ -402,7 +402,7 @@ module cadr_io_board (
   localparam int unsigned FCLK_T         = 125 / 5;
   localparam int unsigned RBUF_SETUP_T   = (33 + 4) / 5;
 
-  // The serial port's select is synchronised to a half-microsecond clock
+  // The serial port's select is synchronized to a half-microsecond clock
   // whose phase `busint::IOB_HALF_USEC_PHASE_NS` measures at 203 ns on the
   // netlist board, through the two 74LS74s at IOBSER 0F29; the answer is
   // `busint::IOB_SERIAL_NS` = 750 after the first edge STRICTLY after
@@ -1185,7 +1185,7 @@ module cadr_io_board (
         // (`self.tx_empty = self.tx_on()`) and its `status()` masks it with
         // `CR0`; the netlist-level 2651 in `src/part.rs` raises it under
         // `tx_on && !thr_full` and keeps its generator running while a frame
-        // is in flight.  Before that the behavioural model set the flag
+        // is in flight.  Before that the behavioral model set the flag
         // whatever the transmitter was doing, the two models disagreed, and
         // the sheet settled it; `docs/io-board.md` carries the reading.
         if (s_tx_on && !(s_thr_full && s_cts)) s_tx_empty <= 1'b1;
@@ -1315,7 +1315,7 @@ module cadr_io_board (
         // The half-microsecond clock, STRICTLY after `-UB MSYN` as the
         // microsecond clock is, and `FCLK^` AT OR AFTER `-MSYN` plus 33 ns,
         // which is seven ticks.  Each counts only its first edge: what
-        // follows is a delay line and not a second synchroniser.
+        // follows is a delay line and not a second synchronizer.
         if (busy && hu_now && !hu_edge1) begin
           hu_edge1 <= 1'b1;
           t_hu     <= 8'd1;

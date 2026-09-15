@@ -14,7 +14,7 @@
 // tb/cadr_md_hold_tb.cpp, which is muir's trace with this testbench standing in
 // for the bus interface, and then drives ONE extra `-LOADMD` strobe, for one
 // tick, at an instant the trace does not: the `cpu_edge` at which an
-// instruction writes MD.  The memory is modelled outside the design, as
+// instruction writes MD.  The memory is modeled outside the design, as
 // `ddr_boot` has it, and what it hands back is a poison word --- the
 // complement of what MD is about to hold --- so a word that lands where it
 // should not is a word nobody can mistake for the right one.  The boot PROM

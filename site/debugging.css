@@ -14,7 +14,7 @@
    real machine and a page that draws the cable between two of them can then
    be changed one at a time.
 
-   Nothing here carries a status colour.  The board drawings colour a block by
+   Nothing here carries a status color.  The board drawings color a block by
    how far along it is; these figures say what the cable IS and what crosses
    it, so they are drawn in `currentColor` alone and read the same in either
    theme.  What has run on a board and what has not is in the table at the
@@ -27,7 +27,7 @@
 
 /* A filled region: the marker and parity slots of a frame, the ground pins of
    a header.  Tone comes from the fill's opacity rather than from a hue, which
-   is what the rest of the site does with its dither and its utilisation
+   is what the rest of the site does with its dither and its utilization
    bars. */
 .d-tint { fill: currentColor; fill-opacity: 0.14; stroke: none; }
 

@@ -148,7 +148,7 @@ reason.
 
 A mutation downstream of an exhaustively checked guard tests the guard and
 not the thing. A slave's address match cannot be mutated wider while the
-mutation honours the decode's select, because the decode is checked false at
+mutation honors the decode's select, because the decode is checked false at
 every empty address. Such records are written ungated.
 
 A recorded hole is where a regression hides. A survivor with `@hole` keeps

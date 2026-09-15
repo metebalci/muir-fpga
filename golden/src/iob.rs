@@ -197,7 +197,7 @@ const CHAOS_ADDRESS: u16 = 0o003101;
 const TICK_NS: u64 = 5;
 
 /// **How wide the card's own `-BOOT*` is**, which is the one thing about the
-/// boot decode muir's behavioural board has no time for.  The comparator's
+/// boot decode muir's behavioral board has no time for.  The comparator's
 /// enable is `EOC.KBD^`, low while `KB CLK^` is low with the start marker at
 /// `SR0`: the half clock before the rising edge that latches the word into
 /// the 74LS374s and sets `KBD READY`.  So the pulse is half a keyboard clock
@@ -998,7 +998,7 @@ fn main() {
     assert_eq!(v, csr::FLOATING | csr::CLOCK_READY, "the status register at power-on");
     // The counter's high half before its low half has ever been read: the
     // latch is what it came up with, and MIT's own note is that the
-    // hardware synchronises only if the low half is read first.
+    // hardware synchronizes only if the low half is read first.
     assert_eq!(g.read(USEC_HIGH), 0, "the microsecond latch before any read of the low half");
     for a in [KBD_LOW, KBD_HIGH, MOUSE_Y, MOUSE_X, CSR, USEC_LOW, USEC_HIGH, CLOCK, GPIO] {
         g.read(a);

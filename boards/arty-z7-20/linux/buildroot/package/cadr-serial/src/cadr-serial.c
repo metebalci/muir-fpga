@@ -63,7 +63,7 @@
 // purpose.  A frame the machine calls 1.04 ms at 9,600 baud therefore occupies
 // 2.08 ms of the wall this program's `poll()` is measured against, and one at
 // 19,200 occupies 1.04 ms.  The margin is twice what the paragraph above
-// counts, in this program's favour.  Do not close the gap by speeding the
+// counts, in this program's favor.  Do not close the gap by speeding the
 // generator up: the frame's length is what MIT's own interrupt walk depends on
 // and `rtl/plumbing/cadr_serial_line.sv` says at length what shortening it
 // cost.  The default here is 2,000 us, which is comfortable at 9,600 and

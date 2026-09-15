@@ -75,7 +75,7 @@ static const struct mem kMems[] = {
 static const unsigned kMemCount = sizeof(kMems) / sizeof(kMems[0]);
 
 // The register table's entries, in the order `cadr_microcycle.sv` numbers
-// them.  A name a person would recognise, and the machine's own.
+// them.  A name a person would recognize, and the machine's own.
 static const char *const kRegNames[21] = {
 	"PC", "LPC", "IR", "IWR", "L", "Q", "VMA", "MD", "ST", "LC",
 	"WADR", "PDL-POINTER", "PDL-INDEX", "SPCPTR", "RETA", "DC", "LVMO",

@@ -6,7 +6,7 @@
 //
 // **THE HOLE THIS IS AIMED AT.**  CLAUDE.md's account of the board's
 // page-hash-table word ends with a bounded suspect list.  `make hash-watch`
-// runs `cadr_machine` from reset off a real pack with a modelled DDR and
+// runs `cadr_machine` from reset off a real pack with a modeled DDR and
 // reaches 171,000,000 microcycles with the board's fingerprint occurring zero
 // times, so the defect is not in `rtl/machine/`.  What that harness replaces
 // with a model is what is left: between `cadr_machine`'s `mem_*` port and the
@@ -26,7 +26,7 @@
 // and a pack behind the block store's seam, so that the cold boot's own
 // `COLD-DISK-READ` happens: a CCW list, blocks into consecutive physical
 // pages, 256 bus cycles a page, every word of every page crossing
-// `cadr_axi_master` and `cadr_axi_widen` into the 64-bit AXI3 slave modelled
+// `cadr_axi_master` and `cadr_axi_widen` into the 64-bit AXI3 slave modeled
 // here.  The run stops when enough transfers have been made, so nothing in it
 // depends on what the machine does after the microcode is loaded.
 //
@@ -56,7 +56,7 @@
 //      halves.  Checked transaction by transaction rather than on a directed
 //      stimulus.
 //
-//   3  A WRITE DISTURBS ONLY ITS OWN HALF, held by DATA: the neighbouring word
+//   3  A WRITE DISTURBS ONLY ITS OWN HALF, held by DATA: the neighboring word
 //      of the beat is a real and different word of the machine's memory, and a
 //      strobe pattern covering it destroys that word silently.
 //

@@ -19,7 +19,7 @@
 # WHAT `tb/cadr_jtag_chain.tcl` DOES NOT MODEL is written at length in its own
 # header and is the thing to read before quoting this check. In one line: it
 # is a shift chain, not a TAP and not silicon, and it cannot see a DRCK edge,
-# `BSCANE2`'s real behaviour, or anything at all about `rtl/plumbing/xilinx7/cadr_probe.sv` ---
+# `BSCANE2`'s real behavior, or anything at all about `rtl/plumbing/xilinx7/cadr_probe.sv` ---
 # which `tb/cadr_probe_tb.cpp` holds instead, in Verilator, against muir.
 #
 # WHY IT IS IN `tb/`.  Both `boards/arty-z7-20/vivado/fit.tcl` and `boards/arty-z7-20/vivado/bitstream.tcl` read
@@ -53,7 +53,7 @@ set probe [file normalize $probe]
 # the bottom: bit 5 is DONE, and its BSDL says "1 when DONE is released". A
 # configured part reads 1 there, which is what the board read, and it is put
 # in the model so that the script's `our_ir_lsb + 5` has something to be
-# wrong about --- an off-by-one in that offset reads a neighbouring device's
+# wrong about --- an off-by-one in that offset reads a neighboring device's
 # capture bit and no exit code would notice.
 set ZYNQ {xc7z020          6 0x23727093 0x21 0x09 0x02 454}
 set DAP  {zynq7000_arm_dap 4 0x4ba00477 0x01 0x0e {}   0}
@@ -74,7 +74,7 @@ set ZYNQ_IR5 {xc7z020 5 0x23727093 0x01 0x09 0x02 454}
 # The DONE line is asserted on all three passing chains because the offset it
 # is read at, `our_ir_lsb + 5`, moves with the device order: 5 when the part
 # is at the TDO end, 9 when the DAP is in front of it. An off-by-one there
-# reads a neighbouring device's capture bit, which is a plausible 0 or 1 and
+# reads a neighboring device's capture bit, which is a plausible 0 or 1 and
 # changes no exit code anywhere.
 set CASES {
     {good      0 {"PROBE: the 10-bit instruction register captures 061, wanting 041 under mask 0c3"

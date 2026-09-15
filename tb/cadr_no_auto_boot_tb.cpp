@@ -6,7 +6,7 @@
 //
 // The DUT is `rtl/machine/cadr_machine.sv` --- the processor, the memory path,
 // the bus interface and the I/O board under one roof --- with MIT's boot PROM
-// in it.  `build/kbd_boot.pass` is the neighbouring check and holds the three
+// in it.  `build/kbd_boot.pass` is the neighboring check and holds the three
 // boot lines; this one holds the state the machine COMES UP in, which is the
 // other half of the same page: `RUN` is preset at the 74S74 at OLORD1 1A14 by
 // `-BOOT`, and what this asks is whether a machine whose button has never been

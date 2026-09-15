@@ -12,7 +12,7 @@
 # muir is one program, so its file goes to it whole.  The fabric CADR is
 # served by several programs --- the screen, the serial line, the network, the
 # USB input and the boot button --- and each of them refuses a flag it does
-# not know, which is muir's behaviour and is right: a flag that is quietly
+# not know, which is muir's behavior and is right: a flag that is quietly
 # ignored is a setting somebody wrote down and did not get.  So the file
 # cannot go to any of them whole.
 #

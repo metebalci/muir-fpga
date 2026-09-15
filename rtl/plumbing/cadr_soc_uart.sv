@@ -143,7 +143,7 @@ module cadr_soc_uart #(
 
   // --------------------------------------------------------- the receiver
   //
-  // Two synchroniser stages, because the pin is asynchronous to this clock,
+  // Two synchronizer stages, because the pin is asynchronous to this clock,
   // and then: idle until the line goes low, wait HALF a bit so that the
   // sampling point is in the middle of the start bit, check it is still low
   // --- a glitch shorter than half a bit is not a start bit and is ignored

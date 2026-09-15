@@ -383,17 +383,17 @@ CHECKS = {
     # The machine behind real memory, which is what `DDR=1` puts on the part.
     # Same module list as `machine` and a different question: `machine` asks
     # whether the fabric agrees with muir, and this asks what it does where
-    # muir cannot follow it --- past microcycle 537,900, where muir's modelled
+    # muir cannot follow it --- past microcycle 537,900, where muir's modeled
     # disk controller answers the boot PROM's polls and the board's does not
     # exist.  Its reference is the boot PROM's own page-0 parity loop with a
-    # poison in it and a modelled DDR3 that answers at a delay of its own.
+    # poison in it and a modeled DDR3 that answers at a delay of its own.
     #
     # No `golden`: there is no trace to hand it.  The testbench runs the
     # machine twice from reset, 200 ms of machine time each way, and takes
     # about fifteen seconds --- the slowest check here that is not a trace.
     # CAN THE COMPOSED MACHINE LEAVE MD STALE ACROSS A READ?  `md_hold` and
     # `md_inject` ask that of `cadr_microcycle`, where the bus is muir's
-    # stimulus; this asks it of the whole machine with only DDR modelled, and
+    # stimulus; this asks it of the whole machine with only DDR modeled, and
     # it answers the question CLAUDE.md left open about whether the
     # DESTMDR/-LOADMD coincidence can be placed at all.  It also compares the
     # direction of every DDR transaction against the processor's own WRCYC,
@@ -544,7 +544,7 @@ CHECKS = {
     # `gprom_path` rather than `gprom`: the testbench WRITES its patched image
     # before the model reads it, so it must have a file of its own, and that
     # file belongs in the mutant's own work directory.  Sharing one would be
-    # the stale-artifact family this file's neighbours keep meeting --- every
+    # the stale-artifact family this file's neighbors keep meeting --- every
     # mutant writing one path, and a later run reading an earlier one's PROM.
     # Everything else is `map_boot`'s entry.
     "map_access": {
@@ -779,7 +779,7 @@ CHECKS = {
     # `readout` holds the window against the processor's arrays; NOTHING held
     # the three wires between them until this check, and a mux on
     # `con_ro_data` that selected the wrong arm, a `sel` off by a tick or a
-    # selector that swallowed its neighbours would each have been silent.
+    # selector that swallowed its neighbors would each have been silent.
     #
     # `sources` is the two files the join is written in.  The rest of the
     # machine is `extra`, having its own checks' records aimed at it, and
@@ -895,7 +895,7 @@ CHECKS = {
     # machine, its load-store address not settling in a 10 ns tick, so
     # `rtl/plumbing/cadr_soc_cross.sv` carries the request and the answer
     # between the two domains and the check runs the whole firmware at three
-    # ratios.  What a simulator cannot hold is the DEPTH of a synchroniser ---
+    # ratios.  What a simulator cannot hold is the DEPTH of a synchronizer ---
     # nothing here models metastability, so one flip-flop behaves exactly as
     # two --- and the records say so at the constant rather than leaving a
     # hole to be filed.
@@ -1053,7 +1053,7 @@ CHECKS = {
     # before the START that needs it, and `disk_pack` fills the store on
     # demand but every list in it is one CCW long bar a single chained pair
     # whose first block is resident.  So neither could see a channel that
-    # honours the first CCW of a list and not the rest --- which is what the
+    # honors the first CCW of a list and not the rest --- which is what the
     # board did on 2026-09-10, halting the cold boot at microcode PC `0o5163`.
     # This runs the cold boot's own first two command lists, three CCWs and
     # nine, taken from muir's `rtl` engine on MIT's boot PROM, and compares
@@ -2069,7 +2069,7 @@ def check_coverage(mutations):
     the one that hides, because nothing about it is ever wrong: the run is
     green, the count is right, and a whole module is untested.
     """
-    # The lint harness is generated, tied off and has no behaviour; what
+    # The lint harness is generated, tied off and has no behavior; what
     # carries the port list is the header it includes, which is mutated.
     exempt = {"rtl/machine/cadr_cables_lint.sv"}
     touched = set(m.path for m in mutations)

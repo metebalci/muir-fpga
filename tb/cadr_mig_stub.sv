@@ -18,7 +18,7 @@
 // module it instantiates, and `boards/arty-a7-100/vivado/mig_check.py` is what
 // holds it to that file rather than to memory.
 //
-// It models nothing.  The real behaviour is modelled in
+// It models nothing.  The real behavior is modeled in
 // `tb/cadr_a7_mem_harness.sv`, against which `cadr_mig_ui` is checked.
 
 `default_nettype none

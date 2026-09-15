@@ -13,7 +13,7 @@ bitstream says nothing about that at all.
     vivado -mode batch -source ...   Vivado                      no checks
 
 `make check` is what CI runs on every push. A checkout without Vivado runs
-every check that matters. Nothing in `make check` synthesises anything.
+every check that matters. Nothing in `make check` synthesizes anything.
 
 ## For the checks
 
@@ -52,18 +52,18 @@ the rest and you should. The part is `xc7z020clg400-1`, and the other families
 are approaching a hundred gigabytes you will never use. The install is about
 65 GB with Zynq-7000 alone.
 
-**A licence is needed.** Vivado will not launch without one, even for the free
+**A license is needed.** Vivado will not launch without one, even for the free
 tier. The failure is `[Common 17-345]`, at startup, before anything is read.
-The free licence is node-locked to a host id. Generate it on AMD's licensing
+The free license is node-locked to a host id. Generate it on AMD's licensing
 site and install it with `vlm`, or point `XILINXD_LICENSE_FILE` at the `.lic`.
 
 **The tier this project uses is BASIC, and the distinction matters.** The
-licence here reads `Vivado_Basic_Package` with `License_Tier:BASIC`. This
+license here reads `Vivado_Basic_Package` with `License_Tier:BASIC`. This
 document said "ML Standard" for a while and that was wrong, and the error cost
 a session: BASIC refuses `create_debug_core` outright, so Vivado's scripted
 debug flow is unavailable and `mark_debug` is useless without a core. Nothing
 here has needed more. Synthesis, place and route, the bitstream and the
-hardware manager all run, and `xc7z020clg400-1` is covered. Read the licence
+hardware manager all run, and `xc7z020clg400-1` is covered. Read the license
 and its stated limits before planning around a Vivado feature, or around its
 absence.
 
@@ -143,9 +143,9 @@ finished", never "died".** That distinction has been got wrong here.
 `bitstream.tcl` checks its own output rather than trusting it, and the reason
 is worth knowing before you read one. `cadr_machine` brings its whole datapath
 out for the testbenches. A top level that left those unconnected would
-synthesise to almost nothing, route in seconds, and **write a perfectly good
-bitstream of an empty part.** That is not an error but a plausible artefact. So
-the utilisation is compared against what the machine is known to cost:
+synthesize to almost nothing, route in seconds, and **write a perfectly good
+bitstream of an empty part.** That is not an error but a plausible artifact. So
+the utilization is compared against what the machine is known to cost:
 
     about 2,800 LUTs of 53,200, 29 block RAMs of 140, no DSPs
 

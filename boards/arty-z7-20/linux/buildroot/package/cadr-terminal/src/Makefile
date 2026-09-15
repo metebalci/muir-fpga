@@ -65,7 +65,7 @@ HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 # `git worktree`, so two of them building at the same time overwrite each
 # other's test binary and each other's mutants --- one run then dies with
 # "Terminated" and the other reports on sources it did not build.  That is
-# CLAUDE.md's stale-artefact scar, and it has been measured here twice.  The
+# CLAUDE.md's stale-artifact scar, and it has been measured here twice.  The
 # other three packages hash $(CURDIR) for the same reason and this is the same
 # line.
 WORK    ?= $(HOME)/.cache/muir-fpga-screen-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
@@ -83,7 +83,7 @@ install: all
 	install -m 0755 $(PROGRAMS) $(DESTDIR)/usr/bin/
 
 # The check.  Its own object directory, so a target build and a host build
-# never share a binary --- and a build artefact that outlived a machine move
+# never share a binary --- and a build artifact that outlived a machine move
 # would name a home directory that no longer exists.
 check: $(WORK)/screen_test
 	$(WORK)/screen_test --screens $(SCREENS) --server-log $(WORK)/server.log

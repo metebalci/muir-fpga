@@ -24,7 +24,7 @@
 # BTN1 takes a fresh one.
 #
 # WHY THIS IS RAW JTAG AND NOT A DEBUG CORE.  `create_debug_core` is refused
-# by the licence on this host: `License_Tier:BASIC` in `~/.Xilinx/Xilinx.lic`,
+# by the license on this host: `License_Tier:BASIC` in `~/.Xilinx/Xilinx.lic`,
 # and Vivado answers "'create_debug_core' tcl command is not supported. Your
 # current selected license is BASIC". The ILA IP core does generate at BASIC
 # and is the directory of generated XML this project has decided against, so

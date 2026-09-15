@@ -78,7 +78,7 @@
 //     Xbus cycle at physical page `0o37000`, which muir does not model. `MD` is
 //     write-only through the map and the trace's last two `MAP` rows say so.
 //   - A mapped page that is not main memory. `Busint::debug_xbus_edge` says
-//     in its own words that one is **not modelled**, so no row asks for one.
+//     in its own words that one is **not modeled**, so no row asks for one.
 //   - The debug block at `0o766100`-`0o766136`. `busint::register` decodes it
 //     to nothing and the sweep holds this block to answering nothing there;
 //     what answers it on a real machine is the cable.
@@ -1239,7 +1239,7 @@ int main(int argc, char **argv) {
   // `DEBUG OUT ACK` is a level.  On MIT's cable it falls within nanoseconds of
   // the request it belongs to being lifted, because the far end's gate is
   // `NAND(-DB ADR1 CLK, -DB ADR0 CLK, -DB READ STATUS)` and the three go with
-  // the request.  A carrier that serialises the cable does not give that for
+  // the request.  A carrier that serializes the cable does not give that for
   // free: the fall takes a frame to cross, so the acknowledgement of the
   // cycle just finished is still standing when the next one starts.
   //

@@ -10,7 +10,7 @@
 // generated Verilog that nothing here can simulate.
 //
 // **THE MODEL IS THE POINT AND IT IS NOT A STUB.**  `tb/cadr_mig_stub.sv` is a
-// stub: it has the port list and no behaviour, and it exists so that lint can
+// stub: it has the port list and no behavior, and it exists so that lint can
 // elaborate a board.  This is a model of what UG586 says the interface does,
 // and it is written to be UNFORGIVING in the two directions that matter:
 //

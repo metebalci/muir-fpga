@@ -22,7 +22,7 @@
 #      different words, because a lane select stuck at one value collapses the
 #      four into one and the read-back shows the last one written four times
 #      --- which one word, written and read, cannot see.
-#   4. **And does the neighbourhood survive it?**  A run of blocks poisoned
+#   4. **And does the neighborhood survive it?**  A run of blocks poisoned
 #      injectively in the address and read back.  A dropped address bit makes
 #      two addresses land on one word, and the first one read back then carries
 #      the second one's poison.
@@ -30,7 +30,7 @@
 # **THE POISON IS THIS SCRIPT'S AND NOT THE FABRIC'S**, which is what makes
 # this an instrument rather than a fabric agreeing with itself.
 # `rtl/plumbing/cadr_jtag_mem.sv`'s header says plainly what is lost by the
-# debugger's words travelling the machine's own path, and what these four
+# debugger's words traveling the machine's own path, and what these four
 # questions recover.
 
 set here [file dirname [file normalize [info script]]]
@@ -100,7 +100,7 @@ if {$bad} {
 }
 puts "MEM: four lanes of one block, four different words, all four right"
 
-# ---- 4: the neighbourhood, poisoned injectively
+# ---- 4: the neighborhood, poisoned injectively
 #
 # Written with one scan a word --- a data register scan captures before it
 # updates, so a run of writes is a run of single scans.

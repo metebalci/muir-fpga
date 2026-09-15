@@ -487,8 +487,8 @@ believable, and a device tree is no different.
   archive and neither is installed. Neither needs to be, because the tree is
   built where `dtc` already is.
 - **The microSD card is free to use.** It is `/dev/sda`, 29.7 GB over USB. It
-  came carrying Raspberry Pi OS: `sda1` 512 MB vfat labelled `bootfs`, and
-  `sda2` 29.2 GB ext4 labelled `rootfs`. That was inspected read-only, and the
+  came carrying Raspberry Pi OS: `sda1` 512 MB vfat labeled `bootfs`, and
+  `sda2` 29.2 GB ext4 labeled `rootfs`. That was inspected read-only, and the
   card has since been confirmed free to reformat. **Check the device node
   before writing anything.** It is `/dev/sda` on this laptop today, and it is
   `/dev/sda` on the build host too, where that is the system disk. `mksd.sh`
@@ -518,7 +518,7 @@ believable, and a device tree is no different.
 - **The card is written**, on 10 Sep, from the build host over ssh to the
   laptop, with the recipe above against `/dev/sda` (29.7 GB, usb, guarded by
   `lsblk` before the wipe). It has one partition, `2048..62333951`, type
-  `0x0c`, bootable, `vfat` labelled `BOOT`. The three files read back with the
+  `0x0c`, bootable, `vfat` labeled `BOOT`. The three files read back with the
   staged sha256s. Nothing else is on it.
 - **The boot-mode jumper has to be set to SD**, and **its designator is
   deliberately not asserted here.** Digilent's site returns 403 to automated

@@ -46,7 +46,7 @@
 // `cadr_console_bus.sv` captures the diagnostic mux at it.  A harness with no
 // boundary would leave the read-back frozen at its reset value and the check
 // would be comparing a constant.  There is no processor: `spy_rdata` comes
-// from outside for the reason `err_status` does in the neighbouring harnesses
+// from outside for the reason `err_status` does in the neighboring harnesses
 // --- a check that hands the DUT the answer tests nothing, and a value from
 // outside is somebody else's.
 

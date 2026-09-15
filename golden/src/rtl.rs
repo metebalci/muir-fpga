@@ -26,10 +26,10 @@
 //!   sources, `MD` on 284,000 of these microcycles and `VMA` on 6,000, and
 //!   the memory path that makes them is a later slice.
 //! - `promdis`, `errstop`, `stathenb`, `speed1` and `speed0`, the mode
-//!   register's bits at OLORD1 1A09.  The speed reaches the generator through the synchroniser at
+//!   register's bits at OLORD1 1A09.  The speed reaches the generator through the synchronizer at
 //!   1A01, clocked by `SPEEDCLK` 60 ns into the cycle, so the register
 //!   stands one stage ahead of the microcycle it lengthens.  The fabric has
-//!   that synchroniser; what it has no console to write is the register.
+//!   that synchronizer; what it has no console to write is the register.
 //! - `stall`, the nanoseconds this microcycle spent held off before it ran,
 //!   and `halted`, the nanoseconds spent with `MACHRUN` down and no
 //!   microcycle run at all.  Both come from the bus, and until the memory

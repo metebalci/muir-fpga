@@ -11,7 +11,7 @@
 #
 # **THE VERSION IS READ FROM muir.commit AND IS NOT WRITTEN HERE.**  That file
 # is what says which muir this repository is held to; every reference trace in
-# golden/ is that muir's behaviour written down.  A SHA typed into this file
+# golden/ is that muir's behavior written down.  A SHA typed into this file
 # would be a second place to change, and the two would part company on the
 # first bump that forgot one.  So the pin is read, and moving the pin moves
 # the board's muir with no edit here.
@@ -102,7 +102,7 @@ MUIR_SITE_METHOD = git
 MUIR_LICENSE = AGPL-3.0-or-later
 MUIR_LICENSE_FILES = LICENSE
 # Buildroot's Cargo infrastructure appends ", vendored dependencies licenses
-# probably not listed" to every crate's licence, because a crate usually
+# probably not listed" to every crate's license, because a crate usually
 # vendors some.  muir vendors none --- its [dependencies] section is empty and
 # Cargo.lock names one package, itself --- so that clause is true of nothing
 # here.  It is Buildroot's line and not ours, and it shows only in

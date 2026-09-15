@@ -45,7 +45,7 @@
 # the machine makes for its own, and the invariant here is unchanged: nothing
 # *else* may take it. The other way to make this pass would have been to
 # widen the check, and a check widened to admit one thing stops catching the
-# reset synchroniser it was written for.
+# reset synchronizer it was written for.
 proc relaxed_outside {inside period} {
     if {[llength $inside] == 0} {
         set outside [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]
@@ -87,7 +87,7 @@ proc assert_constraints_scoped {inside period} {
     }
     puts "XDC: FAILED --- [llength $caught] register(s) outside [join $inside {, }]"
     puts "XDC: are taking a microcycle exception that was written for the"
-    puts "XDC: machine's datapath. A reset synchroniser or a free-running"
+    puts "XDC: machine's datapath. A reset synchronizer or a free-running"
     puts "XDC: counter given a whole microcycle to settle is the one thing"
     puts "XDC: that file's own prose says must not happen."
     foreach c [lrange $caught 0 9] { puts "XDC:   $c" }
@@ -174,7 +174,7 @@ proc relaxed_path_histogram {limit} {
 #   leaves every figure looking plausible.
 #
 # `fast` and `relaxed` are lists of name patterns under the instance.  An
-# instance that has no registers at all fails: a module optimised away is a
+# instance that has no registers at all fails: a module optimized away is a
 # finding and not a pass.
 proc assert_instance_timing {period cycles instance relaxed} {
     set want [format %.3f [expr {$period * $cycles}]]
@@ -185,7 +185,7 @@ proc assert_instance_timing {period cycles instance relaxed} {
         puts "XDC: Either the instance was renamed, in which case the clause"
         puts "XDC: in cadr_machine.xdc that names it is empty and every"
         puts "XDC: register under it is relaxed in silence, or the module was"
-        puts "XDC: optimised away, which is a finding of its own."
+        puts "XDC: optimized away, which is a finding of its own."
         exit 1
     }
     set fast {}

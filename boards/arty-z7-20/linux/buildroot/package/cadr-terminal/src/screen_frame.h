@@ -4,7 +4,7 @@
 // One frame: the machine's screen taken out of DDR and held where the
 // encoder can read it many times.
 //
-// **THE COPY IS NOT AN OPTIMISATION, IT IS THE FRAME.**  The window is an
+// **THE COPY IS NOT AN OPTIMIZATION, IT IS THE FRAME.**  The window is an
 // uncached mapping --- `cadr_open_mem` opens /dev/mem with O_SYNC, because a
 // word the fabric writes over `S_AXI_HP0` must not sit in a cache the port
 // cannot see --- so every read of it goes to the DDR controller.  An encoder
@@ -25,7 +25,7 @@
 // frame; the next pass sends the rest.  Said here so that nobody looks for
 // the interlock.
 //
-// **BLANK IS A STATE WORTH SAYING.**  Uninitialised DDR on this board reads
+// **BLANK IS A STATE WORTH SAYING.**  Uninitialized DDR on this board reads
 // as alternating bands of zeros and ones (CLAUDE.md, measured on the first
 // bring-up), and a CADR that has not drawn leaves the window exactly as the
 // controller left it.  A viewer shown 739,584 identical pixels cannot tell

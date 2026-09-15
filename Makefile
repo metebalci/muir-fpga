@@ -190,7 +190,7 @@ $(BUILD)/axi_widen.pass: $(BUILD)/obj_axi_widen/Vcadr_axi_widen
 #
 # No muir reference, as there is none for the adapter or the widening. Held to
 # the property --- the word lands at the address it was asked for and nowhere
-# else, the beat's neighbour is untouched, a wrong word does not read as a
+# else, the beat's neighbor is untouched, a wrong word does not read as a
 # match --- and to the 80 ns the bus specification puts on a master, which is
 # what `rtl/plumbing/xilinx7/cadr_ddr.xdc` relaxes the adapter's address registers on.
 PROVE_SRC := rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_axi_master.sv rtl/plumbing/cadr_axi_widen.sv \
@@ -218,7 +218,7 @@ $(BUILD)/prove.pass: $(BUILD)/obj_prove/Vcadr_prove_harness
 # harmless while nothing drove them from outside; `build/unibus.pass` drives
 # the debug cable through `cadr_dbgin.sv` now, so a prerequisite that is not
 # listed is a check that silently runs yesterday's module.  Same family as the
-# build artefact carrying the old machine's PROM path.
+# build artifact carrying the old machine's PROM path.
 MEMPATH := rtl/plumbing/cadr_ddr_map.sv rtl/machine/cadr_xbus_decode.sv rtl/machine/cadr_busint_xbus.sv \
            rtl/plumbing/cadr_xbus_ddr.sv rtl/machine/cadr_tv.sv rtl/machine/cadr_console_bus.sv \
            rtl/machine/cadr_io_board.sv rtl/machine/cadr_busint_regs.sv \
@@ -244,7 +244,7 @@ $(BUILD)/memory_path.pass: $(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/b
 # THE DUT IS `cadr_memory_path`, NOT A HARNESS: `rtl/machine/cadr_tv.sv` is
 # instantiated inside it, its frame buffer being that module's bridge at the
 # display's base, so the wiring checked is the wiring on the board.  Same
-# sources as `memory_path`, another trace and another testbench; the modelled
+# sources as `memory_path`, another trace and another testbench; the modeled
 # DDR answers at once so that the timing is comparable with muir, whose TV
 # takes no time of its own.
 #
@@ -530,9 +530,9 @@ $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
 
 # ------------------------------------------------- the machine behind memory
 
-# The machine with a modelled DDR3 behind `mem_*`, which is what `DDR=1` puts
+# The machine with a modeled DDR3 behind `mem_*`, which is what `DDR=1` puts
 # on the part. The one check here that muir cannot back past microcycle
-# 537,900 --- muir has a modelled disk controller and the board has none --- so
+# 537,900 --- muir has a modeled disk controller and the board has none --- so
 # its reference is the boot PROM's own page-0 parity loop, poisoned from
 # outside, and what the machine may NOT do with what it reads.
 #
@@ -558,7 +558,7 @@ $(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.h
 # again.  muir's own `tests/keyboard_boot.rs` is the same claim on `micro`,
 # `rtl` and `chip`.
 #
-# No memory is modelled, deliberately: the PROM's first main-memory cycle is
+# No memory is modeled, deliberately: the PROM's first main-memory cycle is
 # at microcycle 536,303 and nothing here runs that far.  It takes a second.
 $(BUILD)/obj_kbd_boot/Vcadr_machine: $(MACHINE) tb/cadr_kbd_boot_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_kbd_boot \
@@ -693,7 +693,7 @@ $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
 # changes together, and `docs/band.md` writes both of them out.
 #
 # It skips, and says so, when the System 100 release is not here, as its
-# neighbours do; the sum is checked before the archive is used and the pack is
+# neighbors do; the sum is checked before the archive is used and the pack is
 # decompressed fresh for the run and removed after.  Twenty-five seconds.
 $(BUILD)/obj_band/Vcadr_machine: $(MACHINE) tb/cadr_band_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band \
@@ -1542,7 +1542,7 @@ $(BUILD)/arty_a7.pass: $(MACHINE) boards/arty-a7-100/cadr_arty_a7.sv \
 #
 # The generated memory controller is not linted with them and cannot be: it is
 # 73 files of Verilog with a physical layer of seven-series primitives in it.
-# `tb/cadr_mig_stub.sv` stands in for it, with its port list and no behaviour,
+# `tb/cadr_mig_stub.sv` stands in for it, with its port list and no behavior,
 # and carries the same weakness every stub here carries --- it is written to
 # match what we connect.  What it does hold is that the wrapper's
 # instantiation matches the generator's own template in name, direction and
@@ -2008,7 +2008,7 @@ $(BUILD)/disk.golden: golden/src/disk.rs golden/Cargo.toml | $(BUILD)
 # The controller against that trace, WITH ITS PACK SIDE UNDERNEATH.  The
 # block store used to be filled by the testbench through a seam; now
 # `rtl/plumbing/cadr_disk_pack.sv` fills it over `S_AXI_HP2` from records the testbench
-# puts in a modelled DDR at the addresses the trace names, asked to by register
+# puts in a modeled DDR at the addresses the trace names, asked to by register
 # writes over `M_AXI_GP0`, and the drive's presence, its read-only switch and
 # whether its time is charged are three of those registers.  So the harness is
 # the DUT --- `tb/cadr_disk_harness.sv` wires the two as `boards/arty-z7-20/cadr_arty.sv`'s
@@ -2038,7 +2038,7 @@ $(BUILD)/disk.pass: $(BUILD)/obj_disk/Vcadr_disk_harness $(BUILD)/disk.golden
 # `rtl/plumbing/cadr_disk_pack.sv` held to the property, which is `cadr_axi_master.sv`'s
 # situation: no muir reference --- `Unit::read_block` is a memcpy --- so the
 # testbench is the stimulus and a counting AXI3 slave is the observer.  A
-# block put in the modelled DDR and fetched is READ BACK BY THE CADR, through
+# block put in the modeled DDR and fetched is READ BACK BY THE CADR, through
 # the controller's own transfer into a poisoned page, and a block the CADR
 # wrote is written back and compared; the three words after the block are read
 # back through the status bits the controller raises when each is wrong.  Same
@@ -2128,7 +2128,7 @@ $(BUILD)/gp0_default.pass: $(BUILD)/obj_gp0_default/Vcadr_gp0_default
 # is the design.
 #
 # `tb/cadr_display_out_tb.cpp` runs both clocks at their real and deliberately
-# incommensurate periods against a modelled DDR poisoned injectively in the
+# incommensurate periods against a modeled DDR poisoned injectively in the
 # address, and reads the result the way a monitor does --- recovering the
 # raster position from the syncs rather than from any counter inside the
 # module. A whole frame is compared pixel for pixel, the picture against the
@@ -2157,7 +2157,7 @@ $(BUILD)/display_out.pass: $(BUILD)/obj_display_out/Vcadr_display_out
 # is found by breadth-first search over the reference model, and all 256 byte
 # values are tested in every one of them.
 #
-# WHAT IT DOES NOT HOLD is the serialiser. `OSERDESE2` and `OBUFDS` are
+# WHAT IT DOES NOT HOLD is the serializer. `OSERDESE2` and `OBUFDS` are
 # primitives, their stubs in `tb/cadr_arty_stubs.sv` tie their outputs low, and
 # a check built on a stub confirms rather than compares. `build/arty.pass`
 # lints `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` and the fitter is what stands
@@ -2467,7 +2467,7 @@ COMMON_SRC   := $(COMMON_PKG)/src
 # a log off the board's RAM disk --- and this package's mutation list aims at
 # it by name, as `serial.pass` and `terminal.pass` already do with the
 # endpoint grammar.  Without these a change to `cadr_log.c` would leave this
-# check stamped and unrun, which is this project's stale-artefact scar in a
+# check stamped and unrun, which is this project's stale-artifact scar in a
 # Makefile.
 $(BUILD)/console_face.pass: $(CONSOLE_SRC_DIR)/console_face.c \
                             $(CONSOLE_SRC_DIR)/console_face.h \
@@ -2480,7 +2480,7 @@ $(BUILD)/console_face.pass: $(CONSOLE_SRC_DIR)/console_face.c \
                             $(wildcard $(COMMON_SRC)/cadr/*.h) \
                             $(CONSOLE_SRC_DIR)/cadr-console.c | $(BUILD)
 	$(MAKE) -C $(CONSOLE_SRC_DIR) check
-	@echo "console: the program's core agrees with a modelled slave, a reply to a person is"
+	@echo "console: the program's core agrees with a modeled slave, a reply to a person is"
 	@echo "console: bare, and a --log goes to every destination named and is capped at 1 MiB"
 	@touch $@
 
@@ -2491,7 +2491,7 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 	$(MAKE) -C $(READOUT_SRC) check
 	$(MAKE) -C $(READOUT_SRC) all COMMON=host
 	$(MAKE) -C $(READOUT_SRC) clean
-	@echo "readout: the program builds and its core agrees with a modelled window"
+	@echo "readout: the program builds and its core agrees with a modeled window"
 	@touch $@
 
 # ------------------------------------------- the checkpoint, and muir itself
@@ -2618,7 +2618,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 # five sources and this has twelve, so an explicit list would be a list
 # somebody forgets to add to --- and a source added to the check but not to
 # the rule is a check that does not re-run when it changes, which is the
-# quiet half of a stale-artefact failure this project has met three times.
+# quiet half of a stale-artifact failure this project has met three times.
 #
 # **AND `cadr-terminal`'s JOINS THEM, WHICH IS A HOLE THE SCREEN SLICE LEFT.**
 # That program has had its own `make -C src check` since it was written --- 420
@@ -2675,7 +2675,7 @@ $(BUILD)/chaosnet.pass: $(wildcard $(CHAOSNET_SRC)/*.c) \
 # stale-loader refusal out of `mksd-buildroot.sh`, and the address guard out of
 # `mksd-release.sh`, each on its own anchors, and runs them alone.  Without
 # these a change to either would leave the check stamped and unrun --- this
-# repository's stale-artefact scar in a Makefile --- and the release guard is
+# repository's stale-artifact scar in a Makefile --- and the release guard is
 # exactly the thing that sat broken because nobody ran it.
 $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
                       $(COMMON_SRC)/daemon.sh \
@@ -2697,7 +2697,7 @@ $(BUILD)/fpgarc.pass: $(COMMON_SRC)/fpgarc.sh \
 # THEM.**  The endpoint grammar `--serial` reads is there, shared with the
 # screen so that one grammar cannot become two, and a record in this package's
 # list aims at it by name.  Without these a change to it would leave the check
-# stamped and unrun, which is this project's stale-artefact scar in a Makefile.
+# stamped and unrun, which is this project's stale-artifact scar in a Makefile.
 $(BUILD)/serial.pass: $(wildcard $(SERIAL_SRC)/*.c) $(wildcard $(SERIAL_SRC)/*.h) \
                       $(wildcard $(COMMON_SRC)/*.c) $(wildcard $(COMMON_SRC)/cadr/*.h) \
                       $(SERIAL_SRC)/serial_mutations.txt \
@@ -2987,7 +2987,7 @@ buildroot-cora-rebuild: buildroot-cora-check
 #
 # `md_hold` and `md_inject` ask whether MD can be left holding a stale word,
 # of `cadr_microcycle`, where the bus is muir's stimulus.  This asks it of the
-# WHOLE machine with only DDR modelled, and walks the acknowledgement across
+# WHOLE machine with only DDR modeled, and walks the acknowledgement across
 # the microcycle so the strobe lands at every phase.  It answers the question
 # CLAUDE.md left open --- whether the DESTMDR/-LOADMD coincidence can be
 # placed at all --- and the answer is no, with the reason named: -LOADMD
@@ -3037,7 +3037,7 @@ $(BUILD)/park.pass: $(BUILD)/obj_park/Vcadr_machine $(BUILD)/boot_prom.hex
 # **THE TOOLCHAIN IS NAMED AND ITS ABSENCE IS FATAL.**  A firmware is the one
 # thing here that needs a compiler this repository does not otherwise want, and
 # a rule that skipped quietly would leave a bitstream carrying whatever hex was
-# last built --- which is CLAUDE.md's stale-artefact entry waiting to happen.
+# last built --- which is CLAUDE.md's stale-artifact entry waiting to happen.
 # So the recipe checks, and says what to install.
 
 RISCV_CC      ?= riscv64-unknown-elf-gcc

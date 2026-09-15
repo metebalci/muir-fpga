@@ -35,7 +35,7 @@ each have their own, and the boot button has a step of its own in the disk pack
 program's init script.
 
 Every one of those programs refuses a flag it does not know. That is muir's
-behaviour and it is the property worth keeping, because a flag that is quietly
+behavior and it is the property worth keeping, because a flag that is quietly
 ignored is a setting somebody wrote down and did not get. So the file cannot be
 passed to any of them whole.
 
@@ -256,7 +256,7 @@ last script compares against is what the scripts that actually ran asked for.
 
 Every one of these programs refuses a flag it does not know. That refusal used
 to go nowhere. An init script starts its program with `start-stop-daemon -b`,
-which daemonises it and closes its output, so the program printed its refusal
+which daemonizes it and closes its output, so the program printed its refusal
 into `/dev/null` and the script printed `OK`. A carriage return on every peer's
 port once cost this board its whole Chaosnet that way, on a boot that looked
 perfect.
@@ -474,7 +474,7 @@ the serial line as well, which is what this project's own board needs.
 `RELEASE=1` is what writes the released menu, and `mksd-release.sh` sets it.
 That is a separate flag from `STANDALONE=1`, which is about what is private:
 one decides which lines are live and the other keeps an address, a MAC and this
-board's own station numbers off a public artefact. `fpgarc.pass` writes both
+board's own station numbers off a public artifact. `fpgarc.pass` writes both
 menus and compares them, so a release menu cut down by turning the development
 card's lines off as well would fail by name.
 

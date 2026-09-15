@@ -54,7 +54,7 @@
 // data, or dropped an address bit, passed. Both are caught now, and both are in
 // the mutation list.
 //
-// The DDR behind the bridge is modelled here, answering `device_ns` after the
+// The DDR behind the bridge is modeled here, answering `device_ns` after the
 // bridge asks, which is what makes the timing comparable: the trace's
 // `device_ns` is the model's device answer time measured from -XBUS.RQ, and a
 // thin bridge puts the request out on that same tick.
@@ -79,7 +79,7 @@ struct Row {
   int n_memgrant, n_memack, n_loadmd, timed_out;
 };
 
-// What the modelled DDR holds at a byte address the stimulus has not written.
+// What the modeled DDR holds at a byte address the stimulus has not written.
 //
 // INJECTIVE IN THE ADDRESS, and it was one constant. Every read of an address
 // the trace never wrote used to be answered with 0xDEADBEEF and then counted
@@ -129,7 +129,7 @@ int Fail(const Row &r, const char *what, long got, long want) {
 // integrity half of configuration A was once wrong.
 namespace {
 
-// The modelled DDR's latency, in ticks, and the microcycle the master clock
+// The modeled DDR's latency, in ticks, and the microcycle the master clock
 // is pulsed at.
 constexpr int kMemLatency = 6;
 constexpr int kMicrocycle = 29;
@@ -337,7 +337,7 @@ int RunArbiter() {
   }
   // **ONE MEMORY ACCESS AND NOT TWO.** A word already in flight when the
   // processor asks has to finish; a second word must not start. So the bound
-  // is the modelled memory's own latency and the four ticks the handover
+  // is the modeled memory's own latency and the four ticks the handover
   // costs: the tick the bus is left idle as the channel TAKES it, the
   // channel's acknowledgement register, the tick the arbiter takes to give the
   // bus back, and the tick the bus is left idle again as it does. The worst
@@ -428,7 +428,7 @@ int main(int argc, char **argv) {
   // The Xbus seam and the diagnostic register block, held quiet and said so.
   // Main memory is the one slave this check has; a device cycle reaches nobody,
   // which is what makes the trace's `present 0` cycles time out. These were
-  // left to Verilator's zero-initialisation before, which is the same value and
+  // left to Verilator's zero-initialization before, which is the same value and
   // not the same claim.
   dut->device_ack = 0;
   dut->device_rdata = 0;

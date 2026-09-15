@@ -315,7 +315,7 @@ int main(int argc, char **argv) {
   uint64_t mem_delay = 0;                 // ticks the memory takes past the trace
   uint64_t progress = 0;                  // say where the machine is, this often
   // WHAT AN UNWRITTEN WORD OF DDR READS AS.  CLAUDE.md, measured on the board
-  // before anything was written: "Uninitialised DDR reads as alternating bands
+  // before anything was written: "Uninitialized DDR reads as alternating bands
   // of zeros and ones, not as zero ... So an unwritten word reads 0x00000000
   // in some places and 0xFFFFFFFF in others, and anything taking either as
   // evidence a write happened is testing nothing."  muir's memory is zero and
@@ -1137,7 +1137,7 @@ int main(int argc, char **argv) {
           lo = static_cast<uint32_t>(beat);
           hi = static_cast<uint32_t>(beat >> 32);
           // A WRITE DISTURBS ONLY ITS OWN HALF, held by DATA and not by the
-          // strobe pattern alone: the neighbouring word of the beat is a real
+          // strobe pattern alone: the neighboring word of the beat is a real
           // and different word of the machine's memory, and a strobe covering
           // it destroys it silently.
           const bool hi_half = ((req_addr >> 2) & 1u) != 0;
@@ -1680,9 +1680,9 @@ int main(int argc, char **argv) {
       "%ld,\n"
       "      outside-a-request %ld, direction %ld, beat-unaligned %ld,\n"
       "      strobes-not-a-half %ld, strobes-name-the-wrong-half %ld,\n"
-      "      word-not-offered-twice %ld, read-lane %ld, neighbour-disturbed "
+      "      word-not-offered-twice %ld, read-lane %ld, neighbor-disturbed "
       "%ld\n"
-      "    %ld transactions landed outside the modelled store (the display's "
+      "    %ld transactions landed outside the modeled store (the display's "
       "window)\n",
       req_rises, req_read_rises, req_write_rises,
       ar_handshakes, aw_handshakes, w_handshakes, r_handshakes, b_handshakes,

@@ -18,7 +18,7 @@
 //   page NPC/LPC     PC and LPC
 //   page OPCS        the eight-deep shift register of PCs
 //   page STAT        the statistics counter
-//   page OLORD1      MACHRUN, and the speed synchroniser at 1A01
+//   page OLORD1      MACHRUN, and the speed synchronizer at 1A01
 //   page ACTL/MCTL   the A and M memories, their latches and pass-arounds
 //   page PDLCTL      the PDL, its pointer and its index
 //   page SPC/SPCW    the stack, SPCPTR, RETA and the push pass-around
@@ -52,7 +52,7 @@
 // **The scratchpads are read while CLK is high, and the 74S373s are what
 // holds the word.**  `rtl.rs`'s header is explicit: the 93425As have "no clock
 // pin, so what holds a word between phases is the 74S373 at ALATCH, MLATCH,
-// PLATCH or SPCLCH and not the memory.  Modelling the memory as a register
+// PLATCH or SPCLCH and not the memory.  Modeling the memory as a register
 // loaded early is the 74S373 drawn one state too soon."  A synchronous read
 // enabled by TPCLK *is* that latch --- it follows the memory through the read
 // phase and holds through the write phase --- and it settles the
@@ -378,7 +378,7 @@ module cadr_microcycle #(
   logic cpu_edge;
   assign cpu_edge = mclk_edge && machrun;
 
-  // The speed synchroniser, the 74S174 at OLORD1 1A01, clocked by SPEEDCLK
+  // The speed synchronizer, the 74S174 at OLORD1 1A01, clocked by SPEEDCLK
   // sixty nanoseconds into the generator cycle --- and the 74S151 at CLOCK1
   // 1D08 selects the tap five nanoseconds after that, at 65.  So the shift
   // has to be *complete* by phase 12 for the select at phase 13 to see it,
@@ -753,7 +753,7 @@ module cadr_microcycle #(
   // THE 74S373s ARE THE STATE, AND THEY ARE WHAT MAKES BLOCK RAM WORK HERE.
   // `rtl.rs`'s header: the 93425As "are 93425As with no clock pin, so what
   // holds a word between phases is the 74S373 at ALATCH, MLATCH, PLATCH or
-  // SPCLCH and not the memory.  Modelling the memory as a register loaded
+  // SPCLCH and not the memory.  Modeling the memory as a register loaded
   // early is the 74S373 drawn one state too soon."  So the latch follows the
   // memory *while CLK is high* and holds through the write phase --- and a
   // synchronous read enabled by TPCLK is exactly that, with the read landing

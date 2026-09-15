@@ -6,7 +6,7 @@
 //
 // WHAT THIS EXISTS FOR.  CLAUDE.md's account of the board's page-hash-table
 // word ends with a bounded suspect list.  `make hash-watch` runs `cadr_machine`
-// from reset off a real pack with a modelled DDR and reaches 171,000,000
+// from reset off a real pack with a modeled DDR and reaches 171,000,000
 // microcycles without the board's fingerprint, so the defect is not in
 // `rtl/machine/`.  What that harness replaces with a model is what is left:
 // between `cadr_machine`'s `mem_*` port and the DRAM the board has
@@ -24,7 +24,7 @@
 // IT IS IN `tb/` FOR THE REASON `tb/cadr_arty_stubs.sv` GIVES.  Both Vivado
 // scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`, so a
 // wiring harness in `rtl/` would join the bitstream --- a second copy of the
-// memory path, in the synthesised design, that nothing on the board would ever
+// memory path, in the synthesized design, that nothing on the board would ever
 // reach.
 //
 // **THE WIRING IS `boards/arty-z7-20/cadr_arty.sv`'s `g_ddr` EXACTLY**, and

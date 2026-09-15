@@ -24,7 +24,7 @@
 #      the program says so on the console, and the CADR waits for a drive as
 #      the real machine did with no pack loaded.  **THE DEBUGGER'S BAND IS A
 #      BAND TOO.**  CC compiled into a world is 257 MiB of somebody else's
-#      Lisp on a public artefact, and the muirrc that names it would name a
+#      Lisp on a public artifact, and the muirrc that names it would name a
 #      file the user is free to delete, so a release carries neither.  The
 #      mechanism is STANDALONE=1: mksd-buildroot.sh clears CC_PACK with the
 #      four private values, and because it clears them BEFORE reading
@@ -35,7 +35,7 @@
 #      does not read local.conf at all: no TFTP server address, no MAC, no
 #      Chaosnet peer, no bridge, and no Chaosnet station number of this
 #      board's.  Without it the released card would try to boot over a network
-#      the user has not got, would carry private values on a public artefact,
+#      the user has not got, would carry private values on a public artifact,
 #      and would come out different on every build host.  **Not reading the
 #      file is the structural half and it replaced a list of names**: every
 #      card setting is read as `${VAR:-<default>}`, so local.conf could set any
@@ -127,11 +127,11 @@ OUT="$OUT" BIT="$BIT" BOOT_MB=64 PACKS_MB="$PACKS_MB" STANDALONE=1 RELEASE=1 \
 #
 # **AND IT READS MAC ADDRESSES, WHICH IT ALSO USED NOT TO.**  uEnv.txt carries
 # ethaddr from local.conf, and a MAC is not IPv4-shaped, so a MAC went straight
-# past a check whose whole job is that nothing of ours is on a public artefact.
+# past a check whose whole job is that nothing of ours is on a public artifact.
 #
 # **THE EXEMPTIONS ARE ADDRESSES THAT CANNOT NAME A HOST**, which is the only
 # reason any of them is exempt.  This guard is about nothing of ours being on a
-# public artefact, so what it has to let through is exactly the addresses that
+# public artifact, so what it has to let through is exactly the addresses that
 # are somebody's nowhere:
 #
 #     0.0.0.0        "every interface on this board".  Both files of flags say

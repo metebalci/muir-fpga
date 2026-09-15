@@ -25,7 +25,7 @@
 //!   the fabric to fetch, or where it has the fabric write them back to.
 //!   Chosen here and not by the testbench, spread across the address bits
 //!   and 128-byte aligned, so that a master that dropped an address bit or
-//!   landed one burst over lands on poison and not on a neighbour --- the
+//!   landed one burst over lands on poison and not on a neighbor --- the
 //!   shadow-memory rule: the address is the stimulus's, never the DUT's.
 //! - `NEED`, the blocks a transfer read off the pack, in the order the
 //!   walk reached them: what `Unit::read_block` was asked for. It says
@@ -100,7 +100,7 @@ const RECORD_BYTES: u32 = (BLOCK_WORDS as u32 + 3) * 4;
 const RECORD_ALIGN: u32 = 128;
 
 /// Where the k'th record goes: spread across sixteen address bits above
-/// the alignment, so that no two are neighbours and a dropped or doubled
+/// the alignment, so that no two are neighbors and a dropped or doubled
 /// address bit lands somewhere nothing was put. Injective in `k` because
 /// `0x9E37` is odd; the generator asserts no two records overlap anyway.
 fn record_at(k: u32) -> u32 {

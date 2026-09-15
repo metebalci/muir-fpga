@@ -1165,7 +1165,7 @@ int main(int argc, char **argv)
 	}
 	{
 		// ...and with nothing at the link, a viewer leaving still
-		// releases what IT was holding, which is the behaviour that
+		// releases what IT was holding, which is the behavior that
 		// was there before and must not have been lost.
 		struct harness h;
 		struct viewer v;

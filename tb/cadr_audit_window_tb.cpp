@@ -328,7 +328,7 @@ int main(int argc, char **argv) {
   //
   // A second fault, in the other direction: the record must not move and both
   // counts must.  An instrument whose record followed the last fault would
-  // hand back the neighbourhood of a machine that had already been corrupted.
+  // hand back the neighborhood of a machine that had already been corrupted.
   {
     const uint32_t first_addr = A(first_addr);
     for (int i = 0; i < 3; ++i) {

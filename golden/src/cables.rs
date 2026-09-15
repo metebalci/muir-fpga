@@ -42,7 +42,7 @@ enum Side {
 struct Wire {
     /// The name on the processor's drawings, which is the one used here.
     cpu_name: String,
-    /// What the bus interface calls the same wire; the two readers spelt
+    /// What the bus interface calls the same wire; the two readers spelled
     /// some of them differently, which is why the anchors and not the names
     /// are what find the net.
     busint_name: String,

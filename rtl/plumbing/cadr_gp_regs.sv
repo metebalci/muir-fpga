@@ -20,7 +20,7 @@
 // zero, and a write there is dropped.  `cadr_gp0_default.sv`'s header has
 // the argument --- an error response to a Cortex-A9's posted write arrives as
 // an imprecise external abort the kernel cannot attribute to a process, so a
-// constant a program can recognise is the safer failure --- and the pack
+// constant a program can recognize is the safer failure --- and the pack
 // side's SLVERR outside its sixteen words is the older, narrower decision,
 // left where it is.
 //

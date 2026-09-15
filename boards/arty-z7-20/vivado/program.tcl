@@ -103,7 +103,7 @@ if {$after != 1} {
 }
 if {![build_stamp_verdict "PROG:" $want $ubefore $uafter]} { exit 1 }
 # Not "DONE is high" any more: the lines above say what was checked, and
-# DONE was never the thing worth summarising.
+# DONE was never the thing worth summarizing.
 puts "PROG: programmed [file tail $bit]"
 puts "PROG: expect LD1 blinking at about 3 Hz --- the fabric's own clock ---"
 puts "PROG: and LD2 blinking with it once the machine retires microcycles."

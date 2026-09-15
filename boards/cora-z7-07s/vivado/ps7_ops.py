@@ -26,7 +26,7 @@
 # HAS ONE.** That board's routine is compared op for op against the one in
 # Digilent's own PetaLinux BSP for it --- a different tool eight releases
 # apart, agreeing character for character on every DDR, PLL, MIO and
-# post-config write. No such artefact was found for the Cora Z7-07S:
+# post-config write. No such artifact was found for the Cora Z7-07S:
 # `github.com/Digilent/Cora-Z7-HW`'s per-board branches are empty root
 # commits. So what holds this file is the provenance of
 # `boards/cora-z7-07s/vivado/ps7_config.tcl` --- Digilent's own maintained
@@ -101,12 +101,12 @@ def main():
 
     mod.rendered = rendered
 
-    # **AND WHAT IT SAYS ON THE WAY OUT IS RELABELLED TOO.**  The shared
+    # **AND WHAT IT SAYS ON THE WAY OUT IS RELABELED TOO.**  The shared
     # `main()` writes the other board's path into its own success and failure
     # messages as literal text, so a run here would report that the ARTY's
     # `.ops` is current while having read and written this board's.  A message
     # that names the wrong file is the shape of failure this repository spends
-    # its prose on, so the output is passed through the same relabelling the
+    # its prose on, so the output is passed through the same relabeling the
     # generated file gets.  `--check` reads the committed file through
     # `committed()`, which closes over the module's own `OPS`; overriding the
     # global is enough because nothing captured the old value.

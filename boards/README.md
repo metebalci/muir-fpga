@@ -48,7 +48,7 @@ keeps its place because it has an Ethernet PHY on fabric pins.
 ## The card
 
 **Every board's card has the same two partitions and the same layout**, so that
-a person who has learnt one card has learnt all of them.
+a person who has learned one card has learned all of them.
 
     partition 1  BOOT   BOOT.BIN, u-boot.img and uEnv.txt at the root, and a
                         folder named as the board's directory here is ---
@@ -221,7 +221,7 @@ a light that does not come on, and that reads as a design fault in the machine.
 `cora-z7-07s/` and `arty-a7-100/` therefore each hold Digilent's master `.xdc`
 byte for byte as published, under Digilent's own filename, with its provenance
 recorded in that directory's `README.md`. Digilent publishes them under the MIT
-licence, so each directory also holds a copy of that licence text as
+license, so each directory also holds a copy of that license text as
 `Digilent-License.txt`.
 
 Each directory's own constraint file then copies out the handful of pins that

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // A DVI transmitter: three TMDS channels and the clock channel, as ten-bit
-// words for a serialiser.
+// words for a serializer.
 //
 // NO muir REFERENCE EXISTS, as none exists for `cadr_tmds_encode.sv` below
 // it or for `cadr_axi_master.sv`.  This is held to DVI 1.0 and to nothing
@@ -33,7 +33,7 @@
 // pixel.  Writing the word in binary and the order it leaves in is the only
 // way this is readable; as `0x01F` it says nothing.  It is not 8b/10b
 // encoded --- there is nothing to encode --- and it is written here rather
-// than in the serialiser so that everything the monitor receives comes out
+// than in the serializer so that everything the monitor receives comes out
 // of one module and one clock domain.
 //
 // WHAT THE CHECK HOLDS THIS TO.  `tb/cadr_hdmi_tx_tb.cpp` carries a second
@@ -41,7 +41,7 @@
 // three channels against it: over every one of the 256 byte values in every
 // disparity state the encoder can reach, over all four control tokens, and
 // over a long pseudorandom stream of pixels and blanking.  What it cannot
-// hold is the serialiser, which is Xilinx primitives --- see
+// hold is the serializer, which is Xilinx primitives --- see
 // `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv`.
 
 `default_nettype none
@@ -51,7 +51,7 @@ module cadr_hdmi_tx (
     input  var logic       prst,
 
     // The pixel, and the raster's own signals.  `de` low is a control
-    // period and the colour is ignored there.
+    // period and the color is ignored there.
     input  var logic [7:0] red,
     input  var logic [7:0] green,
     input  var logic [7:0] blue,

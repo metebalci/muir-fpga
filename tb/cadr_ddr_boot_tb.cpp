@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The machine behind real memory: `cadr_machine` with a modelled DDR3 behind
+// The machine behind real memory: `cadr_machine` with a modeled DDR3 behind
 // `mem_*`, running MIT's boot PROM from reset.
 //
 // WHY THIS EXISTS AND WHY MUIR IS NOT THE REFERENCE.  Every other check here

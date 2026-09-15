@@ -815,7 +815,7 @@ int main(int argc, char **argv) {
     b.d->ser_tx_done = 0;
     b.d->ser_rx_strobe = 0;
     b.d->ser_rx_end = 0;
-    // Nothing in the trace raises either: muir's behavioural 2651 does not
+    // Nothing in the trace raises either: muir's behavioral 2651 does not
     // model them and says so, so the run holds them at zero over the whole
     // trace and the second configuration below is what raises them.
     b.d->ser_rx_parity = 0;
@@ -1094,7 +1094,7 @@ int main(int argc, char **argv) {
   //
   // A real bus cycle at every address, in both directions: does the card
   // answer, and WHEN.  The instant is what tells the three timing groups
-  // apart, and so tells `0o764130` from `0o764120`'s neighbours.
+  // apart, and so tells `0o764130` from `0o764120`'s neighbors.
   Dut s;
   s.d->chaos_address = (unsigned)want_h("chaos_address");
   long dec_answers = 0, dec_silent = 0;
@@ -1209,7 +1209,7 @@ int main(int argc, char **argv) {
 
   // ---- the parity and framing flags, which no trace against muir can reach -
   //
-  // **muir'S BEHAVIOURAL 2651 RAISES NEITHER AND SAYS SO**: "the break the
+  // **muir'S BEHAVIORAL 2651 RAISES NEITHER AND SAYS SO**: "the break the
   // transmitter can force and the framing and parity errors the receiver can
   // raise ... need a far end that sends bits rather than characters --- the
   // netlist board has one".  So `SR3` and `SR5` are zero on every row of the

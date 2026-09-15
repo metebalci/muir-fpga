@@ -132,7 +132,7 @@ bool ParseRow(const char *line, Row &r) {
   return true;
 }
 
-// The window, as `rtl/plumbing/cadr_debug_window.sv` parameterises it and as
+// The window, as `rtl/plumbing/cadr_debug_window.sv` parameterizes it and as
 // muir's `src/fabric.rs` names it.
 constexpr uint32_t kBase     = 0x80000080u;
 constexpr uint32_t kIdent    = 0x44425547u;   // "DBUG"
@@ -765,7 +765,7 @@ int main(int argc, char **argv) {
            | (seq << kSeqShift) | (uint32_t(dbd) << kDbdShift);
   };
 
-  // **A REQUEST IS THE STORE AND THEN THE LEAD, AND THE TESTBENCH LEARNT THAT
+  // **A REQUEST IS THE STORE AND THEN THE LEAD, AND THE TESTBENCH LEARNED THAT
   // THE HARD WAY.**  The adapter puts the levels on the cable at once and
   // brings `-DEBUG IN REQ` down `LEAD_T` ticks later, as the MTD100 at DBGOUT
   // 0A10 does, so a request lifted inside that section never reaches the

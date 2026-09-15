@@ -231,7 +231,7 @@ and the world holds the truenames of every file it loaded. The FILE service
 writes through a temporary whose name carries a process id, so there is at
 least one plausible way for two runs to differ in their bytes. Nobody has run
 the script twice under identical conditions and compared, so the honest
-statement is that the procedure is reproducible and the artefact is
+statement is that the procedure is reproducible and the artifact is
 identified by its digest rather than predicted by it.
 
 A pack is named by three things together: its digest, the commit of muir it
@@ -263,7 +263,7 @@ not the release's.** `BASE` names the pack to start from, which is copied and
 never written to itself. `SITE` names a directory of site files copied over
 the release's own under the file service's root, which is what lets the band
 identify itself on its own network. `CC_PACK_CHAOS`, `CC_PACK_SERVER` and
-`CC_PACK_SERVER_NAME` put the machine and the server on the modelled cable at
+`CC_PACK_SERVER_NAME` put the machine and the server on the modeled cable at
 that network's addresses, and the name is used in the forms the program types
 as well, because a file it asks the machine to write is named on that host.
 Left alone, all five are the release's own.
@@ -302,7 +302,7 @@ sampler taking it every 500,000 microcycles never saw it inside the partition
 at all.
 
 The pack itself is the signal, which is right in principle as well as in
-practice, because the pack is the artefact the run exists to make. Six blocks
+practice, because the pack is the artifact the run exists to make. Six blocks
 spread through the partition are read back out of the file while the machine
 writes it. When they have changed from what they were and then stayed put for
 600,000,000 microcycles, the dump is over. The reboot that follows only

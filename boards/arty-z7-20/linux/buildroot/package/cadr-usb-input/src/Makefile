@@ -74,7 +74,7 @@ HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 # once.**  A fixed `~/.cache/<name>` is shared by the main checkout and every
 # `git worktree`, so two of them building at the same time overwrite each
 # other's test binary --- and `make` then sees a binary newer than its sources
-# and does not rebuild.  CLAUDE.md's stale-artefact scar, met in the serial
+# and does not rebuild.  CLAUDE.md's stale-artifact scar, met in the serial
 # line's own Makefile first.
 WORK ?= $(HOME)/.cache/muir-fpga-usb-input-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 
@@ -90,7 +90,7 @@ install: all
 	install -m 0755 $(PROGRAMS) $(DESTDIR)/usr/bin/
 
 # The check.  Its own object directory, so a target build and a host build
-# never share a binary --- and a build artefact that outlived a machine move
+# never share a binary --- and a build artifact that outlived a machine move
 # would name a home directory that no longer exists.
 check: $(WORK)/usb_test
 	$(WORK)/usb_test --work $(WORK)

@@ -118,7 +118,7 @@
 @file chaos_packet.c
 @why a frame whose 12-bit count disagrees with the number of words it actually carries must be refused, not read past its end
 @note AIM-628 section 5.1 meters incoming packets "rejected for a length that
-@note is not a multiple of 16 bits" and its neighbours.  Without this the
+@note is not a multiple of 16 bits" and its neighbors.  Without this the
 @note parser reads the trailer as data, or data as the trailer.
 @old
 	if (body != CHAOS_PKT_HEADER_WORDS + (count + 1u) / 2u) {

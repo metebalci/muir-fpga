@@ -29,7 +29,7 @@
 // is exact on the average and needs no real arithmetic in a parameter.  A 16X
 // clock is `DIVISORS[MR2 bits 3:0]` crystal periods and a character's frame is
 // `half_bits * 8` of those 16X clocks, which is
-// `muir::serial::Framing::frame_ns` with the nanoseconds cancelled out.
+// `muir::serial::Framing::frame_ns` with the nanoseconds canceled out.
 //
 // **THE SECOND IS THE MACHINE'S AND NOT THE WALL'S, AND THIS WAS WRONG ONCE.**
 // The divider counted 5,068,800 periods in every 100,000,000 ticks --- the

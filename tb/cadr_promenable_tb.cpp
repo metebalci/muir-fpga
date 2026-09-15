@@ -5,7 +5,7 @@
 //
 // The DUT is `rtl/machine/cadr_machine.sv` with MIT's boot PROM in it, in the
 // shape `tb/cadr_no_auto_boot_tb.cpp` and `tb/cadr_kbd_boot_tb.cpp` use --- no
-// memory modelled, because the PROM's first main-memory cycle is at microcycle
+// memory modeled, because the PROM's first main-memory cycle is at microcycle
 // 536,303 and nothing here gets near it.
 //
 // **WHY THIS CHECK EXISTS.**  The three boards drive their blue lamp from
@@ -161,7 +161,7 @@ struct Mach {
   // `PROMDISABLE`.  The handshake is the Unibus's own and is bounded at every
   // wait, so a fabric that never grants or never answers fails here rather
   // than hanging.  Taken from `tb/cadr_kbd_boot_tb.cpp`, which writes the same
-  // register for the neighbouring reason.
+  // register for the neighboring reason.
   bool UnibusWrite(unsigned addr, unsigned word) {
     long k = 0;
     d->con_req = 1;

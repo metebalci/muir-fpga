@@ -28,7 +28,7 @@
 #
 #   2. THAT THE MACHINE IS STILL THERE. `cadr_machine` brings its whole
 #      datapath out for the testbenches, and a top level that left those
-#      unconnected would synthesise to nearly nothing and write a perfectly
+#      unconnected would synthesize to nearly nothing and write a perfectly
 #      good bitstream of an empty part. `cadr_cora.sv` folds every output into
 #      one register to prevent it; this checks that it worked.
 #
@@ -173,11 +173,11 @@ synth_design -top cadr_cora -part $part \
     -generic PROVE=$prove
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
-    puts "BIT: not the one the utilisation and timing prose below describes."
+    puts "BIT: not the one the utilization and timing prose below describes."
 }
 if {$port > 0} {
     puts "BIT: the processing system is behind the memory port, so this board"
-    puts "BIT: is neither the design the utilisation prose below describes nor"
+    puts "BIT: is neither the design the utilization prose below describes nor"
     puts "BIT: the one the timing prose does."
 }
 if {$prove > 0} {
@@ -192,7 +192,7 @@ if {$prove > 0} {
 # THE MACHINE'S FILE IS READ SCOPED, and that is not tidiness. Unscoped, its
 # `$slow` set is `all_registers` minus a name list, and on a board `all_
 # registers` includes the top level's own --- 26 of them when this was written,
-# the reset synchroniser and the free-running heartbeat, each taking a
+# the reset synchronizer and the free-running heartbeat, each taking a
 # fifteen-tick multicycle written for a datapath. `-ref cadr_machine` makes
 # `all_registers` mean the machine's, which is what the file's prose has
 # always said it meant.
@@ -242,7 +242,7 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 # master responsible for --- and what receives them is `cadr_axi_master`'s
 # address and data registers, which are outside `u_machine` by construction.
 # So the adapter joins the list, and what the invariant still says is that
-# nothing ELSE outside the machine is relaxed: the port's reset synchroniser
+# nothing ELSE outside the machine is relaxed: the port's reset synchronizer
 # and the held error bit sit beside it in `g_ddr` and are not exempt.
 #
 # A FOURTH WITH `DDR=1`, and it is the debug cable's own contract on the same
@@ -368,7 +368,7 @@ if {$port > 0} {
 }
 # And the Pmod carrier's, the same two halves, and ASSERTED ON EVERY BOARD
 # because the connector is on every board. The frame registers of the
-# carrier's sender may carry it; the strobe's synchroniser, the beat counter,
+# carrier's sender may carry it; the strobe's synchronizer, the beat counter,
 # the gap counter and the dead man may not, because a counter given four ticks
 # to settle is a counter that no longer counts.
 assert_instance_timing $tick 4 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
@@ -384,7 +384,7 @@ set luts  [llength [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == LUT}]]
 set brams [llength [get_cells -quiet -hier -filter {PRIMITIVE_TYPE =~ BMEM.*.*}]]
 set ffs   [llength [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]]
 puts "BIT: $luts LUTs, $ffs registers, $brams block RAMs"
-# THESE THREE ARE CELL COUNTS AND NOT THE UTILISATION REPORT'S, and the two do
+# THESE THREE ARE CELL COUNTS AND NOT THE UTILIZATION REPORT'S, and the two do
 # not agree by construction --- so the floors below must be read against these
 # and not against the figures anybody quotes. Measured on the board's routed
 # design at 712909e: `PRIMITIVE_GROUP == LUT` is 2,101 cells where
@@ -407,7 +407,7 @@ puts "BIT: $luts LUTs, $ffs registers, $brams block RAMs"
 if {$luts < 1500 || $brams < 20} {
     puts "BIT: FAILED --- that is not the whole machine."
     puts "BIT: Routed on the board it is 2,101 LUT cells and 29 BMEM cells."
-    puts "BIT: Something upstream has optimised the datapath away, which"
+    puts "BIT: Something upstream has optimized the datapath away, which"
     puts "BIT: happens when the top level does not use what cadr_machine brings"
     puts "BIT: out. A bitstream of an empty part is the failure to look for."
     exit 1

@@ -233,7 +233,7 @@ static const char *where(const struct sockaddr_in *a)
 
 int chudp_bind(struct chudp *u, const char *bind_addr, uint16_t port)
 {
-	// **This is the initialiser.**  There is no `chudp_init`, and the
+	// **This is the initializer.**  There is no `chudp_init`, and the
 	// header's own rule is that the socket is bound before anything else
 	// runs --- so `local`, `trace`, the peers and the default peer are set
 	// AFTER this call, never before it.

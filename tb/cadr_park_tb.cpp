@@ -8,7 +8,7 @@
 // halted machine before it looks at the bus at all --- `if !r.machrun { the
 // master clock cycle; return }` --- so a halted muir never takes a `-HANG`,
 // the generator goes on running, and the console, the bus interface and the
-// synchronisers on OLORD1 go on working.  That is the property here, and it
+// synchronizers on OLORD1 go on working.  That is the property here, and it
 // is a property rather than a trace because no reference program halts
 // itself: the clock control register is the console's, and a machine running
 // its own microcode has no console.  `build/sstep.pass` scripts the same
@@ -48,7 +48,7 @@
 //
 // **THE STIMULUS IS THE BOOT PROM's PARITY LOOP**, `PAGE-0-PARITY-FIX`, which
 // is the only main-memory traffic the PROM has: 512 reads and 512 writes from
-// microcycle 536,303.  DDR is modelled here as `md_compose` models it, keyed
+// microcycle 536,303.  DDR is modeled here as `md_compose` models it, keyed
 // by the bridge's own address out of a window poisoned injectively, because
 // the point is the handshake and not the words.  The halt is issued at each
 // phase of a memory cycle in turn --- before MEMGO, between MEMGO and the
@@ -148,7 +148,7 @@ class Sim {
   }
   ~Sim() { delete dut_; }
 
-  // One tick, with the modelled DDR answering on the machine's memory port.
+  // One tick, with the modeled DDR answering on the machine's memory port.
   void Tick() {
     dut_->mem_done = 0;
     dut_->mem_rdata = kNotAnswering;

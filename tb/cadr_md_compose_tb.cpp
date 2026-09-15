@@ -21,7 +21,7 @@
 //      the acknowledgement come apart."
 //
 // THE DUT IS `cadr_machine`, so the bus interface, the decode, the bridge and
-// the arbiter are all in the design and only DDR is modelled.  That is the
+// the arbiter are all in the design and only DDR is modeled.  That is the
 // whole point: nothing between the processor and the memory is stimulus.
 //
 // WHAT IT MEASURES, AND WHY THAT IS THE RIGHT QUESTION.
@@ -226,7 +226,7 @@ Run Simulate() {
           // **WHAT THE WRITE-DATA LINES CARRY DURING A READ**, measured rather
           // than reasoned about.  `cadr_microcycle.sv` loads `wdata` from MD
           // at MEMGO whatever the direction --- which is the board's own
-          // behaviour, MEM<31:0> being driven from MD by the master --- so on
+          // behavior, MEM<31:0> being driven from MD by the master --- so on
           // every read the whole of MD is standing on `mem_wdata` at the
           // bridge.  The consequence is worth a number: one wrong bit of
           // `mem_write` on one cycle silently replaces a memory word with MD,
@@ -520,7 +520,7 @@ int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
 
   std::printf("md_compose: can the composed machine leave MD stale?\n");
-  std::printf("  DUT              cadr_machine, DDR modelled, nothing else\n");
+  std::printf("  DUT              cadr_machine, DDR modeled, nothing else\n");
   std::printf("  program          MIT's boot PROM\n");
   std::printf("  DDR latency      4..40 ticks, stride 13 a transaction\n");
 

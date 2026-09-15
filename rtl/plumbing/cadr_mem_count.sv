@@ -26,7 +26,7 @@
 // intentions moves with it in exactly the same way.  A fabric that never
 // issued a transaction cannot fabricate a `BVALID`, so `answered_*` reading
 // zero on a board is not a claim this design is able to get wrong in its own
-// favour.
+// favor.
 //
 // AND THE ASKING IS COUNTED TOO, WHICH IS WHAT MAKES A ZERO READABLE.  With
 // only the answers, `0` means either "the machine never got that far" or "the

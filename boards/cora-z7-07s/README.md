@@ -43,7 +43,7 @@ from their own device tree for this board, which names the part in a comment.
 The programmable logic side is Digilent's master pin file,
 `Cora-Z7-07S-Master.xdc` in this directory. It gives the board a 125 MHz system
 clock on pin H16, two RGB LEDs, two push buttons, two Pmod headers named JA and
-JB, a shield connector and the analogue inputs. There are no plain LEDs, no
+JB, a shield connector and the analog inputs. There are no plain LEDs, no
 slide switches, and **no HDMI section at all**, where the Arty Z7-20's master
 file has both a receiver and a transmitter.
 
@@ -219,12 +219,12 @@ that board. That route is not available for this one.** Digilent's
 `Cora-Z7-HW` repository has per-board branches and the ones for this board are
 empty root commits, which is the same rot the Arty's own superproject has
 already been through. So this comes from the board files instead, which are the
-artefact Vivado itself consumes and are maintained rather than archived.
+artifact Vivado itself consumes and are maintained rather than archived.
 
 **The Arty's routine also has an independent control and this one does not.**
 That board's is compared operation for operation against the one in Digilent's
 PetaLinux BSP for it, a different tool eight releases apart, and the two agree
-character for character. No such artefact was found for the Cora Z7-07S. What
+character for character. No such artifact was found for the Cora Z7-07S. What
 holds this one is the provenance of the preset and the committed `.ops` file.
 
 ### How the two routines differ
@@ -232,7 +232,7 @@ holds this one is the provenance of the preset and the committed `.ops` file.
 Generated and compared under Vivado 2026.1. The routine is 668 operations in 25
 procedures against the Arty's 673 in 24.
 
-**The DDR3 initialisation is byte-identical**, every operation of it, on all
+**The DDR3 initialization is byte-identical**, every operation of it, on all
 three silicon revisions. Both boards carry the same memory device at the same
 width and the same speed.
 
@@ -324,11 +324,11 @@ published, because nothing here has been on silicon.
 is the `0x03723093` this part must carry, and `PCAP_PS_VERSION` as 3, which is
 silicon 3.1 and takes `ps7_init`'s else branch onto the 3.0 tables exactly as
 the other board does. Then DDR answered: the proving word and its complement at
-`0x18A72EE4` with its neighbour untouched, 26 walking-one addresses across the
+`0x18A72EE4` with its neighbor untouched, 26 walking-one addresses across the
 machine's region, and a word and its complement sixteen bytes below the top of
 the 512 MB.
 
-**Uninitialised DDR reads in half-word bands on this board.** Before anything
+**Uninitialized DDR reads in half-word bands on this board.** Before anything
 was written, the words at `0x18000000` read `0x0000FFFF` and the words at
 `0x19000000` read `0xFFFF0000`, with a scatter of single flipped bits and no
 change between two reads. So an unwritten word here is neither zero nor all
@@ -425,11 +425,11 @@ Every pin in it is commented out, which is how Digilent publishes it.
 `cadr_cora.xdc` copies out the pins the design uses and cites this file in its
 header.
 
-`Digilent-License.txt` is the MIT licence text from the same repository and the
+`Digilent-License.txt` is the MIT license text from the same repository and the
 same commit, 1,064 bytes, sha256
 `fbdfae05e542ea6ad7e11e3818076b46d2b6bd81dac49c59bc9ac78025ba5339`. Digilent
 publishes it as `License.txt` and it is renamed here so that nobody reads it as
-the licence of this directory. Everything else here is AGPL.
+the license of this directory. Everything else here is AGPL.
 
 ## The Z7-10 is not the answer
 

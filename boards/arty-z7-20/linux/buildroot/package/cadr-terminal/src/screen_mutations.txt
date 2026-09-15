@@ -139,7 +139,7 @@
 @why the dither, where RRE is one subrectangle a pixel and Raw is the smaller: the check asks which encoding the rectangle went in
 @note RRE is a win of fifty times on a real CADR screen and a loss of three
 @note times on a dither.  Taking it always is a decision that looks right
-@note until somebody draws a grey.
+@note until somebody draws a gray.
 @old
 			use_rre = rre_bytes < raw_bytes;
 @new
@@ -188,7 +188,7 @@
 @mutation an-all-ones-screen-is-not-called-blank
 @file screen_frame.c
 @why the blank check: an unwritten word of this board's DDR reads zero in some places and all ones in others, so both have to be named
-@note CLAUDE.md, measured on the first bring-up: uninitialised DDR reads as
+@note CLAUDE.md, measured on the first bring-up: uninitialized DDR reads as
 @note alternating bands of zeros and ones.  A program that only knew about
 @note zeros would serve a white screen and say nothing.
 @old
@@ -716,7 +716,7 @@ static int is_prefix(const struct key_map *m, uint32_t keysym)
 @mutation keys-go-as-fast-as-the-fabric-will-take-them
 @file screen_server.c
 @why twenty characters with no gap between them is the burst that arrived as nineteen on the board
-@note This is the fault as it stood: the card's own handshake is honoured ---
+@note This is the fault as it stood: the card's own handshake is honored ---
 @note the fabric sees to that whatever this program does --- and the words
 @note still go over about two ticks apart, which is a machine given its keys
 @note twenty nanoseconds apart.  It reads them all and digests some of them.

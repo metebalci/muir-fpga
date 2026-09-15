@@ -44,7 +44,7 @@
          system in front of its register faces. They are the figures that
          board's own drawing carries under its fabric label. A cell says yes
          only where that board itself has shown the thing, which is the same
-         claim the drawings' colours make. -->
+         claim the drawings' colors make. -->
     <div class="tablescroll" tabindex="0" role="region" aria-label="What each board is and what it does">
       <table class="boardtable">
         <thead>
@@ -116,7 +116,7 @@
   <div class="band">
     <div class="prose">
       <h2>The name</h2>
-      <p>muir-fpga is <a href="https://github.com/metebalci/muir">muir</a>'s RTL model of the CADR, synthesised into the fabric of an FPGA and held to muir tick for tick. muir is named for Nathan Muir, the character Robert Redford plays in <em>Spy Game</em> (2001). In memory of Robert Redford.</p>
+      <p>muir-fpga is <a href="https://github.com/metebalci/muir">muir</a>'s RTL model of the CADR, synthesized into the fabric of an FPGA and held to muir tick for tick. muir is named for Nathan Muir, the character Robert Redford plays in <em>Spy Game</em> (2001). In memory of Robert Redford.</p>
     </div>
   </div>
 </section>
@@ -124,9 +124,9 @@
 <section>
   <div class="band">
     <div class="prose">
-      <h2>Licence</h2>
+      <h2>License</h2>
       <p>The work in this repository is free software under the <b>GNU Affero General Public License, version 3 or later</b>. That is the fabric, the checks and their reference traces, the programs that run beside the machine, the documents and these pages alike. The full text is <a href="https://github.com/metebalci/muir-fpga/blob/main/LICENSE"><code>LICENSE</code> at the root of the repository</a>. Almost every file in it repeats that in its own header as the SPDX identifier <code>AGPL-3.0-or-later</code>, so a file taken out of the repository still says what it is.</p>
-      <p>Eight files are under the <b>GNU General Public License, version 2 or later</b> instead, four for each of the two Zynq boards. They are the Zynq start-up routine <code>ps7_init_gpl.c</code>, U-Boot's default environment, the board's device tree and the <code>-u-boot.dtsi</code> beside it. Each of the eight is compiled into U-Boot, which is itself under that licence, and the start-up routine's register tables are Digilent's board configuration as Xilinx's tool writes it out, whose own <code>ps7_init_gpl.c</code> carries the same terms. Every one of them says so in its own header.</p>
+      <p>Eight files are under the <b>GNU General Public License, version 2 or later</b> instead, four for each of the two Zynq boards. They are the Zynq start-up routine <code>ps7_init_gpl.c</code>, U-Boot's default environment, the board's device tree and the <code>-u-boot.dtsi</code> beside it. Each of the eight is compiled into U-Boot, which is itself under that license, and the start-up routine's register tables are Digilent's board configuration as Xilinx's tool writes it out, whose own <code>ps7_init_gpl.c</code> carries the same terms. Every one of them says so in its own header.</p>
     </div>
   </div>
 </section>
@@ -140,19 +140,19 @@
       <dl class="credits">
         <div>
           <dt>Ibex</dt>
-          <dd>lowRISC's RISC-V core, which is the soft processor on the Arty A7-100. It is in <code>third_party/ibex/</code> as published, pinned at commit <code>405c6d1d</code> rather than at a release because the project has none, under the <b>Apache License 2.0</b>. The primitives from lowRISC's own IP library that it depends on are under that directory in a <code>vendor/</code> of its own, under the same licence.</dd>
+          <dd>lowRISC's RISC-V core, which is the soft processor on the Arty A7-100. It is in <code>third_party/ibex/</code> as published, pinned at commit <code>405c6d1d</code> rather than at a release because the project has none, under the <b>Apache License 2.0</b>. The primitives from lowRISC's own IP library that it depends on are under that directory in a <code>vendor/</code> of its own, under the same license.</dd>
         </div>
         <div>
           <dt>Digilent's pin files</dt>
-          <dd>Pins come from Digilent's published master constraint files and never from memory, because a wrong pin is a light that does not come on. Digilent publishes them under the <b>MIT License</b>. The Cora Z7-07S's and the Arty A7-100's master files are in their board directories byte for byte as published, each beside a copy of that licence as <code>Digilent-License.txt</code>. The Arty Z7-20's own constraint file copies out the handful of pins that design uses rather than carrying the master file, and cites the commit and digest it read them from.</dd>
+          <dd>Pins come from Digilent's published master constraint files and never from memory, because a wrong pin is a light that does not come on. Digilent publishes them under the <b>MIT License</b>. The Cora Z7-07S's and the Arty A7-100's master files are in their board directories byte for byte as published, each beside a copy of that license as <code>Digilent-License.txt</code>. The Arty Z7-20's own constraint file copies out the handful of pins that design uses rather than carrying the master file, and cites the commit and digest it read them from.</dd>
         </div>
         <div>
           <dt>Digilent's memory settings</dt>
-          <dd>The Arty A7-100's DDR3L timing comes from Digilent's own project file for that board, <code>mig-digilent-E.0-1.1.prj</code>, kept byte for byte as published by Digilent in <code>github.com/Digilent/vivado-boards</code>. The repository records the commit, the path and a digest for it; it does not record a licence for that repository, and none is assumed here.</dd>
+          <dd>The Arty A7-100's DDR3L timing comes from Digilent's own project file for that board, <code>mig-digilent-E.0-1.1.prj</code>, kept byte for byte as published by Digilent in <code>github.com/Digilent/vivado-boards</code>. The repository records the commit, the path and a digest for it; it does not record a license for that repository, and none is assumed here.</dd>
         </div>
         <div>
           <dt>The memory controller</dt>
-          <dd>That project file is the input to Xilinx's Memory Interface Generator, and what the generator writes is committed under <code>boards/arty-a7-100/mig/gen/</code>. Thirty-four of those seventy-three files carry Xilinx's own copyright notice and disclaimer, which grants nothing beyond a licence Xilinx itself issues and asks that the notice stay with the file. They are kept exactly as the generator wrote them.</dd>
+          <dd>That project file is the input to Xilinx's Memory Interface Generator, and what the generator writes is committed under <code>boards/arty-a7-100/mig/gen/</code>. Thirty-four of those seventy-three files carry Xilinx's own copyright notice and disclaimer, which grants nothing beyond a license Xilinx itself issues and asks that the notice stay with the file. They are kept exactly as the generator wrote them.</dd>
         </div>
         <div>
           <dt>muir</dt>
@@ -160,7 +160,7 @@
         </div>
         <div>
           <dt>Buildroot, U-Boot, Linux</dt>
-          <dd>The Linux side of a Zynq board is built rather than copied. The build fetches Buildroot 2026.02.3, and through it U-Boot 2026.01 and Linux 6.19.14, each under its own licence, which for the loader and the kernel is the GPL, version 2. Nothing of theirs is in this repository. The only files of this project's that are compiled into them are the four per board named above.</dd>
+          <dd>The Linux side of a Zynq board is built rather than copied. The build fetches Buildroot 2026.02.3, and through it U-Boot 2026.01 and Linux 6.19.14, each under its own license, which for the loader and the kernel is the GPL, version 2. Nothing of theirs is in this repository. The only files of this project's that are compiled into them are the four per board named above.</dd>
         </div>
         <div>
           <dt>Archivo, IBM Plex Mono</dt>
@@ -168,7 +168,7 @@
         </div>
         <div>
           <dt>MIT's own files</dt>
-          <dd>The drawings on the page about the real machine, and the behaviour every check in this project is held to, are read from MIT's engineering files: the drawings, wire lists, print sets and PROM images the AI Laboratory wrote between 1977 and 1981, and MIT's system software beside them. None of it is in this repository. muir carries it, recovered from the ITS backup tapes and unmodified. No statement of terms came with the engineering files and none is made up for them; the system release states its own, which is the AGPL, version 3 or later.</dd>
+          <dd>The drawings on the page about the real machine, and the behavior every check in this project is held to, are read from MIT's engineering files: the drawings, wire lists, print sets and PROM images the AI Laboratory wrote between 1977 and 1981, and MIT's system software beside them. None of it is in this repository. muir carries it, recovered from the ITS backup tapes and unmodified. No statement of terms came with the engineering files and none is made up for them; the system release states its own, which is the AGPL, version 3 or later.</dd>
         </div>
       </dl>
     </div>

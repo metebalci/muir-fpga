@@ -44,7 +44,7 @@
 //
 // **THE TWO PORTS CAN NAME ONE WORD AND NOTHING ARBITRATES THEM.**  Port B
 // writing while port A fetches the same address gives port A the old word,
-// which is the block RAM's own behaviour for two ports in one cycle, and a
+// which is the block RAM's own behavior for two ports in one cycle, and a
 // firmware that wrote over the instruction it was about to execute would be
 // doing something no firmware here does.  It is stated rather than guarded:
 // a guard would cost a cycle on every fetch to make a case nobody reaches

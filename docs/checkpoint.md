@@ -173,7 +173,7 @@ written at the value the fabric behaves as.
 against a model of the console's window on the build host — no board, no
 fabric, nothing but a C compiler — and then hands the file it writes to muir.
 
-The round trip is the centre of it: muir loads the file and saves it back, and
+The round trip is the center of it: muir loads the file and saves it back, and
 the two are compared **byte for byte**. That is muir's own round-trip property
 and it holds the framing — every field at the offset muir's reader expects,
 every array's count, every flag a 0 or a 1, every range check passed, and the

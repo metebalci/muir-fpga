@@ -52,7 +52,7 @@
 // hold.  `tb/cadr_disk_pack_tb.cpp` STARTs a transfer during a fill and
 // requires the miss.
 //
-// **AND THE CHANNEL'S INTERLOCK IS HONOURED, BOTH WAYS, AND IT IS PER
+// **AND THE CHANNEL'S INTERLOCK IS HONORED, BOTH WAYS, AND IT IS PER
 // SLOT.**  `ch_active` is the controller's own BUSY for a transfer, and
 // `ch_slot` the slot the walk is on: while the channel is active and not
 // waiting, a move on THAT slot is refused --- not queued, because a request
@@ -157,7 +157,7 @@
 // **THE GP0 FACE IS A SLAVE TO A 32-BIT AXI3 MASTER, AND IT IS SMALL ON
 // PURPOSE.**  A register access from the CPU is a single beat on an
 // uncached mapping; this accepts a burst of any length and walks the
-// address up a word a beat so that it is never surprised, honours the byte
+// address up a word a beat so that it is never surprised, honors the byte
 // strobes so a `writeb` does what it says, and answers reads a beat at a
 // time with RLAST on the last.  One write and one read may be in flight at
 // once, because the two halves of AXI are independent and the CPU's

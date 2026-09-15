@@ -69,7 +69,7 @@
 #
 # WHAT EACH CASE CHECKS, BEYOND THE ONE WORD.
 #
-#   - `PROVE_ECHO`'s NEIGHBOUR, 0x18A72F1C, is the other half of its 64-bit
+#   - `PROVE_ECHO`'s NEIGHBOR, 0x18A72F1C, is the other half of its 64-bit
 #     beat and must still hold 0x3C7A91D6.  The write-back goes through
 #     `cadr_axi_widen.sv` like any other write, so a strobe pattern that
 #     opened both halves would destroy it --- the same check step two makes
@@ -254,7 +254,7 @@ say "  device identity              [hex $device]  wanted 0x03727093 (XC7Z020)"
 if {$device != 0x03727093} {
     say "FAILED at 0xF8000530 --- PSS_IDCODE is not an XC7Z020's."
     say "FAILED   read [hex $idcode], device identity [hex $device], wanted"
-    say "FAILED   0x03727093.  Nothing below is initialised or programmed"
+    say "FAILED   0x03727093.  Nothing below is initialized or programmed"
     say "FAILED   against a part this routine was not written for."
     bye 1
 }

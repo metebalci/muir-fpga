@@ -332,7 +332,7 @@ module cadr_dbg_cable #(
   // of a group to itself and the one data line has the second.  A guard is
   // driven and not left floating: a quiet line beside a switching one is only
   // quiet if something holds it, and a floating line is a capacitor the
-  // neighbour charges.
+  // neighbor charges.
   //
   // | index | header pin | forward group | return group |
   // |---|---|---|---|
@@ -706,7 +706,7 @@ module cadr_dbg_cable #(
   // GUARDS.**  `pin_o` starts at zero, so the two lines named `*_GD*` go out
   // LOW whenever their group is enabled: that is the whole of the guard, and
   // it has to be a DRIVEN low rather than a pad left out of the enable, or the
-  // line beside the strobe is a floating capacitor its neighbour charges.
+  // line beside the strobe is a floating capacitor its neighbor charges.
   // Enabling all four also keeps the pad groups the console reports and
   // `build/dbg_cable.pass` asserts against --- the low four or the high four,
   // never a subset of one.

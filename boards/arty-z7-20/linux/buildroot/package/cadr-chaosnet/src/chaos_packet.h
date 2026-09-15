@@ -113,7 +113,7 @@ struct chaos_frame {
 // a packet at all --- fewer than the header and trailer, or a byte count that
 // does not agree with the length, which AIM-628 §5.1's meters count as
 // "rejected for a length that is not a multiple of 16 bits" and its
-// neighbours.  `why` is filled with a sentence if it is not NULL.
+// neighbors.  `why` is filled with a sentence if it is not NULL.
 int chaos_frame_parse(const uint16_t *words, unsigned n, struct chaos_frame *out,
 		      const char **why);
 

@@ -274,7 +274,7 @@ static unsigned a_frame(uint16_t *out, unsigned data_len)
 	p.source_index = 021;
 	p.number = 1;
 	p.len = (uint16_t)data_len;
-	// Every byte different from its neighbours and from its own index's low
+	// Every byte different from its neighbors and from its own index's low
 	// bits, so a swap, a shift or a lost byte shows.
 	for (unsigned k = 0; k < data_len; ++k)
 		p.data[k] = (uint8_t)(0x41u + (k % 59u));
@@ -473,7 +473,7 @@ static void check_give(struct chaos_face *f, struct face_model *m)
 	CHECK(m->lost == lost + 1u, "the fabric's refusal was not counted");
 	m->rx_armed = 1;
 
-	// **Loop Back is honoured rather than ignored.**  `csr::LOOP_BACK` is a
+	// **Loop Back is honored rather than ignored.**  `csr::LOOP_BACK` is a
 	// maintenance mode in which the fabric carries the machine's own
 	// packets back to it; a frame injected then would arrive as though the
 	// machine had sent it to itself.  Nothing is offered at all, so the

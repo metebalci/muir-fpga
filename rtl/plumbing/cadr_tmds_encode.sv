@@ -4,14 +4,14 @@
 // One TMDS channel's 8b/10b encoder, from the DVI 1.0 specification.
 //
 // THERE IS NO muir REFERENCE FOR THIS AND THERE CANNOT BE.  Nothing in MIT's
-// drawings is a serial link to a monitor: the SIMPLE TV drove a analogue
+// drawings is a serial link to a monitor: the SIMPLE TV drove a analog
 // video signal off a sync program and a shift register, and what this file
 // encodes for is a connector that did not exist.  So it is held to a
 // SPECIFICATION rather than to a model, the way `cadr_axi_master.sv` is:
 // DVI 1.0, section 3.2.2, "Encode Algorithm", figure 3-5.
 //
 // THE ALGORITHM, AND THE ONE PLACE IT IS EASY TO GET SUBTLY WRONG.  A pixel
-// is turned into ten bits in two stages.  The first minimises transitions:
+// is turned into ten bits in two stages.  The first minimizes transitions:
 // count the ones in the byte, and if there are more than four --- or exactly
 // four with bit 0 clear --- build the intermediate word with XNOR and mark it
 // with a clear ninth bit, otherwise with XOR and a set one.  The second
@@ -30,15 +30,15 @@
 // model, and compares all 256 byte values in each of them.
 //
 // **A CONTROL PERIOD RESETS THE DISPARITY TO ZERO.**  That is in the
-// specification and it is not an optimisation: the four control tokens are
-// balanced by construction, and a receiver resynchronises on them.  It is
+// specification and it is not an optimization: the four control tokens are
+// balanced by construction, and a receiver resynchronizes on them.  It is
 // also what makes the encoder's state space small enough to search
 // exhaustively, since every frame's blanking returns it to a known state.
 //
 // THE FOUR CONTROL TOKENS ARE CONSTANTS AND ARE WRITTEN OUT IN BINARY, in
 // the specification's own bit order, so that they can be read against it
 // rather than decoded from hexadecimal.  They are transmitted least
-// significant bit first, which is the serialiser's business and not this
+// significant bit first, which is the serializer's business and not this
 // module's.
 
 `default_nettype none

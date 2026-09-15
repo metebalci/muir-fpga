@@ -20,7 +20,7 @@
 // `mem_*` is already a four-phase handshake and already one transaction at a
 // time: `mem_req` is a LEVEL held up until `mem_done`, and `mem_done` stands
 // until `mem_req` falls.  So the crossing is two levels through two
-// synchronisers each, and the payload never needs one --- it is stable for
+// synchronizers each, and the payload never needs one --- it is stable for
 // two clocks of the far side before the level that announces it arrives, and
 // stable again for two clocks before the level that announces the answer goes
 // back.  That is the standard argument and it is made good by construction
@@ -29,7 +29,7 @@
 //   * the request payload is REGISTERED ON THIS SIDE at the rise of
 //     `a_mem_req`, and `req` does not go out until the cycle after, so the
 //     payload has been standing still for at least one A clock plus the two B
-//     clocks of the synchroniser before anything on the B side looks at it;
+//     clocks of the synchronizer before anything on the B side looks at it;
 //   * the answer is REGISTERED ON THE FAR SIDE when `b_mem_done` rises, and
 //     `ack` does not go back until the cycle after, by the same argument.
 //
@@ -82,7 +82,7 @@ module cadr_mem_cross (
   logic        write_q;
   logic [31:0] addr_q, wdata_q;
 
-  // The far side's answer, synchronised back.
+  // The far side's answer, synchronized back.
   logic [1:0]  ack_sync;
   logic        ack_a;
   assign ack_a = ack_sync[1];

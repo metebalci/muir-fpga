@@ -78,7 +78,7 @@
 // than noticing: an instrument that can change what it measures is not one.
 //
 // WHAT IT COSTS, MEASURED AND NOT ESTIMATED.  Out of context on
-// `xc7z020clg400-1` under Vivado 2026.1, this module alone synthesises to
+// `xc7z020clg400-1` under Vivado 2026.1, this module alone synthesizes to
 // **95 slice LUTs (0.18%), 347 slice registers (0.33%) and 16 carry cells**
 // --- 103 LUT cells before packing --- no DSP and no block RAM, and closes at
 // the 10 ns tick with **+5.790 ns**, worst path

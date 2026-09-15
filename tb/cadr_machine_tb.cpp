@@ -513,7 +513,7 @@ int main(int argc, char **argv) {
     // tried: `tb/cadr_busint_xbus_tb.cpp` already does it that way and says
     // why.  It is not here because on its own it turns this check red on 58
     // microcycles, each exactly one 220 ns wait long, which nobody has
-    // characterised.  See the `RD_FINISH_T` comment in
+    // characterized.  See the `RD_FINISH_T` comment in
     // `rtl/machine/cadr_microcycle.sv` and issue #11.
     //
     // Anyone re-deriving these numbers should move the observation first and
@@ -876,7 +876,7 @@ int main(int argc, char **argv) {
   if (halts) {
     std::fprintf(stderr,
                  "FAIL: the machine halted on %ld microcycles; MACHRUN going "
-                 "down is not modelled here\n",
+                 "down is not modeled here\n",
                  halts);
     ++thin;
   }

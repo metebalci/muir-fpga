@@ -108,7 +108,7 @@ int usb_kbd_key(struct usb_kbd_state *k, uint16_t code, int value,
 	const int down = value != 0;
 
 	// **SHIFT IS TRACKED BEFORE THE LEVEL IS CHOSEN AND SENT LIKE ANY
-	// OTHER KEY.**  Before, because a Shift going down must colour the
+	// OTHER KEY.**  Before, because a Shift going down must color the
 	// keys after it and not itself; `Shift_L` has one keysym, so its own
 	// level cannot matter.
 	if (code == KEY_LEFTSHIFT_C)

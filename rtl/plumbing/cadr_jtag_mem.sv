@@ -7,7 +7,7 @@
 // ever claimed about a memory path on silicon rests on an observer OUTSIDE the
 // design under test.  On the Arty Z7-20 that observer is the JTAG debugger
 // reading DDR through the processing system: `vivado/prove_write.tcl` poisons
-// a neighbourhood, the fabric writes one word into it, and the debugger reads
+// a neighborhood, the fabric writes one word into it, and the debugger reads
 // it back --- and the two never share a wire, because UG585's own port table
 // puts the debug access port on a different DDR controller port from the one
 // the fabric uses.
@@ -110,7 +110,7 @@ module cadr_jtag_mem #(
     //
     // **WITHOUT IT NOBODY COULD RUN THE MEMORY STEP WITH NOBODY AT THE
     // BOARD.**  The machine reaches its first main-memory cycle 118 ms after
-    // its own reset and a debugger needs seconds to poison a neighbourhood
+    // its own reset and a debugger needs seconds to poison a neighborhood
     // through this register, so the poison would always arrive after the
     // machine had already read.  On the Arty Z7-20 the processing system's own
     // port gate did this --- poison, then `ps7_post_config`, then the fabric
@@ -177,7 +177,7 @@ module cadr_jtag_mem #(
   // register has stopped moving before it --- the last shift is in EXIT1-DR,
   // and the next data-register clock is the following scan's CAPTURE.  So the
   // whole of `sr` is standing still by the time this sees the pulse two clocks
-  // later, and it is sampled straight rather than through 160 synchronisers.
+  // later, and it is sampled straight rather than through 160 synchronizers.
   // That is the same argument `cadr_mem_cross` makes for the payload it
   // carries, and it is the argument that has to be true for either to work.
   logic [2:0] upd_sync;

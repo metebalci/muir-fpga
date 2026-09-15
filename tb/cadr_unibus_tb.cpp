@@ -1639,7 +1639,7 @@ int main(int argc, char **argv) {
   // purpose, so that a check which supplies the answer cannot be the thing
   // that tests it; so what makes each bit true here is the machine being
   // driven, and the byte is read back over the cable.  A bit misplaced by one
-  // in the join lands on a neighbour this section has just measured clear.
+  // in the join lands on a neighbor this section has just measured clear.
   long cable_strobes = 0, cable_cycles = 0, cable_reads = 0, cable_writes = 0;
   long cable_mapped = 0, cable_status_reads = 0, cable_unanswered = 0;
   long md_writes_seen = 0;

@@ -41,7 +41,7 @@
 #
 #   2. THAT THE MACHINE IS STILL THERE. `cadr_machine` brings its whole
 #      datapath out for the testbenches, and a top level that left those
-#      unconnected would synthesise to nearly nothing and write a perfectly
+#      unconnected would synthesize to nearly nothing and write a perfectly
 #      good bitstream of an empty part. `cadr_arty_a7.sv` folds every output
 #      into one register to prevent it; this checks that it worked.
 #
@@ -176,9 +176,9 @@ if {$soc == 0} {
 # SystemVerilog, and only when it is going to be used.
 #
 # **IT IS READ AS SOURCE AND NOT AS AN IP.**  Vivado's project-mode IP flow
-# would synthesise it out of context into a checkpoint and stitch that in;
+# would synthesize it out of context into a checkpoint and stitch that in;
 # reading the generated files is what this repository does with everything
-# else, it keeps this flow one `synth_design` with no intermediate artefact to
+# else, it keeps this flow one `synth_design` with no intermediate artifact to
 # go stale, and the generated Verilog is plain and unencrypted.
 #
 # And `boards/arty-a7-100/cadr_a7_memory.sv` --- which names the generated
@@ -242,7 +242,7 @@ if {$memory} {
 }
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
-    puts "BIT: not the one the utilisation and timing figures in README.md"
+    puts "BIT: not the one the utilization and timing figures in README.md"
     puts "BIT: describe."
 }
 
@@ -250,7 +250,7 @@ if {$probe_depth > 0} {
 #
 # THE MACHINE'S FILE IS READ SCOPED, and that is not tidiness. Unscoped, its
 # `$slow` set is `all_registers` minus a name list, and on a board
-# `all_registers` includes the top level's own --- the reset synchroniser, the
+# `all_registers` includes the top level's own --- the reset synchronizer, the
 # button's debounce counter, the free-running heartbeat, the microcycle beat,
 # the disk lamp's one-shot --- each of which would take a fifteen-tick
 # multicycle written for a datapath. `-ref cadr_machine` makes `all_registers`
@@ -391,7 +391,7 @@ source boards/arty-z7-20/vivado/constraints_check.tcl
 set inside u_machine
 if {$probe_depth > 0} { lappend inside g_probe.u_probe }
 # **AND THE GENERATED CONTROLLER, WHICH CARRIES EXCEPTIONS OF ITS OWN.**  Its
-# constraints relax a read-idle register onto the input serialisers by six
+# constraints relax a read-idle register onto the input serializers by six
 # memory clocks, which at 3.077 ns is 18.5 --- more than one of the machine's
 # ticks and a half, so the check would catch it and be right to, if the
 # exception were the machine's.  It is not: it is the controller's, written
@@ -421,7 +421,7 @@ lappend inside u_dbg_cable
 # be an exemption too wide, which is the failure this repository records more
 # often than any other, so `assert_soc_domain_timed` below asks the same
 # question of those registers against THEIR OWN period.  Everything else in
-# `g_soc` --- the three faces, which are the machine's neighbours --- stays in
+# `g_soc` --- the three faces, which are the machine's neighbors --- stays in
 # the list and is still held to the tick.
 if {$soc != 0} { lappend inside g_soc.u_soc }
 # **AND THIS CALL IS WEAKER THAN IT LOOKS WITH TWO CLOCKS IN THE DESIGN, WHICH
@@ -466,7 +466,7 @@ proc assert_soc_domain_timed {instance period} {
                    "PRIMITIVE_GROUP == FLOP_LATCH && NAME =~ ${instance}/*"]
     if {[llength $cells] == 0} {
         puts "XDC: FAILED --- no registers matched $instance, so the soft"
-        puts "XDC: processing system was optimised away or renamed. Either is"
+        puts "XDC: processing system was optimized away or renamed. Either is"
         puts "XDC: a finding and neither is a pass."
         exit 1
     }
@@ -532,7 +532,7 @@ if {$soc != 0} {
         if {$n == 0} {
             puts "BIT: FAILED --- no path at all runs from\
  [get_property NAME $from] to [get_property NAME $to] ($what)."
-            puts "BIT: Either the crossing was optimised away or the two"
+            puts "BIT: Either the crossing was optimized away or the two"
             puts "BIT: clocks are not the ones cadr_soc.xdc named. An"
             puts "BIT: exception that reaches no path is the failure that"
             puts "BIT: looks exactly like a build that finished."
@@ -676,7 +676,7 @@ set luts  [llength [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == LUT}]]
 set brams [llength [get_cells -quiet -hier -filter {PRIMITIVE_TYPE =~ BMEM.*.*}]]
 set ffs   [llength [get_cells -quiet -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]]
 puts "BIT: $luts LUTs, $ffs registers, $brams block RAMs"
-# THESE THREE ARE CELL COUNTS AND NOT THE UTILISATION REPORT'S, and the two do
+# THESE THREE ARE CELL COUNTS AND NOT THE UTILIZATION REPORT'S, and the two do
 # not agree by construction --- so the floors below must be read against these
 # and not against the figures anybody quotes. The report counts sites, two LUT5
 # cells often sharing one, and adds the sites holding distributed RAM, which
@@ -688,7 +688,7 @@ puts "BIT: $luts LUTs, $ffs registers, $brams block RAMs"
 # moved.
 if {$luts < 1500 || $brams < 20} {
     puts "BIT: FAILED --- that is not the whole machine."
-    puts "BIT: Something upstream has optimised the datapath away, which"
+    puts "BIT: Something upstream has optimized the datapath away, which"
     puts "BIT: happens when the top level does not use what cadr_machine brings"
     puts "BIT: out. A bitstream of an empty part is the failure to look for."
     exit 1

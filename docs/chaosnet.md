@@ -343,7 +343,7 @@ silent over all 524,288 directions of an eighteen-bit address, read and
 written, a real bus cycle each. 63 mutation records, all caught.
 
 It has a second configuration now. The 2651's parity and framing flags cannot
-be held to muir at all, because muir's behavioural chip raises neither, so that
+be held to muir at all, because muir's behavioral chip raises neither, so that
 configuration drives the two seam inputs itself and holds the Signetics sheet.
 
 `unibus` holds the composed claim, that the machine's own bus cycle reaches

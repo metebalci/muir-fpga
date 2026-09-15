@@ -10,7 +10,7 @@
 # **NAME THE CABLE, ALWAYS.**  More than one board can be on one host's USB,
 # and `[lindex [get_hw_targets] 0]` then programs whichever the server
 # enumerated first --- which is not a fault anybody sees until the wrong board
-# changes behaviour.  The serial number is printed on the FTDI device and is
+# changes behavior.  The serial number is printed on the FTDI device and is
 # what `get_hw_targets` puts in the target's own name, so this script matches
 # on it and stops when it matches none or more than one.  `CABLE` has no
 # default for the same reason `tick.tcl` has no fallback period: a default
@@ -136,18 +136,18 @@ if {$after != 1} {
 }
 if {![build_stamp_verdict "PROG:" $want $ubefore $uafter]} { exit 1 }
 # Not "DONE is high" any more: the lines above say what was checked, and
-# DONE was never the thing worth summarising.
+# DONE was never the thing worth summarizing.
 puts "PROG: programmed [file tail $bit]"
 puts "PROG: **THE LAMP NUMBERS ON THIS BOARD ARE NOT THE OTHER BOARD'S.**"
 puts "PROG: This board silkscreens its four green LEDs LD4 to LD7 and its four"
-puts "PROG: tricolour ones LD0 to LD3. Expect the green LD5 blinking at about"
+puts "PROG: tricolor ones LD0 to LD3. Expect the green LD5 blinking at about"
 puts "PROG: 1.5 Hz --- the fabric's own clock --- and the green LD6 blinking"
 puts "PROG: with the microcycles, every 0.28 s, and STAYING lit and unlit in"
 puts "PROG: turn: with no memory the machine does not stop, it runs about a"
 puts "PROG: fifth slower once every main-memory cycle ends on the 4.25 us"
 puts "PROG: timer. The green LD4 is MACHRUN and DIMS from that point rather"
-puts "PROG: than going out. The tricolour LD1 is blue while the machine is in"
-puts "PROG: its boot PROM, which here is for ever. **The tricolour LD0 should"
+puts "PROG: than going out. The tricolor LD1 is blue while the machine is in"
+puts "PROG: its boot PROM, which here is for ever. **The tricolor LD0 should"
 puts "PROG: stay DARK**: it lights for the machine's own error halt and for"
 puts "PROG: nothing else, and a timeout is not one. README.md tabulates all"
 puts "PROG: six."

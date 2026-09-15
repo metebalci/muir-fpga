@@ -16,8 +16,8 @@
 //      wrong place and agrees with itself.
 //   2. A write lands in ITS OWN LANE of the sixteen-byte block and in no
 //      other.  That is the fault this family of module actually makes, and
-//      the model's poison --- injective in the address, so a neighbour's word
-//      is recognisably a neighbour's --- is what makes it visible.
+//      the model's poison --- injective in the address, so a neighbor's word
+//      is recognizably a neighbor's --- is what makes it visible.
 //   3. The controller's own protocol, watched in the model: an aligned block
 //      address, a write burst that ends, a command held still until it is
 //      taken, and write data that never arrives more than two user clocks
@@ -177,7 +177,7 @@ Scan ScanDr(const unsigned in[5]) {
   }
   dut->jtag_shift = 0;
   // UPDATE-DR.  **HELD FOR TEN OF THE MACHINE'S TICKS AND NOT ONE.**  The
-  // fabric synchronises this pulse into its own clock with three registers, so
+  // fabric synchronizes this pulse into its own clock with three registers, so
   // a pulse shorter than a few ticks can be missed --- and a real test access
   // port runs at a few megahertz, where this is microseconds.  Written short
   // the first time, it made the window miss about one command in ten and read
@@ -349,7 +349,7 @@ int main(int argc, char **argv) {
       for (int l = 0; l < 4; ++l) {
         unsigned got = Peek(base + 4 * l);
         unsigned want = l == 2 ? v : Poison(base + 4 * l);
-        if (got != want) Fail("a neighbouring lane", got, want);
+        if (got != want) Fail("a neighboring lane", got, want);
         ++neighbours_checked;
       }
       // ...and the blocks either side are untouched, which is what a dropped
@@ -357,7 +357,7 @@ int main(int argc, char **argv) {
       for (int d = -16; d <= 16; d += 32) {
         unsigned a = base + 8 + d;
         unsigned got = Peek(a);
-        if (got != Poison(a)) Fail("a neighbouring block", got, Poison(a));
+        if (got != Poison(a)) Fail("a neighboring block", got, Poison(a));
         ++neighbours_checked;
       }
     }
@@ -552,7 +552,7 @@ int main(int argc, char **argv) {
               {"reads", reads},
               {"reads matched against an earlier write", reads_checked},
               {"lanes of one block read back", lanes_checked},
-              {"neighbours found untouched", neighbours_checked},
+              {"neighbors found untouched", neighbours_checked},
               {"addresses outside the reservation refused", refused},
               {"transactions through the debugger's window", window_ops},
               {"contended pairs", contended},
@@ -569,7 +569,7 @@ int main(int argc, char **argv) {
       "ok: the A7's memory path agrees with a model of the controller\n"
       "    two clock ratios, 100 MHz against 83.3 and 71.4\n"
       "    %ld writes and %ld reads, %ld of them matched against a write\n"
-      "    %ld lanes of a block and %ld neighbours, all where they belong\n"
+      "    %ld lanes of a block and %ld neighbors, all where they belong\n"
       "    %ld addresses outside the reservation refused with a zero word\n"
       "    %ld transactions through the debugger's window, %ld contended\n"
       "    %ld waited on a refused command and %ld on refused write data\n"

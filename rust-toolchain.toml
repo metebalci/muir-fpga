@@ -11,7 +11,7 @@
 # rights: rustup resolves the toolchain from the working directory and its
 # ancestors, not from --manifest-path, and the Makefile runs
 # `cargo --manifest-path golden/Cargo.toml` from here. A file in golden/ would
-# be silently ignored by every `make check` and honoured only by someone who
+# be silently ignored by every `make check` and honored only by someone who
 # happened to cd there first. From here it covers both.
 [toolchain]
 channel = "1.99.0-beta.4"

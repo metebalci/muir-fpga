@@ -85,7 +85,7 @@
 // two are MIT's program with ten bits of one word changed, and **muir has no
 // trace of them**: no generator in `golden/` takes a PROM argument, so those
 // runs are held to the columns a changed constant cannot move --- the
-// instruction stream, the control flow, and the map and permission behaviour
+// instruction stream, the control flow, and the map and permission behavior
 // muir's rule above predicts.  That is weaker than `map_boot`'s comparison and
 // stronger than a fabric-only property, and the output says which claim is
 // which rather than letting a reader assume.

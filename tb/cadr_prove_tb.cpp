@@ -78,7 +78,7 @@
 //   THE PAYLOAD IS WHAT WAS ASKED FOR AND NOT WHAT THE INPUTS SAY BY NOW.
 //   Once a sequence is under way the testbench SCRIBBLES over `addr`, `word`,
 //   `echo_addr` and `writes` --- with the complement of the word and each
-//   address moved into the neighbouring lane, so that a witness reading its
+//   address moved into the neighboring lane, so that a witness reading its
 //   inputs instead of its own registers lands in the wrong half and compares
 //   against poison.  On the board those four are tied to constants and none of
 //   this could ever show; here it is what makes the latching load-bearing, and
@@ -460,7 +460,7 @@ int main(int argc, char **argv) {
                                    exp_word);
         // Apply it the way a slave would: byte by byte, under the strobes.
         // A strobe pattern that opened both halves therefore destroys the
-        // neighbour here exactly as it would on the board.
+        // neighbor here exactly as it would on the board.
         unsigned long long cur = mem[want_beat];
         unsigned long long nw = cur;
         for (int b = 0; b < 8; ++b) {
@@ -543,7 +543,7 @@ int main(int argc, char **argv) {
 
     // THE INPUTS GO BAD ONCE THE PAYLOAD IS TAKEN. See the header: a witness
     // that read these instead of its own registers would address the
-    // neighbouring lane and compare against the complement of the word.
+    // neighboring lane and compare against the complement of the word.
     if (in_flight && tphase == WAITING && dut->mem_addr == want_addr) {
       dut->addr = want_addr ^ 4u;
       dut->word = ~want_word;
@@ -600,7 +600,7 @@ int main(int argc, char **argv) {
           unsigned nbr = (want_addr & 4u) ? lo : hi;
           if (got != want_word) Fail("the word in memory", got, want_word);
           if (nbr != (~want_word & 0xFFFFFFFFu)) {
-            Fail("the neighbour in the beat", nbr, ~want_word & 0xFFFFFFFFu);
+            Fail("the neighbor in the beat", nbr, ~want_word & 0xFFFFFFFFu);
           }
           ++neighbour_cases;
         }
@@ -623,7 +623,7 @@ int main(int argc, char **argv) {
 
         // WHAT THE OBSERVER OUTSIDE WOULD READ. The word that came back,
         // written out raw at the second address --- and the second address's
-        // neighbour, which a strobe pattern opening both halves destroys.
+        // neighbor, which a strobe pattern opening both halves destroys.
         if (err_stage != 1) {
           unsigned long long ebeat = mem[want_echo & ~7u];
           unsigned elo = static_cast<unsigned>(ebeat);
@@ -635,7 +635,7 @@ int main(int argc, char **argv) {
           }
           ++echoes_checked;
           if (enbr != echo_fill) {
-            Fail("the neighbour of the second address", enbr, echo_fill);
+            Fail("the neighbor of the second address", enbr, echo_fill);
           }
           ++echo_neighbours;
         }
@@ -680,10 +680,10 @@ int main(int argc, char **argv) {
   std::printf("prove: %ld writes, %ld reads, %ld matched, %ld did not\n",
               writes_done, reads_done, matches, mismatches);
   std::printf("prove: %ld errors injected, %ld wrong-half reads, "
-              "%ld neighbours checked\n",
+              "%ld neighbors checked\n",
               errors_injected, lane_cases, neighbour_cases);
   std::printf("prove: %ld words written back and compared, %ld of their "
-              "neighbours checked\n", echoes_checked, echo_neighbours);
+              "neighbors checked\n", echoes_checked, echo_neighbours);
   std::printf("prove: %ld reads left the beat they came out of untouched\n",
               read_beats_intact);
   std::printf("prove: %ld sequences re-armed by a reset under a held `go`\n",

@@ -41,7 +41,7 @@ jobs:
 
       # muir at the commit `muir.commit` names, not whatever main happens to
       # be that morning: every reference trace in golden/ is muir's own
-      # behaviour written down, so the pair is what is under test. Read here
+      # behavior written down, so the pair is what is under test. Read here
       # rather than hard-coded so that moving the pin is one edit.
       - name: Read muir's pin
         id: muir

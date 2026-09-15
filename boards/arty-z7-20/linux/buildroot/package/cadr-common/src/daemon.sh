@@ -4,10 +4,10 @@
 # STARTING A DAEMON SO THAT A FLAG IT REFUSES IS NOT SILENT.
 #
 # **THE FAULT THIS EXISTS FOR.**  Every one of these programs refuses a flag it
-# does not know --- muir's behaviour, and the property the card's one file of
+# does not know --- muir's behavior, and the property the card's one file of
 # flags is built on, because a flag quietly ignored is a setting somebody wrote
 # down and did not get.  But a refusal is a line on stderr, and an init script
-# starts its program with `start-stop-daemon -b`, which daemonises it and sends
+# starts its program with `start-stop-daemon -b`, which daemonizes it and sends
 # stdout and stderr to /dev/null.  So the program printed its refusal into
 # nothing, start-stop-daemon reported that it had forked successfully, and the
 # script printed OK.  That is the exact shape of the carriage return that once

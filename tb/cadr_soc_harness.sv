@@ -367,7 +367,7 @@ module cadr_soc_harness #(
       .con_ro_addr(con_ro_addr), .con_ro_data(con_ro_data),
       .con_ro_echo(con_ro_echo),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .n_boot2(n_boot2),
-      // SW0, synchronised, read at the machine's own reset arms and nowhere
+      // SW0, synchronized, read at the machine's own reset arms and nowhere
       // else --- the block above `cadr_machine` here says the whole of it ---
       // and `-BOOT` on its way back out, for the error lamp to be cleared by.
       .no_auto_boot(sw0_level), .n_boot_o(n_boot),

@@ -43,7 +43,7 @@
 //   and waiting to coalesce would only add latency.
 //
 // **THE CHIP IS THE FABRIC'S AND ITS TIMING STAYS THERE.**  `serial_face.h`
-// says it and this file obeys it: no baud rate is modelled, no character
+// says it and this file obeys it: no baud rate is modeled, no character
 // frame is assembled, nothing here counts a bit time.  The port takes its own
 // frame time over each character either way, so a burst read off the socket
 // in one turn is still received one frame at a time by the machine.  Two

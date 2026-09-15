@@ -54,7 +54,7 @@
 // **2. WHICH LANE.**  Those sixteen bytes arrive on `app_rd_data[127:0]` and
 // leave on `app_wdf_data[127:0]`, least significant byte first, so the 32-bit
 // word at byte address B is at bit `32 * B[3:2]`.  Getting this wrong reads
-// and writes a neighbour three words away and is the classic fault this
+// and writes a neighbor three words away and is the classic fault this
 // family of module has: `cadr_axi_widen`'s header records the same thing one
 // size down, and the board's proving step is written to catch exactly it.
 //

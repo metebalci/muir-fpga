@@ -28,7 +28,7 @@
 #      different memory and would pass unnoticed otherwise.
 #   2. **Does regenerating give the same files?**  The controller is
 #      regenerated into a scratch directory with the same relative layout and
-#      compared.  Two lines are normalised and both are named below; nothing
+#      compared.  Two lines are normalized and both are named below; nothing
 #      else is forgiven.
 #   3. **Is `cadr_a7_ddr_off.xdc` what this derives from the generated one?**
 #      The memory-off board has the same DDR3L ports and no controller behind
@@ -187,7 +187,7 @@ def regenerate(dest):
 
 
 def same(a, b):
-    """Two generated files, with the generator's own hour stamp normalised."""
+    """Two generated files, with the generator's own hour stamp normalized."""
     ta = [l for l in a.read_text(errors="replace").splitlines()
           if not STAMP.match(l)]
     tb = [l for l in b.read_text(errors="replace").splitlines()

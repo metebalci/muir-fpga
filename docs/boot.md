@@ -20,7 +20,7 @@ The board runs a Buildroot image. It is built entirely on the build host
 from a pinned Buildroot, so that the board is reproducible from the
 repository and survives a machine move. **It has booted the board.** The
 network path ran on 10 September: U-Boot's first stage, U-Boot, the CADR into
-the fabric, Linux 6.19 with the reservation honoured by the tree alone, and a
+the fabric, Linux 6.19 with the reservation honored by the tree alone, and a
 login 15 s after the reset. The card path is how anyone else's board boots,
 and it ran the same day from U-Boot's prompt. The four files were read off
 the card in under a second, Linux came up with the reservation, and the
@@ -113,7 +113,7 @@ Zynq board in three things the files settle: the console is **UART 0**, the
 PS clock is **50 MHz**, and the PHY is at MDIO address **1**. It includes
 `boards/arty-z7-20/linux/cadr-reserved.dtsi`, the same node the stepping
 stone appended. It is compiled twice, by the kernel and by U-Boot. U-Boot
-reading it matters. Mainline U-Boot honours a `reserved-memory` node in its
+reading it matters. Mainline U-Boot honors a `reserved-memory` node in its
 *own* tree for its own relocation (`common/memtop.c`) and for where it puts
 the fdt and the ramdisk (`lib/lmb.c`). It does not rewrite the kernel's
 memory node, because `ARCH_FIXUP_FDT_MEMORY` is off in `xilinx_zynq_virt`.
@@ -161,12 +161,12 @@ and nothing runs at all.
 ### The drawing says both, in two boxes
 
 This was settled with no change to the label, and with a change of shape that
-resolves it instead. The drawing carries it now: a grey box for U-Boot with a
+resolves it instead. The drawing carries it now: a gray box for U-Boot with a
 small green box inside it saying SPL.
 
-The worry was that a finished colour beside the word "U-Boot" reads as a claim
-that this project wrote U-Boot. It does not. On that drawing the colours answer
-how far along a block is, and grey answers whose code it is.
+The worry was that a finished color beside the word "U-Boot" reads as a claim
+that this project wrote U-Boot. It does not. On that drawing the colors answer
+how far along a block is, and gray answers whose code it is.
 
 Three single-word replacements were considered first and each failed for its
 own reason. "boot: SPL, ps7_init" does not fit a narrow rotated strip. "boot
@@ -177,7 +177,7 @@ The label is stacked one letter to a line rather than rotated. The strip is 54
 pixels wide and 93 tall below the first-stage box, and six lines fill 84 of it.
 A rotated label makes the reader tilt their head and a stacked one does not.
 
-Two boxes say what one word could not. Grey is the drawing's existing marker
+Two boxes say what one word could not. Gray is the drawing's existing marker
 for an existing component, which is what muir and the DDR controller already
 carry, so the loader is marked as upstream. The green box inside it is the
 first stage, and it is green because the board boots from it and because the
@@ -186,7 +186,7 @@ start-up routine that stage runs is generated here.
 **The split is a little kind to us and it is worth knowing why.** Only one of
 the four files above lives in the first stage. `ps7_init_gpl.c` is compiled
 into the SPL, and `cadr.env` and the two device trees are read by U-Boot
-proper, which is the grey box. So the green box understates what is ours by
+proper, which is the gray box. So the green box understates what is ours by
 three files, and no arrangement of two boxes on a strip 54 pixels wide will
 say that. This paragraph is where it is said instead.
 
@@ -509,7 +509,7 @@ rewrite the card.
 than a set of variables somebody has to remember. It refuses to run if `PACKS`
 is set. It does not trust its own standalone flag either: it greps both staged
 partitions for anything address-shaped afterwards and stops if it finds any,
-because a flag can be wrong and a private address on a public artefact cannot
+because a flag can be wrong and a private address on a public artifact cannot
 be taken back. It then checks that the pack partition holds the README and the
 two files of flags and nothing else, that the image fits the smallest card sold
 as 4 GB, and that the empty bay has room for three T-300 packs, which is two

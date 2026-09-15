@@ -7,7 +7,7 @@
 #
 # **WHY THERE IS A CHECK HERE AT ALL.**  cadr-chaosnet resolves every peer's
 # name once, at the start, and refuses a name that has no address --- which is
-# muir's behaviour and is right: a name with no address is a refusal at the
+# muir's behavior and is right: a name with no address is a refusal at the
 # start rather than a peer that is never reached.  The init script runs during
 # init, and on this image the DHCP client backgrounds itself when no lease is
 # there at once, so `ifup -a` returns OK with the interface still bare and the
@@ -26,7 +26,7 @@
 # what they were asked and answer what the case wants.  The stub `ip` prints
 # nothing and exits 0 when there is no address, which is what the real one
 # does --- an exit status would be the easier thing to fake and would not be
-# this image's behaviour.
+# this image's behavior.
 #
 # **WHAT THIS CANNOT DO: aim a mutation record at the script.**  mutate.py
 # copies C sources into a directory of its own and compiles one binary, so its

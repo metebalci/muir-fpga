@@ -31,7 +31,7 @@
 //! first `Responder::Device` where the fabric's decode calls it `memory` --- on
 //! this board main memory *is* a device that answers in its own time, and
 //! `Responder::Memory` would bring the 4116 refresh model of a board nobody is
-//! building. The two names are the same behaviour.
+//! building. The two names are the same behavior.
 //!
 //! The NXM timeout is here too, on `Responder::NoXbus` --- "Xbus I/O with
 //! nothing at that address: the cycle times out and sets the Xbus NXM bit".

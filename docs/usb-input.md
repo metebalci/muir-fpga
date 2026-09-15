@@ -314,7 +314,7 @@ spelling for the shared file, which is what `cadr-chaosnet` already does with
 **How one file serves several programs is settled: a filter in each init
 script.** Every program on the board refuses a flag it does not know by name,
 and that refusal is worth keeping, because a boot that silently dropped a flag
-would look exactly like a boot that honoured it. So no program is handed the
+would look exactly like a boot that honored it. So no program is handed the
 file whole. Each init script names the flags its own program owns and hands the
 file to the reader at `/usr/share/cadr/fpgarc.sh`, which gives back those lines
 and no others and refuses nothing.
@@ -424,7 +424,7 @@ What it asserts:
 - A viewer and a keyboard at the board are one keyboard: both reach the
   machine, their buttons are ORed, and **the viewer leaving does not lift what
   the board is holding** --- while a viewer leaving with nothing at the link
-  still releases its own keys, which is the behaviour that was there before.
+  still releases its own keys, which is the behavior that was there before.
 - A mapping file binds a key for both sources at once: the keypad's 7, unbound
   in the built-in mapping, types nothing until one line says what it is.
 - And what such a line cannot do: Shift and Tab bound to MIT's Tab types a
