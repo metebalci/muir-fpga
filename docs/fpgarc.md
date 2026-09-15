@@ -175,10 +175,11 @@ that plugs into the connector, which is what a CADR is with nothing set.
 
 ## What cannot be written here, and why
 
-`--log` is passed by the init script, which is what decides where a daemon
-writes. `--once` and `--no-guard` are for somebody at a prompt and not for a
-card. `--base`, `--no-fabric` and `--device` reach past the program into the
-fabric or name a word another program could want.
+`--log` is passed by `cadr_daemon`, which is what decides where a daemon
+writes, and it is the same two places for every program. `--once` and
+`--no-guard` are for somebody at a prompt and not for a card. `--base`,
+`--no-fabric` and `--device` reach past the program into the fabric or name a
+word another program could want.
 
 ## `--port` and `--bind` are gone, replaced by `--terminal` and `--serial`
 
@@ -283,6 +284,34 @@ including the ones about to die. A whole second is also the only interval a
 POSIX `sleep` is certain to take. Five seconds on a board that reaches a login
 in fifteen is the price of a class of failure that has already cost this
 project a night.
+
+## Where a program's log is, and how to follow it
+
+`cadr_daemon` starts every daemon with two destinations:
+
+    --log /dev/console --log /var/log/cadr-<program>.log
+
+So a boot is watched on the serial console as it always was, and the same
+lines are in a file that somebody with nothing but ssh can read:
+
+    tail -F /var/log/cadr-terminal.log
+    tail -F /var/log/cadr-usb-input.log
+
+Those two are where `cadr-console trace-keys on` puts what it switches on, and
+the person who wants a key trace is usually the person over ssh. The programs
+take `--log` more than once for this, and every line goes to every destination
+named.
+
+**`tail -F` and not `tail -f`.** A rotated file is a new file under the old
+name, and `tail -f` goes on following the one it opened.
+
+**A file is capped at 1 MiB and rotated to `<name>.1`.** The root filesystem is
+unpacked into memory at every boot, `/var/log` is a symlink to `/tmp`, and
+`/tmp` is that same memory, so a log that grew without bound would take the
+board down. Each program holds at most two of these files and the five at most
+ten megabytes, however long the board is up. The logs go at a reboot, which is
+right for a log of this kind. `docs/console.md` has the routine and what holds
+it.
 
 ## `--no-auto-boot`
 

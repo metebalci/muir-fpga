@@ -43,19 +43,43 @@
 # THE CONTRACT.
 #
 #   cadr_daemon PROG PIDFILE ARG...
-#       Print `Starting <name>: `, start PROG as a daemon with ARG..., and
-#       print OK when it is still running a moment later.  Otherwise print
-#       FAIL and then, on lines of their own, what the program says when it is
-#       run again --- or that it died at start and said nothing.  Returns 0
-#       when it is running and 1 when it is not, so a caller may do more.
+#       Print `Starting <name>: `, start PROG as a daemon with ARG... and with
+#       its two logs, and print OK when it is still running a moment later.
+#       Otherwise print FAIL and then, on lines of their own, what the program
+#       says when it is run again --- or that it died at start and said
+#       nothing.  Returns 0 when it is running and 1 when it is not, so a
+#       caller may do more.
 #
 # `cadr_daemon_alive` and `cadr_daemon_why` are its two halves and are not for
 # calling from anywhere else.
+#
+# **WHERE A DAEMON WRITES IS THIS FILE'S AND NOT THE CARD'S, AND IT IS TWO
+# PLACES.**  Every one of these programs is started with
+# `--log /dev/console --log $CADR_LOG_DIR/<name>.log`, so what it says is on
+# the serial console, where a boot is watched, and in a file, where somebody
+# with nothing but ssh can read it and follow it with `tail -F`.  It used to
+# be the console alone, and the thing that made that wrong is the key trace:
+# `cadr-console trace-keys on` switches on a trace in `cadr-terminal` and
+# `cadr-usb-input`, and the person who asked for it is usually the person over
+# ssh who cannot see the console at all.  The programs take `--log` more than
+# once for this; `cadr-common/src/cadr/cadr_log.h` is the routine.
+#
+# **THE FILES ARE IN RAM AND ARE CAPPED, WHICH IS WHY THEY ARE SAFE TO WRITE.**
+# The root filesystem is unpacked into memory at every boot and `/var/log` is a
+# symlink to `/tmp` in this skeleton --- measured in the built target tree, not
+# assumed --- so a log is lost at a reboot, which is right for a log of this
+# kind, and a log that grew without bound would take the board's own memory.
+# The routine caps a file at 1 MiB and rotates it to `<name>.1`, so five
+# programs hold at most ten megabytes however long the board is up.
 #
 # It is sourced beside `fpgarc.sh`, which is what hands each program the flags
 # it owns out of the card's one file.  The two go together: that file decides
 # what a program is given and this one makes sure a program that will not take
 # it says so where somebody is looking.
+
+# Where the files go, named once so that five init scripts cannot come to
+# disagree about it.
+CADR_LOG_DIR=/var/log
 
 # A moment, then the process the pid file names.  The pid file is
 # start-stop-daemon's own, written by -m, so an empty or absent one is itself
@@ -106,7 +130,15 @@ cadr_daemon() {
 	_cadr_prog=$1
 	_cadr_pidfile=$2
 	shift 2
-	printf "Starting %s: " "$(basename "$_cadr_prog")"
+	_cadr_name=$(basename "$_cadr_prog")
+	# The two logs, last of all: the console and a file under $CADR_LOG_DIR
+	# named for the program.  They are added here rather than in each init
+	# script so that five scripts cannot come to disagree about where a
+	# program writes, and they are added to the words the caller gave so
+	# that the refusal path below runs the program with exactly what it was
+	# started with.
+	set -- "$@" --log /dev/console --log "$CADR_LOG_DIR/$_cadr_name.log"
+	printf "Starting %s: " "$_cadr_name"
 	if ! start-stop-daemon -S -q -b -m -p "$_cadr_pidfile" \
 	     --exec "$_cadr_prog" -- "$@"; then
 		echo "FAIL"

@@ -1,0 +1,224 @@
+# SPDX-FileCopyrightText: 2026 Mete Balci
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The mutation list for cadr-console: bugs `console_test.c` has to catch.
+#
+# `mutate.py` applies each record to a copy of the sources this check builds,
+# builds the check against it, and runs it.  A mutation the check FAILS on is
+# a check doing its job; one the check passes is reported as SURVIVED and the
+# run is red.  A record whose `@old` no longer matches its file exactly once,
+# or that does not compile, is BROKEN and also fails the run --- CLAUDE.md
+# records two fabric mutations reported as surviving that had never been
+# built.
+#
+# THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
+# can read this one:
+#
+#   @mutation  a kebab-case name; how a survivor is reported
+#   @file      which of the sources this check builds to mutate
+#   @why       what the check is supposed to notice, printed when it does not
+#   @note      prose, repeatable; printed with @why on a survivor
+#   @old       the source to replace, exactly as it stands
+#   @new       what to put there; empty deletes
+#   @end
+#
+# **THIS PACKAGE'S CHECK BUILDS `cadr-common/src/cadr_log.c`, SO RECORDS AIM
+# AT IT FROM HERE.**  That is what `serial_mutations.txt` already does with
+# the endpoint grammar and `usb_mutations.txt` with the input link: a file
+# several packages share is held by the check that builds it, and the
+# logging's own package has a shell check and no C one to put these in.  A
+# bare name below is this package's; `cadr-common/src/...` is the shared file.
+#
+# WHERE THE LIST CAME FROM.  The console's own printing rule --- a reply to a
+# person is bare and a line that is kept names its program --- and then every
+# rule `cadr/cadr_log.h` states about where a line goes and how big a log may
+# get, because a rule nothing exercises is not a rule.  `docs/console.md` has
+# the eight mutations that were applied BY HAND to this program before there
+# was a runner here; they are still to be written down as records.
+#
+# **THE MUTATIONS KEEP EVERY SIGNAL USED.**  CLAUDE.md's lint lesson, one
+# language along: a mutation that leaves a variable unread is caught by the
+# compiler and not by the check, and a record caught by its own build failure
+# is a record that tests nothing.
+
+@mutation the-reply-to-a-person-carries-the-program-name
+@file console_host.c
+@why a reply at a terminal must be bare: the person asked this program, and the name
+@why in front of every line of a regs table is noise between them and the answer
+@note This is the whole of the rule, and the shape of the defect is the one
+@note that was there before it: one prefix for everybody, because the boot log
+@note needs one.  muir's prompt is the reference --- its answers carry no
+@note program name at all.
+@old
+	return (logs_named == 0 && stdout_is_a_terminal) ? "" : CONS_LOG_PREFIX;
+@new
+	return (logs_named == 0 && stdout_is_a_terminal) ? CONS_LOG_PREFIX : CONS_LOG_PREFIX;
+@end
+
+@mutation a-line-written-through-log-is-bare-too
+@file console_host.c
+@why a line the caller said to keep --- --log /dev/console, --log a file --- must name
+@why its program, whatever stdout is: five programs write to one console at boot
+@note The opposite error from the record above, and the one that would put
+@note five unattributable programs in one boot log.  It survives every check
+@note that only ever runs at a terminal, which is why the truth table is
+@note asserted at both ends.
+@old
+	return (logs_named == 0 && stdout_is_a_terminal) ? "" : CONS_LOG_PREFIX;
+@new
+	return stdout_is_a_terminal ? "" : CONS_LOG_PREFIX;
+@end
+
+@mutation the-log-goes-only-to-the-first-destination
+@file cadr-common/src/cadr_log.c
+@why --log given twice must put every line in both places: this is the board writing
+@why to the serial console AND to the file somebody over ssh reads
+@note The defect that was there before this slice, in the shape it would come
+@note back in: a routine that takes several destinations and says the line to
+@note one.  On the board it is invisible from the console, which is the
+@note destination that would still work, and total from ssh.
+@old
+	for (unsigned k = 0; k < ndests; ++k) {
+@new
+	for (unsigned k = 0; k < ndests && k < 1; ++k) {
+@end
+
+@mutation the-second-destination-is-forgotten
+@file cadr-common/src/cadr_log.c
+@why a second --log must be remembered beside the first and not on top of it
+@note One index along from the record above, and it fails the other way: the
+@note line goes to one place because only one place was ever opened.  The
+@note check asserts the COUNT as well as the two files, so either half is
+@note caught by itself.
+@old
+	wanted[nwanted++] = path;
+@new
+	wanted[nwanted] = path;
+@end
+
+@mutation the-log-file-grows-without-a-cap
+@file cadr-common/src/cadr_log.c
+@why a file destination must be rotated at CADR_LOG_MAX: the root filesystem is a RAM
+@why disk and five logs that grow without bound are a way to take the board down
+@note The reason for the cap is the board and not tidiness --- /var/log is a
+@note symlink to /tmp in this skeleton and /tmp is the RAM the board runs in.
+@note This is what a log with no cap looks like from the check: the file goes
+@note past a megabyte and there is no `.1` beside it.
+@old
+	if (d->rotate && d->size >= (long)CADR_LOG_MAX)
+		rotate(d);
+	if (!d->f)
+		return;
+	fputs(log_prefix, d->f);
+@new
+	if (d->rotate && d->size < 0)
+		rotate(d);
+	if (!d->f)
+		return;
+	fputs(log_prefix, d->f);
+@end
+
+# **A SECOND EQUIVALENCE, REASONED AND STATED RATHER THAN FILED.**  Dropping
+# the `S_ISREG` test in `add`, so that /dev/console and a pipe are called
+# rotatable, changes nothing: the size a destination is judged by comes from
+# `ftell`, which on a console answers 0 for ever and on a pipe fails, so
+# neither ever reaches the cap.  The test is there to say what is meant and to
+# stop a future size that came from counting bytes rather than from the file.
+#
+# **AN EQUIVALENCE, MEASURED, SO THAT NOBODY FILES IT AS A HOLE.**  Deleting
+# `d->size = 0` in `rotate` --- so that a freshly opened file is thought to be
+# still full --- SURVIVES, and not because the check is blind: `say_to` reads
+# the size back out of the file with `ftell` after every line, so the stale
+# value is written over before it is next looked at.  The line is there for
+# the case where `ftell` fails, which on a regular file it does not.  What is
+# live is the threshold, which is the record below.
+
+@mutation the-cap-is-applied-at-half-its-constant
+@file cadr-common/src/cadr_log.c
+@why the rotated file must hold a whole generation: a cap applied early is a log that
+@why holds a fraction of what it says it does, and nobody would look at the file to
+@why find out
+@note The magnitude rather than the presence, which CLAUDE.md's own rule
+@note prefers: asking whether a cap exists gives one bit, asking at what size
+@note it fires says whether the constant is the constant.  Half is caught; so
+@note is anything smaller.
+@old
+	if (d->rotate && d->size >= (long)CADR_LOG_MAX)
+		rotate(d);
+	if (!d->f)
+		return;
+	fputs(log_prefix, d->f);
+@new
+	if (d->rotate && d->size >= (long)(CADR_LOG_MAX / 2))
+		rotate(d);
+	if (!d->f)
+		return;
+	fputs(log_prefix, d->f);
+@end
+
+@mutation a-log-is-truncated-when-the-program-starts
+@file cadr-common/src/cadr_log.c
+@why a log is appended to: a program restarted by hand must not take away what the
+@why one before it said, and the cap is what keeps that from growing
+@note `cadr-chaosnet` really did open its log with "w" before this slice, so
+@note this is the defect as it stood and not an invented one.
+@old
+		FILE *f = fopen(wanted[k], "a");
+@new
+		FILE *f = fopen(wanted[k], "w");
+@end
+
+@mutation a-log-that-cannot-be-opened-is-not-refused
+@file cadr-common/src/cadr_log.c
+@why a --log that cannot be opened must stop the program: a daemon that carried on
+@why would be running with a log the person who asked for it cannot find
+@old
+		if (!f) {
+			fprintf(stderr, "%s%s: %s\n", log_prefix, wanted[k],
+				strerror(errno));
+			return -1;
+		}
+@new
+		if (!f) {
+			fprintf(stderr, "%s%s: %s\n", log_prefix, wanted[k],
+				strerror(errno));
+			continue;
+		}
+@end
+
+@mutation the-fan-out-stream-reaches-only-the-first-log
+@file cadr-common/src/cadr_log.c
+@why a line written through the stream must reach every destination: the disk pack
+@why program's feeder writes eighteen kinds of line through one, the denied block
+@why among them, and the first destination alone is the console and not the file
+@note This is the defect the stream exists to remove, and it is what handing
+@note the feeder `cadr_log_file()` would do: the lines somebody over ssh most
+@note wants are the ones that would not be there.
+@old
+	for (unsigned k = 0; k < ndests; ++k)
+		bytes_to(&dests[k], buf, n);
+@new
+	for (unsigned k = 0; k < ndests && k < 1; ++k)
+		bytes_to(&dests[k], buf, n);
+@end
+
+@mutation lines-written-through-the-stream-escape-the-cap
+@file cadr-common/src/cadr_log.c
+@why what the feeder writes is the bulk of the disk pack program's log, so a road to
+@why the file the cap does not watch is the RAM disk filling by the back door
+@note The cap on `say` and the cap on the stream are two places, which is why
+@note both are written past for real.  `say_to` has a check of its own and is
+@note held by the record above it.
+@old
+	long at;
+	if (d->rotate && d->size >= (long)CADR_LOG_MAX)
+		rotate(d);
+	if (!d->f)
+		return;
+	fwrite(buf, 1, n, d->f);
+@new
+	long at;
+	if (!d->f)
+		return;
+	fwrite(buf, 1, n, d->f);
+@end

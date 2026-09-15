@@ -83,8 +83,9 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 # (src/cadr-chaosnet.c).  Both spellings of each, muir's `--chaos-` one and
 # this program's short one, because the program takes both.
 #
-# Three things are deliberately not here.  `--log` is passed by this script,
-# which decides where a daemon writes.  `--no-guard`, `--no-fabric` and
+# Three things are deliberately not here.  `--log` is passed by `cadr_daemon`,
+# which is where every one of these programs is given the same two
+# destinations.  `--no-guard`, `--no-fabric` and
 # `--base` reach into the fabric and belong to somebody at a prompt rather
 # than to a card.  And nothing generic --- `--port` is the screen's and the
 # serial line's both, so no list may claim it.
@@ -357,13 +358,14 @@ start() {
 		wait_for_network
 	fi
 
-	# `--log` is last of all and is not the card's to say: where a daemon
-	# writes is this script's.  **THIS IS THE PROGRAM THE SILENT REFUSAL
-	# WAS MEASURED ON**: a carriage return on every peer's port, refused by
-	# name into /dev/null, with this script printing OK and leaving a pid
-	# file.  The reader took the carriage return away and `cadr_daemon`
-	# takes the silence away.
-	cadr_daemon "$PROG" "$PIDFILE" "$@" --log /dev/console
+	# `--log` is not here and is not the card's to say: where a daemon
+	# writes is `cadr_daemon`'s, and it is the console and a file under
+	# /var/log.  **THIS IS THE PROGRAM THE SILENT REFUSAL WAS MEASURED
+	# ON**: a carriage return on every peer's port, refused by name into
+	# /dev/null, with this script printing OK and leaving a pid file.  The
+	# reader took the carriage return away and `cadr_daemon` takes the
+	# silence away.
+	cadr_daemon "$PROG" "$PIDFILE" "$@"
 }
 
 stop() {

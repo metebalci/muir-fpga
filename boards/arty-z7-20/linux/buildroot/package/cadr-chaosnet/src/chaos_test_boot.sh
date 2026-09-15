@@ -263,7 +263,12 @@ RC
 	started
 	passes_flag "--chaos-address 3050"
 	passes_flag "--chaos-udp-peer 3060@a-host.invalid:42043"
+	# **BOTH LOGS, WHICH ARE `cadr_daemon`'s AND NOT THIS SCRIPT'S.**  The
+	# console for whoever is watching the boot and a file for whoever has
+	# only ssh; this program is the one the silent refusal was measured on,
+	# and the file is where its refusal can be read afterwards.
 	passes_flag "--log /dev/console"
+	passes_flag "--log /var/log/cadr-chaosnet.log"
 	resolved "a-host.invalid"
 	resolved "a-bridge.invalid"
 }

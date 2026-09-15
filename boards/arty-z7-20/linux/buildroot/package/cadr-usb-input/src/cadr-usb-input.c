@@ -23,7 +23,7 @@
 // the two shapes that were not taken.
 //
 // HOW IT RUNS.  `S88cadr-usb-input` starts it at boot with
-// `--log /dev/console`, after the terminal's `S85`.  In order:
+// its two logs --- the console and a file --- after the terminal's `S85`.  In order:
 //
 //   1. THE LINK.  It connects to the socket the terminal listens on and
 //      exchanges a greeting, which is what tells the terminal from anything
@@ -45,7 +45,7 @@
 //
 //     cadr-usb-input [--link PATH] [--device PATH]... [--input-dir DIR]
 //                    [--scan-ms N] [--grab] [--no-keyboard] [--no-mouse]
-//                    [--trace] [--log PATH] [--once]
+//                    [--trace] [--log PATH]... [--once]
 //
 // **WHAT EACH KEY BECAME, WHILE SOMEBODY IS WATCHING.**  `--usb-trace` writes
 // a line for every key event: the device, the key code as the kernel names
@@ -144,7 +144,10 @@ static void usage(void)
 		"                    that the code is not in the table. The mouse is not traced.\n"
 		"                    SIGUSR1 turns it on while the program runs and SIGUSR2 turns\n"
 		"                    it off, which is `cadr-console trace-keys on|off`\n"
-		"  --log PATH        where to write (default stdout)\n"
+		"  --log PATH        where to write; may be given more than once, and every\n"
+		"                    line then goes to every destination named.  With none,\n"
+		"                    stdout.  A destination that is a file is capped at 1 MiB\n"
+		"                    and rotated to <name>.1 (the root filesystem is a RAM disk)\n"
 		"  --once            find the devices, say what is there, and exit\n"
 		"\n"
 		"Every flag also has a --usb- spelling, for the card's fpgarc.\n",
@@ -155,7 +158,6 @@ int main(int argc, char **argv)
 {
 	const char *link_path = CADR_INPUT_LINK_PATH;
 	const char *input_dir = "/dev/input";
-	const char *log_path = NULL;
 	const char *named[USB_MAX_NAMED];
 	unsigned names = 0;
 	unsigned scan_ms = 1000;
@@ -200,7 +202,7 @@ int main(int argc, char **argv)
 		case 'K': no_keyboard = 1; break;
 		case 'M': no_mouse = 1; break;
 		case 'T': trace = 1; break;
-		case 'l': log_path = optarg; break;
+		case 'l': cadr_log_dest(optarg); break;
 		case 'o': once = 1; break;
 		default: usage(); return 2;
 		}
@@ -215,15 +217,8 @@ int main(int argc, char **argv)
 				"leave nothing to read\n");
 		return 2;
 	}
-	FILE *dest = stdout;
-	if (log_path) {
-		dest = fopen(log_path, "a");
-		if (!dest) {
-			fprintf(stderr, "cadr-usb-input: %s: %s\n", log_path, strerror(errno));
-			return 2;
-		}
-	}
-	cadr_log_init("cadr-usb-input: ", dest);
+	if (cadr_log_open("cadr-usb-input: ") < 0)
+		return 2;
 
 	struct usb_set set;
 	usb_set_init(&set);

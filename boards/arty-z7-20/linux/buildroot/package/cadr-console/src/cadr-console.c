@@ -66,7 +66,7 @@
 //            memory the machine's bus cycles land in, not the machine's view
 //            of it --- halt it first if the answer is to mean anything.
 //
-//     cadr-console [--regs ADDR] [--log PATH] [--settle-us N] [--no-guard]
+//     cadr-console [--regs ADDR] [--log PATH]... [--settle-us N] [--no-guard]
 //                  [command [arguments]]
 //
 //     halt | start | step [N] | regs | status | ident | switch
@@ -83,7 +83,6 @@
 // below and works on a board whose fabric has no console in it.
 // `console_host.h` has the whole of it, and says why it is not in the face.
 
-#include <errno.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -513,7 +512,10 @@ static void usage(void)
 	fprintf(stderr,
 		"usage: cadr-console [options] [command [arguments]]\n"
 		"  --regs ADDR      the console's window (default 0x80000000, the bottom of M_AXI_GP1)\n"
-		"  --log PATH       where to write (default stdout)\n"
+		"  --log PATH       where to write; may be given more than once, and every\n"
+		"                   line then goes to every destination named.  With none, the\n"
+		"                   lines go to stdout, and to a TERMINAL they go bare: a reply\n"
+		"                   to a person does not name the program they asked\n"
 		"  --settle-us N    how long `status` waits between its two reads of CYCLES (default 2000)\n"
 		"  --no-guard       touch M_AXI_GP1 without checking the EMIO tally first\n"
 		"with no command it reads lines at a `>` prompt; `help` lists them\n"
@@ -523,7 +525,6 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
-	const char *log_path = NULL;
 	uint32_t regs_phys = CONS_REG_BASE;
 	unsigned settle_us = 2000, no_guard = 0;
 	static const struct option opts[] = {
@@ -538,21 +539,19 @@ int main(int argc, char **argv)
 	while ((c = getopt_long(argc, argv, "r:l:s:Gh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
-		case 'l': log_path = optarg; break;
+		case 'l': cadr_log_dest(optarg); break;
 		case 's': settle_us = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'G': no_guard = 1; break;
 		default: usage(); return 2;
 		}
 	}
-	FILE *dest = stdout;
-	if (log_path) {
-		dest = fopen(log_path, "a");
-		if (!dest) {
-			fprintf(stderr, "cadr-console: %s: %s\n", log_path, strerror(errno));
-			return 2;
-		}
-	}
-	cadr_log_init("cadr-console: ", dest);
+	// **THE REPLY IS BARE WHEN A PERSON IS READING IT.**  `console_host.h`
+	// has the rule and the reference in muir's own prompt; the decision is
+	// a function of its own there so that the check can make it without a
+	// terminal.
+	if (cadr_log_open(cons_log_prefix((int)cadr_log_dests(),
+					  isatty(STDOUT_FILENO))) < 0)
+		return 2;
 
 	// **THE ONE WORD THAT IS NOT ABOUT THE FABRIC, DONE BEFORE THE GUARD.**
 	// `trace-keys` reads two pid files and signals two programs; it touches

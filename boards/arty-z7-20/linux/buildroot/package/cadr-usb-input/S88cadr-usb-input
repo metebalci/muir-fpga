@@ -64,8 +64,8 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 # `--grab` and `--no-mouse` are words another program could want, and a flag
 # in `fpgarc` names one program or it names none.  `--link` and `--usb-link`
 # are the same seam cadr-terminal listens on, and the `--usb-` one is this
-# end of it.  `--log` and `--once` are this script's or a person's at a
-# prompt.
+# end of it.  `--log` is `cadr_daemon`'s, which gives every program the same
+# two destinations, and `--once` is a person's at a prompt.
 FLAGS="--usb-link
        --usb-device
        --usb-input-dir
@@ -78,9 +78,10 @@ start() {
 	set --
 	[ -f "$RC" ] && eval "set -- $(fpgarc_args "$RC" $FLAGS)"
 
-	# `--log` is last of all and is not the card's to say: where a daemon
-	# writes is this script's.
-	cadr_daemon "$PROG" "$PIDFILE" "$@" --log /dev/console
+	# `--log` is not here and is not the card's to say: where a daemon
+	# writes is `cadr_daemon`'s, and it is two places --- the console and a
+	# file under /var/log that somebody over ssh can follow.
+	cadr_daemon "$PROG" "$PIDFILE" "$@"
 
 	# **AND THE LAST WORD ON THE CARD'S FILE, because this is the last
 	# script to read it.**  Nothing in the reader refuses anything --- that

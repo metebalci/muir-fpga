@@ -55,6 +55,48 @@
 // this program's own shell, and whatever else is in it --- and a negative pid
 // signals a group by number.  A pid file holding `0` is a `start-stop-daemon`
 // that wrote nothing useful, not an instruction to signal everybody.
+// --- WHO IS BEING TOLD, WHICH DECIDES WHETHER THE LINE IS BARE ------------
+//
+// **A REPLY TO A PERSON IS BARE; A LINE WRITTEN TO A LOG CARRIES THE
+// PROGRAM'S NAME.**  `say()` puts `cadr-console: ` in front of every line,
+// and that prefix exists for the boot log, where five programs write to one
+// serial console and a line has to say which of them said it.  At the prompt,
+// and in a command typed in a session over ssh, there is nobody else talking:
+// the person asked this program, and the name in front of every line of a
+// `regs` table is noise between them and the answer.  `ssh board cadr-console
+// status` with no terminal is the other case and keeps the prefix, its output
+// being a pipe and so on its way into something.
+//
+// muir's prompt is the reference: its answers carry no program name at all,
+// and even the `muir: ` it writes while the machine is held goes only to a
+// terminal, "a pipe or a file gets muir's answers alone"
+// (`../muir/src/prompt.rs`).
+//
+// **THE TEST IS THE ONE THE RULE IS ABOUT: IS ANYBODY THERE.**  Standard
+// output a terminal means a person is reading it as it comes; a pipe or a
+// file means it is being kept, and a line that is kept has to name its
+// program.  And `--log PATH` is the same question answered by the caller, so a
+// line written through one is prefixed whatever stdout is: that is a log by
+// the person's own say-so.
+//
+// **`/dev/console` IS A TERMINAL AND THE TEST CANNOT TELL IT FROM A PERSON**,
+// so an init script that lets these lines into the boot log says which it is:
+// `S80cadr-disk-packs` calls `cadr-console --log /dev/console` on the two
+// commands whose output it passes through.  A boot log is where six programs
+// write and is exactly what the prefix exists for.
+//
+// It is here rather than in `console_face.c` for the reason the file says at
+// its head --- the face is compiled for the Arty A7-100's bare-metal
+// firmware, which has a `say()` of its own over a UART and no terminals at
+// all.
+#define CONS_LOG_PREFIX "cadr-console: "
+
+// The prefix to open the log with: `CONS_LOG_PREFIX`, or "" for a bare reply.
+// `logs_named` is how many `--log` destinations were given and
+// `stdout_is_a_terminal` is `isatty(1)`; both are read by the caller so that
+// this is a decision a check can make without a terminal of its own.
+const char *cons_log_prefix(int logs_named, int stdout_is_a_terminal);
+
 #define CONS_TRACE_TERMINAL "cadr-terminal"
 #define CONS_TRACE_TERMINAL_PID "/var/run/cadr-terminal.pid"
 #define CONS_TRACE_USB "cadr-usb-input"
