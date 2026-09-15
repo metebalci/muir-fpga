@@ -269,7 +269,7 @@ module cadr_gp0_split_harness (
   logic [12:0] chaos_rx_bits;
   logic [11:0] chaos_bits;
   logic        chaos_tx_go, chaos_tx_valid, chaos_tx_clear, chaos_reset;
-  logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc;
+  logic        chaos_rx_valid, chaos_rx_done, chaos_rx_crc, chaos_rx_lost;
   logic        chaos_tx_done, chaos_tx_abort, chaos_cbl_busy;
 
   cadr_chaos_cable u_chaos (
@@ -291,6 +291,7 @@ module cadr_gp0_split_harness (
       .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word),
       .chaos_rx_done(chaos_rx_done), .chaos_rx_bits(chaos_rx_bits),
       .chaos_rx_crc(chaos_rx_crc),
+      .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
       .chaos_cbl_busy(chaos_cbl_busy),
       .irq(chaos_irq)
@@ -394,6 +395,7 @@ module cadr_gp0_split_harness (
       .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word),
       .chaos_rx_done(chaos_rx_done), .chaos_rx_bits(chaos_rx_bits),
       .chaos_rx_crc(chaos_rx_crc), .chaos_tx_done(chaos_tx_done),
+      .chaos_rx_lost(chaos_rx_lost),
       .chaos_tx_abort(chaos_tx_abort), .chaos_cbl_busy(chaos_cbl_busy),
       .chaos_bits(chaos_bits),
       .intr_request(iob_intr), .intr_vector(iob_vector), .audio(iob_audio),

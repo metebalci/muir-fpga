@@ -454,10 +454,24 @@ to a log. So the four names are this program's own.
 ## The machine holds one packet, and a frame it refuses goes again
 
 The Chaosnet interface has one incoming packet buffer. A frame given to it
-while the machine has not read the last packet out is refused, and the
-interface counts the refusal in its Lost Count. That is the four-bit field of
-AIM-628 section 7, and on this board it is the `LOST` register of
-`chaos_face.h`.
+while the machine has not read the last packet out is refused, and the refusal
+is counted at both ends of the seam. The machine's end is the Lost Count, the
+four-bit field of AIM-628 section 7 that `CHAOS:PKTS-LOST` reads. The
+program's end is the `LOST` register of `chaos_face.h`. One condition in the
+fabric raises both, so they move on the same events.
+
+The two are not the same number. The Lost Count is four bits of a 74LS161 and
+wraps at sixteen. Clear Receiver and Reset each put it back to zero, because
+it counts what has been lost since the machine last emptied its buffer. `LOST`
+is thirty-two bits and survives a reset, because `chaos_face_give` reads any
+change in it as a refusal and a count that went backwards would make the
+program read a stored frame as a refused one.
+
+The program offers the machine a frame only when the frame is a broadcast or
+is addressed to this machine. A third party's frame is never offered, which
+agrees with muir on what is counted. It also means Spy is not implemented: a
+machine that set the Spy bit would expect every frame on the cable, and this
+program does not offer them.
 
 So a host that sends two frames back to back offers the second one while the
 machine is still copying the first out of the buffer. A form longer than 488
