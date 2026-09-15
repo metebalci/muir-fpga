@@ -20,6 +20,11 @@
 //   0x1C00_0000    8 MB    2,097,152  display
 //   0x1C80_0000   56 MB               spare
 //
+// The display's 8 MB holds BOTH display boards' frame buffers, the normal
+// TV's at its base and the color TV's 128 KB above it, which is the first
+// board's own 32,768 words.  Neither board grows and the region does not:
+// what was reserved for one display is room for a dozen.
+//
 // WHAT THE MACHINE CAN ACTUALLY REACH TODAY, which is much less:
 //
 //   Main memory is 3,932,160 words --- 15 MB of the 64 reserved.  The CADR's
@@ -70,6 +75,19 @@ package cadr_ddr_map;
   // tv::BUFFER_WORDS, 0o100000: the 64 4116s on the SIMPLE TV.
   localparam int unsigned DISPLAY_WORDS_REACHABLE = 32768;
 
+  // The second display board, the color TV, at the first board's own size
+  // above it: 0x1C02_0000.  Its buffer is `tv::BUFFER_WORDS` like the first's
+  // --- the board answers all 32,768 words whatever the picture uses --- and
+  // `sys/window/color.lisp`'s `COLOR:MAKE-SCREEN` draws 576 by 454 at four
+  // bits a pixel in the bottom 32,688 of them, 72 words a line.
+  //
+  // **NOTHING ON THE LINUX SIDE HAS TO GROW FOR IT.**  The reserved-memory
+  // node in the device tree reserves all 128 MB from RESERVED_BASE, and this
+  // is inside the display's 8 MB, so the board's two screens are two windows
+  // of a region Linux already keeps its hands off.
+  localparam logic [31:0] COLOR_DISPLAY_BASE =
+      DISPLAY_BASE + 32'(DISPLAY_WORDS_REACHABLE << 2);
+
   // A CADR word address into a byte address in the region.
   function automatic logic [31:0] main_byte_address(input logic [21:0] phys);
     return MAIN_BASE + (32'(phys) << 2);
@@ -82,6 +100,14 @@ package cadr_ddr_map;
   // answers it at this base.
   function automatic logic [31:0] display_byte_address(input logic [14:0] offset);
     return DISPLAY_BASE + (32'(offset) << 2);
+  endfunction
+
+  // And a word of the color TV's window, the same arithmetic at the other
+  // base.  `rtl/machine/cadr_tv.sv` decodes the window --- the second
+  // instance, strapped to `tv::COLOR_TV` --- and
+  // `rtl/plumbing/cadr_xbus_ddr.sv` answers it here.
+  function automatic logic [31:0] color_display_byte_address(input logic [14:0] offset);
+    return COLOR_DISPLAY_BASE + (32'(offset) << 2);
   endfunction
 
 endpackage

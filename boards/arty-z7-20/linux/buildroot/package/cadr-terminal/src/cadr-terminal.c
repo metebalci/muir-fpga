@@ -58,12 +58,15 @@
 //      that reaches nothing.
 //   2. THE WINDOW: 128 KB at 0x1C00_0000 through /dev/mem, uncached --- a
 //      word the fabric writes over `S_AXI_HP0` must not be read out of a
-//      cache the port cannot see.
+//      cache the port cannot see.  With `--color-terminal` a SECOND window,
+//      the color TV's, 128 KB at 0x1C02_0000, and the console's face for the
+//      color map, which is the only way to ask what a color is.
 //   3. THE SOCKET: RFB where `--terminal` says, every interface at port 5900
 //      by default, which a viewer reaches as display `:0`.
 //   4. THE LOOP: the visible 23,112 words copied out of the window once a
-//      pass and every viewer answered from that one copy.  Nothing is read
-//      while nobody is watching.
+//      pass and every viewer answered from that one copy --- and the color
+//      screen's 32,688, on the same interval and only while somebody is
+//      watching it.  Nothing is read while nobody is watching.
 //
 // **WHAT IT CANNOT READ, AND WHAT IT ASSUMES INSTEAD.**  `MODE BOW` decides
 // whether a one bit is white or black, and it is four flops in the fabric
@@ -129,6 +132,7 @@
 
 #include <cadr/cadr_input_link.h>
 
+#include "color_map.h"
 #include "input_face.h"
 #include "input_keys.h"
 #include "input_mapping.h"
@@ -170,6 +174,13 @@ static void usage(void)
 		"                    stdout.  A destination that is a file is capped at 1 MiB\n"
 		"                    and rotated to <name>.1 (the root filesystem is a RAM disk)\n"
 		"  --bow             the display's MODE BOW: one bits are black (default: white)\n"
+		"  --color-terminal [<endpoint>]\n"
+		"                            the SECOND screen, the color TV's, served as the\n"
+		"                            first one is: 576x454 at four bits a pixel through\n"
+		"                            the machine's own color map. Pixels only --- the\n"
+		"                            keyboard and mouse stay with the main screen.\n"
+		"                            Default: the display above the main screen's\n"
+		"  --color-window ADDR   the color TV's region (default 0x1C020000)\n"
 		"  --window ADDR     the display's region (default 0x1C000000)\n"
 		"  --interval-ms N   how often the window is read while anybody watches (default 16)\n"
 		"  --no-rre          send every rectangle Raw, for measuring what RRE buys\n"
@@ -202,7 +213,7 @@ static const char *blank_word(int blank)
 	switch (blank) {
 	case SCREEN_BLANK_ZEROS: return "every visible word zero";
 	case SCREEN_BLANK_ONES: return "every visible word all ones";
-	case SCREEN_BLANK_OTHER: return "one word repeated 23,112 times";
+	case SCREEN_BLANK_OTHER: return "one word repeated over the whole picture";
 	default: return "content";
 	}
 }
@@ -218,7 +229,17 @@ int main(int argc, char **argv)
 	if (cadr_endpoint_parse(NULL, NULL, TERMINAL_PORT, &listen) != 0)
 		return 2;
 	uint32_t window_phys = SCREEN_BASE;
+	uint32_t color_phys = SCREEN_COLOR_BASE;
 	uint32_t input_phys = IN_REG_BASE;
+	// **THE SECOND SCREEN, the color TV's**, served only when
+	// `--color-terminal` asks: muir's own flag, and muir's own default ---
+	// the display above the main screen's.  `want_color` is whether the
+	// flag was given at all, because a machine with no color board is the
+	// ordinary one and a second socket nobody asked for would be a port
+	// this program took for nothing.
+	struct cadr_endpoint color_listen;
+	int want_color = 0, have_color_spec = 0;
+	const char *color_spec = "";
 	int bow = 0, no_guard = 0, once = 0, no_rre = 0, no_input = 0, no_link = 0;
 	int boot_trace = 0, key_trace = 0;
 	const char *link_path = CADR_INPUT_LINK_PATH;
@@ -231,6 +252,8 @@ int main(int argc, char **argv)
 		return 2;
 	static const struct option opts[] = {
 		{ "terminal", optional_argument, NULL, 't' },
+		{ "color-terminal", optional_argument, NULL, 'c' },
+		{ "color-window", required_argument, NULL, 'W' },
 		{ "log", required_argument, NULL, 'l' },
 		{ "bow", no_argument, NULL, 'B' },
 		{ "window", required_argument, NULL, 'w' },
@@ -250,7 +273,7 @@ int main(int argc, char **argv)
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "t::l:Bw:i:RGIn:k:K:TML:Noh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "t::c::W:l:Bw:i:RGIn:k:K:TML:Noh", opts, NULL)) != -1) {
 		switch (c) {
 		case 't': {
 			// **THE ENDPOINT IS OPTIONAL, AS muir'S IS, AND getopt
@@ -275,6 +298,22 @@ int main(int argc, char **argv)
 			}
 			break;
 		}
+		case 'c': {
+			// muir's grammar and muir's default, which is the
+			// display above the main screen's.  **The endpoint is
+			// read here against `listen` as it stands**, so a card
+			// naming `--terminal` after this line would move the
+			// main screen and not this one; both are read again
+			// below, after the loop, where `listen` is final.
+			const char *spec = optarg;
+			if (!spec && optind < argc && argv[optind][0] != '-')
+				spec = argv[optind++];
+			color_spec = spec ? spec : "";
+			have_color_spec = spec != NULL;
+			want_color = 1;
+			break;
+		}
+		case 'W': color_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'l': cadr_log_dest(optarg); break;
 		case 'B': bow = 1; break;
 		case 'w': window_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
@@ -452,6 +491,95 @@ int main(int argc, char **argv)
 	               : "READ-ONLY: keys and pointer events are dropped",
 	    no_rre ? " only (--no-rre)" : " and RRE, whichever is smaller for each rectangle");
 
+	// 3b. **THE SECOND SCREEN, THE COLOR TV'S.**
+	//
+	// `--color-terminal` is muir's flag and this is muir's shape of it: a
+	// second RFB display serving the second display board's picture, 576 x
+	// 454 at four bits a pixel through the sixteen colors the machine
+	// wrote into the color map.  **PIXELS ONLY** --- the machine has one
+	// keyboard and one mouse, both on the I/O board, and they stay with
+	// the main screen, so this server is given no input face and no link
+	// and drops what a viewer types, which is muir's `pixels_only`.
+	//
+	// **THE MAP IS READ OUT OF THE CONSOLE FACE AND CANNOT BE READ ANY
+	// OTHER WAY.**  Register 4 is write only on the Xbus, the RAMs being
+	// off the board, so the fabric keeps the sixteen entries as muir does
+	// and offers them on page 5.  Without them a four-bit pixel is a
+	// number and not a color.
+	struct screen_frame color_frame;
+	struct screen_server color_srv;
+	struct color_map_face cmap;
+	volatile uint32_t *color_window = NULL;
+	int have_color = 0, have_cmap = 0, said_no_map = 0;
+	if (want_color) {
+		// The default is the display above the main screen's, which is
+		// `display_above` in muir's own main.rs.
+		if (cadr_endpoint_parse(have_color_spec ? color_spec : NULL,
+					listen.addr[0] ? listen.addr : NULL,
+					listen.port + 1, &color_listen) != 0) {
+			fprintf(stderr, "cadr-terminal: --color-terminal %s: "
+				"wants nothing, a port, an address or address:port\n", color_spec);
+			return 2;
+		}
+		color_window = cadr_map(mem, color_phys, SCREEN_WINDOW_BYTES,
+					"the color TV's window");
+		if (!color_window)
+			return 1;
+		screen_frame_init_color(&color_frame);
+		// The console face, for the map and for what the backplane
+		// says.  **A FACE THAT DOES NOT ANSWER IS NOT A FAILURE**, for
+		// the input face's own reason: the picture is worth serving
+		// either way, and a map of zeros is a black screen said out
+		// loud rather than a program that would not start.
+		uint32_t got = 0;
+		if (color_map_open(&cmap, mem, CMAP_REG_BASE) == 0) {
+			if (color_map_ident(&cmap, &got) == 0) {
+				have_cmap = 1;
+			} else {
+				color_map_close(&cmap);
+				say("the console's face reads 0x%08x and not \"CONS\", so the "
+				    "color map cannot be read: the color screen is served "
+				    "through a map of zeros, which is black", got);
+			}
+		}
+		if (have_cmap) {
+			const int fitted = color_map_fitted(&cmap);
+			if (fitted == 0)
+				say("--color-terminal, and the fabric says NO COLOR TV is in the "
+				    "backplane: those addresses give the NXM and the machine will "
+				    "never draw here. `--color-tv` in fpgarc is what fits one");
+			else if (fitted < 0)
+				say("--color-terminal, and page 2's word 33 carries no marker: "
+				    "this fabric is older than the second display board");
+			uint8_t map[CMAP_COLORS][CMAP_CHANNELS];
+			if (color_map_read(&cmap, map))
+				screen_frame_map(&color_frame, map);
+			else
+				said_no_map = 1;
+		}
+		screen_frame_read(&color_frame, color_window);
+		if (screen_server_bind(&color_srv, color_listen.addr[0] ? color_listen.addr : NULL,
+				       color_listen.port) < 0)
+			return 1;
+		color_srv.rre_offered = !no_rre;
+		color_srv.name = SCREEN_COLOR_NAME;
+		have_color = 1;
+		say("the color TV's window is %u KB at 0x%08x; the screen is %ux%u, %u words a "
+		    "line, %u of the window's %u words, four bits a pixel through sixteen colors",
+		    SCREEN_WINDOW_BYTES / 1024u, color_phys, SCREEN_COLOR_WIDTH,
+		    SCREEN_COLOR_HEIGHT, SCREEN_COLOR_WORDS_PER_LINE,
+		    SCREEN_COLOR_VISIBLE_WORDS, SCREEN_WINDOW_WORDS);
+		say("RFB on %s:%u --- display :%u to a viewer. NO AUTHENTICATION, as the main "
+		    "screen has none. PIXELS ONLY: the machine has one keyboard and one mouse and "
+		    "they stay with the main screen, so a viewer's keys and pointer are dropped",
+		    color_listen.addr[0] ? color_listen.addr : "0.0.0.0", color_listen.port,
+		    color_listen.port >= TERMINAL_PORT && color_listen.port < TERMINAL_PORT + 100
+			? color_listen.port - TERMINAL_PORT : 0);
+		if (said_no_map)
+			say("the color map is all zeros: the machine has not written one, so every "
+			    "one of the sixteen colors is black and so is the picture");
+	}
+
 	// 4. The loop.
 	signal(SIGTERM, on_stop);
 	signal(SIGINT, on_stop);
@@ -463,7 +591,7 @@ int main(int argc, char **argv)
 	key_trace_signals();
 	time_t last_said = time(NULL);
 	unsigned long said_connects = 0, said_input = 0;
-	uint64_t last_read_ns = 0;
+	uint64_t last_read_ns = 0, last_color_read_ns = 0;
 	unsigned long long said_bytes = 0;
 	while (!stopping) {
 		const uint64_t now = monotonic_ns();
@@ -502,7 +630,32 @@ int main(int argc, char **argv)
 			if (due_ms < wait_ms)
 				wait_ms = due_ms;
 		}
+		// **THE SECOND SCREEN IS READ ON THE SAME INTERVAL AND ONLY
+		// WHILE SOMEBODY IS WATCHING IT**, which is the main screen's
+		// own rule: 32,688 words of an uncached mapping is real traffic
+		// on the DDR controller.  The color map is re-read with it,
+		// sixteen words against thirty-two thousand, because the
+		// machine rewrites the map whenever the window system changes
+		// a color and a screen drawn through a stale map is the wrong
+		// screen.
+		if (have_color && color_srv.viewers
+		    && now - last_color_read_ns >= (uint64_t)interval_ms * 1000000u) {
+			screen_frame_read(&color_frame, color_window);
+			last_color_read_ns = now;
+			if (have_cmap) {
+				uint8_t map[CMAP_COLORS][CMAP_CHANNELS];
+				const int any = color_map_read(&cmap, map);
+				screen_frame_map(&color_frame, map);
+				if (any && said_no_map) {
+					say("the color map has been written: the color screen is "
+					    "drawn through the machine's own sixteen colors");
+					said_no_map = 0;
+				}
+			}
+		}
 		screen_server_poll(&srv, &frame, wait_ms, monotonic_ns());
+		if (have_color)
+			screen_server_poll(&color_srv, &color_frame, 0, monotonic_ns());
 		const time_t t = time(NULL);
 		if (t - last_said >= 60
 		    && (srv.connects != said_connects || srv.input_events != said_input
@@ -540,6 +693,11 @@ int main(int argc, char **argv)
 	// closing it after would queue those releases where nothing would ever
 	// send them.
 	screen_server_close(&srv);
+	if (have_color) {
+		screen_server_close(&color_srv);
+		if (have_cmap)
+			color_map_close(&cmap);
+	}
 	// Every key anybody had down comes up, and the machine is left with
 	// nothing held: a Control still down when this program stops is a
 	// Control down for the rest of the machine's run.

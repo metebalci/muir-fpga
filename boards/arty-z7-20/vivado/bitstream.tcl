@@ -198,6 +198,19 @@ set prove [expr {[info exists ::env(PROVE)] ? $::env(PROVE) : 0}]
 #
 #     DDR=1 HDMI=1 OUTDIR=build/hdmi vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
 set hdmi [expr {[info exists ::env(HDMI)] ? $::env(HDMI) : 0}]
+# **THE SECOND DISPLAY BOARD, `LMTV=1`.**  MIT's color TV --- `lmtv.order`'s
+# "for the color TV, x is 5" --- a second `rtl/machine/cadr_tv.sv` strapped to
+# 0o17200000 with its control words at 0o17377750, its frame buffer a second
+# window of the display's region of DDR, and its color map read by the
+# console face.  On by default: whether a MACHINE has the board is the
+# console's page 2 word 33 and a backplane with none gives the NXM at those
+# addresses, so a fabric that carries the slot is still a one-display machine
+# until somebody says otherwise.  Zero leaves the slot out of the fabric, for
+# a part with no room for it.
+#
+#     LMTV=0 DDR=1 OUTDIR=build/ddr vivado -mode batch -source boards/arty-z7-20/vivado/bitstream.tcl
+set lmtv [expr {[info exists ::env(LMTV)] ? $::env(LMTV) : 1}]
+
 if {$prove != 0 && $prove != 1 && $prove != 2} {
     puts "BIT: FAILED --- PROVE=$prove is not a board. 1 writes a word, 2 reads"
     puts "BIT: one back, 0 is the machine. See rtl/plumbing/cadr_prove.sv."
@@ -248,7 +261,8 @@ synth_design -top cadr_arty -part $part \
     -generic PROBE_DEPTH=$probe_depth \
     -generic DDR=$ddr \
     -generic PROVE=$prove \
-    -generic HDMI=$hdmi
+    -generic HDMI=$hdmi \
+    -generic LMTV=$lmtv
 if {$probe_depth > 0} {
     puts "BIT: PROBE_DEPTH=$probe_depth --- this is the instrumented board,"
     puts "BIT: not the one the utilization and timing prose below describes."

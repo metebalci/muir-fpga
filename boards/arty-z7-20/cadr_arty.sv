@@ -148,7 +148,17 @@ module cadr_arty #(
     // onto the HDMI connector, with no software in the path.  It needs the
     // processing system for that port, so like `PROVE` it turns `PORT` on by
     // itself.  `docs/display-output.md` is the design.
-    parameter int unsigned HDMI = 0
+    parameter int unsigned HDMI = 0,
+
+    // **THE SECOND DISPLAY BOARD, THE COLOR TV**, `lmtv.order`'s "for the
+    // color TV, x is 5": a LISPM TV strapped to 0o17200000 with its control
+    // words at 0o17377750, carrying a color monitor of its own.  One means
+    // the fabric has the slot; whether a machine HAS the board is the
+    // console's page 2 word 33, which `fpgarc`'s `--color-tv` writes at
+    // boot, and a machine with none gives the NXM at those addresses ---
+    // which is how `COLOR-EXISTS-P` finds out.  Zero leaves the slot out of
+    // the fabric entirely, for a part with no room for it.
+    parameter int unsigned LMTV = 1
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     input  var logic [3:0] btn,
@@ -158,7 +168,7 @@ module cadr_arty #(
     // the board rather than the design, as BTN2 and BTN3 are.
     input  var logic [1:0] sw,
     output var logic [3:0] led,
-    // The two tricolour LEDs. Driven high to light, one pin a colour.
+    // The two tricolor LEDs. Driven high to light, one pin a color.
     output var logic       led4_r, led4_g, led4_b,
     output var logic       led5_r, led5_g, led5_b,
     // **MIT'S DEBUG CABLE ON ONE PMOD HEADER, JA, AND JB CARRIES NOTHING.**
@@ -401,6 +411,15 @@ module cadr_arty #(
   // `cadr_memory_path` folds to a constant and the register block keeps its
   // one master, which is the board this file builds by default.
   logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
+
+  // **WHICH DISPLAY BOARDS THE BACKPLANE HAS**, out of the console's page 2
+  // word 33, and the two boards' color maps coming back on pages 4 and 5.
+  // A board with no console is a machine with one SIMPLE TV and no color TV,
+  // which is muir's own default and the backplane every reference trace
+  // taken before the second board was built was taken on.
+  logic        con_tv_lispm, con_color_tv;
+  logic [3:0]  con_tv_map_a;
+  logic [23:0] con_tv_map_q, con_tv_color_map_q;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the twenty-one wires of the DBGIN connector.
@@ -664,7 +683,7 @@ module cadr_arty #(
   // preset --- a board switched on runs its boot PROM, waits for a drive and
   // boots its band, which is what somebody switching a board on wants and what
   // every bring-up board here needs.  SW0 is how a board being worked on is
-  // asked for the other behaviour instead.  muir's `--no-auto-boot` is the
+  // asked for the other behavior instead.  muir's `--no-auto-boot` is the
   // same state by the same argument, and the card's `fpgarc` has that flag;
   // the two are an OR and the flag can never turn the switch off.
   //
@@ -677,7 +696,7 @@ module cadr_arty #(
   // takes the hold off, which is what a button is for.
   //
   // **AND WHAT THE CONSOLE REPORTS IS THE VERY VALUE THE MACHINE USED.**
-  // `sw0_held` follows the synchronised level at every edge `mach_rst` is up
+  // `sw0_held` follows the synchronized level at every edge `mach_rst` is up
   // and freezes at the last of them --- the same edge, off the same signal, as
   // the two reset arms inside the machine --- so the two cannot disagree, and
   // a person reading `cadr-console status` is told what the machine actually
@@ -704,7 +723,7 @@ module cadr_arty #(
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
 
-  // LD4's three colours, as {red, green, blue}. It is a wire and not three
+  // LD4's three colors, as {red, green, blue}. It is a wire and not three
   // assignments because WHAT LD4 SAYS DEPENDS ON THE BOARD: on the machine it
   // is the machine's own error halt and nothing else, dark or red, and on a
   // `PROVE` board it is the witness's verdict, which is a board with no
@@ -756,8 +775,8 @@ module cadr_arty #(
   //                  there. And **bit 2 is set**, which is the sharp part:
   //                  `cadr_axi_widen.sv` puts the word in the HIGH half of
   //                  the 64-bit beat at 0x18A7_2EE0, so the word at
-  //                  0x18A7_2EE4's neighbour is the one a strobe pattern that
-  //                  opens both halves would destroy. Reading that neighbour
+  //                  0x18A7_2EE4's neighbor is the one a strobe pattern that
+  //                  opens both halves would destroy. Reading that neighbor
   //                  is what makes the check able to fail.
   //
   //   the word       0x8A5C_36E1. Four different bytes, none of them 0x00 or
@@ -796,7 +815,7 @@ module cadr_arty #(
   //                  opens the LOW half of its own, so a widening stuck on
   //                  one half is caught in one direction or the other: stuck
   //                  low, the read brings back filler; stuck high, the word
-  //                  lands on this address's neighbour instead.
+  //                  lands on this address's neighbor instead.
   //
   //                  **INSIDE THE POISONED BLOCK, WITH ITS OWN NEIGHBOUR IN
   //                  IT TOO.** 0x18A7_2F1C is the other half of this beat
@@ -814,7 +833,8 @@ module cadr_arty #(
 
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
-      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+      .SYNC_PROM_HEX(SYNC_PROM_HEX),
+      .LMTV(LMTV)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO
@@ -854,6 +874,10 @@ module cadr_arty #(
       // 32 boards of 64K words, which is muir's own default and what every
       // trace in this repository was taken with.
       .boards(7'd32),
+      // And which display boards are in it, from the console face.
+      .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
+      .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
+      .tv_color_map_q(con_tv_color_map_q),
       // The memory, or the absence of one: see the `DDR` generate below.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -904,7 +928,7 @@ module cadr_arty #(
       // The I/O board's cables, tied off above with the slice that will
       // drive each, and what the card shows.
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .n_boot2(n_boot2),
-      // SW0, synchronised, read at the machine's own reset arms and nowhere
+      // SW0, synchronized, read at the machine's own reset arms and nowhere
       // else --- the block above `cadr_machine` here says the whole of it ---
       // and `-BOOT` on its way back out, for the error lamp to be cleared by.
       .no_auto_boot(sw0_level), .n_boot_o(n_boot),
@@ -1056,7 +1080,7 @@ module cadr_arty #(
 
     // The port's reset, out of the PS at whatever moment software runs
     // post-config, and asynchronous to this clock by construction --- so it
-    // is synchronised in, the same way `mmcm_locked` is.
+    // is synchronized in, the same way `mmcm_locked` is.
     logic       hp0_aresetn;
     logic [2:0] port_rst_sync;
     always_ff @(posedge clk) begin
@@ -1542,7 +1566,7 @@ module cadr_arty #(
       // The splitter's first page, which is the pack side's on every other
       // board, still has to be answered: a read nothing answers there hangs
       // both Arm cores at one PC each and there is no software guard for it.
-      // `gp0_rst_s` is the port's own reset synchronised, made once in the
+      // `gp0_rst_s` is the port's own reset synchronized, made once in the
       // enclosing scope where the splitter and the other three slaves take
       // it --- a second one here would shadow the name.
       cadr_gp0_default u_gp0_default (
@@ -1585,7 +1609,7 @@ module cadr_arty #(
     // --- which is the only thing standing between "the default port is
     // connected" and the frozen cores.
     //
-    // Reset by the port's own reset, synchronised, as the pack side and the
+    // Reset by the port's own reset, synchronized, as the pack side and the
     // console are: before Linux is up the faces read zero, so the serial
     // port's `CTL` is zero and its cable is out, and the Chaosnet's address
     // switches read zero --- which is exactly what the tie-off did.
@@ -1756,7 +1780,7 @@ module cadr_arty #(
     // is what says whether the machine is running, and a board that can only
     // be watched through its lamps cannot answer that.
     //
-    // Reset by the port's own reset, synchronised, as the pack side is ---
+    // Reset by the port's own reset, synchronized, as the pack side is ---
     // and the machine is NOT reset with it: a console that reset the machine
     // when Linux came up would be a console that could never be attached to
     // a running machine, which is the only time it is wanted.
@@ -1823,7 +1847,7 @@ module cadr_arty #(
     // **IT TAKES THE PORT'S RESET AND NOT THE MACHINE'S**, for the reason
     // the console gives about its own: a carrier reset by the machine's
     // reset would abandon the request that asked for it, and the debugger
-    // would be left waiting for an acknowledgement from a cable that had
+    // would be left waiting for an acknowledgment from a cable that had
     // forgotten the request.  Modifier bit 1 resets the machine and this is
     // deliberately outside that.
     //
@@ -1891,6 +1915,11 @@ module cadr_arty #(
         .s_rdata(gp1c_rdata), .s_rresp(gp1c_rresp), .s_rid(gp1c_rid),
         .s_rlast(gp1c_rlast), .s_rvalid(gp1c_rvalid), .s_rready(gp1c_rready),
         .dbg_req(con_req), .dbg_gnt(con_gnt),
+        // The backplane's display boards, page 2's word 33, and the two
+        // color maps on pages 4 and 5.
+        .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
+        .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
+        .tv_color_map_q(con_tv_color_map_q),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -1980,7 +2009,7 @@ module cadr_arty #(
 
     if (HDMI != 0) begin : g_hdmi
 
-      // The port's own reset, synchronised as HP0's and HP2's are.
+      // The port's own reset, synchronized as HP0's and HP2's are.
       logic [2:0] disp_rst_sync;
       logic       disp_rst;
       always_ff @(posedge clk) begin
@@ -2198,6 +2227,11 @@ module cadr_arty #(
     // what `build/machine.pass` compares.
     assign con_req = 1'b0;
     assign con_msyn = 1'b0;
+    // And no way to say what the backplane has, so it is the default one:
+    // a SIMPLE TV and no color board.
+    assign con_tv_lispm = 1'b0;
+    assign con_color_tv = 1'b0;
+    assign con_tv_map_a = 4'd0;
     assign con_write = 1'b0;
     assign con_addr = 18'd0;
     assign con_wdata = 16'd0;
@@ -2406,6 +2440,10 @@ module cadr_arty #(
                    // page 0's word 14 reports them and this is a second
                    // reader.
                    dbg_engaged, dbg_foreign, dbg_live, dbg_active, dbg_peer_far, dbg_frames,
+                   // The two display boards' color maps, which the console
+                   // reads on pages 4 and 5. On a board with no console they
+                   // reach nobody and are folded here.
+                   con_tv_map_q, con_tv_color_map_q,
                    dbg_wire_state};
     end
   end
@@ -2495,7 +2533,7 @@ module cadr_arty #(
   // ---------------------------------------------------------------- LD4
   //
   // **LD4 IS THE MACHINE'S OWN ERROR HALT AND NOTHING ELSE: IT IS EITHER OFF
-  // OR RED.**  No other colour and no other meaning ever reaches it --- not at
+  // OR RED.**  No other color and no other meaning ever reaches it --- not at
   // power-on, not during the PROM, not while halted by a console.  Its green
   // and blue channels are tied off, so there is nothing for a later meaning to
   // be put on.
@@ -2575,7 +2613,7 @@ module cadr_arty #(
   // register's own bit is `promdisable`, which drives no lamp here --- the
   // probe's sample carries it and nothing else does.
   //
-  // Blue, and blue only, for the one state it carries.  A colour lamp showing
+  // Blue, and blue only, for the one state it carries.  A color lamp showing
   // one thing is still the right lamp for it: this is the answer to "has it
   // finished booting", which is worth telling apart from the four plain green
   // ones at a glance.
@@ -2652,7 +2690,7 @@ module cadr_arty #(
   // BTN0 is the machine's boot button and BTN1 the fabric's reset; BTN2 and
   // BTN3 have no meaning here, and neither has SW1. SW0 is the no-auto-boot
   // switch. The unused pins are read here only to keep them legal without
-  // inventing behaviour for them.
+  // inventing behavior for them.
   //
   // **AND `sw0_held` IS READ HERE FOR A DIFFERENT REASON**, which is worth
   // keeping apart from theirs: it has a reader, the console, and the console

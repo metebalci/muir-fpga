@@ -29,7 +29,12 @@
 // are all it maps: a readout that mapped the whole face would be claiming an
 // interest in words it never touches.
 #define RO_REG_BASE   0x80000000u
-#define RO_REG_BYTES  128u
+// **384 AND NOT 128 SINCE THE TWO DISPLAY BOARDS' COLOR MAPS TOOK PAGES 4
+// AND 5.**  A checkpoint has to carry the map muir would have kept ---
+// `tv::Tv::color_map` --- and register 4 is write only on the Xbus, the RAMs
+// being off the board, so this window is the only way to ask.  Everything
+// else here still reads page 0 and page 1 alone.
+#define RO_REG_BYTES  384u
 #define RO_IDENT_WORD 0x434F4E53u	/* "CONS" */
 #define RO_UNMAPPED   0xBCB0B1ACu	/* ~IDENT */
 
@@ -47,6 +52,23 @@ enum ro_p0 { RO_IDENT = 0, RO_STAT = 1, RO_CYCLES = 2, RO_CYCLESH = 3,
 // Page 1: word 16 + k is diagnostic register k.
 #define RO_PAGE1      16u
 #define RO_SPY(k)     (RO_PAGE1 + (unsigned)(k))
+
+// **THE TWO DISPLAY BOARDS' COLOR MAPS, pages 4 and 5.**  Word 64 + c is the
+// first display's color c and word 80 + c the color TV's: red in bits 23 to
+// 16, green in 15 to 8 and blue in 7 to 0, which is `WRITE-COLOR-MAP`'s own
+// channel order.  Read only.
+//
+// The map is write only on the Xbus, so nothing a bus cycle can do reads one
+// back and the fabric keeps the sixteen entries for exactly this.  Which
+// board's map a caller wants depends on what it is for: a CHECKPOINT carries
+// the machine's `tv`, which is the first board, and a screen server drawing
+// the color picture wants the second.
+#define RO_PAGE4      64u
+#define RO_PAGE5      80u
+#define RO_MAP_COLORS   IMG_MAP_COLORS
+#define RO_MAP_CHANNELS IMG_MAP_CHANNELS
+#define RO_COLOR_MAP_WORD(board, color) \
+	(((board) ? RO_PAGE5 : RO_PAGE4) + (unsigned)(color))
 #define RO_LOST_BIT   0x00010000u
 
 // The diagnostic registers this program uses, muir's `spy.rs` names.
@@ -92,6 +114,13 @@ int ro_is_halted(struct readout *r);
 // the low word's read, which is the rule for the whole of page 0.
 uint64_t ro_cycles(struct readout *r);
 uint64_t ro_ticks(struct readout *r);
+
+// One display board's color map, `[color][channel]` with red first: board 0
+// the first display and board 1 the color TV.  Returns 1 if any of the
+// forty-eight bytes is not zero, which is what says the machine has written
+// one --- an unwritten map is every gun at zero.
+int ro_color_map(struct readout *r, int board,
+		 uint8_t map[RO_MAP_COLORS][RO_MAP_CHANNELS]);
 
 // Everything the window can say, into `img`.  Main memory and the display are
 // not here --- they are DDR and come through /dev/mem.  Returns 0, or -1.

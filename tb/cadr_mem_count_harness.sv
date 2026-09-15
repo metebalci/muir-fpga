@@ -209,6 +209,11 @@ module cadr_mem_count_harness #(
       .clock_ready(clock_ready), .interval(interval),
       .ub_ssyn_by(ub_ssyn_by),
       .boards(7'd32),
+      // **THE BACKPLANE THIS CHECK RUNS ON: one SIMPLE TV and no color TV**,
+      // which is muir's own default and what `busint::decode` describes.  The
+      // second display board has `build/color_tv.pass` of its own.
+      .tv_lispm(1'b0), .color_tv(1'b0), .tv_map_a(4'd0),
+      .tv_map_q(tv_map_q), .tv_color_map_q(tv_color_map_q),
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
       .alu(alu), .r(r), .ob(ob), .q(q), .dc(dc), .lc(lc), .vma(vma),
@@ -320,8 +325,13 @@ module cadr_mem_count_harness #(
   logic [47:0] con_ro_data;
   logic [17:0] con_ro_echo;
   /* verilator lint_off UNUSEDSIGNAL */
+  // The two display boards' color maps, which go to the console face on the
+  // board and to nobody here; folded below with everything else this harness
+  // does not read.
+  logic [23:0] tv_map_q, tv_color_map_q;
+
   logic unused;
-  assign unused = &{1'b0, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
+  assign unused = &{1'b0, tv_map_q, tv_color_map_q, lpc, opc, st, a, m, alu, r, ob, q, ir, dc, lc, vma,
                     store_rdata, store_miss, ch_active,
                     req_valid, req_tag, req_post, ch_waiting, ch_slot,
                     ch_wrote, ch_hit,

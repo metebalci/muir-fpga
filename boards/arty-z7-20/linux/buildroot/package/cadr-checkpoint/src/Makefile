@@ -104,7 +104,7 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) \
 # The list and the loop in the repository's own Makefile are two statements of
 # one number, and `build/checkpoint.pass` runs whatever that loop names: a
 # mutant added here and not there is built and never judged.
-MUTANTS := 1 2 3 4 5 6 7
+MUTANTS := 1 2 3 4 5 6 7 8
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) \

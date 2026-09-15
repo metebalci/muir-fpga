@@ -91,6 +91,8 @@ DAEMON_SH=/usr/share/cadr/daemon.sh
 # program listened.  muir says the same thing in one word that belongs to one
 # program, and now so does this.
 FLAGS="--terminal
+       --color-terminal
+       --color-window
        --keyboard-mapping
        --keyboard-boot
        --keyboard-boot-trace

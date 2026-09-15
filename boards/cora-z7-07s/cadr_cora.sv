@@ -12,7 +12,7 @@
 //
 //   - **TWO LAMPS AND NOT SIX.**  Digilent's master pin file gives this board
 //     two RGB LEDs and no plain ones, where the Arty Z7-20 has four plain and
-//     two tricolour.  The Arty spends six lamps on the machine's run signal,
+//     two tricolor.  The Arty spends six lamps on the machine's run signal,
 //     the fabric's clock, the microcycles, the disk, its error halt and the
 //     boot PROM.  Two cannot carry six meanings, so what this board shows is
 //     a decision and not a translation; see the lamps at the bottom.
@@ -203,7 +203,17 @@ module cadr_cora #(
     // and writes what it read to a second address.
     // See the note above the memory below: a `PROVE` board is a `DDR` board
     // by construction, because proving the port needs the port.
-    parameter int unsigned PROVE = 0
+    parameter int unsigned PROVE = 0,
+
+    // **THE SECOND DISPLAY BOARD, THE COLOR TV**, `lmtv.order`'s "for the
+    // color TV, x is 5": a LISPM TV strapped to 0o17200000 with its control
+    // words at 0o17377750, carrying a color monitor of its own.  One means
+    // the fabric has the slot; whether a machine HAS the board is the
+    // console's page 2 word 33, which `fpgarc`'s `--color-tv` writes at
+    // boot, and a machine with none gives the NXM at those addresses ---
+    // which is how `COLOR-EXISTS-P` finds out.  Zero leaves the slot out of
+    // the fabric entirely, for a part with no room for it.
+    parameter int unsigned LMTV = 1
 ) (
     input  var logic       sysclk,   // 125 MHz, pin H16
     // BTN0 boots the machine and BTN1 resets the fabric.  Two buttons is what
@@ -211,7 +221,7 @@ module cadr_cora #(
     // where the Arty Z7-20 reads SW0.
     input  var logic [1:0] btn,
     // The two RGB LEDs, and the whole of this board's light panel.  Driven
-    // high to light, one pin a colour.  LD0 is the machine's run lamp and LD1
+    // high to light, one pin a color.  LD0 is the machine's run lamp and LD1
     // is what the machine is doing; the section at the bottom of this file is
     // the assignment and the argument for it.
     output var logic       led0_r, led0_g, led0_b,
@@ -443,6 +453,15 @@ module cadr_cora #(
   // `cadr_memory_path` folds to a constant and the register block keeps its
   // one master, which is the board this file builds by default.
   logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
+
+  // **WHICH DISPLAY BOARDS THE BACKPLANE HAS**, out of the console's page 2
+  // word 33, and the two boards' color maps coming back on pages 4 and 5.
+  // A board with no console is a machine with one SIMPLE TV and no color TV,
+  // which is muir's own default and the backplane every reference trace
+  // taken before the second board was built was taken on.
+  logic        con_tv_lispm, con_color_tv;
+  logic [3:0]  con_tv_map_a;
+  logic [23:0] con_tv_map_q, con_tv_color_map_q;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the twenty-one wires of the DBGIN connector.
@@ -724,7 +743,7 @@ module cadr_cora #(
   // no memory, so LD5's blue is dark on the board this file builds by default.
   logic ddr_error;
 
-  // LD1's three colours, as {red, green, blue}. It is a wire and not three
+  // LD1's three colors, as {red, green, blue}. It is a wire and not three
   // assignments because WHAT LD1 SAYS DEPENDS ON THE BOARD: on the machine it
   // is the machine's error halt, the boot PROM and the microcycles, and on a
   // `PROVE` board it is the witness's verdict, which is a board with no
@@ -767,8 +786,8 @@ module cadr_cora #(
   //                  there. And **bit 2 is set**, which is the sharp part:
   //                  `cadr_axi_widen.sv` puts the word in the HIGH half of
   //                  the 64-bit beat at 0x18A7_2EE0, so the word at
-  //                  0x18A7_2EE4's neighbour is the one a strobe pattern that
-  //                  opens both halves would destroy. Reading that neighbour
+  //                  0x18A7_2EE4's neighbor is the one a strobe pattern that
+  //                  opens both halves would destroy. Reading that neighbor
   //                  is what makes the check able to fail.
   //
   //   the word       0x8A5C_36E1. Four different bytes, none of them 0x00 or
@@ -807,7 +826,7 @@ module cadr_cora #(
   //                  opens the LOW half of its own, so a widening stuck on
   //                  one half is caught in one direction or the other: stuck
   //                  low, the read brings back filler; stuck high, the word
-  //                  lands on this address's neighbour instead.
+  //                  lands on this address's neighbor instead.
   //
   //                  **INSIDE THE POISONED BLOCK, WITH ITS OWN NEIGHBOUR IN
   //                  IT TOO.** 0x18A7_2F1C is the other half of this beat
@@ -825,7 +844,8 @@ module cadr_cora #(
 
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
-      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+      .SYNC_PROM_HEX(SYNC_PROM_HEX),
+      .LMTV(LMTV)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // **-XBUS.INTR IS THE MACHINE'S OWN NOW AND USED TO BE TIED TO ZERO
@@ -865,6 +885,10 @@ module cadr_cora #(
       // 32 boards of 64K words, which is muir's own default and what every
       // trace in this repository was taken with.
       .boards(7'd32),
+      // And which display boards are in it, from the console face.
+      .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
+      .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
+      .tv_color_map_q(con_tv_color_map_q),
       // The memory, or the absence of one: see the `DDR` generate below.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -1054,7 +1078,7 @@ module cadr_cora #(
 
     // The port's reset, out of the PS at whatever moment software runs
     // post-config, and asynchronous to this clock by construction --- so it
-    // is synchronised in, the same way `mmcm_locked` is.
+    // is synchronized in, the same way `mmcm_locked` is.
     logic       hp0_aresetn;
     logic [2:0] port_rst_sync;
     always_ff @(posedge clk) begin
@@ -1540,7 +1564,7 @@ module cadr_cora #(
       // The splitter's first page, which is the pack side's on every other
       // board, still has to be answered: a read nothing answers there hangs
       // both Arm cores at one PC each and there is no software guard for it.
-      // `gp0_rst_s` is the port's own reset synchronised, made once in the
+      // `gp0_rst_s` is the port's own reset synchronized, made once in the
       // enclosing scope where the splitter and the other three slaves take
       // it --- a second one here would shadow the name.
       cadr_gp0_default u_gp0_default (
@@ -1583,7 +1607,7 @@ module cadr_cora #(
     // --- which is the only thing standing between "the default port is
     // connected" and the frozen cores.
     //
-    // Reset by the port's own reset, synchronised, as the pack side and the
+    // Reset by the port's own reset, synchronized, as the pack side and the
     // console are: before Linux is up the faces read zero, so the serial
     // port's `CTL` is zero and its cable is out, and the Chaosnet's address
     // switches read zero --- which is exactly what the tie-off did.
@@ -1754,7 +1778,7 @@ module cadr_cora #(
     // is what says whether the machine is running, and a board that can only
     // be watched through its lamps cannot answer that.
     //
-    // Reset by the port's own reset, synchronised, as the pack side is ---
+    // Reset by the port's own reset, synchronized, as the pack side is ---
     // and the machine is NOT reset with it: a console that reset the machine
     // when Linux came up would be a console that could never be attached to
     // a running machine, which is the only time it is wanted.
@@ -1821,7 +1845,7 @@ module cadr_cora #(
     // **IT TAKES THE PORT'S RESET AND NOT THE MACHINE'S**, for the reason
     // the console gives about its own: a carrier reset by the machine's
     // reset would abandon the request that asked for it, and the debugger
-    // would be left waiting for an acknowledgement from a cable that had
+    // would be left waiting for an acknowledgment from a cable that had
     // forgotten the request.  Modifier bit 1 resets the machine and this is
     // deliberately outside that.
     //
@@ -1889,6 +1913,11 @@ module cadr_cora #(
         .s_rdata(gp1c_rdata), .s_rresp(gp1c_rresp), .s_rid(gp1c_rid),
         .s_rlast(gp1c_rlast), .s_rvalid(gp1c_rvalid), .s_rready(gp1c_rready),
         .dbg_req(con_req), .dbg_gnt(con_gnt),
+        // The backplane's display boards, page 2's word 33, and the two
+        // color maps on pages 4 and 5.
+        .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
+        .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
+        .tv_color_map_q(con_tv_color_map_q),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -2033,6 +2062,11 @@ module cadr_cora #(
     // what `build/machine.pass` compares.
     assign con_req = 1'b0;
     assign con_msyn = 1'b0;
+    // And no way to say what the backplane has, so it is the default one:
+    // a SIMPLE TV and no color board.
+    assign con_tv_lispm = 1'b0;
+    assign con_color_tv = 1'b0;
+    assign con_tv_map_a = 4'd0;
     assign con_write = 1'b0;
     assign con_addr = 18'd0;
     assign con_wdata = 16'd0;
@@ -2239,6 +2273,10 @@ module cadr_cora #(
                    // is doing rather than what crosses it. On a board with no
                    // console they reach nobody and are folded here.
                    dbg_engaged, dbg_foreign, dbg_live, dbg_active, dbg_peer_far, dbg_frames,
+                   // The two display boards' color maps, which the console
+                   // reads on pages 4 and 5. On a board with no console they
+                   // reach nobody and are folded here.
+                   con_tv_map_q, con_tv_color_map_q,
                    dbg_wire_state};
     end
   end
@@ -2392,7 +2430,7 @@ module cadr_cora #(
     else          machrun_lamp <= machrun;
   end
 
-  // Green, and green only.  The other two colours are tied off rather than
+  // Green, and green only.  The other two colors are tied off rather than
   // left for a later meaning, on the Arty Z7-20's own argument for its error
   // lamp: a lamp that means one thing is read faster than one that means
   // three, and a tied-off channel is a channel nothing can be quietly added

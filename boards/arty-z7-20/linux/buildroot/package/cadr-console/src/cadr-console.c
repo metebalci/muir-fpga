@@ -147,7 +147,7 @@ static int probe_face(struct console *c, uint32_t regs_phys)
 
 static const char *ddr_note =
 	"read straight out of DDR over /dev/mem, NOT through the machine: this fabric answers no mapped "
-	"Unibus window, so nothing was halted and nothing was synchronised";
+	"Unibus window, so nothing was halted and nothing was synchronized";
 
 static int ddr_word(int mem, uint32_t phys, uint32_t *out, const uint32_t *in)
 {
@@ -323,6 +323,14 @@ static void help(void)
 	say("                        which way round the JA ribbon was made.  Only a DEBUGGER");
 	say("                        applies it; `auto` looks for the answer and is the default.");
 	say("                        Refused while this board is the debugger");
+	say("tv-board [simple-tv|lispm-tv]");
+	say("                which display board the first one is, muir's own --tv-board.");
+	say("                With no word it reports.  It reaches mode bit 7 and nothing else");
+	say("color-tv [on|off]       whether the second display board --- the color TV at");
+	say("                0o17200000 --- is in the backplane.  A machine with none gives");
+	say("                the NXM there, which is how the band finds out.  Exits 0 when fitted");
+	say("color-map [first|color] one board's sixteen colors, three guns each: the map the");
+	say("                machine wrote through register 4, which no bus cycle can read back");
 	say("trace-keys on|off  tell cadr-terminal and cadr-usb-input to say what each key");
 	say("                becomes --- a keysym, MIT's own key position, or nothing at all.");
 	say("                Their logs, not this one; no register is touched");
@@ -435,6 +443,64 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 		// `console_face.h` has the argument for putting it here as well
 		// as in the line above.
 		exit_status = sw.held_at_reset ? 0 : 1;
+	}
+	else if (!strcmp(cmd, "tv-board")) {
+		// muir's own two words, and a spelling nothing names writes
+		// nothing and says so rather than picking a board for
+		// somebody.  With no word it reports.
+		struct cons_display d;
+		if (argc > 1) {
+			if (!strcmp(argv[1], "simple-tv"))
+				cons_set_tv_board(c, 0);
+			else if (!strcmp(argv[1], "lispm-tv"))
+				cons_set_tv_board(c, 1);
+			else {
+				say("tv-board simple-tv|lispm-tv");
+				return 0;
+			}
+		}
+		cons_read_display(c, &d);
+		cons_say_display(&d);
+	}
+	else if (!strcmp(cmd, "color-tv")) {
+		struct cons_display d;
+		if (argc > 1) {
+			if (!strcmp(argv[1], "on"))
+				cons_set_color_tv(c, 1);
+			else if (!strcmp(argv[1], "off"))
+				cons_set_color_tv(c, 0);
+			else {
+				say("color-tv on|off");
+				return 0;
+			}
+		}
+		cons_read_display(c, &d);
+		cons_say_display(&d);
+		// The answer, for a script: 0 when a color board is fitted.
+		exit_status = d.color ? 0 : 1;
+	}
+	else if (!strcmp(cmd, "color-map")) {
+		// One board's sixteen colors, out of a port no bus cycle can
+		// reach.  The default is the color board's, which is the one
+		// anything drawing a picture wants.
+		uint8_t map[CONS_MAP_COLORS][CONS_MAP_CHANNELS];
+		int board = 1;
+		if (argc > 1) {
+			if (!strcmp(argv[1], "color"))
+				board = 1;
+			else if (!strcmp(argv[1], "first"))
+				board = 0;
+			else {
+				say("color-map [first|color]");
+				return 0;
+			}
+		}
+		cons_read_color_map(c, board, map);
+		say("the %s board's color map, as the machine last wrote it:",
+		    board ? "color" : "first");
+		for (int k = 0; k < CONS_MAP_COLORS; ++k)
+			say("  %2d  red %3u  green %3u  blue %3u", k,
+			    map[k][0], map[k][1], map[k][2]);
 	}
 	else if (!strcmp(cmd, "trace-keys"))
 		exit_status = do_trace_keys(argc, argv);

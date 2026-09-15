@@ -129,18 +129,61 @@ unsigned rfb_put(const struct rfb_format *f, uint8_t *out, uint32_t value)
 	return n;
 }
 
-void rfb_colour_map(uint8_t out[RFB_COLOUR_MAP_BYTES])
+size_t rfb_colour_map(uint8_t out[RFB_COLOUR_MAP_BYTES], const uint8_t map[16][3],
+		      unsigned values)
 {
+	if (values > 16)
+		values = 16;
 	out[0] = 1;			/* message type: SetColourMapEntries */
 	out[1] = 0;			/* padding */
 	be16(out + 2, 0);		/* first color */
-	be16(out + 4, 2);		/* how many */
-	be16(out + 6, 0);		/* black: red */
-	be16(out + 8, 0);		/*        green */
-	be16(out + 10, 0);		/*        blue */
-	be16(out + 12, 0xFFFF);		/* white: red */
-	be16(out + 14, 0xFFFF);		/*        green */
-	be16(out + 16, 0xFFFF);		/*        blue */
+	be16(out + 4, (uint16_t)values);
+	for (unsigned v = 0; v < values; ++v) {
+		uint8_t *e = out + 6 + v * 6;
+		if (values == 2) {
+			// The first display board: black at 0 and white at 1.
+			const uint16_t w = v ? 0xFFFF : 0;
+			be16(e + 0, w);
+			be16(e + 2, w);
+			be16(e + 4, w);
+		} else {
+			// The color TV: the map the machine wrote.  **RFB's
+			// entries are sixteen bits a gun and the CADR's map is
+			// eight**, so a byte is repeated into both halves ---
+			// 0xFF becomes 0xFFFF and 0x00 stays 0x0000, which is
+			// what makes full and empty come out full and empty.
+			for (unsigned k = 0; k < 3; ++k) {
+				const uint16_t b = map[v][k];
+				be16(e + k * 2, (uint16_t)(b << 8 | b));
+			}
+		}
+	}
+	return 6 + (size_t)values * 6;
+}
+
+uint32_t rfb_pixel(const struct rfb_format *f, const uint8_t map[16][3], unsigned value,
+		   unsigned values)
+{
+	value &= 15u;
+	if (!f->true_colour)
+		return value;
+	if (values == 2)
+		return value ? rfb_white(f) : rfb_black(f);
+	// The color TV, in the viewer's own format.  A gun is eight bits here
+	// and `red_max` is whatever the viewer asked for, so the byte is
+	// scaled into it rather than shifted: a viewer asking for five bits a
+	// gun gets 0xFF as 31 and 0x00 as 0.
+	uint32_t v = 0;
+	const unsigned width = f->bits_per_pixel;
+	const uint16_t max[3] = { f->red_max, f->green_max, f->blue_max };
+	const uint8_t shift[3] = { f->red_shift, f->green_shift, f->blue_shift };
+	for (unsigned k = 0; k < 3; ++k) {
+		if (shift[k] >= width)
+			continue;
+		const uint32_t scaled = ((uint32_t)map[value][k] * max[k] + 127u) / 255u;
+		v |= scaled << shift[k];
+	}
+	return v;
 }
 
 enum rfb_version rfb_version_parse(const uint8_t b[12])

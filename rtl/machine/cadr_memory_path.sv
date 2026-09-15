@@ -120,7 +120,16 @@ module cadr_memory_path #(
     // MIT's TV sync PROM as a `$readmemh` image, passed down to `cadr_tv`;
     // `rtl/machine/cadr_tv.sv` says what it is and why it is named at
     // elaboration rather than left to a relative default.
-    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
+
+    // **WHETHER THE SECOND DISPLAY BOARD IS BUILT AT ALL.**  `color_tv` says
+    // whether a machine HAS one, which is a backplane a console can change;
+    // this says whether the fabric carries the slot, which is a board's own
+    // decision taken at synthesis.  A part with no room for it builds with
+    // `LMTV` zero, and then the color addresses give the NXM whatever the
+    // console asks for --- which is a machine with no color board, exactly
+    // as `busint::decode` describes one.
+    parameter int LMTV = 1
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -153,7 +162,30 @@ module cadr_memory_path #(
     input  var logic        device_ack,   // -XBUS.ACK, from that slave
     input  var logic [31:0] device_rdata,
     // The display's `SEND INTR`, onto -XBUS.INTR: see the instance below.
+    // **BOTH BOARDS', ORED**, as the backplane's open-collector `-XBUS.INTR`
+    // joins them: muir's `Machine::xbus_interrupt` is `self.tv.interrupt() ||
+    // self.color_tv...interrupt()`.  Microcode 323's `INTRX0` clears the
+    // flag by reading and writing the NORMAL TV's register alone, so a
+    // color-board interrupt has nothing to take it and the software never
+    // enables one; the line is joined because the backplane joins it.
     output var logic        tv_intr,
+
+    // --- the two display boards ------------------------------------------
+    //
+    // Which board the first display is, muir's `--tv-board`: it reaches mode
+    // bit 7 and nothing else.  And whether a second board --- the color TV,
+    // `tv::COLOR_TV` --- is in the backplane at all, muir's `--color-tv`,
+    // which decides whether its two address ranges answer.  Both come from
+    // the console face, which is where a machine's backplane is set.
+    input  var logic        tv_lispm,
+    input  var logic        color_tv,
+
+    // The two boards' color maps, read only: `tv_map_a` names a color and
+    // the two words hand back its three channels, red in bits 23 to 16.
+    // `rtl/machine/cadr_tv.sv` says what the map is and why it is kept.
+    input  var logic [3:0]  tv_map_a,
+    output var logic [23:0] tv_map_q,
+    output var logic [23:0] tv_color_map_q,
 
     // `XBUS INTR IN`, the backplane's one interrupt line as it arrives at the
     // bus interface: the disk controller's request ORed with the display's.
@@ -689,7 +721,15 @@ module cadr_memory_path #(
   // change to what it decides.
   logic is_memory_c, device_c, nxm_c, unibus_c;
 
+  // Whether the color ranges answer: the console's setting AND the slot
+  // being built.  One term, used by all three decodes and by the instance
+  // itself, so a board built without the second display cannot be asked into
+  // a backplane it does not have.
+  logic color_fitted;
+  assign color_fitted = (LMTV != 0) && color_tv;
+
   cadr_xbus_decode decode (
+      .color_tv(color_fitted),
       .phys  (phys),
       .boards(boards),
       .memory(is_memory_c),
@@ -711,6 +751,7 @@ module cadr_memory_path #(
   logic ch_device_c, ch_nxm_c, ch_unibus_c;
 
   cadr_xbus_decode ch_decode (
+      .color_tv(color_fitted),
       .phys  (ch_addr),
       .boards(boards),
       .memory(ch_memory_c),
@@ -745,6 +786,7 @@ module cadr_memory_path #(
   logic        mp_device_c, mp_nxm_c, mp_unibus_c;
 
   cadr_xbus_decode mp_decode (
+      .color_tv(color_fitted),
       .phys  (map_addr),
       .boards(boards),
       .memory(mp_memory_c),
@@ -803,16 +845,21 @@ module cadr_memory_path #(
 
   logic [21:0] bus_phys;
   logic [31:0] bus_wdata;
-  logic        bus_write, bus_rq, bus_sel, bus_display;
+  logic        bus_write, bus_rq, bus_sel, bus_display, bus_display_color;
   assign bus_phys  = ch_own ? ch_addr  : mp_own ? map_addr  : phys;
   assign bus_wdata = ch_own ? ch_wdata : mp_own ? map_wdata : wdata;
   assign bus_write = ch_own ? ch_write : mp_own ? map_write : cpu_write;
   assign bus_rq    = changing ? 1'b0 : (ch_own ? ch_req : mp_own ? map_req : cpu_rq);
-  // The bridge answers main memory and the display's frame buffer, at two
-  // bases; the channel reaches only the first.  `tv_fb` is held in
-  // `cadr_tv`, as `is_memory` is held here, so this is a mux on registers.
-  assign bus_sel     = ch_own ? ch_memory : mp_own ? mp_memory : (is_memory || tv_fb);
-  assign bus_display = !ch_own && !mp_own && tv_fb;
+  // The bridge answers main memory and the display boards' frame buffers, at
+  // three bases; the channel reaches only the first.  `tv_fb` and `tvc_fb`
+  // are held in `cadr_tv`, as `is_memory` is held here, so this is a mux on
+  // registers.  The two windows are disjoint by construction --- the boards
+  // are strapped to two 32,768-word slots --- so `bus_display_color` picks
+  // between them and never both.
+  assign bus_sel           = ch_own ? ch_memory : mp_own ? mp_memory
+                                                : (is_memory || tv_fb || tvc_fb);
+  assign bus_display       = !ch_own && !mp_own && (tv_fb || tvc_fb);
+  assign bus_display_color = !ch_own && !mp_own && tvc_fb;
 
   // The channel's answer comes a tick after main memory's, because the
   // bridge's `rdata` is a register: `dev_ack` is a gate on `mem_done` and the
@@ -833,7 +880,7 @@ module cadr_memory_path #(
   // gate, read by an instrument a level up and by nothing else.
   assign ch_own_o       = ch_own;
   assign bus_changing_o = changing;
-  assign cpu_memory_o   = is_memory || tv_fb;
+  assign cpu_memory_o   = is_memory || tv_fb || tvc_fb;
   assign ch_memory_o    = ch_memory;
 
   always_ff @(posedge clk) begin
@@ -1149,6 +1196,7 @@ module cadr_memory_path #(
       .rst      (rst),
       .sel      (bus_sel),
       .display  (bus_display),
+      .display_color(bus_display_color),
       .dev_rq   (bus_rq),
       .dev_write(bus_write),
       .phys     (bus_phys),
@@ -1186,30 +1234,93 @@ module cadr_memory_path #(
   // and the disk's four are disjoint by construction.
   logic        tv_ack, tv_drives, tv_fb;
   logic [31:0] tv_rdata;
+  logic        tv_intr_n, tvc_intr_n;
 
   cadr_tv #(
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) tv (
-      .clk      (clk),
-      .rst      (rst),
-      .xbus_init(xbus_init),
-      .sel      (device),
-      .dev_rq   (dev_rq),
-      .dev_write(dev_write),
-      .phys     (phys),
-      .wdata    (wdata),
-      .dev_ack  (tv_ack),
-      .rdata    (tv_rdata),
-      .drives   (tv_drives),
-      .fb_sel   (tv_fb),
-      .intr     (tv_intr)
+      .clk        (clk),
+      .rst        (rst),
+      .xbus_init  (xbus_init),
+      .board_lispm(tv_lispm),
+      // The first display board is always in the backplane.  A CADR with no
+      // display at all is not a machine anything here has a reference for.
+      .fitted     (1'b1),
+      .sel        (device),
+      .dev_rq     (dev_rq),
+      .dev_write  (dev_write),
+      .phys       (phys),
+      .wdata      (wdata),
+      .dev_ack    (tv_ack),
+      .rdata      (tv_rdata),
+      .drives     (tv_drives),
+      .fb_sel     (tv_fb),
+      .intr       (tv_intr_n),
+      .map_a      (tv_map_a),
+      .map_q      (tv_map_q)
   );
+
+  // --- and the second display board, the color TV -------------------------
+  //
+  // The same module at the other strap, `tv::COLOR_TV`: `lmtv.order`'s "For
+  // the normal TV, x is 6.  For the color TV, x is 5".  It is a LISPM TV
+  // whatever the first board is --- `Tv::color()` is one --- because the
+  // color TV IS the LISPM TV, strapped elsewhere and driving a color
+  // monitor through the off-board map.
+  //
+  // **`fitted` IS WHAT MAKES IT ABSENT, AND THE DECODE AGREES WITH IT.**  The
+  // same `color_tv` reaches the three decodes above, so a machine with no
+  // board gives the NXM at the color addresses and this instance is reached
+  // by nothing --- which is what `COLOR-EXISTS-P` probes for.  Two places
+  // rather than one because a board on a backplane decodes its own address
+  // and the interface decides on its own whether anything answered.
+  logic        tvc_ack, tvc_drives, tvc_fb;
+  logic [31:0] tvc_rdata;
+
+  if (LMTV != 0) begin : g_color_tv
+    cadr_tv #(
+        .SYNC_PROM_HEX(SYNC_PROM_HEX),
+        .STRAP_CONTROL(19'd507901),  // 0o17377750
+        .STRAP_BUFFER (7'd122)       // 0o17200000
+    ) tv_color (
+        .clk        (clk),
+        .rst        (rst),
+        .xbus_init  (xbus_init),
+        .board_lispm(1'b1),
+        .fitted     (color_fitted),
+        .sel        (device),
+        .dev_rq     (dev_rq),
+        .dev_write  (dev_write),
+        .phys       (phys),
+        .wdata      (wdata),
+        .dev_ack    (tvc_ack),
+        .rdata      (tvc_rdata),
+        .drives     (tvc_drives),
+        .fb_sel     (tvc_fb),
+        .intr       (tvc_intr_n),
+        .map_a      (tv_map_a),
+        .map_q      (tv_color_map_q)
+    );
+  end else begin : g_no_color_tv
+    // No slot: the color addresses reach nothing, which `color_fitted`
+    // has already told the decodes, and the console's pages 4 and 5 read a
+    // map of zeros --- the map a board that is not there holds.
+    assign tvc_ack        = 1'b0;
+    assign tvc_drives     = 1'b0;
+    assign tvc_fb         = 1'b0;
+    assign tvc_rdata      = 32'd0;
+    assign tvc_intr_n     = 1'b0;
+    assign tv_color_map_q = 24'd0;
+  end
+
+  // `-XBUS.INTR` is open collector and every board on it pulls the one line.
+  assign tv_intr = tv_intr_n || tvc_intr_n;
 
   // The acknowledgments, joined as the open-collector `-XBUS.ACK` joins
   // them, and the word from whichever slave answered.  Nothing answers the
   // processor while the channel has the bus: its cycle simply waits, which is
   // what the per-word arbitration bounds.
-  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || device_ack);
+  assign dev_ack = !ch_own && !mp_own && (memory_ack || tv_ack || tvc_ack || device_ack);
   // The word from whichever slave answered. A Unibus register is sixteen bits
   // and reaches `MEM<15:0>`; the rest of the word is what nothing drives.  The
   // display drives the lines only while answering a READ of a control word
@@ -1239,6 +1350,7 @@ module cadr_memory_path #(
   // down where somebody meeting the line will meet it.
   assign rdata   = ub_ssyn      ? {16'h0000, ub_rdata}
                  : tv_drives    ? tv_rdata
+                 : tvc_drives   ? tvc_rdata
                  : device_ack   ? device_rdata
                                 : memory_rdata;
 

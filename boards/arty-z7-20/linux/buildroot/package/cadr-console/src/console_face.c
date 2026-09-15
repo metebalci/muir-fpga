@@ -927,3 +927,63 @@ void cons_say_regs(const struct cons_regs *r)
 	say("and page 0's words 7, 8 and 9, which are the machine's own and are on no diagnostic register:");
 	cons_say_machine_words(&r->mw);
 }
+
+// --- the backplane's display boards, page 2's word 33 and pages 4 and 5 ---
+//
+// A CADR carries one display board or two, and which is a fact about the
+// backplane rather than about the machine.  `console_face.h` has the argument
+// for putting it on page 2 beside the build stamp and for the three keys.
+
+void cons_read_display(struct console *c, struct cons_display *d)
+{
+	// ONE read for both bits, so that they name one instant: a word saying
+	// the first board is a LISPM TV and the second is fitted has to be one
+	// backplane and not two reads of a changing one.
+	d->word = c->read(c, CONS_DISPLAY);
+	d->mark_ok = CONS_TV_MARK_OF(d->word) == CONS_TV_MARK;
+	d->lispm = (d->word & CONS_TV_LISPM) != 0;
+	d->color = (d->word & CONS_TV_COLOR) != 0;
+}
+
+void cons_set_tv_board(struct console *c, int lispm)
+{
+	c->write(c, CONS_DISPLAY, lispm ? CONS_TV_LISPM_KEY : CONS_TV_SIMPLE_KEY);
+	++c->writes;
+}
+
+void cons_set_color_tv(struct console *c, int on)
+{
+	c->write(c, CONS_DISPLAY, on ? CONS_COLOR_TV_KEY : CONS_NO_COLOR_TV_KEY);
+	++c->writes;
+}
+
+void cons_read_color_map(struct console *c, int board,
+			 uint8_t map[CONS_MAP_COLORS][CONS_MAP_CHANNELS])
+{
+	for (int color = 0; color < CONS_MAP_COLORS; ++color) {
+		const uint32_t w = c->read(c, CONS_COLOR_MAP_WORD(board, color));
+		map[color][0] = (uint8_t)CONS_MAP_RED(w);
+		map[color][1] = (uint8_t)CONS_MAP_GREEN(w);
+		map[color][2] = (uint8_t)CONS_MAP_BLUE(w);
+	}
+}
+
+void cons_say_display(const struct cons_display *d)
+{
+	if (!d->mark_ok) {
+		// The marker is what tells a fabric older than this word from a
+		// backplane with nothing set: both read zero in the two bits.
+		say("display: word 33 did not carry its marker (0x%08x);"
+		    " this fabric is older than it is", d->word);
+		return;
+	}
+	say("display: the first board is a %s", d->lispm ? "LISPM TV" : "SIMPLE TV");
+	// **AND THE SECOND BOARD'S ABSENCE IS A FACT AND NOT A SILENCE.**  A
+	// machine with no color board gives the NXM at `0o17200000` and
+	// `0o17377750`, which is what `COLOR-EXISTS-P` probes for, so saying
+	// nothing here would leave a person wondering whether the word was
+	// read at all.
+	say("display: %s", d->color
+	    ? "a color TV is fitted, at 0o17200000 with its registers at 0o17377750"
+	    : "no color TV --- those addresses give the NXM, which is how the band finds out");
+}

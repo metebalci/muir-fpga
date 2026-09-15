@@ -10,10 +10,36 @@ void screen_frame_init(struct screen_frame *f, int black_on_white)
 	f->width = SCREEN_WIDTH;
 	f->height = SCREEN_HEIGHT;
 	f->words_per_line = SCREEN_WORDS_PER_LINE;
+	f->visible_words = SCREEN_VISIBLE_WORDS;
+	f->bpp = 1;
 	f->black_on_white = black_on_white != 0;
 	f->reads = 0;
-	for (unsigned i = 0; i < SCREEN_VISIBLE_WORDS; ++i)
+	for (unsigned c = 0; c < SCREEN_COLORS; ++c)
+		f->map[c][0] = f->map[c][1] = f->map[c][2] = 0;
+	for (unsigned i = 0; i < SCREEN_MAX_VISIBLE_WORDS; ++i)
 		f->words[i] = 0;
+}
+
+void screen_frame_init_color(struct screen_frame *f)
+{
+	screen_frame_init(f, 0);
+	f->width = SCREEN_COLOR_WIDTH;
+	f->height = SCREEN_COLOR_HEIGHT;
+	f->words_per_line = SCREEN_COLOR_WORDS_PER_LINE;
+	f->visible_words = SCREEN_COLOR_VISIBLE_WORDS;
+	f->bpp = SCREEN_COLOR_BPP;
+	// **`MODE BOW` IS NOT CARRIED HERE AND IT IS NOT AN OVERSIGHT.**  A
+	// four-bit pixel is an address into the map, so there is no bit to
+	// invert, and muir's `Tv::color` takes no notice of the mode register
+	// either.
+	f->black_on_white = 0;
+}
+
+void screen_frame_map(struct screen_frame *f, const uint8_t map[SCREEN_COLORS][3])
+{
+	for (unsigned c = 0; c < SCREEN_COLORS; ++c)
+		for (unsigned k = 0; k < 3; ++k)
+			f->map[c][k] = map[c][k];
 }
 
 void screen_frame_read(struct screen_frame *f, const volatile uint32_t *window)
@@ -21,7 +47,7 @@ void screen_frame_read(struct screen_frame *f, const volatile uint32_t *window)
 	// Word by word and not memcpy: the source is a volatile mapping of
 	// somebody else's memory, and memcpy takes a plain pointer and is
 	// entitled to read it twice or in another width.
-	for (unsigned i = 0; i < SCREEN_VISIBLE_WORDS; ++i)
+	for (unsigned i = 0; i < f->visible_words; ++i)
 		f->words[i] = window[i];
 	++f->reads;
 }
@@ -29,7 +55,7 @@ void screen_frame_read(struct screen_frame *f, const volatile uint32_t *window)
 int screen_frame_blank(const struct screen_frame *f)
 {
 	const uint32_t first = f->words[0];
-	for (unsigned i = 1; i < SCREEN_VISIBLE_WORDS; ++i)
+	for (unsigned i = 1; i < f->visible_words; ++i)
 		if (f->words[i] != first)
 			return SCREEN_BLANK_NO;
 	if (first == 0)
@@ -42,7 +68,7 @@ int screen_frame_blank(const struct screen_frame *f)
 unsigned long screen_frame_lit(const struct screen_frame *f)
 {
 	unsigned long n = 0;
-	for (unsigned i = 0; i < SCREEN_VISIBLE_WORDS; ++i) {
+	for (unsigned i = 0; i < f->visible_words; ++i) {
 		uint32_t w = f->words[i];
 		while (w) {
 			n += w & 1u;

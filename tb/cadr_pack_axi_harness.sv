@@ -364,6 +364,11 @@ module cadr_pack_axi_harness #(
       .clock_ready(clock_ready), .interval(interval),
       .ub_ssyn_by(ub_ssyn_by),
       .boards(7'd32),
+      // **THE BACKPLANE THIS CHECK RUNS ON: one SIMPLE TV and no color TV**,
+      // which is muir's own default and what `busint::decode` describes.  The
+      // second display board has `build/color_tv.pass` of its own.
+      .tv_lispm(1'b0), .color_tv(1'b0), .tv_map_a(4'd0),
+      .tv_map_q(tv_map_q), .tv_color_map_q(tv_color_map_q),
       // The port's own acknowledgments, which `cadr_bus_audit` inside the
       // machine compares against what the machine asked for.  This harness has
       // a real port, so they are the real handshakes rather than tied low,
@@ -466,8 +471,13 @@ module cadr_pack_axi_harness #(
   // The machine brings out more than anything here reads, and saying so is
   // what keeps lint honest about it.
   /* verilator lint_off UNUSEDSIGNAL */
+  // The two display boards' color maps, which go to the console face on the
+  // board and to nobody here; folded below with everything else this harness
+  // does not read.
+  logic [23:0] tv_map_q, tv_color_map_q;
+
   logic unused;
-  assign unused = &{1'b0,
+  assign unused = &{1'b0, tv_map_q, tv_color_map_q,
                     ser_mode1, ser_mode2, ser_cmd, ser_tx_strobe, ser_tx_data,
                     ser_status, ser_syn_face,
                     chaos_tx_go, chaos_tx_len, chaos_tx_valid,

@@ -78,6 +78,10 @@ const uint32_t W_CON_UNMAPPED = ~W_CONS;
 // this repository could carry, so a word that reads it came from the console
 // and from nowhere else.
 const uint32_t W_CON_BUILD = 0xC0FFEE21u;
+// Page 2's word 33 carries "TV" in its top half: the backplane's display
+// boards, and the marker is what says the console answered rather than that
+// the setting is anything.
+const uint32_t W_CON_TV_MARK = 0x5456u;
 const uint32_t W_DBG_UNMAPPED = ~W_DBUG;
 const uint32_t W_LIFT = 0x4C494654u;   // "LIFT"
 
@@ -503,15 +507,27 @@ int main(int argc, char **argv) {
         if (got == W_DBG_UNMAPPED)
           FailAt(addr, "the reply: the debug cable answered the console's page", got, 0);
         // Words 0 to 31 are the console's first two pages of sixteen, word
-        // 32 is which build the fabric is, and everything else in its 4 KB
-        // page is its own UNMAPPED.  **THE BUILD IS ASSERTED HERE TOO**, and
-        // not skipped, because what this check is about is which slave
-        // answers an address: a word that reads the harness's own stamp came
-        // from the console and from nothing else, which is a stronger
-        // statement about the routing than `UNMAPPED` is.
+        // 32 is which build the fabric is, word 33 is which display boards
+        // the backplane has, words 64 to 95 are the two boards' color maps,
+        // and everything else in its 4 KB page is its own UNMAPPED.  **THE
+        // BUILD IS ASSERTED HERE TOO**, and not skipped, because what this
+        // check is about is which slave answers an address: a word that
+        // reads the harness's own stamp came from the console and from
+        // nothing else, which is a stronger statement about the routing than
+        // `UNMAPPED` is.  The display word carries its own marker, which
+        // says the same thing about it.
         if (word == 32) {
           if (got != W_CON_BUILD)
             FailAt(addr, "the console's build word", got, W_CON_BUILD);
+        } else if (word == 33) {
+          if ((got >> 16) != W_CON_TV_MARK)
+            FailAt(addr, "the display word's marker", got >> 16, W_CON_TV_MARK);
+        } else if (word >= 64 && word < 96) {
+          // The two color maps, which this harness drives with zeros: what
+          // is asserted here is that the console answered and not that the
+          // map is anything, `build/console.pass` being where the pattern
+          // is.  The default slave's and the cable's own words are what
+          // this rules out, and both are checked above.
         } else if (word > 32 && got != W_CON_UNMAPPED) {
           FailAt(addr, "a word above the console's build", got, W_CON_UNMAPPED);
         }

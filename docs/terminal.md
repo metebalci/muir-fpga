@@ -263,7 +263,7 @@ compared against itself.
 The state machine over the table is written out by hand in `src/input_keys.c`,
 function for function against `Keyboard::resolve`, `tap`, `press` and
 `release`. A translation of behavior is not a translation of data, and
-pretending otherwise would hide where the judgement is.
+pretending otherwise would hide where the judgment is.
 
 ### What could not be mapped
 
@@ -1013,6 +1013,54 @@ would refuse a card carrying this one, and the `README.TXT` it writes there
 names the settings files one by one. Both are a line each and neither is this
 package's file.
 
+## The second screen, the color TV's: `--color-terminal`
+
+A CADR can carry two display boards. The second is the color TV ---
+`cadrtv/lmtv.order`'s "For the normal TV, x is 6. For the color TV, x is 5" ---
+and its picture is 576 by 454 at four bits a pixel through a map of sixteen
+colors. `--color-terminal` serves it as a second RFB display, which is muir's
+own flag and muir's own shape of it.
+
+**It is pixels only.** The machine has one keyboard and one mouse, both on the
+I/O board, and they stay with the main screen; a second monitor is a monitor
+and has neither. So the second server is given no input face and no input
+link, and what a viewer types or points at it is dropped. That is muir's
+`pixels_only`.
+
+**The color map is read out of the console face and cannot be read any other
+way.** A four-bit pixel is an address into sixteen colors, and register 4 on
+the display board is write only --- `sys/window/color.lisp` keeps
+`HARDWARE-COLOR-MAP` in the band because "the hardware does not allow reading
+back of the color map", the RAMs and their converters being off the board. The
+fabric keeps the sixteen entries as muir does and offers them on the console
+face's page 5; `color_map.h` is this program's reader, and the map is re-read
+with every frame because the window system rewrites it whenever it changes a
+color. A machine that has written no map has every color black, and the
+program says so rather than serving a black screen silently.
+
+**Where it is served.** muir's default is the display above the main screen's,
+and this takes the same rule: `--terminal 0.0.0.0:5900` puts the color screen
+on 5901 unless `--color-terminal` says otherwise. On this board 5901 is muir's
+own machine and 5902 would be muir's color screen, so the card's menu names a
+display of its own.
+
+**Two windows in memory.** The color board's frame buffer is a second region
+of the display's reserved 8 MB, 128 KB above the first, which is
+`cadr_ddr_map.sv`'s `COLOR_DISPLAY_BASE`. `--color-window` moves it.
+
+**What is shared and what is not.** One server module serves both screens: the
+geometry, how many values a pixel has and the color map all come out of the
+frame it is given at every poll, and a frame-buffer byte is eight pixels on the
+first board and two on the color one. RRE is offered on both, and there its
+rule differs in a way worth stating: a run is a run of ONE color, which is the
+same thing on a two-color screen and is not on a sixteen-color one.
+
+**The window name is different**, where muir names both terminals `muir:
+CADR`. This board serves both at once on one Ethernet port, so somebody with
+two viewers open would have two windows with one name; the second is called
+`CADR color`. The name is a label on a window and not a claim about the
+machine.
+
 ## What is not built
 
 - **Reading `MODE BOW`**, which is described above. It is fabric work in three
@@ -1037,6 +1085,12 @@ package's file.
   this project has no sample of one. Building it against no sample and no
   reference is the shape of a claim nothing exercises.
 - **A trigger for the probe.** That is a different instrument and is not this.
+- **The color screen's keyboard and mouse**, deliberately: see the section
+  above. A viewer's events there are counted and dropped, which is muir's own
+  rule for its own color terminal.
+- **The color screen on HDMI.** `cadr_display_out.sv` scans the first board's
+  window alone. The plan on record is both screens side by side on the one
+  output; nothing is built for it.
 
 ## The Makefile does not name the packages any more, it derives them
 

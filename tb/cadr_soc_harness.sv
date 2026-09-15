@@ -318,6 +318,10 @@ module cadr_soc_harness #(
   logic n_boot2;
   assign n_boot2 = !con_boot;
 
+  logic        con_tv_lispm, con_color_tv;
+  logic [3:0]  con_tv_map_a;
+  logic [23:0] con_tv_map_q, con_tv_color_map_q;
+
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
       .SYNC_PROM_HEX(SYNC_PROM_HEX)
@@ -342,6 +346,13 @@ module cadr_soc_harness #(
       // trace in this repository was taken with.  System 100 cannot cold-boot
       // with 40 or more, measured, so this number is not a knob.
       .boards(7'd32),
+      // **THE BACKPLANE'S DISPLAY BOARDS, wired to the console as the board
+      // wires them**, which is this harness's own rule: the whole point is to
+      // be `boards/arty-a7-100/cadr_arty_a7.sv` instance for instance.  A
+      // machine comes up with one SIMPLE TV and no color board and nothing
+      // here writes word 33, so this is the default backplane throughout.
+      .tv_lispm(con_tv_lispm), .color_tv(con_color_tv), .tv_map_a(con_tv_map_a),
+      .tv_map_q(con_tv_map_q), .tv_color_map_q(con_tv_color_map_q),
       // The absence of a memory: see the tie-offs above.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -601,7 +612,11 @@ module cadr_soc_harness #(
       .dbg_connect(dbg_connect), .dbg_wiring(dbg_wiring),
       .dbg_wire_state(3'd0), .dbg_frames(24'd0),
       .dbg_engaged(1'b0), .dbg_foreign(1'b0), .dbg_peer_far(1'b0),
-      .dbg_live(1'b0), .dbg_active(1'b0)
+      .dbg_live(1'b0), .dbg_active(1'b0),
+      // The backplane's display boards, page 2's word 33, and the two color
+      // maps on pages 4 and 5, wired to the machine as the board wires them.
+      .tv_lispm(con_tv_lispm), .color_tv(con_color_tv), .tv_map_a(con_tv_map_a),
+      .tv_map_q(con_tv_map_q), .tv_color_map_q(con_tv_color_map_q)
   );
 
   // ------------------------------------------- the machine's DBGIN page

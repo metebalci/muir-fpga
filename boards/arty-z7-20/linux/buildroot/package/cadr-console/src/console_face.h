@@ -80,11 +80,12 @@
 // with both ports and line 135 for one with GP1 alone.  The console sits at
 // the bottom of GP1's gigabyte.
 #define CONS_REG_BASE    0x80000000u
-// Four pages of sixteen words.  It was two and 128 bytes until the build
-// stamp wanted a word of its own and page 0 had none left; nothing maps this
+// Six pages of sixteen words.  It was two and 128 bytes until the build
+// stamp wanted a word of its own and page 0 had none left, and four until the
+// two display boards' color maps wanted sixteen words each; nothing maps this
 // (the program maps the 4 KB page GP1's split gives the console), so it is
 // the face's size and not an argument to `mmap`.
-#define CONS_REG_BYTES   256u
+#define CONS_REG_BYTES   384u
 #define CONS_IDENT_WORD  0x434F4E53u	/* "CONS" */
 #define CONS_UNMAPPED    0xBCB0B1ACu	/* ~IDENT */
 
@@ -254,6 +255,63 @@ enum cons_debug_wire {
 #define CONS_PAGE2        32u
 #define CONS_BUILD        (CONS_PAGE2 + 0u)
 #define CONS_BUILD_NONE   0xFFFFFFFFu
+
+// **WHICH DISPLAY BOARDS THE BACKPLANE HAS, page 2's word 33.**
+//
+// A CADR carries one display board or two.  `--tv-board` says which the first
+// one is --- MIT's SIMPLE TV, which System 100 drives, or the LISPM TV that
+// replaced it in December 1980 --- and the two differ in ONE bit a bus cycle
+// can see, mode bit 7, which the LISPM TV reads the sync enable back through
+// and the SIMPLE TV grounds.  `--color-tv` fits the second board, the color
+// TV: `cadrtv/lmtv.order`'s "For the normal TV, x is 6.  For the color TV, x
+// is 5", a LISPM TV strapped to `0o17200000` with its control words at
+// `0o17377750`, carrying a color monitor of its own.
+//
+// **A MACHINE WITH NO COLOR BOARD MUST GIVE THE NXM AT THOSE ADDRESSES**,
+// because that is how `COLOR-EXISTS-P` in `sys/window/color.lisp` finds out:
+// it writes into the first buffer word with the error stop off and reads it
+// back.  So the board is off by default, and a card that wants one says so.
+//
+// **IT IS ON PAGE 2 BECAUSE IT IS WHAT THE BACKPLANE IS**, the same kind of
+// fact as the build stamp beside it, and not what the machine is doing.  Page
+// 0 is the machine's and has been full since the debug cable took word 14.
+//
+// Three keys for word 6's reason --- a value that means nothing must not
+// change what a machine has fitted --- and the color board's two are a value
+// and its complement, so that no partial write of one can be the other.
+#define CONS_DISPLAY        (CONS_PAGE2 + 1u)
+#define CONS_TV_SIMPLE_KEY  0x534D504Cu	/* "SMPL" */
+#define CONS_TV_LISPM_KEY   0x4C53504Du	/* "LSPM" */
+#define CONS_COLOR_TV_KEY   0x434F4C52u	/* "COLR" */
+#define CONS_NO_COLOR_TV_KEY (~CONS_COLOR_TV_KEY)
+// The word's own marker, "TV": three keys and no one of them is the word's,
+// so it is named rather than borrowed, and it is a marker for words 6, 13 and
+// 14's reason --- a word reading zero when nothing has been set cannot be
+// told from a window pointed somewhere else.
+#define CONS_TV_MARK        0x5456u
+#define CONS_TV_MARK_OF(w)  ((w) >> 16)
+enum cons_display_bit { CONS_TV_LISPM = 1u << 0, CONS_TV_COLOR = 1u << 1 };
+
+// **AND THE TWO BOARDS' COLOR MAPS, pages 4 and 5.**  Word 64 + c is the
+// first display's color c and word 80 + c is the color board's: red in bits
+// 23 to 16, green in 15 to 8 and blue in 7 to 0, which is
+// `WRITE-COLOR-MAP`'s own channel order.  Read only.
+//
+// **THE MAP IS WRITE ONLY ON THE BUS AND THE PICTURE CANNOT BE DRAWN WITHOUT
+// IT.**  A pixel of the color screen is four bits, an address into these
+// sixteen, so an RFB server has to be told what a color is; and a checkpoint
+// has to carry the map muir would have kept, `tv::Tv::color_map`.  The RAMs
+// and their converters are off the board, so nothing on the Xbus can read one
+// back and this port is the only way to ask.
+#define CONS_PAGE4        64u
+#define CONS_PAGE5        80u
+#define CONS_COLOR_MAP_WORD(board, color) \
+	(((board) ? CONS_PAGE5 : CONS_PAGE4) + (unsigned)(color))
+#define CONS_MAP_COLORS   16
+#define CONS_MAP_CHANNELS 3
+#define CONS_MAP_RED(w)   (((w) >> 16) & 0xFFu)
+#define CONS_MAP_GREEN(w) (((w) >> 8) & 0xFFu)
+#define CONS_MAP_BLUE(w)  ((w) & 0xFFu)
 
 // The nibble, `tools/build_stamp.tcl`'s five values and no others.  The flows
 // write nothing else; a word carrying anything else came from somewhere that
@@ -650,6 +708,28 @@ void cons_debug_cable_wiring(struct console *c, int wire);
 void cons_read_debug_cable(struct console *c, struct cons_debug_cable *d);
 void cons_say_debug_cable(const struct cons_debug_cable *d);
 
+// --- the backplane's display boards, page 2's word 33 and pages 4 and 5 ---
+
+struct cons_display {
+	uint32_t word;		/* word 33 as it read */
+	int mark_ok;		/* it carried `CONS_TV_MARK` */
+	int lispm;		/* the first display is a LISPM TV */
+	int color;		/* a color TV is fitted */
+};
+
+void cons_read_display(struct console *c, struct cons_display *d);
+void cons_say_display(const struct cons_display *d);
+// Which board the first display is, and whether the second is there.  Each is
+// a keyed write of word 33 and each leaves the other alone, so a caller that
+// wants both writes twice.  Write and then READ: a wrong key is dropped in
+// silence, which is what the key is for.
+void cons_set_tv_board(struct console *c, int lispm);
+void cons_set_color_tv(struct console *c, int on);
+// One board's whole color map, `[color][channel]` with red first.  `board`
+// is 0 for the first display and 1 for the color TV.
+void cons_read_color_map(struct console *c, int board,
+			 uint8_t map[CONS_MAP_COLORS][CONS_MAP_CHANNELS]);
+
 // `step N`: CC's `CC-CLOCK`, `2` then `0`, N times (../muir/src/spy.rs's
 // ClockControl and ../muir/tests/spy.rs:743-761).
 //
@@ -713,7 +793,7 @@ struct cons_status {
 	// bits of the STAT word this already has to look at.
 	struct cons_switch sw;
 	// **AND WHICH BUILD THE FABRIC IS**, for the reason SW0 is here: it is
-	// one more read of page 0's neighbour and it answers the question a
+	// one more read of page 0's neighbor and it answers the question a
 	// person asking `status` usually has next, which is whether the board
 	// is running what they think they served it.
 	struct cons_build build;
@@ -759,7 +839,7 @@ void cons_say_flag2(uint16_t w);
 // **SO EXAMINE AND DEPOSIT GO THROUGH /dev/mem ON THE MACHINE'S RESERVED DDR
 // REGION, AND SAY SO IN THEIR OWN OUTPUT.**  What that reads is the memory
 // the machine's bus cycles land in, not the machine's view of it: nothing is
-// halted, nothing is synchronised, and a word read while the machine is
+// halted, nothing is synchronized, and a word read while the machine is
 // running is a word from an instant nobody named.  The addresses are
 // `rtl/plumbing/cadr_ddr_map.sv`'s and the arithmetic is its `main_byte_address`.
 #define CONS_MAIN_BASE 0x18000000u

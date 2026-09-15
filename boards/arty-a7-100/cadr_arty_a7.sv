@@ -91,8 +91,8 @@
 // THE LAMPS, AND THE ONE THING ABOUT THEM THAT IS PECULIAR TO THIS BOARD.
 // The six lamps this project assigns are the same six the other board
 // carries, by MEANING.  What differs is the silkscreen: the Arty Z7-20 numbers
-// its four plain green LEDs LD0 to LD3 and its two tricolour ones LD4 and
-// LD5, and the Arty A7-100 numbers its four TRICOLOUR ones LD0 to LD3 and its
+// its four plain green LEDs LD0 to LD3 and its two tricolor ones LD4 and
+// LD5, and the Arty A7-100 numbers its four TRICOLOR ones LD0 to LD3 and its
 // four plain green ones LD4 to LD7.  So the numbers on the two boards do not
 // line up and the meanings do:
 //
@@ -106,7 +106,7 @@
 //   nothing; dark                  ---            led2_*, led3_* LD2, LD3
 //
 // This board has eight lamps where the six-lamp assignment wants six, so two
-// tricolour ones are dark.  They are in the port list and driven to zero
+// tricolor ones are dark.  They are in the port list and driven to zero
 // rather than left out, so that the port list matches the board.
 //
 // THE BUTTONS ARE THE SAME TWO ON EVERY BOARD HERE.  BTN0 is `-BOOT2`, the
@@ -120,7 +120,7 @@
 // default, with `RUN` preset --- a board switched on runs its boot PROM ---
 // which is what somebody switching a board on wants and what a board being
 // brought up needs.  SW0 is how a board being worked on is asked for the other
-// behaviour instead, and `-BOOT` is what takes the hold off.  It is a
+// behavior instead, and `-BOOT` is what takes the hold off.  It is a
 // POWER-ON CONDITION and not a control: the level is read at the machine's own
 // reset arms and nowhere else, so moving the switch under a running machine
 // does nothing until the next reset.  SW1 to SW3 are pins the board has and
@@ -183,7 +183,17 @@ module cadr_arty_a7 #(
     // `boards/arty-a7-100/firmware/link.ld`, and `tools/bin2hex.py` is what
     // refuses an image that does not fit.
     parameter int unsigned SOC_RAM_WORDS = 8192,
-    parameter int unsigned SOC_BAUD = 115_200
+    parameter int unsigned SOC_BAUD = 115_200,
+
+    // **THE SECOND DISPLAY BOARD, THE COLOR TV**, `lmtv.order`'s "for the
+    // color TV, x is 5": a LISPM TV strapped to 0o17200000 with its control
+    // words at 0o17377750, carrying a color monitor of its own.  One means
+    // the fabric has the slot; whether a machine HAS the board is the
+    // console's page 2 word 33, which `fpgarc`'s `--color-tv` writes at
+    // boot, and a machine with none gives the NXM at those addresses ---
+    // which is how `COLOR-EXISTS-P` finds out.  Zero leaves the slot out of
+    // the fabric entirely, for a part with no room for it.
+    parameter int unsigned LMTV = 1
 ) (
     input  var logic       sysclk,   // 100 MHz, pin E3
     input  var logic [3:0] btn,
@@ -195,8 +205,8 @@ module cadr_arty_a7 #(
     // The four plain green LEDs.  Digilent's file calls them `led[0]` to
     // `led[3]` and the board's own silkscreen calls them LD4 to LD7.
     output var logic [3:0] led,
-    // The four tricolour LEDs, Digilent's names and the board's silkscreen
-    // LD0 to LD3.  Driven high to light, one pin a colour.  The first two
+    // The four tricolor LEDs, Digilent's names and the board's silkscreen
+    // LD0 to LD3.  Driven high to light, one pin a color.  The first two
     // carry this project's LD4 and LD5; the other two are dark.
     output var logic       led0_r, led0_g, led0_b,
     output var logic       led1_r, led1_g, led1_b,
@@ -245,7 +255,7 @@ module cadr_arty_a7 #(
     //
     // They are in the port list whether or not `SOC` is set, so that the port
     // list matches the board rather than the configuration, which is the rule
-    // the two dark tricolour lamps above are here by.  With the soft system
+    // the two dark tricolor lamps above are here by.  With the soft system
     // absent the transmitter idles high, which is a line with nothing on it.
     output var logic       uart_rxd_out,
     input  var logic       uart_txd_in,
@@ -502,7 +512,7 @@ module cadr_arty_a7 #(
   // false-paths all four switches, a slide switch being no timing constraint.
   //
   // **AND THE VALUE THE MACHINE ACTUALLY CAME UP WITH IS FROZEN**, so that a
-  // console can report it.  `sw0_held` follows the synchronised level at every
+  // console can report it.  `sw0_held` follows the synchronized level at every
   // edge `mach_rst` is up and freezes at the last of them --- the same edge,
   // off the same signal, as the two reset arms inside the machine --- so the
   // two cannot disagree.  The comment above used to say this register was not
@@ -606,6 +616,15 @@ module cadr_arty_a7 #(
   logic [15:0] dbd_to_machine;
   // The console's half of the diagnostic bus.
   logic        con_req, con_gnt, con_msyn, con_write, con_ssyn;
+
+  // **WHICH DISPLAY BOARDS THE BACKPLANE HAS**, out of the console's page 2
+  // word 33, and the two boards' color maps coming back on pages 4 and 5.
+  // A board with no console is a machine with one SIMPLE TV and no color TV,
+  // which is muir's own default and the backplane every reference trace
+  // taken before the second board was built was taken on.
+  logic        con_tv_lispm, con_color_tv;
+  logic [3:0]  con_tv_map_a;
+  logic [23:0] con_tv_map_q, con_tv_color_map_q;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the DBGIN connector's twenty-one wires.
@@ -861,7 +880,8 @@ module cadr_arty_a7 #(
   // what holds the two lists together.
   cadr_machine #(
       .PROM_HEX(PROM_HEX),
-      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+      .SYNC_PROM_HEX(SYNC_PROM_HEX),
+      .LMTV(LMTV)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // Nothing answers a device cycle from outside: the Xbus slaves that are
@@ -883,6 +903,10 @@ module cadr_arty_a7 #(
       // trace in this repository was taken with.  System 100 cannot cold-boot
       // with 40 or more, measured, so this number is not a knob.
       .boards(7'd32),
+      // And which display boards are in it, from the console face.
+      .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
+      .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
+      .tv_color_map_q(con_tv_color_map_q),
       // The absence of a memory: see the tie-offs above.
       .mem_done(mem_done), .mem_rdata(mem_rdata),
       .pc(pc), .lpc(lpc), .opc(opc), .st(st), .ir(ir), .a(a), .m(m),
@@ -927,7 +951,7 @@ module cadr_arty_a7 #(
       .con_ro_addr(con_ro_addr), .con_ro_data(con_ro_data),
       .con_ro_echo(con_ro_echo),
       .kbd_strobe(kbd_strobe), .kbd_code(kbd_code), .n_boot2(n_boot2),
-      // SW0, synchronised, read at the machine's own reset arms and nowhere
+      // SW0, synchronized, read at the machine's own reset arms and nowhere
       // else --- the block above `cadr_machine` here says the whole of it ---
       // and `-BOOT` on its way back out, for the error lamp to be cleared by.
       .no_auto_boot(sw0_level), .n_boot_o(n_boot),
@@ -1087,7 +1111,7 @@ module cadr_arty_a7 #(
       // so that it can say whether the port answered anything the machine did
       // not ask for.  The port answers in ANOTHER clock here, and a pulse does
       // not survive a clock crossing --- but a LEVEL does, and `mem_done` is
-      // the far side's acknowledgement carried back by `cadr_mem_cross`, one
+      // the far side's acknowledgment carried back by `cadr_mem_cross`, one
       // rise per transaction and no more.  So the rise is the pulse.
       logic done_q;
       always_ff @(posedge clk) done_q <= w_done;
@@ -1446,6 +1470,11 @@ module cadr_arty_a7 #(
         .s_rdata(cn_rdata), .s_rresp(cn_rresp), .s_rid(cn_rid),
         .s_rlast(cn_rlast), .s_rvalid(cn_rvalid), .s_rready(cn_rready),
         .dbg_req(con_req), .dbg_gnt(con_gnt),
+        // The backplane's display boards, page 2's word 33, and the two
+        // color maps on pages 4 and 5.
+        .tv_lispm(con_tv_lispm), .color_tv(con_color_tv),
+        .tv_map_a(con_tv_map_a), .tv_map_q(con_tv_map_q),
+        .tv_color_map_q(con_tv_color_map_q),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -1505,6 +1534,11 @@ module cadr_arty_a7 #(
 
     assign con_req     = 1'b0;
     assign con_msyn    = 1'b0;
+    // And no way to say what the backplane has, so it is the default one:
+    // a SIMPLE TV and no color board.
+    assign con_tv_lispm = 1'b0;
+    assign con_color_tv = 1'b0;
+    assign con_tv_map_a = 4'd0;
     assign con_write   = 1'b0;
     assign con_addr    = 18'd0;
     assign con_wdata   = 16'd0;
@@ -1751,6 +1785,9 @@ module cadr_arty_a7 #(
                    // and this is a second reader.
                    dbg_holder, dbg_engaged, dbg_foreign, dbg_live, dbg_active, dbg_peer_far, dbg_frames,
                    dbg_wire_state,
+                   // The two display boards' color maps, which the console
+                   // reads on pages 4 and 5.
+                   con_tv_map_q, con_tv_color_map_q,
                    // The pack side's unanswered memory port, folded one level
                    // down, and the switch value the console reports.
                    hp_fold, sw0_held};
@@ -1830,7 +1867,7 @@ module cadr_arty_a7 #(
   // ---------------------------------------------------------------- LD4
   //
   // **LD4 IS THE MACHINE'S OWN ERROR HALT AND NOTHING ELSE: IT IS EITHER OFF
-  // OR RED.**  No other colour and no other meaning ever reaches it --- not at
+  // OR RED.**  No other color and no other meaning ever reaches it --- not at
   // power-on, not during the PROM, not while halted by a console.  Its green
   // and blue channels are tied off, so there is nothing for a later meaning to
   // be put on.
@@ -1895,7 +1932,7 @@ module cadr_arty_a7 #(
   // bit is `promdisable`, which drives no lamp here --- the probe's sample
   // carries it and nothing else does.
   //
-  // Blue, and blue only, for the one state it carries.  A colour lamp showing
+  // Blue, and blue only, for the one state it carries.  A color lamp showing
   // one thing is still the right lamp for it: this is the answer to "has it
   // finished booting", which is worth telling apart from the four plain green
   // ones at a glance.
@@ -1903,7 +1940,7 @@ module cadr_arty_a7 #(
   assign led1_g = 1'b0;
   assign led1_b = promenable;
 
-  // The two tricolour lamps this board has and the assignment does not use.
+  // The two tricolor lamps this board has and the assignment does not use.
   // Driven rather than left out of the port list, so that the port list
   // matches the board: a lamp with no meaning is dark, and a lamp with no
   // driver is a pin that cannot be placed.
@@ -1957,7 +1994,7 @@ module cadr_arty_a7 #(
   // btn[3:2] and sw[3:1] are pins the board has and this design does not use.
   // BTN0 is the machine's boot button, BTN1 the fabric's reset and SW0 the
   // no-auto-boot switch; the rest have no meaning here.  They are read here
-  // only to keep them legal without inventing behaviour for them.
+  // only to keep them legal without inventing behavior for them.
   //
   // **AND TWO MORE WHEN THERE IS NO SOFT PROCESSING SYSTEM.**  `uart_txd_in`
   // is what a host types and `pack_irq` is the disk pack side's interrupt;

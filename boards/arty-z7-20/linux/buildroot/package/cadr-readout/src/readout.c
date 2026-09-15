@@ -94,6 +94,21 @@ uint64_t ro_cycles(struct readout *r)
 	return (uint64_t)lo | ((uint64_t)hi << 32);
 }
 
+int ro_color_map(struct readout *r, int board,
+		 uint8_t map[RO_MAP_COLORS][RO_MAP_CHANNELS])
+{
+	int any = 0;
+	for (int c = 0; c < RO_MAP_COLORS; ++c) {
+		const uint32_t w = r->read(r, RO_COLOR_MAP_WORD(board, c));
+		map[c][0] = (uint8_t)((w >> 16) & 0xFFu);
+		map[c][1] = (uint8_t)((w >> 8) & 0xFFu);
+		map[c][2] = (uint8_t)(w & 0xFFu);
+		if (map[c][0] || map[c][1] || map[c][2])
+			any = 1;
+	}
+	return any;
+}
+
 uint64_t ro_ticks(struct readout *r)
 {
 	const uint32_t lo = r->read(r, RO_TICKS);
