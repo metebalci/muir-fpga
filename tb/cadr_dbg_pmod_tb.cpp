@@ -5,7 +5,10 @@
 // **what goes in one end comes out the other, unchanged, whole, and in
 // bounded time.**
 //
-// The carrier is `rtl/plumbing/cadr_dbg_tx.sv` with `cadr_dbg_rx.sv`, four pins each way, and
+// The carrier is `rtl/plumbing/cadr_dbg_tx.sv` with `cadr_dbg_rx.sv` --- four
+// pins each way of which TWO carry signals, a strobe and one data line, the
+// other two being guards `rtl/plumbing/cadr_dbg_cable.sv` holds at zero so
+// that no coupled pair of the header carries two signals --- and
 // `rtl/plumbing/cadr_dbg_join.sv` is what lets two debuggers share one DBGIN
 // page.  Neither has a muir reference: muir has the cable and no wires, so
 // there is no trace to compare against and what holds these is the property.
@@ -51,18 +54,36 @@
 namespace {
 
 // The carrier's own four, as the harness overrides them.  A frame is
-// BEATS * BEAT_T + GAP_T ticks, and BEATS is eight: twenty payload bits and
-// the two-bit marker over three lines.
-constexpr int kBeats = 8;
+// BEATS * BEAT_T + GAP_T ticks, and BEATS is TWENTY-FOUR: twenty-one payload
+// bits, a two-bit marker and a parity bit over ONE line.
+//
+// **ONE LINE A DIRECTION, BECAUSE THE PINS ARE COUPLED PAIRS.**  The
+// high-speed Pmod headers on these boards route pins 1 with 2, 3 with 4, 7
+// with 8 and 9 with 10 as pairs, so a group driven single-ended on all four
+// has an edge on one line coupling into its partner and the partner may be the
+// strobe.  The link puts one signal on each pair and drives the other line
+// low; `rtl/plumbing/cadr_dbg_cable.sv` owns the guards and the pin map, and
+// what reaches the carrier is a strobe and one data line.  The carrier alone
+// is what this file holds, so the guards are the two-board check's.
+constexpr int kBeats = 24;
 constexpr int kBeatT = 6;
 constexpr int kGapT = 18;
-constexpr long kFrameT = kBeats * kBeatT + kGapT;    // 66
+constexpr long kFrameT = kBeats * kBeatT + kGapT;    // 162
 constexpr long kLossT = 512;
 
-// busint::DEBUG_TIMEOUT_NS, the REQTIM PROM's second table, at the 10 ns
-// tick: what a debugger waits before it gives up on a cycle.  Every round
-// trip this check measures is reported against it.
-constexpr long kDebugTimeoutT = 1105;
+// **THE DEADLINE, AND IT IS A TICK COUNT BECAUSE THE FABRIC COUNTS TICKS.**
+// `rtl/machine/cadr_busint_xbus.sv` runs the REQTIM oscillator at
+// `425 / TICK_NS` ticks a half period and a debug cycle takes the PROM's
+// SECOND table, thirteen whole periods: 13 * 170 = 2,210 ticks, which is
+// `busint::DEBUG_TIMEOUT_NS` --- 11.05 microseconds on MIT's 5 ns grid, 22.1
+// of real time at this board's 10 ns tick.  Every round trip this check
+// measures is held to HALF of it, so that the bound still says something if
+// the frame's length moves again; the line it prints gives both.  The figure
+// standing here before the frame grew was 1,105, taken as 11.05 microseconds
+// of REAL time, which is the same number by a different route and is now
+// arrived at deliberately rather than by coincidence.
+constexpr long kDebugTimeoutT = 2210;
+constexpr long kRoundTripBound = kDebugTimeoutT / 2;
 
 // The window's words and the fields of `CTL` and `STS`, from
 // `rtl/plumbing/cadr_debug_window.sv` and muir's `src/fabric.rs`.
@@ -176,54 +197,47 @@ struct Wire {
 
 // ------------------------------------------------------------- a connector
 //
-// Eight wires: one strobe and three data each way.  `perm` is the order the
-// three data lines of the A-to-B half arrive in, so that crossing two of them
-// is one line of stimulus.
+// FOUR wires: one strobe and ONE data line each way.  The connector's other
+// four pins are the guards, which the carrier never sees --- one signal a
+// coupled pair is `rtl/plumbing/cadr_dbg_cable.sv`'s arrangement and
+// `build/dbg_cable.pass` is what holds the guards to being driven low.
+//
+// `swap_ab` is the two signals of the A-to-B half arriving in each other's
+// place, which is what crossing two lines of a ribbon means when a direction
+// has two of them.  It is a worse fault than a crossed pair of data lines ever
+// was: the strobe is the one thing on this cable a receiver clocks on, so the
+// crossing puts the frame's own bits on it.
 struct Link {
-  Wire ab[4];
-  Wire ba[4];
+  Wire ab[2];
+  Wire ba[2];
   bool cut_ab = false;
   bool cut_ba = false;
-  int perm[3] = {0, 1, 2};
+  bool swap_ab = false;
 
   void Reset() {
-    for (int k = 0; k < 4; ++k) {
+    for (int k = 0; k < 2; ++k) {
       ab[k].Clear();
       ba[k].Clear();
     }
     cut_ab = false;
     cut_ba = false;
-    perm[0] = 0;
-    perm[1] = 1;
-    perm[2] = 2;
+    swap_ab = false;
   }
 
   void Push(int a_stb, int a_d, int b_stb, int b_d) {
     ab[0].Push(a_stb);
+    ab[1].Push(a_d & 1);
     ba[0].Push(b_stb);
-    for (int k = 0; k < 3; ++k) {
-      ab[1 + k].Push((a_d >> k) & 1);
-      ba[1 + k].Push((b_d >> k) & 1);
-    }
+    ba[1].Push(b_d & 1);
   }
 
   // What the B end sees, and what the A end sees.  An unplugged connector
   // reads zero: the pins carry a pull-down and the strobe then never moves,
   // which is the state `cadr_dbg_rx.sv` calls not live.
-  int BStb() const { return cut_ab ? 0 : ab[0].Get(); }
-  int BD() const {
-    if (cut_ab) return 0;
-    int v = 0;
-    for (int k = 0; k < 3; ++k) v |= ab[1 + perm[k]].Get() << k;
-    return v;
-  }
+  int BStb() const { return cut_ab ? 0 : ab[swap_ab ? 1 : 0].Get(); }
+  int BD() const { return cut_ab ? 0 : ab[swap_ab ? 0 : 1].Get(); }
   int AStb() const { return cut_ba ? 0 : ba[0].Get(); }
-  int AD() const {
-    if (cut_ba) return 0;
-    int v = 0;
-    for (int k = 0; k < 3; ++k) v |= ba[1 + k].Get() << k;
-    return v;
-  }
+  int AD() const { return cut_ba ? 0 : ba[1].Get(); }
 };
 
 Vcadr_dbg_pmod_harness *d = nullptr;
@@ -509,7 +523,7 @@ int main(int argc, char **argv) {
     };
     for (const Case &c : cases) {
       ResetBoth();
-      for (int k = 0; k < 4; ++k) {
+      for (int k = 0; k < 2; ++k) {
         link_p.ab[k].delay = c.delay;
         link_p.ba[k].delay = c.delay;
       }
@@ -600,13 +614,13 @@ int main(int argc, char **argv) {
 
     // The marker's own claim: neither a rail can be mistaken for a frame.
     // The strobe still moves, so beats keep arriving; what stops them being
-    // taken is the marker and the fill.
+    // taken is the marker, whose lower bit is a zero every frame carries.
     for (int rail = 0; rail <= 1; ++rail) {
       ResetBoth();
       d->p_tx_a = Poison(6);
       Idle(4 * kFrameT);
       if (!d->p_live_b) Say("not live before a rail is applied");
-      for (int k = 1; k < 4; ++k) link_p.ab[k].force = rail;
+      link_p.ab[1].force = rail;
       long gone = -1;
       for (long k = 0; k < kLossT + 4 * kFrameT; ++k) {
         Tick();
@@ -619,40 +633,55 @@ int main(int argc, char **argv) {
     }
     std::fprintf(stderr, "  all ones and all zeros both refused by the marker\n");
 
-    // A single line shorted, and two lines crossed.  Neither is guaranteed to
-    // break the marker --- only beat zero and one bit of beat one carry it ---
-    // so what is asserted is that the fault is VISIBLE: either the frame stops
-    // being taken, or what arrives is not what was sent.
+    // The one data line shorted to a rail, and the two lines of a direction
+    // crossed --- which with one data line a direction is the STROBE arriving
+    // on the data pin and the data on the strobe pin, a ribbon whose two pairs
+    // were swapped.  Neither is guaranteed to break the marker, so what is
+    // asserted is that the fault is VISIBLE: either the frame stops being
+    // taken, or what arrives is not what was sent.
     int seen = 0, cases = 0;
-    for (int line = 0; line < 3; ++line) {
-      for (int rail = 0; rail <= 1; ++rail) {
-        ResetBoth();
-        const uint32_t v = Poison(13 + line * 2 + rail);
-        d->p_tx_a = v;
-        sent_ab.insert(v);
-        Idle(4 * kFrameT);
-        link_p.ab[1 + line].force = rail;
-        Idle(kLossT + 4 * kFrameT);
-        ++cases;
-        const bool visible = !d->p_live_b || d->p_rx_b != v;
-        if (visible) ++seen;
-        else Fail("a shorted data line was invisible", d->p_rx_b, v);
-      }
-    }
-    for (int i = 0; i < 3; ++i) {
-      const int j = (i + 1) % 3;
+    for (int rail = 0; rail <= 1; ++rail) {
       ResetBoth();
-      const uint32_t v = Poison(31 + i);
+      const uint32_t v = Poison(13 + rail);
       d->p_tx_a = v;
       sent_ab.insert(v);
       Idle(4 * kFrameT);
-      link_p.perm[i] = j;
-      link_p.perm[j] = i;
+      link_p.ab[1].force = rail;
       Idle(kLossT + 4 * kFrameT);
       ++cases;
       const bool visible = !d->p_live_b || d->p_rx_b != v;
       if (visible) ++seen;
-      else Fail("two crossed data lines were invisible", d->p_rx_b, v);
+      else Fail("a shorted data line was invisible", d->p_rx_b, v);
+    }
+    // And the strobe shorted, which one data line a direction makes worth
+    // asking separately: with three lines a stuck strobe could still be told
+    // from a stuck data line by what the other two carried, and with one there
+    // is nothing else on the group at all.
+    for (int rail = 0; rail <= 1; ++rail) {
+      ResetBoth();
+      const uint32_t v = Poison(17 + rail);
+      d->p_tx_a = v;
+      sent_ab.insert(v);
+      Idle(4 * kFrameT);
+      link_p.ab[0].force = rail;
+      Idle(kLossT + 4 * kFrameT);
+      ++cases;
+      const bool visible = !d->p_live_b || d->p_rx_b != v;
+      if (visible) ++seen;
+      else Fail("a shorted strobe was invisible", d->p_rx_b, v);
+    }
+    {
+      ResetBoth();
+      const uint32_t v = Poison(31);
+      d->p_tx_a = v;
+      sent_ab.insert(v);
+      Idle(4 * kFrameT);
+      link_p.swap_ab = true;
+      Idle(kLossT + 4 * kFrameT);
+      ++cases;
+      const bool visible = !d->p_live_b || d->p_rx_b != v;
+      if (visible) ++seen;
+      else Fail("a strobe and a data line crossed were invisible", d->p_rx_b, v);
     }
     std::fprintf(stderr, "  %d of %d shorted or crossed lines were visible\n",
                  seen, cases);
@@ -681,7 +710,7 @@ int main(int argc, char **argv) {
       // eight of them is four ticks either way.
       const int base = 8;
       link_p.ab[0].delay = base + (skew > 0 ? skew : 0);
-      for (int k = 1; k < 4; ++k) link_p.ab[k].delay = base + (skew < 0 ? -skew : 0);
+      link_p.ab[1].delay = base + (skew < 0 ? -skew : 0);
       d->p_tx_a = Poison(50);
       sent_ab.insert(Poison(50));
       Idle(6 * kFrameT);
@@ -736,11 +765,12 @@ int main(int argc, char **argv) {
     }
     std::fprintf(stderr,
                  "  eight addresses latched over the cable; worst round trip "
-                 "%ld ticks, the debugger gives up at %ld\n",
-                 worst, kDebugTimeoutT);
-    if (worst >= kDebugTimeoutT)
+                 "%ld ticks, a frame is %ld, the debugger gives up at %ld and "
+                 "this check at %ld\n",
+                 worst, kFrameT, kDebugTimeoutT, kRoundTripBound);
+    if (worst >= kRoundTripBound)
       Fail("the round trip", static_cast<unsigned long long>(worst),
-           static_cast<unsigned long long>(kDebugTimeoutT));
+           static_cast<unsigned long long>(kRoundTripBound));
   }
 
   // The modifier register: three bits out of `DBD<2:0>`, and bit 1 is this
@@ -794,11 +824,11 @@ int main(int argc, char **argv) {
     }
     std::fprintf(stderr,
                  "  sixteen diagnostic registers read over the cable; worst "
-                 "round trip %ld ticks\n",
-                 worst);
-    if (worst >= kDebugTimeoutT)
+                 "round trip %ld ticks against a bound of %ld\n",
+                 worst, kRoundTripBound);
+    if (worst >= kRoundTripBound)
       Fail("a cycle's round trip", static_cast<unsigned long long>(worst),
-           static_cast<unsigned long long>(kDebugTimeoutT));
+           static_cast<unsigned long long>(kRoundTripBound));
   }
 
   // The halt: CC's first act on a debuggee is `spy_write(CLK, 0)`, which is
@@ -980,12 +1010,19 @@ int main(int argc, char **argv) {
   // an end released there locks on to beat zero by itself --- the level the
   // first beat put on the lines is still standing, so the change it detects
   // is beat zero's own.  Nothing about the gap was being asked and the record
-  // aimed at it survived.  Seventy-one covers every offset in a
-  // sixty-six-tick frame.
+  // aimed at it survived.
+  //
+  // **SO THE SWEEP IS THE FRAME AND A BEAT, NOT A CONSTANT.**  It was
+  // seventy-one, which covered every offset in the sixty-six-tick frame three
+  // lines a group made; a frame is 162 ticks now and seventy-one would have
+  // covered fewer than half of them while the check went on passing.  A number
+  // that was a frame once and a literal afterwards is the shape this project
+  // keeps meeting.
+  const long kResetLengths = kFrameT + kBeatT - 1;
   std::fprintf(stderr, "phase 9: one board reset, the other still running\n");
   {
     long worst_back = 0;
-    for (long len = 1; len <= 71; ++len) {
+    for (long len = 1; len <= kResetLengths; ++len) {
       ResetBoth();
       const uint32_t va = Poison(90 + len);
       const uint32_t vb = Poison(140 + len);
@@ -1015,9 +1052,9 @@ int main(int argc, char **argv) {
       }
     }
     std::fprintf(stderr,
-                 "  seventy-one reset lengths, and the worst took %ld ticks to "
-                 "come back, a frame being %ld\n",
-                 worst_back, kFrameT);
+                 "  %ld reset lengths --- every offset in a frame --- and the "
+                 "worst took %ld ticks to come back, a frame being %ld\n",
+                 kResetLengths, worst_back, kFrameT);
     if (worst_back > 4 * kFrameT)
       Fail("the worst recovery", static_cast<unsigned long long>(worst_back),
            static_cast<unsigned long long>(4 * kFrameT));
@@ -1028,9 +1065,11 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::fprintf(stderr,
-               "PASS: the debug cable crosses eight pins in %d beats each way, "
-               "%ld ticks a frame; worst level delay %ld ticks\n",
-               kBeats, kFrameT, worst_level_delay);
+               "PASS: the debug cable crosses eight pins --- two signals and two "
+               "guards each way, one signal a coupled pair --- in %d beats, %ld "
+               "ticks a frame; worst level delay %ld ticks, and the debugger "
+               "gives up at %ld\n",
+               kBeats, kFrameT, worst_level_delay, kDebugTimeoutT);
   delete d;
   return 0;
 }
