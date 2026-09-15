@@ -1297,8 +1297,8 @@ machine's own reset arms read, at the same edges, so the two cannot disagree.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
 `start`, `boot`, `step N`, `regs`, `status`, `switch`, `trace-keys on|off`,
-`examine` and `deposit`.  It also takes `--version`, which names which build
-the PROGRAM is and touches no register at all.
+`trace-chaos on|off`, `examine` and `deposit`.  It also takes `--version`,
+which names which build the PROGRAM is and touches no register at all.
 `status` is the question of the day and answers it the way `main.rs`'s
 `machrun_low` does, plus a positive measurement: CYCLES sampled twice a few
 milliseconds apart, so that "running" is something seen rather than inferred. `step N` is CC's
@@ -1358,6 +1358,32 @@ requiring that they do not fire.
 before `IDENT`: a word that cannot reach `M_AXI_GP1` must not be stopped by a
 window that does not answer. `cadr-console trace-keys on` works on a board whose
 fabric has no console in it at all.
+
+**And `trace-chaos on|off` is the same word for the network.** It switches
+`cadr-chaosnet`'s packet trace: every frame as it goes by, and every datagram
+refused with the reason and the endpoint it came from.
+
+    cadr-console trace-chaos on
+    cadr-console trace-chaos off
+
+The program's report line says how many datagrams arrived and counts the
+refusals in three classes, and this is how the class that is not zero is
+followed to a sender. `docs/chaosnet.md` has the counters and the line.
+
+It reads `/var/run/cadr-chaosnet.pid`, which is what `S87cadr-chaosnet`
+writes, and sends `SIGUSR1` or `SIGUSR2` exactly as `trace-keys` does. One
+program rather than two, so the status is simply whether it was reached. It
+touches no register either, and runs before the guard for the same reason.
+
+**One pair of functions serves both words.** Reading a pid file and sending a
+signal is the same job whichever daemon is being told, so the only difference
+is the words that go in the line: `key trace` or `packet trace`. A line that
+said `key trace` to somebody who had asked about the network would send them
+to the wrong log, and the host check asserts which line each word prints.
+
+There is no `fpgarc` line for either word. A signal is not a setting, and the
+flags that ask for a trace from a program's first line are the card's business
+rather than this one's.
 
 **There is no init script**, and `cadr-console.mk` says why: the console is a
 person at a prompt, and started at boot it would hold a second master on the

@@ -461,3 +461,124 @@
 	if (have_cable || npeers > 0)
 		return NULL;
 @end
+
+# **THE COUNTERS, AND WHY THE IDENTITY IS WHAT THE RECORDS AIM AT.**  The link
+# refuses a datagram for eight reasons and counted one of them, so a report
+# line reading "0 in, 0 with a bad checksum" said the same thing whether
+# nothing had arrived or everything had arrived and been thrown away.  The
+# four counts close --- what arrived equals what came in plus the three ways
+# it can fail to --- and `chaos_test_udp` drives every road once and adds them
+# up.  Three of the records below break the sum and one keeps it, which is the
+# one that says why the classes are asserted separately as well.
+
+@mutation a-refusal-for-its-shape-is-counted-nowhere
+@file chaos_udp.c
+@why every datagram that arrives is accounted for: what arrived must equal what came in plus the three ways it can fail to
+@note This is the program as it was before the counters: a bad checksum was
+@note counted and the six shape rules were printed under `--chaos-trace` and
+@note nowhere else.  A link refusing every datagram it heard then reported
+@note nothing at all, which is exactly what a link hearing nothing reports.
+@old
+			bump(bad_checksum ? &u->bad_checksum : &u->bad_shape);
+@new
+			if (bad_checksum)
+				bump(&u->bad_checksum);
+@end
+
+@mutation the-arrival-is-counted-after-the-refusal
+@file chaos_udp.c
+@why the arrival is counted at the socket, before anything has looked at the datagram, or the sum does not close
+@note The natural place to put this count is beside the delivery, where the
+@note frame is in hand --- and there it counts the datagrams that came in
+@note rather than the datagrams that arrived, so the refusals are no longer a
+@note part of anything and the line stops adding up.  Counting at the socket
+@note is what makes every road below it accountable.
+@old
+		bump(&u->received);
+		uint16_t words[CHAOS_PKT_MAX_WORDS];
+		const char *why = NULL;
+		int bad_checksum = 0;
+		const unsigned n = chudp_unwrap(datagram, (unsigned)got, words,
+						CHAOS_PKT_MAX_WORDS, &why, &bad_checksum);
+@new
+		uint16_t words[CHAOS_PKT_MAX_WORDS];
+		const char *why = NULL;
+		int bad_checksum = 0;
+		const unsigned n = chudp_unwrap(datagram, (unsigned)got, words,
+						CHAOS_PKT_MAX_WORDS, &why, &bad_checksum);
+		if (n != 0)
+			bump(&u->received);
+@end
+
+@mutation a-frame-that-is-somebody-elses-is-counted-nowhere
+@file chaos_udp.c
+@why a frame claiming a source this cable already carries is dropped, and the drop is counted like every other
+@note Nothing is wrong with this datagram --- it is somebody else's --- so it
+@note is the refusal a reader is least likely to think of as one, and the
+@note identity is what makes leaving it out impossible to miss.
+@old
+		if (cable_source == 0 || cable_source == u->local) {
+			bump(&u->not_this_cable);
+@new
+		if (cable_source == 0 || cable_source == u->local) {
+@end
+
+@mutation a-shape-refusal-is-reported-as-a-bad-checksum
+@file chaos_udp.c
+@why a refusal is counted in the class it belongs to, and not merely somewhere
+@note **THE SUM STILL CLOSES HERE**, which is why the four counts are
+@note asserted one by one as well as added up.  A link that reported every
+@note malformed datagram as a bad checksum would send somebody looking for a
+@note damaged network, and there is nothing wrong with the network: something
+@note at the far end is speaking a CHUDP this does not.
+@old
+			bump(bad_checksum ? &u->bad_checksum : &u->bad_shape);
+@new
+			bump(&u->bad_checksum);
+@end
+
+# **THE TRACE, SWITCHED WHILE THE PROGRAM RUNS.**  A board restarted to get a
+# diagnostic is a board whose Lisp is lost to get it, so SIGUSR1 turns the
+# trace on and SIGUSR2 off.  What the three records below hold is that the two
+# signals mean different things, that a run started with the flag is not
+# turned off by its own first pass, and that nothing is said when nothing
+# changed.
+
+@mutation the-two-signals-mean-the-same-thing
+@file chaos_udp.c
+@why SIGUSR1 turns the trace on and SIGUSR2 turns it off, and a trace that cannot be turned off fills a log
+@note The handler does the one thing a handler may, which is write a flag;
+@note what it writes is the whole of the difference between the two signals.
+@old
+	trace_asked = (sig == SIGUSR1);
+@new
+	trace_asked = 1;
+@end
+
+@mutation a-run-started-with-the-flag-is-turned-off-by-its-own-loop
+@file chaos_udp.c
+@why -1 is nothing asked, so that the first pass of the loop does not turn off a trace the flag asked for
+@note The flag sets the trace before the loop begins.  If nothing asked for
+@note anything is read as asking for `off`, `--chaos-trace` works until the
+@note program's first idle turn and then stops, which reads as a trace that
+@note misses the very packets somebody started the run to see.
+@old
+static volatile sig_atomic_t trace_asked = -1;
+@new
+static volatile sig_atomic_t trace_asked = 0;
+@end
+
+@mutation the-trace-says-a-line-every-time-it-is-asked
+@file chaos_udp.c
+@why one line at the change and none otherwise, so that asking twice is not two lines
+@note `cadr-console trace-chaos on` is a thing somebody types when they are
+@note not sure whether they typed it already.  Without the second half of
+@note this test the answer is a line a pass of the loop --- a thousand a
+@note second into the log the trace itself is writing to.
+@old
+	if (want < 0 || want == (now_on != 0))
+		return -1;
+@new
+	if (want < 0)
+		return -1;
+@end

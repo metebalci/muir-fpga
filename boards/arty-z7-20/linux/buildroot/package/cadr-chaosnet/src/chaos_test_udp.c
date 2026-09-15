@@ -36,6 +36,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -1072,6 +1073,227 @@ static void check_a_flag_that_says_who_is_on_the_cable_needs_the_cable(void)
 	}
 }
 
+// --- every datagram is accounted for --------------------------------------
+
+// One datagram out of a socket exactly as it stands, which `send_raw` cannot
+// do: it wraps a frame this program built, and what is wanted here is a
+// datagram this program would never have built.
+static void send_bytes(int fd, const struct sockaddr_in *to, const uint8_t *bytes, unsigned len)
+{
+	CHECK(sendto(fd, bytes, len, 0, (const struct sockaddr *)to, sizeof *to) == (ssize_t)len,
+	      "the raw datagram of %u bytes did not go: %s", len, strerror(errno));
+}
+
+// Every counter the link keeps, added up.  **NOT the identity**: this is what
+// is waited on, and waiting on one side of an identity that a mutation has
+// broken would make the check hang rather than fail.  Any counter moving
+// means the datagram has been dealt with, which is all the waiting needs to
+// know; whether the right ones moved is asserted afterwards.
+static unsigned long tally(const struct chudp *u)
+{
+	return u->received + u->delivered + u->bad_shape + u->bad_checksum + u->not_this_cable;
+}
+
+// Sends one datagram and polls until the link has counted it somewhere.
+static void one_datagram(struct chudp *u, int fd, const struct sockaddr_in *to,
+			 const uint8_t *bytes, unsigned len, struct heard *h)
+{
+	const unsigned long before = tally(u);
+	send_bytes(fd, to, bytes, len);
+	for (unsigned turn = 0; turn < 2500u; ++turn) {
+		chudp_poll(u, 8, heard_deliver, h);
+		if (tally(u) != before)
+			return;
+		usleep(2000);
+	}
+	CHECK(tally(u) != before,
+	      "a datagram sent on the loopback moved no counter at all: it was lost, or "
+	      "every road out of the link is uncounted");
+}
+
+// **EVERY DATAGRAM THAT ARRIVES IS ACCOUNTED FOR, AND THE SUM CLOSES.**
+//
+// The link refuses a datagram for eight reasons and until now counted ONE of
+// them.  The other seven were printed under `--chaos-trace` and nowhere else,
+// so a report line reading "0 in, 0 with a bad checksum" said the same thing
+// whether nothing had arrived or everything had arrived and been thrown
+// away.  Those are the two states a person reads that line to tell apart.
+//
+// **WHAT IS HELD IS THE IDENTITY AND NOT THE COUNTERS ONE BY ONE**, though
+// the counters are asserted too.  Each road is driven exactly once and then
+//
+//     received == delivered + bad_shape + bad_checksum + not_this_cable
+//
+// which is what says no road is uncounted.  A counter deleted, a road that
+// falls through to nothing, a refusal counted twice: all three break the sum.
+// Asserting the four separately as well is what catches the mutation that
+// keeps the sum and moves a count from one class to another, which is a link
+// telling a person the wrong thing about their network.
+static void check_every_datagram_is_accounted_for(void)
+{
+	struct chudp board, far;
+	struct sockaddr_in board_at, far_at;
+	struct heard h;
+	uint16_t frame[CHAOS_PKT_MAX_WORDS];
+	uint8_t good[CHUDP_MAX_FRAME], bad[CHUDP_MAX_FRAME + 1];
+	char spec[64];
+	unsigned len;
+
+	memset(&h, 0, sizeof h);
+	CHECK(chudp_bind(&board, "127.0.0.1", 0) == 0, "the board's link would not bind");
+	CHECK(chudp_bind(&far, "127.0.0.1", 0) == 0, "the far end's link would not bind");
+	board.local = ME;
+	CHECK(bound_at(&board, &board_at) == 0, "the board's link will not say where it is");
+	CHECK(bound_at(&far, &far_at) == 0, "the far end's link will not say where it is");
+	// One peer, so that a frame addressed on the cable to HOST is a frame
+	// for somebody else and takes the leaf's own road out.
+	snprintf(spec, sizeof spec, "%o@127.0.0.1:%u", HOST, (unsigned)ntohs(far_at.sin_port));
+	CHECK(chudp_add_peer(&board, spec) == 0, "the peer would not take");
+
+	CHECK(board.received == 0 && board.delivered == 0 && board.bad_shape == 0 &&
+		      board.bad_checksum == 0 && board.not_this_cable == 0,
+	      "a link that has heard nothing does not start at zero");
+
+	// A good frame from PEER to ME: the one road in.
+	len = status_rfc(frame, "STATUS", 6);
+	len = chudp_wrap(frame, len, good, sizeof good);
+	CHECK(len > 0, "the good frame would not wrap");
+	one_datagram(&board, far.fd, &board_at, good, len, &h);
+	CHECK(board.delivered == 1 && h.n == 1, "the good frame was not delivered: %lu delivered, "
+	      "%u heard", board.delivered, h.n);
+
+	// **THE CHECKSUM, WHICH IS THE ONE REFUSAL THAT WAS ALREADY COUNTED.**
+	// A data byte altered and the checksum left alone, which is what a
+	// damaged datagram is.
+	memcpy(bad, good, len);
+	bad[20] ^= 0xffu;
+	one_datagram(&board, far.fd, &board_at, bad, len, &h);
+	CHECK(board.bad_checksum == 1, "a damaged datagram was not counted as one: %lu",
+	      board.bad_checksum);
+
+	// **THE SIX SHAPE RULES, EACH DRIVEN ONCE.**  What they have in common
+	// is that `chudp_unwrap` refused and it was not the checksum; they
+	// share a count for that reason, and the trace is what names which.
+	{
+		// Longer than any Chaos packet.
+		memset(bad, 0, sizeof bad);
+		bad[0] = CHUDP_VERSION;
+		bad[1] = CHUDP_FUNCTION_PACKET;
+		one_datagram(&board, far.fd, &board_at, bad, CHUDP_MAX_FRAME + 1u, &h);
+		// Too short for a header, a packet and a trailer.
+		one_datagram(&board, far.fd, &board_at, good, 3u, &h);
+		// A version this does not speak.
+		memcpy(bad, good, len);
+		bad[0] = 2;
+		one_datagram(&board, far.fd, &board_at, bad, len, &h);
+		// A function that is not "here is a Chaos packet".
+		memcpy(bad, good, len);
+		bad[1] = 2;
+		one_datagram(&board, far.fd, &board_at, bad, len, &h);
+		// The count word's bytes swapped, which is an absurd count.
+		memcpy(bad, good, len);
+		bad[6] = good[7];
+		bad[7] = good[6];
+		one_datagram(&board, far.fd, &board_at, bad, len, &h);
+		// Two bytes fewer than the data count wants.
+		one_datagram(&board, far.fd, &board_at, good, len - 2u, &h);
+		CHECK(board.bad_shape == 6, "six datagrams refused for their shape were "
+		      "counted %lu times", board.bad_shape);
+	}
+
+	// **THE TWO ROADS THAT ARE NOT THE DATAGRAM'S FAULT.**  A frame
+	// claiming a source this cable already carries, and a frame addressed
+	// on the cable to a station a peer line names.  Nothing is wrong with
+	// either datagram; they are somebody else's, and a leaf does not
+	// forward them.
+	{
+		// The trailer's source is the second word from the end, and
+		// the checksum has to be made again for the frame as altered
+		// --- a frame refused for its checksum would be counted in the
+		// wrong class and the check would not see which road was taken.
+		const unsigned n = status_rfc(frame, "STATUS", 6);
+		frame[n - 2u] = 0;		/* no station's address */
+		frame[n - 1u] = chudp_checksum(frame, n - 1u);
+		len = chudp_wrap(frame, n, bad, sizeof bad);
+		CHECK(len > 0, "the sourceless frame would not wrap");
+		one_datagram(&board, far.fd, &board_at, bad, len, &h);
+
+		frame[n - 2u] = ME;		/* this cable's own address */
+		frame[n - 1u] = chudp_checksum(frame, n - 1u);
+		len = chudp_wrap(frame, n, bad, sizeof bad);
+		one_datagram(&board, far.fd, &board_at, bad, len, &h);
+
+		// And one addressed on the cable to the peer: the leaf rule.
+		const unsigned m = frame_to(frame, HOST, CHAOS_RFC, "STATUS", 6);
+		frame[m - 2u] = PEER;		/* somebody else put it on the cable */
+		frame[m - 1u] = chudp_checksum(frame, m - 1u);
+		len = chudp_wrap(frame, m, bad, sizeof bad);
+		one_datagram(&board, far.fd, &board_at, bad, len, &h);
+		CHECK(board.not_this_cable == 3, "three frames that are not this cable's were "
+		      "counted %lu times", board.not_this_cable);
+	}
+
+	// **AND THE SUM CLOSES**, which is the whole statement: eleven
+	// datagrams arrived, one came in, and every one of the other ten is in
+	// exactly one of the three refusals.
+	CHECK(board.received == 11, "eleven datagrams were sent and %lu arrived", board.received);
+	CHECK(board.received == board.delivered + board.bad_shape + board.bad_checksum +
+			       board.not_this_cable,
+	      "the counters do not add up: %lu arrived against %lu delivered + %lu shape + "
+	      "%lu checksum + %lu not this cable",
+	      board.received, board.delivered, board.bad_shape, board.bad_checksum,
+	      board.not_this_cable);
+	CHECK(board.delivered == 1 && board.bad_shape == 6 && board.bad_checksum == 1 &&
+		      board.not_this_cable == 3,
+	      "the sum closes on the wrong classes: %lu delivered, %lu shape, %lu checksum, "
+	      "%lu not this cable", board.delivered, board.bad_shape, board.bad_checksum,
+	      board.not_this_cable);
+	chudp_close(&board);
+	chudp_close(&far);
+}
+
+// **THE TRACE IS SWITCHED WHILE THE PROGRAM RUNS, AND SAYS SO ONCE.**
+//
+// A board restarted to get a diagnostic is a board whose Lisp is lost to get
+// it, so the flag is not the only way in: SIGUSR1 turns the trace on and
+// SIGUSR2 off, and `cadr-console trace-chaos on|off` is what sends them.
+// This process plays both the daemon and the person, which is the only honest
+// way to see that a signal arrived at all.
+//
+// **WHAT -1 IS FOR.**  `chaos_trace_apply` answers -1 for "nothing to do", and
+// there are two of those: nothing was asked, and what was asked is what the
+// program is already doing.  The first is what keeps a run started with
+// `--chaos-trace` from being turned off by the first pass of its own loop;
+// the second is what keeps a second `on` from saying a second line.
+static void check_the_trace_switches_while_it_runs(void)
+{
+	chaos_trace_signals();
+
+	// Nothing asked yet: neither setting moves, and a run that began with
+	// the flag stays on.
+	CHECK(chaos_trace_apply(0) == -1, "the trace changed with nothing asked");
+	CHECK(chaos_trace_apply(1) == -1, "a run started with --chaos-trace was turned off");
+
+	raise(SIGUSR1);
+	CHECK(chaos_trace_apply(0) == 1, "SIGUSR1 did not turn the trace on");
+	// Asked again with the trace already on: nothing to say and nothing to
+	// do, which is what makes a second `trace-chaos on` silent.
+	CHECK(chaos_trace_apply(1) == -1, "a second SIGUSR1 turned the trace on again");
+
+	raise(SIGUSR2);
+	CHECK(chaos_trace_apply(1) == 0, "SIGUSR2 did not turn the trace off");
+	CHECK(chaos_trace_apply(0) == -1, "a second SIGUSR2 turned the trace off again");
+
+	// And on again, so that the switch is not a one-way door.
+	raise(SIGUSR1);
+	CHECK(chaos_trace_apply(0) == 1, "the trace would not come back on");
+	raise(SIGUSR2);
+	CHECK(chaos_trace_apply(1) == 0, "the trace would not go off again");
+
+	signal(SIGUSR1, SIG_DFL);
+	signal(SIGUSR2, SIG_DFL);
+}
+
 // --- the suite ------------------------------------------------------------
 
 void chaos_test_udp(void)
@@ -1089,4 +1311,7 @@ void chaos_test_udp(void)
 	check_the_links();
 	check_a_stranger_is_heard_and_nothing_is_learned();
 	check_a_flag_that_says_who_is_on_the_cable_needs_the_cable();
+	chaos_test_note("udp: every datagram that arrives is accounted for");
+	check_every_datagram_is_accounted_for();
+	check_the_trace_switches_while_it_runs();
 }

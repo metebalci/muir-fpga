@@ -385,3 +385,36 @@
 	if (d->color)
 		say("display: a color TV is fitted, at 0o17200000 with its registers at 0o17377750");
 @end
+
+# **THE TWO TRACE WORDS**, which are the only words here that touch no
+# register.  One pair of functions serves both, so what these hold is the pair
+# doing different things for the two callers: the right signal for `on` and
+# `off`, and a line that names the trace the person asked about rather than
+# the other one.
+
+@mutation the-trace-word-sends-one-signal-for-both
+@file console_host.c
+@why SIGUSR1 turns a trace on and SIGUSR2 turns it off, and a trace that cannot be turned off fills a log it is itself writing to
+@note The daemons install one handler for both signals and tell them apart by
+@note number, so a word that sent the same signal either way would turn a
+@note trace on and never off.  The check plays the daemon itself and counts
+@note which signal arrived, which is the only assertion that could see this.
+@old
+	if (kill((pid_t)pid, on ? SIGUSR1 : SIGUSR2) == 0) {
+@new
+	if (kill((pid_t)pid, SIGUSR1) == 0) {
+@end
+
+@mutation the-line-names-the-wrong-trace
+@file console_host.c
+@why the line names the trace that was asked about: somebody told `key trace` when they asked about the network goes to the wrong log
+@note One pair of functions serves `trace-keys` and `trace-chaos`, and `what`
+@note is the whole of the difference between them.  Ignoring it costs nothing
+@note that a status can see --- the signal still goes to the right program ---
+@note so only the line itself catches it.
+@old
+	const char *word = r->what && !strcmp(r->what, CONS_TRACE_WHAT_CHAOS)
+				   ? "trace-chaos" : "trace-keys";
+@new
+	const char *word = "trace-keys";
+@end

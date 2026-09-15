@@ -28,7 +28,7 @@
 #ifndef CONSOLE_HOST_H
 #define CONSOLE_HOST_H
 
-// --- THE KEY TRACE, WHICH IS THE ONE WORD THAT IS NOT ABOUT THE FABRIC -----
+// --- THE TRACES, WHICH ARE THE WORDS THAT ARE NOT ABOUT THE FABRIC ---------
 //
 // **`trace-keys on|off` SWITCHES THE TWO INPUT PROGRAMS' TRACES**, and it is
 // a word of `cadr-console` because this is the program somebody already has
@@ -37,6 +37,21 @@
 // --- and each says what it did under a trace of its own.  Turning them on
 // means finding two daemons and signaling them, which is a thing to type
 // once and not twice.
+//
+// **`trace-chaos on|off` IS THE SAME WORD FOR THE NETWORK**, and it switches
+// `cadr-chaosnet`'s packet trace: every frame as it goes by, and every
+// datagram refused and why.  It is one program rather than two, and it is
+// here for the reason the key trace is --- a link that is quietly refusing
+// datagrams is a question somebody asks with the console already open, and
+// the alternative is stopping the program to add a flag, which on this board
+// means the machine's world has to be booted off the disk again.
+//
+// **ONE PAIR OF FUNCTIONS SERVES BOTH, AND `what` IS THE ONLY DIFFERENCE.**
+// The job is a pid file read and a signal sent, which is the same job
+// whichever daemon is being told; naming it after one of the two callers
+// would make the second one read as a borrowed function.  `what` is the
+// words that go in the line --- `key trace`, `packet trace` --- so that what
+// a person is told names the thing they asked about.
 //
 // **IT TOUCHES NO REGISTER AND NEEDS NO BITSTREAM.**  Every other word the
 // console has is a cycle on the diagnostic bus; this one reads a pid file
@@ -101,6 +116,13 @@ const char *cons_log_prefix(int logs_named, int stdout_is_a_terminal);
 #define CONS_TRACE_TERMINAL_PID "/var/run/cadr-terminal.pid"
 #define CONS_TRACE_USB "cadr-usb-input"
 #define CONS_TRACE_USB_PID "/var/run/cadr-usb-input.pid"
+#define CONS_TRACE_CHAOS "cadr-chaosnet"
+#define CONS_TRACE_CHAOS_PID "/var/run/cadr-chaosnet.pid"
+
+// What is being traced, in the words the line uses.  The two programs of
+// `trace-keys` trace one thing between them and `cadr-chaosnet` another.
+#define CONS_TRACE_WHAT_KEYS "key trace"
+#define CONS_TRACE_WHAT_CHAOS "packet trace"
 
 enum cons_trace_reached {
 	CONS_TRACE_NOT_RUNNING = 0,	/* no pid file, or nothing at that pid */
@@ -108,21 +130,22 @@ enum cons_trace_reached {
 	CONS_TRACE_REFUSED = -1		/* it is there and would not take it */
 };
 
-struct cons_trace_keys {
+struct cons_trace {
 	const char *program;	/* `cadr-terminal`, for the line */
 	const char *pidfile;
+	const char *what;	/* `key trace`, `packet trace` */
 	long pid;		/* what the file held, or 0 */
 	int reached;		/* `enum cons_trace_reached` */
 	char why[128];		/* what was wrong, in the system's own words */
 };
 
-// One program told to turn its trace on (`on` non-zero) or off.  The result
-// is filled in whatever happens; the return is `r->reached`, so that a caller
+// One program told to turn a trace on (`on` non-zero) or off.  The result is
+// filled in whatever happens; the return is `r->reached`, so that a caller
 // may count.  `pidfile` is the board's on the board and the check's own file
 // in the host test.
-int cons_trace_keys(const char *program, const char *pidfile, int on,
-		    struct cons_trace_keys *r);
-void cons_say_trace_keys(const struct cons_trace_keys *r, int on);
+int cons_trace_signal(const char *program, const char *pidfile, const char *what, int on,
+		      struct cons_trace *r);
+void cons_say_trace(const struct cons_trace *r, int on);
 
 // --- WHICH BUILD THIS PROGRAM IS -----------------------------------------
 //
