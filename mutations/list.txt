@@ -14086,3 +14086,102 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @new
     frame_out[SLOTS-1 -: MARK_W]   = ~MARK;
 @end
+
+@mutation the-guard-beside-a-signal-is-left-floating
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **A PAIR'S OTHER LINE LEFT OUT OF THE ENABLE, WHICH IS THE WHOLE OF WHAT
+@note ONE SIGNAL PER PAIR BUYS, UNDONE.**  The header's rows are coupled pairs
+@note with 0-ohm shunts where a differential termination would go, so the link
+@note puts one signal on each pair and holds the other line at zero.  A guard
+@note that is not DRIVEN is not a guard: a floating line beside a switching one
+@note is a capacitor its neighbour charges, and what it charges into is the
+@note strobe's own pair.
+@note
+@note The fabric cannot see coupling and neither can a testbench, so what this
+@note record is aimed at is the CLAIM rather than the physics: a group of four
+@note pads goes out whole or not at all, and two of the four sit at zero.  A
+@note check that only watched the two signal pins would pass a board that had
+@note quietly stopped driving the guards, and the pair arrangement would be a
+@note sentence in a header with nothing behind it.
+@old
+      pin_t[FWD_GD0] = 1'b0;
+      pin_t[FWD_GD1] = 1'b0;
+@new
+      pin_t[FWD_GD0] = 1'b1;
+      pin_t[FWD_GD1] = 1'b1;
+@end
+
+@mutation a-listening-board-drives-the-guards-of-the-group-it-listens-to
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE GUARDS DRIVEN WHATEVER THE ROLE SAYS.**  It reads as harmless ---
+@note they are only guards, and holding them low can only help the far end's
+@note signals --- and it is the failure this connector's whole design is
+@note arranged to prevent.  A guard is a PIN.  The far board drives all four
+@note pads of the group it owns, guards included, so a board that drove the
+@note guards of a group it is merely listening to has two drivers on two wires
+@note of a cable.
+@note
+@note It is also the one form of that fault that the pin-group rules alone
+@note would not have caught before the pairs: with all four pins carrying
+@note signals there was no pin a board could think of as "not really a signal".
+@old
+  always_comb begin
+    pin_o = 8'h00;
+    pin_t = 8'hFF;
+@new
+  always_comb begin
+    pin_o = 8'h00;
+    pin_t = 8'hFF;
+    pin_t[FWD_GD0] = 1'b0;
+    pin_t[FWD_GD1] = 1'b0;
+@end
+
+@mutation the-data-line-goes-out-on-the-even-pin-of-its-pair
+@check dbg_cable
+@file rtl/plumbing/cadr_dbg_cable.sv
+@note **THE SIGNAL AND ITS GUARD SWAPPED, AT THE DRIVE ONLY.**  The forward
+@note group's data line goes out on header pin 2 --- the strobe's own partner
+@note --- and header pin 3 carries the zero.  Two signals on one pair and
+@note nothing on the other is exactly the arrangement the pairs were moved away
+@note from, and it is silent at the far end only if the far end reads the same
+@note wrong pin.
+@note
+@note **AND THAT IS WHY IT IS THE DRIVE ALONE.**  Both boards run this file, so
+@note moving `FWD_DAT` itself would relabel the pin consistently at both ends
+@note and the link would work --- the shared-address-expression equivalence
+@note this project has already filed twice, once for each level of the map.  A
+@note pin map can only be mutated by breaking the write differently from the
+@note read.
+@old
+      pin_o[FWD_DAT] = tx_d[0];
+      pin_o[FWD_GD0] = 1'b0;
+@new
+      pin_o[FWD_GD0] = tx_d[0];
+      pin_o[FWD_DAT] = 1'b0;
+@end
+
+@mutation the-frame-is-a-beat-short-of-its-own-payload
+@check dbg_pmod
+@file rtl/plumbing/cadr_dbg_tx.sv
+@note **THE BEAT COUNT WORKED OUT WITHOUT THE PARITY BIT.**  A frame is the
+@note payload, a two-bit marker and one parity bit, and the beat count is that
+@note total divided by the data lines, rounded up.  Drop the parity bit from
+@note the division and the sender emits twenty-three beats where the receiver
+@note counts twenty-four: every frame is misaligned, the marker lands on the
+@note payload's own top bits, and nothing is ever taken.
+@note
+@note **AND THIS RECORD ONLY EXISTS BECAUSE THERE IS ONE DATA LINE.**  Over
+@note three lines the same arithmetic gave `(21+2+3-1)/3` and `(21+2+1+3-1)/3`,
+@note which are both eight: the rounding swallowed the bit and the mutation was
+@note an equivalence nobody could have filed as anything else.  Over one line
+@note the division is exact and the bit is a beat.  Measured, not assumed ---
+@note and it is the same lesson as the sweep that replaces an equivalence with
+@note the smallest magnitude that is caught, arriving by a change of geometry
+@note rather than by a sweep.
+@old
+  localparam int unsigned BEATS  = (PAYLOAD_W + MARK_W + 1 + LINES - 1) / LINES;
+@new
+  localparam int unsigned BEATS  = (PAYLOAD_W + MARK_W + LINES - 1) / LINES;
+@end

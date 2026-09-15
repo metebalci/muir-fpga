@@ -113,15 +113,16 @@
 //                               ones nor a dead one's zeros can be it
 //                   bits 23:8   frames heard on the connector, whatever
 //                               their checks said, saturating at 65,535
-//                   bits 7:0    frames REFUSED --- the marker, the parity or
-//                               the fill wrong --- saturating at 255
-//                 The pins of a Pmod row are routed as coupled pairs and this
-//                 link drives all four single-ended, so an edge on one line
-//                 can couple into the strobe beside it and misalign a frame.
-//                 A misaligned frame moves nothing and the next one carries
-//                 the levels again, so what crosstalk costs is refused frames
-//                 --- and these two numbers are how often, which is a thing
-//                 nobody has measured.  `cadr_dbg_cable.sv` has the fallback.
+//                   bits 7:0    frames REFUSED --- the marker or the parity
+//                               wrong --- saturating at 255
+//                 The pins of a Pmod row are routed as coupled pairs, so the
+//                 link puts one signal on each pair and holds the other line
+//                 low as a guard; `cadr_dbg_cable.sv` has the map.  A frame
+//                 that catches a false edge --- from a guard nobody is
+//                 holding, from between pairs, or from anything else ---
+//                 moves nothing, and the next one carries the levels again.
+//                 So a bad cable costs refused frames and never a word, and
+//                 these two numbers are how often.
 //
 //   page 1, `REG_BASE + 0x40`, the sixteen diagnostic registers, word k
 //   being `EADR` k:

@@ -21,12 +21,13 @@
 //
 // ## One connector, and what that forces
 //
-// The cable is ONE header, JA.  Both directions cross it, four pins each, and
-// the second header carries nothing: a board is a debugger or a debuggee on
-// this cable and never both at once, so a second connector would buy only the
-// case of a board debugging one machine while another debugs it, which the
-// register window already covers --- muir on this board's own Arm cores
-// reaches the DBGIN page whatever the connector is doing.
+// The cable is ONE header, JA.  Both directions cross it, four pins each ---
+// a strobe, one data line and the two GUARDS the section on the pin map below
+// explains --- and the second header carries nothing: a board is a debugger or
+// a debuggee on this cable and never both at once, so a second connector would
+// buy only the case of a board debugging one machine while another debugs it,
+// which the register window already covers --- muir on this board's own Arm
+// cores reaches the DBGIN page whatever the connector is doing.
 //
 // **WHAT ACTUALLY CROSSES IS TWENTY OUT AND NINETEEN BACK, COUNTED OFF THE
 // NETLIST.**  MIT's cable is twenty-one wires: four out --- `-DEBUG OUT REQ`,
@@ -59,9 +60,12 @@
 // A Pmod ribbon is supposed to join pin one to pin one.  The four low pins are
 // then the DEBUGGER's --- it drives them and the debuggee listens --- and the
 // four high pins the DEBUGGEE's, and neither group is ever driven from both
-// ends while the two boards hold different roles.  That is what makes this
-// full duplex with no shared pin rather than a bus that has to be turned
-// around.
+// ends while the two boards hold different roles.  A group is four pins
+// throughout this file: two carry the strobe and the data line and two are
+// guards, and all four are enabled together, so everything said here about a
+// board driving or listening to a group is about all four of them.  That is
+// what makes this full duplex with no shared pin rather than a bus that has to
+// be turned around.
 //
 // **A CABLE MADE FROM TWO HOST SOCKETS MIRRORS THE HEADER'S TWO ROWS, AND
 // ONE WAS MEASURED ON THE BENCH.**  A 2x6 Pmod header has pins 1 to 6 in one
@@ -312,14 +316,51 @@ module cadr_dbg_cable #(
     input  var logic [7:0]  pin_i
 );
 
-  // The two groups of four.  The strobe is the top pin of each group and the
-  // three data lines are under it.
-  localparam int unsigned FWD_STB = 3;   // the low four, pins 1 to 4
-  localparam int unsigned RET_STB = 7;   // and the high four, pins 7 to 10
+  // ---------------------------------------------------- the eight pins, named
+  //
+  // **ONE SIGNAL PER COUPLED PAIR, AND THE PARTNER OF EACH DRIVEN LOW.**  The
+  // high-speed Pmod headers on these boards route their pins as pairs --- 1
+  // with 2, 3 with 4, 7 with 8, 9 with 10, with 0-ohm shunts where a
+  // differential termination would go --- so a group driven single-ended on
+  // all four pins has an edge on one line coupling into its partner, and the
+  // partner may be the STROBE.  A false edge on a strobe makes a false beat
+  // and a false beat misaligns the frame it lands in.
+  //
+  // So each pair carries ONE signal and its other line is a GUARD held at
+  // zero by whichever board drives that group.  The strobe has the first pair
+  // of a group to itself and the one data line has the second.  A guard is
+  // driven and not left floating: a quiet line beside a switching one is only
+  // quiet if something holds it, and a floating line is a capacitor the
+  // neighbour charges.
+  //
+  // | index | header pin | forward group | return group |
+  // |---|---|---|---|
+  // | 0 / 4 | 1 / 7  | strobe        | strobe        |
+  // | 1 / 5 | 2 / 8  | guard, low    | guard, low    |
+  // | 2 / 6 | 3 / 9  | data          | data          |
+  // | 3 / 7 | 4 / 10 | guard, low    | guard, low    |
+  //
+  // **WHAT IT COSTS IS THE FRAME'S LENGTH AND NOTHING ELSE.**  One data line
+  // where there were three is twenty-four beats where there were eight, 162
+  // ticks a frame against 66, which the section on the intervals below
+  // carries through the detection and the probe.  A debug cycle is two frames
+  // and the far machine's own bus cycle, and the debugger gives up at
+  // `busint::DEBUG_TIMEOUT_NS` --- the REQTIM PROM's second table, which this
+  // fabric counts as 2,210 ticks in `rtl/machine/cadr_busint_xbus.sv`.
+  // `build/dbg_pmod.pass` and `build/dbg_cable.pass` measure the round trip
+  // against it rather than leaving the arithmetic to stand on its own.
+  localparam int unsigned FWD_STB = 0;   // the low four, header pins 1 to 4
+  localparam int unsigned FWD_GD0 = 1;
+  localparam int unsigned FWD_DAT = 2;
+  localparam int unsigned FWD_GD1 = 3;
+  localparam int unsigned RET_STB = 4;   // and the high four, pins 7 to 10
+  localparam int unsigned RET_GD0 = 5;
+  localparam int unsigned RET_DAT = 6;
+  localparam int unsigned RET_GD1 = 7;
 
   // The cable's levels: MIT's twenty plus the sender's own role.
   localparam int unsigned PAYLOAD_W = 21;
-  localparam int unsigned LINES     = 3;
+  localparam int unsigned LINES     = 1;
   localparam int unsigned ROLE_BIT  = PAYLOAD_W - 1;
 
   // The three the console's word 14 can hold.  `WIRE_AUTO` is the reset
@@ -359,6 +400,13 @@ module cadr_dbg_cable #(
   // shorter than `ACT_T` plus the round trip flips away before the answer can
   // arrive.  Measured, at `LOSS_T`: the answer landed exactly as the
   // assumption flipped and a mirrored cable never came up.
+  //
+  // **AND EVERY ONE OF THEM IS THREE TIMES WHAT IT WAS**, because one data
+  // line a group makes the frame twenty-four beats where three made it eight.
+  // At the defaults: a frame is 162 ticks, `ACT_T` 324, the listen
+  // `162 + LOSS_T`, a probe 1,296 and a re-listen 486.  Nothing here is a
+  // round number and nothing here is a constant: they are all the frame, so
+  // the connector cannot drift from the carrier under it.
   localparam int unsigned BEATS    = (PAYLOAD_W + 2 + 1 + LINES - 1) / LINES;
   localparam int unsigned FRAME_T  = BEATS * BEAT_T + GAP_T;
   localparam int unsigned ACT_T    = 2 * FRAME_T;
@@ -374,7 +422,18 @@ module cadr_dbg_cable #(
   // enough that both receivers are telling the truth, and anything heard in
   // that interval settles the wiring outright.
   localparam int unsigned RELISTEN_T = ACT_T + FRAME_T;
-  localparam int unsigned PH_W     = $clog2(DETECT_T + 1);
+  // **THE PHASE COUNTER IS SIZED FROM THE LONGEST OF THE THREE AND NOT FROM
+  // THE LISTEN.**  It was `$clog2(DETECT_T + 1)`, which held while a frame was
+  // sixty-six ticks and the probe was the shorter of the two; at twenty-four
+  // beats a probe is 1,296 ticks and a listen with the CHECK's own shrunken
+  // loss interval is 674, so the load truncated and the probe ended after 272.
+  // Nothing said so: the board's own numbers still fitted, and only the check
+  // --- which shrinks `LOSS_T` to make a run seconds rather than minutes ---
+  // was wrong.  A width derived from one of three intervals is a width that is
+  // right by coincidence.
+  localparam int unsigned PH_TRY  = PROBE_T > DETECT_T ? PROBE_T : DETECT_T;
+  localparam int unsigned PH_LONG = PH_TRY > RELISTEN_T ? PH_TRY : RELISTEN_T;
+  localparam int unsigned PH_W     = $clog2(PH_LONG + 1);
 
   // ------------------------------------------------------------- the carrier
   //
@@ -420,7 +479,7 @@ module cadr_dbg_cable #(
       .LOSS_T(LOSS_T), .ACT_T(ACT_T)
   ) u_rx_fwd (
       .clk(clk), .rst(rst || drive_fwd),
-      .rx_stb(pin_i[FWD_STB]), .rx_d(pin_i[FWD_STB-1:0]),
+      .rx_stb(pin_i[FWD_STB]), .rx_d(pin_i[FWD_DAT]),
       .rx_levels(fwd_levels), .rx_live(fwd_live), .rx_active(fwd_act),
       .frame_done(fwd_done), .frame_bad(fwd_frame_bad)
   );
@@ -430,7 +489,7 @@ module cadr_dbg_cable #(
       .LOSS_T(LOSS_T), .ACT_T(ACT_T)
   ) u_rx_ret (
       .clk(clk), .rst(rst || drive_ret),
-      .rx_stb(pin_i[RET_STB]), .rx_d(pin_i[RET_STB-1:4]),
+      .rx_stb(pin_i[RET_STB]), .rx_d(pin_i[RET_DAT]),
       .rx_levels(ret_levels), .rx_live(ret_live), .rx_active(ret_act),
       .frame_done(ret_done), .frame_bad(ret_frame_bad)
   );
@@ -469,26 +528,20 @@ module cadr_dbg_cable #(
 
   // ------------------------------------------------- how the cable behaves
   //
-  // **THE PMOD'S PINS ARE ROUTED AS COUPLED PAIRS AND THIS LINK DRIVES ALL
-  // FOUR OF A ROW SINGLE-ENDED.**  Pins 1 and 2 are a pair, 3 and 4, 7 and 8,
-  // and 9 and 10, with 0-ohm shunts where a differential termination would go,
-  // so an edge on one line of a pair couples into the other --- and the other
-  // may be the STROBE, which is the one thing here a false edge can hurt.
+  // **THE PINS ARE COUPLED PAIRS AND THIS LINK PUTS ONE SIGNAL ON EACH**, with
+  // the partner driven low --- the section above has the map and the reason.
+  // That removes the coupling this counter was put in to measure, and the
+  // counter stays anyway.
   //
-  // What that costs is bounded: a frame with a false beat in it fails its
-  // marker or its parity, moves nothing, and the levels stand until the next
-  // frame carries them again.  So crosstalk is LOST FRAMES and never wrong
-  // values, unless it is frequent --- and how frequent is a number nobody has.
-  // These two counters are that number, read through the console: frames
-  // heard, whatever their checks said, and frames refused.
-  //
-  // **AND THE FALLBACK IS ONE SIGNAL PER PAIR**, if the number turns out bad:
-  // strobe on pin 1 with 2 left quiet, data on 3 with 4 quiet, and the same on
-  // the return row.  Twenty-one bits over one line is twenty-four beats a
-  // frame against eight, 198 ticks against 66, still a fraction of the 11.05
-  // microseconds a debug cycle is allowed.  It is `LINES` and a pin map and
-  // nothing else.  Whether it is needed is a measurement on a board, and this
-  // is the instrument for it.
+  // **A GUARDED PAIR IS AN ARGUMENT AND NOT A MEASUREMENT.**  Nothing about
+  // either arrangement has been seen on a board, a ribbon has its own
+  // crosstalk between pairs as well as within one, and a false beat costs the
+  // same whatever made it: the frame fails its marker or its parity, moves
+  // nothing, and the levels stand until the next frame carries them again.  So
+  // a bad cable is LOST FRAMES and never wrong values, unless it is frequent
+  // --- and how frequent is still a number nobody has.  These two counters are
+  // that number, read through the console: frames heard, whatever their checks
+  // said, and frames refused.
   //
   // Both saturate rather than wrap, for the reason the console's other counts
   // do: a counter that can read zero again is one that can say nothing has
@@ -647,18 +700,40 @@ module cadr_dbg_cable #(
   assign drive_fwd = want_fwd && !fwd_act && !rst;
   assign drive_ret = want_ret && !ret_act && !rst;
 
+  //
+  // **A GROUP IS DRIVEN WHOLE OR NOT AT ALL, AND TWO OF ITS FOUR PINS ARE
+  // GUARDS.**  `pin_o` starts at zero, so the two lines named `*_GD*` go out
+  // LOW whenever their group is enabled: that is the whole of the guard, and
+  // it has to be a DRIVEN low rather than a pad left out of the enable, or the
+  // line beside the strobe is a floating capacitor its neighbour charges.
+  // Enabling all four also keeps the pad groups the console reports and
+  // `build/dbg_cable.pass` asserts against --- the low four or the high four,
+  // never a subset of one.
+  // Written a pin at a time and not a nibble at a time, so that every one of
+  // the eight names above appears where it is used: a guard's level is a
+  // statement of its own and reads as one.
   always_comb begin
     pin_o = 8'h00;
     pin_t = 8'hFF;
     if (drive_fwd) begin
-      pin_o[FWD_STB]     = tx_stb;
-      pin_o[FWD_STB-1:0] = tx_d;
-      pin_t[FWD_STB:0]   = 4'h0;
+      pin_o[FWD_STB] = tx_stb;
+      pin_o[FWD_DAT] = tx_d[0];
+      pin_o[FWD_GD0] = 1'b0;
+      pin_o[FWD_GD1] = 1'b0;
+      pin_t[FWD_STB] = 1'b0;
+      pin_t[FWD_DAT] = 1'b0;
+      pin_t[FWD_GD0] = 1'b0;
+      pin_t[FWD_GD1] = 1'b0;
     end
     if (drive_ret) begin
-      pin_o[RET_STB]     = tx_stb;
-      pin_o[RET_STB-1:4] = tx_d;
-      pin_t[RET_STB:4]   = 4'h0;
+      pin_o[RET_STB] = tx_stb;
+      pin_o[RET_DAT] = tx_d[0];
+      pin_o[RET_GD0] = 1'b0;
+      pin_o[RET_GD1] = 1'b0;
+      pin_t[RET_STB] = 1'b0;
+      pin_t[RET_DAT] = 1'b0;
+      pin_t[RET_GD0] = 1'b0;
+      pin_t[RET_GD1] = 1'b0;
     end
   end
 

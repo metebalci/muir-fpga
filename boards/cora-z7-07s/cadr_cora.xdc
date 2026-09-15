@@ -101,10 +101,13 @@ set_false_path -to [get_cells -quiet witness_reg]
 ## pin against both master files, so a cable joining one board's JA to the
 ## other's JA needs nothing said about it.
 ##
-## FOUR PINS EACH WAY, one strobe and three data.
-## `rtl/plumbing/cadr_dbg_tx.sv` has the argument for splitting them rather
-## than sharing seven and turning them around; `rtl/plumbing/cadr_dbg_cable.sv`
-## is the connector that puts both directions on this one header.
+## FOUR PINS EACH WAY, of which TWO carry signals: a strobe and one data line,
+## the other two driven LOW as guards --- the table at the pins below has the
+## map and the reason.
+## `rtl/plumbing/cadr_dbg_tx.sv` has the argument for splitting the directions
+## rather than sharing seven pins and turning them around;
+## `rtl/plumbing/cadr_dbg_cable.sv` is the connector that puts both directions
+## on this one header.
 ##
 ## THE LOW FOUR ARE THE DEBUGGER'S AND THE HIGH FOUR THE DEBUGGEE'S, at both
 ## ends. A straight Pmod ribbon joins pin one to pin one, so a cable from one
@@ -121,6 +124,32 @@ set_false_path -to [get_cells -quiet witness_reg]
 ## recorded so that nobody reads the choice of JA as being about it.
 
 ## Pmod JA --- the debug cable, both directions.
+##
+## **ONE SIGNAL A COUPLED PAIR, AND THE OTHER LINE OF EACH DRIVEN LOW.** The
+## header's eight signal pins are routed as four coupled 100-ohm pairs --- 1
+## with 2, 3 with 4, 7 with 8, 9 with 10, with 0-ohm shunts where a differential
+## termination would go, which the schematic names above say twice over in their
+## own `_P`/`_N` suffixes. A group driven single-ended on all four pins has an
+## edge on one line coupling into its partner, and the partner may be the
+## STROBE, which is the one thing on this cable a false edge can hurt. So each
+## pair carries ONE signal and its partner is a GUARD held at zero by whichever
+## board drives that group:
+##
+##     index 0, pin 1   the forward group's STROBE
+##     index 1, pin 2   guard, driven low beside it
+##     index 2, pin 3   the forward group's one DATA line
+##     index 3, pin 4   guard, driven low beside it
+##     index 4, pin 7   the return group's STROBE
+##     index 5, pin 8   guard, driven low beside it
+##     index 6, pin 9   the return group's one DATA line
+##     index 7, pin 10  guard, driven low beside it
+##
+## A guard is DRIVEN and not merely left out of the enable: a quiet line beside
+## a switching one is only quiet if something holds it. All eight pads are still
+## bidirectional and all eight still carry a pull-down, because either group can
+## be the one this board is listening to and a listening board drives no pin of
+## a group, guard included. `rtl/plumbing/cadr_dbg_cable.sv` has the map and
+## `build/dbg_cable.pass` asserts it on every tick.
 set_property -dict { PACKAGE_PIN Y18   IOSTANDARD LVCMOS33 } [get_ports { ja[0] }]; #IO_L17P_T2_34 Sch=ja_p[1] (Pin 1)
 set_property -dict { PACKAGE_PIN Y19   IOSTANDARD LVCMOS33 } [get_ports { ja[1] }]; #IO_L17N_T2_34 Sch=ja_n[1] (Pin 2)
 set_property -dict { PACKAGE_PIN Y16   IOSTANDARD LVCMOS33 } [get_ports { ja[2] }]; #IO_L7P_T1_34 Sch=ja_p[2] (Pin 3)

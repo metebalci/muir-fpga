@@ -5,8 +5,10 @@
 //
 // `rtl/plumbing/cadr_dbg_tx.sv` is the sender and its header has the frame,
 // the gap, the marker and the parity, and why the two are separate modules.
-// This is the other half: four pins in, the levels that were put on them at
-// the far end out, and two questions about the connector beside them.
+// This is the other half: two pins in --- a strobe and one data line, the
+// other two of the group being guards this module never sees --- the levels
+// that were put on them at the far end out, and two questions about the
+// connector beside them.
 //
 // **NO muir REFERENCE EXISTS FOR THIS MODULE**, for the sender's reason.
 // What holds it is a property, in `build/dbg_pmod.pass`.
@@ -27,9 +29,10 @@
 //
 // ## Two questions, and they are not the same question
 //
-// `rx_live` is whether a GOOD FRAME has arrived lately: the marker, the parity
-// and the fill all check and the far end has not since gone quiet.  It is what
-// the DBGOUT page asks before it waits for an answer.
+// `rx_live` is whether a GOOD FRAME has arrived lately: the marker and the
+// parity check --- and the fill too, where a setting leaves one --- and the far
+// end has not since gone quiet.  It is what the DBGOUT page asks before it
+// waits for an answer.
 //
 // `rx_active` is whether anything is DRIVING these four pins at all, good
 // frame or not --- a strobe transition within the same `LOSS_T`.  It is what
@@ -49,29 +52,26 @@
 //
 // ## Counting what arrives, and why anybody would
 //
-// **THE HIGH-SPEED PMODS ON THESE BOARDS ROUTE THEIR PINS AS COUPLED PAIRS.**
-// Pins 1 and 2 are a pair, 3 and 4, 7 and 8, and 9 and 10, with 0-ohm shunts
-// where a differential termination would go.  This link drives all four pins
-// of a row single-ended, so an edge on one line of a pair couples into the
-// other --- and the other, on this carrier, may be the STROBE, which is the
-// one thing on the cable a false edge can hurt.  A false beat misaligns the
-// frame it lands in.
+// **THE HIGH-SPEED PMODS ON THESE BOARDS ROUTE THEIR PINS AS COUPLED PAIRS,
+// AND THE LINK IS ARRANGED SO THAT NO PAIR CARRIES TWO SIGNALS.**  Pins 1 and
+// 2 are a pair, 3 and 4, 7 and 8, and 9 and 10, with 0-ohm shunts where a
+// differential termination would go.  A row driven single-ended has an edge on
+// one line coupling into its partner, and the partner may be the STROBE, which
+// is the one thing on this cable a false edge can hurt.  So the strobe has a
+// pair to itself and the data line the other, with the even line of each
+// driven LOW as a guard --- `rtl/plumbing/cadr_dbg_cable.sv` has the pin map.
+// One data line is what makes the frame twenty-four beats where three made it
+// eight.
 //
-// What that costs is bounded and is not a wrong word: a misaligned frame fails
-// its marker or its parity, moves nothing, and the levels stand until the next
-// frame carries them again sixty-six ticks later.  So crosstalk is LOST FRAMES
-// and never wrong values --- unless it is frequent, and how frequent is a
-// number nobody has.  `frame_done` and `frame_bad` are that number: count them
-// both and read the ratio.
-//
-// **AND THE FALLBACK IF THE NUMBER IS BAD IS ONE SIGNAL PER PAIR.**  Strobe on
-// pin 1 with 2 left quiet, data on 3 with 4 quiet, and the same on the return
-// row: one strobe and one data line each way, no pair carrying two signals and
-// nothing to couple into.  Twenty-one bits over one line is twenty-four beats a
-// frame against eight, which is 198 ticks against 66 --- still a fraction of
-// the 11.05 microseconds a debug cycle is allowed.  It is a parameter change
-// and a pin map and nothing else, `LINES` being what decides it.  Whether it is
-// needed is a measurement on a board and this is the instrument for it.
+// **THE COUNTERS ARE KEPT, BECAUSE A GUARDED PAIR IS AN ARGUMENT AND NOT A
+// MEASUREMENT.**  Nothing has been measured on a board either way, and a false
+// beat still misaligns the frame it lands in whatever made it.  What that
+// costs is bounded and is not a wrong word: a misaligned frame fails its
+// marker or its parity, moves nothing, and the levels stand until the next
+// frame carries them again one frame later.  So a bad cable is LOST FRAMES and
+// never wrong values --- unless it is frequent, and how frequent is a number
+// nobody has.  `frame_done` and `frame_bad` are that number: count them both
+// and read the ratio.
 //
 // ## An unplugged connector, and one that goes away
 //
@@ -97,25 +97,29 @@ module cadr_dbg_rx #(
     // The cable's levels, in one direction.  `cadr_dbg_tx.sv`'s header has
     // what the twenty-one are.
     parameter int unsigned PAYLOAD_W = 21,
-    // Data lines a direction.  Eight pins, one strobe each way, three left.
-    parameter int unsigned LINES     = 3,
+    // Data lines a direction.  ONE: the four pins of a group are two coupled
+    // pairs and this link puts one signal on each, the strobe on one and this
+    // line on the other.  See the header and `cadr_dbg_tx.sv`'s.
+    parameter int unsigned LINES     = 1,
     // The silence this end treats as being between frames.  It is the only
     // one of the sender's three intervals this end needs: `BEAT_T < GAP_MIN <
     // GAP_T`, so a gap is told from a beat with a tick of sampling jitter
     // either side, and the beat and the gap themselves are the sender's.
     parameter int unsigned GAP_MIN   = 12,
     // Ticks with no good frame before the far end is taken to be gone.  Free
-    // running frames arrive every `BEATS * BEAT_T + GAP_T`, so this is fifteen
-    // of them at the defaults and fires only when they stop.
+    // running frames arrive every `BEATS * BEAT_T + GAP_T`, 162 ticks at the
+    // defaults, so this is six of them and fires only when they stop.
     parameter int unsigned LOSS_T    = 1024,
     // And ticks with no TRANSITION before nothing is taken to be driving these
     // pins, which is a different question and wants a different number.
     //
     // **IT IS SHORT ON PURPOSE, AND THE LENGTH IS LOAD-BEARING.**  A sender
     // free-runs, so a gap longer than one frame means nobody is there --- two
-    // frames is a bound with a whole frame of margin, where `LOSS_T` is
-    // fifteen.  What the difference costs was measured: the connector will not
-    // drive a group anything else is driving, so a board waits out THIS
+    // frames is a bound with a whole frame of margin, where `LOSS_T` is six.
+    // The connector overrides this parameter with two frames of the frame it
+    // is actually sending, which is 324 ticks at twenty-four beats.  What the
+    // difference costs was measured: the connector will not drive a group
+    // anything else is driving, so a board waits out THIS
     // interval before it may answer on a group the far end has stopped
     // driving.  At `LOSS_T` that wait is longer than a probe and a cable that
     // was being hunted for never came up.
@@ -124,7 +128,8 @@ module cadr_dbg_rx #(
     input  var logic                 clk,   // 100 MHz, one tick = 10 ns
     input  var logic                 rst,
 
-    // --- the connector.  One strobe and three data lines.
+    // --- the connector.  One strobe and one data line; the group's two
+    // --- guard pins are the connector's and never reach this module.
     input  var logic                 rx_stb,
     input  var logic [LINES-1:0]     rx_d,
 
@@ -134,9 +139,9 @@ module cadr_dbg_rx #(
     output var logic                 rx_active,
 
     // --- and two one-tick terms for whoever is counting.  A frame ARRIVED,
-    // --- whatever its checks said, and a frame was REFUSED --- the marker, the
-    // --- parity or the fill wrong.  See the header: on these boards the two
-    // --- numbers together are the instrument for crosstalk between the pins.
+    // --- whatever its checks said, and a frame was REFUSED --- the marker or
+    // --- the parity wrong.  See the header: on these boards the two numbers
+    // --- together are how often a bad cable costs a frame.
     output var logic                 frame_done,
     output var logic                 frame_bad
 );
@@ -148,8 +153,13 @@ module cadr_dbg_rx #(
   localparam int unsigned SLOTS  = BEATS * LINES;
   // The marker, the parity bit and the zero fill together: everything above
   // the payload.  The marker is at the top, the parity bit under it, and the
-  // fill under that, so a payload that fills the frame exactly --- which the
-  // connector's twenty-one does --- is not a special case.
+  // fill under that, so a payload that fills the frame exactly is not a
+  // special case.  **AT ONE DATA LINE THERE IS NEVER A FILL**, the frame being
+  // the payload, the marker and the parity bit exactly, so `HEAD_W` is three
+  // in every configuration any board builds and the fill is unreachable.  It
+  // is kept because it is what makes the head one expression rather than three
+  // cases; nothing checks it and nothing can, and saying so is cheaper than
+  // leaving somebody to find that out from a mutation that survives.
   localparam int unsigned HEAD_W = SLOTS - PAYLOAD_W;
   localparam int unsigned BEAT_W = $clog2(BEATS + 1);
   localparam int unsigned IDLE_W = $clog2(GAP_MIN + 1);

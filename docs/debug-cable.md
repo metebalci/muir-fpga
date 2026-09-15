@@ -589,13 +589,15 @@ STATUS` drives only `DBD<7:0>` and MIT's cable carries the byte above it on
 pull-ups that a Pmod ribbon does not have. A count of seventeen coming back
 counts the acknowledgement and the data and misses them.
 
-The carrier's payload is twenty bits in each direction, so the return has one
-bit spare and sends it as zero.
+The carrier's payload is twenty-one bits in each direction: MIT's twenty, with
+the return's one spare bit going out as zero, and a twenty-first that says
+whether the board that sent this frame is the debugger.
 
 **ONE CONNECTOR CARRIES THE WHOLE LINK, IN BOTH DIRECTIONS, four pins each
-way.** Each direction is one strobe and three data lines, eight beats a frame,
-and neither group is ever driven from both ends. That is far inside the cable's
-own 11.05 microsecond timeout, so the beats are free.
+way.** Each direction is one strobe, one data line and two guards, twenty-four
+beats a frame, and neither group is ever driven from both ends. A frame is 162
+ticks against the 2,210 the debugger's own interface allows a cycle, so the
+beats have room. The section on the budget below spends them.
 
 **A board is a debugger or a debuggee by configuration and never both at
 once.** That is what makes one connector enough. Two connectors bought exactly
@@ -614,11 +616,13 @@ nothing is clocked by it.
 this design has no opinion about, bar the Arty A7-100's JD, which is where
 that board's card goes.
 
-### Four pins each way
+### Four pins each way, of which two carry signals
 
-The eight pins are split four and four. Each direction is one strobe and three
-data lines, driven by one end and sampled by the other with its own clock.
-Nothing is shared and nothing is turned around.
+The eight pins are split four and four. Each direction is one strobe and one
+data line, with a guard beside each of them, driven by one end and sampled by
+the other with its own clock. Nothing is shared and nothing is turned around.
+The section on the coupled pairs below says why a group of four carries two
+signals rather than four.
 
 The alternative was one clock and seven data lines shared and turned around
 under it. That is MIT's own arrangement, where the Am8304s face whichever way
@@ -628,9 +632,9 @@ and they have no back channel to agree on; a turnaround that misses does not
 corrupt a word, it puts two drivers on one wire. And a receiver clocked from
 the cable is a second clock domain across the whole carrier, where the two
 boards already have a tick of the same length. What a forwarded clock would
-buy is a smaller delay, and delay is the one thing this cable does not care
-about: a debugger waits 11.05 microseconds for an answer and a frame here is
-sixty-six ticks.
+buy is a smaller delay, and delay is the one thing this cable has room for. A
+frame here is 162 ticks and the debugger's own interface waits 2,210 for an
+answer. The section on the budget below has the arithmetic.
 
 The eighth wire is therefore a strobe and not a clock. Nothing on either side
 is clocked by it. It is sampled through two flops like any other asynchronous
@@ -656,6 +660,10 @@ The four high pins are the debuggee's. Neither group is ever driven from both
 ends while the two boards hold different roles, which is what makes this full
 duplex with no shared pin.
 
+Two of each four carry signals and two are guards. The header's rows are
+coupled pairs, so each pair takes one signal and the other line of it is held
+at zero. The section on the coupled pairs below has the reason.
+
 **The pads are bidirectional and they have to be**, because the role is not
 fixed at synthesis. `cadr_dbg_cable.sv` hands out a tri-state enable a pad, so
 the group this board does not own is high-impedance and the far end has it.
@@ -667,16 +675,22 @@ carrier's and the header pin is the one on the connector. **The header is JA on
 the two Zynq boards and JB on the Arty A7-100**, for the reason the section
 above gives.
 
-| index | header pin | role | Arty Z7-20 JA | Cora Z7-07S JA | Arty A7-100 JB |
-|---|---|---|---|---|---|
-| 0 | 1 | debugger data 0 | Y18 | Y18 | E15 |
-| 1 | 2 | debugger data 1 | Y19 | Y19 | E16 |
-| 2 | 3 | debugger data 2 | Y16 | Y16 | D15 |
-| 3 | 4 | debugger strobe | Y17 | Y17 | C15 |
-| 4 | 7 | debuggee data 0 | U18 | U18 | J17 |
-| 5 | 8 | debuggee data 1 | U19 | U19 | J18 |
-| 6 | 9 | debuggee data 2 | W18 | W18 | K15 |
-| 7 | 10 | debuggee strobe | W19 | W19 | J15 |
+| index | header pin | pair | role | Arty Z7-20 JA | Cora Z7-07S JA | Arty A7-100 JB |
+|---|---|---|---|---|---|---|
+| 0 | 1 | first | debugger strobe | Y18 | Y18 | E15 |
+| 1 | 2 | first | guard, driven low | Y19 | Y19 | E16 |
+| 2 | 3 | second | debugger data | Y16 | Y16 | D15 |
+| 3 | 4 | second | guard, driven low | Y17 | Y17 | C15 |
+| 4 | 7 | third | debuggee strobe | U18 | U18 | J17 |
+| 5 | 8 | third | guard, driven low | U19 | U19 | J18 |
+| 6 | 9 | fourth | debuggee data | W18 | W18 | K15 |
+| 7 | 10 | fourth | guard, driven low | W19 | W19 | J15 |
+
+The signal is on the odd header pin of each pair and the guard on the even one.
+A guard is driven low by whichever board drives that group, and a board
+listening to a group drives no pin of it, guard included. So a group of four
+pads is enabled whole or not at all, and `build/dbg_cable.pass` asserts exactly
+that on every tick of every phase.
 
 Every one of the three files indexes a header's eight signals in the same
 order, which is header pins 1, 2, 3, 4, 7, 8, 9, 10 --- the two signal rows of
@@ -785,38 +799,117 @@ it hears a frame whose role bit is set, and an idle board's frames do not have
 it, so two idle boards never answer each other. The take refuses for a debugger
 and not for activity, so an idle board on the connector blocks nothing.
 
-### The pins of a row are coupled pairs, and this link drives them singly
+### The pins of a row are coupled pairs, so each pair carries one signal
 
 The high-speed Pmod headers on these boards route their pins as coupled
 differential pairs. Pins 1 and 2 are a pair, 3 and 4, 7 and 8, and 9 and 10,
-with 0-ohm shunts where a differential termination would go. This link drives
-all four pins of a row single-ended.
+with 0-ohm shunts where a differential termination would go.
 
-So an edge on one line of a pair couples into the other, and the other may be
-the strobe. A false edge on a strobe makes a false beat, and a false beat
-misaligns the frame it lands in.
+A link that drove all four pins of a row single-ended would have an edge on one
+line coupling into the other. The other may be the strobe, and the strobe is
+the one thing on this cable a false edge can hurt: a false beat misaligns the
+frame it lands in.
 
-**What that costs is bounded and is not a wrong word.** A misaligned frame
-fails its marker or its parity, moves nothing, and the levels stand until the
-next frame carries them again sixty-six ticks later. So crosstalk shows as lost
+**So no pair carries two signals.** The strobe has the first pair of a group to
+itself and the one data line has the second. The other line of each pair is a
+guard, driven low by whichever board drives that group. The odd header pin of
+each pair carries the signal and the even one is the guard, which is the table
+in the section on the pins above.
+
+**A guard is driven and not merely left out of the enable.** A quiet line
+beside a switching one is only quiet if something holds it, and a floating line
+is a capacitor its neighbour charges. So a group of four pads goes out whole,
+and a board listening to a group drives no pin of it.
+
+**What it costs is the frame's length and nothing else.** One data line a
+direction where there were three makes the frame twenty-four beats where it was
+eight, which is 162 ticks against 66. The section on the budget below spends
+that against the debugger's own timeout and finds room.
+
+**The counters are kept.** Page 0's word 15 of the console's face carries two:
+frames heard, whatever their checks said, and frames refused. Both saturate, at
+65,535 and 255, and only a reset of the fabric clears them. `cadr-console
+debug-cable` prints both. A guarded pair is an argument and not a measurement,
+a ribbon has crosstalk between pairs as well as within one, and a false beat
+costs the same whatever made it, so the instrument stays.
+
+**What a false beat costs is bounded and is not a wrong word.** A misaligned
+frame fails its marker or its parity, moves nothing, and the levels stand until
+the next frame carries them again one frame later. So a bad cable shows as lost
 frames and never as wrong values, unless it is frequent.
 
-**How frequent is a number nobody has, and the fabric counts it.** Page 0's
-word 15 of the console's face carries two: frames heard, whatever their checks
-said, and frames refused. Both saturate, at 65,535 and 255, and only a reset of
-the fabric clears them. `cadr-console debug-cable` prints both.
+**The pairing is read off the schematic and the cost is arithmetic. What has
+been measured on a board is one asymmetry, and it does not prove coupling.**
+Two boards on a real crossed ribbon brought the link up on 15 September with
+all four pins of a row driven. The counters then said this: as the debugger,
+the Arty Z7-20 refused frames on both of its connects, 163 on one and 185 on
+the other. They arrived in bursts rather than at a rate --- 185 inside a single
+ten-millisecond window, then about 257,000 frames with none, then the counter
+saturating 300 milliseconds after the connect. As the debuggee it refused none
+over nineteen seconds with the far board driving, and the Cora Z7-07S as the
+debugger refused none over sixteen. So it belongs to one configuration rather
+than to one board or one role, and under `crossover` both ends drive the same
+group, which means the wiring does not explain it.
 
-**The fallback, if the number turns out bad, is one signal per pair.** Strobe
-on pin 1 with pin 2 left quiet, data on pin 3 with pin 4 quiet, and the same on
-the return row: one strobe and one data line each way, no pair carrying two
-signals, and nothing to couple into. Twenty-one bits over one line is
-twenty-four beats a frame against eight, which is 198 ticks against 66 --- still
-a fraction of the 11.05 microseconds a debug cycle is allowed. It is the
-carrier's `LINES` parameter and a pin map and nothing else.
+That is a reason to take the coupling out of the design and not a measurement
+of it. One signal a pair removes the suspect; whether it removes the bursts is
+a board question and nobody has asked it yet.
 
-**Nothing here has been measured on a board.** The pairing is read off the
-schematic and the cost is arithmetic; the counters exist so that the decision
-can be taken from a measurement instead.
+### The budget a frame is spent out of
+
+A debug cycle over the cable is three things: the request frame crossing, the
+far machine's own bus cycle, and the answer frame crossing back. Frames run
+free, so a level put on the cable waits for the next frame to start.
+
+The worst case each way is therefore a whole frame of waiting plus the frame
+itself, which is 162 + 138 ticks with the receiver moving its outputs at the
+last beat. The far machine's own bus cycle is 74 ticks for a diagnostic
+register and longer for a cycle through the map. If nothing at the far end
+answers at all there is no answer to wait for: the debuggee runs no timer for
+this master, which the section on the timeout above says, so the debugger's own
+counter is the whole of it.
+
+**What it is spent against is 2,210 ticks.** The debugger's interface gives up
+at `busint::DEBUG_TIMEOUT_NS`, the REQTIM PROM's second table, which
+`rtl/machine/cadr_busint_xbus.sv` counts as thirteen periods of 170 ticks. That
+is 11.05 microseconds on MIT's 5 nanosecond grid and 22.1 of real time at this
+board's 10 nanosecond tick.
+
+**Neither figure is left to the arithmetic.** `build/dbg_cable.pass` reports
+the slowest debug cycle of its whole run and fails above half the timeout;
+`build/dbg_pmod.pass` does the same for the round trips it measures. The
+slowest measured is 644 ticks, against a bound of 1,105 and a real deadline of
+2,210. A cycle at an address nothing answers is a leg of its own in the
+two-board check: it must come back with no word at all over more ticks than
+that table allows, and the cable must carry the cycle after it.
+
+### Making the frame longer found three numbers that were right by coincidence
+
+None of the three was wrong before. Each was a figure derived from the frame
+once and then left standing as a literal, and the frame growing is what told
+them apart. They are recorded because the shape recurs.
+
+**The connector's phase counter was sized from the listening interval alone.**
+It is loaded with three different intervals: the listen, the probe and the
+quiet before a flip. `$clog2(DETECT_T + 1)` covered all three while the probe
+was the shorter, and at twenty-four beats the probe is 1,296 ticks against a
+listen of 674 with the check's own shrunken loss interval. The load truncated
+and a probe ended after 272 ticks. The board's own numbers still fitted, so
+only the check saw it. A width derived from one of three loads is a width that
+is right by coincidence, and it is the longest of the three now.
+
+**The two-board check held a request's lift for a constant twenty-four ticks.**
+Over MIT's cable a lift is seen at the far end within nanoseconds; over this
+one it is a level like any other and has to cross a frame. Twenty-four ticks
+was enough at sixty-six and is not at 162, and the check said so by failing.
+It is written as frames now.
+
+**And the carrier check's board-reset sweep ran seventy-one lengths.** That
+sweep is what asks whether the gap realigns an end that came back while the far
+one kept running, so it has to cover every offset in a frame, and seventy-one
+was a frame and a beat when a frame was sixty-six. Left alone it would have
+covered fewer than half of them while the check went on passing, which is the
+only one of the three that would have been silent.
 
 **A ribbon between two boards joins their supplies, and that is worth saying
 before anybody makes one.** A twelve-pin Pmod header carries ground on pins 5
@@ -890,42 +983,47 @@ The DBGIN page is never switched off. Only the connector changes hands, so a
 debugger board stays debuggable through its register window while it debugs
 somebody else. A real CADR has both connectors live for the same reason.
 
-### Eight beats each way
+### Twenty-four beats each way
 
-Twenty signals cross in each direction. A frame must also say that it is a
-frame, because a connector with nothing on it reads as a constant, and a
-constant is indistinguishable from twenty levels that happen to be all ones or
-all zeros. The answer is the two-bit marker this document already describes in
-`STS`: all zeros reads `00`, all ones reads `11`, and a frame is taken only on
-`01`.
+Twenty-one signals cross in each direction: MIT's twenty and the one bit that
+says whether the board that sent this frame is the debugger. A frame must also
+say that it is a frame, because a connector with nothing on it reads as a
+constant, and a constant is indistinguishable from levels that happen to be all
+ones or all zeros. The answer is the two-bit marker this document already
+describes in `STS`: all zeros reads `00`, all ones reads `11`, and a frame is
+taken only on `01`.
 
-Twenty payload bits, two marker bits and one parity bit is twenty-three, and
-twenty-three over three lines is eight beats. Eight beats is twenty-four
-slots, so one is zero fill, which the receiver checks as well. The beat count
-is eight each way.
+Twenty-one payload bits, two marker bits and one parity bit is twenty-four, and
+twenty-four over one line is twenty-four beats with no slot left over. The beat
+count is twenty-four each way, and a frame is 162 ticks at the default beat of
+six and gap of eighteen.
 
 **The parity bit catches what the marker cannot.** The marker says a frame is
-a frame and says nothing about the twenty bits under it. One line shorted, one
-beat sampled at the wrong instant or one bit flipped in the cable would
-otherwise arrive as a level and be taken. The parity is over the payload
-alone, so any odd number of bits wrong in it moves nothing at this end and the
-previous levels stand. That is the same refusal a bad marker gets. None of the
-three is a code that can correct anything, and none should be: the far end
-sends the levels again sixty-six ticks later, so refusing a frame costs one
-frame.
+a frame and says nothing about the bits under it. One line shorted, one beat
+sampled at the wrong instant or one bit flipped in the cable would otherwise
+arrive as a level and be taken. The parity is over the payload alone, so any
+odd number of bits wrong in it moves nothing at this end and the previous
+levels stand. That is the same refusal a bad marker gets. Neither is a code
+that can correct anything, and neither should be: the far end sends the levels
+again one frame later, so refusing a frame costs one frame.
+
+**It was eight beats over three data lines a group.** That frame had a slot to
+spare, which went out as zero fill. One signal a coupled pair took the two
+spare data lines of each group away, so the same twenty-four slots are now
+twenty-four beats.
 
 The count written down before anything was built was four out and three back.
 That was right for its own premise: twenty signals over seven data lines is
 three beats. What does not hold is the premise, because one connector has to
-carry both directions and the eighth pin is a strobe each way.
+carry both directions and the pairs leave one data line a group.
 
 ### The gap is the frame marker
 
 A receiver with no clock has to know which beat is beat zero. It is told by
-the silence. The sender emits its eight beats six ticks apart and then leaves
-the lines alone for eighteen. Any interval longer than twelve ticks with no
-transition is between frames, so the next transition is beat zero. That costs
-no wire and no slot.
+the silence. The sender emits its twenty-four beats six ticks apart and then
+leaves the lines alone for eighteen. Any interval longer than twelve ticks with
+no transition is between frames, so the next transition is beat zero. That
+costs no wire and no slot.
 
 The marker and the gap answer different questions and both are kept. The gap
 says where a frame begins. The marker says whether what arrived was a frame at
@@ -1002,6 +1100,12 @@ same counter and the same free-running oscillator; the PROM's second table
 raises `NXM TIMEOUT` at count 13 where the first raises it at count 5, and
 `DEBUG REQUEST ACTIVE` is what selects it.
 
+**In ticks those are 850 and 2,210**, because the oscillator's half period is
+`425 / TICK_NS` and `TICK_NS` is MIT's 5 nanosecond grid rather than the
+board's 10 nanosecond clock. So a debug cycle has 2,210 ticks of this fabric to
+finish in, which is 22.1 microseconds of real time. That is the number the
+carrier's frames are spent against, and both checks measure against it.
+
 `rtl/machine/cadr_busint_regs.sv` therefore brings `SELECT DEBUG` out and
 `rtl/machine/cadr_memory_path.sv` joins it to `rtl/machine/cadr_busint_xbus.sv`,
 which is where the counter is. Without it a debugger would give up at 4.25
@@ -1021,7 +1125,15 @@ end comes out the other, unchanged, whole and in bounded time. The testbench
 is the cable, so every wire is delayed, skewed, shorted, crossed or unplugged
 by the check rather than assumed to be perfect. What crosses is poison: every
 value sent has its low ten bits the complement of its high ten, no two values
-in a run are the same, and none is zero.
+in a run are the same, and none is zero. Crossed now means the strobe and the
+data line arriving in each other's place, since a direction has one of each;
+the check also shorts each of the two to each rail, and reports the round trips
+against the debugger's timeout.
+
+The board reset sweep in that check runs a frame and a beat of reset lengths,
+so every offset in a frame is covered. It was seventy-one, which was a frame
+and a beat when a frame was sixty-six ticks and would have been less than half
+of one afterwards.
 
 `build/dbg_cable.pass` holds what the carrier is for. The DUT is two boards.
 One runs the DBGOUT page and the other answers through
@@ -1038,9 +1150,19 @@ What it shows rather than argues, on its own output:
 - the address latch at the far end holding what CC wrote into it;
 - the status read coming back with the debuggee's byte below and all ones
   above, which is the one place a byte nobody drives has to arrive as ones;
-- cycles over three ticks of wire each way, and cycles with a data line
-  inverted for a tick inside the request, both of which cost a frame and never
-  a word;
+- cycles over three ticks of wire each way, and cycles with the one data line
+  inverted for five ticks inside the request, both of which cost a frame and
+  never a word;
+- the same five ticks on a GUARD pin instead, which costs nothing at all ---
+  not the word and not the far board's count of refused frames, which is what
+  "nothing reads a guard" means as a check rather than as a claim;
+- every group a board drove going out whole, all four pads and never a subset,
+  with both of its guards at zero, asserted on every tick of every phase;
+- a cycle at an address nothing answers coming back with no word at all over
+  more ticks than the debugger's own timeout allows, with the cable carrying
+  the cycle after it;
+- the slowest debug cycle of the whole run reported and held under half the
+  debugger's timeout;
 - a cable pulled under a standing request answered at once with all ones
   rather than waited on, and the far board heard again when it is plugged back
   in;

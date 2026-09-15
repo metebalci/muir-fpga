@@ -221,9 +221,12 @@ module cadr_cora #(
     // bought, muir on this board's own Arm cores reaching the DBGIN page
     // whatever the connector is doing.
     //
-    // Eight pins, four each way: one strobe and three data lines a direction,
+    // Eight pins, four each way, and only TWO of each four carry signals: the
+    // header's rows are coupled pairs, so each pair takes one signal --- a
+    // strobe on the first, one data line on the second --- and the other line
+    // of each is a GUARD driven low beside it.
     // `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` under
-    // `rtl/plumbing/cadr_dbg_cable.sv`.
+    // `rtl/plumbing/cadr_dbg_cable.sv`, which owns the map.
     // A straight Pmod ribbon joins pin one to pin one, so the LOW four are
     // the debugger's at both ends and the HIGH four the debuggee's, and which
     // end drives which group follows the role. The eighth wire is a STROBE

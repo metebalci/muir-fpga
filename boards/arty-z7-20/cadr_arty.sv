@@ -166,9 +166,12 @@ module cadr_arty #(
     // bought, muir on this board's own Arm cores reaching the DBGIN page
     // whatever the connector is doing.
     //
-    // Eight pins, four each way: one strobe and three data lines a direction,
+    // Eight pins, four each way, and only TWO of each four carry signals: the
+    // header's rows are coupled pairs, so each pair takes one signal --- a
+    // strobe on the first, one data line on the second --- and the other line
+    // of each is a GUARD driven low beside it.
     // `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` under
-    // `rtl/plumbing/cadr_dbg_cable.sv`.
+    // `rtl/plumbing/cadr_dbg_cable.sv`, which owns the map.
     // A straight Pmod ribbon joins pin one to pin one, so the LOW four are
     // the debugger's at both ends and the HIGH four the debuggee's, and which
     // end drives which group follows the role. The eighth wire is a STROBE
@@ -945,8 +948,9 @@ module cadr_arty #(
   // `rtl/plumbing/cadr_dbg_tx.sv` and `cadr_dbg_rx.sv` under it are the
   // carrier and say why four
   // and four rather than the "one clock and seven data" this was drawn as.
-  // The frame is eight beats, which is twenty signals, a two-bit marker and a
-  // parity bit over three lines.
+  // The frame is twenty-four beats, which is twenty-one signals, a two-bit
+  // marker and a parity bit over ONE data line --- one signal a coupled pair,
+  // with the other line of each pair driven low.
   //
   // **IT IS INSTANTIATED ON EVERY BOARD, NOT ONLY A `DDR` ONE.** A board is
   // always a DEBUGGEE: it answers a debugger on the connector exactly as

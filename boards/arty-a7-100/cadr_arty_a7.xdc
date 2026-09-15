@@ -167,12 +167,34 @@ set_property -dict { PACKAGE_PIN A9    IOSTANDARD LVCMOS33 } [get_ports { uart_t
 ## `{1,2,3,4,7,8,9,10}[k]` on all three boards, so a straight ribbon from this
 ## board's JB to a Zynq board's JA maps every signal to its counterpart.
 ##
-## FOUR PINS EACH WAY, one strobe and three data.
-## `rtl/plumbing/cadr_dbg_tx.sv` has the argument for splitting them rather
-## than sharing seven and turning them around; `rtl/plumbing/cadr_dbg_cable.sv`
-## is the connector that puts both directions on this one header. The LOW four
-## are the debugger's at both ends and the HIGH four the debuggee's, and the
-## roles decide who drives which group.
+## FOUR PINS EACH WAY, of which TWO carry signals: a strobe and one data line,
+## with the other two DRIVEN LOW as guards.
+## `rtl/plumbing/cadr_dbg_tx.sv` has the argument for splitting the directions
+## rather than sharing seven pins and turning them around;
+## `rtl/plumbing/cadr_dbg_cable.sv` is the connector that puts both directions
+## on this one header. The LOW four are the debugger's at both ends and the
+## HIGH four the debuggee's, and the roles decide who drives which group.
+##
+## **ONE SIGNAL A COUPLED PAIR.** JB is a high-speed Pmod port and its rows are
+## coupled pairs --- 1 with 2, 3 with 4, 7 with 8, 9 with 10, which the
+## schematic names above say in their own `_p`/`_n` suffixes. A group driven
+## single-ended on all four pins has an edge on one line coupling into its
+## partner, and the partner may be the STROBE, which is the one thing here a
+## false edge can hurt. So each pair carries one signal and its partner is a
+## guard held at zero:
+##
+##     index 0, pin 1   the forward group's STROBE
+##     index 1, pin 2   guard, driven low beside it
+##     index 2, pin 3   the forward group's one DATA line
+##     index 3, pin 4   guard, driven low beside it
+##     index 4, pin 7   the return group's STROBE
+##     index 5, pin 8   guard, driven low beside it
+##     index 6, pin 9   the return group's one DATA line
+##     index 7, pin 10  guard, driven low beside it
+##
+## A guard is DRIVEN and not merely left out of the enable: a quiet line beside
+## a switching one is only quiet if something holds it. `build/dbg_cable.pass`
+## asserts all of that on every tick.
 ##
 ## **THEY ARE BIDIRECTIONAL**, and they have to be: the role is not fixed at
 ## synthesis. `cadr_dbg_cable.sv` hands out a tri-state enable a pad, so the
