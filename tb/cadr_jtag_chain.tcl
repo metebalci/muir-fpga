@@ -12,7 +12,7 @@
 # needs ones --- which no check could have caught, because there was no check.
 # The bug reproduces here, off the board, in 80 ms.
 #
-# ------------------------------------------------------------ WHAT IS MODELLED
+# ------------------------------------------------------------- WHAT IS MODELED
 #
 # A chain of devices as a shift register, and only that:
 #
@@ -30,9 +30,9 @@
 #   probe's sample and one advance of the buffer pointer per capture.
 #
 #   TAP reset, as one thing: every device's instruction register goes to
-#   IDCODE. `run_state_hw_jtag RESET` is the only state command honoured.
+#   IDCODE. `run_state_hw_jtag RESET` is the only state command honored.
 #
-# --------------------------------------------------------- WHAT IS NOT MODELLED
+# ---------------------------------------------------------- WHAT IS NOT MODELED
 #
 # READ THIS BEFORE BELIEVING A GREEN RUN MEANS THE READOUT IS VERIFIED. It
 # does not, and the gap is wide.
@@ -40,7 +40,7 @@
 #   NOT A TAP STATE MACHINE.  There is no TMS, no Run-Test/Idle, no
 #   Exit1/Update, no state at all between one scan and the next beyond which
 #   instruction is loaded. A script that reached Shift-DR without passing
-#   through Capture-DR would be modelled as though it had captured.
+#   through Capture-DR would be modeled as though it had captured.
 #
 #   NOT SILICON, AND NOT `rtl/plumbing/xilinx7/cadr_probe.sv`.  There is no DRCK here, no
 #   clock, and no edges. The probe's shift register clocking the wrong edge of
@@ -234,7 +234,7 @@ proc run_state_hw_jtag {state} {
 # Enough of it for `boards/arty-z7-20/vivado/probe.tcl` to open a target and count devices, and
 # no more. `get_hw_devices` lists from the TDI end, which is the opposite of
 # the order the raw scan reads in --- that opposition is a thing the script
-# has to get right and so is modelled rather than smoothed over.
+# has to get right and so is modeled rather than smoothed over.
 proc open_hw_manager {args} {}
 proc connect_hw_server {args} {}
 proc get_hw_targets {args} { return {model_target} }

@@ -10,7 +10,7 @@ HDMI connector, with no software in the path.
 
 The display block writes nothing and reads nothing of the machine's. It takes
 the bitmap out of the display's own region of DDR over `S_AXI_HP3`, turns it
-into a raster at a monitor's rate, encodes that as DVI and serialises it onto
+into a raster at a monitor's rate, encodes that as DVI and serializes it onto
 four differential pairs. The machine cannot detect its presence. A board built
 without it is the same machine.
 
@@ -42,7 +42,7 @@ touches it.
 The picture is 963 lines high. That rules out every common mode below
 1280x1024: 1024x768 and 1280x960 are both too short, and 1152x864 is shorter
 still. Scaling is not considered. A one-bit picture scaled by anything other
-than a whole number turns single-pixel strokes into grey, and the CADR's
+than a whole number turns single-pixel strokes into gray, and the CADR's
 screen is single-pixel strokes almost everywhere.
 
 So the smallest standard mode that holds 768x963 unscaled is **1280x1024**.
@@ -108,7 +108,7 @@ instead of 60.02. Monitors accept far more than that.
 
 ### How the picture sits in the raster
 
-Centred, with the rest black.
+Centered, with the rest black.
 
 The picture is 768 wide in 1280, so there are 256 columns of border on each
 side. It is 963 high in 1024, so there are 61 rows of border: 30 above and 31
@@ -120,7 +120,7 @@ zeros are shown.
 
 ## 2. The clocks
 
-The pixel clock and its serialiser clock come from an MMCM of their own, off
+The pixel clock and its serializer clock come from an MMCM of their own, off
 the board's 125 MHz, separate from the machine's. The machine's own MMCM makes
 100 MHz and its tick stays 10 ns. Nothing about the machine moves.
 
@@ -154,12 +154,12 @@ A `BUFIO` reaches only its own clock region, which is why this works at all.
 All eight of the connector's TX pins are in bank 35 and, measured with
 `get_clock_regions`, all eight are in clock region `X1Y2`, which has four
 `BUFIO` sites. Had the four pairs been spread across two regions the
-serialisers could not have shared one regional clock and this would be a
+serializers could not have shared one regional clock and this would be a
 different design. A board that moves those pins has to check this again.
 
 The pixel clock stays on a `BUFG`, because the raster, the line buffer's read
 side and the encoders are ordinary fabric and have to be reachable from
-anywhere on the die. So a serialiser sees its two clocks over different
+anywhere on the die. So a serializer sees its two clocks over different
 networks. That is the one thing in the block the fitter has to be asked about
 rather than assumed, and the answer is in the fit report quoted above: it
 closes.
@@ -178,7 +178,7 @@ and flips a request toggle on the same pixel-clock edge. The memory side sees
 that flip two of its own clock edges later at the earliest, by which time the
 number has been stable for two clocks and will stay stable for the rest of the
 line. A line is 1688 pixel clocks. So the number is settled long before
-anything reads it, and only the toggle needs synchronising. Coming back, an
+anything reads it, and only the toggle needs synchronizing. Coming back, an
 acknowledge toggle is set to the value of the request just finished, so the two
 being equal means everything asked for has arrived.
 
@@ -300,7 +300,7 @@ scheduler, BCH error correction and audio clock regeneration, for a machine
 that has no audio.
 
 Three channels are 8b/10b encoded by the algorithm in DVI 1.0 section 3.2.2.
-Each pixel byte is turned into ten bits in two stages: the first minimises
+Each pixel byte is turned into ten bits in two stages: the first minimizes
 transitions by choosing XOR or XNOR along the byte and marking which in a ninth
 bit, and the second balances the direct current by inverting the eight bits or
 not according to a running disparity, marking that in a tenth.
@@ -357,7 +357,7 @@ banks at all, so there is no alternative and no choice to make.
 
 The three remaining TX pins are not used and are not brought out. `hdmi_tx_hpdn`
 at R19 is the hot-plug detect, which would say whether a monitor is attached;
-nothing here changes its behaviour depending on that, so reading it would be a
+nothing here changes its behavior depending on that, so reading it would be a
 signal with no consumer. `hdmi_tx_scl` and `hdmi_tx_sda` at M17 and M18 are the
 display data channel, over which a source reads the monitor's EDID; this block
 sends one fixed mode and does not negotiate, so there is nothing to read it
@@ -398,13 +398,13 @@ display.
 | `rtl/plumbing/cadr_display_out.sv` | the AXI master, the line buffer and the raster | `build/display_out.pass` |
 | `rtl/plumbing/cadr_hdmi_tx.sv` | the three channels and the clock channel | `build/hdmi_tx.pass` |
 | `rtl/plumbing/cadr_tmds_encode.sv` | one channel's 8b/10b encoder | `build/hdmi_tx.pass` |
-| `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` | the MMCM, the serialisers, the output buffers | lint and the fitter only |
+| `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` | the MMCM, the serializers, the output buffers | lint and the fitter only |
 | `boards/arty-z7-20/cadr_arty.xdc` | the eight pins, on every board | the fitter |
 | `rtl/plumbing/xilinx7/cadr_hdmi.xdc` | the clock groups, only when it is built | the fitter |
 | `tb/cadr_arty_stubs.sv` | `OSERDESE2`, `OBUFDS`, `BUFIO` as empty shells | nothing; it models nothing |
 
 The split is not the obvious one and the reason is checkability. Putting the
-encoder in the same file as the serialiser primitives would have made the
+encoder in the same file as the serializer primitives would have made the
 encoder unsimulable, because a check on that file would have to be built
 against stubs, and a check built against a stub confirms rather than compares.
 So everything that can be plain SystemVerilog is, and the Xilinx-specific file
@@ -415,8 +415,8 @@ is four primitives and a clock with no logic in it at all.
 It found three faults in the first draft, and all three would have been
 invisible against a memory of zeros.
 
-The 4 KB crossing is described above. The second was a synchroniser that came
-out of reset holding zero while the signal it synchronised came out of reset
+The 4 KB crossing is described above. The second was a synchronizer that came
+out of reset holding zero while the signal it synchronized came out of reset
 holding one, so the first line's readiness test was true for the two or three
 clocks before the real value arrived, the first line took a bank nothing had
 filled, and every bank after it was one out. The whole picture was drawn one
@@ -428,14 +428,14 @@ right-hand third of every other line came out black.
 None of the three is the kind of thing that is found by reading.
 
 `tb/cadr_display_out_tb.cpp` runs `cadr_display_out` with two clocks at their
-real and mutually irrational periods, against a modelled DDR poisoned
+real and mutually irrational periods, against a modeled DDR poisoned
 injectively in the address, and behaves like a monitor: it recovers the raster
 position from the sync and data-enable outputs rather than from any internal
 counter, so the module's pipeline depth is not something the check has to know.
 
 It holds:
 
-- every pixel inside the picture against the bit of the modelled memory it
+- every pixel inside the picture against the bit of the modeled memory it
   comes from, over a whole frame;
 - every pixel outside the picture and inside the active region black;
 - the data-enable and both syncs against the mode's own figures, counted
@@ -475,12 +475,12 @@ It holds:
 - the clock channel's constant word;
 - a long pseudorandom stream of pixels and blanking, compared every cycle.
 
-**It does not hold the serialiser, and nothing does.** `OSERDESE2` and
+**It does not hold the serializer, and nothing does.** `OSERDESE2` and
 `OBUFDS` are stubbed in `tb/` so that the top level lints, and the stubs tie
 their outputs low. A simulation built on them would show a dark connector
-whatever the encoder did. What stands behind the serialiser is the fitter and,
+whatever the encoder did. What stands behind the serializer is the fitter and,
 in the end, a monitor. A monitor has now been put on the connector and shows
-the machine's screen as built: 1280x1024 with the CADR's 768x963 centred in it,
+the machine's screen as built: 1280x1024 with the CADR's 768x963 centered in it,
 white on black. `docs/board.md` has that reading.
 
 ### `arty`

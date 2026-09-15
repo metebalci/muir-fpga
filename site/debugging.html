@@ -25,8 +25,8 @@
   </div>
 </header>
 
-<!-- THESE FIGURES CARRY NO STATUS COLOUR, which is the rule `cadr.css` and
-     `booting.html` already state.  A board drawing colours a block by how far
+<!-- THESE FIGURES CARRY NO STATUS COLOR, which is the rule `cadr.css` and
+     `booting.html` already state.  A board drawing colors a block by how far
      along it is.  These say what the cable IS and what crosses it, so they are
      drawn in `currentColor` alone.  What has run on a board is the table at
      the foot, in words. -->
@@ -531,7 +531,7 @@
           <text class="d-s" x="30" y="220">Six ticks a beat, and eighteen of silence after the last. Any interval longer than twelve ticks with no transition is between frames, so the</text>
           <text class="d-s" x="30" y="236">next transition after it is beat zero. That costs no wire and no slot, and it puts a receiver that has just come up back in step within one frame.</text>
           <text class="d-s" x="30" y="260">The snapshot is taken once, at the first beat, and the receiver moves its outputs once, at the last, so a frame is presented whole or not at all.</text>
-          <text class="d-s" x="30" y="276">A carrier that delivered a frame bit by bit would hand back every hazard the cable has no defence against: a late address bit makes the wrong</text>
+          <text class="d-s" x="30" y="276">A carrier that delivered a frame bit by bit would hand back every hazard the cable has no defense against: a late address bit makes the wrong</text>
           <text class="d-s" x="30" y="292">strobe, a late data line is latched instead of the intended word, and a write flag that moves inside a request inverts the cycle.</text>
         </svg>
       </div>
@@ -697,7 +697,7 @@
 
     <div class="prose">
       <p><code>yes</code> means a board itself has shown it, which is the same
-      claim the colours on the board drawings make. The console&rsquo;s own line
+      claim the colors on the board drawings make. The console&rsquo;s own line
       carries two counters, frames heard and frames refused, and the second is
       how much of the cable&rsquo;s time a bad ribbon costs. Frames heard
       saturates at 65,535 within a tenth of a second of a connect and only a

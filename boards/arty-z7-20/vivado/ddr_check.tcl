@@ -97,7 +97,7 @@
 #
 # WHAT EACH READ IS FOR:
 #
-#   uninitialised     a block read before anything is written, and read
+#   uninitialized     a block read before anything is written, and read
 #                     twice.  Not asserted --- there is nothing to assert ---
 #                     but recorded, because all-zeros, all-ones, and a value
 #                     that changes between two reads point three different
@@ -121,15 +121,15 @@
 #                     ones band.
 #
 #                     ON A SECOND RUN THEY READ BACK THE FIRST RUN'S WRITES.
-#                     Nothing clears DDR between runs, so "uninitialised"
-#                     means uninitialised since power-on and only the first
+#                     Nothing clears DDR between runs, so "uninitialized"
+#                     means uninitialized since power-on and only the first
 #                     run after one says anything.
 #   word and poison   the project's own pair, `0x8A5C36E1` at `0x18A72EE4`
 #                     and its complement `0x75A3C91E` written over it.  A
 #                     read that returns the value the previous write left is
 #                     indistinguishable from a real one until the second
 #                     write disagrees with the first.
-#   the neighbour     `0x18A72EE0`, the low half of the same 64-bit beat,
+#   the neighbor      `0x18A72EE0`, the low half of the same 64-bit beat,
 #                     asserted unchanged.  `0x18A72EE4` has bit 2 set for
 #                     exactly this reason.
 #   walking one       one address per address bit, each carrying a value only
@@ -309,7 +309,7 @@ set connected 1
 #
 # Every Zynq on the hub has an APU, so the count is asked before anything is
 # selected and a run with nothing to tell them apart refuses rather than
-# initialising the first one.
+# initializing the first one.
 set apus [targets -target-properties -filter {name =~ "APU*"}]
 set seen {}
 foreach t $apus {
@@ -379,7 +379,7 @@ if {$device != ($DEVICE_ID & 0xFFFFFFFF)} {
     say "FAILED   wanted [hex $DEVICE_ID], which is Xilinx's own device code"
     say "FAILED   for this part with the revision nibble masked off.  The"
     say "FAILED   chain's JTAG IDCODE is the same word with a revision on it."
-    say "FAILED   Nothing below is initialised against a part this routine was"
+    say "FAILED   Nothing below is initialized against a part this routine was"
     say "FAILED   not written for."
     bye 1
 }
@@ -431,9 +431,9 @@ say "ps7_init returned without error"
 say "ps7_post_config is deliberately NOT run: the level shifters and"
 say "  S_AXI_HP0 belong with the bitstream that uses them."
 
-# ------------------------------------------------- uninitialised, before any write
+# ------------------------------------------------- uninitialized, before any write
 
-say "uninitialised DDR, read before anything is written:"
+say "uninitialized DDR, read before anything is written:"
 foreach a [list $MAIN_BASE $PROVE_NEIGH 0x19000000 0x1FFFFFE0] {
     set words [rdn $a 8]
     set out {}
@@ -452,7 +452,7 @@ if {$first eq $second} {
     set out {}
     foreach w $second { lappend out [hex $w] }
     say "  0x19000000 re-read: DIFFERENT --- [join $out { }]"
-    say "  (recorded, not asserted: uninitialised DDR is allowed to be"
+    say "  (recorded, not asserted: uninitialized DDR is allowed to be"
     say "   anything, but an unstable read is worth knowing about)"
 }
 
@@ -464,7 +464,7 @@ wr32 $PROVE_ADDR $PROVE_WORD
 expect "wrote the word"           $PROVE_ADDR $PROVE_WORD
 wr32 $PROVE_ADDR $PROVE_POISON
 expect "wrote its complement"     $PROVE_ADDR $PROVE_POISON
-expect "the neighbour, untouched" $PROVE_NEIGH $neigh_before
+expect "the neighbor, untouched"  $PROVE_NEIGH $neigh_before
 
 # ------------------------------------------------------------ the walking one
 
@@ -501,10 +501,10 @@ say "the top of the 512 MB, so the whole part is known to have enumerated:"
 wr32 $TOP_ADDR              0x1FEDCBA9
 wr32 [expr {$TOP_ADDR + 4}] 0x5AA51248
 expect "top word"            $TOP_ADDR              0x1FEDCBA9
-expect "its neighbour"       [expr {$TOP_ADDR + 4}] 0x5AA51248
+expect "its neighbor"        [expr {$TOP_ADDR + 4}] 0x5AA51248
 wr32 $TOP_ADDR              0xE0123456
 expect "top word, complement" $TOP_ADDR             0xE0123456
-expect "its neighbour, still" [expr {$TOP_ADDR + 4}] 0x5AA51248
+expect "its neighbor, still"  [expr {$TOP_ADDR + 4}] 0x5AA51248
 
 # ----------------------------------------------------------------------- done
 

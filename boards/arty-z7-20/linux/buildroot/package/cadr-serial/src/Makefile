@@ -69,7 +69,7 @@ install: all
 	install -m 0755 $(PROGRAMS) $(DESTDIR)/usr/bin/
 
 # The check.  Its own object directory, so a target build and a host build
-# never share a binary --- and a build artefact that outlived a machine move
+# never share a binary --- and a build artifact that outlived a machine move
 # would name a home directory that no longer exists.
 check: $(WORK)/serial_test
 	$(WORK)/serial_test

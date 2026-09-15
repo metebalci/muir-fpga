@@ -14,7 +14,7 @@
 //
 // IT IS IN `tb/` FOR THE REASON `tb/cadr_arty_stubs.sv` GIVES.  Both Vivado
 // scripts read `[glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]`, so a wiring harness in `rtl/` would join
-// the bitstream --- a second copy of the memory path, in the synthesised
+// the bitstream --- a second copy of the memory path, in the synthesized
 // design, that nothing on the board would ever reach.  `tb/` is globbed by
 // nothing.
 //

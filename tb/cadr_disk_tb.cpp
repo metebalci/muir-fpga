@@ -15,10 +15,10 @@
 // disk address, the last memory address, the ECC register and `interrupt()`,
 // read back through four bus cycles of its own. And, since the channel
 // landed, everything a transfer leaves behind it: every `PAGE` row word for
-// word against a modelled main memory the controller reaches only through its
+// word against a modeled main memory the controller reaches only through its
 // own bus master, and every `BLK write` row against the block store --- which
 // is now READ BACK THE WAY THE BOARD WILL READ IT: the pack side writes the
-// slot back over `S_AXI_HP2` to the address the row names, into a modelled
+// slot back over `S_AXI_HP2` to the address the row names, into a modeled
 // DDR this testbench seeded with poison, and the record there is compared.
 //
 // **THE MODEL MEMORY, THE DDR AND THE BLOCK STORE COME FROM THE STIMULUS AND
@@ -31,7 +31,7 @@
 // to the wrong page reads back as some other page's poison. The block store
 // is filled from `BLK load` and `BLK lay` rows, which are what a formatter
 // and the pack's vendor put on the pack: each row's 259 words are put in the
-// modelled DDR at the address the ROW names --- the generator's choice,
+// modeled DDR at the address the ROW names --- the generator's choice,
 // spread across the address bits --- and the fabric is told that address over
 // `M_AXI_GP0` and fetches them itself. Nothing here writes the store.
 //
@@ -48,7 +48,7 @@
 //
 // **NOTHING A COMMAND DOES IS EXEMPT ANY MORE.** `0o02` Read All and `0o13`
 // Write All go round the whole track as BYTES rather than as blocks, and the
-// serialiser and the parser that do that are in the module now: the three
+// serializer and the parser that do that are in the module now: the three
 // `PAGE` rows a Read All moved and the two `BLK write` rows a Write All laid
 // down are COMPARED, where they were taken as stimulus, and so is register 1
 // after one. The channel's eight status bits, the last memory address, the
@@ -65,7 +65,7 @@
 // track into twenty pages, checked byte for byte against `disk_unit::format`
 // written out here from the store's own words, and then Write All of exactly
 // those pages back, which must leave all seventeen blocks as they were. A
-// serialiser and a parser that were wrong in inverse ways would survive the
+// serializer and a parser that were wrong in inverse ways would survive the
 // round trip; the trace's five rows are what stops that, and the round trip
 // is what reaches the fourteen sectors and the 17,088 bytes the trace never
 // looks at.
@@ -1199,7 +1199,7 @@ int main(int argc, char **argv) {
           }
           break;
         // The pack.  A `load` or `lay` row is what a formatter put there: its
-        // record goes into the modelled DDR at the row's address and the
+        // record goes into the modeled DDR at the row's address and the
         // fabric is told to fetch it.  A `write` row is what a transfer left:
         // the fabric is told to write the slot back to the row's address ---
         // a fresh one, poisoned --- and the record there must be these words.
@@ -1357,7 +1357,7 @@ int main(int argc, char **argv) {
   //
   // A property check with no reference trace behind it, in the shape
   // `cadr_memory_path.sv`'s arbiter check has: what is asserted is a
-  // property --- the serialiser and the parser are inverses over a whole
+  // property --- the serializer and the parser are inverses over a whole
   // track --- and the numbers come from the STORE, which the trace's `BLK`
   // rows filled and nothing in the DUT ever wrote.
   //
@@ -1367,7 +1367,7 @@ int main(int argc, char **argv) {
   // to muir. This reaches the other 17,088 --- the fifteenth to seventeenth
   // sectors, the 372-byte leftover the index closes, and the wrap back to
   // the start --- and it holds the two halves to EACH OTHER. Neither can
-  // stand alone: a round trip cannot see a serialiser and a parser wrong in
+  // stand alone: a round trip cannot see a serializer and a parser wrong in
   // inverse ways, and the trace cannot see anything past byte 3,072.
   long sc_bytes = 0, sc_wrap = 0, sc_slots = 0, sc_stops = 0;
   if (!bad && !stuck) {
@@ -1737,7 +1737,7 @@ int main(int argc, char **argv) {
       "    write beats, %ld register writes and %ld reads; a fetch %ld ticks,\n"
       "    a write-back %ld, a register write %ld\n"
       "  the track, held to itself as well as to muir:\n"
-      "    %ld bytes of a whole track serialised out of the store and\n"
+      "    %ld bytes of a whole track serialized out of the store and\n"
       "      compared against disk_unit::format one byte at a time, %ld more\n"
       "      read past its end and found to be the start of it again\n"
       "    %ld blocks written back over the pack side after the parser put the\n"

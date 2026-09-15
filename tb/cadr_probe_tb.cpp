@@ -113,7 +113,7 @@ void tick() {
   ++ticks;
 }
 
-// A DR scan of one sample, modelled on the UNISIM: DRCK follows TCK in
+// A DR scan of one sample, modeled on the UNISIM: DRCK follows TCK in
 // Capture-DR and Shift-DR, the shift register loads on the CAPTURE rising
 // edge, and the TAP reads TDO between rising edges --- so the first bit out
 // is the one standing after the load.

@@ -12,7 +12,7 @@
 // calibration sequence, a per-bit deskew PHY and a bank manager.  Keeping the
 // wiring here and the logic there is what makes the unchecked part as small
 // as it can be.  `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` says the same thing
-// about the display's serialisers and for the same reason.
+// about the display's serializers and for the same reason.
 //
 // **AND IT IS IN THIS DIRECTORY AND NOT IN `rtl/plumbing/xilinx7/` ON
 // PURPOSE.**  It names `cadr_mig_a7`, which is generated for THIS board's
@@ -76,7 +76,7 @@
 // after its own reset.  So the memory is always trained before the machine
 // asks.  While it is not, `cadr_mig_ui` is held in reset, nothing is answered,
 // and the machine's cycles end on the bus's 4.25 us timer exactly as they do
-// on a board with no memory at all --- which is the right behaviour and not a
+// on a board with no memory at all --- which is the right behavior and not a
 // hang.
 //
 // ---------------------------------------------------------------------------

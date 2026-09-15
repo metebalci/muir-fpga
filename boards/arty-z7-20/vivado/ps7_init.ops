@@ -11,7 +11,7 @@
 # that is what it is.
 #
 # This is the claim.  The routine itself is regenerated into $OUTDIR and is not
-# committed: it carries no licence header of any kind, and its text would
+# committed: it carries no license header of any kind, and its text would
 # compare two tools' formatting rather than their effect.  See boards/arty-z7-20/vivado/ps7_ops.py
 # for what was measured against what, and boards/arty-z7-20/vivado/ps7_config.tcl for where the
 # configuration came from.

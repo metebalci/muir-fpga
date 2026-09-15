@@ -109,7 +109,7 @@ instead: seven ticks, with the lift and the next request stored back to back.
 
 ## The whole request crosses in one store
 
-This is what answers the hazards the cable has no defence against. A late
+This is what answers the hazards the cable has no defense against. A late
 address bit makes the wrong strobe. A late data line is latched instead of the
 intended word. A write flag that moves inside a request inverts the cycle.
 None of the three is detected by anything on the cable.
@@ -334,7 +334,7 @@ whole window.
 The window's own limits are its module's and are not the cable's. A mapped page
 that is not main memory is never acknowledged, which is muir's own decision:
 `Busint::debug_xbus_edge` says the processor asking for the Xbus meanwhile, and
-a mapped page nothing answers, are not modelled, because the debuggee CC works
+a mapped page nothing answers, are not modeled, because the debuggee CC works
 on is halted and its map points at memory. A page whose `MAPVALID` is down, or
 whose `WRITEOK` is down on a write, sets `UB MAP ERROR` and is never answered
 either. In both cases the debugger's own timeout is what ends the cycle, which
@@ -584,7 +584,7 @@ UD` are pins 9 and 11 of the two Am8304s at DBGOUT 0B21 and 0B22, and
 debugger's own transceiver controls on the debugger's own board. An earlier
 count of twenty-two outgoing signals included them and was wrong.
 
-A serialised carrier has no shared bus, so the sixteen data lines are sent in
+A serialized carrier has no shared bus, so the sixteen data lines are sent in
 each direction separately. Outgoing is therefore twenty: the four control
 signals and the sixteen data values. Coming back is nineteen: the
 acknowledgement, the sixteen data values, and **two bits saying which bytes of
@@ -822,7 +822,7 @@ in the section on the pins above.
 
 **A guard is driven and not merely left out of the enable.** A quiet line
 beside a switching one is only quiet if something holds it, and a floating line
-is a capacitor its neighbour charges. So a group of four pads goes out whole,
+is a capacitor its neighbor charges. So a group of four pads goes out whole,
 and a board listening to a group drives no pin of it.
 
 **What it costs is the frame's length and nothing else.** One data line a
@@ -1045,7 +1045,7 @@ ever cleared and nothing is a pulse, because the debuggee's latches take
 `DBD<15:0>` at the trailing edge of their own strobe.
 
 A frame is presented whole or not at all. That is the promise that matters
-most. This document already names three hazards the cable has no defence
+most. This document already names three hazards the cable has no defense
 against. A late address bit makes the wrong strobe. A late data line is
 latched instead of the intended word. A write flag that moves inside a request
 inverts the cycle. The window answers all three by making a request one 32-bit
@@ -1093,7 +1093,7 @@ debuggers and neither does this.
 request it belongs to being lifted, because the far end's gate is a NAND of
 the three register strobes and they go with the request.
 
-A carrier that serialises the cable does not give that for free. The fall
+A carrier that serializes the cable does not give that for free. The fall
 takes a frame to cross, so the acknowledgement of the cycle just finished is
 still standing when the next one starts. A page that took it would answer its
 own machine in no time with a word nobody drove. So the acknowledgement is
@@ -1189,13 +1189,13 @@ What it shows rather than argues, on its own output:
 is held saying nothing while a board is the debugger, because a debugger
 listens to the return group and would otherwise be reset by its own debuggee's
 answers. Holding the timer alone is not enough: `rx_stb` is one pin while
-engaged and another after, so the role changing moves the synchroniser from one
+engaged and another after, so the role changing moves the synchronizer from one
 pin to the other, and with its two flops left running the comparison one tick
 later reads as a transition on the forward group. The board then believes a
 debugger has appeared and drives the return group on top of the debuggee still
 answering it. Measured: 2,048 pad-ticks driven from both ends --- four pads for
 the whole of `LOSS_T` --- at the tick the second board was told to disconnect.
-The synchroniser is held with the timer now.
+The synchronizer is held with the timer now.
 
 `build/busint_regs.pass` sweeps the debug block over all 262,144 Unibus
 addresses against `busint::debug_register`, with nothing plugged in and again
@@ -1444,7 +1444,7 @@ those commands are not available in a world loaded this way.
 **Two things an interpreted load needs that a compiled one does not.**
 
 First, `cadreg.lisp` must be read into package `CADR`. Its own attribute line
-says `Package: SYSTEM-INTERNALS`, and `load` honours the file's package where
+says `Package: SYSTEM-INTERNALS`, and `load` honors the file's package where
 `make-system` reads a file in the system's. Package `CADR` uses `GLOBAL` and
 `SYSTEM` and not `SYSTEM-INTERNALS`, so `SI:RARSET` and `CADR:RARSET` are two
 symbols and the rest of CC cannot see the first. The form that works is

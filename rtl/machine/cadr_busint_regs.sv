@@ -103,7 +103,7 @@
 // `ub_msyn` alone, so a master that puts the address up on the tick of the
 // strobe, which is what `golden/src/busint_regs.rs` is, is served.
 //
-// **THAT MAKES THE HOLD A TIMING FACT AND NOT A BEHAVIOURAL ONE, AND IT WAS
+// **THAT MAKES THE HOLD A TIMING FACT AND NOT A BEHAVIORAL ONE, AND IT WAS
 // MEASURED RATHER THAN ASSERTED.**  The six rewritten as `assign`s off
 // `ub_addr` passed `busint_regs` over all 38,319,186 of its ticks and
 // `unibus` over all 13,192,237 of its, with both summaries byte-identical.
@@ -261,9 +261,9 @@
 // cycle for exactly that reason: an answer at a fixed instant would let a
 // block that counted ticks rather than watching `map_done` pass.
 //
-// **AND A MAPPED PAGE THAT IS NOT MAIN MEMORY IS NOT MODELLED, BY muir'S OWN
+// **AND A MAPPED PAGE THAT IS NOT MAIN MEMORY IS NOT MODELED, BY muir'S OWN
 // WORDS.**  `Busint::debug_xbus_edge`: "The processor asking for the Xbus
-// meanwhile, and a mapped page nothing answers, are **not modelled**: the
+// meanwhile, and a mapped page nothing answers, are **not modeled**: the
 // debuggee CC works on is halted, and its map points at memory."  So
 // `rtl/machine/cadr_memory_path.sv` takes the bus for this master only for a
 // main-memory page, and a mapped cycle at any other page is never
@@ -301,7 +301,7 @@
 // `Rtl::try_debug_request` tests `req.write` before it tests `map_to_md`, so
 // the odd word of a read is the page's read buffer and the even word is a
 // mapped Xbus cycle at physical page `0o37000`, which is the Unibus and not
-// main memory --- and a mapped page nothing answers is not modelled.  `MD` is
+// main memory --- and a mapped page nothing answers is not modeled.  `MD` is
 // write-only through the map, and `golden/src/busint_regs.rs` carries both
 // halves of such a read to say so.
 //
@@ -644,7 +644,7 @@ module cadr_busint_regs (
   // `DEBUG OUT ACK` is a LEVEL, and on MIT's cable it falls within
   // nanoseconds of the request it belongs to being lifted --- the far end's
   // gate is `NAND(-DB ADR1 CLK, -DB ADR0 CLK, -DB READ STATUS)` and the three
-  // go with the request.  A carrier that serialises the cable does not give
+  // go with the request.  A carrier that serializes the cable does not give
   // that for free: the fall takes a frame to cross, so the acknowledgement of
   // the cycle just finished is still standing when the next one starts, and a
   // page that took it would answer its own machine in no time with a word

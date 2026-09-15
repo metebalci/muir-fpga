@@ -46,7 +46,7 @@
 // AXI SIZE IS DELIBERATELY NOT DERIVED FROM `s_awsize`.  The adapter says four
 // bytes, which is the word; the beat is eight, and the strobes above are what
 // make those the same thing.  Reading the adapter's size and widening it would
-// be inventing a behaviour for a value that is a constant on one side of a
+// be inventing a behavior for a value that is a constant on one side of a
 // wire, so the constant is written here and the adapter's is left unread.
 
 `default_nettype none

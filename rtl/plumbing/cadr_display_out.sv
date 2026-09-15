@@ -8,7 +8,7 @@
 // it has no raster at all, and `rtl/machine/cadr_tv.sv` is held to it tick
 // for tick and does not change.  What this module does --- read the bitmap
 // at a monitor's rate and put pixels on a wire --- is a thing MIT's SIMPLE
-// TV did with a sync program, a shift register and an analogue video
+// TV did with a sync program, a shift register and an analog video
 // amplifier, into a monitor that no longer exists.  So this is held to a
 // SPECIFICATION and to the bitmap, the way `cadr_axi_master.sv` is held to
 // AXI: the raster to VESA's own figures for the mode, and every pixel to
@@ -42,7 +42,7 @@
 // whatever rates each ran at, and so does this.  The vertical flag the
 // machine reads is `cadr_tv.sv`'s and is not this module's VSYNC.
 //
-// **SO THE PICTURE TEARS, AND TEARING IS THE ORIGINAL BEHAVIOUR RATHER THAN
+// **SO THE PICTURE TEARS, AND TEARING IS THE ORIGINAL BEHAVIOR RATHER THAN
 // A DEFECT.**  A line fetched while the machine is drawing shows some words
 // from before a write and some from after.  On a one-bit black-and-white
 // screen that is a character appearing with its top half drawn, for one
@@ -94,7 +94,7 @@
 // earliest, by which time `req_line` has been stable for two clocks and
 // will stay stable for the rest of the line --- 1,688 pixel clocks.  So the
 // number is settled long before anything looks at it, and only the toggle
-// needs synchronising.  This is the standard formulation and its safety is
+// needs synchronizing.  This is the standard formulation and its safety is
 // the ratio between "two clocks" and "a whole line", which is a factor of
 // eight hundred.
 //
@@ -225,7 +225,7 @@ module cadr_display_out #(
   localparam int unsigned H_TOTAL = H_ACTIVE + H_FRONT + H_SYNC + H_BACK;
   localparam int unsigned V_TOTAL = V_ACTIVE + V_FRONT + V_SYNC + V_BACK;
 
-  // The picture, centred.  An odd margin loses its half pixel at the
+  // The picture, centered.  An odd margin loses its half pixel at the
   // bottom and the right, which is where a reader expects it.
   localparam int unsigned PIC_X0 = (H_ACTIVE - PIC_W) / 2;
   localparam int unsigned PIC_Y0 = (V_ACTIVE - PIC_H) / 2;
@@ -299,7 +299,7 @@ module cadr_display_out #(
 
       unique case (fstate)
         F_IDLE: begin
-          // A request is outstanding whenever the synchronised toggle has
+          // A request is outstanding whenever the synchronized toggle has
           // moved away from the one last acted on.  Looked at only here,
           // so a request arriving mid-burst waits rather than being lost:
           // the toggle is still different when this comes back round.
@@ -443,7 +443,7 @@ module cadr_display_out #(
     if (prst) begin
       hc <= '0; vc <= '0;
       req_tog <= 1'b0; req_line <= '0;
-      // **A SYNCHRONISER MUST COME OUT OF RESET HOLDING WHAT ITS SOURCE
+      // **A SYNCHRONIZER MUST COME OUT OF RESET HOLDING WHAT ITS SOURCE
       // COMES OUT OF RESET HOLDING.**  `ack_tog` resets to one; these
       // resetting to zero would make the first line's readiness test true
       // for the two or three clocks before the real value arrives, the

@@ -95,7 +95,7 @@ module cadr_soc_timer #(
       mtime <= mtime + 64'd1;
 
       if (sel && we) begin
-        // Byte enables are honoured because the seam carries them; a store of
+        // Byte enables are honored because the seam carries them; a store of
         // a half word to a timer is not something any firmware here does, and
         // a face that quietly widened it would be lying about what landed.
         if (word == 3'd4) begin

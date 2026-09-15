@@ -155,7 +155,7 @@ STANDALONE=${STANDALONE:-}
 # **RELEASE=1 IS ABOUT THE MENU AND STANDALONE=1 IS ABOUT WHAT IS PRIVATE**,
 # and they are two flags because they are two properties.  STANDALONE says this
 # card carries nothing out of local.conf, which is what keeps an address, a MAC
-# and this board's own station numbers off a public artefact.  RELEASE says the
+# and this board's own station numbers off a public artifact.  RELEASE says the
 # card is the one a stranger is given, so the file of flags is written with the
 # three lines a board out of the box needs live and every other flag present
 # and commented out.  mksd-release.sh sets both; a card staged here for the

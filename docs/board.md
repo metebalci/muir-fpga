@@ -23,7 +23,7 @@ debugging on a first bring-up.
     ~/Xilinx/<version>/HWSRVR/bin/hw_server
 
 That install has no `settings64.sh`. Call the binary by its path. It listens on
-`TCP::3121` unless `-s<url>` says otherwise. `-d` daemonises it.
+`TCP::3121` unless `-s<url>` says otherwise. `-d` daemonizes it.
 
 ## The udev rules, which are not optional
 
@@ -121,7 +121,7 @@ a boot image. It does not run at all when a `.bit` is downloaded on its own.
 
 So a design whose fabric clock comes from `FCLK_CLK0` is *dead* on a
 JTAG-programmed board. A design that reads DDR gets no answer. Neither failure
-looks like a missing initialisation. The first looks like a bitstream that did
+looks like a missing initialization. The first looks like a bitstream that did
 not load, and the second looks like a broken memory path.
 
 Two consequences, both deliberate in `boards/arty-z7-20/cadr_arty.sv`:
@@ -175,7 +175,7 @@ From step two on, a bitstream of the board that step is about must exist too:
 **Step two's board and step three's are two different bitstreams with the same
 file name**, one directory apart. Pointing step three at step two's bitstream
 produces every symptom of a fabric that cannot read, on a perfectly good board.
-The script recognises that reading and says so rather than blaming the design.
+The script recognizes that reading and says so rather than blaming the design.
 
 ### Run every invocation under `timeout`
 
@@ -189,7 +189,7 @@ therefore hangs rather than failing.**
 Exit 124 means the poll never finished. That is its own finding and not a
 crash.
 
-### The two identity registers, before anything is initialised
+### The two identity registers, before anything is initialized
 
 `0xF8000530` is SLCR `PSS_IDCODE`, the part's identity. It reads
 `0x23727093`, the same word as the JTAG IDCODE above, off a different register
@@ -211,7 +211,7 @@ silicon 3.1, `PS_VERSION = 3`, per `zynq_fsbl`'s `fsbl.h`. Silicon 3.1 shares
     DDR: devcfg MCTRL at 0xF8007080 reads 0x30800100
     DDR:   PCAP_PS_VERSION 31:28        3
 
-### Uninitialised DDR is not zero, so everything poisons first
+### Uninitialized DDR is not zero, so everything poisons first
 
 The first bring-up read one word per megabyte across the whole 512 MB, before
 anything had ever been written to it. It found bands of all-zeros and all-ones,
@@ -288,7 +288,7 @@ version lines are commented out in Xilinx's own output. Its return therefore
 says only that no Tcl error was raised, and "no error" is not "DDR is up". That
 is the same shape as the DONE bit above.
 
-The script records uninitialised DDR and re-reads one block to see whether it
+The script records uninitialized DDR and re-reads one block to see whether it
 is stable. That reading is recorded and not asserted, because there is nothing
 to assert. It then writes the proving word `0x8A5C36E1` at `0x18A72EE4`, and
 its complement over it, with the low half of that beat asserted untouched. It
@@ -321,7 +321,7 @@ which shares nothing with the fabric's.
 **Pass is two things, and the second is the one that can fail.** `0x18A72EE4`
 holds the word. Every other word of the thirty-two still holds the filler, and
 `0x18A72EE0` above all, which is the low half of the same 64-bit beat. The
-address has bit 2 set for exactly that reason. Against a neighbourhood of
+address has bit 2 set for exactly that reason. Against a neighborhood of
 zeros, a widening that opened both halves would be invisible.
 
     PROVE: PASSED --- the fabric wrote 0x8A5C36E1 to 0x18A72EE4
@@ -674,7 +674,7 @@ stopped, though. That is why LD2 carries the blink instead: motion cannot be
 faked.
 
 **LD4 is the machine's own error halt and nothing else. It is either off or
-red.** No other colour and no other meaning ever reaches it, at power-on,
+red.** No other color and no other meaning ever reaches it, at power-on,
 during the PROM or while halted. Its green and blue channels are tied off.
 
 ERRHALT is ERRSTOP and HALTED at OLORD1, and it is one of MACHRUN's own terms.
@@ -716,7 +716,7 @@ from one that does not. Which signal the board wires to it stays lint-only.
 **LD5 is `PROMENABLE`, driven from the net itself.** It is lit blue while the
 machine fetches its microinstructions out of the boot PROM and dark once it
 runs the microcode it loaded from the disk. So a lit lamp means booting and a
-dark one means booted. Blue is the only colour it takes.
+dark one means booted. Blue is the only color it takes.
 
 **It is the PROM's own select and not the mode register's bit.** MIT's
 `-PROMENABLE` at PCTL 1C19 is `BOTTOM.1K` with `PROMDISABLED`, `IWRITEDA` and
@@ -746,7 +746,7 @@ Read the first three in order.
 
 **The assignment before this one was a bring-up instrument and is superseded.**
 LD0 was the fabric's clock, LD2 counted non-existent-memory timeouts, LD3 was
-the datapath fold, LD4 carried three boot states in three colours and then four
+the datapath fold, LD4 carried three boot states in three colors and then four
 kinds of fault at once, and LD5 showed whether the last bus cycle was answered.
 Each of those answers a question nobody asks of a working machine. What is worth keeping from the
 measurements behind them is below.
@@ -808,7 +808,7 @@ there.
 
 **The general point is worth more than the correction.** The prediction was
 that no memory means no progress. The fabric's answer is that no memory means
-slow progress. That is the first behaviour anyone here observed on silicon that
+slow progress. That is the first behavior anyone here observed on silicon that
 was predicted wrongly, and it was predicted wrongly in this file.
 
 ## Holding the machine at boot
@@ -938,7 +938,7 @@ Two things are not shown yet. The serial port's registers are programmed and
 its rate reads back, but characters do not flow, because the line's frame end
 is presented early in `rtl/plumbing/cadr_serial_line.sv`. And nothing has
 driven the debug cable from the board. So the terminal and Chaosnet blocks on
-the drawing go green, and the I/O board keeps the colour that says checked here
+the drawing go green, and the I/O board keeps the color that says checked here
 and not yet on silicon. Both of those were shown later the same day, and the
 section below supersedes this paragraph.
 
@@ -1146,7 +1146,7 @@ happens the drawing's USB input block says checked here and not yet on silicon.
 ## The display, the keyboard and the mouse, 14 September
 
 **A monitor on the HDMI TX connector shows the machine's screen.** It is
-1280x1024 at 60 Hz with the CADR's own 768x963 screen centred in it, white on
+1280x1024 at 60 Hz with the CADR's own 768x963 screen centered in it, white on
 black, and the rest of the frame black. That is the display output block as it
 was built and as `docs/display-output.md` describes it. The picture comes out
 of DDR over `S_AXI_HP3` with no software anywhere in the path, so the block and
@@ -1375,7 +1375,7 @@ read the monitor's EDID.
 
 ### What should appear
 
-The machine's own screen, 768 by 963, centred in a 1280 by 1024 raster with a
+The machine's own screen, 768 by 963, centered in a 1280 by 1024 raster with a
 black border 256 pixels wide on each side and about 30 rows deep above and
 below. White on black.
 
@@ -1391,7 +1391,7 @@ thing to look at.
 
 ### What the failures would mean
 
-**No signal at all, or the monitor reporting no input.** The serialisers are
+**No signal at all, or the monitor reporting no input.** The serializers are
 not sending, which is the clock rather than the picture: either the bitstream
 is not the `HDMI=1` one, or the display's MMCM is not locked. The CADR itself
 runs either way, so LD1 and LD2 say nothing about this. The cheapest check is
@@ -1406,7 +1406,7 @@ path.
 
 **A signal the monitor syncs to, showing noise.** The picture is arriving and
 is being read wrongly. That would be new: the raster, the line buffer handoff
-and every read burst are checked against a modelled memory poisoned
+and every read burst are checked against a modeled memory poisoned
 injectively in the address, which is exactly the stimulus that makes a
 misread show as noise rather than as black.
 

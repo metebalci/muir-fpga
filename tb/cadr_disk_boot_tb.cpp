@@ -34,7 +34,7 @@
 //   - the blocks of the real pack as STIMULUS: 259 words a record, at an
 //     address the generator chose, spread across the address bits so that a
 //     fetch one record over lands on the DDR's poison and not on a
-//     neighbour;
+//     neighbor;
 //   - main memory as the PROGRAM leaves it: the command lists, and the
 //     poison every destination page carries, a function of the page and the
 //     offset both, so that a page nothing wrote cannot read back like one

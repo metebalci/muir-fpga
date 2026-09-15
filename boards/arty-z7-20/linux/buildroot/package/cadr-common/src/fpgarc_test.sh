@@ -7,7 +7,7 @@
 #
 # **WHY THERE IS A CHECK HERE AT ALL.**  The card carries one file of flags
 # for the CADR in the fabric, and that machine is served by several programs.
-# Each of them refuses a flag it does not know, which is muir's behaviour and
+# Each of them refuses a flag it does not know, which is muir's behavior and
 # is the property worth keeping, so the file cannot be passed to any of them
 # whole.  Each init script names the flags its own program owns and hands the
 # file to the shared reader, which gives back those lines and no others.  Two
@@ -820,9 +820,9 @@ fi
 # ---------------------------------------------------------------------------
 #
 # **THE FAULT.**  Every one of these programs refuses a flag it does not know,
-# which is muir's behaviour and the property this whole file of flags rests on.
+# which is muir's behavior and the property this whole file of flags rests on.
 # But an init script starts its program with `start-stop-daemon -b`, which
-# daemonises it and closes stdout and stderr, so the refusal went to /dev/null
+# daemonizes it and closes stdout and stderr, so the refusal went to /dev/null
 # and the script printed OK.  That is exactly what a carriage return on every
 # peer's port once did to the Chaosnet on the board: a boot that looked perfect
 # with a program that was not running.

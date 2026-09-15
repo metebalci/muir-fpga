@@ -10,7 +10,7 @@
 # the processing system is a `PS7`.  Each of those is one primitive in a file
 # somebody can read.  A DDR3 controller is not: it is a calibration state
 # machine, a PHY with per-bit deskew, a refresh and bank manager and a write
-# levelling sequence, and nothing in this repository could hold a hand-written
+# leveling sequence, and nothing in this repository could hold a hand-written
 # one to anything.  So the Memory Interface Generator is taken.
 #
 # WHAT KEEPS IT HONEST.  The input is a text file in the repository, the run

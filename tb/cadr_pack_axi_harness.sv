@@ -7,7 +7,7 @@
 // has cleared `rtl/machine/` over 171,000,000 microcycles (`make hash-watch`)
 // and the adapter and the widening over 13,000,000 onto a real 64-bit AXI3
 // port (`make band-axi`).  What is left is the PS7 and its DDR3 controller,
-// which cannot be modelled; board-only causes; and THE DISK SEAM ---
+// which cannot be modeled; board-only causes; and THE DISK SEAM ---
 // `rtl/plumbing/cadr_disk_pack.sv`, `S_AXI_HP2` and the `cadr-disk-packs`
 // program --- which **no whole-machine check in this tree has ever
 // contained**.  `disk_pack.pass` holds that module to properties on a directed
@@ -382,10 +382,10 @@ module cadr_pack_axi_harness #(
       .mem_addr(mem_addr), .mem_wdata(mem_wdata)
   );
 
-  // THE PACK SIDE.  Reset is `rst` rather than `cadr_arty.sv`'s synchronised
+  // THE PACK SIDE.  Reset is `rst` rather than `cadr_arty.sv`'s synchronized
   // `hp2_aresetn && gp0_aresetn`, for the reason `tb/cadr_band_axi_harness.sv`
   // gives for leaving `hp0_aresetn` out: a dead port is a configuration this
-  // has nothing to say about, and modelling it here would add a reset the
+  // has nothing to say about, and modeling it here would add a reset the
   // testbench could get wrong without the machine noticing.
   cadr_disk_pack u_pack (
       .clk(clk), .rst(rst),

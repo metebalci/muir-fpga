@@ -117,7 +117,7 @@ a counter in the fabric with no path to Linux. A torn frame is one frame.
 ## The geometry, and where every number came from
 
 The classic failure of a program like this one is a picture served upside
-down, mirrored, or in the wrong colours. It is cheap to get right by reading.
+down, mirrored, or in the wrong colors. It is cheap to get right by reading.
 `screen_geom.h` carries the table below beside the code, and `screen_test.c`
 pins the mapping on hand-computed pixels.
 
@@ -259,7 +259,7 @@ compared against itself.
 
 The state machine over the table is written out by hand in `src/input_keys.c`,
 function for function against `Keyboard::resolve`, `tap`, `press` and
-`release`. A translation of behaviour is not a translation of data, and
+`release`. A translation of behavior is not a translation of data, and
 pretending otherwise would hide where the judgement is.
 
 ### What could not be mapped
@@ -666,7 +666,7 @@ viewer must take, so it is the floor. A viewer that offers nothing else, or
 offers only encodings this server has not got, is answered in Raw.
 
 **RRE** (section 7.7.2) is the one that compresses runs. It sends a background
-pixel and a list of subrectangles of the other colour. muir's terminal declined
+pixel and a list of subrectangles of the other color. muir's terminal declined
 it, on the grounds that the screen is one bit a pixel and its own viewer is on
 a loopback socket. This one is on a board at the end of a hundred-megabit link,
 and the measurement goes the other way. **Which one a rectangle goes in is
@@ -725,7 +725,7 @@ remembered.
   each other, and the anchors are the thing no such pair can put back.
 - **A whole screen, pixel for pixel, in five pixel formats.** They are 32 bits
   a pixel little- and big-endian with the shifts moved, 16-bit 5-6-5, 8-bit
-  2-2-2, and a colour-mapped one whose `SetColourMapEntries` must arrive. The
+  2-2-2, and a color-mapped one whose `SetColourMapEntries` must arrive. The
   viewer works the two byte patterns out for itself and refuses a pixel that
   is neither.
 - **An incremental update after part of the buffer changes.** The rectangles

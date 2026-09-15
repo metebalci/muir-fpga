@@ -29,7 +29,7 @@
 #      and it is read here as `fpga -state` plus bit 5 of the part's IR
 #      capture, which is where `program.tcl`'s `REGISTER.IR.BIT5_DONE` and
 #      `boards/arty-z7-20/vivado/probe.tcl`'s DONE both come from.
-#   3. **Poison the neighbourhood, and do it before the port comes live.**
+#   3. **Poison the neighborhood, and do it before the port comes live.**
 #      Step one measured never-written DDR on this board coming back in bands
 #      of all-zeros and all-ones, so an unwritten word reads `0x00000000` in
 #      some places and `0xFFFFFFFF` in others and neither is evidence of
@@ -69,7 +69,7 @@
 # 64-bit beat --- still holds the filler.  `cadr_axi_widen.sv` puts a word
 # with bit 2 set in the high half and opens only the top four byte strobes; a
 # widening that opened both halves would write the low half too, and against a
-# neighbourhood of zeros that would be invisible.  The address was chosen for
+# neighborhood of zeros that would be invisible.  The address was chosen for
 # this.  All thirty-two are printed either way.
 #
 # WHAT IT CANNOT SEE.  LD4 carries the witness's own verdict --- blinking red
@@ -228,7 +228,7 @@ say "  device identity              [hex $device]  wanted 0x03727093 (XC7Z020)"
 if {$device != 0x03727093} {
     say "FAILED at 0xF8000530 --- PSS_IDCODE is not an XC7Z020's."
     say "FAILED   read [hex $idcode], device identity [hex $device], wanted"
-    say "FAILED   0x03727093.  Nothing below is initialised or programmed"
+    say "FAILED   0x03727093.  Nothing below is initialized or programmed"
     say "FAILED   against a part this routine was not written for."
     bye 1
 }

@@ -328,7 +328,7 @@ impl Cadr {
         let _ = std::fs::remove_file(&file);
         let before: std::collections::HashSet<PathBuf> = temp_files(&tmp).into_iter().collect();
         // The file is named on the host the band calls its own, which is
-        // the server on the modelled cable and is not always `OZ`.
+        // the server on the modeled cable and is not always `OZ`.
         let host = server_name();
         let line = format!(
             "(with-open-file (f \"{host}://tmp//{name}.text\" :direction :output) \
@@ -507,7 +507,7 @@ fn band_digest(pack: &Path, start: u32, blocks: u32) -> u64 {
 /// it inside the partition at all.
 ///
 /// **The pack itself is the signal**, which is right in principle as well
-/// as in practice: the pack is the artefact this whole run exists to make.
+/// as in practice: the pack is the artifact this whole run exists to make.
 /// Six blocks spread through the partition are read back out of the file
 /// while the machine writes it; when they have changed from what they were
 /// and then stayed put for a good while, the dump is over.  The reboot

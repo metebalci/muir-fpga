@@ -15,7 +15,7 @@
 //
 // ## What the seam IS, which is the thing to agree on first
 //
-// muir puts the CADR's interface on a modelled `ether` and hangs the CHUDP
+// muir puts the CADR's interface on a modeled `ether` and hangs the CHUDP
 // link and every other station off that ether as `ether::Node`s.  On this
 // board the interface is in fabric and the ether is this program.  So the seam is a **mailbox for whole frames**, not a copy of
 // the interface's registers:
@@ -160,7 +160,7 @@ enum chaos_stat {
 	CHAOS_ST_RX_ARMED = 1u << 2,
 	// The interface is in Loop Back (`csr::LOOP_BACK`): the fabric is
 	// carrying the machine's packets back to itself and Linux must not
-	// inject any.  A maintenance mode, and honoured rather than ignored.
+	// inject any.  A maintenance mode, and honored rather than ignored.
 	CHAOS_ST_LOOPED   = 1u << 3
 };
 

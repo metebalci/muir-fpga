@@ -36,7 +36,7 @@ set_property -dict { PACKAGE_PIN E3    IOSTANDARD LVCMOS33 } [get_ports { sysclk
 create_clock -add -name sysclk -period 10.000 -waveform {0 5} [get_ports { sysclk }]
 
 ## The four plain green LEDs. **DIGILENT'S `led[0]` IS THE BOARD'S LD4**: this
-## board silkscreens its four tricolour LEDs LD0 to LD3 and its four green ones
+## board silkscreens its four tricolor LEDs LD0 to LD3 and its four green ones
 ## LD4 to LD7, which is the opposite way round from the Arty Z7-20. The port
 ## names here are Digilent's, so that a pin can be checked against the master
 ## file by eye; `cadr_arty_a7.sv`'s header has the table that says which of
@@ -48,7 +48,7 @@ set_property -dict { PACKAGE_PIN J5    IOSTANDARD LVCMOS33 } [get_ports { led[1]
 set_property -dict { PACKAGE_PIN T9    IOSTANDARD LVCMOS33 } [get_ports { led[2] }]; #IO_L24P_T3_A01_D17_14 Sch=led[6]
 set_property -dict { PACKAGE_PIN T10   IOSTANDARD LVCMOS33 } [get_ports { led[3] }]; #IO_L24N_T3_A00_D16_14 Sch=led[7]
 
-## The four tricolour LEDs, the board's LD0 to LD3. LD0 is this project's LD4
+## The four tricolor LEDs, the board's LD0 to LD3. LD0 is this project's LD4
 ## --- trouble, red and nothing else --- and LD1 is its LD5, the boot PROM in
 ## blue. LD2 and LD3 have no meaning in the six-lamp assignment and are driven
 ## dark; they are constrained anyway, because a port with no pin cannot be
@@ -230,7 +230,7 @@ set_false_path -to   [get_ports { jb[*] }]
 ## **BOTH FALSE-PATHED, AND A BAUD RATE IS WHY.** At 115,200 baud one bit
 ## lasts 868 ticks of this board's clock, so neither end of this line has a
 ## setup relationship with anything: the transmitter holds a level for the
-## whole of a bit time, and the receiver synchronises the pin through two
+## whole of a bit time, and the receiver synchronizes the pin through two
 ## stages before it looks at it and then samples in the middle of a bit. A
 ## timing constraint here would be a claim about a wire nothing is racing on.
 set_false_path -to   [get_ports { uart_rxd_out }]

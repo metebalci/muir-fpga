@@ -353,7 +353,7 @@ int main(void)
 	if (!m->running)
 		fail("the machine was not started again", 0, 1);
 
-	printf("readout: %ld words compared through a modelled window, %lu reads "
+	printf("readout: %ld words compared through a modeled window, %lu reads "
 	       "and %lu writes, %lu refused for a stale echo, and the "
 	       "transaction audit read back field for field with an unmarked "
 	       "one refused\n",

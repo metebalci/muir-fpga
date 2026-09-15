@@ -295,7 +295,7 @@ Run Simulate(Mode mode) {
       // to the address THIS PROGRAM was given rather than to anything the
       // DUT says it meant --- byte by byte under the strobes, exactly as a
       // slave would, so a strobe pattern that opened both halves destroys
-      // the neighbour here as it would on the board.
+      // the neighbor here as it would on the board.
       if (aw_taken && w_taken && b_wait < 0) {
         const long w0 = (static_cast<long>(aw_addr) -
                          static_cast<long>(kMainBase)) / 4;

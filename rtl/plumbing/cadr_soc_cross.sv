@@ -120,7 +120,7 @@ module cadr_soc_cross (
   logic [3:0]  be_q;
   logic [31:0] addr_q, wdata_q;
 
-  // The far side's acknowledgement, synchronised back.  Two flip-flops: the
+  // The far side's acknowledgement, synchronized back.  Two flip-flops: the
   // first may go metastable and the second is what anything reads.
   logic [1:0] ack_sync;
   logic       ack_a;
@@ -194,7 +194,7 @@ module cadr_soc_cross (
           // own busy flag and that is one clock more than the window needs.
           // How much more was measured by instrumenting the mutant: of 273
           // requests, **129 arrive while the acknowledgement still stands at
-          // the SECOND flip-flop of the synchroniser and NONE while it stands
+          // the SECOND flip-flop of the synchronizer and NONE while it stands
           // at the first**.  One clock.  `mutations/list.txt` records that
           // beside the crossing's records rather than filing a hole, so that
           // a reader who deletes this finds the measurement and not a green

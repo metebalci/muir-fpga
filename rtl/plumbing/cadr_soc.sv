@@ -18,7 +18,7 @@
 //
 // **THE CORE IS IBEX AND IT IS NOT OURS.**  lowRISC's, two-stage, in-order,
 // RV32IMC, under Apache-2.0, vendored at a pinned commit in `third_party/ibex/`
-// with its own licence and its provenance beside it --- `third_party/ibex/README.md`
+// with its own license and its provenance beside it --- `third_party/ibex/README.md`
 // says which commit, how it was obtained and what each file's digest is.  The
 // decision behind it is in CLAUDE.md and it is the important one: a standard
 // soft core and never a home-made one.  A processor this project wrote would
@@ -169,7 +169,7 @@ module cadr_soc #(
     // runs on it.
     input  var logic        clk,
     // The board's reset, a level, asynchronous to `clk` --- it is made in the
-    // machine's domain and synchronised onto this one below, in the one place
+    // machine's domain and synchronized onto this one below, in the one place
     // that has to know.
     input  var logic        rst,
 
@@ -274,12 +274,12 @@ module cadr_soc #(
 
   // ------------------------------------------ this domain's own reset
 
-  // **THE RESET ARRIVES FROM THE MACHINE'S DOMAIN AND IS SYNCHRONISED HERE, IN
+  // **THE RESET ARRIVES FROM THE MACHINE'S DOMAIN AND IS SYNCHRONIZED HERE, IN
   // THE ONE PLACE THAT HAS TO KNOW.**  The board makes one reset --- the clock
   // manager not locked, or the fabric-reset button --- in the machine's
   // domain, and a reset released asynchronously to this clock is a reset some
   // of these registers leave a clock before the others.  The alternative was a
-  // second synchroniser in the board's top level and a third in the check's
+  // second synchronizer in the board's top level and a third in the check's
   // harness, which is two more descriptions of one thing.
   //
   // **THE TWO SIDES OF THE CROSSING THEREFORE COME OUT OF RESET AT DIFFERENT
@@ -395,7 +395,7 @@ module cadr_soc #(
 
       // No instruction cache, so no cache RAMs.  The ports are tied off
       // rather than left off, so that an Ibex which grew one would be a
-      // PINMISSING here and not a silent change of behaviour.
+      // PINMISSING here and not a silent change of behavior.
       .ic_tag_req_o  (), .ic_tag_write_o(), .ic_tag_addr_o(), .ic_tag_wdata_o(),
       .ic_tag_rdata_i('{default: '0}),
       .ic_data_req_o (), .ic_data_write_o(), .ic_data_addr_o(), .ic_data_wdata_o(),
@@ -540,7 +540,7 @@ module cadr_soc #(
   // an answer, and one clock is exactly the margin the crossing's fourth phase
   // has: `cadr_soc_cross.sv` records the measurement --- of 273 requests, 129
   // arrive while the acknowledgement still stands at the second flip-flop of
-  // the synchroniser and none while it stands at the first.  The crossing is
+  // the synchronizer and none while it stands at the first.  The crossing is
   // written not to need that (it holds its answer until the handshake has
   // closed, so a requester may ask on the very next clock), and the two
   // together are belt and braces on a seam where getting it wrong would hand

@@ -80,7 +80,7 @@
 //!
 //! **Main memory is poisoned injectively in the physical address** before
 //! any of it, so a read the map sent to the wrong page takes a word muir
-//! never had. The testbench's modelled memory computes the same function
+//! never had. The testbench's modeled memory computes the same function
 //! from the address the FABRIC puts out and the trace carries muir's own
 //! answer, so the two meet only if the translation is right.
 //!
@@ -98,7 +98,7 @@
 //!
 //! - A mapped page that is not main memory. `Busint::debug_xbus_edge` says
 //!   in its own words that "a mapped page nothing answers" is **not
-//!   modelled**, so no row asks for one and the fabric's arbiter refuses
+//!   modeled**, so no row asks for one and the fabric's arbiter refuses
 //!   such a page the bus rather than guessing at its timing.
 //! - A read through a page whose high five bits are ones. `MD` is
 //!   write-only through the map: `Rtl::try_debug_request` tests
@@ -106,7 +106,7 @@
 //!   page's read buffer and the even word is a mapped Xbus cycle at
 //!   page `0o37000`, which is the Unibus and not main memory --- and
 //!   `Busint::debug_xbus_edge` says a mapped page nothing answers is not
-//!   modelled. Both halves of a read through CC's own entry are here, the
+//!   modeled. Both halves of a read through CC's own entry are here, the
 //!   even one through a real page, and neither touches `MD`.
 //! - The debug block at `0o766100`-`0o766136`. `busint::register` decodes
 //!   it to `None` and this trace says so in its `IFACENONE` runs, which is
@@ -523,7 +523,7 @@ impl Gen {
     /// `req.write` before it tests `map_to_md`, so the odd word of a read
     /// is the page's read buffer and the even word is a mapped Xbus cycle
     /// at a page that is not main memory --- which `Busint::debug_xbus_edge`
-    /// says in its own words is **not modelled**. So `MD` is write-only
+    /// says in its own words is **not modeled**. So `MD` is write-only
     /// through the map, and this generator cannot ask for the other half.
     fn mapped_md(&mut self, uaddr: u32, v: u16) -> u32 {
         let a = busint::map_access(uaddr).expect("the address is inside the window");

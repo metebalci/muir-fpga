@@ -62,7 +62,7 @@ PROM argument, so nothing here can produce one.
 What holds the patched runs is therefore narrower. It is the instruction
 stream, which must be muir's everywhere but at the patched address. It is the
 control flow, which must follow muir's PC until the program reacts to a refusal
-muir never had. And it is the permission behaviour, which muir's own rule
+muir never had. And it is the permission behavior, which muir's own rule
 predicts. That is weaker than `map_boot`'s comparison and stronger than a
 fabric-only property. The check says which claim is which on its own output.
 
@@ -209,7 +209,7 @@ floating nets settle to. A floating TTL input reads high, which through the
 inverters would give block 0, but that is an inference from float-high and not
 a measurement.
 
-The conclusion is that there is no correct behaviour to implement. The fabric
+The conclusion is that there is no correct behavior to implement. The fabric
 agrees with the engine it is checked against, the case is unreachable in MIT's
 microcode, and the disagreement that exists is between muir's own two engines.
 It is recorded here so that nobody files it as a fabric defect, and the check

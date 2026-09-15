@@ -13,9 +13,9 @@
 // any transfer --- what a formatter or the vendor laid --- and goes onto the
 // pack file exactly as muir's `Unit` would hold it.  `NEED` is a block a
 // transfer read off the pack, in the order the walk reached it: here each
-// run of NEED rows is one transfer the modelled controller makes, and the
+// run of NEED rows is one transfer the modeled controller makes, and the
 // controller posts each block it lacks in REQ for the feeder to answer.
-// `BLK write` is a block a transfer wrote: a Write the modelled controller
+// `BLK write` is a block a transfer wrote: a Write the modeled controller
 // makes of that block with those words, which dirties a slot the feeder
 // must take back and put on the pack.
 //
@@ -1023,7 +1023,7 @@ int main(int argc, char **argv)
 	char err[256];
 
 	// The drive bay: a real directory of real files, because a rename and
-	// a delete are what has to be exercised and there is no modelling
+	// a delete are what has to be exercised and there is no modeling
 	// those.  The trace's pack goes in as unit 2's, at a T-300's size,
 	// sparse and fresh for this run.
 	char bay_dir[4000], path[4096];
@@ -1438,7 +1438,7 @@ int main(int argc, char **argv)
 	// ---- the drive bay ----------------------------------------------------
 	//
 	// A real directory of real files: a rename and a delete are exactly what
-	// has to be exercised and there is no modelling those.  Every arm below
+	// has to be exercised and there is no modeling those.  Every arm below
 	// ends with the store consistent with the bay, because a drive that
 	// leaves takes its slots with it.
 	unsigned long bay_two_unit_hits = 0, bay_scans_deferred = 0;
@@ -2041,7 +2041,7 @@ int main(int argc, char **argv)
 	}
 	printf("ok: the disk pack program serves the disk controller on demand and keeps\n"
 	       "    the pack as muir's Unit keeps it\n"
-	       "    %lu requests posted by the modelled controller --- %lu from the\n"
+	       "    %lu requests posted by the modeled controller --- %lu from the\n"
 	       "      trace's %lu NEED rows in %lu transfers --- %lu answered within\n"
 	       "      %ld poll(s) each, %lu denied (other unit, off the pack);\n"
 	       "      %lu hits compared, %lu words, every record 128-byte aligned\n"

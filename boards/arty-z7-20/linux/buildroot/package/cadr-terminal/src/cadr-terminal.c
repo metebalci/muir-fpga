@@ -22,7 +22,7 @@
 // words --- muir's own mapping and MIT's own key table, `input_keys.h` --- and
 // its `PointerEvent` becomes deltas for the quadrature encoder in fabric and
 // a mask for the mouse's three switches.  The screen came first and the input
-// later; this is the later.  **`--no-input` is the old behaviour**,
+// later; this is the later.  **`--no-input` is the old behavior**,
 // and so is a bitstream without the input cables: the events are counted and
 // dropped and one line says so.
 //

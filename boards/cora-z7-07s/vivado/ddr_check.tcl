@@ -18,7 +18,7 @@
 # `boards/arty-z7-20/vivado/ddr_check.tcl`, which is where the check itself
 # lives. That is the shape `gen_ps7.py` and `ps7_ops.py` in this directory
 # already use. What the check does, why each read is made, and what an
-# uninitialised word is allowed to look like are hard-won and there is one copy
+# uninitialized word is allowed to look like are hard-won and there is one copy
 # of them.
 #
 # THE ROUTINE IS THIS BOARD'S. `make ps7-init-cora` writes it to

@@ -1172,7 +1172,7 @@ int main(int argc, char **argv) {
   //   eleven tenths of a frame TxEMT is up when the handler arrives, RANDOM
   //                            absorbs eight in a row and the machine spins
   //                            having sent one character --- which is the real
-  //                            chip's behaviour too, and is what the board did
+  //                            chip's behavior too, and is what the board did
   //
   // A fabric whose frame ends early fails the first of those with the second
   // still passing, and that is the board's fault written down as a check.

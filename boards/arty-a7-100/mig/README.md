@@ -8,12 +8,12 @@ DDR3L, and the project file it is generated from.
 Everything else Xilinx offers as a directory of generated XML has been declined
 here and hand-built instead. The clock generator is one `MMCME2_BASE`. The
 capture instrument is one `BSCANE2` and a shift register, where an integrated
-logic analyser was available and was refused. The Zynq's processing system is
+logic analyzer was available and was refused. The Zynq's processing system is
 one `PS7` primitive with its port list derived by a script from Xilinx's own
 library file.
 
 A DDR3 controller is not that kind of thing. It is a calibration sequence, a
-physical layer with per-bit deskew, a write levelling procedure, a refresh and
+physical layer with per-bit deskew, a write leveling procedure, a refresh and
 bank manager and a temperature monitor. Nothing in this repository could hold a
 hand-written one to anything, and a memory controller that is wrong in a way no
 check can see is the worst kind of thing this project can contain.
@@ -110,7 +110,7 @@ The project file is Digilent's with the four changes above and no others. The
 memory-off board's pin file, `../cadr_a7_ddr_off.xdc`, is what this script
 derives from the generated constraints, so the two cannot come apart. And the
 controller itself is regenerated into a scratch directory with the same
-relative layout and compared file for file, with one line normalised: the
+relative layout and compared file for file, with one line normalized: the
 generator stamps the hour it ran into a comment at the top of each constraint
 file.
 
@@ -136,9 +136,9 @@ Out of `gen/datasheet.txt`, which is the generator's own record.
 | data mask | enabled, which is what lets a 32-bit write not disturb its block |
 | ECC | disabled |
 
-## The licence
+## The license
 
-`create_ip -name mig_7series` and `generate_target all` checked out no licence
-feature at all under the BASIC licence on this host, and the build that follows
+`create_ip -name mig_7series` and `generate_target all` checked out no license
+feature at all under the BASIC license on this host, and the build that follows
 reports `A valid Vivado Design Suite BASIC license has been detected`. The
 generator is not a paid feature.

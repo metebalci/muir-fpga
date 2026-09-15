@@ -16,7 +16,7 @@
 // **THE TESTBENCH IS THE CABLE.**  The harness brings the eight wires of each
 // connector out as ports, so every wire here is delayed, skewed, shorted,
 // crossed or unplugged by this file rather than assumed to be perfect.  A
-// loopback of a serialiser into a deserialiser with an ideal wire between
+// loopback of a serializer into a deserializer with an ideal wire between
 // them is a check of arithmetic, not of a cable.
 //
 // **AND WHAT CROSSES IS POISON.**  A carrier fed a constant passes whatever

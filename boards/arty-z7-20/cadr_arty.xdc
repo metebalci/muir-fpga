@@ -33,7 +33,7 @@ set_property -dict { PACKAGE_PIN P14 IOSTANDARD LVCMOS33 } [get_ports { led[1] }
 set_property -dict { PACKAGE_PIN N16 IOSTANDARD LVCMOS33 } [get_ports { led[2] }]
 set_property -dict { PACKAGE_PIN M14 IOSTANDARD LVCMOS33 } [get_ports { led[3] }]
 
-## The two tricolour LEDs, from Digilent's Arty-Z7-20-Master.xdc verbatim.
+## The two tricolor LEDs, from Digilent's Arty-Z7-20-Master.xdc verbatim.
 ## Taken from the file rather than from memory: a wrong pin here is a light
 ## that does not come on, which reads as a design fault.
 set_property -dict { PACKAGE_PIN N15   IOSTANDARD LVCMOS33 } [get_ports { led4_r }]
@@ -210,7 +210,7 @@ set_false_path -to   [get_ports { ja[*] }]
 ##
 ## All eight pins are in bank 35 and, measured with `get_clock_regions`, all
 ## eight are in clock region X1Y2 --- which is what lets one `BUFIO` carry
-## the serial clock to all four serialisers. A board that moves these pins
+## the serial clock to all four serializers. A board that moves these pins
 ## has to check that again.
 set_property -dict { PACKAGE_PIN L16   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_clk_p }]; # IO_L11P_T1_SRCC_35      Sch=HDMI_TX_CLK_P
 set_property -dict { PACKAGE_PIN L17   IOSTANDARD TMDS_33 } [get_ports { hdmi_tx_clk_n }]; # IO_L11N_T1_SRCC_35      Sch=HDMI_TX_CLK_N
