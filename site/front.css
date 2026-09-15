@@ -53,7 +53,7 @@ table.boardtable {
 .boardtable td {
   text-align: left;
   vertical-align: top;
-  padding: 10px 14px 10px 0;
+  padding: 10px 14px;
   /* Faint lines between every cell, both ways: a row of yes and no is read
      by column as much as by row, and a thin rule under each row alone let
      the eye slide across.  The line is the ink at a fraction of its
@@ -62,7 +62,6 @@ table.boardtable {
   line-height: 1.4;
 }
 .boardtable thead th { font-weight: 600; }
-.boardtable tbody tr:last-child th,
 
 /* The board's name is the row's heading, and it stays in view while the rest
    of the row scrolls under it: a cell reading `built` says nothing without
