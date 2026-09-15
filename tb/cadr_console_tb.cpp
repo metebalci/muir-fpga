@@ -144,12 +144,27 @@ constexpr uint32_t kIdent    = 0x434F4E53u;   // "CONS"
 constexpr uint32_t kUnmapped = ~kIdent;
 constexpr uint32_t kLostT    = 4096u;
 
+// **WHAT THE FABRIC SAYS IT IS**, page 2's word 32.  On a board this comes out
+// of the part's AXSS register, which `tools/build_stamp.tcl` loaded from the
+// bitstream; here the check chooses it, because a check that read back
+// whatever the fabric happened to hold would be confirming and not comparing.
+//
+// Seven hex digits and a tree nibble, the stamp's own format: commit
+// `c0ffee2` with a tree that had a modified file.  Not a commit of this
+// repository and not `0xFFFFFFFF`, which is the one value the format reserves
+// for a bitstream that names no build at all.
+constexpr uint32_t kBuild = 0xC0FFEE21u;
+
 // Page 0, the console's own registers; page 1, the sixteen diagnostic ones.
 uint32_t Con(unsigned i) { return kBase + 4u * i; }
 uint32_t Spy(unsigned e) { return kBase + 0x40u + 4u * e; }
 enum ConReg { kRegIdent = 0, kRegStat = 1, kRegCycles = 2, kRegCyclesH = 3,
               kRegTicks = 4, kRegTicksH = 5, kRegReset = 6, kRegVma = 7,
               kRegQ = 8, kRegMd = 9, kRegBoot = 13, kRegDebug = 14 };
+// Page 2's word 32 is the build; every other word of pages 2 and 3 reads
+// `UNMAPPED`, which is also what an address outside the face reads --- so
+// this is the ONE address the face gained.
+constexpr unsigned kRegBuild = 32;
 
 // What `rtl/plumbing/xilinx7/cadr_machine.xdc`'s relaxed set asks of the three
 // registers `rtl/machine/cadr_console_state.sv` holds: fifteen ticks, 75 ns.
@@ -360,6 +375,7 @@ int main(int argc, char **argv) {
   dut->s_araddr = 0; dut->s_arlen = 0; dut->s_arid = 0;
   dut->cpu_msyn = 0; dut->cpu_write = 0; dut->cpu_addr = 0; dut->cpu_wdata = 0;
   dut->gnt_inhibit = 0;
+  dut->build = kBuild;
   dut->eval();
 
   auto read_next = [&](Row &r) {
@@ -1299,11 +1315,59 @@ int main(int argc, char **argv) {
     if ((w >> 24) != 0x44u) Fail("the frame counts' marker", w >> 24, 0x44u);
     if (w == kUnmapped) Fail("word 15 reading as an unused word", w, 0x44000000u);
   }
+  // **AND PAGE 2's WORD 32 IS WHICH BUILD THE FABRIC IS.**  On a board it
+  // comes out of `rtl/plumbing/xilinx7/cadr_usr_access.sv`, which reads the
+  // part's AXSS register, and `tools/build_stamp.tcl` put the commit and the
+  // tree's state there before `write_bitstream`.  Here the harness drives it
+  // with `kBuild`, so what is asserted is that the thirty-two bits reach the
+  // word unchanged --- a decode aimed a word out, or a word that answered
+  // with something of its own, reads as something else.
+  {
+    const uint32_t w = ReadWord(Con(kRegBuild));
+    if (w != kBuild) Fail("the build the fabric says it is", w, kBuild);
+    // And it is read-only: a write of the stamp back into it, and of a key
+    // that means something at another word, must change nothing.  A face that
+    // took writes here would be a face whose answer a program could have
+    // caused.
+    DoWrite(Con(kRegBuild), kBuild ^ 0xFFFFFFFFu, 0xF);
+    DoWrite(Con(kRegBuild), 0x5253'4554u, 0xF);          // RESET_KEY
+    const uint32_t again = ReadWord(Con(kRegBuild));
+    if (again != kBuild) Fail("the build after writes at its own word", again, kBuild);
+  }
+  // **AND EVERY OTHER WORD OF PAGES 2 AND 3 READS `UNMAPPED`**, which is what
+  // an address outside the face reads too --- so the face gained exactly one
+  // readable address when the stamp arrived and gained nothing else.  The two
+  // ends of page 2 past the stamp and the two ends of page 3.
+  for (unsigned i : {33u, 47u, 48u, 63u}) {
+    const uint32_t w = ReadWord(Con(i));
+    if (w != kUnmapped) Fail("a word of pages 2 and 3 that is not the build", w, kUnmapped);
+    ++unmapped_seen;
+    DoWrite(Con(i), 0xFFFFFFFFu, 0xF);   // dropped, and it must still answer
+  }
+  // **AND A WRITE ANYWHERE IN PAGES 2 AND 3 REACHES NOTHING**, which is the
+  // thing a second address match buys over a wider first one: page 2's word 6
+  // is `RESET_KEY`'s offset within its page, and a face that had merely
+  // widened its match would reset the machine here.  `resets` is read before
+  // and after, and the same test is made for the boot button's word.
+  {
+    const uint32_t before_r = ReadWord(Con(kRegReset));
+    const uint32_t before_b = ReadWord(Con(kRegBoot));
+    DoWrite(Con(32 + 6), 0x5253'4554u, 0xF);   // RESET_KEY at page 2's word 6
+    DoWrite(Con(48 + 6), 0x5253'4554u, 0xF);   // and at page 3's
+    DoWrite(Con(32 + 13), 0x424F'4F54u, 0xF);  // BOOT_KEY at page 2's word 13
+    DoWrite(Con(48 + 13), 0x424F'4F54u, 0xF);
+    const uint32_t after_r = ReadWord(Con(kRegReset));
+    const uint32_t after_b = ReadWord(Con(kRegBoot));
+    if (after_r != before_r) Fail("a key written on page 2 reset the machine", after_r, before_r);
+    if (after_b != before_b) Fail("a key written on page 2 pressed the button", after_b, before_b);
+  }
   // Outside the window, across the port's gigabyte.  A read nothing answers
   // hangs both Arm cores at one PC each, measured on the board, so what is
   // held is that these complete at all --- and with a word a program can
-  // recognize.
-  const uint32_t outside[] = {kBase + 0x80u, kBase + 0x1000u, kBase + 0x10000000u,
+  // recognize.  **`kBase + 0x80` WAS IN THIS LIST AND IS THE BUILD NOW**: it
+  // was outside a face of thirty-two words and is page 2's first word since,
+  // which is the one address in the whole port whose value the stamp moved.
+  const uint32_t outside[] = {kBase + 0x100u, kBase + 0x1000u, kBase + 0x10000000u,
                               kBase - 4u, 0xBFFFFFFCu, 0x00000000u, 0x40000000u};
   for (uint32_t a : outside) {
     const uint32_t w = ReadWord(a);
@@ -2282,6 +2346,15 @@ int main(int argc, char **argv) {
       "      HAD**: with the connector refusing, word 14 read bit 1 up, bit 0\n"
       "      DOWN and bit 2 saying why, which is the one thing about this word\n"
       "      a check with no cable on it can settle\n"
+      "    WHICH BUILD THE FABRIC IS, page 2's word 32: the harness drove\n"
+      "      0x%08X into the port a primitive reads the part's AXSS register\n"
+      "      with, and the word carried all thirty-two bits of it.  Two\n"
+      "      writes at that word changed nothing; the four other words of\n"
+      "      pages 2 and 3 that were read answered UNMAPPED, as an address\n"
+      "      outside the face does; and RESET_KEY and BOOT_KEY written at\n"
+      "      their own offsets within pages 2 and 3 neither reset the\n"
+      "      machine nor pressed the button, which is what a SECOND address\n"
+      "      match buys over a wider first one\n"
       "    MEASURED, NOT ASSERTED, because the file is not this slice's:\n"
       "      a mode write at register 13 landed %ld times (muir's\n"
       "      write_strobe is `eadr & 7`, so: once)\n",
@@ -2296,6 +2369,6 @@ int main(int argc, char **argv) {
       lag_seen, lag_samples, lag_moving,
       wrong_writes, pulse, pulse2, replay_rows,
       wrong_boot_writes, press, mboot_ticks - boot_ticks_before - press,
-      step_moved, visits, wrong_debug_writes, alias_landed);
+      step_moved, visits, wrong_debug_writes, kBuild, alias_landed);
   return 0;
 }

@@ -66,10 +66,40 @@ WORK   ?= $(HOME)/.cache/muir-fpga-console-$(shell printf '%s' '$(CURDIR)' | sha
 
 CFLAGS += -Wall -Wextra -std=gnu11
 
+# --- WHICH BUILD THE PROGRAM IS, which is a different question from which
+# --- build the FABRIC is
+#
+# `cadr-console --version` names the commit this program was compiled from,
+# in muir's own spelling: `muir 0.1.0-<commit>-release`, the commit dropped
+# when there is none.  muir's build.rs asks git and stamps the answer in
+# through the compile-time environment; this does the same with a `-D`.
+#
+# **BUILDROOT'S BUILD IS NOT IN A GIT TREE**, because the `local` site method
+# rsyncs this directory into `output/build` and compiles there, so a `git`
+# here would answer nothing under Buildroot and the truth would be lost
+# exactly where it matters.  `cadr-console.mk` therefore passes `BUILD_GIT`
+# from the repository, and this default is for the host build, which does run
+# in the tree.  Unset in both, the program says what muir says with no
+# `MUIR_GIT`: the version and the build kind and no commit, which is true.
+#
+# **AND THE STAMP IS TAKEN WHEN THE PACKAGE IS BUILT AND NOT WHEN THE IMAGE
+# IS**, so a Buildroot output directory carried across a commit that changed
+# no source of this package keeps the older number.  `make buildroot-rebuild`
+# is what forces it, which is what the image procedure already does; a
+# program that claimed otherwise would be the stale-artefact failure in its
+# own version string.
+BUILD_GIT ?= $(shell git rev-parse --short=7 HEAD 2>/dev/null)$(shell \
+	git status --porcelain 2>/dev/null | head -c 1 | sed 's/.\+/-dirty/')
+PKG_VERSION ?= 0
+VERSION_CFLAGS := -DCADR_PKG_VERSION='"$(PKG_VERSION)"'
+ifneq ($(BUILD_GIT),)
+VERSION_CFLAGS += -DCADR_BUILD_GIT='"$(BUILD_GIT)"'
+endif
+
 all: $(PROGRAMS)
 
 cadr-console: cadr-console.c $(CORE) $(HOST) $(HEADERS)
-	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(LDFLAGS) -o $@ cadr-console.c $(CORE) $(HOST) $(COMMON_LINK)
+	$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(VERSION_CFLAGS) $(LDFLAGS) -o $@ cadr-console.c $(CORE) $(HOST) $(COMMON_LINK)
 
 install: all
 	install -d $(DESTDIR)/usr/bin

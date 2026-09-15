@@ -222,3 +222,78 @@
 		return;
 	fwrite(buf, 1, n, d->f);
 @end
+
+# --- WHICH BUILD THE FABRIC IS, page 2's word 32 --------------------------
+#
+# The decode's three defects: a nibble read from the wrong end, a tree state
+# that looks like another, and the one value the stamp's format reserves
+# being taken for a build.  What makes these worth recording is that the word
+# they read is the only thing on a running board that says which bitstream it
+# is carrying, and a wrong answer there is worse than none: a person who
+# believes a commit goes and reads that commit's sources.
+
+@mutation the-build-nibble-is-read-from-the-wrong-end
+@file console_face.c
+@why the stamp's format is seven hex digits of commit and a nibble of tree state,
+@why and a decode that took the nibble from the top gets both halves wrong at once
+@note Written as a shift the other way rather than as a mask, so that every
+@note field stays read and the compiler has nothing to say --- the lint lesson
+@note one language along.  A board carrying build `782e3a90`, a clean tree,
+@note would report commit `82e3a90` and a tree of 7, which is not a state the
+@note format defines: it reads as a fabric from somewhere else entirely.
+@old
+	b.commit = w >> 4;
+	b.tree = w & 0xFu;
+@new
+	b.commit = w & 0x0FFFFFFFu;
+	b.tree = w >> 28;
+@end
+
+@mutation a-dirty-build-says-its-tree-was-clean
+@file console_face.c
+@why a bring-up run against an uncommitted change is legitimate and the stamp records
+@why it; a console that reported the commit alone would send somebody to sources that
+@why are not what the fabric was made from
+@note The nibble is still decoded and still printed; what goes is the
+@note distinction between the two states, which is exactly the shape of a
+@note defect somebody would introduce while tidying.  CLAUDE.md's own rule at
+@note the stamp is that a dirty tree is RECORDED and never refused, so the
+@note check has to hold the recording and not merely the refusal.
+@old
+	case CONS_BUILD_MODIFIED:	b.modified = 1;		b.known = 1; break;
+@new
+	case CONS_BUILD_MODIFIED:				b.known = 1; break;
+@end
+
+@mutation all-ones-is-read-as-a-build
+@file console_face.c
+@why all ones is what an unprogrammed part reads and what a bitstream built before
+@why the flows stamped them leaves behind, and `build_stamp_pack` makes sure no build
+@why can ever be called it: a console that printed `commit fffffff` would invent one
+@note This is the all-ones-and-all-zeros rule in its decoding form, and it is
+@note the value most likely to be met on a board --- every bitstream this
+@note project built before the stamp existed reads it.  The mutation keeps the
+@note field and sets it, so nothing is left unread.
+@old
+	if (w == CONS_BUILD_NONE)
+		return b;		/* stamped stays 0; there is nothing to read */
+	b.stamped = 1;
+@new
+	b.stamped = 1;
+@end
+
+@mutation the-build-is-read-from-the-word-beside-it
+@file console_face.c
+@why page 2's word 32 is the build and word 33 reads UNMAPPED, so a read aimed a word
+@why out answers with a value that means nothing and would be decoded as a commit
+@note The address is a constant and the shape of the defect is an off-by-one
+@note in it, which is the same thing `console-reads-the-register-after-the-one-
+@note asked` holds one page along.  `CONS_UNMAPPED` is `0xBCB0B1AC`, which is
+@note a perfectly plausible-looking stamp: commit `bcb0b1a`, tree nibble 12 ---
+@note not a state the format defines, which is what the decode's `known` flag
+@note is for and what catches this.
+@old
+	return c->read(c, CONS_BUILD);
+@new
+	return c->read(c, CONS_BUILD + 1u);
+@end

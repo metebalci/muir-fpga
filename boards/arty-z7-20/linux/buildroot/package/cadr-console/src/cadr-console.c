@@ -518,6 +518,8 @@ static void usage(void)
 		"                   to a person does not name the program they asked\n"
 		"  --settle-us N    how long `status` waits between its two reads of CYCLES (default 2000)\n"
 		"  --no-guard       touch M_AXI_GP1 without checking the EMIO tally first\n"
+		"  --version        which build THIS PROGRAM is, and exit.  `status` names\n"
+		"                   which build the FABRIC is, which is the other half\n"
 		"with no command it reads lines at a `>` prompt; `help` lists them\n"
 		"`trace-keys on|off` is the one command that touches no register: it tells\n"
 		"cadr-terminal and cadr-usb-input to say what each key becomes\n");
@@ -532,16 +534,23 @@ int main(int argc, char **argv)
 		{ "log", required_argument, NULL, 'l' },
 		{ "settle-us", required_argument, NULL, 's' },
 		{ "no-guard", no_argument, NULL, 'G' },
+		{ "version", no_argument, NULL, 'V' },
 		{ "help", no_argument, NULL, 'h' },
 		{ NULL, 0, NULL, 0 }
 	};
 	int c;
-	while ((c = getopt_long(argc, argv, "r:l:s:Gh", opts, NULL)) != -1) {
+	while ((c = getopt_long(argc, argv, "r:l:s:GVh", opts, NULL)) != -1) {
 		switch (c) {
 		case 'r': regs_phys = (uint32_t)strtoul(optarg, NULL, 0); break;
 		case 'l': cadr_log_dest(optarg); break;
 		case 's': settle_us = (unsigned)strtoul(optarg, NULL, 0); break;
 		case 'G': no_guard = 1; break;
+		// **BEFORE THE LOG IS OPENED AND BEFORE ANYTHING TOUCHES THE
+		// BUS**, as muir prints its own version before it reads an rc
+		// file.  A version is what somebody asks for when nothing else
+		// works, so it must not need a window that answers, a
+		// bitstream with a console in it, or /dev/mem.
+		case 'V': printf("%s\n", cons_version()); return 0;
 		default: usage(); return 2;
 		}
 	}

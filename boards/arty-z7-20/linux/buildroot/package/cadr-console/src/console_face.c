@@ -647,6 +647,11 @@ int cons_status(struct console *c, unsigned settle_us, struct cons_status *st)
 	// samples make rather than inside it, where one more register read
 	// would widen the window `running` is measured over.
 	cons_read_switch(c, &st->sw);
+	// And which build the fabric is, outside the bracket for the switch's
+	// reason: it is a constant from configuration onward, so a read of it
+	// inside the two samples of CYCLES would widen the window `running` is
+	// measured over and tell nobody anything new.
+	st->build = cons_build_of(cons_build_word(c));
 	st->flag1_word = f1;
 	st->flag2_word = f2;
 	st->f1 = cons_flag1_of(f1);
@@ -744,6 +749,101 @@ void cons_say_boot(const struct cons_boot_report *r)
 		    : "the machine did not come back: ask `status`");
 }
 
+// ---------------------------------------------------------------------------
+// **WHICH BUILD THE FABRIC IS**, page 2's word 32
+// ---------------------------------------------------------------------------
+//
+// `tools/build_stamp.tcl` is the authority on the format and this reads what
+// it writes: the commit's first seven hex digits in the top 28 bits and a
+// nibble saying how the tree stood.  Nothing here formats a number the tcl
+// could not have produced, and the one value it reserves --- all ones, which
+// an unprogrammed part reads and which a bitstream built before the flows
+// stamped them leaves behind --- is reported as "no stamp" and never as a
+// commit.
+//
+// **PURE, AND THAT IS LOAD-BEARING.**  This file is compiled for the Arty
+// A7-100's bare-metal firmware as well as for Linux, where there is no
+// operating system and picolibc is the whole library.  A decode that reached
+// for a file or a process would not merely waste space there: it would stop
+// the firmware linking, which is what `build/soc.pass` is the check for.
+struct cons_build cons_build_of(uint32_t w)
+{
+	struct cons_build b;
+	memset(&b, 0, sizeof b);
+	b.word = w;
+	if (w == CONS_BUILD_NONE)
+		return b;		/* stamped stays 0; there is nothing to read */
+	b.stamped = 1;
+	b.commit = w >> 4;
+	b.tree = w & 0xFu;
+	switch (b.tree) {
+	case CONS_BUILD_CLEAN:					b.known = 1; break;
+	case CONS_BUILD_MODIFIED:	b.modified = 1;		b.known = 1; break;
+	case CONS_BUILD_UNTRACKED:	b.untracked = 1;	b.known = 1; break;
+	case CONS_BUILD_BOTH:		b.modified = 1;
+					b.untracked = 1;	b.known = 1; break;
+	case CONS_BUILD_NO_TREE:				b.known = 1;
+		// `0000000f` is the whole word the stamp writes when git said
+		// nothing at all, and that is a different fact from a known
+		// commit whose tree could not be read.  Running the two
+		// together would print `commit 0000000`.
+		b.no_git = (b.commit == 0);
+		break;
+	default:
+		break;
+	}
+	return b;
+}
+
+const char *cons_build_tree_words(const struct cons_build *b)
+{
+	if (!b->known)
+		return "a state this program does not know";
+	if (b->tree == CONS_BUILD_NO_TREE)
+		return "unknown --- git could not say";
+	if (b->modified && b->untracked)
+		return "modified and carrying an untracked file";
+	if (b->modified)
+		return "modified";
+	if (b->untracked)
+		return "carrying an untracked file";
+	return "clean";
+}
+
+void cons_say_build(const struct cons_build *b)
+{
+	if (!b->stamped) {
+		say("fabric: no build stamp --- this bitstream was built before the flows "
+		    "stamped them, or the part is not configured; all ones is the one "
+		    "value a build can never be");
+		return;
+	}
+	if (b->no_git) {
+		say("fabric: build %08x --- no git information: it was not built from a "
+		    "checkout, so nothing here names a commit", b->word);
+		return;
+	}
+	say("fabric: build %08x --- commit %07x, tree %s",
+	    b->word, b->commit, cons_build_tree_words(b));
+	// **AND A TREE THAT WAS NOT CLEAN IS WORTH SAYING TWICE.**  A bring-up
+	// run against an uncommitted change is legitimate work and the stamp
+	// records it rather than refusing it; what must not happen is somebody
+	// reading the commit off this line and believing the fabric is what
+	// that commit builds.
+	if (b->modified || b->untracked)
+		say("fabric: so the commit names where this build STARTED and not what it "
+		    "is --- the tree had changes in it that are in no commit");
+	if (!b->known)
+		say("fabric: and the low nibble is %x, which is not one of the five the "
+		    "stamp's format defines, so the commit above may not be one either",
+		    b->tree);
+}
+
+uint32_t cons_build_word(struct console *c)
+{
+	return c->read(c, CONS_BUILD);
+}
+
 void cons_say_status(const struct cons_status *st)
 {
 	if (st->lost) {
@@ -776,6 +876,11 @@ void cons_say_status(const struct cons_status *st)
 		say("status: SW0 is %s NOW, which is not what it was at the last reset; the switch "
 		    "is read only there, so that changes nothing until the next one",
 		    st->sw.now ? "ON" : "OFF");
+	// **AND WHICH BUILD THE FABRIC IS**, last, because it is about the
+	// bitstream and everything above it is about the machine.  It is the
+	// answer to the question this project has twice had to reconstruct from
+	// a file's timestamp.
+	cons_say_build(&st->build);
 }
 
 // FLAG-1's sixteen fields, the low byte named as CC's `CC-PRINT-ERROR-STATUS`

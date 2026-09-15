@@ -86,3 +86,29 @@ void cons_say_trace_keys(const struct cons_trace_keys *r, int on)
 		break;
 	}
 }
+
+// --- WHICH BUILD THIS PROGRAM IS -----------------------------------------
+//
+// The Makefile passes both; `console_host.h` has the argument for the shape
+// and for the number.  Neither is ever absent from a build done here, and the
+// defaults are what a compile by hand with no `-D` gets.
+#ifndef CADR_PKG_VERSION
+#define CADR_PKG_VERSION "0"
+#endif
+
+const char *cons_version(void)
+{
+#ifdef CADR_BUILD_GIT
+	// muir's own order: name, version, commit, build kind.  `-dirty` rides
+	// on the commit exactly as muir's does, because a dirty tree is a fact
+	// about the commit's relationship to what was compiled and not a fourth
+	// field.
+	return "cadr-console " CADR_PKG_VERSION "-" CADR_BUILD_GIT "-release";
+#else
+	// Built from something that is not a checkout.  muir's `None` branch
+	// prints the version and the build kind and no commit, and so does
+	// this: a program that guessed would be worse than one that says
+	// nothing.
+	return "cadr-console " CADR_PKG_VERSION "-release";
+#endif
+}
