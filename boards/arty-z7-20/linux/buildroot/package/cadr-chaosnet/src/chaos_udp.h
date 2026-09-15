@@ -54,25 +54,62 @@
 //         16      2  packet number
 //         18      2  acknowledge
 //         20      n  data, n the byte count rounded up to a whole word
-//     ---- the hardware trailer, AIM-628 §2.2 ----
-//     20 + n      2  destination
-//     22 + n      2  source
-//     24 + n      2  check
+//     ---- the trailer, AIM-628 §2.2's three words ----
+//     20 + n      2  destination: the address on this subnet the packet is
+//                    sent to, which is the next hop and not necessarily the
+//                    header's destination
+//     22 + n      2  source: the sender's own address
+//     24 + n      2  checksum: the Internet checksum, NOT the 9401's CRC-16
 //
-// ## Byte order, which is **unverified** and is muir's reading
+// ## Byte order: every word most significant byte first
 //
 // `CHUDP_PACKET_ORDER` and `CHUDP_TRAILER_ORDER` say it and are the only
-// place a word becomes bytes.  The packet's own words are LITTLE-endian and
-// the trailer's three are NETWORK order --- a mixed frame.  muir's own
-// header explains why each is believed and what would settle it (a capture of
-// a live exchange, or one interoperation); the protocol's author has said a
-// version 2 may differ from version 1 in nothing but byte order, so it is two
-// constants to change rather than an audit of the packing.  The wrong order
-// fails loudly on the first packet --- an absurd 12-bit data count against
-// the datagram's length --- so it does not fail quietly.
+// place a word becomes bytes.  Both are network order, in the header, in the
+// data and in the trailer, which is what `cbridge` speaks --- established by
+// running `cbridge` and capturing what it accepts and sends, and implemented
+// the same way in `ozd`.  The two names are kept, rather than folded into
+// one, because the protocol's author has said a version 2 may differ from
+// version 1 in nothing but byte order: a version that moved one and not the
+// other would then be two constants to change rather than an audit of the
+// packing.
 //
-// `CHUDP_VERSION` is checked on receipt for the same reason: an unknown
-// version is refused with its number rather than parsed as this one.
+// **The data comes out swapped in pairs, and that is not a mistake.**
+// AIM-628 §3.6 puts the first byte of a pair in the word's arithmetically
+// least significant half, and the word is then written most significant byte
+// first, so `STATUS` goes on the wire as `TSTASU`.  An odd byte count is
+// padded to a whole word with a zero in the high half, which is the byte that
+// comes FIRST on the wire.  `cbridge` always pads and so does this;
+// `chudp_unwrap` refuses a datagram that does not, because a lone trailing
+// byte sits where the pad byte would be and reading it as data is a guess.
+//
+// `CHUDP_VERSION` is checked on receipt for the same reason the two names are
+// kept: an unknown version is refused with its number rather than parsed as
+// this one.
+//
+// ## The trailer's third word is the Internet checksum, not the CADR's CRC
+//
+// The CADR's sources and its netlist define the packet's words, how data
+// bytes go into them, and what the interface puts on its cable, the Fairchild
+// 9401's CRC-16 included.  They do not define how CHUDP lays those words out
+// in a datagram or which check word it carries.  No CADR ever sent a UDP
+// packet, and for CHUDP `cbridge` is the reference.
+//
+// So the conversion is here, at the edge where the machine meets UDP, and it
+// is the only thing this file does to a frame's words.  A frame going out
+// carries the Internet checksum in place of the check word the fabric
+// computed; a frame coming in has its Internet checksum verified, and then
+// the 9401's CRC-16 made for it, because the machine reads the trailer's
+// three words back out of its own buffer.  **The fabric is untouched by any
+// of this**, and `chaos_face.h`'s seam still carries the CADR's own check
+// word at both ends.
+//
+// The checksum is the one's complement of the one's complement sum of every
+// word before it: the eight header words, the data words, and the trailer's
+// destination and source.  A frame is good when all of its words, the
+// checksum included, sum to 0xFFFF.  `cbridge` drops a frame whose words do
+// not sum right, and so does this: a frame carried anyway would reach the
+// machine with a CRC this program made for it, which would say the frame
+// arrived whole when it did not.
 
 #ifndef CHAOS_UDP_H
 #define CHAOS_UDP_H
@@ -109,7 +146,7 @@
 #define CHUDP_MAX_PEERS 16u
 
 enum chudp_order { CHUDP_LITTLE, CHUDP_BIG };
-#define CHUDP_PACKET_ORDER  CHUDP_LITTLE
+#define CHUDP_PACKET_ORDER  CHUDP_BIG
 #define CHUDP_TRAILER_ORDER CHUDP_BIG
 
 struct chudp_peer {
@@ -136,6 +173,11 @@ struct chudp {
 	int have_default;
 	unsigned npeers;
 	struct chudp_peer peers[CHUDP_MAX_PEERS];
+	// Datagrams whose words did not sum right and were dropped, which is
+	// what `cbridge` does with one.  Counted rather than only traced: a
+	// link that is quietly losing frames to a checksum is the one fault a
+	// person watching the report line has to be able to see.
+	unsigned long bad_checksum;
 };
 
 // Binds the socket.  `port` of 0 asks the host for one.  0, or -1 having said
@@ -193,8 +235,25 @@ int chudp_poll(struct chudp *u, unsigned max,
 // `wrap`: the frame's words into a datagram.  Returns its length, or 0.
 // `unwrap`: a datagram back into a frame's words.  Returns the word count, or
 // 0 having put a sentence in `*why`.
+// `wrap` takes the frame as the machine's seam carries it --- the check word
+// in the trailer being the 9401's CRC-16 --- and writes the Internet checksum
+// in its place.  `unwrap` does the reverse: it verifies the Internet checksum
+// and hands back a frame whose trailer carries the CRC the machine expects,
+// so a frame that came off the network is one the machine's own interface
+// would have produced.  A datagram whose words do not sum right is refused,
+// with `*bad_checksum` set to 1 if `bad_checksum` is not NULL --- which is
+// what lets a caller count that refusal apart from a malformed datagram.
 unsigned chudp_wrap(const uint16_t *words, unsigned n, uint8_t *out, unsigned max);
 unsigned chudp_unwrap(const uint8_t *datagram, unsigned len, uint16_t *out,
-		      unsigned max, const char **why);
+		      unsigned max, const char **why, int *bad_checksum);
+
+// The Internet checksum over `n` words: the one's complement of their one's
+// complement sum.  Exported so that the check can hold it to `cbridge`'s own
+// figure for a frame `cbridge` sent, rather than to this program's arithmetic
+// agreeing with itself.
+uint16_t chudp_checksum(const uint16_t *words, unsigned n);
+
+// Whether a whole frame's words, the checksum among them, sum to 0xFFFF.
+int chudp_checksum_ok(const uint16_t *words, unsigned n);
 
 #endif
