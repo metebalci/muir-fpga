@@ -41,5 +41,6 @@ void chaos_test_note(const char *fmt, ...) __attribute__((format(printf, 1, 2)))
 void chaos_test_packet(void);
 void chaos_test_udp(void);
 void chaos_test_face(void);
+void chaos_test_inject(void);
 
 #endif

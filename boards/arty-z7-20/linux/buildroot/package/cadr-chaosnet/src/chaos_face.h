@@ -227,4 +227,22 @@ int chaos_face_give(struct chaos_face *f, const uint16_t *words, unsigned n);
 uint32_t chaos_face_stat(struct chaos_face *f);
 uint32_t chaos_face_lost(struct chaos_face *f);
 
+// Whether the machine has emptied its incoming buffer since this was last
+// asked.  The fabric latches `CHAOS_IRQ_RX_FREE` at the fall of Receive Done,
+// and a 1 written clears it, so this READS AND CLEARS: what it answers is an
+// EDGE since the last call and never a level.
+//
+// **THAT IS THE DIFFERENCE THAT MATTERS TO A RETRY.**  `STAT`'s `RX_BUSY`
+// being down says the buffer is free now, which a frame refused a moment ago
+// cannot use: the buffer may have been free all along and the refusal have
+// been for another reason.  The latched bit says the machine took a packet
+// out, which is the event that makes a refused frame worth offering again.
+// `chaos_inject.c` clears it immediately before every offer for exactly this
+// reason, so that a drain from before a refusal is never read as the turn to
+// go again after it.
+//
+// Only that bit is written back: `CHAOS_IRQ_TX` is a different question and
+// throwing it away here would answer it for somebody else.
+int chaos_face_rx_freed(struct chaos_face *f);
+
 #endif

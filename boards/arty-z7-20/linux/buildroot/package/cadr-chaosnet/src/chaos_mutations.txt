@@ -582,3 +582,131 @@ static volatile sig_atomic_t trace_asked = 0;
 	if (want < 0)
 		return -1;
 @end
+
+# **THE RETRY AT THE MACHINE'S END OF THE CABLE.**  The interface holds one
+# incoming packet, and a frame given to it while the machine has not read the
+# last one out is refused and counted in `LOST`.  Before `chaos_inject.c` the
+# program handed such a frame's loss to the sender's retransmission, and a
+# burst of frames from one host therefore delivered exactly ONE frame however
+# long the burst was.  AIM-628 §2.5 says the cable did not lose them: the
+# receiver aborts the frame, the sender's interface reads Transmit Abort, and
+# §2.6, "we recover from it (in software) by retransmitting the packet again a
+# couple of times".  The seven records below hold the seven decisions in that
+# retry, and the first three of them are what turn a burst of sixty-four
+# frames from one delivered into sixty-four.
+
+@mutation a-refused-frame-is-dropped-rather-than-held
+@file chaos_inject.c
+@why a frame the buffer refused waits for a turn, which is the whole of what this file is
+@note This is the program as it was: the refusal handed to the sender's
+@note retransmission and the frame gone.  A burst of any length then delivers
+@note exactly one frame, which is the measurement this slice started from, and
+@note the counts stop closing as well --- the frame was taken for the machine
+@note and is accounted for nowhere.
+@old
+		put(&q->q[q->head], words, n);
+		q->waiting = 1;
+@new
+		q->waiting = 0;
+@end
+
+@mutation a-frame-is-retired-at-its-first-failed-retry
+@file chaos_inject.c
+@why three offers in all, so that two retries can meet a machine that is busy twice over
+@note **THE BURST TABLE DOES NOT CATCH THIS, AND THAT IS WHY THE BOUND HAS A
+@note CHECK OF ITS OWN.**  Against a machine that empties its buffer, the
+@note retry after a refusal always succeeds, so a frame never needs its third
+@note offer and a burst of any length still arrives whole.  What the bound is
+@note for is the machine that has stopped listening, and only a case where
+@note the buffer is never emptied can count the offers a frame really gets.
+@old
+	if (q->offers >= CHAOS_INJECT_OFFERS) {
+@new
+	if (q->offers >= 2u) {
+@end
+
+@mutation the-bound-is-off-by-one
+@file chaos_inject.h
+@why three offers in all, which is CHAOS-NUMBER-TRANSMIT-RETRIES, "Send once and retry twice if aborted"
+@note A bound nobody can see is a bound nobody checks, and a check that read
+@note the constant would agree with any value of it.  `chaos_test_inject.c`
+@note writes the number out once beside MIT's own words for it, and counts
+@note the offers a frame really gets against a machine that never empties its
+@note buffer.
+@old
+#define CHAOS_INJECT_OFFERS 3u
+@new
+#define CHAOS_INJECT_OFFERS 4u
+@end
+
+@mutation the-frame-whose-turn-it-is-is-the-newest-and-not-the-oldest
+@file chaos_inject.c
+@why a queue keeps order, as MIT's driver does by leaving an aborted packet at the head of the transmit list
+@note muir's CHUDP node puts an aborted frame back at the FRONT of its queue,
+@note "ahead of anything that arrived since".  Taking the newest instead
+@note delivers a burst backwards, which a transport at the far end recovers
+@note from by retransmitting everything --- so it costs throughput and not
+@note correctness, and nothing but an order check finds it.
+@old
+	struct chaos_inject_frame *head = &q->q[q->head];
+@new
+	struct chaos_inject_frame *head =
+		&q->q[(q->head + q->waiting - 1u) % CHAOS_INJECT_QUEUE];
+@end
+
+@mutation a-frame-given-up-past-the-bound-is-counted-nowhere
+@file chaos_inject.c
+@why every frame this edge took for the machine is stored, given up, dropped for want of room, or waiting
+@note This is `struct chudp`'s rule one seam along and the same argument: the
+@note sum closing is what says a road out has not been left uncounted.  A
+@note frame retired after its three offers and counted nowhere goes missing
+@note in silence, which is the failure that took hours to tell from a link
+@note hearing nothing at all.
+@old
+		bump(&q->given_up);
+@new
+@end
+
+@mutation a-drain-from-before-a-refusal-is-taken-for-the-turn-to-go-again
+@file chaos_inject.c
+@why the turn to go again is the machine emptying its buffer AFTER the refusal, not before it
+@note `CHAOS_IRQ_RX_FREE` is latched and stays set until somebody writes a 1
+@note to it, so a drain from any time in the past looks exactly like one from
+@note a moment ago.  Clearing it immediately before every offer is what makes
+@note the answer an edge.  Without it a refused frame retries at once, and
+@note again, and the three offers are gone in microseconds against a machine
+@note that needs hundreds of them.
+@old
+	(void)chaos_face_rx_freed(f);
+	if (chaos_face_give(f, words, n) == 1) {
+@new
+	if (chaos_face_give(f, words, n) == 1) {
+@end
+
+@mutation the-buffer-being-free-is-read-as-a-level-and-not-an-edge
+@file chaos_face.c
+@why a 1 written clears the latched bit, so that the next answer is about the next drain
+@note The register is the fabric's own `irq_q <= (irq_q & ~irq_clr) | irq_set`
+@note and the bit is set at the FALL of Receive Done.  A reader that never
+@note clears it is told "the machine emptied its buffer" for ever after the
+@note first packet it ever took, which is a level dressed as an event.
+@old
+	f->write(f, CHAOS_IRQ, CHAOS_IRQ_RX_FREE);
+	return 1;
+@new
+	return 1;
+@end
+
+@mutation a-frame-with-nowhere-to-wait-overwrites-one-that-is-waiting
+@file chaos_inject.c
+@why a queue that is full drops the frame and counts it, rather than writing over a frame that has not gone yet
+@note A sender with no room for a packet does not transmit one, and the cable
+@note loses it. Writing over the slot at the head instead loses a DIFFERENT
+@note frame --- one the machine was already owed --- and leaves `waiting`
+@note counting a frame that is no longer there, so the counts stop closing as
+@note well.
+@old
+		q->waiting == CHAOS_INJECT_QUEUE
+@new
+		q->waiting > CHAOS_INJECT_QUEUE
+@end

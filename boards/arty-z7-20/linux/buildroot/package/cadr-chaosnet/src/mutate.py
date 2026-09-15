@@ -34,10 +34,11 @@ import shutil
 import subprocess
 import sys
 
-CORE = ["chaos_packet.c", "chaos_udp.c", "chaos_face.c"]
-HEADERS = ["chaos_face.h", "chaos_packet.h", "chaos_udp.h"]
+CORE = ["chaos_packet.c", "chaos_udp.c", "chaos_face.c", "chaos_inject.c"]
+HEADERS = ["chaos_face.h", "chaos_packet.h", "chaos_udp.h", "chaos_inject.h"]
 TESTS = ["chaos_test.c", "chaos_test_packet.c", "chaos_test_udp.c",
-         "chaos_test_face.c", "chaos_test.h"]
+         "chaos_test_face.c", "chaos_test_model.c", "chaos_test_inject.c",
+         "chaos_test.h", "chaos_test_model.h"]
 COMMON = ["cadr_log.c", "cadr_mem.c"]
 MUTABLE = set(CORE) | set(HEADERS)
 
