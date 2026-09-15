@@ -119,6 +119,22 @@
       <p class="src">Source: <code>docs/io-board.md</code>,
       <code>docs/tv.md</code>, <code>docs/board.md</code>.</p>
 
+      <h3>Is the color TV four bits a pixel or eight?</h3>
+      <p>Four, and nothing here implements eight. A pixel of the color screen
+      is a four-bit address into a map of sixteen colors, and each of those
+      sixteen holds three eight-bit channels &mdash; so the eight is the depth
+      of a gun and not of a pixel. MIT's own software settles it:
+      <code>COLOR:MAKE-SCREEN</code> declares the screen
+      <code>:BITS-PER-PIXEL 4</code>, <code>%COLOR-TRANSFORM</code> accepts
+      only <code>ART-4B</code> arrays and traps on anything else, and
+      <code>lmtv.order</code> says of the map that &ldquo;we only use a 16x8
+      subset of it&rdquo;. The board has one mode here and it is that one.</p>
+      <p class="src">Source: <code>docs/tv.md</code>; muir's
+      <code>src/tv.rs</code>, its <code>COLOR_BITS_PER_PIXEL</code>,
+      <code>COLORS</code> and <code>CHANNELS</code>; MIT's
+      <code>sys/window/color.lisp</code>, <code>sys/ucadr/uc-hacks.lisp</code>
+      and <code>cadrtv/lmtv.order</code>.</p>
+
       <h3>Why does the screen keep the previous boot's picture?</h3>
       <p>Because the real machine did. A reset on the display board clears the
       vertical flag and nothing else; the mode register and the sync enable

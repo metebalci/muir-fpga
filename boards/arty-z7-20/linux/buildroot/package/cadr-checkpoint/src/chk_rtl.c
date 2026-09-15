@@ -37,6 +37,7 @@
 
 #include "chk_rtl.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 // --- the constants a fresh muir machine has --------------------------------
@@ -63,10 +64,11 @@
 // The tag `Tv::save` writes for the board, src/tv.rs:886-889: the SIMPLE TV
 // is 0 and the LISPM TV is 1.
 #define MUIR_TV_BOARD_SIMPLE 0u
-// `tv::COLORS` times `tv::CHANNELS`, src/tv.rs:225 and :233: sixteen colours
+// `tv::COLORS` times `tv::CHANNELS`, src/tv.rs:225 and :233: sixteen colors
 // of three channels each, and `Tv::save` writes them a byte at a time with no
 // count in front of them.
-#define MUIR_TV_COLOR_MAP_BYTES (16u * 3u)
+#define MUIR_TV_COLOR_CHANNELS  3u
+#define MUIR_TV_COLOR_MAP_BYTES (16u * MUIR_TV_COLOR_CHANNELS)
 // muir's own `chaos::Config::default().address`, src/chaos/mod.rs:145.
 #define MUIR_CHAOS_ADDRESS 0177001u
 
@@ -199,11 +201,12 @@ static void emit_disk(struct chk *w, const struct chk_declared *d)
 // **THE PICTURE IS REAL AND NOTHING ELSE HERE IS.**  The display block writes
 // the frame buffer into the display's own region of DDR, which Linux can map,
 // so the 32,768 words are the board's own screen word for word.  The mode
-// register, the sync RAM, the colour map and the vertical-interrupt flag are
-// inside `cadr_tv.sv` and the readout window does not reach them: the sync RAM
-// is muir's model of a sync generator the fabric does not have at all, the
-// colour map is a write-only port whose RAMs are off the board, and the flag
-// is one bit that the resumed machine will set again at its next frame.
+// register, the sync RAM and the vertical-interrupt flag are inside
+// `cadr_tv.sv` and the readout window does not reach them: the sync RAM is
+// 4,096 bytes and no readout reaches it, and the flag is one bit that the
+// resumed machine will set again at its next frame.  **THE COLOR MAP IS
+// READ**, off the console face's page 4 --- register 4 is write only on the
+// Xbus, so that page is the only way to ask what a color is.
 static void emit_tv(struct chk *w, const struct cadr_image *img)
 {
 	// **WHICH OF THE TWO DISPLAY BOARDS THIS IS, AND IT IS NOT A DEFAULT.**
@@ -227,27 +230,32 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 	chk_bytes(w, zero_sync, IMG_TV_SYNC);	/* NONE sync.words */
 	chk_u16(w, 0);				/* NONE sync.pointer */
 	chk_u8(w, MUIR_TV_SYNC_ENABLE);		/* NONE sync.enable */
-	// The colour map, sixteen colours of three channels: **bare bytes with
+	// The color map, sixteen colors of three channels: **bare bytes with
 	// NO COUNT in front of them**, because `Tv::save` writes them `w.u8` at
 	// a time (src/tv.rs:893-897) and not through `w.bytes`.  A count here
 	// would shift every byte after it.
 	//
-	// Zero is `Tv::default`'s `color_map: [[0; CHANNELS]; COLORS]`
-	// (src/tv.rs:439), the power-on map, and the fabric has nothing else to
-	// offer: register 4 is the write-only port whose RAMs and converters
-	// are off the board, so `cadr_tv.sv` answers the write and keeps
-	// nothing.  muir keeps what was written because it draws the picture;
-	// this board cannot be asked what it was.
+	// **IT IS READ NOW AND IT USED TO BE WRITTEN AS ZEROS.**  Register 4 is
+	// write only on the Xbus --- the RAMs and their converters are off the
+	// board --- so no bus cycle can be asked what the map is; the fabric
+	// keeps the sixteen entries as muir's `tv::Tv::color_map` does and
+	// offers them on the console face's page 4, which is where `img->tv_map`
+	// came from.  This is the FIRST display board's map, because the
+	// section being written is the machine's `tv`.
+	//
+	// The rest of this section is still NONE, and that is not made better
+	// by the map arriving: the sync RAM is 4,096 bytes and no readout
+	// reaches it, so a resumed machine's display is the map it had with
+	// MIT's PROM running.  `chk_rtl_missing` says so.
 	for (unsigned i = 0; i < MUIR_TV_COLOR_MAP_BYTES; ++i) {
 #if CHK_MUTATE == 5
 		// Every gun at full, which is a map somebody has written and
-		// not the one a machine comes up with.  Forty-eight bytes in
-		// the right slots with the wrong values: it loads, muir
-		// re-saves it byte for byte, and the digest is the only thing
-		// that can see it.
+		// not the one this board has.  Forty-eight bytes in the right
+		// slots with the wrong values: it loads, muir re-saves it byte
+		// for byte, and the digest is the only thing that can see it.
 		chk_u8(w, 0xffu);
 #else
-		chk_u8(w, 0);			/* NONE color_map */
+		chk_u8(w, img->tv_map[i / MUIR_TV_COLOR_CHANNELS][i % MUIR_TV_COLOR_CHANNELS]);
 #endif
 	}
 	chk_bool(w, 0);				/* NONE flag_written */
@@ -511,7 +519,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	emit_tv(w, img);
 	// **WHETHER A SECOND DISPLAY BOARD WAS ON THE BACKPLANE**, and the
 	// board itself after it when there was one (`Machine::save`,
-	// src/machine.rs:962-965).  This backplane has one screen: the colour
+	// src/machine.rs:962-965).  This backplane has one screen: the color
 	// board is `17200000` and `17377750`, which `cadr_xbus_decode.sv`
 	// answers with an NXM --- held to `busint::decode` over all 4,194,304
 	// addresses --- and that NXM is how `COLOR-EXISTS-P` finds out which
@@ -519,7 +527,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// `refuse_color_tv` (src/main.rs:3276-3286) refuses a resume that
 	// `--color-tv` disagrees with, by name.
 #if CHK_MUTATE == 7
-	// A colour board this backplane does not have.  muir then reads a
+	// A color board this backplane does not have.  muir then reads a
 	// whole second 135,257-byte display out of the eight hundred bytes
 	// that are left, and REFUSES at the short read --- which is what
 	// makes this the flag's own mutant and not the map's.
@@ -669,15 +677,16 @@ static const char *const kMissing[] = {
 	"    was halted is LOST.  Halt between transfers --- the disk light is",
 	"    the instrument --- or expect the microcode to retry.",
 	"the display's mode register, its sync RAM, when that program last",
-	"    started, its colour map and its vertical-interrupt flag.  The",
-	"    PICTURE is read, out of DDR, word for word.  There is no sync",
-	"    generator in this fabric, so the program has run since power-on",
-	"    and that instant is zero.  The colour map is the write-only port",
-	"    at register 4, whose RAMs are off the board: the fabric answers",
-	"    the write and keeps nothing, so a power-on map is written.  Which",
-	"    display board this is, and that no colour board is fitted, are",
-	"    DECLARED rather than missing --- the fabric is the SIMPLE TV with",
-	"    one screen, and muir refuses a resume that disagrees with either.",
+	"    started, and its vertical-interrupt flag.  The PICTURE is read,",
+	"    out of DDR, word for word, and so is THE COLOR MAP, off the",
+	"    console face's page 4 --- register 4 is write only on the Xbus,",
+	"    whose RAMs are off the board, so that page is the only way to ask",
+	"    what a color is.  The sync program is 4,096 bytes and no readout",
+	"    reaches it, so a resumed machine runs MIT's PROM from its",
+	"    power-on instant.  Which display board this is, and that no",
+	"    color board is fitted, are DECLARED rather than missing --- the",
+	"    fabric is the SIMPLE TV with one screen, and muir refuses a",
+	"    resume that disagrees with either.",
 	"the I/O board, whole: the keyboard, the mouse, the sixty-cycle",
 	"    interval and THE MICROSECOND CLOCK, which is the CADR's whole",
 	"    timebase.  A resumed machine's time of day starts again.",
@@ -723,7 +732,7 @@ const char *const *chk_rtl_missing(void)
 //
 // **4 TO 7 ARE THE FOUR FIELDS FORMAT 25 ADDED, ONE EACH**, because a field
 // nothing is aimed at is a field the check does not hold: the display board's
-// tag, the colour map, the sync program's origin and the colour board's
+// tag, the color map, the sync program's origin and the color board's
 // presence flag.  Two of the four are caught by muir's REFUSAL --- the tag by
 // its cross-check against `--tv-board`, the flag by the short read that
 // follows a display board that is not in the file --- and two by the DIGEST
@@ -741,12 +750,93 @@ const char *chk_rtl_mutation(void)
 #elif CHK_MUTATE == 4
 	return "the display board written as the LISPM TV where the fabric is the SIMPLE TV";
 #elif CHK_MUTATE == 5
-	return "the colour map written all ones where a power-on map is all zeros";
+	return "the color map written all ones where the board's own map is read";
 #elif CHK_MUTATE == 6
 	return "the sync program's origin written at the machine's clock instead of zero";
 #elif CHK_MUTATE == 7
-	return "a colour display board claimed on a backplane that has none";
+	return "a color display board claimed on a backplane that has none";
+#elif CHK_MUTATE == 8
+	return "--chaos-address read as decimal, which is what strtoul(.., 0) does";
 #else
 	return NULL;
+#endif
+}
+
+// **AN ADDRESS IS OCTAL, AND THIS PROGRAM READ IT AS DECIMAL UNTIL IT WAS
+// CAUGHT ON THE BOARD.**  `--chaos-address 177100` went through
+// `strtoul(.., 0)`, where a plain string of digits is DECIMAL, and put
+// 0o131714 --- the low sixteen bits of one hundred and seventy-seven thousand
+// --- into the checkpoint's switches.  muir then refused the file, saying so:
+// "the Chaosnet interface's switches read 131714, this machine's 177100".
+// Only the spelling `0177100` worked.
+//
+// muir's own flag "wants one address in octal or subnet:host", and
+// `chaos::parse_address` is the whole of what it takes:
+//
+//   * a bare octal number, `u16::from_str_radix(s, 8)`.  **No prefix**: not
+//     `0o`, not `0x`, and a leading `0` changes nothing because the string is
+//     octal already.  A digit 8 or 9 is refused.
+//   * or `subnet:host`, each an octal byte of at most `0o377`.
+//   * and in both forms BOTH halves must be non-zero --- `a >> 8 != 0 && a &
+//     0o377 != 0` --- so `0`, `377` and `177000` are not addresses.
+//
+// This is that parser in C, so that a card, a script and a person all spell an
+// address here the way they spell it to muir.  The checkpoint is refused by
+// muir when the two disagree, which is what made the defect visible at all.
+//
+// Returns 0 and sets `*out`, or -1.
+int chk_chaos_address(const char *s, unsigned *out)
+{
+#if CHK_MUTATE == 8
+	// The defect as it stood on the board: `strtoul(.., 0)` reads a plain
+	// string of digits as DECIMAL, so `177001` becomes 177,001 and its low
+	// sixteen bits, 0o131551, go into the checkpoint's switches.  muir
+	// refuses the file and says which two addresses disagree, which is how
+	// it was found.
+	*out = (unsigned)(strtoul(s, NULL, 0) & 0xFFFFu);
+	return 0;
+#else
+	const char *colon = strchr(s, ':');
+	unsigned a = 0;
+
+	// One octal byte or one octal address: digits 0 to 7 alone, and at
+	// least one of them.
+	unsigned long v = 0;
+	const char *p = s;
+	unsigned n = 0;
+	for (; *p && *p != ':'; ++p) {
+		if (*p < '0' || *p > '7')
+			return -1;
+		v = v * 8u + (unsigned long)(*p - '0');
+		if (v > 0177777ul)
+			return -1;
+		++n;
+	}
+	if (n == 0)
+		return -1;
+	if (colon) {
+		if (v > 0377ul)
+			return -1;
+		unsigned long h = 0;
+		unsigned hn = 0;
+		for (p = colon + 1; *p; ++p) {
+			if (*p < '0' || *p > '7')
+				return -1;
+			h = h * 8u + (unsigned long)(*p - '0');
+			if (h > 0377ul)
+				return -1;
+			++hn;
+		}
+		if (hn == 0)
+			return -1;
+		a = (unsigned)((v << 8) | h);
+	} else {
+		a = (unsigned)v;
+	}
+	// Both halves non-zero, which is muir's `both`.
+	if ((a >> 8) == 0 || (a & 0377u) == 0)
+		return -1;
+	*out = a;
+	return 0;
 #endif
 }

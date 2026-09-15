@@ -79,6 +79,7 @@
 #include "input_face.h"
 #include "input_keys.h"
 #include "input_mapping.h"
+#include "color_map.h"
 #include "screen_frame.h"
 #include <cadr/cadr_endpoint.h>
 
@@ -179,6 +180,12 @@ struct client {
 	unsigned n;			/* bytes a pixel */
 	uint8_t white[4], black[4];
 	int got_colour_map;
+	// What the server said the screen is, out of ServerInit, and what
+	// SetColourMapEntries carried: the color screen's check compares
+	// both, and neither can be had from the mono path.
+	unsigned told_w, told_h;
+	unsigned map_first, map_count;
+	uint16_t map_rgb[16][3];
 	unsigned long rects_raw, rects_rre, subrects;
 	unsigned long long bytes;
 };
@@ -331,8 +338,13 @@ static int client_handshake(struct client *c, const char *version)
 	if (client_need(c, 24) < 0)
 		return -1;
 	const unsigned w = be16at(c->in), h = be16at(c->in + 2);
-	CHECK(w == SCREEN_WIDTH && h == SCREEN_HEIGHT,
-	      "ServerInit says %ux%u, wanting %ux%u", w, h, SCREEN_WIDTH, SCREEN_HEIGHT);
+	c->told_w = w;
+	c->told_h = h;
+	// **THE SIZE IS THE FRAME'S AND NOT A CONSTANT**, because this one
+	// server serves both display boards and the check drives it with
+	// either: 768 x 963 on the first board and 576 x 454 on the color TV.
+	CHECK(w == frame.width && h == frame.height,
+	      "ServerInit says %ux%u, wanting %ux%u", w, h, frame.width, frame.height);
 	const uint32_t namelen = be32at(c->in + 20);
 	if (client_need(c, 24 + namelen) < 0)
 		return -1;
@@ -349,15 +361,27 @@ static void client_set_format(struct client *c, const struct rfb_format *f)
 	client_send(c, m, sizeof m);
 	client_format(c, f);
 	if (!f->true_colour) {
-		// SetColourMapEntries, section 7.6.2: two colors from 0.
-		if (client_need(c, 18) == 0 && c->in[0] == 1) {
-			CHECK(be16at(c->in + 2) == 0 && be16at(c->in + 4) == 2,
-			      "the color map named %u colors from %u, wanting 2 from 0",
-			      be16at(c->in + 4), be16at(c->in + 2));
-			CHECK(be16at(c->in + 12) == 0xFFFF,
-			      "color map entry 1 is not white");
-			c->got_colour_map = 1;
-			client_take(c, 18);
+		// SetColourMapEntries, section 7.6.2: two colors from 0 on the
+		// first display board and SIXTEEN on the color TV, whose
+		// entries are the map the machine wrote.
+		if (client_need(c, 6) == 0 && c->in[0] == 1) {
+			c->map_first = be16at(c->in + 2);
+			c->map_count = be16at(c->in + 4);
+			if (c->map_count <= 16 && client_need(c, 6 + 6 * c->map_count) == 0) {
+				for (unsigned v = 0; v < c->map_count; ++v)
+					for (unsigned k = 0; k < 3; ++k)
+						c->map_rgb[v][k] =
+							(uint16_t)be16at(c->in + 6 + v * 6 + k * 2);
+				if (c->map_count == 2) {
+					CHECK(c->map_first == 0,
+					      "the color map named 2 colors from %u, wanting 0",
+					      c->map_first);
+					CHECK(c->map_rgb[1][0] == 0xFFFF,
+					      "color map entry 1 is not white");
+				}
+				c->got_colour_map = 1;
+				client_take(c, 6 + 6 * c->map_count);
+			}
 		}
 	}
 }
@@ -1543,6 +1567,405 @@ static void send_pointer(struct client *c, uint8_t buttons, unsigned x, unsigned
 // `up_down` written a second time.  That is the anchors' rule applied to the
 // keyboard: a builder and a reader that are wrong the same way agree with
 // each other, and the literals are what no such pair can put back.
+// ---- THE SECOND SCREEN, the color TV's ----------------------------------
+//
+// 576 x 454 at four bits a pixel through sixteen colors.  **NOTHING HERE
+// GOES THROUGH THE MONO DECODER**: `canvas` holds one of two values and a
+// color pixel is one of sixteen, so this reads the rectangle itself and
+// compares every pixel against a color it computed from the map --- which is
+// also what keeps it from agreeing with the program by using the program's
+// own arithmetic.
+//
+// **THE ANCHORS ARE HAND-COMPUTED**, as the first screen's are.  muir's
+// `Tv::color`: the pixel at `x`, `y` is nibble `x % 8` of word
+// `y * 72 + x / 8`, from the LOW end.
+
+struct color_anchor { unsigned word, nibble, x, y; const char *what; };
+
+static const struct color_anchor COLOR_ANCHORS[] = {
+	{ 0, 0, 0, 0, "word 0's low nibble is the top-left pixel" },
+	{ 0, 1, 1, 0, "word 0's next nibble is one pixel to its right" },
+	{ 0, 7, 7, 0, "word 0's high nibble is the eighth pixel" },
+	{ 1, 0, 8, 0, "word 1's low nibble is the pixel after it" },
+	{ 71, 7, 575, 0, "word 71's high nibble is the last pixel of line 0" },
+	{ 72, 0, 0, 1, "word 72's low nibble is the first pixel of line 1" },
+	{ 72 * 227 + 36, 0, 288, 227, "the middle of the screen" },
+	{ 72 * 453, 0, 0, 453, "word 32,616's low nibble is the first pixel of the last line" },
+	{ 72 * 453 + 71, 7, 575, 453, "word 32,687's high nibble is the bottom-right pixel" },
+};
+
+// The map this check uses: sixteen colors, every one distinct in all three
+// guns, none of them zero and none all ones --- so a channel read in the
+// wrong order, a color off by one, and an entry that came back as black are
+// three different failures.
+static void color_map_for_the_check(uint8_t map[SCREEN_COLORS][3])
+{
+	for (unsigned c = 0; c < SCREEN_COLORS; ++c) {
+		map[c][0] = (uint8_t)(0x11u + c * 0x0Du);
+		map[c][1] = (uint8_t)(0x23u + c * 0x07u);
+		map[c][2] = (uint8_t)(0x41u + c * 0x03u);
+	}
+}
+
+// One color in a viewer's own 32-bit format, written again here rather than
+// called out of `screen_rfb.c`: a mutation of that arithmetic must not cancel.
+static uint32_t color_expected_rgb888(const uint8_t map[SCREEN_COLORS][3], unsigned v)
+{
+	return ((uint32_t)map[v][0] << 16) | ((uint32_t)map[v][1] << 8) | map[v][2];
+}
+
+static void color_set(uint32_t *w, unsigned x, unsigned y, unsigned v)
+{
+	const unsigned at = y * SCREEN_COLOR_WORDS_PER_LINE + x / 8u;
+	const unsigned sh = (x % 8u) * 4u;
+	w[at] = (w[at] & ~(0xFu << sh)) | ((v & 0xFu) << sh);
+}
+
+// The rectangle a viewer is sent for the whole color screen, read here and
+// compared pixel by pixel.  `want` is the colors the check put there.
+static void color_expect(struct client *c, const uint8_t map[SCREEN_COLORS][3],
+			 const uint8_t *picture, const char *what)
+{
+	tick();
+	client_request(c, 0, 0, 0, SCREEN_COLOR_WIDTH, SCREEN_COLOR_HEIGHT);
+	if (client_need(c, 4) < 0) {
+		fail(__LINE__, "%s: no update", what);
+		return;
+	}
+	if (c->in[0] != 0) {
+		fail(__LINE__, "%s: message type %u, wanting FramebufferUpdate", what, c->in[0]);
+		return;
+	}
+	const unsigned rects = be16at(c->in + 2);
+	client_take(c, 4);
+	unsigned differ = 0, painted = 0;
+	for (unsigned r = 0; r < rects; ++r) {
+		if (client_need(c, 12) < 0) {
+			fail(__LINE__, "%s: a rectangle header did not arrive", what);
+			return;
+		}
+		const unsigned x = be16at(c->in), y = be16at(c->in + 2);
+		const unsigned w = be16at(c->in + 4), h = be16at(c->in + 6);
+		const int32_t enc = (int32_t)be32at(c->in + 8);
+		client_take(c, 12);
+		if (enc != RFB_ENCODING_RAW) {
+			fail(__LINE__, "%s: encoding %d, wanting Raw", what, enc);
+			return;
+		}
+		const size_t n = (size_t)w * h * c->n;
+		if (client_need(c, n) < 0) {
+			fail(__LINE__, "%s: the pixels did not arrive", what);
+			return;
+		}
+		for (unsigned dy = 0; dy < h; ++dy)
+			for (unsigned dx = 0; dx < w; ++dx) {
+				const uint8_t *p = c->in + ((size_t)dy * w + dx) * c->n;
+				uint32_t got = 0;
+				for (unsigned k = 0; k < c->n; ++k)
+					got |= (uint32_t)p[k] << (c->format.big_endian
+								      ? 8 * (c->n - 1 - k)
+								      : 8 * k);
+				const unsigned v =
+					picture[(size_t)(y + dy) * SCREEN_COLOR_WIDTH + x + dx];
+				const uint32_t wantv = color_expected_rgb888(map, v);
+				++painted;
+				if (got != wantv) {
+					if (differ < 4)
+						fail(__LINE__,
+						     "%s: pixel %u,%u is 0x%08x, wanting color %u "
+						     "= 0x%08x",
+						     what, x + dx, y + dy, got, v, wantv);
+					++differ;
+				}
+			}
+		client_take(c, n);
+	}
+	++checks;
+	if (differ)
+		fail(__LINE__, "%s: %u of %u pixels differ", what, differ, painted);
+	CHECK(painted == SCREEN_COLOR_WIDTH * SCREEN_COLOR_HEIGHT,
+	      "%s: %u pixels painted, wanting %u", what, painted,
+	      SCREEN_COLOR_WIDTH * SCREEN_COLOR_HEIGHT);
+}
+
+// A model of the console face for `color_map.c`: the words are an array and
+// the read is an index into it, which is the whole of what the board's
+// mapping does.
+static uint32_t model_face_read(struct color_map_face *f, unsigned word)
+{
+	const uint32_t *w = f->ctx;
+	return w[word];
+}
+
+static void check_color_screen(void)
+{
+	static const struct rfb_format rgb888 = { 32, 24, 0, 1, 255, 255, 255, 16, 8, 0 };
+	static const struct rfb_format mapped = { 8, 8, 0, 0, 0, 0, 0, 0, 0, 0 };
+	static const int32_t rre_list[] = { RFB_ENCODING_RRE, RFB_ENCODING_RAW };
+	uint8_t map[SCREEN_COLORS][3];
+	color_map_for_the_check(map);
+
+	// 1.  **THE ANCHORS**, one nibble at a time in an empty screen.
+	for (unsigned k = 0; k < sizeof COLOR_ANCHORS / sizeof *COLOR_ANCHORS; ++k) {
+		const struct color_anchor *a = &COLOR_ANCHORS[k];
+		screen_frame_init_color(&frame);
+		screen_frame_map(&frame, map);
+		for (unsigned i = 0; i < SCREEN_COLOR_VISIBLE_WORDS; ++i)
+			frame.words[i] = 0;
+		// Color 9, which is neither 0 nor 15: a screen of zeros with
+		// one 9 in it, and the 9 must be where the anchor says.
+		frame.words[a->word] = 9u << (a->nibble * 4u);
+		unsigned found_x = SCREEN_COLOR_WIDTH, found_y = SCREEN_COLOR_HEIGHT, n = 0;
+		for (unsigned y = 0; y < SCREEN_COLOR_HEIGHT; ++y)
+			for (unsigned x = 0; x < SCREEN_COLOR_WIDTH; ++x)
+				if (screen_value(&frame, x, y) == 9u) {
+					if (n == 0) {
+						found_x = x;
+						found_y = y;
+					}
+					++n;
+				}
+		CHECK(n == 1 && found_x == a->x && found_y == a->y,
+		      "%s: word %u nibble %u put color 9 at %u,%u %u times; wanting once at %u,%u",
+		      a->what, a->word, a->nibble, found_x, found_y, n, a->x, a->y);
+	}
+
+	// 2.  A whole screen a viewer can check every pixel of.  The colors
+	//     run across and down so that a row taken for another row, or a
+	//     nibble for its neighbor, shows.
+	static uint8_t picture[SCREEN_COLOR_HEIGHT * SCREEN_COLOR_WIDTH];
+	screen_frame_init_color(&frame);
+	screen_frame_map(&frame, map);
+	for (unsigned i = 0; i < SCREEN_COLOR_VISIBLE_WORDS; ++i)
+		frame.words[i] = 0;
+	for (unsigned y = 0; y < SCREEN_COLOR_HEIGHT; ++y)
+		for (unsigned x = 0; x < SCREEN_COLOR_WIDTH; ++x) {
+			const unsigned v = (x / 3u + y * 5u) & 0xFu;
+			picture[(size_t)y * SCREEN_COLOR_WIDTH + x] = (uint8_t)v;
+			color_set(frame.words, x, y, v);
+		}
+	{
+		struct client c;
+		if (open_viewer(&c, "RFB 003.008\n", &rgb888, NULL, 0) < 0) {
+			fail(__LINE__, "the color screen: no viewer");
+			return;
+		}
+		// **THE VIEWER IS TOLD THE COLOR SCREEN'S SIZE AND NOT THE
+		// FIRST BOARD'S**, which is what says the server takes its
+		// geometry from the frame it is given.
+		CHECK(c.told_w == SCREEN_COLOR_WIDTH && c.told_h == SCREEN_COLOR_HEIGHT,
+		      "the color screen: a viewer was told %ux%u, wanting %ux%u",
+		      c.told_w, c.told_h, SCREEN_COLOR_WIDTH, SCREEN_COLOR_HEIGHT);
+		color_expect(&c, map, picture, "the color screen in 32bpp");
+		client_close(&c);
+		settle();
+	}
+
+	// 3.  **A MAPPED VIEWER IS SENT SIXTEEN ENTRIES AND THEY ARE THE
+	//     MACHINE'S MAP.**  RFB's entries are sixteen bits a gun and the
+	//     CADR's are eight, so a byte is repeated into both halves.
+	{
+		struct client c;
+		if (open_viewer(&c, "RFB 003.008\n", &mapped, NULL, 0) < 0) {
+			fail(__LINE__, "the color map: no viewer");
+			return;
+		}
+		CHECK(c.got_colour_map, "a mapped viewer of the color screen got no "
+		      "SetColourMapEntries");
+		CHECK(c.map_first == 0 && c.map_count == SCREEN_COLORS,
+		      "SetColourMapEntries named colors %u to %u, wanting 0 to 15",
+		      c.map_first, c.map_first + c.map_count);
+		unsigned wrong = 0;
+		for (unsigned v = 0; v < SCREEN_COLORS && v < c.map_count; ++v)
+			for (unsigned k = 0; k < 3; ++k) {
+				const uint16_t want16 = (uint16_t)(map[v][k] << 8 | map[v][k]);
+				if (c.map_rgb[v][k] != want16) {
+					if (wrong < 3)
+						fail(__LINE__,
+						     "color %u gun %u came back 0x%04x, wanting "
+						     "0x%04x", v, k, c.map_rgb[v][k], want16);
+					++wrong;
+				}
+			}
+		CHECK(wrong == 0, "%u of the 48 color-map channels differ", wrong);
+		client_close(&c);
+		settle();
+	}
+
+	// 4.  **RRE WITH MORE THAN TWO COLORS.**  A run of one color is one
+	//     subrectangle; a row of red beside a row of green is two.  The
+	//     screen is bands, so RRE wins and every subrectangle carries a
+	//     color of its own --- which is what a walk written for two
+	//     colors gets wrong: it would call everything that is not the
+	//     background one color and send whichever it saw first.
+	screen_frame_init_color(&frame);
+	screen_frame_map(&frame, map);
+	for (unsigned y = 0; y < SCREEN_COLOR_HEIGHT; ++y)
+		for (unsigned x = 0; x < SCREEN_COLOR_WIDTH; ++x) {
+			// Half the row the background color 0, then two bands
+			// of two other colors.
+			const unsigned v = x < SCREEN_COLOR_WIDTH / 2 ? 0u
+					   : x < SCREEN_COLOR_WIDTH * 3 / 4 ? 5u : 12u;
+			picture[(size_t)y * SCREEN_COLOR_WIDTH + x] = (uint8_t)v;
+			color_set(frame.words, x, y, v);
+		}
+	{
+		struct client c;
+		if (open_viewer(&c, "RFB 003.008\n", &rgb888, rre_list, 2) < 0) {
+			fail(__LINE__, "the color screen with RRE: no viewer");
+			return;
+		}
+		tick();
+		client_request(&c, 0, 0, 0, SCREEN_COLOR_WIDTH, SCREEN_COLOR_HEIGHT);
+		if (client_need(&c, 16) < 0) {
+			fail(__LINE__, "the color screen with RRE: no update");
+			client_close(&c);
+			return;
+		}
+		const unsigned rects = be16at(c.in + 2);
+		client_take(&c, 4);
+		CHECK(rects == 1, "the color screen with RRE: %u rectangles, wanting 1", rects);
+		const unsigned w = be16at(c.in + 4), h = be16at(c.in + 6);
+		const int32_t enc = (int32_t)be32at(c.in + 8);
+		client_take(&c, 12);
+		CHECK(enc == RFB_ENCODING_RRE,
+		      "three bands of color went as encoding %d, wanting RRE", enc);
+		if (enc != RFB_ENCODING_RRE) {
+			client_close(&c);
+			settle();
+			return;
+		}
+		if (client_need(&c, 4 + c.n) < 0) {
+			fail(__LINE__, "the RRE header did not arrive");
+			client_close(&c);
+			return;
+		}
+		const uint32_t count = be32at(c.in);
+		uint32_t background = 0;
+		for (unsigned k = 0; k < c.n; ++k)
+			background |= (uint32_t)c.in[4 + k] << (c.format.big_endian
+								   ? 8 * (c.n - 1 - k) : 8 * k);
+		client_take(&c, 4 + c.n);
+		CHECK(background == color_expected_rgb888(map, 0),
+		      "the RRE background is 0x%08x, wanting color 0 = 0x%08x",
+		      background, color_expected_rgb888(map, 0));
+		// Two subrectangles a row: the two bands that are not the
+		// background.  A walk that sent "not the background" as ONE
+		// color would send one a row and paint the far band wrong.
+		CHECK(count == 2u * h, "%u subrectangles for %u rows of two bands, wanting %u",
+		      count, h, 2u * h);
+		const size_t each = c.n + 8;
+		if (client_need(&c, each * count) < 0) {
+			fail(__LINE__, "the RRE subrectangles did not arrive");
+			client_close(&c);
+			return;
+		}
+		unsigned wrong = 0;
+		for (uint32_t k = 0; k < count; ++k) {
+			const uint8_t *p = c.in + each * k;
+			uint32_t got = 0;
+			for (unsigned q = 0; q < c.n; ++q)
+				got |= (uint32_t)p[q] << (c.format.big_endian
+							      ? 8 * (c.n - 1 - q) : 8 * q);
+			const unsigned sx = be16at(p + c.n);
+			const unsigned want_v = sx < SCREEN_COLOR_WIDTH * 3 / 4 ? 5u : 12u;
+			if (got != color_expected_rgb888(map, want_v)) {
+				if (wrong < 3)
+					fail(__LINE__,
+					     "a subrectangle at x=%u is 0x%08x, wanting color %u "
+					     "= 0x%08x", sx, got, want_v,
+					     color_expected_rgb888(map, want_v));
+				++wrong;
+			}
+		}
+		CHECK(wrong == 0, "%u of %u RRE subrectangles carry the wrong color", wrong, count);
+		client_take(&c, each * count);
+		(void)w;
+		client_close(&c);
+		settle();
+	}
+
+	// 5.  **A COLOR MAP OF ZEROS IS A BLACK SCREEN AND NOT AN ERROR.**
+	//     That is what a machine that has not written one leaves, and the
+	//     program says so rather than serving a picture whose colors are
+	//     invented.
+	screen_frame_init_color(&frame);
+	for (unsigned y = 0; y < SCREEN_COLOR_HEIGHT; ++y)
+		for (unsigned x = 0; x < SCREEN_COLOR_WIDTH; ++x)
+			color_set(frame.words, x, y, (x + y) & 0xFu);
+	{
+		unsigned lit = 0;
+		for (unsigned v = 0; v < SCREEN_COLORS; ++v)
+			lit += frame.map[v][0] | frame.map[v][1] | frame.map[v][2];
+		CHECK(lit == 0, "an unwritten color map is not all zeros");
+	}
+
+	// 6.  **THE COLOR MAP'S READER**, against a model of the console face.
+	//     No /dev/mem: the face is one function pointer, which is
+	//     `input_face`'s own seam one file along.
+	{
+		static uint32_t face[96];
+		struct color_map_face cm;
+		for (unsigned i = 0; i < 96; ++i)
+			face[i] = 0xDEADBEEFu;	/* nothing reads this */
+		face[CMAP_IDENT] = CMAP_IDENT_WORD;
+		// The two boards' maps, DIFFERENT maps: a reader that took the
+		// first board's page would come back with the other one's
+		// bytes and every one of them would be wrong.
+		for (unsigned c = 0; c < CMAP_COLORS; ++c) {
+			face[CMAP_WORD(0, c)] =
+				((uint32_t)(0x80u + c) << 16) | ((uint32_t)(0x90u + c) << 8)
+				| (0xA0u + c);
+			face[CMAP_WORD(1, c)] =
+				((uint32_t)map[c][0] << 16) | ((uint32_t)map[c][1] << 8) | map[c][2];
+		}
+		cm.read = model_face_read;
+		cm.ctx = face;
+
+		uint32_t got = 0;
+		CHECK(color_map_ident(&cm, &got) == 0 && got == CMAP_IDENT_WORD,
+		      "the console's face read 0x%08x and not CONS", got);
+
+		// **A FABRIC OLDER THAN WORD 33 IS NOT A BACKPLANE WITH
+		// NOTHING SET**, and the marker is what tells them apart.
+		face[CMAP_DISPLAY] = 0;
+		CHECK(color_map_fitted(&cm) < 0, "an unmarked display word read as a backplane");
+		face[CMAP_DISPLAY] = (uint32_t)CMAP_TV_MARK << 16;
+		CHECK(color_map_fitted(&cm) == 0, "a backplane with no color board read as one");
+		face[CMAP_DISPLAY] = ((uint32_t)CMAP_TV_MARK << 16) | CMAP_TV_COLOR;
+		CHECK(color_map_fitted(&cm) == 1, "a fitted color board was not seen");
+
+		uint8_t read_back[CMAP_COLORS][CMAP_CHANNELS];
+		CHECK(color_map_read(&cm, read_back) == 1,
+		      "a map with every gun set came back as an unwritten one");
+		unsigned wrong = 0;
+		for (unsigned c = 0; c < CMAP_COLORS; ++c)
+			for (unsigned k = 0; k < CMAP_CHANNELS; ++k)
+				if (read_back[c][k] != map[c][k]) {
+					if (wrong < 3)
+						fail(__LINE__,
+						     "the color board's map at %u/%u read %u, "
+						     "wanting %u --- the first board's is %u there",
+						     c, k, read_back[c][k], map[c][k],
+						     (unsigned)((face[CMAP_WORD(0, c)]
+								 >> (16 - 8 * k)) & 0xFFu));
+					++wrong;
+				}
+		CHECK(wrong == 0, "%u of the 48 map bytes came from the wrong page or channel", wrong);
+
+		// And an unwritten map is said to be one, so that the program
+		// can tell a black screen from a machine that has not drawn.
+		for (unsigned c = 0; c < CMAP_COLORS; ++c)
+			face[CMAP_WORD(1, c)] = 0;
+		CHECK(color_map_read(&cm, read_back) == 0,
+		      "a map of zeros was not reported as unwritten");
+	}
+
+	// Back to the first screen, so that nothing after this runs on a frame
+	// it did not expect.
+	screen_frame_init(&frame, 0);
+}
+
 static void check_keyboard(void)
 {
 	struct client c;
@@ -3378,6 +3801,9 @@ int main(int argc, char **argv)
 
 	printf("--- the register face\n");
 	check_input_face();
+
+	printf("--- the second screen, the color TV's: 576x454 at four bits a pixel\n");
+	check_color_screen();
 
 	printf("--- the keyboard: muir's mapping onto MIT's own key table\n");
 	check_keyboard();

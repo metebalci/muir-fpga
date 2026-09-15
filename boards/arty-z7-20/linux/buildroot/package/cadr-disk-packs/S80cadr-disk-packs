@@ -124,12 +124,65 @@ start() {
 	else
 		echo "cadr-disk-packs: no pack partition at $PACKS_DEV; the bay will be empty"
 	fi
+	set_the_display_boards
 	hold_the_machine
 	connect_the_debug_cable
 	# `--log` is not here and not the card's: `cadr_daemon` gives every
 	# program the same two destinations, the console and a file under
 	# /var/log that somebody over ssh can follow.
 	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS"
+}
+
+# **WHICH DISPLAY BOARDS THE BACKPLANE HAS**, and it is here for
+# `hold_the_machine`'s two reasons: it reads `fpgarc`, which is on the
+# partition this script is the one thing that mounts, and it must land before
+# the drive comes present, because a machine that has read a band is a machine
+# that may already have looked at a display board.
+#
+# `--tv-board` says which board the first display is, muir's own two words:
+# MIT's SIMPLE TV, which System 100 drives, or the LISPM TV that replaced it in
+# December 1980.  `--color-tv` fits the SECOND display board, the color TV at
+# `0o17200000`.  Both are muir's flags with muir's meanings.
+#
+# **A MACHINE WITH NO COLOR BOARD MUST GIVE THE NXM AT THOSE ADDRESSES**,
+# which is how `COLOR-EXISTS-P` in the band finds out whether it has one, so
+# the board is off unless the card asks for it and a card that says nothing is
+# a one-display machine --- which is muir's own default and the backplane every
+# reference trace was taken on.
+#
+# **THE TWO ARE SET IN THIS ORDER AND THE ORDER DOES NOT MATTER**, which is
+# worth saying because the debug cable's two lines below are an order and not a
+# tidiness: these are two bits of one word and each key leaves the other alone,
+# so a card carrying both gets both whichever way round they are read.
+#
+# Nothing is printed when neither flag is there, because a board with the
+# backplane muir describes has nothing to say about it.
+set_the_display_boards() {
+	[ -f "$RC" ] || return 0
+	fpgarc_has "$RC" --tv-board || fpgarc_has "$RC" --color-tv || return 0
+	if ! command -v cadr-console > /dev/null 2>&1; then
+		echo "cadr-display: --tv-board or --color-tv, and no cadr-console to ask with;" \
+		     "the fabric's own backplane stands: one SIMPLE TV and no color TV"
+		return 0
+	fi
+	# `--log /dev/console` for the reason the cable's calls give: these
+	# lines are a log and a line in a log names its program.
+	if fpgarc_has "$RC" --tv-board; then
+		# One flag, one word, and the reader hands back both.  A
+		# spelling the console does not know is refused BY the console,
+		# which prints the two it takes.
+		eval "set -- $(fpgarc_args "$RC" --tv-board)"
+		if ! cadr-console --log /dev/console tv-board "${2:-simple-tv}" 2>&1; then
+			echo "cadr-display: --tv-board ${2:-simple-tv}: cadr-console could not reach" \
+			     "the console; the first board is whatever the fabric came up as"
+		fi
+	fi
+	if fpgarc_has "$RC" --color-tv; then
+		if ! cadr-console --log /dev/console color-tv on 2>&1; then
+			echo "cadr-display: --color-tv: cadr-console could not reach the console;" \
+			     "this machine has no color TV"
+		fi
+	fi
 }
 
 # **LEAVE THE BOOT BUTTON UNPRESSED, AND THERE ARE TWO WAYS TO ASK FOR IT.**

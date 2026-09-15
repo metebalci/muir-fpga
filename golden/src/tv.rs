@@ -13,6 +13,18 @@
 //! where the program is restarted, so this trace PINS that instant and works
 //! its `-TVMA CLR`s out from it; see `ORIGIN_T` below.
 //!
+//! **ONE PROGRAM, TWO BOARDS.**  muir has one display model and `--tv-board`
+//! says which board it is playing; this takes the same word as its argument
+//! and writes the board into the header, and `tb/cadr_tv_tb.cpp` reads it
+//! back and straps the fabric to match.  The two boards differ in ONE bit a
+//! bus cycle can see --- mode bit 7, `SYNC PROM ENB`, which the LISPM TV
+//! reads the sync enable back through and the SIMPLE TV grounds by ECO 2 of
+//! `cadrtv/lmtv.eco` --- so the two traces are the same program and part only
+//! on reads of the mode register with the sync RAM selected.  The last
+//! section is three such reads, put there so that the bit is exercised
+//! deliberately rather than by accident of what the rest of the program
+//! happened to leave the enable at.
+//!
 //! **What muir's TV is.**  `src/tv.rs`: a 32,768-word frame buffer at
 //! `BUFFER` (`0o17000000`), eight control words at `CONTROL` (`0o17377760`),
 //! and a vertical flag.  Register 0 is the mode register: four writable bits
@@ -24,7 +36,7 @@
 //! board grounds it, while bits 5 and 6 are the sync program's own `VSYNC`
 //! and `HSYNC`.
 //! Registers 1 to 3 are the sync program RAM's data, pointer and enable;
-//! register 4 is the Colour register, whose map is not on the board; and only
+//! register 4 is the Color register, whose map is not on the board; and only
 //! 5 to 7 "respond but don't do anything".  `SEND INTR`, what the board puts
 //! on `-XBUS.INTR`, is the flag with the enable up.  The device answers in no
 //! time of its own (`IDEAL_DEVICE_NS`), so a read acknowledges 140 ns after
@@ -113,7 +125,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use muir::busint::{self, Busint, MFINISHD_NS, Responder};
 use muir::tv::{
-    BUFFER, BUFFER_WORDS, CONTROL, CONTROL_WORDS, FRAME_NS, SYNC_RAM_WORDS, Tv, mode, sync,
+    BUFFER, BUFFER_WORDS, Board, CONTROL, CONTROL_WORDS, FRAME_NS, SYNC_RAM_WORDS, Tv, mode, sync,
 };
 
 /// Five nanoseconds, the master clock's period.
@@ -227,6 +239,13 @@ fn which_register(phys: u32) -> Option<u32> {
 }
 
 fn main() {
+    // Which board this trace is of, `--tv-board`'s own two words.
+    let board = match std::env::args().nth(1).as_deref() {
+        None | Some("simple-tv") => Board::SimpleTv,
+        Some("lispm-tv") => Board::LispmTv,
+        Some(other) => panic!("tv: `{other}` is not a board; simple-tv or lispm-tv"),
+    };
+
     assert_eq!(FRAME_NS % TICK_NS, 0, "FRAME_NS is not on the 5 ns grid");
     assert_eq!(FRAME_TICKS, 3_091_200);
     assert_eq!(FRAME_TICKS % MICROCYCLE_TICKS, 3, "the boundary arithmetic below assumes a frame is 3 mod 29 ticks");
@@ -353,7 +372,7 @@ fn main() {
 
 
     // Frame 8: the frame buffer.  Writes across the window and its edges,
-    // reads back, one word rewritten with its neighbours checked, and the
+    // reads back, one word rewritten with its neighbors checked, and the
     // two words just outside the window, which nothing answers.
     // ---------------------------------------------------------------
     p.at(8 * f + 777);
@@ -545,6 +564,24 @@ fn main() {
     p.pause(150); // past the first instruction of the run the enable started
     p.read(CONTROL); // the flag gone, the mode standing
     p.read(CONTROL + 1); // 0xA5: the RAM and its enable survived the reset
+
+    // ---------------------------------------------------------------
+    // **AND THE ONE BIT THE TWO BOARDS DIFFER IN**, deliberately rather than
+    // by accident.  Mode bit 7, `SYNC PROM ENB`: on the LISPM TV the 74LS244
+    // at XBCTL 0F11 takes it from pin 19 of the 74LS273 at TVINC 0A07, which
+    // is the sync enable, and on the SIMPLE TV the same pin is ground.  So
+    // the enable is turned off and on again with a read of the mode register
+    // at each, and the two traces part on exactly those reads and nowhere
+    // else.  The flag is clear here --- the `-XBUS INIT` above took it and
+    // the pause since is a few hundred ticks against a frame --- so neither
+    // enable write restarts the program with it standing.
+    // ---------------------------------------------------------------
+    p.write(CONTROL + 3, 0o65); // the enable off, the spacing kept
+    p.pause(150); // past the first instruction of the run it started
+    p.read(CONTROL); // 0o14 on both boards
+    p.write(CONTROL + 3, 0x80 | 0o65); // and on again
+    p.pause(150);
+    p.read(CONTROL); // 0o14 on a SIMPLE TV, 0o214 on a LISPM TV
     let end = p.cursor + 500_000;
 
     // ---------------------------------------------------------------
@@ -553,6 +590,7 @@ fn main() {
     let mut bi = Busint::new(1);
     bi.device_ns = 0;
     let mut tv = Tv::default();
+    tv.set_board(board);
     let mut main: BTreeMap<u32, u32> = BTreeMap::new();
     let mut fb_written: BTreeSet<u32> = BTreeSet::new();
 
@@ -604,7 +642,7 @@ fn main() {
         let mclk = tick % MICROCYCLE_TICKS == 0;
         let mut xinit = false;
 
-        // The cpu lifts -MEMRQ MFINISHD_NS after the acknowledgement.
+        // The cpu lifts -MEMRQ MFINISHD_NS after the acknowledgment.
         if let Some(at) = release_at
             && now >= at
         {
@@ -684,7 +722,7 @@ fn main() {
                 if r == 0 {
                     // Neither the flag nor the sync bits may move between
                     // muir's read and the fabric's strobe: see the top.
-                    let ack = bi.ack_at().expect("a read has an acknowledgement");
+                    let ack = bi.ack_at().expect("a read has an acknowledgment");
                     assert_eq!(
                         tv.vert_flag(now),
                         tv.vert_flag(ack),
@@ -851,6 +889,7 @@ fn main() {
     println!("# generated by golden/src/tv.rs from muir's tv::Tv through busint::Busint");
     println!("# one row a tick wherever anything moves; between rows every column holds");
     println!("# every value decimal; rdata is the word MD takes on a read, 0 otherwise");
+    println!("# board {}", board.name());
     println!("# frame_ns {FRAME_NS}");
     println!("# frame_ticks {FRAME_TICKS}");
     println!("# microcycle_ticks {MICROCYCLE_TICKS}");
@@ -883,7 +922,8 @@ fn main() {
         println!("{l}");
     }
     eprintln!(
-        "tv: {cycle} cycles over {end} ticks ({} frames), {n_rows} rows; interrupt up {intr_rises} times and down {intr_falls}; {inits} inits, {nxm_cycles} timeouts",
+        "tv {}: {cycle} cycles over {end} ticks ({} frames), {n_rows} rows; interrupt up {intr_rises} times and down {intr_falls}; {inits} inits, {nxm_cycles} timeouts",
+        board.name(),
         end / f
     );
 }

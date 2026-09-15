@@ -69,36 +69,55 @@ static void buf_reset(struct buf *v)
 
 struct pixels {
 	unsigned n;			/* bytes a pixel takes on the wire */
-	uint8_t table[256 * 8 * 4];	/* entry b: byte b as eight pixels, bit 0 first */
-	uint8_t white[4], black[4];
+	unsigned per_byte;		/* pixels a frame-buffer byte carries */
+	unsigned values;		/* distinct pixel values: 2 or 16 */
+	uint8_t table[256 * 8 * 4];	/* entry b: byte b as `per_byte` pixels, the
+					   first pixel first */
+	uint8_t value[16][4];		/* each pixel value, on the wire */
 };
 
-static void pixels_make(struct pixels *px, const struct rfb_format *f)
+// **THE TABLE IS BUILT FOR WHICHEVER SCREEN THIS VIEWER IS WATCHING.**  On
+// the one-bit screen a frame-buffer byte is eight pixels of two values; on
+// the color one it is two pixels of sixteen.  Either way the table's entry
+// for a byte is that byte's pixels, the leftmost first, already in the
+// viewer's own format --- and `256 * 8 * 4` bytes holds both, the color
+// screen using a quarter of it.
+static void pixels_make(struct pixels *px, const struct rfb_format *f,
+			const struct screen_frame *fr)
 {
 	px->n = rfb_bytes_per_pixel(f);
 	if (px->n == 0)
 		px->n = 4;
-	rfb_put(f, px->white, rfb_white(f));
-	rfb_put(f, px->black, rfb_black(f));
+	px->values = screen_values(fr);
+	px->per_byte = 8u / fr->bpp;
+	for (unsigned v = 0; v < 16u; ++v)
+		rfb_put(f, px->value[v], rfb_pixel(f, fr->map, v, px->values));
 	for (unsigned byte = 0; byte < 256; ++byte)
-		for (unsigned bit = 0; bit < 8; ++bit)
-			memcpy(px->table + (byte * 8 + bit) * px->n,
-			       (byte >> bit) & 1u ? px->white : px->black, px->n);
+		for (unsigned k = 0; k < px->per_byte; ++k) {
+			const unsigned v = px->values == 2u
+					       ? (byte >> k) & 1u
+					       : (byte >> (k * 4u)) & 0xFu;
+			memcpy(px->table + (byte * px->per_byte + k) * px->n, px->value[v], px->n);
+		}
 }
 
-static const uint8_t *pixels_eight(const struct pixels *px, uint8_t b)
+// One frame-buffer byte as its pixels, the leftmost first.
+static const uint8_t *pixels_byte(const struct pixels *px, uint8_t b)
 {
-	return px->table + (size_t)b * 8 * px->n;
+	return px->table + (size_t)b * px->per_byte * px->n;
 }
 
-static const uint8_t *pixels_one(const struct pixels *px, int white)
+static const uint8_t *pixels_one(const struct pixels *px, unsigned value)
 {
-	return white ? px->white : px->black;
+	return px->value[value & 15u];
 }
 
-// Byte `k` of row `y`, with `BOW` applied: pixel p is bit p % 8 of byte
-// p / 8, and byte k is the k % 4th of word k / 4, from the low end.  This is
-// muir's `Pixels::put_row`, whose comment says the same.
+// Byte `k` of row `y`, with `BOW` applied: byte k is the k % 4th of word
+// k / 4, from the low end.  On the one-bit screen pixel p is bit p % 8 of
+// byte p / 8, which is muir's `Pixels::put_row`; on the color screen it is
+// nibble p % 2 of byte p / 2, which is `Tv::color` written the same way.
+// `BOW` reaches the one-bit screen only --- a four-bit pixel has no bit to
+// invert, and `screen_frame_init_color` says so.
 static uint8_t row_byte(const struct screen_frame *f, unsigned y, unsigned k)
 {
 	uint32_t word = f->words[y * f->words_per_line + k / 4];
@@ -110,32 +129,34 @@ static uint8_t row_byte(const struct screen_frame *f, unsigned y, unsigned k)
 // ---- the two encodings ---------------------------------------------------
 
 // Raw, RFC 6143 section 7.7.1: the pixels of the rectangle, left to right and
-// top to bottom.  The middle of a row goes eight pixels at a time out of the
-// table; the ends, where the rectangle begins or stops inside a byte of the
-// frame buffer, go one at a time through `screen_shows_white`, which is where
-// the rule about which way round the screen is lives.  A viewer normally asks
-// for the whole screen, whose 768 pixels are 96 whole bytes, and then there
-// are no ends.
+// top to bottom.  The middle of a row goes a frame-buffer BYTE at a time out
+// of the table --- eight pixels on the one-bit screen and two on the color
+// one; the ends, where the rectangle begins or stops inside a byte, go one at
+// a time through `screen_value`, which is where the rule about which way
+// round each screen is lives.  A viewer normally asks for the whole screen,
+// whose 768 or 576 pixels are whole bytes either way, and then there are no
+// ends.
 static int encode_raw(struct buf *out, const struct screen_frame *f, const struct pixels *px,
 		      unsigned rx, unsigned ry, unsigned rw, unsigned rh)
 {
 	if (buf_room(out, (size_t)rw * rh * px->n) < 0)
 		return -1;
+	const unsigned per = px->per_byte;
 	for (unsigned y = ry; y < ry + rh; ++y) {
 		unsigned p = rx;
 		const unsigned end = rx + rw;
-		while (p < end && p % 8 != 0) {
-			memcpy(out->b + out->len, pixels_one(px, screen_shows_white(f->words, p, y, f->black_on_white)), px->n);
+		while (p < end && p % per != 0) {
+			memcpy(out->b + out->len, pixels_one(px, screen_value(f, p, y)), px->n);
 			out->len += px->n;
 			++p;
 		}
-		while (p + 8 <= end) {
-			memcpy(out->b + out->len, pixels_eight(px, row_byte(f, y, p / 8)), 8 * px->n);
-			out->len += 8 * px->n;
-			p += 8;
+		while (p + per <= end) {
+			memcpy(out->b + out->len, pixels_byte(px, row_byte(f, y, p / per)), per * px->n);
+			out->len += per * px->n;
+			p += per;
 		}
 		while (p < end) {
-			memcpy(out->b + out->len, pixels_one(px, screen_shows_white(f->words, p, y, f->black_on_white)), px->n);
+			memcpy(out->b + out->len, pixels_one(px, screen_value(f, p, y)), px->n);
 			out->len += px->n;
 			++p;
 		}
@@ -143,41 +164,52 @@ static int encode_raw(struct buf *out, const struct screen_frame *f, const struc
 	return 0;
 }
 
-// Which color the rectangle has more of.
-static int rre_background(const struct screen_frame *f, unsigned rx, unsigned ry,
-			  unsigned rw, unsigned rh)
+// Which color the rectangle has most of.  **SIXTEEN COLORS AND NOT TWO**,
+// because the color screen is served by this too: the counts are a histogram
+// and the background is its largest bin, which on a two-value screen is
+// exactly the old majority test.
+static unsigned rre_background(const struct screen_frame *f, unsigned rx, unsigned ry,
+			       unsigned rw, unsigned rh)
 {
-	unsigned long white = 0;
+	unsigned long n[16] = {0};
 	for (unsigned y = ry; y < ry + rh; ++y)
 		for (unsigned x = rx; x < rx + rw; ++x)
-			white += (unsigned)screen_shows_white(f->words, x, y, f->black_on_white);
-	return white * 2 >= (unsigned long)rw * rh;
+			++n[screen_value(f, x, y) & 15u];
+	unsigned best = 0;
+	for (unsigned v = 1; v < 16u; ++v)
+		if (n[v] > n[best])
+			best = v;
+	return best;
 }
 
 // RRE, section 7.7.2: a background pixel and a list of subrectangles of
-// everything that is not it.  The screen is two colors, so every
-// subrectangle is the other one, and each is one row of a run --- a
-// rectangular decomposition that joined runs across rows would be smaller
-// still and is not built: this one is a single pass and the measurement says
-// it already sends a real screen in a fortieth of Raw.
+// everything that is not it.  Each subrectangle is one row of a run of ONE
+// color --- a rectangular decomposition that joined runs across rows would
+// be smaller still and is not built: this one is a single pass and the
+// measurement says it already sends a real screen in a fortieth of Raw.
+//
+// **A RUN IS A RUN OF ONE COLOR AND NOT OF "NOT THE BACKGROUND"**, which is
+// the same thing on a two-color screen and is not on a sixteen-color one:
+// a row of red beside a row of green is two subrectangles, and a walk that
+// wrote one would send whichever color it happened to look at first.
 //
 // Counts the subrectangles, and writes them if `out` is not NULL.
 static unsigned long rre_walk(struct buf *out, const struct screen_frame *f,
 			      const struct pixels *px, unsigned rx, unsigned ry,
-			      unsigned rw, unsigned rh, int background)
+			      unsigned rw, unsigned rh, unsigned background)
 {
 	unsigned long subrects = 0;
 	uint8_t head[12];
 	for (unsigned y = ry; y < ry + rh; ++y) {
 		unsigned x = rx;
 		while (x < rx + rw) {
-			if (screen_shows_white(f->words, x, y, f->black_on_white) == background) {
+			const unsigned v = screen_value(f, x, y);
+			if (v == background) {
 				++x;
 				continue;
 			}
 			const unsigned start = x;
-			while (x < rx + rw
-			       && screen_shows_white(f->words, x, y, f->black_on_white) != background)
+			while (x < rx + rw && screen_value(f, x, y) == v)
 				++x;
 			++subrects;
 			if (!out)
@@ -185,7 +217,7 @@ static unsigned long rre_walk(struct buf *out, const struct screen_frame *f,
 			// A subrectangle: the pixel, then x, y, w, h relative
 			// to the rectangle, section 7.7.2.
 			unsigned n = px->n;
-			memcpy(head, pixels_one(px, !background), n);
+			memcpy(head, pixels_one(px, v), n);
 			head[n + 0] = (uint8_t)((start - rx) >> 8);
 			head[n + 1] = (uint8_t)(start - rx);
 			head[n + 2] = (uint8_t)((y - ry) >> 8);
@@ -218,7 +250,7 @@ struct screen_viewer {
 	struct pixels pixels;
 	unsigned told_w, told_h;
 	// The screen as this viewer last had it, in frame-buffer words.
-	uint32_t was[SCREEN_VISIBLE_WORDS];
+	uint32_t was[SCREEN_MAX_VISIBLE_WORDS];
 	int seen;
 	// One outstanding request: a viewer that asks again before being
 	// answered gets one answer, and the later ask is the one honored.
@@ -417,12 +449,13 @@ static int viewer_step(struct screen_server *s, struct screen_viewer *v, const c
 			// this server serves every viewer either way.
 			memmove(v->inbox, v->inbox + 1, v->in_len - 1);
 			--v->in_len;
-			uint8_t init[24 + sizeof SCREEN_NAME];
-			const size_t n = rfb_server_init(init, (uint16_t)SCREEN_WIDTH,
-							 (uint16_t)SCREEN_HEIGHT, SCREEN_NAME);
+			const char *name = s->name ? s->name : SCREEN_NAME;
+			uint8_t init[24 + 64];
+			const size_t n = rfb_server_init(init, (uint16_t)s->frame->width,
+							 (uint16_t)s->frame->height, name);
 			buf_add(&v->out, init, n);
-			v->told_w = SCREEN_WIDTH;
-			v->told_h = SCREEN_HEIGHT;
+			v->told_w = s->frame->width;
+			v->told_h = s->frame->height;
 			v->stage = STAGE_RUNNING;
 			say("viewer %s: %s, %ux%u, 32 bits a pixel until it asks otherwise",
 			    v->who,
@@ -453,11 +486,19 @@ static int viewer_step(struct screen_server *s, struct screen_viewer *v, const c
 					return -1;
 				}
 				v->format = m.format;
-				pixels_make(&v->pixels, &v->format);
+				pixels_make(&v->pixels, &v->format, s->frame);
 				if (!v->format.true_colour) {
+					// **SIXTEEN ENTRIES ON THE COLOR
+					// SCREEN AND TWO ON THE OTHER.**  A
+					// mapped viewer is sent the index and
+					// is told here what each index means,
+					// which for the color screen is the
+					// map the machine wrote through
+					// register 4.
 					uint8_t map[RFB_COLOUR_MAP_BYTES];
-					rfb_colour_map(map);
-					buf_add(&v->out, map, sizeof map);
+					const size_t n = rfb_colour_map(map, s->frame->map,
+									screen_values(s->frame));
+					buf_add(&v->out, map, n);
 				}
 				// The viewer has changed what a pixel means, so
 				// what it was sent before says nothing about
@@ -618,18 +659,18 @@ static void answer(struct screen_server *s, struct screen_viewer *v,
 	if (whole && v->have_full_at && now_ns - v->full_at_ns < SCREEN_FULL_UPDATE_NS)
 		return;
 
-	struct run runs[SCREEN_HEIGHT];
+	struct run runs[SCREEN_MAX_HEIGHT];
 	unsigned n_runs;
 	if (whole) {
 		runs[0].row = 0;
 		runs[0].len = height;
 		n_runs = height ? 1 : 0;
 	} else {
-		n_runs = changed_rows(f, v->was, height, runs, SCREEN_HEIGHT);
+		n_runs = changed_rows(f, v->was, height, runs, SCREEN_MAX_HEIGHT);
 	}
 
 	// Each run, clipped to what was asked for.
-	struct run rects[SCREEN_HEIGHT];
+	struct run rects[SCREEN_MAX_HEIGHT];
 	unsigned n_rects = 0;
 	for (unsigned k = 0; k < n_runs; ++k) {
 		const unsigned top = runs[k].row > ay ? runs[k].row : ay;
@@ -662,7 +703,8 @@ static void answer(struct screen_server *s, struct screen_viewer *v,
 	for (unsigned k = 0; k < n_rects; ++k) {
 		const unsigned ry = rects[k].row, rh = rects[k].len;
 		const size_t raw_bytes = (size_t)aw * rh * v->pixels.n;
-		int use_rre = 0, background = 0;
+		int use_rre = 0;
+		unsigned background = 0;
 		size_t rre_bytes = 0;
 		if (s->rre_offered && v->takes_rre) {
 			background = rre_background(f, ax, ry, aw, rh);
@@ -705,7 +747,7 @@ static void answer(struct screen_server *s, struct screen_viewer *v,
 	}
 	// What the viewer now has is what was just encoded --- the same frame,
 	// not the one that may arrive while this drains.
-	memcpy(v->was, f->words, SCREEN_VISIBLE_WORDS * sizeof(uint32_t));
+	memcpy(v->was, f->words, f->visible_words * sizeof(uint32_t));
 	v->seen = 1;
 	v->have_request = 0;
 }
@@ -790,7 +832,7 @@ static void accept_one(struct screen_server *s, uint64_t now_ns)
 	v->connected_ns = now_ns;
 	v->stage = STAGE_VERSION;
 	v->format = RFB_RGB888;
-	pixels_make(&v->pixels, &v->format);
+	pixels_make(&v->pixels, &v->format, s->frame);
 	buf_add(&v->out, RFB_VERSION, 12);
 	s->viewer[s->viewers++] = v;
 	++s->connects;
@@ -800,6 +842,11 @@ static void accept_one(struct screen_server *s, uint64_t now_ns)
 void screen_server_poll(struct screen_server *s, const struct screen_frame *f,
 			int timeout_ms, uint64_t now_ns)
 {
+	// **WHICH SCREEN THIS SERVER SHOWS, TAKEN HERE AND NOWHERE ELSE.**  A
+	// viewer is accepted and handshaken inside this call, and both need
+	// the screen's size and how many values a pixel has; the frame is the
+	// one thing that carries them.
+	s->frame = f;
 	// The listener, the viewers, and then the input link's listener and
 	// its clients.
 	struct pollfd fds[SCREEN_MAX_VIEWERS + 1 + CADR_INPUT_LINK_MAX_CLIENTS + 1];

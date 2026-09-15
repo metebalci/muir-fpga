@@ -36,6 +36,10 @@
 #define IMG_OPCS        8u
 // tv::BUFFER_WORDS, 0o100000.
 #define IMG_TV_WORDS    32768u
+// The color map a display board keeps: `tv::COLORS` by `tv::CHANNELS`,
+// sixteen colors of red, green and blue.
+#define IMG_MAP_COLORS   16
+#define IMG_MAP_CHANNELS 3
 // A memory board is 64K words and `boards(7'd32)` is what
 // `boards/arty-z7-20/cadr_arty.sv` gives the machine.
 #define IMG_BOARD_WORDS 65536u
@@ -143,6 +147,13 @@ struct cadr_image {
 	unsigned boards;
 	uint32_t *tv;		/* IMG_TV_WORDS */
 
+	// --- the first display board's color map, `[color][channel]` with
+	// --- red first.  It is not DDR and it is not the readout window: it
+	// --- is the console face's page 4, which is the only way to read a
+	// --- map back at all --- register 4 is write only on the Xbus, the
+	// --- RAMs being off the board.  A checkpoint carries it because
+	// --- muir's `tv::Tv::color_map` is part of the machine.
+	uint8_t tv_map[IMG_MAP_COLORS][IMG_MAP_CHANNELS];
 };
 
 int img_alloc(struct cadr_image *img, unsigned boards);

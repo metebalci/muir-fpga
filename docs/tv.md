@@ -5,9 +5,13 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 # The display controller
 
-The TV is MIT's name for the CADR's black-and-white display controller. It is
-the SIMPLE TV of `cadrtv/`, and it is what the window system asks for by
-`'(:VIDEO :BLACK-AND-WHITE :CONTROLLER :SIMPLE)`. This document describes it
+The TV is MIT's name for the CADR's display controller. The first board is
+the SIMPLE TV of `cadrtv/`, which is what the window system asks for by
+`'(:VIDEO :BLACK-AND-WHITE :CONTROLLER :SIMPLE)`, or the LISPM TV that
+replaced it in December 1980. A machine can carry a second board as well: the
+color TV, which is a LISPM TV strapped elsewhere and driving a color monitor.
+The sections "Which board" and "The second display board" at the end are those
+two facts; everything between them is both boards. This document describes it
 as an Xbus device in the fabric, checked against muir. It was written at the
 slice, with muir at `dad7249`, so read that on anything below which says what
 does or does not exist. Its citations into muir were renumbered when the pin
@@ -39,22 +43,24 @@ is that file, line by line.
   them `173777x0` to `x7`. The 74S138 at NXBCTL 0F13 decodes eight and its top
   three outputs go nowhere, so words 5 to 7 are the three that `lmtv.order`
   says "respond but don't do anything". **Word 4 is not one of them. It is the
-  Colour register.** That output of the decoder is `-LOAD COLOR`
+  Color register.** That output of the decoder is `-LOAD COLOR`
   (`data/SIMPLETV.netlist`, page NXBCTL, part 0F13, pin 11), and `lmtv.order`
-  gives the register as write only, with the value for the colour map in bits
-  15 to 8, the channel in bits 7 and 6 and the colour in bits 3 to 0. MIT's
+  gives the register as write only, with the value for the color map in bits
+  15 to 8, the channel in bits 7 and 6 and the color in bits 3 to 0. MIT's
   own `WRITE-COLOR-MAP-IMMEDIATE` writes it three times, once a gun
   (`sys/window/color.lisp`, lines 161--163). The map itself is not on this
   board. Page NRACOL carries the interface and no memory at all. `lmtv.order`
   describes the map as a 64 by 9 RAM for each channel with a
-  digital-to-analogue converter on it. So a write to word 4 reaches nothing
-  here. The fabric answers it and keeps nothing, because nothing on this board
-  can read the map back. muir kept nothing either up to `4ddaeb2`; since
-  `bfba7f3` it keeps the sixteen entries of three channels for its colour
-  board and its checkpoint (`Tv::color_map`). The register is write only on
-  both boards, so no check here reads one back and the behaviour was never in
-  question. The four words above the eight,
-  `0o17377770`--`3`, sit between the display's registers and the disk
+  digital-to-analog converter on it. So a write to word 4 reaches nothing on
+  the board itself. **The fabric keeps the sixteen entries**, as muir has
+  since `bfba7f3` (`Tv::color_map`), because a four-bit pixel of the color
+  screen is an address into them and whatever draws that screen has to know
+  what a color is. They are kept on both boards, both netlists strobing the
+  map with the same circuit, and they are offered to Linux on the console
+  face's pages 4 and 5. No bus cycle reads one back on either board, so the
+  register stays write only on the Xbus and no trace can check it; the map's
+  own port is what `build/color_tv.pass` compares. The four words above the
+  eight, `0o17377770`--`3`, sit between the display's registers and the disk
   controller's and answer to nothing.
 - **Register 0 is the mode register**, with four writable bits
   (`mode::WRITABLE`, line 266). They are `CLOCK MODE<1:0>` (line 255), `MODE
@@ -62,21 +68,22 @@ is that file, line by line.
   INTR ENB` (line 262). They are the Am25LS2519 at NXBCTL 0F12. muir's note at
   `mod mode` says MIT drew this page twice, a 74S174 in 1979 and the 2519 in
   1980, and the netlist is the newer sheet. Bits 5 to 7 (`VSYNC`, `HSYNC`,
-  `SYNC PROM ENB`, lines 280--313) are read only, and all three read zero
-  here. **They read zero for two different reasons, and only one of them is a
-  property of the board.** Bit 7 is grounded. ECO 2 of `lmtv.eco`, of 18 June
-  1980, wires `GND` to that input of the read buffer so that the window system
-  can tell old boards from new. Bits 5 and 6 are wired to the sync generator.
-  The 74LS244 at NXBCTL 0F11 takes `VSYNC` on pin 4 and `HSYNC` on pin 6, and
-  the 74LS175 at NSYREG 0D02 registers both of those from the sync program's
-  own bits 0 and 1. **The fabric runs that program and reads the two bits off
-  it**, as muir has since `bfba7f3`; both read zero up to `4ddaeb2`, and both
-  said so as a departure. They change 1,932 times in a frame of MIT's
-  `cpt.prom`.
-  The distinction matters to anyone who adds the colour board, because MIT's
+  `SYNC PROM ENB`, lines 280--313) are read only. **Bit 7 is the one bit of
+  the interface the two display boards differ in**, and it is why `--tv-board`
+  is a setting at all: on the SIMPLE TV it is grounded --- ECO 2 of
+  `lmtv.eco`, of 18 June 1980, wires `GND` to that input of the read buffer so
+  that the window system can tell old boards from new --- and on the LISPM TV
+  it reads the sync enable back. The section "Which board" below has it. Bits
+  5 and 6 are wired to the sync generator. The 74LS244 at NXBCTL 0F11 takes
+  `VSYNC` on pin 4 and `HSYNC` on pin 6, and the 74LS175 at NSYREG 0D02
+  registers both of those from the sync program's own bits 0 and 1. **The
+  fabric runs that program and reads the two bits off it**, as muir has since
+  `bfba7f3`; both read zero up to `4ddaeb2`, and both said so as a departure.
+  They change 1,932 times in a frame of MIT's `cpt.prom`.
+  The distinction matters to anyone who adds the color board, because MIT's
   `WRITE-COLOR-MAP` spins on bit 5 and its `%XBUS-WRITE-SYNC` waits on bit 6
   (`sys/window/color.lisp`, lines 139--143), which is exactly what muir
-  changed in order to make the colour board work.
+  changed in order to make the color board work.
 - **Bit 4 is the vertical flag, a flop of its own** (`mode::VERT`, line 278).
   It is the 74LS74 at NXBCTL 0E14. It is **preset by `-TVMA CLR`**, the sync
   program's start of frame: "this is set by TVMA CLR, not by the start of
@@ -92,7 +99,7 @@ is that file, line by line.
   of 15,456,000 ns thereafter.
 - **`SEND INTR` is the flag with the enable**, the 74S08 at 0D10, onto
   `-XBUS.INTR` (`interrupt`, line 674). `machine.rs:457` ORs it with the
-  disk's request as `XBUS INTR IN`, and since `bfba7f3` with a colour board's
+  disk's request as `XBUS INTR IN`, and since `bfba7f3` with a color board's
   own request when one is fitted. `rtl.rs:1932` registers that as `SINTR` at
   the microcycle edge, which is the `sintr` column of both processor traces.
 - **The frame is `FRAME_NS` = 15,456,000 ns** (line 331). That is 966 lines of
@@ -216,8 +223,8 @@ answers when DDR answers, so the composed machine waits on the frame buffer
 exactly as it already waits on main memory. A second master on the same port
 would wait the same and add an arbiter. The Xbus has one master a cycle, and
 the disk's channel reaches main memory alone and never the window, so the
-bridge is idle whenever the window is asked. In `build/tv.pass` the modelled
-DDR answers at once and the acknowledgement lands where muir's does, tick for
+bridge is idle whenever the window is asked. In `build/tv.pass` the modeled
+DDR answers at once and the acknowledgment lands where muir's does, tick for
 tick. On the board it lands when DDR does, which is the parting main memory
 already has and the display inherits.
 
@@ -359,7 +366,7 @@ enable bit does have a register, because it chooses the program.
 worth saying outright, because the question was asked again on 2026-09-11 and
 the answer was assumed to be no: the frame buffer is the one thing in the
 window a program reads *back*, and 23 of the trace's 43 window cycles are
-reads, compared against muir's own word at -MEMACK's rise, from a modelled DDR
+reads, compared against muir's own word at -MEMACK's rise, from a modeled DDR
 poisoned injectively in the address so that a read of the wrong word cannot
 come back right. The window's first word, its last, the word each side of it
 and one offset rewritten are all among them. Configuration B, below, adds the
@@ -388,7 +395,7 @@ to hold. The run is 83,970,731 ticks, twenty-seven frames and 259 bus cycles:
 - **The memory port is checked.** Every frame-buffer cycle is at
   `DISPLAY_BASE` plus four times the offset and every main-memory cycle at
   `MAIN_BASE` plus four times the address, with the trace's word, asserted at
-  the port on the tick. The word is read back through a modelled DDR keyed by
+  the port on the tick. The word is read back through a modeled DDR keyed by
   the stimulus's address and filled from the stimulus's word, never the DUT's,
   and poisoned injectively where nothing wrote.
 - **The counts are checked.** The run sees exactly the cycles of each kind,
@@ -410,7 +417,7 @@ four frames, and a frame nobody clears. It drives the sync RAM through 31
 pointers spread over twelve bits and reads them back in another order, with the
 enable off and on and the write-only registers reading zero. It writes the
 frame buffer at eighteen offsets across the window and its edges, rewrites one
-word with its neighbours checked, and lets the words just outside the window
+word with its neighbors checked, and lets the words just outside the window
 time out. It pulses `-XBUS INIT` off a boundary, on one and a tick either side.
 It toggles the flag by writes alone with the enable off. And it lands a write a
 tick before, a tick after and exactly on a boundary. Three main-memory words
@@ -419,8 +426,8 @@ are in there too, so the bridge's other base is in the same trace.
 ## What configuration B holds to
 
 The trace is muir's, and muir's TV answers a buffer word in no time of its
-own, so the modelled DDR has to answer in the same tick for the
-acknowledgement to land where the reference puts it. That leaves one thing
+own, so the modeled DDR has to answer in the same tick for the
+acknowledgment to land where the reference puts it. That leaves one thing
 unexercised: `build/tv.pass` is the only check in the tree that ever puts the
 display's base on the memory port, and it was also the only one whose memory
 answered at once. `tb/cadr_memory_path_tb.cpp` waits six ticks and
@@ -431,7 +438,7 @@ that writes the screen correctly and reads it back black --- had nothing
 looking at it, where the same bug at main memory's base is caught twice.
 
 So after the trace the run builds a second machine and drives window cycles at
-it directly, with a modelled DDR 37 ticks behind every request. It is held to a
+it directly, with a modeled DDR 37 ticks behind every request. It is held to a
 property and not to muir, because muir's TV has no DDR behind it to be late:
 **a word written into the window is the word read back out of it, at the
 display's base, however long the memory takes.** Twelve cycles to the window:
@@ -444,7 +451,7 @@ display's base, however long the memory takes.** Twelve cycles to the window:
   before it cannot come back right, and every word a read is held to is
   required to be non-zero and different from the word before;
 - a word of the window the program never wrote, which must come back as the
-  modelled DDR's poison rather than as zero --- a bridge answering out of its
+  modeled DDR's poison rather than as zero --- a bridge answering out of its
   own idea of an unwritten word passes a check that only ever reads words it
   has written;
 - one offset written twice and read back, so a bridge that kept the word it
@@ -480,14 +487,14 @@ caught on a line of its own.
 ignored (the first preset, which comes with the enable off), the window's
 base a word off and the window's select dropped in the path (the first
 frame-buffer write, at the port), a bit lane of the bitmap swapped (the same
-write, the word), the acknowledgement a tick late (the first write,
+write, the word), the acknowledgment a tick late (the first write,
 -MEMACK), the preset gated on the enable, the write unable to clear the
 flag, **the preset beating the write (the sixteenth preset and nowhere
 earlier --- the yardstick for the trace's length)**, init not clearing the
 flag, init clearing the mode register, the clock-mode bits crossed, register
 1 reading the wrong half of the PROM's range, the sync RAM read from the
 wrong half (the read alone, because a bijection on both is an equivalence),
-the control words answering their dead neighbours, the window half its size,
+the control words answering their dead neighbors, the window half its size,
 the store repeating while the request stands (visible only at the write that
 lands one tick before a preset, where a repeated store overrides it),
 frame-buffer reads taken from the main base, and the register word not
@@ -676,6 +683,101 @@ believable and the last digit is not.
 **The Cora is the board to watch**: it is at 93.4% of its slices and 83.0%
 of its block RAM, and the binding one did not move.
 
+## Which board
+
+`--tv-board` is muir's flag and the fabric takes the same word. muir has one
+display model and the flag says which board it is playing; `cadr_tv.sv` is the
+same, and `board_lispm` is that flag.
+
+The two boards differ in one bit a bus cycle can see. Mode bit 7 is `SYNC PROM
+ENB`. On the LISPM TV the read buffer, the 74LS244 at XBCTL 0F11, takes it
+from pin 19 of the 74LS273 at TVINC 0A07, which is register 3's bit 7 and so
+the sync enable. On the SIMPLE TV the same pin is ground. ECO 2 of
+`cadrtv/lmtv.eco`, 18 June 1980, is why: "new window system not initializing
+tv properly at original power-up; on old TV boards the check if TV is in PROM
+mode (extant only on new TV boards) reads an unused input". Nothing else on
+either board is different where a bus cycle can reach it.
+
+The setting is the console face's page 2 word 33, and the disk pack program's
+init script writes it at boot from `fpgarc`'s `--tv-board`, before the drive
+comes present. A card that says nothing is a SIMPLE TV, which is muir's own
+default and the machine every reference trace here was taken on.
+
+`build/tv.pass` runs the same program twice, once a board: `tv.golden` and
+`tv_lispm.golden` are generated from muir with the matching `--tv-board`, and
+the testbench straps the fabric from each trace's own header. The two traces
+are byte-identical but for 96 rows, which are six reads of the mode register
+with the sync RAM selected, and every value that moves moves by `0o200`. Two
+mutations hold the strap, one in each direction, because either alone is
+caught by one trace and survives the other.
+
+## The second display board
+
+`cadrtv/lmtv.order` says it in one line: "Note: For the normal TV, x is 6.
+For the color TV, x is 5." The board is a LISPM TV strapped to `tv::COLOR_TV`
+--- the frame buffer at `0o17200000` and the eight control words at
+`0o17377750` --- with a color monitor on it. `sys/window/color.lisp`'s
+`COLOR:MAKE-SCREEN` draws 576 by 454 at four bits a pixel there, 72 words a
+line, each pixel an address into the sixteen colors the color map holds.
+
+It is a second instance of `cadr_tv.sv` at the other strap, and it is a LISPM
+TV whatever the first board is, because `Tv::color` is one.
+
+**The picture is four bits a pixel and there is no eight-bit mode.** A pixel
+is a four-bit address into sixteen map entries, and each entry holds three
+eight-bit channels, so the eight is the depth of a gun and not of a pixel.
+MIT's own software settles it: `COLOR:MAKE-SCREEN` declares the screen
+`:BITS-PER-PIXEL 4`, `%COLOR-TRANSFORM` in `sys/ucadr/uc-hacks.lisp` accepts
+only `ART-4B` arrays and traps on anything else, and `lmtv.order` says of the
+map that "we only use a 16x8 subset of it". muir has the same three constants
+--- `COLOR_BITS_PER_PIXEL`, `COLORS` and `CHANNELS` --- and nothing on either
+side implements a second depth.
+
+**A machine with no color board must give the NXM at those addresses.**
+`COLOR-EXISTS-P` is how System 100 finds out whether it has one: it writes
+into the first buffer word with the error stop off and reads it back. So the
+board is off by default. `--color-tv` in `fpgarc` fits it, through the same
+console word and the same init step as `--tv-board`, and `busint::decode_with`
+is muir's own name for the same fact. The decode takes it and so does the
+instance's own `fitted`, which is two places on purpose: a board on a
+backplane decodes its own address and the interface decides for itself whether
+anything answered.
+
+**The color map is kept.** Register 4 is write only on the Xbus --- the RAMs
+and their converters are off the board --- so no bus cycle can read an entry
+back. muir keeps the sixteen entries all the same, because a four-bit pixel is
+an address into them and whatever draws the screen has to know what a color
+is. The fabric keeps them too, on both boards as muir does and as both boards'
+netlists strobe them, and offers them to Linux on the console face's pages 4
+and 5, read only. `cadr-terminal --color-terminal` renders the color screen
+through page 5 and `cadr-checkpoint` carries page 4 into the checkpoint.
+
+**The second frame buffer is a second window of the display's region of DDR**,
+128 KB above the first, which is the first board's own 32,768 words.
+`cadr_ddr_map.sv`'s `COLOR_DISPLAY_BASE` is the constant. Nothing on the Linux
+side grows for it: the reserved-memory node already reserves the whole 128 MB.
+
+**`-XBUS.INTR` is the OR of the two boards**, which is muir's
+`Machine::xbus_interrupt`. Microcode 323's `INTRX0` clears the flag by reading
+and writing the first board's register alone, so a color-board interrupt has
+nothing to take it and MIT's software never enables one; the line is joined
+because the backplane joins it.
+
+`build/color_tv.pass` is the check: `golden/src/color_tv.rs` drives muir's
+`Tv::color()` beside its `Tv` through `busint::Busint`, both boards' registers
+and both windows on one backplane, and the testbench compares every tick,
+reads the fabric's own map port against the map muir holds, and then runs a
+second configuration with `color_tv` down where every color address must
+give the NXM with MD zero while the first board goes on answering.
+
+**`LMTV` is a top-level parameter and it is one.** It says whether the fabric
+carries the slot at all, which is a board's decision taken at synthesis; the
+console word says whether a MACHINE has the board. With `LMTV=0` the second
+instance is not elaborated and the color addresses give the NXM whatever the
+console asks for. It is on by default on all three boards. The Cora Z7-07S is
+the one where the question is live: with the board fitted it routes and closes
+at +0.237 ns and 96.1% of its slices, which fits and leaves almost nothing.
+
 ## What is not built
 
 - **The display output.** Nothing drives a monitor: there is no raster, no
@@ -701,3 +803,11 @@ of its block RAM, and the binding one did not move.
   supplies. See the paragraph above.
 - **The I/O board.** It is the other slave on the seam and the Unibus's
   business.
+- **The color board's picture on HDMI.** `cadr_display_out.sv` scans the
+  first board's window and nothing else. The plan on record is both screens
+  side by side on the one output, which needs a mode wider than the 1280x1024
+  driven today; nothing is built for it.
+- **The color board's own sync program is run and its raster is not**, which
+  is the first board's position exactly. What a color cycle would fetch, and
+  what the off-board map's converters make of a stored byte, are outside the
+  Xbus face either way.

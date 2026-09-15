@@ -31,6 +31,19 @@ module cadr_xbus_decode (
     /* verilator lint_on UNUSEDSIGNAL */
     input  var logic [6:0]  boards,  // 64K-word memory boards fitted, 1 to 60
 
+    // Whether the second display board --- the color TV, `tv::COLOR_TV` ---
+    // is on the backplane.  muir's `busint::decode_with` takes the same fact
+    // and `busint::decode` is it with none, so this input at zero is the
+    // machine every check before this one was written against.
+    //
+    // **THE COLOR RANGES MUST NOT ANSWER WITHOUT IT, AND THE BAND DEPENDS ON
+    // THAT.**  `COLOR-EXISTS-P` in `sys/window/color.lisp` is how System 100
+    // finds out whether a machine has the board: it writes one into the first
+    // buffer word with the error stop off and reads it back, and a machine
+    // with no board there has to give it the NXM.  A fabric that answered
+    // regardless would be walked into `COLOR:SETUP` on every cold boot.
+    input  var logic        color_tv,
+
     output var logic        memory,  // main memory: the DDR bridge answers
     output var logic        device,  // Xbus I/O with something built there
     output var logic        nxm,     // Xbus space with nothing there
@@ -65,7 +78,17 @@ module cadr_xbus_decode (
   assign tv_control = phys[21:3]  == 19'd507902;  // 0o17377760, 8 words
   assign disk_regs  = phys[21:2]  == 20'd1015807; // 0o17377774, 4 words
 
-  assign device = xbus_io && (tv_buffer || tv_control || disk_regs);
+  // And the color TV's two ranges, the same board at the other strap:
+  // `lmtv.order`'s "For the normal TV, x is 6.  For the color TV, x is 5",
+  // which is `tv::COLOR_TV` --- the buffer at 0o17200000 for the same
+  // 0o100000 words, 3,997,696 being 122 * 32,768, and the eight control
+  // registers at 0o17377750, the eight below the normal TV's.
+  logic color_buffer, color_control;
+  assign color_buffer  = phys[21:15] == 7'd122;      // 0o17200000, 32768 words
+  assign color_control = phys[21:3]  == 19'd507901;  // 0o17377750, 8 words
+
+  assign device = xbus_io && (tv_buffer || tv_control || disk_regs
+                              || (color_tv && (color_buffer || color_control)));
 
   // A board is 64K words and they start at zero, so the whole comparison is on
   // the slot number.

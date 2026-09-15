@@ -45,6 +45,12 @@ struct chk_declared {
 void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 		  const struct chk_declared *d);
 
+// **AN ADDRESS IS OCTAL, as muir's own `--chaos-address` takes it**: a bare
+// octal number or `subnet:host`, both halves non-zero and neither above
+// `0o377`, and no prefix of any kind.  `chk_rtl.c` has muir's parser and why
+// this is not `strtoul(.., 0)`.  0 and `*out` set, or -1.
+int chk_chaos_address(const char *s, unsigned *out);
+
 // Every field the fabric has no reading for, one line each, NULL-terminated.
 const char *const *chk_rtl_missing(void);
 

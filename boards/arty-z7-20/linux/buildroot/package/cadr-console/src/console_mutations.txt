@@ -296,3 +296,92 @@
 @new
 	return c->read(c, CONS_BUILD + 1u);
 @end
+
+# --- the backplane's display boards, page 2's word 33 and pages 4 and 5 -----
+
+@mutation the-display-word-takes-any-value
+@file console_face.c
+@why a value that means nothing must not change what a machine has fitted: zero off a
+@why dead bus and all ones off an undriven one both reach this register
+@note The key is word 6's rule one page along, and the two the color board
+@note takes are a value and its complement so that no partial write of one can
+@note be the other.  This mutation makes the console write a value the fabric
+@note drops, which is the program's half of the same rule: a console that
+@note wrote the wrong word would set nothing and report nothing wrong.
+@old
+	c->write(c, CONS_DISPLAY, on ? CONS_COLOR_TV_KEY : CONS_NO_COLOR_TV_KEY);
+@new
+	c->write(c, CONS_DISPLAY, on ? CONS_COLOR_TV_KEY + 1u : CONS_NO_COLOR_TV_KEY);
+@end
+
+@mutation the-two-boards-are-one-setting
+@file console_face.c
+@why the first board's strap and the second board's presence are two facts on one word,
+@why and a write of either that moved the other would make a card's two lines fight
+@note `--tv-board` and `--color-tv` are two flags in muir and two lines in
+@note `fpgarc`, applied in whatever order an init script happens to take them.
+@old
+	c->write(c, CONS_DISPLAY, lispm ? CONS_TV_LISPM_KEY : CONS_TV_SIMPLE_KEY);
+@new
+	c->write(c, CONS_DISPLAY, lispm ? CONS_TV_LISPM_KEY : CONS_NO_COLOR_TV_KEY);
+@end
+
+@mutation an-unmarked-display-word-reads-as-a-backplane
+@file console_face.c
+@why a fabric older than word 33 reads zero in the two bits, and so does a backplane
+@why with nothing set; the marker is the only thing that tells them apart
+@note The same rule words 6, 13 and 14 are written to, and the same failure it
+@note exists to stop: a window pointed somewhere else reads zero too.
+@old
+	d->mark_ok = CONS_TV_MARK_OF(d->word) == CONS_TV_MARK;
+@new
+	d->mark_ok = CONS_TV_MARK_OF(d->word) != 0xFFFFu;
+@end
+
+@mutation the-color-boards-map-is-read-off-the-first-boards-page
+@file console_face.c
+@why the two display boards keep two maps, on two pages, and an RFB server rendering
+@why the color screen through the first board's map draws the wrong picture
+@note MIT's software writes the color board's map and never the first
+@note board's, so on a real machine the first board's is all zeros --- which
+@note is exactly the value a renderer reading the wrong page would get, and a
+@note black screen looks like a machine that has not painted yet.
+@note Written as the OTHER board's page rather than as one fixed page, so
+@note that `board` stays read: a parameter a mutation leaves unused is caught
+@note by the compiler and not by the check.
+@old
+		const uint32_t w = c->read(c, CONS_COLOR_MAP_WORD(board, color));
+@new
+		const uint32_t w = c->read(c, CONS_COLOR_MAP_WORD(!board, color));
+@end
+
+@mutation the-color-maps-channels-come-back-in-the-wrong-order
+@file console_face.c
+@why `WRITE-COLOR-MAP` writes red on channel 0, green on 1 and blue on 2, and a
+@why renderer that read them the other way round draws the right picture in wrong colors
+@note The one thing about the map that goes wrong quietly: every byte is
+@note there, every color is distinct, and the screen is simply not the
+@note screen the machine drew.
+@old
+		map[color][0] = (uint8_t)CONS_MAP_RED(w);
+		map[color][1] = (uint8_t)CONS_MAP_GREEN(w);
+		map[color][2] = (uint8_t)CONS_MAP_BLUE(w);
+@new
+		map[color][0] = (uint8_t)CONS_MAP_BLUE(w);
+		map[color][1] = (uint8_t)CONS_MAP_GREEN(w);
+		map[color][2] = (uint8_t)CONS_MAP_RED(w);
+@end
+
+@mutation the-absent-color-board-is-not-said
+@file console_face.c
+@why a machine with no color board gives the NXM at 0o17200000, which is how the band
+@why finds out; a console that said nothing leaves a person wondering whether the word
+@why was read at all
+@old
+	say("display: %s", d->color
+	    ? "a color TV is fitted, at 0o17200000 with its registers at 0o17377750"
+	    : "no color TV --- those addresses give the NXM, which is how the band finds out");
+@new
+	if (d->color)
+		say("display: a color TV is fitted, at 0o17200000 with its registers at 0o17377750");
+@end

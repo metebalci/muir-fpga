@@ -89,10 +89,22 @@ unsigned rfb_put(const struct rfb_format *f, uint8_t *out, uint32_t value);
 // The color map entry white takes when a viewer asks for a mapped format.
 #define RFB_WHITE_INDEX 1
 
-// `SetColourMapEntries`, section 7.6.2: the two colors this screen has,
-// black at 0 and white at 1.  Writes RFB_COLOUR_MAP_BYTES bytes.
-#define RFB_COLOUR_MAP_BYTES 18
-void rfb_colour_map(uint8_t out[RFB_COLOUR_MAP_BYTES]);
+// `SetColourMapEntries`, section 7.6.2: what each pixel VALUE means, for a
+// viewer that asked for a mapped format.  `values` is how many a pixel of
+// this screen can take --- two on the first display board, black at 0 and
+// white at 1, and sixteen on the color TV, whose entries are the map the
+// machine wrote through register 4.  `map` is `[color][channel]` with red
+// first and is read only at two values.  Writes and returns 6 + 6 * values
+// bytes, at most RFB_COLOUR_MAP_BYTES.
+#define RFB_COLOUR_MAP_BYTES (6 + 6 * 16)
+size_t rfb_colour_map(uint8_t out[RFB_COLOUR_MAP_BYTES], const uint8_t map[16][3],
+		      unsigned values);
+
+// What one pixel value is on the wire: for a mapped viewer the index itself,
+// and for a true-color one the color built out of the viewer's own maxima
+// and shifts.  Two values are black and white; sixteen are the map's.
+uint32_t rfb_pixel(const struct rfb_format *f, const uint8_t map[16][3], unsigned value,
+		   unsigned values);
 
 // The version the server offers, section 7.1.1.
 #define RFB_VERSION "RFB 003.008\n"

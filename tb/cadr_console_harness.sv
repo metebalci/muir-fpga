@@ -95,6 +95,15 @@ module cadr_console_harness #(
     output var logic        n_memrq,
     output var logic        wrcyc,
 
+    // --- **THE BACKPLANE'S DISPLAY BOARDS, page 2's word 33.**  The two
+    // settings leave the console and go to `cadr_machine` on the board; here
+    // they leave the harness, so that the testbench can compare the LEVEL the
+    // fabric holds against the WORD it reads back.  Those are two facts: a
+    // console that reported the key it was given rather than the setting it
+    // made would agree with itself and with nothing else.
+    output var logic        tv_lispm,
+    output var logic        color_tv,
+
     // --- `M_AXI_GP1`, brought out for the testbench's own master
     input  var logic [31:0] s_awaddr,
     input  var logic [3:0]  s_awlen,
@@ -333,6 +342,18 @@ module cadr_console_harness #(
       .con_md  (con_md)
   );
 
+  // The color map this harness offers, `[board][color]`: a byte a channel,
+  // none of them zero and every one of them distinct in all three.
+  function automatic logic [23:0] map_word(input logic board, input logic [3:0] color);
+    logic [7:0] red, green, blue;
+    red   = 8'd1 + {4'd0, color} + (board ? 8'd97 : 8'd0);
+    green = 8'd2 + {3'd0, color, 1'b0} + (board ? 8'd53 : 8'd0);
+    blue  = 8'd3 + {2'd0, color, 2'b0} + (board ? 8'd29 : 8'd0);
+    return {red, green, blue};
+  endfunction
+
+  logic [3:0] tv_map_a;
+
   cadr_console console (
       .clk        (clk),
       .rst        (rst),
@@ -391,6 +412,20 @@ module cadr_console_harness #(
       // touched a switch since.
       .no_auto_boot_held(1'b0),
       .no_auto_boot_now (1'b0),
+      // **THE BACKPLANE'S DISPLAY BOARDS, page 2's word 33, AND THE TWO
+      // COLOR MAPS ON PAGES 4 AND 5.**  The two settings leave the console
+      // and go to `cadr_machine` on the board; here they come straight back
+      // out, so that the testbench can write a key and read what the fabric
+      // made of it.  The maps come the other way, out of the two `cadr_tv`
+      // instances on the board and out of a pattern here --- injective in
+      // the board, the color and the channel, so that a page read off the
+      // wrong one cannot come back right, and no byte zero, which is what a
+      // face answering nothing would give.
+      .tv_lispm   (tv_lispm),
+      .color_tv   (color_tv),
+      .tv_map_a   (tv_map_a),
+      .tv_map_q   (map_word(1'b0, tv_map_a)),
+      .tv_color_map_q(map_word(1'b1, tv_map_a)),
       // **THE DEBUG CABLE'S ROLE, page 0's word 14, AND THE CONNECTOR IS THE
       // TESTBENCH.**  `build/dbg_cable.pass` is the check that has a real one
       // and two real boards on it; what this check holds is the console's own

@@ -58,7 +58,14 @@
 #define SCREEN_MAX_VIEWERS 8
 
 // The name a viewer puts on its window.
+//
+// **AND THE SECOND SCREEN'S IS DIFFERENT, WHERE muir'S IS NOT.**  muir names
+// both its terminals `muir: CADR`; this board serves both at once on one
+// Ethernet port, so somebody with two viewers open would have two windows
+// with one name.  The name is a label on a window and not a claim about the
+// machine, so the two are told apart here.
 #define SCREEN_NAME "CADR"
+#define SCREEN_COLOR_NAME "CADR color"
 
 struct screen_viewer;
 
@@ -69,6 +76,17 @@ struct screen_server {
 	// RRE is offered unless this is clear: `--no-rre`, for measuring the
 	// difference and for a viewer that says it takes RRE and does not.
 	int rre_offered;
+	// **WHICH SCREEN THIS SERVER SHOWS**, which it learns from the frame
+	// it is given at every poll: the size it tells a viewer, how many
+	// values a pixel has, and the color map a mapped viewer is sent all
+	// come out of it.  Set at the top of `screen_server_poll`, because a
+	// viewer is accepted and handshaken inside one.  NULL before the first
+	// poll, and nothing that reads it can run before then.
+	const struct screen_frame *frame;
+	// The name a viewer puts on its window: `SCREEN_NAME` unless the
+	// caller says otherwise.  **ZERO MEANS `SCREEN_NAME`**, so a server
+	// that was only zeroed is the main screen's.
+	const char *name;
 	// The read-only line, said once for the program and not once a viewer.
 	int said_input;
 	unsigned long connects, drops, refused;

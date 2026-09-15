@@ -224,6 +224,7 @@ day want**. That is a quarter of the board's 512 MB, and Linux keeps 384.
 |---|---|---|---|
 | `0x1800_0000` | 64 MB, 16M words | 15 MB, 3,932,160 words | main memory |
 | `0x1C00_0000` | 8 MB, 2M words | 128 KB, 32,768 words | display |
+| `0x1C02_0000` | in the 8 MB above | 128 KB, 32,768 words | second display |
 | `0x1C80_0000` | 56 MB | --- | spare |
 
 DDR was never the limit. The CADR's physical address is 22 bits, a 14-bit page
@@ -232,10 +233,15 @@ ceiling. The top four of the 64 slots are taken by the display, the disk
 controller and the Unibus. The CADR's *virtual* address is 24 bits, which is
 what the 64 MB is room for.
 
-The display's 8 MB is room for 1920 x 1080 at 32 bits a pixel. The CADR's own
-screen is 768 x 963 at one bit, so that room is for a display that is not the
-CADR's. The Linux side serves a 1080p canvas over RFB and composites the
-machine's screen into it.
+The display's 8 MB holds both display boards' frame buffers: the first at its
+base and the second, the color TV's, 128 KB above it, which is the first
+board's own size. A machine carries the second board only when the card asks
+for it. The 8 MB is also room for 1920 x 1080 at 32 bits a pixel. The CADR's
+own screen is 768 x 963 at one bit and the color TV's 576 x 454 at four bits
+a pixel --- four is the only depth that board has here, a pixel being an
+address into sixteen colors of three eight-bit channels --- so that room is
+for a display that is not the CADR's. The Linux side serves a 1080p canvas
+over RFB and composites the machine's screen into it.
 
 ## Building
 
