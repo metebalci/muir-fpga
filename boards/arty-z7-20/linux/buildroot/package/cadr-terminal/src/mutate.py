@@ -14,7 +14,7 @@
 # quietly skipped.
 #
 # THE BUILD FAILING IS NOT A MUTATION SURVIVING AND NOT A MUTATION CAUGHT.
-# CLAUDE.md records that two mutations of the fabric were reported as
+# `docs/mutations.md` records two mutations of the fabric reported as
 # surviving when they had never been built: lint rejected them and a stale
 # binary ran.  So each record is built in a directory of its own, a build that
 # fails is BROKEN, and BROKEN fails the run.

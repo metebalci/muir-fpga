@@ -26,7 +26,7 @@
 // the interlock.
 //
 // **BLANK IS A STATE WORTH SAYING.**  Uninitialized DDR on this board reads
-// as alternating bands of zeros and ones (CLAUDE.md, measured on the first
+// as alternating bands of zeros and ones (measured on the first
 // bring-up), and a CADR that has not drawn leaves the window exactly as the
 // controller left it.  A viewer shown 739,584 identical pixels cannot tell
 // "the machine has drawn nothing" from "this program is reading the wrong

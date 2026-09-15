@@ -7,8 +7,8 @@
 # the check against it, and runs it.  A mutation the check FAILS on is a check
 # doing its job; one the check passes is reported as SURVIVED and the run is
 # red.  A record whose `@old` no longer matches its file exactly once, or that
-# does not compile, is BROKEN and also fails the run --- CLAUDE.md records two
-# fabric mutations reported as surviving that had never been built.
+# does not compile, is BROKEN and also fails the run --- `docs/mutations.md`
+# records two fabric mutations reported as surviving that had never been built.
 #
 # THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
 # can read this one:
@@ -188,7 +188,7 @@
 @mutation an-all-ones-screen-is-not-called-blank
 @file screen_frame.c
 @why the blank check: an unwritten word of this board's DDR reads zero in some places and all ones in others, so both have to be named
-@note CLAUDE.md, measured on the first bring-up: uninitialized DDR reads as
+@note Measured on the first bring-up: uninitialized DDR reads as
 @note alternating bands of zeros and ones.  A program that only knew about
 @note zeros would serve a white screen and say nothing.
 @old

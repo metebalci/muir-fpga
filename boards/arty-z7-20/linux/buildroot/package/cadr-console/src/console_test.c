@@ -1627,7 +1627,7 @@ static void check_trace_keys(void)
 		CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_KEYS, 1, &r) == CONS_TRACE_NOT_RUNNING,
 		      "a pid file holding \"%s\" was not refused", bad[i]);
 		CHECK(trace_seen_on == 0 && trace_seen_off == 0,
-		      "a pid file holding \"%s\" signalled something: %d on, %d off",
+		      "a pid file holding \"%s\" signaled something: %d on, %d off",
 		      bad[i], (int)trace_seen_on, (int)trace_seen_off);
 		cons_say_trace(&r, 1);
 		CHECK(strstr(capture_end(), "is not running") != NULL,
@@ -1642,7 +1642,7 @@ static void check_trace_keys(void)
 	capture_start();
 	CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_KEYS, 1, &r) == CONS_TRACE_NOT_RUNNING,
 	      "a missing pid file was not reported as a program that is not running");
-	CHECK(trace_seen_on == 0 && trace_seen_off == 0, "a missing pid file signalled something");
+	CHECK(trace_seen_on == 0 && trace_seen_off == 0, "a missing pid file signaled something");
 	cons_say_trace(&r, 1);
 	CHECK(strstr(capture_end(), "is not running") != NULL,
 	      "a missing pid file did not report the program as not running");
@@ -1650,7 +1650,7 @@ static void check_trace_keys(void)
 	signal(SIGUSR2, SIG_DFL);
 
 	// The three pid files are where the init scripts write them.  A word
-	// that signalled the wrong file would say `not running` for ever on a
+	// that signaled the wrong file would say `not running` for ever on a
 	// board where the programs are up.
 	CHECK(strcmp(CONS_TRACE_TERMINAL_PID, "/var/run/cadr-terminal.pid") == 0,
 	      "the terminal's pid file is not where S85cadr-terminal writes it");
@@ -1727,7 +1727,7 @@ static void check_trace_chaos(void)
 		      CONS_TRACE_NOT_RUNNING,
 	      "a pid file holding 0 was not refused");
 	CHECK(trace_seen_on == 0 && trace_seen_off == 0,
-	      "a pid file holding 0 signalled something");
+	      "a pid file holding 0 signaled something");
 	cons_say_trace(&r, 1);
 	CHECK(strstr(capture_end(), "trace-chaos:") != NULL,
 	      "the refusal does not name the word that was typed");
@@ -2536,7 +2536,7 @@ int main(int argc, char **argv)
 	       "      a modeled fabric that boots on any value is caught by the same twelve\n"
 	       "    trace-keys: the pid file read and the right signal sent --- SIGUSR1 for on\n"
 	       "      and SIGUSR2 for off, this process playing the daemon --- and a file\n"
-	       "      holding 0, -1, nothing or a word REFUSED with nothing signalled, since\n"
+	       "      holding 0, -1, nothing or a word REFUSED with nothing signaled, since\n"
 	       "      kill(0) signals the whole process group and kill(-1) signals everything\n"
 	       "    trace-chaos: the same pair of functions told the packet trace instead, the\n"
 	       "      signal still going and the line naming the packet trace and the word that\n"
