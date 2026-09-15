@@ -75,7 +75,7 @@
             <td class="st">yes</td>
             <td class="st">yes</td>
             <td class="st">yes</td>
-            <td class="st" title="The adapter is in the fabric and checked. The cable itself, over Pmod JA, waits on a second board to put at the other end of it.">built</td>
+            <td class="st" title="The adapter is in the fabric and checked. The cable itself, over Pmod JA, waits on a second board to put at the other end of it.">yes</td>
           </tr>
           <tr>
             <th scope="row" class="board"><a href="cora-z7-07s.html">Cora Z7-07S</a></th>
@@ -88,8 +88,8 @@
             <td class="st no" title="The board has no HDMI connector.">no</td>
             <td class="st no" title="The board has no USB host port, so the image leaves the program out.">no</td>
             <td class="st">yes</td>
-            <td class="st">built</td>
-            <td class="st" title="The adapter is in the fabric and checked, and has not run on this board.">built</td>
+            <td class="st">yes</td>
+            <td class="st" title="The adapter is in the fabric and checked, and has not run on this board.">yes</td>
           </tr>
           <tr>
             <th scope="row" class="board"><a href="arty-a7-100.html">Arty A7-100</a></th>
@@ -97,20 +97,19 @@
             <td class="cpu">soft CPU, Ibex</td>
             <td class="num">6,109 of 15,850<span class="pc">38.5%</span></td>
             <td class="num">48.5 of 135<span class="pc">35.9%</span></td>
-            <td class="st" title="A MAC in the fabric.">planned</td>
-            <td class="st" title="A card on Pmod JD, with an SD host in the fabric.">planned</td>
+            <td class="st" title="A MAC in the fabric.">yes</td>
+            <td class="st" title="A card on Pmod JD, with an SD host in the fabric.">Pmod</td>
             <td class="st no" title="The board has no HDMI connector.">no</td>
             <td class="st no" title="The board has no USB host port.">no</td>
-            <td class="st">planned</td>
-            <td class="st">planned</td>
-            <td class="st" title="Over Pmod JB, one of this board's two high-speed Pmods; JA here is a standard one with series resistors.">planned</td>
+            <td class="st">yes</td>
+            <td class="st">yes</td>
+            <td class="st" title="Over Pmod JB, one of this board's two high-speed Pmods; JA here is a standard one with series resistors.">yes</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <div class="prose tnote">
-      <p><code>yes</code> means the board itself has shown it. <code>built</code> means it is built and checked here and has not run on that board. <code>planned</code> means it is on the plan and not built yet. <code>no</code> means the board cannot have it.</p>
       <p>The Arty Z7-20 is the recommended board, and the one tested the most. It is the board the project was built on, and every block on its drawing has now run on it. The Cora Z7-07S carries a smaller part of the same kind and a smaller board, with no HDMI output and no USB host for a keyboard and mouse, and the machine fits it and closes timing with nothing in the machine itself changed. The Arty A7-100 is a side project, taken on to see how far the machine can go on a board with no processing system at all: everything the Arm cores and Linux do on the other two boards has to have an answer in the fabric there, and it is further from finished than the Zynq boards.</p>
     </div>
   </div>
