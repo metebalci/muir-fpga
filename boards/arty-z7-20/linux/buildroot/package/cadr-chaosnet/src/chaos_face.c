@@ -173,6 +173,22 @@ uint32_t chaos_face_lost(struct chaos_face *f)
 	return f->read(f, CHAOS_LOST);
 }
 
+// The latched "the machine emptied the incoming buffer", read and cleared.
+// The header says why a retry wants the edge rather than `STAT`'s level.
+//
+// **THE READ IS NOT SKIPPED WHEN THE BIT IS CLEAR AND THE WRITE IS**, which is
+// the whole of the difference between asking and clearing: a write of zero to
+// `IRQ` clears nothing, but it is still a bus cycle on a port the machine's
+// own traffic crosses, and this is asked at every turn of the program's loop.
+int chaos_face_rx_freed(struct chaos_face *f)
+{
+	const uint32_t irq = f->read(f, CHAOS_IRQ);
+	if (!(irq & CHAOS_IRQ_RX_FREE))
+		return 0;
+	f->write(f, CHAOS_IRQ, CHAOS_IRQ_RX_FREE);
+	return 1;
+}
+
 // --- the sixteen address switches ----------------------------------------
 //
 // On the board these are a DIP switch body; on this one they are a register,

@@ -90,6 +90,7 @@
 #include <cadr/cadr_mem.h>
 
 #include "chaos_face.h"
+#include "chaos_inject.h"
 #include "chaos_packet.h"
 #include "chaos_udp.h"
 
@@ -98,13 +99,22 @@
 // the round trip this bounds is what a file transfer moves at: muir measures
 // "some three milliseconds a packet" at that end's acknowledgment rate, and
 // a millisecond of polling under that is not what limits it.  A turn that did
-// something does not sleep at all, so a burst drains at the speed of the
-// fabric.
+// something does not sleep at all.
+//
+// **WHAT A BURST DRAINS AT IS THE MACHINE'S PACE AND NOT THE FABRIC'S**, and
+// that is `chaos_inject.c`'s doing rather than this constant's.  The frames of
+// a burst are taken off the socket as fast as the socket has them, and then
+// they wait their turn: the machine's incoming buffer holds one packet, so a
+// frame goes when the machine has emptied it.  This sleep is the floor on how
+// long a turn can be missed by, and the machine's own copy loop is about the
+// same length, so it does not show.
 #define IDLE_SLEEP_US 1000u
 
 // How many frames are taken from the fabric, and from the socket, in one turn
 // before the other is looked at.  Bounded so that a flood on either side
-// cannot starve the other.
+// cannot starve the other.  It is also how many frames can wait a turn for the
+// machine (`CHAOS_INJECT_QUEUE`), so that a burst arriving together is never
+// dropped for want of room.
 #define DRAIN 64u
 
 // How often the program says how it is getting on, when anything has moved.
@@ -177,12 +187,22 @@ struct ether {
 	int have_face;
 	struct chudp udp;
 	int have_udp;
+	// The sending station's end of the machine's buffer: a frame the buffer
+	// refused waits here for a turn and is offered again, as an interface's
+	// driver retries on Transmit Abort.  It carries the four counts of
+	// what became of every frame headed for the machine.
+	struct chaos_inject inject;
 	uint16_t machine;		// the CADR's own address
 	int trace;
+	// The turn's own clock, read once at the top of each pass of the loop.
+	// The retry wants to know how long a refused frame has been waiting,
+	// and `carry` is reached from CHUDP's callback, which carries no time
+	// of its own.
+	uint64_t now;
 	// What has gone by, for the report line and for a person wondering
 	// whether anything is happening at all.
-	unsigned long from_machine, to_machine, from_udp, to_udp;
-	unsigned long dropped_no_route, dropped_bad_frame, refused_busy;
+	unsigned long from_machine, from_udp, to_udp;
+	unsigned long dropped_no_route, dropped_bad_frame;
 };
 
 // One frame printed as it goes by: muir's `--chaos-trace`.  This is the only
@@ -208,10 +228,18 @@ static void trace_frame(struct ether *e, const char *way, const uint16_t *words,
 	    f.check_ok ? "good" : "BAD");
 }
 
-// A frame onto the machine's incoming buffer, if the fabric is there.  A
-// refusal is not a failure: the machine has not read the last packet out, the
-// interface's own Lost Count records it (AIM-628 §7), and the sender will
-// retransmit.  That is what the real cable did when a host was slow.
+// A frame onto the machine's incoming buffer, if the fabric is there.
+//
+// **A REFUSAL IS THE HARDWARE'S ABORT AND THE ANSWER TO IT IS A RETRY.**  The
+// machine has not read the last packet out and the interface's own Lost Count
+// records the refusal (AIM-628 §7); on the cable the sender's interface would
+// have read Transmit Abort and its driver would have sent the packet again
+// (§2.5, §2.6).  The station that sent this frame is at the far end of a UDP
+// socket and cannot, so `chaos_inject.c` stands in for its interface: the
+// frame waits for a turn, goes again when the machine has emptied its buffer,
+// and is given up after the three offers the CADR's own driver allows.
+// Without it a burst of frames from one host delivered exactly one frame,
+// however long the burst was.
 //
 // **A BAD CHECK WORD IS NOT FILTERED HERE.**  The cable carries what it
 // carries and the interface has a CRC Error bit for exactly this; muir's
@@ -222,11 +250,7 @@ static void to_machine(struct ether *e, const uint16_t *words, unsigned n)
 	if (!e->have_face)
 		return;
 	trace_frame(e, "to the machine", words, n);
-	const int r = chaos_face_give(&e->face, words, n);
-	if (r == 1)
-		++e->to_machine;
-	else if (r == 0)
-		++e->refused_busy;
+	chaos_inject_give(&e->inject, &e->face, words, n, e->now);
 }
 
 // One frame off the cable, from whichever station put it there, routed by its
@@ -536,9 +560,17 @@ int main(int argc, char **argv)
 	// ---- the ether ----
 	uint64_t last_report = now_ns();
 	unsigned long reported = 0;
+	// The retry at the machine's end, and the trace it starts with: a run
+	// started with `--chaos-trace` should say what the queue is doing from
+	// its first frame and not from its first signal.
+	chaos_inject_init(&e.inject);
+	e.inject.trace = e.trace;
 	while (!stopping) {
 		int did = 0;
 		const uint64_t now = now_ns();
+		// The turn's own clock, where `carry` can reach it: CHUDP hands
+		// a frame up through a callback that carries no time.
+		e.now = now;
 
 		// What SIGUSR1 or SIGUSR2 asked for, if either did: acted on
 		// here, in the program's own loop, where `say` is allowed.
@@ -549,6 +581,7 @@ int main(int argc, char **argv)
 			const int want = chaos_trace_apply(e.trace);
 			if (want >= 0) {
 				e.trace = want;
+				e.inject.trace = want;
 				if (e.have_udp)
 					e.udp.trace = want;
 			}
@@ -580,6 +613,16 @@ int main(int argc, char **argv)
 				did = 1;
 		}
 
+		// **AND THE FRAME WHOSE TURN IT IS.**  A frame the machine's
+		// buffer refused waits here and goes again when the machine has
+		// emptied it, which is what the sending station's own driver
+		// would have done with an aborted packet.  One frame a turn, as
+		// muir's node puts one on the cable at each of its turns.  A
+		// turn in which nothing moved answers nought, so a queue waiting
+		// on the machine still lets the loop sleep.
+		if (e.have_face && chaos_inject_pump(&e.inject, &e.face, now))
+			did = 1;
+
 		if (now - last_report >= REPORT_NS) {
 			// **WHAT COUNTS AS SOMETHING HAVING HAPPENED INCLUDES A
 			// DATAGRAM THAT WAS REFUSED**, which is the whole
@@ -592,7 +635,7 @@ int main(int argc, char **argv)
 			// `received` covers its delivered frames as well, so
 			// it takes their place here rather than being added
 			// to them.
-			const unsigned long moved = e.from_machine + e.to_machine + e.to_udp
+			const unsigned long moved = e.from_machine + e.inject.stored + e.to_udp
 						  + (e.have_udp ? e.udp.received : 0ul);
 			if (moved != reported) {
 				// **THE LINK'S OWN FOUR COUNTS, AND THEY ADD
@@ -608,18 +651,44 @@ int main(int argc, char **argv)
 				// a line where they do says that a link
 				// reporting nothing in really did hear
 				// nothing.
+				// **AND THE MACHINE'S SIDE CLOSES TOO**, which is
+				// the same rule one seam along: every frame this
+				// cable carried for the machine was stored, given
+				// up after its three offers, dropped for want of
+				// room to wait, or is still waiting, and
+				// `chaos_inject.h` names the identity.  The
+				// refusals stand beside them rather than in the
+				// sum, being OFFERS and not frames: they are the
+				// twin of the interface's own Lost Count, which
+				// counts a commit and not a packet.
 				say("%lu from the machine, %lu to it, %lu in and %lu out over UDP; "
 				    "%lu datagrams arrived, %lu refused for their shape, "
 				    "%lu with a bad checksum, %lu not for this cable; "
-				    "%lu with nowhere to go, %lu malformed, "
-				    "%lu refused because the machine had not emptied its buffer",
-				    e.from_machine, e.to_machine, e.from_udp, e.to_udp,
+				    "%lu with nowhere to go, %lu malformed; "
+				    "%lu offers refused because the machine had not emptied "
+				    "its buffer and %lu in the interface's own Lost Count, "
+				    "%lu frames given up after three, "
+				    "%lu with no room to wait, %lu waiting",
+				    e.from_machine, e.inject.stored, e.from_udp, e.to_udp,
 				    e.have_udp ? e.udp.received : 0ul,
 				    e.have_udp ? e.udp.bad_shape : 0ul,
 				    e.have_udp ? e.udp.bad_checksum : 0ul,
 				    e.have_udp ? e.udp.not_this_cable : 0ul,
 				    e.dropped_no_route, e.dropped_bad_frame,
-				    e.refused_busy);
+				    e.inject.refused,
+				    // **THE INTERFACE'S OWN COUNT, BESIDE THIS
+				    // PROGRAM'S.**  They are the same event
+				    // counted at the two ends of the seam and
+				    // they should move together; a board where
+				    // they do not is a board where somebody
+				    // else is committing frames, or where the
+				    // fabric is refusing for a reason this
+				    // program cannot see.  It is the one number
+				    // in this line that is read out of the
+				    // fabric rather than kept here.
+				    e.have_face ? (unsigned long)chaos_face_lost(&e.face) : 0ul,
+				    e.inject.given_up,
+				    e.inject.no_room, (unsigned long)e.inject.waiting);
 				reported = moved;
 			}
 			last_report = now;
@@ -629,7 +698,8 @@ int main(int argc, char **argv)
 			usleep(IDLE_SLEEP_US);
 	}
 
-	say("stopping: %lu packets from the machine, %lu to it", e.from_machine, e.to_machine);
+	say("stopping: %lu packets from the machine, %lu to it, %lu still waiting for a turn",
+	    e.from_machine, e.inject.stored, (unsigned long)e.inject.waiting);
 	if (e.have_udp)
 		chudp_close(&e.udp);
 	if (e.have_face)

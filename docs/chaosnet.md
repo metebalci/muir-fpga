@@ -451,6 +451,130 @@ traces a refusal when `--chaos-trace` is on and keeps no tally, because it has
 a prompt somebody is sitting at rather than a daemon writing one line a minute
 to a log. So the four names are this program's own.
 
+## The machine holds one packet, and a frame it refuses goes again
+
+The Chaosnet interface has one incoming packet buffer. A frame given to it
+while the machine has not read the last packet out is refused, and the
+interface counts the refusal in its Lost Count. That is the four-bit field of
+AIM-628 section 7, and on this board it is the `LOST` register of
+`chaos_face.h`.
+
+So a host that sends two frames back to back offers the second one while the
+machine is still copying the first out of the buffer. A form longer than 488
+bytes is two packets, which makes this the common case rather than a rare one.
+
+### What the cable did, which is not losing the frame
+
+AIM-628 section 2.5 says a receiver whose buffer is full does not silently
+drop a frame addressed to it. It sends an abort signal, which stops the
+transmitter. The sending interface reads Transmit Abort, and section 2.6 says
+what the sender does about it: "we recover from it (in software) by
+retransmitting the packet again a couple of times, hoping that the receiver
+will soon clear its packet buffer."
+
+The CADR's own driver does exactly that. `CHAOS-NUMBER-TRANSMIT-RETRIES` is 3
+in `ucadr/uc-chaos.lisp`, with MIT's comment "Send once and retry twice if
+aborted". An aborted packet stays at the head of the transmit list until it is
+done with, so packets queued behind it stay behind it. Past the third offer
+the driver gives up and the packet is lost.
+
+### What this program does
+
+The program is the cable, and the station that sent a frame is at the far end
+of a UDP socket and has gone on. So the retry is here, in `chaos_inject.c`,
+standing in for the sending station's interface as the rest of the program
+stands in for the cable.
+
+A frame the buffer refuses waits for a turn. It goes again when the machine
+has emptied its buffer, which the fabric latches as `CHAOS_IRQ_RX_FREE` and
+`chaos_face_rx_freed` reads and clears. The bit is cleared immediately before
+every offer, so a drain from before a refusal is never read as the turn to go
+again after it.
+
+Three offers in all, which is the CADR's own bound. A frame that has waited
+twenty milliseconds without the machine emptying its buffer goes again anyway,
+which is what makes the bound reachable on a machine that has stopped
+listening. Past the third offer the frame is given up and counted.
+
+Frames that arrive while one is waiting queue behind it, in order, up to
+sixty-four of them. Sixty-four is one turn's drain off the socket, so a burst
+that arrives together is never dropped here for want of room. A frame that
+arrives with the queue full is dropped and counted, as the cable would have
+lost it.
+
+Frames for anywhere else are not affected. The program routes by the cable
+destination alone, so a frame for another station goes straight out over UDP
+and never reaches this queue.
+
+### The counts, and the sum that closes
+
+The traffic line carries four counts for the machine's side:
+
+- **offers refused because the machine had not emptied its buffer.** These are
+  offers and not frames, which is what makes them comparable with the
+  interface's own Lost Count: one frame offered three times moves both by
+  three.
+- **frames given up after three.**
+- **frames with no room to wait.**
+- **frames waiting.**
+
+Every frame the program took for the machine is stored, given up, dropped for
+want of room, or still waiting. The check asserts that identity after every
+case, so a road out that counts nothing breaks the sum and the check says so.
+It is the same rule as the datagram counts above and for the same reason.
+
+### What it measures, on the build host
+
+The package's check runs a burst against a model of the fabric with a machine
+that empties its buffer after a service time. The first table is the program
+as it was, the second is the program as it is:
+
+| a burst of | reached the machine before | after |
+|---|---|---|
+| 2 frames | 1 | 2 |
+| 3 frames | 1 | 3 |
+| 64 frames | 1 | 64 |
+
+The refusals are unchanged: a burst of 64 costs 63 refusals either way, one
+for every frame after the first. That is what the cable charged too, since
+each frame was aborted once and sent again.
+
+Spacing the frames 20 milliseconds apart delivers all of them without any
+retry at all, which is the contrast the first measurement of this drew on
+another machine. What the retry buys is that the sender no longer has to know
+to do it.
+
+### The machine's service time, derived
+
+`CHAOS-INTR` in microcode 323 is at control store `0o25762`. Its prologue runs
+to `0o26006`, which is 21 microinstructions, and it calls `CHAOS-LIST-GET` for
+a free packet. The copy loop at `0o26007` reads two 16-bit words out of the
+interface and writes one word of main memory, and one pass of it is 19
+microinstructions. The tail from `0o26032` to the Clear Receiver write at
+`0o26040` is 8 more.
+
+So a frame of `n` 16-bit words costs about 38 + 19 x ceil(n / 2) microcycles.
+A microcycle on this board is 290 nanoseconds. The longest packet is 255 words
+and takes about 716 microseconds; a six-byte packet is 14 words and takes
+about 50.
+
+One term of that loop is a delay the microcode takes when the disk is busy or
+when a PDP-11 arbitrates the Unibus. This board's LOCAL ENABLE bit reads set,
+which the microcode takes into `A-INTR-LOCAL-UNIBUS-MODE`, so the delay count
+is zero and a pass is 19 microinstructions rather than 51.
+
+That figure is the copy loop alone. The whole time from a frame arriving to
+the Clear Receiver write also includes the machine reaching its interrupt
+handler, which has not been measured for this interrupt. The serial line's own
+measurement on this board brackets the same latency at a couple of
+milliseconds at worst.
+
+**No answer above rests on the figure being exact.** The check runs at both
+service times and gets the same table, because what decides a loss is an order
+of events rather than a duration. A burst handed down in one turn cannot
+outlast any service time at all, and a burst that waits for the buffer cannot
+lose to one.
+
 ## The trace switches while the program runs
 
 `--chaos-trace` says every frame as it goes by and every datagram refused,
@@ -499,14 +623,20 @@ address space in both directions, read out of muir's two traces rather than
 transcribed.
 
 `chaosnet` and `serial` hold the two programs on the build host with no board:
-548 checks and 37 mutation records for the first, 115 and 19 for the second.
+919 checks and 45 mutation records for the first, 115 and 19 for the second.
 Thirty-four of those checks and seven of those records are the counters and
 the trace switch above: every road out of the link driven once, the four
-counts added up, and the two signals told apart.
-The first figures were 772 and 61 while the program carried services. The
-checks and records that went are the ones written for the connection protocol
-and for STATUS, TIME, UPTIME and FILE. A check for code that should not exist
-is not a check, so they went with the code.
+counts added up, and the two signals told apart. Three hundred and seventy-one
+more checks and eight more records are the burst above: two, three and
+sixty-four frames back to back against a machine that empties its buffer at
+its own pace, how many reached it and in what order, the bound counted against
+a machine that never empties it at all, and the queue's own bound.
+
+The figures were 548 and 37 before the burst checks, and 772 and 61 while the
+program carried services. The checks and records that went at that point are
+the ones written for the connection protocol and for STATUS, TIME, UPTIME and
+FILE. A check for code that should not exist is not a check, so they went with
+the code.
 
 What is left is the whole of what the program does: the packet's word layout
 and its check word, the register face's handshake with the fabric, and CHUDP's
