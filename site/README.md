@@ -111,9 +111,12 @@ down on the UART's right, the gap on its left being the SD host's now.
 
 Under the machine, each drawing is three layers. The software region is on
 top. That is the Linux programs on a Zynq board and the firmware's own services
-on the Arty A7-100. Under it is a row of controllers, one for each thing the
-board is attached to: the memory controller, the MAC, the SD host, the UART,
-and on the Arty Z7-20 the USB host. Under that row are the board's own
+on the Arty A7-100. Beside that region, at its left, stand the processor it
+runs on and the boot that starts that processor, in the same two places on all
+three drawings: the Arm cores and U-Boot on the Zynq boards, the Ibex and the
+QSPI flash on the Arty A7-100. Under it is a row of controllers, one for each
+thing the board is attached to: the memory controller, the MAC, the SD host,
+the UART, and on the Arty Z7-20 the USB host. Under that row are the board's own
 connectors, one under each controller. A line that leaves a program ends on a
 controller and never on a connector. Each controller has one line down to the
 connector it drives. On the two Zynq boards every controller in the row is the
