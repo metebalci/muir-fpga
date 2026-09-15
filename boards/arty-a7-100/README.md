@@ -15,11 +15,15 @@ figures are below.
 
 ## What runs on this board today
 
-The CADR runs its boot PROM. There is nothing behind its memory port, so
-nothing answers the main-memory cycles. That is not a fault of this board. It
-is the Arty Z7-20's own memory-off configuration, which is the one this project
-has built and measured from the beginning, and it is what a board with no
-memory controller can do.
+**This section is about the default configuration, which is the machine
+alone.** `DDR`, `SOC`, `PROVE` and `PROBE_DEPTH` are switches and every one of
+them is off unless a build sets it. Main memory and the soft processing system
+have sections of their own below, and both have run on silicon.
+
+With no switch set the CADR runs its boot PROM. There is nothing behind its
+memory port, so nothing answers the main-memory cycles. That is not a fault of
+this board. It is the Arty Z7-20's own memory-off configuration, which is the
+one this project has built and measured from the beginning.
 
 **The machine does not stop when it reaches memory, and that is worth knowing
 before reading the lamps.** An unanswered cycle is not a stall. It ends on the
@@ -47,8 +51,10 @@ them out over JTAG, and `tools/probe_check.py` diffs that capture against
 muir's own trace column for column. That is the same instrument the Arty Z7-20
 used for its first evidence from silicon.
 
-**Neither has been run on this board.** Everything below the fit figures is a
-recipe and not a measurement.
+**Both have been run on this board.** The probe's capture of the first 1,024
+microcycles agrees with muir's own trace column for column, and the lamps read
+at the board as this section says they should. "The recipe, and its first run
+on silicon" below has that run's account.
 
 ## The lamps, and the one thing about them that traps a reader
 
@@ -196,6 +202,13 @@ four of JB's header rows --- pins 1 and 2, 3 and 4, 7 and 8, 9 and 10 --- are
 true differential pairs of bank 15, and two of them are clock-capable. Not one
 of JA's four rows is a pair at all: its differential pairs straddle the rows
 instead.
+
+**Those four rows are what the link uses, one signal to a pair.** A group of
+four pads carries a strobe on one line of the first pair and one data line on
+one line of the second, and the other line of each pair is driven low as a
+guard by whichever board drives that group. So the coupled line beside a signal
+does not switch, and the crosstalk a pair is built to carry is the thing the
+guard removes.
 
 This link's timing rests on a strobe at the far end of a ribbon, so it goes on
 a high-speed port. **The card stays on JD**, the other standard port, and is
@@ -621,10 +634,11 @@ clock of its own: the machine's tick did not move and nothing about it was
 meant to.
 
 So on silicon: a RISC-V core in the fabric read four register faces, each of
-which answered with its own identifier; it halted the CADR, read its program
-counter and its first flag word off MIT's diagnostic bus, stepped it exactly
-one microcycle, and started it again. **This is the first time anything on
-this board has done more than blink.**
+which answered with its own identifier --- the fourth of them being the debug
+window, which is not in this board's design any more; it halted the CADR, read
+its program counter and its first flag word off MIT's diagnostic bus, stepped
+it exactly one microcycle, and started it again. **This is the first time
+anything on this board has done more than blink.**
 
 The four commands answer too. Typed at the wire, one at a time:
 
@@ -654,11 +668,6 @@ one microsecond between raising STEP and reading SSDONE, and the two master
 clocks it is waiting for are 880 nanoseconds at extra slow. The wait comes out
 of the timer, so it is a microsecond whatever the soft clock is; what would
 break it is a machine tick longer than 11.36 nanoseconds, not a slower core.
-
-**Two readers on one serial device split the bytes between them**, which is
-worth knowing before believing a capture: the first attempt at the commands
-above produced a line cut off in the middle of a word, and the cause was a
-capture left running from an earlier test rather than anything on the board.
 
 **And this run is of a design that closes.** The section below has the figures.
 An earlier run of the same firmware, on a design that did not close, is not
@@ -882,11 +891,11 @@ clock group would be wrong: a grouped path is not timed at all, and a payload
 that is not timed at all is a payload the fitter may route through a swamp.
 
 **And the flow asks the design whether that worked** rather than trusting it.
-At the build above, **71 paths cross for the request and its payload and 36 for
-the answer coming back, every one of them bounded at 10.000 ns**, and the
-machine's own fifteen-tick exception still reaches 19,884 of 46,388 setup
-paths. A constraint that reached nothing would print a plausible worse number
-and finish, which is the failure this repository has met four times.
+At the `SOC=1` build above, **71 paths cross for the request and its payload
+and 36 for the answer coming back, every one of them bounded at 10.000 ns**,
+and the machine's own fifteen-tick exception still reaches 19,886 of 46,430
+setup paths. A constraint that reached nothing would print a plausible worse
+number and finish, which is the failure this repository has met four times.
 
 **The soft system is asked a different question rather than not asked.**
 `assert_constraints_scoped` holds every register outside the machine to one
@@ -901,11 +910,11 @@ registers against their own period instead: **1,395 registers under
 **What the check holds.** `build/soc.pass` runs the whole firmware at three
 clock ratios in one process, the board's own 2:1 and two that share no factor
 with it or with each other, and asserts the same thirteen lines at every one.
-The thirteenth is new with the second clock. It is sixteen rounds of four
-back-to-back loads, one at each face, with nothing between them for the
-compiler to put an instruction into, because **a race check needs the stimulus
-that loses the race** and every other line in that firmware is one load with a
-`say()` behind it.
+The thirteenth is new with the second clock. It is sixteen rounds of three
+back-to-back loads, one at each face the board has, with nothing between them
+for the compiler to put an instruction into, because **a race check needs the
+stimulus that loses the race** and every other line in that firmware is one load
+with a `say()` behind it.
 
 Five mutation records are aimed at the crossing and all five are caught.
 **What no record there can reach is the depth of a synchroniser.** Nothing
@@ -917,11 +926,31 @@ being left to be filed as a hole.
 
 ### What is still absent
 
-The disk pack face answers its registers and cannot move a block: its memory
-port is `S_AXI_HP2` on the Zynq and there is no memory controller on this board
-yet, so the port's ready lines are low and a block fetch would stand. That is
-said plainly rather than answered with a plausible completion. Nothing asks it
+The disk pack face answers its registers and cannot move a block. **This board
+has a memory controller and the pack face is not joined to it.**
+
+The machine's own memory port is joined to it. `mem_*` leaves `cadr_machine`,
+passes `cadr_jtag_mem`, crosses to the controller's user clock in
+`cadr_mem_cross`, becomes a user-interface command in `cadr_mig_ui` and reaches
+the generated controller, all of it inside
+`boards/arty-a7-100/cadr_a7_memory.sv`, and that path has run MIT's boot PROM
+out of real DDR3L on silicon.
+
+The pack face's own memory master is not. It is `S_AXI_HP2` on the Zynq, and in
+`boards/arty-a7-100/cadr_arty_a7.sv` its `m_awready`, `m_wready` and
+`m_arready` are tied low with `m_bvalid` and `m_rvalid` beside them, so a block
+fetch would stand for ever; what it drives goes nowhere but the fold that keeps
+those wires from being trimmed. That is said plainly rather than answered with a
+plausible completion: a port that accepted an address and returned a word of
+nothing would let the pack face report a block it had not moved. Nothing asks it
 for a block.
+
+**What joining them needs is a second master in front of the controller.**
+`cadr_mig_ui.sv` takes one `mem_*` port and one request in flight, which is what
+the machine's port is, so a block moving beside the machine's own cycles wants
+an arbiter there --- and the machine's 4.25 microsecond timer is what bounds how
+long the disk may hold the controller, exactly as it bounds the channel's
+arbiter on the other board.
 
 The firmware is not mutated by `mutations/run.py`, and that is a limit rather
 than a choice: its hex is built with a RISC-V compiler and read at elaboration,
@@ -930,27 +959,75 @@ which carry mutation lists of their own.
 
 ## The fit, measured
 
-Placed and routed for `xc7a100tcsg324-1` at commit `86d787b`, memory-off, with
-`boards/arty-a7-100/vivado/bitstream.tcl`. Beside it is the Arty Z7-20's own
-memory-off board, built from the same commit by the same flow, so the two are
-one comparison and not two quotations. **Nothing under `rtl/` changed between
-`86d787b` and the commit these files land at**, so the figures are of the
-machine as it stands.
+**This board has five configurations and no one commit has routed all of
+them.** Each was built by the slice that put it there, so the table below names
+the commit every figure was routed at. Slack in this project has moved a
+quarter of a nanosecond between two builds of bit-identical logic, so anything
+inside that is placement rather than a finding, and rows from different commits
+are not a series.
 
-| | Arty A7-100 | Arty Z7-20, memory-off |
-|---|---|---|
-| part | `xc7a100tcsg324-1` | `xc7z020clg400-1` |
-| worst slack | **+1.227 ns**, met | **-9.600 ns**, NOT met |
-| failing endpoints | 0 of 27,148 | 596 of 28,959 |
-| hold | +0.043 ns, met | +0.040 ns, met |
-| Slice LUTs | 6,009 of 63,400 (9.48%) | 6,330 of 53,200 (11.90%) |
-| Slice registers | 2,403 of 126,800 (1.90%) | 3,039 of 106,400 (2.86%) |
-| block RAM tiles | 38 of 135 (28.15%) | 38 of 140 (27.14%) |
-| DSP | 0 of 240 | 0 of 220 |
-| paths at the relaxed requirement | 18,861 of 27,266 at 150.000 ns | 18,843 of 28,916 at 150.000 ns |
-| bitstream | 3,825,992 bytes | 4,045,764 bytes |
+| configuration | commit | worst slack | failing endpoints | slices | Slice LUTs | registers | block RAM tiles |
+|---|---|---|---|---|---|---|---|
+| memory-off, the default | `2e01ab8` | **+1.181 ns**, met | 0 of 28,643 | 2,108 (13.30%) | 6,367 (10.04%) | 2,923 (2.31%) | 38 (28.15%) |
+| with the probe, `PROBE_DEPTH=1024` | `b6edbe6` | **+1.069 ns**, met | 0 of 28,948 | 2,173 (13.71%) | 6,253 (9.86%) | 3,351 (2.64%) | 51 (37.78%) |
+| `DDR=1` | `be01ca0` | **+0.232 ns**, met | 0 of 40,343 | --- | 10,400 (16.40%) | 6,541 (5.16%) | 38 (28.15%) |
+| `SOC=1` | `27624ed` | **+0.123 ns**, met | 0 of 46,476 | 4,787 (30.20%) | 13,465 (21.24%) | 8,565 (6.75%) | 48.5 (35.93%) |
+| `SOC=1 DDR=1` | `782e3a9` | **+0.608 ns**, met | --- | 6,185 (39.02%) | 18,184 (28.68%) | 12,901 (10.17%) | --- |
 
-**THE SLACK ROW IS NOT A COMPARISON AND THE OTHER BOARD'S FIGURE WAS NOT ITS
+Every row is a routed run of `boards/arty-a7-100/vivado/bitstream.tcl` for
+`xc7a100tcsg324-1`, and every one met.
+
+**Three of the five rows were read out of a routed report and two were not,
+which is a difference worth carrying.** The memory-off row is the debug cable
+slice's own build, the probe row is the first silicon run's, and the `SOC=1`
+row is the window slice's; each has a `timing.rpt` and a `utilisation.rpt`
+kept beside its bitstream. The `DDR=1` row is what the run that built main
+memory reported and its reports were not kept, so those figures are quoted and
+not read. The `SOC=1 DDR=1` row is the one-signal-per-pair slice's own record
+of its build, which kept no report for this board either; that slice counted
+its block RAM in cells and gave 51, where the build before it had 51 cells in
+48.5 tiles, so the column is left empty rather than converted.
+
+**Only the last row is of the fabric this board builds today.** The debug
+cable moved to Pmod JB and the debug window came off at `27624ed`, and the
+cable went to one signal a coupled pair at `782e3a9`, so every row above the
+last is of a design whose cable is not this one. What those rows still answer
+is whether the machine fits, which is a question about shape and barely moves.
+
+**And two of the rows were routed from a slice's worktree rather than from the
+commit itself**, which is the same sources and not the same words: the `SOC=1`
+row is the window slice's build of what landed as `27624ed`, and the
+`SOC=1 DDR=1` row is the cable slice's build of what landed as `782e3a9`.
+
+**The count of relaxed paths is the check that the constraints reached the
+design, and it is the first thing to read in any of these runs.**
+`rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes the machine's datapath
+registers to fifteen ticks, and an exception that applied to nothing is listed
+by `report_exceptions` exactly as one that reached ten thousand paths. What
+separates them is the setup requirement the paths themselves carry. A design
+where nothing asks for 150 ns is the unconstrained design, whatever any report
+says, and every slack figure from such a run would be of a machine nobody meant
+to build. The `SOC=1` build reports 19,886 of 46,430 setup paths at 150.000 ns,
+and the `SOC=1 DDR=1` build 19,882 of 60,287, each with the Pmod carrier's own
+24 paths at 40.000 ns beside it.
+
+**Read the memory-off row as a floor.** That design is the machine with every
+seam tied off, and a tie-off is not free: the drive constant-folds, the serial
+chip constant-folds, the Chaosnet interface folds with its address switches at
+zero, and the mouse's counters fold because nothing on its seven lines ever
+changes. Every fabric answer in "What is absent" above adds logic and block RAM
+that row does not include. Utilisation answers "does it fit", which is about
+the design's shape; slack answers "is this build finished".
+
+### The memory-off board against the Arty Z7-20's, and why that row is history
+
+The two boards were routed memory-off from one commit once, `86d787b`, by the
+same flow, which made them one comparison rather than two quotations. The Arty
+A7-100 read **+1.227 ns met on 0 of 27,148 endpoints** with 6,009 Slice LUTs,
+2,403 registers and 38 block RAM tiles; the Arty Z7-20 read **-9.600 ns on 596
+of 28,959** with 6,330 Slice LUTs, 3,039 registers and 38 tiles.
+
+**THAT SLACK ROW WAS NOT A COMPARISON AND THE OTHER BOARD'S FIGURE WAS NOT ITS
 PART'S FAULT.** Every one of the Arty Z7-20's 596 failing endpoints was in the
 debug cable's Pmod carrier, and the ten worst paths all ran from
 `u_machine/processor/memstart_reg` to that carrier's frame registers ---
@@ -962,48 +1039,18 @@ is instantiated on every board. So the memory-off board was timed without it
 and missed by 9.6 nanoseconds. **That gap is closed**: every board's flow reads
 the file unconditionally now and asserts that it reached a path.
 
-These figures were measured before that, on a board whose debug cable was tied
-off and whose `DBD` lines reached nothing but the false-pathed fold. The
-carrier is in this design now, so the slack rows are of two designs neither of
-which is the one built today, and only the rows below them compare.
-
-**The count of relaxed paths is the check that the constraints reached the
-design, and it is the row to read first.** `rtl/plumbing/xilinx7/cadr_machine.xdc`
-relaxes the machine's datapath registers to fifteen ticks, and an exception
-that applied to nothing is listed by `report_exceptions` exactly as one that
-reached ten thousand paths. What separates them is the setup requirement the
-paths themselves carry. A design where nothing asks for 150 ns is the
-unconstrained design, whatever any report says, and every slack figure from
-such a run would be of a machine nobody meant to build.
-
-With the probe in the design, at `PROBE_DEPTH=1024`:
-
-| | |
-|---|---|
-| worst slack | **+1.069 ns**, met |
-| failing endpoints | 0 of 28,948 |
-| Slice LUTs | 6,253 of 63,400 (9.86%) |
-| Slice registers | 3,351 of 126,800 (2.64%) |
-| block RAM tiles | 51 of 135 (37.78%) |
-
-**Read every number here with its commit attached.** Slack in this project has
-moved a quarter of a nanosecond between two builds of bit-identical logic, so
-anything inside that is placement and not a finding. Utilisation answers "does
-it fit", which is about the design's shape and barely moves; slack answers "is
-this build finished".
-
-**And read the whole table as a floor.** The design measured here is the
-machine with every seam tied off. A tie-off is not free and that is the point:
-the drive constant-folds, the serial chip constant-folds, the Chaosnet
-interface folds with its address switches at zero, and the mouse's counters
-fold because nothing on its seven lines ever changes. Every fabric answer in
-the section above adds logic and block RAM that these figures do not include,
-and a DDR3 controller adds a great deal of it.
+Both of those figures were measured before it was closed, so neither is of a
+design anybody builds today. The memory-off row in the table above is a later
+build, with the carrier in it and timed.
 
 ### With the memory in it
 
-Placed and routed by the same flow at the commit these files land at, `DDR=1`
-against the same tree with `DDR` off, so the two rows are one comparison.
+Placed and routed by the same flow at `be01ca0`, the commit that put main
+memory here, `DDR=1` against the same tree with `DDR` off, so the two rows are
+one comparison. **Neither run's reports were kept**, so both columns are what
+that run reported rather than what a report file says today, and both predate
+the debug cable's carrier being timed --- which is why the memory-off column
+here is not the memory-off row in the table above.
 
 | | memory-off | memory-on |
 |---|---|---|
@@ -1026,9 +1073,9 @@ output tiles and in distributed memory, not in block RAM. That last row is
 worth having before anyone reaches for a smaller part, because block RAM is
 what binds on the Cora Z7-07S.
 
-**The memory-off figures moved by 23 LUTs and 2 registers** against the
-`86d787b` ones in the table above, which is the DDR3L's own ports arriving in
-the port list of both configurations and being driven to their safe state in
+**The memory-off column moved by 23 LUTs and 2 registers** against the
+`86d787b` figures in the section above, which is the DDR3L's own ports arriving
+in the port list of both configurations and being driven to their safe state in
 one of them. The slack moved 0.124 ns, which is inside this project's own
 quarter-nanosecond placement noise and is not a finding.
 
@@ -1110,21 +1157,35 @@ goes through to a bitstream with **zero critical warnings and zero errors**.
 
 | | |
 |---|---|
-| `cadr_arty_a7.sv` | the top level: the clock, the machine, the tie-offs, the probe, the fold, the lamps |
+| `cadr_arty_a7.sv` | the top level: the clock, the machine, the memory, the soft processing system, the tie-offs, the probe, the fold, the lamps |
 | `cadr_arty_a7.xdc` | the pins the design uses, the board clock, and the Artix's configuration properties |
+| `cadr_a7_memory.sv` | the DDR3L behind the machine's memory port: the generated controller, the crossing into its clock, the driver for its user interface and the tally at its edge |
+| `cadr_a7_ddr.xdc` | the memory board's two extra clocks and the three places the design crosses between them |
+| `cadr_a7_ddr_off.xdc` | the same for a board with the controller out, generated and held current |
+| `mig/` | the generated memory controller, its project file and the argument for generating it |
 | `vivado/bitstream.tcl` | synthesis, place and route, the constraint assertions, and the bitstream |
 | `vivado/fit.tcl` | the same for `cadr_machine` alone, out of context |
+| `vivado/mig.tcl` | generate the controller in batch from the project file |
+| `vivado/mig_check.py` | is what is committed what the generator writes today |
 | `vivado/program.tcl` | program the part over JTAG, by cable serial |
 | `vivado/probe.tcl` | read the capture back over JTAG into a file `tools/probe_check.py` can diff |
+| `vivado/mem_window.tcl` | the debugger's side of the memory window, sourced by the three below |
+| `vivado/ddr_check.tcl` | can the debugger reach the DDR3L, and does what it writes come back |
+| `vivado/prove.tcl` | does the fabric write real memory, and does it read it |
+| `vivado/ddr_run.tcl` | the machine running MIT's boot PROM out of the board's own DDR3L |
 | `vivado/qspi.tcl` | write the bitstream into the board's flash, never run |
 | `firmware/` | the soft processing system's bare-metal C, its linker script and its reset vector |
 | `Arty-A7-100-Master.xdc` | Digilent's published pin file, byte for byte |
 | `Digilent-License.txt` | the MIT licence that file is published under |
 
-`make build/arty_a7.pass` lints the top level in all three of its
-configurations: the machine, the machine with the probe, and the machine with
-the soft processing system. It
-cannot be simulated, Verilator having no `MMCME2_BASE`, and what lint holds is
+`make build/arty_a7.pass` lints the top level in all seven of its
+configurations: the machine, the machine with the probe, the machine with its
+memory behind it, the two proving boards, the machine with the soft processing
+system, and `SOC=1 DDR=1`, which is the only one of the seven that is the whole
+board. A check that lints one configuration says nothing about the others, and
+this repository has already had a whole seam with no check of any kind from any
+tool while `make check` was green. The design cannot be simulated, Verilator
+having no `MMCME2_BASE`, and what lint holds is
 that the port list matches, that nothing is undriven, and that the `witness`
 fold names every output of `cadr_machine`. **That last is a real check and not
 a duplicate of the other board's**: two top levels now instantiate the machine,
