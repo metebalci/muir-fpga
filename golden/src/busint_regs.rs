@@ -122,7 +122,7 @@
 
 use muir::busint::{self, Busint, DebugOut, Register, Responder, error_status, interrupt_status};
 use muir::ioboard::{self, csr};
-use muir::simpletv::mode;
+use muir::tv::mode;
 use muir::machine::{self, Machine};
 
 /// The Unibus is 18 bits and byte-addressed.
@@ -212,7 +212,7 @@ fn responder(m: &Machine, a: busint::MapAccess, write: bool) -> (u32, Option<u32
     }
 }
 
-/// The display's mode register, `simpletv::CONTROL` --- the one thing in
+/// The display's mode register, `tv::CONTROL` --- the one thing in
 /// this process that can raise `XBUS INTR IN`, the disk having no drive.
 const TV_MODE: u32 = 0o17377760;
 

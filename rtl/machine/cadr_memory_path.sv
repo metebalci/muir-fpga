@@ -116,7 +116,12 @@
 
 `default_nettype none
 
-module cadr_memory_path (
+module cadr_memory_path #(
+    // MIT's TV sync PROM as a `$readmemh` image, passed down to `cadr_tv`;
+    // `rtl/machine/cadr_tv.sv` says what it is and why it is named at
+    // elaboration rather than left to a relative default.
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
+) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
     // `-XBUS INIT` on the backplane, which is not a bus cycle: the display's
@@ -1182,7 +1187,9 @@ module cadr_memory_path (
   logic        tv_ack, tv_drives, tv_fb;
   logic [31:0] tv_rdata;
 
-  cadr_tv tv (
+  cadr_tv #(
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+  ) tv (
       .clk      (clk),
       .rst      (rst),
       .xbus_init(xbus_init),

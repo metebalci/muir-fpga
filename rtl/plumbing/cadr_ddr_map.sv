@@ -33,7 +33,7 @@
 //   wider frame.  That is a fork of the machine and not a change here.
 //
 //   The display is 32,768 words --- 128 KB of the 8 MB reserved --- which is
-//   `simpletv::BUFFER_WORDS`, the 64 4116s on the board.  The 8 MB is room for
+//   `tv::BUFFER_WORDS`, the 64 4116s on the board.  The 8 MB is room for
 //   1920 x 1080 at 32 bits a pixel.  The CADR's own screen is 768 x 963 at one
 //   bit, and 32bpp is not a size its window system could drive; the room is
 //   for a display that is not the CADR's.
@@ -67,7 +67,7 @@ package cadr_ddr_map;
   localparam logic [31:0] DISPLAY_BASE  = 32'h1C00_0000;
   localparam int unsigned DISPLAY_WORDS = 2 * 1024 * 1024;  // 8 MB reserved
 
-  // simpletv::BUFFER_WORDS, 0o100000: the 64 4116s on the SIMPLE TV.
+  // tv::BUFFER_WORDS, 0o100000: the 64 4116s on the SIMPLE TV.
   localparam int unsigned DISPLAY_WORDS_REACHABLE = 32768;
 
   // A CADR word address into a byte address in the region.
@@ -76,7 +76,7 @@ package cadr_ddr_map;
   endfunction
 
   // A word of the display's window into a byte address in its region.  The
-  // window is `simpletv::BUFFER_WORDS` long and aligned to its own size, so
+  // window is `tv::BUFFER_WORDS` long and aligned to its own size, so
   // its offset is the low fifteen bits of the address and nothing is
   // subtracted; `rtl/machine/cadr_tv.sv` decodes the window and `rtl/plumbing/cadr_xbus_ddr.sv`
   // answers it at this base.

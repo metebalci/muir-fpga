@@ -1,26 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The display controller: MIT's TV, muir's `simpletv::SimpleTv`, as an Xbus
-// slave --- the register face and the vertical interrupt.
+// The display controller: MIT's TV, muir's `tv::Tv`, as an Xbus
+// slave --- the register face, the sync program and the vertical interrupt.
 //
-// What the board is, from `src/simpletv.rs` and the sources it cites
+// What the board is, from `src/tv.rs` and the sources it cites
 // (`sys/window/shwarm.lisp`, `cadrtv/lmtv.order`, `data/SIMPLETV.netlist`):
 // a 32,768-word frame buffer at `0o17000000`, eight control words at
 // `0o17377760`, and a vertical flag.  Register 0 is the mode register ---
 // the Am25LS2519 at NXBCTL 0F12 holding `MODE<3:0>`: `CLOCK MODE<1:0>`,
 // `MODE BOW` and `MODE INTR ENB` --- read back through the 74LS244 at 0F11
-// with `VERT FLAG` in bit 4 and bits 5 to 7 (VSYNC, HSYNC, SYNC PROM ENB)
-// reading zero.  **The three read zero for two reasons and only one is the
-// board's.**  Bit 7 is grounded at the buffer by ECO 2 of `cadrtv/lmtv.eco`,
-// so it reads zero on the hardware.  Bits 5 and 6 are wired to the sync
-// generator on the netlist --- the 74LS244 at 0F11 takes VSYNC on pin 4 and
-// HSYNC on pin 6 from the 74LS175 at NSYREG 0D02 --- and they read zero here
-// only because muir models no sync generator and this has none either.
+// with `VERT FLAG` in bit 4, `VSYNC` and `HSYNC` in bits 5 and 6 off the
+// sync generator, and bit 7 reading zero because ECO 2 of `cadrtv/lmtv.eco`
+// grounds it on this board.
 // **The flag is a flop of its own, the 74LS74 at 0E14: preset by `-TVMA
-// CLR`, the sync program's start of frame, once a frame; clocked by `-LOAD
-// MODE` with `XDI 4` as its data, so a write of the register puts the
-// written bit 4 into it; cleared by `-RESET`, which is `-XBUS INIT`.**
+// CLR`, the sync program's start of field; clocked by `-LOAD MODE` with
+// `XDI 4` as its data, so a write of the register puts the written bit 4
+// into it; cleared by `-RESET`, which is `-XBUS INIT`.**
 // `SEND INTR` is the flag ANDed with the enable at the 74S08 at 0D10, and
 // that is what the board puts on `-XBUS.INTR`.  Registers 1 to 3 are the
 // sync program RAM --- the eight 2147s at NSYRAM, 4K by 8 --- its data at
@@ -29,33 +25,91 @@
 // spacing).  Register 4 is the COLOUR register: the 74S138 at 0F13 drives
 // `-LOAD COLOR` from it, and `lmtv.order` gives it as write only with the
 // map value in bits 15 to 8, the channel in 7 and 6 and the colour in 3 to 0.
-// The map RAMs and their converters are not on the board, so the write
-// reaches nothing here and this answers and keeps nothing, as muir does.
+// The map RAMs and their converters are off the board, so the write reaches
+// nothing here: this answers the write and keeps nothing, because nothing on
+// this board can read the map back.  muir's model keeps the sixteen entries
+// --- three channels each, `tv::Tv::color_map` --- for its colour board and
+// its checkpoint; the register is write only on both boards, so no check
+// here reads one back.
 // Only 5 to 7 are the three `lmtv.order` says "respond but don't do
 // anything".
 //
-// **WHAT IS NOT HERE, DELIBERATELY.**  No video timing: muir has none
-// either --- "the vertical flag is kept on a frame clock rather than a
-// raster, FRAME_NS, which is the netlist board's own period" --- and the
-// sync program in the RAM is stored and read back, never run.  The frame
-// is 15,456,000 ns, 966 lines of 16.000 us measured on the netlist board,
-// which is 3,091,200 ticks of this clock exactly, counted from power-on as
-// muir counts its frames.  And no frame buffer: the bitmap lives in PS
-// DDR3, in the 8 MB `cadr_ddr_map.sv` reserves for the display, so that
-// whatever draws the screen later --- a display output block, an RFB
-// server on the processing system --- reads it from there.  A cycle to
-// the window is answered by MAIN MEMORY'S BRIDGE at the display's base:
-// this module decodes the window and says so on `fb_sel`, and
-// `cadr_memory_path.sv` selects the bridge on it, exactly as it does for
-// main memory.  One bridge and one memory port rather than a second
-// master, because the Xbus has one master a cycle and the bridge is idle
-// whenever this window is asked --- the disk's channel reaches main
-// memory alone and never the window.  What that costs against muir is
-// what main memory already costs: muir's TV answers a buffer word in no
-// time of its own and the board's DDR answers when it answers, so the
-// composed machine waits on the frame buffer as it waits on memory.  In
-// the check the modelled DDR answers at once and the timing agrees with
-// muir tick for tick.
+// **THE SYNC PROGRAM IS RUN, AND IT IS WHAT MAKES THE FRAME.**  `lmtv.order`,
+// `>Sync Program`: "The Sync Program executes an instruction every (32, 16,
+// 8, 32) bits of video (indexed by Mode<1-0>) or roughly every 1/2
+// microsecond", and it "is structured as a series of loops.  Each loop is
+// executed a fixed number of times between 1 and 256.  A loop starts with a
+// word containing the number of times it is to be executed.  This word is
+// never executed as an instruction, and does not cause a time delay ... The
+// second to last instruction of a loop contains Special Function 2 or 3; one
+// more instruction is executed (JUMP-XCT-NEXT) and then control returns to
+// the first instruction of the loop, unless the repeat counter has counted
+// out."  An End of Program sends control back to location 0; an End of Loop
+// takes the word after next as the next loop's repeat count.  That is the
+// whole machine below, and muir runs the same rules in `src/tv/sync.rs`.
+//
+// Three things come off it and nothing else here does:
+//
+//   **`VSYNC` and `HSYNC` in the mode register are the program's own bits 1
+//   and 0**, latched at the instruction boundary AFTER the instruction that
+//   carries them --- read off the netlist SIMPLE TV, `src/tv/sync.rs`.  On
+//   MIT's own `cpt.prom` the pair changes 1,932 times in one frame, which is
+//   what `%XBUS-WRITE-SYNC` in the colour software waits on.
+//
+//   **`-TVMA CLR`, the program's Special Function 1, presets the vertical
+//   flag** --- `lmtv.order`: "this is set by TVMA CLR, not by the start of
+//   Vertical Sync".  For `cpt.prom` in clock mode 0 that falls 16,000 ns
+//   into the program, as the first line's 32nd instruction completes, and
+//   once a frame of 15,456,000 ns thereafter.  It is NOT the frame boundary
+//   and this module counted from the boundary until the sync program landed.
+//
+//   **The program's start MOVES.**  A write that changes `CLOCK MODE<1:0>`,
+//   a write of a RAM word while the RAM is selected, or a change of the
+//   RAM's enable runs the program afresh from location 0 --- `Tv::restart`
+//   --- so the flag's phase is not fixed to power-on at all.
+//
+// **AN INSTRUCTION IS 100 OR 125 TICKS AND NOTHING ROUNDS.**  500 ns in
+// clock modes 0 and 1 and 625 ns in modes 2 and 3 (`sync::INSTRUCTION_NS`,
+// measured on the netlist LISPM TV with `cpt.prom` running), which on MIT's
+// 5 ns grid is exactly 100 and 125.  muir walks the whole program into a
+// timeline because a model jumps in time; this executes one instruction
+// every 100 or 125 ticks, which is a program counter, a repeat counter and
+// the two sync bits latched an instruction late.  MIT's `cadrtv/cpt.prom` is
+// the program from power-on, `$readmemh`'d from `SYNC_PROM_HEX` as the boot
+// PROM's image is, until the software loads the RAM and selects it.
+//
+// **WHERE THIS PARTS FROM muir, MEASURED AND BOUNDED.**  Two instants, both
+// of them muir looking at a program it has already walked to the end:
+//
+//   `Timeline::sync_at` answers, for the first instruction of a run, the
+//   bits the program leaves at the END of a run --- right for a program that
+//   has been running, and a guess for the first run after a restart, which is
+//   the only run where no instruction has landed yet.  The 74LS175 at NSYREG
+//   0D02 is a register with no clear on the program's start, so this module
+//   holds the bits it held, and at power-on it holds zero.  The reference
+//   trace does not read the mode register there and `golden/src/tv.rs` says
+//   so at the assert that keeps it out.
+//
+//   `Timeline::of` answers None for a program that runs off the end of its
+//   store without an End of Loop, and answers it AT THE RESTART; this module
+//   discovers it by fetching, and stops when the fetch runs past the
+//   program.  No walk in the reference gets as far as one instruction before
+//   the next restart replaces it, and the generator asserts that too.
+//
+// **AND NO FRAME BUFFER**: the bitmap lives in PS DDR3, in the 8 MB
+// `cadr_ddr_map.sv` reserves for the display, so that whatever draws the
+// screen --- a display output block, an RFB server on the processing system
+// --- reads it from there.  A cycle to the window is answered by MAIN
+// MEMORY'S BRIDGE at the display's base: this module decodes the window and
+// says so on `fb_sel`, and `cadr_memory_path.sv` selects the bridge on it,
+// exactly as it does for main memory.  One bridge and one memory port rather
+// than a second master, because the Xbus has one master a cycle and the
+// bridge is idle whenever this window is asked --- the disk's channel reaches
+// main memory alone and never the window.  What that costs against muir is
+// what main memory already costs: muir's TV answers a buffer word in no time
+// of its own and the board's DDR answers when it answers, so the composed
+// machine waits on the frame buffer as it waits on memory.  In the check the
+// modelled DDR answers at once and the timing agrees with muir tick for tick.
 //
 // THE ANSWER IS A GATE, as the disk's is and for the same measured reason:
 // muir's TV takes 0 ns of its own (`IDEAL_DEVICE_NS`), so a read
@@ -76,12 +130,13 @@
 // the cycle's latch, one AND --- where the disk's START needed its whole
 // decode held to reach a data pin in time.
 //
-// **PRIORITY AT ONE EDGE: `-XBUS INIT`, then the write, then the preset.**
-// A write landing on the tick a frame begins keeps the written bit ---
-// muir's `vert_flag` asks for a frame *strictly* since `written_at` ---
-// and the trace reaches that tick at frame 25 and either side of it at
-// frames 6 and 15, so the order is checked and not merely argued.  Init
-// over everything, because the 74LS74's clear is a pin and not a clock.
+// **PRIORITY AT ONE EDGE: `-XBUS INIT`, then the write, then the preset,
+// and a restart over the instruction boundary.**  A write landing on the
+// tick a `-TVMA CLR` falls keeps the written bit --- muir's `vert_flag` asks
+// for a field *strictly* since `written_at` --- and a restart landing on an
+// instruction boundary suppresses that boundary, because muir's new timeline
+// begins at the restart and the old one's last instruction is not in it.
+// Init over everything, because the 74LS74's clear is a pin and not a clock.
 //
 // THE HELD MATCH.  `ctl`, `fb` and `which` are taken once from `phys` ---
 // the far end of the map, constant for the whole microcycle --- and held
@@ -93,7 +148,17 @@
 
 `default_nettype none
 
-module cadr_tv (
+module cadr_tv #(
+    // MIT's sync PROM as a `$readmemh` image, `build/sync_prom.hex`, written
+    // by `golden/src/sync_prom.rs` out of muir's own `cadrtv/cpt.prom`.  Named
+    // at elaboration and absolute, for the reason `cadr_microcycle.sv`'s
+    // `PROM_HEX` is: `$readmemh` resolves against the working directory, and
+    // a model built with the relative default runs only from the repository
+    // root.  A file that is not there is a WARNING and leaves a program of
+    // zeros, which is a display that never interrupts, so the guard below
+    // makes it loud where a simulator can say so.
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
+) (
     input  var logic        clk,        // 100 MHz, one tick = 10 ns
     input  var logic        rst,
 
@@ -123,35 +188,36 @@ module cadr_tv (
     output var logic        intr
 );
 
-  // simpletv::CONTROL, 0o17377760, in eights; simpletv::BUFFER,
+  // tv::CONTROL, 0o17377760, in eights; tv::BUFFER,
   // 0o17000000, in 32,768s.  The same constants `cadr_xbus_decode.sv`
   // makes `device` from, held here because a board decodes its own
   // address and the decode's `device` is one signal for every slave.
   localparam logic [18:0] CONTROL_PAGE = 19'd507902;
   localparam logic [6:0]  BUFFER_SLOT  = 7'd120;
 
-  // simpletv::FRAME_NS, 15,456,000 ns, in ticks.
+  // The sync program's three stores, and the two lengths that matter.
   //
-  // **SO THE FRAME IS 30.912 REAL MILLISECONDS AND THE VERTICAL INTERRUPT
-  // ARRIVES AT 32.35 Hz, WHERE THE DISPLAY BOARD SCANNED AT 64.70.**  These
-  // are the machine's nanoseconds divided by MIT's five-nanosecond grid, and
-  // the board clocks a tick at 10 ns rather than 5 --- `cadr_arty.sv`, whose
-  // header is the argument.  It matters more here than anywhere else in the
-  // machine, because **MIT's microcode uses this interrupt as its
-  // roughly-sixty-cycle clock**: mouse tracking and the scheduler's sequence
-  // break both run off it, so the machine's idea of a second is 50% of one.
-  // It was decided on 2026-09-11 that the machine keeps agreeing with muir
-  // for now --- the checks are the backbone and `tv.golden` compares tick
-  // counts --- and this is the record of what that costs rather than a fix.
-  //
-  // **UNDOING IT IS STILL ONE CONSTANT.**  A real frame is exactly 1,545,600
-  // ticks of 10 ns, a whole number, so restoring real time here is that
-  // number in place of this one and nothing else ---
-  // at the price of this module no longer agreeing with muir.  The RFB server
-  // on the processing system does the opposite and paces off the REAL frame,
-  // because it compares against `CLOCK_MONOTONIC`: see `SCREEN_FRAME_REAL_NS`
-  // in `boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src/screen_geom.h`.
-  localparam logic [21:0] FRAME_T = 22'd3_091_200;
+  // `tv::SYNC_RAM_WORDS`: the eight 2147s at NSYRAM 0A01-0B04, 4K by 1 each,
+  // addressed by the twelve bits of the pointer.
+  localparam int SYNC_RAM_WORDS = 4096;
+  // The 74S472 beside them, 512 by 8, which the enable selects against.  The
+  // image is the whole chip so that nothing in it is undefined.
+  localparam int SYNC_CHIP_WORDS = 512;
+  // And the 297 words of it MIT burned, `cadrtv/cpt.prom`.  muir sizes its
+  // image to the highest address burned and calls a fetch past it a program
+  // that makes no frame, so this is where a PROM fetch runs off the end; the
+  // unburned tail reads zero, which is what a read of register 1 above the
+  // program gives.  `golden/src/tv.rs` puts the number in the trace's header
+  // and `tb/cadr_tv_tb.cpp` holds this constant to it.
+  localparam int SYNC_PROM_WORDS = 297;
+
+  // An instruction of the sync program, in ticks of MIT's 5 ns grid: 500 ns
+  // in clock modes 0 and 1 and 625 ns in modes 2 and 3, `sync::INSTRUCTION_NS`
+  // measured on the netlist LISPM TV.  **Exactly 100 and 125 --- nothing
+  // rounds**, which is the constraint the whole machine is built on and the
+  // reason a tick stays MIT's 5 ns here while the board clocks one at 10.
+  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd100;
+  localparam logic [6:0] INSTRUCTION_T_SLOW = 7'd125;
 
   // --- the held match --------------------------------------------------
   logic       ctl_c, fb_c, ctl, fb;
@@ -173,35 +239,95 @@ module cadr_tv (
   logic        flag;      // VERT FLAG, the 74LS74 at 0E14
   logic [11:0] pointer;   // the sync RAM's address, register 2
   // Register 3's bit 7: the sync enable, which selects the RAM over the PROM
-  // and so decides what register 1 reads back.  Bits 6 to 0 are the
-  // vertical spacing, which the 74LS273 at NTVINC 0A07 holds for a sync
-  // generator this board does not have --- nothing reads them back, in muir
-  // or here, so they have no register and lint agrees.
+  // and so decides both what register 1 reads back and which program the
+  // generator runs.  Bits 6 to 0 are the vertical spacing, which the
+  // 74LS273 at NTVINC 0A07 holds for the video cycles this module does not
+  // make --- nothing reads them back, in muir or here, so they have no
+  // register and lint agrees.
   logic        sync_on;
-  logic [7:0]  sync_ram [4096];
-  logic [7:0]  sync_q;    // the RAM's word at the pointer, a tick behind it
 
-  // The frame counter, which is `-TVMA CLR` here: it wraps once a frame and
-  // presets the flag as it does.  Counted from reset, as muir counts from
-  // power-on; both are on the same 5 ns grid, so they never drift.
-  logic [21:0] frame_t;
-  logic        frame_start;
-  assign frame_start = (frame_t == FRAME_T - 22'd1);
+  // --- the sync program's two stores -------------------------------------
+  //
+  // Two read ports each: the register face reads at the pointer, and the
+  // generator fetches at its own address.  A simple dual port, written as
+  // the two processes Vivado infers one from --- and a plain read in each,
+  // because Vivado refuses a RAM process with a mux on its read.
+  logic [7:0] sync_ram  [SYNC_RAM_WORDS];
+  logic [7:0] sync_prom [SYNC_CHIP_WORDS];
+
+  logic [7:0] ram_face, ram_seq, prom_face, prom_seq;
+
+  // --- the sync generator ------------------------------------------------
+  //
+  // `Timeline::of`'s walk, one instruction every INSTRUCTION_T ticks.
+  // `seq_a` is the address standing on the generator's read port; the word
+  // at it is `seq_word`, two ticks behind an assignment to `seq_a` and so
+  // settled long before the boundary that uses it, an instruction being a
+  // hundred ticks.  `seq_load` counts those two ticks out after the address
+  // of a loop's repeat count is applied: the count word "is never executed
+  // as an instruction, and does not cause a time delay", so the loading
+  // costs no time of its own and the boundary keeps counting through it.
+  logic [12:0] seq_a;       // thirteen bits, so that past the RAM is visible
+  logic [12:0] seq_first;   // the loop's first instruction
+  logic [12:0] seq_after;   // the JUMP-XCT-NEXT instruction that leaves it
+  logic [8:0]  seq_left;    // iterations left, 1 to 256
+  logic        seq_one_more;
+  logic [1:0]  seq_ended;   // 2 End of Loop, 3 End of Program
+  logic [1:0]  seq_load;    // ticks left before a repeat count is taken
+  logic        seq_alive;   // a program that makes a frame is still running
+  logic [6:0]  seq_t;       // ticks into the instruction
+  logic        sync_h, sync_v;  // the 74LS175 at NSYREG 0D02
+
+  logic [6:0] step_t;
+  assign step_t = mode[1] ? INSTRUCTION_T_SLOW : INSTRUCTION_T_FAST;
+
+  logic [7:0] seq_word;
+  assign seq_word = sync_on ? ram_seq : prom_seq;
+
+  // `program.get(p)?`: the RAM is the twelve bits its 2147s address, the
+  // PROM the 297 words MIT burned.
+  logic seq_past;
+  assign seq_past = sync_on ? seq_a[12] : (seq_a >= 13'(SYNC_PROM_WORDS));
+
+  logic seq_fire;
+  assign seq_fire = seq_alive && (seq_load == 2'd0) && (seq_t == step_t - 7'd1);
+
+  // `-TVMA CLR`, Special Function 1, at the instant the instruction carrying
+  // it completes.
+  logic tvma_clr;
+  assign tvma_clr = seq_fire && !seq_past && (seq_word[7:6] == 2'b01);
+
+  // The iteration ends at the instruction after the one that carried the End
+  // of Loop or End of Program: `one_more && p == after`.
+  logic seq_end_of_iteration;
+  assign seq_end_of_iteration = seq_one_more && (seq_a == seq_after);
 
   // ONCE PER BUS CYCLE, the way `cadr_xbus_ddr.sv` latches `done`: -XBUS.RQ
   // stands for tens of ticks and the word is taken at the first of them.
   logic taken, store_now;
   assign store_now = asked && dev_write && !taken;
 
-  // What a read gives: the mode register with the flag in bit 4 and zeros
-  // above; the sync RAM's word while the RAM is the one selected, "31-8
-  // garbage" read as zero; and nothing from the write-only and the empty
-  // registers.
+  // A write that changes the program the generator runs, or the rate it runs
+  // at, runs it afresh from location 0: `Tv::restart`.
+  logic restart;
+  assign restart = store_now
+      && ( (which == 3'd0 && ((wdata[1:0] ^ mode[1:0]) != 2'd0))
+        || (which == 3'd1 && sync_on)
+        || (which == 3'd3 && (wdata[7] != sync_on)) );
+
+  // What a read gives: the mode register with the flag in bit 4 and the sync
+  // generator's two bits above it; the sync program's word at the pointer,
+  // out of whichever store the enable selects, "31-8 garbage" read as zero;
+  // and nothing from the write-only and the empty registers.
+  logic [7:0] face_word;
+  assign face_word = sync_on ? ram_face
+                             : ((pointer[11:9] == 3'd0) ? prom_face : 8'd0);
+
   logic [31:0] word;
   always_comb begin
     unique case (which)
-      3'd0:    word = {27'd0, flag, mode};
-      3'd1:    word = sync_on ? {24'd0, sync_q} : 32'd0;
+      3'd0:    word = {25'd0, sync_h, sync_v, flag, mode};
+      3'd1:    word = {24'd0, face_word};
       default: word = 32'd0;
     endcase
   end
@@ -209,13 +335,35 @@ module cadr_tv (
 
   assign intr = mode[3] && flag;
 
-  // The sync program RAM: a store into register 1 writes the byte at the
-  // pointer, and the word at the pointer is read every tick into `sync_q`.
-  // A process of its own with a plain read, because Vivado refuses a RAM
-  // whose read has a mux in it and infers a BRAM36 for this.
+  // The sync program RAM, port A: the register face.  A store into register 1
+  // writes the byte at the pointer, and the word at the pointer is read every
+  // tick.
   always_ff @(posedge clk) begin
     if (store_now && which == 3'd1) sync_ram[pointer] <= wdata[7:0];
-    sync_q <= sync_ram[pointer];
+    ram_face <= sync_ram[pointer];
+  end
+
+  // And port B: the generator's fetch.
+  always_ff @(posedge clk) begin
+    ram_seq <= sync_ram[seq_a[11:0]];
+  end
+
+  // MIT's PROM, the same two ports.  Read at elaboration, and checked: a
+  // `$readmemh` of a file that is not there is a warning, and a program of
+  // zeros is a display that never interrupts and never moves a sync bit ---
+  // which would pass every check that does not read this board.
+  initial begin
+    $readmemh(SYNC_PROM_HEX, sync_prom);
+`ifdef VERILATOR
+    if (sync_prom[0] !== 8'h01)
+      $fatal(1, "cadr_tv: %s is not MIT's cadrtv/cpt.prom: word 0 is %02h, wanting 01",
+             SYNC_PROM_HEX, sync_prom[0]);
+`endif
+  end
+
+  always_ff @(posedge clk) begin
+    prom_face <= sync_prom[pointer[8:0]];
+    prom_seq  <= sync_prom[seq_a[8:0]];
   end
 
   always_ff @(posedge clk) begin
@@ -227,19 +375,33 @@ module cadr_tv (
       flag    <= 1'b0;
       pointer <= 12'd0;
       sync_on <= 1'b0;
-      frame_t <= 22'd0;
       taken   <= 1'b0;
+
+      // Power-on: the PROM's program from location 0.  The 74LS175 that
+      // holds the sync bits comes up cleared here; on the board it comes up
+      // undefined and the first instruction lands 500 ns later, which is
+      // before any processor exists to read it.  See WHERE THIS PARTS FROM
+      // muir at the top.
+      seq_a        <= 13'd0;
+      seq_first    <= 13'd1;
+      seq_after    <= 13'd1;
+      seq_left     <= 9'd1;
+      seq_one_more <= 1'b0;
+      seq_ended    <= 2'd0;
+      seq_load     <= 2'd2;
+      seq_alive    <= 1'b1;
+      seq_t        <= 7'd0;
+      sync_h       <= 1'b0;
+      sync_v       <= 1'b0;
     end else begin
       ctl   <= ctl_c;
       fb    <= fb_c;
       which <= which_c;
 
-      frame_t <= frame_start ? 22'd0 : frame_t + 22'd1;
-
       // The flag: init over the write over the preset.  See the top.
       if (xbus_init)                       flag <= 1'b0;
       else if (store_now && which == 3'd0) flag <= wdata[4];
-      else if (frame_start)                flag <= 1'b1;
+      else if (tvma_clr)                   flag <= 1'b1;
 
       // The four pins of the 2519 land; the sync registers take theirs;
       // everything above bit 3, 11 or 7 has nowhere to be stored, and the
@@ -255,6 +417,83 @@ module cadr_tv (
 
       if (!asked)         taken <= 1'b0;
       else if (store_now) taken <= 1'b1;
+
+      // --- the sync generator ---------------------------------------------
+      if (restart) begin
+        // From location 0, which holds a repeat count.  The sync bits are
+        // not touched: the 74LS175 has no clear on the program's start.
+        seq_a        <= 13'd0;
+        seq_one_more <= 1'b0;
+        seq_ended    <= 2'd0;
+        seq_load     <= 2'd2;
+        seq_alive    <= 1'b1;
+        seq_t        <= 7'd0;
+      end else if (seq_load != 2'd0) begin
+        // The repeat count, once its word has arrived: "a word containing
+        // the number of times it is to be executed ... never executed as an
+        // instruction, and does not cause a time delay", and a zero is the
+        // counter's 256, the count being eight bits.
+        if (seq_load == 2'd1) begin
+          if (seq_past) begin
+            seq_alive <= 1'b0;
+          end else begin
+            seq_left  <= (seq_word == 8'd0) ? 9'd256 : {1'b0, seq_word};
+            seq_first <= seq_a + 13'd1;
+            seq_a     <= seq_a + 13'd1;
+            // `let mut ended = Special::None;` and `let mut after = first;`
+            // at the top of each loop: a loop that carries no End of Loop
+            // and no End of Program never ends an iteration and walks off
+            // the end of the program, which is what `Timeline::of` calls a
+            // program that makes no frame.
+            seq_after    <= seq_a + 13'd1;
+            seq_one_more <= 1'b0;
+            seq_ended    <= 2'd0;
+          end
+        end
+        seq_load <= seq_load - 2'd1;
+        seq_t    <= seq_t + 7'd1;
+      end else if (seq_fire) begin
+        seq_t <= 7'd0;
+        if (seq_past) begin
+          // The walk ran off the end of the program: no frame, and nothing
+          // moves again until a restart.  `Timeline::of` answers None.
+          seq_alive <= 1'b0;
+        end else begin
+          // The bits land at the boundary after the instruction.
+          sync_h <= seq_word[0];
+          sync_v <= seq_word[1];
+
+          // Special Function 2 is End of Loop and 3 End of Program, so bit 7
+          // is the whole test; 1 is `-TVMA CLR` and 0 no special function.
+          if (seq_word[7] && !seq_one_more) begin
+            seq_ended    <= seq_word[7:6];
+            seq_one_more <= 1'b1;
+            seq_after    <= seq_a + 13'd1;
+          end
+
+          if (seq_end_of_iteration) begin
+            if (seq_left > 9'd1) begin
+              seq_left     <= seq_left - 9'd1;
+              seq_a        <= seq_first;
+              seq_one_more <= 1'b0;
+            end else if (seq_ended == 2'b11) begin
+              // End of Program: "control returns to location 0 of the Sync
+              // Program ... which is expected to contain a repeat count".
+              seq_a    <= 13'd0;
+              seq_load <= 2'd2;
+            end else begin
+              // End of Loop: "the location after next is taken as the repeat
+              // count of the next loop".
+              seq_a    <= seq_after + 13'd1;
+              seq_load <= 2'd2;
+            end
+          end else begin
+            seq_a <= seq_a + 13'd1;
+          end
+        end
+      end else begin
+        seq_t <= seq_t + 7'd1;
+      end
     end
   end
 
@@ -262,7 +501,11 @@ module cadr_tv (
   // reference says so: a write of 0xFFFFFFE5 to the mode register reads
   // back as 0o5.
   logic unused;
-  assign unused = &{1'b0, wdata[31:12]};
+  // `seq_word[5:2]` are the instruction's Blank, Composite Sync and Video
+  // Buffer Cycle Type: this module makes no video cycles and drives no
+  // monitor, so nothing here reads them, and a bit nothing reads is a lint
+  // error unless it is said out loud.
+  assign unused = &{1'b0, wdata[31:12], seq_word[5:2]};
 
 endmodule
 

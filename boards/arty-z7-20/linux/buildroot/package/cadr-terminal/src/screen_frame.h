@@ -20,8 +20,8 @@
 // window while this copy is being made, so a copy may hold the top of the
 // screen from before a write and the bottom from after it.  There is no
 // interlock to take: muir's own terminal has the same seam (`Frame::of` hands
-// over the buffer as it stands) and the vertical flag the microcode uses is a
-// frame counter in the fabric with no path to Linux.  A torn frame is one
+// over the buffer as it stands) and the vertical flag the microcode uses is
+// the sync program's own in the fabric, with no path to Linux.  A torn frame is one
 // frame; the next pass sends the rest.  Said here so that nobody looks for
 // the interlock.
 //
