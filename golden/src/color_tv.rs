@@ -51,9 +51,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use muir::busint::{self, Busint, MFINISHD_NS, Responder};
-use muir::tv::{
-    BUFFER_WORDS, CHANNELS, COLORS, COLOR_TV, CONTROL_WORDS, FRAME_NS, NORMAL_TV, Tv, mode, sync,
-};
+use muir::tv::{BUFFER_WORDS, CHANNELS, COLORS, COLOR_TV, CONTROL_WORDS, FRAME_NS, NORMAL_TV, Tv};
 
 /// Five nanoseconds, the master clock's period.
 const TICK_NS: u64 = 5;
@@ -459,18 +457,10 @@ fn main() {
             landed = true;
             if let Some((color, r)) = which_register(phys) {
                 let board = if color { &mut ctv } else { &mut tv };
-                let will_restart = match r {
-                    0 => (word ^ board.mode()) & mode::CLOCK != 0,
-                    1 => board.sync.enabled(),
-                    3 => ((word as u8) & 0o200 != 0) != board.sync.enabled(),
-                    _ => false,
-                };
-                assert!(
-                    !(will_restart && r != 0 && board.vert_flag(now)),
-                    "tick {tick}: the write of register {r} restarts a sync program with the \
-                     vertical flag standing, and muir's restart forgets it where the board's flop \
-                     keeps it; clear the flag first"
-                );
+                // A restart carries the vertical flag and the mode
+                // register's sync bits over, in muir as on the board, so a
+                // write that restarts a program with the flag up is
+                // comparable; `golden/src/tv.rs` has the parts.
                 board.write_control(r, word, now);
                 assert!(
                     board.timeline().is_some(),
@@ -506,12 +496,6 @@ fn main() {
                         board.sync_at(now),
                         board.sync_at(ack),
                         "tick {tick}: VSYNC or HSYNC moves inside the deskew of a mode-register read"
-                    );
-                    let step = sync::INSTRUCTION_NS[(board.mode() & mode::CLOCK) as usize];
-                    assert!(
-                        now >= board.origin() + step,
-                        "tick {tick}: a mode-register read inside the first instruction of a run, \
-                         where muir's sync bits are its guess at what the program leaves behind"
                     );
                 }
                 v

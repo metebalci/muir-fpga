@@ -19,7 +19,7 @@
 // the rule were written wrong in BOTH the builder here and the reader under
 // test, they would agree with each other and the check would pass a mirrored
 // screen.  So the mapping is pinned first, on single bits, at coordinates
-// worked out by hand from muir `src/tv.rs:554-557` and written as
+// worked out by hand from muir `src/tv.rs:599-602` and written as
 // literals: word 0 bit 0 is the top-left pixel, word 0 bit 31 is pixel 31 of
 // line 0, word 1 bit 0 is pixel 32, word 23 bit 31 is the last pixel of line
 // 0, word 24 bit 0 is the first of line 1, and word 23,111 bit 31 is the
@@ -145,7 +145,7 @@ static void settle(void);
 
 // ---- the screen, built by muir's rule -----------------------------------
 //
-// muir src/tv.rs:554-557 and :607-609, written out here rather than
+// muir src/tv.rs:599-602 and :607-609, written out here rather than
 // called, for the reason in the header.
 
 static void screen_clear(uint32_t *w)
@@ -571,7 +571,7 @@ static unsigned canvas_differs(const char *what)
 
 // ---- muir's PNG ---------------------------------------------------------
 //
-// `Tv::png` (muir src/tv.rs:616) writes 1-bit grayscale, filter
+// `Tv::png` (muir src/tv.rs:661) writes 1-bit grayscale, filter
 // none on every row, and STORED deflate blocks --- "the encoder is here
 // rather than a crate: a 1-bit grayscale PNG is a header, the rows behind
 // stored deflate blocks, and two checksums."  So this reads exactly that and
@@ -720,7 +720,7 @@ static int whole_screen(struct client *c, int32_t *encodings, unsigned max)
 }
 
 // **THE ANCHORS.**  One bit in an empty screen, and the pixel it must light.
-// Every coordinate below is worked out by hand from muir src/tv.rs:555,
+// Every coordinate below is worked out by hand from muir src/tv.rs:600,
 // `bit = y * WORDS_PER_LINE * 32 + x`, and written as a literal: nothing here
 // computes it from the same expression the program uses.
 struct anchor { unsigned word, bit, x, y; const char *what; };
