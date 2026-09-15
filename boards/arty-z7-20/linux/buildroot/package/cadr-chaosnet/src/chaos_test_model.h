@@ -167,4 +167,16 @@ void chaos_model_drains(struct face_model *m);
 // swap, a shift or a lost byte shows.
 unsigned chaos_model_frame(uint16_t *out, unsigned data_len, unsigned number);
 
+// The same frame addressed to everybody: the cable destination is zero, which
+// is MIT's own "the cable address of the destination of the packet, or 0 to
+// broadcast it".
+//
+// **ONLY THAT ONE WORD DIFFERS** from `chaos_model_frame`'s --- the software
+// header, the data and the length are the same, and the check word follows
+// the destination as it must.  A check where a broadcast is treated
+// differently from a frame by name is then a check about the cable
+// destination and about nothing else, and code that decided from the software
+// header instead would fail it.
+unsigned chaos_model_broadcast(uint16_t *out, unsigned data_len, unsigned number);
+
 #endif

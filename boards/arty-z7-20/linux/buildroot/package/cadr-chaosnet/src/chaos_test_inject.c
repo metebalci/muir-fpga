@@ -36,6 +36,16 @@
 // in one turn cannot outlast any service time at all, and a burst that waits
 // for the buffer cannot lose to one.
 //
+// ## And a broadcast, which must NOT be retried
+//
+// AIM-628 §2.5's abort goes out only for a frame "specifically addressed" to
+// the receiver.  A broadcast into a full buffer is counted and nobody is told,
+// so no driver on the cable would have sent it again.  The last three cases
+// below hold that: a broadcast is offered once and counted, a burst of them
+// still delivers one frame --- which for a broadcast is right, and is the same
+// number that was the fault above when the frames were addressed by name ---
+// and a refused broadcast spends nothing of a frame waiting behind it.
+//
 // **AND THE COST OF ONE OFFER IS A PARAMETER, because it is not measured.**  A
 // give is about 259 accesses across a general-purpose AXI port and nobody has
 // timed one on the board.  The tables are run at nothing and at 25 us, and the
@@ -149,14 +159,18 @@ static unsigned settle(struct burst *b)
 }
 
 // The identity `chaos_inject.h` states: every frame this edge was handed for
-// the machine is stored, given up, dropped for want of room, or waiting.
+// the machine is stored, given up, lost as a broadcast, dropped for want of
+// room, or waiting.
 static void sum_closes(const struct chaos_inject *q, const char *where)
 {
-	const unsigned long sum = q->stored + q->given_up + q->no_room + q->waiting;
+	const unsigned long sum = q->stored + q->given_up + q->broadcasts_lost +
+				  q->no_room + q->waiting;
 	CHECK(q->taken == sum,
 	      "%s: %lu frames were taken for the machine and %lu accounted for "
-	      "(%lu stored, %lu given up, %lu with no room, %u waiting)",
-	      where, q->taken, sum, q->stored, q->given_up, q->no_room, q->waiting);
+	      "(%lu stored, %lu given up, %lu broadcasts lost, %lu with no room, "
+	      "%u waiting)",
+	      where, q->taken, sum, q->stored, q->given_up, q->broadcasts_lost,
+	      q->no_room, q->waiting);
 }
 
 // --- the burst, on the old path and on the new one ------------------------
@@ -549,6 +563,180 @@ static void check_holds_up_nothing(void)
 	sum_closes(&b.q, "holding up nothing");
 }
 
+// --- a broadcast is counted and not retried --------------------------------
+//
+// **THE FRAMES A BUSY RECEIVER COUNTS AND THE FRAMES IT ABORTS ARE DIFFERENT
+// SETS.**  AIM-628 §2.5, having described the abort: "Note that a receiver
+// whose packet buffer is full will only generate an abort signal if the packet
+// was specifically addressed to it."  So a broadcast is counted and nobody is
+// told, and a retry here --- which stands in for a driver answering an abort
+// --- has nothing to stand on.
+//
+// The two halves of that are checked against ONE machine in one case below,
+// because either half alone passes the wrong program: a program that had
+// stopped retrying altogether would pass "a broadcast is not retried", and a
+// program that retried everything would pass "a frame by name is retried".
+
+static void check_broadcast_is_not_retried(void)
+{
+	struct burst b;
+	uint16_t frame[CHAOS_PKT_MAX_WORDS];
+	// The machine never empties its buffer, so nothing can succeed on a
+	// second offer and the offers a frame really gets can be counted.
+	burst_init(&b, 0, OFFER_FREE_NS);
+	const unsigned n = chaos_model_frame(frame, 6, 1);
+	CHECK(chaos_face_give(&b.f, frame, n) == 1, "the first frame was not stored");
+
+	const unsigned m = chaos_model_broadcast(frame, 6, 2);
+	give(&b, frame, m);
+
+	// Offered once, and counted twice over: in the refusals, which are the
+	// twin of the interface's own Lost Count and which count a broadcast
+	// exactly as they count a frame by name, and on its own road out of the
+	// sum.
+	CHECK(b.q.refused == 1ul, "a refused broadcast was offered %lu times, wanting one",
+	      b.q.refused);
+	CHECK(b.q.broadcasts_lost == 1ul, "%lu broadcasts were counted lost, wanting one",
+	      b.q.broadcasts_lost);
+	CHECK(b.q.waiting == 0u, "%u frames are waiting: a broadcast took a turn it can "
+	      "never be given", b.q.waiting);
+	CHECK(b.q.given_up == 0ul,
+	      "a broadcast was counted as a frame given up, which is the reading that "
+	      "means a machine has stopped listening");
+	CHECK(b.q.stored == 0ul, "a frame was stored into a buffer nobody emptied");
+	sum_closes(&b.q, "a broadcast refused");
+
+	// **AND NOTHING EVER OFFERS IT AGAIN**, neither on the next turn nor
+	// when the deadline a held frame goes on has passed twice over.
+	const unsigned commits = b.m.commits;
+	for (unsigned k = 0; k < 64u; ++k)
+		(void)turn(&b);
+	b.m.now += 2ull * CHAOS_INJECT_WAIT_NS;
+	for (unsigned k = 0; k < 64u; ++k)
+		(void)turn(&b);
+	CHECK(b.m.commits == commits,
+	      "a broadcast the buffer refused was committed %u more times over two "
+	      "deadlines", b.m.commits - commits);
+	CHECK(b.q.refused == 1ul, "a refused broadcast was offered %lu times in all",
+	      b.q.refused);
+
+	// **AND THE SAME MACHINE STILL RETRIES A FRAME ADDRESSED TO IT**, which
+	// is what says the rule discriminates rather than simply retrying less.
+	// Three offers, and then MIT's own word for what happens next.
+	const unsigned long refused_before = b.q.refused;
+	const unsigned p = chaos_model_frame(frame, 6, 3);
+	give(&b, frame, p);
+	CHECK(b.q.waiting == 1u,
+	      "a frame addressed to the machine did not wait its turn behind a full buffer");
+	while (b.q.waiting && b.turns < TURN_BUDGET)
+		(void)turn(&b);
+	CHECK(b.q.refused - refused_before == 3ul,
+	      "a frame addressed to the machine was offered %lu times, wanting three, "
+	      "where a broadcast beside it got one",
+	      b.q.refused - refused_before);
+	CHECK(b.q.given_up == 1ul, "%lu frames were given up, wanting one", b.q.given_up);
+	// **AND IT WENT DOWN THE RIGHT ROAD.**  A program that treated every
+	// frame as a broadcast would have the counts of one frame each way, and
+	// the two lines above would still pass.
+	CHECK(b.q.broadcasts_lost == 1ul,
+	      "%lu broadcasts were counted lost after a frame addressed by name was "
+	      "given up, wanting one", b.q.broadcasts_lost);
+	sum_closes(&b.q, "a broadcast and a frame by name");
+}
+
+// A burst of broadcasts at a machine that does empty its buffer.  **THE ANSWER
+// IS ONE FRAME, AND FOR A BROADCAST THAT IS CORRECT** --- it is the same number
+// that was the fault this suite exists for when the frames were addressed by
+// name, which is why the two tables sit beside each other.
+static void check_broadcast_burst(void)
+{
+	struct burst b;
+	uint16_t frame[CHAOS_PKT_MAX_WORDS];
+	const unsigned n = 8u;
+	burst_init(&b, SERVICE_LONG_NS, OFFER_FREE_NS);
+	for (unsigned k = 0; k < n; ++k) {
+		const unsigned len = chaos_model_broadcast(frame, CHAOS_MAX_DATA, k + 1);
+		give(&b, frame, len);
+	}
+	CHECK(b.q.waiting == 0u, "%u broadcasts are waiting for a turn", b.q.waiting);
+	CHECK(b.q.stored == 1ul,
+	      "%lu of a burst of %u broadcasts were stored, wanting the one that found "
+	      "the buffer free", b.q.stored, n);
+	CHECK(b.q.broadcasts_lost == (unsigned long)(n - 1u),
+	      "%lu of a burst of %u broadcasts were counted lost, wanting %u",
+	      b.q.broadcasts_lost, n, n - 1u);
+	// One offer each and no retry, so the refusals are the losses exactly.
+	CHECK(b.q.refused == (unsigned long)(n - 1u),
+	      "a burst of %u broadcasts cost %lu offers refused, wanting %u --- one "
+	      "apiece and not one retried", n, b.q.refused, n - 1u);
+	sum_closes(&b.q, "a burst of broadcasts");
+
+	// And no turn of the loop brings any of them back for the room the
+	// machine makes when it empties its buffer.
+	for (unsigned k = 0; k < 64u; ++k)
+		(void)turn(&b);
+	b.m.now += SERVICE_LONG_NS + 1;
+	(void)chaos_face_stat(&b.f);
+	CHECK(b.m.delivered == 1u, "the machine took %u of a burst of %u broadcasts",
+	      b.m.delivered, n);
+	CHECK(b.q.stored == 1ul, "%lu broadcasts were stored in all", b.q.stored);
+	chaos_test_note("    %2u broadcasts back to back: %2u reached the machine "
+			"(LOST %u), and none was offered twice", n, b.m.delivered,
+			(unsigned)b.m.lost);
+	sum_closes(&b.q, "a burst of broadcasts, later");
+}
+
+// **A REFUSED BROADCAST DELAYS NOTHING**, which is the other half of not
+// queueing it: it must not take the head, spend a waiting frame's offers,
+// restart its deadline, or throw away the latched drain its turn is read from.
+static void check_broadcast_delays_nothing(void)
+{
+	struct burst b;
+	uint16_t frame[CHAOS_PKT_MAX_WORDS];
+	burst_init(&b, 0, OFFER_FREE_NS);
+	const unsigned n = chaos_model_frame(frame, 6, 1);
+	CHECK(chaos_face_give(&b.f, frame, n) == 1, "the first frame was not stored");
+
+	// A frame addressed by name is refused and waits its turn.
+	const unsigned m = chaos_model_frame(frame, 6, 2);
+	give(&b, frame, m);
+	CHECK(b.q.waiting == 1u, "the refused frame is not waiting");
+	CHECK(b.q.offers == 1u, "the waiting frame has had %u offers, wanting one",
+	      b.q.offers);
+	const uint64_t refused_at = b.q.refused_at;
+
+	// A broadcast arrives behind it, is refused, and is gone --- having
+	// touched none of that.
+	b.m.now += 1000ull;
+	const unsigned p = chaos_model_broadcast(frame, 6, 3);
+	give(&b, frame, p);
+	CHECK(b.q.waiting == 1u,
+	      "%u frames are waiting: a broadcast took a place in the queue", b.q.waiting);
+	CHECK(b.q.broadcasts_lost == 1ul, "the refused broadcast was not counted");
+	CHECK(b.q.offers == 1u,
+	      "the waiting frame has had %u offers after a broadcast went by, and a "
+	      "broadcast may spend none of its three", b.q.offers);
+	CHECK(b.q.refused_at == refused_at,
+	      "a broadcast going by restarted the waiting frame's wait");
+	sum_closes(&b.q, "a broadcast behind a frame");
+
+	// **AND THE FRAME BEHIND IT GOES AT ONCE.**  The machine empties its
+	// buffer and the very next turn takes the waiting frame, a long way
+	// inside the deadline --- which could not happen if the broadcast were
+	// at the head, or if it had thrown away the drain the turn is read from.
+	chaos_model_drains(&b.m);
+	CHECK(b.m.now < CHAOS_INJECT_WAIT_NS,
+	      "the deadline had already passed, so this case proves nothing");
+	CHECK(turn(&b) == 1, "the turn after the machine emptied its buffer did nothing");
+	CHECK(b.q.stored == 1ul,
+	      "the waiting frame did not go when the buffer was emptied");
+	CHECK(b.m.rx[6] == 2u,
+	      "the machine was given packet %u, wanting the frame addressed to it",
+	      (unsigned)b.m.rx[6]);
+	CHECK(b.q.waiting == 0u, "the frame is still waiting");
+	sum_closes(&b.q, "after a broadcast");
+}
+
 // --- the suite -------------------------------------------------------------
 
 void chaos_test_inject(void)
@@ -566,4 +754,7 @@ void chaos_test_inject(void)
 	check_stale_drain();
 	check_no_room();
 	check_holds_up_nothing();
+	check_broadcast_is_not_retried();
+	check_broadcast_burst();
+	check_broadcast_delays_nothing();
 }

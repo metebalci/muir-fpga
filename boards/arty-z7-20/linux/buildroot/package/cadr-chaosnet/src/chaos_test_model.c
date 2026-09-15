@@ -186,7 +186,8 @@ void chaos_model_drains(struct face_model *m)
 // packet `chaos_test_udp.c` pins the bytes of: one frame described once, so
 // that a word order wrong in one place is wrong in both and shows.
 
-unsigned chaos_model_frame(uint16_t *out, unsigned data_len, unsigned number)
+static unsigned model_frame_to(uint16_t *out, unsigned data_len, unsigned number,
+			       uint16_t cable_dest)
 {
 	struct chaos_packet p;
 	memset(&p, 0, sizeof p);
@@ -206,5 +207,18 @@ unsigned chaos_model_frame(uint16_t *out, unsigned data_len, unsigned number)
 	// took out cannot pass on the wrong frame.
 	for (unsigned k = 0; k < data_len; ++k)
 		p.data[k] = (uint8_t)(0x41u + ((k + number) % 59u));
-	return chaos_packet_frame(&p, 03050, 03040, out, CHAOS_PKT_MAX_WORDS);
+	return chaos_packet_frame(&p, cable_dest, 03040, out, CHAOS_PKT_MAX_WORDS);
+}
+
+unsigned chaos_model_frame(uint16_t *out, unsigned data_len, unsigned number)
+{
+	return model_frame_to(out, data_len, number, 03050);
+}
+
+// Addressed to everybody.  The cable destination is the ONLY word that differs
+// from the frame above, for the reason `chaos_test_model.h` gives at the
+// declaration.
+unsigned chaos_model_broadcast(uint16_t *out, unsigned data_len, unsigned number)
+{
+	return model_frame_to(out, data_len, number, 0);
 }

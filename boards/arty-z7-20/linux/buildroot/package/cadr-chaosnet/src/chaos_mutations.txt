@@ -678,9 +678,9 @@ static volatile sig_atomic_t trace_asked = 0;
 @note that needs hundreds of them.
 @old
 	(void)chaos_face_rx_freed(f);
-	if (chaos_face_give(f, words, n) == 1) {
+	if (commit(q, f, words, n) == 1)
 @new
-	if (chaos_face_give(f, words, n) == 1) {
+	if (commit(q, f, words, n) == 1)
 @end
 
 @mutation the-buffer-being-free-is-read-as-a-level-and-not-an-edge
@@ -709,4 +709,81 @@ static volatile sig_atomic_t trace_asked = 0;
 		q->waiting == CHAOS_INJECT_QUEUE
 @new
 		q->waiting > CHAOS_INJECT_QUEUE
+@end
+
+# **A BROADCAST IS COUNTED AND NOT RETRIED**, and the four records below hold
+# the two conditions apart.  AIM-628 §2.5: a receiver whose buffer is full
+# "will only generate an abort signal if the packet was specifically addressed
+# to it".  The frames a busy receiver COUNTS and the frames it ABORTS are
+# therefore different sets, and a retry stands in for a driver answering an
+# abort.  Two records mutate the one test each way, because either direction
+# alone would be passed by a program that had simply stopped retrying, or by
+# the program as it was before this rule existed.
+
+@mutation a-broadcast-refused-by-a-full-buffer-is-retried-anyway
+@file chaos_inject.c
+@why no abort goes out for a broadcast, so no sender is told and no driver anywhere sends it again
+@note This is the program as it was: the cable destination that means
+@note everybody read as an ordinary address, so a broadcast joins the retry
+@note queue on the same terms as a frame addressed by name.  It invents a
+@note retransmission the hardware never made, and it puts a frame nobody is
+@note waiting for in front of frames somebody is.
+@note The destination word is misread rather than the branch deleted, so that
+@note every name in the file stays used and the check does the catching
+@note rather than the compiler.
+@old
+	return n >= CHAOS_PKT_TRAILER_WORDS &&
+	       words[n - CHAOS_PKT_TRAILER_WORDS] == 0u;
+@new
+	return n >= CHAOS_PKT_TRAILER_WORDS &&
+	       words[n - CHAOS_PKT_TRAILER_WORDS] == 0xFFFFu;
+@end
+
+@mutation a-frame-addressed-by-name-is-no-longer-retried
+@file chaos_inject.c
+@why the abort is by name alone, so a frame addressed to the machine is the one thing that IS retried
+@note The other direction: every frame taken for the broadcast road, so
+@note nothing is ever offered twice.  A burst addressed by name then delivers
+@note exactly one frame again, which is the measurement this seam was built
+@note to fix, and the counts move to the broadcast road while they do it.
+@note Without this record a program that had stopped retrying ALTOGETHER
+@note would pass every broadcast case beside it.
+@old
+	return n >= CHAOS_PKT_TRAILER_WORDS &&
+	       words[n - CHAOS_PKT_TRAILER_WORDS] == 0u;
+@new
+	return n >= CHAOS_PKT_TRAILER_WORDS &&
+	       words[n - CHAOS_PKT_TRAILER_WORDS] != 0xFFFFu;
+@end
+
+@mutation a-broadcast-lost-to-a-full-buffer-is-counted-nowhere
+@file chaos_inject.c
+@why every frame this edge took for the machine is stored, given up, lost as a broadcast, dropped for want of room, or waiting
+@note The same rule as the given-up record above, on the road this slice
+@note added.  A broadcast is taken for the machine and counted in `taken`, so
+@note a road out that counts nothing breaks the sum --- which is the whole
+@note reason the identity is asserted after every case rather than at the end.
+@note It is its own count and not `given_up` on purpose: that one means a
+@note machine that has stopped listening, and a count that can mean two things
+@note is one nobody reads.
+@old
+			bump(&q->broadcasts_lost);
+@new
+@end
+
+@mutation a-broadcast-spends-the-waiting-frames-offers
+@file chaos_inject.c
+@why a broadcast touches no state of the queue's, because none of it is about a frame that may go again
+@note `offer` is the head's road and records what only the head needs: that it
+@note is held, when it was refused, and how many of its three offers are gone.
+@note A broadcast sent down it bumps another frame's offer count, restarts
+@note another frame's deadline, and throws away the latched drain that frame's
+@note turn is read from --- so a frame waiting behind a busy broadcast link is
+@note given up after three broadcasts rather than after three offers of its
+@note own.  Nothing about the broadcast itself looks wrong, which is why this
+@note wants a record rather than a reading.
+@old
+		if (commit(q, f, words, n) == 0) {
+@new
+		if (offer(q, f, words, n, now) == 0) {
 @end
