@@ -31,7 +31,7 @@
 # does NOT read is the Rust that uses them: the state machine --- `resolve`,
 # `tap`, `press`, `release` --- is written out in C by hand in
 # `input_keys.c`, because a translation of behavior is not a translation of
-# data and pretending otherwise would hide where the judgement is.
+# data and pretending otherwise would hide where the judgment is.
 
 import argparse
 import os

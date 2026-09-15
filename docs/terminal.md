@@ -903,7 +903,7 @@ case-insensitively, a number past thirty-two bits truncated rather than
 refused, and the key taken as the first word instead of the rest of the line.
 The unjoined rows are the one **whose pixels come out
 right**, so only the check's comparison of the rectangle list can see it. A
-build that fails is BROKEN and fails the run, which is CLAUDE.md's lesson about
+build that fails is BROKEN and fails the run. `docs/mutations.md` records the
 two fabric mutations reported as surviving that had never been built.
 
 **What it cannot hold to.** It cannot hold to the uncached mapping's speed on
@@ -970,7 +970,7 @@ saying which line of it was wrong and that the built-in mapping stands:
 
 The blank line is expected at boot, and it is the point of it. **An unwritten
 word of this board's DDR reads zero in some places and all ones in others**
-(CLAUDE.md, measured on the first bring-up). So a viewer shown 739,584
+(measured on the first bring-up). So a viewer shown 739,584
 identical pixels cannot tell "the machine has not drawn" from "this program is
 reading the wrong address". When the machine draws, one more line says so, and
 nothing further is printed per frame:

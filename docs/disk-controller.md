@@ -16,7 +16,7 @@ afternoon of reading and probing, and nobody should repeat it.
 ## muir has no `rtl`-level disk controller
 
 Every other block here is held to a muir structure with a clock in it.
-`cadr_phase_gen.sv` is held to `clock::Behavioural` tick for tick,
+`cadr_phase_gen.sv` is held to `clock::Behavioral` tick for tick,
 `cadr_busint_xbus.sv` to `busint::Busint` tick for tick, and
 `cadr_microcycle.sv` to `Rtl::signals()` microcycle for microcycle. The disk
 has **two** models, and neither is the middle one:

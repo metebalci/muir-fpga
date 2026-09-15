@@ -42,7 +42,7 @@
 //      that does not exist yet.  `input_face.h` has the other three legs.
 //   1. THE GUARD.  A read on `M_AXI_GP0` or `M_AXI_GP1` that nothing in the
 //      fabric answers hangs both Arm cores, and no software guard can catch
-//      it afterwards (CLAUDE.md; measured on the board).  The one thing a
+//      it afterwards (measured on the board).  The one thing a
 //      program can read first is the EMIO tally at 0xE000A068/6C, which
 //      carries marker bits --- `(w & 0x80008000) == 0x00008000` --- only on a
 //      bitstream with the processing system in it.  **This program reaches no

@@ -157,7 +157,7 @@ never enabled and the microcode's `60CYC` never runs until somebody types
 buffer**. It writes the microcode's run lights, words `0o51763` and `0o51765`
 at the bottom of the screen, all ones and cleared again around every disk
 transfer. That is 917 changes of those two words over the run. The `sintr`
-column's 17,185 rows are all the disk's, as CLAUDE.md records.
+column's 17,185 rows are all the disk's.
 
 So the band reaches a handful of words of one value in the window, and nothing
 of the register face, the flag or the interrupt. **A check driven by either
@@ -197,7 +197,7 @@ and zeros above, so that nothing in it is undefined and a read of register 1
 above the program gives zero as muir's does. `$readmemh` on a file that is
 not there is a warning and a program of zeros is a display that never
 interrupts, so the module checks word 0 and stops, and both Vivado flows
-check the file exists before they synthesise.
+check the file exists before they synthesize.
 
 **A program that makes no frame is found by fetching.** `Timeline::of`
 answers None for a program that runs off the end of its store without an End
@@ -550,7 +550,7 @@ exists for.
 One of them was an equivalence first and a finding second.
 `tv-answers-its-neighbours` was written as a wider match *gated by `sel`* and
 it survived. `sel` is the decode's `device`, exhaustively checked false at
-the four dead words, so a slave that honours it cannot answer an empty
+the four dead words, so a slave that honors it cannot answer an empty
 address however wide its own match. The decode masks the bug by
 construction on the NXM side, and the only other thing inside `device` is
 the disk's four registers, which this DUT does not have. What a slave on
@@ -622,10 +622,11 @@ So the placer found a different solution for a design 54 LUTs and a block
 RAM larger. This board had never closed at that tick, and it has several
 families with next to no margin by construction, an adder whose logic alone
 takes three quarters of a 5 ns tick among them. It came out a third of a
-nanosecond worse where it had been within noise. **That is more than the quarter of a nanosecond CLAUDE.md
-calls placement noise, and it is reported as such rather than as noise.** What
-it is not is a path the display made or lengthened. The checkpoint says so, and
-the numbers above are the measurement. Whether the disk's adder should be given
+nanosecond worse where it had been within noise. **That is more than the
+quarter of a nanosecond this project calls placement noise, and it is reported
+as such rather than as noise.** What it is not is a path the display made or
+lengthened. The checkpoint says so, and the numbers above are the
+measurement. Whether the disk's adder should be given
 a tick of its own is a question for the disk's owner. A display that is right
 cannot be made wrong by a placer, and the checks say it is right.
 

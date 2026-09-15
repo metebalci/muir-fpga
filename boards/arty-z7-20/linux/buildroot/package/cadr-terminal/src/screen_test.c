@@ -1263,7 +1263,7 @@ static void check_blank(void)
 
 // ---- a model of the fabric's input face ---------------------------------
 //
-// **IT RECORDS AND IT DOES NOT INTERPRET.**  CLAUDE.md's standing rule is
+// **IT RECORDS AND IT DOES NOT INTERPRET.**  The standing rule here is
 // that a shadow of the thing under test must not move with a bug in it, so
 // this keeps the word stream the program wrote and nothing else: every check
 // below compares that stream against words worked out BY HAND from

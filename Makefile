@@ -109,7 +109,7 @@ muir-pin:
 
 # ---------------------------------------------------------------- phase gen
 
-# The reference trace, out of muir's own clock::Behavioural. It carries the
+# The reference trace, out of muir's own clock::Behavioral. It carries the
 # stimulus as well as the expected outputs, so the testbench and the model
 # cannot drift apart.
 $(BUILD)/phase_gen.golden: golden/src/phase_gen.rs golden/Cargo.toml | $(BUILD)

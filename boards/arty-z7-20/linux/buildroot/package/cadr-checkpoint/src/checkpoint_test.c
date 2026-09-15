@@ -591,7 +591,7 @@ int main(int argc, char **argv)
 	}
 
 	printf("checkpoint: %zu bytes of body, %lu reads and %lu writes over a "
-	       "modelled window, %lu of them refused for a stale echo\n",
+	       "modeled window, %lu of them refused for a stale echo\n",
 	       body.len, r.reads, r.writes, r.stale);
 	if (out)
 		printf("checkpoint: wrote %s --- muir opening it is the proof, and "

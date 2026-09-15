@@ -558,7 +558,7 @@ though it were protecting something — and a third critical warning said the
 `set_max_delay` on the crossing had matched no object, because the filter
 named a generate hierarchy the tool spells its own way.
 
-That is the same failure CLAUDE.md records against `cadr_machine.xdc`'s
+That is the same failure recorded against `cadr_machine.xdc`'s
 `foreach` and against `cadr_ddr.xdc`'s scoped `get_ports`, in a new file, on
 the first try. The file holds only constraints now, the filter is on the
 register's own name rather than on its hierarchy, and the assertions are in

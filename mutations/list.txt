@@ -241,7 +241,7 @@
 
 # ============================================================== phase gen ===
 #
-# Held to muir's clock::Behavioural tick for tick, so every instant the
+# Held to muir's clock::Behavioral tick for tick, so every instant the
 # generator names is a mutation: move one and the trace disagrees.
 
 @mutation tse-falls-late

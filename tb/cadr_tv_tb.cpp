@@ -30,10 +30,10 @@
 //     memory cycle at `MAIN_BASE` plus four times the address, with the
 //     trace's own word --- asserted at the port on the tick, and read back
 //     through a modeled DDR keyed by the STIMULUS's address and filled
-//     from the STIMULUS's word, never the DUT's.  CLAUDE.md's rule, and the
+//     from the STIMULUS's word, never the DUT's.  The standing rule, and the
 //     reason `bridge-writes-the-address-instead-of-the-data` is in the list.
 //
-// THE MODELLED DDR ANSWERS AT ONCE, as `tb/cadr_machine_tb.cpp` answers
+// THE MODELED DDR ANSWERS AT ONCE, as `tb/cadr_machine_tb.cpp` answers
 // main memory at the instant muir's board would: that is what makes the
 // timing comparable, the bridge being thin.  A word nothing wrote is poison
 // injective in the address, so a read that went to the wrong word cannot
@@ -59,7 +59,7 @@
 // answering zero there, would both go on passing.  The run therefore counts
 // the window reads it compared, requires one per window read the header
 // says the program made, and requires that what it compared them against
-// had a bit set.  CLAUDE.md's rule: a check that only ever compares against
+// had a bit set.  The rule: a check that only ever compares against
 // zero passes a bridge stuck at zero.
 //
 // AND THEN CONFIGURATION B: THE WINDOW AGAINST A MEMORY THAT TAKES TIME.
