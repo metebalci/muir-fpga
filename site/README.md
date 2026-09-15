@@ -41,6 +41,10 @@ build step and no generator, the same way
                   ways into a board's own debuggee end, the ribbon between two
                   Pmod headers, and the frame the eight pins carry. It ends
                   with a table of what has run on a board and what has not
+    faq.html      questions this project is asked, each with an answer of a
+                  few sentences and a line naming the file it rests on. The
+                  first is why there is no disk multiplexor block. There are
+                  no drawings on it. Its styles are in faq.css beside it
     cadr.html     the real CADR in ten drawings with one-sentence captions:
                   the machine, its boards, cables and buses, and how it boots
                   document named at the end of the page
@@ -66,9 +70,10 @@ faint line at the top saying which board this is and linking the other pages.
 Anything that explains a drawing belongs in `full-page.html` or in `docs/`,
 not here.
 
-A **prose page** is `index.html`, `booting.html`, `debugging.html` or
-`cadr.html`. Those carry the topbar, and they are written in brief full
-sentences because they are read by people who did not write the code.
+A **prose page** is `index.html`, `booting.html`, `debugging.html`,
+`faq.html` or `cadr.html`. Those carry the topbar, and they are written in
+brief full sentences because they are read by people who did not write the
+code.
 
 `booting.html`, `debugging.html` and `cadr.html` are prose pages that carry
 drawings, and all three of them draw in `currentColor` alone. **A sequence
@@ -188,6 +193,13 @@ supply pins are open at both ends, because a cable between two boards must not
 join their 3.3 V rails, and the connector's own block says so. It takes the
 crossings' red rather than a colour of its own, so that red on a drawing goes on
 meaning one thing.
+
+`faq.css` is one rule, for the line under each answer that names the file
+the answer rests on. It is kept beside its page for the reason the two files
+below are: one page wanting one small thing is not a reason to put it in the
+stylesheet every page loads. **Every answer on that page carries such a
+line**, and a question whose answer rests on nothing tracked does not go on
+the page.
 
 `debugging.css` is the same arrangement as `cadr.css`: what that page's
 drawings need beyond the shared classes, kept beside it so that the cable page
