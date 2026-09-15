@@ -124,8 +124,10 @@ about a board and not about the code.
 A block a board does not have carries no colour at all. It keeps its place,
 goes dashed, and takes a red cross corner to corner with its label left faint.
 That is the one mark on these drawings that says nothing about progress, and
-the legend calls it "not available on this board". The lines that reached such
-a block stay drawn, because a line on these drawings carries no status either.
+the legend calls it "not available on this board". A line that exists only to
+reach such a block stays drawn and goes faint with it, as far as the first
+junction where another line joins it or the first box it meets, because past
+that junction the same wire serves something the board does have.
 
 ## The one change to muir's stylesheet
 
@@ -148,11 +150,12 @@ join their 3.3 V rails, and the connector's own block says so. It takes the
 crossings' red rather than a colour of its own, so that red on a drawing goes on
 meaning one thing.
 
-`.d-absent`, `.d-absent-x`, `.d-absent-t` and `.d-absent-key` are added for a
-block a board does not have. The outline and the faint label use the drawing's
-own ink through `currentColor`, so they follow the reader's theme like
-everything else. Only the cross has a colour of its own, `--st-absent`, which
-is the red the error lamp is already drawn in.
+`.d-absent`, `.d-absent-x`, `.d-absent-t`, `.d-absent-l` and `.d-absent-key`
+are added for a block a board does not have and for the wires that reach it.
+The outline, the faint label and the faded line use the drawing's own ink
+through `currentColor`, so they follow the reader's theme like everything else.
+Only the cross has a colour of its own, `--st-absent`, which is the red the
+error lamp is already drawn in.
 
 ## Looking at it
 
