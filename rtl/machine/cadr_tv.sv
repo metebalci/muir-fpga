@@ -105,23 +105,27 @@
 // the program from power-on, `$readmemh`'d from `SYNC_PROM_HEX` as the boot
 // PROM's image is, until the software loads the RAM and selects it.
 //
-// **WHERE THIS PARTS FROM muir, MEASURED AND BOUNDED.**  Two instants, both
-// of them muir looking at a program it has already walked to the end:
-//
-//   `Timeline::sync_at` answers, for the first instruction of a run, the
-//   bits the program leaves at the END of a run --- right for a program that
-//   has been running, and a guess for the first run after a restart, which is
-//   the only run where no instruction has landed yet.  The 74LS175 at NSYREG
-//   0D02 is a register with no clear on the program's start, so this module
-//   holds the bits it held, and at power-on it holds zero.  The reference
-//   trace does not read the mode register there and `golden/src/tv.rs` says
-//   so at the assert that keeps it out.
+// **WHERE THIS PARTS FROM muir, MEASURED AND BOUNDED.**  One instant, and it
+// is muir looking at a program it has already walked to the end:
 //
 //   `Timeline::of` answers None for a program that runs off the end of its
 //   store without an End of Loop, and answers it AT THE RESTART; this module
 //   discovers it by fetching, and stops when the fetch runs past the
 //   program.  No walk in the reference gets as far as one instruction before
-//   the next restart replaces it, and the generator asserts that too.
+//   the next restart replaces it, and the generator asserts that.
+//
+// **AND THE SYNC BITS ACROSS A RESTART NO LONGER PART.**  The 74LS175 at
+// NSYREG 0D02 is a register with no clear on the program's start --- pin 1 is
+// the pull-up `HI` at XBADR 0F10 on the SIMPLE TV and `HI5` at XBADR 0D04 on
+// the LISPM TV --- so this module holds the bits it held, and at power-on it
+// holds zero.  muir's `Tv::restart` carries them over and
+// `Timeline::sync_at_since_start` answers them until the new program's first
+// instruction lands, which is what this module has always done.  The same
+// goes for the vertical flag, whose flop below is written by `-XBUS INIT`, a
+// mode store and `-TVMA CLR` and by nothing else: a restart does not touch
+// it, in muir either.  The two asserts that used to keep the reference trace
+// out of both regions are gone; what has not been written is a section of the
+// script that goes INTO them, so neither is compared yet.
 //
 // **AND NO FRAME BUFFER**: the bitmap lives in PS DDR3, in the 8 MB
 // `cadr_ddr_map.sv` reserves for the display, so that whatever draws the

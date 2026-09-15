@@ -136,7 +136,7 @@ pins the mapping on hand-computed pixels.
 | word *n* is at base + 4*n* | `display_byte_address` | `rtl/plumbing/cadr_ddr_map.sv:83`; `rtl/plumbing/cadr_xbus_ddr.sv:87` |
 | a frame is 15,456,000 ns | `FRAME_NS` | muir `src/tv.rs:331`; `rtl/machine/cadr_tv.sv:123` |
 
-**Which bit is which pixel.** muir `src/tv.rs:554-557`:
+**Which bit is which pixel.** muir `src/tv.rs:599-602`:
 
     pub fn pixel(&self, x: usize, y: usize) -> bool {
         let bit = y * WORDS_PER_LINE * 32 + x;
@@ -157,7 +157,7 @@ what a whole-width Raw rectangle actually goes through. **Both are mutated in
 encodings**, which is what says the check reaches both.
 
 **Which way round black and white are.** muir says it at
-`src/tv.rs:547-550` and `:607-609`. A lit bit shows **white** unless
+`src/tv.rs:592-595` and `:607-609`. A lit bit shows **white** unless
 `MODE BOW` is set, and the other way round when it is. That is `MODE<2>`, at
 `tv.rs:260`, "display one bits as black and zeros as white". So a screen
 of zeros with BOW clear is **black**, and that is what a real machine looks

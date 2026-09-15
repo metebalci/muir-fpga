@@ -260,31 +260,31 @@ the board and muir samples early. The generator asserts that no
 mode-register read has either moving inside its deskew, and none does. This
 is recorded here so nobody widens a tolerance for it.
 
-**And no mode-register read falls in the first instruction of a run.**
-`Timeline::sync_at` answers, for an offset inside the first instruction, the
-bits the program leaves at the END of a run. That is what the register
-really holds once the program has been round once --- the program is
-periodic, so the last instruction of the previous run is what latched them
---- and it is a guess for the first run after a restart, the only run where
-no instruction has landed yet. The 74LS175 at NSYREG 0D02 has no clear on
-the program's start, so the fabric holds what it held, and at power-on it
-holds zero. The generator asserts the read out and says so at the assert.
-**Lift it when muir carries the register's own value across `Tv::restart`**,
-which its own comment already describes as the intent: "what the register
-shows before it is what it showed at the end of the previous run".
+**The sync bits and the vertical flag are carried across a restart, in muir
+as on the board.** Two parts, and the program's start reaches neither of
+them. The bits are the 74LS175 at NSYREG 0D02, whose clear, pin 1, is a
+pull-up and nothing else --- `HI`, the PULLUP at XBADR 0F10, on the SIMPLE
+TV, and `HI5` at XBADR 0D04 on the LISPM TV --- so the register holds what
+the program before it left until the new program's first instruction lands,
+and at power-on it holds zero. The flag is the 74LS74 at NXBCTL 0E14,
+preset by `-TVMA CLR` and cleared only by `-LOAD MODE` or `-RESET`, so it
+stands across a restart. The fabric has done both since it was written.
 
-**And the sync program is not restarted while the vertical flag stands.**
-The flag is the 74LS74 at NXBCTL 0E14, preset by `-TVMA CLR` and cleared
-only by `-LOAD MODE` or `-RESET`. The program's start reaches neither pin,
-so on the board the flag stands across a restart. `Tv::vert_flag` counts
-the `-TVMA CLR`s since the last write *of the program now running*, so a
-restart moves the origin and the fields counted before it are forgotten:
-the flag falls until the new program's first `-TVMA CLR`, which for the
-trace's own RAM program would be 93,722 ticks. A write of the mode register
-is exempt, because it clocks the flag itself. **Lift this when muir keeps
-the flop's state across `Tv::restart`.** Both of these are asserts in
-`golden/src/tv.rs` rather than tolerances in the testbench, which is this
-project's own preference: a stated instant over a widened bound.
+These were two ways the fabric parted from muir and they are closed:
+`Tv::restart` carries the flop's value and the held sync bits over, and
+`Timeline::sync_at_since_start` answers the held bits until the first
+instruction lands. Two asserts in `golden/src/tv.rs`, and two more in
+`golden/src/color_tv.rs`, kept the reference trace out of both regions
+while they were open; they are gone.
+
+**What no trace exercises yet.** Removing those asserts does not move a
+reference trace, because the script never places a write or a read where
+they applied: it clears the flag before every restart and waits a whole
+instruction before reading the mode register. So a restart taken with the
+flag standing, and a mode-register read inside a run's first instruction,
+are now comparable and are still uncompared. Writing them is a section of
+the script rather than a deletion from it, and it would move
+`tv.golden`, `tv_lispm.golden` and `color_tv.golden`.
 
 **Priority at one clock edge is `-XBUS INIT`, then the write, then the
 preset, and a restart over the instruction boundary.** A write landing on
