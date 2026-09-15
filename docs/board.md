@@ -1546,6 +1546,140 @@ microseconds. The program's own traffic line is the same on both:
     go, 0 malformed, 0 with a bad checksum, 0 refused because the machine had
     not emptied its buffer
 
+## The second display board, fitted at run time, 15 September
+
+Both Zynq boards were served the set built at commit `52b7b3a` and left
+running on it. The measurements below were taken on the two boards over half
+an hour. No card was written and nothing on either card was changed.
+
+**The two halves name one build, and the part agrees.** On both boards
+`cadr-console --version` prints `cadr-console 0-52b7b3a-release`, and the last
+line of `cadr-console status` reads `fabric: build 52b7b3a0 --- commit
+52b7b3a, tree clean`. The USERCODE register read over JTAG moved from
+`261547d0` to `52b7b3a0` on `xc7z020_1` and on `xc7z007s_1` alike, and the
+loader's own reading of the bitstream header at boot says `UserID=52B7B3A0`.
+The section above says what those four readers are for; this is the second set
+to pass that check.
+
+**With nothing set, both boards say the machine has one display board.**
+`cadr-console tv-board` prints the two lines below and exits 0, and
+`cadr-console color-tv` prints the same two and exits 1:
+
+    display: the first board is a SIMPLE TV
+    display: no color TV --- those addresses give the NXM, which is how the
+             band finds out
+
+Neither card names `--tv-board` or `--color-tv`, so `S80cadr-disk-packs` skips
+its display step at a boot and no `cadr-display:` line appears on either
+console. That is what the color board being off by default looks like.
+
+**MIT's own probe had to be made out of the band's primitives.** The System
+304 band carries MIT's `COLOR` package --- `(pkg-find-package "COLOR" :find)`
+answers with it --- but not the `COLOR` system's functions, and
+`color:xbus-location-exists-p` is undefined. So `COLOR-EXISTS-P` is not run at
+this band's cold boot, and the caution about a band walking into
+`COLOR:SETUP`'s sync loops does not apply to this band as it stands, there
+being nothing loaded to walk into. Whether a band with the `COLOR` system
+loaded would walk into them is untouched by this session.
+
+The four primitives the probe is built from are all there: `%xbus-write`,
+`%xbus-read`, `%unibus-write` and `bit-test` each answer `T` to `fboundp`. So
+the body of `COLOR-EXISTS-P`, `sys/window/color.lisp` lines 95 to 104, was
+typed at a Lisp Listener as one form and the probe made with it. It writes a
+marker into the color buffer's first word, reads the word back with the error
+stop off so that the NXM cannot halt the machine, restores the error stop, and
+answers whether the marker came back. Every number was written explicitly in
+octal, because MIT's file is `Base: 8` and the Listener is not.
+
+**The probe answered NIL with no board fitted, T with one, and NIL again after
+it was taken away.** `cadr-console color-tv on` fitted the board on the Arty
+Z7-20 with the machine running:
+
+    display: the first board is a SIMPLE TV
+    display: a color TV is fitted, at 0o17200000 with its registers at
+             0o17377750
+
+Nothing on the card changed and no `fpgarc` line was uncommented. The probe
+then answered `T`, where minutes earlier it had answered `NIL`, and
+`cadr-console color-tv off` gave back the unfitted words and the probe
+answered `NIL` once more. That is two witnesses meeting: the console's own
+register face on one side and MIT's software doing a bus cycle at `0o17200000`
+on the other, sharing nothing but the backplane. The machine kept running
+across all of it, 6,643 microcycles per 2,000 microseconds before and 6,454
+after, with ERR down each time.
+
+**The color screen is served, and it is black because the map is.**
+`cadr-terminal` was restarted by hand with `--color-terminal 0.0.0.0:5903`,
+and it said what it had found: the color window is 128 KB at `0x1c020000`, the
+screen is 576 by 454, 72 words a line, 32,688 of the window's 32,768 words,
+four bits a pixel through sixteen colors. A viewer on 5903 sees a black 576 by
+454 screen named `CADR color`, and that was measured as bytes rather than
+inferred. All 261,504 pixels read back as zero in the server's default
+true-color format.
+
+The black is the map's doing and not the window's. Asked for a color-mapped
+format instead, the same screen sends `SetColourMapEntries` with sixteen
+entries all red 0, green 0, blue 0, and the pixel indices behind them are not
+zero: sixteen distinct values, 260,533 of the 261,504 of them non-zero, the
+commonest `0x0f`, `0x0e`, `0x07` and `0x0d`. That is unwritten memory in the
+color window, which is what the plan allowed for. So nothing has drawn a
+picture here --- the machine has written neither a map nor a pixel --- and
+every index in that window maps to black.
+
+**The map port reads sixteen zero entries for either board.** `cadr-console
+color-map first` reads the first board's sixteen on a band that has never
+written one, and `cadr-console color-map` with the color board fitted reads
+the color board's sixteen. All thirty-two are red 0, green 0, blue 0.
+
+**The Chaosnet's traffic line closes.** Every such line on both boards adds
+up, which is what the new counters were added for: `arrived` equals `in` plus
+the three refusals. The Arty Z7-20 read 1 datagram arrived against 1 in, 0
+refused for their shape, 0 with a bad checksum and 0 not for this cable, and
+later the same line with 2 in every place; the Cora Z7-07S read 1 in every
+place. So the three refusal counts are at zero, and a link reporting nothing
+in really did hear nothing.
+
+**The packet trace can be turned on while the machine runs, and it writes one
+line a datagram.** `cadr-console trace-chaos on` printed its whole sentence
+and exited 0 on both boards, and the program then wrote a line for every
+datagram into its own log. Traffic was made from Lisp by asking whether the OZ
+host was up, which answered `T` on both:
+
+    onto the network: RFC 177100 -> 177002, 6 bytes, check good
+    to the machine:   ANS 177002 -> 177100, 68 bytes, check good
+
+The Cora Z7-07S's pair reads the same with `177102` in place of `177100`.
+`trace-chaos off` stopped it, both exits 0. No register is touched for any of
+this and both machines were running throughout.
+
+**Nothing else about either machine moved.** Both were RUNNING on every
+reading, 6,364 to 6,819 microcycles per 2,000 microseconds, with `FLAG-1`
+`0xf900` every time. Both screens carry a System 304 Lisp Listener two minutes
+after the boot, 18,080 lit pixels on the Arty Z7-20 and 18,048 on the Cora
+Z7-07S, with who-lines dated after this boot began and advancing at 0.509 of
+real time on both. The mouse tracks on both, read off `tv:mouse-x` and
+`tv:mouse-y` rather than off the arrow alone. The Arty Z7-20 took the
+debugger's role over the mirrored ribbon, found the wiring crossover, and read
+0 refused against a saturated 65,535 heard across a minute, with the Cora
+Z7-07S reporting a debugger on its connector and no `peer_far` line. The
+sections above say what each of those measurements means; this set moved none
+of them.
+
+**Two facts were found, and neither is a fault in the fabric.**
+`--color-terminal` does not refuse when no board is fitted. With the board
+unfitted the program printed exactly the sentence it should, naming the NXM
+and naming `--color-tv` in `fpgarc` as what fits one, and then carried on,
+bound 5903 and served a black screen. The words are right and the verb is not:
+that branch says and does not return. So fitting the board before the terminal
+is started is good practice rather than a requirement.
+
+And both development cards predate the color flags entirely. Neither card's
+`fpgarc` contains `--tv-board` or `--color-tv` in any form, commented or
+otherwise, because both were written before this commit's menu existed. The
+effect is the same, since both settings are off without them, but a card
+written from this commit's script carries all four of the display lines
+commented out.
+
 ## Looking at the display output
 
 The display output block scans the CADR's screen out of DDR and drives the

@@ -1061,6 +1061,16 @@ two viewers open would have two windows with one name; the second is called
 `CADR color`. The name is a label on a window and not a claim about the
 machine.
 
+**What silicon has shown.** With the color board fitted at run time from the
+console, this serves a black 576 by 454 screen named `CADR color` on a display
+of its own, and the black is the map's doing: all 261,504 pixels read back as
+zero in the true-color format, and in a color-mapped one the sixteen map
+entries are all black while the pixel indices behind them are unwritten memory,
+sixteen distinct values with 260,533 of them not zero. So no machine has drawn
+a color picture yet. And with no board fitted the flag is not refused: the
+program prints the sentence naming the NXM and naming `--color-tv` as what
+fits one, and then binds and serves a black screen anyway.
+
 ## What is not built
 
 - **Reading `MODE BOW`**, which is described above. It is fabric work in three
