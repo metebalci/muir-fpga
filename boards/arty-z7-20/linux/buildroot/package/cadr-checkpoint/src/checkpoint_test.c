@@ -540,12 +540,13 @@ int main(int argc, char **argv)
 	//   bus_error..write_buffer  2+2+1+(8+32)*3 = 125
 	//   vmaok      1
 	//   disk       61 + 8             = 69       (no drives: 8 flag bytes)
-	//   tv         1+(8+131072)+4+(8+4096)+2+1+48+1+8+8 = 135257
+	//   tv         1+(8+131072)+4+(8+4096)+2+1+48+1+8+8+1+1 = 135259
 	//                                            (the board's tag, the
 	//                                             buffer, the mode, the
 	//                                             sync RAM, the color map
 	//                                             as 48 bare bytes, the
-	//                                             flag, and two instants)
+	//                                             flag, two instants, and the
+	//                                             two held sync bits)
 	//   color_tv   1                  = 1        (the flag alone: none is
 	//                                             fitted, so no board
 	//                                             follows it)
@@ -571,7 +572,7 @@ int main(int argc, char **argv)
 	{
 		const size_t machine_part =
 			8200 + 131080 + 14 + 10 + 16680 + 29 + 8200 + 4104 + 4 +
-			262152 + 125 + 1 + 69 + 135257 + 1 + 253 + 16;
+			262152 + 125 + 1 + 69 + 135259 + 1 + 253 + 16;
 		const size_t rtl_part =
 			208 + 32 + 19 + 12 + 140 + 1 + 32 + 25 + 26 + 24 + 27;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven

@@ -2655,7 +2655,17 @@ CHECKPOINT_WORK := $(HOME)/.cache/muir-fpga-checkpoint
 # the pack binding carries paths, so two directories give two sizes for
 # reasons that have nothing to do with this.  muir still takes the file and
 # still resumes at the same microcycle.
-CHECKPOINT_SHA  := 79f8d00f301e348e3f52c5166851f33708452df0e06e56bae13af917dfca0973
+#
+# **AND MOVED AGAIN WHEN THE CHECKPOINT FORMAT WENT 25 TO 26.**  muir's `Tv`
+# carries the two sync bits the mode register was holding when the running
+# program started, so `Tv::save` writes two more bools and `chk_rtl.c` writes
+# them too.  **The file did not grow**, 561,515 bytes both ways: the two bools
+# are zeros and `chk.c` collapses a run of zeros, so they joined the eight
+# zero bytes `origin` already puts there rather than making a run of their
+# own.  What moved is the version byte in the header and the length of that
+# one run.  muir loads the file and saves it back byte for byte, and resumes
+# at the same microcycle.
+CHECKPOINT_SHA  := 25f6f4f5fbbf7f40537a30e2e8f9307f4069227fda80e4880ece7d4e7e2063e5
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of five nanoseconds each, the two the model sets.
 CHECKPOINT_RESUMED := at 78187493520 microcycles, 3274101291600 ns, 1 memory boards

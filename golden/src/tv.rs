@@ -79,12 +79,14 @@
 //!   Two things can move in between: the vertical flag, at a `-TVMA CLR`,
 //!   and the two sync bits, at any instruction boundary --- so the generator
 //!   refuses to place a read of the mode register with either inside those
-//!   twelve ticks.  It also refuses one inside the first instruction of a
-//!   run, where `Timeline::sync_at` answers the bits the program leaves at
-//!   the END of a run and the board's register holds what it held.  The
-//!   board reads both live through the 74LS244 at NXBCTL 0F11, so where they
-//!   differ the fabric is the board and muir samples early; the trace simply
-//!   never asks.  Each is one assert, at the read.
+//!   twelve ticks.  The board reads both live through the 74LS244 at NXBCTL
+//!   0F11, so where they differ the fabric is the board and muir samples
+//!   early; the trace simply never asks.  That is one assert, at the read.
+//!   A read inside the first instruction of a run used to be refused too,
+//!   because `Timeline::sync_at` answered the bits the program leaves at the
+//!   END of a run where the board's register holds what it held;
+//!   `Timeline::sync_at_since_start` answers the held bits now and the
+//!   refusal is gone, though nothing places such a read yet.
 //! - `-XBUS INIT` is a stimulus column: the tick it is up is the tick the
 //!   flag clears, and muir's `xbus_init(ns)` is called at that instant.
 //!
@@ -665,30 +667,15 @@ fn main() {
                 assert_eq!(tick, want, "a write meant to land at tick {want} landed at {tick}");
             }
             if let Some(r) = which_register(phys) {
-                // **A RESTART WHILE THE VERTICAL FLAG STANDS IS NOT
-                // COMPARABLE, AND THE PROGRAM DOES NOT MAKE ONE.**  The flag
-                // is the 74LS74 at NXBCTL 0E14, preset by `-TVMA CLR` and
-                // cleared only by `-LOAD MODE` or `-RESET`; the sync
-                // program's start reaches neither pin, so on the board it
-                // stands.  `Tv::vert_flag` counts the `-TVMA CLR`s since the
-                // last write *of the running program*, so a restart moves the
-                // origin and the fields counted before it are forgotten ---
-                // the flag falls until the new program's first `-TVMA CLR`.
-                // A write of the mode register is exempt because it clocks
-                // the flag itself.  Lift this when muir keeps the flop's
-                // state across `Tv::restart`.
-                let will_restart = match r {
-                    0 => (word ^ tv.mode()) & mode::CLOCK != 0,
-                    1 => tv.sync.enabled(),
-                    3 => ((word as u8) & 0o200 != 0) != tv.sync.enabled(),
-                    _ => false,
-                };
-                assert!(
-                    !(will_restart && r != 0 && tv.vert_flag(now)),
-                    "tick {tick}: the write of register {r} restarts the sync program with the \
-                     vertical flag standing, and muir's restart forgets it where the board's flop \
-                     keeps it; clear the flag first"
-                );
+                // **A RESTART CARRIES THE VERTICAL FLAG AND THE SYNC BITS
+                // OVER, IN muir AS ON THE BOARD.**  The flag is the 74LS74 at
+                // NXBCTL 0E14, preset by `-TVMA CLR` and cleared only by
+                // `-LOAD MODE` or `-RESET`; the sync bits are the 74LS175 at
+                // NSYREG 0D02, whose clear is a pull-up.  The sync program's
+                // start reaches none of those pins, so both stand.  `Tv::restart`
+                // carries them now, so a write that restarts the program with
+                // the flag up is comparable and this generator no longer
+                // refuses to place one.
                 tv.write_control(r, word, now);
                 if tv.origin() == now {
                     restarts += 1;
@@ -734,25 +721,6 @@ fn main() {
                         "tick {tick}: VSYNC or HSYNC moves inside the deskew of a mode-register \
                          read; the board reads them live through the 74LS244 at NXBCTL 0F11 and \
                          muir samples at the request, so move the read"
-                    );
-                    // **AND NOT IN THE FIRST INSTRUCTION OF A RUN.**
-                    // `Timeline::sync_at` answers, for an offset inside the
-                    // first instruction, the bits the program leaves at the
-                    // END of a run --- which is what the register really
-                    // holds once the program has been round once, and a
-                    // guess for the first run after a restart.  The 74LS175
-                    // at NSYREG 0D02 holds what the last instruction latched
-                    // and the program's start does not clear it, so there
-                    // the two cannot agree.  Lift this when muir carries the
-                    // register's own value across `Tv::restart`.
-                    let step = sync::INSTRUCTION_NS[(tv.mode() & mode::CLOCK) as usize];
-                    assert!(
-                        now >= tv.origin() + step,
-                        "tick {tick}: a mode-register read {} ns into a run, inside its first \
-                         instruction of {step} ns, where muir's sync bits are its guess at what \
-                         the program leaves behind; move it (origin {}, cycle {cycle})",
-                        now - tv.origin(),
-                        tv.origin()
                     );
                 }
                 v

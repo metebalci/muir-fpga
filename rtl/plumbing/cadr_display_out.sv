@@ -118,7 +118,7 @@
 // ----------------------------------------------------------------------
 // WHICH BIT IS WHICH PIXEL
 //
-// muir `src/tv.rs:554-557`, `Tv::pixel`: a line is 24
+// muir `src/tv.rs:599-602`, `Tv::pixel`: a line is 24
 // consecutive words, the first line first, and within a line the pixels run
 // from the LOW end of the first word --- **bit 0 of a word is the LEFTMOST
 // of the 32 pixels it carries**.  The same rule is written out in

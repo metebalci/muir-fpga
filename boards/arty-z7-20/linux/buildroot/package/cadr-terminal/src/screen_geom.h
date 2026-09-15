@@ -35,7 +35,7 @@
 //                                   lines of 16.000 us measured on the
 //                                   netlist board; rtl/machine/cadr_tv.sv:123
 //
-// **WHICH BIT IS WHICH PIXEL.**  muir `src/tv.rs:554-557`:
+// **WHICH BIT IS WHICH PIXEL.**  muir `src/tv.rs:599-602`:
 //
 //     pub fn pixel(&self, x: usize, y: usize) -> bool {
 //         let bit = y * WORDS_PER_LINE * 32 + x;
@@ -54,7 +54,7 @@
 // trip, because a round trip through a reader and a writer that are wrong
 // the same way agrees with itself.
 //
-// **WHICH WAY ROUND BLACK AND WHITE ARE.**  muir `src/tv.rs:547-550`
+// **WHICH WAY ROUND BLACK AND WHITE ARE.**  muir `src/tv.rs:592-595`
 // and `:607-609`: a lit bit shows WHITE unless `MODE BOW` --- `MODE<2>`,
 // `tv.rs:260`, "display one bits as black and zeros as white" --- is
 // set in the display's mode register, and the other way round when it is.

@@ -61,7 +61,7 @@
 #define MUIR_RESP_NOUNIBUS 10u
 // `tv::BUFFER_WORDS` and the sync RAM, and `SyncRam::default`'s enable.
 #define MUIR_TV_SYNC_ENABLE 0u
-// The tag `Tv::save` writes for the board, src/tv.rs:886-889: the SIMPLE TV
+// The tag `Tv::save` writes for the board, src/tv.rs:932-935: the SIMPLE TV
 // is 0 and the LISPM TV is 1.
 #define MUIR_TV_BOARD_SIMPLE 0u
 // `tv::COLORS` times `tv::CHANNELS`, src/tv.rs:225 and :233: sixteen colors
@@ -196,7 +196,7 @@ static void emit_disk(struct chk *w, const struct chk_declared *d)
 	}
 }
 
-// `tv.rs`'s `Tv::save`, fixed 135,257 bytes.
+// `tv.rs`'s `Tv::save`, fixed 135,259 bytes.
 //
 // **THE PICTURE IS REAL AND NOTHING ELSE HERE IS.**  The display block writes
 // the frame buffer into the display's own region of DDR, which Linux can map,
@@ -232,7 +232,7 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 	chk_u8(w, MUIR_TV_SYNC_ENABLE);		/* NONE sync.enable */
 	// The color map, sixteen colors of three channels: **bare bytes with
 	// NO COUNT in front of them**, because `Tv::save` writes them `w.u8` at
-	// a time (src/tv.rs:893-897) and not through `w.bytes`.  A count here
+	// a time (src/tv.rs:939-943) and not through `w.bytes`.  A count here
 	// would shift every byte after it.
 	//
 	// **IT IS READ NOW AND IT USED TO BE WRITTEN AS ZEROS.**  Register 4 is
@@ -261,7 +261,7 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 	chk_bool(w, 0);				/* NONE flag_written */
 	chk_u64(w, 0);				/* NONE written_at */
 	// When the running sync program last started from its location 0
-	// (src/tv.rs:423-426).  Zero is `Tv::default`'s, which says the program
+	// (src/tv.rs:431-434).  Zero is `Tv::default`'s, which says the program
 	// has been running since the machine came up --- and that is right for
 	// a fabric with no sync generator at all, whose program has therefore
 	// never been changed and never restarted.  `Tv::load` runs the timeline
@@ -276,6 +276,17 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 #else
 	chk_u64(w, 0);				/* NONE origin */
 #endif
+	// The sync bits the mode register was holding when the running program
+	// started, which it goes on reading until that program's first
+	// instruction lands (src/tv.rs:435-441).  The 74LS175 at NSYREG 0D02
+	// has its clear on a pull-up, so the register holds what the program
+	// before it left and a restart does not touch it.  Zero is
+	// `Tv::default`'s and is what power-on leaves in a register that has
+	// never been clocked, which is right for a resume whose origin is zero:
+	// the program has been running since the machine came up and there is
+	// no program before it to have left anything.
+	chk_bool(w, 0);				/* NONE sync_held.0, HSYNC */
+	chk_bool(w, 0);				/* NONE sync_held.1, VSYNC */
 }
 
 // `serial.rs`'s `Pci::save`, fixed 110 bytes, all of it IDLE: the CADR's
@@ -528,7 +539,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// `--color-tv` disagrees with, by name.
 #if CHK_MUTATE == 7
 	// A color board this backplane does not have.  muir then reads a
-	// whole second 135,257-byte display out of the eight hundred bytes
+	// whole second 135,259-byte display out of the eight hundred bytes
 	// that are left, and REFUSES at the short read --- which is what
 	// makes this the flag's own mutant and not the map's.
 	chk_bool(w, 1);

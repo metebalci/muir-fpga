@@ -11,7 +11,7 @@
 // in that order; there is no framing inside it and no checksum over it, so a
 // field of the wrong width silently shifts everything after it.
 //
-// **THE VERSION IS 25 AND A FILE OF ANY OTHER VERSION IS REFUSED BY NAME**,
+// **THE VERSION IS 26 AND A FILE OF ANY OTHER VERSION IS REFUSED BY NAME**,
 // which is the one thing that stops a format change here from being read
 // wrong somewhere else.  When muir's `checkpoint::VERSION` moves, this file
 // moves with it or the board's checkpoints stop loading --- loudly, which is
@@ -31,7 +31,7 @@
 #include <stdint.h>
 
 // muir's `checkpoint::VERSION`.
-#define CHK_VERSION 25u
+#define CHK_VERSION 26u
 // muir's `MIN_ZERO_RUN`: the shortest run of zero bytes worth a count.
 #define CHK_MIN_ZERO_RUN 4u
 
