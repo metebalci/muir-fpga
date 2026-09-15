@@ -190,18 +190,20 @@ the whole of it.
 
 A second board is the same cable on one Pmod connector, JA on the Zynq boards
 and JB on the Arty A7-100, whose JA is a standard Pmod with series resistors.
-The connector carries the whole link in both directions: four pins each way, one
-strobe and three data lines a direction, eight beats a frame. A board is a
-debugger or a debuggee by configuration and never both at once, which is what
-makes one connector enough; a second one bought only a chain of three machines.
-The other Pmod is not assigned. The cable's 11.05 us budget makes the beats
-free.
+The connector carries the whole link in both directions: four pins each way, of
+which two carry a strobe and one data line and the other two are driven low as
+guards beside them, twenty-four beats a frame. A board is a debugger or a
+debuggee by configuration and never both at once, which is what makes one
+connector enough; a second one bought only a chain of three machines. The other
+Pmod is not assigned. The cable's 11.05 us budget makes the beats free.
 
 All three boards carry the connector, in every configuration, because a board
 is always a debuggee. A board becomes the debugger by `--debug-cable-connect`
-in `fpgarc` or by `cadr-console debug-cable-connect`. No cable has been made
-and nothing of this has run on a board. `docs/debug-cable.md` is the whole of
-it.
+in `fpgarc` or by `cadr-console debug-cable-connect`. A cable joins the Arty
+Z7-20 and the Cora Z7-07S, and each has debugged the other over it: CC in one
+board's Lisp world has halted the machine in the other and read its registers
+and scratchpads, equal to that board's own console and readout. `docs/debug-
+cable.md` is the whole of it.
 
 **The console is not this, and the difference is worth keeping.** It masters
 the machine's own Unibus to reach the diagnostic registers. No CADR had that

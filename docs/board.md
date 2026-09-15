@@ -649,8 +649,10 @@ count is a measurement.
 **A cable exists and the link has come up over it.** Two boards were joined by
 one on 14 September and the cable turned out to be mirrored, which is what the
 wiring setting is for. On 15 September the fabric found the mirror by itself
-and the two boards heard each other. `docs/debug-cable.md` is the whole of the
-cable, and it has what the frame counters said on that run.
+and the two boards heard each other. A debug cycle has since crossed it in both
+directions, which the section below on CC over the Pmod cable gives.
+`docs/debug-cable.md` is the whole of the cable, and it has what the frame
+counters said on those runs.
 
 ## What the LEDs say
 
@@ -1173,6 +1175,111 @@ boots again.
 microcode and dark from then on.
 
 Each step above was taken one at a time at the board and behaved as written.
+
+## CC over the Pmod cable
+
+A ribbon joins the Arty Z7-20's Pmod JA connector to the Cora Z7-07S's. MIT's
+own CC, running in the Lisp world of the CADR in one board's fabric, has halted
+the CADR in the other board's fabric over that ribbon, read its registers and
+its scratchpads, and started it again. It has been done both ways round. So a
+CADR has debugged a CADR over a real cable, which is what MIT's debug cable is
+for and what the register window stands in for when there is only one board.
+
+`cadr-console debug-cable-connect` is what takes the debugger's role and
+`cadr-console debug-cable-disconnect` gives it back. A board that has been told
+nothing is a debuggee, which is what a CADR is with nothing set.
+
+**The board found the ribbon's wiring itself.** The cable on the bench is
+mirrored: its connector was pressed on the other way up, so each board's pins 1
+to 4 land on the other board's 7 to 10. The board taking the role listened on
+both groups and reported `crossover, detected`, and the far board reported a
+debugger on the connector rather than a disagreement. Forced to `straight`,
+which is the wrong setting for this ribbon, the debugger said nothing was
+answering and the far board said the two ends disagreed about the cable. That
+is the fault the detection exists to remove, and it was shown once on purpose.
+
+**Neither machine noticed.** Both ran Lisp at their normal rate while the role
+was taken, swapped and given back, and neither Lisp world lost its place.
+
+Every reading below was compared with the far board's own console or readout
+program at the same halt, and the two paths share nothing but the register
+itself. The far machine was halted from its own console first, so that no
+instruction had been forced and both ends look at the same instant. CC prints
+octal and the console prints each register as the halves it reads it in, so a
+row is one word written two ways. CC's status word is one word of 32 bits whose
+halves are `FLAG-1` and `FLAG-2`, and the last two rows of each table are those
+halves.
+
+The Arty Z7-20 as the debugger, reading the Cora Z7-07S:
+
+| word | over the cable | the Cora's console |
+|---|---|---|
+| `PC` | `0o1370` | `0o1370` |
+| `IR` | `0o600626060011100` | `0x180c_b0c0_1240` |
+| `OB` | `0o11200003116` | `0x4a00_064e` |
+| `FLAG-1` | `0xf800` | `0xf800` |
+| `FLAG-2` | `0xc0c7` | `0xc0c3` |
+
+The Cora Z7-07S as the debugger, reading the Arty Z7-20:
+
+| word | over the cable | the Arty's console |
+|---|---|---|
+| `PC` | `0o17700` | `0o17700` |
+| `IR` | `0o600125000511640` | `0x1802_a802_93a0` |
+| `OB` | `0o2202007153` | `0x1208_0e6b` |
+| `FLAG-1` | `0xf800` | `0xf800` |
+| `FLAG-2` | `0xc1d7` | `0xc1d7` |
+
+All 48 bits of the instruction register and all 32 of the output bus are equal
+in both directions.
+
+**The one row that differs is CC's own correction.** `CC-READ-STATUS` inverts
+bit 2 of the second flag word when bit `0o100` of `IR-LOW` is set, under MIT's
+comment saying the hardware reads JC-TRUE incorrectly. In the first direction
+that bit is set and CC prints `0xc0c3` exclusive-ored with 4, which is
+`0xc0c7`. In the second it is clear, the correction does not apply, and the two
+readers agree exactly. The second direction is therefore the control for the
+first.
+
+The scratchpads were read at each direction's own halt, and each figure is two
+readings that were equal: CC's over the cable, and the far board's readout
+program on the same word.
+
+| word | the Cora, read by the Arty's CC | the Arty, read by the Cora's CC |
+|---|---|---|
+| `amem[1]` | `0o56` | `0o72` |
+| `amem[7]` | `0o1240005413` | `0o2` |
+| `mmem[1]` | `0o56` | `0o72` |
+| `mmem[7]` | `0o1240005413` | `0o2` |
+
+Every microcycle is accounted for. A scratchpad read is one forced
+microinstruction, and the far machine's cycle counter moved by exactly one for
+each: five for five reads one way and four for four the other. CC's own
+program counter is what the console reads after the entry, less five, which is
+the five instructions `CC-FULL-SAVE` forces on the way in.
+
+**None of it went through a register window.** The Cora Z7-07S's window, read
+while it was the debuggee, reported no requests and no faults at all, so the
+ribbon carried the halt, the reads and the start.
+
+**Loading CC takes a recipe on these bands**, because the file host serving
+`SYS:` carries CC's sources and no compiled files, so `make-system` fails and
+CC has to be loaded from source and interpreted. `docs/debug-cable.md` has the
+two forms it needs and the list of files. That load took an hour and a half the
+first time and seventeen minutes the second, and what it loads is lost when
+that machine is rebooted.
+
+**One start did not take, once.** A call that starts the far machine answered
+as it does when it works, the machine's own program counter moved, and the
+machine stayed halted until a second call started it. It was not reproduced:
+the same sequence taken again started the machine on the first call. The one
+difference in the failing case is that reads had been made before CC had done
+a full save, and no mechanism is claimed.
+
+**What the cable has not shown.** Nothing has been written to the far machine
+over it: what has run is the halt, the reads and the start. Nothing has been
+measured about its timing, because the frame counters saturate within a third
+of a second of a connect and only a fabric reset clears them.
 
 ## Looking at the display output
 

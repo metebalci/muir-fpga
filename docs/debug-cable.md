@@ -3,18 +3,22 @@ SPDX-FileCopyrightText: 2026 Mete Balci
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
-# The debug cable's debuggee end
+# The debug cable, both of its ends
 
 A CADR is debugged by another CADR. The debugger's `DBGOUT` connector goes to
 the debuggee's `DBGIN` connector over the twenty-one wires of MIT's debug
-cable. This project's fabric is the debuggee. muir, running on the board's own
-Arm cores, is the debugger.
+cable. This project's fabric carries both ends. Every board is a debuggee, and
+a board told to connect is the debugger for a second board on a ribbon between
+two Pmod headers.
 
-muir's half is built. It is `src/fabric.rs` on muir's main at `e4d8aeb`, and
-the specification it was built to is muir issue #95. Nothing is plugged in and
-there is no second board. The cable's wires are a window of memory-mapped
-registers that muir reaches with ordinary loads and stores, selected by
-`--debug-cable-connect 0x<address>`.
+muir is a debugger too. It runs on a board's own Arm cores and reaches that
+board's debuggee end through a window of memory-mapped registers, with ordinary
+loads and stores, selected by `--debug-cable-connect 0x<address>`. muir's half
+is `src/fabric.rs` on muir's main at `e4d8aeb`, and the specification it was
+built to is muir issue #95.
+
+Both ways in have run on a board. The section on what two boards have shown
+says what each carried.
 
 This document is the fabric half. It says what is built, what each piece is
 held to, and what is not built yet.
@@ -916,8 +920,11 @@ before anybody makes one.** A twelve-pin Pmod header carries ground on pins 5
 and 11 and 3.3 V on 6 and 12, and a straight ribbon joins both. The grounds
 must be joined. The supplies must not: two boards' regulators tied together is
 not something either of them is built for. A cable for this link joins pins 1
-to 4, pins 7 to 10 and the grounds, and leaves the supply pins open. **Nobody
-has made one, and nothing in this section has been shown on a board.**
+to 4, pins 7 to 10 and the grounds, and leaves the supply pins open. **A cable
+of this shape exists and the link has run over it.** The one on the bench is a
+manufactured extension, which is why the ribbon is mirrored; the section above
+says what the fabric does about that, and the section on what two boards have
+shown says what the ribbon carried.
 
 ### The roles must differ, and the fabric enforces it
 
@@ -1222,10 +1229,196 @@ there, the memory-off Arty Z7-20 came out at -9.600 ns on 596 endpoints with
 the file read by nothing. Each board's flow reads it unconditionally now and
 asserts with `assert_instance_timing` that it reached a path.
 
-**Nothing here has been shown on a board.** No cable exists, the two boards
-that would take one are running Lisp and Linux, and the silicon proof is a
-later step. What holds it today is `build/dbg_cable.pass`, where the testbench
-is the cable and both boards are real.
+What holds the attachment in simulation is `build/dbg_cable.pass`, where the
+testbench is the cable and both boards are real. What holds it on silicon is
+the section below.
+
+## What two boards have shown
+
+The carrier and a debug cycle over it have both run on real boards. The boards
+are an Arty Z7-20 and a Cora Z7-07S, the cable is a ribbon between their two
+Pmod JA connectors, and each board was running Lisp throughout.
+
+### The carrier
+
+Each board took the debugger's role in turn and gave it back. The board that
+took it found the ribbon's wiring for itself: the cable on the bench is the
+mirrored one the section above describes, and under `auto` the console read
+`crossover, detected` rather than `crossover, assumed`, while the far board
+reported a debugger on the connector and not that the two ends disagreed.
+
+Forced to `straight`, which is the wrong setting for that ribbon, the debugger
+said nothing was answering and the far board said the two ends disagreed about
+the cable. That is the fault the detection exists to remove, and it was shown
+once on purpose as the control for the paragraph above.
+
+Neither machine noticed any of it. Both ran at the rate they run at with no
+cable in them while the role was taken, swapped and given back, and neither
+Lisp world lost its place.
+
+### CC halting the far machine, and the readings compared
+
+MIT's own CC, running in the Lisp world of the CADR in one board's fabric,
+halted the CADR in the other board's fabric over the ribbon, read its registers
+and its scratchpads, and started it again. It was done both ways round. Every
+value CC read over the cable is what the far board's own console and readout
+program give for the same word at the same halt, and the two paths share
+nothing but the register itself.
+
+The far machine was halted from its own console first, so that no instruction
+had been forced and both ends look at the same instant. CC prints octal and the
+console prints each register as the halves it reads it in, so a row below is
+one word written two ways. CC's status word is one word of 32 bits whose halves
+are `FLAG-1` and `FLAG-2`, and the last two rows of each table are those
+halves.
+
+The Arty Z7-20 as the debugger, reading the Cora Z7-07S:
+
+| word | CC over the cable | the Cora's own console |
+|---|---|---|
+| `PC` | `0o1370` | `0o1370` |
+| `IR` | `0o600626060011100` | `0x180c_b0c0_1240` |
+| `OB` | `0o11200003116` | `0x4a00_064e` |
+| `FLAG-1` | `0xf800` | `0xf800` |
+| `FLAG-2` | `0xc0c7` | `0xc0c3` |
+
+The Cora Z7-07S as the debugger, reading the Arty Z7-20:
+
+| word | CC over the cable | the Arty's own console |
+|---|---|---|
+| `PC` | `0o17700` | `0o17700` |
+| `IR` | `0o600125000511640` | `0x1802_a802_93a0` |
+| `OB` | `0o2202007153` | `0x1208_0e6b` |
+| `FLAG-1` | `0xf800` | `0xf800` |
+| `FLAG-2` | `0xc1d7` | `0xc1d7` |
+
+All 48 bits of the instruction register and all 32 of the output bus are equal
+in both directions. The one row that differs is CC's own correction and the
+section below is about it.
+
+The scratchpads were read at each direction's own halt. Each figure below is
+two readings that were equal: CC's over the cable, and the far board's readout
+program on the same word while the machine stood still.
+
+| word | the Cora, read by the Arty's CC | the Arty, read by the Cora's CC |
+|---|---|---|
+| `amem[1]` | `0o56` | `0o72` |
+| `amem[7]` | `0o1240005413` | `0o2` |
+| `mmem[1]` | `0o56` | `0o72` |
+| `mmem[7]` | `0o1240005413` | `0o2` |
+
+Addresses 1 and 7 read the same in octal and in decimal, so nothing in the
+comparison turns on which base either side used.
+
+**Every microcycle is accounted for.** A scratchpad read is one forced
+microinstruction, which is what `CC-EXECUTE` is, and the far machine's cycle
+counter moved by exactly one for each of them: five for five reads one way and
+four for four the other. CC's own `PC=` is what the console reads after the
+entry, less five, which is the five instructions `CC-FULL-SAVE` forces on the
+way in.
+
+**None of it went through the window.** The Cora Z7-07S's own register window,
+read while it was the debuggee, reported no requests and no faults at all. So
+what carried the halt, the reads and the start was the ribbon and nothing
+else.
+
+### CC corrects the status word, and the bit it corrects is JC-TRUE
+
+`FLAG-2` differed by one bit in one direction and by none in the other, and
+that is MIT's software rather than the cable. `CC-READ-STATUS` in
+`sys/cc/lcadrd.lisp` reads the two flag words and inverts bit 2 of the second
+when bit `0o100` of `IR-LOW` is set, under its own comment saying the hardware
+reads JC-TRUE incorrectly.
+
+In the first direction above `IR-LOW` is `0x1240`, that bit is set, and CC
+prints `0xc0c3` exclusive-ored with 4, which is `0xc0c7`. In the second
+`IR-LOW` is `0x93a0`, the bit is clear, the correction does not apply and CC
+prints the register verbatim. So the second direction is the control for the
+first: the same two readers agree exactly where CC is not correcting anything.
+The console's own reading was taken three times with the machine still halted
+and did not move, so the difference is between the two readers rather than
+over time.
+
+### Getting CC into a Lisp world that has no compiled CC
+
+A person repeating this needs the recipe, because the obvious form does not
+work on these bands. `(make-system 'cc :noconfirm :nowarn)` fails with `File
+not found for SYS: CC; LQFMAC QFASL`. The file host serving `SYS:` carries
+CC's sources and no compiled files at all, and this band's own release does
+not ship CC compiled. Compiling it is about twenty-seven minutes of the
+machine's time and writes sixteen compiled files onto the file host, which is
+a change to the file host and was not made.
+
+CC was loaded from source instead, interpreted, file by file, in the order
+`SYS: SYS; SYSDCL LISP` gives for its CADR-DEBUGGER system. Eleven of the
+sixteen files were enough: `LQFMAC`, `LCADMC`, `CADREG`, `CC`, `CCGSYL`,
+`LCADRD`, `LDBG`, `QF`, `ZERO`, `CADLD`, `CHPLOC` and `CCWHY`. Nothing asked
+for the other five, which are the diagnostics, the disk and the salvager, so
+those commands are not available in a world loaded this way.
+
+**Two things an interpreted load needs that a compiled one does not.**
+
+First, `cadreg.lisp` must be read into package `CADR`. Its own attribute line
+says `Package: SYSTEM-INTERNALS`, and `load` honours the file's package where
+`make-system` reads a file in the system's. Package `CADR` uses `GLOBAL` and
+`SYSTEM` and not `SYSTEM-INTERNALS`, so `SI:RARSET` and `CADR:RARSET` are two
+symbols and the rest of CC cannot see the first. The form that works is
+
+    (load "SYS: CC; CADREG LISP" :package "CADR")
+
+Second, a `DEFCONSTANT` is not special to the interpreter, and CC evaluates
+those constants as variables: `lcadrd.lisp` calls `CC-INITIALIZE-SYMBOL-TABLE`
+at load time, which evaluates each symbol of `CC-INITIAL-SYMS`, and the
+interpreter answers `RARSET is referenced as a free variable but not declared
+special`. The compiler never meets this. Declaring all 67 of `cadreg`'s
+constants special is one form, with the reader's package bound so that the
+symbols it makes are the ones CC will look for:
+
+    (let ((package (pkg-find-package "CADR")))
+      (with-open-file (s "SYS: CC; CADREG LISP")
+        (do ((f (read s nil) (read s nil)) (n 0)) ((null f) n)
+          (and (listp f) (eq (car f) (quote defconstant))
+               (progn (eval (list (quote defvar) (cadr f))) (setq n (1+ n)))))))
+
+It answers 67, which is the number of `DEFCONSTANT`s in the file. Run at a
+Listener without binding the package it reads the symbols into `USER` and is a
+no-op, and the load then fails in exactly the same place. Two redefinition
+queries arrive and are answered `P`.
+
+The load took an hour and a half the first time, while the recipe was being
+found, and seventeen minutes the second time, when it was known. It is
+interpreted and lives in the machine's own world, so it is lost when that
+machine is rebooted.
+
+### What the boards have not shown
+
+**Nothing has been written to the far machine over the cable.** What has run is
+the halt, the reads and the start. CC can write a scratchpad, main memory and
+the machine's own registers, and none of that has crossed a ribbon.
+
+**The frame counters cannot give a rate.** Page 0's word 15 carries frames
+heard and frames refused; the first saturates at 65,535 within a tenth of a
+second of a connect and the second at 255 within about a third, and only a
+fabric reset clears either. So both were already saturated before the first
+debug cycle and said the same thing after the last. A counter that can be
+cleared without a reset, or a wider one, is what would measure this.
+
+**Nothing has been measured about the cable's timing.** No beat rate, no round
+trip, and no comparison against the 11.05 microseconds the debugger's own
+interface allows a cycle. The figures in the section on the budget are still
+arithmetic and the check's own measurements.
+
+**One start did not take, once.** `CC-START-MACH` answered as it does when it
+works and the far machine's own program counter moved, and the machine stayed
+halted until a second call started it. Taken again the same sequence started
+the machine on the first call, so it is not reproduced. The one difference in
+the failing case is that reads had been made before CC had done a full save.
+No mechanism is claimed and it is written down because somebody will meet it.
+
+**The refused frames are unexplained.** As the debugger the Arty Z7-20 refuses
+frames and the Cora Z7-07S does not, and the Arty as a debuggee refuses none.
+It belongs to one configuration rather than to one board or one role. It
+stopped nothing: every read was answered and every word was right.
 
 ## What is not built
 
@@ -1238,10 +1431,10 @@ and JB on the Arty A7-100 --- with `cadr_dbg_join.sv` between it and the page.
 The two Zynq boards put `cadr_debug_window.sv` behind a general-purpose port as
 well, so the join has two arms there. The Arty A7-100 has no window and its
 join has one arm empty. The window is how a program plays the far end of this
-cable, and that board has no program that could. What is left is a physical cable and a board to plug it into. The lines
-are the lines
-`tb/cadr_dbgin_harness.sv` was written with, which is what that harness is
-for: it was the attachment before the attachment landed, and the arbiter it
+cable, and that board has no program that could. Two boards and a ribbon are no
+longer what is left: the section above says what they have shown. The lines are
+the lines `tb/cadr_dbgin_harness.sv` was written with, which is what that
+harness is for: it was the attachment before the attachment landed, and the arbiter it
 instantiates is the module `cadr_memory_path.sv` instantiates rather than a
 copy of it.
 
