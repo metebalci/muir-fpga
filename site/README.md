@@ -163,6 +163,11 @@ it is built and checked here and has not run on that board. The boards differ:
 a block that is green on one may be turquoise on another, because the claim is
 about a board and not about the code.
 
+A block with no colour at all has not been started. It is drawn so that the
+shape of the machine is known before the work begins, which is why the LISPM
+TV, MIT's colour display, stands on the Xbus beside the monochrome TV on all
+three pages with nothing built in it yet.
+
 On a drawing derived by crossing off, a block that board does not have carries
 no colour at all. It keeps its place, goes dashed, and takes a red cross corner
 to corner with its label left faint. That is the one mark on these drawings
