@@ -31,12 +31,17 @@
 //                 on the connector and `CONS_DEBUG_DISCONNECT_KEY` gives the
 //                 role back.  It reads a marker, a count of connects, and the
 //                 role this board HAS beside the one it ASKED for
-//     15          UNMAPPED
+//     15 FRAMES   the cable's two counts: frames heard and frames refused,
+//                 behind a marker byte
 //
 //   page 1, +0x40, word k IS diagnostic register `EADR` k:
 //     read   a diagnostic READ cycle: `SPY<15:0>` in bits 15:0 with 31:16
 //            zero, or bit 16 set meaning the cycle was not answered
 //     write  a diagnostic WRITE cycle with `SPY<15:0>` from bits 15:0
+//
+//   page 2, +0x80, what the FABRIC is rather than what the machine is doing:
+//     32 BUILD    which build this bitstream is, read-only.  Everything else
+//                 on pages 2 and 3 reads `CONS_UNMAPPED`
 //
 // **THE HIGH HALF IS LATCHED BY THE LOW HALF'S READ**, so a 64-bit counter is
 // read low then high and the pair names one instant across the carry.  A
@@ -44,8 +49,8 @@
 // latched.  `cons_cycles` and `cons_ticks` are the only readers of the high
 // words here, and they are in that order for that reason.
 //
-// **EVERY ADDRESS ON GP1 IS ANSWERED, WITH OKAY**, and an address in neither
-// page reads `CONS_UNMAPPED`, the complement of IDENT.  Neither zero nor all
+// **EVERY ADDRESS ON GP1 IS ANSWERED, WITH OKAY**, and an address on no page
+// reads `CONS_UNMAPPED`, the complement of IDENT.  Neither zero nor all
 // ones: zero is what a dead bus reads and all ones what an undriven one
 // reads, so a value that means nothing is not a value the instrument can
 // mean.
@@ -75,7 +80,11 @@
 // with both ports and line 135 for one with GP1 alone.  The console sits at
 // the bottom of GP1's gigabyte.
 #define CONS_REG_BASE    0x80000000u
-#define CONS_REG_BYTES   128u
+// Four pages of sixteen words.  It was two and 128 bytes until the build
+// stamp wanted a word of its own and page 0 had none left; nothing maps this
+// (the program maps the 4 KB page GP1's split gives the console), so it is
+// the face's size and not an argument to `mmap`.
+#define CONS_REG_BYTES   256u
 #define CONS_IDENT_WORD  0x434F4E53u	/* "CONS" */
 #define CONS_UNMAPPED    0xBCB0B1ACu	/* ~IDENT */
 
@@ -218,6 +227,73 @@ enum cons_debug_wire {
 	CONS_DBG_WIRE_CR_ASSUMED = 7	/* auto, nothing heard, trying crossover */
 };
 
+// **PAGE 2's WORD 32: WHICH BUILD THE FABRIC IS.**
+//
+// `tools/build_stamp.tcl` writes eight hex digits into
+// `BITSTREAM.CONFIG.USR_ACCESS` before every `write_bitstream` --- the
+// commit's first seven and a nibble saying how the tree stood --- the part
+// loads them at configuration, and
+// `rtl/plumbing/xilinx7/cadr_usr_access.sv` reads them back from inside the
+// fabric.  So a board that has been running for hours can still say which
+// build it is carrying, which this project has twice not known and twice
+// been bitten by: once when an image was built from a mid-change tree and
+// the bay looked empty, and once when a partial commit left a port
+// unconnected and a register read zero into a diagnosis.
+//
+// The same eight digits go into `BITSTREAM.CONFIG.USERID`, which the JTAG
+// USERCODE register holds and `boards/*/vivado/program.tcl` reads back.
+// **Two registers loaded from one value and read over paths that share
+// nothing**, so a session that reads both has compared them rather than
+// asked twice.
+//
+// **ALL ONES MEANS THERE IS NO STAMP.**  That is what an unprogrammed part
+// reads and what a bitstream built before the flows stamped them leaves in
+// the register, and `build_stamp_pack` makes sure no build can ever be
+// called it --- the one value the format reserves.  A program that printed
+// it as a commit would be inventing one.
+#define CONS_PAGE2        32u
+#define CONS_BUILD        (CONS_PAGE2 + 0u)
+#define CONS_BUILD_NONE   0xFFFFFFFFu
+
+// The nibble, `tools/build_stamp.tcl`'s five values and no others.  The flows
+// write nothing else; a word carrying anything else came from somewhere that
+// is not this project's, and `cons_build_of` says so rather than guessing.
+enum cons_build_tree {
+	CONS_BUILD_CLEAN     = 0x0,	/* every tracked file matched HEAD */
+	CONS_BUILD_MODIFIED  = 0x1,	/* a tracked file differed */
+	CONS_BUILD_UNTRACKED = 0x2,	/* an untracked file was present, and the
+					   flows build from a glob and not the index */
+	CONS_BUILD_BOTH      = 0x3,
+	CONS_BUILD_NO_TREE   = 0xF	/* git could not say how the tree stood */
+};
+
+struct cons_build {
+	uint32_t word;		/* the register, as read */
+	int      stamped;	/* 0 when the word is CONS_BUILD_NONE */
+	uint32_t commit;	/* 28 bits: the commit's first seven hex digits */
+	unsigned tree;		/* the nibble, as read */
+	int      known;		/* the nibble is one of the five above */
+	int      modified;	/* and what it says, when it is */
+	int      untracked;
+	// **A COMMIT OF ZERO WITH THE TREE UNKNOWN IS `0000000f`**, which the
+	// stamp writes when git answered nothing at all: a build from a
+	// directory that is not a checkout.  It is a different thing from a
+	// known commit whose tree could not be read, and a program that ran
+	// them together would print `commit 0000000`.
+	int      no_git;
+};
+
+// Pure: no bus, no system, and it is in this file rather than in the console
+// program because the Arty A7-100's bare-metal firmware prints the same line
+// over its UART with no operating system under it.
+struct cons_build cons_build_of(uint32_t w);
+// "clean", "modified", "untracked", "modified and untracked", or a phrase
+// saying the nibble is not one the format defines.  Never NULL.
+const char *cons_build_tree_words(const struct cons_build *b);
+// One line, through `say`, so that the console and the firmware print the
+// same words and cannot drift apart.
+void cons_say_build(const struct cons_build *b);
+
 // Page 1: word 16 + k is diagnostic register k.
 #define CONS_PAGE1        16u
 #define CONS_SPY_WORD(k)  (CONS_PAGE1 + (unsigned)(k))
@@ -324,6 +400,10 @@ void cons_init(struct console *c);
 // IDENT reads "CONS".  0 if it does, -1 with `*got` otherwise.
 int cons_ident_ok(struct console *c, uint32_t *got);
 uint32_t cons_stat(struct console *c);
+// Page 2's word 32, read.  Declared here and not beside `cons_build_of`
+// above because that block is above `struct console`, the constants having
+// to sit with the other words' constants.
+uint32_t cons_build_word(struct console *c);
 
 // The two counters, low half then high, which is what latches the pair.
 uint64_t cons_cycles(struct console *c);
@@ -632,6 +712,11 @@ struct cons_status {
 	// These two say which it is, and they cost no extra read: they are
 	// bits of the STAT word this already has to look at.
 	struct cons_switch sw;
+	// **AND WHICH BUILD THE FABRIC IS**, for the reason SW0 is here: it is
+	// one more read of page 0's neighbour and it answers the question a
+	// person asking `status` usually has next, which is whether the board
+	// is running what they think they served it.
+	struct cons_build build;
 };
 int cons_status(struct console *c, unsigned settle_us, struct cons_status *st);
 

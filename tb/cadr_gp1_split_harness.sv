@@ -255,6 +255,13 @@ module cadr_gp1_split_harness #(
       .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
       .clock_edge(mclk),
       .mach_vma(mach_vma), .mach_q(mach_q), .mach_md(mach_md),
+      // Which build the fabric is, page 2's word 32.  A constant here: what
+      // this check is about is the SPLIT --- which of the two slaves answers
+      // an address --- and the stamp is one more word of the console's face,
+      // held by `build/console.pass`.  Not left unconnected, because a cell
+      // with a missing pin is a PINMISSING and a harness that would not lint
+      // is a harness no mutation can be aimed through.
+      .build(32'hC0FFEE21),
       .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
       // `-BOOT2`, the light panel's button: this page has no processor to
       // give it to, so it folds below with the console's reset.

@@ -428,7 +428,7 @@ The map the port now has:
 
 | | | |
 |---|---|---|
-| `0x8000_0000` | `cadr_console.sv` | thirty-two words, `CONS`, its own `UNMAPPED` in the rest of its page |
+| `0x8000_0000` | `cadr_console.sv` | sixty-four words, `CONS`, its own `UNMAPPED` in the rest of its page |
 | `0x8000_1000` | `cadr_debug_window.sv` | sixteen words, `DBUG`, its own `UNMAPPED` in the rest of its page |
 | everything else | `cadr_gp0_default.sv` | `NONE` to every read, OKAY to every write |
 

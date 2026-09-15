@@ -549,7 +549,10 @@ level below the clock: the soft system with Ibex in it, `cadr_machine` with
 MIT's boot PROM and nothing behind its memory port, and the three faces. The
 firmware is the one the board runs, the same hex.
 
-It asserts every line the firmware says, in order, and then three things the
+It asserts every line the firmware says, in order --- **the build line among
+them, against the number the harness drove into the console's page 2, so that
+the whole road from the port to the sentence is one comparison and not a
+confirmation** --- and then three things the
 firmware cannot say about itself.
 
 **That the machine really halted and really stepped.** `clock_edge` is the
@@ -591,8 +594,12 @@ property of that file rather than of the core in front of it.
 
 ### And it ran on the board
 
-Programmed over JTAG, the board's USB-UART at 115,200 baud, the thirteen lines
-the firmware says, verbatim, with the soft system on its own 50 MHz clock:
+Programmed over JTAG, the board's USB-UART at 115,200 baud, the lines the
+firmware said, verbatim, with the soft system on its own 50 MHz clock. **This
+capture is of that session and has not been retaken**, so it predates two
+changes: the debug window came out of this board, and its `DBUG` line reads
+`NONE` now; and the banner has since gained two lines naming which build the
+fabric is, straight after the console answers.
 
     cadr-soc: the soft processing system on an Arty A7-100: ibex rv32imc in fabric
     cadr-soc: UART UART, timer TIME, 50 ticks a microsecond
@@ -909,7 +916,7 @@ registers against their own period instead: **1,395 registers under
 
 **What the check holds.** `build/soc.pass` runs the whole firmware at three
 clock ratios in one process, the board's own 2:1 and two that share no factor
-with it or with each other, and asserts the same thirteen lines at every one.
+with it or with each other, and asserts the same fifteen lines at every one.
 The thirteenth is new with the second clock. It is sixteen rounds of three
 back-to-back loads, one at each face the board has, with nothing between them
 for the compiler to put an instruction into, because **a race check needs the

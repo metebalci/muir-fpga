@@ -73,6 +73,11 @@ const uint32_t W_CONS = 0x434F4E53u;   // "CONS"
 const uint32_t W_DBUG = 0x44425547u;   // "DBUG"
 const uint32_t W_NONE = 0x4E4F4E45u;   // "NONE"
 const uint32_t W_CON_UNMAPPED = ~W_CONS;
+// Which build the harness tells the console the fabric is, page 2's word 32.
+// `tb/cadr_gp1_split_harness.sv` drives it; it is a value no bitstream of
+// this repository could carry, so a word that reads it came from the console
+// and from nowhere else.
+const uint32_t W_CON_BUILD = 0xC0FFEE21u;
 const uint32_t W_DBG_UNMAPPED = ~W_DBUG;
 const uint32_t W_LIFT = 0x4C494654u;   // "LIFT"
 
@@ -497,10 +502,19 @@ int main(int argc, char **argv) {
           FailAt(addr, "the reply: the default slave answered the console's page", got, 0);
         if (got == W_DBG_UNMAPPED)
           FailAt(addr, "the reply: the debug cable answered the console's page", got, 0);
-        // Words 0 to 31 are the console's two pages of sixteen; everything
-        // above them in its 4 KB page is its own UNMAPPED.
-        if (word >= 32 && got != W_CON_UNMAPPED)
-          FailAt(addr, "a word above the console's thirty-two", got, W_CON_UNMAPPED);
+        // Words 0 to 31 are the console's first two pages of sixteen, word
+        // 32 is which build the fabric is, and everything else in its 4 KB
+        // page is its own UNMAPPED.  **THE BUILD IS ASSERTED HERE TOO**, and
+        // not skipped, because what this check is about is which slave
+        // answers an address: a word that reads the harness's own stamp came
+        // from the console and from nothing else, which is a stronger
+        // statement about the routing than `UNMAPPED` is.
+        if (word == 32) {
+          if (got != W_CON_BUILD)
+            FailAt(addr, "the console's build word", got, W_CON_BUILD);
+        } else if (word > 32 && got != W_CON_UNMAPPED) {
+          FailAt(addr, "a word above the console's build", got, W_CON_UNMAPPED);
+        }
         break;
       case kDbg:
         if (got == W_NONE)

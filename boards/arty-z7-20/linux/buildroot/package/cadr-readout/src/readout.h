@@ -24,7 +24,10 @@
 #include "cadr_image.h"
 
 // `M_AXI_GP1` decodes 0x80000000 upwards to the fabric; the console sits at
-// the bottom of it, thirty-two words, two pages of sixteen.
+// the bottom of it, sixty-four words, four pages of sixteen.  This program
+// reads two of page 0's words and nothing above them, so the 128 bytes below
+// are all it maps: a readout that mapped the whole face would be claiming an
+// interest in words it never touches.
 #define RO_REG_BASE   0x80000000u
 #define RO_REG_BYTES  128u
 #define RO_IDENT_WORD 0x434F4E53u	/* "CONS" */

@@ -120,7 +120,9 @@ refresh_hw_device -update_hw_probes false $dev
 
 set before [get_property REGISTER.IR.BIT5_DONE $dev]
 set ubefore [build_stamp_usercode $dev]
-puts "PROG: DONE before programming: $before, build [expr {$ubefore eq "" ? {not readable} : $ubefore}]"
+set ubshow "not readable"
+if {$ubefore ne ""} { set ubshow $ubefore }
+puts "PROG: DONE before programming: $before, build $ubshow"
 
 set_property PROGRAM.FILE $bit $dev
 program_hw_devices $dev
@@ -128,7 +130,9 @@ refresh_hw_device -update_hw_probes false $dev
 
 set after [get_property REGISTER.IR.BIT5_DONE $dev]
 set uafter [build_stamp_usercode $dev]
-puts "PROG: DONE after programming:  $after, build [expr {$uafter eq "" ? {not readable} : $uafter}]"
+set uashow "not readable"
+if {$uafter ne ""} { set uashow $uafter }
+puts "PROG: DONE after programming:  $after, build $uashow"
 if {$after != 1} {
     puts "PROG: FAILED --- the device did not assert DONE. It has not taken the"
     puts "PROG: configuration, whatever program_hw_devices reported."

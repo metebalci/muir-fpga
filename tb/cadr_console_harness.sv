@@ -134,6 +134,14 @@ module cadr_console_harness #(
     // --- the grant held off for ever, to exercise the engine's own bound
     input  var logic        gnt_inhibit,
 
+    // --- WHICH BUILD THE FABRIC IS, page 2's word 32.  On a board this comes
+    // --- out of `rtl/plumbing/xilinx7/cadr_usr_access.sv`, a primitive
+    // --- reading the part's AXSS register; here the testbench chooses it, so
+    // --- that a read of word 32 is a comparison against a value the check
+    // --- picked and not a confirmation of whatever the fabric happened to
+    // --- hold.  That is the difference the `md` trap is about.
+    input  var logic [31:0] build,
+
     // --- the debug cable's role: what the console asks for, and what the
     // --- connector says back.  The four inputs are the testbench playing the
     // --- connector, which is what lets it refuse.
@@ -365,6 +373,7 @@ module cadr_console_harness #(
       .mach_vma   (con_vma),
       .mach_q     (con_q),
       .mach_md    (con_md),
+      .build      (build),
       // The readout of the processor's memories, page 0's words 10, 11 and
       // 12.  Wired here as `boards/arty-z7-20/cadr_arty.sv` wires it, which
       // is this harness's own rule: the check must hold the thing on the

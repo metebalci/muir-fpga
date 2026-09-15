@@ -987,9 +987,17 @@ CHECKS = {
         # reported `the firmware said 1 line(s), wanting 13`, which is a
         # BASELINE failure and stops the run rather than being mistaken for a
         # catch.  A run that starts is a run in which they agree.
+        #
+        # **AND A FIFTH, WHICH IS WHICH BUILD THE CHECK TELLS THE FABRIC IT
+        # IS.**  `SOC_TB_BUILD_HEX` in the Makefile, the same number in both
+        # places for the same reason and caught the same way: the firmware's
+        # banner names it, so a copy that drifted would fail the baseline at
+        # the build line rather than survive anywhere.
         "flags": ["-O2", "-CFLAGS", "-O2",
                   "-CFLAGS", "-DUART_DIVISOR=32",
                   "-CFLAGS", "-DSOC_TICKS_PER_US=50",
+                  "-CFLAGS", "-DSOC_TB_BUILD=0x5A1B2C33u",
+                  "-GBUILD_STAMP=32'h5A1B2C33",
                   "-GCLK_HZ=50000000",
                   "-GSOC_BAUD=1562500", "-GSOC_RAM_WORDS=8192",
                   "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
@@ -1963,12 +1971,23 @@ def arty_check(args, work, build_fails=False):
           "rtl/plumbing/cadr_disk_pack.sv", "rtl/plumbing/cadr_console.sv",
           "rtl/plumbing/cadr_gp0_default.sv"] + GP0 + DISPLAY),
     ]
+    # **THE `USR_ACCESSE2` SHELL IS ADDED WHERE THE COPY HAS ONE, AND NOT
+    # NAMED IN THE LISTS ABOVE.**  It arrives with the build stamp's readback;
+    # a copy older than that instantiates no such primitive in any top level
+    # and needs no shell for it.  Naming it beside `tb/cadr_arty_stubs.sv`
+    # would put it in every configuration's `files`, so every configuration
+    # would SKIP against an earlier revision and the check would report
+    # `none of the board configurations could be linted` --- the `git archive`
+    # pathspec lesson applied to one file rather than to a directory, and the
+    # reason `--since` names earlier revisions on purpose.
+    usr_access = [f for f in ["tb/cadr_usr_access_stub.sv"]
+                  if os.path.exists(os.path.join(work, f))]
     ran = 0
     for generics, stubs, extra_sources in boards:
         files = stubs + extra_sources
         if not all(os.path.exists(os.path.join(work, f)) for f in files):
             continue
-        cmd = base + generics + stubs + spec["extra"] + spec["sources"]
+        cmd = base + generics + usr_access + stubs + spec["extra"] + spec["sources"]
         cmd += extra_sources
         rc, out = run(cmd, work)
         if rc != 0:

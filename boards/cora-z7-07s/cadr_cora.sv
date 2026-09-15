@@ -1861,6 +1861,21 @@ module cadr_cora #(
         .s_rlast(gp1x_rlast), .s_rvalid(gp1x_rvalid), .s_rready(gp1x_rready)
     );
 
+    // **WHICH BUILD THIS FABRIC IS**, page 2's word 32.  One primitive and one
+    // wire: `tools/build_stamp.tcl` writes the commit and the tree's state
+    // into `BITSTREAM.CONFIG.USR_ACCESS` before every `write_bitstream`, the
+    // part loads it at configuration, and this reads it back from inside.
+    // The same eight digits go into `BITSTREAM.CONFIG.USERID`, which JTAG's
+    // USERCODE register holds --- so a board with a cable on it and a program
+    // on the processing system are asking two registers loaded from one
+    // value, over paths that share nothing.
+    //
+    // It is beside the console because the console is the only thing that
+    // reads it; a board built without one has no reader and instantiates no
+    // primitive.
+    logic [31:0] con_build;
+    cadr_usr_access u_usr_access (.build(con_build));
+
     cadr_console u_console (
         .clk(clk), .rst(gp1_rst),
         .s_awaddr(gp1c_awaddr), .s_awlen(gp1c_awlen), .s_awid(gp1c_awid),
@@ -1880,6 +1895,9 @@ module cadr_cora #(
         // The virtual address register, `Q` and `MD`, page 0's words 7, 8
         // and 9.
         .mach_vma(con_vma), .mach_q(con_q), .mach_md(con_md),
+        // **WHICH BUILD THIS FABRIC IS**, page 2's word 32, out of the
+        // part's own AXSS register.
+        .build(con_build),
         // The readout, page 0's words 10, 11 and 12.
         .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
         // The machine's reset, ORed with the board's own at the declaration

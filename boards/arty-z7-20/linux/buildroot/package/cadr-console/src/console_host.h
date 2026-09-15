@@ -124,4 +124,32 @@ int cons_trace_keys(const char *program, const char *pidfile, int on,
 		    struct cons_trace_keys *r);
 void cons_say_trace_keys(const struct cons_trace_keys *r, int on);
 
+// --- WHICH BUILD THIS PROGRAM IS -----------------------------------------
+//
+// **A DIFFERENT QUESTION FROM WHICH BUILD THE FABRIC IS**, and both are worth
+// having on a board: `status` names the bitstream's commit out of the part's
+// own AXSS register, and this names the commit the program in the root
+// filesystem was compiled from.  They are served as one set and they can
+// still come apart --- a bitstream served without its image, or an image
+// built before a rebuild was forced --- and two lines that disagree say so.
+//
+// **muir's SPELLING, WHICH IS `muir 0.1.0-<commit>-release`.**  muir's
+// `build.rs` asks git for the commit and hands it to the compiler, and
+// `src/main.rs` reads it with `option_env!` so that a build outside a
+// checkout drops the field rather than inventing one.  This does the same
+// with a `-D` from the Makefile, and drops the field the same way.
+//
+// **THE VERSION NUMBER IS `0` AND THAT IS NOT A PLACEHOLDER.**  muir's
+// `0.1.0` is cargo's; ours is the Buildroot package's own
+// `CADR_CONSOLE_VERSION`, which is 0 because these programs have never been
+// released and the commit is what identifies them.  Writing `0.1.0` here to
+// make the line look like muir's would be inventing a number, which is the
+// one thing this project does not do with numbers.
+//
+// It is in the HOST half and not the face, because a version is about the
+// program and the firmware is a different program: the Arty A7-100's banner
+// names the FABRIC's build through `cons_say_build`, and its own build is the
+// firmware's business.
+const char *cons_version(void);
+
 #endif

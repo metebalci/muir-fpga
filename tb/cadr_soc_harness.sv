@@ -87,7 +87,20 @@ module cadr_soc_harness #(
     // The soft system's own clock in hertz --- the board's `CLKOUT2` and not
     // its tick.  The UART's divisor and the timer's microsecond are both
     // computed from it, and both are on the soft side of the crossing.
-    parameter int unsigned CLK_HZ = 50_000_000
+    parameter int unsigned CLK_HZ = 50_000_000,
+    // **WHICH BUILD THE FABRIC SAYS IT IS**, page 2's word 32.  On the board
+    // this is `rtl/plumbing/xilinx7/cadr_usr_access.sv` reading the part's
+    // AXSS register, which `tools/build_stamp.tcl` loaded from the bitstream;
+    // there is no such primitive under Verilator, so the CHECK chooses it.
+    //
+    // **AND IT IS A VALUE THIS TREE'S STAMP COULD NOT BE**, on purpose: a
+    // check that read back whatever the fabric happened to hold would be
+    // confirming rather than comparing, which is the `md` trap this project
+    // already records.  `tb/cadr_soc_tb.cpp` asserts the firmware's banner
+    // against the number it passed in, so the whole road --- the port, the
+    // console's page 2, the AXI bridge, the decode and the sentence --- is
+    // held by one line.
+    parameter logic [31:0] BUILD_STAMP = 32'h5A1B_2C33
 ) (
     // **TWO CLOCKS, AND THE CHECK DRIVES THEM AT A RATIO.**  `clk` is the
     // machine's tick and everything the board clocks with it --- the machine,
@@ -578,6 +591,7 @@ module cadr_soc_harness #(
       .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
       .clock_edge(clock_edge),
       .mach_vma(con_vma), .mach_q(con_q), .mach_md(con_md),
+      .build(BUILD_STAMP),
       .ro_addr(con_ro_addr), .ro_data(con_ro_data), .ro_echo(con_ro_echo),
       .mach_rst(con_mach_rst), .mach_boot(con_boot),
       .no_auto_boot_held(sw0_held), .no_auto_boot_now(sw0_level),

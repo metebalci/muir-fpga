@@ -90,8 +90,8 @@ second description of one thing, and the two would drift.
 
 ### The register map
 
-**Thirty-two words at `REG_BASE`, two pages of sixteen**, in
-`rtl/plumbing/cadr_console.sv`'s header (lines 32-77 at this slice) and its read mux
+**Sixty-four words at `REG_BASE`, four pages of sixteen**, in
+`rtl/plumbing/cadr_console.sv`'s header and its read mux
 (`r_word`, lines 430-446). `REG_BASE` is `0x8000_0000` (line 156), the bottom
 of `M_AXI_GP1`'s window; `IDENT` is `"CONS"` (line 158) and `UNMAPPED` its
 complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
@@ -142,7 +142,31 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                    bits 15:8   presses since the CONSOLE came up, saturating
                                at 255
                    bit 0       the button is down now
-     14-15       read UNMAPPED; writes dropped
+    14  DEBUG    **the debug cable's role** on the one Pmod connector, and
+                 which way round the ribbon was made.  A write of
+                 `DEBUG_KEY` asks this board to be the debugger and its
+                 complement gives the role back; three more keys set the
+                 wiring.  It reads a marker, a count of connects, the role
+                 this board HAS beside the one it ASKED for, and what the
+                 connector is doing
+    15  FRAMES   the cable's two counts, frames heard and frames refused,
+                 behind a marker byte of `0x44`
+
+    page 2, REG_BASE + 0x80, what the FABRIC is rather than what the machine
+    is doing.  Read-only:
+
+    32  BUILD    **which build this bitstream is.**  The eight hex digits
+                 `tools/build_stamp.tcl` wrote into
+                 `BITSTREAM.CONFIG.USR_ACCESS` before `write_bitstream`: the
+                 commit's first seven and a nibble saying how the tree stood.
+                 `rtl/plumbing/xilinx7/cadr_usr_access.sv` reads them out of
+                 the part's AXSS register.  **All ones means there is no
+                 stamp**, which is what a bitstream built before the flows
+                 stamped them leaves behind and the one value a build can
+                 never be
+    33-47        read UNMAPPED; writes dropped
+
+    page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 
     page 1, REG_BASE + 0x40, the sixteen diagnostic registers, word k
     being EADR k:
@@ -169,11 +193,27 @@ low read latched.
 **Every address on GP1 is answered, and with OKAY.** A read nothing answers
 on a GP port does not fault the Arm, it hangs both cores at one PC each,
 measured on the board and set out at length in `rtl/plumbing/cadr_gp0_default.sv`. So a
-read outside the thirty-two words completes with `UNMAPPED` and a write
+read outside the sixty-four words completes with `UNMAPPED` and a write
 outside them completes and is dropped. OKAY and not SLVERR, which is where
 this differs from `rtl/plumbing/cadr_disk_pack.sv`: an error response to a
 Cortex-A9's posted write arrives as an imprecise external abort the kernel
 cannot attribute to a process.
+
+**The face grew from two pages to four by a SECOND address match and not by a
+wider first one**, and the difference is not cosmetic. `w_in` gates every
+write term and every latch of pages 0 and 1, and each of them tests the page
+as one bit, because one bit was all there was. A wider first match would have
+made that bit stop meaning "page 1": page 2's word 6 would then carry
+`RESET_KEY` to the machine's reset and the whole of page 3 would run
+diagnostic cycles, from pages that are supposed to be read-only. Two
+comparators are a handful of LUTs and cannot do that. The mutation
+`console-pages-two-and-three-take-writes` is the widening, and
+`tb/cadr_console_tb.cpp` catches it by writing both keys at their own offsets
+within pages 2 and 3.
+
+**And an address in pages 2 and 3 that is not the build reads exactly what an
+address outside the face reads.** So the one address in the whole port whose
+value changed when the stamp arrived is `REG_BASE + 0x80`.
 
 The console no longer owns the whole gigabyte, and that is a correction. The
 debug cable's carrier wanted a general-purpose port and there was no third, so
@@ -1258,7 +1298,8 @@ machine's own reset arms read, at the same edges, so the two cannot disagree.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
 `start`, `boot`, `step N`, `regs`, `status`, `switch`, `trace-keys on|off`,
-`examine` and `deposit`.
+`examine` and `deposit`.  It also takes `--version`, which names which build
+the PROGRAM is and touches no register at all.
 `status` is the question of the day and answers it the way `main.rs`'s
 `machrun_low` does, plus a positive measurement: CYCLES sampled twice a few
 milliseconds apart, so that "running" is something seen rather than inferred. `step N` is CC's
@@ -1469,6 +1510,60 @@ lost at a reboot, which is right for a log of this kind.
 - **Writing a memory through the readout window.** The window reads and does
   not write. Writing one would have to fight the write pulses a halted machine
   goes on firing, and nothing has asked for it.
+
+## Which build the board is carrying
+
+There are two builds on a board and they are different things. One is the
+bitstream in the fabric. The other is the program in the root filesystem.
+They are served as one set and they can still come apart, so the console
+names both.
+
+**The fabric's build is page 2's word 32, and `status` prints it.**
+`tools/build_stamp.tcl` writes eight hex digits into
+`BITSTREAM.CONFIG.USERID` and `BITSTREAM.CONFIG.USR_ACCESS` before every
+`write_bitstream`: the commit's first seven digits, then a nibble which is 0
+for a clean tree, 1 for a modified one, 2 for one carrying an untracked file,
+3 for both, and `f` when git could not say. The part loads both registers at
+configuration. `USERID` goes to the JTAG USERCODE register, which
+`boards/*/vivado/program.tcl` reads back over a cable. `USR_ACCESS` goes to
+the AXSS register, which `rtl/plumbing/xilinx7/cadr_usr_access.sv` reads from
+inside the fabric and the console carries out on page 2.
+
+So there are two observers of one value over paths that share nothing. A
+session that reads both has compared them rather than asked twice. The line
+reads like this:
+
+    fabric: build 782e3a90 --- commit 782e3a9, tree clean
+
+**A dirty tree is recorded and never refused.** A bring-up run against an
+uncommitted change is legitimate work and lying about it is not, so the stamp
+says so and the console says so twice: the commit then names where the build
+started and not what it is.
+
+**All ones means there is no stamp.** That is what an unprogrammed part reads
+and what every bitstream this project built before the flows stamped them
+leaves in the register, and `build_stamp_pack` makes sure no build can ever
+be called it. The console reports it as no stamp and never as a commit,
+because a program that printed `commit fffffff` would be inventing one.
+
+The Arty A7-100's firmware prints the same line over its UART at start-up,
+through the same function. One sentence in one place cannot drift.
+
+**The program's build is `cadr-console --version`**, in muir's own spelling:
+
+    cadr-console 0-782e3a9-release
+
+Name, version, commit, build kind, with `-dirty` on the commit when the tree
+was not clean and the commit dropped altogether when the program was not
+built from a checkout. The version number is `0` because that is the
+Buildroot package's own version: these programs have never been released and
+the commit is what identifies them. muir's `0.1.0` is cargo's, and writing it
+here to make the line match would be inventing a number.
+
+The commit is taken when the PACKAGE is built and not when the image is, so a
+Buildroot output directory carried across a commit that changed no source of
+this package keeps the older number. `make buildroot-rebuild` is what forces
+it, which is what the image procedure already does.
 
 ## The program that reads it
 
