@@ -161,17 +161,141 @@
 
 # ---- Chaosnet over UDP ----
 
-@mutation the-chudp-trailer-is-read-in-the-packets-own-order
-@file chaos_udp.c
-@why CHUDP is a MIXED frame: the packet's own words are little-endian and the hardware trailer's three are network order, and reading the trailer the other way puts the destination and source addresses byte-swapped
-@note muir marks both orders unverified and says what would settle them, and
-@note says the wrong order fails loudly rather than quietly.  This record is
-@note what makes that true here: the byte-for-byte datagram in the check is
-@note the one thing that would have to change with them.
+# **THE FRAMING IS `cbridge`'S AND THESE RECORDS ARE WHAT HOLD IT THERE.**
+# Every 16-bit word goes most significant byte first, the data therefore comes
+# out swapped in pairs, an odd count is padded, and the trailer's third word
+# is the Internet checksum and not the CADR's CRC-16.  Each of those is a
+# record below, and each is caught against bytes `cbridge` accepted or a
+# datagram `cbridge` sent rather than against this program's own arithmetic
+# agreeing with itself --- which is why the two vectors in `chaos_test_udp.c`
+# are pinned as literal bytes.
+
+@mutation the-chudp-packets-words-go-out-least-significant-byte-first
+@file chaos_udp.h
+@why every 16-bit word of a CHUDP datagram goes most significant byte first, the packet's own words among them: `STATUS` is `TSTASU` on the wire, and the other order is what `cbridge` rejects as bogus with the opcode read as 0
+@note This is the framing this program spoke before `cbridge` was run and
+@note watched.  Both ends of a round trip move together under it, so nothing
+@note but a datagram pinned as literal bytes catches it --- which is what the
+@note two vectors in the check are for.
 @old
-			get_word(CHUDP_TRAILER_ORDER, datagram + len - CHUDP_TRAILER + 2u * k);
+#define CHUDP_PACKET_ORDER  CHUDP_BIG
 @new
-			get_word(CHUDP_PACKET_ORDER, datagram + len - CHUDP_TRAILER + 2u * k);
+#define CHUDP_PACKET_ORDER  CHUDP_LITTLE
+@end
+
+@mutation the-chudp-trailer-goes-out-least-significant-byte-first
+@file chaos_udp.h
+@why the trailer's three words are in the same order as everything else, so the addresses in them read as addresses and the checksum as a checksum
+@note The two constants are kept separate because a version 2 of the protocol
+@note may differ from version 1 in nothing but byte order.  Separate names
+@note that nothing distinguishes would be two ways to write one fact, so each
+@note has a record of its own.
+@old
+#define CHUDP_TRAILER_ORDER CHUDP_BIG
+@new
+#define CHUDP_TRAILER_ORDER CHUDP_LITTLE
+@end
+
+@mutation the-checksum-does-not-fold-its-carry
+@file chaos_udp.c
+@why the trailer carries an INTERNET checksum, whose sum is in one's complement arithmetic: the carry out of sixteen bits is added back in
+@note This one is worth its place because it is small.  Over the pinned RFC
+@note the unfolded sum gives 0xEA6E where the checksum is 0xEA6D --- one ---
+@note and a frame carrying it is dropped by `cbridge` and by everything else
+@note that checks.  A round trip against itself would never see it.
+@old
+		sum = (sum & 0xffffu) + (sum >> 16);
+@new
+@end
+
+@mutation the-checksum-is-a-plain-sum-and-not-its-complement
+@file chaos_udp.c
+@why the checksum is the one's COMPLEMENT of the one's complement sum, which is what makes a whole frame, the checksum among them, sum to 0xFFFF
+@note Without the complement the pinned RFC carries 0x1592 where `cbridge`
+@note wants 0xEA6D, and `chudp_checksum_ok` then refuses every frame that is
+@note good and takes one whose words sum to zero.
+@old
+	return (uint16_t)(~sum & 0xffffu);
+@new
+	return (uint16_t)(sum & 0xffffu);
+@end
+
+@mutation the-checksum-leaves-the-trailers-two-addresses-out
+@file chaos_udp.c
+@why the checksum is over EVERY word before it --- the eight header words, the data words, and the trailer's destination and source --- so that a next hop damaged in flight is caught
+@note The trailer's destination is the next hop and is the one word a bridge
+@note routes on, so leaving it uncovered is the worst of the three places
+@note this could go wrong.  Over the pinned RFC it gives 0xF6B5.
+@old
+	put_word(CHUDP_TRAILER_ORDER, chudp_checksum(words, body + 2u),
+@new
+	put_word(CHUDP_TRAILER_ORDER, chudp_checksum(words, body),
+@end
+
+@mutation a-frame-whose-words-do-not-sum-right-is-carried-anyway
+@file chaos_udp.c
+@why a bad checksum is DROPPED, as `cbridge` drops one: carrying the frame would mean handing the machine a check word this program made for it, and the machine has no other way to know the frame was damaged
+@note The interface's CRC Error bit is held low on this board for want of a
+@note seam bit to carry it, so a damaged frame carried here reaches the
+@note machine looking whole.  That is the one failure a link must not have.
+@old
+		*bad_checksum = 1;
+		return 0;
+	}
+@new
+		*bad_checksum = 1;
+	}
+@end
+
+@mutation the-machines-own-check-word-is-not-made-for-an-arriving-frame
+@file chaos_udp.c
+@why the trailer's third word is the Internet checksum on the wire and the 9401's CRC-16 on the machine's seam, and the machine reads the trailer's three words back out of its own buffer
+@note The fabric computes that word on transmit and computes none on
+@note receipt, so this line is where an arriving frame's comes from.  Without
+@note it the machine is handed a checksum where its own check word belongs,
+@note and every frame off the network looks damaged to anything that verifies
+@note it.
+@old
+	out[n - 1u] = chaos_check_word(out, n - 1u);
+@new
+@end
+
+@mutation an-odd-data-count-is-not-padded-to-a-whole-word
+@file chaos_udp.c
+@why the data is whole 16-bit words on the cable, so an odd count is padded, and a datagram carrying the padding is the one this reads
+@note `cbridge` always pads.  Holding the length to the bare count refuses
+@note every packet with an odd number of data bytes, which is half of them.
+@old
+	if (body != CHUDP_SOFTWARE_HEADER + ((count + 1u) & ~1u)) {
+@new
+	if (body != CHUDP_SOFTWARE_HEADER + count) {
+@end
+
+@mutation an-unpadded-odd-count-is-read-and-its-last-byte-guessed-at
+@file chaos_udp.c
+@why an unpadded odd count is refused BY NAME: its lone trailing byte sits exactly where the pad byte would be, so whether it is data or padding cannot be told from the datagram
+@note Being liberal here looks harmless and is not.  The byte is read as the
+@note half that comes first on the wire, which for an odd count is the
+@note padding and never the data, so the packet handed on is wrong in its
+@note last byte and in its count together --- and the checksum then refuses
+@note it for the wrong reason, which is what this record catches.
+@old
+	if (body != CHUDP_SOFTWARE_HEADER + ((count + 1u) & ~1u)) {
+@new
+	if (body != CHUDP_SOFTWARE_HEADER + ((count + 1u) & ~1u) &&
+	    body != CHUDP_SOFTWARE_HEADER + count) {
+@end
+
+@mutation an-unknown-chudp-function-is-read-as-a-packet
+@file chaos_udp.c
+@why a datagram whose function is not "here is a Chaos packet" is refused, that being the only function defined
+@note The version and the function are the two bytes that say a datagram is
+@note one of ours at all.  A record for each, so neither can be left testing
+@note nothing.
+@old
+	if (datagram[1] != CHUDP_FUNCTION_PACKET) {
+@new
+	if (datagram[1] == 0xFEu) {
 @end
 
 @mutation an-unknown-chudp-version-is-read-as-this-one

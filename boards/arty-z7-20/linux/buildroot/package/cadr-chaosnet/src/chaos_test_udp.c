@@ -6,20 +6,30 @@
 // and this is that file's shape in C.
 //
 // **THE FRAME IS PINNED AS BYTES RATHER THAN LEFT IMPLICIT IN THE PACKING
-// CODE**, and the reason is the whole reason this file exists: the byte order
-// is **unverified**.  `CHUDP_PACKET_ORDER` and `CHUDP_TRAILER_ORDER` say what
-// is believed and `chaos_udp.c`'s header says why and what would settle it;
-// the protocol's author has said a version 2 may differ from version 1 in
-// nothing but byte order.  So a correction must be a change to two constants
-// and to one test, and `the_frame_is_these_bytes` below is that one test.  A
-// check that built the datagram with the same code it was checking would
-// agree with any order at all.
+// CODE**, and two of the datagrams below are `cbridge`'s own rather than this
+// program's.  A check that built a datagram with the same code it was
+// checking would agree with any byte order at all and with any check word; a
+// check against bytes `cbridge` accepted, and against a datagram `cbridge`
+// sent, cannot.
 //
-// **THE MIXED ORDER IS WHAT MAKES IT WORTH PINNING, AND THE DATA IS WHAT
-// SHOWS IT IS NOT ARBITRARY.**  AIM-628 §3.6 puts the first byte of a pair in
-// the word's least significant half, so `STATUS` comes out of a little-endian
-// frame as `STATUS` and out of a big-endian one as `TSTASU`.  Bytes 20 to 25
-// of the pinned datagram read `STATUS`.
+// The two vectors:
+//
+//   - an RFC for `STATUS`, 32 bytes, whose Internet checksum is 0xEA6D.  It
+//     is built here from its fields and must come out byte for byte.
+//   - an answer to a STATUS request that `cbridge` itself sent, 94 bytes.  It
+//     is read here, its checksum verified, and written back byte for byte.
+//
+// **THE DATA IS WHAT SHOWS THE ORDER IS NOT ARBITRARY.**  AIM-628 §3.6 puts
+// the first byte of a pair in the word's least significant half, and the word
+// goes out most significant byte first, so `STATUS` appears on the wire as
+// `TSTASU` and `cbtest` as `bcetts`.  Both are asserted below, in the
+// direction each belongs to.
+//
+// **AND THE CHECK WORD CHANGES AT THIS EDGE, WHICH IS WHAT `check_the_check_
+// word_is_swapped_at_the_edge` HOLDS.**  The machine's seam carries the
+// 9401's CRC-16 in the trailer's third word and the wire carries the Internet
+// checksum, so a frame that goes out and comes back must arrive with the CRC
+// remade for it --- not with the checksum left where the CRC belongs.
 
 #include "chaos_test.h"
 
@@ -91,16 +101,36 @@ static unsigned frame_to(uint16_t *out, uint16_t dest, uint8_t opcode, const voi
 
 // --- the frame is these bytes ---------------------------------------------
 
+// The 32 bytes of the RFC above, as `cbridge` takes them.  Every 16-bit word
+// most significant byte first, the data swapped in pairs by that, and the
+// Internet checksum in the trailer's third word.
+static const uint8_t rfc_datagram[32] = {
+	/* version 1, function 1, two argument bytes */
+	0x01, 0x01, 0x00, 0x00,
+	0x01, 0x00,		/* opcode RFC (1) in the high byte of the word */
+	0x00, 0x06,		/* no forwarding, six data bytes */
+	0x06, 0x28,		/* destination 3050 */
+	0x00, 0x00,		/* destination index */
+	0x06, 0x20,		/* source 3040 */
+	0x00, 0x11,		/* source index 21 */
+	0x00, 0x01,		/* packet number */
+	0x00, 0x00,		/* acknowledgment */
+	'T', 'S', 'T', 'A', 'S', 'U',	/* "STATUS", swapped in pairs */
+	0x06, 0x28,		/* the trailer: destination 3050 */
+	0x06, 0x20,		/* source 3040 */
+	0xEA, 0x6D		/* the Internet checksum */
+};
+
 static void check_the_frame_is_these_bytes(void)
 {
 	uint16_t frame[CHAOS_PKT_MAX_WORDS];
 	const unsigned n = status_rfc(frame, "STATUS", 6);
 	CHECK(n == 14u, "the frame is %u words, wanting 14", n);
 	// The check word `0o171007` is the CADR's own hardware CRC-16 over
-	// these words --- the Fairchild 9401 at LMTBUF C09 --- and it is the
-	// last two bytes of the datagram below, so the pinned bytes hold it
-	// too.  What a CHUDP peer puts in that field is unverified, and nothing
-	// here or in `chaos_udp.c` drops a packet on it.
+	// these words --- the Fairchild 9401 at LMTBUF C09 --- and it is what
+	// the machine's seam carries at both ends.  It is NOT what goes in the
+	// datagram, and the two being different is the whole of what this edge
+	// does.
 	CHECK(frame[13] == 0171007u, "the hardware's check word is %o, wanting 171007",
 	      (unsigned)frame[13]);
 
@@ -108,50 +138,236 @@ static void check_the_frame_is_these_bytes(void)
 	memset(got, 0xAA, sizeof got);
 	const unsigned len = chudp_wrap(frame, n, got, sizeof got);
 	CHECK(len == 32u, "the datagram is %u bytes, wanting 32", len);
-
-	// Four header bytes --- version 1, function 1, two arguments --- then
-	// the Chaos packet's eight header words and its data, each word LEAST
-	// significant byte first, and then the hardware trailer's destination,
-	// source and check word, each MOST significant byte first.
-	static const uint8_t want[32] = {
-		/* version, function, and two argument bytes */
-		0x01, 0x01, 0x00, 0x00,
-		0x00, 0x01,		/* opcode: RFC in the high byte of the word */
-		0x06, 0x00,		/* count: no forwarding, six data bytes */
-		0x28, 0x06,		/* destination 3050 */
-		0x00, 0x00,		/* destination index */
-		0x20, 0x06,		/* source 3040 */
-		0x11, 0x00,		/* source index 21 */
-		0x01, 0x00,		/* packet number */
-		0x00, 0x00,		/* acknowledge */
-		'S', 'T', 'A', 'T', 'U', 'S',
-		0x06, 0x28,		/* the trailer, in network order: destination 3050 */
-		0x06, 0x20,		/* source 3040 */
-		0xF2, 0x07		/* check word 171007 */
-	};
-	CHECK(memcmp(got, want, sizeof want) == 0,
+	CHECK(memcmp(got, rfc_datagram, sizeof rfc_datagram) == 0,
 	      "the datagram is not the frame this file pins");
+
 	// Named one at a time as well, so a failure says WHICH half of the
 	// frame moved rather than only that something did.
 	CHECK(got[0] == 1u && got[1] == 1u, "the header is version %u function %u, wanting 1 and 1",
 	      (unsigned)got[0], (unsigned)got[1]);
 	CHECK(got[2] == 0u && got[3] == 0u, "the two argument bytes are not zero");
-	CHECK(memcmp(got + 20, "STATUS", 6) == 0,
-	      "the data does not read in order, which is the packet's order");
+	CHECK(got[4] == 0x01u && got[5] == 0x00u,
+	      "the opcode word is not most significant byte first");
+	CHECK(got[8] == 0x06u && got[9] == 0x28u,
+	      "the destination address is not most significant byte first");
+	// **`STATUS` IS `TSTASU` ON THE WIRE**, which is the one assertion that
+	// distinguishes this framing from the one this program spoke before.
+	CHECK(memcmp(got + 20, "TSTASU", 6) == 0,
+	      "the data does not come out swapped in pairs, which is what §3.6 packing "
+	      "and a most-significant-byte-first word give together");
 	CHECK(got[26] == 0x06u && got[27] == 0x28u,
-	      "the trailer's destination is not in network order");
-	CHECK(got[30] == 0xF2u && got[31] == 0x07u,
-	      "the trailer's check word is not in network order");
+	      "the trailer's destination is not most significant byte first");
+	CHECK(got[30] == 0xEAu && got[31] == 0x6Du,
+	      "the trailer carries %02x%02x where the Internet checksum 0xEA6D belongs",
+	      (unsigned)got[30], (unsigned)got[31]);
+
+	// And the checksum on its own, against the figure `cbridge` accepts,
+	// computed over exactly the words the protocol names: the eight header
+	// words, the data words, and the trailer's destination and source.
+	CHECK(chudp_checksum(frame, n - 1u) == 0xEA6Du,
+	      "the checksum over the frame's first %u words is 0x%04x, wanting 0xEA6D",
+	      n - 1u, (unsigned)chudp_checksum(frame, n - 1u));
 
 	// And the pinned bytes read back to the words they were made from,
-	// which is the half a wrong `unwrap` would fail.
+	// the CADR's own check word among them.
 	uint16_t back[CHAOS_PKT_MAX_WORDS];
 	const char *why = NULL;
-	const unsigned m = chudp_unwrap(want, sizeof want, back, CHAOS_PKT_MAX_WORDS, &why);
+	const unsigned m = chudp_unwrap(rfc_datagram, sizeof rfc_datagram, back,
+					CHAOS_PKT_MAX_WORDS, &why, NULL);
 	CHECK(m == n, "the pinned datagram reads back as %u words, wanting %u: %s", m, n,
 	      why ? why : "");
 	CHECK(m == n && memcmp(back, frame, (size_t)n * sizeof frame[0]) == 0,
 	      "the pinned datagram does not read back to the frame it was made from");
+}
+
+// --- a datagram cbridge itself sent ---------------------------------------
+
+// `cbridge`'s answer to a STATUS request, 94 bytes, as it put them on the
+// wire.  The bridge was 177020 and named itself `cbtest`; the host that asked
+// was 177022.  Its name appears as `bcetts`, and its checksum verifies the
+// same way the one above does.
+static const uint8_t cbridge_answer[94] = {
+	0x01, 0x01, 0x00, 0x00, 0x05, 0x00, 0x00, 0x44, 0xfe, 0x12, 0x00, 0x12,
+	0xfe, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x63, 0x65, 0x74,
+	0x74, 0x73, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x01, 0xfe, 0x00, 0x10, 0x00, 0x02, 0x00, 0x00,
+	0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0xfe, 0x12, 0xfe, 0x10, 0xc4, 0x05
+};
+
+static void check_a_datagram_cbridge_sent_reads_and_writes_back(void)
+{
+	uint16_t back[CHAOS_PKT_MAX_WORDS];
+	const char *why = NULL;
+	int bad = 0;
+	const unsigned n = chudp_unwrap(cbridge_answer, sizeof cbridge_answer, back,
+					CHAOS_PKT_MAX_WORDS, &why, &bad);
+	CHECK(n != 0, "the datagram cbridge sent does not read: %s", why ? why : "");
+	CHECK(!bad, "the datagram cbridge sent was called a bad checksum");
+	if (n == 0)
+		return;
+	CHECK(n == 45u, "it reads as %u words, wanting 45", n);
+
+	// The checksum `cbridge` put on it, computed over the words before it.
+	// `unwrap` has already replaced the trailer's third word with the
+	// CADR's own, so the figure is taken from the datagram's own bytes.
+	const uint16_t carried = (uint16_t)((unsigned)cbridge_answer[92] << 8 |
+					    cbridge_answer[93]);
+	CHECK(carried == 0xC405u, "the datagram carries 0x%04x, wanting 0xC405",
+	      (unsigned)carried);
+	CHECK(chudp_checksum(back, n - 1u) == carried,
+	      "the checksum over its words is 0x%04x and it carries 0x%04x",
+	      (unsigned)chudp_checksum(back, n - 1u), (unsigned)carried);
+
+	// And it is a packet, with the fields the bridge put in it.
+	struct chaos_frame f;
+	CHECK(chaos_frame_parse(back, n, &f, &why) == 0, "it is not a packet: %s",
+	      why ? why : "");
+	CHECK(f.packet.opcode == CHAOS_ANS, "the opcode is %o, wanting ANS", (unsigned)f.packet.opcode);
+	CHECK(f.packet.len == 68u, "the data count is %u, wanting 68", (unsigned)f.packet.len);
+	CHECK(f.packet.dest == 0177022u && f.packet.source == 0177020u,
+	      "it is %o -> %o, wanting 177020 -> 177022", (unsigned)f.packet.source,
+	      (unsigned)f.packet.dest);
+	CHECK(f.cable_dest == 0177022u && f.cable_source == 0177020u,
+	      "the trailer is %o -> %o, wanting 177020 -> 177022", (unsigned)f.cable_source,
+	      (unsigned)f.cable_dest);
+	// **`bcetts` ON THE WIRE IS `cbtest` IN THE MACHINE.**  The bridge's
+	// own name, unswapped by the same packing the RFC above is swapped by.
+	CHECK(memcmp(f.packet.data, "cbtest", 6) == 0,
+	      "the bridge's name does not read back as cbtest");
+	// The CADR's own check word was made for it, so the frame is one the
+	// machine's interface would have produced.
+	CHECK(f.check_ok, "the CADR's check word was not made for the frame");
+
+	// And it goes back out byte for byte, which is what says nothing was
+	// lost or invented in between.
+	uint8_t again[CHUDP_MAX_FRAME];
+	memset(again, 0xAA, sizeof again);
+	const unsigned len = chudp_wrap(back, n, again, sizeof again);
+	CHECK(len == sizeof cbridge_answer, "it writes back as %u bytes, wanting 94", len);
+	CHECK(len == sizeof cbridge_answer &&
+		      memcmp(again, cbridge_answer, sizeof cbridge_answer) == 0,
+	      "the datagram cbridge sent does not write back byte for byte");
+}
+
+// --- a word altered, and the checksum says so ------------------------------
+
+static void check_one_word_altered_fails_the_checksum(void)
+{
+	// Every word of the frame in turn, one bit at a time in the low half:
+	// the checksum covers all of them, so altering any one must be caught.
+	// The trailer's own destination and source are covered too, which is
+	// the half a checksum taken over the packet alone would miss.
+	for (unsigned k = 0; k < (sizeof cbridge_answer - CHUDP_HEADER) / 2u; ++k) {
+		uint8_t bad[sizeof cbridge_answer];
+		uint16_t back[CHAOS_PKT_MAX_WORDS];
+		const char *why = NULL;
+		int flagged = 0;
+		memcpy(bad, cbridge_answer, sizeof bad);
+		// The count word is not altered here: a changed count is
+		// refused for its length before the checksum is ever reached,
+		// and this check is about the checksum.
+		if (k == 1u)
+			continue;
+		bad[CHUDP_HEADER + 2u * k + 1u] ^= 0x01u;
+		const unsigned n = chudp_unwrap(bad, sizeof bad, back, CHAOS_PKT_MAX_WORDS,
+						&why, &flagged);
+		CHECK(n == 0, "word %u altered and the frame was taken anyway", k);
+		CHECK(flagged, "word %u altered and it was not called a bad checksum: %s", k,
+		      why ? why : "(nothing said)");
+		CHECK(why && strstr(why, "sum"), "word %u: the refusal does not name the sum: %s",
+		      k, why ? why : "(nothing said)");
+	}
+	// And the checksum field itself.
+	{
+		uint8_t bad[sizeof cbridge_answer];
+		uint16_t back[CHAOS_PKT_MAX_WORDS];
+		const char *why = NULL;
+		int flagged = 0;
+		memcpy(bad, cbridge_answer, sizeof bad);
+		bad[sizeof bad - 1u] ^= 0x01u;
+		CHECK(chudp_unwrap(bad, sizeof bad, back, CHAOS_PKT_MAX_WORDS, &why,
+				   &flagged) == 0,
+		      "the checksum field was altered and the frame was taken anyway");
+		CHECK(flagged, "an altered checksum was not called a bad checksum");
+	}
+	// The property the protocol states, on the frame as it stands: all of
+	// its words, the checksum among them, sum to 0xFFFF.
+	{
+		uint32_t sum = 0;
+		for (unsigned k = CHUDP_HEADER; k < sizeof cbridge_answer; k += 2u) {
+			sum += (unsigned)cbridge_answer[k] << 8 | cbridge_answer[k + 1u];
+			sum = (sum & 0xffffu) + (sum >> 16);
+		}
+		CHECK(sum == 0xffffu, "the frame's words sum to 0x%04x, wanting 0xFFFF",
+		      (unsigned)sum);
+	}
+}
+
+// --- the framing this program spoke before is refused ----------------------
+
+// The same frame written the old way: the Chaos packet's own words least
+// significant byte first, and the CADR's CRC-16 in the trailer's third word
+// where the Internet checksum belongs.  **This is a NEGATIVE case on purpose.**
+// The two framings cannot both be readable: a datagram that parses either way
+// would let a board and a bridge disagree about what a packet says while both
+// believed they had understood it.
+static unsigned old_framing(const uint16_t *words, unsigned n, uint8_t *out)
+{
+	const unsigned body = n - CHAOS_PKT_TRAILER_WORDS;
+	out[0] = 1;
+	out[1] = 1;
+	out[2] = 0;
+	out[3] = 0;
+	for (unsigned k = 0; k < body; ++k) {
+		out[CHUDP_HEADER + 2u * k] = (uint8_t)words[k];
+		out[CHUDP_HEADER + 2u * k + 1u] = (uint8_t)(words[k] >> 8);
+	}
+	// The trailer was network order then too, and carried the CRC.
+	for (unsigned k = 0; k < CHAOS_PKT_TRAILER_WORDS; ++k) {
+		uint8_t *at = out + CHUDP_HEADER + body * 2u + 2u * k;
+		at[0] = (uint8_t)(words[body + k] >> 8);
+		at[1] = (uint8_t)words[body + k];
+	}
+	return CHUDP_HEADER + body * 2u + CHUDP_TRAILER;
+}
+
+static void check_the_old_framing_is_refused(void)
+{
+	// With data, the count word comes out of the other half and is absurd:
+	// six bytes read the other way round is 1,536, which no packet carries.
+	// This is what `cbridge` saw when this program spoke to it.
+	{
+		uint16_t frame[CHAOS_PKT_MAX_WORDS], back[CHAOS_PKT_MAX_WORDS];
+		uint8_t old[CHUDP_MAX_FRAME];
+		const char *why = NULL;
+		int flagged = 0;
+		const unsigned n = status_rfc(frame, "STATUS", 6);
+		const unsigned len = old_framing(frame, n, old);
+		CHECK(len == 32u, "the old framing is %u bytes", len);
+		CHECK(memcmp(old + 20, "STATUS", 6) == 0,
+		      "the old framing did not put the data in the packet's own order");
+		CHECK(chudp_unwrap(old, len, back, CHAOS_PKT_MAX_WORDS, &why, &flagged) == 0,
+		      "a datagram in the old framing was read as this one");
+		CHECK(why && strstr(why, "count"),
+		      "the old framing is not refused for its count: %s", why ? why : "");
+	}
+	// With no data at all the count word reads the same either way, so the
+	// length says nothing --- and the checksum is what refuses it, the old
+	// framing carrying the CADR's CRC where the checksum belongs.
+	{
+		uint16_t frame[CHAOS_PKT_MAX_WORDS], back[CHAOS_PKT_MAX_WORDS];
+		uint8_t old[CHUDP_MAX_FRAME];
+		const char *why = NULL;
+		int flagged = 0;
+		const unsigned n = status_rfc(frame, "", 0);
+		const unsigned len = old_framing(frame, n, old);
+		CHECK(chudp_unwrap(old, len, back, CHAOS_PKT_MAX_WORDS, &why, &flagged) == 0,
+		      "a datagram in the old framing with no data was read as this one");
+		CHECK(flagged, "it was refused, but not for its checksum: %s", why ? why : "");
+	}
 }
 
 // --- out and back ---------------------------------------------------------
@@ -178,7 +394,7 @@ static void check_a_frame_goes_out_and_comes_back(void)
 		CHECK(len == CHUDP_HEADER + (n - 3u) * 2u + CHUDP_TRAILER,
 		      "%s: the datagram is %u bytes", cases[c].what, len);
 		const char *why = NULL;
-		const unsigned m = chudp_unwrap(datagram, len, back, CHAOS_PKT_MAX_WORDS, &why);
+		const unsigned m = chudp_unwrap(datagram, len, back, CHAOS_PKT_MAX_WORDS, &why, NULL);
 		CHECK(m == n, "%s: it reads back as %u words, wanting %u: %s", cases[c].what, m,
 		      n, why ? why : "");
 		CHECK(m == n && memcmp(back, frame, (size_t)n * sizeof frame[0]) == 0,
@@ -194,38 +410,94 @@ static void check_a_frame_goes_out_and_comes_back(void)
 	}
 }
 
-// --- an odd data count, padded or not -------------------------------------
+// --- an odd data count is padded ------------------------------------------
 
-static void check_an_odd_count_is_taken_either_way(void)
+static void check_an_odd_count_is_padded(void)
 {
-	// The data is a whole number of 16-bit words on the cable, so `wrap`
-	// pads it; `unwrap` finds the trailer from the end of the datagram
-	// rather than from the count, so a peer that does NOT pad is read all
-	// the same.  **Which a peer does is unverified**; one interoperation
-	// settles it, and until then neither reading is refused.
+	// The data is a whole number of 16-bit words on the cable, so an odd
+	// count leaves a zero in the last word's HIGH half --- and the word
+	// goes out most significant byte first, so the pad byte is the one
+	// that comes FIRST of that pair on the wire.  `cbridge` always pads.
 	uint16_t frame[CHAOS_PKT_MAX_WORDS];
 	uint8_t padded[CHUDP_MAX_FRAME], unpadded[CHUDP_MAX_FRAME];
 	const unsigned n = status_rfc(frame, "odd", 3);
 	const unsigned len = chudp_wrap(frame, n, padded, sizeof padded);
 	CHECK(len == 4u + 16u + 4u + 6u, "the padded datagram is %u bytes, wanting 30", len);
-	// The same datagram with the pad byte taken out.
+	// Three bytes of data in two words: `od`, swapped to `do`, and then
+	// the pad byte before the `d`.
+	CHECK(padded[20] == 'd' && padded[21] == 'o',
+	      "the first data word is %c%c on the wire, wanting od swapped to do",
+	      padded[20], padded[21]);
+	CHECK(padded[22] == 0x00u,
+	      "the pad byte is 0x%02x and it is not first of its pair", (unsigned)padded[22]);
+	CHECK(padded[23] == 'd', "the odd byte is %c and it is not second of its pair",
+	      padded[23]);
+	// And the checksum covers the padded word, pad and all.
+	CHECK(chudp_checksum(frame, n - 1u) ==
+		      (uint16_t)((unsigned)padded[28] << 8 | padded[29]),
+	      "the checksum does not cover the padded word");
+
+	uint16_t a[CHAOS_PKT_MAX_WORDS];
+	const char *why = NULL;
+	const unsigned na = chudp_unwrap(padded, len, a, CHAOS_PKT_MAX_WORDS, &why, NULL);
+	CHECK(na == n, "the padded datagram does not read: %s", why ? why : "");
+	struct chaos_frame parsed;
+	CHECK(na == n && chaos_frame_parse(a, na, &parsed, &why) == 0 &&
+		      parsed.packet.len == 3u && memcmp(parsed.packet.data, "odd", 3) == 0,
+	      "the padded datagram's data is not \"odd\"");
+
+	// **AND AN UNPADDED ODD COUNT IS REFUSED.**  Its lone trailing byte
+	// sits exactly where the pad byte would be, so whether it is data or
+	// padding cannot be told from the datagram; reading it either way is a
+	// guess about a case nothing produces.
 	memcpy(unpadded, padded, 4u + 16u + 3u);
 	memcpy(unpadded + 4u + 16u + 3u, padded + 4u + 16u + 4u, 6u);
 	const unsigned shorter = len - 1u;
-	CHECK(shorter == 4u + 16u + 3u + 6u, "the unpadded datagram is %u bytes", shorter);
+	uint16_t b[CHAOS_PKT_MAX_WORDS];
+	why = NULL;
+	CHECK(chudp_unwrap(unpadded, shorter, b, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
+	      "an unpadded odd data count was read, and its last byte guessed at");
+	CHECK(why && strstr(why, "count"), "the refusal does not name the count: %s",
+	      why ? why : "(nothing said)");
+}
 
-	uint16_t a[CHAOS_PKT_MAX_WORDS], b[CHAOS_PKT_MAX_WORDS];
-	const char *why = NULL;
-	const unsigned na = chudp_unwrap(padded, len, a, CHAOS_PKT_MAX_WORDS, &why);
-	CHECK(na == n, "the padded datagram does not read: %s", why ? why : "");
-	const unsigned nb = chudp_unwrap(unpadded, shorter, b, CHAOS_PKT_MAX_WORDS, &why);
-	CHECK(nb == n, "the unpadded datagram does not read: %s", why ? why : "");
-	CHECK(na == nb && na == n && memcmp(a, b, (size_t)n * sizeof a[0]) == 0,
-	      "padded and unpadded do not read to the same words");
-	struct chaos_frame parsed;
-	CHECK(nb == n && chaos_frame_parse(b, nb, &parsed, &why) == 0 &&
-		      parsed.packet.len == 3u && memcmp(parsed.packet.data, "odd", 3) == 0,
-	      "the unpadded datagram's data is not \"odd\"");
+// --- the check word is swapped at this edge -------------------------------
+
+static void check_the_check_word_is_swapped_at_the_edge(void)
+{
+	// The machine's seam carries the 9401's CRC-16 in the trailer's third
+	// word and the wire carries the Internet checksum.  So a frame out and
+	// back must arrive with the CRC remade for it, and the two must differ
+	// on every frame that is not a coincidence --- which is what says the
+	// conversion happens rather than the word being passed through.
+	static const struct { const char *data; unsigned len; const char *what; } cases[] = {
+		{ "", 0, "no data at all" },
+		{ "STATUS", 6, "six bytes" },
+		{ "odd", 3, "an odd count" }
+	};
+	for (unsigned c = 0; c < sizeof cases / sizeof cases[0]; ++c) {
+		uint16_t frame[CHAOS_PKT_MAX_WORDS], back[CHAOS_PKT_MAX_WORDS];
+		uint8_t datagram[CHUDP_MAX_FRAME];
+		const char *why = NULL;
+		const unsigned n = status_rfc(frame, cases[c].data, cases[c].len);
+		const unsigned len = chudp_wrap(frame, n, datagram, sizeof datagram);
+		const uint16_t on_the_wire = (uint16_t)((unsigned)datagram[len - 2u] << 8 |
+							datagram[len - 1u]);
+		CHECK(on_the_wire == chudp_checksum(frame, n - 1u),
+		      "%s: the wire carries 0x%04x where the checksum 0x%04x belongs",
+		      cases[c].what, (unsigned)on_the_wire,
+		      (unsigned)chudp_checksum(frame, n - 1u));
+		CHECK(on_the_wire != frame[n - 1u],
+		      "%s: the CADR's check word went out unchanged as the checksum",
+		      cases[c].what);
+		const unsigned m = chudp_unwrap(datagram, len, back, CHAOS_PKT_MAX_WORDS,
+						&why, NULL);
+		CHECK(m == n, "%s: it does not read back: %s", cases[c].what, why ? why : "");
+		CHECK(m == n && back[n - 1u] == frame[n - 1u],
+		      "%s: the frame came back with 0%o in the trailer, wanting the CADR's "
+		      "own 0%o", cases[c].what, m == n ? (unsigned)back[n - 1u] : 0u,
+		      (unsigned)frame[n - 1u]);
+	}
 }
 
 // --- what is refused, and by name -----------------------------------------
@@ -237,7 +509,7 @@ static void check_a_datagram_that_is_not_one_is_refused(void)
 	const unsigned n = status_rfc(frame, "STATUS", 6);
 	const unsigned len = chudp_wrap(frame, n, good, sizeof good);
 	const char *why = NULL;
-	CHECK(chudp_unwrap(good, len, back, CHAOS_PKT_MAX_WORDS, &why) == n,
+	CHECK(chudp_unwrap(good, len, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == n,
 	      "the good datagram does not read: %s", why ? why : "");
 
 	// **A version this does not speak is refused BY NUMBER.**  The
@@ -251,7 +523,7 @@ static void check_a_datagram_that_is_not_one_is_refused(void)
 		memcpy(bad, good, len);
 		bad[0] = values[v];
 		why = NULL;
-		CHECK(chudp_unwrap(bad, len, back, CHAOS_PKT_MAX_WORDS, &why) == 0,
+		CHECK(chudp_unwrap(bad, len, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
 		      "version %u was read as version 1", (unsigned)values[v]);
 		snprintf(number, sizeof number, "%u", (unsigned)values[v]);
 		CHECK(why && strstr(why, "version") && strstr(why, number),
@@ -265,7 +537,7 @@ static void check_a_datagram_that_is_not_one_is_refused(void)
 		memcpy(bad, good, len);
 		bad[1] = values[v];
 		why = NULL;
-		CHECK(chudp_unwrap(bad, len, back, CHAOS_PKT_MAX_WORDS, &why) == 0,
+		CHECK(chudp_unwrap(bad, len, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
 		      "function %u was read as a packet", (unsigned)values[v]);
 		CHECK(why && strstr(why, "function"),
 		      "the refusal does not say which: %s", why ? why : "(nothing said)");
@@ -278,11 +550,11 @@ static void check_a_datagram_that_is_not_one_is_refused(void)
 	uint8_t bad[CHUDP_MAX_FRAME + 8];
 	memcpy(bad, good, len);
 	why = NULL;
-	CHECK(chudp_unwrap(bad, len - 2u, back, CHAOS_PKT_MAX_WORDS, &why) == 0,
+	CHECK(chudp_unwrap(bad, len - 2u, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
 	      "two bytes fewer than the count wants was read");
 	memset(bad + len, 0, 2);
 	why = NULL;
-	CHECK(chudp_unwrap(bad, len + 2u, back, CHAOS_PKT_MAX_WORDS, &why) == 0,
+	CHECK(chudp_unwrap(bad, len + 2u, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
 	      "two bytes more than the count wants was read");
 	// The count word's two bytes swapped, which is the wrong order for that
 	// field and gives an absurd twelve-bit count.
@@ -291,7 +563,7 @@ static void check_a_datagram_that_is_not_one_is_refused(void)
 	bad[6] = bad[7];
 	bad[7] = hold;
 	why = NULL;
-	CHECK(chudp_unwrap(bad, len, back, CHAOS_PKT_MAX_WORDS, &why) == 0,
+	CHECK(chudp_unwrap(bad, len, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
 	      "a data count of 1,536 bytes was accepted");
 	CHECK(why && strstr(why, "count"), "the refusal does not name the count: %s",
 	      why ? why : "(nothing said)");
@@ -304,7 +576,7 @@ static void check_a_datagram_that_is_not_one_is_refused(void)
 	huge[0] = CHUDP_VERSION;
 	huge[1] = CHUDP_FUNCTION_PACKET;
 	why = NULL;
-	CHECK(chudp_unwrap(huge, CHUDP_MAX_FRAME + 1u, back, CHAOS_PKT_MAX_WORDS, &why) == 0,
+	CHECK(chudp_unwrap(huge, CHUDP_MAX_FRAME + 1u, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
 	      "a datagram longer than any Chaos packet was read");
 	CHECK(why && strstr(why, "longer"), "the refusal does not say it is too long: %s",
 	      why ? why : "(nothing said)");
@@ -312,22 +584,22 @@ static void check_a_datagram_that_is_not_one_is_refused(void)
 	// Shorter than a header, and a header and a trailer with no packet
 	// between them: neither is a frame.
 	why = NULL;
-	CHECK(chudp_unwrap(good, 3u, back, CHAOS_PKT_MAX_WORDS, &why) == 0,
+	CHECK(chudp_unwrap(good, 3u, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
 	      "three bytes were read as a packet");
 	CHECK(why && strstr(why, "short"), "the refusal does not say it is too short: %s",
 	      why ? why : "(nothing said)");
 	why = NULL;
 	CHECK(chudp_unwrap(good, CHUDP_HEADER + CHUDP_TRAILER, back, CHAOS_PKT_MAX_WORDS,
-			   &why) == 0,
+			   &why, NULL) == 0,
 	      "a header and a trailer with no packet between them was read");
 	why = NULL;
-	CHECK(chudp_unwrap(good, 0u, back, CHAOS_PKT_MAX_WORDS, &why) == 0,
+	CHECK(chudp_unwrap(good, 0u, back, CHAOS_PKT_MAX_WORDS, &why, NULL) == 0,
 	      "an empty datagram was read as a packet");
 
 	// And a frame that will not fit where the caller put it is refused
 	// rather than written past the end of it.
 	why = NULL;
-	CHECK(chudp_unwrap(good, len, back, 4u, &why) == 0, "a 14-word frame went into room for 4");
+	CHECK(chudp_unwrap(good, len, back, 4u, &why, NULL) == 0, "a 14-word frame went into room for 4");
 
 	// `wrap` refuses the same things rather than building a datagram
 	// `unwrap` would throw away.
@@ -806,8 +1078,12 @@ void chaos_test_udp(void)
 {
 	chaos_test_note("udp: CHUDP against a datagram written out byte by byte");
 	check_the_frame_is_these_bytes();
+	check_a_datagram_cbridge_sent_reads_and_writes_back();
+	check_one_word_altered_fails_the_checksum();
+	check_the_old_framing_is_refused();
 	check_a_frame_goes_out_and_comes_back();
-	check_an_odd_count_is_taken_either_way();
+	check_an_odd_count_is_padded();
+	check_the_check_word_is_swapped_at_the_edge();
 	check_a_datagram_that_is_not_one_is_refused();
 	chaos_test_note("udp: two links on the loopback");
 	check_the_links();

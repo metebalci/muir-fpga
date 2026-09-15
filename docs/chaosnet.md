@@ -112,9 +112,65 @@ One bit pair in the character-in word of `serial_face.h` would make them live.
 it either. If a band ever sends one longer than 488 bytes, both are wrong
 together.
 
-**CHUDP's two byte-order constants are unverified**, here as in muir. One
-capture or one interoperation would settle them, and the pinned datagram in
-the check is the single place a correction lands.
+## How CHUDP frames a packet
+
+A CHUDP datagram carries one Chaos packet over UDP, on port 42042 unless a
+flag names another. This is what `cbridge` speaks, and `cbridge` is the
+reference for it. The CADR's own sources define the packet's words, how data
+bytes go into them, and the 9401 CRC-16 the interface puts on its cable. They
+do not define how CHUDP lays those words out in a datagram, or which check
+word it carries. No CADR ever sent a UDP packet.
+
+| bytes | field |
+|---|---|
+| 0 | version, 1 |
+| 1 | function, 1, a Chaos packet |
+| 2 to 3 | two argument bytes, sent as zero |
+| 4 to 19 | the packet's eight header words |
+| 20 onward | the data, as whole 16-bit words |
+| last 6 | the trailer: destination, source, checksum |
+
+**Every 16-bit word goes most significant byte first.** That holds in the
+header, in the data and in the trailer.
+
+The data is packed into words as AIM-628 section 3.6 says, with the first byte
+of each pair in the word's least significant half. The word is then written
+most significant byte first, so each pair of data bytes appears swapped on the
+wire. `STATUS` goes out as `TSTASU`. An odd byte count is padded to a whole
+word with a zero in the high half, which is the byte that comes first on the
+wire. `cbridge` always pads, and a datagram that does not is refused here: a
+lone trailing byte sits exactly where the pad byte would be, so reading it as
+data is a guess.
+
+The trailer holds the three words the CADR's interface adds on its cable. The
+first is the address the packet is sent to on this subnet, which is the next
+hop and not necessarily the header's destination. The second is the sender's
+own address. The third is the checksum.
+
+**The trailer's third word is the Internet checksum, not the CADR's CRC.** It
+is the one's complement of the one's complement sum of every word before it:
+the eight header words, the data words, and the trailer's destination and
+source. The carry out of sixteen bits is added back in at each step. A frame
+is good when all of its words, the checksum included, sum to 0xFFFF. `cbridge`
+drops a frame whose words do not sum right, and so does this program. Carrying
+one would mean handing the machine a check word this program made for it,
+which would say the frame arrived whole when it did not.
+
+**The fabric keeps its own check word, and the conversion is at the UDP edge.**
+`cadr_chaos_cable.sv` computes the 9401's CRC-16 on transmit and streams the
+trailer's three words into the machine's buffer as they are given on receipt.
+So the frame that crosses the register face carries the CADR's check word in
+both directions. `chudp_wrap` puts the Internet checksum in its place on the
+way out, and `chudp_unwrap` verifies the Internet checksum and makes the CRC
+for the frame on the way in. Nothing else about a frame is changed, and no
+fabric file is touched by any of this.
+
+**A board and its peers must move to this framing together.** The old framing
+wrote the packet's own words least significant byte first and carried the
+CADR's CRC in the trailer. The two cannot talk: a datagram in the old framing
+is refused here for its data count, which reads as 1,536 bytes when its two
+halves are swapped, or for its checksum when the count happens to read the
+same either way.
 
 ## `ED-FILE` is a hole in the band's host table, not a missing server
 
@@ -352,7 +408,7 @@ address space in both directions, read out of muir's two traces rather than
 transcribed.
 
 `chaosnet` and `serial` hold the two programs on the build host with no board:
-341 checks and 21 mutation records for the first, 115 and 19 for the second.
+514 checks and 30 mutation records for the first, 115 and 19 for the second.
 The first figures were 772 and 61 while the program carried services. The
 checks and records that went are the ones written for the connection protocol
 and for STATUS, TIME, UPTIME and FILE. A check for code that should not exist
@@ -367,6 +423,15 @@ more.
 `0o135771` as the word the netlist board produced for twelve given words, so a
 wrong polynomial or bit order disagrees with a measurement off hardware and
 not with a round trip that agrees with itself.
+
+**And the CHUDP framing is held to `cbridge` rather than to itself, for the
+same reason.** Two datagrams are pinned as literal bytes. The first is a
+32-byte RFC for `STATUS`, built here from its fields, whose Internet checksum
+is 0xEA6D. The second is a 94-byte answer that `cbridge` itself sent, which is
+read here with a good checksum and written back byte for byte. A check that
+built a datagram with the code it was checking would agree with any byte order
+and any check word. There is a negative case beside them: a datagram in the
+old framing must be refused, so that the two cannot both be readable.
 
 ## One measurement worth not re-deriving
 
