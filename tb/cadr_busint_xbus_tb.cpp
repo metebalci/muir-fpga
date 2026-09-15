@@ -12,7 +12,7 @@
 //
 // The slave also holds the interface to the bus's own rule about the request,
 // which the trace cannot: muir has no -XBUS.RQ to compare against, so the
-// only thing that can say the request was held through the acknowledgement is
+// only thing that can say the request was held through the acknowledgment is
 // the slave that was waiting on it. Found by mutation, issue #2.
 
 #include <cstdio>
@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
 
     // "-XBUS.ACK ... remains asserted until the -XBUS.RQ signal is removed
     // by the master" --- so the master holds the request out through the
-    // acknowledgement, and lets go only when the cpu lifts -MEMRQ. A slave
+    // acknowledgment, and lets go only when the cpu lifts -MEMRQ. A slave
     // that obeys the specification holds its answer against the request, and
     // one whose request was withdrawn under it would be left driving the bus
     // at a master that had gone.
@@ -146,12 +146,12 @@ int main(int argc, char **argv) {
     if (rq_before && !dut->dev_rq && !r.n_memrq)
       bad += Fail(r, "-XBUS.RQ, withdrawn while the cpu still wants the cycle",
                   0, 1);
-    // And the coverage that says the rule is not vacuous: the acknowledgement
+    // And the coverage that says the rule is not vacuous: the acknowledgment
     // has to arrive with the request still out, on some cycle.
     if (!r.n_memack && memack_last) {
       if (dut->dev_rq) ++ack_with_rq;
       else
-        bad += Fail(r, "-XBUS.RQ at the acknowledgement", 0, 1);
+        bad += Fail(r, "-XBUS.RQ at the acknowledgment", 0, 1);
     }
     memack_last = r.n_memack;
 

@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # The whole machine on a band, and where the comparison has to stop
 
 Every processor check in this repository compares `cadr_microcycle` against
-muir with the bus, the memory and the acknowledgements supplied from muir's own
+muir with the bus, the memory and the acknowledgments supplied from muir's own
 columns. `machine.pass` and `map_boot.pass` compare the whole machine, but they
 run MIT's boot PROM, which stops before the microcode is loaded. So the
 composed machine — the processor with the real bus interface, the real memory

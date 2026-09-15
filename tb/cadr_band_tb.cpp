@@ -14,15 +14,15 @@
 //
 // **THE HOLE THIS IS AIMED AT.**  Every processor check in this repository
 // compares `cadr_microcycle` against muir with the bus, the memory and the
-// acknowledgements supplied from muir's own columns; `machine.pass` and
+// acknowledgments supplied from muir's own columns; `machine.pass` and
 // `map_boot.pass` compare the whole machine, but on MIT's boot PROM, which is
 // a different program and stops before the microcode is loaded.  So the
 // composed machine --- processor, bus interface, memory path, real memory,
 // disk controller --- has never been asked to agree with muir while running
-// the microcode it loads off its own disk.  CLAUDE.md states the gap twice,
-// once as "NO CHECK HAS EVER MOVED A REAL PACK BLOCK INTO MAIN MEMORY" and
-// once as "map-write-then-read-through-it across `cadr_machine` has never been
-// compared to muir".
+// the microcode it loads off its own disk.  The gap stands twice over: no
+// check has ever moved a real pack block into main memory, and
+// map-write-then-read-through-it across `cadr_machine` has never been compared
+// to muir.
 //
 // ====================================================================
 // HOW FAR THIS REACHES, AND WHY IT STOPS WHERE IT DOES.  MEASURED.
@@ -36,8 +36,8 @@
 // and part there, so 524,650 of those microcycles are a program nothing else
 // runs on the whole machine, and the disk controller answers them out of a
 // real drive --- unit selection, the spindle, on-line, on-cylinder, seek and
-// attention --- instead of the no-drive constant `0x2321` that CLAUDE.md says
-// a wire would pass.
+// attention --- instead of the no-drive constant `0x2321` that a wire would
+// pass.
 //
 // **It stops at the machine's FIRST DISK TRANSFER, and the reason is that
 // muir's channel does not exist.**  `Controller::timed` is `false` by default
@@ -82,8 +82,9 @@
 //     89 microcycles in all, every one of them confined to `STATUS<28:24>`.
 //     At N = 512 it reaches 1,276,905 --- **and a burst appears that moves PC,
 //     IR and VMA**, which is the exemption beginning to hide the machine
-//     rather than the clock.  That is CLAUDE.md's standing hazard caught in
-//     the act, and it is why the default is zero.
+//     rather than the clock.  That is the standing hazard --- an exemption
+//     too wide tests nothing and looks exactly like one that is right ---
+//     caught in the act, and it is why the default is zero.
 //
 // **AND EVEN WITH A PERFECT CLOCK THIS SHAPE CANNOT REACH THE WINDOW.**  The
 // band's machine reads its own microsecond clock --- Unibus `0o764120` and
@@ -129,10 +130,11 @@
 // block the machine writes is kept in memory for the run exactly as muir's
 // `Unit::written` keeps it.  The header and both checkwords are computed from
 // the address and the data at the move, as `disk_unit::header_of` and `Ecc`
-// compute them and as CLAUDE.md's sidecar decision settled.  **The feeder is
-// stimulus and never a shadow**: what it serves comes from the pack file at
-// the disk address the controller posted, and an address off the pack is
-// DENIED rather than invented.
+// compute them, headers and checkwords being computed at the move rather than
+// kept in a file beside the pack.  **The feeder is stimulus and never a
+// shadow**: what it serves comes from the pack file at the disk address the
+// controller posted, and an address off the pack is DENIED rather than
+// invented.
 //
 // THE DRIVE.  One unit present, not read-only, and `drive_timed` LOW --- which
 // is `Controller::timed` false, the way the reference was generated.  A drive
@@ -1105,7 +1107,7 @@ int main(int argc, char **argv) {
           }
         }
         // WHERE muir's OWN INTERFACE ANSWERS THIS CYCLE.  Rounded up, for
-        // the reason `tb/cadr_machine_tb.cpp` gives: muir's acknowledgement is
+        // the reason `tb/cadr_machine_tb.cpp` gives: muir's acknowledgment is
         // not on the five-nanosecond grid and the fabric can only see it at a
         // tick at or after it.
         if (r.v[kBus]) {

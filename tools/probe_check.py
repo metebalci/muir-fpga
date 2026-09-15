@@ -20,9 +20,8 @@
 # that does not is an error and not a column quietly skipped.
 #
 # WHY COLUMN BY COLUMN.  One bad column and one bad row look identical in a
-# total.  The per-column breakdown is what says which of those it is, and
-# CLAUDE.md is explicit that a column-by-column diff is what makes a claim
-# about a trace believable.
+# total.  The per-column breakdown is what says which of those it is, and a
+# column-by-column diff is what makes a claim about a trace believable.
 #
 # ALIGNMENT IS A CLAIM, NOT AN ASSUMPTION.  The capture is meant to begin at
 # microcycle zero.  Three independent things are checked, and each is named on
@@ -79,11 +78,11 @@
 # wrong rather than a buffer that is short.
 #
 # THE THREE NANOSECOND COLUMNS.  `ns`, `stall` and `halted` are times, and
-# CLAUDE.md records that muir's clock is continuous where the fabric's is a
-# 5 ns grid: 30,088 microcycles of the boot PROM come out 1 to 4 ns long, each
-# hang re-anchoring so the slip cannot accumulate.  Those three are therefore
-# compared to within 4 ns and the slip is counted and printed; every other
-# column is compared exactly.
+# muir's clock is continuous where the fabric's is a 5 ns grid: 30,088
+# microcycles of the boot PROM come out 1 to 4 ns long, each hang re-anchoring
+# so the slip cannot accumulate.  Those three are therefore compared to within
+# 4 ns and the slip is counted and printed; every other column is compared
+# exactly.
 #
 # EXIT STATUS.  0 the hardware agreed, 1 it disagreed (or could not be shown
 # to be aligned), 2 the capture could not be read at all.
@@ -95,8 +94,8 @@ import re
 import sys
 import tempfile
 
-# The three columns that carry a time rather than a value, and the bound
-# CLAUDE.md records for the fabric's 5 ns grid against muir's continuous one.
+# The three columns that carry a time rather than a value, and the bound the
+# fabric's 5 ns grid takes against muir's continuous one.
 TIMING_COLUMNS = ("ns", "stall", "halted")
 TIMING_TOLERANCE_NS = 4
 

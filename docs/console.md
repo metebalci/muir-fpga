@@ -41,7 +41,7 @@ and `-DBWRITE`, and "the EADR<3:0> lines just follow the Unibus address
 `Machine::spy_write` takes a write (`../muir/src/machine.rs:630-645`) --- the
 latter "as the trailing edge of `-DBWRITE` does, from a Unibus cycle **or
 from a console with no bus at all**", which is `src/spy.rs`'s own sentence and
-is the licence for this module.
+is the license for this module.
 
 What a console does with them, in CC's own order
 (`../muir/tests/lashup.rs:143-179`):
@@ -250,14 +250,13 @@ only ever seen a one-tick reset would be released in a way the board never
 performs. The floor is **one whole generator cycle at extra slow, 44 ticks**:
 that is the longest interval over which any of the machine's own timing is in
 flight --- the phase generator's ring, the seven read taps at 15 to 32, the
-write pulses, the two countdowns --- and CLAUDE.md already records that muir's
-`chip.rs` goes on deriving `-TPR60` from `phase_ns` at ticks 11 to 18 of a
-plain power-on reset, so a reset shorter than the cycle it interrupts lands in
-a region the model and the fabric are known to disagree in and nothing
-compares. 64 is the smallest power of two above 44, so the countdown ends on a
-borrow --- which is why `LOST_T` is 4,096 and not 4,000. **It is a floor with
-margin and is stated as one**; nothing derives 64, what is derived is that it
-must be more than 44.
+write pulses, the two countdowns --- and muir's `chip.rs` goes on deriving
+`-TPR60` from `phase_ns` at ticks 11 to 18 of a plain power-on reset, so a
+reset shorter than the cycle it interrupts lands in a region the model and the
+fabric are known to disagree in and nothing compares. 64 is the smallest power
+of two above 44, so the countdown ends on a borrow --- which is why `LOST_T`
+is 4,096 and not 4,000. **It is a floor with margin and is stated as one**;
+nothing derives 64, what is derived is that it must be more than 44.
 
 **The write does not answer until the pulse is over.** `W_RESET` holds the
 write channel through the countdown, so `BVALID` is offered after the machine
@@ -332,10 +331,10 @@ re-arming meant the reset button or a fresh bitstream; it is a store from Linux 
 price is that a console reset spoils a readout in progress --- which the button
 already did.
 
-**WHERE THE PULSE LANDS WAS ASKED OF THE DESIGN.** CLAUDE.md's `elapsed ->
-md/CE` entry says a relaxed register's clock enable goes with it, and a signal
+**WHERE THE PULSE LANDS WAS ASKED OF THE DESIGN.** The `elapsed -> md/CE`
+finding says a relaxed register's clock enable goes with it, and a signal
 reaching a reset that drags a long cone into an enable is invisible in a slack
-figure. Synthesised at this slice, `DDR=1`, scoped XDC read, `all_fanout -flat
+figure. Synthesized at this slice, `DDR=1`, scoped XDC read, `all_fanout -flat
 -endpoints_only` from the two `mach_rst_reg` cells:
 
     the top level's, into cadr_machine   1,008 R, 24 S, 19 D, 12 block-RAM
@@ -366,7 +365,7 @@ wire into flip flops and reaches no 93425A. So a machine reset a second time
 re-executes the boot PROM's instructions from the top with the scratchpads its
 first run left. Measured: `amem` diverges on the **first** microcycle of the
 replay, A and M reading `0x1fc` where muir says 0, while PC, IR, LPC and OPC
-agree for all 600,000. That is the right behaviour: a console reset that
+agree for all 600,000. That is the right behavior: a console reset that
 cleared memory would be a **different** reset from the button's, and then
 there would be two resets to reason about instead of one.
 
@@ -413,7 +412,7 @@ The read of word 7 latches BOTH, and word 8 reads that latch: **the rule is
 VMA then Q**, as it is CYCLES then CYCLESH and for the same reason --- the
 question asked of them is whether they are equal, so a pair read as two
 independent loads of a running machine is two instants and the answer would be
-an artefact of the gap. A burst of two beats over words 7 and 8 is how a
+an artifact of the gap. A burst of two beats over words 7 and 8 is how a
 program should ask.
 
 **MD joined that latch on 2026-09-11 and the rule is now VMA first**, a burst
@@ -461,14 +460,13 @@ A FAULT.** `DDR=1`, board flow, routed:
 **The middle group is the one that was wrong.** Written first with the latch
 armed straight off `r_in` and `r_idx` --- five logic levels off `r_at` --- the
 routed board put that cone into **sixty-four clock enables** and read
-**-0.145 ns** at `r_at_reg[19]/C -> held_q_reg[0]/CE`. That is CLAUDE.md's
-`elapsed -> md/CE` in a new place, and it is exactly what a slack figure
-cannot tell you. The remedy is the one this repository already prescribes:
-**hold the match, do not compute it.** `held_arm` (it was `vq_arm` until MD
-joined it) takes the decision at
-`R_START` and registers it, the latch happens a state later at `R_PREP` ---
-still before `R_PREP2` takes `r_word` --- and what reaches the sixty-four
-enables is one flop and no logic. +0.559 ns after.
+**-0.145 ns** at `r_at_reg[19]/C -> held_q_reg[0]/CE`. That is `elapsed ->
+md/CE` in a new place, and it is exactly what a slack figure cannot tell you.
+The remedy is the one this repository already prescribes: **hold the match, do
+not compute it.** `held_arm` (it was `vq_arm` until MD joined it) takes the
+decision at `R_START` and registers it, the latch happens a state later at
+`R_PREP` --- still before `R_PREP2` takes `r_word` --- and what reaches the
+sixty-four enables is one flop and no logic. +0.559 ns after.
 
 Neither `held_*` nor `con_vma`/`con_q` appears among the routed board's worst
 paths now; those are the disk controller at -0.242 ns and the console's own
@@ -661,7 +659,7 @@ reference can tell them apart.
 **The arc the constraints claim, measured rather than derived.** Every
 register of `cadr_console_state.sv` falls in `cadr_machine.xdc`'s relaxed set,
 so the fabric is told each of these three captures has fifteen ticks. That is
-a claim about the machine's own behaviour, and an exemption too wide tests
+a claim about the machine's own behavior, and an exemption too wide tests
 nothing.
 
 It had to be asked for MD in particular. `vma` and `q` are written inside `if
@@ -746,8 +744,9 @@ register block and **the real processor** with MIT's boot PROM in its control
 store --- from `build/rtl.golden`, the same trace and the same stimulus
 `tb/cadr_microcycle_tb.cpp` drives it from. It takes about fourteen seconds,
 twice what it took before the reset landed: the extra seven are the reset's
-replay of the whole reference, and CLAUDE.md's rule about `disk.golden`'s
-full-length timeout applies --- that is the price of the check.
+replay of the whole reference, and the same holds as for `disk.golden`'s
+full-length timeout, which must not be shortened --- that is the price of the
+check.
 
 | operation | held to | where |
 |---|---|---|
@@ -992,7 +991,7 @@ the `memory` instance.
 
 **`boards/arty-z7-20/cadr_arty.sv`** --- the eight signals declared at module scope, added to
 the `u_machine` instantiation, tied off on the board with no PS7 and folded
-into `witness`; and inside `g_ddr`, the `gp1_*` wires, a reset synchroniser on
+into `witness`; and inside `g_ddr`, the `gp1_*` wires, a reset synchronizer on
 `gp1_aresetn`, the `cadr_console` instance and the PS7's twenty-seven GP1
 pins. The console sits **outside** `g_pack`: every board with a processing
 system has one, because the console is what says whether the machine is
@@ -1173,10 +1172,10 @@ different ones ---
 but NOT reaching the machine**, one line at `u_machine`'s instantiation. It is
 the WORST of the three. So the reset net is not what moves the number: what
 moves is where the placer puts a disk controller that was already sitting at
-zero, and CLAUDE.md's own figure for that is a quarter of a nanosecond. Three
-builds, three worst nets, 0.198 ns between the best and the worst, and the
-build with no reset net at all is the bottom. **Reported as a number and not
-as a regression**, and the isolation build is the evidence rather than the
+zero, and the figure for that is a quarter of a nanosecond. Three builds,
+three worst nets, 0.198 ns between the best and the worst, and the build with
+no reset net at all is the bottom. **Reported as a number and not as a
+regression**, and the isolation build is the evidence rather than the
 reasoning.
 
 **The numbers, fitted in isolated trees at `3198d8b` plus this slice**, board
@@ -1197,10 +1196,10 @@ zero errors:
 `trap_step_reg[9]` into `ecc_r_reg[*]/CE` at 4.724 ns over five levels, which
 is the same family the commit before the console reported at -0.148 ns. The
 board is back where it was, eleven picoseconds apart --- inside the quarter of
-a nanosecond CLAUDE.md calls placement noise, and reported as a number rather
+a nanosecond that counts as placement noise, and reported as a number rather
 than as closure. The memory-off board **meets timing**.
 
-Utilisation, `DDR=1`: 7,318 LUTs (13.76%), 5,080 registers, 37 block RAM
+Utilization, `DDR=1`: 7,318 LUTs (13.76%), 5,080 registers, 37 block RAM
 tiles, 4 DSPs. `DDR=0`: 3,712 LUTs, 1,567 registers. These are not comparable
 with the 6,887/5,060/38 quoted at `37711fe` --- three commits landed between,
 one of them the display --- so they are the shape of this tree and not a
@@ -1208,15 +1207,15 @@ delta.
 
 **AND THE NAMING WAS ASKED OF THE DESIGN RATHER THAN ASSUMED**, which is what
 that file's own prose demands and what a slack figure cannot tell you:
-synthesised with the scoped XDC read, every one of 400 paths into
+synthesized with the scoped XDC read, every one of 400 paths into
 `con_rdata_reg[*]/D` asks for **75.000 ns**, worst `vma_reg[14]/C` over 24
 logic levels with **57.148 ns of slack**. The register really is in the set.
 
 **And the question caught this slice's own prose being wrong.** A relaxed
-register's clock enable is relaxed with it --- CLAUDE.md's `elapsed -> md/CE`
---- so the enable was asked about too. What was written first, in the XDC and
-in the module, was that the enable is not relaxed at all, since `mclk` is made
-from `tpclk` and `tpclk_q` and both are excluded from `slow`. The design says:
+register's clock enable is relaxed with it --- `elapsed -> md/CE` --- so the
+enable was asked about too. What was written first, in the XDC and in the
+module, was that the enable is not relaxed at all, since `mclk` is made from
+`tpclk` and `tpclk_q` and both are excluded from `slow`. The design says:
 
      5.000 ns   u_machine/processor/u_phase_gen/tpclk_reg   x64
      5.000 ns   u_machine/processor/tpclk_q_reg             x64
@@ -1258,7 +1257,7 @@ common `.c` files by path, and `make check` is always the host list.
 `0x52534554` to `REG_BASE + 0x18` plus a read of the same word to report the
 count. It is deliberately not written here: `boards/arty-z7-20/linux/` is another session's and
 `docs/console.md` is where the next person finds the key. The host check in
-that package models the slave and would want the register modelled with it.
+that package models the slave and would want the register modeled with it.
 
 **A held machine is a state the console has to know about, and there are two
 ways a machine gets into it.** Both leave the CADR's boot button unpressed, as a
@@ -1293,7 +1292,7 @@ rather than a file.
 what the machine actually came up with and bit 5 is where the switch is now.
 They differ when somebody has moved it since, which changes nothing until the
 next reset, and the console says so rather than looking as though it
-contradicts itself. The board latches bit 4 off the same synchronised level the
+contradicts itself. The board latches bit 4 off the same synchronized level the
 machine's own reset arms read, at the same edges, so the two cannot disagree.
 
 `cadr-console` offers, from the command line and from a small prompt: `halt`,
@@ -1323,7 +1322,7 @@ sentence for the state: "the machine is halted, its RUN clear: boot presses the
 button that starts it". `boot` presses the button and removes the marker.
 Nothing in the fabric knows about any of this, since `RUN` is still preset at
 reset. The marker is the whole of the contract, and the host check holds all
-three behaviours.
+three behaviors.
 
 **And one word here is not about the fabric at all: `trace-keys on|off`.** It
 tells the two input programs to say what each key becomes, on their own logs.
@@ -1369,7 +1368,7 @@ processor's own cycles with nobody reading what it said.
 check`, on the build host, needing nothing but a C compiler; scratch under
 `~/.cache/muir-fpga-console-<the checkout, hashed>`. It runs the program's core against a model of
 the slave --- the two pages, the latch, the lost bit, `UNMAPPED`, and a
-modelled machine whose CYCLES advances only while RUN is set, and whose STEP
+modeled machine whose CYCLES advances only while RUN is set, and whose STEP
 is an edge and not a level --- and the count is printed by the run. **It is in
 `make check` now**, as `$(BUILD)/console_face.pass`: it had been in the tree
 since the console landed and nothing ran it, where every other program's host

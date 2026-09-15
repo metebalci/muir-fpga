@@ -10,10 +10,10 @@
 // gives it back.
 //
 // THE MEMORY IS KEYED BY THE STIMULUS AND NEVER BY THE DUT, which is the
-// lesson CLAUDE.md paid for twice. A model memory indexed by the address the
-// DUT presented moves with the bug: a converter that dropped an address bit
-// would write consistent nonsense at the wrong beat and read it back from the
-// same wrong beat, and every comparison would agree. So the beat here is
+// lesson this project paid for twice. A model memory indexed by the address
+// the DUT presented moves with the bug: a converter that dropped an address
+// bit would write consistent nonsense at the wrong beat and read it back from
+// the same wrong beat, and every comparison would agree. So the beat here is
 // chosen by the stimulus --- an index into a table of addresses this file
 // wrote --- and the DUT's `m_awaddr` and `m_araddr` are compared against what
 // that address should have produced. **That equality is the only thing in this

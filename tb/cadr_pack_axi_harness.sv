@@ -3,11 +3,11 @@
 //
 // THE LAST SIMULATABLE SEAM: THE PACK SIDE AS FABRIC, NOT AS A TESTBENCH.
 //
-// WHAT THIS EXISTS FOR.  CLAUDE.md's hunt for the board's page-hash-table word
-// has cleared `rtl/machine/` over 171,000,000 microcycles (`make hash-watch`)
-// and the adapter and the widening over 13,000,000 onto a real 64-bit AXI3
-// port (`make band-axi`).  What is left is the PS7 and its DDR3 controller,
-// which cannot be modeled; board-only causes; and THE DISK SEAM ---
+// WHAT THIS EXISTS FOR.  The hunt for the board's page-hash-table word has
+// cleared `rtl/machine/` over 171,000,000 microcycles (`make hash-watch`) and
+// the adapter and the widening over 13,000,000 onto a real 64-bit AXI3 port
+// (`make band-axi`).  What is left is the PS7 and its DDR3 controller, which
+// cannot be modeled; board-only causes; and THE DISK SEAM ---
 // `rtl/plumbing/cadr_disk_pack.sv`, `S_AXI_HP2` and the `cadr-disk-packs`
 // program --- which **no whole-machine check in this tree has ever
 // contained**.  `disk_pack.pass` holds that module to properties on a directed
@@ -40,12 +40,12 @@
 // **THE SEAM STILL COMES OUT, AS OBSERVATION AND NEVER AS STIMULUS.**  Every
 // `store_*`, `req_*` and `ch_*` port below is an OUTPUT here where
 // `tb/cadr_band_axi_harness.sv` had half of them as inputs.  That is
-// deliberate and is CLAUDE.md's `md` trap taken seriously: a port that stops
-// being stimulus must stop being writable, or a testbench line left driving it
-// goes on working and the module under test is unchecked.  Verilator lets you
-// write an output, so the rename of `store_busy` to an output of THIS module
-// is not enough on its own --- but a testbench that assigns one is assigning
-// to something the pack side overwrites every eval, which fails loudly rather
+// deliberate and is the `md` trap taken seriously: a port that stops being
+// stimulus must stop being writable, or a testbench line left driving it goes
+// on working and the module under test is unchecked.  Verilator lets you write
+// an output, so the rename of `store_busy` to an output of THIS module is not
+// enough on its own --- but a testbench that assigns one is assigning to
+// something the pack side overwrites every eval, which fails loudly rather
 // than silently.
 //
 // IT IS IN `tb/` for `tb/cadr_arty_stubs.sv`'s reason: both Vivado scripts
@@ -54,8 +54,8 @@
 // path that nothing on the board would ever reach.
 //
 // `boards` is HARDWIRED to 32, as every harness here hardwires it and as
-// `cadr_arty.sv` sets it: CLAUDE.md records that System 100 cannot cold-boot
-// with 40 or more, so it is not a knob.
+// `cadr_arty.sv` sets it: System 100 cannot cold-boot with 40 or more, so it
+// is not a knob.
 
 `default_nettype none
 
@@ -364,7 +364,7 @@ module cadr_pack_axi_harness #(
       .clock_ready(clock_ready), .interval(interval),
       .ub_ssyn_by(ub_ssyn_by),
       .boards(7'd32),
-      // The port's own acknowledgements, which `cadr_bus_audit` inside the
+      // The port's own acknowledgments, which `cadr_bus_audit` inside the
       // machine compares against what the machine asked for.  This harness has
       // a real port, so they are the real handshakes rather than tied low,
       // registered as `boards/arty-z7-20/cadr_arty.sv` registers them.

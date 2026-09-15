@@ -227,12 +227,12 @@ registers. Composing it under `cadr_memory_path` is a later slice, and
 `busint_xbus.golden` is the trace for that.
 
 **A slave on that seam must hold its address match and not compute it.**
-CLAUDE.md records this as the disk controller's -6.195 ns. A combinational
-match on `phys` carries the map's ripple into `-MEMACK`/`-LOADMD` and so into
-the countdowns' clock enables. Here the address is `ub_addr`, which
-`cadr_memory_path.sv` already registers with the decode, so the ripple is
-already cut. But the same rule applies to whatever this card computes from it,
-and `cadr_spy_registers.sv`'s shape (a `selected` term off the registered
+This is the disk controller's -6.195 ns. A combinational match on `phys`
+carries the map's ripple into `-MEMACK`/`-LOADMD` and so into the countdowns'
+clock enables. Here the address is `ub_addr`, which `cadr_memory_path.sv`
+already registers with the decode, so the ripple is already cut. But the same
+rule applies to whatever this card computes from it, and
+`cadr_spy_registers.sv`'s shape (a `selected` term off the registered
 `ub_addr`, an `elapsed` counter from `-UB MSYN`) is the one to copy.
 
 **This is the 5 ns grid, and the one place this card is not on it.** Every
@@ -255,14 +255,13 @@ that.
 `SIXTY_CYCLE_NS` is 16,666,666, which is 1 mod 5, so the k'th mains edge is on
 the grid only for k a multiple of five. Take a fabric that accumulates
 nanoseconds by five and subtracts the period, which is `disk_unit`'s spindle
-trick, and which CLAUDE.md already records as being exactly
-`now mod REVOLUTION_NS`. It increments at the first tick at or after each
-edge, and the window in which it disagrees with `ns / SIXTY_CYCLE_NS` is
-`[B, B + (5 - B mod 5))`, **which contains no multiple of five at all**. So
-the two agree at every instant the fabric can be looked at. A fabric that
-instead reloads a down-counter with 3,333,333 ticks loses a nanosecond a
-period, and the trace reads the register at fourteen boundaries on alternating
-sides to catch it.
+trick, and which is exactly `now mod REVOLUTION_NS`. It increments at the
+first tick at or after each edge, and the window in which it disagrees with
+`ns / SIXTY_CYCLE_NS` is `[B, B + (5 - B mod 5))`, **which contains no
+multiple of five at all**. So the two agree at every instant the fabric can be
+looked at. A fabric that instead reloads a down-counter with 3,333,333 ticks
+loses a nanosecond a period, and the trace reads the register at fourteen
+boundaries on alternating sides to catch it.
 
 **A tick is 10 ns, so this card's two clocks no longer agree with the wall.**
 Everything above is the machine's own time, where a tick is five nanoseconds
@@ -428,7 +427,8 @@ reads and writes alike at MIT's own half-wavelength.
 
 ## What no trace against this model can reach
 
-These are said here rather than given a column, per CLAUDE.md's rule.
+These are said here rather than given a column, a signal no reference
+has a column for being a signal no trace can check.
 
 - **Both of these were closed by slice five and the paragraphs are kept
   because they say what was wrong.** The Chaosnet's vector `0o270` could not
@@ -577,8 +577,8 @@ sends group 0 nowhere, so an address one word past the block answers nothing
 however wide the DM8136s' match is. The live form of that mutation is the
 other direction, reaching a page lower, `0o763000`. That puts `0o763776` into
 group 7 and is caught at row 24, on the first cycle the card is not supposed
-to answer. It is the same family as the equivalences CLAUDE.md already
-catalogs.
+to answer. It is the same family as the equivalent mutants already recorded
+here.
 
 ## What slice two built
 
@@ -669,7 +669,7 @@ cables carried out through `rtl/machine/cadr_machine.sv` to
 
 `the-unibus-acknowledgement-and-the-md-strobe-change-places` exchanges the bus
 interface's two Unibus instants, so the cycle is acknowledged where the MD
-strobe belongs and MD is strobed where the acknowledgement belongs. It had
+strobe belongs and MD is strobed where the acknowledgment belongs. It had
 carried `@hole #13` since it was written.
 
 The hole's own prose said what would close it. "It is not an equivalence:
@@ -683,7 +683,7 @@ records holding it open.
 ### There is no decode in front of the two slaves, and that is deliberate
 
 Slice two expected one. It would make the two mutations that matter
-untestable. CLAUDE.md records the shape: the display's
+untestable. The shape is on record: the display's
 `tv-answers-its-neighbours`, written as a wider address match gated by the
 decode's `device`, survived. A slave that honors a guard which is checked
 exhaustively elsewhere cannot answer an address the guard refuses, so the
@@ -725,9 +725,9 @@ trace runs against `Vcadr_microcycle`, where `-MEMACK` and `-LOADMD` are
 muir's stimulus.
 
 So `cadr_busint_xbus.sv`'s MD strobe had never carried a word anybody compared.
-That is the one instant on either bus where the word and the acknowledgement
+That is the one instant on either bus where the word and the acknowledgment
 come apart: the word lands `UNIBUS_STROBE_NS` after `-UB SSYN` and the
-acknowledgement `UNIBUS_ACK_NS` after it, fifty nanoseconds later, which is why
+acknowledgment `UNIBUS_ACK_NS` after it, fifty nanoseconds later, which is why
 `n_loadmd` is a port of its own. `build/unibus.pass` compares both instants on
 every one of its answered cycles.
 
@@ -809,9 +809,9 @@ on folding them.
 `build/iob.pass` compares the card's request where it is an output;
 `build/busint_regs.pass` drives it where it is an input; only in
 `build/unibus.pass` are they the same wire, so only there can a crossed or
-dropped connection show. That is CLAUDE.md's worst case written out --- a
-crossing that leaves every signal read is caught by nothing, anywhere, by any
-tool --- and two records are aimed at it.
+dropped connection show. That is the worst case written out --- a crossing
+that leaves every signal read is caught by nothing, anywhere, by any tool ---
+and two records are aimed at it.
 
 ### What the card costs the board
 
@@ -842,7 +842,7 @@ away, is `memory/iob/t_edge_reg[0]/C -> memory/iob/iv_t_reg[0]/R` at
 
 `rtl/plumbing/xilinx7/cadr_machine.xdc` relaxes a set defined as every
 register minus a name list, so a module written after it is swallowed whole.
-CLAUDE.md records what that cost on the disk controller: 3,904 of its 4,000
+What that cost on the disk controller was measured: 3,904 of its 4,000
 internal paths carried the fifteen-cycle exception and three slices' fit
 figures were of a design a quarter of which was not being timed.
 
@@ -1079,10 +1079,10 @@ program. What the row itself says is unchanged: it is what the card's own
 
 `ser_ready` and `chaos_intr` were inputs of `cadr_io_board`, tied low by the
 board and by every harness. The card makes both itself now, so both ports are
-gone rather than left unused. CLAUDE.md records why that matters: Verilator
-lets a testbench write an output, and a conditionally assigned signal then
-fails silently while every check goes green with the thing unchecked. A line
-left driving either of these fails to compile.
+gone rather than left unused. `docs/mutations.md` records why that matters:
+Verilator lets a testbench write an output, and a conditionally assigned
+signal then fails silently while every check goes green with the thing
+unchecked. A line left driving either of these fails to compile.
 
 ### What the two groups cost, measured out of context
 

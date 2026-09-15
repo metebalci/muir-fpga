@@ -63,8 +63,8 @@
 # like four SATURATED counters, and the failure would have been reported as
 # "the machine asked 65,535 times".  `(w & 0x80008000) == 0x00008000` is a
 # pattern neither reading can produce, so the register says who wrote it.
-# CLAUDE.md's never-written-DDR entry in a new place: a value that means
-# nothing must not be a value the instrument can mean.
+# The never-written-DDR finding in a new place: a value that means nothing
+# must not be a value the instrument can mean.
 #
 # THE ORDER IS NOT `prove_write.tcl`'s, AND THE DIFFERENCE IS THE POINT.
 # There the fabric was a witness held in reset until the port came live, so

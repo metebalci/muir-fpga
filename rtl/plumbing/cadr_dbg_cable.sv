@@ -42,7 +42,7 @@
 // included them and was wrong.
 //
 // Un-sharing the sixteen for a carrier with no bus on it gives twenty out ---
-// the four and the data --- and nineteen back: the acknowledgement, the data,
+// the four and the data --- and nineteen back: the acknowledgment, the data,
 // and TWO BITS SAYING WHICH BYTES OF IT THIS END DRIVES.  Those two are why
 // the return is nineteen and not seventeen: `-DB READ STATUS` drives only
 // `DBD<7:0>` and MIT's cable carries the byte above it on pull-ups that a

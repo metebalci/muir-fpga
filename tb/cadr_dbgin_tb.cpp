@@ -275,7 +275,7 @@ int main(int argc, char **argv) {
   }
 
   // The trace is streamed, not held, as `tb/cadr_microcycle_tb.cpp` reads it.
-  // One pass for the acknowledgement times, one to drive.
+  // One pass for the acknowledgment times, one to drive.
   std::vector<uint64_t> ack_for, rdata_for;
   std::vector<bool> arbitrated;
   size_t total_rows = 0;
@@ -395,7 +395,7 @@ int main(int argc, char **argv) {
   long lead_seen = 0, trail_seen = 0;
   bool cable_moved_with_req = false;
 
-  // **THE ACKNOWLEDGEMENT'S OWN LAG, MEASURED AT THE CABLE AND NOT THROUGH A
+  // **THE ACKNOWLEDGMENT'S OWN LAG, MEASURED AT THE CABLE AND NOT THROUGH A
   // LOAD.**  "Acknowledged at once" is a claim about an instant and a load
   // through the port takes several ticks, so asking a poll whether the answer
   // was quick cannot tell a gate from a bus cycle.  `DEBUG ACK` is
@@ -605,7 +605,7 @@ int main(int argc, char **argv) {
       // they stood at that instant --- with an undriven byte read as ones,
       // which is what the cable's pull-ups give.  **This is the reference for
       // the carrier's latch**: `cadr_dbgin.sv` drives a read cycle's word
-      // LIVE, so the lines move under a standing acknowledgement whenever the
+      // LIVE, so the lines move under a standing acknowledgment whenever the
       // machine is running, and the word `STS` gives has to be the one from
       // here and not whatever stands when the Arm gets round to loading.
       if (!ack_prev && dut->cab_ack && req_down_at >= 0) {
@@ -1015,11 +1015,11 @@ int main(int argc, char **argv) {
     if (microcycles == at) Say("the machine retired nothing after the start");
   }
 
-  // ------------- phase 4b: the word is the one at the acknowledgement
+  // ------------- phase 4b: the word is the one at the acknowledgment
   //
   // **THE CARRIER'S LATCH, MADE LOAD-BEARING.**  `cadr_dbgin.sv` drives a read
   // cycle's word live, as the transceivers do, so with the machine running the
-  // lines move under a standing acknowledgement --- MIT's own "read and write
+  // lines move under a standing acknowledgment --- MIT's own "read and write
   // at the same address are uncorrelated", the 74LS244s driving `SPY<15:0>`
   // asynchronously.  By the time the Arm gets round to loading `STS`, the word
   // the debuggee drove is long gone unless the adapter took it at the instant
@@ -1048,18 +1048,18 @@ int main(int argc, char **argv) {
     const uint16_t at_ack = dbd_at_ack;
     const bool drv = drv_at_ack;
 
-    // Ten microcycles or so under the standing acknowledgement.
+    // Ten microcycles or so under the standing acknowledgment.
     Idle(300);
     if (!lines_moved_since_ack)
-      Say("the lines never moved under a standing acknowledgement: the latch "
+      Say("the lines never moved under a standing acknowledgment: the latch "
           "is untested and this phase proves nothing");
 
     const uint32_t s = LoadSts();
-    if (!(s & kAck_)) Say("STS lost an acknowledgement that had already risen");
+    if (!(s & kAck_)) Say("STS lost an acknowledgment that had already risen");
     if (((s & kDrv) != 0) != drv)
-      Fail("DRV against the instant of the acknowledgement", (s & kDrv) != 0, drv);
+      Fail("DRV against the instant of the acknowledgment", (s & kDrv) != 0, drv);
     if (static_cast<uint16_t>(s >> kDbdShift) != at_ack)
-      Fail("the word STS gives against the word on DBD at the acknowledgement",
+      Fail("the word STS gives against the word on DBD at the acknowledgment",
            s >> kDbdShift, at_ack);
     Lift(wc);
     Idle(kReleaseT + 4);
@@ -1270,7 +1270,7 @@ int main(int argc, char **argv) {
   }
   if (ack_seen[0] == 0) Say("-DB NEED UB was never acknowledged");
   else if (ack_lag_min[0] < kMsynT + kSsynT)
-    Fail("the quickest -DB NEED UB acknowledgement", ack_lag_min[0],
+    Fail("the quickest -DB NEED UB acknowledgment", ack_lag_min[0],
          kMsynT + kSsynT);
 
   std::fprintf(stderr,

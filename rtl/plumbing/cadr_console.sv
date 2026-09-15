@@ -231,7 +231,7 @@
 //   - **THE SPLIT THAT IS MADE IS BETWEEN THE WORDS, AND IT CARRIES A
 //     LATCH.**  The question asked of the first two is whether they are EQUAL
 //     or a page apart, so a pair read as two independent loads of a running
-//     machine is two instants and the answer would be an artefact of the gap.
+//     machine is two instants and the answer would be an artifact of the gap.
 //     The read of word 7 therefore latches ALL THREE, and words 8 and 9 read
 //     that latch: the rule is **VMA first**, exactly as it is CYCLES then
 //     CYCLESH one register along and for the same reason.  A burst of three
@@ -276,7 +276,7 @@
 // address it is handed.  **OKAY and not SLVERR**, which is where this differs
 // from `rtl/plumbing/cadr_disk_pack.sv`'s face: an error response to a
 // Cortex-A9's posted write arrives as an imprecise external abort the kernel
-// cannot attribute to a process, and a constant a program can recognise is
+// cannot attribute to a process, and a constant a program can recognize is
 // the safer failure.
 //
 // **AND IT IS NO LONGER THE WHOLE GIGABYTE, WHICH IS A CORRECTION.**  This
@@ -321,11 +321,11 @@
 //     220 ns.  That is the longest interval over which any of the machine's
 //     own timing is in flight --- `cadr_phase_gen.sv`'s ring, the seven read
 //     taps at 15 to 32, the write pulses, and the two countdowns.  muir's
-//     reference is not silent inside a reset either: CLAUDE.md records that
-//     `chip.rs` goes on deriving `-TPR60` from `phase_ns` at ticks 11 to 18
-//     of a plain power-on reset, so a reset shorter than the cycle it
-//     interrupts is a region the model and the fabric are known to disagree
-//     in and nothing compares.
+//     reference is not silent inside a reset either: `chip.rs` goes on
+//     deriving `-TPR60` from `phase_ns` at ticks 11 to 18 of a plain
+//     power-on reset, so a reset shorter than the cycle it interrupts is a
+//     region the model and the fabric are known to disagree in and nothing
+//     compares.
 //   - 64 is the smallest power of two above that floor, so the countdown is
 //     six bits and its end is a borrow rather than a comparison --- which is
 //     why `LOST_T` is 4,096 and not 4,000, one register along.
@@ -406,10 +406,10 @@
 // comparison.
 //
 // **AND WHERE IT LANDS WAS ASKED OF THE DESIGN RATHER THAN REASONED ABOUT**,
-// which is what CLAUDE.md's `elapsed -> md/CE` entry demands of anything that
+// which is what the `elapsed -> md/CE` finding demands of anything that
 // reaches a reset: a relaxed register's clock enable goes with it, and a
 // signal that drags a long cone into an enable is invisible in a slack figure.
-// Synthesised at this slice, `DDR=1`, with the scoped XDC read, `all_fanout
+// Synthesized at this slice, `DDR=1`, with the scoped XDC read, `all_fanout
 // -flat -endpoints_only` from the two `mach_rst_reg` cells:
 //
 //   the top level's, into `cadr_machine`   1,008 R, 24 S, 19 D, 12 block-RAM
@@ -694,7 +694,7 @@ module cadr_console #(
     // ---
     // --- **TWO BITS AND NOT ONE, AND THE SECOND IS NOT A LUXURY.**  `_held`
     // --- is the value the machine ACTUALLY came up with --- the board latches
-    // --- it at the reset, off the same synchronised level the machine's reset
+    // --- it at the reset, off the same synchronized level the machine's reset
     // --- arms read, so the two cannot disagree --- and `_now` is where the
     // --- switch is today.  A person who moved the switch after the board came
     // --- up sees them differ, and that is exactly the thing they need to be
@@ -953,7 +953,7 @@ module cadr_console #(
 
   // The reserved selector and the word a selector this fabric does not map
   // reads back.  **They are `cadr_microcycle.sv`'s and are repeated here
-  // rather than parameterised**, because they are properties of the window
+  // rather than parameterized**, because they are properties of the window
   // the two modules share and not of either one: a parameter would let a
   // board set them apart, and two ends of one window that disagree about
   // what "nothing" looks like is the failure the value exists to prevent.
@@ -1202,16 +1202,16 @@ module cadr_console #(
   // rather than assumed, and it was wrong first: with the latch armed
   // straight off `r_in` and `r_idx` --- five logic levels off `r_at` --- the
   // routed board put that cone into SIXTY-FOUR CLOCK ENABLES and read
-  // **-0.145 ns** at `r_at_reg[19]/C -> held_q_reg[0]/CE`.  That is
-  // CLAUDE.md's `elapsed -> md/CE` in a new place: a register's enable
-  // carries whatever cone drives it, and a slack figure says nothing about
-  // which. `held_arm` is that decision taken at `R_START` and registered, so
-  // what reaches those enables is one flop and no logic, and the
-  // latch itself happens a state later at `R_PREP` --- still before
-  // `R_PREP2` takes `r_word`, which is what makes the read of word 7 answer
-  // with what it latched.  **It was `vq_arm` while it armed two registers and
-  // is `held_arm` now that it arms three**: a name that lists what it covers
-  // is a name that rots the day the list grows, and this file's own record
+  // **-0.145 ns** at `r_at_reg[19]/C -> held_q_reg[0]/CE`.  That is `elapsed
+  // -> md/CE` in a new place: a register's enable carries whatever cone
+  // drives it, and a slack figure says nothing about which. `held_arm` is
+  // that decision taken at `R_START` and registered, so what reaches those
+  // enables is one flop and no logic, and the latch itself happens a state
+  // later at `R_PREP` --- still before `R_PREP2` takes `r_word`, which is
+  // what makes the read of word 7 answer with what it latched.  **It was
+  // `vq_arm` while it armed two registers and is `held_arm` now that it arms
+  // three**: a name that lists what it covers is a name that rots the day the
+  // list grows, and this file's own record
   // `console-md-is-not-latched-by-the-read-of-vma` is anchored on the line.
   logic        held_arm;
 

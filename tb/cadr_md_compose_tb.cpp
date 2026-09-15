@@ -3,22 +3,21 @@
 //
 // CAN THE COMPOSED MACHINE LEAVE MD STALE ACROSS A READ?
 //
-// CLAUDE.md records a latent defect in `rtl/machine/cadr_microcycle.sv`: MD
-// has three writers --- the third of them held by the last section of this
-// file --- and at a tick where `loadmd_edge` and a `DESTMDR`
-// `cpu_edge` coincide the first branch of the register runs, the `else if`
-// that clears `md_pending` never does, and the held bus word commits over the
-// instruction's own word one boundary later.  `tb/cadr_md_inject_tb.cpp` is
-// the falsifiable statement of it and is red on purpose.  Both that and
-// `tb/cadr_md_hold_tb.cpp` run against `cadr_microcycle`, where the bus is
-// muir's stimulus, and CLAUDE.md's open question is the one this file exists
-// to answer:
+// There is a latent defect in `rtl/machine/cadr_microcycle.sv`: MD has three
+// writers --- the third of them held by the last section of this file --- and
+// at a tick where `loadmd_edge` and a `DESTMDR` `cpu_edge` coincide the first
+// branch of the register runs, the `else if` that clears `md_pending` never
+// does, and the held bus word commits over the instruction's own word one
+// boundary later.  `tb/cadr_md_inject_tb.cpp` is the falsifiable statement of
+// it and is red on purpose.  Both that and `tb/cadr_md_hold_tb.cpp` run
+// against `cadr_microcycle`, where the bus is muir's stimulus, and
+// the open question is the one this file exists to answer:
 //
-//     "What is not known: whether the composed machine can place that edge at
-//      all.  `n_loadmd` is `!(acked || (state == UB && ub_loadmd))` where
-//      `n_memack` is `!acked`, and `ub_loadmd` and `ub_acked` are two
-//      registers off two due times --- so the Unibus is where the strobe and
-//      the acknowledgement come apart."
+//     What is not known: whether the composed machine can place that edge at
+//     all.  `n_loadmd` is `!(acked || (state == UB && ub_loadmd))` where
+//     `n_memack` is `!acked`, and `ub_loadmd` and `ub_acked` are two
+//     registers off two due times --- so the Unibus is where the strobe and
+//     the acknowledgment come apart.
 //
 // THE DUT IS `cadr_machine`, so the bus interface, the decode, the bridge and
 // the arbiter are all in the design and only DDR is modeled.  That is the
@@ -40,17 +39,17 @@
 //   3. the invariant itself --- that MD, at every cpu edge after a read the
 //      MODEL answered, holds the word the MODEL handed back.
 //
-// THE WORD COMPARED IS THE MODEL'S, NEVER THE DUT'S.  CLAUDE.md's shadow
-// memory rule: the expected word is what this file put on `mem_rdata`, at the
-// address this file decoded, so a bridge that latched the wrong word, a
-// processor that took it at the wrong instant and a strobe that arrived
-// without its word are all visible.  The poison is injective in the address,
-// so a word from the wrong place is not a word from anywhere.
+// THE WORD COMPARED IS THE MODEL'S, NEVER THE DUT'S.  The shadow-memory rule:
+// the expected word is what this file put on `mem_rdata`, at the address this
+// file decoded, so a bridge that latched the wrong word, a processor that
+// took it at the wrong instant and a strobe that arrived without its word are
+// all visible.  The poison is injective in the address, so a word from the
+// wrong place is not a word from anywhere.
 //
 // THE LATENCY SCHEDULE WALKS THE MICROCYCLE.  A fixed delay puts every
-// acknowledgement at the same phase of the 29-tick microcycle and would
+// acknowledgment at the same phase of the 29-tick microcycle and would
 // measure one phase 512 times.  The schedule steps by a stride coprime with
-// 29 over a span wider than a microcycle, so the acknowledgement lands at
+// 29 over a span wider than a microcycle, so the acknowledgment lands at
 // every offset from the boundary that the machine's own stalling permits ---
 // and the histogram of those offsets is printed, because a phase that never
 // occurs is the finding.
@@ -336,7 +335,7 @@ Run Simulate() {
     // `loadmd_edge` branch on that tick, so the `else if` that commits the
     // held word does not run and the commit waits for the NEXT boundary.
     // Measured here rather than argued: it happens on about one read in
-    // thirty-six, which is what a 29-tick microcycle and an acknowledgement
+    // thirty-six, which is what a 29-tick microcycle and an acknowledgment
     // free to land anywhere gives.  It is harmless only because -HANG covers
     // it --- `rd_in_progress` is still up for RD_FINISH_T ticks, so an
     // instruction that READS MD in that microcycle parks the generator and
@@ -620,7 +619,7 @@ int main(int argc, char **argv) {
   Check(r.reads == 256 && r.writes == 256,
         "%ld reads and %ld writes, wanting 256 of each", r.reads, r.writes);
 
-  // `UB MD LOAD`.  Three pairs, three loads, three acknowledgements; the word
+  // `UB MD LOAD`.  Three pairs, three loads, three acknowledgments; the word
   // in `MD` after every one of them; and the invariant that no load was taken
   // at an edge where the processor's own path into `MD` was live.
   Check(r.md_loads == 3, "%ld writes of MD reached UB MD LOAD, wanting 3", r.md_loads);

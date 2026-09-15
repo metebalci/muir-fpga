@@ -119,8 +119,8 @@ uses `Controller`. Holding the disk to the CADRDC netlist instead would hold
 one block to a fidelity the machine it plugs into does not have. The composed
 check could then no longer compare it against `Rtl` at all. That would be a
 better-checked block that the project's own top-level check could no longer
-see. CLAUDE.md points the same way: the netlists are read for provenance, and
-`rtl` is the word this project works at.
+see. The netlists are read for provenance, and `rtl` is the word this project
+works at.
 
 **The drive carries three words a block beyond its data**: the header word,
 the header checkword and the data checkword. So `STATUS<18>` header compare,
@@ -285,7 +285,7 @@ drive present" reached the clock enable of every drive register. That was
 seven logic levels, 6.8 ns, 3,620 of 23,423 endpoints failing by up to
 2.077 ns on the DDR=1 board, where the baseline met at +0.030. The remedy is
 the one `cadr_machine.xdc` prescribes for a signal read once a bus cycle. The
-acknowledgement stays a gate exactly as -MEMACK on a write does, and the
+acknowledgment stays a gate exactly as -MEMACK on a write does, and the
 registers take the store a tick after the request, from copies of the word and
 the register number registered every tick with no enable. Nothing on the bus
 can see one tick in a register, because the next cycle is a whole microcycle
@@ -318,8 +318,8 @@ access-time sum is registered before `elapsed` comes off it for the same
 reason, the tick counted by `elapsed` itself. `disk_pack.pass` runs
 22 fetches and 4 write-backs under varying delays with 243 bursts counted.
 `ps7_init` with `S_AXI_HP2` on at 64 bits is **byte-identical in its 673
-operations** to the committed routine, as CLAUDE.md predicted for HP0 and
-HP1, so Digilent's FSBL still needs no change.
+operations** to the committed routine, as it is for HP0 and HP1, so Digilent's
+FSBL still needs no change.
 
 ## The disk pack program
 
@@ -340,27 +340,26 @@ fault this revision then fixed, below at "the refusal read back with WAITING
 up". The last paragraphs say what to copy and what the console must show.
 
 **What it does, in order.** *The guard comes first.* A read on `M_AXI_GP0`
-that nothing answers hangs both Arm cores (CLAUDE.md). So before any GP0
-access it reads the EMIO tally at `0xE000A068`/`6C` through `/dev/mem`, and
-requires the marker bits `(w & 0x80008000) == 0x00008000` in both words, which
-only a bitstream with the processing system in it drives. All ones, or zero
---- the GPIO clock gated, or no instrument --- and it stops before touching
-GP0 and says why. `--no-guard` is for a board somebody knows. *IDENT comes
-second.* Register 7 must read `"PACK"`. `"NONE"` is the proving boards'
-default slave and is named as such. *Then the store is emptied.* Every one of
-the 24 slots is taken away, and DRIVE is written with nothing on any cable.
-What the store held before this program is unknown to it, the tags being in
-the fabric and not readable over GP0, so a slot that was DIRTY then is
-reported lost, once, with the count. *Then the bay is looked at*, and
-whichever packs are already in it come present. Each comes with its own
-geometry from its own size (a T-300 is 269,562,880 bytes, a T-80 70,937,600)
-and its own write-protect switch from its own read-only mark. `--timed` says
-whether the drives' own seek and rotational times are charged. They are
-untimed by default, which is muir's default, and every count this project
-quotes was measured with it. **An empty bay is not an error.** The
-program says so and goes on watching. *Then comes the loop*, until SIGTERM or
-SIGINT, on which every dirty slot is written back and every drive is taken
-absent.
+that nothing answers hangs both Arm cores. So before any GP0 access it reads
+the EMIO tally at `0xE000A068`/`6C` through `/dev/mem`, and requires the
+marker bits `(w & 0x80008000) == 0x00008000` in both words, which only a
+bitstream with the processing system in it drives. All ones, or zero --- the
+GPIO clock gated, or no instrument --- and it stops before touching GP0 and
+says why. `--no-guard` is for a board somebody knows. *IDENT comes second.*
+Register 7 must read `"PACK"`. `"NONE"` is the proving boards' default slave
+and is named as such. *Then the store is emptied.* Every one of the 24 slots
+is taken away, and DRIVE is written with nothing on any cable.  What the store
+held before this program is unknown to it, the tags being in the fabric and
+not readable over GP0, so a slot that was DIRTY then is reported lost, once,
+with the count. *Then the bay is looked at*, and whichever packs are already
+in it come present. Each comes with its own geometry from its own size (a
+T-300 is 269,562,880 bytes, a T-80 70,937,600) and its own write-protect
+switch from its own read-only mark. `--timed` says whether the drives' own
+seek and rotational times are charged. They are untimed by default, which is
+muir's default, and every count this project quotes was measured with it. **An
+empty bay is not an error.** The program says so and goes on watching. *Then
+comes the loop*, until SIGTERM or SIGINT, on which every dirty slot is written
+back and every drive is taken absent.
 
 **THE DRIVE BAY, AND WHY THERE IS NO `--pack` AND NO `--unit`.** The packs
 live on the card's second partition, `/mnt/packs`, named `disk-pack-0.img` to
@@ -1115,9 +1114,9 @@ belongs one gate before the 74S175 at LCC 3E12, which `cadr_microcycle.sv`
 registers at the microcycle edge. `sintr` has stopped being an input of
 `cadr_machine` anywhere. The tie-off in `boards/arty-z7-20/cadr_arty.sv` is
 gone, and so is every line in `tb/` that drove it. It was deleted and not left
-unused, which is CLAUDE.md's `md` trap word for word. Verilator lets a
-testbench write an output, so a drive line that stayed would have gone on
-supplying the right answer with every check green.
+unused, which is the `md` trap word for word. Verilator lets a testbench write
+an output, so a drive line that stayed would have gone on supplying the right
+answer with every check green.
 
 ### What holds it
 
@@ -1176,13 +1175,13 @@ hole. A record with an `@hole` needs an issue, and inventing one to hold a
 limit that was never a defect is the suppression that list exists to prevent.
 
 **The band cannot close it, and that is worth being exact about.**
-`rtl_sys.golden` has `sintr` up on 17,185 of its 2,200,000 rows, and CLAUDE.md
-records that on the band it is the disk's done interrupt and nothing else's.
-But `build/microcycle_sys.pass` runs `cadr_microcycle` **alone**, where the
-disk is outside the module and `sintr` is properly a port with the trace
-driving it. So those 17,185 rows check the *processor's* end of the wire,
-which is real and which this slice leaves exactly as it was. They cannot reach
-this end. What would reach it is a composed band check, `cadr_machine` on
+`rtl_sys.golden` has `sintr` up on 17,185 of its 2,200,000 rows, and on the
+band it is the disk's done interrupt and nothing else's.  But
+`build/microcycle_sys.pass` runs `cadr_microcycle` **alone**, where the disk
+is outside the module and `sintr` is properly a port with the trace driving
+it. So those 17,185 rows check the *processor's* end of the wire, which is
+real and which this slice leaves exactly as it was. They cannot reach this
+end. What would reach it is a composed band check, `cadr_machine` on
 `rtl_sys.golden`, and that is a slice rather than a line. It needs the pack
 side, a Linux serving blocks on demand, and something over a billion ticks.
 And muir's channel reaches main memory in no bus cycles at all where the

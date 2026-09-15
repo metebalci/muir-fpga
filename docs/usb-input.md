@@ -235,7 +235,7 @@ which is the cadence muir has always fed this microcode at. A burst that
 arrives faster waits in the terminal's backlog of 256 words, about six seconds
 of the fastest typing anybody does.
 
-This is why the link carries no acknowledgement. The far end is a queue with a
+This is why the link carries no acknowledgment. The far end is a queue with a
 bound, and a source that overruns it is refused whole keystrokes rather than
 half of them, which is what keeps a Shift from going down with its release
 dropped.

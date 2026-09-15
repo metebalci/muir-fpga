@@ -53,8 +53,8 @@ HOSTCFLAGS ?= -O2 -Wall -Wextra -std=gnu11
 # other's test binary --- and `make` then sees a binary newer than its sources
 # and does not rebuild.  Measured 12 Sep: a gate at one commit ran the OTHER
 # tree's `chaos_test` and died on `usage:`, because the flags had changed
-# under it.  That is CLAUDE.md's stale-artifact scar, met in a third place
-# after the cargo target directory and the compiled-in PROM path.
+# under it.  That is the stale-artifact scar, met in a third place after the
+# cargo target directory and the compiled-in PROM path.
 WORK    ?= $(HOME)/.cache/muir-fpga-serial-$(shell printf '%s' '$(CURDIR)' | sha256sum | cut -c1-12)
 
 CFLAGS += -Wall -Wextra -std=gnu11

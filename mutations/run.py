@@ -10,9 +10,9 @@
 # check earning its keep; one it does not is a hole.
 #
 # Every mutation in list.txt is a bug in the fabric, and most of them are bugs
-# that were really made --- CLAUDE.md's "What went wrong, and what caught it"
-# is the seed of the list, because each of those passed something before it
-# was found.
+# that were really made --- this project's record of what went wrong and what
+# caught it is the seed of the list, because each of those passed something
+# before it was found.
 #
 # THE WORKING TREE IS NEVER MUTATED.  Each mutation gets a copy of rtl/ and
 # tb/ under --work and is applied, built and run there.  The tree is shared
@@ -26,10 +26,11 @@
 #   there more than once.  Silently mutating nothing would give a clean build,
 #   a passing check, and a report of SURVIVED: a finding that is not real.
 #
-#   the build failed.  This is CLAUDE.md's own lesson, from the other side:
-#   two mutations were once reported as surviving when lint had rejected them
-#   and a stale binary ran.  Nothing here reuses a build directory, and a
-#   build that fails is reported as BROKEN rather than as anything else.
+#   the build failed.  This is `docs/mutations.md`'s rule that a build
+#   failure is never a catch, from the other side: two mutations were once
+#   reported as surviving when lint had rejected them and a stale binary
+#   ran.  Nothing here reuses a build directory, and a build that fails is
+#   reported as BROKEN rather than as anything else.
 #
 #   the baseline failed.  Before any mutation runs, the unmutated copy has to
 #   pass every check that has mutations against it.  "The check caught it" is
@@ -41,8 +42,8 @@
 #
 # WHAT `@hole` IS FOR, and why it is not a way to hide one.  A check that is
 # known not to catch something, with an issue saying so, is a recorded
-# exception --- the same shape as CLAUDE.md's "Where the fabric parts from
-# muir", or the testbench not comparing -TPR60 while RESET is high.  What the
+# exception --- the same shape as the recorded partings of the fabric from
+# muir, or the testbench not comparing -TPR60 while RESET is high.  What the
 # repository does not tolerate is an *unrecorded* one.
 #
 # The reason to have the field at all is that a target which is red by design
@@ -394,10 +395,10 @@ CHECKS = {
     # CAN THE COMPOSED MACHINE LEAVE MD STALE ACROSS A READ?  `md_hold` and
     # `md_inject` ask that of `cadr_microcycle`, where the bus is muir's
     # stimulus; this asks it of the whole machine with only DDR modeled, and
-    # it answers the question CLAUDE.md left open about whether the
-    # DESTMDR/-LOADMD coincidence can be placed at all.  It also compares the
-    # direction of every DDR transaction against the processor's own WRCYC,
-    # which nothing else in `make check` does.
+    # it answers the open question of whether the DESTMDR/-LOADMD coincidence
+    # can be placed at all.  It also compares the direction of every DDR
+    # transaction against the processor's own WRCYC, which nothing else in
+    # `make check` does.
     #
     # No `golden`: there is no trace to hand it.  Everything with a check of
     # its own is in `extra`.
@@ -627,7 +628,7 @@ CHECKS = {
     },
     # ONE TRANSACTION PER BUS CYCLE, IN THE DIRECTION WRCYC NAMES, AND NONE
     # ANYWHERE ELSE.  The property a spurious write at a read's own address
-    # falls over, which is the shape CLAUDE.md's page-hash-table corruption has
+    # falls over, which is the shape the board's page-hash-table corruption has
     # been narrowed to.  `axi_master` is one level down and cannot see it --- a
     # check whose stimulus IS the transactions cannot count how many a bus
     # cycle issued --- and `mem_count` holds the run's totals to 256 and 256,
@@ -760,7 +761,7 @@ CHECKS = {
     # check above holds it for the one program `cadr_machine` can run under
     # Verilator, and `rtl/plumbing/cadr_bus_audit.sv` carries it onto the board
     # for the program the board runs.  Two implementations of one concept, so
-    # one term, which is what CLAUDE.md's first inherited rule asks for.
+    # one term: the same concept takes the same term, always.
     #
     # The DUT is the module alone and the stimulus is directed.  That is not a
     # smaller version of the check above; it is the only way the clauses
@@ -1577,8 +1578,8 @@ def parse(path):
     if not mutations:
         die("%s: no mutations" % path)
 
-    # Names are how a survivor is reported and how CLAUDE.md's claim is read
-    # against the list, so two of them may not collide.
+    # Names are how a survivor is reported and how a claim about the list is
+    # read against it, so two of them may not collide.
     seen = {}
     for m in mutations:
         if m.name in seen:
@@ -1626,16 +1627,16 @@ def copy_tree(dest, with_golden=False, rev=None):
     # Tcl script than for a module.
     # And `third_party`: `rtl/plumbing/cadr_soc.sv` instantiates Ibex, which
     # is vendored there, so a `soc` mutant that could not see it would report
-    # BROKEN rather than anything about the mutation.  Widening this list is
-    # the trap CLAUDE.md records --- `git archive` refuses a pathspec matching
-    # nothing, and `--since` names revisions older than the directory --- and
-    # the `cat-file -e` filter below is what makes it safe.
-    # And `tools`: both `program.tcl`s source `tools/build_stamp.tcl` for the
-    # build a bitstream names, so a copy without it is a copy where neither
-    # script runs at all --- every record "caught" for the wrong reason and
-    # the baseline BROKEN.  It is 108 KB and `tools/` arrives at 2e54886, well
-    # inside the history `--since` reaches, so the filter earns its keep here
-    # rather than being tested by it.
+    # BROKEN rather than anything about the mutation.  Widening this list is a
+    # known trap --- `git archive` refuses a pathspec matching nothing, and
+    # `--since` names revisions older than the directory --- and the `cat-file
+    # -e` filter below is what makes it safe.  And `tools`: both
+    # `program.tcl`s source `tools/build_stamp.tcl` for the build a bitstream
+    # names, so a copy without it is a copy where neither script runs at all
+    # --- every record "caught" for the wrong reason and the baseline BROKEN.
+    # It is 108 KB and `tools/` arrives at 2e54886, well inside the history
+    # `--since` reaches, so the filter earns its keep here rather than being
+    # tested by it.
     dirs = ["rtl", "tb", "boards", "third_party",
             "tools"] + (["golden"] if with_golden else [])
     if rev:
@@ -2015,9 +2016,10 @@ def generator_check(args, work, spec):
     `release/cables` and cargo will hand a later mutation the earlier one's
     binary.  Measured: three different mutations of cables.rs all panicked
     with the *same* message, which is one mutation's verdict reported three
-    times.  It is CLAUDE.md's stale-binary lesson exactly, in the mirror ---
-    there it made mutations look like survivors, here it makes them look
-    caught, and looking caught is worse because nothing is obviously wrong.
+    times.  It is the stale-binary trap `docs/mutations.md` names, in the
+    mirror --- there it made mutations look like survivors, here it makes
+    them look caught, and looking caught is worse because nothing is
+    obviously wrong.
     Isolation costs 13 s and 14 MB a mutation and removes the whole class.
     """
     manifest = os.path.join(work, "golden", "Cargo.toml")
@@ -2038,8 +2040,8 @@ def cables_check(args, work, build_fails=False):
 
     `cables.pass` is lint alone, which catches a wrong direction or a name
     that no longer exists.  It cannot catch a changed comment --- MIT's own
-    name on the wire --- and CLAUDE.md says what cadr_cables.svh holds to is
-    both netlists via `part::pinout`.  Only `current` enforces that: it
+    name on the wire --- and what cadr_cables.svh holds to is both netlists
+    via `part::pinout`.  Only `current` enforces that: it
     regenerates from muir and fails if anything moved.  So this does the same,
     against the copy, with plain diff standing in for `git diff`.
     """
@@ -2136,30 +2138,30 @@ def check_makefile():
     # and the property it exists for --- that a word whose echo is not the
     # address asked for is refused --- is already a deliberate failure in its
     # own model rather than a mutation of the source.  Naming it here rather
-    # than aiming a record is the second of the two ways CLAUDE.md says close
-    # this warning, and it is the one that stands alone.
-    # `checkpoint` is the same shape as `readout_face` and closed the same
-    # way, and the reason is worth writing down rather than inherited: its
-    # DUT is a C program under `boards/`, and its judge is muir's own reader.
-    # It already carries mutations --- three of them, in `chk_rtl.c` behind
-    # `CHK_MUTATE`, built by its own Makefile and run by its own rule, with
-    # the catching line asserted and the leg that caught each one named.  A
-    # record aimed at it here would be a fourth mutation run by a different
-    # machinery against the same file, and this runner has no way to build a
-    # C program three times over and put muir behind it.  So it is named
-    # here, which is the one of CLAUDE.md's two ways that stands alone.
-    # `chaosnet`, `serial` and `terminal` are the Linux halves of three of the
-    # I/O board's four cables, and they are closed the third way --- which is
-    # neither of CLAUDE.md's two, and is worth saying so rather than filing
-    # under one of them.  Each carries a mutation list OF ITS OWN, in its own
-    # package, run by its own `mutate.py` from its own `make check`: the same
-    # machinery cadr-disk-packs already uses, and the same record format as
-    # `mutations/list.txt`.  So something does mutate them and this runner is
-    # not it, because this runner verilates SystemVerilog and those checks are
-    # C programs with a socket and a scratch directory behind them.  A record
-    # aimed here would have to build a C program a second way; the package's
-    # own runner already builds each mutant in a directory of its own and
-    # calls a build failure BROKEN, which is the property that matters.
+    # than aiming a record is the second of the two ways to close this
+    # warning, and it is the one that stands alone.  `checkpoint` is the same
+    # shape as `readout_face` and closed the same way, and the reason is worth
+    # writing down rather than inherited: its DUT is a C program under
+    # `boards/`, and its judge is muir's own reader.  It already carries
+    # mutations --- three of them, in `chk_rtl.c` behind `CHK_MUTATE`, built
+    # by its own Makefile and run by its own rule, with the catching line
+    # asserted and the leg that caught each one named.  A record aimed at it
+    # here would be a fourth mutation run by a different machinery against the
+    # same file, and this runner has no way to build a C program three times
+    # over and put muir behind it.  So it is named here, which is the one of
+    # the two ways that stands alone.  `chaosnet`, `serial` and `terminal` are
+    # the Linux halves of three of the I/O board's four cables, and they are
+    # closed the third way --- which is neither of those two, and is worth
+    # saying so rather than filing under one of them.  Each carries a mutation
+    # list OF ITS OWN, in its own package, run by its own `mutate.py` from its
+    # own `make check`: the same machinery cadr-disk-packs already uses, and
+    # the same record format as `mutations/list.txt`.  So something does
+    # mutate them and this runner is not it, because this runner verilates
+    # SystemVerilog and those checks are C programs with a socket and a
+    # scratch directory behind them.  A record aimed here would have to build
+    # a C program a second way; the package's own runner already builds each
+    # mutant in a directory of its own and calls a build failure BROKEN, which
+    # is the property that matters.
     #
     # **`terminal` IS NEW HERE AND THE CHECK IT NAMES IS OLDER THAN THE
     # ENTRY.**  `cadr-terminal` has had `make -C src check` since it was
@@ -2185,26 +2187,23 @@ def check_makefile():
     # with this board's pins on it, so a record aimed here would be the same
     # mutation of the same text in a second file: it would tell us nothing
     # `arty` does not already tell us, and it would have to be kept in step
-    # with the Arty's by hand for ever.  Naming it here is the second of
-    # CLAUDE.md's two ways to close this warning and the one that stands
-    # alone.
-    # `arty_a7` is the Arty A7-100's lint and is named here on the same
-    # argument, with one difference worth stating.  That board is an Artix-7
-    # and has no processing system, so its top level is not the Arty's with
-    # different pins: it ties off some forty seams the other two drive, and it
-    # has seven configurations of its own --- the machine, the machine with the
-    # probe, with the DDR3L controller, the two proving boards, with the soft
+    # with the Arty's by hand for ever.  Naming it here is the second of the
+    # two ways to close this warning and the one that stands alone.  `arty_a7`
+    # is the Arty A7-100's lint and is named here on the same argument, with
+    # one difference worth stating.  That board is an Artix-7 and has no
+    # processing system, so its top level is not the Arty's with different
+    # pins: it ties off some forty seams the other two drive, and it has seven
+    # configurations of its own --- the machine, the machine with the probe,
+    # with the DDR3L controller, the two proving boards, with the soft
     # processing system, and with the soft processing system AND the memory,
     # which is the only one of the seven that is the whole board --- as `arty`
-    # has six.  What a record aimed here
-    # could hold is still
-    # what `arty`'s records hold, that an output of `cadr_machine` left
-    # unconnected is caught, and that is a property of the SHAPE of a top
-    # level rather than of which board it is.  What `arty`'s records do NOT
-    # cover is that board's own tie-offs, and the honest statement is that
-    # lint holds those: a tie-off removed is an undriven signal and a tie-off
-    # put on a port that has a driver is a conflict, and Verilator says so
-    # either way.
+    # has six.  What a record aimed here could hold is still what `arty`'s
+    # records hold, that an output of `cadr_machine` left unconnected is
+    # caught, and that is a property of the SHAPE of a top level rather than of
+    # which board it is.  What `arty`'s records do NOT cover is that board's
+    # own tie-offs, and the honest statement is that lint holds those: a
+    # tie-off removed is an undriven signal and a tie-off put on a port that
+    # has a driver is a conflict, and Verilator says so either way.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
                            "usb_input", "fpgarc", "cora", "arty_a7"}
@@ -2688,7 +2687,7 @@ def report(mutations, listing_path):
     The exit rule is three-way, and the third part is what keeps `@hole`
     honest.  A survivor with no `@hole` fails: it is a new finding.  A
     survivor with one is reported and tolerated: it is a recorded exception,
-    the same shape as the divergences from muir that CLAUDE.md writes down.
+    the same shape as the divergences from muir that are written down.
     And a mutation that is *caught* while still carrying an `@hole` fails too,
     because the hole has closed and the record has not caught up --- without
     that, suppressions accumulate silently and the list ends up carrying

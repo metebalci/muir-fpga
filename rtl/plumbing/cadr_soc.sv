@@ -20,10 +20,10 @@
 // RV32IMC, under Apache-2.0, vendored at a pinned commit in `third_party/ibex/`
 // with its own license and its provenance beside it --- `third_party/ibex/README.md`
 // says which commit, how it was obtained and what each file's digest is.  The
-// decision behind it is in CLAUDE.md and it is the important one: a standard
-// soft core and never a home-made one.  A processor this project wrote would
-// be a second machine to be wrong about, in a repository whose whole method is
-// holding ONE machine to a reference.
+// decision behind it is the important one: a standard soft core and never a
+// home-made one.  A processor this project wrote would be a second machine to
+// be wrong about, in a repository whose whole method is holding ONE machine to
+// a reference.
 //
 // WHY IBEX and not the others.  MicroBlaze arrives as an IP directory with an
 // encrypted netlist and its own toolchain, which is the thing this project has
@@ -285,7 +285,7 @@ module cadr_soc #(
   // **THE TWO SIDES OF THE CROSSING THEREFORE COME OUT OF RESET AT DIFFERENT
   // INSTANTS, AND THAT IS HARMLESS BY CONSTRUCTION**: both sides are held
   // while `rst` stands, and what each sees of the other while it is held is
-  // the other's idle level --- no request out, no acknowledgement back --- so
+  // the other's idle level --- no request out, no acknowledgment back --- so
   // whichever leaves first finds the far side where it would have found it
   // anyway.
   logic [2:0] rst_sync;
@@ -539,7 +539,7 @@ module cadr_soc #(
   // AWAY.**  This flag is what holds the next request off for one clock after
   // an answer, and one clock is exactly the margin the crossing's fourth phase
   // has: `cadr_soc_cross.sv` records the measurement --- of 273 requests, 129
-  // arrive while the acknowledgement still stands at the second flip-flop of
+  // arrive while the acknowledgment still stands at the second flip-flop of
   // the synchronizer and none while it stands at the first.  The crossing is
   // written not to need that (it holds its answer until the handshake has
   // closed, so a requester may ask on the very next clock), and the two

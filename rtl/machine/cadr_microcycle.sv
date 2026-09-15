@@ -208,7 +208,7 @@ module cadr_microcycle #(
     //
     // It is a PORT OF ITS OWN and not the `-LOADMD` above, because on the
     // board it is a separate input of the same gate: `-LOADMD` at REQLM 0C10
-    // is the processor's acknowledgement OR `UB MD LOAD`, and only the first
+    // is the processor's acknowledgment OR `UB MD LOAD`, and only the first
     // of those carries the `RDCYC` term that `loadmd_edge` below applies.
     // A write of MD has no `RDCYC` to be gated by; the master is not this
     // machine.
@@ -1202,7 +1202,7 @@ module cadr_microcycle #(
   // words, as `src/rtl.rs` quotes them: "-LOADMD equals MEMACK **and RDCYC**
   // ... Loads MD from MEM, asynchronous with clock ... the high-going edge
   // loads MD.  It takes care of deskewing the data."  The interface puts
-  // -LOADMD out on every acknowledgement, read or write --- `Busint` sets
+  // -LOADMD out on every acknowledgment, read or write --- `Busint` sets
   // `loadmd: ack` without looking at the direction, and so does
   // `cadr_busint_xbus.sv` --- and it is `Rtl::bus_cycle`'s `if !self.wrcyc`
   // that keeps a write from strobing MD.  So the RDCYC term belongs on this
@@ -1223,7 +1223,7 @@ module cadr_microcycle #(
   // that moved MD the instant the strobe came would change it under a read
   // phase that has already settled, and the microcycle reading MD would see
   // the *next* word.  Measured at microcycle 1,422,502 of the System band,
-  // where the acknowledgement lands inside the cycle and muir's MD does not
+  // where the acknowledgment lands inside the cycle and muir's MD does not
   // move until the one after it.
   //
   // So: latched at the strobe, committed at the boundary --- or straight
@@ -1416,7 +1416,7 @@ module cadr_microcycle #(
   // "Cleared by MEMACK delayed by about 150 ns" --- `-RDFINISH` is `-MFINISH`
   // through the TD50 at VCTL1 1D23 and then the TD250 at 1D22, which is 140 ns
   // on the tap ordering `src/part.rs` records.  `MBUSY` clears on `-MFINISHD`,
-  // the 30 ns tap of the same TD50.  Two countdowns off the acknowledgement.
+  // the 30 ns tap of the same TD50.  Two countdowns off the acknowledgment.
   //
   // **-RDFINISH is two ticks short of its 140, and here is the derivation.**
   // Ending a hang costs this fabric two ticks that the board spends in gate
@@ -1441,7 +1441,7 @@ module cadr_microcycle #(
   //
   // Both halves have now been measured and both are false.  The placement
   // *was* a tick late --- the testbench worked the slave's answer out before
-  // the clock edge rather than after it, so every acknowledgement the
+  // the clock edge rather than after it, so every acknowledgment the
   // interface makes combinationally, which is every write, arrived a tick
   // behind: 17 ticks from the grant against muir's 16, on all 5,650 writes,
   // while reads were already exact at 28.  Fixing it collapses the reported
@@ -1486,9 +1486,9 @@ module cadr_microcycle #(
   // 1D23/1D22.  A delay line carries the whole waveform, so while -MEMACK
   // STANDS its delayed copy stands too, and the two flip flops it clears are
   // held cleared rather than cleared once.  The countdowns above are loaded
-  // at the acknowledgement's rising edge and fire exactly once, which is the
+  // at the acknowledgment's rising edge and fire exactly once, which is the
   // same thing for every cycle a running machine makes --- and is not the
-  // same thing when the acknowledgement never falls.
+  // same thing when the acknowledgment never falls.
   //
   // It never falls when the machine is HALTED with a memory cycle prepared.
   // -MEMRQ is `MEMSTART AND VMAOK OR MBUSY` and MEMSTART is a cpu-clocked
@@ -1501,12 +1501,12 @@ module cadr_microcycle #(
   // What goes wrong is the next single step.  A step is a cpu edge, MEMGO is
   // still up on the frozen MEMSTART, so the step sets MBUSY and READ IN
   // PROGRESS again and zeroes both countdowns --- and there is no second
-  // rising edge of an acknowledgement that has been asserted all along, so
+  // rising edge of an acknowledgment that has been asserted all along, so
   // nothing ever clears them.  READ IN PROGRESS standing with `USE.MD` and
   // no -WAIT (the second -WAIT term is `USE.MD AND MBUSY AND -MEMGRANT`, and
   // -MEMGRANT is asserted) is -HANG, and -HANG parks the ring for ever: a
   // parked ring makes no boundary, so no master clock, so
-  // `cadr_busint_xbus.sv` can take no grant, so no acknowledgement can
+  // `cadr_busint_xbus.sv` can take no grant, so no acknowledgment can
   // arrive to end it --- and `cadr_spy_registers.sv`'s `landing` is
   // `mclk || phase_t == SPEEDCLK_T` with `phase_t` saturating, so no console
   // write lands either.  RUN, a STEP pulse, the console's own step and the
@@ -1521,7 +1521,7 @@ module cadr_microcycle #(
   // So the taps are levels here too.  The countdown still places the clear at
   // the instant it always did; the term below only adds what the delay line
   // has been doing all along once the countdown has run out and the
-  // acknowledgement is still there.  On a running machine it is reached for
+  // acknowledgment is still there.  On a running machine it is reached for
   // one or two ticks after MBUSY has already gone, where it asserts what is
   // already true --- no golden trace moves --- and on a halted one it is what
   // stops the step arming a hang nothing can end.
@@ -1667,7 +1667,7 @@ module cadr_microcycle #(
       dc           <= 10'd0;
       for (int unsigned k = 0; k < 8; k++) opcs[k] <= 14'd0;
     end else begin
-      // The acknowledgement's two delays, which run on their own and not on
+      // The acknowledgment's two delays, which run on their own and not on
       // the cpu clock: a stall is what they are there to end.
       n_memack_q <= n_memack;
       n_loadmd_q <= n_loadmd;

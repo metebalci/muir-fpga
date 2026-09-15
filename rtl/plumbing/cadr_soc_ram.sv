@@ -19,9 +19,9 @@
 // hex went missing elaborates empty and the core runs zeros --- which on
 // RISC-V is an illegal instruction at the first fetch, so the failure at least
 // announces itself rather than running a different program.  The Makefile's
-// rule is what stops it happening: the hex is a prerequisite, and CLAUDE.md
-// records the day a stale absolute path compiled into a binary made `make`
-// believe a control store of nothing was up to date.
+// rule is what stops it happening: the hex is a prerequisite, a stale absolute
+// path compiled into a binary having once made `make` believe a control store
+// of nothing was up to date.
 //
 // **ONE MEMORY AND NOT TWO.**  A split instruction and data memory would be
 // smaller to reason about and wrong to build: a firmware has constants in its

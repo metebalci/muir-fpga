@@ -14,7 +14,7 @@
 // `muir/tests/chaos.rs`, and they are AIM-628 §3.5 and §3.6 written out: the
 // opcode in the high byte of word 0, the forwarding count in the top four
 // bits of word 1 and the byte count in the bottom twelve, then destination,
-// destination index, source, source index, packet number, acknowledgement,
+// destination index, source, source index, packet number, acknowledgment,
 // and the data two bytes a word with the FIRST byte in the low half.
 //
 // **THE CHECK WORD IS ANCHORED ON THE NETLIST BOARD AND NOT ON THIS CODE.**
@@ -45,7 +45,7 @@ static const uint16_t board_words[] = {
 	0003050,	/* source address */
 	0000021,	/* source index */
 	0000001,	/* packet number */
-	0000000,	/* acknowledgement */
+	0000000,	/* acknowledgment */
 	0044524,	/* "TI", the first byte in the low half */
 	0042515,	/* "ME" */
 	0003050,	/* the cable destination, written last by the software */
@@ -227,7 +227,7 @@ static void a_frame_goes_there_and_back(void)
 	CHECK(back.packet.source_index == p.source_index, "source index %u",
 	      (unsigned)back.packet.source_index);
 	CHECK(back.packet.number == p.number, "packet number %u", (unsigned)back.packet.number);
-	CHECK(back.packet.ack == p.ack, "acknowledgement %u", (unsigned)back.packet.ack);
+	CHECK(back.packet.ack == p.ack, "acknowledgment %u", (unsigned)back.packet.ack);
 	CHECK(back.packet.len == p.len, "byte count %u", (unsigned)back.packet.len);
 	CHECK(memcmp(back.packet.data, p.data, 488) == 0, "all 488 bytes");
 

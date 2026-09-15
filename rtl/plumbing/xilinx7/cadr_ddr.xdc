@@ -44,7 +44,7 @@
 # `mutations/list.txt` already had one: `the-setup-time-is-short` makes
 # `SETUP_T` fifteen ticks where this claims sixteen, and `busint_xbus` catches
 # it at tick 56 of the trace, on the first cycle --- a request a tick early is
-# an acknowledgement a tick early, so `-MEMACK` and `-LOADMD` both disagree
+# an acknowledgment a tick early, so `-MEMACK` and `-LOADMD` both disagree
 # with muir. That record's note now says it holds this file as well as the
 # fabric, because nothing else about it would show that.
 #
@@ -56,7 +56,7 @@
 #     found", twice, and `report_exceptions` counts two where there should be
 #     four. Measured. Nor can this file reach them from outside ---
 #     `get_pins u_machine/mem_addr[*]` and `u_machine/mem_wdata[*]` are both
-#     empty on the synthesised board, the buses having been dissolved. Only
+#     empty on the synthesized board, the buses having been dissolved. Only
 #     `u_machine/mem_write` survives, alone.
 #
 #   - The `/D` pins and not the cells. `-to [get_cells ...]` is every input
@@ -67,7 +67,7 @@
 #
 # AND THAT SPLIT IS MEASURED, not assumed, because it depends on how synthesis
 # chose to build the register and could have gone the other way. On the
-# synthesised board `m_axi_awaddr_reg[2]` is an FDRE with a real `CE`, driven
+# synthesized board `m_axi_awaddr_reg[2]` is an FDRE with a real `CE`, driven
 # by `g_ddr.u_axi/E[0]` --- the state machine --- and the whole fanin cone of
 # its `D` pin is three startpoints:
 #

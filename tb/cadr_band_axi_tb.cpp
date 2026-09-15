@@ -6,7 +6,7 @@
 //
 // **WHY THIS EXISTS, AND WHAT IT IS NOT.**  `tb/cadr_hash_watch_tb.cpp` runs
 // `cadr_machine` from reset off a real pack with a modeled DDR and reaches
-// 171,000,000 microcycles without the board's fingerprint --- so CLAUDE.md's
+// 171,000,000 microcycles without the board's fingerprint --- so the board's
 // page-hash-table defect is not in `rtl/machine/`.  What that harness replaces
 // with a model is what is left: between `cadr_machine`'s `mem_*` port and the
 // DRAM the board has `cadr_axi_master`, `cadr_axi_widen`, the PS7 and the DDR3
@@ -308,9 +308,9 @@ int main(int argc, char **argv) {
 
   // ============================= THE WATCHPOINT ==============================
   //
-  // CLAUDE.md's "THE BOARD PUT A STALE MEMORY DATA WORD INTO THE PAGE HASH
-  // TABLE" says the corruption is a WRITE that should not have happened, and
-  // that `cadr_memory_path.sv` loads `wdata <= md` at MEMGO REGARDLESS OF
+  // THE BOARD PUT A STALE MEMORY DATA WORD INTO THE PAGE HASH TABLE, the
+  // corruption is a WRITE that should not have happened, and
+  // `cadr_memory_path.sv` loads `wdata <= md` at MEMGO REGARDLESS OF
   // DIRECTION --- so on every read the whole of MD stands on `mem_wdata` at
   // the bridge and one wrong bit of `mem_write` replaces the word being read.
   // Three instruments, all of them free:
@@ -318,10 +318,10 @@ int main(int argc, char **argv) {
   //   1. `--watch <octal physical word>`, repeatable: every transaction that
   //      touches the word, with the microcycle, the direction, the data, the
   //      processor's own WRCYC and whether the channel owned the bus.
-  //   2. ONE TRANSACTION PER BUS CYCLE, over the whole run.  CLAUDE.md:
-  //      "nothing in the tree counts transactions per bus cycle ... That is
-  //      the next check to build, and it is the one this bug has been living
-  //      behind."  `mem_req` stands until the bridge has taken the word, so
+  //   2. ONE TRANSACTION PER BUS CYCLE, over the whole run.  Nothing in the
+  //      tree counted transactions per bus cycle before this, and it is the
+  //      check the bug had been living behind.  `mem_req` stands until the
+  //      bridge has taken the word, so
   //      re-serving inside one `mem_req` is a duplicated transaction.
   //   3. A WRITE NOBODY ASKED FOR: `mem_write` up while the processor's own
   //      `dev_write` (which is `cpu_write`, off the WRCYC flip flop) is down
@@ -331,9 +331,9 @@ int main(int argc, char **argv) {
   uint64_t halt_quiet = 100000;           // ticks with no microcycle = stopped
   uint64_t mem_delay = 0;                 // ticks the memory takes past the trace
   uint64_t progress = 0;                  // say where the machine is, this often
-  // WHAT AN UNWRITTEN WORD OF DDR READS AS.  CLAUDE.md, measured on the board
-  // before anything was written: "Uninitialized DDR reads as alternating bands
-  // of zeros and ones, not as zero ... So an unwritten word reads 0x00000000
+  // WHAT AN UNWRITTEN WORD OF DDR READS AS.  Measured on the board before
+  // anything was written, uninitialized DDR reads as alternating bands of
+  // zeros and ones rather than as zero, so an unwritten word reads 0x00000000
   // in some places and 0xFFFFFFFF in others, and anything taking either as
   // evidence a write happened is testing nothing."  muir's memory is zero and
   // so is this model's, so the two machines differ wherever the CADR reads a
@@ -367,11 +367,11 @@ int main(int argc, char **argv) {
     // Past it there is no column, and the default is to answer as soon as
     // asked --- which is NOT the board, where the word crosses
     // `cadr_axi_master`, `cadr_axi_widen`, a PS7 and a DDR3 controller.
-    // CLAUDE.md's own note that "a DDR round trip takes FEWER ticks at a
-    // longer tick and the acknowledgement lands on a different tick entirely"
-    // says the instant matters, so the delay is a knob and a run says which
-    // one it used.  muir's own `Responder::Memory` answers 573 to 608 ns
-    // after the grant, which is about 115 of these ticks.
+    // A DDR round trip takes FEWER ticks at a longer tick and the
+    // acknowledgment lands on a different tick entirely, so the instant
+    // matters and the delay is a knob, with a run saying which one it used.
+    // muir's own `Responder::Memory` answers 573 to 608 ns after the grant,
+    // which is about 115 of these ticks.
     if (!std::strcmp(argv[i], "--mem-delay") && i + 1 < argc) {
       mem_delay = std::strtoull(argv[++i], nullptr, 0);
       continue;
@@ -669,7 +669,7 @@ int main(int argc, char **argv) {
   bool halted = false;
   uint64_t halt_cycle = 0;
   long fingerprint_hits = 0;
-  // DOES THE MODEL EXERCISE THE SUSPECT PATH AT ALL?  CLAUDE.md names three
+  // DOES THE MODEL EXERCISE THE SUSPECT PATH AT ALL?  The suspect has three
   // places: `PGF-RL` at 0o24074, whose `((MD) A-PGF-VMA)` puts the faulting
   // VMA in MD and whose `((VMA-START-READ) ADD VMA (A-CONSTANT 1))` two
   // instructions later runs a bus cycle at the page hash table's second word
@@ -1074,8 +1074,8 @@ int main(int argc, char **argv) {
         // A WRITE NOBODY ASKED FOR.  `dev_write` is `cpu_write` straight off
         // the WRCYC flip flop and `ch_active` is the channel's interlock; a
         // write at the port with neither up is a direction invented between
-        // the processor and the memory, which is the shape CLAUDE.md's
-        // account of the board's page-hash-table word requires.
+        // the processor and the memory, which is the shape the board's
+        // page-hash-table word requires.
         if (!dut->dev_write && !dut->ch_active) {
           ++writes_unasked;
           if (writes_unasked_shown < 40) {
@@ -1291,10 +1291,10 @@ int main(int argc, char **argv) {
 
     // ------------------------------------------- the halt, and its fingerprint
     //
-    // THE BOARD'S OWN FINGERPRINT, from CLAUDE.md: `PC 0o23555` with
-    // `OPC 0o23560` is `PGF-W-1+7` having returned into the `DISPATCH-XCT-NEXT
-    // MAP-STATUS-CODE` at `0o23553` and landed on case 4, which `D-PGF` sends
-    // to `ILLOP`.  A write fault whose map says the page is writable.
+    // THE BOARD'S OWN FINGERPRINT: `PC 0o23555` with `OPC 0o23560` is
+    // `PGF-W-1+7` having returned into the `DISPATCH-XCT-NEXT MAP-STATUS-CODE`
+    // at `0o23553` and landed on case 4, which `D-PGF` sends to `ILLOP`.  A
+    // write fault whose map says the page is writable.
     if (dut->clock_edge) {
       if (dut->pc == 0023555u && dut->opc == 0023560u) {
         ++fingerprint_hits;
@@ -1336,11 +1336,11 @@ int main(int argc, char **argv) {
         {
           // THE SCREEN.  `cadr_xbus_ddr` answers the display's window at
           // `DISPLAY_BASE`, so every frame-buffer word the machine writes is
-          // in `elsewhere`.  CLAUDE.md dates muir's painting: the first pixel
-          // at microcycle 1,422,167, the first CHARACTER at 4,441,390, the
-          // picture complete at about 6,880,000 --- and the BOARD, at its
-          // halt 169 million microcycles in, has never painted a character.
-          // So this number is the instrument that says whether the fabric is
+          // in `elsewhere`.  muir paints its first pixel at microcycle
+          // 1,422,167, its first CHARACTER at 4,441,390, and the picture is
+          // complete at about 6,880,000 --- and the BOARD, at its halt 169
+          // million microcycles in, has never painted a character.  So this
+          // number is the instrument that says whether the fabric is
           // following muir's program or the board's.
           long lit_words = 0, lit_bits = 0;
           for (const auto &kv : elsewhere) {
@@ -1597,7 +1597,7 @@ int main(int argc, char **argv) {
           }
         }
         // WHERE muir's OWN INTERFACE ANSWERS THIS CYCLE.  Rounded up, for
-        // the reason `tb/cadr_machine_tb.cpp` gives: muir's acknowledgement is
+        // the reason `tb/cadr_machine_tb.cpp` gives: muir's acknowledgment is
         // not on the five-nanosecond grid and the fabric can only see it at a
         // tick at or after it.
         if (r.v[kBus]) {

@@ -8,7 +8,7 @@
 // information used by the hardware", the hardware header being "three 16-bit
 // words, called destination, source, and check".  §3.5: the software header
 // is eight 16-bit words --- operation, count, destination address and index,
-// source address and index, packet number, acknowledgement --- followed by
+// source address and index, packet number, acknowledgment --- followed by
 // the data, up to 488 bytes.
 //
 // **THE WORD ORDER AND THE CHECK WORD ARE muir's AND ARE NOT REDERIVED.**

@@ -284,11 +284,11 @@ static unsigned a_frame(uint16_t *out, unsigned data_len)
 // --- capturing what the program says --------------------------------------
 //
 // **An exit code cannot tell two failures apart, so a check on a program
-// asserts the line it prints.**  CLAUDE.md's own lesson, from a probe script
-// that failed on the check that named the fault and one four checks later
-// with the same status.  Here it is the difference between "this is not a
-// Chaosnet interface" and "this is the default slave, so it is the wrong
-// bitstream", which is the one a reader needs.
+// asserts the line it prints.**  A lesson from a probe script that failed on
+// the check that named the fault and one four checks later with the same
+// status.  Here it is the difference between "this is not a Chaosnet
+// interface" and "this is the default slave, so it is the wrong bitstream",
+// which is the one a reader needs.
 
 static char *cap_buf;
 static size_t cap_len;

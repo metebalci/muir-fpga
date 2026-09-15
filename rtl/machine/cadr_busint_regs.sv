@@ -252,7 +252,7 @@
 // goes out `busint::UB_XBUS_REQUEST_NS` after `-UB MSYN`; the physical
 // address is `Machine::map_entry`'s page with `UBA<9:2>` under it; the
 // thirty-two bits are `Machine::mapped_write`'s; and `-UB SSYN` is
-// `busint::UB_XBUS_READ_ACK_NS` after the acknowledgement on a read and with
+// `busint::UB_XBUS_READ_ACK_NS` after the acknowledgment on a read and with
 // it on a write.  NOT held: everything between, because it is this fabric's
 // arbiter and not MIT's.  `cadr_dbgin.sv` records the same parting for the
 // Unibus grant and for the same reason --- `cadr_busint_xbus.sv`'s header
@@ -366,7 +366,7 @@ module cadr_busint_regs (
 
     // --- the Xbus half of a mapped cycle, `Responder::MapXbus`, which
     // `rtl/machine/cadr_memory_path.sv` arbitrates onto the bus as it does
-    // the disk's channel.  `map_done` is the acknowledgement with the word on
+    // the disk's channel.  `map_done` is the acknowledgment with the word on
     // `map_rdata`; a page that is not main memory is never acknowledged and
     // the header says why.
     output var logic        map_req,
@@ -640,21 +640,21 @@ module cadr_busint_regs (
   // `debug_cable` false; with one, `DEBUG SSYN` is `DEBUG OUT ACK AND SELECT
   // DEBUG` at DBGOUT 0A12 and comes when it comes.
   //
-  // **AND IT MUST BE THIS CYCLE'S ACKNOWLEDGEMENT AND NOT THE LAST ONE'S.**
+  // **AND IT MUST BE THIS CYCLE'S ACKNOWLEDGMENT AND NOT THE LAST ONE'S.**
   // `DEBUG OUT ACK` is a LEVEL, and on MIT's cable it falls within
   // nanoseconds of the request it belongs to being lifted --- the far end's
   // gate is `NAND(-DB ADR1 CLK, -DB ADR0 CLK, -DB READ STATUS)` and the three
   // go with the request.  A carrier that serializes the cable does not give
-  // that for free: the fall takes a frame to cross, so the acknowledgement of
+  // that for free: the fall takes a frame to cross, so the acknowledgment of
   // the cycle just finished is still standing when the next one starts, and a
   // page that took it would answer its own machine in no time with a word
   // nobody drove.  That is the DDR bridge's fault --- a slave's state is its
   // own cycle's --- met on a cable, and it was found by the two-board check
   // rather than reasoned out.
   //
-  // So the acknowledgement is taken only after it has been seen DOWN with
+  // So the acknowledgment is taken only after it has been seen DOWN with
   // this cycle's request already out: a request is answered by an
-  // acknowledgement that rose after it, which costs at most the one frame the
+  // acknowledgment that rose after it, which costs at most the one frame the
   // far end's own fall was going to take anyway.
   logic answer_dbg, ack_armed;
   assign answer_dbg = dbd_enb
@@ -720,7 +720,7 @@ module cadr_busint_regs (
 
   // ------------------------------------------------------------ the bus cycle
   logic [6:0]  t_msyn;   // ticks since `-UB MSYN`, saturating
-  logic [6:0]  t_ack;    // ticks since the Xbus acknowledgement, saturating
+  logic [6:0]  t_ack;    // ticks since the Xbus acknowledgment, saturating
   logic [6:0]  t_md;     // ticks since `MD` took the word, saturating
   logic        answer_reg, answer_buf, answer_x, answer_md, answer_now;
   logic        land, land_wbuf;
@@ -746,7 +746,7 @@ module cadr_busint_regs (
   // `Busint::debug_set_master` gives `Responder::MapBuffer` the same
   // `DIAGNOSTIC_NS` the interface's own registers get.
   assign answer_buf = buf_half && (t_msyn >= 7'(SSYN_T));
-  // The Xbus half.  A write is acknowledged WITH the Xbus acknowledgement and
+  // The Xbus half.  A write is acknowledged WITH the Xbus acknowledgment and
   // a read `UB_XBUS_READ_ACK_NS` after it, which is `Busint::debug_xbus_edge`
   // --- `ack = if write { xack } else { xack + UB_XBUS_READ_ACK_NS }`.
   assign answer_x   = ((xs == XS_ASK) && map_done && wr)
@@ -884,7 +884,7 @@ module cadr_busint_regs (
         // The far end is not acknowledging, with this cycle's strobe up:
         // whatever it says from here belongs to this cycle.  It is taken from
         // `-UB MSYN` and not from the request, because the stale
-        // acknowledgement may still be standing when the request goes out and
+        // acknowledgment may still be standing when the request goes out and
         // the thing being waited for is its FALL.  See `answer_dbg`.
         if (!dbgout_ack) ack_armed <= 1'b1;
 
@@ -909,7 +909,7 @@ module cadr_busint_regs (
                 xs        <= XS_ASK;
               end
             end
-          // The acknowledgement.  A read's HIGH half goes into this page's
+          // The acknowledgment.  A read's HIGH half goes into this page's
           // read buffer and its LOW half is the answer, which is
           // `Machine::mapped_read` exactly.
           XS_ASK:

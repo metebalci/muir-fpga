@@ -323,7 +323,7 @@ void AxiWrite(uint32_t addr, uint32_t data, uint32_t strb = 0xFu) {
     d->s_bready = w ? 1 : 0;
     // **BOTH BOARDS ARE CLOCKED THROUGH AN AXI TRANSACTION**, which is worth
     // saying because the first draft clocked only the debugger's: the far
-    // end then stood still for the whole of a poll and no acknowledgement
+    // end then stood still for the whole of a poll and no acknowledgment
     // ever came back, which reads exactly like a carrier that drops the
     // return path.
     EvalPoint(0, 0);
@@ -379,7 +379,7 @@ uint32_t CtlWord(unsigned a, bool wr, uint16_t dbd, unsigned seq, bool req) {
 }
 
 // A whole transaction over the cable: the request, the wait for the
-// acknowledgement to come back across, the lift, and the hold that lets the
+// acknowledgment to come back across, the lift, and the hold that lets the
 // lift cross so that the far end's latches take what is standing.
 //
 // **THE HOLD IS THE CARRIER'S OWN REQUIREMENT AND IS NOT IN THE WINDOW.** On

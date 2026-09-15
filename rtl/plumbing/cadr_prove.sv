@@ -17,9 +17,9 @@
 // that the OBSERVER IS OUTSIDE THE DESIGN.  A debugger attached to the
 // processing system reads and writes DDR through a path that shares nothing
 // with this one, so a fabric that is wrong about the address, the word, the
-// lane or the strobes cannot agree with it by construction.  That is
-// CLAUDE.md's shadow-memory lesson applied to silicon: a check whose model
-// comes from the DUT moves with the bug, and this one cannot move at all.
+// lane or the strobes cannot agree with it by construction.  That is the
+// shadow-memory rule applied to silicon: a check whose model comes from the
+// DUT moves with the bug, and this one cannot move at all.
 //
 //   `writes` high    STEP TWO.  The fabric writes.  As soon as the port comes
 //                    live it puts `word` at `addr` and stops.  Then somebody

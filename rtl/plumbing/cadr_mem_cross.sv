@@ -100,8 +100,8 @@ module cadr_mem_cross (
         // Not asking, and the last answer has been taken back.  **BOTH TERMS
         // ARE NEEDED AND THE SECOND IS THE ONE THAT IS EASY TO LEAVE OUT.**
         // This is a four-phase handshake: the far side does not drop its
-        // acknowledgement until it has seen the request go, and the
-        // acknowledgement then takes two more clocks to come back here.  A
+        // acknowledgment until it has seen the request go, and the
+        // acknowledgment then takes two more clocks to come back here.  A
         // new request raised inside that window would find `ack_a` still
         // standing from the last one and would be answered before it had been
         // asked.
@@ -114,13 +114,13 @@ module cadr_mem_cross (
         req_a   <= a_mem_req;
       end else if (!a_mem_req) begin
         // The requester has let go.  The handshake's fourth phase: drop the
-        // level and wait for the far side to drop its acknowledgement.
+        // level and wait for the far side to drop its acknowledgment.
         req_a <= 1'b0;
       end
     end
   end
 
-  // `a_mem_done` is the far side's acknowledgement and nothing else.  It is
+  // `a_mem_done` is the far side's acknowledgment and nothing else.  It is
   // not gated on `a_mem_req`: the requester holds that up until it has taken
   // the word, which is what `cadr_xbus_ddr` does, and gating would make a
   // glitch on the request a lost answer.
@@ -146,7 +146,7 @@ module cadr_mem_cross (
     end else begin
       req_sync <= {req_sync[0], req_a};
       if (!req_b) begin
-        // The request has gone: let the acknowledgement go with it.
+        // The request has gone: let the acknowledgment go with it.
         ack_b   <= 1'b0;
         running <= 1'b0;
       end else if (!ack_b) begin
@@ -163,7 +163,7 @@ module cadr_mem_cross (
   end
 
   // The far side is asked for exactly as long as the near side is asking and
-  // has not been answered.  Dropping it at the acknowledgement is what makes
+  // has not been answered.  Dropping it at the acknowledgment is what makes
   // the far end's own `DONE` state let go.
   assign b_mem_req   = req_b && !ack_b;
   assign b_mem_write = write_q;

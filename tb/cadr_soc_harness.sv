@@ -31,11 +31,11 @@
 // three of its configurations, so a port added to `cadr_machine` or to
 // `cadr_soc` and connected in only one of the two files is a Verilator
 // PINMISSING in the other.  What that does NOT catch is a wire crossed the
-// same way in both, and CLAUDE.md records that a crossing which leaves every
-// signal read is caught by nothing, anywhere, by any tool.  The answer to that
-// is the firmware: it reads an identifier at every face and holds it to the
-// constant the face's own header gives, so a face wired where another should
-// be says so on the wire.
+// same way in both, and a crossing which leaves every signal read is caught by
+// nothing, anywhere, by any tool.  The answer to that is the firmware: it
+// reads an identifier at every face and holds it to the constant the face's
+// own header gives, so a face wired where another should be says so on the
+// wire.
 //
 // **THE MACHINE IS THE REAL ONE AND NOTHING ANSWERS ITS MEMORY PORT**, which
 // is the Arty A7-100's own memory-off configuration --- `mem_done` low,

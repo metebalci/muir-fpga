@@ -32,10 +32,9 @@
 //   memory is filled with the COMPLEMENT of the word that should land there
 //   before every transaction, so a word that half-landed, a strobe pattern
 //   that opened both halves of the beat, or an address that lost a bit all
-//   leave something that differs from the answer in every bit.  CLAUDE.md's
-//   "a stimulus that poisons cannot move with the bug": against a memory of
-//   zeros most of those are indistinguishable from a write that never
-//   happened.
+//   leave something that differs from the answer in every bit.  A stimulus
+//   that poisons cannot move with the bug: against a memory of zeros most
+//   of those are indistinguishable from a write that never happened.
 //
 //   AND THE COMPLEMENT OF THE ECHOED WORD, NOT OF `word`, for the beat the
 //   write-back goes into.  In the wrong-half case the witness reads the

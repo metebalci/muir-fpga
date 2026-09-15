@@ -52,7 +52,7 @@
 // by the bridge's own address out of a window poisoned injectively, because
 // the point is the handshake and not the words.  The halt is issued at each
 // phase of a memory cycle in turn --- before MEMGO, between MEMGO and the
-// grant, between the grant and the acknowledgement, after it, and with no
+// grant, between the grant and the acknowledgment, after it, and with no
 // cycle at all --- and the state the machine actually froze in is reported
 // rather than assumed, since the write lands at a boundary and the machine
 // stops where it stops.
@@ -323,7 +323,7 @@ void MustBeAlive(Sim &s, const char *who) {
 // The second half is not a tidiness.  A halt stands -MEMRQ on its frozen
 // MEMSTART and the interface answers and then sits in ACKED, which it leaves
 // only when -MEMRQ falls; -MEMRQ falls only when MBUSY does, and MBUSY is
-// cleared by -MFINISHD, the acknowledgement delayed.  So a machine whose
+// cleared by -MFINISHD, the acknowledgment delayed.  So a machine whose
 // MBUSY is never cleared holds -XBUS.RQ up for ever, the interface
 // acknowledges every later cycle before it has happened, and every read
 // takes the word the last one left --- while the ring turns, microcycles

@@ -62,11 +62,10 @@ set_clock_groups -asynchronous \
 # split is `rtl/plumbing/xilinx7/cadr_probe.sv`'s: its inputs stand still from one microcycle
 # boundary to the next, which is this project's own test for what may be
 # relaxed. `late_q` --- `lpc`, `md`, `vma`, `promdis` --- deliberately may not.
-# `md` is the column CLAUDE.md's entry about sampling before a stall is about:
-# `-LOADMD` strobes it while the clock is held off, and a register given a
-# whole microcycle
-# to notice might not have. All four come straight off registers in the
-# machine and meet one tick without help.
+# `md` is the column that sampling before a stall is about: `-LOADMD` strobes
+# it while the clock is held off, and a register given a whole microcycle to
+# notice might not have. All four come straight off registers in the machine
+# and meet one tick without help.
 #
 # 15 and 14, the same numbers and for the same reason: the tightest instant a
 # datapath register is read at is the fast read tap.

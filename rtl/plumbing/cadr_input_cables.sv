@@ -67,8 +67,8 @@
 // therefore takes the machine down the warm path**, which is the path for a
 // machine being restarted into a band it already has, and is not what a
 // board coming up wants.  The only defense is that nothing is waiting, and
-// CLAUDE.md names this as the trap aimed at whatever carries keys.  These
-// are the four legs that keep it shut.
+// this is the trap aimed at whatever carries keys.  These are the four legs
+// that keep it shut.
 //
 // **AND `0o46` IS THE COLD BOOT WORD'S OWN LOW SIX BITS, NOT A KEY
 // POSITION.**  An earlier version of this comment read the test backwards:
@@ -265,8 +265,8 @@ module cadr_input_cables #(
     // them: bit 5 `KBD READY`, bit 4 `MOUSE READY`.  Registered on the way
     // in, so the only thing between the card's flop and this module's is the
     // card's own `assign` --- a module a level above `cadr_machine` gets
-    // none of `cadr_machine.xdc`, which CLAUDE.md records at -12.837 ns, and
-    // a register at each end is the shape that does not care.
+    // none of `cadr_machine.xdc`, measured at -12.837 ns, and a register at
+    // each end is the shape that does not care.
     input  var logic [7:0]  card_csr
 );
 

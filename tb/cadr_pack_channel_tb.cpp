@@ -38,8 +38,8 @@
 // HP2 are two doors into one DRAM.  Two clauses live on that: a pack-side beat
 // inside the machine's own address range, and a pack-side beat outside the
 // staging records.  Both are zero on a correct run and both are the shape of
-// CLAUDE.md's board fault --- a write nobody asked for, landing on somebody
-// else's word.
+// the board fault --- a write nobody asked for, landing on somebody else's
+// word.
 //
 // **WHAT THIS CANNOT DO**, said at the top for `tb/cadr_axi_channel_tb.cpp`'s
 // reason.  It is not compared against muir: there is no reference for a fabric
@@ -222,9 +222,9 @@ int main(int argc, char **argv) {
   dut->device_rdata = 0;
   // THE DRIVE AND THE SEAM ARE NOT DRIVEN HERE.  `cadr_disk_pack` drives all
   // eleven of them now --- `drive_present` included, off the DRIVE register
-  // Linux writes --- and they are outputs of the harness.  CLAUDE.md's `md`
-  // trap says a port that stops being stimulus must stop being written, so
-  // the lines are gone rather than left to be harmlessly overwritten.
+  // Linux writes --- and they are outputs of the harness.  The `md` trap
+  // says a port that stops being stimulus must stop being written, so the
+  // lines are gone rather than left to be harmlessly overwritten.
   dut->con_ro_addr = 0x3FFFF;
   dut->hp0_awready = 0;
   dut->hp0_wready = 0;
@@ -978,7 +978,7 @@ int main(int argc, char **argv) {
   //     into one DRAM on the board and into one array here, so a pack-side
   //     beat inside the machine's own 22-bit physical space is a word of
   //     somebody else's memory overwritten --- which is the exact shape of
-  //     CLAUDE.md's page-hash-table word.  The staging records are at
+  //     the board's page-hash-table word.  The staging records are at
   //     0x1C80_0000 and up; nothing correct goes anywhere else.
   Check(hp2_in_main == 0,
         "%ld beats of the pack side landed inside the machine's own main "

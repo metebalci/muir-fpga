@@ -21,8 +21,8 @@
 # outright. The first draft of this file guarded itself with both, and both
 # came back as `CRITICAL WARNING [Designutils 20-1307] Command 'foreach' is
 # not supported in the xdc constraint file` --- so the guard applied to
-# nothing while reading as though it were protecting something. That is
-# CLAUDE.md's own loudest recorded trap, met again in a new file. Every
+# nothing while reading as though it were protecting something. That is the
+# loudest trap this project has recorded, met again in a new file. Every
 # assertion this file wants is in `boards/arty-z7-20/vivado/bitstream.tcl`
 # instead, which is plain Tcl and where the flow's other assertions already
 # live.
@@ -34,10 +34,10 @@
 # MMCMs off one board crystal, so the tool can compute a common period and
 # will happily time a path between them against it --- and the paths between
 # them are the line buffer's, which are crossed by a toggle through a
-# synchroniser and are asynchronous on purpose.
+# synchronizer and are asynchronous on purpose.
 #
 # `set_clock_groups -asynchronous` is what says so. Without it the two-flop
-# synchroniser is timed as an ordinary path, the fitter spends effort on it,
+# synchronizer is timed as an ordinary path, the fitter spends effort on it,
 # and the report carries failures that mean nothing.
 set_clock_groups -asynchronous \
     -group [get_clocks clk_raw] \
