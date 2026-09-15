@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>muir-fpga &mdash; FAQ</title>
+<meta name="description" content="Questions this project is asked, answered from the files that settle them: the disk multiplexor, the reference, the tick, the screen, the debug cable, the boards and the checks.">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="faq.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="band">
+    <a class="home" href="index.html"><b>muir-fpga</b></a>
+    <nav>
+      <a href="arty-z7-20.html">Arty Z7-20</a>
+      <a href="cora-z7-07s.html">Cora Z7-07S</a>
+      <a href="arty-a7-100.html">Arty A7-100</a>
+      <a href="booting.html">Booting</a>
+      <a href="debugging.html">Debugging</a>
+      <a href="faq.html">FAQ</a>
+      <a href="cadr.html">the CADR</a>
+    </nav>
+  </div>
+</header>
+
+<!-- EVERY ANSWER HERE RESTS ON A FILE, and the line under it names that file.
+     That is the whole shape of the page: a question somebody actually asks,
+     an answer of a few sentences, and the source it was read from.  Where the
+     material does not settle something, the answer says so rather than
+     filling the gap, which is why the first one ends the way it does.
+     A question with no source does not go on the page. -->
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>Questions</h2>
+      <p class="lede">Questions this project is asked, each answered from the
+      file that settles it.</p>
+
+      <p>MIT's own files are cited at the path
+      <a href="https://github.com/metebalci/muir">muir</a> gives them; the
+      rest are files here.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>The machine</h2>
+
+      <h3>Why is there no disk multiplexor block?</h3>
+      <p>MIT built one, and it is a board of its own: board type LG684,
+      eleven drawing pages, titled DISK MULTIPLEXOR. It hangs off the disk
+      controller's edge connector rather than sitting on a bus, and its work is
+      electrical. It fans the controller's one read and write path out to eight
+      drives, selects a unit, decodes each drive's sector pulses into a block
+      counter of its own, and carries their attention and spin-up lines.
+      Without it the controller cannot drive the unit number at all: MIT's
+      jumper sheet has a one-board version whose jumpers are &ldquo;not to be
+      installed if this DC is associated with a DM board&rdquo;, and they
+      ground those lines so that the single drive is unit 0.</p>
+      <p>Here there is nothing for such a board to do. A drive is a file on the
+      card's second partition, handed to the controller through a register
+      face, so there are no cables to fan out and no sector pulses to count.
+      The fabric's controller is held to muir's behavioural controller, which
+      has addressed eight units all along and wants no such board either, and
+      it selects among them by the disk address's own
+      <code>DA&lt;30:28&gt;</code> as MIT's controller does. Nothing in these
+      files describes several machines sharing a drive through it; what they
+      describe is one controller reaching eight.</p>
+      <p class="src">Source: MIT's <code>mit/cadrdc/dm.txt</code>,
+      <code>dm.wls</code>, <code>dm.eco</code> and <code>disk.hand</code>, and
+      muir's <code>src/cable.rs</code> and <code>src/disk_controller.rs</code>;
+      <code>docs/disk-controller.md</code>.</p>
+
+      <h3>Why is muir the reference, and what does &ldquo;held tick for
+      tick&rdquo; mean?</h3>
+      <p>A machine with no reference is a machine nobody can check. muir
+      simulates the CADR at three fidelities, and <code>rtl</code> is the
+      middle one: the machine's own two-phase clock, every datapath signal on
+      it, and everything that is a matter of <i>when</i>. Each file in
+      <code>rtl/machine/</code> has a muir type it is compared against over a
+      recorded trace, cycle for cycle. Every file in
+      <code>rtl/plumbing/</code> says in its own header that no muir reference
+      exists for it, being held to a bus protocol or to a property instead.
+      <code>muir.commit</code> names the commit the traces were taken from, so
+      a trace and the muir that made it travel together.</p>
+      <p class="src">Source: <code>README.md</code>; the header of
+      <code>mutations/list.txt</code>.</p>
+
+      <h3>Why is a tick ten nanoseconds when MIT's grid is five?</h3>
+      <p>Those are two different numbers that happen to match.
+      <code>TICK_NS</code> in the clock generator is five for ever, because
+      that is the grid MIT's drawings are drawn on and dividing by anything
+      else rounds an instant: write ten there and the first read tap collapses
+      to zero ticks. How long a tick lasts is the board's business, and this
+      board makes one ten nanoseconds. So every count is MIT's own &mdash; the
+      microcycle is 29 ticks, the read taps 15, 17, 20, 23, 25, 28 and 32
+      &mdash; and the machine is scaled rather than distorted: it runs at half
+      the speed the hardware ran with every ratio intact. The reason is timing
+      closure, which at five nanoseconds this design did not reach.</p>
+      <p class="src">Source: the header of
+      <code>rtl/machine/cadr_phase_gen.sv</code>; <code>README.md</code>.</p>
+
+      <h3>Why does the machine's own clock disagree with the wall?</h3>
+      <p>Because the tick is twice as long and the tick counts are untouched.
+      The I/O board's microsecond clock counts 200 ticks, which is now two
+      real microseconds, so a CADR wall clock run off it loses half a day
+      in a day, and on the board the who-line advanced 31 seconds over 61
+      real ones. The display's vertical interrupt arrives at
+      32.35 Hz where the display board scanned at 64.70, and MIT's microcode
+      uses that interrupt as its roughly-sixty-cycle clock. Both are left
+      agreeing with muir, because the checks are the backbone of this project,
+      and undoing either is one constant: a real microsecond is exactly 100
+      ticks and a real frame exactly 1,545,600.</p>
+      <p class="src">Source: <code>docs/io-board.md</code>,
+      <code>docs/tv.md</code>, <code>docs/board.md</code>.</p>
+
+      <h3>Why does the screen keep the previous boot's picture?</h3>
+      <p>Because the real machine did. A reset on the display board clears the
+      vertical flag and nothing else; the mode register and the sync enable
+      clear on a separate power-reset wire, and the frame buffer has no clear
+      of any kind. MIT knew that and wrote the clear in software:
+      <code>LISP-REINITIALIZE</code> calls <code>CLEAR-SCREEN-BUFFER</code>
+      under the comment &ldquo;Clear all the bits of the main screen after a
+      cold boot&rdquo;, and elsewhere takes care &ldquo;to avoid bashing the
+      bits of whatever window was exposed before a warm boot&rdquo;. Here the
+      buffer is a region of memory no reset writes, so the previous world
+      stays on the glass until the band comes up and clears it.</p>
+      <p class="src">Source: <code>docs/tv.md</code>; MIT's
+      <code>sys/sys/ltop.lisp</code> in the System 100 release.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="band">
+    <div class="prose">
+      <h2>The boards, and the way they are checked</h2>
+
+      <h3>Why is the debug cable on one Pmod connector?</h3>
+      <p>Because a board is a debugger or a debuggee and never both at once.
+      Each direction takes four of the header's eight pins &mdash; a strobe, a
+      data line and two guards &mdash; and neither group is ever driven from
+      both ends, so one connector carries the whole link in both directions at
+      once. A second connector would have bought exactly one thing: a chain of
+      three machines, where a board is one machine's debuggee and another's
+      debugger at once, and nobody needs that. On the two Zynq boards muir
+      reaches the debuggee end through a window of registers anyway.</p>
+      <p class="src">Source: <code>docs/debug-cable.md</code>.</p>
+
+      <h3>How does a board become the debugger?</h3>
+      <p>A board with a cable in it and nothing said is a debuggee, which is
+      the power-on state and needs nothing set. It becomes the debugger by
+      <code>--debug-cable-connect</code> in <code>fpgarc</code>, which the disk
+      pack program's init script applies at boot through the console, or by
+      <code>cadr-console debug-cable-connect</code> at any time.
+      <code>cadr-console debug-cable-disconnect</code> gives the role back and
+      <code>cadr-console debug-cable</code> says which role a board holds.
+      There is no listen flag, here or in muir, because listening is what a
+      CADR always does.</p>
+      <p class="src">Source: <code>docs/debug-cable.md</code> again.</p>
+
+      <h3>Why does the Arty A7-100 have no Linux?</h3>
+      <p>Because it has no processing system. The two Zynq boards reach main
+      memory, the disk, the screen, the console, Chaosnet, the serial line and
+      the debugger through Arm cores and the Linux running on them, and an
+      Artix-7 part has none of that, so each of those wants an answer in
+      fabric. The soft processor is Ibex, lowRISC's RISC-V core, vendored at a
+      pinned commit and configured RV32IMC with two stages and no caches, and
+      it runs bare-metal firmware out of block RAM in front of the same
+      register faces Linux drives elsewhere. It was chosen because it is
+      SystemVerilog, where the alternatives were an encrypted netlist, Verilog
+      generated from Scala, and a core taking four or five cycles an
+      instruction.</p>
+      <p class="src">Source: <code>boards/arty-a7-100/README.md</code>.</p>
+
+      <h3>Why are the checks themselves mutation-tested?</h3>
+      <p><code>make check</code> says the checks pass.
+      <code>make mutants</code> says the checks can still fail. A mutation is a
+      deliberate, small, wrong version of the design; the runner applies one,
+      rebuilds, and runs the check that is supposed to hold that part. If the
+      check passes anyway, the mutation survived, and that check cannot tell a
+      right design from that wrong one. Line coverage cannot see the
+      difference, because a line can be executed by every test and still be
+      unchecked, nothing having looked at what it produced.</p>
+      <p class="src">Source: <code>docs/mutations.md</code>.</p>
+
+      <h3>Why is there no ILA or other Vivado debug core?</h3>
+      <p>It was meant to be one. The licence used here is the free BASIC tier,
+      which refuses <code>create_debug_core</code> outright, so Vivado's
+      scripted debug flow does not exist; the ILA core does generate at BASIC,
+      but it arrives as a directory of generated XML, which this project
+      declines for the same reason it declines the clock generator's. So the
+      probe is a <code>BSCANE2</code> and a shift register, which is one
+      primitive in a file somebody can read. It fills from the first qualifying
+      edge after reset and freezes, so nothing has to be armed and nobody has
+      to be at the board.</p>
+      <p class="src">Source: the header of
+      <code>rtl/plumbing/xilinx7/cadr_probe.sv</code>;
+      <code>docs/toolchain.md</code>.</p>
+
+      <h3>What licence is this under, and what in it is not this project's
+      work?</h3>
+      <p>The fabric, the checks and their reference traces, the programs
+      beside the machine, the documents and these pages are free software under
+      the GNU Affero General Public License, version 3 or later, and nearly
+      every file repeats that in its own SPDX header. Eight are under the GNU
+      General Public License, version 2 or later, four for each Zynq board,
+      because each is compiled into U-Boot. What is not this project's work is
+      listed on the front page, each entry naming whose it is and under what
+      terms, and saying where no terms are recorded rather than guessing.</p>
+      <p class="src">Source: the front page's
+      <a href="index.html">Licence and Third-party material</a>.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="band">
+    <p>&copy; 2026 Mete Balci</p>
+  </div>
+</footer>
+
+</body>
+</html>
