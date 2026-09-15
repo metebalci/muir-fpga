@@ -448,7 +448,8 @@ void cons_say_debug_cable(const struct cons_debug_cable *d)
 	say("debug cable: the wiring is %s", wire_words(d->wire));
 	// **AND WHAT THE CABLE IS DOING TO THE FRAMES.**  The pins of a Pmod row
 	// are coupled pairs; this link drives one signal a pair with the partner
-	// held low as a guard, and an edge that still couples into the strobe; a frame that catches one
+	// held low as a guard, and the counts say whether an edge still couples
+	// into the strobe beside it; a frame that catches one
 	// fails its marker or parity and is dropped, and the next carries the
 	// levels again.  So a refusal is not a fault to act on and a RATE of
 	// them is: the two numbers are printed together for that reason.
