@@ -887,7 +887,7 @@ module cadr_machine #(
   // is checked against.  Anything hung on the external port owes the same
   // discipline, and nothing here can enforce it for a slave it cannot see.
   //
-  // THE DATA LINES ARE SEPARATE FROM THE ACKNOWLEDGEMENT, which is the bus
+  // THE DATA LINES ARE SEPARATE FROM THE ACKNOWLEDGMENT, which is the bus
   // and not a convenience: a slave drives MEM<31:0> only while it is
   // answering a READ, so on a device write the seam is left to whatever is
   // outside.  On the board that is nothing and reads zero; in

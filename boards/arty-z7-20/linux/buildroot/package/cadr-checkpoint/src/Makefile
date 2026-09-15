@@ -81,7 +81,7 @@ install: all
 	install -m 0755 $(PROGRAMS) $(DESTDIR)/usr/bin/
 
 # The check. Its own object directory, so a target build and a host build
-# never share a binary --- and a build artefact that outlived a move would
+# never share a binary --- and a build artifact that outlived a move would
 # name a home directory that no longer exists.
 #
 # `CHK` names a file for it to write, which is how `build/checkpoint.pass`

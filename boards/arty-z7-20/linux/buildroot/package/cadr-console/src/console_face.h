@@ -828,9 +828,10 @@ void cons_say_flag2(uint16_t w);
 // still not a route.
 //
 // **This paragraph said BOTH halves were absent and was made wrong by
-// somebody else's correct change**, which is exactly the rot CLAUDE.md
-// records: the `@old` of a mutation rots loudly and prose rots silently.  It
-// is cited to the commit that fixed it rather than left to read as true.
+// somebody else's correct change**, which is exactly the rot
+// `docs/mutations.md` records: a record's reasoning ages faster than its
+// text, so the `@old` of a mutation rots loudly and prose rots silently.
+// It is cited to the commit that fixed it rather than left to read as true.
 //
 // The other route, CC's `CC-EXECUTE-R`, loads a microinstruction into the
 // debug IR and clocks it --- and clocking it is `SSTEP`, the same two hunks

@@ -3,7 +3,7 @@
 //
 // Drives rtl/machine/cadr_phase_gen.sv from the reference trace and compares every
 // tick.  The trace is written by golden/src/phase_gen.rs out of muir's own
-// clock::Behavioural, and carries the stimulus as well as the expected
+// clock::Behavioral, and carries the stimulus as well as the expected
 // outputs, so there is one definition of both.
 //
 // One tick is one posedge: the inputs for tick k are presented, the edge is
@@ -171,7 +171,7 @@ int main(int argc, char **argv) {
   if (thin) return 1;
 
   std::printf(
-      "ok: %ld ticks agree with muir's clock::Behavioural\n"
+      "ok: %ld ticks agree with muir's clock::Behavioral\n"
       "    all 7 taps selected, %ld ticks held by -HANG, %ld by RESET\n",
       checked, hang_ticks, reset_ticks);
   return 0;

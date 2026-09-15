@@ -5,7 +5,7 @@
 //
 // Everything else here is checked against muir and none of it has been near a
 // chip.  This exists to find out whether the design can be built at all ---
-// synthesised, placed, routed and written to a bitstream against a real part
+// synthesized, placed, routed and written to a bitstream against a real part
 // with real package pins --- which is a different question from whether it is
 // correct, and one nothing in this repository has ever asked.
 //
@@ -108,12 +108,12 @@
 // **Every output has to reach a pin or synthesis will delete the machine.**
 // `cadr_machine` brings out the whole datapath for the testbenches to compare
 // --- PC, IR, the A and M buses, the ALU, twenty-odd more --- and a top level
-// that left them unconnected would synthesise to almost nothing, place and
+// that left them unconnected would synthesize to almost nothing, place and
 // route in seconds, and write a perfectly good bitstream of an empty part.
 // That is the failure this project keeps meeting: not an error, but a
-// plausible artefact.  So the wide outputs are reduced into one LED through a
+// plausible artifact.  So the wide outputs are reduced into one LED through a
 // register, which costs four LUTs and keeps every one of them load-bearing.
-// `boards/arty-z7-20/vivado/bitstream.tcl` checks the utilisation against what the design is
+// `boards/arty-z7-20/vivado/bitstream.tcl` checks the utilization against what the design is
 // known to cost rather than trusting that the file exists.
 
 `default_nettype none
@@ -289,7 +289,7 @@ module cadr_arty #(
   // carries them and false-paths all four, a human's finger being no timing
   // constraint.
   //
-  // Reset while the MMCM has not locked, and on BTN1. Synchronised out of
+  // Reset while the MMCM has not locked, and on BTN1. Synchronized out of
   // the 100 MHz domain: `locked` is asynchronous to it by construction.
   logic [3:0] rst_sync;
   logic       rst;
@@ -299,7 +299,7 @@ module cadr_arty #(
   // ------------------------------------------------------ BTN0, DEBOUNCED
   //
   // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN1's four
-  // synchroniser stages are all its job wants: a reset asserted for a
+  // synchronizer stages are all its job wants: a reset asserted for a
   // millisecond of contact bounce is a reset, and the bounces land inside it.
   // `-BOOT2` is a level the machine READS the end of --- it runs the PROM
   // from word 0 when the button is let go --- so every bounce on the release
@@ -600,7 +600,7 @@ module cadr_arty #(
   // `cadr_machine`, and a LUT between the countdown and that fanout is a LUT
   // on every one of their reset pins.  One tick later on a reset costs
   // nothing that anything counts, `rst` itself already being four
-  // synchroniser stages deep.
+  // synchronizer stages deep.
   //
   // **AND THE RULE FOR WHAT TAKES IT: `mach_rst` replaces `rst` wherever
   // `rst` means "since the MACHINE started", and `rst` stays wherever it
@@ -704,7 +704,7 @@ module cadr_arty #(
   // that held it and the level today, because a switch moved since the reset
   // is exactly the thing somebody will want to see.
   //
-  // Three synchroniser stages, because the switch is asynchronous to this
+  // Three synchronizer stages, because the switch is asynchronous to this
   // clock like every other pin.  No debounce: `-BOOT2` needs one because a
   // bounce on the RELEASE is another press, and this is a level read once, at
   // an instant a slide switch is not being moved at.
@@ -786,15 +786,15 @@ module cadr_arty #(
   //                  shows. Bit 0 and bit 31 are both set, so a shift either
   //                  way shows. Reversed byte for byte it is 0xE1365C8A, so
   //                  an endianness swap shows. And it is not the address, nor
-  //                  the address shifted, which is CLAUDE.md's
-  //                  bridge-writes-the-address-instead-of-the-data in the one
+  //                  the address shifted, which is the mutation named
+  //                  bridge-writes-the-address-instead-of-the-data, in the one
   //                  place here where it could happen.
   //
   // THE FILLER IS ITS COMPLEMENT, 0x75A3_C91E, and that is not decoration.
-  // The neighbourhood is filled with it from the debugger before the port is
+  // The neighborhood is filled with it from the debugger before the port is
   // released, so every word that should not have changed differs from `WORD`
-  // in every bit. CLAUDE.md's "a stimulus that poisons cannot move with the
-  // bug": against a neighbourhood of zeros, a word that half-landed reads as
+  // in every bit. The rule "a stimulus that poisons cannot move with the
+  // bug": against a neighborhood of zeros, a word that half-landed reads as
   // plausible. `docs/board.md` will carry the procedure; the numbers live
   // here, once.
   //
@@ -817,7 +817,7 @@ module cadr_arty #(
   //                  low, the read brings back filler; stuck high, the word
   //                  lands on this address's neighbor instead.
   //
-  //                  **INSIDE THE POISONED BLOCK, WITH ITS OWN NEIGHBOUR IN
+  //                  **INSIDE THE POISONED BLOCK, WITH ITS OWN NEIGHBOR IN
   //                  IT TOO.** 0x18A7_2F1C is the other half of this beat
   //                  and carries the filler like everything else, so a
   //                  strobe pattern that opened both halves of the
@@ -920,7 +920,7 @@ module cadr_arty #(
       // modifier register cleared by its own bit 1 clears the bit that is
       // clearing it, and MIT's "write a 1 here then write a 0" could not be
       // written.  The carrier a level up takes the port's reset for the
-      // neighbouring reason.
+      // neighboring reason.
       .dbg_rst(rst),
       .con_vma(con_vma), .con_q(con_q), .con_md(con_md),
       .con_ro_addr(con_ro_addr), .con_ro_data(con_ro_data),
@@ -1342,7 +1342,7 @@ module cadr_arty #(
     // `SAXIHP2ARESETN` are the PS saying each port is live, and until Linux
     // is up neither is: held in reset, the pack side's registers read zero,
     // so `drive_present` is zero and the CADR sees an empty cable exactly as
-    // it does with `DDR` off. Synchronised in as `hp0_aresetn` is.
+    // it does with `DDR` off. Synchronized in as `hp0_aresetn` is.
     logic        hp2_aresetn, gp0_aresetn;
     logic [31:0] hp2_awaddr, hp2_araddr;
     logic [3:0]  hp2_awlen, hp2_arlen;
@@ -1482,7 +1482,7 @@ module cadr_arty #(
       logic [2:0] pack_rst_sync;
       // A register, not a gate: the pack side has some three hundred
       // registers to reset, and made as `rst || !pack_rst_sync[2]` the
-      // machine's synchroniser was on every one of their reset pins across
+      // machine's synchronizer was on every one of their reset pins across
       // the distance between the two.  One tick later on a reset the PS
       // releases at a moment of software's choosing, which nothing counts.
       logic pack_rst;
@@ -1964,7 +1964,7 @@ module cadr_arty #(
     // display's own region of DDR over `S_AXI_HP3` and puts it on a raster;
     // `rtl/plumbing/cadr_hdmi_tx.sv` encodes that as DVI; and
     // `rtl/plumbing/xilinx7/cadr_hdmi_phy.sv` makes the pixel clock and
-    // serialises the four channels.  `docs/display-output.md` is the whole
+    // serializes the four channels.  `docs/display-output.md` is the whole
     // design and the measurements behind it.
     //
     // THE PORT IS BROUGHT OUT WHETHER OR NOT THE DISPLAY IS BUILT, because
@@ -2393,7 +2393,7 @@ module cadr_arty #(
   // machine's, and there is no spare one to hang a load on.  A register
   // nothing reads is trimmed, and the whole machine behind it with it --- and
   // then every fit and timing figure this board reports is a figure for a
-  // design that is not there, which is the loudest trap CLAUDE.md records.
+  // design that is not there, which is the loudest trap this project has met.
   //
   // `DONT_TOUCH` is the one thing that keeps it without inventing a meaning
   // for a lamp.  It propagates through the cone, which is exactly what is
@@ -2490,7 +2490,7 @@ module cadr_arty #(
   // **THEY READ LEFT TO RIGHT AS THE MACHINE'S OWN PROGRESS, AND NOT AS THE
   // FABRIC'S BRING-UP.**  The assignment this file carried until now was the
   // one the bring-up wanted --- a heartbeat, a witness that the datapath had
-  // not been optimised away, a counter of timeouts --- and every one of those
+  // not been optimized away, a counter of timeouts --- and every one of those
   // answers a question nobody asks of a working machine.  The CADR's own
   // light panel carried a run lamp and a parity-error lamp beside the boot
   // button, and BTN0 is that button now.

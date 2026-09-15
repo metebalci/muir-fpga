@@ -83,7 +83,7 @@
 // **Every output has to reach a pin or synthesis will delete the machine.**
 // `cadr_machine` brings out the whole datapath for the testbenches to compare
 // --- PC, IR, the A and M buses, the ALU, twenty-odd more --- and a top level
-// that left them unconnected would synthesise to almost nothing, place and
+// that left them unconnected would synthesize to almost nothing, place and
 // route in seconds, and write a perfectly good bitstream of an empty part.
 // So the wide outputs are reduced into one register, `witness`, which costs
 // a handful of LUTs and keeps every one of them load-bearing.
@@ -438,7 +438,7 @@ module cadr_arty_a7 #(
   // `Arty-A7-100-Master.xdc`.  `cadr_arty_a7.xdc` carries them and false-paths
   // all four, a human's finger being no timing constraint.
   //
-  // Reset while the MMCM has not locked, and on BTN1.  Synchronised out of the
+  // Reset while the MMCM has not locked, and on BTN1.  Synchronized out of the
   // 100 MHz domain: `LOCKED` is asynchronous to it by construction.
   logic [3:0] rst_sync;
   logic       rst;
@@ -448,7 +448,7 @@ module cadr_arty_a7 #(
   // ------------------------------------------------------ BTN0, DEBOUNCED
   //
   // **A RESET DOES NOT NEED DEBOUNCING AND A BOOT DOES.**  BTN1's four
-  // synchroniser stages are all its job wants: a reset asserted for a
+  // synchronizer stages are all its job wants: a reset asserted for a
   // millisecond of contact bounce is a reset, and the bounces land inside it.
   // `-BOOT2` is a level the machine READS THE END OF --- it runs the PROM from
   // word 0 when the button is let go --- so every bounce on the release is
@@ -502,7 +502,7 @@ module cadr_arty_a7 #(
   // it to, so that register is not built here: a register nothing reads is
   // trimmed, and a lamp or a port is what would earn it back.
   //
-  // Three synchroniser stages, because the switch is asynchronous to this
+  // Three synchronizer stages, because the switch is asynchronous to this
   // clock like every other pin.  No debounce: `-BOOT2` needs one because a
   // bounce on the RELEASE is another press, and this is a level read once, at
   // an instant a slide switch is not being moved at.
@@ -825,7 +825,7 @@ module cadr_arty_a7 #(
   // spread across `cadr_machine`, and a LUT between the term and that fanout
   // is a LUT on every one of their reset pins.  One tick later on a reset
   // costs nothing that anything counts, `rst` itself already being four
-  // synchroniser stages deep.
+  // synchronizer stages deep.
   //
   // **AND IT MUST NOT REACH THE DBGIN PAGE THAT MAKES IT**: a modifier
   // register cleared by its own bit 1 clears the bit that is clearing it, and
@@ -1127,7 +1127,7 @@ module cadr_arty_a7 #(
       //
       // **AND ON THIS BOARD THE RESET IS THE DEBUGGER'S**, where on the Arty
       // Z7-20 it was the processing system raising `SAXIHP0ARESETN`.  That is
-      // not a convenience: the debugger must poison the neighbourhood BEFORE
+      // not a convenience: the debugger must poison the neighborhood BEFORE
       // the witness writes into it, and poisoning goes through the same window
       // the witness's port does.  So the witness is held until the `arm` bit
       // is scanned in, and every later rise of that bit runs the whole
@@ -1354,7 +1354,7 @@ module cadr_arty_a7 #(
         // is one request and one answer, at the narrowest seam there is ---
         // `rtl/plumbing/cadr_soc_cross.sv` --- and not a hundred and forty
         // wires of AXI.  The reset is the board's either way and `cadr_soc`
-        // synchronises it onto the soft clock itself, in the one place that
+        // synchronizes it onto the soft clock itself, in the one place that
         // has to know.
         .clk(clk_soc), .rst(rst),
         .axi_clk(clk), .axi_rst(rst),
@@ -1964,7 +1964,7 @@ module cadr_arty_a7 #(
   // being touched, and dark means it is idle, which is the light every
   // computer has had.  It is dark for ever on this board and the one-shot is
   // still built, because a lamp that is built and dark is a lamp, and one that
-  // is optimised away is a hole in the fold.
+  // is optimized away is a hole in the fold.
   localparam int unsigned DISK_LIT_T = 1 << 22;   // 41.9 ms at the 10 ns tick
 
   logic        machrun_lamp;
