@@ -56,20 +56,37 @@
 // rather than wraps, and **it survives a reset** --- a counter that went
 // backwards would make the program read a store as a refusal.
 //
-// **AND A REFUSED COMMIT DOES NOT TOUCH THE SEAM, WHICH COSTS THE MACHINE
-// ITS OWN LOST COUNT.**  The card counts a lost frame when `chaos_rx_done`
-// arrives with Receive Done already up, so the faithful thing would be to
-// pulse it and let the card count.  Measured against the card's own source,
-// that is a race this module cannot win: Receive Done is sampled a tick
-// before the pulse could go out, and the machine may read the buffer out in
-// between --- and then a `chaos_rx_done` with no words behind it commits a
-// packet of ZERO words, whose bit counter underflows (`ch_top` is
-// `ch_rbits - {(ch_rlen - 1), 4'd0}`).  A garbage bit counter in front of
-// the machine is worse than a diagnostic the machine cannot see, so a
-// refusal is counted here and the card's four-bit Lost Count stays at zero
-// on this board.  **Bringing Clear Receiver out as a seam pulse would close
-// this properly**, and that is a one-line change on the card rather than
-// anything here.
+// **AND A REFUSED COMMIT IS CARRIED TO THE CARD ON `chaos_rx_lost`, SO THAT
+// THE MACHINE COUNTS IT TOO.**  AIM-628 section 7's Lost Count is packets
+// "which would have been received if the incoming packet buffer had not been
+// busy".  A board that refused a frame and told only this face left the
+// machine unable to see a loss a real CADR could see: measured on a board,
+// `CHAOS:PKTS-LOST` read zero while `LOST` here read twenty-three.
+//
+// **IT IS A WIRE OF ITS OWN AND NOT A PULSE OF `chaos_rx_done`, WHICH IS A
+// RACE THIS MODULE CANNOT WIN.**  The card counts a lost frame when
+// `chaos_rx_done` arrives with Receive Done already up, so the tempting
+// thing is to pulse that strobe and let the card decide which it was.
+// Measured against the card's own source: the card takes that decision from
+// its own Receive Done, the machine may write Clear Receiver in the tick
+// between the decision and the pulse, and the card then reads the SAME pulse
+// as a commit --- of ZERO words, whose bit counter underflows (`ch_top` is
+// `ch_rbits - {(ch_rlen - 1), 4'd0}`).  One wire with one meaning has no
+// such branch: the card counts it and touches neither the buffer, the fill
+// counter nor the bit counter.
+//
+// **AND ONE CONDITION FEEDS BOTH COUNTS**, `rx_refused` below, so that they
+// cannot drift apart: a refusal moves `LOST` here and the card's four bits
+// on the same tick.  They are not the same number.  The card's WRAPS at
+// sixteen --- AIM-628's four bits are a 74LS161, and muir's `arrive` is
+// `(self.lost + 1) & 0o17` --- and is cleared by Clear Receiver and by
+// Reset, which is what `muir::chaos::board::Interface` does; this one is
+// thirty-two bits
+// and survives a reset, because `chaos_face_give` reads any change in it as
+// a refusal and a counter that went backwards would make the program read a
+// stored frame as a refused one.  They move together, which is what lets the
+// program print them side by side and a board compare the two ends of the
+// seam.
 //
 // **`-CBLBSY` IS HELD LOW, DELIBERATELY.**  The card ORs it with the CRC
 // error into CSR bit 14, and nothing in the card is gated on it.  On the real
@@ -134,7 +151,8 @@
 //               its three write-only bits the same way --- so a write of 0
 //               is a harmless probe
 //    6  LOST    read only, saturating: frames refused because the machine
-//               had not emptied the incoming buffer
+//               had not emptied the incoming buffer.  The card's own
+//               four-bit Lost Count moves with it, on `chaos_rx_lost`
 //    7  IRQ     bit 0 a frame is waiting to be taken, bit 1 the machine
 //               emptied the incoming buffer.  A 1 written clears the bit
 //    8  IRQEN   the mask over IRQ; `IRQ_F2P` is the OR under it
@@ -230,6 +248,9 @@ module cadr_chaos_cable #(
     output var logic        chaos_rx_done,  // one tick, AFTER the last word
     output var logic [12:0] chaos_rx_bits,  // the bit count the counter loads
     output var logic        chaos_rx_crc,
+    output var logic        chaos_rx_lost,  // one tick: a frame the buffer
+                                            // had no room for, counted and
+                                            // dropped, no words behind it
     output var logic        chaos_tx_done,  // one tick: the frame is away
     output var logic        chaos_tx_abort,
     output var logic        chaos_cbl_busy,
@@ -401,6 +422,17 @@ module cadr_chaos_cable #(
                      !chaos_csr[15] && (xst == X_IDLE) &&
                      (r_rxlen != 9'd0) && (r_rxlen <= 9'd256);
 
+  // And a commit the buffer had no room for: THE ONE CONDITION BOTH COUNTS
+  // TAKE.  `chaos_face_give` offers 1 to 255 words and never none, so what a
+  // refusal reaches here is the buffer being busy --- Receive Done up, or a
+  // commit already streaming into it --- which is the state AIM-628 counts.
+  // Combinational, and so on the commit's own tick: the card reads Receive
+  // Done as it stood before anything this tick, which is where muir reads it
+  // too, `advance` running the arrival before `write` applies the store.
+  logic rx_refused;
+  assign rx_refused    = cmd_wr && wr_data[1] && wr_mask[1] && !commit_ok;
+  assign chaos_rx_lost = rx_refused;
+
   // The two buffers' own processes, kept pure: nothing but an address and a
   // datum, because Vivado refuses a RAM process with a mux on its read
   // (`Synth 8-2914`) and Verilator lints and simulates one happily.
@@ -531,7 +563,7 @@ module cadr_chaos_cable #(
           tx_valid      <= 1'b0;
           chaos_tx_done <= 1'b1;
         end
-        if (wr_data[1] && wr_mask[1] && !commit_ok && lost != 32'hFFFF_FFFF) begin
+        if (rx_refused && lost != 32'hFFFF_FFFF) begin
           lost <= lost + 32'd1;
         end
         // Throw away what is in the RX window: the length goes, which is

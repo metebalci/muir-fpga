@@ -838,6 +838,13 @@ int main(int argc, char **argv) {
   const uint16_t kMyAddr = 0003101;   // muir's own `CHAOS_ADDRESS`
   long frames_out = 0, frames_in = 0;
   {
+    // The two ends of the seam's count: what the program reads, and what the
+    // MACHINE reads.  A refusal must move both, which is the thing a board
+    // measured going wrong --- `LOST` here counting twenty-three frames while
+    // `CHAOS:PKTS-LOST` in the band read zero, because the cable refused the
+    // frame at its own end and told the card nothing.
+    auto face_lost = [&]() { return b.Read(CHAOS_PAGE + 4 * 6); };
+    auto card_lost = [&]() { return (b.UbRead(UB_CH_CSR) & 017000u) >> 9; };
     b.Write(CHAOS_PAGE + 4 * 2, kMyAddr);
     if (b.Read(CHAOS_PAGE + 4 * 2) != kMyAddr)
       Fail("MYADDR read back", b.Read(CHAOS_PAGE + 4 * 2), kMyAddr);
@@ -932,6 +939,14 @@ int main(int argc, char **argv) {
     const uint32_t lost2_after = b.Read(CHAOS_PAGE + 4 * 6);
     if (lost2_after != lost2_before + 1)
       Fail("LOST for a frame refused on a full buffer", lost2_after, lost2_before + 1);
+    // **AND THE MACHINE COUNTS IT TOO.**  AIM-628 section 7's Lost Count is
+    // packets "which would have been received if the incoming packet buffer
+    // had not been busy", and it is the only way the microcode can tell that
+    // anything was lost at all: `CHAOS:PKTS-LOST` is this field.  The cable
+    // refuses the frame and raises `chaos_rx_lost`; the card counts it and
+    // stores nothing.
+    const unsigned card2 = card_lost();
+    if (card2 != 1u) Fail("the card's Lost Count for the frame the cable refused", card2, 1u);
 
     // Clear Receiver lets the next one in, and the cable sees it.
     b.UbWrite(UB_CH_CSR, 010u);
@@ -946,11 +961,106 @@ int main(int argc, char **argv) {
     ++frames_in;
     if (b.Read(CHAOS_PAGE + 4 * 6) != lost3_before)
       Fail("LOST for a frame the machine had room for", 1, 0);
+    // Clear Receiver took the card's count away with the packet, and a frame
+    // it then had room for is not a loss at either end.
+    if (card_lost() != 0u)
+      Fail("the card's Lost Count for a frame it stored", card_lost(), 0u);
     if (b.UbRead(UB_CH_BITS) != in.size() * 16 - 1)
       Fail("the bit counter for the second frame", b.UbRead(UB_CH_BITS), in.size() * 16 - 1);
     for (unsigned k = 0; k < in.size(); ++k) (void)b.UbRead(UB_CH_RDBUF);
     b.UbWrite(UB_CH_CSR, 010u);
     b.Idle(4);
+
+    // ------------------------------------------------------------------
+    // THE CARD'S FOUR BITS: A RUN OF REFUSALS, THE SATURATION, AND THE TWO
+    // EVENTS THAT CLEAR THEM
+    // ------------------------------------------------------------------
+    //
+    // **HELD TO muir'S SOURCE AND NOT TO A TRACE, AND THE REASON IS THAT THE
+    // SEAM HAS NO COUNTERPART THERE.**  `chaos::board::Interface::arrive` is
+    // one function: it sees the frame, the buffer and the count together, so
+    // there is nothing between a cable and the registers for a trace to carry
+    // a pulse across.  What muir does fix is the ARITHMETIC, and it is read
+    // out of that file: the count rises by one and WRAPS at sixteen
+    // (`self.lost = (self.lost + 1) & 0o17`, the four bits of a 74LS161),
+    // it is presented in CSR bits 12:9 (`((self.lost as u16) << 9) &
+    // csr::LOST_COUNT`, and `LOST_COUNT` is 0o17000), and both Clear
+    // Receiver and Reset put it back to zero.
+    // `build/iob.pass` is what holds that arithmetic against muir over a
+    // trace --- three frames lost there, through the card's OTHER path, the
+    // one a far end that commits into a full buffer takes.  What is new here
+    // is that a refusal made at the cable's end reaches it at all, and that
+    // the two counts move on the same events.
+    {
+      // Offering the frame that is still in the RX window: the words have not
+      // moved and `RXLEN` is what a commit takes.
+      auto offer = [&]() {
+        b.Write(CHAOS_PAGE + 4 * 4, (uint32_t)in.size());
+        b.Write(CHAOS_PAGE + 4 * 5, 2u);
+        b.Idle(600);
+      };
+      // The buffer is empty after the Clear Receiver above, so this one is
+      // stored and every one after it is refused until the machine empties it.
+      offer();
+      ++frames_in;
+      if (!(b.UbRead(UB_CH_CSR) & 0100000u))
+        Fail("Receive Done for the frame that fills the buffer", 0, 1);
+      if (card_lost() != 0u)
+        Fail("the card's Lost Count for the frame that filled the buffer", card_lost(), 0u);
+
+      // Twenty refusals on that full buffer, the count read after every one.
+      // **TWENTY AND NOT FIFTEEN, BECAUSE WRAPPING AND STOPPING AGREE UNTIL
+      // THE SIXTEENTH.**  The card's four bits are a 74LS161 and WRAP, so
+      // this run ends at four where a counter that stopped at fifteen would
+      // read fifteen, and reading it at every step says which step the two
+      // parted company at rather than only that they did.  The face's own
+      // count is thirty-two bits and takes all twenty, so the pair also says
+      // the two ends move on the same events and are each their own width.
+      const uint32_t face_before = face_lost();
+      for (int k = 0; k < 20; ++k) {
+        offer();
+        const unsigned want = (unsigned)(k + 1) & 15u;
+        const unsigned got = card_lost();
+        if (got != want) {
+          Fail("the card's Lost Count over a run of refusals", got, want);
+          break;
+        }
+      }
+      const uint32_t face_after = face_lost();
+      if (face_after != face_before + 20u)
+        Fail("the face's LOST over the same run of refusals", face_after, face_before + 20u);
+
+      // Clear Receiver "clears Receive Done and enables the receiver to
+      // receive another packet", and muir's `write` takes the count away with
+      // it: the four bits count what has been lost SINCE the buffer was last
+      // emptied.  The face's count is NOT cleared, and must not be ---
+      // `chaos_face_give` reads any change in it as a refusal, so a count
+      // that went backwards would make the program read a stored frame as a
+      // refused one.
+      b.UbWrite(UB_CH_CSR, 010u);
+      b.Idle(4);
+      if (card_lost() != 0u)
+        Fail("the card's Lost Count after Clear Receiver", card_lost(), 0u);
+      if (face_lost() != face_after)
+        Fail("the face's LOST across a Clear Receiver", face_lost(), face_after);
+
+      // And Reset, the other event muir clears it at: fill the buffer, lose
+      // one, and reset the interface out from under it.
+      offer();
+      ++frames_in;
+      offer();
+      if (card_lost() != 1u)
+        Fail("the card's Lost Count before a Reset", card_lost(), 1u);
+      const uint32_t face_reset = face_lost();
+      b.UbWrite(UB_CH_CSR, 020000u);        // Reset, AIM-628's bit 13
+      b.Idle(8);
+      if (card_lost() != 0u)
+        Fail("the card's Lost Count after a Reset", card_lost(), 0u);
+      if (b.UbRead(UB_CH_CSR) & 0100000u)
+        Fail("Receive Done after a Reset", 1, 0);
+      if (face_lost() != face_reset)
+        Fail("the face's LOST across a Reset", face_lost(), face_reset);
+    }
   }
 
   // ======================================================================

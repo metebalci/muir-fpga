@@ -338,6 +338,7 @@ struct Dut {
     d->chaos_rx_valid = 0;
     d->chaos_rx_word = 0;
     d->chaos_rx_done = 0;
+    d->chaos_rx_lost = 0;
     d->chaos_rx_bits = 0;
     d->chaos_rx_crc = 0;
     d->chaos_tx_done = 0;
@@ -809,6 +810,7 @@ int main(int argc, char **argv) {
     b.d->kbd_code = 0;
     b.d->ub_init = 0;
     b.d->chaos_rx_done = 0;
+    b.d->chaos_rx_lost = 0;
     b.d->chaos_tx_done = 0;
     b.d->chaos_tx_abort = 0;
     b.d->ser_tx_take = 0;
