@@ -43,11 +43,11 @@
 // LIVE AND DEAD TOGETHER ARE THE CLAIM.  A counter of the fabric's own
 // intentions --- `mem_req`, `awvalid`, anything this design decides for
 // itself --- reads 256 and 256 in BOTH of them, and would report a working
-// memory path on a board whose port was never brought up.  CLAUDE.md's
-// shadow-memory lesson one level down: a witness that can move with the bug is
-// not a witness.  The DEAD configuration is what makes the difference
-// measurable, and `mutations/list.txt`'s
-// `the-request-is-counted-as-a-write-answered` is the bug it catches.
+// memory path on a board whose port was never brought up.  The shadow-memory
+// rule one level down: a witness that can move with the bug is not a witness.
+// The DEAD configuration is what makes the difference measurable, and
+// `mutations/list.txt`'s `the-request-is-counted-as-a-write-answered` is the
+// bug it catches.
 //
 // WHAT THE SLAVE IS AND IS NOT.  It is a 64-bit AXI3 slave with a model
 // memory keyed by ITS OWN beat address --- never by anything the DUT says it

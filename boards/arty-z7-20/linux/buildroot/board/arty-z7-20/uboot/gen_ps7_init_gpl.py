@@ -57,7 +57,7 @@
 # U-Boot's zynq_get_silicon_version(), MCTRL[31:28]; 0 and 1 take the 1.0
 # and 2.0 tables, everything else --- including this board's 3.1, which
 # reads 3 --- takes the 3.0 tables through the `else`, exactly as Vivado's C
-# and .tcl do.  CLAUDE.md records that the else branch is the intended path.
+# and .tcl do.  The else branch is the intended path.
 
 import argparse
 import os

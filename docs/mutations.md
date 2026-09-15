@@ -46,7 +46,7 @@ and the literal text to replace. This one is from the bus interface:
 @file rtl/machine/cadr_busint_xbus.sv
 @note XACK is made from XBUS ACK IN by the 74S64 at REQLM 0C11 --- a gate.
 @note Only a read goes through the 60 ns tap of the TD100 at 0C09. Registering
-@note both puts the acknowledgement a tick late on every write.
+@note both puts the acknowledgment a tick late on every write.
 @old
               || (state == GRANTED && ((write && answering) || deskewed))
 @new

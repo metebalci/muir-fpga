@@ -317,7 +317,7 @@ int main(int argc, char **argv) {
   }
 
   // The trace is streamed, not held --- as `tb/cadr_microcycle_tb.cpp` reads
-  // it, and for the same reason.  One pass for the acknowledgement times, one
+  // it, and for the same reason.  One pass for the acknowledgment times, one
   // to drive.
   std::vector<uint64_t> ack_for, rdata_for;
   std::vector<bool> arbitrated;
@@ -526,7 +526,7 @@ int main(int argc, char **argv) {
     const bool acking = bus_outstanding && tick >= ack_at_tick;
     dut->n_memack = acking ? 0 : 1;
     // "-LOADMD equals MEMACK and RDCYC": the interface puts it out on every
-    // acknowledgement and the processor's own RDCYC decides.
+    // acknowledgment and the processor's own RDCYC decides.
     dut->n_loadmd = acking ? 0 : 1;
     // Poison on a write, for the reason `cadr_microcycle_tb.cpp` gives: an
     // extra load of MD is a no-op if the word handed back is the one MD
@@ -605,7 +605,7 @@ int main(int argc, char **argv) {
       prev_ns = r.v[kNs];
       if (r.v[kBus]) {
         bus_outstanding = true;
-        // Rounded up: muir's acknowledgement is not on the five-nanosecond
+        // Rounded up: muir's acknowledgment is not on the five-nanosecond
         // grid and the fabric can only see it at a tick at or after it.
         ack_at_tick = tick + static_cast<long>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);
       }
@@ -884,7 +884,7 @@ int main(int argc, char **argv) {
       const uint32_t w = SpyRead(5);
       if (w >> 16) Fail("a lag probe's read was not answered", w >> 16, 0);
       if (sample_pending) {
-        Fail("a lag probe never saw the acknowledgement", 1, 0);
+        Fail("a lag probe never saw the acknowledgment", 1, 0);
         sample_pending = false;
       } else {
         const size_t got = w & 0x3fffu;

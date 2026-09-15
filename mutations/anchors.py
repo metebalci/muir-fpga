@@ -9,9 +9,9 @@ KILLS IT.**  `parse()` refuses the whole list, so one rotted anchor takes
 every other record with it and the run ends with no summary line at all.
 That happened at `66570da` and eleven commits were gated and pushed before
 anybody noticed, because `make check` does not run the mutation suite.
-CLAUDE.md's own account of it asks for exactly this: "a few seconds of Python
-over `mutations/run.py`'s own `parse()`, and would have caught this at the
-commit that broke it".
+The cheap guard that would have caught it is exactly this: a few seconds of
+Python over `mutations/run.py`'s own `parse()`, run at the commit that broke
+it.
 
 It uses the runner's `parse()` and not its own reader, so the two cannot
 drift apart about what a record is.  What it adds is the one thing `parse()`
@@ -23,9 +23,9 @@ legitimately differ.
     make mutants-anchors
 
 It is seconds, it needs no traces and no Verilator, and it is worth running
-after any change to a file a record names --- which is the rule CLAUDE.md
-already states as "a slice that touches a file must re-run every record aimed
-at that file", made cheap enough to do every time.
+after any change to a file a record names --- which is `docs/mutations.md`'s
+rule that a change touching a file re-runs every record aimed at that file,
+made cheap enough to do every time.
 """
 
 import os

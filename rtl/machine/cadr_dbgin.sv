@@ -16,7 +16,7 @@
 // `lashup::CableEnd`'s debuggee half:
 //
 //   the strobes and their          `busint::DEBUG_CYCLE`, `DEBUG_STATUS`,
-//   acknowledgement                `DEBUG_MODIFIER`, `DEBUG_ADDRESS`, and
+//   acknowledgment                `DEBUG_MODIFIER`, `DEBUG_ADDRESS`, and
 //                                  `Rtl::try_debug_request`, which answers a
 //                                  register strobe at the instant it is made
 //                                  and a cycle never

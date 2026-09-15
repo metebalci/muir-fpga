@@ -35,7 +35,7 @@
 // open when a key does nothing.  A key's road has two halves --- `cadr-usb-input` turns a key code
 // into a keysym, `cadr-terminal` turns a keysym into MIT's own key position
 // --- and each says what it did under a trace of its own.  Turning them on
-// means finding two daemons and signalling them, which is a thing to type
+// means finding two daemons and signaling them, which is a thing to type
 // once and not twice.
 //
 // **IT TOUCHES NO REGISTER AND NEEDS NO BITSTREAM.**  Every other word the

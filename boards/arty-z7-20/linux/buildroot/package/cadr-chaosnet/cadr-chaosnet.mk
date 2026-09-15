@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # The Chaosnet program: one package per program, which is this project's rule
-# since 10 September.  CLAUDE.md names it as "routing and its services", and
+# since 10 September.  The drawing names it "routing and its services", and
 # what it routes between is the Chaosnet interface in the fabric and the
 # board's gigabit Ethernet.
 #

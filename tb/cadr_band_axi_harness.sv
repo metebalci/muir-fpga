@@ -4,13 +4,13 @@
 // THE WHOLE PATH FROM THE MICROCODE TO THE 64-BIT BEAT, WITH THE DISK SEAM
 // BROUGHT OUT SO THAT A REAL PROGRAM CAN RUN THROUGH IT.
 //
-// WHAT THIS EXISTS FOR.  CLAUDE.md's account of the board's page-hash-table
-// word ends with a bounded suspect list.  `make hash-watch` runs `cadr_machine`
-// from reset off a real pack with a modeled DDR and reaches 171,000,000
-// microcycles without the board's fingerprint, so the defect is not in
-// `rtl/machine/`.  What that harness replaces with a model is what is left:
-// between `cadr_machine`'s `mem_*` port and the DRAM the board has
-// `cadr_axi_master`, `cadr_axi_widen`, the PS7 and the DDR3 controller.
+// WHAT THIS EXISTS FOR.  The account of the board's page-hash-table word ends
+// with a bounded suspect list.  `make hash-watch` runs `cadr_machine` from
+// reset off a real pack with a modeled DDR and reaches 171,000,000 microcycles
+// without the board's fingerprint, so the defect is not in `rtl/machine/`.
+// What that harness replaces with a model is what is left: between
+// `cadr_machine`'s `mem_*` port and the DRAM the board has `cadr_axi_master`,
+// `cadr_axi_widen`, the PS7 and the DDR3 controller.
 //
 // `tb/cadr_mem_count_harness.sv` and `tb/cadr_bus_audit_harness.sv` already
 // wire those three modules together, and both are deliberately kept to MIT's
@@ -44,10 +44,10 @@
 //   testbench plays both, at the same order and the same interlock.
 //
 //   The processor's own bus cycle: `mbusy_o`, `wrcyc`, `nxm`, `unibus`,
-//   `device`, `phys`.  CLAUDE.md's shadow-memory rule says a check keyed by
-//   the thing under test moves with the bug, and the bug being hunted is a
-//   duplicated or invented transaction at exactly the boundary below.  So the
-//   anchor is the processor's cycle and never the bridge's.
+//   `device`, `phys`.  The shadow-memory rule says a check keyed by the thing
+//   under test moves with the bug, and the bug being hunted is a duplicated or
+//   invented transaction at exactly the boundary below.  So the anchor is the
+//   processor's cycle and never the bridge's.
 //
 //   `ch_active`, because the channel is a SECOND master on the same bridge and
 //   the accounting above is the processor's.  Where `tb/cadr_bus_audit_tb.cpp`
@@ -62,8 +62,8 @@
 //   board gets wrong --- is read out of a machine that has stopped.
 //
 // `boards` is HARDWIRED to 32, as `tb/cadr_mem_count_harness.sv` hardwires it
-// and as `boards/arty-z7-20/cadr_arty.sv` sets it: CLAUDE.md records that
-// System 100 cannot cold-boot with 40 or more, so it is not a knob.
+// and as `boards/arty-z7-20/cadr_arty.sv` sets it: System 100 cannot
+// cold-boot with 40 or more, so it is not a knob.
 
 `default_nettype none
 
@@ -223,7 +223,7 @@ module cadr_band_axi_harness #(
   logic [31:0] con_vma, con_q, con_md;
   logic [17:0] con_ro_echo;
 
-  // The PS7 boundary's own acknowledgements: `rvalid && rready && rlast` and
+  // The PS7 boundary's own acknowledgments: `rvalid && rready && rlast` and
   // `bvalid && bready`, registered, which is where `cadr_mem_count.sv` counts
   // them and for the same reason --- a fabric that never issued a transaction
   // cannot fabricate a B or an R beat.

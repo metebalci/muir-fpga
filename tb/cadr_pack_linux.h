@@ -16,8 +16,8 @@
 //              RLAST where the length says and nowhere else, one response a
 //              burst, no burst across a 4 KB boundary, every beat aligned to
 //              its size.  A slave that only recorded the address could not see
-//              a duplicate handshake, which is CLAUDE.md's
-//              `awvalid-held-up-after-awready` lesson.
+//              a duplicate handshake, which is what the record
+//              `awvalid-held-up-after-awready` holds.
 //
 //   Gp0Linux   a single-beat 32-bit AXI3 master, NON-BLOCKING: one register
 //              access at a time, advanced a tick at a time by the caller's own

@@ -8,8 +8,8 @@
 # doing its job; one the check passes is reported as SURVIVED and the run is
 # red.  A record whose `@old` no longer matches its file exactly once, or that
 # does not compile, or that names a file the check does not build, is BROKEN
-# and also fails the run --- CLAUDE.md records two fabric mutations reported
-# as surviving that had never been built.
+# and also fails the run --- two fabric mutations were once reported as
+# surviving that had never been built.
 #
 # THE FORMAT is `mutations/list.txt`'s, so that anybody who has read that one
 # can read this one:
@@ -110,7 +110,7 @@
 @file pack_feeder.c
 @why a loss that is counted and not said is a loss nobody finds out about
 @note An exit code cannot tell two failures apart and a count that names
-@note nothing is not a report (CLAUDE.md, twice).  The check reads the
+@note nothing is not a report, both learned twice over.  The check reads the
 @note console back and requires the unit, the count and the block number, and
 @note the sentence that says renaming is the gesture that would have kept
 @note them.

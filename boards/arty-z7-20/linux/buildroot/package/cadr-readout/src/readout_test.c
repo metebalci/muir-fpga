@@ -89,8 +89,8 @@ static uint64_t model_word(struct model *m, unsigned sel, unsigned a)
 
 // The audit's record as the fabric lays it out, with every field distinct so
 // that a field taken out of the wrong word shows.  The numbers are the board's
-// own: CLAUDE.md's page hash table word at physical 0o103757, which turned out
-// to be the faulting virtual address rather than a page table word.
+// own: the page hash table word at physical 0o103757, which turned out to be
+// the faulting virtual address rather than a page table word.
 #define AUD_MARK ((uint64_t)IMG_AUDIT_MARK << 32)
 static void fill_audit(struct model *m)
 {

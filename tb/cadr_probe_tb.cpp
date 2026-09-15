@@ -18,7 +18,7 @@
 //
 // The window needs no stimulus.  The boot PROM's first memory cycle is at
 // microcycle 535,791, so nothing in the first thousand microcycles asks the
-// bus for anything: no grant, no acknowledgement, no stall, no device.
+// bus for anything: no grant, no acknowledgment, no stall, no device.
 //
 // **IS THE SAMPLE THE LAST VALUE BEFORE THE BOUNDARY, OR SOMETHING FROM THE
 // MIDDLE OF THE MICROCYCLE?**  It matters most where the window above cannot

@@ -3,11 +3,11 @@
 //
 // ONE TRANSACTION PER BUS CYCLE, AND ITS DIRECTION IS THE PROCESSOR'S.
 //
-// The check the board's own bug has been living behind.  CLAUDE.md's account,
-// in one paragraph: a word in MIT's page hash table is the faulting virtual
-// address rather than a page table word; MD is exonerated by measurement, so
-// main memory already held it, so the corruption is a WRITE that should not
-// have happened; and `cadr_microcycle.sv` loads `wdata` from MD at MEMGO
+// The check the board's own bug has been living behind.  The account, in one
+// paragraph: a word in MIT's page hash table is the faulting virtual address
+// rather than a page table word; MD is exonerated by measurement, so main
+// memory already held it, so the corruption is a WRITE that should not have
+// happened; and `cadr_microcycle.sv` loads `wdata` from MD at MEMGO
 // REGARDLESS OF DIRECTION, so on every read the whole of MD is standing on
 // `mem_wdata` at the bridge.  One unwanted write therefore replaces a memory
 // word with MD, at the read's own address, and neither the machine nor the
@@ -71,7 +71,7 @@
 //      sounds like, because what the program does most of is what a spurious
 //      transaction would most likely ride on.
 //
-// THE ANCHOR IS THE PROCESSOR'S OWN CYCLE AND NEVER THE BRIDGE'S.  CLAUDE.md's
+// THE ANCHOR IS THE PROCESSOR'S OWN CYCLE AND NEVER THE BRIDGE'S.  The
 // shadow-memory rule: a check keyed by the thing under test moves with the
 // bug.  A bus cycle here is a rise of MBUSY, which `cadr_microcycle.sv` sets
 // at MEMGO and clears MFINISHD_T ticks after -MEMACK; `nxm`, `unibus` and

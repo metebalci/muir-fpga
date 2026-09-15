@@ -49,10 +49,10 @@
 //       * `UB MAP ERROR` is bit 5 of the error status register, which the
 //         face of every row carries.
 //     The instants are `busint::UB_XBUS_REQUEST_NS` from `-UB MSYN` to the
-//     request and `busint::UB_XBUS_READ_ACK_NS` from the acknowledgement to
+//     request and `busint::UB_XBUS_READ_ACK_NS` from the acknowledgment to
 //     `-UB SSYN` on a read, with it on a write. **The Xbus behind the window
 //     answers at a latency that moves from cycle to cycle**, so a block that
-//     counted ticks from the strobe rather than watching the acknowledgement
+//     counted ticks from the strobe rather than watching the acknowledgment
 //     could not pass; and it holds the poison `golden/src/busint_regs.rs`
 //     puts in muir's own memory, computed here from the address THE FABRIC
 //     puts out, so a translation one page or one word wide takes a word muir
@@ -551,8 +551,8 @@ int main(int argc, char **argv) {
   // rise after that, so a grant landing just before a fall waits nearly two
   // half-periods longer than one landing just after.  A table that had
   // collapsed to one number would pass every replay and would be exactly the
-  // bug CLAUDE.md records as "restarting it at the grant is the obvious way
-  // to write it and is wrong on every cycle but the lucky ones".
+  // recorded bug: restarting the oscillator at the grant is the obvious way
+  // to write it and is wrong on every cycle but the lucky ones.
   long tmo_lo = -1, tmo_hi = -1;
   for (long ph = 0; ph < kVcoPeriodNs; ph += kTickNs) {
     const long d = dbg_tmo[ph];
@@ -637,13 +637,13 @@ int main(int argc, char **argv) {
   };
   // **THE XBUS BEHIND THE WINDOW ANSWERS AT A LATENCY THAT MOVES.** A fixed
   // one would let a block that counted ticks from `-UB MSYN` rather than
-  // watching the acknowledgement pass, which is the whole of what
+  // watching the acknowledgment pass, which is the whole of what
   // `busint::UB_XBUS_READ_ACK_NS` is a claim about.
   long map_latency = 1;
   // **AND `UB MD LOAD` ANSWERS AT A LATENCY THAT MOVES TOO**, for the same
   // reason: the load is a grant on the machine's side of the seam, and a
   // block that counted ticks from `-UB MSYN` rather than watching the
-  // acknowledgement would pass a fixed one.  `busint::UB_MD_ACK_NS` is a
+  // acknowledgment would pass a fixed one.  `busint::UB_MD_ACK_NS` is a
   // claim about the interval from the LOAD, not from the strobe.
   long md_latency = 1;
   // **AND THE FAR END OF THE DEBUG CABLE ANSWERS AT A LATENCY THAT MOVES**,
@@ -680,7 +680,7 @@ int main(int argc, char **argv) {
         mdcount = -1;
       }
       // The other machine's `DEBUG ACK`, driven INTO this edge as the seam's
-      // acknowledgement is: what `-UB SSYN` must follow with no delay of its
+      // acknowledgment is: what `-UB SSYN` must follow with no delay of its
       // own.  It is a level and it stands until the cycle ends.
       if (cablecount == 0) {
         b.d->dbgout_ack = 1;
@@ -736,7 +736,7 @@ int main(int argc, char **argv) {
       }
     }
     b.d->ub_msyn = 0;
-    // The cable's acknowledgement is a level the far end holds for its own
+    // The cable's acknowledgment is a level the far end holds for its own
     // cycle and lets go with it, which is what `cadr_dbgin.sv` does: it is
     // dropped here with the strobe rather than left standing into the next.
     b.d->dbgout_ack = 0;
@@ -868,10 +868,10 @@ int main(int argc, char **argv) {
             bad += Fail(r.n, "the word this memory holds against muir's", b.MemRead(r.phys),
                         r.xword);
           // `Busint::debug_xbus_edge`: a write is acknowledged WITH the Xbus
-          // acknowledgement and a read `UB_XBUS_READ_ACK_NS` after it.
+          // acknowledgment and a read `UB_XBUS_READ_ACK_NS` after it.
           const long want = r.write ? 0 : kReadAckT;
           if (got.done_at < 0 || got.ssyn - got.done_at != want)
-            bad += Fail(r.n, "-UB SSYN, in ticks after the Xbus acknowledgement",
+            bad += Fail(r.n, "-UB SSYN, in ticks after the Xbus acknowledgment",
                         (unsigned long)(got.ssyn - got.done_at), (unsigned long)want);
         } else {
           // The buffer halves and the refusals make no Xbus cycle at all:
@@ -1151,7 +1151,7 @@ int main(int argc, char **argv) {
       if (got.word != (w & 0xFFFFu))
         bad += Fail((long)u, "the low half of the mapped word", got.word, w & 0xFFFFu);
       if (got.done_at < 0 || got.ssyn - got.done_at != kReadAckT)
-        bad += Fail((long)u, "-UB SSYN, in ticks after the Xbus acknowledgement",
+        bad += Fail((long)u, "-UB SSYN, in ticks after the Xbus acknowledgment",
                     (unsigned long)(got.ssyn - got.done_at), (unsigned long)kReadAckT);
       last_high = w >> 16;
       have_high = 1;
@@ -1168,7 +1168,7 @@ int main(int argc, char **argv) {
   // The sweep above ran with nothing plugged in, which is the pull-up
   // answering.  This runs the same thirty-two addresses with a board at the
   // far end, and it is where the four strobes, the levels and the
-  // acknowledgement are compared.
+  // acknowledgment are compared.
   //
   // **THE FAR END'S WORD IS INJECTIVE IN THE ADDRESS AND THE DIRECTION**, so
   // a block that answered one cycle with another's word says so, and it is
@@ -1234,18 +1234,18 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // ---- an acknowledgement that belongs to the CYCLE BEFORE ------------------
+  // ---- an acknowledgment that belongs to the CYCLE BEFORE ------------------
   //
   // `DEBUG OUT ACK` is a level.  On MIT's cable it falls within nanoseconds of
   // the request it belongs to being lifted, because the far end's gate is
   // `NAND(-DB ADR1 CLK, -DB ADR0 CLK, -DB READ STATUS)` and the three go with
   // the request.  A carrier that serializes the cable does not give that for
-  // free: the fall takes a frame to cross, so the acknowledgement of the
+  // free: the fall takes a frame to cross, so the acknowledgment of the
   // cycle just finished is still standing when the next one starts.
   //
   // So this is the stimulus that loses the race --- the ack left UP across
   // the gap between two cycles, which is what the cable really does --- and
-  // the claim is that the second cycle waits for an acknowledgement of its
+  // the claim is that the second cycle waits for an acknowledgment of its
   // own.  Found on the two-board check before it was a section here.
   {
     b.d->dbgout_live = 1;
@@ -1264,7 +1264,7 @@ int main(int argc, char **argv) {
     b.d->ub_msyn = 1;
     long early = -1;
     for (long k = 0; k < 120; ++k) {
-      // The far end lets the old acknowledgement go a frame in, and gives one
+      // The far end lets the old acknowledgment go a frame in, and gives one
       // of its own for THIS cycle a little after.
       if (k == 40) b.d->dbgout_ack = 0;
       if (k == 80) {
@@ -1278,7 +1278,7 @@ int main(int argc, char **argv) {
     b.d->dbgout_ack = 0;
     b.Idle(3);
     if (early < 80)
-      bad += Fail(-1, "-UB SSYN taken from the acknowledgement of the cycle BEFORE",
+      bad += Fail(-1, "-UB SSYN taken from the acknowledgment of the cycle BEFORE",
                   (unsigned long)early, 80);
     b.d->dbgout_live = 0;
     b.d->dbgout_dbd_in = 0xFFFF;
@@ -1457,7 +1457,7 @@ int main(int argc, char **argv) {
       "    writes), %ld refused with UB MAP ERROR and never answered, and %ld a write of MD,\n"
       "    decoded, answered and loaded into MD.  The Xbus request is %ld ticks after -UB MSYN\n"
       "    on every one of\n"
-      "    them and -UB SSYN is %ld ticks after the acknowledgement on a read and with it on a\n"
+      "    them and -UB SSYN is %ld ticks after the acknowledgment on a read and with it on a\n"
       "    write, the seam answering at a latency that moves from cycle to cycle.\n"
       "    AND -UB TO MD IS BUILT: %ld of those mapped writes put their thirty-two lines into\n"
       "    the processor's MD instead of onto the Xbus --- the Unibus word in the high half\n"
@@ -1480,7 +1480,7 @@ int main(int argc, char **argv) {
       "    and %ld writes, with -DEBUG OUT REQ %ld ticks after -UB MSYN, DEBUG OUT A<1:0> the\n"
       "    strobe the address decodes to, the levels standing after the master let the cycle\n"
       "    go, and -UB SSYN on the far end's DEBUG ACK with no delay of its own, that\n"
-      "    acknowledgement coming at a latency that moves from cycle to cycle.  A cable\n"
+      "    acknowledgment coming at a latency that moves from cycle to cycle.  A cable\n"
       "    pulled under a standing request answers there with ones rather than waiting.\n"
       "    %ld of muir's own busint::Busint cycles replayed, %ld of them at an address the\n"
       "    far end never answered --- this block has no timer and build/unibus.pass is where\n"

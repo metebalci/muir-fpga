@@ -6,18 +6,17 @@
 // board, for as long as the board runs, and readable hours after it has
 // stopped.
 //
-// WHY THIS EXISTS, and it is one specific board bug.  CLAUDE.md's chain, every
-// link measured: the board halts in `PDL-BUFFER-REFILL` because a word in
-// MIT's page hash table is the faulting virtual address rather than a page
-// table word; the memory data register is exonerated --- the composed machine
-// cannot leave MD stale across a read, 59,358 strobes with MBUSY down at none
-// of them --- so main memory already held that word, so the corruption is a
-// WRITE THAT SHOULD NOT HAVE HAPPENED.  And `rtl/machine/cadr_microcycle.sv`
-// loads `wdata` from MD at MEMGO REGARDLESS OF DIRECTION, measured on every
-// one of the boot PROM's 256 reads, so the whole of MD stands on `mem_wdata`
-// during a read: one unwanted write replaces a memory word with MD, at the
-// read's own address, and neither the machine nor the microcode can tell
-// afterwards.
+// WHY THIS EXISTS, and it is one specific board bug.  The chain, every link
+// measured: the board halts in `PDL-BUFFER-REFILL` because a word in MIT's
+// page hash table is the faulting virtual address rather than a page table
+// word; the memory data register is exonerated --- the composed machine cannot
+// leave MD stale across a read, 59,358 strobes with MBUSY down at none of them
+// --- so main memory already held that word, so the corruption is a WRITE THAT
+// SHOULD NOT HAVE HAPPENED.  And `rtl/machine/cadr_microcycle.sv` loads
+// `wdata` from MD at MEMGO REGARDLESS OF DIRECTION, measured on every one of
+// the boot PROM's 256 reads, so the whole of MD stands on `mem_wdata` during a
+// read: one unwanted write replaces a memory word with MD, at the read's own
+// address, and neither the machine nor the microcode can tell afterwards.
 //
 // `tb/cadr_bus_audit_tb.cpp` holds exactly this property in simulation and is
 // green.  What it cannot do is the reason this module exists: the boot PROM is
@@ -128,15 +127,15 @@
 // instance is timed at one tick and no name has to be added for them.
 //
 // WHAT THE OWNER BUNDLE IS, AND WHY IT IS AN INPUT RATHER THAN DECODED HERE.
-// CLAUDE.md's shadow-memory rule says a check keyed by the thing under test
-// moves with the bug, and the thing under test here is the path from the bus
-// cycle to the AXI port.  So `cycle`, `cycle_write`, `cycle_memory` and
-// `cycle_phys` must come from the MASTER'S OWN upstream signals --- MBUSY,
-// the 74S175 at 1C23, and the held decode for the processor; the channel's own
-// request, direction and decode for the disk --- and never from `bus_rq`,
-// `bus_write` and `bus_sel`, which are the bridge's inputs and would move with
-// a fault in the mux that makes them.  The instantiation owns that choice and
-// the module says so here because a later reader cannot see it from inside.
+// The shadow-memory rule says a check keyed by the thing under test moves with
+// the bug, and the thing under test here is the path from the bus cycle to the
+// AXI port.  So `cycle`, `cycle_write`, `cycle_memory` and `cycle_phys` must
+// come from the MASTER'S OWN upstream signals --- MBUSY, the 74S175 at 1C23,
+// and the held decode for the processor; the channel's own request, direction
+// and decode for the disk --- and never from `bus_rq`, `bus_write` and
+// `bus_sel`, which are the bridge's inputs and would move with a fault in the
+// mux that makes them.  The instantiation owns that choice and the module says
+// so here because a later reader cannot see it from inside.
 //
 // **AND `cycle_memory` IS NOT THE ADDRESS DECODE'S `memory` OUTPUT.**  The
 // display's frame buffer is main memory's own bridge at a second base, so a
@@ -151,7 +150,7 @@
 // OWNS THE BUS.**  MBUSY is up from MEMGO until MFINISHD_T ticks after
 // -MEMACK, and the channel may take the bus inside either end of that window
 // --- `ch_own <= ch_req && !cpu_rq`, and `cpu_rq` is up only from the grant to
-// the acknowledgement.  A `cycle` that were simply `mbusy || ch_own` would run
+// the acknowledgment.  A `cycle` that were simply `mbusy || ch_own` would run
 // the two cycles together, carry the processor's direction into the channel's
 // word and never reset the per-cycle request count.  What makes it exact is
 // the idle tick `cadr_memory_path.sv` already inserts at every change of owner

@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
   }
 
   // Streamed, not held: the band trace is 297 MB and holding it parsed is
-  // most of a gigabyte.  Read once for the acknowledgement instants, which
+  // most of a gigabyte.  Read once for the acknowledgment instants, which
   // are the only thing that has to be known before their row, then again to
   // drive.  tb/cadr_microcycle_tb.cpp says the same and for the same reason.
   bool pack_trace = false;

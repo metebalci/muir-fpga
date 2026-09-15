@@ -10,15 +10,15 @@
 // the three-tick pipeline at the end of `rtl/machine/cadr_microcycle.sv`,
 // the second read port of each memory, the selector's mux and the echo.
 // The reference is the array itself, read out of the model by name.  **That
-// is not the shadow-memory mistake CLAUDE.md records**, and the difference
-// is worth stating because the shapes look alike: a shadow keyed by the
-// DUT's own address and filled from the DUT's own data moves with the bug,
-// so a bridge writing the address instead of the word writes consistent
-// nonsense and every read agrees.  Here the storage is the reference and the
-// READOUT is the suspect, and nothing the readout does can move a word in an
-// array --- it drives no address, no enable and no word that the machine
-// reads.  A bug in what the machine WRITES is not this check's to catch and
-// `build/machine.pass` is where it would show.
+// is not the shadow-memory mistake**, and the difference is worth stating
+// because the shapes look alike: a shadow keyed by the DUT's own address and
+// filled from the DUT's own data moves with the bug, so a bridge writing the
+// address instead of the word writes consistent nonsense and every read
+// agrees.  Here the storage is the reference and the READOUT is the suspect,
+// and nothing the readout does can move a word in an array --- it drives no
+// address, no enable and no word that the machine reads.  A bug in what the
+// machine WRITES is not this check's to catch and `build/machine.pass` is
+// where it would show.
 //
 // **TWO PHASES, AND THE SECOND EXISTS BECAUSE THE FIRST TESTS ALMOST
 // NOTHING ON ITS OWN.**

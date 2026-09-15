@@ -1064,7 +1064,7 @@ It is a race rather than a consequence: the same halt wedged about one entry in
 three, with the cable in the same state after each. The exact race is not
 established.
 
-This fault has been found and fixed since. The acknowledgement's level, and
+This fault has been found and fixed since. The acknowledgment's level, and
 not its edge alone, now holds the countdown flags cleared, and forty console
 halts and eleven debugger entries have run on the board without a deadlock.
 

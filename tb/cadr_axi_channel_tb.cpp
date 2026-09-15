@@ -4,13 +4,13 @@
 // A BLOCK OF A PACK, THROUGH THE CHANNEL, THROUGH THE ADAPTER AND THE
 // WIDENING, INTO A 64-BIT BEAT --- AND OUT AGAIN WORD FOR WORD.
 //
-// **THE HOLE THIS IS AIMED AT.**  CLAUDE.md's account of the board's
-// page-hash-table word ends with a bounded suspect list.  `make hash-watch`
-// runs `cadr_machine` from reset off a real pack with a modeled DDR and
-// reaches 171,000,000 microcycles with the board's fingerprint occurring zero
-// times, so the defect is not in `rtl/machine/`.  What that harness replaces
-// with a model is what is left: between `cadr_machine`'s `mem_*` port and the
-// DRAM the board has `cadr_axi_master`, `cadr_axi_widen`, the PS7 and the DDR3
+// **THE HOLE THIS IS AIMED AT.**  The account of the board's page-hash-table
+// word ends with a bounded suspect list.  `make hash-watch` runs
+// `cadr_machine` from reset off a real pack with a modeled DDR and reaches
+// 171,000,000 microcycles with the board's fingerprint occurring zero times,
+// so the defect is not in `rtl/machine/`.  What that harness replaces with a
+// model is what is left: between `cadr_machine`'s `mem_*` port and the DRAM
+// the board has `cadr_axi_master`, `cadr_axi_widen`, the PS7 and the DDR3
 // controller.
 //
 // And **no check in this tree had ever run a real program through that
@@ -36,9 +36,9 @@
 // rest name the block and the word's place in it.  So a page of main memory
 // can be READ BACK AND DECODED without the testbench being told where the CCW
 // walk put it --- which is what keeps this from being a shadow memory.
-// CLAUDE.md's rule is that a check keyed by the thing under test moves with
-// the bug; here the testbench knows only what it SERVED at the seam, and what
-// it finds in memory has to decode to that on its own.
+// The rule is that a check keyed by the thing under test moves with the bug;
+// here the testbench knows only what it SERVED at the seam, and what it finds
+// in memory has to decode to that on its own.
 //
 // No file: a pack of 263,245 blocks is generated a block at a time on demand,
 // which is what lets this run under `mutations/run.py` with nothing copied.
@@ -73,9 +73,9 @@
 //      here and in no other check in this tree.
 //
 //   6  A WRITE NOBODY ASKED FOR.  `mem_write` up at the port with the
-//      processor's own WRCYC down and the channel idle.  That is CLAUDE.md's
-//      account of the board's corruption written as an invariant rather than
-//      as an address, and it is the reason this family of checks exists.
+//      processor's own WRCYC down and the channel idle.  That is the board's
+//      corruption written as an invariant rather than as an address, and it
+//      is the reason this family of checks exists.
 //
 //   7  A CYCLE THE DECODE DID NOT CALL MAIN MEMORY ISSUES NOTHING.  The
 //      processor's own `device`/`unibus`/`nxm`, applied while no transfer is

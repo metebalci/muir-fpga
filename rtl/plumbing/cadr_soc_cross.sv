@@ -37,7 +37,7 @@
 //     standing still for a full period of the far side's clock, plus the
 //     resolution time of the first flop, before anything reads it;
 //   * the answer is REGISTERED ON THE ANSWERING SIDE at the edge that raises
-//     the acknowledgement, and comes back by the same argument.
+//     the acknowledgment, and comes back by the same argument.
 //
 // `rtl/plumbing/xilinx7/cadr_soc.xdc` is where that argument is told to the
 // fitter, as a maximum delay on everything that crosses and NOT as a clock
@@ -49,9 +49,9 @@
 //
 // **THE ANSWER IS NOT HANDED BACK UNTIL THE HANDSHAKE HAS CLOSED, AND THAT IS
 // THE ONE THING THIS DOES THAT `cadr_mem_cross` DOES NOT HAVE TO.**  A
-// four-phase handshake is not finished when the acknowledgement arrives: the
+// four-phase handshake is not finished when the acknowledgment arrives: the
 // request has still to be dropped, the far side has still to see it go and
-// drop its acknowledgement, and that has still to come back.  The requester in
+// drop its acknowledgment, and that has still to come back.  The requester in
 // front of this one --- `rtl/plumbing/cadr_soc.sv`'s data seam --- clears its
 // own busy flag the instant it is answered and may offer the next request one
 // clock later, which is INSIDE that window.  So the answer is held until the
@@ -109,8 +109,8 @@ module cadr_soc_cross (
 
   typedef enum logic [1:0] {
       A_IDLE,   // nothing out; a request may be taken
-      A_ASK,    // the request is out, waiting for the acknowledgement
-      A_DRAIN   // the request is withdrawn, waiting for the acknowledgement
+      A_ASK,    // the request is out, waiting for the acknowledgment
+      A_DRAIN   // the request is withdrawn, waiting for the acknowledgment
                 // to go with it --- the handshake's fourth phase
   } a_state_e;
 
@@ -120,7 +120,7 @@ module cadr_soc_cross (
   logic [3:0]  be_q;
   logic [31:0] addr_q, wdata_q;
 
-  // The far side's acknowledgement, synchronized back.  Two flip-flops: the
+  // The far side's acknowledgment, synchronized back.  Two flip-flops: the
   // first may go metastable and the second is what anything reads.
   logic [1:0] ack_sync;
   logic       ack_a;
@@ -168,7 +168,7 @@ module cadr_soc_cross (
         A_ASK: begin
           if (ack_a) begin
             // The answer was registered on the far side at the same edge
-            // that raised the acknowledgement, and the acknowledgement has
+            // that raised the acknowledgment, and the acknowledgment has
             // come through two of this side's flip-flops since --- so it has
             // been standing still for a full period of this clock, plus the
             // first flop's resolution time, before anything here reads it.
@@ -182,7 +182,7 @@ module cadr_soc_cross (
         default: begin  // A_DRAIN
           // **THE FOURTH PHASE, AND ANSWERING BEFORE IT IS OVER IS A
           // CORRECTNESS BUG AND NOT A LATENCY ONE.**  The far side does not
-          // drop its acknowledgement until it has seen the request go, and
+          // drop its acknowledgment until it has seen the request go, and
           // that then takes two more clocks to come back here.  A requester
           // told it was answered inside that window would raise the next
           // request while `ack_a` still stood from the last one, and this
@@ -193,7 +193,7 @@ module cadr_soc_cross (
           // every ratio, because `cadr_soc.sv` takes one clock to clear its
           // own busy flag and that is one clock more than the window needs.
           // How much more was measured by instrumenting the mutant: of 273
-          // requests, **129 arrive while the acknowledgement still stands at
+          // requests, **129 arrive while the acknowledgment still stands at
           // the SECOND flip-flop of the synchronizer and NONE while it stands
           // at the first**.  One clock.  `mutations/list.txt` records that
           // beside the crossing's records rather than filing a hole, so that
@@ -231,7 +231,7 @@ module cadr_soc_cross (
     end else begin
       req_sync <= {req_sync[0], req_a};
       if (!req_b) begin
-        // The request has gone: let the acknowledgement go with it, which is
+        // The request has gone: let the acknowledgment go with it, which is
         // what lets the asking side out of its drain.
         ack_b <= 1'b0;
         taken <= 1'b0;

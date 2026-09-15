@@ -68,7 +68,7 @@
 // registers `pack_rst` for exactly that reason.  **It does NOT reset the
 // window**, for the reason `cadr_console.sv` argues about its own: a carrier
 // reset by the machine's reset would abandon the request that asked for it,
-// and the debugger would be left waiting for an acknowledgement from a cable
+// and the debugger would be left waiting for an acknowledgment from a cable
 // that had forgotten the request.
 
 `default_nettype none
@@ -417,7 +417,7 @@ module cadr_dbgin_harness #(
       .rdata       (rdata),
       // `UB MD LOAD`, MD's third writer: a foreign master's mapped write
       // through the Unibus map, which this harness has no register block to
-      // make.  Tied off, and the acknowledgement is then never asked for.
+      // make.  Tied off, and the acknowledgment is then never asked for.
       .ub_md_req   (1'b0),
       .ub_md_data  (32'd0),
       .ub_md_ack   (ub_md_ack_u),

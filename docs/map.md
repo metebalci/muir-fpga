@@ -93,10 +93,10 @@ happens. The write half is held by the store. A word written outside page 0 is
 named at its address, each of the 256 words must be read exactly once and
 written exactly once, and page 0 must be zero at the end.
 
-**And the boot PROM does exercise the property, which CLAUDE.md said it did
-not.** This was measured against muir. `SET-UP-FOUR-PAGES` writes four
-second-level entries at microcycles 536,290, 536,293, 536,297 and 536,299, and
-each takes an entry from **zero — no access** — to `MAP-ACCESS-CODE 3`. The
+**And the boot PROM does exercise the property, where it had been written down
+that it did not.** This was measured against muir. `SET-UP-FOUR-PAGES` writes
+four second-level entries at microcycles 536,290, 536,293, 536,297 and 536,299,
+and each takes an entry from **zero — no access** — to `MAP-ACCESS-CODE 3`. The
 first bus cycle is at 536,302. That is twelve microcycles after the first and
 three after the last, against `PDL-BUFFER-REFILL`'s seven. The testbench
 re-derives that gap from the trace's own `WMAPD` and `VMA<25>` columns at every

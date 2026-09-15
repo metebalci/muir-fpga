@@ -20,7 +20,7 @@
 // should not is a word nobody can mistake for the right one.  The boot PROM
 // past its first bus cycle writes MD almost only with zero, so the poison is
 // almost always all ones: the two are as far apart as thirty-two bits get,
-// and which of them MD holds is not a judgement call.
+// and which of them MD holds is not a judgment call.
 //
 // WHY THAT IS A LEGITIMATE THING TO DRIVE.  `n_loadmd` is an input of
 // `cadr_microcycle` and the module has to be right for what its port can be

@@ -25,11 +25,11 @@
 #
 # **THE SOURCE COMES FROM muir'S OWN GIT** rather than from ../../muir beside
 # this repository.  A local path would rsync whatever is checked out there,
-# which is a working tree somebody may be mid-slice in --- CLAUDE.md's rule is
-# that it must not be moved for exactly that reason --- and the image would
-# then hold a muir that is no commit.  Buildroot clones the commit and makes a
-# tarball of it in $(DL_DIR), so a rebuild fetches nothing and a build is
-# reproducible from the pin alone.
+# which is a working tree somebody may be mid-slice in, and which must not be
+# moved for exactly that reason, and the image would then hold a muir that is
+# no commit.  Buildroot clones the commit and makes a tarball of it in
+# $(DL_DIR), so a rebuild fetches nothing and a build is reproducible from the
+# pin alone.
 #
 # **THERE IS NO .hash FILE, AND THAT IS A CHOICE.**  A hash covers the tarball
 # Buildroot builds from the clone, so it would have to be recomputed every time

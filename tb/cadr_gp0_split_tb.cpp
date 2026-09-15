@@ -509,7 +509,7 @@ int main(int argc, char **argv) {
   // `(JUMP-IF-BIT-CLEAR (BYTE-FIELD 1 5) MD COLD-BOOT)`: `KBD READY` clear
   // is a cold boot and ready is a WARM one.  A board coming up with a word
   // waiting at that register therefore goes somewhere it was never asked to
-  // go, and CLAUDE.md names this as the trap aimed at whatever carries keys.
+  // go, and this is the trap aimed at whatever carries keys.
   //
   // `cadr_input_cables.sv`'s first leg against it is that the ONLY source of
   // `kbd_strobe` is an AXI write.  So: from reset, with nothing written,
@@ -2215,7 +2215,7 @@ int main(int argc, char **argv) {
       }
       // The keyboard still works afterwards, which is what says the pending
       // flag was cleared with the queue and not left set on a word whose
-      // acknowledgement the reset threw away.
+      // acknowledgment the reset threw away.
       const uint32_t w = KbdWord(KEY_RETURN, false);
       b.Write(INPUT_PAGE + 4 * IN_KEY, w);
       long waited = 0;

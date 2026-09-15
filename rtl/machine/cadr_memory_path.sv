@@ -20,7 +20,7 @@
 // only one.**  On the board `-XBUS.RQ` goes to every slave, each decodes the
 // address for itself, and whichever owns it pulls `-XBUS.ACK`.  That is the
 // shape here: `dev_rq` and `dev_write` leave, `device_ack` and `device_rdata`
-// come back, and the acknowledgements are joined the way an open-collector
+// come back, and the acknowledgments are joined the way an open-collector
 // line joins them.  Main memory stays inside because it is the one slave the
 // fabric already has; the display and the disk controller will hang off these
 // when they exist, and `device` says the cycle is not memory's so a slave
@@ -92,18 +92,18 @@
 //
 // **THERE IS NO DECODE IN FRONT OF THEM, AND THAT IS DELIBERATE.**  The
 // obvious composition is one decode that hands the cycle to a slave, and it
-// would make both of the mutations that matter here untestable.  CLAUDE.md
-// records the shape: the display's `tv-answers-its-neighbours`, written as a
-// wider address match gated by the decode's `device`, SURVIVED, because a
-// slave that honors a guard checked exhaustively elsewhere cannot answer an
-// address the guard refuses --- so the mutation tests the guard and not the
-// slave.  On the backplane each board decodes the whole address for itself
-// and pulls `-SSYN` if it is its own; that is what both of these do, and a
-// match widened in either of them is then visible here.  What replaces the
-// decode is the assertion: `build/unibus.pass` runs a real bus cycle at every
-// word address of `0o760000`-`0o777776` in both directions and requires that
-// AT MOST ONE slave answers each, which is the claim a decode would have
-// assumed rather than tested.
+// would make both of the mutations that matter here untestable.  The shape is
+// on record: the display's `tv-answers-its-neighbours`, written as a wider
+// address match gated by the decode's `device`, SURVIVED, because a slave
+// that honors a guard checked exhaustively elsewhere cannot answer an address
+// the guard refuses --- so the mutation tests the guard and not the slave.
+// On the backplane each board decodes the whole address for itself and pulls
+// `-SSYN` if it is its own; that is what both of these do, and a match
+// widened in either of them is then visible here.  What replaces the decode
+// is the assertion: `build/unibus.pass` runs a real bus cycle at every word
+// address of `0o760000`-`0o777776` in both directions and requires that AT
+// MOST ONE slave answers each, which is the claim a decode would have assumed
+// rather than tested.
 //
 // **AND THE TWO MASTERS' ARBITER COVERS BOTH SLAVES.**  The console takes the
 // bus for `DIAGNOSTIC_NS` plus the drop and can only name the register block
@@ -206,8 +206,8 @@ module cadr_memory_path #(
     //
     // **THEY ARE THE ARBITER'S STATE AND EACH MASTER'S OWN HELD DECODE, AND
     // NOT `bus_rq`, `bus_write` OR `bus_sel`.**  That module's header carries
-    // the argument, and it is CLAUDE.md's shadow-memory rule: a check keyed by
-    // the thing under test moves with the bug, and the thing under test is the
+    // the argument, and it is the shadow-memory rule: a check keyed by the
+    // thing under test moves with the bug, and the thing under test is the
     // path from a bus cycle to the AXI port --- so a fault in the mux those
     // three come out of must not also move what the audit compares against.
     // The request and the direction are therefore taken at each master, which
@@ -736,7 +736,7 @@ module cadr_memory_path #(
   // cycle is never acknowledged and stands until its master gives up, which
   // is what `cadr_dbgin.sv` says happens to any cycle nothing answers ---
   // "there being no timeout for this master".  Refusing the GRANT rather than
-  // the acknowledgement is what keeps the machine's own Xbus cycles running
+  // the acknowledgment is what keeps the machine's own Xbus cycles running
   // meanwhile.
   logic        map_req, map_write, map_done, map_md;
   logic [21:0] map_addr;
@@ -824,7 +824,7 @@ module cadr_memory_path #(
   assign ch_rdata = memory_rdata;
 
   // The map's window, the same shape and for the same reason: its word is a
-  // tick behind main memory's acknowledgement because the bridge's `rdata` is
+  // tick behind main memory's acknowledgment because the bridge's `rdata` is
   // a register.  There is no `nxm` here, a page that is not main memory never
   // having taken the bus at all.
   assign map_done = mp_own && mp_ack_q;
@@ -1205,7 +1205,7 @@ module cadr_memory_path #(
       .intr     (tv_intr)
   );
 
-  // The acknowledgements, joined as the open-collector `-XBUS.ACK` joins
+  // The acknowledgments, joined as the open-collector `-XBUS.ACK` joins
   // them, and the word from whichever slave answered.  Nothing answers the
   // processor while the channel has the bus: its cycle simply waits, which is
   // what the per-word arbitration bounds.

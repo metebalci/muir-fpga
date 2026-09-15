@@ -29,7 +29,7 @@
 // column for: **an unanswered read gives MD zero.** A slave drives MEM<31:0>
 // only while it is selected and answering, so a cycle nothing answered leaves
 // the lines undriven and -LOADMD --- which the interface asserts on the NXM
-// timer's acknowledgement too --- strobes MD with zero. The trace already runs
+// timer's acknowledgment too --- strobes MD with zero. The trace already runs
 // 29 cycles that nothing answers, 20 of them reads, and every one has a memory
 // read before it that put a word in the bridge's `rdata` --- a write does not,
 // the latch being guarded on `!dev_write`. So the sequence the rule is about
@@ -125,7 +125,7 @@ int Fail(const Row &r, const char *what, long got, long want) {
 // of this fabric against another run of the same fabric.
 //
 // The model memory is keyed by what the TESTBENCH asked for and never by what
-// the DUT put on the port, which is CLAUDE.md's rule and the reason the
+// the DUT put on the port, which is the shadow-memory rule and the reason the
 // integrity half of configuration A was once wrong.
 namespace {
 
@@ -339,7 +339,7 @@ int RunArbiter() {
   // processor asks has to finish; a second word must not start. So the bound
   // is the modeled memory's own latency and the four ticks the handover
   // costs: the tick the bus is left idle as the channel TAKES it, the
-  // channel's acknowledgement register, the tick the arbiter takes to give the
+  // channel's acknowledgment register, the tick the arbiter takes to give the
   // bus back, and the tick the bus is left idle again as it does. The worst
   // case is the processor asking on the very tick the channel takes the bus.
   //

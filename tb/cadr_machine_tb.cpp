@@ -209,7 +209,7 @@ int main(int argc, char **argv) {
   // THE TRACE IS STREAMED, NOT HELD.  The pack trace is 2.2 million
   // microcycles and 297 MB; holding it as parsed rows is 686 MB of a machine
   // three sessions are building on.  So it is read twice instead: once for
-  // the acknowledgement times, which are the only thing needing to be known
+  // the acknowledgment times, which are the only thing needing to be known
   // before their row, and once to drive the DUT.
   bool pack_trace = false;
   std::vector<uint64_t> ack_for;
@@ -345,20 +345,18 @@ int main(int argc, char **argv) {
   // gets, so all 16,951 device cycles --- the boot PROM's disk polls --- were
   // answered with muir's own word.  `rtl/machine/cadr_disk_controller.sv` answers
   // them now, and a line that went on handing back the right word would leave
-  // that module unchecked: CLAUDE.md's `md` trap verbatim, where a driven
-  // input that became an output kept being driven and both processor checks
-  // went green with MD unchecked.  What goes on the seam instead is the
-  // complement.
+  // that module unchecked: the `md` trap verbatim, where a driven input that
+  // became an output kept being driven and both processor checks went green
+  // with MD unchecked.  What goes on the seam instead is the complement.
   auto drive = [&](const Row &r, size_t row) {
     // **`sintr` WAS DRIVEN HERE AND THE LINE IS GONE.**  -XBUS.INTR is the
     // machine's own now: `cadr_disk_controller.sv` puts the disk's request on
     // it, `cadr_tv.sv` the display's vertical interrupt, and `cadr_machine.sv`
     // ORs the two where the backplane does.  The column is COMPARED below
     // instead, against `sintr_o`.  Deleted rather than left unused, which is
-    // CLAUDE.md's `md` trap word for word: Verilator lets a testbench write an
-    // output, so a drive line that stayed would have gone on supplying the
-    // right answer and the join would have been unchecked with every check
-    // green.
+    // the `md` trap word for word: Verilator lets a testbench write an output,
+    // so a drive line that stayed would have gone on supplying the right
+    // answer and the join would have been unchecked with every check green.
     dut->mem_rdata = static_cast<uint32_t>(rdata_for[row]);
     // **POISON ON THE SEAM, ALWAYS, AND NEVER DATA.**  `device_rdata` is what
     // `cadr_machine.sv` puts on MEM<31:0> when no slave inside it is driving
@@ -367,9 +365,9 @@ int main(int argc, char **argv) {
     // Holding the complement of the word MD should hold makes both of those
     // loud: a processor whose -LOADMD has lost its RDCYC gate takes poison on
     // a write, and a register block that stops driving reads poison instead
-    // of the word it happened to hand back last.  CLAUDE.md's rule is that a
-    // stimulus that poisons cannot move with the bug, and this one cannot: it
-    // is the trace's own column, complemented, keyed by the row.
+    // of the word it happened to hand back last.  The rule is that a stimulus
+    // that poisons cannot move with the bug, and this one cannot: it is the
+    // trace's own column, complemented, keyed by the row.
     dut->device_rdata = ~static_cast<uint32_t>(rdata_for[row]);
   };
 
@@ -487,18 +485,18 @@ int main(int argc, char **argv) {
     //
     // **READ THE NUMBERS IT PRINTS WITH THIS IN MIND: IT OBSERVES ONE TICK
     // EARLY.**  It samples `n_memack` here, near the top of the tick, before
-    // the slave's answer has been driven and eval'd, so an acknowledgement
+    // the slave's answer has been driven and eval'd, so an acknowledgment
     // the interface makes combinationally reads back a tick after it
     // happened.  Measured, and the size of it: the printed histogram says -5
     // on every device read and -5 on every device write, which is the
     // instrument's one tick and nothing else.  **THE DEVICE WRITES USED TO
     // READ -10 AND THE DISK CONTROLLER MOVED THEM**: when this testbench
     // answered them, all 5,650 came back a tick late --- 17 ticks from the
-    // grant against muir's 16, the signature of CLAUDE.md's fourth entry,
-    // an answer worked out before the clock edge rather than after it ---
-    // and `rtl/machine/cadr_disk_controller.sv`, answering combinationally off
-    // `dev_rq` inside the fabric, lands them at muir's own 16.  The reads
-    // were 28 ticks from the grant either way, which is muir's 28.
+    // grant against muir's 16, the signature of an answer worked out before
+    // the clock edge rather than after it --- and
+    // `rtl/machine/cadr_disk_controller.sv`, answering combinationally off
+    // `dev_rq` inside the fabric, lands them at muir's own 16.  The reads were
+    // 28 ticks from the grant either way, which is muir's 28.
     //
     // The rest of the histogram is main memory and is the testbench's own
     // rounding, not the fabric's: the 256 writes spread over -9, -7 and -5
@@ -546,10 +544,10 @@ int main(int argc, char **argv) {
     // happens on.
     //
     // Deleted rather than commented out or left unused, which is the whole
-    // lesson of CLAUDE.md's `md` entry: a testbench that goes on supplying
-    // the right answer leaves the new module unchecked and every check green.
-    // POISON ON A WRITE.  -LOADMD is asserted on every acknowledgement and it
-    // is RDCYC on the processor's side that keeps a write from strobing MD.
+    // lesson of the `md` trap: a testbench that goes on supplying the right
+    // answer leaves the new module unchecked and every check green.  POISON
+    // ON A WRITE.  -LOADMD is asserted on every acknowledgment and it is
+    // RDCYC on the processor's side that keeps a write from strobing MD.
     // Handing back the word MD should hold makes that gate unobservable ---
     // an extra load is then a no-op, and dropping the gate survives, measured
     // --- so a write cycle gets the complement instead. Nothing should take
@@ -743,9 +741,9 @@ int main(int argc, char **argv) {
         saw_device = false;
         saw_ub = false;
         // Rounded *up*: a memory board answers on its own refresh clock, so
-        // muir's acknowledgement is not on the five-nanosecond grid, and the
+        // muir's acknowledgment is not on the five-nanosecond grid, and the
         // fabric can only see it at a tick at or after it. Truncating instead
-        // ends a wait one 220 ns cycle early wherever the acknowledgement
+        // ends a wait one 220 ns cycle early wherever the acknowledgment
         // falls within a tick of a master clock edge.
         ack_at_tick =
             t + static_cast<long>((ack_for[k] - r.v[kNs] + kTickNs - 1) / kTickNs);
@@ -970,8 +968,8 @@ int main(int argc, char **argv) {
   // **THE ZERO -XBUS.INTR IS COMPARED AGAINST MUST BE A LIVE ZERO.**  This
   // program raises no interrupt --- it enables neither the disk's nor the
   // display's --- so the comparison above is against zero on every row, and
-  // CLAUDE.md's rule is that a check which only ever compares against zero
-  // passes a wire stuck at zero.  What makes it a real comparison is that the
+  // The rule is that a check which only ever compares against zero passes a
+  // wire stuck at zero.  What makes it a real comparison is that the
   // interrupt's OTHER term is true throughout: `not_active` is `STATUS<0>`
   // and the 11,301 polls all come back `0x2321`, which has it set.  So a
   // fabric that ignored the enable would raise the line and fail.  If MD

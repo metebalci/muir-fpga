@@ -14,7 +14,7 @@
 // for row.
 //
 // WHY IT IS NOT AN ILA.  It was meant to be.  `create_debug_core` is refused
-// by the licence on this host --- `License_Tier:BASIC` in
+// by the license on this host --- `License_Tier:BASIC` in
 // `~/.Xilinx/Xilinx.lic`, and Vivado answers "'create_debug_core' tcl command
 // is not supported.  Your current selected license is BASIC" --- so the
 // scripted debug-core flow does not exist here, and the ILA IP core, which
@@ -81,11 +81,11 @@
 // THE CLOCK CROSSING IS QUASI-STATIC AND THAT IS ON PURPOSE.  `rd_addr` lives
 // in the DRCK domain and moves once per scan --- 454 TCKs, tens of
 // microseconds --- while `mem_q` is read in the 100 MHz domain through a
-// two-flop synchroniser on the address.  By the time the JTAG side loads
+// two-flop synchronizer on the address.  By the time the JTAG side loads
 // `mem_q` at the next CAPTURE, the address has been stable for thousands of
-// ticks and the word for very nearly as many.  It is the same argument
-// `CLAUDE.md` makes about the map: a synchronous read of an address that is
-// constant for the whole interval settles long before anything looks at it.
+// ticks and the word for very nearly as many.  It is the same argument that
+// holds for the map: a synchronous read of an address that is constant for
+// the whole interval settles long before anything looks at it.
 
 `default_nettype none
 
@@ -200,10 +200,9 @@ module cadr_probe #(
   //
   // `late_q` must NOT, and that is the whole reason there are two.  It holds
   // the four columns that can move *inside* a microcycle --- `lpc`, `md`,
-  // `vma` and `promdis` --- and `md` is the one CLAUDE.md's entry about
-  // sampling before a stall is about: `-LOADMD` strobes it while the clock is
-  // held off, and a register given a whole microcycle to notice might not
-  // have.  All four
+  // `vma` and `promdis` --- and `md` is the one that sampling before a stall
+  // is about: `-LOADMD` strobes it while the clock is held off, and a
+  // register given a whole microcycle to notice might not have.  All four
   // come straight off registers in the machine, so one tick is what they can
   // have and what they do not need help meeting.
   //

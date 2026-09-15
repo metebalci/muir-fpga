@@ -20,13 +20,12 @@
 //
 // **THE ANSWERS ARE COUNTED AT THE PROCESSING SYSTEM'S OWN HANDSHAKES**, `B`
 // for a write and the last `R` beat for a read, and not at anything the
-// fabric decides for itself.  That is the point of the module and it is
-// CLAUDE.md's shadow-memory lesson one level down: a shadow memory keyed by
-// the DUT's own address moves with the bug, and a counter of the fabric's own
-// intentions moves with it in exactly the same way.  A fabric that never
-// issued a transaction cannot fabricate a `BVALID`, so `answered_*` reading
-// zero on a board is not a claim this design is able to get wrong in its own
-// favor.
+// fabric decides for itself.  That is the point of the module and it is the
+// shadow-memory rule one level down: a shadow memory keyed by the DUT's own
+// address moves with the bug, and a counter of the fabric's own intentions
+// moves with it in exactly the same way.  A fabric that never issued a
+// transaction cannot fabricate a `BVALID`, so `answered_*` reading zero on a
+// board is not a claim this design is able to get wrong in its own favor.
 //
 // AND THE ASKING IS COUNTED TOO, WHICH IS WHAT MAKES A ZERO READABLE.  With
 // only the answers, `0` means either "the machine never got that far" or "the
@@ -57,17 +56,17 @@
 // instrument reads exactly like four SATURATED counters, and all-ones is a
 // value this module can legitimately produce; the two would have been
 // indistinguishable, and the failure would have been reported as "the machine
-// asked 65,535 times".  That is CLAUDE.md's never-written-DDR entry in a new
-// place: a value that means nothing must not be a value the thing can mean.
-// The marker makes the register say who wrote it.
+// asked 65,535 times".  That is the never-written-DDR finding in a new place:
+// a value that means nothing must not be a value the thing can mean.  The
+// marker makes the register say who wrote it.
 //
 // THE COUNTERS SATURATE FOR THE OTHER HALF OF THE SAME REASON.  The boot PROM
 // asks 512 times and never again, so the reading stands at 256 of each for
 // ever; a program that asked more than 32,767 times would wrap, and a wrapped
 // counter reading a small number is a false negative of the exact kind this
-// module exists to rule out.  CLAUDE.md's `-XBUS.RQ` entry is the same fact
-// from the other side: a counter that wraps tells a lie no trace has a column
-// to catch.
+// module exists to rule out.  The ten-bit `-XBUS.RQ` counter that wrapped is
+// the same fact from the other side: a counter that wraps tells a lie no
+// trace has a column to catch.
 //
 // AND THE PACKING IS HERE AND NOT IN THE TOP LEVEL, which is where it was
 // written.  `boards/arty-z7-20/cadr_arty.sv` cannot be simulated, so a field placed one bit
