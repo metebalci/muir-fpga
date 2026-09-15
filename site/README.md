@@ -9,7 +9,9 @@ build step and no generator, the same way
                   what it does, each board's name linking its own page, and a
                   link to the page on the real machine. The table's styles are
                   in front.css beside it, because the table is this project's
-                  own rather than muir's
+                  own rather than muir's. It ends with the project's licence
+                  and a list of the third-party material the boards use, each
+                  entry naming whose it is and under what terms
     arty-z7-20.html
                   the Arty Z7-20's architecture drawing, and nothing else. How
                   it boots is on booting.html with the other two boards'
