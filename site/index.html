@@ -112,7 +112,6 @@
     <div class="prose tnote">
       <p><code>yes</code> means the board itself has shown it. <code>built</code> means it is built and checked here and has not run on that board. <code>planned</code> means it is on the plan and not built yet. <code>no</code> means the board cannot have it.</p>
       <p>The Arty Z7-20 is the recommended board, and the one tested the most. It is the board the project was built on, and every block on its drawing has now run on it. The Cora Z7-07S carries a smaller part of the same kind and a smaller board, with no HDMI output and no USB host for a keyboard and mouse, and the machine fits it and closes timing with nothing in the machine itself changed. The Arty A7-100 is a side project, taken on to see how far the machine can go on a board with no processing system at all: everything the Arm cores and Linux do on the other two boards has to have an answer in the fabric there, and it is further from finished than the Zynq boards.</p>
-      <p>The Cora Z7-07S has no HDMI connector and no USB host port, so the display output block and the USB input program are left out of its build. The Arty A7-100 has neither, and its screen, keyboard and mouse will be served over its Ethernet and by nothing else. The slice and block RAM figures are each board's own place and route report for the build that board runs.</p>
     </div>
   </div>
 </section>
