@@ -5,7 +5,9 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 # The checkpoint
 
 Written at the checkpoint slice, 2026-09-11, against `cadr-checkpoint` as it
-stands at this slice. Numbers below are measured at that point.
+stands at this slice. Numbers below are measured at that point. The format's
+version and the four fields muir's display work added are the exception. They
+are measured against the muir that `muir.commit` pins today.
 
 A checkpoint is the board's whole machine written into a file that muir can
 open and resume. It exists because the console is a keyhole: sixteen
@@ -39,6 +41,32 @@ a daemon and has no init script, because it halts the machine while it reads.
 The refusal at step 5 comes before anything is written. A checkpoint that
 cannot name the disk it was taken on is the thing this program exists to
 prevent, so a pack that cannot be read costs the run and not the evidence.
+
+## The format has a version, and it moves with muir
+
+muir writes its `checkpoint::VERSION` into the header, and a file of any other
+version is refused by name rather than read wrong. **The version is 25.** It is
+`CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
+`../muir/src/checkpoint.rs` and not an interpretation of it.
+
+So the program is tied to the commit of muir that `muir.commit` pins, and a
+muir that moves the format stops the board's checkpoints loading. That failure
+is loud, which is the right way round: the refusal names both versions.
+
+Version 25 is what muir's display work left. It added four fields, and no
+wire in this fabric carries any of them.
+
+| field | what this program writes | why |
+|---|---|---|
+| `Tv::board`, which of the two display boards it is | `0`, the SIMPLE TV | `cadr_tv.sv` is MIT's SIMPLE TV. muir compares the loaded board with `--tv-board` and refuses a resume that disagrees, so a wrong tag is a message and not a machine |
+| `Tv::color_map`, sixteen colours of three channels | 48 zero bytes, the power-on map | register 4 is a write-only port whose map RAMs and converters are off the board. The fabric answers the write and keeps nothing, so there is nothing to read back |
+| `Tv::origin`, when the running sync program last started from its location 0 | `0` | the fabric has no sync generator at all, so its program has never been changed and never restarted. Zero says it has been running since the machine came up |
+| whether a colour display board is on the backplane | `false`, and no board after it | this backplane has one screen. The colour board's addresses `17200000` and `17377750` answer with an NXM, which is how `COLOR-EXISTS-P` finds out which machine it is on |
+
+The first and the last are **declared** rather than missing: they are facts
+about this fabric that no wire carries, and muir cross-checks both. The middle
+two are things the fabric does not have, and they are in the list below with
+the rest.
 
 ## The pack is bound to the checkpoint, and why it has to be
 
@@ -153,7 +181,7 @@ The list, with what is written and what it costs a resume.
 | the debug IR, 48 bits | zero | nothing: IDEBUG is not built, so nothing would look at it |
 | the bus interface's own registers — the sixteen Unibus map entries, their read and write buffers, the error register, WRITE-THROUGH | clear, with the interrupt status at its power-on LOCAL-ENABLE | the interrupt status register, the error status register and the sixteen map entries are in the fabric now, and a checkpoint puts each of them back where a power-on leaves it. **The read and write buffers are in the fabric too and a checkpoint does NOT carry them**, so a restore leaves them at whatever the last mapped cycle put there; nothing can reach them yet, the debug cable's master being tied off, and nothing the boot PROM does touches any of them |
 | the disk controller, whole: command, command-list pointer, disk address, eight error flops, the channel, and the eight drives' head positions and attention timers | a controller that has just been built, heads at cylinder 0 | **a transfer in flight when the board was halted is lost.** The resumed machine's next look at the controller finds it idle with no error. The microcode's own retry covers a lost transfer; a half-walked command list it does not. Halt between transfers — the disk light is the instrument — or expect the cold boot to be re-driven |
-| the display's mode register, its sync RAM, its vertical-interrupt flag | clear | the **picture** is read, out of DDR, word for word. The sync RAM is muir's model of a sync generator the fabric does not have; the flag is set again at the next frame |
+| the display's mode register, its sync RAM, its color map, its vertical-interrupt flag | clear | the **picture** is read, out of DDR, word for word. The sync RAM is muir's model of a sync generator the fabric does not have; the color map is a write-only port whose RAMs are off the board; the flag is set again at the next frame |
 | the I/O board, whole: the keyboard, the mouse, the sixty-cycle interval, and the microsecond clock | idle, with the mouse's two quadrature phases at 2, which is what a fresh mouse has | **the microsecond clock is the one that matters.** `(TIME)` is that counter shifted, and off it hang the wall clock, `PROCESS-SLEEP`, every Chaosnet timer and the scheduler, so a resumed machine's time of day starts again from zero. Nothing it computes depends on the clock being continuous; what it will see is one very long or very short interval at the seam |
 | the serial line's registers | idle | the CADR's serial line is in `cadr_io_board.sv` and has no readout |
 | the Chaosnet interface | idle, with its switches at the address `--chaos-address` names | `IoBoard::load` refuses a checkpoint whose address is not the resuming machine's, so the two have to agree; muir's own default is used unless told otherwise |
@@ -181,13 +209,24 @@ packing muir's own rather than merely a legal one, since `unpack` accepts any
 valid packing but `save` re-emits muir's.
 
 **One leg is not enough, and that was measured rather than assumed.** Three
-mutants of `chk_rtl.c` were built and run against each leg:
+mutants of `chk_rtl.c` were built and run against each leg, and no leg caught
+all three:
 
 | mutant | caught by |
 |---|---|
 | `prog_boot` dropped, so every byte after it is at the wrong offset | muir refuses the file |
 | the mouse's quadrature phases written 0 where a fresh mouse has 2 | the recorded digest, and nothing else |
 | `Machine::opc` taken from the OPC shift register instead of LPC | the recorded digest, and nothing else |
+
+There are seven now. Format 25's four fields have one mutant each, for the
+same reason: a field nothing is aimed at is a field the check does not hold.
+
+| mutant | caught by |
+|---|---|
+| the display board written as the LISPM TV where the fabric is the SIMPLE TV | muir refuses it: "a lispm-tv checkpoint, and `--tv-board` is simple-tv" |
+| a colour display board claimed on a backplane that has none | muir refuses it at the short read, having tried to take a second display out of the eight hundred bytes that are left |
+| the colour map written all ones where a power-on map is all zeros | the recorded digest, and nothing else |
+| the sync program's origin written at the machine's clock instead of zero | the recorded digest, and nothing else |
 
 The round trip cannot see a wrong value in a right-shaped slot, by
 construction: muir re-saves whatever it read, so any valid value survives it.

@@ -58,8 +58,15 @@
 // `Responder::NoUnibus`, tag 10; `Responder::Memory(b)`, tag 0.
 #define MUIR_RESP_MEMORY 0u
 #define MUIR_RESP_NOUNIBUS 10u
-// `simpletv::BUFFER_WORDS` and the sync RAM, and `SyncRam::default`'s enable.
+// `tv::BUFFER_WORDS` and the sync RAM, and `SyncRam::default`'s enable.
 #define MUIR_TV_SYNC_ENABLE 0u
+// The tag `Tv::save` writes for the board, src/tv.rs:886-889: the SIMPLE TV
+// is 0 and the LISPM TV is 1.
+#define MUIR_TV_BOARD_SIMPLE 0u
+// `tv::COLORS` times `tv::CHANNELS`, src/tv.rs:225 and :233: sixteen colours
+// of three channels each, and `Tv::save` writes them a byte at a time with no
+// count in front of them.
+#define MUIR_TV_COLOR_MAP_BYTES (16u * 3u)
 // muir's own `chaos::Config::default().address`, src/chaos/mod.rs:145.
 #define MUIR_CHAOS_ADDRESS 0177001u
 
@@ -187,25 +194,80 @@ static void emit_disk(struct chk *w, const struct chk_declared *d)
 	}
 }
 
-// `simpletv.rs`'s `SimpleTv::save`, fixed 135,200 bytes.
+// `tv.rs`'s `Tv::save`, fixed 135,257 bytes.
 //
 // **THE PICTURE IS REAL AND NOTHING ELSE HERE IS.**  The display block writes
 // the frame buffer into the display's own region of DDR, which Linux can map,
 // so the 32,768 words are the board's own screen word for word.  The mode
-// register, the sync RAM and the vertical-interrupt flag are inside
-// `cadr_tv.sv` and the readout window does not reach them: the sync RAM is
-// muir's model of a sync generator the fabric does not have at all, and the
-// flag is one bit that the resumed machine will set again at its next frame.
+// register, the sync RAM, the colour map and the vertical-interrupt flag are
+// inside `cadr_tv.sv` and the readout window does not reach them: the sync RAM
+// is muir's model of a sync generator the fabric does not have at all, the
+// colour map is a write-only port whose RAMs are off the board, and the flag
+// is one bit that the resumed machine will set again at its next frame.
 static void emit_tv(struct chk *w, const struct cadr_image *img)
 {
+	// **WHICH OF THE TWO DISPLAY BOARDS THIS IS, AND IT IS NOT A DEFAULT.**
+	// `cadr_tv.sv` is MIT's SIMPLE TV --- its own header says so and
+	// `tv.pass` holds its register face to that board --- so this is a
+	// fact about the fabric, declared here because no wire carries it.
+	// muir cross-checks it: `resume_engine` (src/main.rs:3375-3382)
+	// compares the loaded board against `--tv-board` and refuses by name,
+	// so a wrong tag here is a message and never a machine.
+#if CHK_MUTATE == 4
+	// The other board's tag.  It LOADS --- `Tv::load` takes 0 and 1 and
+	// refuses anything else --- and the body is the same length, so only
+	// muir's own cross-check against `--tv-board` can say anything.
+	chk_u8(w, 1);
+#else
+	chk_u8(w, MUIR_TV_BOARD_SIMPLE);	/* DECLARED board */
+#endif
 	chk_u32s(w, img->tv, IMG_TV_WORDS);	/* READ, out of DDR */
 	chk_u32(w, 0);				/* NONE mode */
 	static const uint8_t zero_sync[IMG_TV_SYNC] = { 0 };
 	chk_bytes(w, zero_sync, IMG_TV_SYNC);	/* NONE sync.words */
 	chk_u16(w, 0);				/* NONE sync.pointer */
 	chk_u8(w, MUIR_TV_SYNC_ENABLE);		/* NONE sync.enable */
+	// The colour map, sixteen colours of three channels: **bare bytes with
+	// NO COUNT in front of them**, because `Tv::save` writes them `w.u8` at
+	// a time (src/tv.rs:893-897) and not through `w.bytes`.  A count here
+	// would shift every byte after it.
+	//
+	// Zero is `Tv::default`'s `color_map: [[0; CHANNELS]; COLORS]`
+	// (src/tv.rs:439), the power-on map, and the fabric has nothing else to
+	// offer: register 4 is the write-only port whose RAMs and converters
+	// are off the board, so `cadr_tv.sv` answers the write and keeps
+	// nothing.  muir keeps what was written because it draws the picture;
+	// this board cannot be asked what it was.
+	for (unsigned i = 0; i < MUIR_TV_COLOR_MAP_BYTES; ++i) {
+#if CHK_MUTATE == 5
+		// Every gun at full, which is a map somebody has written and
+		// not the one a machine comes up with.  Forty-eight bytes in
+		// the right slots with the wrong values: it loads, muir
+		// re-saves it byte for byte, and the digest is the only thing
+		// that can see it.
+		chk_u8(w, 0xffu);
+#else
+		chk_u8(w, 0);			/* NONE color_map */
+#endif
+	}
 	chk_bool(w, 0);				/* NONE flag_written */
 	chk_u64(w, 0);				/* NONE written_at */
+	// When the running sync program last started from its location 0
+	// (src/tv.rs:423-426).  Zero is `Tv::default`'s, which says the program
+	// has been running since the machine came up --- and that is right for
+	// a fabric with no sync generator at all, whose program has therefore
+	// never been changed and never restarted.  `Tv::load` runs the timeline
+	// afresh from it, so a resume measures the frame from power-on as a
+	// machine that had never touched the board would.
+#if CHK_MUTATE == 6
+	// The machine's own clock in place of zero: "the sync program started
+	// when the checkpoint was taken" rather than "it has been running
+	// since power-on".  A plausible misreading, a legal value --- muir
+	// only needs `ns >= origin` --- and so another one for the digest.
+	chk_u64(w, img->ticks * 5u);
+#else
+	chk_u64(w, 0);				/* NONE origin */
+#endif
 }
 
 // `serial.rs`'s `Pci::save`, fixed 110 bytes, all of it IDLE: the CADR's
@@ -447,15 +509,34 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_bool(w, img_flag(img, IMG_F_VMAOK));	/* READ */
 	emit_disk(w, d);
 	emit_tv(w, img);
+	// **WHETHER A SECOND DISPLAY BOARD WAS ON THE BACKPLANE**, and the
+	// board itself after it when there was one (`Machine::save`,
+	// src/machine.rs:962-965).  This backplane has one screen: the colour
+	// board is `17200000` and `17377750`, which `cadr_xbus_decode.sv`
+	// answers with an NXM --- held to `busint::decode` over all 4,194,304
+	// addresses --- and that NXM is how `COLOR-EXISTS-P` finds out which
+	// machine it is on.  So the flag is clear and NOTHING follows it;
+	// `refuse_color_tv` (src/main.rs:3276-3286) refuses a resume that
+	// `--color-tv` disagrees with, by name.
+#if CHK_MUTATE == 7
+	// A colour board this backplane does not have.  muir then reads a
+	// whole second 135,257-byte display out of the eight hundred bytes
+	// that are left, and REFUSES at the short read --- which is what
+	// makes this the flag's own mutant and not the map's.
+	chk_bool(w, 1);
+#else
+	chk_bool(w, 0);					/* DECLARED no color TV */
+#endif
 	emit_ioboard(w, d);
 	chk_u64(w, img->cycles);			/* READ */
 	// **THE CLOCK.**  A fabric tick stands for five nanoseconds of MIT's
 	// grid whatever it costs in real time --- `cadr_phase_gen.sv`'s
-	// `TICK_NS` is 5 and stays 5, the board's own tick being 6.25 ns since
-	// 2026-09-11 --- so this is the machine's own elapsed time in the
-	// units muir counts it in, and it is a measurement rather than a
-	// guess.  What it is NOT is consistent with the idle instants in
-	// `Busint` above, which are a fresh machine's.
+	// `TICK_NS` is 5 and stays 5, the board's own tick being 10 ns, which
+	// `cadr_arty.sv`'s `CLKOUT0_DIVIDE_F` decides and nothing else does ---
+	// so this is the machine's own elapsed time in the units muir counts it
+	// in, and it is a measurement rather than a guess.  What it is NOT is
+	// consistent with the idle instants in `Busint` above, which are a
+	// fresh machine's.
 	chk_u64(w, img->ticks * 5u);			/* READ ns */
 
 	// --- the Rtl tail ---------------------------------------------------
@@ -587,8 +668,16 @@ static const char *const kMissing[] = {
 	"    heads and attention timers.  A transfer in flight when the board",
 	"    was halted is LOST.  Halt between transfers --- the disk light is",
 	"    the instrument --- or expect the microcode to retry.",
-	"the display's mode register, its sync RAM and its vertical-interrupt",
-	"    flag.  The PICTURE is read, out of DDR, word for word.",
+	"the display's mode register, its sync RAM, when that program last",
+	"    started, its colour map and its vertical-interrupt flag.  The",
+	"    PICTURE is read, out of DDR, word for word.  There is no sync",
+	"    generator in this fabric, so the program has run since power-on",
+	"    and that instant is zero.  The colour map is the write-only port",
+	"    at register 4, whose RAMs are off the board: the fabric answers",
+	"    the write and keeps nothing, so a power-on map is written.  Which",
+	"    display board this is, and that no colour board is fitted, are",
+	"    DECLARED rather than missing --- the fabric is the SIMPLE TV with",
+	"    one screen, and muir refuses a resume that disagrees with either.",
 	"the I/O board, whole: the keyboard, the mouse, the sixty-cycle",
 	"    interval and THE MICROSECOND CLOCK, which is the CADR's whole",
 	"    timebase.  A resumed machine's time of day starts again.",
@@ -627,10 +716,19 @@ const char *const *chk_rtl_missing(void)
 // The host check builds this file again with each value and requires that
 // the round trip through muir FAILS for each --- because a round trip that
 // cannot fail says nothing, which is this repository's oldest lesson in its
-// newest place.  The three are chosen to fail in three different ways: 1
-// loads and re-saves DIFFERENT BYTES, 2 puts a field the window really does
+// newest place.  The first three are chosen to fail in three different ways:
+// 1 loads and re-saves DIFFERENT BYTES, 2 puts a field the window really does
 // read where another belongs, and 3 drops one byte so that muir REFUSES the
 // file outright.
+//
+// **4 TO 7 ARE THE FOUR FIELDS FORMAT 25 ADDED, ONE EACH**, because a field
+// nothing is aimed at is a field the check does not hold: the display board's
+// tag, the colour map, the sync program's origin and the colour board's
+// presence flag.  Two of the four are caught by muir's REFUSAL --- the tag by
+// its cross-check against `--tv-board`, the flag by the short read that
+// follows a display board that is not in the file --- and two by the DIGEST
+// alone, being legal values in the right slots, which is the leg this file's
+// own comment says the round trip cannot replace.
 
 const char *chk_rtl_mutation(void)
 {
@@ -640,6 +738,14 @@ const char *chk_rtl_mutation(void)
 	return "Machine::opc taken from the OPC shift register instead of LPC";
 #elif CHK_MUTATE == 3
 	return "prog_boot dropped, so every byte after it is at the wrong offset";
+#elif CHK_MUTATE == 4
+	return "the display board written as the LISPM TV where the fabric is the SIMPLE TV";
+#elif CHK_MUTATE == 5
+	return "the colour map written all ones where a power-on map is all zeros";
+#elif CHK_MUTATE == 6
+	return "the sync program's origin written at the machine's clock instead of zero";
+#elif CHK_MUTATE == 7
+	return "a colour display board claimed on a backplane that has none";
 #else
 	return NULL;
 #endif

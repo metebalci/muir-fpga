@@ -139,6 +139,8 @@
 // watching it cost --- are worth keeping apart.
 module cadr_arty_a7 #(
     parameter string PROM_HEX = "build/boot_prom.hex",
+    // MIT's TV sync PROM, for the display: `rtl/machine/cadr_tv.sv`.
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
     parameter int unsigned PROBE_DEPTH = 0,
     // ---------------------------------------------------- MAIN MEMORY
     //
@@ -858,7 +860,8 @@ module cadr_arty_a7 #(
   // found missing from the other board's, so `make build/arty_a7.pass` is
   // what holds the two lists together.
   cadr_machine #(
-      .PROM_HEX(PROM_HEX)
+      .PROM_HEX(PROM_HEX),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // Nothing answers a device cycle from outside: the Xbus slaves that are

@@ -53,7 +53,9 @@
 `default_nettype none
 
 module cadr_machine #(
-    parameter string PROM_HEX = "build/boot_prom.hex"
+    parameter string PROM_HEX = "build/boot_prom.hex",
+    // MIT's TV sync PROM, for the display inside `cadr_memory_path`.
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,
@@ -690,7 +692,9 @@ module cadr_machine #(
       .con_md  (con_md)
   );
 
-  cadr_memory_path memory (
+  cadr_memory_path #(
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
+  ) memory (
       .clk        (clk),
       .rst        (rst),
       // `-XBUS INIT`, as the disk takes it below: the power-on reset is the

@@ -15,9 +15,10 @@
 #include "cadr_image.h"
 #include "chk.h"
 
-// simpletv's sync RAM, 4096 bytes.  It is here and not in `cadr_image.h`
-// because the fabric has no sync generator to read one out of --- the readout
-// window never produces this and only the checkpoint has to know the size.
+// tv's sync RAM, 4096 bytes.  It is here and not in `cadr_image.h` because
+// the readout window never produces it: the fabric runs the sync program but
+// has no path that reads the RAM out, and only the checkpoint has to know
+// the size.
 #define IMG_TV_SYNC 4096u
 
 // What the checkpoint DECLARES rather than reads.

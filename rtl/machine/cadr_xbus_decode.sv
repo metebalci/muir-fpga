@@ -53,9 +53,9 @@ module cadr_xbus_decode (
   // size, so each is a comparison on a slice of the address rather than a pair
   // of bounds:
   //
-  //   the display's frame buffer, simpletv::BUFFER 0o17000000 for
+  //   the display's frame buffer, tv::BUFFER 0o17000000 for
   //   BUFFER_WORDS 0o100000 --- 3,932,160 is 120 * 32,768;
-  //   its control registers, simpletv::CONTROL 0o17377760 for 8;
+  //   its control registers, tv::CONTROL 0o17377760 for 8;
   //   the disk controller's, disk_controller::REGS 0o17377774 for 4.
   //
   // The four words between the display's registers and the disk's answer to

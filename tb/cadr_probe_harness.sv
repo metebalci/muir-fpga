@@ -29,6 +29,10 @@
 
 module cadr_probe_harness #(
     parameter string       PROM_HEX   = "build/boot_prom.hex",
+    // MIT's TV sync PROM, which `rtl/machine/cadr_tv.sv` reads at
+    // elaboration; passed down beside the boot PROM's image for the same
+    // reason, so that a model built anywhere finds it.
+    parameter string       SYNC_PROM_HEX = "build/sync_prom.hex",
     parameter int unsigned REAL_DEPTH = 1024,
     // Small, so that the synthetic side fills, freezes and wraps inside a
     // testbench rather than inside a machine.
@@ -85,7 +89,8 @@ module cadr_probe_harness #(
   logic sintr;   // -XBUS.INTR, the machine's own; read by nothing here
 
   cadr_machine #(
-      .PROM_HEX(PROM_HEX)
+      .PROM_HEX(PROM_HEX),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) u_machine (
       .clk(clk), .rst(rst),
       // `device_ack` low is not "no disk controller": the disk's four

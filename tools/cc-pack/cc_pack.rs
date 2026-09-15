@@ -86,7 +86,7 @@ use muir::disk_unit::{Geometry, Unit};
 use muir::engine::Engine;
 use muir::machine::Machine;
 use muir::rtl::Rtl;
-use muir::simpletv::WIDTH;
+use muir::tv::WIDTH;
 use muir::terminal::keyboard::{Keyboard, keysym};
 
 use support::{ChaosServer, time};
@@ -204,7 +204,7 @@ impl Cadr {
 
     /// Lit pixels in rows `rows`.
     fn lit(&self, rows: std::ops::Range<usize>) -> usize {
-        let tv = &self.e.machine().simpletv;
+        let tv = &self.e.machine().tv;
         rows.flat_map(|y| (0..WIDTH).map(move |x| (x, y))).filter(|&(x, y)| tv.pixel(x, y)).count()
     }
 
@@ -218,7 +218,7 @@ impl Cadr {
     fn screen_hash(&self) -> u64 {
         self.e
             .machine()
-            .simpletv
+            .tv
             .buffer()
             .iter()
             .fold(0xcbf2_9ce4_8422_2325u64, |h, &w| (h ^ w as u64).wrapping_mul(0x100_0000_01b3))
@@ -237,7 +237,7 @@ impl Cadr {
 
     fn screenshot(&self, name: &str) {
         let p = self.root.join(format!("{name}.png"));
-        std::fs::write(&p, self.e.machine().simpletv.png()).unwrap();
+        std::fs::write(&p, self.e.machine().tv.png()).unwrap();
         eprintln!("  screen at {}", p.display());
     }
 
@@ -540,7 +540,7 @@ fn save_the_band(c: &mut Cadr, pack: &Path, band: &str, start: u32, blocks: u32)
             reported = gone / 500_000_000;
             eprintln!(
                 "  save: {gone} microcycles on, {} lit, band {}",
-                c.lit(0..muir::simpletv::HEIGHT),
+                c.lit(0..muir::tv::HEIGHT),
                 if moved { "written" } else { "untouched" }
             );
             // One file, overwritten, so that somebody watching a run that
@@ -579,7 +579,7 @@ fn save_the_band(c: &mut Cadr, pack: &Path, band: &str, start: u32, blocks: u32)
     c.run(40_000_000);
     eprintln!(
         "  after the swap-in: {} lit, at the listener {}",
-        c.lit(0..muir::simpletv::HEIGHT),
+        c.lit(0..muir::tv::HEIGHT),
         c.at_the_listener()
     );
     c.screenshot("cc-pack-after-save");
@@ -732,7 +732,7 @@ fn the_saved_band_with_no_network() {
     eprintln!(
         "with no network: {} microcycles, {} lit, at the listener {}, in {:.1} s",
         c.steps,
-        c.lit(0..muir::simpletv::HEIGHT),
+        c.lit(0..muir::tv::HEIGHT),
         c.at_the_listener(),
         started.elapsed().as_secs_f64()
     );

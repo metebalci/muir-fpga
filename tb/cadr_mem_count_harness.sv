@@ -35,7 +35,11 @@
 `default_nettype none
 
 module cadr_mem_count_harness #(
-    parameter string PROM_HEX = "build/boot_prom.hex"
+    parameter string PROM_HEX = "build/boot_prom.hex",
+    // MIT's TV sync PROM, which `rtl/machine/cadr_tv.sv` reads at
+    // elaboration; passed down beside the boot PROM's image for the same
+    // reason, so that a model built anywhere finds it.
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
 ) (
     input  var logic clk,
     input  var logic rst,
@@ -127,7 +131,8 @@ module cadr_mem_count_harness #(
   // The DDR=1 board's configuration exactly: no interrupt, no Xbus device,
   // 32 boards of memory declared.
   cadr_machine #(
-      .PROM_HEX(PROM_HEX)
+      .PROM_HEX(PROM_HEX),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) u_machine (
       .clk(clk), .rst(rst),
       // `device_ack` low is not "no disk controller": the disk's four

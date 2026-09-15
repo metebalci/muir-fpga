@@ -22,18 +22,24 @@ beside it.
 
 The picture is `rtl/machine/cadr_tv.sv`'s frame buffer. That is 768 pixels
 across and 963 lines, one bit a pixel, 24 words to a line, at `0x1C00_0000` in
-DDR. Those are muir's `simpletv::WIDTH`, `HEIGHT` and `WORDS_PER_LINE` and
+DDR. Those are muir's `tv::WIDTH`, `HEIGHT` and `WORDS_PER_LINE` and
 `cadr_ddr_map::DISPLAY_BASE`.
 
 Bit 0 of a word is the leftmost of the 32 pixels that word carries. A lit bit
 shows white unless `MODE BOW` is set. Both rules are muir's
-`SimpleTv::pixel` and `SimpleTv::shows_white`, and both are already written out
+`Tv::pixel` and `Tv::shows_white`, and both are already written out
 in `screen_geom.h`, which is the remote viewer's copy of the same facts. This
 block is the third expression of them.
 
-`rtl/machine/cadr_tv.sv` does not change. It is held to muir tick for tick, it
-has no raster, and its vertical flag runs on its own frame clock. Nothing here
-touches it.
+`rtl/machine/cadr_tv.sv` has no raster. It runs the board's sync program, so
+the vertical flag is preset where that program's `-TVMA CLR` falls and the
+mode register's `VSYNC` and `HSYNC` bits are the program's own; it is held to
+muir tick for tick and `docs/tv.md` carries the account. **This block does not
+read any of it.** Its frame comes from the video mode below and its picture
+from the display's region of DDR, so a machine that changes its sync program,
+or one whose program makes no frame at all, changes nothing a monitor sees
+here. What the two share is the region and the pixel rules above, and nothing
+else.
 
 ## 1. The video mode
 

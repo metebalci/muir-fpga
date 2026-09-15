@@ -523,7 +523,15 @@ int main(int argc, char **argv)
 	//   bus_error..write_buffer  2+2+1+(8+32)*3 = 125
 	//   vmaok      1
 	//   disk       61 + 8             = 69       (no drives: 8 flag bytes)
-	//   simpletv   (8+131072)+4+(8+4096)+2+1+1+8 = 135200
+	//   tv         1+(8+131072)+4+(8+4096)+2+1+48+1+8+8 = 135257
+	//                                            (the board's tag, the
+	//                                             buffer, the mode, the
+	//                                             sync RAM, the color map
+	//                                             as 48 bare bytes, the
+	//                                             flag, and two instants)
+	//   color_tv   1                  = 1        (the flag alone: none is
+	//                                             fitted, so no board
+	//                                             follows it)
 	//   ioboard    57 + 110 + 1 + 85  = 253      (its own, the serial port's
 	//                                             Pci, the chaos flag, and
 	//                                             the Chaosnet interface)
@@ -546,10 +554,10 @@ int main(int argc, char **argv)
 	{
 		const size_t machine_part =
 			8200 + 131080 + 14 + 10 + 16680 + 29 + 8200 + 4104 + 4 +
-			262152 + 125 + 1 + 69 + 135200 + 253 + 16;
+			262152 + 125 + 1 + 69 + 135257 + 1 + 253 + 16;
 		const size_t rtl_part =
 			208 + 32 + 19 + 12 + 140 + 1 + 32 + 25 + 26 + 24 + 27;
-		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Two of the three
+		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven
 		// keep the body's length and one does not, and the point of
 		// building them is what the ROUND TRIP does with them, so this
 		// assertion --- which belongs to the real thing --- stands down.

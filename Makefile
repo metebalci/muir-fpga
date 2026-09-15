@@ -21,7 +21,7 @@ VFLAGS := --cc --exe --build -Wall
 
 # **A RECIPE THAT FAILS LEAVES NO TARGET BEHIND.**  Without this, a rule whose
 # command redirects into `$@` leaves whatever the command managed to write ---
-# and `$(BUILD)/boot_prom.hex` is written by `... --bin prom > $@`, so a cargo
+# and `$(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex` is written by `... --bin prom > $@`, so a cargo
 # failure left a ZERO-BYTE file that make then believed was up to date.  An
 # empty `$$readmemh` is a WARNING, not an error, so the control store
 # elaborates empty and the machine runs zeros: the check fails on the symptom
@@ -227,9 +227,10 @@ MEMPATH := rtl/plumbing/cadr_ddr_map.sv rtl/machine/cadr_xbus_decode.sv rtl/mach
 
 $(BUILD)/obj_memory_path/Vcadr_memory_path: $(MEMPATH) tb/cadr_memory_path_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_memory_path \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_memory_path_tb.cpp)
 
-$(BUILD)/memory_path.pass: $(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden
+$(BUILD)/memory_path.pass: $(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_memory_path/Vcadr_memory_path $(BUILD)/busint_xbus.golden
 	@touch $@
 
@@ -256,9 +257,10 @@ $(BUILD)/tv.golden: golden/src/tv.rs golden/Cargo.toml | $(BUILD)
 
 $(BUILD)/obj_tv/Vcadr_memory_path: $(MEMPATH) tb/cadr_tv_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_tv \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_tv_tb.cpp)
 
-$(BUILD)/tv.pass: $(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden
+$(BUILD)/tv.pass: $(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_tv/Vcadr_memory_path $(BUILD)/tv.golden
 	@touch $@
 
@@ -366,10 +368,11 @@ $(BUILD)/busint_regs.pass: $(BUILD)/obj_busint_regs/Vcadr_busint_regs $(BUILD)/b
 # half.
 $(BUILD)/obj_unibus/Vcadr_memory_path: $(MEMPATH) tb/cadr_unibus_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_unibus \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_memory_path $(MEMPATH) $(abspath tb/cadr_unibus_tb.cpp)
 
 $(BUILD)/unibus.pass: $(BUILD)/obj_unibus/Vcadr_memory_path $(BUILD)/iob.golden \
-                      $(BUILD)/busint_regs.golden
+                      $(BUILD)/busint_regs.golden $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_unibus/Vcadr_memory_path $(BUILD)/iob.golden $(BUILD)/busint_regs.golden
 	@touch $@
 
@@ -412,6 +415,12 @@ $(BUILD)/rtl.golden: golden/src/rtl.rs golden/src/trace.rs \
 $(BUILD)/boot_prom.hex: golden/src/prom.rs golden/Cargo.toml | $(BUILD)
 	$(GOLDEN) --release --bin prom > $@
 
+# And MIT's TV sync PROM, `cadrtv/cpt.prom`, the same way and for the same
+# reason: the display runs that program from power-on until the software loads
+# the RAM and selects it, and MIT's material is muir's to carry.
+$(BUILD)/sync_prom.hex: golden/src/sync_prom.rs golden/Cargo.toml | $(BUILD)
+	$(GOLDEN) --release --bin sync_prom > $@
+
 MICROCYCLE := rtl/machine/cadr_phase_gen.sv rtl/machine/cadr_microcycle.sv
 
 # The PROM image is named at verilation, absolute, rather than left to the
@@ -424,7 +433,7 @@ $(BUILD)/obj_microcycle/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_microcycle_tb.cp
 	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_microcycle_tb.cpp)
 
 $(BUILD)/microcycle.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
-                          $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+                          $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl.golden
 	@touch $@
 
@@ -458,7 +467,7 @@ $(BUILD)/obj_sstep/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_sstep_tb.cpp | $(BUIL
 	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_sstep_tb.cpp)
 
 $(BUILD)/sstep.pass: $(BUILD)/obj_sstep/Vcadr_microcycle \
-                     $(BUILD)/sstep.golden $(BUILD)/boot_prom.hex
+                     $(BUILD)/sstep.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_sstep/Vcadr_microcycle $(BUILD)/sstep.golden
 	@touch $@
 
@@ -521,10 +530,11 @@ DISPLAY := rtl/plumbing/cadr_display_out.sv rtl/plumbing/cadr_tmds_encode.sv \
 $(BUILD)/obj_machine/Vcadr_machine: $(MACHINE) tb/cadr_machine_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_machine \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_machine_tb.cpp)
 
 $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
-                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_machine/Vcadr_machine $(BUILD)/rtl.golden
 	@touch $@
 
@@ -541,9 +551,10 @@ $(BUILD)/machine.pass: $(BUILD)/obj_machine/Vcadr_machine \
 $(BUILD)/obj_ddr_boot/Vcadr_machine: $(MACHINE) tb/cadr_ddr_boot_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_ddr_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_ddr_boot_tb.cpp)
 
-$(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.hex
+$(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_ddr_boot/Vcadr_machine
 	@touch $@
 
@@ -563,9 +574,10 @@ $(BUILD)/ddr_boot.pass: $(BUILD)/obj_ddr_boot/Vcadr_machine $(BUILD)/boot_prom.h
 $(BUILD)/obj_kbd_boot/Vcadr_machine: $(MACHINE) tb/cadr_kbd_boot_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_kbd_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_kbd_boot_tb.cpp)
 
-$(BUILD)/kbd_boot.pass: $(BUILD)/obj_kbd_boot/Vcadr_machine $(BUILD)/boot_prom.hex
+$(BUILD)/kbd_boot.pass: $(BUILD)/obj_kbd_boot/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_kbd_boot/Vcadr_machine
 	@touch $@
 
@@ -588,9 +600,10 @@ $(BUILD)/kbd_boot.pass: $(BUILD)/obj_kbd_boot/Vcadr_machine $(BUILD)/boot_prom.h
 $(BUILD)/obj_no_auto_boot/Vcadr_machine: $(MACHINE) tb/cadr_no_auto_boot_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_no_auto_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_no_auto_boot_tb.cpp)
 
-$(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boot_prom.hex
+$(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_no_auto_boot/Vcadr_machine
 	@touch $@
 
@@ -611,9 +624,10 @@ $(BUILD)/no_auto_boot.pass: $(BUILD)/obj_no_auto_boot/Vcadr_machine $(BUILD)/boo
 $(BUILD)/obj_promenable/Vcadr_machine: $(MACHINE) tb/cadr_promenable_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_promenable \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_promenable_tb.cpp)
 
-$(BUILD)/promenable.pass: $(BUILD)/obj_promenable/Vcadr_machine $(BUILD)/boot_prom.hex
+$(BUILD)/promenable.pass: $(BUILD)/obj_promenable/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_promenable/Vcadr_machine
 	@touch $@
 
@@ -661,10 +675,11 @@ $(BUILD)/errhalt_lamp.pass: $(BUILD)/obj_errhalt_lamp/Vcadr_lamp_errhalt
 $(BUILD)/obj_map_boot/Vcadr_machine: $(MACHINE) tb/cadr_map_boot_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_map_boot \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_map_boot_tb.cpp)
 
 $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
-                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+                        $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_map_boot/Vcadr_machine $(BUILD)/rtl.golden
 	@touch $@
 
@@ -698,10 +713,11 @@ $(BUILD)/map_boot.pass: $(BUILD)/obj_map_boot/Vcadr_machine \
 $(BUILD)/obj_band/Vcadr_machine: $(MACHINE) tb/cadr_band_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_band_tb.cpp)
 
 .PHONY: band
-band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
+band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	@if [ ! -f $(SYS100_GZ) ]; then \
 	    echo "band: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
 	else \
@@ -749,10 +765,11 @@ band: $(BUILD)/obj_band/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom
 $(BUILD)/obj_hash_watch/Vcadr_machine: $(MACHINE) tb/cadr_hash_watch_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_hash_watch \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_hash_watch_tb.cpp)
 
 .PHONY: hash-watch
-hash-watch: $(BUILD)/obj_hash_watch/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
+hash-watch: $(BUILD)/obj_hash_watch/Vcadr_machine $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	@if [ ! -f $(SYS100_GZ) ]; then \
 	    echo "hash-watch: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
 	else \
@@ -802,11 +819,12 @@ $(BUILD)/obj_axi_channel/Vcadr_band_axi_harness: $(AXI_CHANNEL_SRC) \
                                                  tb/cadr_axi_channel_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_axi_channel \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_band_axi_harness $(AXI_CHANNEL_SRC) \
 	    $(abspath tb/cadr_axi_channel_tb.cpp)
 
 $(BUILD)/axi_channel.pass: $(BUILD)/obj_axi_channel/Vcadr_band_axi_harness \
-                           $(BUILD)/boot_prom.hex
+                           $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_axi_channel/Vcadr_band_axi_harness
 	@touch $@
 
@@ -865,12 +883,13 @@ $(BUILD)/obj_band_axi/Vcadr_band_axi_harness: $(BAND_AXI_SRC) \
                                               tb/cadr_band_axi_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_band_axi \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_band_axi_harness $(BAND_AXI_SRC) \
 	    $(abspath tb/cadr_band_axi_tb.cpp)
 
 .PHONY: band-axi
 band-axi: $(BUILD)/obj_band_axi/Vcadr_band_axi_harness $(BUILD)/rtl_sys.golden \
-          $(BUILD)/boot_prom.hex
+          $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	@if [ ! -f $(SYS100_GZ) ]; then \
 	    echo "band-axi: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
 	else \
@@ -923,11 +942,12 @@ $(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness: $(PACK_CHANNEL_SRC) \
                                                   tb/cadr_pack_linux.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -CFLAGS -I$(abspath tb) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_pack_channel \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_pack_axi_harness $(PACK_CHANNEL_SRC) \
 	    $(abspath tb/cadr_pack_channel_tb.cpp)
 
 $(BUILD)/pack_channel.pass: $(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness \
-                            $(BUILD)/boot_prom.hex
+                            $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_pack_channel/Vcadr_pack_axi_harness
 	@touch $@
 
@@ -966,12 +986,13 @@ $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness: $(PACK_BAND_SRC) \
                                                tb/cadr_pack_linux.h | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -CFLAGS -I$(abspath tb) -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_pack_band \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_pack_axi_harness $(PACK_BAND_SRC) \
 	    $(abspath tb/cadr_pack_band_tb.cpp)
 
 .PHONY: pack-band
 pack-band: $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness $(BUILD)/rtl_sys.golden \
-           $(BUILD)/boot_prom.hex
+           $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	@if [ ! -f $(SYS100_GZ) ]; then \
 	    echo "pack-band: skipped --- no System 100 release; muir's tools/fetch-system-100.sh fetches it"; \
 	else \
@@ -1014,10 +1035,11 @@ pack-band: $(BUILD)/obj_pack_band/Vcadr_pack_axi_harness $(BUILD)/rtl_sys.golden
 $(BUILD)/obj_map_access/Vcadr_machine: $(MACHINE) tb/cadr_map_access_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_map_access \
 	    -GPROM_HEX='"$(abspath $(BUILD))/map_access_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_map_access_tb.cpp)
 
 $(BUILD)/map_access.pass: $(BUILD)/obj_map_access/Vcadr_machine \
-                          $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+                          $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_map_access/Vcadr_machine $(BUILD)/rtl.golden \
 	    $(BUILD)/map_access_prom.hex $(BUILD)/boot_prom.hex
 	@touch $@
@@ -1050,11 +1072,12 @@ $(BUILD)/obj_mem_count/Vcadr_mem_count_harness: $(MEM_COUNT_SRC) \
                                                 tb/cadr_mem_count_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_mem_count \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_mem_count_harness $(MEM_COUNT_SRC) \
 	    $(abspath tb/cadr_mem_count_tb.cpp)
 
 $(BUILD)/mem_count.pass: $(BUILD)/obj_mem_count/Vcadr_mem_count_harness \
-                         $(BUILD)/boot_prom.hex
+                         $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_mem_count/Vcadr_mem_count_harness
 	@touch $@
 
@@ -1089,11 +1112,12 @@ $(BUILD)/obj_bus_audit/Vcadr_bus_audit_harness: $(BUS_AUDIT_SRC) \
                                                 tb/cadr_bus_audit_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_bus_audit \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_bus_audit_harness $(BUS_AUDIT_SRC) \
 	    $(abspath tb/cadr_bus_audit_tb.cpp)
 
 $(BUILD)/bus_audit.pass: $(BUILD)/obj_bus_audit/Vcadr_bus_audit_harness \
-                         $(BUILD)/boot_prom.hex
+                         $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_bus_audit/Vcadr_bus_audit_harness
 	@touch $@
 
@@ -1157,11 +1181,12 @@ $(BUILD)/bus_audit_unit.pass: $(BUILD)/obj_bus_audit_unit/Vcadr_bus_audit
 $(BUILD)/obj_audit_window/Vcadr_machine: $(MACHINE) tb/cadr_audit_window_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 --public-flat-rw -Mdir $(BUILD)/obj_audit_window \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) \
 	    $(abspath tb/cadr_audit_window_tb.cpp)
 
 $(BUILD)/audit_window.pass: $(BUILD)/obj_audit_window/Vcadr_machine \
-                            $(BUILD)/boot_prom.hex
+                            $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_audit_window/Vcadr_machine
 	@touch $@
 
@@ -1176,12 +1201,13 @@ $(BUILD)/audit_window.pass: $(BUILD)/obj_audit_window/Vcadr_machine \
 # Phony deliberately. A `.pass` file would make `check_makefile` report a check
 # that nothing mutates.
 .PHONY: nomem
-nomem: $(BUILD)/obj_nomem/Vcadr_machine $(BUILD)/boot_prom.hex
+nomem: $(BUILD)/obj_nomem/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_nomem/Vcadr_machine
 
 $(BUILD)/obj_nomem/Vcadr_machine: $(MACHINE) tb/cadr_nomem_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_nomem \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_nomem_tb.cpp)
 
 # ------------------------------------------------------------- the top level
@@ -1232,14 +1258,17 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) boards/arty-z7-20/cadr_arty.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv $(MACHINE) \
 	    boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilinx7/cadr_probe.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
@@ -1248,6 +1277,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
@@ -1256,6 +1286,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=2 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
@@ -1271,6 +1302,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
 # green through once already.
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 -GHDMI=1 \
 	    --top-module cadr_arty tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/arty-z7-20/cadr_arty.sv boards/arty-z7-20/cadr_ps7.sv rtl/plumbing/cadr_axi_master.sv \
@@ -1320,16 +1352,19 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
                     tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_cora tb/cadr_arty_stubs.sv $(MACHINE) boards/cora-z7-07s/cadr_cora.sv \
 	    rtl/plumbing/cadr_lamp_errhalt.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
 	    --top-module cadr_cora tb/cadr_arty_stubs.sv $(MACHINE) \
 	    boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xilinx7/cadr_probe.sv \
 	    rtl/plumbing/cadr_lamp_errhalt.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GDDR=1 \
 	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
@@ -1339,6 +1374,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=1 \
 	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
@@ -1348,6 +1384,7 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROVE=2 \
 	    --top-module cadr_cora tb/cadr_arty_stubs.sv tb/cadr_ps7_stub.sv \
 	    $(MACHINE) boards/cora-z7-07s/cadr_cora.sv boards/cora-z7-07s/cadr_ps7.sv \
@@ -1519,6 +1556,7 @@ ARTY_A7_SRC := tb/cadr_arty_stubs.sv $(MACHINE) \
 ARTY_A7_LINT := $(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
                 -Irtl/plumbing/xilinx7 -Iboards/arty-a7-100 $(IBEX_INC) \
                 -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+                -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
                 -GFIRMWARE_HEX='"$(abspath $(BUILD))/soc_firmware.hex"' \
                 --top-module cadr_arty_a7 $(IBEX_VLT)
 
@@ -1628,11 +1666,12 @@ PROBE_SRC := $(MACHINE) rtl/plumbing/xilinx7/cadr_probe.sv tb/cadr_probe_harness
 $(BUILD)/obj_probe/Vcadr_probe_harness: $(PROBE_SRC) tb/cadr_probe_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_probe \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_probe_harness $(PROBE_SRC) \
 	    $(abspath tb/cadr_probe_tb.cpp)
 
 $(BUILD)/probe.pass: $(BUILD)/obj_probe/Vcadr_probe_harness \
-                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_probe/Vcadr_probe_harness $(BUILD)/rtl.golden
 	@touch $@
 
@@ -1842,7 +1881,7 @@ mutants: mutants-anchors $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
          $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
          $(BUILD)/disk.golden $(BUILD)/disk_boot.golden $(BUILD)/tv.golden \
          $(BUILD)/iob.golden $(BUILD)/busint_regs.golden \
-         $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
+         $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
 	    --rev $(MUTREV)
@@ -1856,7 +1895,7 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
                   $(BUILD)/xbus_decode.golden $(BUILD)/rtl.golden \
                   $(BUILD)/disk.golden $(BUILD)/disk_boot.golden \
                   $(BUILD)/tv.golden \
-                  $(BUILD)/boot_prom.hex $(BUILD)/rtl_sys.golden \
+                  $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden \
              $(BUILD)/soc_firmware.hex | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
@@ -1916,7 +1955,7 @@ $(BUILD)/rtl_sys.golden: golden/src/rtl_sys.rs golden/src/trace.rs \
 # reads which generator wrote the trace out of its header and asserts what
 # that trace is for.
 $(BUILD)/microcycle_sys.pass: $(BUILD)/obj_microcycle/Vcadr_microcycle \
-                              $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
+                              $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_microcycle/Vcadr_microcycle $(BUILD)/rtl_sys.golden
 	@touch $@
 
@@ -1946,12 +1985,12 @@ $(BUILD)/obj_md_hold/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_md_hold_tb.cpp | $(
 	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_md_hold_tb.cpp)
 
 $(BUILD)/md_hold.pass: $(BUILD)/obj_md_hold/Vcadr_microcycle \
-                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+                       $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_md_hold/Vcadr_microcycle $(BUILD)/rtl.golden
 	@touch $@
 
 $(BUILD)/md_hold_sys.pass: $(BUILD)/obj_md_hold/Vcadr_microcycle \
-                           $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex
+                           $(BUILD)/rtl_sys.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_md_hold/Vcadr_microcycle $(BUILD)/rtl_sys.golden
 	@touch $@
 
@@ -1982,7 +2021,7 @@ $(BUILD)/obj_md_inject/Vcadr_microcycle: $(MICROCYCLE) tb/cadr_md_inject_tb.cpp 
 	    --top-module cadr_microcycle $(MICROCYCLE) $(abspath tb/cadr_md_inject_tb.cpp)
 
 $(BUILD)/md_inject.pass: $(BUILD)/obj_md_inject/Vcadr_microcycle \
-                         $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex
+                         $(BUILD)/rtl.golden $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_md_inject/Vcadr_microcycle $(BUILD)/rtl.golden
 	@touch $@
 
@@ -2500,15 +2539,18 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 # is the only check in the repository whose judge is muir's own reader.
 #
 # **THE PROOF IS THE ROUND TRIP AND IT HAS THREE LEGS, BECAUSE ONE IS NOT
-# ENOUGH.**  Measured, not assumed --- three mutants of `chk_rtl.c` were built
-# and run against each leg, and no leg catches all three:
+# ENOUGH.**  Measured, not assumed --- seven mutants of `chk_rtl.c` are built
+# and run against each leg, and no leg catches all seven:
 #
 #   1. muir LOADS the file and SAVES IT BACK BYTE FOR BYTE.  This is muir's
 #      own round-trip property (`tests/checkpoint.rs`, "the checkpoint loads
 #      and saves as itself") and it holds the framing: every field at the
 #      offset muir's reader expects, every array's count, every flag a 0 or a
 #      1, every range check passed, and the packing muir's own rather than
-#      merely a legal one.  It catches the mutant that drops a byte.
+#      merely a legal one.  It catches the mutant that drops a byte, and the
+#      two that describe a display this machine has not got: muir's own
+#      cross-check of the board against `--tv-board`, and the short read that
+#      follows a colour board claimed on a backplane with none.
 #   2. muir's own REPORT of what it resumed names the microcycle count and
 #      the nanoseconds the synthetic machine was given.  Two fields the
 #      window really does read, asserted in muir's words rather than through
@@ -2516,10 +2558,17 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 #   3. the file's SHA-256 against the value recorded here.  **This is the leg
 #      that catches a field carrying a WRONG VALUE in a RIGHT-SHAPED SLOT**,
 #      which the round trip cannot see by construction: muir re-saves whatever
-#      it read, so any valid value survives it.  Two of the three mutants ---
-#      the mouse's quadrature phases written 0 where a fresh mouse has 2, and
-#      `Machine::opc` taken from the OPC shift register instead of LPC ---
-#      load, re-save identically, and are caught here and nowhere else.
+#      it read, so any valid value survives it.  Four of the seven mutants ---
+#      the mouse's quadrature phases written 0 where a fresh mouse has 2,
+#      `Machine::opc` taken from the OPC shift register instead of LPC, the
+#      colour map written all ones, and the sync program's origin written at
+#      the machine's clock --- load, re-save identically, and are caught here
+#      and nowhere else.
+#
+# **THE SEVEN ARE STATED TWICE AND BOTH MOVE TOGETHER**: `MUTANTS` in the
+# package's own Makefile builds them and the loop below judges them, so one
+# added in the first place alone is built and never run, and in the second
+# alone is run and never built.
 #
 # **SO THIS DIGEST IS A GOLDEN VALUE AND MOVES LIKE ONE.**  It is of the file
 # the host check writes from its own fixed synthetic machine, which is
@@ -2530,7 +2579,7 @@ $(BUILD)/readout_face.pass: $(READOUT_SRC)/readout.c $(READOUT_SRC)/readout.h \
 # states for a trace, because this is one.
 CHECKPOINT_SRC  := boards/arty-z7-20/linux/buildroot/package/cadr-checkpoint/src
 CHECKPOINT_WORK := $(HOME)/.cache/muir-fpga-checkpoint
-CHECKPOINT_SHA  := 9bc79063064d6f2336d69b384b7e73a8e76631998f167e108779678f3bb1b6db
+CHECKPOINT_SHA  := b6f82f67742cff0c06061370f123e42e8af825680273705d88eb503c120cd9cf
 # What muir prints for the synthetic machine: 0x1234567890 microcycles and
 # 0x9876543210 ticks of five nanoseconds each, the two the model sets.
 CHECKPOINT_RESUMED := at 78187493520 microcycles, 3274101291600 ns, 1 memory boards
@@ -2572,7 +2621,7 @@ $(BUILD)/checkpoint.pass: $(CHECKPOINT_SRC)/cadr-checkpoint.c \
 	 echo "checkpoint: muir loaded $$(stat -c%s $$W/out.chk) bytes and saved them back identically,"; \
 	 echo "checkpoint: resumed $$(grep '^resumed' $$W/muir.log | sed 's/^resumed: [^ ]* //'),"; \
 	 echo "checkpoint: and the file is the one the digest was recorded for."; \
-	 for m in 1 2 3; do \
+	 for m in 1 2 3 4 5 6 7; do \
 	   $$W/checkpoint_test-$$m $$W $$W/mut-$$m.chk > $$W/mut-$$m.out 2>&1 \
 	     || { echo "checkpoint: mutant $$m did not build or did not run: BROKEN"; \
 	          cat $$W/mut-$$m.out; exit 1; }; \
@@ -2999,9 +3048,10 @@ buildroot-cora-rebuild: buildroot-cora-check
 $(BUILD)/obj_md_compose/Vcadr_machine: $(MACHINE) tb/cadr_md_compose_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_md_compose \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_md_compose_tb.cpp)
 
-$(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_prom.hex
+$(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_md_compose/Vcadr_machine
 	@touch $@
 
@@ -3018,9 +3068,10 @@ $(BUILD)/md_compose.pass: $(BUILD)/obj_md_compose/Vcadr_machine $(BUILD)/boot_pr
 $(BUILD)/obj_park/Vcadr_machine: $(MACHINE) tb/cadr_park_tb.cpp | $(BUILD)
 	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 --public-flat-rw -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/arty-z7-20 -Mdir $(BUILD)/obj_park \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_machine $(MACHINE) $(abspath tb/cadr_park_tb.cpp)
 
-$(BUILD)/park.pass: $(BUILD)/obj_park/Vcadr_machine $(BUILD)/boot_prom.hex
+$(BUILD)/park.pass: $(BUILD)/obj_park/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_park/Vcadr_machine
 	@touch $@
 
@@ -3193,13 +3244,14 @@ $(BUILD)/obj_soc/Vcadr_soc_harness: $(SOC_HARNESS_SRC) $(IBEX_VLT) \
 	    -CFLAGS -DUART_DIVISOR=$(SOC_TB_DIVISOR) \
 	    -CFLAGS -DSOC_TICKS_PER_US=$(SOC_TICKS_PER_US) \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
+	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GFIRMWARE_HEX='"$(abspath $(BUILD))/soc_firmware.hex"' \
 	    -GSOC_RAM_WORDS=$(SOC_RAM_WORDS) -GSOC_BAUD=$(SOC_TB_BAUD) \
 	    -GCLK_HZ=$(SOC_CLK_HZ) \
 	    --top-module cadr_soc_harness $(IBEX_VLT) $(SOC_HARNESS_SRC) \
 	    $(abspath tb/cadr_soc_tb.cpp)
 
-$(BUILD)/soc.pass: $(BUILD)/obj_soc/Vcadr_soc_harness $(BUILD)/boot_prom.hex \
+$(BUILD)/soc.pass: $(BUILD)/obj_soc/Vcadr_soc_harness $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
                    $(BUILD)/soc_firmware.hex
 	$(BUILD)/obj_soc/Vcadr_soc_harness
 	@touch $@

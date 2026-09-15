@@ -92,7 +92,7 @@ uint32_t Poison(uint32_t word) {
   return 0xF0000000u ^ (word * 2654435761u);
 }
 
-// What the picture should be: muir's `SimpleTv::pixel`, bit 0 of a word the
+// What the picture should be: muir's `Tv::pixel`, bit 0 of a word the
 // leftmost of the 32 pixels it carries.
 bool Lit(int line, int x) {
   const uint32_t bit = static_cast<uint32_t>(line) * kWordsPerLine * 32u +

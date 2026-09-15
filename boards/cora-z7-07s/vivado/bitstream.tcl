@@ -3,7 +3,7 @@
 #
 # Build a bitstream for the Cora Z7-07S.
 #
-#     make build/boot_prom.hex
+#     make build/boot_prom.hex build/sync_prom.hex
 #     vivado -mode batch -source boards/cora-z7-07s/vivado/bitstream.tcl
 #
 # Run from the repository root. This is
@@ -146,6 +146,16 @@ if {![file exists $prom]} {
     exit 1
 }
 
+# And MIT's TV sync PROM, which the display runs from power-on.  Checked here
+# for the reason the boot PROM is: `$readmemh` on a file that is not there is
+# a WARNING, and a sync program of zeros is a display that never interrupts
+# --- which synthesises, routes and writes a bitstream.
+set sync_prom build/sync_prom.hex
+if {![file exists $sync_prom]} {
+    puts "BIT: $sync_prom is missing; run `make $sync_prom` first"
+    exit 1
+}
+
 # **THE GLOB DROPS THE SOFT PROCESSING SYSTEM, AND IT HAS TO.**
 # `rtl/plumbing/cadr_soc*.sv` is the Arty A7-100's Ibex core and the four
 # modules around it: a part with no processing system of its own needs one in
@@ -168,6 +178,7 @@ foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/cora-z7-07s/*.sv] {
 read_verilog -sv $sources
 synth_design -top cadr_cora -part $part \
     -generic PROM_HEX=[file normalize $prom] \
+    -generic SYNC_PROM_HEX=[file normalize $sync_prom] \
     -generic PROBE_DEPTH=$probe_depth \
     -generic DDR=$ddr \
     -generic PROVE=$prove

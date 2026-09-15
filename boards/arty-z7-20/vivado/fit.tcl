@@ -3,7 +3,7 @@
 #
 # Synthesize, place and route the composed machine, and report what it costs.
 #
-#     make build/boot_prom.hex
+#     make build/boot_prom.hex build/sync_prom.hex
 #     vivado -mode batch -source boards/arty-z7-20/vivado/fit.tcl
 #
 # Run from the repository root. Out of context, and still out of context now
@@ -40,9 +40,20 @@ if {![file exists $prom]} {
     exit 1
 }
 
+# And MIT's TV sync PROM, which the display runs from power-on.  Checked here
+# for the reason the boot PROM is: `$readmemh` on a file that is not there is
+# a WARNING, and a sync program of zeros is a display that never interrupts
+# --- which synthesises, routes and writes a bitstream.
+set sync_prom build/sync_prom.hex
+if {![file exists $sync_prom]} {
+    puts "fit: $sync_prom is missing; run `make $sync_prom` first"
+    exit 1
+}
+
 read_verilog -sv [glob rtl/*/*.sv rtl/*/*/*.sv boards/arty-z7-20/*.sv]
 synth_design -top cadr_machine -part $part -mode out_of_context \
-    -generic PROM_HEX=[file normalize $prom]
+    -generic PROM_HEX=[file normalize $prom] \
+    -generic SYNC_PROM_HEX=[file normalize $sync_prom]
 
 # THE CLOCK IS THIS FLOW'S, NOT THE DESIGN'S.  Out of context `cadr_machine`
 # is the top and `clk` is a port, so the period is declared here.  In a board

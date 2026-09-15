@@ -100,7 +100,11 @@ $(WORK)/checkpoint_test: checkpoint_test.c $(CORE) $(HEADERS) \
 # check is built again with each value of `CHK_MUTATE` and `build/checkpoint
 # .pass` requires muir to refuse or to disagree with every one of them.
 # `CHK_MUTATE` is never defined in the program installed on the board.
-MUTANTS := 1 2 3
+#
+# The list and the loop in the repository's own Makefile are two statements of
+# one number, and `build/checkpoint.pass` runs whatever that loop names: a
+# mutant added here and not there is built and never judged.
+MUTANTS := 1 2 3 4 5 6 7
 mutants: $(foreach m,$(MUTANTS),$(WORK)/checkpoint_test-$(m))
 
 $(WORK)/checkpoint_test-%: checkpoint_test.c $(CORE) $(HEADERS) \

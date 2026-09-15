@@ -10,14 +10,17 @@ the SIMPLE TV of `cadrtv/`, and it is what the window system asks for by
 `'(:VIDEO :BLACK-AND-WHITE :CONTROLLER :SIMPLE)`. This document describes it
 as an Xbus device in the fabric, checked against muir. It was written at the
 slice, with muir at `dad7249`, so read that on anything below which says what
-does or does not exist. It has the same shape as `docs/disk-controller.md`:
+does or does not exist. Its citations into muir were renumbered when the pin
+moved to `bfba7f3`, the commit at which muir began running the board's sync
+program. The fabric runs that program too, and what it took is said where it
+bears. This document has the same shape as `docs/disk-controller.md`:
 what muir says the board is, what the two reference programs actually ask of
 it, the decisions, what the check holds to and cannot, and what is deliberately
 not built.
 
 ## What muir says the TV is
 
-The reference is `src/simpletv.rs`, whose header names three sources and says
+The reference is `src/tv.rs`, whose header names three sources and says
 they agree. They are `sys/window/shwarm.lisp` in the System 100 release (the
 software that writes to this device), `cadrtv/lmtv.order` (MIT's programming
 specification for the board), and `data/SIMPLETV.netlist` through
@@ -25,13 +28,13 @@ specification for the board), and `data/SIMPLETV.netlist` through
 is that file, line by line.
 
 - **There is a frame buffer of 32,768 words at `0o17000000`** (`BUFFER`, line
-  39; `BUFFER_WORDS`, line 43). `MAIN-SCREEN-BUFFER-ADDRESS` is
+  74; `BUFFER_WORDS`, line 78). `MAIN-SCREEN-BUFFER-ADDRESS` is
   `IO-SPACE-VIRTUAL-ADDRESS`, the base of Xbus I/O space, and
   `MAIN-SCREEN-BUFFER-LENGTH` is `#o100000`. The picture is one bit a pixel,
   768 across, 24 words to a line and 963 lines (`WIDTH`, `HEIGHT`,
-  `WORDS_PER_LINE`, lines 65--73). The screen uses 23,112 of the 32,768 words.
-- **There are eight control words at `0o17377760`** (`CONTROL`, line 49;
-  `CONTROL_WORDS`, line 62). `MAIN-SCREEN-CONTROL-ADDRESS #o377760` is an
+  `WORDS_PER_LINE`, lines 100--108). The screen uses 23,112 of the 32,768 words.
+- **There are eight control words at `0o17377760`** (`CONTROL`, line 84;
+  `CONTROL_WORDS`, line 97). `MAIN-SCREEN-CONTROL-ADDRESS #o377760` is an
   I/O offset, and the physical address is that plus `BUFFER`. `lmtv.order` runs
   them `173777x0` to `x7`. The 74S138 at NXBCTL 0F13 decodes eight and its top
   three outputs go nowhere, so words 5 to 7 are the three that `lmtv.order`
@@ -45,57 +48,75 @@ is that file, line by line.
   board. Page NRACOL carries the interface and no memory at all. `lmtv.order`
   describes the map as a 64 by 9 RAM for each channel with a
   digital-to-analogue converter on it. So a write to word 4 reaches nothing
-  here. The fabric answers it and keeps nothing, which is what muir does, and
-  the behaviour was never in question. The four words above the eight,
+  here. The fabric answers it and keeps nothing, because nothing on this board
+  can read the map back. muir kept nothing either up to `4ddaeb2`; since
+  `bfba7f3` it keeps the sixteen entries of three channels for its colour
+  board and its checkpoint (`Tv::color_map`). The register is write only on
+  both boards, so no check here reads one back and the behaviour was never in
+  question. The four words above the eight,
   `0o17377770`--`3`, sit between the display's registers and the disk
   controller's and answer to nothing.
 - **Register 0 is the mode register**, with four writable bits
-  (`mode::WRITABLE`, line 106). They are `CLOCK MODE<1:0>` (line 95), `MODE
-  BOW` (line 100, "display one bits as black and zeros as white") and `MODE
-  INTR ENB` (line 102). They are the Am25LS2519 at NXBCTL 0F12. muir's note at
+  (`mode::WRITABLE`, line 266). They are `CLOCK MODE<1:0>` (line 255), `MODE
+  BOW` (line 260, "display one bits as black and zeros as white") and `MODE
+  INTR ENB` (line 262). They are the Am25LS2519 at NXBCTL 0F12. muir's note at
   `mod mode` says MIT drew this page twice, a 74S174 in 1979 and the 2519 in
   1980, and the netlist is the newer sheet. Bits 5 to 7 (`VSYNC`, `HSYNC`,
-  `SYNC PROM ENB`, lines 120--133) are read only, and all three read zero
+  `SYNC PROM ENB`, lines 280--313) are read only, and all three read zero
   here. **They read zero for two different reasons, and only one of them is a
   property of the board.** Bit 7 is grounded. ECO 2 of `lmtv.eco`, of 18 June
   1980, wires `GND` to that input of the read buffer so that the window system
   can tell old boards from new. Bits 5 and 6 are wired to the sync generator.
   The 74LS244 at NXBCTL 0F11 takes `VSYNC` on pin 4 and `HSYNC` on pin 6, and
   the 74LS175 at NSYREG 0D02 registers both of those from the sync program's
-  own bits 0 and 1. They read zero here because muir models no sync generator
-  and this fabric has none either. That is a modelling departure and not
-  something the board does. The distinction matters to anyone who adds the
-  colour board, because MIT's `WRITE-COLOR-MAP` spins on bit 5 and its
-  `%XBUS-WRITE-SYNC` waits on bit 6 (`sys/window/color.lisp`, lines
-  139--143).
-- **Bit 4 is the vertical flag, a flop of its own** (`mode::VERT`, line 118).
+  own bits 0 and 1. **The fabric runs that program and reads the two bits off
+  it**, as muir has since `bfba7f3`; both read zero up to `4ddaeb2`, and both
+  said so as a departure. They change 1,932 times in a frame of MIT's
+  `cpt.prom`.
+  The distinction matters to anyone who adds the colour board, because MIT's
+  `WRITE-COLOR-MAP` spins on bit 5 and its `%XBUS-WRITE-SYNC` waits on bit 6
+  (`sys/window/color.lisp`, lines 139--143), which is exactly what muir
+  changed in order to make the colour board work.
+- **Bit 4 is the vertical flag, a flop of its own** (`mode::VERT`, line 278).
   It is the 74LS74 at NXBCTL 0E14. It is **preset by `-TVMA CLR`**, the sync
   program's start of frame: "this is set by TVMA CLR, not by the start of
   Vertical Sync". It is **clocked by `-LOAD MODE` with `XDI 4` as its data**,
   so a write of the register puts the written bit 4 into it. Microcode 323's
   `INTRX0` takes the interrupt by reading the register, testing this bit and
-  writing it back with the bit cleared. `vert_flag(ns)` (line 328) is
-  `flag_written || ns / FRAME_NS > written_at / FRAME_NS`, which is what the
-  last write put in, or set if a frame has started *strictly* since.
+  writing it back with the bit cleared. `vert_flag(ns)` (line 667) is
+  what the last write put in, or set if a `-TVMA CLR` has fallen *strictly*
+  since. Up to `4ddaeb2` muir counted frame boundaries from power-on instead;
+  since `bfba7f3` it counts the sync program's `-TVMA CLR`s, and so does the
+  fabric. For `cpt.prom` in clock mode 0 that falls 16,000 ns into the
+  program, as the first line's 32nd instruction completes, and once a frame
+  of 15,456,000 ns thereafter.
 - **`SEND INTR` is the flag with the enable**, the 74S08 at 0D10, onto
-  `-XBUS.INTR` (`interrupt`, line 335). `machine.rs:429` ORs it with the
-  disk's request as `XBUS INTR IN`. `rtl.rs:1928` registers that as `SINTR` at
+  `-XBUS.INTR` (`interrupt`, line 674). `machine.rs:457` ORs it with the
+  disk's request as `XBUS INTR IN`, and since `bfba7f3` with a colour board's
+  own request when one is fitted. `rtl.rs:1932` registers that as `SINTR` at
   the microcycle edge, which is the `sintr` column of both processor traces.
-- **The frame is `FRAME_NS` = 15,456,000 ns** (line 145). That is 966 lines of
+- **The frame is `FRAME_NS` = 15,456,000 ns** (line 331). That is 966 lines of
   16.000 us, or 64.7 Hz, "the roughly-60-cycle clock". It was measured on the
   netlist board in `tests/simpletv_netlist.rs` and `tests/monitor.rs`. muir
-  keeps the flag "on a frame clock rather than a raster", with frames counted
-  from power-on, and says so as a knowing departure from the machine.
-- **Registers 1 to 3 are the sync program RAM** (`SyncRam`, line 183). It is
+  kept the flag "on a frame clock rather than a raster", with frames counted
+  from power-on, up to `4ddaeb2`, and said so as a knowing departure from the
+  machine. Both run the program now. The figure is still what a frame comes
+  to, and it is no longer a counter in either place: the flag's instant is
+  where `-TVMA CLR` falls, and the program's start moves.
+- **Registers 1 to 3 are the sync program RAM** (`SyncRam`, line 365). It is
   the eight 2147s at NSYRAM, 4K by 1 each, addressed by a twelve-bit pointer.
   Register 1 is the data at the pointer, read and written. Register 2 is the
   pointer, write only. Register 3 is the enable in bit 7 over the vertical
   spacing in 6--0, write only. With the enable clear the 74S472 PROM is
-  selected instead, and a read of register 1 is the PROM's word, zero on this
-  path. **The program in the RAM is stored and read back, never run.**
-  `SI:SETUP-CPT` loads it at every `LISP-REINITIALIZE` and reads it back, and
-  that is what is modelled.
-- **`-XBUS INIT` clears the flag and nothing else** (`xbus_init`, line 398,
+  selected instead, and a read of register 1 is the PROM's word. **The
+  program in the RAM is run as well as stored**, as muir has run it since
+  `bfba7f3`, and MIT's own `cadrtv/cpt.prom` --- 297 words of the 74S472's
+  512 --- is what runs from power-on until the software selects the RAM.
+  `SI:SETUP-CPT` loads the RAM at every `LISP-REINITIALIZE` and reads it
+  back. The image reaches the fabric as `build/sync_prom.hex`, written by
+  `golden/src/sync_prom.rs` out of muir's own copy and never committed, for
+  the reason the boot PROM's image is never committed.
+- **`-XBUS INIT` clears the flag and nothing else** (`xbus_init`, line 810,
   and its long note). `-RESET` reaches pin 13 of the 74LS74 alone. The mode
   register and the sync enable clear on `-POWER RESET`, a backplane wire the
   processor raises only at power-on. `lmtv.order` has the enable "cleared by
@@ -114,11 +135,11 @@ three sources, a counter. It was traceable, and it was traced.
 ## What the two reference programs ask of it
 
 This was measured with a throwaway probe against muir's `rtl` engine, with the
-`simpletv` fields read after the run.
+`tv` fields read after the run.
 
 **MIT's boot PROM, over 600,000 microcycles, asks for nothing.** No cycle
 reaches either range. The mode register is 0, the sync RAM is empty, the buffer
-is all zero, and `SimpleTv::interrupt` is false on every row.
+is all zero, and `Tv::interrupt` is false on every row.
 
 **The System 100 band, over 2,200,000 microcycles, asks for the frame buffer
 and nothing else.** The mode register stays 0 and the sync RAM stays empty for
@@ -138,6 +159,48 @@ program would test nothing.** The generated program is the only reference.
 same reason.
 
 ## The decisions
+
+**The sync program is run, and it is what makes the frame.** `lmtv.order`'s
+`>Sync Program` gives the whole of it. An instruction is eight bits: two sync
+bits, a composite sync bit, a blank bit, a two-bit video cycle type and a
+two-bit special function. The program is a series of loops; a loop begins
+with a word holding its repeat count, which "is never executed as an
+instruction, and does not cause a time delay"; the second-to-last instruction
+of a loop carries Special Function 2 or 3, one more instruction is executed,
+and control returns to the loop's first instruction until the count runs out.
+End of Program then returns to location 0 and End of Loop takes the word
+after next as the next count.
+
+**An instruction is 100 or 125 ticks and nothing rounds.** 500 ns in clock
+modes 0 and 1 and 625 ns in modes 2 and 3, `sync::INSTRUCTION_NS`, measured
+on the netlist LISPM TV --- which on MIT's 5 ns grid is exactly 100 and 125.
+muir walks the whole program into a timeline because a model jumps in time;
+the fabric executes one instruction every 100 or 125 ticks, which is a
+program counter, a repeat counter, a loop's first and last addresses, and the
+two sync bits latched an instruction late. It costs a second read port on the
+sync RAM and a 512-word ROM beside it.
+
+**MIT's `cadrtv/cpt.prom` is the program from power-on.** 297 words of the
+74S472 at NSYRAM, which the enable selects against the 2147s. It reaches the
+fabric as `build/sync_prom.hex`, written by `golden/src/sync_prom.rs` out of
+muir's own copy and named at elaboration through `SYNC_PROM_HEX` --- exactly
+as the boot PROM's image is, and generated rather than committed for the same
+reason. The image is the whole chip, 512 words with MIT's 297 at the bottom
+and zeros above, so that nothing in it is undefined and a read of register 1
+above the program gives zero as muir's does. `$readmemh` on a file that is
+not there is a warning and a program of zeros is a display that never
+interrupts, so the module checks word 0 and stops, and both Vivado flows
+check the file exists before they synthesise.
+
+**A program that makes no frame is found by fetching.** `Timeline::of`
+answers None for a program that runs off the end of its store without an End
+of Loop, and answers it at the restart, because it has walked the whole
+program by then. The fabric cannot look ahead: it fetches, and when the fetch
+runs past the program --- 4,096 words for the RAM, 297 for the PROM --- the
+generator stops and nothing moves again until a restart. The two agree as
+long as no such program stands for as long as one instruction, and the
+generator asserts exactly that.
+
 
 **The frame buffer is DDR, through main memory's bridge at a second base.**
 `rtl/plumbing/cadr_ddr_map.sv` has reserved 8 MB at `0x1C00_0000` for the display
@@ -183,22 +246,63 @@ decodes a START. The store's decision is one AND of the held match,
 **A read is made at `answered_at`, and the trace refuses one the fabric
 would answer differently.** The fabric's MD takes the lines at the deskew
 tap twelve ticks after the request, where muir reads the register at the
-request. The one thing that can move in between is the flag at a frame
-boundary. The board reads the flop live through the 74LS244 at 0F11, so
-where the two differ the fabric is the board and muir samples early. The
-generator asserts that no mode-register read straddles a boundary, and
-none does. This is recorded here so nobody widens a tolerance for it.
+request. Two things can move in between: the vertical flag, at a `-TVMA
+CLR`, and the two sync bits, at any instruction boundary. The board reads
+both live through the 74LS244 at 0F11, so where they differ the fabric is
+the board and muir samples early. The generator asserts that no
+mode-register read has either moving inside its deskew, and none does. This
+is recorded here so nobody widens a tolerance for it.
+
+**And no mode-register read falls in the first instruction of a run.**
+`Timeline::sync_at` answers, for an offset inside the first instruction, the
+bits the program leaves at the END of a run. That is what the register
+really holds once the program has been round once --- the program is
+periodic, so the last instruction of the previous run is what latched them
+--- and it is a guess for the first run after a restart, the only run where
+no instruction has landed yet. The 74LS175 at NSYREG 0D02 has no clear on
+the program's start, so the fabric holds what it held, and at power-on it
+holds zero. The generator asserts the read out and says so at the assert.
+**Lift it when muir carries the register's own value across `Tv::restart`**,
+which its own comment already describes as the intent: "what the register
+shows before it is what it showed at the end of the previous run".
+
+**And the sync program is not restarted while the vertical flag stands.**
+The flag is the 74LS74 at NXBCTL 0E14, preset by `-TVMA CLR` and cleared
+only by `-LOAD MODE` or `-RESET`. The program's start reaches neither pin,
+so on the board the flag stands across a restart. `Tv::vert_flag` counts
+the `-TVMA CLR`s since the last write *of the program now running*, so a
+restart moves the origin and the fields counted before it are forgotten:
+the flag falls until the new program's first `-TVMA CLR`, which for the
+trace's own RAM program would be 93,722 ticks. A write of the mode register
+is exempt, because it clocks the flag itself. **Lift this when muir keeps
+the flop's state across `Tv::restart`.** Both of these are asserts in
+`golden/src/tv.rs` rather than tolerances in the testbench, which is this
+project's own preference: a stated instant over a widened bound.
 
 **Priority at one clock edge is `-XBUS INIT`, then the write, then the
-preset.** A write landing on the very tick a frame begins keeps the written
-bit, because `vert_flag` asks for a frame *strictly* since `written_at`.
-Reaching that tick needs the grant edge, the 80 ns setup and the landing
-tick to sum to a frame boundary. A frame is 3,091,200 ticks, which is 3 mod
-29, so the first boundary a store can land on is frame 25's. **That is why
-the trace is twenty-five frames and 77 million ticks long.** Frames 6
-and 15 put the landing one tick either side. `-XBUS INIT` is not tied to
-the master clock, so it is put on a boundary and a tick either side of one
+preset, and a restart over the instruction boundary.** A write landing on
+the very tick a `-TVMA CLR` falls keeps the written bit, because
+`vert_flag` asks for a field *strictly* since `written_at`. Reaching that
+tick needs the grant edge, the 80 ns setup and the landing tick to sum to
+the instant the preset falls. A store can land only on a tick congruent to
+17 modulo 29, and the presets fall at `27 + 3k` modulo 29, so the three
+cases --- one tick before a preset, on one, and one tick after --- are first
+reachable at the twenty-sixth, sixteenth and sixth preset and at no earlier
+one. **That is why the trace is twenty-seven frames and 83.7 million ticks
+long**, and the generator asserts the three congruences rather than leaving
+them to be rediscovered. A restart landing on an instruction boundary
+suppresses that boundary, because muir's new timeline begins at the restart
+and the old one's last instruction is not in it. `-XBUS INIT` is not tied to
+the master clock, so it is put on a preset and a tick either side of one
 directly. Init comes before everything, because the 74LS74's clear is a pin.
+
+**And the instant the presets fall is pinned rather than found.** They are
+the program's start plus 16,000 ns and a frame thereafter, and the start is
+where the program was last restarted --- so the trace places frame 1's
+clock-mode write at an exact tick with `write_landing_at` and takes that as
+the origin. Nothing between there and the sync RAM section at the very end
+restarts the program, which is why that section moved to the end: every
+write in it moves the origin.
 
 **`-XBUS.INTR` is whole in the fabric, since `f8c6d25`.** The display's
 `SEND INTR` leaves `cadr_memory_path` as `tv_intr`, and the disk's request
@@ -222,7 +326,8 @@ timing closure being chased: 6.25 ns that morning and 10 ns the same
 afternoon, when a one-character change to a multiplexer cost a third of a
 nanosecond and the memory-on board stopped closing again. So the fabric runs
 at 100 MHz and the machine at 50% of the speed the hardware ran. Every tick
-count in the design is unchanged --- this module's `FRAME_T` among them --- so
+count in the design is unchanged --- this module's 100 and 125 ticks of a
+sync instruction among them --- so
 the machine's own time is exactly what it was and not one golden trace moved.
 What it costs is that the vertical interrupt arrives at **32.35 Hz where the
 display board scanned at 64.70**, and MIT's microcode uses that interrupt as
@@ -230,18 +335,23 @@ its roughly-sixty-cycle clock for mouse tracking and the scheduler's sequence
 break. So the machine's idea of a second is 50% of one. **It is decided that
 this keeps agreeing with muir for now**, because the checks are the
 backbone of this project and nothing built yet needs the time of day. **And
-undoing it is still one constant.** A real frame is exactly 1,545,600 ticks, a
-whole number, so restoring real time here means changing `FRAME_T` and nothing
-else, rather than a rewrite or a second clock domain. Doing it would put this module out of
-agreement with muir, which is why it has not been done.
+undoing it is still one constant.** An instruction of the sync program is 100
+or 125 ticks, and a real instruction at a 10 ns tick is 50 or 62.5 --- so
+restoring real time here is not a change to this module at all but a change
+to `TICK_NS`, and 62.5 is not a whole number of ticks. That is the floor this
+project has always had: the tick may be stretched and may not be rounded.
+Doing it would put this module out of agreement with muir, which is why it has
+not been done.
 `boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src/screen_geom.h`
 carries both numbers for the same reason, `SCREEN_FRAME_NS` and
 `SCREEN_FRAME_REAL_NS`.
 
 **The vertical spacing has no register.** Register 3's bits 6--0 are the
-74LS273's spacing for a sync generator this board does not have. muir
-stores them and nothing reads them back, so lint and the fitter agree they
-are not there. The enable bit does have one.
+74LS273's spacing, which the board adds to `TVMA` on an end-of-line video
+cycle. The fabric runs the sync program but makes no video cycles --- there
+is no `TVMA` here, the picture being in DDR --- so nothing reads the spacing
+back, in muir or here, and lint and the fitter agree it is not there. The
+enable bit does have a register, because it chooses the program.
 
 ## What the check holds to
 
@@ -258,19 +368,23 @@ one thing the trace cannot reach.
 In `build/tv.pass`, `tb/cadr_tv_tb.cpp` drives `cadr_memory_path` from
 `build/tv.golden`. There is one row a tick wherever anything moves, and every
 gap is stepped a tick at a time with the inputs held and every output required
-to hold. The run is 77,290,001 ticks, twenty-five frames and 247 bus cycles:
+to hold. The run is 83,970,731 ticks, twenty-seven frames and 259 bus cycles:
 
 - **-MEMGRANT, -MEMACK, -LOADMD and NXM TIMEOUT are held against `Busint`** at
   every tick. A control-word read is acknowledged 140 ns after the grant, a
   write at 80, and the dead words go on the NXM timer.
 - **MD is compared at -MEMACK's rise on every answered read** against muir's
-  model: the mode register with the flag in bit 4, the sync RAM's byte or its
-  absence, the frame buffer's word, and main memory's. There are 102 of them,
-  and MD is zero on the seven cycles nothing answered.
-- **-XBUS.INTR is compared against `SimpleTv::interrupt` at every tick.**
-  There are sixteen rises and sixteen falls, from writes, from frame
-  boundaries with the enable on and off, and from four `-XBUS INIT` pulses,
-  with ten boundaries presetting a flag already set and moving nothing.
+  model: the mode register with the flag in bit 4 and the sync program's own
+  `VSYNC` and `HSYNC` above it, the sync RAM's byte or MIT's PROM's, the
+  frame buffer's word, and main memory's. There are 108 of them, and MD is
+  zero on the seven cycles nothing answered.
+- **-XBUS.INTR is compared against `Tv::interrupt` at every tick.**
+  There are twenty rises and nineteen falls, from writes, from the sync
+  program's `-TVMA CLR` with the enable on and off, and from five `-XBUS
+  INIT` pulses. Three of the rises are there to date a restart: the program
+  the enable selects, and the one a RAM word's write starts afresh, each
+  reach their first `-TVMA CLR` at an instant only a restart at the right
+  tick puts them at.
 - **The memory port is checked.** Every frame-buffer cycle is at
   `DISPLAY_BASE` plus four times the offset and every main-memory cycle at
   `MAIN_BASE` plus four times the address, with the trace's word, asserted at
@@ -359,26 +473,53 @@ the band's run-light writes.
 
 ## The mutations
 
-Twenty-four records are aimed at `tv` in `mutations/list.txt`, and each is
-caught on a line of its own. They are the frame a tick long and a tick short (caught at
-the first frame boundary the enable is up for), the enable ignored (the first
-frame, whose preset comes with the enable off), the window's base a word
-off and the window's select dropped in the path (the first frame-buffer
-write, at the port), a bit lane of the bitmap swapped (the same write, the
-word), the acknowledgement a tick late (the first write, -MEMACK), the
-frame not presetting while enabled, the write unable to clear the flag,
-**the preset beating the write (frame 25 and nowhere earlier --- the
-yardstick for the trace's length)**, init not clearing the flag, init
-clearing the mode register, the clock-mode bits crossed, the sync RAM
-reading back without its enable, the sync RAM read from the wrong half
-(the read alone, because a bijection on both is an equivalence), the
-control words answering their dead neighbours, the window half its size,
-the store repeating while the request stands (visible only at frame 6,
-where a repeated store overrides the preset one tick later), frame-buffer
-reads taken from the main base, and the register word not selected in the
-path.
+Thirty-four records are aimed at `tv` in `mutations/list.txt`, and each is
+caught on a line of its own.
 
-**Four of the twenty-four are the window READ**, which is the half of the
+**The register face and the window**, which were the slice's: the enable
+ignored (the first preset, which comes with the enable off), the window's
+base a word off and the window's select dropped in the path (the first
+frame-buffer write, at the port), a bit lane of the bitmap swapped (the same
+write, the word), the acknowledgement a tick late (the first write,
+-MEMACK), the preset gated on the enable, the write unable to clear the
+flag, **the preset beating the write (the sixteenth preset and nowhere
+earlier --- the yardstick for the trace's length)**, init not clearing the
+flag, init clearing the mode register, the clock-mode bits crossed, register
+1 reading the wrong half of the PROM's range, the sync RAM read from the
+wrong half (the read alone, because a bijection on both is an equivalence),
+the control words answering their dead neighbours, the window half its size,
+the store repeating while the request stands (visible only at the write that
+lands one tick before a preset, where a repeated store overrides it),
+frame-buffer reads taken from the main base, and the register word not
+selected in the path.
+
+**And the sync generator**, which is this slice's: an instruction a tick long
+and a tick short, the slow clock modes run at the fast rate, the flag preset
+at the End of Program rather than at `-TVMA CLR`, `VSYNC` and `HSYNC`
+swapped, the clock mode not restarting the program, a RAM write not
+restarting it, the enable's restart inverted, the repeat count executed as an
+instruction, the loop running one instruction too far, End of Program treated
+as End of Loop, and a zero repeat count read as one rather than 256. Each
+names a sentence of `lmtv.order`, and between them they hold the whole of
+what that document says the program does.
+
+**Five of the thirty-four went from caught to surviving when the reference
+moved, and the trace was what had to change.** `tv-preset-beats-the-write`,
+`tv-store-repeats-while-the-request-stands` and the two instruction-length
+records all rested on the flag being preset at the frame boundary; with the
+preset 16,000 ns into a run instead, the stores that used to land on it
+landed nowhere in particular and the clock-mode-3 stretch had no interrupt
+enabled to show its slower rate.
+`tv-a-sync-ram-write-does-not-restart-the-program` survived because the
+restart it tests was undone by two more restarts a few cycles later, before
+anything looked. **The fix was the stimulus in every case and never the
+mutation**, which is this project's own rule: the presets
+are computed from a pinned origin now, the mode-3 stretch keeps `MODE INTR
+ENB` standing so that its `-TVMA CLR` shows on `-XBUS.INTR`, and the RAM
+write is followed by a wait long enough for the restarted program's first
+preset to arrive.
+
+**Four of the thirty-four are the window READ**, which is the half of the
 display nothing outside this check exercises: a run light is a blind write,
 while a character is drawn by `BITBLT-INNER-4` and `XTVCHO3`, which read the
 frame-buffer word back, merge the glyph's bits into it and write it again. So a
@@ -389,14 +530,17 @@ word, so that the mux in `cadr_memory_path.sv` gives a control word where the
 screen should be), `tv-window-read-ignores-the-word-ddr-returned` (the bridge
 never taking DDR's word for a window read, so the screen reads back black),
 `tv-window-base-a-page-off`, and `tv-window-answered-before-ddr-does`. The
-first three are caught by the trace, the first two at tick 24,731,141 --- the
-first read-back of the window, the last word of the buffer --- and the third at
-tick 24,730,404, at the port, on the first write. **The fourth is caught by
-configuration B and by nothing else, measured:** with it applied the trace
-prints its own `ok` and configuration B fails on all seven of its reads, each
-reading back zero. That is the record that configuration B exists for.
+first three are caught by the trace: the first two at the first read-back of
+the window, which is the last word of the buffer, and the third at the port
+on the first window write. (The ticks those fall at were quoted here and are
+not any more: the trace's own instants moved when the sync program landed,
+and a number nobody has re-measured is worse than none.) **The fourth is
+caught by configuration B and by nothing else, measured:** with it applied
+the trace prints its own `ok` and configuration B fails on all seven of its
+reads, each reading back zero. That is the record that configuration B
+exists for.
 
-One of the twenty was an equivalence first and a finding second.
+One of them was an equivalence first and a finding second.
 `tv-answers-its-neighbours` was written as a wider match *gated by `sel`* and
 it survived. `sel` is the decode's `device`, exhaustively checked false at
 the four dead words, so a slave that honours it cannot answer an empty
@@ -437,8 +581,10 @@ of routing do not move when the clock does.
     registers               1,503       1,547           4,600       4,618
     block RAM tiles         37          38              37          38
 
-The display costs 54 LUTs, 44 registers and one block RAM tile on either board.
-That tile is the sync program RAM, 4K by 8, a RAMB36.
+The display cost 54 LUTs, 44 registers and one block RAM tile on either board
+at that slice, before the sync generator. That tile is the sync program RAM,
+4K by 8, a RAMB36, and it is still one tile with the generator reading it: see
+the last paragraph of this section.
 
 **The memory-off board is where it was.** Its one failing endpoint is the
 same family as before, the phase generator's TPCLK into the control
@@ -500,22 +646,55 @@ the largest margin any build of this design has had. The display's paths were
 never the question and they are further from it now; the adder that took three
 quarters of a tick takes three eighths of one.
 
+**And the sync generator costs no block RAM at all.** Both halves of this
+were measured, `DDR=1 HDMI=1` on the Arty Z7-20 and `DDR=1` on the Cora
+Z7-07S. The before column is the same tree with the sync generator taken out
+and nothing else changed, so the difference is this one piece of work rather
+than a placer's mood:
+
+                        Arty Z7-20            Cora Z7-07S
+                        before    after       before    after
+    worst slack         +0.484    +0.236 ns   +0.739    +0.452 ns
+    Slice LUTs          13,907    14,067      12,411    12,551
+    slices               5,582     5,470       4,059     4,110
+    slice registers     11,346    11,415       9,129     9,198
+    block RAM tiles       41.5      41.5        41.5      41.5
+
+So the generator is 160 Slice LUTs on the Arty and 140 on the Cora, 69
+registers on either, and **not one block RAM**. The registers are the
+sequencer's own state: the program address, the loop's first and last word,
+the repeat count, the instruction timer and the two sync bits. The sync
+program RAM was already a RAMB36 and stayed one when it grew a second read
+port, which is what a true dual port is; MIT's 512-word PROM went into LUTs.
+
+The slice count fell on the Arty while its LUT count rose, which is packing
+and not a saving; read the LUT figure. Both boards still meet timing, and
+both slacks moved down by about a quarter of a nanosecond, which is the
+placement noise this project has measured twice --- so the direction is
+believable and the last digit is not.
+
+**The Cora is the board to watch**: it is at 93.4% of its slices and 83.0%
+of its block RAM, and the binding one did not move.
+
 ## What is not built
 
 - **The display output.** Nothing drives a monitor: there is no raster, no
   HDMI, no reading of the buffer out of DDR. That block is last and is not this
   slice's. What this slice leaves it is a bitmap at a known place in DDR,
   one bit a pixel, 24 words a line, 963 lines, with `BOW` in the mode register
-  saying which way up the bits are, and a frame clock it can take its
-  period from.
-- **Video timing.** `VSYNC` and `HSYNC` never rise, as in muir, and the frame
-  is a counter. A display output block that runs a raster of its own would
-  want the flag preset from its vertical retrace rather than from this
-  counter, which is one wire's move.
-- **The sync program is not run.** Registers 1 to 3 store and read back
-  what `SETUP-CPT` writes, and that is all `lmtv.order` asks of a program
-  on this board. The PROM's program is not loaded either, so a read of
-  register 1 with the enable clear is zero, as in muir.
+  saying which way up the bits are. Its own frame comes from its video mode
+  and not from the machine's sync program; the two are unrelated.
+- **Video timing.** There is no raster: no dot is fetched, no shift register
+  is loaded and no monitor is driven. What the sync program produces here is
+  its two sync bits, its `-TVMA CLR` and its rate, which is everything the
+  Xbus face can see. `rtl/plumbing/cadr_display_out.sv` drives a monitor from
+  a mode of its own and reads none of this.
+- **The video cycles.** An instruction of the sync program names a Video
+  Buffer Cycle Type --- processor, refresh, normal video or end-of-line ---
+  and a normal video cycle loads 64 bits of the buffer into a shift register
+  and advances `TVMA`. There is no `TVMA` here: the picture is in DDR and the
+  window is a bridge to it, so the fabric decodes those two bits and acts on
+  neither. That is also why register 3's vertical spacing has no register.
 - **The disk's interrupt joined `-XBUS.INTR` at `f8c6d25`**, after the board
   spun for ever in `AWAIT-DISK` waiting for it, and the machine's `sintr`
   became an output rather than something a board outside the fabric

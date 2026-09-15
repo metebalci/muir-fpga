@@ -3,8 +3,9 @@
 //
 // The display output: the CADR's bitmap out of DDR and onto a raster.
 //
-// **NO muir REFERENCE EXISTS AND NONE COULD.**  muir's `simpletv::SimpleTv`
-// is a frame buffer, a mode register and a vertical flag on a frame clock;
+// **NO muir REFERENCE EXISTS AND NONE COULD.**  muir's `tv::Tv`
+// is a frame buffer, a mode register and a vertical flag off the sync
+// program;
 // it has no raster at all, and `rtl/machine/cadr_tv.sv` is held to it tick
 // for tick and does not change.  What this module does --- read the bitmap
 // at a monitor's rate and put pixels on a wire --- is a thing MIT's SIMPLE
@@ -17,9 +18,11 @@
 // **THIS IS NOT PART OF THE MACHINE AND MUST NOT BECOME PART OF IT.**  It
 // reads the display's region of DDR and writes nothing, tells the machine
 // nothing and is told nothing by it.  The CADR cannot detect its presence:
-// no cycle of the machine's reaches it, `cadr_tv.sv`'s vertical flag keeps
-// running on its own frame clock, and a board built without it is the same
-// machine.  That is what lets the raster be asynchronous to everything ---
+// no cycle of the machine's reaches it, `cadr_tv.sv` goes on running the
+// board's own sync program and presetting its vertical flag where that
+// program's `-TVMA CLR` falls, and a board built without this block is the
+// same machine.  **The two frames have nothing to do with each other**: the
+// machine's is the sync program's and the monitor's is the video mode's.  That is what lets the raster be asynchronous to everything ---
 // see the two clocks below.
 //
 // ----------------------------------------------------------------------
@@ -57,7 +60,7 @@
 //
 // Two line buffers of 24 words.  The raster reads one while the memory side
 // fills the other, and they change places at the start of every raster
-// line.  A line is 24 words because that is `simpletv::WORDS_PER_LINE`, and
+// line.  A line is 24 words because that is `tv::WORDS_PER_LINE`, and
 // 24 words of 32 bits is 96 bytes, which is twelve beats of the 64-bit
 // port.
 //
@@ -115,7 +118,7 @@
 // ----------------------------------------------------------------------
 // WHICH BIT IS WHICH PIXEL
 //
-// muir `src/simpletv.rs:254-257`, `SimpleTv::pixel`: a line is 24
+// muir `src/tv.rs:554-557`, `Tv::pixel`: a line is 24
 // consecutive words, the first line first, and within a line the pixels run
 // from the LOW end of the first word --- **bit 0 of a word is the LEFTMOST
 // of the 32 pixels it carries**.  The same rule is written out in
@@ -129,7 +132,7 @@
 // **this module cannot read it**: `cadr_tv` does not bring the mode
 // register out, and adding a port to it is a change to `rtl/machine/`,
 // which is held to muir.  So `BOW` is a parameter whose default is the
-// fabric's own power-on state, zero --- which is also `SimpleTv::default`
+// fabric's own power-on state, zero --- which is also `Tv::default`
 // and the mode both reference programs leave the register in for their
 // whole run.  `cadr-terminal` made the identical choice for the identical
 // reason and calls it `--bow`.  Wiring it properly is one output on

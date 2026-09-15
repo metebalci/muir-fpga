@@ -68,6 +68,10 @@
 
 module cadr_soc_harness #(
     parameter string PROM_HEX = "build/boot_prom.hex",
+    // MIT's TV sync PROM, which `rtl/machine/cadr_tv.sv` reads at
+    // elaboration; passed down beside the boot PROM's image for the same
+    // reason, so that a model built anywhere finds it.
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex",
     parameter string FIRMWARE_HEX = "build/soc_firmware.hex",
     parameter int unsigned SOC_RAM_WORDS = 8192,
     // **THE RATE IS A PARAMETER AND THE CHECK SETS IT.**  The board builds at
@@ -302,7 +306,8 @@ module cadr_soc_harness #(
   assign n_boot2 = !con_boot;
 
   cadr_machine #(
-      .PROM_HEX(PROM_HEX)
+      .PROM_HEX(PROM_HEX),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) u_machine (
       .clk(clk), .rst(mach_rst),
       // Nothing answers a device cycle from outside: the Xbus slaves that are

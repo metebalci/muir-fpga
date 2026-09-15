@@ -6,7 +6,7 @@
 // The DUT is `cadr_memory_path` as the machine wires it --- the decode, the
 // bus interface, the bridge and `rtl/machine/cadr_tv.sv` inside it --- driven on the
 // cpu's side of the cables by `build/tv.golden`, which `golden/src/tv.rs`
-// writes out of muir's own `simpletv::SimpleTv` through `busint::Busint`.
+// writes out of muir's own `tv::Tv` through `busint::Busint`.
 // No harness: the wiring under test is the wiring on the board.
 //
 // WHAT THIS HOLDS TO, at every one of the trace's 77 million ticks:
@@ -17,11 +17,14 @@
 //     --- and the four dead words between the display's registers and the
 //     disk's on the NXM timer;
 //   - MD, at -MEMACK's rise on every answered read, against what muir's
-//     model gave: the mode register with the flag in bit 4, the sync RAM's
-//     byte or its absence, the frame buffer's word, main memory's;
-//   - -XBUS.INTR against `SimpleTv::interrupt`, rows and gaps alike, which
-//     is where a frame a tick long or short, an enable ignored, a flag that
-//     the write does not clock or the frame does not preset, all show;
+//     model gave: the mode register with the flag in bit 4 and the sync
+//     program's own VSYNC and HSYNC in bits 5 and 6, the sync RAM's byte or
+//     MIT's PROM's, the frame buffer's word, main memory's;
+//   - -XBUS.INTR against `Tv::interrupt`, rows and gaps alike, which is
+//     where an instruction of the sync program a tick long or short, an
+//     enable ignored, a flag that the write does not clock or the program's
+//     `-TVMA CLR` does not preset, and a program restarted at the wrong
+//     instant, all show;
 //   - the memory port: every frame-buffer cycle reaches `mem_*` at
 //     `DISPLAY_BASE` plus four times the window offset, and every main
 //     memory cycle at `MAIN_BASE` plus four times the address, with the
@@ -108,7 +111,7 @@
 namespace {
 
 // rtl/plumbing/cadr_ddr_map.sv's two bases, and the display's window as
-// simpletv::BUFFER / BUFFER_WORDS and CONTROL / CONTROL_WORDS have them.
+// tv::BUFFER / BUFFER_WORDS and CONTROL / CONTROL_WORDS have them.
 constexpr uint32_t kMainBase = 0x1800'0000u;
 constexpr uint32_t kDisplayBase = 0x1C00'0000u;
 constexpr uint32_t kBuffer = 017000000u;
@@ -117,7 +120,18 @@ constexpr uint32_t kControl = 017377760u;
 constexpr uint32_t kControlWords = 8u;
 constexpr long kMicrocycle = 29;
 
-// The picture: `simpletv::WIDTH` x `HEIGHT` at one bit a pixel, 768 across
+// `cadr_tv.sv`'s own two constants for MIT's sync PROM: the 297 words of
+// `cadrtv/cpt.prom` MIT burned, which is where a fetch runs off the end of
+// the program and above which a read of register 1 gives zero; and an
+// instruction of the sync program in clock modes 0/1 and 2/3, 500 ns and
+// 625, which on MIT's 5 ns grid is exactly 100 ticks and 125.  Held to the
+// generator's header below, so that a muir whose PROM or whose instruction
+// moved says so here rather than as a mismatch a frame in.
+constexpr long kSyncPromWords = 297;
+constexpr long kSyncInstructionFastNs = 500;
+constexpr long kSyncInstructionSlowNs = 625;
+
+// The picture: `tv::WIDTH` x `HEIGHT` at one bit a pixel, 768 across
 // and 963 down, is 24 words to a line and 23,112 words of the window's
 // 32,768.  The fabric knows nothing of it --- the window is one range and
 // the decode is on its top seven address bits --- but it is where the
@@ -537,6 +551,9 @@ int main(int argc, char **argv) {
       {"buffer_words", want_h("buffer_words"), (long)kBufferWords},
       {"control", want_h("control"), (long)kControl},
       {"boards", want_h("boards"), 32L},
+      {"sync_prom_words", want_h("sync_prom_words"), kSyncPromWords},
+      {"sync_instruction_ns", want_h("sync_instruction_ns", 0), kSyncInstructionFastNs},
+      {"the slow sync instruction", want_h("sync_instruction_ns", 1), kSyncInstructionSlowNs},
   };
   int wrong = 0;
   for (const auto &c : consts)
@@ -767,7 +784,7 @@ int main(int argc, char **argv) {
   }
 
   std::printf(
-      "ok: %ld ticks, %ld frames, agree with muir's SimpleTv through Busint at every tick\n"
+      "ok: %ld ticks, %ld frames, agree with muir's Tv through Busint at every tick\n"
       "    %ld cycles: %ld reads and %ld writes of the mode register, %ld and %ld of the sync RAM's data,\n"
       "    %ld and %ld of the frame buffer through DDR at the display's base, %ld and %ld of main memory,\n"
       "    %ld that nothing answered; %ld answered reads compared at -LOADMD; -XBUS.INTR up %ld times and\n"

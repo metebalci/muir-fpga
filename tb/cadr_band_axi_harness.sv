@@ -68,7 +68,11 @@
 `default_nettype none
 
 module cadr_band_axi_harness #(
-    parameter string PROM_HEX = "build/boot_prom.hex"
+    parameter string PROM_HEX = "build/boot_prom.hex",
+    // MIT's TV sync PROM, which `rtl/machine/cadr_tv.sv` reads at
+    // elaboration; passed down beside the boot PROM's image for the same
+    // reason, so that a model built anywhere finds it.
+    parameter string SYNC_PROM_HEX = "build/sync_prom.hex"
 ) (
     input  var logic clk,
     input  var logic rst,
@@ -236,7 +240,8 @@ module cadr_band_axi_harness #(
   assign port_write_ack = ack_bvalid && ack_bready;
 
   cadr_machine #(
-      .PROM_HEX(PROM_HEX)
+      .PROM_HEX(PROM_HEX),
+      .SYNC_PROM_HEX(SYNC_PROM_HEX)
   ) u_machine (
       .clk(clk), .rst(rst),
       // -XBUS.INTR is the machine's own line --- the display's vertical
