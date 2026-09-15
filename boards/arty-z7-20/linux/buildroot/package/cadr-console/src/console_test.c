@@ -1550,7 +1550,8 @@ static void check_held(void)
 	      "the marker is not where the init step leaves it");
 }
 
-// **`trace-keys`, WHICH SIGNALS TWO PROGRAMS AND TOUCHES NO REGISTER.**
+// **`trace-keys` AND `trace-chaos`, WHICH SIGNAL DAEMONS AND TOUCH NO
+// REGISTER.**
 //
 // What is under check is the pid file and the signal: that the right one of
 // the two goes, that a file which does not name a process is REFUSED rather
@@ -1592,22 +1593,22 @@ static void check_trace_keys(void)
 	fprintf(f, "%ld\n", (long)getpid());
 	fclose(f);
 
-	struct cons_trace_keys r;
+	struct cons_trace r;
 	trace_seen_on = trace_seen_off = 0;
 	capture_start();
-	CHECK(cons_trace_keys("a program", path, 1, &r) == CONS_TRACE_SIGNALLED,
+	CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_KEYS, 1, &r) == CONS_TRACE_SIGNALLED,
 	      "the signal did not go to a live process");
 	CHECK(r.pid == (long)getpid(), "the pid read back is %ld and not this process's %ld",
 	      r.pid, (long)getpid());
 	CHECK(trace_seen_on == 1 && trace_seen_off == 0,
 	      "`on` sent %d SIGUSR1 and %d SIGUSR2, wanting one and none",
 	      (int)trace_seen_on, (int)trace_seen_off);
-	cons_say_trace_keys(&r, 1);
+	cons_say_trace(&r, 1);
 	CHECK(strstr(capture_end(), "turn its key trace ON") != NULL,
 	      "the line for a program that was reached does not say the trace was turned on");
 
 	trace_seen_on = trace_seen_off = 0;
-	CHECK(cons_trace_keys("a program", path, 0, &r) == CONS_TRACE_SIGNALLED,
+	CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_KEYS, 0, &r) == CONS_TRACE_SIGNALLED,
 	      "the off signal did not go");
 	CHECK(trace_seen_off == 1 && trace_seen_on == 0,
 	      "`off` sent %d SIGUSR2 and %d SIGUSR1, wanting one and none",
@@ -1623,12 +1624,12 @@ static void check_trace_keys(void)
 		fclose(f);
 		trace_seen_on = trace_seen_off = 0;
 		capture_start();
-		CHECK(cons_trace_keys("a program", path, 1, &r) == CONS_TRACE_NOT_RUNNING,
+		CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_KEYS, 1, &r) == CONS_TRACE_NOT_RUNNING,
 		      "a pid file holding \"%s\" was not refused", bad[i]);
 		CHECK(trace_seen_on == 0 && trace_seen_off == 0,
 		      "a pid file holding \"%s\" signalled something: %d on, %d off",
 		      bad[i], (int)trace_seen_on, (int)trace_seen_off);
-		cons_say_trace_keys(&r, 1);
+		cons_say_trace(&r, 1);
 		CHECK(strstr(capture_end(), "is not running") != NULL,
 		      "a pid file holding \"%s\" did not report the program as not running",
 		      bad[i]);
@@ -1639,22 +1640,100 @@ static void check_trace_keys(void)
 	unlink(path);
 	trace_seen_on = trace_seen_off = 0;
 	capture_start();
-	CHECK(cons_trace_keys("a program", path, 1, &r) == CONS_TRACE_NOT_RUNNING,
+	CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_KEYS, 1, &r) == CONS_TRACE_NOT_RUNNING,
 	      "a missing pid file was not reported as a program that is not running");
 	CHECK(trace_seen_on == 0 && trace_seen_off == 0, "a missing pid file signalled something");
-	cons_say_trace_keys(&r, 1);
+	cons_say_trace(&r, 1);
 	CHECK(strstr(capture_end(), "is not running") != NULL,
 	      "a missing pid file did not report the program as not running");
 	signal(SIGUSR1, SIG_DFL);
 	signal(SIGUSR2, SIG_DFL);
 
-	// The two pid files are where the init scripts write them.  A word that
-	// signalled the wrong file would say `not running` for ever on a board
-	// where both programs are up.
+	// The three pid files are where the init scripts write them.  A word
+	// that signalled the wrong file would say `not running` for ever on a
+	// board where the programs are up.
 	CHECK(strcmp(CONS_TRACE_TERMINAL_PID, "/var/run/cadr-terminal.pid") == 0,
 	      "the terminal's pid file is not where S85cadr-terminal writes it");
 	CHECK(strcmp(CONS_TRACE_USB_PID, "/var/run/cadr-usb-input.pid") == 0,
 	      "the USB program's pid file is not where S88cadr-usb-input writes it");
+	CHECK(strcmp(CONS_TRACE_CHAOS_PID, "/var/run/cadr-chaosnet.pid") == 0,
+	      "the Chaosnet program's pid file is not where S87cadr-chaosnet writes it");
+	CHECK(strcmp(CONS_TRACE_CHAOS, "cadr-chaosnet") == 0,
+	      "the Chaosnet program is not named as the init script names it");
+}
+
+// **`trace-chaos`, WHICH IS THE SAME PAIR OF FUNCTIONS TOLD A DIFFERENT
+// TRACE.**  What is under check here is the half that differs: the signal
+// still goes, and the line names the PACKET trace and the word somebody
+// typed.  A line that said `key trace` to somebody who asked about the
+// network would send them to the wrong log.
+static void check_trace_chaos(void)
+{
+	char path[] = "/tmp/cadr-trace-chaos-testXXXXXX";
+	const int fd = mkstemp(path);
+	CHECK(fd >= 0, "could not make the pid file the test needs");
+	if (fd < 0)
+		return;
+	close(fd);
+	signal(SIGUSR1, trace_note);
+	signal(SIGUSR2, trace_note);
+
+	FILE *f = fopen(path, "w");
+	fprintf(f, "%ld\n", (long)getpid());
+	fclose(f);
+
+	struct cons_trace r;
+	trace_seen_on = trace_seen_off = 0;
+	capture_start();
+	CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_CHAOS, 1, &r) ==
+		      CONS_TRACE_SIGNALLED,
+	      "the signal did not go to a live process");
+	CHECK(trace_seen_on == 1 && trace_seen_off == 0,
+	      "`on` sent %d SIGUSR1 and %d SIGUSR2, wanting one and none",
+	      (int)trace_seen_on, (int)trace_seen_off);
+	cons_say_trace(&r, 1);
+	{
+		const char *said = capture_end();
+		CHECK(strstr(said, "turn its packet trace ON") != NULL,
+		      "the line does not say the packet trace was turned on: %s", said);
+		CHECK(strstr(said, "trace-chaos:") != NULL,
+		      "the line does not name the word that was typed: %s", said);
+		CHECK(strstr(said, "key trace") == NULL,
+		      "the line for the packet trace mentions the key trace: %s", said);
+	}
+
+	// And off, which is the other signal.
+	trace_seen_on = trace_seen_off = 0;
+	capture_start();
+	CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_CHAOS, 0, &r) ==
+		      CONS_TRACE_SIGNALLED,
+	      "the off signal did not go");
+	CHECK(trace_seen_off == 1 && trace_seen_on == 0,
+	      "`off` sent %d SIGUSR2 and %d SIGUSR1, wanting one and none",
+	      (int)trace_seen_off, (int)trace_seen_on);
+	cons_say_trace(&r, 0);
+	CHECK(strstr(capture_end(), "turn its packet trace off") != NULL,
+	      "the line does not say the packet trace was turned off");
+
+	// A pid file naming no process is refused here as it is for the keys:
+	// one function, so this asserts that the chaos word reaches it rather
+	// than re-testing the refusal itself.
+	f = fopen(path, "w");
+	fputs("0\n", f);
+	fclose(f);
+	trace_seen_on = trace_seen_off = 0;
+	capture_start();
+	CHECK(cons_trace_signal("a program", path, CONS_TRACE_WHAT_CHAOS, 1, &r) ==
+		      CONS_TRACE_NOT_RUNNING,
+	      "a pid file holding 0 was not refused");
+	CHECK(trace_seen_on == 0 && trace_seen_off == 0,
+	      "a pid file holding 0 signalled something");
+	cons_say_trace(&r, 1);
+	CHECK(strstr(capture_end(), "trace-chaos:") != NULL,
+	      "the refusal does not name the word that was typed");
+	unlink(path);
+	signal(SIGUSR1, SIG_DFL);
+	signal(SIGUSR2, SIG_DFL);
 }
 
 // **SW0, AND WHAT A CONSOLE MUST SAY ABOUT A MACHINE THAT NEVER RAN.**
@@ -2416,6 +2495,7 @@ int main(int argc, char **argv)
 	check_boot();
 	check_held();
 	check_trace_keys();
+	check_trace_chaos();
 	check_switch();
 	check_step();
 	check_flags();
@@ -2458,6 +2538,9 @@ int main(int argc, char **argv)
 	       "      and SIGUSR2 for off, this process playing the daemon --- and a file\n"
 	       "      holding 0, -1, nothing or a word REFUSED with nothing signalled, since\n"
 	       "      kill(0) signals the whole process group and kill(-1) signals everything\n"
+	       "    trace-chaos: the same pair of functions told the packet trace instead, the\n"
+	       "      signal still going and the line naming the packet trace and the word that\n"
+	       "      was typed, so that nobody is sent to the wrong log\n"
 	       "    the held machine: start and step refuse while /var/run/cadr-held exists and\n"
 	       "      say muir's own sentence for it, and boot presses the button and removes it\n"
 	       "    SW0, the no-auto-boot switch, as two bits of STAT and not one: what it did at\n"

@@ -72,16 +72,19 @@
 //     halt | start | step [N] | regs | status | ident | switch
 //     read EADR | write EADR VALUE
 //     examine ADDR [N] | deposit ADDR VALUE
-//     trace-keys on|off
+//     trace-keys on|off | trace-chaos on|off
 //     help | quit
 //
-// **ONE WORD HERE IS NOT ABOUT THE FABRIC AT ALL: `trace-keys`.**  It tells
-// `cadr-terminal` and `cadr-usb-input` to say what each key becomes, which is
-// how a key that does nothing is followed from the board's USB port or a
-// viewer to MIT's own key position.  It reads their pid files and signals
-// them, touching no register --- so it runs BEFORE the guard and the IDENT
-// below and works on a board whose fabric has no console in it.
-// `console_host.h` has the whole of it, and says why it is not in the face.
+// **TWO WORDS HERE ARE NOT ABOUT THE FABRIC AT ALL: `trace-keys` AND
+// `trace-chaos`.**  The first tells `cadr-terminal` and `cadr-usb-input` to
+// say what each key becomes, which is how a key that does nothing is followed
+// from the board's USB port or a viewer to MIT's own key position.  The
+// second tells `cadr-chaosnet` to say every frame that goes by and every
+// datagram it refuses, which is how a network that reaches nobody is told
+// from one nothing is speaking to.  Both read a pid file and signal, touching
+// no register --- so they run BEFORE the guard and the IDENT below and work
+// on a board whose fabric has no console in it.  `console_host.h` has the
+// whole of it, and says why they are not in the face.
 
 #include <getopt.h>
 #include <stdio.h>
@@ -234,19 +237,40 @@ static int do_trace_keys(int argc, char **argv)
 		return 2;
 	}
 	const int on = strcmp(argv[1], "on") == 0;
-	struct cons_trace_keys r;
+	struct cons_trace r;
 	int reached = 0;
-	cons_trace_keys(CONS_TRACE_TERMINAL, CONS_TRACE_TERMINAL_PID, on, &r);
-	cons_say_trace_keys(&r, on);
+	cons_trace_signal(CONS_TRACE_TERMINAL, CONS_TRACE_TERMINAL_PID,
+			  CONS_TRACE_WHAT_KEYS, on, &r);
+	cons_say_trace(&r, on);
 	reached += r.reached == CONS_TRACE_SIGNALLED;
-	cons_trace_keys(CONS_TRACE_USB, CONS_TRACE_USB_PID, on, &r);
-	cons_say_trace_keys(&r, on);
+	cons_trace_signal(CONS_TRACE_USB, CONS_TRACE_USB_PID, CONS_TRACE_WHAT_KEYS, on, &r);
+	cons_say_trace(&r, on);
 	reached += r.reached == CONS_TRACE_SIGNALLED;
 	// **THE STATUS ANSWERS "DID ANYBODY HEAR IT"**, as `switch` answers a
 	// question of its own: 0 when at least one program was told, 1 when
 	// neither was.  A board with no USB keyboard runs one of the two, and
 	// that is not a failure.
 	return reached ? 0 : 1;
+}
+
+// **`trace-chaos on|off`: THE NETWORK PROGRAM TOLD TO SAY WHAT IT HEARS.**
+// One program rather than two, so the status is simply whether it was
+// reached.  What it turns on is `cadr-chaosnet`'s `--chaos-trace`: every
+// frame as it goes by, and every datagram refused with the reason and the
+// endpoint it came from.  The report line counts those refusals in four
+// classes and this is how the one that is not zero is followed to a sender.
+static int do_trace_chaos(int argc, char **argv)
+{
+	if (argc < 2 || (strcmp(argv[1], "on") != 0 && strcmp(argv[1], "off") != 0)) {
+		say("trace-chaos on|off  tell cadr-chaosnet to say every frame and every "
+		    "datagram it refuses, on its own log");
+		return 2;
+	}
+	const int on = strcmp(argv[1], "on") == 0;
+	struct cons_trace r;
+	cons_trace_signal(CONS_TRACE_CHAOS, CONS_TRACE_CHAOS_PID, CONS_TRACE_WHAT_CHAOS, on, &r);
+	cons_say_trace(&r, on);
+	return r.reached == CONS_TRACE_SIGNALLED ? 0 : 1;
 }
 
 static void do_status(struct console *c, unsigned settle_us)
@@ -334,6 +358,9 @@ static void help(void)
 	say("trace-keys on|off  tell cadr-terminal and cadr-usb-input to say what each key");
 	say("                becomes --- a keysym, MIT's own key position, or nothing at all.");
 	say("                Their logs, not this one; no register is touched");
+	say("trace-chaos on|off tell cadr-chaosnet to say every frame that goes by and every");
+	say("                datagram it refuses, with the reason and where it came from.");
+	say("                Its log, not this one; no register is touched");
 	say("read EADR       one diagnostic READ cycle");
 	say("write EADR VAL  one diagnostic WRITE cycle");
 	say("examine A [N]   N words of DDR from CADR physical word A --- not through the machine");
@@ -504,6 +531,8 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 	}
 	else if (!strcmp(cmd, "trace-keys"))
 		exit_status = do_trace_keys(argc, argv);
+	else if (!strcmp(cmd, "trace-chaos"))
+		exit_status = do_trace_chaos(argc, argv);
 	else if (!strcmp(cmd, "read")) {
 		if (argc < 2) {
 			say("read EADR");
@@ -587,8 +616,10 @@ static void usage(void)
 		"  --version        which build THIS PROGRAM is, and exit.  `status` names\n"
 		"                   which build the FABRIC is, which is the other half\n"
 		"with no command it reads lines at a `>` prompt; `help` lists them\n"
-		"`trace-keys on|off` is the one command that touches no register: it tells\n"
-		"cadr-terminal and cadr-usb-input to say what each key becomes\n");
+		"`trace-keys on|off` and `trace-chaos on|off` are the commands that touch no\n"
+		"register: the first tells cadr-terminal and cadr-usb-input to say what each\n"
+		"key becomes, the second tells cadr-chaosnet to say every frame and every\n"
+		"datagram it refuses\n");
 }
 
 int main(int argc, char **argv)
@@ -628,12 +659,15 @@ int main(int argc, char **argv)
 					  isatty(STDOUT_FILENO))) < 0)
 		return 2;
 
-	// **THE ONE WORD THAT IS NOT ABOUT THE FABRIC, DONE BEFORE THE GUARD.**
-	// `trace-keys` reads two pid files and signals two programs; it touches
-	// no register, so a board whose window does not answer must not stop it
-	// --- and the guard below and the IDENT after it would.
+	// **THE WORDS THAT ARE NOT ABOUT THE FABRIC, DONE BEFORE THE GUARD.**
+	// `trace-keys` reads two pid files and signals two programs and
+	// `trace-chaos` reads a third; neither touches a register, so a board
+	// whose window does not answer must not stop them --- and the guard
+	// below and the IDENT after it would.
 	if (optind < argc && !strcmp(argv[optind], "trace-keys"))
 		return do_trace_keys(argc - optind, argv + optind);
+	if (optind < argc && !strcmp(argv[optind], "trace-chaos"))
+		return do_trace_chaos(argc - optind, argv + optind);
 
 	int mem = cadr_open_mem();
 	if (mem < 0)
