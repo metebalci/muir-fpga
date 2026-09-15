@@ -172,6 +172,12 @@ is refused here for its data count, which reads as 1,536 bytes when its two
 halves are swapped, or for its checksum when the count happens to read the
 same either way.
 
+**Both Zynq boards have spoken this framing to a peer that speaks it.** The
+datagrams were captured on the peer's own machine and decoded from their
+literal bytes: every field is as this section lays it out, every check word
+verifies in both directions, and a datagram in the old framing goes
+unanswered. `docs/board.md` has the measurement.
+
 ## `ED-FILE` is a hole in the band's host table, not a missing server
 
 The board's screen, with Lisp booted, shows this:

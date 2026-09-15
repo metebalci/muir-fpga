@@ -1444,6 +1444,108 @@ have been written. The spelling that works today is `cadr-checkpoint
 --chaos-address 0177100`, and with it the two programs agreed and the resume
 ran. The behavior predates this set, and a fix is in hand.
 
+## The Chaosnet framing on the wire, 15 September
+
+Both Zynq boards were served the root filesystem built at commit `1515934`,
+which carries the CHUDP framing `docs/chaosnet.md` describes: every 16-bit
+word most significant byte first, and the Internet checksum in the trailer.
+The OZ host at `0o177002` speaks that framing, and every datagram between it
+and the boards was captured on the peer's own machine. Forty-five datagrams
+were captured, none dropped by the kernel, and each was decoded from its
+literal bytes. So this is the framing measured against another implementation
+rather than against itself.
+
+**The bytes match the specification in every field.** The first datagram the
+Cora Z7-07S sent is its cold boot asking the OZ host for the time. It is
+thirty bytes:
+
+    01 01 00 00 01 00 00 04 fe 02 00 00 fe 42 18 0b 00 00 00 00
+    49 54 45 4d fe 02 fe 42 5f c3
+
+The first four bytes are CHUDP's own header: version 1, function 1, and two
+argument bytes sent as zero. Eight header words follow, each most significant
+byte first. Word 0 is `0x0100`, an opcode of 1, which is RFC. Word 1 is
+`0x0004`, a forwarding count of 0 and a data byte count of 4. Words 2 and 3
+are the destination, `0xfe02` = `0o177002`, at index 0, and words 4 and 5 are
+the source, `0xfe42` = `0o177102`, at index `0o14013`. Words 6 and 7 are the
+packet number and the acknowledgment, both 0. The four data bytes are `49 54
+45 4d`, which are the words `0x4954` and `0x454d`. Unpacked as AIM-628 section
+3.6 says, with the first byte of each pair in the word's low half, they read
+`TIME`; read straight off the wire they read `ITEM`, which is the pair swap
+the framing requires. The trailer is the destination `0o177002`, the source
+`0o177102` and the check word `0x5fc3`. The Internet checksum over the twelve
+covered words is `0x5fc3`, and every word of the datagram including the
+checksum sums to `0xffff`.
+
+**The OZ host answered that request 65 microseconds later.** Its answer is
+thirty bytes as well: opcode 5, which is ANS, four data bytes carrying the
+time, addressed to `0o177102` at the index the request asked from, from
+`0o177002`, with the check word `0x1322`, which verifies the same way.
+
+**Six exchanges, three from each board, and every check word was good in both
+directions.** Each board asked for the time at its cold boot and made two
+status requests afterwards. Every one of the six was answered, so nothing was
+retransmitted, and the answers came back between 65 and 710 microseconds. All
+twelve datagrams sum to `0xffff`.
+
+**The peer's own meters read off the wire are the meters the machine prints.**
+A status answer is 94 bytes, of which 68 are data: the host's name, then for
+each subnet a word of `0400` plus the subnet number, a word saying how many
+counter words follow, and the counters. The name comes out with each pair of
+bytes swapped, in the same way `STATUS` goes out as `TSTASU`. In the last
+answer of the session, word 16 is `0x01fe`, which is `0400` plus subnet
+`0o376`, and word 17 is 16. The eight counters unpacked out of those bytes are
+the eight the machine printed:
+
+| meter | out of the datagram | on the machine's screen |
+|---|---|---|
+| datagrams in | 42 | 42 |
+| datagrams out | 10 | 10 |
+| abort | 0 | 0 |
+| lost | 0 | 0 |
+| crc | 0 | 0 |
+| ram | 0 | 0 |
+| bad bit count | 28 | 28 |
+| other discarded | 3 | 3 |
+
+That datagram is the answer to a `chaos:hostat` form typed at a Lisp Listener
+on the Arty Z7-20, so the two columns are one answer read twice: once by MIT's
+own microcode and Lisp, and once by a decoder here reading the captured bytes.
+The two paths share nothing but the datagram itself.
+
+**The negative control is in the bytes too.** For part of the window the Arty
+Z7-20 was still on the previous image and sent the previous framing, which
+wrote the packet's own words least significant byte first and carried the
+CADR's CRC-16 in the trailer. One of those datagrams is 32 bytes and is well
+formed under the old rule: an RFC of six data bytes reading `STATUS`, from
+`0o177100` to `0o177002`, with the check word `0x00f3`, which is the CADR's
+CRC and not the Internet checksum, that being `0x3c78` over the same words.
+Read as the specification requires, the same bytes are nonsense. Word 0 is
+`0x0001`, an opcode of 0, which is no Chaosnet opcode. Word 1 is `0x0600`, a
+data byte count of 1,536 in a datagram of 32 bytes. The addresses come out
+byte-swapped as `0o1376` and `0o40376`. So the refusal happens at the length
+test and never reaches the checksum. The peer answered none of the twenty such
+datagrams it was sent, and the meter it keeps for a refusal of that kind is
+the bad bit count column above. That column stood at 28 and stopped moving
+once both boards were on the new image: between two readings four minutes
+apart it stayed at 28 and other discarded stayed at 3, while the datagrams in
+went from 39 to 42 and the datagrams out from 7 to 10. Nothing in the meters
+names a sender, so which datagrams make up the 28 is not established. What the
+pair of readings says is that nothing either board sent afterwards was
+refused.
+
+**Where the two boards were left.** Both run the image built at `1515934` over
+the fabric built at `261547d`, which is the image having moved while the
+fabric did not. On each board `chaos:host-up-p` answers T for the OZ host, the
+herald names it as the associated machine, `time:print-current-time` gives the
+date and the time of day, and the who-line is dated. Both machines were
+running Lisp throughout, at 6,556 and 6,767 microcycles per 2,000
+microseconds. The program's own traffic line is the same on both:
+
+    3 from the machine, 3 to it, 3 in and 3 out over UDP; 0 with nowhere to
+    go, 0 malformed, 0 with a bad checksum, 0 refused because the machine had
+    not emptied its buffer
+
 ## Looking at the display output
 
 The display output block scans the CADR's screen out of DDR and drives the
