@@ -82,7 +82,6 @@ table.boardtable {
 /* The part, the figures and the four status words are values rather than
    prose, so they take the machine face, as the tables on the other pages do.
    The word is held on one line: `planned` broken over two reads as two. */
-.boardtable td.part,
 .boardtable td.num,
 .boardtable td.st {
   font: 500 var(--front-small)/1.5 var(--front-mono);
