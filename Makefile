@@ -1576,8 +1576,15 @@ SOC_CLK_HZ := $(shell echo $$(( 1000000000 / $(SOC_CLK_DIVIDE) )))
 # answers "NONE", and `rtl/plumbing/cadr_soc_axi.sv` has two windows and a
 # catch-all where it had three and one.  The file itself stays: both Zynq
 # boards read it.
+#
+# **AND `M_AXI_GP0`'s SPLITTER AND THE I/O BOARD'S THREE FACES, WHICH ARE THE
+# ZYNQ BOARDS' FILES UNCHANGED.**  The bridge hands the splitter the same
+# gigabyte the processing system does, so `$(GP0)` is the same list here.
+# `rtl/plumbing/cadr_hp2_mem.sv` is the disk pack face's own master's slave,
+# which is `S_AXI_HP2` on a Zynq and words on the memory's arbiter here.
 SOC_FACES := rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_disk_pack.sv \
-             rtl/plumbing/cadr_gp0_default.sv
+             rtl/plumbing/cadr_gp0_default.sv $(GP0) \
+             rtl/plumbing/cadr_hp2_mem.sv
 
 # ----------------------------------------------- the Arty A7-100's top level
 #
@@ -1630,7 +1637,8 @@ SOC_FACES := rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_disk_pack.sv \
 # is why the lint itself was never wrong. The memory block's comment says
 # what the three are for.
 A7MEM := rtl/plumbing/cadr_mem_cross.sv rtl/plumbing/cadr_mig_ui.sv \
-         rtl/plumbing/cadr_jtag_mem.sv rtl/plumbing/cadr_mem_count.sv
+         rtl/plumbing/cadr_jtag_mem.sv rtl/plumbing/cadr_mem_count.sv \
+         rtl/plumbing/cadr_mem_share.sv
 
 ARTY_A7_SRC := $(BOARD_STUBS) $(MACHINE) \
                boards/arty-a7-100/cadr_arty_a7.sv \
@@ -1707,7 +1715,14 @@ $(BUILD)/arty_a7.pass: $(MACHINE) boards/arty-a7-100/cadr_arty_a7.sv \
 # from outside the machine, an Artix having no debug access port onto it.
 # (`A7MEM` itself is assigned above the Arty A7-100's lint rule, which names
 # it as a prerequisite and so needs it defined first; see the comment there.)
-A7MEM_SRC := rtl/plumbing/cadr_ddr_map.sv $(A7MEM) tb/cadr_a7_mem_harness.sv
+#
+# **AND THE REAL DISK PACK FACE, WITH ITS MASTER'S SLAVE**, because the
+# property the check holds for the arbiter needs the consumer that actually
+# streams around the machine: nine bursts a block, a word at a time, from a
+# face whose own tests hold it to the protocol.
+A7MEM_SRC := rtl/plumbing/cadr_ddr_map.sv $(A7MEM) \
+             rtl/plumbing/cadr_hp2_mem.sv rtl/plumbing/cadr_disk_pack.sv \
+             tb/cadr_a7_mem_harness.sv
 
 $(BUILD)/obj_a7_mem/Vcadr_a7_mem_harness: $(A7MEM_SRC) tb/cadr_a7_mem_tb.cpp \
                     | $(BUILD)
@@ -3268,6 +3283,13 @@ endef
 SOC_FW_DIR   := boards/arty-a7-100/firmware
 SOC_CONS_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-console/src
 SOC_PACK_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src
+# ...and the three faces behind `M_AXI_GP0` beside the pack side, whose
+# headers the firmware includes for their addresses and identifiers and for
+# nothing else: a second copy of `0x4000_1000` here would be the beginning of
+# two programs.
+SOC_CHAOS_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/src
+SOC_SER_DIR   := boards/arty-z7-20/linux/buildroot/package/cadr-serial/src
+SOC_IN_DIR    := boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src
 
 # 32 KB, eight block RAM tiles.  It must agree with `LENGTH` in
 # `$(SOC_FW_DIR)/link.ld`; `tools/bin2hex.py` refuses an image that does not
@@ -3281,7 +3303,8 @@ SOC_CFLAGS := -march=rv32imc_zicsr -mabi=ilp32 -Os -g -ffreestanding \
               -nostartfiles --specs=picolibc.specs \
               -DPICOLIBC_INTEGER_PRINTF_SCANF \
               -I$(SOC_FW_DIR) -I$(SOC_FW_DIR)/include \
-              -I$(SOC_CONS_DIR) -I$(SOC_PACK_DIR)
+              -I$(SOC_CONS_DIR) -I$(SOC_PACK_DIR) \
+              -I$(SOC_CHAOS_DIR) -I$(SOC_SER_DIR) -I$(SOC_IN_DIR)
 
 SOC_FW_OBJ := $(BUILD)/soc/start.o $(BUILD)/soc/soc_io.o $(BUILD)/soc/main.o \
               $(BUILD)/soc/console_face.o $(BUILD)/soc/pack_side.o
@@ -3300,6 +3323,8 @@ $(BUILD)/soc/soc_io.o: $(SOC_FW_DIR)/soc_io.c $(SOC_FW_DIR)/soc.h \
 
 $(BUILD)/soc/main.o: $(SOC_FW_DIR)/main.c $(SOC_FW_DIR)/soc.h \
                      $(SOC_CONS_DIR)/console_face.h $(SOC_PACK_DIR)/pack_side.h \
+                     $(SOC_CHAOS_DIR)/chaos_face.h $(SOC_SER_DIR)/serial_face.h \
+                     $(SOC_IN_DIR)/input_face.h \
                      | $(BUILD)/soc
 	$(SOC_NEED_TOOLCHAIN)
 	$(RISCV_CC) $(SOC_CFLAGS) -Wall -Wextra -Werror -c $< -o $@
@@ -3376,8 +3401,14 @@ SOC_TB_BUILD_HEX := 5A1B2C33
 # Verilator's own module search, so that a change to it re-runs this check:
 # a prerequisite list is what makes a file part of a check, and finding the
 # module is not the same as depending on it.
+#
+# **AND THE MEMORY'S ARBITER**, which the harness puts in front of a model of
+# main memory as the board puts it in front of the controller.  It is in
+# `A7MEM` beside the controller's other neighbors and not in `SOC_FACES`, so it
+# is named here.
 SOC_HARNESS_SRC := $(MACHINE) tb/cadr_soc_harness.sv $(IBEX_SRC) $(SOC_RTL) \
-                   $(SOC_FACES) rtl/plumbing/cadr_dbg_join.sv
+                   $(SOC_FACES) rtl/plumbing/cadr_dbg_join.sv \
+                   rtl/plumbing/cadr_mem_share.sv
 
 $(BUILD)/obj_soc/Vcadr_soc_harness: $(SOC_HARNESS_SRC) $(IBEX_VLT) \
                                     tb/cadr_soc_tb.cpp | $(BUILD)

@@ -80,16 +80,30 @@
 //   `BranchPredictor=0` no prediction, and `BranchTargetALU = 0` with it
 //
 // THE MAP.  The faces keep the addresses the Linux programs use, which is the
-// whole point of the exercise --- `console_face.h` says `0x8000_0000` and
-// `pack_side.h` says `0x4000_0000`, and a header that had to say "except on
-// the Artix" would be the beginning of two programs:
+// whole point of the exercise --- `console_face.h` says `0x8000_0000`,
+// `pack_side.h` says `0x4000_0000`, and `chaos_face.h`, `serial_face.h` and
+// `input_face.h` say the three pages above it.  A header that had to say
+// "except on the Artix" would be the beginning of two programs:
 //
 //     0x0000_0000  `RAM_WORDS` words of block RAM, the firmware in it
 //     0x1000_0000  this processing system's own UART
 //     0x1000_1000  its own timer
-//     0x4000_0000  the disk pack face          `cadr_disk_pack.sv`
+//     0x2000_0000  128 MB of DDR3L, the machine's reservation, a word a load
+//     0x4000_0000  `M_AXI_GP0`'s gigabyte, split as the Zynq splits it:
+//       0x4000_0000  the disk pack face        `cadr_disk_pack.sv`
+//       0x4000_1000  the Chaosnet cable        `cadr_chaos_cable.sv`
+//       0x4000_2000  the serial line           `cadr_serial_line.sv`
+//       0x4000_3000  the keyboard and mouse    `cadr_input_cables.sv`
+//       the rest of the gigabyte               `cadr_gp0_default.sv`, "NONE"
 //     0x8000_0000  the console                 `cadr_console.sv`
 //     everything else                          `cadr_gp0_default.sv`, "NONE"
+//
+// **THE DDR WINDOW IS THE ONE ADDRESS HERE THAT IS NOT THE ZYNQ'S, AND IT
+// CANNOT BE.**  On the Zynq, Linux reaches DDR at its physical address and the
+// machine's reservation is at `0x1800_0000` in that map.  Here `0x1000_0000`
+// and up is where this system's own pages are and where more of them go, so
+// the window takes the next free 128 MB and is laid onto the reservation.  A
+// firmware converts between the two with one constant, and `soc.h` has it.
 //
 // **AND `0x8000_1000` IS NOT IN THAT LIST, WHERE ON THE TWO ZYNQ BOARDS IT IS
 // THE DEBUG CABLE'S REGISTER WINDOW.**  That window exists so that muir, on
@@ -119,7 +133,8 @@
 // than the machine's tick, and not a path a constraint may relax, being one
 // cycle of a processor.  So the core, its memory, its UART and its timer run
 // on a clock of their own off the same manager, `clk`, and the bridge runs on
-// the machine's, `axi_clk`, where the three faces already are.
+// the machine's, `axi_clk`, where the faces and the memory's arbiter already
+// are.
 // `rtl/plumbing/cadr_soc_cross.sv` is the seam between them and carries the
 // whole argument; `boards/arty-a7-100/README.md` carries the measurement that
 // made it necessary.
@@ -159,11 +174,16 @@ module cadr_soc #(
     // Where this processing system's own two pages sit.
     parameter logic [31:0] UART_BASE  = 32'h1000_0000,
     parameter logic [31:0] TIMER_BASE = 32'h1000_1000,
-    // The two faces, at the addresses the Linux programs use.  There is no
-    // third: the debug cable's window is not on this board, and the header
-    // above says why.
-    parameter logic [31:0] PACK_BASE = 32'h4000_0000,
-    parameter logic [31:0] CON_BASE  = 32'h8000_0000
+    // `M_AXI_GP0`'s gigabyte and the console's page, at the addresses the
+    // Linux programs use.  There is no page for the debug cable's window: it
+    // is not on this board, and the header above says why.
+    parameter logic [31:0] GP0_BASE = 32'h4000_0000,
+    parameter logic [31:0] CON_BASE = 32'h8000_0000,
+    // The DDR window, and what it is laid onto, which is
+    // `cadr_ddr_map::RESERVED_BASE`.  `cadr_soc_axi.sv` says why the default
+    // is written out rather than named.
+    parameter logic [31:0] DDR_BASE   = 32'h2000_0000,
+    parameter logic [31:0] DDR_TARGET = 32'h1800_0000
 ) (
     // **THE SOFT SYSTEM'S OWN CLOCK.**  Everything in here but the bridge
     // runs on it.
@@ -185,40 +205,41 @@ module cadr_soc #(
     output var logic        uart_tx,
     input  var logic        uart_rx,
 
-    // --- **THE DISK PACK SIDE's INTERRUPT**, into the core's external
-    // --- interrupt.  On the Zynq the same line goes to `IRQ_F2P` and Linux
-    // --- takes it; here there is no interrupt controller and no operating
-    // --- system, so it is `mip.MEIP` and the firmware may enable it or poll
-    // --- the face instead.  The first firmware polls, and this is here so
-    // --- that the one that does not need no change in fabric.
-    input  var logic        ext_irq,
+    // --- **THE FACES' INTERRUPTS, IN `IRQ_F2P`'s ORDER**: bit 0 the disk pack
+    // --- face's, bit 1 the Chaosnet cable's, bit 2 the serial line's.  On the
+    // --- Zynq these reach the processing system and Linux takes them.  Here
+    // --- there is no interrupt controller, so each is one of Ibex's fast
+    // --- interrupts, bit n at `mip` bit 16 + n, one number a line on both
+    // --- boards.  A firmware may enable them or poll the faces; the first one
+    // --- polls, and reads `mip` once to show the wires are where this says.
+    input  var logic [2:0]  irq,
 
-    // --- the disk pack face ------------------------------------------------
-    output var logic [31:0] pack_awaddr,
-    output var logic [3:0]  pack_awlen,
-    output var logic [11:0] pack_awid,
-    output var logic        pack_awvalid,
-    input  var logic        pack_awready,
-    output var logic [31:0] pack_wdata,
-    output var logic [3:0]  pack_wstrb,
-    output var logic        pack_wlast,
-    output var logic        pack_wvalid,
-    input  var logic        pack_wready,
-    input  var logic [1:0]  pack_bresp,
-    input  var logic [11:0] pack_bid,
-    input  var logic        pack_bvalid,
-    output var logic        pack_bready,
-    output var logic [31:0] pack_araddr,
-    output var logic [3:0]  pack_arlen,
-    output var logic [11:0] pack_arid,
-    output var logic        pack_arvalid,
-    input  var logic        pack_arready,
-    input  var logic [31:0] pack_rdata,
-    input  var logic [1:0]  pack_rresp,
-    input  var logic [11:0] pack_rid,
-    input  var logic        pack_rlast,
-    input  var logic        pack_rvalid,
-    output var logic        pack_rready,
+    // --- `M_AXI_GP0`, the whole gigabyte, to `cadr_gp0_split.sv` ----------
+    output var logic [31:0] gp0_awaddr,
+    output var logic [3:0]  gp0_awlen,
+    output var logic [11:0] gp0_awid,
+    output var logic        gp0_awvalid,
+    input  var logic        gp0_awready,
+    output var logic [31:0] gp0_wdata,
+    output var logic [3:0]  gp0_wstrb,
+    output var logic        gp0_wlast,
+    output var logic        gp0_wvalid,
+    input  var logic        gp0_wready,
+    input  var logic [1:0]  gp0_bresp,
+    input  var logic [11:0] gp0_bid,
+    input  var logic        gp0_bvalid,
+    output var logic        gp0_bready,
+    output var logic [31:0] gp0_araddr,
+    output var logic [3:0]  gp0_arlen,
+    output var logic [11:0] gp0_arid,
+    output var logic        gp0_arvalid,
+    input  var logic        gp0_arready,
+    input  var logic [31:0] gp0_rdata,
+    input  var logic [1:0]  gp0_rresp,
+    input  var logic [11:0] gp0_rid,
+    input  var logic        gp0_rlast,
+    input  var logic        gp0_rvalid,
+    output var logic        gp0_rready,
 
     // --- the console -------------------------------------------------------
     output var logic [31:0] con_awaddr,
@@ -246,6 +267,15 @@ module cadr_soc #(
     input  var logic        con_rlast,
     input  var logic        con_rvalid,
     output var logic        con_rready,
+
+    // --- the DDR window, one word a request, in `axi_clk` -------------------
+    output var logic        ddr_req,
+    output var logic        ddr_write,
+    output var logic [31:0] ddr_addr,
+    output var logic [31:0] ddr_wdata,
+    input  var logic        ddr_done,
+    input  var logic [31:0] ddr_rdata,
+    input  var logic        ddr_error,
 
     // --- everything else ---------------------------------------------------
     output var logic [11:0] dflt_awid,
@@ -293,16 +323,21 @@ module cadr_soc #(
   always_ff @(posedge clk) rst_sync <= {rst_sync[1:0], rst};
   assign rst_a = rst_sync[2];
 
-  // **AND THE PACK SIDE'S INTERRUPT IS A LEVEL FROM THE MACHINE'S DOMAIN**,
-  // into the core's external interrupt.  Two flip-flops, for the reason every
-  // level that crosses gets two.  It is the only signal that reaches this
+  // **AND THE FACES' INTERRUPTS ARE LEVELS FROM THE MACHINE'S DOMAIN**, into
+  // the core's fast interrupts.  Two flip-flops each, for the reason every
+  // level that crosses gets two.  They are the only signals that reach this
   // domain from the other one outside `cadr_soc_cross`, and
-  // `rtl/plumbing/xilinx7/cadr_soc.xdc` bounds its route with everything else
-  // that crosses.
-  logic [1:0] irq_sync;
+  // `rtl/plumbing/xilinx7/cadr_soc.xdc` bounds their route with everything
+  // else that crosses, by naming the two clocks rather than the wires.
+  logic [2:0] irq_meta, irq_sync;
   always_ff @(posedge clk) begin
-    if (rst_a) irq_sync <= 2'b00;
-    else       irq_sync <= {irq_sync[0], ext_irq};
+    if (rst_a) begin
+      irq_meta <= 3'b000;
+      irq_sync <= 3'b000;
+    end else begin
+      irq_meta <= irq;
+      irq_sync <= irq_meta;
+    end
   end
 
   // --------------------------------------------------------- the core's seams
@@ -405,8 +440,8 @@ module cadr_soc #(
 
       .irq_software_i(1'b0),
       .irq_timer_i   (timer_irq),
-      .irq_external_i(irq_sync[1]),
-      .irq_fast_i    (15'd0),
+      .irq_external_i(1'b0),
+      .irq_fast_i    ({12'd0, irq_sync}),
       .irq_nm_i      (1'b0),
       .irq_pending_o (),
 
@@ -668,8 +703,10 @@ module cadr_soc #(
   );
 
   cadr_soc_axi #(
-      .PACK_BASE(PACK_BASE),
-      .CON_BASE (CON_BASE)
+      .GP0_BASE  (GP0_BASE),
+      .CON_BASE  (CON_BASE),
+      .DDR_BASE  (DDR_BASE),
+      .DDR_TARGET(DDR_TARGET)
   ) u_axi (
       .clk(axi_clk), .rst(axi_rst),
       .req(x_req), .we(x_we), .be(x_be), .addr(x_addr),
@@ -682,16 +719,16 @@ module cadr_soc #(
       .gnt(x_gnt),
       .done(x_done), .rdata(x_rdata), .err(x_err),
 
-      .pack_awaddr(pack_awaddr), .pack_awlen(pack_awlen), .pack_awid(pack_awid),
-      .pack_awvalid(pack_awvalid), .pack_awready(pack_awready),
-      .pack_wdata(pack_wdata), .pack_wstrb(pack_wstrb), .pack_wlast(pack_wlast),
-      .pack_wvalid(pack_wvalid), .pack_wready(pack_wready),
-      .pack_bresp(pack_bresp), .pack_bid(pack_bid), .pack_bvalid(pack_bvalid),
-      .pack_bready(pack_bready),
-      .pack_araddr(pack_araddr), .pack_arlen(pack_arlen), .pack_arid(pack_arid),
-      .pack_arvalid(pack_arvalid), .pack_arready(pack_arready),
-      .pack_rdata(pack_rdata), .pack_rresp(pack_rresp), .pack_rid(pack_rid),
-      .pack_rlast(pack_rlast), .pack_rvalid(pack_rvalid), .pack_rready(pack_rready),
+      .gp0_awaddr(gp0_awaddr), .gp0_awlen(gp0_awlen), .gp0_awid(gp0_awid),
+      .gp0_awvalid(gp0_awvalid), .gp0_awready(gp0_awready),
+      .gp0_wdata(gp0_wdata), .gp0_wstrb(gp0_wstrb), .gp0_wlast(gp0_wlast),
+      .gp0_wvalid(gp0_wvalid), .gp0_wready(gp0_wready),
+      .gp0_bresp(gp0_bresp), .gp0_bid(gp0_bid), .gp0_bvalid(gp0_bvalid),
+      .gp0_bready(gp0_bready),
+      .gp0_araddr(gp0_araddr), .gp0_arlen(gp0_arlen), .gp0_arid(gp0_arid),
+      .gp0_arvalid(gp0_arvalid), .gp0_arready(gp0_arready),
+      .gp0_rdata(gp0_rdata), .gp0_rresp(gp0_rresp), .gp0_rid(gp0_rid),
+      .gp0_rlast(gp0_rlast), .gp0_rvalid(gp0_rvalid), .gp0_rready(gp0_rready),
 
       .con_awaddr(con_awaddr), .con_awlen(con_awlen), .con_awid(con_awid),
       .con_awvalid(con_awvalid), .con_awready(con_awready),
@@ -703,6 +740,10 @@ module cadr_soc #(
       .con_arvalid(con_arvalid), .con_arready(con_arready),
       .con_rdata(con_rdata), .con_rresp(con_rresp), .con_rid(con_rid),
       .con_rlast(con_rlast), .con_rvalid(con_rvalid), .con_rready(con_rready),
+
+      .ddr_req(ddr_req), .ddr_write(ddr_write), .ddr_addr(ddr_addr),
+      .ddr_wdata(ddr_wdata), .ddr_done(ddr_done), .ddr_rdata(ddr_rdata),
+      .ddr_error(ddr_error),
 
       .dflt_awid(dflt_awid), .dflt_awvalid(dflt_awvalid),
       .dflt_awready(dflt_awready),

@@ -25,12 +25,19 @@
 //   one step, and the count CYCLES moved by, which must be exactly one
 //   start again, and CYCLES moving again
 //   the disk pack face's IDENT, which must be "PACK"
+//   the I/O board's three faces behind the same splitter: "CHAO", "SERI" and
+//     "INPT", at the pages the Linux programs use
 //   the default slave, which must read "NONE" --- the proof that an address
 //     nothing implements is ANSWERED and does not hang the core
 //   0x8000_1000, where the debug cable's register window sits on the two Zynq
 //     boards, which on THIS board must read "NONE" as well: there is no muir
 //     here to play a debugger in software, the debugger is a second board on
 //     the Pmod, and the window is not in the design
+//   main memory, through the DDR window: a record written and read back, a
+//     byte store refused, and the disk pack face fetching the record and
+//     writing it back where the window reads it
+//   the disk pack face's interrupt, at the fast interrupt `soc.h` names
+//   a round of back-to-back loads at five places, one of them main memory
 //   a summary naming how many of the checks failed, and then an idle loop
 //     that takes four commands from the wire
 //
@@ -44,8 +51,11 @@
 
 #include "soc.h"
 
+#include <chaos_face.h>
 #include <console_face.h>
+#include <input_face.h>
 #include <pack_side.h>
+#include <serial_face.h>
 
 #include <cadr/cadr_log.h>
 
@@ -143,6 +153,29 @@ static uint32_t expect(const char *what, uint32_t addr, uint32_t want)
 // --- the machine ---------------------------------------------------------
 
 static struct console con;
+
+// --- main memory, through the window --------------------------------------
+//
+// **THE RECORD THE DISK PACK FACE MOVES, AT THE ADDRESSES ITS LINUX PROGRAM
+// USES.**  A record is the block's 256 words, the header and its two
+// checkwords, and a pad after them that the face never writes.  The disk pack
+// program puts them in the spare above the display, a fetch area and a
+// write-back area 2 KB apart, and so does this.
+#define REC_WORDS  259u
+#define REC_FETCH  0x1C800000u
+#define REC_BACK   0x1C800800u
+#define REC_SLOT   1u
+#define REC_TAG    0x00123456u
+
+// Two families of word, each injective in its address and neither able to be
+// the other at these addresses: the record, and the poison the write-back
+// area holds before the face writes into it.  A write-back that moved nothing
+// reads as poison, and one that moved the wrong words reads as the wrong
+// record words.
+static uint32_t rec_word(uint32_t addr) { return 0x5EC00000u ^ addr; }
+static uint32_t rec_poison(uint32_t addr) { return ~addr; }
+
+static int have_memory;
 
 static int machine_running(unsigned settle_us, uint64_t *moved)
 {
@@ -318,6 +351,13 @@ int main(void)
 		    (unsigned long)PS_REG_BASE, g, (unsigned)PS_IDENT);
 	}
 
+	// **AND THE I/O BOARD'S THREE FACES, BEHIND THE SAME SPLITTER AT THE SAME
+	// PAGES AS ON THE ZYNQ BOARDS.**  Each identifier is its own header's
+	// constant, so a face wired where another should be names itself.
+	expect("the Chaosnet cable", CHAOS_REG_BASE, CHAOS_IDENT_WORD);
+	expect("the serial line", SER_REG_BASE, SER_IDENT_WORD);
+	expect("the keyboard and mouse", IN_REG_BASE, IN_IDENT_WORD);
+
 	// **THE ADDRESS NOTHING IMPLEMENTS, WHICH IS THE ONE THAT MATTERS.**
 	// On the Zynq a read nothing answers inside a general-purpose window
 	// hangs both ARM cores at one PC each, measured, and no software guard
@@ -326,7 +366,11 @@ int main(void)
 	// bridge's last port is a catch-all and `cadr_gp0_default.sv` is behind
 	// it, and THIS LINE IS THE PROOF --- a firmware that reached this line
 	// at all is a firmware whose load came back.
-	expect("the default slave", PS_REG_BASE + 0x1000u, 0x4E4F4E45u);
+	//
+	// **IT USED TO BE `0x4000_1000`, WHICH IS THE CHAOSNET CABLE's PAGE
+	// NOW.**  The first page past the four faces is the splitter's own
+	// default slave, which is the one this board shares with the Zynq's.
+	expect("the default slave", PS_REG_BASE + 0x4000u, 0x4E4F4E45u);
 
 	// **AND THE PAGE THE DEBUG CABLE'S WINDOW HOLDS ON THE OTHER TWO
 	// BOARDS, WHICH ON THIS ONE IS NOT A FACE AT ALL.**  This used to read
@@ -344,6 +388,123 @@ int main(void)
 	// which is the one place where "every address is answered" could have
 	// been left with a hole and nothing would have said so.
 	expect("the window's page", 0x80001000u, 0x4E4F4E45u);
+
+	// **MAIN MEMORY, THROUGH THE WINDOW, AND THE DISK PACK FACE MOVING A
+	// RECORD THROUGH IT.**  On the Zynq boards Linux puts a record in DDR and
+	// the face fetches it; here this firmware is the one that puts it there.
+	//
+	// **A BOARD BUILT WITHOUT MEMORY ANSWERS THE WINDOW WITH A FAULT**, and
+	// the same firmware runs on both, so the first load is a probe.  A fault
+	// there is said and is not a failure: it is the design, not a defect.
+	{
+		uint32_t cause = 0;
+		(void)soc_probe_load(soc_ddr(REC_FETCH), &cause);
+		have_memory = (cause == 0);
+		if (!have_memory)
+			say("the DDR window at 0x%08lx faults (mcause %lu): no memory "
+			    "is built into this design", (unsigned long)SOC_DDR_WINDOW,
+			    (unsigned long)cause);
+	}
+
+	if (have_memory) {
+		// The record and its pad, written and read back.
+		unsigned wrong = 0;
+		for (unsigned i = 0; i <= REC_WORDS; ++i)
+			soc_wr(soc_ddr(REC_FETCH + 4u * i), rec_word(REC_FETCH + 4u * i));
+		for (unsigned i = 0; i <= REC_WORDS; ++i)
+			if (soc_rd(soc_ddr(REC_FETCH + 4u * i)) != rec_word(REC_FETCH + 4u * i))
+				wrong++;
+		if (wrong)
+			failures++;
+		say("the DDR window at 0x%08lx wrote %u words at 0x%08lx and read "
+		    "%u back wrong", (unsigned long)SOC_DDR_WINDOW, REC_WORDS + 1u,
+		    (unsigned long)REC_FETCH, wrong);
+	}
+
+	if (have_memory) {
+		// **A BYTE STORE IS REFUSED, AND REFUSED MEANS UNWRITTEN.**  The
+		// memory port writes whole words, so a byte store would either
+		// overwrite the three bytes beside it or need a read and a write the
+		// machine could step between.  It must fault, and the word it aimed
+		// at must be what it was.
+		uint32_t cause = 0;
+		uint32_t before = soc_rd(soc_ddr(REC_FETCH));
+		soc_probe_store8(soc_ddr(REC_FETCH), 0xA5u, &cause);
+		uint32_t after = soc_rd(soc_ddr(REC_FETCH));
+		if (cause != SOC_CAUSE_STORE_ACCESS || after != before)
+			failures++;
+		say("a byte stored into the window is refused with mcause %lu, and "
+		    "the word %s", (unsigned long)cause,
+		    after == before ? "is unchanged" : "CHANGED");
+	}
+
+	{
+		struct pack_side ps;
+		char why[112];
+		uint32_t st = 0;
+		ps_init(&ps);
+		ps.read = pack_read;
+		ps.write = pack_write;
+		ps.pause = pack_pause;
+
+		if (have_memory) {
+			// **THE FACE FETCHES WHAT THE WINDOW WROTE**, through its own
+			// master, `cadr_hp2_mem.sv` and the memory's arbiter.
+			int r = ps_fetch(&ps, REC_FETCH, REC_TAG, REC_SLOT, &st, why,
+					 sizeof why);
+			if (r != 0)
+				failures++;
+			say("the disk pack face fetched 0x%08lx into slot %u: %s",
+			    (unsigned long)REC_FETCH, REC_SLOT, r == 0 ? "done" : why);
+
+			// **AND THE WINDOW READS WHAT THE FACE WROTE BACK**, into an
+			// area poisoned first, and to a different address from the one
+			// it was fetched from, so a write-back that went where the
+			// fetch came from, or moved nothing, reads wrong.  The pad after
+			// the record must still be poison, because the face's last beat
+			// strobes only its low half.
+			//
+			// **THIS IS A ROUND TRIP AND IT CANNOT SEE A FAULT THAT IS THE
+			// SAME BOTH WAYS**: two halves of a beat swapped on the fetch and
+			// swapped back on the write-back agree with themselves.
+			// `tb/cadr_a7_mem_tb.cpp` reads the store the face filled
+			// directly, which is what holds that.
+			for (unsigned i = 0; i <= REC_WORDS; ++i)
+				soc_wr(soc_ddr(REC_BACK + 4u * i), rec_poison(REC_BACK + 4u * i));
+			r = ps_writeback(&ps, REC_BACK, REC_SLOT, &st, why, sizeof why);
+			unsigned wrong = 0;
+			for (unsigned i = 0; i < REC_WORDS; ++i)
+				if (soc_rd(soc_ddr(REC_BACK + 4u * i)) != rec_word(REC_FETCH + 4u * i))
+					wrong++;
+			int pad = soc_rd(soc_ddr(REC_BACK + 4u * REC_WORDS)) ==
+				  rec_poison(REC_BACK + 4u * REC_WORDS);
+			if (r != 0 || wrong || !pad)
+				failures++;
+			say("the disk pack face wrote slot %u back to 0x%08lx: %s; the "
+			    "window read %u of %u words wrong, and the pad after them is "
+			    "%s", REC_SLOT, (unsigned long)REC_BACK,
+			    r == 0 ? "done" : why, wrong, REC_WORDS,
+			    pad ? "untouched" : "WRITTEN");
+		}
+
+		// **THE FACE'S INTERRUPT, AT THE WIRE `soc.h` SAYS.**  A take moves
+		// no DDR traffic and ends a move all the same, so the face's "a move
+		// finished" event is set whether or not there is memory.  Enabled,
+		// the face's line rises and `mip` shows fast interrupt 0 and no other
+		// face's; disabled, it falls.  Nothing enables the core's own
+		// interrupts: `mip` shows the wires as they stand.
+		(void)ps_take(&ps, REC_SLOT + 1u, &st, why, sizeof why);
+		ps_irqen(&ps, PS_IRQ_DONE);
+		soc_delay_us(20);
+		uint32_t on = soc_read_mip() & SOC_MIP_FACES;
+		ps_irqen(&ps, 0);
+		soc_delay_us(20);
+		uint32_t off = soc_read_mip() & SOC_MIP_FACES;
+		if (on != SOC_MIP_FAST(0) || off != 0)
+			failures++;
+		say("the disk pack face's interrupt reads mip 0x%05lx enabled and "
+		    "0x%05lx disabled", (unsigned long)on, (unsigned long)off);
+	}
 
 	// **AND THE SEAM AT THE RATE A DRIVER WOULD DRIVE IT.**  Every line
 	// above is one load with a `say()` behind it, which is the slowest
@@ -374,20 +535,44 @@ int main(void)
 	// memory-exercised-with-one-constant shape this repository has met
 	// twice, and it is worth more to lose a load than to keep a round that
 	// cannot tell two of its own answers apart.
+	//
+	// **AND NOW IT IS FIVE, BECAUSE THERE ARE FIVE DIFFERENT ANSWERS AGAIN.**
+	// The console, the Chaosnet cable behind the splitter, the disk pack face
+	// behind it too, the catch-all at the window's page, and a word of main
+	// memory through the window and the arbiter --- five words, none of them
+	// another's, and two of them the same bridge target so that the
+	// splitter's own selection is raced as well.  A board with no memory runs
+	// the round without the fifth, in a loop of its own, so neither loop has a
+	// branch between its loads.
 	{
 		unsigned wrong = 0;
-		for (unsigned k = 0; k < 16u; ++k) {
-			uint32_t a = soc_rd(CONS_REG_BASE);
-			uint32_t c = soc_rd(PS_REG_BASE + 0x1000u);
-			uint32_t d = soc_rd(PS_REG_BASE + 4u * PS_IDENT);
-			if (a != CONS_IDENT_WORD || c != 0x4E4F4E45u ||
-			    d != PS_IDENT_WORD)
-				wrong++;
+		const uint32_t want_e = rec_word(REC_FETCH);
+		if (have_memory) {
+			for (unsigned k = 0; k < 16u; ++k) {
+				uint32_t a = soc_rd(CONS_REG_BASE);
+				uint32_t b = soc_rd(CHAOS_REG_BASE);
+				uint32_t c = soc_rd(PS_REG_BASE + 4u * PS_IDENT);
+				uint32_t d = soc_rd(0x80001000u);
+				uint32_t e = soc_rd(soc_ddr(REC_FETCH));
+				if (a != CONS_IDENT_WORD || b != CHAOS_IDENT_WORD ||
+				    c != PS_IDENT_WORD || d != 0x4E4F4E45u || e != want_e)
+					wrong++;
+			}
+		} else {
+			for (unsigned k = 0; k < 16u; ++k) {
+				uint32_t a = soc_rd(CONS_REG_BASE);
+				uint32_t b = soc_rd(CHAOS_REG_BASE);
+				uint32_t c = soc_rd(PS_REG_BASE + 4u * PS_IDENT);
+				uint32_t d = soc_rd(0x80001000u);
+				if (a != CONS_IDENT_WORD || b != CHAOS_IDENT_WORD ||
+				    c != PS_IDENT_WORD || d != 0x4E4F4E45u)
+					wrong++;
+			}
 		}
 		if (wrong)
 			failures++;
-		say("%u of 16 rounds of three back-to-back loads, one at each "
-		    "face, came back wrong", wrong);
+		say("%u of 16 rounds of %s back-to-back loads, each at a place of "
+		    "its own, came back wrong", wrong, have_memory ? "five" : "four");
 	}
 
 	say("%u failure(s); idling --- s status, h halt, c continue, . step",
