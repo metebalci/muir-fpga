@@ -15,6 +15,7 @@
 #include <string>
 
 #include "Vcadr_phase_gen.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
@@ -66,8 +67,10 @@ int main(int argc, char **argv) {
   // pass and mean nothing, so the run also has to show every tap the 74S151
   // at CLOCK1 1D08 can select, and both ways the generator is held.
   // TPCLK rises at phase 0 and falls at the tap, so the ticks between are the
-  // tap: 75, 85, 100, 115, 125, 140, 160 ns over five.
-  const int kTaps[7] = {15, 17, 20, 23, 25, 28, 32};
+  // tap: 75, 85, 100, 115, 125, 140, 160 ns put through the grid.
+  const long kTapNs[7] = {75, 85, 100, 115, 125, 140, 160};
+  int kTaps[7];
+  for (int i = 0; i < 7; ++i) kTaps[i] = static_cast<int>(GridTicks(kTapNs[i]));
   bool tap_seen[7] = {false};
   long rise_at = -1;
   int last_tpclk = 0;
@@ -157,7 +160,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < 7; ++i)
     if (!tap_seen[i]) {
       std::fprintf(stderr, "FAIL: the %d ns tap was never selected\n",
-                   kTaps[i] * 5);
+                   static_cast<int>(kTapNs[i]));
       ++thin;
     }
   if (hang_ticks == 0) {

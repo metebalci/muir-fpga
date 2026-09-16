@@ -391,7 +391,7 @@ module cadr_microcycle #(
   // boundary on.  Over the boundary tick itself it still holds the last
   // cycle's count, which cannot alias: the shortest cycle the generator
   // makes is 27 ticks and this is only ever compared against 11.
-  localparam int unsigned SPEEDCLK_T = 60 / 5 - 1;   // phase 11, shifting into 12
+  localparam int unsigned SPEEDCLK_T = cadr_tick_pkg::ticks(60) - 1;  // phase 11, shifting into 12
 
   logic [5:0] phase_t;
   logic       speedclk;
@@ -1470,8 +1470,8 @@ module cadr_microcycle #(
   // **So this number is right and we do not know why**, which is a worse
   // comment to write and a better one to read than the confident wrong story
   // it replaces.  Left as measured, with #11 holding the question.
-  localparam int unsigned MFINISHD_T  = 30 / 5;
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
+  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(30);
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
 
   logic       n_memack_q;
   logic [5:0] mfinish_t, rdfinish_t;

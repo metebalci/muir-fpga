@@ -113,6 +113,7 @@
 
 #include "Vcadr_machine.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
@@ -142,7 +143,7 @@ constexpr int kWindowWords = 4096;
 // acknowledged in the tick of its answer whatever the delay was, and a read a
 // fixed deskew later.
 constexpr int kAckAfterWrite = 0;
-constexpr int kAckAfterRead = 60 / 5 - 1;
+constexpr int kAckAfterRead = GridTicks(60) - 1;
 
 // The word the model holds on `mem_rdata` when it is not answering.  Bit 0 is
 // set on purpose, and it is not any word of the poison.
@@ -427,15 +428,15 @@ void CheckRun(const Run &r, bool bit0, char name) {
   std::printf("  window watched    %d words, %08x..%08x\n", kWindowWords,
               kMainBase, kMainBase + 4u * (kWindowWords - 1));
   std::printf("  ticks             %ld (%.1f ms of machine time)\n", kTicks,
-              kTicks * 5.0 / 1e6);
+              kTicks * kGridNsD / 1e6);
   std::printf("  microcycles       %ld\n", r.micro);
   std::printf("  first mem_req     microcycle %ld, tick %ld (%.3f ms)\n",
               r.first_req_micro, r.first_req_tick,
-              r.first_req_tick * 5.0 / 1e6);
+              r.first_req_tick * kGridNsD / 1e6);
   std::printf("  last transaction  microcycle %ld, tick %ld (%.3f ms)\n",
-              r.last_txn_micro, r.last_txn_tick, r.last_txn_tick * 5.0 / 1e6);
+              r.last_txn_micro, r.last_txn_tick, r.last_txn_tick * kGridNsD / 1e6);
   std::printf("  quiet afterwards  %.1f ms with no DDR access at all\n",
-              (kTicks - r.last_txn_tick) * 5.0 / 1e6);
+              (kTicks - r.last_txn_tick) * kGridNsD / 1e6);
   std::printf("  transactions      %zu (%ld reads, %ld writes), every one in "
               "%08x..%08x\n", r.txns.size(), reads, writes, kMainBase,
               kMainBase + 4u * (kPageWords - 1));

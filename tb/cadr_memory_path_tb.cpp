@@ -67,6 +67,7 @@
 #include <vector>
 
 #include "Vcadr_memory_path.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
@@ -514,7 +515,7 @@ int main(int argc, char **argv) {
     req_last = dut->mem_req;
 
     const int done =
-        (req_since >= 0) && ((r.tick - req_since) * 5 >= r.device_ns);
+        (req_since >= 0) && ((r.tick - req_since) * kGridNs >= r.device_ns);
     dut->mem_done = done;
     if (done && !dut->mem_write) {
       auto it = ddr.find(dut->mem_addr);

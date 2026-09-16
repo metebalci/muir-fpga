@@ -156,15 +156,19 @@
 module cadr_serial_line #(
     // "SERI", so that a read of word 0 can be told from a bus of zeros.
     parameter logic [31:0] IDENT = 32'h5345_5249,
-    // **MIT'S GRID, AND NOT THE BOARD'S CLOCK.**  `cadr_phase_gen.sv`'s own
-    // `TICK_NS` is 5 for ever, because the drawings' grid is 5 ns and every
-    // instant in this machine is a count of them: the card's microsecond
-    // clock is `1000 / 5` ticks, the display's frame is muir's frame_ns over
-    // five, the disk's spans are `ceil(ns / 5)`.  The board's tick is 10 ns,
-    // so the whole machine deliberately runs at half real time and its clocks
-    // disagree with the wall --- and the serial line is part of the machine.
-    // See the header for what putting the real 100 MHz here did.
-    parameter int unsigned TICK_NS = 5
+    // **MIT'S GRID, AND NOT THE BOARD'S CLOCK.**  `cadr_tick_pkg::TICK_NS`
+    // is the one constant every instant in this machine is a count of: the
+    // card's microsecond clock, the display's frame, the disk's spans.  The
+    // board's tick is 10 ns, so the whole machine deliberately runs at half
+    // real time and its clocks disagree with the wall --- and the serial
+    // line is part of the machine.  See the header for what putting the real
+    // 100 MHz here did.
+    //
+    // It stays a PARAMETER because it already was one, and this change moves
+    // where the number lives without touching the module's interface.  No
+    // check overrides it today: `tb/cadr_gp0_split_harness.sv` takes the
+    // default, so the divider is exercised at the machine's grid only.
+    parameter int unsigned TICK_NS = cadr_tick_pkg::TICK_NS
 ) (
     input  var logic        clk,
     input  var logic        rst,

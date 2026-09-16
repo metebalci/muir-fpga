@@ -75,6 +75,7 @@
 #include <cstdlib>
 #include "Vcadr_machine.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 int main(int argc, char **argv) {
   Verilated::commandArgs(argc, argv);
@@ -110,14 +111,14 @@ int main(int argc, char **argv) {
     if (dut->mem_req && first_memreq < 0) { first_memreq = t; micro_at_first = micro; }
     dut->clk = 0; dut->eval();
   }
-  double ns = TICKS * 5.0;
+  double ns = TICKS * kGridNsD;
   printf("ticks              %ld  (%.3f ms of machine time)\n", TICKS, ns / 1e6);
   printf("microcycles        %ld\n", micro);
   printf("first mem_req at   tick %ld, microcycle %ld\n", first_memreq, micro_at_first);
   printf("NXM timeouts       %ld\n", timeouts);
   if (micro_at_first > 0 && micro > micro_at_first) {
     double after = micro - micro_at_first;
-    double ns_after = (TICKS - first_memreq) * 5.0;
+    double ns_after = (TICKS - first_memreq) * kGridNsD;
     printf("after the first memory cycle: %.0f microcycles in %.3f ms\n", after, ns_after/1e6);
     printf("  = %.2f us per microcycle (normal is 0.22)\n", ns_after / after / 1000.0);
     printf("  beat[19] toggles every 524288 microcycles = %.2f s\n",

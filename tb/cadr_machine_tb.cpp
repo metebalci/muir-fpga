@@ -139,11 +139,12 @@
 
 #include "Vcadr_machine.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
 // Five nanoseconds, the master clock's period.
-constexpr int kTickNs = 5;
+constexpr int kTickNs = kGridNs;
 
 // WHERE THE NXM TIMER'S ACKNOWLEDGMENT LANDS, against muir's own column, in
 // the units the histogram at the end prints: muir minus the fabric as this

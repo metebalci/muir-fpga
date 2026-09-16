@@ -60,6 +60,7 @@
 
 #include "Vcadr_gp0_split_harness.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
@@ -130,10 +131,10 @@ const unsigned IN_DEPTH = 16;
 const unsigned UB_FLOATING = 0177400;
 
 // `mouse::MOUSE_STEP_NS` = 16,000, on MIT's 5 ns grid.
-const long MOUSE_STEP_T = 16000 / 5;
+const long MOUSE_STEP_T = GridTicks(16000);
 // `ioboard::KB_CLK_NS` = 8,000: how long the card may take to latch a
 // change onto `NEW`.
-const long KB_CLK_T = 8000 / 5;
+const long KB_CLK_T = GridTicks(8000);
 
 // `muir::serial::DIVISORS`, Table 1: the crystal periods in one 16X clock.
 const unsigned DIVISORS[16] = {6336, 4224, 2880, 2355, 2112, 1056, 528, 264,
@@ -149,7 +150,7 @@ const unsigned BRCLK_HZ = 5068800u;
 // part of the machine.  A frame measured against the real 100 MHz instead
 // would be half this many ticks and the chip would run at twice the rate its
 // software programmed, measured in the only clock the machine has.
-const unsigned TICK_NS = 5u;
+const unsigned TICK_NS = (unsigned)kGridNs;
 
 int bad = 0;
 long tick = 0;

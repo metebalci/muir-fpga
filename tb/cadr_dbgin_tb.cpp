@@ -102,10 +102,11 @@
 
 #include "Vcadr_dbgin_harness.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
-constexpr int kTickNs = 5;
+constexpr int kTickNs = kGridNs;
 
 // The trace's columns, in the order golden/src/rtl.rs prints them.
 enum Col {
@@ -138,9 +139,9 @@ constexpr uint32_t kBase     = 0x80000080u;
 constexpr uint32_t kIdent    = 0x44425547u;   // "DBUG"
 constexpr uint32_t kUnmapped = ~kIdent;
 constexpr uint32_t kLift     = 0x4C494654u;   // "LIFT"
-constexpr long     kLeadT    = 100 / 5;       // busint::DEBUG_OUT_REQUEST_NS
-constexpr long     kMsynT    = 100 / 5;       // busint::DEBUG_MSYN_NS
-constexpr long     kReleaseT = 100 / 5;       // busint::DEBUG_RELEASE_NS
+constexpr long     kLeadT    = GridTicks(100);  // busint::DEBUG_OUT_REQUEST_NS
+constexpr long     kMsynT    = GridTicks(100);  // busint::DEBUG_MSYN_NS
+constexpr long     kReleaseT = GridTicks(100);  // busint::DEBUG_RELEASE_NS
 // `busint::DIAGNOSTIC_NS` is fifty ticks, and the fifty-first is the edge at
 // which the master asserted `-UB MSYN`: **a level settled at the end of tick
 // t is what tick t+1's edge consumes**, and `cadr_spy_registers.sv` counts
@@ -149,7 +150,7 @@ constexpr long     kReleaseT = 100 / 5;       // busint::DEBUG_RELEASE_NS
 // is this check's is that the debug master waits for the slave's own answer
 // and acknowledges exactly there, which is what a constant rather than a
 // range says.
-constexpr long     kSsynT    = 250 / 5 + 1;
+constexpr long     kSsynT    = GridTicks(250) + 1;
 constexpr long     kWatchdogT = 4096;         // the harness's own, shrunk
 
 uint32_t Win(unsigned i) { return kBase + 4u * i; }

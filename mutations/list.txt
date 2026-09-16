@@ -250,9 +250,9 @@
 @note TPTSE goes away at 5 ns and comes back at 25. Moving the fall to 10
 @note leaves the pulse the right shape and in the wrong place.
 @old
-  localparam int unsigned TSE_OFF_T  = 5 / TICK_NS;    //   5 ns
+  localparam int unsigned TSE_OFF_T   = cadr_tick_pkg::ticks(5);
 @new
-  localparam int unsigned TSE_OFF_T  = 10 / TICK_NS;   //  10 ns
+  localparam int unsigned TSE_OFF_T   = cadr_tick_pkg::ticks(10);
 @end
 
 @mutation tse-returns-late
@@ -260,9 +260,9 @@
 @file rtl/machine/cadr_phase_gen.sv
 @note The other end of the same pulse.
 @old
-  localparam int unsigned TSE_ON_T   = 25 / TICK_NS;   //  25 ns
+  localparam int unsigned TSE_ON_T    = cadr_tick_pkg::ticks(25);
 @new
-  localparam int unsigned TSE_ON_T   = 30 / TICK_NS;   //  30 ns
+  localparam int unsigned TSE_ON_T    = cadr_tick_pkg::ticks(30);
 @end
 
 @mutation tpr60-opens-early
@@ -272,9 +272,9 @@
 @note Opening it at 55 is five nanoseconds of a signal that drives the front
 @note panel's clock.
 @old
-  localparam int unsigned TPR60_ON_T = 60 / TICK_NS;   //  60 ns
+  localparam int unsigned TPR60_ON_T  = cadr_tick_pkg::ticks(60);
 @new
-  localparam int unsigned TPR60_ON_T = 55 / TICK_NS;   //  55 ns
+  localparam int unsigned TPR60_ON_T  = cadr_tick_pkg::ticks(55);
 @end
 
 @mutation tpr60-closes-a-tick-late
@@ -296,9 +296,9 @@
 @note -ILONG}. One wrong entry in that table is one wrong microcycle length,
 @note and the testbench's tap coverage exists for exactly this.
 @old
-      SPEED_NORMAL:     read_sel = ilong ? 6'd25 : 6'd17;  // 125 : 85 ns
+      SPEED_NORMAL:     read_sel = ilong ? 6'(READ_NORMAL_ILONG_T) : 6'(READ_NORMAL_T);  // 125 : 85 ns
 @new
-      SPEED_NORMAL:     read_sel = ilong ? 6'd23 : 6'd17;  // 115 : 85 ns
+      SPEED_NORMAL:     read_sel = ilong ? 6'(READ_FAST_ILONG_T) : 6'(READ_NORMAL_T);  // 115 : 85 ns
 @end
 
 @mutation extra-slow-stretches-with-ilong
@@ -308,9 +308,9 @@
 @note ILONG adds nothing. Making it stretch anyway is the reading of "ILONG
 @note adds forty nanoseconds" that forgets the exception.
 @old
-      SPEED_EXTRA_SLOW: read_sel = 6'd32;                  // 160 ns, both
+      SPEED_EXTRA_SLOW: read_sel = 6'(READ_EXTRA_SLOW_T);                                // 160 ns, both
 @new
-      SPEED_EXTRA_SLOW: read_sel = ilong ? 6'd40 : 6'd32;  // 200 : 160 ns
+      SPEED_EXTRA_SLOW: read_sel = ilong ? 6'(cadr_tick_pkg::ticks(200)) : 6'(READ_EXTRA_SLOW_T);  // 200 : 160 ns
 @end
 
 @mutation the-read-phase-is-selected-at-the-start-of-the-cycle
@@ -323,9 +323,9 @@
 @note compare with a literal, which would leave SELECT_T unused and let lint
 @note catch it instead of the check.
 @old
-  localparam int unsigned SELECT_T   = 65 / TICK_NS;   //  65 ns
+  localparam int unsigned SELECT_T    = cadr_tick_pkg::ticks(65);
 @new
-  localparam int unsigned SELECT_T   = 5 / TICK_NS;    //   5 ns
+  localparam int unsigned SELECT_T    = cadr_tick_pkg::ticks(5);
 @end
 
 @mutation the-write-pulse-opens-a-tick-late
@@ -345,9 +345,9 @@
 @file rtl/machine/cadr_phase_gen.sv
 @note -TPW45, the one that ends the write to the control store.
 @old
-  localparam int unsigned WPIRAM_OFF_T = 45 / TICK_NS; // -TPW45
+  localparam int unsigned WPIRAM_OFF_T = cadr_tick_pkg::ticks(45); // -TPW45
 @new
-  localparam int unsigned WPIRAM_OFF_T = 50 / TICK_NS; // -TPW50
+  localparam int unsigned WPIRAM_OFF_T = cadr_tick_pkg::ticks(50); // -TPW50
 @end
 
 @mutation the-write-pulse-outlives-the-boundary
@@ -521,12 +521,12 @@
 @note only shows because the trace's grants land at varied phases.
 @old
     if (rst) begin
-      vco_count <= 7'd0;
-      vco       <= 1'b1;
+      vco_acc <= 9'd0;
+      vco     <= 1'b1;
 @new
     if (rst || (mclk && !n_memrq && state != GRANTED && state != ACKED)) begin
-      vco_count <= 7'd0;
-      vco       <= 1'b1;
+      vco_acc <= 9'd0;
+      vco     <= 1'b1;
 @end
 
 @mutation xbus-rq-dropped-at-the-acknowledgement
@@ -574,9 +574,9 @@
 @note the memory port does, so one mutation of `SETUP_T` is one tick outside
 @note BOTH bounds and no second record is written for the second clause.
 @old
-  localparam int unsigned SETUP_T = 80 / 5;
+  localparam int unsigned SETUP_T = cadr_tick_pkg::ticks(80);
 @new
-  localparam int unsigned SETUP_T = 75 / 5;
+  localparam int unsigned SETUP_T = cadr_tick_pkg::ticks(75);
 @end
 
 @mutation the-read-deskew-is-long
@@ -585,9 +585,9 @@
 @note The 60 ns tap of the TD100 at REQLM 0C09, which is what puts the word
 @note in MD.
 @old
-  localparam int unsigned DESKEW_T = 60 / 5;
+  localparam int unsigned DESKEW_T = cadr_tick_pkg::ticks(60);
 @new
-  localparam int unsigned DESKEW_T = 65 / 5;
+  localparam int unsigned DESKEW_T = cadr_tick_pkg::ticks(65);
 @end
 
 @mutation the-deskew-starts-a-tick-late
@@ -606,9 +606,9 @@
 @file rtl/machine/cadr_busint_xbus.sv
 @note 850 ns, so 425 a half period --- chip::VCO_PERIOD.
 @old
-  localparam int unsigned VCO_HALF_T = 425 / 5;
+  localparam int unsigned VCO_HALF_NS = 425;
 @new
-  localparam int unsigned VCO_HALF_T = 420 / 5;
+  localparam int unsigned VCO_HALF_NS = 420;
 @end
 
 @mutation the-timeout-comes-a-period-early
@@ -1762,9 +1762,9 @@
 @note records that the explanation this list used to give for that third
 @note tick has been disproved.
 @old
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
 @new
-  localparam int unsigned RD_FINISH_T = (140 / 5);
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140);
 @end
 
 @mutation the-read-finish-delay-is-a-tick-longer
@@ -1795,9 +1795,9 @@
 @note because it has the real bus interface under it rather than a model of
 @note one, and a record has to sit on the check that pays.
 @old
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
 @new
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 2;
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 2;
 @end
 
 @mutation a-hang-ends-a-tick-late-on-the-machine
@@ -1816,9 +1816,9 @@
 @note the real bus interface --- and an edge is only tested on the check that
 @note has it.
 @old
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 3;
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 3;
 @new
-  localparam int unsigned RD_FINISH_T = (140 / 5) - 4;
+  localparam int unsigned RD_FINISH_T = cadr_tick_pkg::ticks(140) - 4;
 @end
 
 @mutation use-md-does-not-mind-a-nopped-cycle
@@ -2066,9 +2066,9 @@
 @note read off the part, where RD_FINISH_T is a number chosen. Both deserve
 @note interrogating and only one was.
 @old
-  localparam int unsigned MFINISHD_T  = 30 / 5;
+  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(30);
 @new
-  localparam int unsigned MFINISHD_T  = 50 / 5;
+  localparam int unsigned MFINISHD_T  = cadr_tick_pkg::ticks(50);
 @end
 
 @mutation a-hang-may-be-taken-while-a-wait-is-up
@@ -3631,11 +3631,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note evidence for it.  Written at five and not zero so that it is the
 @note smaller of the two holds that is missing.
 @old
-      spin        <= 24'd10;
-      into        <= 20'd10;
+      spin        <= 24'(2 * cadr_tick_pkg::TICK_NS);
+      into        <= 20'(2 * cadr_tick_pkg::TICK_NS);
 @new
-      spin        <= 24'd5;
-      into        <= 20'd5;
+      spin        <= 24'(cadr_tick_pkg::TICK_NS);
+      into        <= 20'(cadr_tick_pkg::TICK_NS);
 @end
 
 @mutation disk-seek-settle-a-tick-short
@@ -6537,9 +6537,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note which is the card's half of the agreement muir's snap is the mouse's
 @note half of.
 @old
-  localparam int unsigned KB_CLK_T       = 8_000 / 5;
+  localparam int unsigned KB_CLK_T       = cadr_tick_pkg::ticks(8_000);
 @new
-  localparam int unsigned KB_CLK_T       = 16_000 / 5;
+  localparam int unsigned KB_CLK_T       = cadr_tick_pkg::ticks(16_000);
 @end
 
 @mutation iob-the-mouse-clock-follows-the-microsecond-clocks-phase
@@ -6659,9 +6659,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note carries a `slip` column rather than a tolerance so that the rounding is
 @note a stated instant.
 @old
-  localparam int unsigned USEC_LOW_T     = (313 + 4) / 5;
+  localparam int unsigned USEC_LOW_T     = cadr_tick_pkg::ticks(313);
 @new
-  localparam int unsigned USEC_LOW_T     = 313 / 5;
+  localparam int unsigned USEC_LOW_T     = 313 / cadr_tick_pkg::TICK_NS;
 @end
 
 @mutation iob-the-counters-low-half-is-read-at-ssyn
@@ -7106,9 +7106,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `cadr_microcycle.sv` gates -LOADMD by RDCYC and the strobe changes
 @note nothing at all, and `busint_xbus.golden` never leaves the Xbus.
 @old
-  localparam int unsigned UB_STROBE_T  = 100 / 5;   // -UB SSYN to the MD strobe
+  localparam int unsigned UB_STROBE_T  = cadr_tick_pkg::ticks(100);  // -UB SSYN to the MD strobe
 @new
-  localparam int unsigned UB_STROBE_T  = 150 / 5;   // -UB SSYN to the MD strobe
+  localparam int unsigned UB_STROBE_T  = cadr_tick_pkg::ticks(150);  // -UB SSYN to the MD strobe
 @end
 
 # ---------------------------------------------------------------------------
@@ -7619,9 +7619,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `disk-seek-settle-a-tick-short`'s shape and is here so that a tolerance
 @note widening on this check reddens the run.
 @old
-  localparam int unsigned SSYN_T   = 250 / 5;
+  localparam int unsigned SSYN_T   = cadr_tick_pkg::ticks(250);
 @new
-  localparam int unsigned SSYN_T   = 245 / 5;
+  localparam int unsigned SSYN_T   = cadr_tick_pkg::ticks(245);
 @end
 
 @mutation busint-regs-the-write-lands-at-the-answer
@@ -9586,9 +9586,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note netlist board at every phase of the board's clocks, which is why it is
 @note one number and not a range.
 @old
-  localparam int unsigned CHAOS_BUF_T    = 350 / 5;
+  localparam int unsigned CHAOS_BUF_T    = cadr_tick_pkg::ticks(350);
 @new
-  localparam int unsigned CHAOS_BUF_T    = 250 / 5;
+  localparam int unsigned CHAOS_BUF_T    = cadr_tick_pkg::ticks(250);
 @end
 
 @mutation iob-the-receive-buffers-read-waits-no-clock
@@ -9619,7 +9619,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note moving the phase moves EVERY answer of the group, by as much as half a
 @note microsecond at the wrong side of an edge.
 @old
-  localparam int unsigned HU_FIRST_T     = (203 + 4) / 5;
+  localparam int unsigned HU_FIRST_T     = cadr_tick_pkg::ticks(203);
 @new
   localparam int unsigned HU_FIRST_T     = HU_PERIOD_T;
 @end
@@ -11020,9 +11020,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note and no count would show.  Caught at "the ticks 63 steps of the mouse
 @note took".
 @old
-  localparam int unsigned MOUSE_STEP_T = 16_000 / 5;
+  localparam int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(16_000);
 @new
-  localparam int unsigned MOUSE_STEP_T = 8_000 / 5;
+  localparam int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(8_000);
 @end
 
 @mutation input-the-mouse-comes-up-at-phase-zero
@@ -12461,9 +12461,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note line says it a second way, "ticks of -BOOT* low is 14382, the reference
 @note says 14400".
 @old
-  localparam int unsigned BOOT_T     = 4_000 / 5;
+  localparam int unsigned BOOT_T     = cadr_tick_pkg::ticks(4_000);
 @new
-  localparam int unsigned BOOT_T     = 4_000 / 5 - 1;
+  localparam int unsigned BOOT_T     = cadr_tick_pkg::ticks(4_000) - 1;
 @end
 
 @mutation boot-the-card-pulls-the-line-for-every-word
@@ -13098,9 +13098,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note reaches the far end's latches.  One tick in twenty, on a documented
 @note constant: `disk-seek-settle-a-tick-short`'s shape.
 @old
-  localparam int unsigned DBG_REQ_T = 100 / 5;
+  localparam int unsigned DBG_REQ_T = cadr_tick_pkg::ticks(100);
 @new
-  localparam int unsigned DBG_REQ_T = 95 / 5;
+  localparam int unsigned DBG_REQ_T = cadr_tick_pkg::ticks(95);
 @end
 
 @mutation the-debug-decode-runs-to-the-end-of-the-block
@@ -14462,9 +14462,9 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @note moves the same gate twenty ticks the other way; this one moves it one,
 @note which is the distance a constraint cares about.
 @old
-  localparam int unsigned STROBE_T = 150 / 5;
+  localparam int unsigned STROBE_T = cadr_tick_pkg::ticks(150);
 @new
-  localparam int unsigned STROBE_T = 145 / 5;
+  localparam int unsigned STROBE_T = cadr_tick_pkg::ticks(145);
 @end
 
 @mutation the-memory-path-leaves-reset-a-tick-late

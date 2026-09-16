@@ -186,9 +186,15 @@ module cadr_debug_window #(
     parameter logic [31:0] LIFT     = 32'h4C49_4654,
     // busint::DEBUG_OUT_REQUEST_NS, in ticks: the levels are on the cable
     // this long before the request, and this long after the lift.
-    parameter int unsigned LEAD_T   = 100 / 5,
+    parameter int unsigned LEAD_T   = cadr_tick_pkg::ticks(100),
     // How long a request may stand before the watchdog lifts it.  One second
     // at the 10 ns tick.  See the header: it is a floor with margin.
+    //
+    // **BOARD TICKS AND NOT MIT'S GRID**, which is why it names no
+    // nanosecond figure and does not go through `cadr_tick_pkg`.  It is a
+    // bound on how long a wedged bus may stand before somebody at the
+    // board notices, so what it wants is a second of REAL time; `LEAD_T`
+    // above it is the machine's own instant and is on the grid.
     parameter int unsigned WATCHDOG_T = 100_000_000
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns

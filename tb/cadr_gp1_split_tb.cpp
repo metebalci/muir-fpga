@@ -61,6 +61,7 @@
 
 #include "Vcadr_gp1_split_harness.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
@@ -100,8 +101,8 @@ const uint32_t kMarkMask = 3u << 14;
 // busint::DEBUG_CYCLE and the three after it.
 const unsigned kACycle = 0, kAStatus = 1, kAModifier = 2, kAAddress = 3;
 // busint::DEBUG_OUT_REQUEST_NS and DEBUG_RELEASE_NS, in ticks.
-const long kLeadT = 100 / 5;
-const long kReleaseT = 100 / 5;
+const long kLeadT = GridTicks(100);
+const long kReleaseT = GridTicks(100);
 
 // spy::BASE.
 const uint32_t kSpyBase = 0766000u;

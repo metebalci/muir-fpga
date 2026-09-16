@@ -141,10 +141,11 @@
 
 #include "Vcadr_machine.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
-constexpr long kTickNs = 5;
+constexpr long kTickNs = kGridNs;
 constexpr int kXbusAckNs = 60;
 
 // cadr_ddr_map::MAIN_BASE, and the page the parity loop walks.
