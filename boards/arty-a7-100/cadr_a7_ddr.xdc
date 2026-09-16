@@ -119,12 +119,17 @@ set_max_delay -datapath_only -from $mach -to [get_clocks jtag_mem_drck] 100.000
 # handshake watching the request --- which is the one signal the contract must
 # NOT relax.
 #
-# **AND `-from` THE MACHINE'S OWN REGISTERS AND NOT EVERYTHING.**  The debugger's
-# window sits in front of these registers and multiplexes its own address in,
-# so the fanin of that `D` pin includes the window's arbiter, which changes one
-# tick before the capture rather than sixteen.  Relaxing that arc would relax a
-# select that has to be right immediately.  Starting the exception at the
-# machine's registers leaves it timed at one tick, where it belongs.
+# **AND `-from` THE MACHINE'S OWN REGISTERS AND NOT EVERYTHING.**  The memory's
+# arbiter, `rtl/plumbing/cadr_mem_share.sv`, sits in front of these registers
+# and multiplexes four masters' addresses in --- the debugger's window, the
+# disk pack face's master and the soft processing system's window beside the
+# machine --- so the fanin of that `D` pin includes the arbiter's owner
+# register, which changes one tick before the capture rather than sixteen, and
+# the other three masters' own address registers, which make no 80 ns promise
+# at all.  Relaxing those arcs would relax a select that has to be right
+# immediately and addresses nobody gave sixteen ticks.  Starting the exception
+# at the machine's registers leaves all of them timed at one tick, where they
+# belong.
 set contract [get_pins -quiet {g_memory.u_memory/u_cross/addr_q_reg[*]/D \
                                g_memory.u_memory/u_cross/wdata_q_reg[*]/D \
                                g_memory.u_memory/u_cross/write_q_reg/D}]

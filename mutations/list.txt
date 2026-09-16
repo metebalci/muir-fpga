@@ -13350,26 +13350,241 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
       if (!req_a) begin
 @end
 
-@mutation the-machine-takes-the-windows-answer
+@mutation share-every-master-takes-the-answer
+@check a7_mem
+@file rtl/plumbing/cadr_mem_share.sv
+@note **The port's answer handed to every master and not only to the one whose
+@note turn it is.**  The machine may ask while another master's word is in
+@note flight, and the debugger's window may be waiting behind the disk pack
+@note face's master.  With the answer ungated, whichever of them is waiting
+@note takes the word somebody else asked for and lets go as though it had been
+@note served.
+@note
+@note This replaces `the-machine-takes-the-windows-answer`, which held the same
+@note fault in `cadr_jtag_mem.sv` while that module was the arbiter between the
+@note machine and the debugger.  The arbitration moved into this file when the
+@note disk pack face's master and the soft processing system's window joined the
+@note port, and the fault moved with it.
+@note
+@note `owner` stays read, so lint has nothing to say and the check is what
+@note catches it.
+@note
+@note **Measured, the catching line is `ns 147473: the machine's word under
+@note contention is 0x2468ace0, expected 0x13579bdf`** --- the machine, waiting
+@note behind the debugger's window, took the word the DEBUGGER asked for.  With
+@note the three masters streaming the run also reports that the quiet run
+@note answered masters which never asked.
+@old
+    done        = '0;
+    done[owner] = (st == ASK) && p_done;
+@new
+    done        = {N{(st == ASK) && p_done}};
+    done[owner] = (st == ASK) && p_done;
+@end
+
+@mutation share-the-machine-yields-when-two-others-ask
+@check a7_mem
+@file rtl/plumbing/cadr_mem_share.sv
+@note **The machine served first only while no more than one other master is
+@note asking**, so that when the disk pack face and the window are both waiting,
+@note one of them goes ahead of the machine.  A machine cycle that arrives while
+@note a word is in flight then waits for that word and for a second one, which
+@note is exactly the case the growth bound exists to tell from the first: one
+@note access is what the bound allows, and two is what this costs.
+@note
+@note **THE FIRST DRAFT OF THIS RECORD MADE THE MACHINE WAIT UNTIL NOBODY ELSE
+@note ASKED, AND IT WAS CAUGHT BY THE WRONG PROPERTY.**  The window streams words
+@note back to back, so the machine never got in at all and the run stopped on
+@note its own hang guard, `a growth run did not finish: machine 42 of 96`.  That
+@note says the arbiter can starve the machine; it says nothing about whether the
+@note bound would see a machine that waits one word too many, and this is the
+@note mutation that asks that.
+@note
+@note **Measured, the catching line is the bound's own**: `machine access 10 is
+@note 52 ticks with the face and the window streaming and 10 with them idle, 42
+@note more than the 25 one access may cost it`.
+@old
+    if (req[0]) begin
+@new
+    if (req[0] && !(req[2] && req[3])) begin
+@end
+
+# **AN EQUIVALENCE, MEASURED, SO THAT NOBODY FILES IT AS A HOLE.**  Letting the
+# arbiter choose the next owner without waiting for the last owner's answer to
+# fall --- `LET_GO: if (!p_done)` weakened to always --- was written, run and
+# SURVIVED `a7_mem`, and it is not a hole.  `cadr_mem_cross.sv` drops its own
+# request at the very edge the arbiter sees the owner let go, and its answer is
+# that request ANDed with its acknowledgment, so the answer has already fallen
+# by the time `LET_GO` looks.  The crossing will not take the next request until
+# its acknowledgment has cleared either.  So the wait in `LET_GO` is never the
+# thing that keeps an owner from being handed the previous answer; the crossing
+# is.  The wait stays, because it makes the arbiter's promise a property of that
+# file rather than of the crossing behind it.
+
+@mutation share-the-address-follows-the-choice-not-the-owner
+@check a7_mem
+@file rtl/plumbing/cadr_mem_share.sv
+@note **The address steered by who would be chosen next rather than by who has
+@note the port.**  The choice is combinational and moves whenever a master
+@note starts or stops asking, and the crossing behind the arbiter may be waiting
+@note for its own acknowledgment to clear before it takes the request.  So the
+@note address it captures is whichever master happened to be first in line at
+@note that tick, under the owner's request and the owner's data.
+@note
+@note It is also the one place a combinational select would ripple into the
+@note register the bus's 80 ns contract relaxes, which is why the module steers
+@note by the registered owner.
+@note
+@note **Measured, the catching line is `ns 6531: the window's word while the
+@note others streamed is 0x72404800, expected 0x67906012`** --- a word read back
+@note from an address the arbiter's own choice picked rather than the one the
+@note window asked for.
+@old
+  assign p_addr  = addr[owner];
+@new
+  assign p_addr  = addr[pick];
+@end
+
+@mutation hp2-the-high-word-is-read-from-the-low-words-place
+@check a7_mem
+@file rtl/plumbing/cadr_hp2_mem.sv
+@note **Both halves of a read beat taken from the beat's first byte.**  Word 2k
+@note of the record is the low half of beat k and word 2k+1 the high half, four
+@note bytes on.  Read from the same place, every odd word of the record lands in
+@note the store as the even word before it.
+@note
+@note A round trip through the same module cannot see a fault that is the same
+@note both ways, which is why the check reads the slot straight out of the
+@note store the face filled.
+@note
+@note **Measured, and the catching line is that read**: `ns 328351: a place of
+@note the slot the face filled is 0x42400000, expected 0x42400004`.
+@old
+        R_LET_GO: if (!mem_done) begin
+          if (!half) begin
+            half    <= 1'b1;
+            word_at <= at + 32'd4;
+@new
+        R_LET_GO: if (!mem_done) begin
+          if (!half) begin
+            half    <= 1'b1;
+            word_at <= at;
+@end
+
+@mutation hp2-the-next-beat-reads-the-last-beats-place
+@check a7_mem
+@file rtl/plumbing/cadr_hp2_mem.sv
+@note **The word address left behind when a read burst moves to its next
+@note beat**, while the beat's own address moves on.  The low word of every beat
+@note after the first comes from the beat before it, and the high word from the
+@note right place, so the record arrives in the store with half its words one
+@note beat late.
+@note
+@note **Measured, the catching line is `ns 328351: a place of the slot the face
+@note filled is 0x42400000, expected 0x42400008`**, which is the second beat's
+@note low word carrying the first beat's.
+@old
+            word_at <= at + 32'd8;
+@new
+            word_at <= at;
+@end
+
+@mutation hp2-writes-the-pad
+@check a7_mem
+@file rtl/plumbing/cadr_hp2_mem.sv
+@note **The high half of every write beat written whatever its strobes say.**
+@note The face's last beat carries the data checkword in its low half and
+@note strobes nothing in its high half, because the word after the record is
+@note never written.  Written anyway, it is whatever the face left in that
+@note register, over a word that belongs to somebody else.
+@note
+@note What catches it is the pad: the check poisons the write-back area first
+@note and requires the word after the record to be poison still.  **Measured,
+@note the catching line is `ns 457693: the pad after a written-back record is
+@note 0x00abc000, expected 0xe37ff3f3`** --- and the word written over the pad
+@note is the slot's own tag, which is what the face happened to leave in that
+@note register.
+@old
+          end else if (nib == 4'hF) begin
+@new
+          end else if (nib == 4'hF || half) begin
+@end
+
+@mutation hp2-the-last-beat-is-called-a-beat-early
+@check a7_mem
+@file rtl/plumbing/cadr_hp2_mem.sv
+@note **RLAST one beat early.**  `cadr_disk_pack.sv` holds a burst to ending
+@note where its length says, because a slave that ends a burst early has handed
+@note over the wrong number of words, and a block made of them is not to be
+@note trusted.  So every fetch reports an error.  **Measured, the catching line
+@note is `ns 328351: the status of a fetch of a record the window wrote is
+@note 0x00000006, expected 0x00000002`**, which is the face's done bit with its
+@note error bit beside it.
+@old
+  assign s_rlast  = (beat == len);
+@new
+  assign s_rlast  = (beat + 4'd1 == len);
+@end
+
+@mutation hp2-a-refused-word-reads-as-okay
+@check a7_mem
+@file rtl/plumbing/cadr_hp2_mem.sv
+@note **A word the memory refused, handed to the face as an ordinary word.**
+@note `cadr_mig_ui.sv` refuses any address outside the machine's reservation, and
+@note the only way the face can learn that its record was placed wrong is RRESP.
+@note Swallowed here, a fetch from the wrong place completes cleanly with a slot
+@note full of zeros.
+@note
+@note `mem_error` stays read, so lint has nothing to say.
+@note
+@note **Measured, the catching line is `ns 489451: a fetch from
+@note outside the reservation ended with status 0x2 and no error`**,
+@note which is the refusal reported as a clean fetch.  The line is
+@note legible only because the check's failure prints now begin with
+@note `FAIL:`; before that the runner showed this record's catch as
+@note the bare count `2 disagreement(s)`, which says a check bit and
+@note not what it saw.
+@old
+          if (mem_error) rerr <= 1'b1;
+@new
+          if (mem_error) rerr <= rerr;
+@end
+
+@mutation the-window-takes-its-answer-before-it-comes
 @check a7_mem
 @file rtl/plumbing/cadr_jtag_mem.sv
-@note **The debugger's window and the machine sharing one port, with the
-@note machine's answer not gated on whose transaction it is.**  The window
-@note takes the port only when the machine is not asking, but the machine may
-@note ask while a window transaction is in flight --- and then `p_done` is the
-@note window's, and a machine that takes it reads the word the DEBUGGER asked
-@note for.
+@note **The debugger's transaction ended before the port answered it.**  The
+@note module asks the arbiter and waits for its turn and its answer, like every
+@note other master; ended at once, it drops its request having taken whatever
+@note word stood on the shared lines, and a read the host scans back is not the
+@note word at the address it asked for.  **Measured, the catching line is `ns
+@note 130603: the window's read is 0x00000000, expected 0xa1b2c3d4`.**
 @note
-@note On this board that matters more than it would on the other one: an Artix
-@note has no debug access port onto memory, so the debugger's own words travel
-@note the machine's path, and this is the one place the two can be confused.
-@note The check runs a machine read at twelve different offsets into a window
-@note transaction for that reason --- a race check needs the stimulus that
-@note loses the race.
+@note `p_done` stays read, so lint has nothing to say.
 @old
-  assign m_done  = (owner == MACHINE) && p_done;
+      end else if (busy && p_done) begin
 @new
-  assign m_done  = p_done;
+      end else if (busy && (p_done || !p_done)) begin
+@end
+
+@mutation a7-harness-the-face-and-the-window-change-places
+@check a7_mem
+@file tb/cadr_a7_mem_harness.sv
+@note **Two of the arbiter's masters' requests wired to each other's places**,
+@note with their answers left where they were.  The index of a master is its
+@note place in a concatenation, and `boards/arty-a7-100/cadr_arty_a7.sv` says so
+@note at its own copy, which lint alone holds.  Crossed, each master waits for an
+@note answer the arbiter gives the other, and the face and the window stop.
+@note
+@note The file is the harness because the top level's copy is out of a
+@note mutation's reach: `arty_a7` is a lint with no entry in the runner's table.
+@note
+@note **Measured, the catching line is the check's own hang guard**: `ns 235075:
+@note the window got no answer at 0x1c800000; a hang, so the run stops here`.
+@old
+      .req  ({win_req,   hp_mem_req,   jw_req,   mem_req}),
+@new
+      .req  ({hp_mem_req, win_req,     jw_req,   mem_req}),
 @end
 
 # ================= THE SOFT PROCESSING SYSTEM ON THE ARTY A7-100 ===========
@@ -13404,7 +13619,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note is caught on the console and not on the disk pack side, at the third
 @note line: `the console at 0x80000000 answers .... (0x00000000), wanting
 @note CONS (0x434f4e53)` --- word 0 became word 1, which is STAT, and STAT is
-@note zero at that instant.  The prediction was that the pack side would be
+@note zero at that instant.  The runner reports `the firmware said 22 line(s),
+@note wanting 23` first, measured at this slice.  The prediction was that the pack side would be
 @note the one to say so.  The catching line is quoted rather than reasoned
 @note about, which is what this file asks of every record.
 @old
@@ -13426,11 +13642,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note early would make the very next read of FLAG-1 mean nothing.
 @note
 @note It also leaves the slave's `BVALID` standing with nobody to take it, so
-@note the write channel is never drained.  **Measured, the catching line is
-@note `the firmware said 6 line(s), wanting 12`**: the firmware gets as far as
-@note halting the machine and then stops, because the console's next write
-@note never completes.  The transaction counters in the check say so too, and
-@note the line count is what the runner reports first.
+@note the write channel is never drained.  **Measured with the faces and the
+@note DDR window in the design, the catching line is `the firmware said 8
+@note line(s), wanting 23`**: the firmware gets as far as halting the machine
+@note and then stops, because the console's next write never completes.  The
+@note transaction counters in the check say so too, and the line count is what
+@note the runner reports first.
 @note
 @note `bvalid_sel` is kept in the condition rather than deleted: a condition
 @note that dropped it would leave the signal unread and lint, not the check,
@@ -13470,7 +13687,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note
 @note **MEASURED, AND THE LEGIBLE LINE IS THE THIRD**: `the console at
 @note 0x80000000 answers NONE (0x4e4f4e45), wanting CONS (0x434f4e53)`.  The
-@note runner reports `the firmware said 12 line(s), wanting 13` first, because
+@note runner reports `the firmware said 22 line(s), wanting 23` first, because
 @note the halt and the step are then written into the default slave instead of
 @note the machine's own registers, the diagnostic cycles are not answered and
 @note two of the firmware's lines become one.  The identifier is what makes it
@@ -13506,10 +13723,11 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note console, which answers, so nothing hangs and no handshake is wrong ---
 @note what is wrong is the word that comes back.
 @note
-@note **MEASURED, AND IT IS CAUGHT ON THE LINE THAT IS ABOUT IT**: `line 11 is
+@note **MEASURED, AND IT IS CAUGHT ON THE LINE THAT IS ABOUT IT**: `line 16 is
 @note "cadr-soc: the window's page at 0x80001000 answers .... (0xbcb0b1ac),
 @note wanting NONE (0x4e4f4e45)"`, with `1 failure(s)` in the summary behind
-@note it.  The word is whatever the console makes of an address a thousand
+@note it.  It was line 11 before the I/O board's faces and main memory gave the
+@note firmware five more lines to say.  The word is whatever the console makes of an address a thousand
 @note registers past its own, which is not a value anybody could read as an
 @note identifier --- and that is the point: nothing else in the run moves, so
 @note the catch is the claim and nothing else.
@@ -13555,7 +13773,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note `the join's window arm asked for the DBGIN page on 1037005 tick(s)`,
 @note `the join gave the DBGIN page to its window arm on 1036942 tick(s)` and
 @note `something asked for the machine's DBGIN page on 1037005 tick(s)`.  The
-@note runner reports `the firmware said 12 line(s), wanting 13` first, and the
+@note runner reports `the firmware said 22 line(s), wanting 23` first --- it was
+@note 12 of 13 when those figures were taken --- and the
 @note damage behind that is exactly what the note above predicts: the debug
 @note master takes the debuggee's Unibus and holds it, the console's own
 @note diagnostic cycles are not answered --- `halted, but the diagnostic cycle
@@ -13695,6 +13914,106 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
   localparam logic [31:0] TICKS_PER_US = 32'(CLK_HZ / 1_000_000);
 @new
   localparam logic [31:0] TICKS_PER_US = 32'(CLK_HZ / 2_000_000);
+@end
+
+# ------------------------------------------------ main memory and `M_AXI_GP0`
+#
+# The bridge hands `M_AXI_GP0`'s whole gigabyte to the Zynq boards' splitter,
+# and offers the firmware a window onto the machine's reservation as a word a
+# request on the memory's arbiter.  The firmware reads every face's
+# identifier, writes and reads a record through the window, has the disk pack
+# face fetch it and write it back, and reads the face's interrupt in `mip`.
+
+@mutation soc-the-window-is-laid-off-the-reservation
+@check soc
+@file rtl/plumbing/cadr_soc_axi.sv
+@note **The window's words laid onto the wrong 128 MB.**  The translation is the
+@note reservation's top bits over the window's offset, and one bit of those
+@note wrong puts every word the firmware stores somewhere the machine and the
+@note disk pack face never look, where the memory refuses it.
+@note
+@note Written as an XOR so that `DDR_TARGET` stays read; a parameter nothing
+@note reads is a lint warning and lint would do the catching.
+@note
+@note **Measured, the catching line is `the firmware said 20 line(s), wanting
+@note 23`**: the firmware's own probe of the window faults, it says so and skips
+@note the three lines that need memory, which is exactly what it does on a board
+@note built without any.
+@old
+  assign ddr_addr  = {DDR_TARGET[31:DDR_BITS], a_hold[DDR_BITS-1:0]};
+@new
+  assign ddr_addr  = {DDR_TARGET[31:DDR_BITS] ^ 5'd1, a_hold[DDR_BITS-1:0]};
+@end
+
+@mutation soc-a-byte-store-is-taken-as-a-word
+@check soc
+@file rtl/plumbing/cadr_soc_axi.sv
+@note **A byte store into the window passed to the memory as a word store.**
+@note The memory port writes whole words, so a byte store either overwrites the
+@note three bytes beside it or needs a read and a write the machine could step
+@note between.  Refused, the core takes a store access fault and the word is
+@note untouched; let through, the word changes.
+@note
+@note What catches it is the firmware's probe, which asks for the fault and
+@note reads the word either side of it.  That needs a trap handler that returns,
+@note which `boards/arty-a7-100/firmware/start.S` grew for this.
+@note
+@note **Measured, the catching line is `line 18 is "cadr-soc: a byte stored into
+@note the window is refused with mcause 0, and the word CHANGED"`.**
+@old
+              st <= (we && be != 4'hF) ? D_REFUSE : D_ASK;
+@new
+              st <= (we && be == 4'h0) ? D_REFUSE : D_ASK;
+@end
+
+@mutation soc-the-gp0-gigabyte-is-only-the-pack-page
+@check soc
+@file rtl/plumbing/cadr_soc_axi.sv
+@note **`M_AXI_GP0` matched as one page instead of a gigabyte**, which is the
+@note bridge as it was when the disk pack face was the only face there.  The
+@note splitter is behind it and answers four pages, but only the first ever
+@note reaches it: the Chaosnet cable's page, the serial line's and the input
+@note cables' fall through to the bridge's own default slave and read "NONE".
+@note
+@note What catches it is the firmware holding each face to its own header's
+@note identifier, which is why every face has one.  **Measured, the catching
+@note line is `line 12 is "cadr-soc: the Chaosnet cable at 0x40001000 answers
+@note NONE (0x4e4f4e45), wanting CHAO (0x4348414f)"`** --- the first face past
+@note the page the bridge still matched.
+@old
+    if (page[19:18] == GP0_BASE[31:30]) return S_GP0;
+@new
+    if (page == GP0_BASE[31:12]) return S_GP0;
+@end
+
+# **A SECOND EQUIVALENCE, MEASURED, SO THAT NOBODY FILES IT AS A HOLE.**  The
+# bridge going back to idle without waiting for the DDR window's answer to fall
+# --- `D_LET_GO: if (!ddr_done)` weakened to always --- was written, run and
+# SURVIVED `soc`.  Two neighbors make it harmless.  `cadr_mem_share.sv` gates
+# each master's answer by whose turn it is, and `cadr_soc_cross.sv` does not
+# offer the bridge another request until its own four-phase handshake has
+# closed, which is several clocks later.  The wait stays because it makes the
+# bridge's own behavior independent of both of them, and this is the same shape
+# as the crossing's fourth phase one seam along, which is recorded there.
+
+@mutation soc-the-faces-interrupts-change-places
+@check soc
+@file rtl/plumbing/cadr_soc.sv
+@note **The disk pack face's interrupt and the Chaosnet cable's crossed on their
+@note way to the core.**  Each face's line is one of Ibex's fast interrupts, in
+@note `IRQ_F2P`'s order, so that a firmware reading `mip` bit 16 + n and Linux
+@note reading `IRQ_F2P` bit n are asking about the same face.  Crossed, the face
+@note that raised its line is not the one `mip` names.
+@note
+@note What catches it is the firmware enabling the face's "move finished" event
+@note and reading `mip` with its own interrupts off.  **Measured, the catching
+@note line is `line 21 is "cadr-soc: the disk pack face's interrupt reads mip
+@note 0x20000 enabled and 0x00000 disabled"`**, which is fast interrupt 1, the
+@note Chaosnet cable's.
+@old
+      irq_meta <= irq;
+@new
+      irq_meta <= {irq[2], irq[0], irq[1]};
 @end
 
 # ------------------------------------------------------ what says a download took

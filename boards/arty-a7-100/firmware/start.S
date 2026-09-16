@@ -78,7 +78,33 @@ _start:
 
 	.globl _trap_entry
 _trap_entry:
-	// Nothing is saved.  This handler does not return: it prints what
+	// **ONE FAULT MAY BE ASKED FOR, AND THEN THIS RETURNS.**
+	// `soc_probe_load` and `soc_probe_store8` below set `soc_fault` before
+	// the one instruction that may fault and clear it after.  An exception
+	// taken while it is set is recorded, the faulting instruction is stepped
+	// over --- it is four bytes, this whole file being `norvc` --- and the
+	// core goes on at the instruction after it.  That is what lets a firmware
+	// show that a refusal is a refusal: the DDR window answers a byte store
+	// with a store access fault, and a handler that could only park would
+	// make the one check of it the last thing the firmware ever did.
+	//
+	// Only an exception, and only while asked.  `mcause` has its top bit set
+	// for an interrupt, and nothing in this firmware enables one.  `t1` and
+	// `t2` are the probes' own scratch, so the path that returns disturbs
+	// nothing a probe's caller holds.
+	la	t1, soc_fault
+	lw	t2, 0(t1)
+	beqz	t2, 5f
+	csrr	t2, mcause
+	bltz	t2, 5f
+	sw	t2, 4(t1)
+	sw	zero, 0(t1)
+	csrr	t2, mepc
+	addi	t2, t2, 4
+	csrw	mepc, t2
+	mret
+5:
+	// Nothing is saved on this path.  It does not return: it prints what
 	// happened and parks, so the registers it stands on are the last
 	// evidence anybody wanted and the stack pointer is the only thing that
 	// has to be sound.
@@ -88,3 +114,56 @@ _trap_entry:
 	csrr	a2, mtval
 	call	soc_trap
 4:	j	4b
+
+	.section .text, "ax"
+
+	// uint32_t soc_probe_load(uint32_t addr, uint32_t *cause)
+	//
+	// One load that may fault.  The word it read, or zero if it faulted, and
+	// the fault's `mcause` in `*cause`, zero if there was none.
+	.globl soc_probe_load
+soc_probe_load:
+	la	t1, soc_fault
+	sw	zero, 4(t1)
+	li	t2, 1
+	sw	t2, 0(t1)
+	mv	t0, a0
+	li	a0, 0
+	lw	a0, 0(t0)
+	la	t1, soc_fault
+	sw	zero, 0(t1)
+	lw	t2, 4(t1)
+	sw	t2, 0(a1)
+	ret
+
+	// void soc_probe_store8(uint32_t addr, uint8_t value, uint32_t *cause)
+	//
+	// One byte store that may fault, and its `mcause` in `*cause`.
+	.globl soc_probe_store8
+soc_probe_store8:
+	la	t1, soc_fault
+	sw	zero, 4(t1)
+	li	t2, 1
+	sw	t2, 0(t1)
+	sb	a1, 0(a0)
+	la	t1, soc_fault
+	sw	zero, 0(t1)
+	lw	t2, 4(t1)
+	sw	t2, 0(a2)
+	ret
+
+	// uint32_t soc_read_mip(void)
+	//
+	// The pending interrupts, read without enabling any.  Ibex shows its
+	// interrupt inputs in `mip` as they stand, so this is what the wires say.
+	.globl soc_read_mip
+soc_read_mip:
+	csrr	a0, mip
+	ret
+
+	// Whether a fault is asked for, and the cause of the one that came.
+	.section .bss
+	.balign 4
+	.globl soc_fault
+soc_fault:
+	.space 8

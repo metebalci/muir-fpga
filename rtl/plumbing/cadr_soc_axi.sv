@@ -1,29 +1,46 @@
 // SPDX-FileCopyrightText: 2026 Mete Balci
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The bridge: one of the soft core's loads or stores becomes one AXI
-// transaction at one of the machine's register faces.
+// The bridge: one of the soft core's loads or stores becomes one transaction
+// at one of the machine's register faces, or one word of the board's DDR3L.
 //
 // **THE WHOLE POINT OF THIS FILE IS THAT NOTHING BEHIND IT CHANGES.**  The
-// console, the disk pack face and the default slave were written against the
-// Zynq's `M_AXI_GP0` and `M_AXI_GP1`: 32 bits, AXI3, 12-bit identifiers, one
-// write and one read in flight at once, the whole address handed in.  A soft
-// processing system that could not present exactly that would be a second
-// description of every face, and this project's own record of what two
-// descriptions of one thing cost fills a page.  So this presents that, and
-// `rtl/plumbing/cadr_console.sv`, `rtl/plumbing/cadr_disk_pack.sv` and
-// `rtl/plumbing/cadr_gp0_default.sv` are instantiated on this board with the
-// same parameters and the same wires they have on the other two, and their
-// checks are unchanged.  What this board does NOT hang off it is the debug
-// cable's register window: that face is how a program plays the debugger, and
-// this board has no program that does.  The parameter list below has the
-// argument.
+// faces were written against the Zynq's `M_AXI_GP0` and `M_AXI_GP1`: 32 bits,
+// AXI3, 12-bit identifiers, one write and one read in flight at once, the
+// whole address handed in.  A soft processing system that could not present
+// exactly that would be a second description of every face, and this
+// project's own record of what two descriptions of one thing cost fills a
+// page.  So this presents that, and the faces are instantiated on this board
+// with the same parameters and the same wires they have on the other two, and
+// their checks are unchanged.
 //
-// **AND THE FIRMWARE AND THE LINUX PROGRAMS THEREFORE SHARE ONE MAP.**
-// `console_face.h` says the console is at `0x8000_0000` and `pack_side.h`
-// says the pack side is at `0x4000_0000`, and both are true of this board,
-// where there is no Zynq to decode either.  A header that had to say "except
-// on the Artix" would be the beginning of two programs.
+// **`M_AXI_GP0` IS A GIGABYTE AND IT IS HANDED OVER WHOLE.**  On the Zynq the
+// general-purpose port from `0x4000_0000` to `0x7FFF_FFFF` goes to
+// `rtl/plumbing/cadr_gp0_split.sv`, which gives four pages to the disk pack
+// face and the I/O board's three far ends --- the Chaosnet cable, the serial
+// line, the keyboard and mouse --- and answers the rest with a default slave.
+// This bridge sends that whole gigabyte to the same splitter, so the four
+// faces sit at the same addresses behind the same decode on both boards, and
+// the programs' headers are true of both.  What the debug cable's register
+// window was on `M_AXI_GP1` is not here: that face is how a program plays the
+// debugger, and this board has no program that does.
+//
+// **AND THE DDR WINDOW IS NOT A FACE, AND IT IS NOT AXI.**  On the Zynq, Linux
+// writes a disk block into DDR itself and tells the pack face where it is.
+// This board has no Linux, so the firmware has to reach DDR, and this bridge
+// gives it a 128 MB window at `DDR_BASE` onto exactly the machine's
+// reservation: a load or store there becomes one word request on
+// `rtl/plumbing/cadr_mem_share.sv`, the arbiter the machine, the debugger and
+// the disk pack face also use.  The address is the window's offset laid onto
+// the reservation, one constant set of top bits, so a word the firmware stores
+// at `0x2480_0000` is the word the pack face fetches from `0x1C80_0000`.
+//
+// **A STORE NARROWER THAN A WORD IS REFUSED.**  The memory port writes whole
+// words.  A byte or half-word store would either overwrite the bytes beside it
+// or need a read and a write that the machine could step between, so it is
+// answered at once with `err`, which the core takes as a store access fault,
+// and nothing reaches the memory.  A load of any width is a word load, and the
+// core takes the bytes it wanted.
 //
 // WHAT A TRANSACTION LOOKS LIKE.  Single beat, always: `AWLEN` and `ARLEN`
 // are zero, `WLAST` is one, and `RLAST` is expected to come back one.  That
@@ -33,15 +50,14 @@
 //
 // **ONE TRANSACTION AT A TIME, AND THAT IS WHAT MAKES ONE SELECTION SAFE.**
 // `rtl/plumbing/cadr_gp0_split.sv` holds TWO selections, one per channel,
-// because the thing in front of it is a processing system that drives the
-// read and the write channels independently and a single held selection would
-// route a read to whichever slave a write in flight had chosen.  The thing in
-// front of THIS is the core's load-store unit through a seam that takes one
-// request and answers it before it takes another, so there is never a read
-// and a write in flight together and `sel` is one register.  That is a
-// property of this file and not an assumption about somebody else's master,
-// and `tb/cadr_soc_tb.cpp` asserts it every tick rather than leaving it to be
-// believed: `soc-bridge-takes-a-second-request` is the record.
+// because the thing in front of it on a Zynq is a processing system that
+// drives the read and the write channels independently.  The thing in front of
+// THIS is the core's load-store unit through a seam that takes one request and
+// answers it before it takes another, so there is never a read and a write in
+// flight together and `sel` is one register.  That is a property of this file
+// and not an assumption about somebody else's master, and `tb/cadr_soc_tb.cpp`
+// asserts it every tick rather than leaving it to be believed:
+// `soc-bridge-takes-a-second-request` is the record.
 //
 // **THE MATCH IS HELD, NEVER COMPUTED**, which is the rule this repository
 // learned from the disk controller's first draft and from the mapped window:
@@ -54,10 +70,11 @@
 // guard can catch a load that never completes.  A soft core is in exactly the
 // same position and worse, because it has no interconnect to give it a DECERR
 // at all.  So the last port here is a catch-all: every address that is none of
-// the two windows goes to it, anywhere in the four gigabytes, and
+// the others goes to it, anywhere in the four gigabytes, and
 // `cadr_gp0_default.sv` answers it with "NONE" and OKAY.  **A firmware on this
-// board cannot hang on a load**, and that is a property of the composition
-// rather than of the firmware's care.
+// board cannot hang on a load from a face**, and that is a property of the
+// composition rather than of the firmware's care.  The DDR window is answered
+// by the memory, and a board with no memory answers it with an error.
 //
 // **SLVERR COMES BACK AS A RISC-V ACCESS FAULT.**  `cadr_disk_pack.sv`
 // answers an address in its window that is not one of its registers with
@@ -71,28 +88,40 @@
 // same shape as a memory whose only exercise writes one constant, which this
 // project has met twice.  So it counts, and `tb/cadr_soc_tb.cpp` asserts that
 // what comes back is what went out.
+//
+// **THE TABLE IS MEANT TO GROW.**  `target()` is one line a window and the
+// selection has room for more; a new face at a page of its own is one line
+// there, one port here and one arm of the multiplexer.
 
 `default_nettype none
 
 module cadr_soc_axi #(
-    // The two windows, at the addresses the Linux programs already use.  Each
-    // is 4 KB.  `cadr_disk_pack.sv`'s own default and `cadr_console.sv`'s
-    // `REG_BASE`.
+    // `M_AXI_GP0`'s gigabyte, matched on its top two bits, as the Zynq's
+    // processing system decodes it.
+    parameter logic [31:0] GP0_BASE = 32'h4000_0000,
+    // The console's 4 KB page: `cadr_console.sv`'s `REG_BASE`.
     //
-    // **THERE IS NO THIRD, AND THE DEBUG CABLE'S WINDOW IS WHY.**  On the two
-    // Zynq boards a third 4 KB page at `0x8000_1000` is
+    // **THERE IS NO SECOND PAGE BESIDE IT, AND THE DEBUG CABLE'S WINDOW IS
+    // WHY.**  On the two Zynq boards a page at `0x8000_1000` is
     // `rtl/plumbing/cadr_debug_window.sv`, which is how muir on those boards'
     // own Arm cores plays the far end of MIT's debug cable in software.  There
     // is no muir here and no processor to run one on: this board's debugger is
     // a SECOND BOARD over the Pmod, and it reaches the machine's DBGIN page
     // through `rtl/plumbing/cadr_dbg_cable.sv` and nothing in this file.  So
-    // the window is not in the design, that page is none of the two below, and
-    // the catch-all answers it exactly as it answers every other address
-    // nothing implements.  **That is a property and not an absence**:
-    // `tb/cadr_soc_tb.cpp` asserts that a load from `0x8000_1000` comes back
-    // "NONE", and `soc-the-window-page-is-a-page-of-its-own` is the record.
-    parameter logic [31:0] PACK_BASE = 32'h4000_0000,
-    parameter logic [31:0] CON_BASE  = 32'h8000_0000
+    // that page is none of the windows below, and the catch-all answers it
+    // exactly as it answers every other address nothing implements.  **That is
+    // a property and not an absence**: `tb/cadr_soc_tb.cpp` asserts that a
+    // load from `0x8000_1000` comes back "NONE", and
+    // `soc-the-window-page-is-a-page-of-its-own` is the record.
+    parameter logic [31:0] CON_BASE  = 32'h8000_0000,
+    // The DDR window, `2 ** DDR_BITS` bytes at `DDR_BASE`, laid onto the
+    // machine's reservation at `DDR_TARGET`.  The target is
+    // `cadr_ddr_map::RESERVED_BASE` and the top level passes it from there; the
+    // default is that value written out, because this file is compiled before
+    // that package in the soft system's check and cannot name it.
+    parameter logic [31:0] DDR_BASE   = 32'h2000_0000,
+    parameter logic [31:0] DDR_TARGET = 32'h1800_0000,
+    parameter int unsigned DDR_BITS   = 27
 ) (
     input  var logic        clk,
     input  var logic        rst,
@@ -110,32 +139,32 @@ module cadr_soc_axi #(
     output var logic [31:0] rdata,
     output var logic        err,
 
-    // --- the disk pack face ------------------------------------------------
-    output var logic [31:0] pack_awaddr,
-    output var logic [3:0]  pack_awlen,
-    output var logic [11:0] pack_awid,
-    output var logic        pack_awvalid,
-    input  var logic        pack_awready,
-    output var logic [31:0] pack_wdata,
-    output var logic [3:0]  pack_wstrb,
-    output var logic        pack_wlast,
-    output var logic        pack_wvalid,
-    input  var logic        pack_wready,
-    input  var logic [1:0]  pack_bresp,
-    input  var logic [11:0] pack_bid,
-    input  var logic        pack_bvalid,
-    output var logic        pack_bready,
-    output var logic [31:0] pack_araddr,
-    output var logic [3:0]  pack_arlen,
-    output var logic [11:0] pack_arid,
-    output var logic        pack_arvalid,
-    input  var logic        pack_arready,
-    input  var logic [31:0] pack_rdata,
-    input  var logic [1:0]  pack_rresp,
-    input  var logic [11:0] pack_rid,
-    input  var logic        pack_rlast,
-    input  var logic        pack_rvalid,
-    output var logic        pack_rready,
+    // --- `M_AXI_GP0`, the whole gigabyte, to `cadr_gp0_split.sv` ----------
+    output var logic [31:0] gp0_awaddr,
+    output var logic [3:0]  gp0_awlen,
+    output var logic [11:0] gp0_awid,
+    output var logic        gp0_awvalid,
+    input  var logic        gp0_awready,
+    output var logic [31:0] gp0_wdata,
+    output var logic [3:0]  gp0_wstrb,
+    output var logic        gp0_wlast,
+    output var logic        gp0_wvalid,
+    input  var logic        gp0_wready,
+    input  var logic [1:0]  gp0_bresp,
+    input  var logic [11:0] gp0_bid,
+    input  var logic        gp0_bvalid,
+    output var logic        gp0_bready,
+    output var logic [31:0] gp0_araddr,
+    output var logic [3:0]  gp0_arlen,
+    output var logic [11:0] gp0_arid,
+    output var logic        gp0_arvalid,
+    input  var logic        gp0_arready,
+    input  var logic [31:0] gp0_rdata,
+    input  var logic [1:0]  gp0_rresp,
+    input  var logic [11:0] gp0_rid,
+    input  var logic        gp0_rlast,
+    input  var logic        gp0_rvalid,
+    output var logic        gp0_rready,
 
     // --- the console -------------------------------------------------------
     output var logic [31:0] con_awaddr,
@@ -164,6 +193,15 @@ module cadr_soc_axi #(
     input  var logic        con_rvalid,
     output var logic        con_rready,
 
+    // --- the DDR window, one word a request on the shared memory port -----
+    output var logic        ddr_req,
+    output var logic        ddr_write,
+    output var logic [31:0] ddr_addr,
+    output var logic [31:0] ddr_wdata,
+    input  var logic        ddr_done,
+    input  var logic [31:0] ddr_rdata,
+    input  var logic        ddr_error,
+
     // --- everything else, which answers without looking at an address.  The
     // --- port list is `cadr_gp0_default.sv`'s, signal for signal, so that an
     // --- unconnected pin is a PINMISSING rather than a silent hole --- which
@@ -190,40 +228,36 @@ module cadr_soc_axi #(
     output var logic        dflt_rready
 );
 
-  // Which of the three a transaction is for.  The order matters only in that
-  // `S_DFLT` is last and matches whatever the two windows did not.
-  //
-  // **AND IT IS `2'd3` WITH A GAP AT `2'd2`, WHICH IS DELIBERATE.**  `2'd2`
-  // was the debug cable's window before that face left this board, and the
-  // encoding is left where it was rather than closed up: `S_DFLT` is the
-  // catch-all and reading as the top of the range is what "last" means here.
-  // `target()` returns only the three below, so the gap is a value `sel` can
-  // never take and the `default` arm of the multiplexer covers it either way.
-  typedef enum logic [1:0] { S_PACK = 2'd0, S_CON = 2'd1,
-                             S_DFLT = 2'd3 } target_e;
+  // Which of them a transaction is for.  The order matters only in that
+  // `S_DFLT` is last and matches whatever the windows did not, and it sits at
+  // the top of the range so that the values between are free for a new
+  // window to take.
+  typedef enum logic [2:0] { S_GP0 = 3'd0, S_CON = 3'd1, S_DDR = 3'd2,
+                             S_DFLT = 3'd7 } target_e;
 
-  // **THE WINDOWS ARE 4 KB AND THE COMPARISON IS ON BITS 31:12.**  A face
-  // sees the whole address it was handed, as it does behind the Zynq, and
-  // answers what is outside its own registers in its own way --- the console
-  // with `UNMAPPED` and OKAY, the pack side with SLVERR.  That is their
-  // business and not this file's; all this decides is which of them is asked.
-  // **THE PAGE AND NOT THE ADDRESS.**  The argument is bits 31:12 alone, so
-  // that a low bit which reaches nothing here cannot be read as though it did:
-  // a function handed the whole word and using twenty bits of it would leave
-  // lint saying nothing and a reader guessing.
+  // **THE COMPARISON IS ON THE PAGE AND NOT THE ADDRESS.**  The argument is
+  // bits 31:12 alone, so that a low bit which reaches nothing here cannot be
+  // read as though it did.  The gigabyte and the DDR window compare fewer of
+  // those bits, and the console's page all of them.  A face sees the whole
+  // address it was handed, as it does behind the Zynq, and answers what is
+  // outside its own registers in its own way --- that is its business and not
+  // this file's; all this decides is which of them is asked.
   function automatic target_e target(input logic [19:0] page);
-    if (page == PACK_BASE[31:12]) return S_PACK;
+    if (page[19:18] == GP0_BASE[31:30]) return S_GP0;
     else if (page == CON_BASE[31:12]) return S_CON;
+    else if (page[19:DDR_BITS-12] == DDR_BASE[31:DDR_BITS]) return S_DDR;
     else return S_DFLT;
   endfunction
 
-  typedef enum logic [2:0] { IDLE, W_ADDR_DATA, W_RESP, R_ADDR, R_DATA } state_e;
+  typedef enum logic [2:0] { IDLE, W_ADDR_DATA, W_RESP, R_ADDR, R_DATA,
+                             D_ASK, D_LET_GO, D_REFUSE } state_e;
 
   state_e            st;
   target_e           sel;
   logic [31:0]       a_hold;
   logic [31:0]       d_hold;
   logic [3:0]        be_hold;
+  logic              we_hold;
   logic [11:0]       id;
   logic              aw_done, w_done;
 
@@ -235,11 +269,11 @@ module cadr_soc_axi #(
 
   always_comb begin
     case (sel)
-      S_PACK: begin
-        awready_sel = pack_awready; wready_sel = pack_wready;
-        bvalid_sel  = pack_bvalid;  bresp_sel  = pack_bresp; bid_sel = pack_bid;
-        arready_sel = pack_arready; rvalid_sel = pack_rvalid;
-        rresp_sel   = pack_rresp;   rdata_sel  = pack_rdata; rid_sel = pack_rid;
+      S_GP0: begin
+        awready_sel = gp0_awready; wready_sel = gp0_wready;
+        bvalid_sel  = gp0_bvalid;  bresp_sel  = gp0_bresp; bid_sel = gp0_bid;
+        arready_sel = gp0_arready; rvalid_sel = gp0_rvalid;
+        rresp_sel   = gp0_rresp;   rdata_sel  = gp0_rdata; rid_sel = gp0_rid;
       end
       S_CON: begin
         awready_sel = con_awready; wready_sel = con_wready;
@@ -258,7 +292,9 @@ module cadr_soc_axi #(
 
   // The valid lines, driven only at the slave the held selection names.  Every
   // other slave sees nothing at all, which is what makes this a demultiplexer
-  // and not three slaves listening to one master.
+  // and not three slaves listening to one master.  The DDR window is never
+  // offered an AXI valid: it is not an AXI slave, and `S_DDR` names none of
+  // the three below.
   logic aw_v, w_v, ar_v, b_r, r_r;
 
   assign aw_v = (st == W_ADDR_DATA) && !aw_done;
@@ -267,43 +303,50 @@ module cadr_soc_axi #(
   assign b_r  = (st == W_RESP);
   assign r_r  = (st == R_DATA);
 
-  assign pack_awvalid = aw_v && (sel == S_PACK);
+  assign gp0_awvalid  = aw_v && (sel == S_GP0);
   assign con_awvalid  = aw_v && (sel == S_CON);
   assign dflt_awvalid = aw_v && (sel == S_DFLT);
 
-  assign pack_wvalid = w_v && (sel == S_PACK);
+  assign gp0_wvalid  = w_v && (sel == S_GP0);
   assign con_wvalid  = w_v && (sel == S_CON);
   assign dflt_wvalid = w_v && (sel == S_DFLT);
 
-  assign pack_arvalid = ar_v && (sel == S_PACK);
+  assign gp0_arvalid  = ar_v && (sel == S_GP0);
   assign con_arvalid  = ar_v && (sel == S_CON);
   assign dflt_arvalid = ar_v && (sel == S_DFLT);
 
-  assign pack_bready = b_r && (sel == S_PACK);
+  assign gp0_bready  = b_r && (sel == S_GP0);
   assign con_bready  = b_r && (sel == S_CON);
   assign dflt_bready = b_r && (sel == S_DFLT);
 
-  assign pack_rready = r_r && (sel == S_PACK);
+  assign gp0_rready  = r_r && (sel == S_GP0);
   assign con_rready  = r_r && (sel == S_CON);
   assign dflt_rready = r_r && (sel == S_DFLT);
 
   // The address, the data and the identifier are broadcast; only the valid
   // lines above choose who is being spoken to.  A slave that looked at an
   // address while its own VALID was low would not be an AXI slave.
-  assign pack_awaddr = a_hold;  assign con_awaddr = a_hold;
-  assign pack_araddr = a_hold;  assign con_araddr = a_hold;
-  assign pack_wdata  = d_hold;  assign con_wdata  = d_hold;
-  assign pack_wstrb  = be_hold; assign con_wstrb  = be_hold;
+  assign gp0_awaddr = a_hold;   assign con_awaddr = a_hold;
+  assign gp0_araddr = a_hold;   assign con_araddr = a_hold;
+  assign gp0_wdata  = d_hold;   assign con_wdata  = d_hold;
+  assign gp0_wstrb  = be_hold;  assign con_wstrb  = be_hold;
 
   // Single beat, always.  See the header.
-  assign pack_awlen = 4'd0; assign con_awlen = 4'd0;
-  assign pack_arlen = 4'd0; assign con_arlen = 4'd0;
+  assign gp0_awlen = 4'd0; assign con_awlen = 4'd0;
+  assign gp0_arlen = 4'd0; assign con_arlen = 4'd0;
   assign dflt_arlen = 4'd0;
-  assign pack_wlast = 1'b1; assign con_wlast = 1'b1;
+  assign gp0_wlast = 1'b1; assign con_wlast = 1'b1;
   assign dflt_wlast = 1'b1;
 
-  assign pack_awid = id; assign con_awid = id; assign dflt_awid = id;
-  assign pack_arid = id; assign con_arid = id; assign dflt_arid = id;
+  assign gp0_awid = id; assign con_awid = id; assign dflt_awid = id;
+  assign gp0_arid = id; assign con_arid = id; assign dflt_arid = id;
+
+  // The DDR window's word: the held address's offset in the window, laid onto
+  // the reservation.
+  assign ddr_req   = (st == D_ASK);
+  assign ddr_write = we_hold;
+  assign ddr_addr  = {DDR_TARGET[31:DDR_BITS], a_hold[DDR_BITS-1:0]};
+  assign ddr_wdata = d_hold;
 
   assign gnt = (st == IDLE) && req;
 
@@ -314,6 +357,7 @@ module cadr_soc_axi #(
       a_hold  <= 32'd0;
       d_hold  <= 32'd0;
       be_hold <= 4'd0;
+      we_hold <= 1'b0;
       id      <= 12'd0;
       aw_done <= 1'b0;
       w_done  <= 1'b0;
@@ -329,9 +373,13 @@ module cadr_soc_axi #(
             a_hold  <= addr;
             d_hold  <= wdata;
             be_hold <= be;
+            we_hold <= we;
             aw_done <= 1'b0;
             w_done  <= 1'b0;
-            st      <= we ? W_ADDR_DATA : R_ADDR;
+            if (target(addr[31:12]) == S_DDR)
+              st <= (we && be != 4'hF) ? D_REFUSE : D_ASK;
+            else
+              st <= we ? W_ADDR_DATA : R_ADDR;
           end
         end
 
@@ -374,6 +422,33 @@ module cadr_soc_axi #(
           end
         end
 
+        // --- the DDR window: one word, and the answer let go before the next
+        D_ASK: begin
+          if (ddr_done) begin
+            done  <= 1'b1;
+            rdata <= we_hold ? 32'd0 : ddr_rdata;
+            err   <= ddr_error;
+            st    <= D_LET_GO;
+          end
+        end
+
+        // **THE BRIDGE DOES NOT GO BACK TO IDLE UNTIL THE ANSWER HAS FALLEN.**
+        // The arbiter behind this gates the answer by whose turn it is, and
+        // the crossing in front of it drains its own handshake before it asks
+        // again, so a request taken here early would not be answered wrongly
+        // today.  It is written so that it would not be answered wrongly
+        // whatever the two neighbors did.
+        D_LET_GO: begin
+          if (!ddr_done) st <= IDLE;
+        end
+
+        D_REFUSE: begin
+          done  <= 1'b1;
+          err   <= 1'b1;
+          rdata <= 32'd0;
+          st    <= IDLE;
+        end
+
         default: st <= IDLE;
       endcase
     end
@@ -385,7 +460,7 @@ module cadr_soc_axi #(
   // the use, which is the rule the boards' own tie-off blocks keep.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = &{1'b0, pack_rlast, con_rlast, dflt_rlast};
+  assign unused = &{1'b0, gp0_rlast, con_rlast, dflt_rlast};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule

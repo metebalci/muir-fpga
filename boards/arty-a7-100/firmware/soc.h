@@ -60,6 +60,43 @@ enum soc_timer_reg {
 	SOC_TIMER_R_MTIMECMP_HI  = 0x14
 };
 
+// ---------------------------------------------------------- the DDR window
+//
+// `rtl/plumbing/cadr_soc_axi.sv`.  128 MB of this address space laid onto the
+// machine's reservation, which is `rtl/plumbing/cadr_ddr_map.sv`'s
+// `RESERVED_BASE` and where the Zynq boards' programs find it.  **A word the
+// firmware stores at `soc_ddr(a)` is the word the disk pack face moves at
+// `a`**, so an address handed to a face is the reservation's and an address
+// loaded or stored here goes through `soc_ddr` first.  A store narrower than a
+// word is refused with a store access fault.
+#define SOC_DDR_WINDOW    0x20000000u
+#define SOC_DDR_RESERVED  0x18000000u
+#define SOC_DDR_BYTES     0x08000000u
+
+static inline uint32_t soc_ddr(uint32_t reserved)
+{
+	return SOC_DDR_WINDOW + (reserved - SOC_DDR_RESERVED);
+}
+
+// The fast interrupts, one a face in `IRQ_F2P`'s order: 0 the disk pack face,
+// 1 the Chaosnet cable, 2 the serial line.  `rtl/plumbing/cadr_soc.sv`.
+#define SOC_MIP_FAST(n)   (1u << (16 + (n)))
+#define SOC_MIP_FACES     (SOC_MIP_FAST(0) | SOC_MIP_FAST(1) | SOC_MIP_FAST(2))
+
+// RISC-V's own numbers for the two faults a probe can meet.
+#define SOC_CAUSE_LOAD_ACCESS   5u
+#define SOC_CAUSE_STORE_ACCESS  7u
+
+// --- a fault asked for ---------------------------------------------------
+//
+// `start.S`.  A probe sets a flag, makes the one access that may fault, and
+// clears the flag; the trap handler records a fault taken while the flag is
+// set and steps over the access.  So a refusal can be checked and the
+// firmware go on.
+uint32_t soc_probe_load(uint32_t addr, uint32_t *cause);
+void soc_probe_store8(uint32_t addr, uint8_t value, uint32_t *cause);
+uint32_t soc_read_mip(void);
+
 // --- the access layer ----------------------------------------------------
 //
 // **THIS IS WHAT REPLACES `mmap`.**  The Linux programs reach a face through

@@ -7,11 +7,12 @@
 // **WHAT THIS HOLDS.**  `tb/cadr_soc_harness.sv` is the Arty A7-100's top
 // level below the clock: `cadr_soc` with Ibex in it, `cadr_machine` with MIT's
 // boot PROM in its control store and nothing behind its memory port, and the
-// three faces the soft core masters --- the disk pack side, the console and
-// the default slave --- at the addresses the Linux programs use.  The firmware
-// is the one the board runs, the same ELF, the same hex.  What this asserts is
-// every line it says, in order, and then four things it cannot say about
-// itself:
+// faces the soft core masters --- `M_AXI_GP0`'s splitter with the disk pack
+// side and the I/O board's three faces behind it, the console and the default
+// slave --- at the addresses the Linux programs use, and main memory behind the
+// board's own arbiter.  The firmware is the one the board runs, the same ELF,
+// the same hex.  What this asserts is every line it says, in order, and then
+// five things it cannot say about itself:
 //
 //   **THE MACHINE REALLY HALTED AND REALLY STEPPED.**  `clock_edge` is the
 //   machine's own microcycle boundary and this counts it every tick, so the
@@ -52,6 +53,17 @@
 //   it every tick, because a join whose empty arm asserted would take the page
 //   and hold it, and the console's own diagnostic cycles are on the other side
 //   of that arbiter.
+//
+//   **THE WORDS REALLY MOVED THROUGH THE ARBITER, AND AS MANY AS THEY
+//   SHOULD.**  The firmware's lines say that a record read back right and that
+//   the disk pack face fetched it and wrote it back; a firmware that compared
+//   against its own copy would say the same.  So this counts the answers the
+//   memory's arbiter gave each master, every tick: the face's master must have
+//   moved exactly the 519 words a fetch and a write-back of one record are ---
+//   130 beats of two words in, and 129 beats of two words and one of one out
+//   --- and the soft system's window exactly the words the firmware's own loop
+//   makes.  A face that skipped a beat, or a write-back that wrote the pad,
+//   moves a different number.
 //
 //   **THE BAUD DIVISOR IS MEASURED FROM THE WIRE.**  The narrowest level the
 //   transmitter ever holds is one bit time, so the minimum pulse width over
@@ -294,6 +306,11 @@ static int run_one(const Ratio &r)
 	// and how often anything reached the page at all.
 	long win_asked = 0, win_held = 0, page_asked = 0;
 
+	// The memory's arbiter: how many answers each master got, counted on the
+	// rise of its own answer bit.
+	long mem_words[4] = { 0, 0, 0, 0 };
+	unsigned prev_mem_done = 0;
+
 	// The bridge, which is on the machine's clock.
 	long r_out = 0, w_out = 0;
 	long reads = 0, writes = 0;
@@ -406,6 +423,13 @@ static int run_one(const Ratio &r)
 			if (r_out > 1 || r_out < 0) over_r++;
 			if (w_out > 1 || w_out < 0) over_w++;
 
+			// --- the memory's arbiter
+			unsigned md = d->mem_done_o;
+			for (int i = 0; i < 4; ++i)
+				if ((md >> i & 1) && !(prev_mem_done >> i & 1))
+					mem_words[i]++;
+			prev_mem_done = md;
+
 			mtick++;
 		}
 
@@ -493,15 +517,35 @@ static int run_one(const Ratio &r)
 		"cadr-soc: stepped 1, CYCLES moved 1, SSDONE 1",
 		"cadr-soc: started: RUNNING,",
 		"cadr-soc: the disk pack face at 0x40000000 answers PACK (register 7)",
-		"cadr-soc: the default slave at 0x40001000 answers NONE",
+		// **THE I/O BOARD'S THREE FACES, BEHIND THE SAME SPLITTER.**  The
+		// first page past them is the splitter's own default slave, which is
+		// why the default slave's address moved off the Chaosnet page.
+		"cadr-soc: the Chaosnet cable at 0x40001000 answers CHAO",
+		"cadr-soc: the serial line at 0x40002000 answers SERI",
+		"cadr-soc: the keyboard and mouse at 0x40003000 answers INPT",
+		"cadr-soc: the default slave at 0x40004000 answers NONE",
 		// **THE PAGE THE WINDOW HOLDS ON THE TWO ZYNQ BOARDS, WHICH ON
 		// THIS ONE IS THE CATCH-ALL's.**  This line used to read
 		// "the debug window at 0x80001000 answers DBUG".  It is the
 		// one assertion that says the window's own address did not
 		// become a hole when the window left the design.
 		"cadr-soc: the window's page at 0x80001000 answers NONE",
-		"cadr-soc: 0 of 16 rounds of three back-to-back loads, one at "
-			"each face, came back wrong",
+		// **MAIN MEMORY, AND THE DISK PACK FACE MOVING A RECORD THROUGH
+		// IT.**  Every number in these lines is the firmware's comparison
+		// against the constant it wrote, and the counts below the lines are
+		// what hold the fabric to having moved the words.
+		"cadr-soc: the DDR window at 0x20000000 wrote 260 words at 0x1c800000 "
+			"and read 0 back wrong",
+		"cadr-soc: a byte stored into the window is refused with mcause 7, "
+			"and the word is unchanged",
+		"cadr-soc: the disk pack face fetched 0x1c800000 into slot 1: done",
+		"cadr-soc: the disk pack face wrote slot 1 back to 0x1c800800: done; "
+			"the window read 0 of 259 words wrong, and the pad after them is "
+			"untouched",
+		"cadr-soc: the disk pack face's interrupt reads mip 0x10000 enabled "
+			"and 0x00000 disabled",
+		"cadr-soc: 0 of 16 rounds of five back-to-back loads, each at a place "
+			"of its own, came back wrong",
 		"cadr-soc: 0 failure(s); idling"
 	};
 	const int nwant = (int)(sizeof want / sizeof *want);
@@ -623,6 +667,42 @@ static int run_one(const Ratio &r)
 		Fail(m);
 	}
 
+	// ------------------------------------------------- the memory's arbiter
+	//
+	// **EXACT, BECAUSE THE BURSTS ARE.**  A fetch is eight bursts of sixteen
+	// beats and one of two, every beat two words: 260 read requests.  A
+	// write-back is the same bursts, and the last beat's high half is the pad,
+	// which is not written: 259 write requests.  The window's are the
+	// firmware's own loop, one probe load, the record and its pad written and
+	// read, the word read either side of the refused byte store, the
+	// write-back area poisoned, the record and its pad read back, and one load
+	// in each of sixteen rounds.  The refused byte store is NOT among them:
+	// refused means it never reached the memory.
+	{
+		const long want_pack = 260 + 259;
+		const long want_window = 1 + 260 + 260 + 2 + 260 + 259 + 1 + 16;
+		if (mem_words[2] != want_pack) {
+			char m[256];
+			std::snprintf(m, sizeof m,
+				      "the disk pack face's master moved %ld word(s) "
+				      "through the arbiter, wanting %ld --- a fetch and "
+				      "a write-back of one record", mem_words[2],
+				      want_pack);
+			Fail(m);
+		}
+		if (mem_words[3] != want_window) {
+			char m[256];
+			std::snprintf(m, sizeof m,
+				      "the soft system's window moved %ld word(s) "
+				      "through the arbiter, wanting %ld", mem_words[3],
+				      want_window);
+			Fail(m);
+		}
+		if (mem_words[1] != 0)
+			Fail("the debugger's window, which is not in this harness, "
+			     "was answered");
+	}
+
 	// ------------------------------------------------------- the bridge
 	if (multi_aw) Fail("more than one slave saw AWVALID at once");
 	if (multi_ar) Fail("more than one slave saw ARVALID at once");
@@ -660,7 +740,9 @@ static int run_one(const Ratio &r)
 			"more than %ld ticks with exactly ONE\n"
 			"    microcycle between --- the halt, the single step "
 			"and the start --- and MACHRUN was\n"
-			"    down throughout.  The bridge carried %ld read(s) "
+			"    down throughout.  The memory's arbiter answered the "
+			"disk pack face %ld word(s) and\n"
+			"    the window %ld.  The bridge carried %ld read(s) "
 			"and %ld write(s) across the two\n"
 			"    clocks, never spoke to two slaves at once, never "
 			"had a read and a write in flight\n"
@@ -670,7 +752,7 @@ static int run_one(const Ratio &r)
 			"on a Zynq board, and nothing\n"
 			"    asked for that page at all.\n",
 			mtick, stick, (int)u.lines.size(), min_pulse, edges,
-			HALT_GAP, reads, writes);
+			HALT_GAP, mem_words[2], mem_words[3], reads, writes);
 
 	delete d;
 	return bad;
@@ -710,7 +792,7 @@ int main(int argc, char **argv)
 		"machine at %d clock ratios ---\n"
 		"    the board's own 2:1 and two that share no factor with it "
 		"or with each other --- and\n"
-		"    said the same fifteen lines at every one, so the crossing "
+		"    said the same twenty-three lines at every one, so the crossing "
 		"between the core's clock\n"
 		"    and the machine's tick does not depend on the number.\n",
 		nratio);

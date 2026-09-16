@@ -624,9 +624,15 @@ CHECKS = {
             "rtl/plumbing/cadr_mem_cross.sv",
             "rtl/plumbing/cadr_mig_ui.sv",
             "rtl/plumbing/cadr_jtag_mem.sv",
+            "rtl/plumbing/cadr_mem_share.sv",
+            "rtl/plumbing/cadr_hp2_mem.sv",
             "tb/cadr_a7_mem_harness.sv",
         ],
-        "extra": ["rtl/plumbing/cadr_mem_count.sv"],
+        # The disk pack face is in `extra`: it has checks of its own, and what
+        # is asked of it here is that its master's words move through the
+        # arbiter and land where it named them.
+        "extra": ["rtl/plumbing/cadr_mem_count.sv",
+                  "rtl/plumbing/cadr_disk_pack.sv"],
         "top": "cadr_a7_mem_harness",
         "tb": "tb/cadr_a7_mem_tb.cpp",
         "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
@@ -999,7 +1005,16 @@ CHECKS = {
             "third_party/ibex/rtl/ibex_wb_stage.sv",
             "third_party/ibex/rtl/ibex_core.sv",
             "rtl/plumbing/cadr_console.sv", "rtl/plumbing/cadr_disk_pack.sv",
-            "rtl/plumbing/cadr_gp0_default.sv"
+            "rtl/plumbing/cadr_gp0_default.sv",
+            # `M_AXI_GP0`'s splitter and the I/O board's three faces, which the
+            # bridge hands the same gigabyte a Zynq's processing system does;
+            # the disk pack face's master's slave; and the memory's arbiter,
+            # which the harness puts in front of a model of main memory.
+            "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
+            "rtl/plumbing/cadr_chaos_cable.sv",
+            "rtl/plumbing/cadr_serial_line.sv",
+            "rtl/plumbing/cadr_input_cables.sv",
+            "rtl/plumbing/cadr_hp2_mem.sv", "rtl/plumbing/cadr_mem_share.sv"
         ],
         "top": "cadr_soc_harness",
         "tb": "tb/cadr_soc_tb.cpp",

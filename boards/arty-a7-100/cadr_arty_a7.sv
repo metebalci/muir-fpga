@@ -162,8 +162,11 @@ module cadr_arty_a7 #(
     parameter int unsigned PROVE = 0,
     // **THE SOFT PROCESSING SYSTEM.**  With it, `rtl/plumbing/cadr_soc.sv` is
     // in the design and masters the register faces the Zynq's ARM cores
-    // master on the other two boards: the console, the disk pack side and the
-    // default slave, at the addresses the Linux programs already use.  **NOT
+    // master on the other two boards: the console, and `M_AXI_GP0`'s splitter
+    // with the disk pack side and the I/O board's three far ends behind it, at
+    // the addresses the Linux programs already use.  With `DDR` beside it, it
+    // also reaches main memory through a window, and the disk pack side's own
+    // master reaches it too, both through the arbiter the machine uses.  **NOT
     // the debug cable's register window**, which is the one face of the four
     // this board does not have: it is how a PROGRAM plays the far end of MIT's
     // cable, and this board's debugger is a second board on the Pmod instead.
@@ -604,10 +607,20 @@ module cadr_arty_a7 #(
   // The disk pack side's interrupt.  On the Zynq it reaches `IRQ_F2P` and
   // Linux; here it reaches the soft core's external interrupt.
   logic        pack_irq;
-  // What the soft processing system transmits, and the fold that keeps the
-  // pack side's unanswered memory port from being trimmed.  See the
-  // instantiation.
-  logic        soc_uart_tx, hp_fold;
+  // What the soft processing system transmits.
+  logic        soc_uart_tx;
+  // **THE TWO MASTERS THE SOFT PROCESSING SYSTEM BRINGS TO MAIN MEMORY**, made
+  // in the soft system's generate and taken in the memory's, so they are
+  // declared here where both can see them: the disk pack side's own master,
+  // one word a request out of `rtl/plumbing/cadr_hp2_mem.sv`, and the soft
+  // system's window onto DDR out of `rtl/plumbing/cadr_soc_axi.sv`.  Idle
+  // with no soft system, and answered with an error with no memory.
+  logic        hp_mem_req, hp_mem_write, hp_mem_done, hp_mem_error;
+  logic [31:0] hp_mem_addr, hp_mem_wdata, hp_mem_rdata;
+  logic        sw_mem_req, sw_mem_write, sw_mem_done, sw_mem_error;
+  logic [31:0] sw_mem_addr, sw_mem_wdata, sw_mem_rdata;
+  // The two cables' interrupts, beside the pack side's.
+  logic        chaos_irq, ser_irq;
   // The join's other arm, which on the two Zynq boards is the debug cable's
   // register window and on this board is nobody at all.  It is tied idle
   // below, whatever `SOC` says; see the tie-off.
@@ -742,9 +755,11 @@ module cadr_arty_a7 #(
   //
   // **AND WITH `SOC` SET THE PACK SIDE IS HERE AND THESE ARE NOT TIED OFF.**
   // The register face answers, so a firmware can read its IDENT and post a
-  // block's address; what is still missing is a memory for it to fetch the
-  // block FROM, which is the memory controller this board does not have yet.
-  // The generate below the machine is where both halves are.
+  // block's address, and with `DDR` beside it the face's own master fetches
+  // the block from main memory and writes one back, through the arbiter the
+  // machine's port uses.  What is still missing is a pack to fill main memory
+  // from, which is a card this board has no host for yet.  The generate below
+  // the machine is where the face and its master are.
 
   // THE CONSOLE.  On the other board it is sixteen diagnostic registers on
   // `M_AXI_GP1` and a program that halts, steps and inspects the machine, and
@@ -787,31 +802,13 @@ module cadr_arty_a7 #(
   // USB host in fabric for the keyboard and mouse --- which this board has no
   // controller for at all, the other one's being the processing system's.
   //
-  // **ALL ONES AND NOT ZERO ON THE MOUSE**: the seven lines are what the
-  // MOUSE drives, each switch pulled to ground when pressed and each
-  // quadrature line high at rest, so all ones is a cable with nothing moving
-  // on it and zero would be three buttons held down for ever.
-  assign ser_tx_take    = 1'b0;
-  assign ser_tx_done    = 1'b0;
-  assign ser_rx_strobe  = 1'b0;
-  assign ser_rx_data    = 8'd0;
-  assign ser_rx_end     = 1'b0;
-  assign ser_rx_parity  = 1'b0;
-  assign ser_rx_framing = 1'b0;
-  assign ser_plugged    = 1'b0;
-  assign chaos_address  = 16'd0;
-  assign chaos_rx_valid = 1'b0;
-  assign chaos_rx_word  = 16'd0;
-  assign chaos_rx_done  = 1'b0;
-  assign chaos_rx_bits  = 13'd0;
-  assign chaos_rx_crc   = 1'b0;
-  assign chaos_rx_lost  = 1'b0;
-  assign chaos_tx_done  = 1'b0;
-  assign chaos_tx_abort = 1'b0;
-  assign chaos_cbl_busy = 1'b0;
-  assign kbd_strobe     = 1'b0;
-  assign kbd_code       = 24'd0;
-  assign mouse_lines    = 7'h7F;
+  // **WITH `SOC` SET THE THREE FACES ARE HERE AND THESE ARE NOT TIED OFF.**
+  // `cadr_chaos_cable.sv`, `cadr_serial_line.sv` and `cadr_input_cables.sv`
+  // drive the seams as they do on the Zynq boards, behind the same splitter at
+  // the same addresses, so a firmware has the registers a far end needs.  The
+  // far ends themselves --- a MAC, a socket for the serial line, a keyboard ---
+  // are other work.  With `SOC` clear nobody can write a face, and the
+  // tie-offs are in `g_nosoc` below.
 
   // ------------------------------------------------- the machine's reset
   //
@@ -1006,9 +1003,11 @@ module cadr_arty_a7 #(
   // Everything above `mem_*` is unchanged.  `cadr_xbus_ddr` asks for a word at
   // a byte address and waits, `cadr_ddr_map`'s constants are the ones they
   // have always been, and nothing in `rtl/machine/` knows which board it is
-  // on.  What is new is three modules, each with a testbench:
-  // `cadr_jtag_mem` in front of the port, `cadr_mem_cross` across the two
-  // clocks and `cadr_mig_ui` onto the controller's user interface.
+  // on.  What is new is four modules, each held by a testbench:
+  // `cadr_mem_share` in front of the port, sharing it between the machine and
+  // three other masters with the machine first; `cadr_jtag_mem`, the debugger's
+  // own master among them; `cadr_mem_cross` across the two clocks; and
+  // `cadr_mig_ui` onto the controller's user interface.
   //
   // **WHERE THE MACHINE'S 128 MB LANDS, AND WHY THE MAP DOES NOT MOVE.**
   // `cadr_ddr_map` reserves 0x1800_0000 upwards --- 64 MB of main memory and
@@ -1020,7 +1019,9 @@ module cadr_arty_a7 #(
   // arithmetic.  Main memory is therefore the sixteen megabytes at DDR byte
   // 0x0800_0000 and the display's window the eight at 0x0C00_0000, of which
   // the machine can reach 15 MB and 128 KB.  **The bottom 128 MB is nobody's
-  // yet** and is where a soft processor beside the machine would live.
+  // yet.**  The soft processing system's window is onto the reservation and
+  // not onto that half, because what it has to reach is the machine's memory
+  // and the spare above the display where the disk's records go.
   //
   // **AND THE OBSERVER IS A JTAG REGISTER BECAUSE THERE IS NOTHING ELSE.**
   // Every claim this project has made about a memory path on silicon rests on
@@ -1067,12 +1068,41 @@ module cadr_arty_a7 #(
     // No window, so nothing out here holds the machine still.
     assign window_mach_reset = 1'b0;
 
+    // **AND THE SOFT PROCESSING SYSTEM'S TWO MASTERS ARE ANSWERED WITH AN
+    // ERROR, NOT LEFT STANDING.**  With `SOC` set and no memory, the disk pack
+    // side's master and the soft system's window still ask.  An answer that
+    // never came would leave the face busy for ever and hang the core on a
+    // load, which is the GP0-hang rule in another place; an answer of zero
+    // would let the face report a block it had not moved.  So each word is
+    // answered at once, with the error flag up: the face reports the move as
+    // an error and the core takes an access fault.  Both follow the
+    // handshake, the answer rising a tick after the request and falling a
+    // tick after it falls.
+    logic hp_nm_done, sw_nm_done;
+    always_ff @(posedge clk) begin
+      if (rst) begin
+        hp_nm_done <= 1'b0;
+        sw_nm_done <= 1'b0;
+      end else begin
+        hp_nm_done <= hp_mem_req;
+        sw_nm_done <= sw_mem_req;
+      end
+    end
+    assign hp_mem_done  = hp_nm_done;
+    assign hp_mem_error = hp_nm_done;
+    assign hp_mem_rdata = 32'd0;
+    assign sw_mem_done  = sw_nm_done;
+    assign sw_mem_error = sw_nm_done;
+    assign sw_mem_rdata = 32'd0;
+
     // And the reference clock the controller would have calibrated its input
     // delays against.  Named rather than left dangling; the fitter takes the
     // whole branch out, the buffer and the clock manager's output with it.
     /* verilator lint_off UNUSEDSIGNAL */
     logic unused_clk;
-    assign unused_clk = &{1'b0, clk_ref};
+    assign unused_clk = &{1'b0, clk_ref, hp_mem_write, hp_mem_addr,
+                          hp_mem_wdata, sw_mem_write, sw_mem_addr,
+                          sw_mem_wdata};
     /* verilator lint_on UNUSEDSIGNAL */
 
   end else begin : g_memory
@@ -1086,8 +1116,16 @@ module cadr_arty_a7 #(
     logic        calib_done, prove_arm;
     logic        prove_has_run, prove_matched;
 
-    // ...and the window's machine-side face, which is whatever is driving the
-    // port today: the machine itself, or the proving witness in its place.
+    // What the arbiter hands every master: its own answer bit, and the word
+    // and the flag they share.
+    logic [3:0]  sh_done;
+    logic [31:0] sh_rdata;
+    logic        sh_error, sh_busy;
+    logic [1:0]  sh_owner;
+
+    // ...and the arbiter's first master, which is whatever is driving the
+    // machine's side today: the machine itself, or the proving witness in its
+    // place.
     logic        w_req, w_write, w_done;
     logic [31:0] w_addr, w_wdata, w_rdata;
     logic        w_error;
@@ -1213,14 +1251,14 @@ module cadr_arty_a7 #(
     );
     /* verilator lint_on PINCONNECTEMPTY */
 
+    logic        jw_req, jw_write, jw_done;
+    logic [31:0] jw_addr, jw_wdata;
+
     cadr_jtag_mem u_window (
         .clk(clk), .rst(rst),
-        .m_req(w_req), .m_write(w_write),
-        .m_addr(w_addr), .m_wdata(w_wdata),
-        .m_done(w_done), .m_rdata(w_rdata), .m_error(w_error),
-        .p_req(port_req), .p_write(port_write),
-        .p_addr(port_addr), .p_wdata(port_wdata),
-        .p_done(port_done), .p_rdata(port_rdata), .p_error(port_error),
+        .p_req(jw_req), .p_write(jw_write),
+        .p_addr(jw_addr), .p_wdata(jw_wdata),
+        .p_done(jw_done), .p_rdata(sh_rdata), .p_error(sh_error),
         .tally(tally), .calib_done(calib_done),
         .prove_has_run(prove_has_run), .prove_matched(prove_matched),
         .arm(prove_arm), .mach_reset(window_mach_reset),
@@ -1228,6 +1266,46 @@ module cadr_arty_a7 #(
         .jtag_capture(jm_capture), .jtag_update(jm_update),
         .jtag_tdi(jm_tdi), .jtag_tdo(jm_tdo)
     );
+
+    // ------------------------------------------ one port, and who has it
+    //
+    // **THE MACHINE FIRST, AND ONE WORD AT A TIME.**  `cadr_mem_share` is the
+    // one arbiter in front of the port: index 0 is whatever drives the
+    // machine's side --- the machine, or the proving witness in its place ---
+    // and it wins whenever the port is free.  The debugger's window, the disk
+    // pack side's own master and the soft system's window take turns behind
+    // it.  Nothing is taken back once it has started, so a machine cycle
+    // waits for at most the one word already in flight.  Its header has the
+    // argument and `tb/cadr_a7_mem_tb.cpp` holds the bound.
+    //
+    // **THE ORDER OF THE CONCATENATION IS THE INDEX**, most significant
+    // first: the soft system's window is 3, the pack side 2, the debugger 1
+    // and the machine 0.
+    cadr_mem_share #(
+        .N(4)
+    ) u_share (
+        .clk(clk), .rst(rst),
+        .req  ({sw_mem_req,   hp_mem_req,   jw_req,   w_req}),
+        .write({sw_mem_write, hp_mem_write, jw_write, w_write}),
+        .addr ({sw_mem_addr,  hp_mem_addr,  jw_addr,  w_addr}),
+        .wdata({sw_mem_wdata, hp_mem_wdata, jw_wdata, w_wdata}),
+        .done(sh_done), .rdata(sh_rdata), .error(sh_error),
+        .p_req(port_req), .p_write(port_write),
+        .p_addr(port_addr), .p_wdata(port_wdata),
+        .p_done(port_done), .p_rdata(port_rdata), .p_error(port_error),
+        .busy(sh_busy), .owner(sh_owner)
+    );
+
+    assign w_done       = sh_done[0];
+    assign w_rdata      = sh_rdata;
+    assign w_error      = sh_error;
+    assign jw_done      = sh_done[1];
+    assign hp_mem_done  = sh_done[2];
+    assign hp_mem_rdata = sh_rdata;
+    assign hp_mem_error = sh_error;
+    assign sw_mem_done  = sh_done[3];
+    assign sw_mem_rdata = sh_rdata;
+    assign sw_mem_error = sh_error;
 
     // ------------------------------------------------------ and the memory
     //
@@ -1259,7 +1337,7 @@ module cadr_arty_a7 #(
     // second reader and costs nothing.
     /* verilator lint_off UNUSEDSIGNAL */
     logic unused_mem;
-    assign unused_mem = &{1'b0, w_error, prove_arm};
+    assign unused_mem = &{1'b0, w_error, prove_arm, sh_busy, sh_owner};
     /* verilator lint_on UNUSEDSIGNAL */
 
   end
@@ -1290,16 +1368,16 @@ module cadr_arty_a7 #(
   // interconnect to give it an error response at all.
   if (SOC != 0) begin : g_soc
 
-    // The four AXI ports, as `cadr_soc.sv` drives them.  AXI3 in shape, single
-    // beat in use; `cadr_soc_axi.sv`'s header says why that is what the faces
-    // were written for.
-    logic [31:0] pk_awaddr, pk_wdata, pk_araddr, pk_rdata;
-    logic [3:0]  pk_awlen, pk_wstrb, pk_arlen;
-    logic [11:0] pk_awid, pk_bid, pk_arid, pk_rid;
-    logic [1:0]  pk_bresp, pk_rresp;
-    logic        pk_awvalid, pk_awready, pk_wlast, pk_wvalid, pk_wready;
-    logic        pk_bvalid, pk_bready, pk_arvalid, pk_arready;
-    logic        pk_rlast, pk_rvalid, pk_rready;
+    // The ports, as `cadr_soc.sv` drives them.  AXI3 in shape, single beat in
+    // use; `cadr_soc_axi.sv`'s header says why that is what the faces were
+    // written for.  `g0_*` is `M_AXI_GP0`'s whole gigabyte, into the splitter.
+    logic [31:0] g0_awaddr, g0_wdata, g0_araddr, g0_rdata;
+    logic [3:0]  g0_awlen, g0_wstrb, g0_arlen;
+    logic [11:0] g0_awid, g0_bid, g0_arid, g0_rid;
+    logic [1:0]  g0_bresp, g0_rresp;
+    logic        g0_awvalid, g0_awready, g0_wlast, g0_wvalid, g0_wready;
+    logic        g0_bvalid, g0_bready, g0_arvalid, g0_arready;
+    logic        g0_rlast, g0_rvalid, g0_rready;
 
     logic [31:0] cn_awaddr, cn_wdata, cn_araddr, cn_rdata;
     logic [3:0]  cn_awlen, cn_wstrb, cn_arlen;
@@ -1317,23 +1395,59 @@ module cadr_arty_a7 #(
     logic        df_bvalid, df_bready, df_arvalid, df_arready;
     logic        df_rlast, df_rvalid, df_rready;
 
-    // The pack side's own memory port.  On the Zynq it is `S_AXI_HP2` into the
-    // DDR controller, and a block crosses it eight bursts at a time.
-    // **THERE IS NO MEMORY BEHIND IT HERE AND THE READY LINES ARE LOW, WHICH
-    // MEANS A BLOCK FETCH WOULD STAND FOR EVER.**  That is said plainly rather
-    // than answered with a plausible completion: a port that accepted an
-    // address and returned a word of nothing would let the pack side report a
-    // block it had not moved, and this project's whole method is against
-    // instruments that can mean something they have not measured.  The
-    // firmware asks for no block, and the memory controller this board is
-    // waiting for is what will connect these.
+    // What the splitter hands the disk pack side, which keeps the whole
+    // address...
+    logic [31:0] pk_awaddr, pk_wdata, pk_araddr, pk_rdata;
+    logic [3:0]  pk_awlen, pk_wstrb, pk_arlen;
+    logic [11:0] pk_awid, pk_bid, pk_arid, pk_rid;
+    logic [1:0]  pk_bresp, pk_rresp;
+    logic        pk_awvalid, pk_awready, pk_wlast, pk_wvalid, pk_wready;
+    logic        pk_bvalid, pk_bready, pk_arvalid, pk_arready;
+    logic        pk_rlast, pk_rvalid, pk_rready;
+
+    // ...the three card faces, which get the offset in their page...
+    logic [11:0] ch_awaddr, ch_araddr, se_awaddr, se_araddr, ip_awaddr, ip_araddr;
+    logic [31:0] ch_wdata, ch_rdata, se_wdata, se_rdata, ip_wdata, ip_rdata;
+    logic [3:0]  ch_awlen, ch_arlen, ch_wstrb, se_awlen, se_arlen, se_wstrb;
+    logic [3:0]  ip_awlen, ip_arlen, ip_wstrb;
+    logic [11:0] ch_awid, ch_arid, ch_bid, ch_rid, se_awid, se_arid, se_bid, se_rid;
+    logic [11:0] ip_awid, ip_arid, ip_bid, ip_rid;
+    logic [1:0]  ch_bresp, ch_rresp, se_bresp, se_rresp, ip_bresp, ip_rresp;
+    logic        ch_awvalid, ch_awready, ch_wlast, ch_wvalid, ch_wready;
+    logic        ch_bvalid, ch_bready, ch_arvalid, ch_arready;
+    logic        ch_rlast, ch_rvalid, ch_rready;
+    logic        se_awvalid, se_awready, se_wlast, se_wvalid, se_wready;
+    logic        se_bvalid, se_bready, se_arvalid, se_arready;
+    logic        se_rlast, se_rvalid, se_rready;
+    logic        ip_awvalid, ip_awready, ip_wlast, ip_wvalid, ip_wready;
+    logic        ip_bvalid, ip_bready, ip_arvalid, ip_arready;
+    logic        ip_rlast, ip_rvalid, ip_rready;
+
+    // ...and the rest of the gigabyte, which answers without an address.
+    logic [31:0] gd_rdata;
+    logic [3:0]  gd_arlen;
+    logic [11:0] gd_awid, gd_bid, gd_arid, gd_rid;
+    logic [1:0]  gd_bresp, gd_rresp;
+    logic        gd_awvalid, gd_awready, gd_wlast, gd_wvalid, gd_wready;
+    logic        gd_bvalid, gd_bready, gd_arvalid, gd_arready;
+    logic        gd_rlast, gd_rvalid, gd_rready;
+
+    // The pack side's own memory master.  On the Zynq it is `S_AXI_HP2` into
+    // the DDR controller, and a block crosses it nine bursts at a time.  Here
+    // `rtl/plumbing/cadr_hp2_mem.sv` answers it and turns each beat into words
+    // on the arbiter the machine's port uses.  **THIS NOTE USED TO SAY THERE
+    // WAS NO MEMORY BEHIND IT AND THAT A FETCH WOULD STAND FOR EVER**, which
+    // stopped being true when the memory controller landed: the controller was
+    // there and the master was not joined to it.  It is joined now.  With
+    // `DDR` clear every word is answered with an error, so a move reports one.
     logic [31:0] hp_awaddr, hp_araddr;
     logic [3:0]  hp_awlen, hp_arlen;
-    logic [1:0]  hp_awsize, hp_awburst, hp_arsize, hp_arburst;
-    logic [63:0] hp_wdata;
+    logic [1:0]  hp_awsize, hp_awburst, hp_arsize, hp_arburst, hp_bresp, hp_rresp;
+    logic [63:0] hp_wdata, hp_rdata;
     logic [7:0]  hp_wstrb;
-    logic        hp_awvalid, hp_wlast, hp_wvalid, hp_bready, hp_arvalid,
-                 hp_rready;
+    logic        hp_awvalid, hp_awready, hp_wlast, hp_wvalid, hp_wready;
+    logic        hp_bvalid, hp_bready, hp_arvalid, hp_arready;
+    logic        hp_rlast, hp_rvalid, hp_rready;
 
     // ------------------------------------------------- the processing system
     cadr_soc #(
@@ -1346,7 +1460,10 @@ module cadr_arty_a7 #(
         // one place the number is decided, and this is that same number said
         // in hertz.
         .CLK_HZ      (SOC_CLK_HZ),
-        .BAUD        (SOC_BAUD)
+        .BAUD        (SOC_BAUD),
+        // The machine's reservation, named where it is decided, which the
+        // DDR window is laid onto.
+        .DDR_TARGET  (cadr_ddr_map::RESERVED_BASE)
     ) u_soc (
         // **THE BOARD's RESET AND NOT THE MACHINE's.**  A firmware reset by
         // the machine's reset could not make one: the store to the console's
@@ -1365,18 +1482,19 @@ module cadr_arty_a7 #(
         .clk(clk_soc), .rst(rst),
         .axi_clk(clk), .axi_rst(rst),
         .uart_tx(soc_uart_tx), .uart_rx(uart_txd_in),
-        .ext_irq(pack_irq),
+        // `IRQ_F2P`'s three, in its order.
+        .irq({ser_irq, chaos_irq, pack_irq}),
 
-        .pack_awaddr(pk_awaddr), .pack_awlen(pk_awlen), .pack_awid(pk_awid),
-        .pack_awvalid(pk_awvalid), .pack_awready(pk_awready),
-        .pack_wdata(pk_wdata), .pack_wstrb(pk_wstrb), .pack_wlast(pk_wlast),
-        .pack_wvalid(pk_wvalid), .pack_wready(pk_wready),
-        .pack_bresp(pk_bresp), .pack_bid(pk_bid), .pack_bvalid(pk_bvalid),
-        .pack_bready(pk_bready),
-        .pack_araddr(pk_araddr), .pack_arlen(pk_arlen), .pack_arid(pk_arid),
-        .pack_arvalid(pk_arvalid), .pack_arready(pk_arready),
-        .pack_rdata(pk_rdata), .pack_rresp(pk_rresp), .pack_rid(pk_rid),
-        .pack_rlast(pk_rlast), .pack_rvalid(pk_rvalid), .pack_rready(pk_rready),
+        .gp0_awaddr(g0_awaddr), .gp0_awlen(g0_awlen), .gp0_awid(g0_awid),
+        .gp0_awvalid(g0_awvalid), .gp0_awready(g0_awready),
+        .gp0_wdata(g0_wdata), .gp0_wstrb(g0_wstrb), .gp0_wlast(g0_wlast),
+        .gp0_wvalid(g0_wvalid), .gp0_wready(g0_wready),
+        .gp0_bresp(g0_bresp), .gp0_bid(g0_bid), .gp0_bvalid(g0_bvalid),
+        .gp0_bready(g0_bready),
+        .gp0_araddr(g0_araddr), .gp0_arlen(g0_arlen), .gp0_arid(g0_arid),
+        .gp0_arvalid(g0_arvalid), .gp0_arready(g0_arready),
+        .gp0_rdata(g0_rdata), .gp0_rresp(g0_rresp), .gp0_rid(g0_rid),
+        .gp0_rlast(g0_rlast), .gp0_rvalid(g0_rvalid), .gp0_rready(g0_rready),
 
         .con_awaddr(cn_awaddr), .con_awlen(cn_awlen), .con_awid(cn_awid),
         .con_awvalid(cn_awvalid), .con_awready(cn_awready),
@@ -1390,6 +1508,11 @@ module cadr_arty_a7 #(
         .con_rlast(cn_rlast), .con_rvalid(cn_rvalid), .con_rready(cn_rready),
 
 
+        // The window onto the machine's reservation, one word a request.
+        .ddr_req(sw_mem_req), .ddr_write(sw_mem_write), .ddr_addr(sw_mem_addr),
+        .ddr_wdata(sw_mem_wdata), .ddr_done(sw_mem_done),
+        .ddr_rdata(sw_mem_rdata), .ddr_error(sw_mem_error),
+
         .dflt_awid(df_awid), .dflt_awvalid(df_awvalid),
         .dflt_awready(df_awready),
         .dflt_wlast(df_wlast), .dflt_wvalid(df_wvalid), .dflt_wready(df_wready),
@@ -1399,6 +1522,158 @@ module cadr_arty_a7 #(
         .dflt_arready(df_arready),
         .dflt_rdata(df_rdata), .dflt_rresp(df_rresp), .dflt_rid(df_rid),
         .dflt_rlast(df_rlast), .dflt_rvalid(df_rvalid), .dflt_rready(df_rready)
+    );
+
+    // ---------------------------------------------- `M_AXI_GP0`, split
+    //
+    // **THE ZYNQ BOARDS' SPLITTER AND FACES, UNCHANGED, AT THE SAME
+    // ADDRESSES.**  `boards/arty-z7-20/cadr_arty.sv` puts exactly these five
+    // behind the processing system's `M_AXI_GP0`; this puts them behind the
+    // bridge's, which hands over the same gigabyte.  The reset is the board's
+    // where that board's is the port's, because here there is no processing
+    // system to bring a port up late; and the input cables' queue takes the
+    // machine's reset for its flush, for the reason that board gives.
+    cadr_gp0_split u_gp0_split (
+        .clk(clk), .rst(rst),
+        .s_awaddr(g0_awaddr), .s_awlen(g0_awlen), .s_awid(g0_awid),
+        .s_awvalid(g0_awvalid), .s_awready(g0_awready),
+        .s_wdata(g0_wdata), .s_wstrb(g0_wstrb), .s_wlast(g0_wlast),
+        .s_wvalid(g0_wvalid), .s_wready(g0_wready),
+        .s_bresp(g0_bresp), .s_bid(g0_bid), .s_bvalid(g0_bvalid),
+        .s_bready(g0_bready),
+        .s_araddr(g0_araddr), .s_arlen(g0_arlen), .s_arid(g0_arid),
+        .s_arvalid(g0_arvalid), .s_arready(g0_arready),
+        .s_rdata(g0_rdata), .s_rresp(g0_rresp), .s_rid(g0_rid),
+        .s_rlast(g0_rlast), .s_rvalid(g0_rvalid), .s_rready(g0_rready),
+        .pack_awaddr(pk_awaddr), .pack_awlen(pk_awlen), .pack_awid(pk_awid),
+        .pack_awvalid(pk_awvalid), .pack_awready(pk_awready),
+        .pack_wdata(pk_wdata), .pack_wstrb(pk_wstrb), .pack_wlast(pk_wlast),
+        .pack_wvalid(pk_wvalid), .pack_wready(pk_wready),
+        .pack_bresp(pk_bresp), .pack_bid(pk_bid), .pack_bvalid(pk_bvalid),
+        .pack_bready(pk_bready),
+        .pack_araddr(pk_araddr), .pack_arlen(pk_arlen), .pack_arid(pk_arid),
+        .pack_arvalid(pk_arvalid), .pack_arready(pk_arready),
+        .pack_rdata(pk_rdata), .pack_rresp(pk_rresp), .pack_rid(pk_rid),
+        .pack_rlast(pk_rlast), .pack_rvalid(pk_rvalid), .pack_rready(pk_rready),
+        .chaos_awaddr(ch_awaddr), .chaos_awlen(ch_awlen), .chaos_awid(ch_awid),
+        .chaos_awvalid(ch_awvalid), .chaos_awready(ch_awready),
+        .chaos_wdata(ch_wdata), .chaos_wstrb(ch_wstrb), .chaos_wlast(ch_wlast),
+        .chaos_wvalid(ch_wvalid), .chaos_wready(ch_wready),
+        .chaos_bresp(ch_bresp), .chaos_bid(ch_bid), .chaos_bvalid(ch_bvalid),
+        .chaos_bready(ch_bready),
+        .chaos_araddr(ch_araddr), .chaos_arlen(ch_arlen), .chaos_arid(ch_arid),
+        .chaos_arvalid(ch_arvalid), .chaos_arready(ch_arready),
+        .chaos_rdata(ch_rdata), .chaos_rresp(ch_rresp), .chaos_rid(ch_rid),
+        .chaos_rlast(ch_rlast), .chaos_rvalid(ch_rvalid), .chaos_rready(ch_rready),
+        .ser_awaddr(se_awaddr), .ser_awlen(se_awlen), .ser_awid(se_awid),
+        .ser_awvalid(se_awvalid), .ser_awready(se_awready),
+        .ser_wdata(se_wdata), .ser_wstrb(se_wstrb), .ser_wlast(se_wlast),
+        .ser_wvalid(se_wvalid), .ser_wready(se_wready),
+        .ser_bresp(se_bresp), .ser_bid(se_bid), .ser_bvalid(se_bvalid),
+        .ser_bready(se_bready),
+        .ser_araddr(se_araddr), .ser_arlen(se_arlen), .ser_arid(se_arid),
+        .ser_arvalid(se_arvalid), .ser_arready(se_arready),
+        .ser_rdata(se_rdata), .ser_rresp(se_rresp), .ser_rid(se_rid),
+        .ser_rlast(se_rlast), .ser_rvalid(se_rvalid), .ser_rready(se_rready),
+        .in_awaddr(ip_awaddr), .in_awlen(ip_awlen), .in_awid(ip_awid),
+        .in_awvalid(ip_awvalid), .in_awready(ip_awready),
+        .in_wdata(ip_wdata), .in_wstrb(ip_wstrb), .in_wlast(ip_wlast),
+        .in_wvalid(ip_wvalid), .in_wready(ip_wready),
+        .in_bresp(ip_bresp), .in_bid(ip_bid), .in_bvalid(ip_bvalid),
+        .in_bready(ip_bready),
+        .in_araddr(ip_araddr), .in_arlen(ip_arlen), .in_arid(ip_arid),
+        .in_arvalid(ip_arvalid), .in_arready(ip_arready),
+        .in_rdata(ip_rdata), .in_rresp(ip_rresp), .in_rid(ip_rid),
+        .in_rlast(ip_rlast), .in_rvalid(ip_rvalid), .in_rready(ip_rready),
+        .dflt_awid(gd_awid), .dflt_awvalid(gd_awvalid),
+        .dflt_awready(gd_awready),
+        .dflt_wlast(gd_wlast), .dflt_wvalid(gd_wvalid),
+        .dflt_wready(gd_wready),
+        .dflt_bresp(gd_bresp), .dflt_bid(gd_bid), .dflt_bvalid(gd_bvalid),
+        .dflt_bready(gd_bready),
+        .dflt_arlen(gd_arlen), .dflt_arid(gd_arid),
+        .dflt_arvalid(gd_arvalid), .dflt_arready(gd_arready),
+        .dflt_rdata(gd_rdata), .dflt_rresp(gd_rresp), .dflt_rid(gd_rid),
+        .dflt_rlast(gd_rlast), .dflt_rvalid(gd_rvalid),
+        .dflt_rready(gd_rready)
+    );
+
+    cadr_chaos_cable u_chaos (
+        .clk(clk), .rst(rst),
+        .s_awaddr(ch_awaddr), .s_awlen(ch_awlen), .s_awid(ch_awid),
+        .s_awvalid(ch_awvalid), .s_awready(ch_awready),
+        .s_wdata(ch_wdata), .s_wstrb(ch_wstrb), .s_wlast(ch_wlast),
+        .s_wvalid(ch_wvalid), .s_wready(ch_wready),
+        .s_bresp(ch_bresp), .s_bid(ch_bid), .s_bvalid(ch_bvalid),
+        .s_bready(ch_bready),
+        .s_araddr(ch_araddr), .s_arlen(ch_arlen), .s_arid(ch_arid),
+        .s_arvalid(ch_arvalid), .s_arready(ch_arready),
+        .s_rdata(ch_rdata), .s_rresp(ch_rresp), .s_rid(ch_rid),
+        .s_rlast(ch_rlast), .s_rvalid(ch_rvalid), .s_rready(ch_rready),
+        .chaos_address(chaos_address),
+        .chaos_tx_go(chaos_tx_go), .chaos_tx_len(chaos_tx_len),
+        .chaos_tx_valid(chaos_tx_valid), .chaos_tx_word(chaos_tx_word),
+        .chaos_tx_clear(chaos_tx_clear), .chaos_reset(chaos_reset),
+        .chaos_csr(chaos_csr),
+        .chaos_rx_valid(chaos_rx_valid), .chaos_rx_word(chaos_rx_word),
+        .chaos_rx_done(chaos_rx_done), .chaos_rx_bits(chaos_rx_bits),
+        .chaos_rx_crc(chaos_rx_crc),
+        .chaos_rx_lost(chaos_rx_lost),
+        .chaos_tx_done(chaos_tx_done), .chaos_tx_abort(chaos_tx_abort),
+        .chaos_cbl_busy(chaos_cbl_busy),
+        .irq(chaos_irq)
+    );
+
+    cadr_serial_line u_serial (
+        .clk(clk), .rst(rst),
+        .s_awaddr(se_awaddr), .s_awlen(se_awlen), .s_awid(se_awid),
+        .s_awvalid(se_awvalid), .s_awready(se_awready),
+        .s_wdata(se_wdata), .s_wstrb(se_wstrb), .s_wlast(se_wlast),
+        .s_wvalid(se_wvalid), .s_wready(se_wready),
+        .s_bresp(se_bresp), .s_bid(se_bid), .s_bvalid(se_bvalid),
+        .s_bready(se_bready),
+        .s_araddr(se_araddr), .s_arlen(se_arlen), .s_arid(se_arid),
+        .s_arvalid(se_arvalid), .s_arready(se_arready),
+        .s_rdata(se_rdata), .s_rresp(se_rresp), .s_rid(se_rid),
+        .s_rlast(se_rlast), .s_rvalid(se_rvalid), .s_rready(se_rready),
+        .ser_reset(ser_reset), .ser_mode1(ser_mode1), .ser_mode2(ser_mode2),
+        .ser_cmd(ser_cmd), .ser_status(ser_status),
+        .ser_tx_strobe(ser_tx_strobe), .ser_tx_data(ser_tx_data),
+        .ser_tx_take(ser_tx_take), .ser_tx_done(ser_tx_done),
+        .ser_rx_strobe(ser_rx_strobe), .ser_rx_data(ser_rx_data),
+        .ser_rx_end(ser_rx_end), .ser_rx_parity(ser_rx_parity),
+        .ser_rx_framing(ser_rx_framing),
+        .ser_plugged(ser_plugged),
+        .irq(ser_irq)
+    );
+
+    cadr_input_cables u_input (
+        .clk(clk), .rst(rst), .mach_rst(mach_rst),
+        .s_awaddr(ip_awaddr), .s_awlen(ip_awlen), .s_awid(ip_awid),
+        .s_awvalid(ip_awvalid), .s_awready(ip_awready),
+        .s_wdata(ip_wdata), .s_wstrb(ip_wstrb), .s_wlast(ip_wlast),
+        .s_wvalid(ip_wvalid), .s_wready(ip_wready),
+        .s_bresp(ip_bresp), .s_bid(ip_bid), .s_bvalid(ip_bvalid),
+        .s_bready(ip_bready),
+        .s_araddr(ip_araddr), .s_arlen(ip_arlen), .s_arid(ip_arid),
+        .s_arvalid(ip_arvalid), .s_arready(ip_arready),
+        .s_rdata(ip_rdata), .s_rresp(ip_rresp), .s_rid(ip_rid),
+        .s_rlast(ip_rlast), .s_rvalid(ip_rvalid), .s_rready(ip_rready),
+        .kbd_strobe(kbd_strobe), .kbd_code(kbd_code),
+        .mouse_lines(mouse_lines),
+        .card_csr(csr_face)
+    );
+
+    cadr_gp0_default u_gp0_rest (
+        .clk(clk), .rst(rst),
+        .s_awvalid(gd_awvalid), .s_awid(gd_awid), .s_awready(gd_awready),
+        .s_wlast(gd_wlast), .s_wvalid(gd_wvalid), .s_wready(gd_wready),
+        .s_bresp(gd_bresp), .s_bid(gd_bid), .s_bvalid(gd_bvalid),
+        .s_bready(gd_bready),
+        .s_arlen(gd_arlen), .s_arid(gd_arid), .s_arvalid(gd_arvalid),
+        .s_arready(gd_arready),
+        .s_rdata(gd_rdata), .s_rresp(gd_rresp), .s_rid(gd_rid),
+        .s_rlast(gd_rlast), .s_rvalid(gd_rvalid), .s_rready(gd_rready)
     );
 
     // ------------------------------------------------------ the disk pack side
@@ -1415,14 +1690,16 @@ module cadr_arty_a7 #(
         .s_rdata(pk_rdata), .s_rresp(pk_rresp), .s_rid(pk_rid),
         .s_rlast(pk_rlast), .s_rvalid(pk_rvalid), .s_rready(pk_rready),
         .m_awaddr(hp_awaddr), .m_awlen(hp_awlen), .m_awsize(hp_awsize),
-        .m_awburst(hp_awburst), .m_awvalid(hp_awvalid), .m_awready(1'b0),
+        .m_awburst(hp_awburst), .m_awvalid(hp_awvalid),
+        .m_awready(hp_awready),
         .m_wdata(hp_wdata), .m_wstrb(hp_wstrb), .m_wlast(hp_wlast),
-        .m_wvalid(hp_wvalid), .m_wready(1'b0),
-        .m_bresp(2'b00), .m_bvalid(1'b0), .m_bready(hp_bready),
+        .m_wvalid(hp_wvalid), .m_wready(hp_wready),
+        .m_bresp(hp_bresp), .m_bvalid(hp_bvalid), .m_bready(hp_bready),
         .m_araddr(hp_araddr), .m_arlen(hp_arlen), .m_arsize(hp_arsize),
-        .m_arburst(hp_arburst), .m_arvalid(hp_arvalid), .m_arready(1'b0),
-        .m_rdata(64'd0), .m_rresp(2'b00), .m_rlast(1'b0), .m_rvalid(1'b0),
-        .m_rready(hp_rready),
+        .m_arburst(hp_arburst), .m_arvalid(hp_arvalid),
+        .m_arready(hp_arready),
+        .m_rdata(hp_rdata), .m_rresp(hp_rresp), .m_rlast(hp_rlast),
+        .m_rvalid(hp_rvalid), .m_rready(hp_rready),
         .store_we(store_we), .store_slot(store_slot),
         .store_addr(store_addr), .store_wdata(store_wdata),
         .store_rdata(store_rdata), .store_miss(store_miss),
@@ -1435,17 +1712,25 @@ module cadr_arty_a7 #(
         .drive_timed(drive_timed)
     );
 
-    // The memory port's outputs reach nothing, and a signal nothing reads is
-    // trimmed along with whatever computes it --- which here is the block
-    // store's whole read path.  The fold is what keeps it, exactly as
-    // `witness` keeps the machine's outputs, and `witness` takes this in turn.
-    always_ff @(posedge clk) begin
-      if (rst) hp_fold <= 1'b0;
-      else hp_fold <= ^{hp_awaddr, hp_awlen, hp_awsize, hp_awburst, hp_awvalid,
-                        hp_wdata, hp_wstrb, hp_wlast, hp_wvalid, hp_bready,
-                        hp_araddr, hp_arlen, hp_arsize, hp_arburst, hp_arvalid,
-                        hp_rready};
-    end
+    // ...and its master's slave: each beat becomes words on the arbiter.
+    cadr_hp2_mem u_hp2 (
+        .clk(clk), .rst(rst),
+        .s_awaddr(hp_awaddr), .s_awlen(hp_awlen), .s_awsize(hp_awsize),
+        .s_awburst(hp_awburst), .s_awvalid(hp_awvalid),
+        .s_awready(hp_awready),
+        .s_wdata(hp_wdata), .s_wstrb(hp_wstrb), .s_wlast(hp_wlast),
+        .s_wvalid(hp_wvalid), .s_wready(hp_wready),
+        .s_bresp(hp_bresp), .s_bvalid(hp_bvalid), .s_bready(hp_bready),
+        .s_araddr(hp_araddr), .s_arlen(hp_arlen), .s_arsize(hp_arsize),
+        .s_arburst(hp_arburst), .s_arvalid(hp_arvalid),
+        .s_arready(hp_arready),
+        .s_rdata(hp_rdata), .s_rresp(hp_rresp), .s_rlast(hp_rlast),
+        .s_rvalid(hp_rvalid), .s_rready(hp_rready),
+        .mem_req(hp_mem_req), .mem_write(hp_mem_write),
+        .mem_addr(hp_mem_addr), .mem_wdata(hp_mem_wdata),
+        .mem_done(hp_mem_done), .mem_rdata(hp_mem_rdata),
+        .mem_error(hp_mem_error)
+    );
 
     // ------------------------------------------------------------- the console
     // **WHICH BUILD THIS FABRIC IS**, page 2's word 32.  One primitive and one
@@ -1541,7 +1826,47 @@ module cadr_arty_a7 #(
     assign store_busy_slot = 5'd0;
     assign store_deny      = 1'b0;
     assign pack_irq        = 1'b0;
-    assign hp_fold         = 1'b0;
+    assign chaos_irq       = 1'b0;
+    assign ser_irq         = 1'b0;
+
+    // No master of main memory but the machine and the debugger.
+    assign hp_mem_req   = 1'b0;
+    assign hp_mem_write = 1'b0;
+    assign hp_mem_addr  = 32'd0;
+    assign hp_mem_wdata = 32'd0;
+    assign sw_mem_req   = 1'b0;
+    assign sw_mem_write = 1'b0;
+    assign sw_mem_addr  = 32'd0;
+    assign sw_mem_wdata = 32'd0;
+
+    // The I/O board's four cables with nothing on the end of them, which is
+    // what they were on every configuration before the faces came here.
+    //
+    // **ALL ONES AND NOT ZERO ON THE MOUSE**: the seven lines are what the
+    // MOUSE drives, each switch pulled to ground when pressed and each
+    // quadrature line high at rest, so all ones is a cable with nothing moving
+    // on it and zero would be three buttons held down for ever.
+    assign ser_tx_take    = 1'b0;
+    assign ser_tx_done    = 1'b0;
+    assign ser_rx_strobe  = 1'b0;
+    assign ser_rx_data    = 8'd0;
+    assign ser_rx_end     = 1'b0;
+    assign ser_rx_parity  = 1'b0;
+    assign ser_rx_framing = 1'b0;
+    assign ser_plugged    = 1'b0;
+    assign chaos_address  = 16'd0;
+    assign chaos_rx_valid = 1'b0;
+    assign chaos_rx_word  = 16'd0;
+    assign chaos_rx_done  = 1'b0;
+    assign chaos_rx_bits  = 13'd0;
+    assign chaos_rx_crc   = 1'b0;
+    assign chaos_rx_lost  = 1'b0;
+    assign chaos_tx_done  = 1'b0;
+    assign chaos_tx_abort = 1'b0;
+    assign chaos_cbl_busy = 1'b0;
+    assign kbd_strobe     = 1'b0;
+    assign kbd_code       = 24'd0;
+    assign mouse_lines    = 7'h7F;
 
     assign con_req     = 1'b0;
     assign con_msyn    = 1'b0;
@@ -1806,9 +2131,8 @@ module cadr_arty_a7 #(
                    // reads on pages 4 and 5.
                    con_tv_map_q, con_tv_color_map_q, con_disp_color_map_q,
                    con_hdmi_out, con_hdmi_rotate,
-                   // The pack side's unanswered memory port, folded one level
-                   // down, and the switch value the console reports.
-                   hp_fold, sw0_held};
+                   // The switch value the console reports.
+                   sw0_held};
     end
   end
 
@@ -2022,7 +2346,9 @@ module cadr_arty_a7 #(
   // whole of the answer for every configuration.
   /* verilator lint_off UNUSEDSIGNAL */
   logic unused;
-  assign unused = &{1'b0, btn[3:2], sw[3:1], uart_txd_in, pack_irq};
+  assign unused = &{1'b0, btn[3:2], sw[3:1], uart_txd_in, pack_irq, chaos_irq,
+                    ser_irq, hp_mem_done, hp_mem_rdata, hp_mem_error,
+                    sw_mem_done, sw_mem_rdata, sw_mem_error};
   /* verilator lint_on UNUSEDSIGNAL */
 
 endmodule
