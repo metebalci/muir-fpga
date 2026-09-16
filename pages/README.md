@@ -74,12 +74,14 @@ say again what a document already says.
 ## The shape of a page
 
 Every page is the same shape. A desk note at the top, as on muir's and ozd's
-sites, gives the project's name and what this page is, and the other pages
-follow on the same line as links. Under it the page is a column of paper plates
-on a halftone desk. Each plate opens with a pink eyebrow and a title in the
-display face, holds its panels, and closes with a who-line whose last cell is
-the plate's number on its page. The last plate of every page is the colophon:
-the copyright, where the drawing style and the board come from, and the board
+sites, gives the project's name and then all seven pages, in one fixed order on
+every page, so no word on it moves as a reader goes from page to page. The page
+being read is plain text on the spot color, marked `aria-current`, and every
+other page is a link. Under it the page is a column of paper plates on a
+halftone desk. Each plate opens with a pink eyebrow and a title in the display
+face, holds its panels, and closes with a who-line whose last cell is the
+plate's number on its page. The last plate of every page is the colophon: the
+copyright, where the drawing style and the board come from, and the board
 waving goodbye. The front page's colophon is shaped as muir's is: where the
 material comes from, how the project is made, the name, the license, and the
 credits.
@@ -211,7 +213,7 @@ is what this is, and a spot color printed on black is a different object. The
 status colors on the drawings are therefore chosen, and checked, on paper
 alone.
 
-`.desk-note` is muir's, with the other pages added to it as links, and
+`.desk-note` is muir's, with the pages added to it as one fixed line, and
 `body.wide` lets a board page's plate out to hold the drawing at about its own
 size.
 

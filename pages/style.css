@@ -194,9 +194,13 @@ code, kbd { font-family: var(--mono); font-size: var(--fs-mono); font-weight: 40
 body.wide .page { max-width: 118rem; }
 
 /* The desk note, above the plates and outside them, as muir's and ozd's is:
-   the project's name in bold and what this page is. The other pages follow
-   it on the same line as links, because this site has seven pages where
-   theirs has one, and a name is never broken across two lines. */
+   the project's name in bold, then the pages. This site has seven pages where
+   theirs has one, so the note is one fixed line naming all seven in one order
+   on every page, and nothing on it moves from page to page. The page being
+   read is plain text printed on the spot color, as the who-line prints its
+   number; the color is drawn with a shadow rather than padding, so it takes
+   no room and no word shifts. Every other page is a link. No name is broken
+   across two lines. */
 .desk-note {
   font-family: var(--mono);
   font-size: var(--fs-mono-small);
@@ -206,7 +210,12 @@ body.wide .page { max-width: 118rem; }
   margin-bottom: 0.9rem;
 }
 .desk-note b { font-weight: 600; }
-.desk-note a { white-space: nowrap; }
+.desk-note a, .desk-note [aria-current="page"] { white-space: nowrap; }
+.desk-note [aria-current="page"] {
+  background: var(--spot);
+  box-shadow: 0 0 0 0.15rem var(--spot);
+  color: var(--ink);
+}
 
 /* Each section is paper on the halftone desk, with its panels above and the
    machine's own status line ruled off at the foot. */
