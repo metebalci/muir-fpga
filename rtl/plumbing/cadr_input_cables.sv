@@ -270,13 +270,13 @@ module cadr_input_cables #(
     input  var logic [7:0]  card_csr
 );
 
-  // `mouse::MOUSE_STEP_NS` = 16,000, in ticks of MIT's 5 ns grid.  **The
-  // five is `TICK_NS` and not the board's clock period**, which is 10 ns:
-  // `cadr_phase_gen.sv`'s header names that collision, and the two tens have
-  // nothing to do with each other.  So a step is 3,200 ticks, which is 32
-  // real microseconds at this board's tick, and the mouse keeps the card's
-  // own time.
-  localparam int unsigned MOUSE_STEP_T = 16_000 / 5;
+  // `mouse::MOUSE_STEP_NS` = 16,000, on MIT's grid.  **The grid is not the
+  // board's clock period**, which is 10 ns: `cadr_tick_pkg.sv`'s header
+  // names that collision, and the two tens have nothing to do with each
+  // other.  So a step is 3,200 ticks, which is 32 real microseconds at this
+  // board's tick, and the mouse keeps the card's own time.  It is twice
+  // `ioboard::KB_CLK_NS`, which is what lets the card see every step.
+  localparam int unsigned MOUSE_STEP_T = cadr_tick_pkg::ticks(16_000);
 
   // The count reaches DEPTH and the pointers only DEPTH-1, so they are
   // different widths: a pointer as wide as the count indexes an array with

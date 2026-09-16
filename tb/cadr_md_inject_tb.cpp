@@ -68,10 +68,11 @@
 #include "Vcadr_microcycle.h"
 #include "Vcadr_microcycle___024root.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
-constexpr int kTickNs = 5;
+constexpr int kTickNs = kGridNs;
 
 // Not before this microcycle.  `loadmd_edge` is gated by RDCYC and RDCYC is
 // a flip flop loaded by a memory operation, so it is zero until the boot

@@ -120,9 +120,9 @@ module cadr_spy_registers (
 );
 
   // busint::DIAGNOSTIC_NS, REGISTER_STROBE_NS and REGISTER_PULSE_NS.
-  localparam int unsigned SSYN_T   = 250 / 5;
-  localparam int unsigned STROBE_T = 150 / 5;
-  localparam int unsigned PULSE_T  = (150 - 100) / 5;
+  localparam int unsigned SSYN_T   = cadr_tick_pkg::ticks(250);
+  localparam int unsigned STROBE_T = cadr_tick_pkg::ticks(150);
+  localparam int unsigned PULSE_T  = cadr_tick_pkg::ticks(150 - 100);
 
   // spy::BASE and the sixteen registers above it, two apart.
   localparam logic [17:0] BASE = 18'o766000;
@@ -150,7 +150,7 @@ module cadr_spy_registers (
   // opportunity, which is up to a microcycle away. Applying it at the strobe
   // instead sets PROMDISABLE a microcycle early, measured on the band at
   // 1,410,034 against muir's 1,410,035.
-  localparam int unsigned SPEEDCLK_T = 60 / 5;
+  localparam int unsigned SPEEDCLK_T = cadr_tick_pkg::ticks(60);
 
   logic [5:0]  phase_t;      // ticks since the boundary
   logic        landing;      // one of the two instants is now

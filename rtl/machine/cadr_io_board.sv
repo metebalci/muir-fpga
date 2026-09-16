@@ -351,32 +351,32 @@ module cadr_io_board (
   // this board has been built with leaves the constant whole.
   // `SIXTY_CYCLE_NS` below is the same family and slows in the same
   // proportion, so its 60 Hz is 30 Hz of real time.
-  localparam int unsigned FIRST_EDGE_T   = 890 / 5;
-  localparam int unsigned USEC_PERIOD_T  = 1000 / 5;
+  localparam int unsigned FIRST_EDGE_T   = cadr_tick_pkg::ticks(890);
+  localparam int unsigned USEC_PERIOD_T  = cadr_tick_pkg::ticks(1000);
 
   // `ioboard::KB_CLK_NS` = 8,000: `QC` of the 74LS163 at IOBCLK 0D24 counting
   // `1 USEC CLK`, out through the 74S37 at 0C25.  muir counts these from
   // power-on at multiples of 8,000 rather than from the microsecond clock's
   // own 890 ns offset, and it is muir this is held to.
-  localparam int unsigned KB_CLK_T       = 8_000 / 5;
+  localparam int unsigned KB_CLK_T       = cadr_tick_pkg::ticks(8_000);
 
   // `ioboard::INTERVAL_TICK_NS` = 16,000: one count of the four 74LS193s at
   // CLKTIM on `16 USEC CLK`.  muir counts from the LOAD --- `ns - loaded >=
   // interval * 16,000` --- and not off a free-running 16 us clock, which would
   // bring `CLOCK READY` up by up to 16 us early.
-  localparam int unsigned INTERVAL_T     = 16_000 / 5;
+  localparam int unsigned INTERVAL_T     = cadr_tick_pkg::ticks(16_000);
 
   // `ioboard::SIXTY_CYCLE_NS`, in nanoseconds, and the tick.  See the header:
   // this one is accumulated, never reloaded.
   localparam logic [23:0] SIXTY_CYCLE_NS = 24'd16_666_666;
-  localparam logic [23:0] TICK_NS        = 24'd5;
+  localparam logic [23:0] TICK_NS        = 24'(cadr_tick_pkg::TICK_NS);
 
   // `busint::IOB_STRAIGHT_NS` = 250, the TD250 at IOBADR 0E09, and the
   // counter's low half, `IOB_USEC_LOW_NS` = 313 --- the next edge of the
   // 16 MHz `MCLK^` and then the TD250 --- rounded UP to the 5 ns grid, which
   // is the trace's `slip`.
-  localparam int unsigned STRAIGHT_T     = 250 / 5;
-  localparam int unsigned USEC_LOW_T     = (313 + 4) / 5;
+  localparam int unsigned STRAIGHT_T     = cadr_tick_pkg::ticks(250);
+  localparam int unsigned USEC_LOW_T     = cadr_tick_pkg::ticks(313);
 
   // Nothing drives `UBO8`..`UBO15` on a read of the status register, the two
   // unnamed slots of the keyboard group, the beep or the GPIO.
@@ -396,7 +396,7 @@ module cadr_io_board (
   // `busint::IOB_CHAOS_BUFFER_NS` = 350: the transmit buffer's write and
   // START, through the transmitter's `-TSR.SSYN`, measured at every phase of
   // the board's clocks.
-  localparam int unsigned CHAOS_BUF_T    = 350 / 5;
+  localparam int unsigned CHAOS_BUF_T    = cadr_tick_pkg::ticks(350);
 
   // The Chaosnet receive buffer's read: `-MSYN` taken at the first `FCLK^`
   // edge AT LEAST `busint::IOB_RBUF_SETUP_NS` = 33 ns after it, the word out
@@ -404,8 +404,17 @@ module cadr_io_board (
   // 74S163 at LMTCLK 0B03, an edge every 125 ns at multiples of 125 from
   // power-on --- 25 ticks --- so the condition is the first edge at a tick
   // at or after `-UB MSYN` plus 33 ns, which on the grid is seven ticks.
-  localparam int unsigned FCLK_T         = 125 / 5;
-  localparam int unsigned RBUF_SETUP_T   = (33 + 4) / 5;
+  // **`FCLK_NS` STAYS IN NANOSECONDS AND IS NOT A COUNT OF TICKS.**  It is a
+  // free-running oscillator and not a delay from anything: the 74S163 at
+  // LMTCLK 0B03 has put an edge every 125 ns since power came up, and what a
+  // read of the receive buffer waits for is the first of those edges past a
+  // threshold.  So the number that matters is the PHASE the chain is at when
+  // `-UB MSYN` arrives, and rounding the period would move that phase further
+  // every edge.  The accumulator at `fclk_acc` keeps the true period at any
+  // grid.  `RBUF_SETUP_T` beside it is a threshold measured FROM `-UB MSYN`,
+  // so it is a triggered delay and is on the grid.  See `docs/timing.md`.
+  localparam int unsigned FCLK_NS        = 125;
+  localparam int unsigned RBUF_SETUP_T   = cadr_tick_pkg::ticks(33);
 
   // The serial port's select is synchronized to a half-microsecond clock
   // whose phase `busint::IOB_HALF_USEC_PHASE_NS` measures at 203 ns on the
@@ -419,9 +428,9 @@ module cadr_io_board (
   // 205 + 500k for the same reason: no multiple of five lies between 203 and
   // 205 modulo 500, so an edge is strictly after `-MSYN` on the grid exactly
   // where it is strictly after it on the netlist.
-  localparam int unsigned HU_PERIOD_T    = 500 / 5;
-  localparam int unsigned HU_FIRST_T     = (203 + 4) / 5;
-  localparam int unsigned SERIAL_T       = 750 / 5;
+  localparam int unsigned HU_PERIOD_T    = cadr_tick_pkg::ticks(500);
+  localparam int unsigned HU_FIRST_T     = cadr_tick_pkg::ticks(203);
+  localparam int unsigned SERIAL_T       = cadr_tick_pkg::ticks(750);
 
   // The keyboard-and-mouse group's eight registers, `A<3:1>`.
   localparam logic [2:0]  R_KBD_LOW      = 3'd0;
@@ -496,9 +505,19 @@ module cadr_io_board (
   logic        hu_now;
   assign hu_now = (hu_t == 7'd0);
 
-  logic [4:0]  fclk_t;      // ticks to the next edge of `FCLK^`
+  // `FCLK^` as an accumulator in nanoseconds, for the reason `FCLK_NS` gives
+  // and in the shape `mains_acc` below uses: the wrap SUBTRACTS the period
+  // rather than clearing, so the remainder is carried and the average period
+  // is exact at any grid.  At the 5 ns grid the remainder is always zero and
+  // the edge falls every 25 ticks, exactly where the tick counter this
+  // replaced put it; at 10 ns the period is 12.5 ticks and it alternates 13
+  // and 12.  Zero at reset makes the first period the longer one.
+  logic [7:0]  fclk_acc;    // nanoseconds into the current `FCLK^` period
   logic        fclk_now;
-  assign fclk_now = (fclk_t == 5'd0);
+  logic [7:0]  fclk_next, fclk_less;
+  assign fclk_next = fclk_acc + 8'(cadr_tick_pkg::TICK_NS);
+  assign fclk_less = fclk_next - 8'(FCLK_NS);
+  assign fclk_now  = (fclk_acc >= 8'(FCLK_NS - cadr_tick_pkg::TICK_NS));
 
   logic [10:0] kb_t;        // ticks to the next edge of `KB CLK^`
   logic        kb_now;
@@ -626,7 +645,7 @@ module cadr_io_board (
   // one.  The firmware's own `bootflag` is what keeps the next word off it,
   // and that is the keyboard's business and not this card's.
   localparam logic [7:0]  BOOT_MATCH = 8'o360;  // ones in 13-10, zeros in 9-6
-  localparam int unsigned BOOT_T     = 4_000 / 5;
+  localparam int unsigned BOOT_T     = cadr_tick_pkg::ticks(4_000);
 
   logic       boot_match;
   logic [9:0] boot_t;
@@ -988,7 +1007,7 @@ module cadr_io_board (
       usec_latch  <= 32'd0;
       usec_t      <= 8'(FIRST_EDGE_T - 1);
       hu_t        <= 7'(HU_FIRST_T - 1);
-      fclk_t      <= 5'(FCLK_T - 1);
+      fclk_acc    <= 8'd0;
       kb_t        <= 11'(KB_CLK_T - 1);
       mains_acc   <= 24'd0;
       mains_wrap  <= 1'b0;
@@ -1276,10 +1295,10 @@ module cadr_io_board (
       // `FCLK^` the Chaosnet's receive buffer reads on, both free-running
       // off the same 32 MHz crystal and neither moved by a reset.
       hu_t   <= hu_now   ? 7'(HU_PERIOD_T - 1) : hu_t - 7'd1;
-      fclk_t <= fclk_now ? 5'(FCLK_T - 1)      : fclk_t - 5'd1;
+      fclk_acc <= fclk_now ? fclk_less : fclk_next;
 
       // --- the sixty-cycle clock ------------------------------------------
-      mains_wrap <= !mains_wrap && (mains_acc >= SIXTY_CYCLE_NS - 24'd10);
+      mains_wrap <= !mains_wrap && (mains_acc >= SIXTY_CYCLE_NS - 24'(2 * cadr_tick_pkg::TICK_NS));
       mains_acc  <= mains_wrap ? mains_less : mains_next;
       if (mains_wrap) mains <= mains + 16'd1;
 

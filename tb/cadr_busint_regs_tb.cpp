@@ -99,11 +99,12 @@
 
 #include "Vcadr_busint_regs.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
 // MIT's grid, which every tick count in the fabric is measured in.
-constexpr long kTickNs = 5;
+constexpr long kTickNs = kGridNs;
 
 // The eighteen-bit Unibus.
 constexpr unsigned kAddrs = 1u << 18;

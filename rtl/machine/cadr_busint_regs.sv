@@ -473,21 +473,21 @@ module cadr_busint_regs (
   // busint::DIAGNOSTIC_NS and REGISTER_STROBE_NS, the same two instants
   // `cadr_spy_registers.sv` answers on: this is one register cycle on the
   // board and the block select is shared.
-  localparam int unsigned SSYN_T   = 250 / 5;
-  localparam int unsigned STROBE_T = 150 / 5;
+  localparam int unsigned SSYN_T   = cadr_tick_pkg::ticks(250);
+  localparam int unsigned STROBE_T = cadr_tick_pkg::ticks(150);
 
   // busint::UB_XBUS_REQUEST_NS, `UBXRQ` up after `-UB MSYN` --- which is also
   // `UB XBUS T100`, the clock on the 74LS74 at REQERR 0D03 that carries
   // `UB MAP ERROR`, and so the instant a refused access sets it.  And
   // busint::UB_XBUS_READ_ACK_NS, `-UB SSYN` after `-UBACK` on a read.
-  localparam int unsigned XBUS_RQ_T  = 100 / 5;
-  localparam int unsigned READ_ACK_T = 100 / 5;
+  localparam int unsigned XBUS_RQ_T  = cadr_tick_pkg::ticks(100);
+  localparam int unsigned READ_ACK_T = cadr_tick_pkg::ticks(100);
 
   // busint::UB_MD_ACK_NS, `-LOADMD ACK` after the edge that loads `MD`.  A
   // constant of its own however equal it is to `READ_ACK_T` today: one is
   // `-UB SSYN` after `-UBACK` on a mapped read and this is `-LOADMD ACK`
   // after a load that makes no bus cycle at all.
-  localparam int unsigned MD_ACK_T   = 100 / 5;
+  localparam int unsigned MD_ACK_T   = cadr_tick_pkg::ticks(100);
 
   // busint::interrupt_status and busint::error_status.
   localparam logic [15:0] LOCAL_ENABLE  = 16'o000002;
@@ -513,7 +513,7 @@ module cadr_busint_regs (
   // busint::DEBUG_OUT_REQUEST_NS: `-UB MSYN` to `-DEBUG OUT REQ`, the MTD100
   // at DBGOUT 0A10.  The data, the write flag and the two address bits have
   // been on the cable that long before the request.
-  localparam int unsigned DBG_REQ_T = 100 / 5;
+  localparam int unsigned DBG_REQ_T = cadr_tick_pkg::ticks(100);
 
   // busint::map_access's range, `UB17-14=MAP` at UBCYC 0E06.
   localparam logic [17:0] WIN_LOW  = 18'o140000;

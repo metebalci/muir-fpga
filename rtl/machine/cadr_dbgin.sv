@@ -110,10 +110,10 @@
 module cadr_dbgin #(
     // busint::DEBUG_MSYN_NS: from `DBUB MASTER` to `-UB MSYN`.  "MSYN OUT at
     // DATCTL 0D08 follows the master a delay-line section on."
-    parameter int unsigned MSYN_T    = 100 / 5,
+    parameter int unsigned MSYN_T    = cadr_tick_pkg::ticks(100),
     // busint::DEBUG_RELEASE_NS: from `-DEBUG IN REQ` rising to `DBUB MASTER`
     // clearing, the 74S74 at UBMAST 0D02.
-    parameter int unsigned RELEASE_T = 100 / 5
+    parameter int unsigned RELEASE_T = cadr_tick_pkg::ticks(100)
 ) (
     input  var logic        clk,          // 100 MHz, one tick = 10 ns
     input  var logic        rst,

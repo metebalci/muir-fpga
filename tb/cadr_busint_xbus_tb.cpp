@@ -21,6 +21,7 @@
 
 #include "Vcadr_busint_xbus.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
@@ -120,7 +121,7 @@ int main(int argc, char **argv) {
     // Nothing at the address never answers, and the timer is what ends the
     // cycle. That is the stimulus, not something the interface is told.
     dut->dev_ack = r.present && (rq_since >= 0) &&
-                   ((r.tick - rq_since) * 5 >= r.device_ns);
+                   ((r.tick - rq_since) * kGridNs >= r.device_ns);
     dut->eval();
 
     if (dut->n_memgrant != r.n_memgrant)

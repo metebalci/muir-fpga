@@ -163,6 +163,7 @@
 
 #include "Vcadr_machine.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
@@ -170,7 +171,7 @@ namespace {
 // read deskew.  `cadr_phase_gen.sv`'s TICK_NS: a number of MIT's nanoseconds
 // a tick stands for, which is what every constant in the machine is written
 // in.  It is not the board's clock period and does not move with it.
-constexpr long kTickNs = 5;
+constexpr long kTickNs = kGridNs;
 constexpr int kXbusAckNs = 60;
 
 // ------------------------------------------------------------ the trace
@@ -1321,7 +1322,7 @@ int main(int argc, char **argv) {
         if (!clock_started) {
           clock_started = true;
         } else {
-          const int64_t fab = static_cast<int64_t>((t - last_edge_tick) * 5ull);
+          const int64_t fab = static_cast<int64_t>((t - last_edge_tick) * kGridNsU);
           const int64_t mu = static_cast<int64_t>(r.v[kNs] - last_muir_ns);
           if (r.v[kStall]) { drift_stalled += fab - mu; ++rows_stalled; }
           else { drift_plain += fab - mu; ++rows_plain; }
@@ -1341,11 +1342,11 @@ int main(int argc, char **argv) {
                        "at %" PRIu64 " ns, a difference of %" PRId64 " ns\n"
                        "    the drive's turn: the fabric %" PRIu64 " ns into it, "
                        "muir %" PRIu64 " ns, blocks %" PRIu64 " and %" PRIu64 "\n",
-                       static_cast<uint64_t>(t * 5ull), r.v[kNs],
-                       static_cast<int64_t>(t * 5ull) - static_cast<int64_t>(r.v[kNs]),
-                       static_cast<uint64_t>((t * 5ull) % 16666667ull),
+                       static_cast<uint64_t>(t * kGridNsU), r.v[kNs],
+                       static_cast<int64_t>(t * kGridNsU) - static_cast<int64_t>(r.v[kNs]),
+                       static_cast<uint64_t>((t * kGridNsU) % 16666667ull),
                        static_cast<uint64_t>(r.v[kNs] % 16666667ull),
-                       static_cast<uint64_t>(((t * 5ull) % 16666667ull) / 968448ull),
+                       static_cast<uint64_t>(((t * kGridNsU) % 16666667ull) / 968448ull),
                        static_cast<uint64_t>((r.v[kNs] % 16666667ull) / 968448ull));
           auto one = [&](const char *what, uint64_t got, uint64_t want) {
             if (got != want)

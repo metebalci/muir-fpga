@@ -10,21 +10,21 @@
 // line becomes a counter.
 //
 // Every instant the generator names is a multiple of five nanoseconds ON THE
-// DRAWINGS, so `TICK_NS` below is 5 and every tap divides out exactly: the
-// four read taps (75, 85, 100, 160 ns) and their ILONG variants (115, 125,
-// 140) are 15, 17, 20, 32, 23, 25 and 28 ticks.  `phase` counts those ticks.
+// DRAWINGS, and `cadr_tick_pkg::ticks` is what converts them: the four read
+// taps (75, 85, 100, 160 ns) and their ILONG variants (115, 125, 140) come
+// out as 15, 17, 20, 32, 23, 25 and 28 ticks.  `phase` counts those ticks.
 //
-// **`TICK_NS` IS THE CONVERSION FROM MIT'S DRAWINGS AND NOT THE LENGTH OF A
-// TICK, AND THE BOARD'S TICK IS 10 ns, WHICH MAKES SAYING THIS PROPERLY
-// URGENT.**  `TICK_NS` is 5 for ever, because the drawings' grid is 5 ns and
-// dividing by anything else rounds an instant: write 10 HERE and the first
-// tap collapses to zero ticks and SELECT lands on top of another tap.  How
-// long a tick then LASTS is the board's business and nobody's here ---
-// `boards/arty-z7-20/cadr_arty.sv` makes it 10 ns, so this generator's cycle
-// is 29 ticks of 10 rather than of 5 and every instant keeps its exact ratio
-// to every other.  The two tens are unrelated numbers that happen to match:
-// one is a divisor here and one is a clock period there.  The machine cannot
+// **THE GRID IS NOT THE LENGTH OF A TICK, AND THE BOARD'S TICK IS 10 ns,
+// WHICH MAKES SAYING THIS PROPERLY URGENT.**  How long a tick lasts is the
+// board's business and nobody's here --- `boards/arty-z7-20/cadr_arty.sv`
+// makes it 10 ns, so this generator's cycle is 29 ticks of 10 rather than of
+// 5 and every instant keeps its exact ratio to every other.  The two tens
+// are unrelated numbers that happen to match: one is a divisor in
+// `cadr_tick_pkg.sv` and one is a clock period there.  The machine cannot
 // tell, and neither can any check --- they all compare tick counts.
+//
+// This generator is the whole of the first class `cadr_tick_pkg.sv`'s header
+// names: one counter, and every instant below a comparison against it.
 //
 // MACHRUN is deliberately not a port.  `-CLK0` is `-TPCLK AND MACHRUN` at
 // CLOCK2 1D10, which is on the board and not in the generator; `clock.rs`
@@ -99,30 +99,41 @@ module cadr_phase_gen (
   // --- except at extra slow, where 160 is already the longest tap the chain
   // provides.  `Speed::read_phase_ns` has the same table.
   //
-  // FIVE, FOR EVER: this is MIT's grid and not the board's clock.  See the
-  // header --- `cadr_arty.sv` makes a tick 10 ns and nothing below moves for
-  // it, because what is written below is tick COUNTS.  A reader who sets this
-  // to 10 to "match the board" builds a different machine that still lights
-  // LEDs.
-  localparam int unsigned TICK_NS = 5;
+  // Every instant below is a nanosecond figure off MIT's drawings put
+  // through `cadr_tick_pkg::ticks`.  The grid is not the board's clock: see
+  // that file's header, and `docs/timing.md` for what each of these is
+  // measured from and what must move with it.
 
   // The fixed instants, all measured from -TPR0 at phase zero.
-  localparam int unsigned TSE_OFF_T  = 5 / TICK_NS;    //   5 ns
-  localparam int unsigned TSE_ON_T   = 25 / TICK_NS;   //  25 ns
-  localparam int unsigned TPR60_ON_T = 60 / TICK_NS;   //  60 ns
-  localparam int unsigned SELECT_T   = 65 / TICK_NS;   //  65 ns
-  localparam int unsigned TPR60_OFF_T = (60 + 40) / TICK_NS; // 100 ns
+  localparam int unsigned TSE_OFF_T   = cadr_tick_pkg::ticks(5);
+  localparam int unsigned TSE_ON_T    = cadr_tick_pkg::ticks(25);
+  localparam int unsigned TPR60_ON_T  = cadr_tick_pkg::ticks(60);
+  localparam int unsigned SELECT_T    = cadr_tick_pkg::ticks(65);
+  localparam int unsigned TPR60_OFF_T = cadr_tick_pkg::ticks(60 + 40);
 
   // ...and the ones measured from the end of the read phase.
-  localparam int unsigned WP_ON_T      = 30 / TICK_NS; // -TPW30
-  localparam int unsigned WPIRAM_OFF_T = 45 / TICK_NS; // -TPW45
+  localparam int unsigned WP_ON_T      = cadr_tick_pkg::ticks(30); // -TPW30
+  localparam int unsigned WPIRAM_OFF_T = cadr_tick_pkg::ticks(45); // -TPW45
   // WP_OFF_NS is 70 on the board but the cycle restarts at -TPDONE = -TPW60,
   // so muir clamps the pulse to the boundary: `WP_OFF_NS.min(RESTART)`.  The
   // hardware's pulse outlives the boundary and propagation delay closes it
   // before the clock edge arrives; with no gate delays here, a pulse that
   // outlived it would write at the next instruction's address.  See the
   // WP_OFF_NS comment in clock.rs.
-  localparam int unsigned RESTART_T = 60 / TICK_NS;    // -TPDONE, 60 ns
+  localparam int unsigned RESTART_T = cadr_tick_pkg::ticks(60);        // -TPDONE, 60 ns
+
+  // The seven taps of the delay chain the 74S151 at CLOCK1 1D08 selects
+  // between, named rather than written as tick counts so that the grid
+  // reaches them.  `Speed::read_phase_ns` has the same table, and ILONG
+  // adds forty nanoseconds at every speed but extra slow, where 160 ns is
+  // already the longest tap the chain provides.
+  localparam int unsigned READ_FAST_T         = cadr_tick_pkg::ticks(75);
+  localparam int unsigned READ_FAST_ILONG_T   = cadr_tick_pkg::ticks(75 + 40);
+  localparam int unsigned READ_NORMAL_T       = cadr_tick_pkg::ticks(85);
+  localparam int unsigned READ_NORMAL_ILONG_T = cadr_tick_pkg::ticks(85 + 40);
+  localparam int unsigned READ_SLOW_T         = cadr_tick_pkg::ticks(100);
+  localparam int unsigned READ_SLOW_ILONG_T   = cadr_tick_pkg::ticks(100 + 40);
+  localparam int unsigned READ_EXTRA_SLOW_T   = cadr_tick_pkg::ticks(160);
 
   logic [5:0] phase;       // ticks since -TPR0
   logic       running;     // a cycle has started; low while reset is held
@@ -165,11 +176,11 @@ module cadr_phase_gen (
   logic [5:0] read_sel;
   always_comb begin
     unique case (speed)
-      SPEED_FAST:       read_sel = ilong ? 6'd23 : 6'd15;  // 115 : 75 ns
-      SPEED_NORMAL:     read_sel = ilong ? 6'd25 : 6'd17;  // 125 : 85 ns
-      SPEED_SLOW:       read_sel = ilong ? 6'd28 : 6'd20;  // 140 : 100 ns
-      SPEED_EXTRA_SLOW: read_sel = 6'd32;                  // 160 ns, both
-      default:          read_sel = 6'd17;
+      SPEED_FAST:       read_sel = ilong ? 6'(READ_FAST_ILONG_T) : 6'(READ_FAST_T);      // 115 : 75 ns
+      SPEED_NORMAL:     read_sel = ilong ? 6'(READ_NORMAL_ILONG_T) : 6'(READ_NORMAL_T);  // 125 : 85 ns
+      SPEED_SLOW:       read_sel = ilong ? 6'(READ_SLOW_ILONG_T) : 6'(READ_SLOW_T);      // 140 : 100 ns
+      SPEED_EXTRA_SLOW: read_sel = 6'(READ_EXTRA_SLOW_T);                                // 160 ns, both
+      default:          read_sel = 6'(READ_NORMAL_T);
     endcase
   end
 
@@ -180,11 +191,11 @@ module cadr_phase_gen (
       running    <= 1'b0;
       phase      <= 6'd0;
       // Normal, no ILONG; replaced at the first SELECT.
-      tpclk_off_at  <= 6'd17 - 6'd1;
-      wp_on_at      <= 6'd17 + 6'(WP_ON_T) - 6'd1;
-      wpiram_off_at <= 6'd17 + 6'(WPIRAM_OFF_T) - 6'd1;
-      wrap_at       <= 6'd17 + 6'(RESTART_T) - 6'd1;
-      park_at       <= 6'd17 + 6'(RESTART_T);
+      tpclk_off_at  <= 6'(READ_NORMAL_T) - 6'd1;
+      wp_on_at      <= 6'(READ_NORMAL_T) + 6'(WP_ON_T) - 6'd1;
+      wpiram_off_at <= 6'(READ_NORMAL_T) + 6'(WPIRAM_OFF_T) - 6'd1;
+      wrap_at       <= 6'(READ_NORMAL_T) + 6'(RESTART_T) - 6'd1;
+      park_at       <= 6'(READ_NORMAL_T) + 6'(RESTART_T);
       tpclk      <= 1'b0;
       tptse      <= 1'b0;
       n_tpwp     <= 1'b1;

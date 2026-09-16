@@ -125,16 +125,26 @@ module cadr_busint_xbus (
 
   // "it is the responsibility of the bus master to assert good address, write,
   // and data lines 80 ns. prior to asserting -XBUS.RQ" --- busint::SETUP_NS.
-  localparam int unsigned SETUP_T = 80 / 5;
+  localparam int unsigned SETUP_T = cadr_tick_pkg::ticks(80);
 
   // The board's own deskew on a read: the 74S64 at REQLM 0C11 makes XACK from
   // XBUS ACK IN at once for a write and through the 60 ns tap of the TD100 at
   // 0C09 for a read --- busint::XBUS_ACK_NS.
-  localparam int unsigned DESKEW_T = 60 / 5;
+  localparam int unsigned DESKEW_T = cadr_tick_pkg::ticks(60);
 
   // The request-timing oscillator at REQTIM 0A01: 850 ns, so 425 ns a half
   // period --- chip::VCO_PERIOD. It free-runs from power-on, high first.
-  localparam int unsigned VCO_HALF_T = 425 / 5;
+  //
+  // **THE PERIOD STAYS IN NANOSECONDS AND IS NOT A COUNT OF TICKS**, which
+  // is what every other constant in this file is.  Everything else here is a
+  // delay from an event, so rounding it to the grid moves one instant by
+  // less than a tick and nothing accumulates.  This is an oscillator: the
+  // grant only OPENS its output, it does not start it, so what the NXM timer
+  // measures is the phase this counter happens to be at when a cycle is
+  // granted.  Round the half period and that phase drifts further every
+  // period, and the acknowledgment instant drifts with it.  The accumulator
+  // below keeps the true period at any grid.  See `docs/timing.md`.
+  localparam int unsigned VCO_HALF_NS = 425;
 
   // `NXM TIMEOUT` on the sixth rise of the gated output: the first rise plus
   // busint::TIMEOUT_NS, which is five whole periods.  The REQTIM PROM's
@@ -161,10 +171,10 @@ module cadr_busint_xbus (
   // cleared by another master taking the bus, so from the second Unibus cycle
   // on the machine is already the master and starts at stage 4.  Stages 1 to
   // 3 happen once in the life of the machine.
-  localparam int unsigned UB_SELECT_T  = 200 / 5;   // -SACK to the grant
-  localparam int unsigned UB_ADDRESS_T = 100 / 5;   // the grant to -UB MSYN
-  localparam int unsigned UB_ACK_T     = 150 / 5;   // -UB SSYN to -LMACK
-  localparam int unsigned UB_STROBE_T  = 100 / 5;   // -UB SSYN to the MD strobe
+  localparam int unsigned UB_SELECT_T  = cadr_tick_pkg::ticks(200);  // -SACK to the grant
+  localparam int unsigned UB_ADDRESS_T = cadr_tick_pkg::ticks(100);  // the grant to -UB MSYN
+  localparam int unsigned UB_ACK_T     = cadr_tick_pkg::ticks(150);  // -UB SSYN to -LMACK
+  localparam int unsigned UB_STROBE_T  = cadr_tick_pkg::ticks(100);  // -UB SSYN to the MD strobe
 
   typedef enum logic [2:0] {
     IDLE,       // no cycle; -MEMRQ is high
@@ -176,10 +186,32 @@ module cadr_busint_xbus (
   } state_e;
 
   // The oscillator, free-running from reset and independent of any cycle.
-  logic [6:0] vco_count;
+  //
+  // **AN ACCUMULATOR IN NANOSECONDS, WRAPPED BY SUBTRACTING THE PERIOD AND
+  // NEVER BY CLEARING.**  Clearing discards the remainder, and the remainder
+  // is the whole of the difference: at a grid that does not divide 425 a
+  // cleared counter loses a little every half period and the phase walks
+  // away.  Subtracting carries it, so the average period is exact at any
+  // grid.  `cadr_io_board.sv`'s sixty-cycle clock and `cadr_serial_line.sv`'s
+  // crystal are the same shape.
+  //
+  // At the 5 ns grid the machine runs at, the remainder is always zero and
+  // the toggle falls every 85 ticks --- exactly where the tick counter this
+  // replaced put it.  At a 10 ns grid the half period is 42.5 ticks and the
+  // accumulator alternates 43 and 42.
+  //
+  // The condition is `vco_acc >= VCO_HALF_NS - TICK_NS`, which is the same
+  // test as `vco_acc + TICK_NS >= VCO_HALF_NS` with the adder off it; the
+  // note at `mains_acc` in `cadr_io_board.sv` has that argument at length.
+  // After a wrap the accumulator is under one tick, so the tick after a wrap
+  // cannot wrap again.
+  logic [8:0] vco_acc;     // nanoseconds into the current half period
   logic       vco;
   logic       vco_toggle;
-  assign vco_toggle = (vco_count == 7'(VCO_HALF_T - 1));
+  logic [8:0] vco_next, vco_less;
+  assign vco_next   = vco_acc + 9'(cadr_tick_pkg::TICK_NS);
+  assign vco_less   = vco_next - 9'(VCO_HALF_NS);
+  assign vco_toggle = (vco_acc >= 9'(VCO_HALF_NS - cadr_tick_pkg::TICK_NS));
 
   logic       nxm;        // this cycle was ended by the timer, not a slave
   logic       tmr_fell;   // the gated output has taken its first fall
@@ -318,14 +350,26 @@ module cadr_busint_xbus (
   always_ff @(posedge clk) begin
     // The oscillator runs whatever the cycle is doing, and reset only sets its
     // phase: on the board it has been running since the power came up.
+    //
+    // **THE STARTING PARITY IS STATED HERE RATHER THAN INHERITED.**  Zero
+    // makes the first half period the LONGER of the two wherever the grid
+    // does not divide 425: at a 10 ns grid it is 43 ticks and then 42.  At
+    // the 5 ns grid the machine runs at, every half period is 85 and the
+    // parity does not arise.  The reference anchors the timeout at five
+    // periods after the first gated rise, with whole periods counted from
+    // power-on, and at this grid a zero start begins a half period at
+    // reset as that does.  At a grid that does not divide 425 no starting
+    // value keeps every edge on the reference's instant.  Issue #21 found a
+    // separate one-tick defect in how the timer samples `vco`; that is not
+    // this counter's and is fixed on its own.
     if (rst) begin
-      vco_count <= 7'd0;
-      vco       <= 1'b1;
+      vco_acc <= 9'd0;
+      vco     <= 1'b1;
     end else if (vco_toggle) begin
-      vco_count <= 7'd0;
-      vco       <= !vco;
+      vco_acc <= vco_less;
+      vco     <= !vco;
     end else begin
-      vco_count <= vco_count + 7'd1;
+      vco_acc <= vco_next;
     end
 
     if (rst) begin

@@ -108,10 +108,11 @@
 
 #include "Vcadr_console_harness.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
-constexpr int kTickNs = 5;
+constexpr int kTickNs = kGridNs;
 
 // The trace's columns, in the order golden/src/rtl.rs prints them.
 enum Col {
