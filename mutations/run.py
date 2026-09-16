@@ -93,6 +93,32 @@ GP0 = ["rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
        "rtl/plumbing/cadr_chaos_cable.sv", "rtl/plumbing/cadr_serial_line.sv",
        "rtl/plumbing/cadr_input_cables.sv"]
 
+# MIT's grid, `rtl/machine/cadr_tick_pkg.sv`, which the Makefile hands every
+# Verilator line as `$(TICKPKG)` ahead of the modules that import it.
+#
+# **IT IS NOT IN ANY SOURCE LIST ABOVE OR BELOW, AND IT WAS NOT HERE AT ALL
+# WHEN IT ARRIVED.**  The package landed in the Makefile and in no list of
+# this file's, so every check this runner verilates failed its baseline on
+# `%Error-PKGNODECL` and the run exited 2 before a single record: `make
+# mutants` was dead while `make check` was green.  Neither guard below could
+# say so.  `check_makefile` asks only that every file this runner names is
+# mentioned somewhere in the Makefile, which is the other direction, and it
+# reads the Makefile's text, where the package is a variable named once;
+# `check_coverage` compares these lists with the records and never with the
+# Makefile at all.
+#
+# It goes first on every Verilator command rather than into fifty-four lists,
+# because a package nothing imports costs lint nothing and a list that forgot
+# it is exactly this failure again.  And only where the copy HAS it, because
+# `--since` names revisions older than the package, where a file that is not
+# there would make every record BROKEN --- the `git archive` pathspec lesson.
+TICK_PKG = "rtl/machine/cadr_tick_pkg.sv"
+
+
+def tick_pkg(work):
+    """The grid's package, if this copy of the tree has one."""
+    return [TICK_PKG] if os.path.exists(os.path.join(work, TICK_PKG)) else []
+
 CHECKS = {
     "phase_gen": {
         "sources": ["rtl/machine/cadr_phase_gen.sv"],
@@ -1706,6 +1732,7 @@ def build_and_run(args, work, check, build_fails=False):
         cmd += ["-GPROM_HEX=\"%s\""
                 % os.path.join(args.goldens, "boot_prom.hex")]
     cmd += ["-Mdir", obj, "--top-module", spec["top"]]
+    cmd += tick_pkg(work)
     cmd += spec["sources"]
     # Everything the check builds that no mutation is aimed at: a wiring
     # harness, or a module with a check of its own.  `arty` has used the key
@@ -1835,7 +1862,7 @@ def arty_check(args, work, build_fails=False):
         files = stubs + extra_sources
         if not all(os.path.exists(os.path.join(work, f)) for f in files):
             continue
-        cmd = base + generics + usr_access + stubs + spec["extra"] + spec["sources"]
+        cmd = base + generics + tick_pkg(work) + usr_access + stubs + spec["extra"] + spec["sources"]
         cmd += extra_sources
         rc, out = run(cmd, work)
         if rc != 0:
