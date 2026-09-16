@@ -2,19 +2,33 @@
 
 This directory is the project page. The files are hand-written, and there is no
 build step and no generator, the same way
-[muir's `site/`](https://github.com/metebalci/muir/tree/main/site) has none:
+[muir's `site/`](https://github.com/metebalci/muir/tree/main/site) has none.
+The pages are drawn in the hand of Cold Boot, a manga-style zine about the
+CADR: ink and one spot color, fluorescent pink, on paper, in panels with a
+who-line ruled off under each section. muir's and ozd's sites are drawn in the
+same hand, and this one takes muir's stylesheet so that the three are one
+family.
 
-    index.html    the front page. What the project is in a paragraph, then one
-                  table with a row for each board saying what that board is and
-                  what it does, each board's name linking its own page, and a
-                  link to the page on the real machine. The table's styles are
-                  in front.css beside it, because the table is this project's
-                  own rather than muir's. It ends with the project's license
-                  and a list of the third-party material the boards use, each
-                  entry naming whose it is and under what terms
+**The pages are brief, and the documents are long.** A page is its drawings,
+its tables and a few sentences around them. Anything longer lives in `docs/`
+in the repository, and the page links to the file. The page's own text is
+there so a reader can tell what the drawing is before they read it, and not to
+say again what a document already says.
+
+    index.html    the front page. What the project is, in two speech bubbles
+                  and a terminal block, then one table with a row for each
+                  board, the board's name linking its own page. It ends with
+                  the license and a table of the third-party material the
+                  boards and the site use, each row naming whose it is, under
+                  what terms, and where those terms are recorded. The long
+                  form of that table is docs/license.md. The tables' styles
+                  are in front.css beside it, because the tables are this
+                  project's own rather than muir's
     arty-z7-20.html
-                  the Arty Z7-20's architecture drawing, and nothing else. How
-                  it boots is on booting.html with the other two boards'
+                  the Arty Z7-20's architecture drawing, under the board's
+                  name, one line saying what it is, and the keys to the pages
+                  that explain it. How it boots is on booting.html with the
+                  other board's
     cora-z7-07s.html
                   the same drawing for the Cora Z7-07S. That part is
                   smaller and the board has no HDMI connector, no USB host port
@@ -26,20 +40,23 @@ build step and no generator, the same way
                   from its own card, and the same board from a TFTP server
                   while it is being worked on. The two Zynq boards come up the
                   same way, so one drawing serves both and a label says where
-                  they differ
+                  they differ. The long form is docs/boot.md
     debugging.html
                   how one CADR debugs another, in five drawings: MIT's cable
                   of twenty-one wires and what CC reaches over it, the two
                   ways into a board's own debuggee end, the ribbon between two
-                  Pmod headers, and the frame the eight pins carry. It ends
-                  with a table of what has run on a board and what has not
+                  Pmod headers, and the frame the pins carry. It ends with a
+                  table of what has run on a board and what has not. The long
+                  form is docs/debug-cable.md
     faq.html      questions this project is asked, each with an answer of a
-                  few sentences and a line naming the file it rests on. The
-                  first is why there is no disk multiplexor block. There are
-                  no drawings on it. Its styles are in faq.css beside it
+                  sentence or two and a line naming the file it rests on. The
+                  whole of each answer is in docs/faq.md. The first is why
+                  there is no disk multiplexor block. There are no drawings on
+                  it. Its styles are in faq.css beside it
     cadr.html     the real CADR in ten drawings with one-sentence captions:
-                  the machine, its boards, cables and buses, and how it boots
-                  document named at the end of the page
+                  the machine, its boards, cables and buses, and how it boots.
+                  What each drawing shows, and every source it was read from,
+                  is in docs/cadr.md
     full-page.html
                   a fuller draft kept for later: the architecture drawing with
                   its caption, the target and its block-RAM budget, the
@@ -47,31 +64,59 @@ build step and no generator, the same way
                   space, and where things stand. Deliberately not committed
                   --- it is in .gitignore with a TEMPORARY marker --- and it
                   is here to be drawn from rather than published as it stands
-    style.css     muir's stylesheet, with one change --- see below
-    fonts/        Archivo and IBM Plex Mono, so a visitor does not have to
-                  ask a third party for the page to be readable
+    style.css     muir's stylesheet, with the drawings' classes added --- see
+                  below
+    fonts/        Dela Gothic One, Zen Maru Gothic and IBM Plex Mono, so a
+                  visitor does not have to ask a third party for the page to
+                  be readable
     .nojekyll     keeps GitHub Pages from running Jekyll over it
 
-## The two kinds of page
+## The shape of a page
 
-A **drawing page** is `arty-z7-20.html` or `cora-z7-07s.html`. The drawing is
-the page. There is no heading, no caption and no prose on it, and each drawing
-carries its own title inside it. The only text outside the drawings is one
-faint line at the top saying which board this is and linking the other pages.
-Anything that explains a drawing belongs in `full-page.html` or in `docs/`,
-not here.
+Every page is the same shape. A line of mono at the top names the pages and
+marks the one being read. Under it the page is a column of paper plates on a
+halftone desk. Each plate opens with a pink eyebrow and a title in the display
+face, holds its panels, and closes with a who-line whose last cell is the
+plate's number on its page. The last plate of every page is the colophon: the
+copyright, where the drawing style and the board come from, and the board
+waving goodbye.
 
-A **prose page** is `index.html`, `booting.html`, `debugging.html`,
-`faq.html` or `cadr.html`. Those carry the topbar, and they are written in
-brief full sentences because they are read by people who did not write the
-code.
+**A board page** is `arty-z7-20.html` or `cora-z7-07s.html`. It is one plate:
+the board's name, one line, the keys to the booting and debugging pages, and
+the drawing in a panel of its own. The drawing carries its own title and
+legend inside it, and nothing outside the drawing explains it. Anything that
+does belongs in `full-page.html` or in `docs/`.
 
-`booting.html`, `debugging.html` and `cadr.html` are prose pages that carry
-drawings, and all three of them draw in `currentColor` alone. **A sequence
-carries no status color.**
+**A page with prose** is `index.html`, `booting.html`, `debugging.html`,
+`faq.html` or `cadr.html`. What text it has is written in brief full
+sentences, because it is read by people who did not write the code, and every
+long form it points at is a Markdown file in `docs/`.
+
+`booting.html`, `debugging.html` and `cadr.html` carry drawings, and all three
+of them draw in `currentColor` alone. **A sequence carries no status color.**
 A board drawing colors a block by how far along it is; a sequence says what
 happens and in what order, which is a different claim, so what is built and
 what is not is in the caption under each figure, in words.
+
+## The characters
+
+The characters are inline SVG, defined once at the top of each page that uses
+them and placed with `<use>`. They are drawn in `#141414` and `#fff` with the
+spot pink, and they are pictures rather than drawings of the machine, so they
+make no claim about it.
+
+**The board is the site's mascot.** It was drawn for this site by the
+[ozd](https://github.com/metebalci/ozd) project, in Cold Boot's hand, and it
+is copied here unchanged from ozd's `pages/index.html`, where it was added at
+ozd commit `b707ecc`. Its chip wears CADR's face. The DDR3 beside it, the
+Ethernet jack and the microSD slot are the Arty Z7-20's, and the mounting
+holes and the lights are any development board's. ozd is under the AGPL,
+version 3 or later.
+
+**CADR's body, its face and its waving arm are Cold Boot's own parts**, under
+CC BY-SA 4.0, and the board wears the face and the arm. The two boards joined
+by a ribbon on the debugging page are the mascot twice, with the ribbon drawn
+between them in the same hand.
 
 ## The drawings
 
@@ -80,9 +125,9 @@ They are hand-placed rather than generated, because nothing here reads the RTL.
 So **a change to the architecture is a change to the drawing**, made by hand,
 and the drawing can drift from the machine.
 
-There are now three architecture drawings, one per board. The Arty Z7-20's is
-the original, and the other two are derived from it. They share its viewBox and
-its translation, and a block two boards both have is at the same coordinates in
+There are two architecture drawings, one per board. The Arty Z7-20's is
+the original, and the other is derived from it. It shares its viewBox and
+its translation, and a block the two boards both have is at the same coordinates in
 both.
 
 **The derived one is derived by crossing off.** The Cora Z7-07S is the same
@@ -145,20 +190,36 @@ faint with it, as far as the first junction where another line joins it or the
 first box it meets, because past that junction the same wire serves something
 the board does have.
 
-## The one change to muir's stylesheet
+## What `style.css` adds to muir's
 
-muir sets `html { font-size: 17px }` and states its type scale as fractions of
-that. This copy leaves the root alone and sets the base on `body` instead, with
-the scale restated against a 16px root. Pinning the root silently overrides a
-reader who has raised their browser's default, and that is the one
-accessibility choice that matters. The rendered sizes are identical at a
-default root, and they follow the reader when it is not the default. muir took
-the narrow-screen step from 17px to 16 in one line. That is still one line
-here, as a block of token overrides under `@media (max-width: 720px)`.
+The chrome is muir's stylesheet as it is: its tokens, its panels, its speech
+bubbles, its keys, its contents, its tables and its who-line. What is added is
+this site's own.
 
-`.fig.dense` is added for the architecture drawings. Those drawings carry more
-label text than muir's figures, so they scroll sooner rather than shrinking
-below legibility. `.crumb` is added for the faint line on the drawing pages.
+**Font sizes are in rem, and the base is set once, on `body`.** Nothing styles
+`html`. Pinning the root would silently override a reader who has raised their
+browser's default, and that is the one accessibility choice that matters. The
+wordmark's `clamp()` keeps a rem term in its middle value for the same reason.
+The one exception is the drawings: the `d-*` rules give their sizes in the
+drawing's own viewBox units, which scale with the picture.
+
+**There is no dark mode**, as there is none on muir's or ozd's. Paper and ink
+is what this is, and a spot color printed on black is a different object. The
+status colors on the drawings are therefore chosen, and checked, on paper
+alone.
+
+`.desk-nav` is the line of pages at the top, and `body.wide` lets a board
+page's plate out to hold the drawing at about its own size.
+
+`.fig.dense` is for the booting page's sequences, which carry more label text
+than muir's figures, so they scroll sooner rather than shrinking below
+legibility. `.fig.dense.wide` is for the architecture drawings, which scale
+with their plate and never force a scrollbar, except on a phone, where they
+keep a readable width and scroll inside their own panel.
+
+The drawings' labels are set in the voice, Zen Maru Gothic, as muir's are.
+Measured in a browser against the face they were placed with, every label is
+two to seven per cent narrower, and none runs past its box.
 
 `.d-warn` is added for the one red label on the drawings. The debug cable's
 supply pins are open at both ends, because a cable between two boards must not
@@ -184,13 +245,12 @@ after `style.css` would otherwise take the red out of the smallest label.
 `.d-absent`, `.d-absent-x`, `.d-absent-t`, `.d-absent-l` and `.d-absent-key`
 are added for a block a board does not have and for the wires that reach it.
 The outline, the faint label and the faded line use the drawing's own ink
-through `currentColor`, so they follow the reader's theme like everything else.
-Only the cross has a color of its own, `--st-absent`, which is the red the
-error lamp is already drawn in.
+through `currentColor`. Only the cross has a color of its own, `--st-absent`,
+which is the red the error lamp is already drawn in.
 
 ## Looking at it
 
-    python3 -m http.server -d site 8000
+    python3 -m http.server -d pages 8000
 
 You can also open `index.html` directly. There is no build.
 

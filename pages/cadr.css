@@ -3,13 +3,13 @@
 
 /* The CADR page's own drawing classes.  Everything else it needs ---
    `d-box`, `d-t`, `d-s`, `d-m`, `d-n`, `d-line`, `d-bus`, `d-dash`,
-   `figure.fig` and its `.scroll`, `.tablewrap` and `dl.credits` --- is in
-   `style.css` and is shared with the board drawings.  This file exists so
+   `figure.fig` and its `.scroll`, and `.tablewrap` --- is in `style.css`
+   and is shared with the board drawings.  This file exists so
    that this page can be worked on without touching that one.
 
    Nothing here carries a status color.  The board drawings color a block
    by how far along it is; these figures say what the machine IS, so they
-   are drawn in `currentColor` alone and read the same in either theme. */
+   are drawn in `currentColor` alone, which is the page's ink. */
 
 /* An inner division of a field or a bar: lighter than the box around it,
    so a 48-bit word reads as one word cut into fields rather than as
@@ -18,8 +18,7 @@
 
 /* A filled region: the part of a buffer a picture uses, the data of a
    block, the memory that is fitted.  Tone comes from the fill's opacity
-   rather than from a hue, which is what the rest of the site does with
-   its dither and its utilization bars. */
+   rather than from a hue. */
 .d-tint { fill: currentColor; fill-opacity: 0.14; stroke: none; }
 
 /* The smallest label on the page, for a bit number under a field that is
