@@ -139,6 +139,7 @@
 #include "Vcadr_disk_harness.h"
 #include "cadr_pack_side.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 using namespace pack_side;
 
@@ -891,7 +892,7 @@ int main(int argc, char **argv) {
   // is not exact, where masking the four bits would be none.
   auto time_ok = [&](const Row &r, unsigned st, long st_tick) {
     ++ex_charged;
-    bool early = st_tick < r.now / 5 + K + turns;
+    bool early = st_tick < r.now / kGridNs + K + turns;
     unsigned wrong2 = early ? (st & TIME_BITS & ~r.status)
                             : (r.status & TIME_BITS & ~st);
     if (wrong2)
@@ -910,7 +911,7 @@ int main(int argc, char **argv) {
   auto check_port = [&](const Row &r, unsigned port, long at_tick) {
     ++checked_port;
     if (port) ++port_raised;
-    const long own = r.now / 5 + K + turns;
+    const long own = r.now / kGridNs + K + turns;
     if (at_tick == own || !timed_dirty) {
       if (port != (unsigned)r.intr)
         fail(r, "-XBUS.INTR at the port", port, (unsigned)r.intr);
@@ -937,7 +938,7 @@ int main(int argc, char **argv) {
     // 2,583,337,385 is 4,000 ns into a revolution, which is the index pulse's
     // trailing edge exactly.  Every row of the block-counter sweep has an
     // instant to itself and is compared; a row that shares one is not.
-    if (st_tick != r.now / 5 + K + turns) {
+    if (st_tick != r.now / kGridNs + K + turns) {
       ++ex_counter;
       mask &= 0x00FFFFFFu;
       if (timed_dirty) { mask &= ~TIME_BITS; time_ok(r, st, st_tick); }
@@ -949,7 +950,7 @@ int main(int argc, char **argv) {
     if ((st ^ r.status) & mask) fail(r, "the status word", st, r.status);
     chan_bits_seen |= r.status & CHAN;
     unsigned bc = st >> 24;
-    if (bc < 32) { if (st_tick == r.now / 5 + K + turns) counters_seen |= 1u << bc; }
+    if (bc < 32) { if (st_tick == r.now / kGridNs + K + turns) counters_seen |= 1u << bc; }
     else fail(r, "the block counter, which cannot exceed 17", bc, 17);
     if ((st >> 10) & 1) ++seek_errors;
     if ((st >> 7) & 1) ++read_onlys;
@@ -1102,7 +1103,7 @@ int main(int argc, char **argv) {
       glast.push_back(b);
       gspan.push_back(off);
       ganchor.push_back(anchor);
-      gorigin.push_back(rows[a].now / 5 + K - anchor);
+      gorigin.push_back(rows[a].now / kGridNs + K - anchor);
       a = b;
     }
   }
@@ -1283,8 +1284,8 @@ int main(int argc, char **argv) {
               // write being the controller's hold.
               if (getenv("DISK_DEBUG"))
                 std::fprintf(stderr, "START row %ld cmd %o tick %ld want %ld\n",
-                             r.n, lastcmd & 017u, tick - 2, rows[i].now / 5 + K + turns);
-              if (tick - 2 != rows[i].now / 5 + K + turns) ++unanchored_starts;
+                             r.n, lastcmd & 017u, tick - 2, rows[i].now / kGridNs + K + turns);
+              if (tick - 2 != rows[i].now / kGridNs + K + turns) ++unanchored_starts;
               unsigned code = lastcmd & 017u;
               int unit = (int)((ref_da >> 28) & 7u);
               bool present = (d_present >> unit) & 1u;
@@ -1323,7 +1324,7 @@ int main(int argc, char **argv) {
             if (r.reg == 0) {
               ++checked_status;
               chan_bits_seen |= r.status & CHAN;
-              if (v_tick != r.now / 5 + K + turns) {
+              if (v_tick != r.now / kGridNs + K + turns) {
                 ++ex_counter;
                 mask &= 0x00FFFFFFu;
                 if (timed_dirty) { mask &= ~TIME_BITS; time_ok(r, v, v_tick); }
@@ -1332,7 +1333,7 @@ int main(int argc, char **argv) {
                   (v & TIME_BITS) == (r.status & TIME_BITS))
                 timed_dirty = false;
               unsigned bc = v >> 24;
-              if (bc < 32) { if (v_tick == r.now / 5 + K + turns) counters_seen |= 1u << bc; }
+              if (bc < 32) { if (v_tick == r.now / kGridNs + K + turns) counters_seen |= 1u << bc; }
               else fail(r, "the block counter, which cannot exceed 17", bc, 17);
             }
             ++checked_read;

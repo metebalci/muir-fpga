@@ -2038,7 +2038,7 @@ def check_makefile():
     # two ways to close this warning and the one that stands alone.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
-                           "usb_input", "fpgarc", "cora"}
+                           "usb_input", "fpgarc", "cora", "grid"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four

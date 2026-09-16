@@ -77,11 +77,12 @@
 #include "Vcadr_microcycle.h"
 #include "Vcadr_microcycle___024root.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
 // Five nanoseconds, the master clock's period.
-constexpr int kTickNs = 5;
+constexpr int kTickNs = kGridNs;
 
 // The trace's columns, in the order golden/src/rtl.rs prints them.
 enum Col {

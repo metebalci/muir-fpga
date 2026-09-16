@@ -75,12 +75,13 @@
 
 #include "Vcadr_microcycle.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
 // `cadr_phase_gen.sv`'s `TICK_NS`: MIT's 5 ns grid, which is what every tick
 // count in the machine is a count of.  It is not the board's clock period.
-constexpr int kTickNs = 5;
+constexpr int kTickNs = kGridNs;
 
 // The clock control register's five bits, `spy::ClockControl`'s order and
 // MIT's `ir.bits`, whose numbers are OCTAL: 1 Run, 2 Step, 4 NOP, 10 IDEBUG,

@@ -101,7 +101,7 @@
 // board stopped closing again.  A design sitting near zero turns every edit
 // into a timing question, and the longer tick buys that off.  Nothing under
 // `rtl/machine/` changed:
-// `cadr_phase_gen.sv`'s `TICK_NS` is still 5, because that constant
+// `cadr_tick_pkg::TICK_NS` is still 5, because that constant
 // is the conversion from MIT's drawings --- whose instants are five
 // nanoseconds apart --- into tick counts, and the seven read taps are still
 // 15, 17, 20, 23, 25, 28 and 32 ticks of whatever a tick costs.
@@ -114,7 +114,7 @@
 // 145 ns instants would become half-ticks and six of the machine's own edges,
 // the microcycle's length among them, simply could not be expressed --- the
 // "different machine that still lights LEDs" this project keeps meeting.
-// That is a property of `cadr_phase_gen.sv`'s `TICK_NS`, which is 5 for ever.
+// That is a property of `cadr_tick_pkg::TICK_NS`, which is 5 for ever.
 // Making every tick LONGER by the same factor is a different operation: the
 // counts are untouched, so every instant keeps its exact ratio to every other,
 // a microcycle is 29 ticks whatever a tick costs, and the machine's own clock

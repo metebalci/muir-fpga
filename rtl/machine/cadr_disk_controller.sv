@@ -465,7 +465,7 @@ module cadr_disk_controller #(
   // it, for the fitter's sake --- see the note at the top.  Every timer a
   // store loads is loaded this much short, and the walk's own tally of ticks
   // starts at it, so that what expires expires at muir's instant.
-  localparam logic [31:0] STORE_HOLD_NS = 32'd10;
+  localparam logic [31:0] STORE_HOLD_NS = 32'(2 * cadr_tick_pkg::TICK_NS);
 
   // **AND ONE TICK MORE ON THE WAY OUT.**  The counters' answers in the
   // status word are registers --- `busy_zero_q`, `att_zero_q`,
@@ -480,7 +480,7 @@ module cadr_disk_controller #(
   // trace's own tick-sharp samples --- `disk-timeout-a-tick-short`,
   // `disk-seek-settle-a-tick-short`, `disk-index-pulse-a-tick-narrow` ---
   // are what say the compensation is exact, as they say it of the store's.
-  localparam logic [31:0] READ_HOLD_NS = 32'd5;
+  localparam logic [31:0] READ_HOLD_NS = 32'(cadr_tick_pkg::TICK_NS);
   // What a timer a START loads is loaded short by, all told.
   localparam logic [31:0] HOLD_NS = STORE_HOLD_NS + READ_HOLD_NS;
 
@@ -865,7 +865,7 @@ module cadr_disk_controller #(
   logic        wrapping, stepping;
   logic [19:0] pulse_ns;
 
-  assign spin_next = spin + 24'd5;
+  assign spin_next = spin + 24'(cadr_tick_pkg::TICK_NS);
   // **THE WRAP AND THE STEP ARE REGISTERS, COMPARED A TICK EARLY.**  As
   // gates on `spin_next` and `into + 5` they put an adder, a compare and the
   // subtraction in series on the counters' own data pins, thirteen logic
@@ -1921,8 +1921,8 @@ module cadr_disk_controller #(
       pf_n        <= 2'd0;
       // Ten, not zero: five for the reset held a tick here (see `rst_q`),
       // five for the read word held a tick on the way out (`READ_HOLD_NS`).
-      spin        <= 24'd10;
-      into        <= 20'd10;
+      spin        <= 24'(2 * cadr_tick_pkg::TICK_NS);
+      into        <= 20'(2 * cadr_tick_pkg::TICK_NS);
       region      <= 5'd0;
       seek_ns_r   <= 28'd0;
       seek_held_r <= 28'd0;
@@ -1946,8 +1946,8 @@ module cadr_disk_controller #(
       end
     end else begin
       // --- the spindle, which turns whatever the bus is doing
-      wrap_q <= !wrapping && (spin >= REVOLUTION_NS - 24'd10);
-      step_q <= !wrapping && !stepping && (into >= SECTOR_NS - 20'd10)
+      wrap_q <= !wrapping && (spin >= REVOLUTION_NS - 24'(2 * cadr_tick_pkg::TICK_NS));
+      step_q <= !wrapping && !stepping && (into >= SECTOR_NS - 20'(2 * cadr_tick_pkg::TICK_NS))
              && (region < 5'(BPT));
       if (wrapping) begin
         spin   <= spin_next - REVOLUTION_NS;
@@ -1956,16 +1956,16 @@ module cadr_disk_controller #(
       end else begin
         spin <= spin_next;
         if (stepping) begin
-          into   <= into + 20'd5 - SECTOR_NS;
+          into   <= into + 20'(cadr_tick_pkg::TICK_NS) - SECTOR_NS;
           region <= region + 5'd1;
         end else begin
-          into <= into + 20'd5;
+          into <= into + 20'(cadr_tick_pkg::TICK_NS);
         end
       end
 
       // --- the busy counter, and the timeout flop at its expiry
-      if (busy_ns > 32'd5) begin
-        busy_ns <= busy_ns - 32'd5;
+      if (busy_ns > 32'(cadr_tick_pkg::TICK_NS)) begin
+        busy_ns <= busy_ns - 32'(cadr_tick_pkg::TICK_NS);
       end else if (busy_ns != 32'd0) begin
         busy_ns <= 32'd0;
         if (hanging) begin
@@ -2053,7 +2053,7 @@ module cadr_disk_controller #(
       // read, so this costs nothing.
       acc_at_q    <= acc_at;
       if (ps_wr)  ch_ra <= ch_ra + 9'd1;
-      if (ch_busy) elapsed <= elapsed + 32'd5;
+      if (ch_busy) elapsed <= elapsed + 32'(cadr_tick_pkg::TICK_NS);
 
       // --- the track goes past the head, a byte at a time -----------------
       //
@@ -2755,7 +2755,8 @@ module cadr_disk_controller #(
           // since, so what is still owed is five less --- and zero stays
           // zero, as the counter itself has it.
           busy_ns  <= !drive_timed_q ? 32'd0
-                    : ((acc_owed && acc_left > 32'd5) ? acc_left - 32'd5 : 32'd0);
+                    : ((acc_owed && acc_left > 32'(cadr_tick_pkg::TICK_NS))
+                       ? acc_left - 32'(cadr_tick_pkg::TICK_NS) : 32'd0);
           ch_state <= C_IDLE;
         end
         default: ch_state <= C_IDLE;

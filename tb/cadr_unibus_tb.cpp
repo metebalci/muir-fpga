@@ -142,6 +142,7 @@
 
 #include "Vcadr_memory_path.h"
 #include "verilated.h"
+#include "cadr_tick.h"
 
 namespace {
 
@@ -152,7 +153,7 @@ const long kMicrocycle = 29;
 // MIT's grid, which is what every tick count in the fabric is measured in.
 // `cadr_arty.sv` decides how long a tick is in real time and nothing here
 // cares.
-const long kTickNs = 5;
+const long kTickNs = kGridNs;
 
 // `busint::UNIBUS_ACK_NS`, -UB SSYN to -LMACK.  The trace's header carries
 // `unibus_strobe_ns` and not this one, so it is written out with muir's name
