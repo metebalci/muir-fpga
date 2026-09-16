@@ -79,8 +79,9 @@ was cut.
 
 ### The drawing style and the characters
 
-The site's drawing style, its palette and its panels are those of Cold Boot, a
-manga-style zine about the CADR, under **CC BY-SA 4.0**. So are the parts the
+The site's drawing style, its palette and its panels are those of
+[Cold Boot](https://github.com/metebalci/coldboot), a manga-style zine about
+the same machine by the same author, under **CC BY-SA 4.0**. So are the parts the
 site's characters are drawn from: CADR's body, its face and its waving arm.
 [muir](https://muir.metebalci.com) and [ozd](https://ozd.metebalci.com) are
 drawn in the same hand.
