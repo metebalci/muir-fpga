@@ -169,23 +169,16 @@ if {![file exists $sync_prom]} {
     exit 1
 }
 
-# **THE GLOB DROPS THE SOFT PROCESSING SYSTEM, AND IT HAS TO.**
-# `rtl/plumbing/cadr_soc*.sv` is the Arty A7-100's Ibex core and the four
-# modules around it: a part with no processing system of its own needs one in
-# fabric, and this board has a hard one. Those files name Ibex's own packages,
-# which live under `third_party/ibex/` and are read only by that board's flow,
-# so a glob that took them in stops synthesis with `'ibex_pkg' is not
-# declared` --- measured, and it is what a glob does the moment somebody adds
-# a file to a shared directory for another board.
-#
-# Read rather than filtered would be the other way round, and it is worth
-# saying why this way. A list would have to be kept in step with `rtl/` by
-# hand, which is the thing the glob exists to avoid; naming what does NOT
-# belong is one line and rots loudly, because a soft-system file that stopped
-# matching would stop the build with the same error.
+# **THE GLOB TAKES EVERY MODULE UNDER `rtl/`, AND THAT IS THE POINT.** A list
+# would have to be kept in step with `rtl/` by hand, which is the thing the
+# glob exists to avoid. It is worth knowing what it costs: a file added to a
+# shared directory for another board is read by this board's synthesis too, so
+# a module naming a package this board never elaborates stops the build. That
+# happened once, and the answer then was to name what did not belong. If it
+# happens again, name it again --- one line that rots loudly is better than a
+# list that rots quietly.
 set sources {}
 foreach f [glob rtl/*/*.sv rtl/*/*/*.sv boards/cora-z7-07s/*.sv] {
-    if {[string match */cadr_soc*.sv $f]} { continue }
     lappend sources $f
 }
 read_verilog -sv $sources

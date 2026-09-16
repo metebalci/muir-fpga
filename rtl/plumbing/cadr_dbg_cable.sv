@@ -21,8 +21,9 @@
 //
 // ## One connector, and what that forces
 //
-// The cable is ONE header --- JA on the Zynq boards, JB on the Arty A7-100,
-// whose JA is a standard Pmod.  Both directions cross it, four pins each ---
+// The cable is ONE header --- JA on both boards.  A part whose headers are
+// not alike would want that asked again, a strobe at the far end of a ribbon
+// wanting the high-speed one.  Both directions cross it, four pins each ---
 // a strobe, one data line and the two GUARDS the section on the pin map below
 // explains --- and the second header carries nothing: a board is a debugger or
 // a debuggee on this cable and never both at once, so a second connector would

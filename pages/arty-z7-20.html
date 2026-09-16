@@ -15,7 +15,6 @@
     <nav>
       <a href="arty-z7-20.html">Arty Z7-20</a>
       <a href="cora-z7-07s.html">Cora Z7-07S</a>
-      <a href="arty-a7-100.html">Arty A7-100</a>
       <a href="booting.html">Booting</a>
       <a href="debugging.html">Debugging</a>
       <a href="faq.html">FAQ</a>
@@ -440,9 +439,8 @@
                each of them has one line down to its own.  On this board they are
                all the part's own silicon --- the memory controller, the gigabit
                MAC, the SD host, the UART and the USB host --- so the whole row is
-               gray, an existing component, like the connectors under it.  On the
-               Arty A7-100 the same row stands in the same place and is ours to
-               build.  The memory controller moved left and lost twenty of its
+               gray, an existing component, like the connectors under it.
+               The memory controller moved left and lost twenty of its
                height to make the room: what it is has not changed, and the three
                buses that reach it land on its top edge, as the line from the
                software region above --- the Arm cores' own port --- does.  EVERY CONTROLLER IN THE
@@ -479,8 +477,7 @@
           <!-- THE UART IS ON EVERY BOARD'S DRAWING, IN ONE POSITION, in the
                controller row with the others and over its own connector.
                On this board the UART is the processing system's own silicon and
-               Linux's console comes out of it; on the Arty A7-100 the same block is
-               in the fabric and the firmware's console comes out of it.
+               Linux's console comes out of it.
                The micro-USB socket under it carries that console and JTAG together
                through one bridge, which is how a board like this is watched.  The
                line up to the UART is drawn from the software region's own edge, in

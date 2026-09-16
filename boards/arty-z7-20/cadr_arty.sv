@@ -304,8 +304,8 @@ module cadr_arty #(
   // they had before, and after BTN1 the disk pack program and the console are
   // out of step with the fabric until they are restarted.  `rst -srst` over
   // JTAG resets everything, and on a Zynq board that is the reset to reach
-  // for.  BTN1 exists for the Arty A7-100, which has no processing system and
-  // nothing else to reset it with, and for uniformity across the boards.
+  // for.  BTN1 exists for uniformity across the boards, and for a part with no
+  // processing system and nothing else to reset it with.
   //
   // Pins: `btn[0]` is D19 and `btn[1]` is D20, both `LVCMOS33`, from
   // Digilent's `Arty-Z7-20-Master.xdc`.  `boards/arty-z7-20/cadr_arty.xdc`

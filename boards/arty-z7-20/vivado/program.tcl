@@ -15,10 +15,10 @@
 #
 # **DONE ALONE CANNOT SEE THAT.**  On a part that was already configured DONE
 # is high before the download and high after it, so the bit that was the whole
-# witness here reads the same whether the configuration took or not.  On the
-# Arty A7-100 a download failed silently three times in six while its script
-# said it had worked, and what caught it was an identity read out of the
-# design rather than anything the programming script did.
+# witness here reads the same whether the configuration took or not.  On one
+# board a download failed silently three times in six while its script said it
+# had worked, and what caught it was an identity read out of the design rather
+# than anything the programming script did.
 #
 # So the flows write the commit into `BITSTREAM.CONFIG.USERID`, the part reads
 # it back over JTAG as its USERCODE, and this compares the two.

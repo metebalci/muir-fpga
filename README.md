@@ -59,14 +59,24 @@ processing-system configuration and a device tree. That is one directory under
 `boards/`, and nothing in `rtl/` changes.
 
 **A part with no processing system is not a port but a second set of
-plumbing.** An Artix is the same seven-series fabric, so the machine and even
-the clock and scan primitives carry over unchanged. What does not carry over is
-everything the processing system does today: main memory, Linux, and therefore
-the disk pack program, the console's path and the display's. Each of those
-needs a fabric answer instead. Nearly all of that work lands in
-`rtl/plumbing/`, where it is reusable, and the board directory stays thin. The
-disk controller would ask for a block exactly as it does now and would not care
-who answered.
+plumbing.** Another seven-series part carries the machine and even the clock
+and scan primitives over unchanged. What does not carry over is everything the
+processing system does today: main memory, Linux, and therefore the disk pack
+program, the console's path and the display's. Each of those needs a fabric
+answer instead. Nearly all of that work lands in `rtl/plumbing/`, where it is
+reusable, and the board directory stays thin. The disk controller would ask for
+a block exactly as it does now and would not care who answered.
+
+**An Arty A7-100 directory was here and was removed.** It held that board's top
+level, its pin file, a generated DDR3L controller, lowRISC's Ibex as a soft
+processor in a vendored directory that went with it, and the bare-metal
+firmware that drove the same register faces Linux drives on a Zynq board. It was taken out because that board
+carries a microSD card only as a module bolted onto a Pmod header, its Ethernet
+is 10/100 where the Zynq boards are gigabit, and it has no video connector, so
+the screen had nowhere to go. None of that made it worth carrying beside the
+Zynq boards. `310b9b7` is the last commit that has it, and `boards/README.md`
+still lists what a part with no processing system would have to answer, so the
+question can be re-opened from there.
 
 **It is one repository and not one per family, deliberately.** The value here
 is the CADR held to muir. Two repositories would mean two copies of the machine
@@ -188,8 +198,7 @@ puts the twenty-one wires on `M_AXI_GP1` as sixteen words. muir reaches them
 with ordinary loads and stores through `/dev/mem`. `docs/debug-cable.md` is
 the whole of it.
 
-A second board is the same cable on one Pmod connector, JA on the Zynq boards
-and JB on the Arty A7-100, whose JA is a standard Pmod with series resistors.
+A second board is the same cable on one Pmod connector, JA on both boards.
 The connector carries the whole link in both directions: four pins each way, of
 which two carry a strobe and one data line and the other two are driven low as
 guards beside them, twenty-four beats a frame. A board is a debugger or a

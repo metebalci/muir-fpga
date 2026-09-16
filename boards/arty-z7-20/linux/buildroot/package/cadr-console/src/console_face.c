@@ -545,11 +545,11 @@ void cons_step(struct console *c, unsigned n, struct cons_step *s)
 		// ticks at extra slow, 58 at normal --- and a reader quick
 		// enough off the mark sees it still down on a machine that
 		// stepped perfectly.  An ARM through /dev/mem was never quick
-		// enough and the bit read up by luck.  A soft RISC-V core on
-		// the Arty A7-100 IS quick enough: with Ibex's branch adder
-		// turned on for timing it reported `SSDONE 0` on a step whose
-		// CYCLES moved by exactly one, and with it off, on the same
-		// firmware, `SSDONE 1`.  A bit whose value depends on how fast
+		// enough and the bit read up by luck.  A soft RISC-V core in
+		// fabric IS quick enough, and that was measured rather than
+		// reasoned: it reported `SSDONE 0` on a step whose CYCLES had
+		// moved by exactly one, and one build later, on the same
+		// program, `SSDONE 1`.  A bit whose value depends on how fast
 		// the processor reading it happens to be is not a witness.
 		//
 		// One microsecond is 100 ticks, more than the two master
@@ -761,11 +761,12 @@ void cons_say_boot(const struct cons_boot_report *r)
 // stamped them leaves behind --- is reported as "no stamp" and never as a
 // commit.
 //
-// **PURE, AND THAT IS LOAD-BEARING.**  This file is compiled for the Arty
-// A7-100's bare-metal firmware as well as for Linux, where there is no
-// operating system and picolibc is the whole library.  A decode that reached
-// for a file or a process would not merely waste space there: it would stop
-// the firmware linking, which is what `build/soc.pass` is the check for.
+// **PURE, AND IT IS KEPT THAT WAY.**  This file was once compiled a second
+// time for a bare-metal core with picolibc and no kernel under it, where a
+// decode that reached for a file or a process did not merely waste space: it
+// stopped the link.  That second build is gone and no check enforces the rule
+// now, so it is written down here instead --- what is in this file is a cycle
+// on the bus and arithmetic on what comes back, and nothing else.
 struct cons_build cons_build_of(uint32_t w)
 {
 	struct cons_build b;

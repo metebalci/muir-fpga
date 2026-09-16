@@ -1588,9 +1588,6 @@ leaves in the register, and `build_stamp_pack` makes sure no build can ever
 be called it. The console reports it as no stamp and never as a commit,
 because a program that printed `commit fffffff` would be inventing one.
 
-The Arty A7-100's firmware prints the same line over its UART at start-up,
-through the same function. One sentence in one place cannot drift.
-
 **The program's build is `cadr-console --version`**, in muir's own spelling:
 
     cadr-console 0-782e3a9-release

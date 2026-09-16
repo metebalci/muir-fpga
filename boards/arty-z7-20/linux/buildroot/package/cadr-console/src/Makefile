@@ -28,14 +28,15 @@
 # it is compiled here without Buildroot.
 
 PROGRAMS := cadr-console
-# **TWO SOURCE FILES AND THE LINE BETWEEN THEM IS LOAD-BEARING.**  `CORE` is
-# the register face, and the top-level Makefile compiles that same file for
-# the Arty A7-100's bare-metal firmware, where there is no operating system.
-# `HOST` is what needs one --- a pid file read, a signal sent --- and only the
-# two builds here compile it.  Putting a host-only word in `CORE` does not
-# merely waste space on the firmware: it stops the firmware LINKING, which is
-# what happened when `trace-keys` first landed, and what `make build/soc.pass`
-# is the check for.  `console_host.h` has the whole argument.
+# **TWO SOURCE FILES AND THE LINE BETWEEN THEM.**  `CORE` is the register
+# face: cycles on the diagnostic bus and arithmetic on what comes back, and
+# nothing that needs an operating system.  `HOST` is what needs one --- a pid
+# file read, a signal sent --- and only the two builds here compile it.  The
+# split was made when that same `CORE` was also compiled for a bare-metal core
+# with no kernel, where a host-only word did not merely waste space but stopped
+# the LINK, which is what happened when `trace-keys` first landed.  That second
+# build is gone and no check enforces the split now.  `console_host.h` has the
+# whole argument.
 CORE     := console_face.c
 HOST     := console_host.c
 HEADERS  := console_face.h console_host.h
