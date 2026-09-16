@@ -97,7 +97,25 @@
 # modules, so that the connector can hold a receiver quiet while it drives the
 # group that receiver watches. What is relaxed is the sender's, as it always
 # was.
+#
+# **SIX TICKS AND NOT FOUR, AND THE NUMBER IS THE DESIGN'S OWN.** Four was a
+# floor chosen for margin rather than derived, and at a 5 ns tick it is below
+# the real bound: the routed board reports this register needing 22.867 ns,
+# which is four ticks and a half. The bound is `BEAT_T`, and it is not the
+# frame's length. `rtl/plumbing/cadr_dbg_tx.sv` reloads `tx_t` with
+# `BEAT_T - 1` at every beat and reloads `tx_frame` whenever `tx_t` reaches
+# zero, so THE SHIFT RELOADS THIS REGISTER ONCE EVERY `BEAT_T` TICKS --- six
+# at the default --- even though the snapshot it captures from `frame_out`
+# arrives once a frame, every 162. A register that is clocked every six ticks
+# has six for whatever stands on its `D`, and the longer way in buys nothing.
+# **Six is the tighter of the two ways in, and that is what makes it a bound
+# rather than a margin.**
+#
+# `boards/*/vivado/bitstream.tcl` asserts the count and the instance at six,
+# so a `BEAT_T` that stopped being six would leave this constraint claiming a
+# deadline the carrier no longer has --- which is what
+# `the-carrier-beats-faster-than-its-deadline` is aimed at.
 set pmod [get_pins -quiet {u_dbg_cable/u_tx/tx_frame_reg[*]/D
                            u_dbg_cable/u_tx/tx_d_reg[*]/D}]
-set_multicycle_path -setup 4 -to $pmod
-set_multicycle_path -hold  3 -to $pmod
+set_multicycle_path -setup 6 -to $pmod
+set_multicycle_path -hold  5 -to $pmod

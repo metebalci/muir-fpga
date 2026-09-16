@@ -245,6 +245,75 @@ proc assert_instance_timing {period cycles instance relaxed} {
           $want ns: the split took"
 }
 
+# THE CABLE'S DEADLINE IS THE CARRIER'S OWN BEAT, AND THIS IS WHAT KEEPS THE
+# TWO IN STEP.
+#
+# `rtl/plumbing/xilinx7/cadr_debug_pmod.xdc` gives `tx_frame` and `tx_d` six
+# ticks because the shift reloads them once every `BEAT_T` ticks and `BEAT_T`
+# is six. That is a bound and not a margin --- and NOTHING IN THE CHECKS CAN
+# SEE IT. Measured by sweeping the design against the exception: a beat of
+# five survives `dbg_cable` and `dbg_pmod`, a beat of three survives both, and
+# only a beat of one is caught --- and `cadr_dbg_rx.sv`'s own header says why,
+# the data standing for `BEAT_T` minus three ticks after the strobe is
+# detected, so what a short beat finally breaks is the RECEIVER'S SAMPLING
+# MARGIN and not the reload interval the exception rests on. A mutation at the
+# smallest caught magnitude would test a different property and say it tested
+# this one, which is the failure this repository records more often than any
+# other.
+#
+# So the claim is held the way `tick.tcl` holds the tick instead: the number
+# is READ OUT OF THE SOURCE and compared, rather than remembered in two
+# places. A `BEAT_T` that moved would stop this build and name both files,
+# where before it would have left a constraint quietly claiming a deadline
+# the carrier no longer had. It is pure Tcl and takes no design, so it runs
+# before synthesis and can be exercised by `tclsh` on its own.
+proc assert_cable_beat {rtl xdc} {
+    if {![file exists $rtl]} { puts "XDC: FAILED --- $rtl is missing"; exit 1 }
+    if {![file exists $xdc]} { puts "XDC: FAILED --- $xdc is missing"; exit 1 }
+    set fh [open $rtl r]; set rtl_text [read $fh]; close $fh
+    set fh [open $xdc r]; set xdc_text [read $fh]; close $fh
+    if {![regexp {parameter\s+int\s+unsigned\s+BEAT_T\s*=\s*(\d+)} $rtl_text -> beat]} {
+        puts "XDC: FAILED --- no `parameter int unsigned BEAT_T = <n>` in $rtl."
+        puts "XDC: The carrier's beat is what cadr_debug_pmod.xdc's deadline"
+        puts "XDC: IS, so a renamed parameter leaves that constraint claiming"
+        puts "XDC: a number nothing in the design still says. Renaming it is"
+        puts "XDC: fine; leaving this unable to find it is not."
+        exit 1
+    }
+    if {![regexp {set_multicycle_path\s+-setup\s+(\d+)\s+-to\s+\$pmod} $xdc_text -> setup]} {
+        puts "XDC: FAILED --- no `set_multicycle_path -setup <n> -to \$pmod`"
+        puts "XDC: in $xdc."
+        exit 1
+    }
+    if {![regexp {set_multicycle_path\s+-hold\s+(\d+)\s+-to\s+\$pmod} $xdc_text -> hold]} {
+        puts "XDC: FAILED --- no `set_multicycle_path -hold <n> -to \$pmod`"
+        puts "XDC: in $xdc, and a setup multicycle without its hold half"
+        puts "XDC: creates hold violations no slower clock can cure."
+        exit 1
+    }
+    if {$setup != $beat} {
+        puts "XDC: FAILED --- the carrier beats every $beat ticks and"
+        puts "XDC: $xdc gives its frame registers $setup."
+        puts "XDC: The shift reloads `tx_frame` and `tx_d` once a beat, so the"
+        puts "XDC: beat IS the deadline: a constraint claiming more than the"
+        puts "XDC: design gives is an exemption too wide, and one claiming"
+        puts "XDC: less costs slack for nothing. No check can catch this ---"
+        puts "XDC: a beat five ticks long survives dbg_cable and dbg_pmod ---"
+        puts "XDC: which is why it is read out of $rtl here."
+        exit 1
+    }
+    if {$hold != $beat - 1} {
+        puts "XDC: FAILED --- setup is $setup and hold is $hold in $xdc."
+        puts "XDC: The hold multicycle must be one less than the setup one, or"
+        puts "XDC: the tool asks the word to be HELD for $hold ticks after its"
+        puts "XDC: launch and reports hold violations that no slower clock"
+        puts "XDC: can cure."
+        exit 1
+    }
+    puts "XDC: the carrier beats every $beat ticks and its frame registers are\
+          given $beat ($hold on hold): $rtl and $xdc agree"
+}
+
 # Fails the run when no path carries the relaxed requirement.
 proc assert_multicycle_applied {period cycles {limit 100000}} {
     set want [format %.3f [expr {$period * $cycles}]]

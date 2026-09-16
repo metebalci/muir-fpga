@@ -384,6 +384,130 @@ set slow [filter [all_registers] {NAME !~ *u_phase_gen*      && \
 set_multicycle_path -setup 15 -from $slow -to $slow
 set_multicycle_path -hold  14 -from $slow -to $slow
 
+# THE BUS'S OWN EIGHTY NANOSECONDS, FOR THE SLAVES THAT ARE INSIDE THIS FILE.
+#
+# `rtl/plumbing/cadr_xbus_ddr.sv` quotes the bus rule that a master must
+# "assert good address, write, and data lines 80 ns prior to asserting
+# -XBUS.RQ", and `rtl/plumbing/xilinx7/cadr_ddr.xdc` relaxes the memory
+# port's address and data registers to sixteen ticks ON THE STRENGTH OF IT.
+# The machine's OWN slaves take the same lines from the same master under the
+# same rule, and until now nothing said so: they were timed at one tick, and
+# at a 5 ns tick the routed board fails 207 paths into the display board's
+# color map because of it.
+#
+# THE DERIVATION, and every step of it is a line rather than an argument.
+# `cadr_busint_xbus.sv:568` sets `SETUP_T = 80 / 5` and `:541` makes
+# `dev_rq = (state == GRANTED && elapsed >= SETUP_T)`, so -XBUS.RQ stands
+# sixteen ticks after the grant and `elapsed` counts from the grant.
+# `cadr_memory_path.sv` loads `wdata` at MEMGO, which is at or before the
+# grant. `cadr_tv.sv:401` takes the word at
+# `store_now = asked && dev_write && !taken` --- the FIRST tick -XBUS.RQ
+# stands, `taken` refusing every tick after it. So the word has been settled
+# for sixteen ticks when the board captures it, and it is the same sixteen
+# the memory port already claims one module along.
+#
+# WHAT MAKES THIS A BOUND AND NOT A CONVENIENCE, which is the whole of the
+# discipline this file is made of:
+#
+#   - **The `/D` pins and not the cells.** `color_map`'s clock enable is
+#     `store_now` with `which`, `wdata[7:6]` and `wdata[3:0]` on it --- an
+#     address decode and a one-tick window. `cadr_debug.xdc` and
+#     `cadr_ddr.xdc` both split a register's data from its enable for this
+#     reason, and `elapsed -> md/CE` is the lesson under all three. The
+#     enable keeps its tick, so the capture happens at the tick it always
+#     did; what is relaxed is only the word it captures, which the bus
+#     already owed sixteen ticks of settling.
+#
+#   - **Only registers whose `D` IS the bus word.** `color_map` and
+#     `pointer` have exactly two writers each --- `cadr_tv.sv:502` and `:476`
+#     clear them at reset, `:530` and `:519` load them from `wdata` --- and a
+#     synchronous clear arrives on `R`, not on `D`. So every setup path into
+#     these `/D` pins is the line the 80 ns rule names, and the exception
+#     needs no `-from` to say so.
+#
+#   - **`flag` is refused although the same gate writes it.**
+#     `cadr_tv.sv:510` gives it a third writer, `tvma_clr`, the sync
+#     generator's own one-tick event. Relaxing `flag/D` would relax that
+#     preset, and an exemption that reaches a one-tick event is the one this
+#     file exists to warn about. `mode` and `sync_on` pass the test and are
+#     left timed at the tick anyway, because nothing has asked: naming
+#     registers to buy slack nobody wanted is the same fault seen from the
+#     other side, and it is the reason the I/O board's read side is out.
+#
+#   - **And the sync generator is not in it.** `seq_a`, `seq_left` and
+#     `seq_ended` fail at 5 ns too and are NOT relaxed: they are the display's
+#     own program counter, which steps every tick, and they are the reason
+#     this clause names four pin patterns rather than an instance.
+#
+# HOLD: `-hold 15` beside `-setup 16`, which puts the hold check back on the
+# launch edge where it was. Without it the tool would ask the word to be held
+# for fifteen ticks after its launch and report hold violations no slower
+# clock could cure.
+set bus_word [get_pins -quiet {memory/tv/color_map_reg[*][*][*]/D
+                               memory/tv/pointer_reg[*]/D
+                               memory/g_color_tv.tv_color/color_map_reg[*][*][*]/D
+                               memory/g_color_tv.tv_color/pointer_reg[*]/D}]
+set_multicycle_path -setup 16 -to $bus_word
+set_multicycle_path -hold  15 -to $bus_word
+
+# THE UNIBUS MAP AND ITS WRITE BUFFER, AT THE INSTANT MIT's OWN STROBE PUTS
+# THEM.
+#
+# `cadr_busint_regs.sv:765` and `:769`:
+#
+#     assign land      = ub_msyn && sel    && wr             && (t_msyn == STROBE_T);
+#     assign land_wbuf = ub_msyn && in_win && wr && !mp_high && (t_msyn == STROBE_T);
+#
+# with `STROBE_T = 150 / 5` at `:477` --- THIRTY TICKS after `-UB MSYN`
+# rises. That is `busint::REGISTER_STROBE_NS`, the instant muir's `Busint`
+# calls a write of this block answered, and `t_msyn` counts from the strobe,
+# so neither capture can happen before its thirtieth tick.
+#
+# And a Unibus master has its data lines good BEFORE it raises `-UB MSYN`.
+# The word arrives on `ub_wdata`, which `cadr_console_bus.sv:228` mixes from
+# the three masters --- `sr_wdata = dbg_own ? dbg_wdata : con_own ?
+# con_wdata_q : cpu_wdata` --- and which of them owns the bus is settled
+# before the cycle starts, the bus idling one tick at every change of owner.
+# So every setup path into these two registers' `D` was launched at or before
+# the tick `-UB MSYN` rose and is captured thirty ticks later.
+#
+# THE TWO REGISTERS ARE THE ONLY ONES IN THE BLOCK THIS IS TRUE OF, and the
+# neighbours are worth naming because each is refused for a different reason:
+#
+#   - `wr_buf` (`:954`) and `ub_map` (`:959`) have exactly two writers each,
+#     the reset at `:820`-`:822` and the master's word at the strobe. A
+#     synchronous clear arrives on `R`, so every setup path into `/D` is
+#     `ub_wdata`.
+#   - `rd_buf` is NOT in it. `:919` loads it with `map_rdata[31:16]`, the
+#     HIGH half of an Xbus READ, inside the mapped cycle's state machine and
+#     nowhere near the strobe. Same array, same reset, different instant.
+#   - `map_wdata` (`:906`) and `map_md_wdata` (`:939`) are not in it either:
+#     they are loaded when the mapped cycle is LAUNCHED, at `xbus_ok`, which
+#     is the state machine's tick and not the strobe's.
+#   - `int_status`, `err_*` and `write_through` are loaded at `land` like
+#     `ub_map` and would pass the same test. They are left timed at the tick
+#     because nothing has asked --- one failing path between them at 5 ns
+#     against 270 for the two named here --- and this file's rule is that
+#     naming registers to buy slack nobody wanted is an exemption written
+#     before the question was.
+#
+# THE ENABLE IS NOT RELAXED AND MUST NOT BE. `land` and `land_wbuf` are an
+# EQUALITY on a counter, true for exactly one tick, and `mp_page` and `mapk`
+# are the addresses they write at. A capture whose enable is relaxed can fire
+# at a tick where its own data has not settled, and here it would also fire
+# at a tick where the entry it writes has moved. That is `elapsed -> md/CE`
+# and it is why this names `/D` pins and not cells. 729 of the failing paths
+# at 5 ns are the clock enables of these very registers and NOT ONE of them
+# is relaxed here.
+#
+# HOLD: `-hold 29` beside `-setup 30`, putting the hold check back on the
+# launch edge. `the-register-strobe-is-a-tick-early` is the mutation that
+# holds the thirty, one tick outside the bound in the design.
+set ub_strobe [get_pins -quiet {memory/busint_regs/wr_buf_reg[*][*]/D
+                                memory/busint_regs/ub_map_reg[*][*]/D}]
+set_multicycle_path -setup 30 -to $ub_strobe
+set_multicycle_path -hold  29 -to $ub_strobe
+
 # THE MEMORY PORT'S OWN DEADLINE IS NOT HERE, AND IT CANNOT BE.
 #
 # `mem_addr`, `mem_wdata` and `mem_write` leave this module for whatever is
