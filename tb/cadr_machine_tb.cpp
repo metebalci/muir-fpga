@@ -145,6 +145,26 @@ namespace {
 // Five nanoseconds, the master clock's period.
 constexpr int kTickNs = 5;
 
+// WHERE THE NXM TIMER'S ACKNOWLEDGMENT LANDS, against muir's own column, in
+// the units the histogram at the end prints: muir minus the fabric as this
+// testbench observes it, which is one tick late for the reason given at the
+// collection site.  MEASURED AND NOT DERIVED: the two cycles this program
+// sends to empty Xbus space both read +5, and what is pinned is that they do
+// not move.  They move when the bus interface's free-running timeout
+// oscillator changes phase, and the only thing that changes its phase is the
+// tick reset is released on --- which is why this is the one witness the
+// boot PROM has to the reset network arriving everywhere at once.
+// AND +5 IS NOT AGREEMENT.  One tick of it is this instrument reading a
+// tick late; the rest is real, and means the fabric's NXM timer fires two
+// ticks BEFORE muir's.  A combinationally answered cycle reads -5 here,
+// which is exact agreement once the instrument's tick is allowed for, so
+// the two are measured against the same yardstick and only this one
+// disagrees.  Filed as issue #21.  What is pinned is the phase, not the
+// polarity: the number moves when the reset network arrives in two
+// places at once, which is the claim, and closing #21 moves it too --- at
+// which point this constant changes and the leg goes on doing its job.
+constexpr int kNxmAckSlipNs = 5;
+
 // "a write is acknowledged at once, a read XBUS_ACK_NS later, which is the
 // 60 ns tap of the TD100 at REQLM 0C09 deskewing the word into MD".
 constexpr int kXbusAckNs = 60;
@@ -417,6 +437,17 @@ int main(int argc, char **argv) {
   bool saw_ub = false;
   long ub_cycles = 0;
   bool was_unibus = false, was_nxm = false;
+  // **THE NXM TIMER'S INSTANT IS THE ONLY WITNESS THIS PROGRAM HAS TO THE
+  // RESET RELEASE.**  The oscillator at REQTIM 0A01 free-runs from power-on
+  // --- `cadr_busint_xbus.sv` clears `vco_count` and `vco` on `rst` and never
+  // again --- so its phase is fixed by the tick `rst` is released on, and the
+  // instant a cycle nothing answers reaches -MEMACK carries that phase.
+  // Every other acknowledgment on this program is either driven from the
+  // trace or made combinationally by the disk controller, so none of them can
+  // see it.  Compared per cycle here rather than left to the histogram, which
+  // was printed and asserted by nothing.
+  bool cur_nxm = false;
+  long nxm_acks = 0, nxm_ack_wrong = 0;
   uint32_t stuck_phys = 0;
   const char *stopped_because = "nothing on the bus answered it";
   // HOW MANY DEVICE CYCLES THE FABRIC ITSELF ANSWERED.  Counted at the far
@@ -520,7 +551,19 @@ int main(int argc, char **argv) {
     if (acked_armed && !dut->n_memack_o) {
       acked_armed = false;
       const long ns_now = static_cast<long>(prev_ns) + (t - last_edge) * kTickNs;
-      ack_error[static_cast<long>(ack_for_cur) - ns_now]++;
+      const long slip = static_cast<long>(ack_for_cur) - ns_now;
+      ack_error[slip]++;
+      if (cur_nxm && !pack_trace) {
+        ++nxm_acks;
+        if (slip != kNxmAckSlipNs) {
+          std::fprintf(stderr,
+                       "FAIL: the NXM timer ended a cycle %+ld ns from muir, "
+                       "wanting %+ld --- the timeout oscillator free-runs from "
+                       "reset, so its phase is the reset release's\n",
+                       slip, static_cast<long>(kNxmAckSlipNs));
+          ++nxm_ack_wrong;
+        }
+      }
     }
 
     if (bus_outstanding && dut->unibus) {
@@ -733,6 +776,7 @@ int main(int argc, char **argv) {
         }
         dev_cycle = dut->device;
         dev_acked = false;
+        cur_nxm = dut->nxm;
         if (dut->device) ++device_cycles;
         else if (!dut->nxm && !dut->unibus) ++mem_cycles;
         acked_armed = ack_for[k] != 0;
@@ -957,6 +1001,17 @@ int main(int argc, char **argv) {
                  device_cycles, device_answers, device_timeouts);
     ++thin;
   }
+  // **AND THE CYCLES THE COMPARISON ABOVE RESTS ON MUST HAVE HAPPENED.**  A
+  // program that sent none would pass it by comparing nothing, which is the
+  // shape this file guards everywhere else.  This one sends exactly two.
+  if (nxm_ack_wrong || (nxm_acks != 2 && !pack_trace)) {
+    std::fprintf(stderr,
+                 "FAIL: %ld cycles ended on the NXM timer and %ld of them "
+                 "acknowledged away from muir's instant; this program sends "
+                 "two to empty Xbus space and both must land at %+d ns\n",
+                 nxm_acks, nxm_ack_wrong, kNxmAckSlipNs);
+    ++thin;
+  }
   if (device_cycles == 0) {
     std::fprintf(stderr,
                  "FAIL: none of %ld bus cycles reached an Xbus device, so the "
@@ -1076,6 +1131,10 @@ int main(int argc, char **argv) {
       prom_fetches, ram_fetches, stalls, map_sources, q_shifts, ilongs,
       a_values.size(), m_values.size(), ob_values.size(), grants_checked,
       sintr_checked, sintr_raised, status_rows);
+  std::printf("    %ld cycles ended on the NXM timer, each acknowledging %+d ns\n"
+              "      from muir --- the free-running timeout oscillator's phase,\n"
+              "      and so the tick the reset network was released on\n",
+              nxm_acks, kNxmAckSlipNs);
 
   // What this program did not reach, printed from the counts rather than
   // asserted from memory, so the list cannot outlive its reasons.
