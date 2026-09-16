@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Mete Balci
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# Publishes site/ to GitHub Pages.  Nothing is built: the directory is
-# uploaded as it stands, which is why site/ has a .nojekyll in it.
+# Publishes pages/ to GitHub Pages.  Nothing is built: the directory is
+# uploaded as it stands, which is why pages/ has a .nojekyll in it.
 #
 # One-time setup, already done: Settings -> Pages -> Build and deployment
 # -> Source: "GitHub Actions".
@@ -17,7 +17,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'site/**'
+      - 'pages/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -46,6 +46,6 @@ jobs:
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: site
+          path: pages
       - id: deployment
         uses: actions/deploy-pages@v5

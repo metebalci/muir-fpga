@@ -24,7 +24,7 @@ CLAUDE.md
 # TEMPORARY: delete this line when it is ready to publish. Note that once it
 # is committed the workflow puts it at /full-page.html, reachable whether or
 # not anything links to it.
-site/full-page.html
+pages/full-page.html
 
 # Fetched material: the System releases the processor's second reference runs
 # on. Nothing here vendors MIT's packs any more than it vendors the netlists

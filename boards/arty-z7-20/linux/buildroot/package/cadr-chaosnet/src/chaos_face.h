@@ -108,7 +108,7 @@
 // ## Where it is
 //
 // **ASSUMED**: the low end of `M_AXI_GP0`'s window one 4 KB page above the
-// pack side, which owns `0x40000000` today.  `site/index.html` already says
+// pack side, which owns `0x40000000` today.  `pages/index.html` already says
 // GP0 is the port "over which the PS reaches the disk controller and the
 // Chaosnet buffers", so the port is the drawing's and only the offset is
 // this file's guess.  Putting a second slave on GP0 needs a decode in front

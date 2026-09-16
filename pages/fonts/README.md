@@ -1,4 +1,4 @@
-# `site/fonts/`
+# `pages/fonts/`
 
 The two faces the pages use, carried here so that reading them asks nothing
 of a third party. Fetched from Google Fonts on 7 September 2026, the `latin`
