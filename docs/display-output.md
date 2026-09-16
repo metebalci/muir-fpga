@@ -182,27 +182,33 @@ disagree.
 
 ### Why the mode is a parameter and not a setting
 
-This was measured before it was built, and the answer is that changing it at run
-time is not available to this project.
+This was measured before it was built. The answer then was that changing it at
+run time is closed to this project, and that answer was wrong: it is open, and
+it is simply not built. What follows says why the mode is still a build here,
+and what building the other thing would take.
 
 A video mode is a pixel clock; the pixel clock and its serializer clock come
 from an MMCM; and an MMCM's dividers are fixed in the bitstream. Moving them at
 run time means writing its reconfiguration port --- which needs `MMCME2_ADV`
 rather than `MMCME2_BASE`, and that part is present in the unisim library and
-costs no licence feature.
+costs no license feature.
 
-**The blocker is the data and not the primitive.** Rewriting an MMCM's
-multiplier and divider also means rewriting its LOCK and FILTER registers, which
-are empirical values of Xilinx's with no published arithmetic behind them. The
-only copy on this machine is inside the clocking wizard, at
-`data/ip/xilinx/clk_wiz_v6_0/mmcm_pll_drp_func_7s_mmcm.vh`, under a notice that
-begins "This file contains confidential and proprietary information of AMD" and
-ends "THIS COPYRIGHT NOTICE AND DISCLAIMER MUST BE RETAINED AS PART OF THIS FILE
-AT ALL TIMES". That is not a file an AGPL repository can take, and writing the
-tables from memory is the thing this project refuses everywhere else.
+**The data is not the blocker, and an earlier reading of this said it was.**
+Rewriting an MMCM's multiplier and divider also means rewriting its LOCK and
+FILTER registers, which are empirical values with no published arithmetic behind
+them. Those values are not out of reach. The clocking wizard creates and
+generates for this part with no license feature checked out, and asked for
+dynamic reconfiguration it emits a core with an AXI4-Lite interface that rewrites
+the multiply and divide values at run time. The file declaring the two lookups
+is part of what it generates.
 
-**And a fixed oscillator cannot serve the three, so the tables cannot be
-avoided.** A 10:1 serializer needs the serial clock to be exactly five times the
+So the tables arrive the way the memory controller's files arrive: as generated
+output of the vendor's own tool, for our part, which this repository already
+carries on that footing and holds current with a checker. The license is not
+what stops this.
+
+**And a fixed oscillator cannot serve the three, so it is the multiplier that
+would have to move, and not the output dividers alone.** A 10:1 serializer needs the serial clock to be exactly five times the
 pixel clock. `CLKOUT0_DIVIDE_F` moves in eighths and `CLKOUT1_DIVIDE` is an
 integer, so if the pixel divider is `D` and the serial divider `D/5`, then `D`
 must be a multiple of five. One oscillator therefore offers the pixel ratios
@@ -265,36 +271,58 @@ manager, and that manager's multiplier is fixed when the bitstream loads.
 
 Changing it while the design runs is possible in principle: the manager has a
 reconfiguration port, and the primitive that exposes it is in the tool's own
-library and costs no licence feature. That is not where this stops.
+library and costs no license feature. That is not where this stops.
 
-It stops at the data. The vendor's own procedure for reprogramming the
-multiplier requires writing two further registers whose values come from
-empirical tables with no published arithmetic behind them. The only copy of
-those tables on this machine is a generated file inside the tool's
-installation, at `data/ip/xilinx/clk_wiz_v6_0/mmcm_pll_drp_func_7s_mmcm.vh`,
-which declares the two functions `mmcm_pll_lock_lookup` and
-`mmcm_pll_filter_lookup`; the reconfiguration template that calls them is
-`data/ip/xilinx/clk_wiz_v6_0/ttcl/mmcm_pll_drp_v.ttcl`. That file is headed as
-the vendor's confidential and proprietary information and requires its notice to
-be kept with it, so this repository cannot carry it or a transcription of it, and
-writing the tables from memory is the thing this project refuses everywhere
-else. A reader who wants to see them can look at the path above.
+It stops at the work, and not at the data or the license.
+
+The vendor's procedure for reprogramming the multiplier writes two further
+registers whose values come from empirical tables. Those tables are generated
+output: the clocking wizard writes the file that declares
+`mmcm_pll_lock_lookup` and `mmcm_pll_filter_lookup`, for this part, with no
+license feature checked out, and the template that calls them with the
+multiplier is beside it. In a 2026.1 install the two are
+`data/ip/xilinx/clk_wiz_v6_0/mmcm_pll_drp_func_7s_mmcm.vh` and
+`data/ip/xilinx/clk_wiz_v6_0/ttcl/mmcm_pll_drp_v.ttcl`. A repository that
+already carries a generated memory controller can carry them the same way.
+
+So the mode is a build here because nobody has built the other thing, and the
+next section says what that is. An earlier version of this document said the
+mode could not be a setting because the tables were closed to us. That was
+wrong and is withdrawn.
 
 ### What would make run-time switching possible
 
-Worth recording, because it is narrower than "not possible".
+It is possible, and it is not built. This is what building it would take.
 
-Both tables are indexed by the multiplier alone: each is a lookup whose only
-argument is the divide value, and the vendor's reconfiguration template passes
-it the multiplier and never an output divider. So **reprogramming the output
-dividers alone touches neither table**, and a small writer of our own could do
-it with arithmetic this project is allowed to write down.
+**Reprogramming one clock manager is not the same as switching between two, and
+that is what makes it reachable.** The section above rules out a switch, because
+the serial clock rides a regional buffer with no glitch-free select and the
+global buffer that has one will not take 539 MHz. Reprogramming leaves the
+buffer where it is: one manager, one source, new dividers. The objection to the
+switch is not an objection to this.
 
-That buys a set of modes whose pixel clocks are all one oscillator over a
-multiple of five. None of the three standard modes wanted here share an
-oscillator, so taking that route would mean choosing modes for that property
-rather than for what a monitor expects. That is a decision about which modes to
-offer, not a fix for these three.
+Four pieces, none of them measured on a board:
+
+1. `MMCME2_ADV` in place of `MMCME2_BASE`, which is the same primitive with the
+   reconfiguration port brought out, and costs no license feature.
+2. A writer for that port, with the two lookup tables beside it, vendored as
+   generated output for this part and held current by a checker, as the memory
+   controller's files are.
+3. The raster's own widths and margins become registers rather than a build
+   parameter. Today `HDMI_MODE` reaches them at elaboration, and a mode that
+   moves at run time needs them to move with it.
+4. A blank interval around the change. A manager stops its outputs while it
+   relocks, so the link goes down and the serializers are reset and restarted
+   behind it. A monitor sees a mode change, which is what it is.
+
+**What does not change.** The serializer's 600 MHz and the global buffer's
+464 MHz stand: they are measured, and section 1 has them. The three modes still
+want three different oscillator frequencies, which is why one bitstream carries
+one mode today.
+
+**And the vendor's own HDMI transmitter is not the way round this.** That
+subsystem is refused for this part outright and asks for license keys besides,
+so it is not an alternative to any of the above.
 
 ### How the picture sits in the raster
 
@@ -920,8 +948,9 @@ nothing sleeps the monitor: a source puts a digital monitor to sleep by stopping
 the link, and nothing here stops it. The connector's CEC pin is wired on this
 board and would let a television be told to stand by; it is not built either.
 
-**The mode cannot be changed without a new bitstream**, for the two measured
-reasons in section 1.
+**The mode is not a setting**: this bitstream carries one mode and the console
+reports which. Making it a setting is possible and is not built; section 1 has
+what it would take.
 
 ## Looking at it
 
