@@ -525,20 +525,37 @@ if {$port > 0} {
 # there would fail on a healthy design; not asserting it here would leave the
 # 80 ns claim exactly as unchecked as it was before it existed.
 if {$port > 0} { assert_multicycle_applied $tick 16 }
-# And the debug cable's four ticks, the same way and for the same reason. The
+# And the debug cable's six ticks, the same way and for the same reason. The
 # instance assertion is the narrow half --- `sts_dbd_reg` may carry it and no
 # other register of the carrier may --- and the count is the `foreach` half,
 # that it reached a path at all.
 if {$port > 0} {
-    assert_instance_timing $tick 4 *g_ddr.u_debug_window/* {*sts_dbd_reg*}
+    assert_instance_timing $tick 6 *g_ddr.u_debug_window/* {*sts_dbd_reg*}
 }
 # And the Pmod carrier's, the same two halves, and ASSERTED ON EVERY BOARD
 # because the connector is on every board. The frame registers of the
 # carrier's sender may carry it; the strobe's synchronizer, the beat counter,
-# the gap counter and the dead man may not, because a counter given four ticks
+# the gap counter and the dead man may not, because a counter given six ticks
 # to settle is a counter that no longer counts.
-assert_instance_timing $tick 4 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
-assert_multicycle_applied $tick 4
+assert_instance_timing $tick 6 *u_dbg_cable/* {*tx_frame_reg* *tx_d_reg*}
+
+# And the carrier's deadline against the carrier's own beat, read out of the
+# source rather than remembered here. Pure Tcl and no design, so it runs
+# before anything is elaborated and fails naming both files.
+assert_cable_beat rtl/plumbing/cadr_dbg_tx.sv rtl/plumbing/xilinx7/cadr_debug_pmod.xdc
+assert_multicycle_applied $tick 6
+
+# AND THE TWO CLAUSES `cadr_machine.xdc` ADDED FOR THE SLAVES INSIDE THE
+# MACHINE, held the same two ways: the instance half says no OTHER register
+# of the block may carry the requirement, and the proc's own empty clause
+# says at least one of the named ones must. The display board takes the
+# master's word at the first tick of -XBUS.RQ, which the bus rule owes
+# sixteen ticks of settling; the bus interface's own block takes it at the
+# register strobe, thirty ticks after -UB MSYN. Neither clause touches a
+# clock enable, and these assertions are what says so.
+assert_instance_timing $tick 16 *u_machine/memory/tv/* {*color_map_reg* *pointer_reg*}
+assert_instance_timing $tick 30 *u_machine/memory/busint_regs/* \
+    {*wr_buf_reg* *ub_map_reg*}
 
 opt_design
 place_design

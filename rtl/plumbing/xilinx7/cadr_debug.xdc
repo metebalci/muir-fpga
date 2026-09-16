@@ -49,8 +49,19 @@
 # the word --- `dbg_addr`, hence `spy_eadr` --- is a LATCHED register that has
 # not moved since the previous request's lift. So by the tick `DEBUG IN ACK`
 # rises and this register captures, the word has had twenty-five ticks to
-# settle and not one. **Four ticks is a floor with six times margin**, and it
+# settle and not one. **Six ticks is a floor with four times margin**, and it
 # is stated as a floor: the measured need is 18.679 ns, which is two.
+#
+# IT WAS FOUR UNTIL THE TICK WAS ASKED TO BE 5 ns AGAIN, AND FOUR IS NOT A
+# BOUND. At a 10 ns tick 18.679 ns is under two ticks and any small number
+# does; at 5 ns the same arc is four ticks and a half, and the routed board
+# reports 22.867 ns into `sts_dbd_reg[*]`, so four is below the arc it was
+# written for. Six is taken from the other register this project relaxes by
+# the same argument --- the Pmod carrier's frame register, whose shift
+# reloads it every `BEAT_T` = 6 ticks and which therefore cannot honestly be
+# given more --- so ONE number covers both latches and neither is written to
+# its own convenience. Twenty-five is what this latch alone could claim, and
+# it is not claimed.
 #
 # WHAT THE RELAXATION DOES NOT EXCUSE, and it is worth saying because MIT
 # said it first. The 74LS244s drive `SPY<15:0>` asynchronously, so a RUNNING
@@ -97,5 +108,5 @@
 # other end, and `assert_instance_timing` in each board's flow is what says it
 # reached the registers it was meant to.
 set cable [get_pins -quiet {*u_debug_window/sts_dbd_reg[*]/D}]
-set_multicycle_path -setup 4 -to $cable
-set_multicycle_path -hold  3 -to $cable
+set_multicycle_path -setup 6 -to $cable
+set_multicycle_path -hold  5 -to $cable
