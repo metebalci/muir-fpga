@@ -65,8 +65,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
        $(BUILD)/audit_window.pass \
        $(BUILD)/pack_channel.pass \
-       $(BUILD)/arty.pass $(BUILD)/cora.pass $(BUILD)/arty_a7.pass \
-       $(BUILD)/a7_mem.pass $(BUILD)/soc.pass \
+       $(BUILD)/arty.pass $(BUILD)/cora.pass \
        $(BUILD)/probe.pass \
        $(BUILD)/probe_jtag.pass $(BUILD)/program_tcl.pass \
        $(BUILD)/disk.pass $(BUILD)/disk_pack.pass \
@@ -1477,276 +1476,6 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
 	@touch $@
 
-# ------------------- Ibex and the soft processing system's sources ---------
-#
-# **THESE LIVE HERE AND NOT IN THE BLOCK AT THE END OF THIS FILE FOR ONE
-# REASON: `make` EXPANDS A RULE's PREREQUISITES WHEN IT READS THE LINE.**  The
-# Arty A7's lint is the first rule that names them, so a definition after it
-# would be an empty list --- which would look exactly like a lint that had
-# nothing to read and would pass.  Everything else about the soft processing
-# system is in one block at the end of this file.
-
-# --- Ibex, vendored ---------------------------------------------------------
-#
-# The file list is Ibex's own `rtl/ibex_core.f` plus the six files that list
-# does not name and the build needs, plus the include files and the two
-# `prim_` modules those pull in.  `third_party/ibex/README.md` says which six
-# and why, and carries the upstream commit and every file's digest.
-IBEX_DIR := third_party/ibex
-IBEX_INC := -I$(IBEX_DIR)/vendor/lowrisc_ip/ip/prim/rtl \
-            -I$(IBEX_DIR)/vendor/lowrisc_ip/dv/sv/dv_utils
-# **THE PATHS ARE SPELLED OUT AND NOT BUILT FROM `$(IBEX_DIR)`.**
-# `mutations/run.py`'s `check_makefile` compares the runner's source list with
-# this file as literal text, so that a file added to a check in one and not the
-# other is a warning rather than silent under-testing. A variable in the middle
-# of a path defeats it, and a guard that cannot see the thing it guards is
-# worse than none.
-IBEX_SRC := third_party/ibex/rtl/ibex_pkg.sv \
-            third_party/ibex/rtl/ibex_cheriot_pkg.sv \
-            third_party/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_cipher_pkg.sv \
-            third_party/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_lfsr.sv \
-            third_party/ibex/rtl/ibex_alu.sv \
-            third_party/ibex/rtl/ibex_compressed_decoder.sv \
-            third_party/ibex/rtl/ibex_controller.sv \
-            third_party/ibex/rtl/ibex_counter.sv \
-            third_party/ibex/rtl/ibex_cs_registers.sv \
-            third_party/ibex/rtl/ibex_csr.sv \
-            third_party/ibex/rtl/ibex_decoder.sv \
-            third_party/ibex/rtl/ibex_ex_block.sv \
-            third_party/ibex/rtl/ibex_id_stage.sv \
-            third_party/ibex/rtl/ibex_if_stage.sv \
-            third_party/ibex/rtl/ibex_load_store_unit.sv \
-            third_party/ibex/rtl/ibex_multdiv_slow.sv \
-            third_party/ibex/rtl/ibex_multdiv_fast.sv \
-            third_party/ibex/rtl/ibex_prefetch_buffer.sv \
-            third_party/ibex/rtl/ibex_fetch_fifo.sv \
-            third_party/ibex/rtl/ibex_register_file_ff.sv \
-            third_party/ibex/rtl/ibex_register_file_fpga.sv \
-            third_party/ibex/rtl/ibex_pmp.sv \
-            third_party/ibex/rtl/ibex_dummy_instr.sv \
-            third_party/ibex/rtl/ibex_branch_predict.sv \
-            third_party/ibex/rtl/ibex_wb_stage.sv \
-            third_party/ibex/rtl/ibex_core.sv
-# **IBEX's OWN WAIVER IS NOT USED AND THIS ONE IS SCOPED.**  Upstream's first
-# line turns a rule off globally, with no file match, which would reach every
-# file in this repository.  `ibex_lint.vlt` is written here and waives three
-# rules for the vendored directory alone; its header says what each is.
-IBEX_VLT := $(IBEX_DIR)/ibex_lint.vlt
-
-SOC_RTL := rtl/plumbing/cadr_soc_ram.sv rtl/plumbing/cadr_soc_uart.sv \
-           rtl/plumbing/cadr_soc_timer.sv rtl/plumbing/cadr_soc_axi.sv \
-           rtl/plumbing/cadr_soc_cross.sv \
-           rtl/plumbing/cadr_soc.sv
-
-# **THE SOFT SYSTEM'S OWN CLOCK, READ OUT OF THE FABRIC THAT DECIDES IT.**  The
-# core runs slower than the machine --- Ibex computes a load or a store's
-# address in the cycle it uses it and that arc does not fit in a 10 ns tick ---
-# and `SOC_CLK_DIVIDE` beside the clock manager in
-# `boards/arty-a7-100/cadr_arty_a7.sv` is the one place the number is decided.
-# The transmitter's divisor and the timer's microsecond are computed from it
-# here so that the check and the board cannot describe two different clocks,
-# which is `boards/arty-z7-20/vivado/tick.tcl`'s argument in a second place.
-# The voltage controlled oscillator is 1000 MHz, so the divider IS the
-# frequency: twenty gives 50 MHz.
-#
-# **AND THE ARITHMETIC IS THE FABRIC'S OWN, TRUNCATION INCLUDED.**
-# `cadr_soc.sv` computes the timer's microsecond as `CLK_HZ / 1_000_000` in
-# integers; doing it any other way here would make the check and the board
-# disagree about a microsecond at any divider that does not give whole
-# megahertz.  So both lines below are integer divisions in the same order.
-SOC_CLK_DIVIDE := $(shell sed -n \
-    's/^ *localparam int unsigned SOC_CLK_DIVIDE *= *\([0-9][0-9]*\).*/\1/p' \
-    boards/arty-a7-100/cadr_arty_a7.sv | head -1)
-ifeq ($(strip $(SOC_CLK_DIVIDE)),)
-$(error SOC_CLK_DIVIDE could not be read out of \
-        boards/arty-a7-100/cadr_arty_a7.sv, so the soft system's clock would \
-        be two numbers that can come apart)
-endif
-SOC_CLK_HZ := $(shell echo $$(( 1000000000 / $(SOC_CLK_DIVIDE) )))
-# The faces the soft system masters, unchanged from the boards that have a
-# processing system.
-#
-# **THREE AND NOT FOUR, AND THE FOURTH IS THE DEBUG CABLE'S WINDOW.**
-# `rtl/plumbing/cadr_debug_window.sv` is how muir, on a Zynq board's own ARM
-# cores, plays the far end of MIT's debug cable in software.  There is no muir
-# on an Artix and no processor to run one on: this board's debugger is a SECOND
-# BOARD on Pmod JB, which reaches the machine's DBGIN page through the cable's
-# own carrier and never through the bridge.  So the window is in no
-# configuration of this board, `0x8000_1000` is an address the catch-all
-# answers "NONE", and `rtl/plumbing/cadr_soc_axi.sv` has two windows and a
-# catch-all where it had three and one.  The file itself stays: both Zynq
-# boards read it.
-#
-# **AND `M_AXI_GP0`'s SPLITTER AND THE I/O BOARD'S THREE FACES, WHICH ARE THE
-# ZYNQ BOARDS' FILES UNCHANGED.**  The bridge hands the splitter the same
-# gigabyte the processing system does, so `$(GP0)` is the same list here.
-# `rtl/plumbing/cadr_hp2_mem.sv` is the disk pack face's own master's slave,
-# which is `S_AXI_HP2` on a Zynq and words on the memory's arbiter here.
-SOC_FACES := rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_disk_pack.sv \
-             rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-             rtl/plumbing/cadr_hp2_mem.sv
-
-# ----------------------------------------------- the Arty A7-100's top level
-#
-# `boards/arty-a7-100/cadr_arty_a7.sv` is the third board and the first with no
-# processing system: an Artix-7, so no PS7, no AXI port, nothing behind the
-# machine's memory port, and every seam the other two drive from a program tied
-# off instead. Like them it cannot be simulated --- Verilator has no
-# `MMCME2_BASE` --- so lint and the fitter are all there is, and this is the
-# lint.
-#
-# **THE FOLD IS WHAT THIS EARNS, AND IT IS NOT A DUPLICATE OF THE OTHER TWO.**
-# Three top levels now instantiate `cadr_machine`, and an output added to the
-# machine and connected in only some of them is a PINMISSING in the rest. The
-# Arty's lint and the Cora's say the port list is complete for a board with a
-# processing system; this says it is complete for a board with none, where
-# forty-odd seams are tied off rather than driven --- which is a different
-# statement about the same list.
-#
-# SIX TIMES, ONE A CONFIGURATION. The switches are this board's own:
-# `PROBE_DEPTH`, `DDR`, `PROVE` and `SOC`. Of the Arty Z7-20's three only
-# `HDMI` has no counterpart here; `DDR` and `PROVE` mean the board's own DDR3L
-# through the generated controller rather than a port of a Zynq's, and `SOC`
-# is the soft processing system the other board has no need of. `PROBE_DEPTH`
-# is zero by default and the generate that instantiates
-# `rtl/plumbing/xilinx7/cadr_probe.sv` is then not elaborated at all, so a lint
-# of the default says nothing about the board
-# `boards/arty-a7-100/vivado/probe.tcl` builds and reads. A branch only one
-# build reaches is a branch only one build checks.
-#
-# `$(MACHINE)` COMES FIRST, as it does for the other two: a package has to be
-# parsed before the file that reads it.
-#
-# **THE SOFT PROCESSING SYSTEM IS A SWITCH OF ITS OWN.**  `SOC` puts
-# `rtl/plumbing/cadr_soc.sv` and the four faces in the design, and a branch
-# only one build reaches is a branch only one build checks.
-#
-# **AND ONE FILE LIST FOR ALL SIX.**  Verilator resolves the modules named
-# in a generate branch it does not elaborate, so the SoC's sources have to be
-# on the command line even when `SOC` is clear --- which is the same fact as
-# the PINMISSING this repository already records for an un-elaborated cell.
-# What changes between the passes is the parameter and nothing else, which is
-# also what makes the six comparable.
-#
-# `A7MEM` IS DEFINED HERE, ABOVE THE RULE THAT NAMES IT, AND NOT IN THE MEMORY
-# BLOCK BELOW WHERE IT READS AS BELONGING.  A prerequisite list is expanded
-# when the rule is read, so a variable defined further down is empty there:
-# measured with `make -pn`, the four files were absent from `arty_a7.pass`'s
-# prerequisites and a change to any of them did not re-run the lint that
-# reads them. The recipe was unaffected, being expanded when it runs, which
-# is why the lint itself was never wrong. The memory block's comment says
-# what the three are for.
-A7MEM := rtl/plumbing/cadr_mem_cross.sv rtl/plumbing/cadr_mig_ui.sv \
-         rtl/plumbing/cadr_jtag_mem.sv rtl/plumbing/cadr_mem_count.sv \
-         rtl/plumbing/cadr_mem_share.sv
-
-ARTY_A7_SRC := $(BOARD_STUBS) $(MACHINE) \
-               boards/arty-a7-100/cadr_arty_a7.sv \
-               rtl/plumbing/cadr_lamp_errhalt.sv \
-               $(IBEX_SRC) $(SOC_RTL) $(SOC_FACES)
-ARTY_A7_LINT := $(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing \
-                -Irtl/plumbing/xilinx7 -Iboards/arty-a7-100 $(IBEX_INC) \
-                -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-                -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-                -GFIRMWARE_HEX='"$(abspath $(BUILD))/soc_firmware.hex"' \
-                --top-module cadr_arty_a7 $(IBEX_VLT)
-
-$(BUILD)/arty_a7.pass: $(MACHINE) boards/arty-a7-100/cadr_arty_a7.sv \
-                    rtl/plumbing/cadr_lamp_errhalt.sv \
-                    rtl/plumbing/xilinx7/cadr_probe.sv \
-                    boards/arty-a7-100/cadr_a7_memory.sv $(A7MEM) \
-                    tb/cadr_mig_stub.sv \
-                    $(IBEX_SRC) $(IBEX_VLT) $(SOC_RTL) $(SOC_FACES) \
-                    $(BOARD_STUBS) | $(BUILD)
-	$(ARTY_A7_LINT) $(ARTY_A7_SRC)
-	$(ARTY_A7_LINT) -GPROBE_DEPTH=1024 $(ARTY_A7_SRC) \
-	    rtl/plumbing/xilinx7/cadr_probe.sv
-# ...and the three the board's own memory adds: the machine with the DDR3L
-# behind it, and the two proving boards with the witness in the machine's
-# place.  **FIVE CONFIGURATIONS AND NOT TWO.**  A check that lints one
-# configuration says nothing about the others, and this repository has already
-# had a whole seam --- everything between the adapter and the processing
-# system --- with no check of any kind from any tool while `make check` was
-# green, because the runner linted the default board only.
-#
-# The generated memory controller is not linted with them and cannot be: it is
-# 73 files of Verilog with a physical layer of seven-series primitives in it.
-# `tb/cadr_mig_stub.sv` stands in for it, with its port list and no behavior,
-# and carries the same weakness every stub here carries --- it is written to
-# match what we connect.  What it does hold is that the wrapper's
-# instantiation matches the generator's own template in name, direction and
-# width, which is the fault a hand-copied port list actually makes.
-	for g in DDR=1 PROVE=1 PROVE=2; do \
-	    $(ARTY_A7_LINT) -G$$g $(ARTY_A7_SRC) tb/cadr_mig_stub.sv \
-	        boards/arty-a7-100/cadr_a7_memory.sv $(A7MEM) || exit 1; \
-	done
-# ...and the soft processing system, which is the sixth.  **SIX
-# CONFIGURATIONS AND NOT FIVE.**  `SOC` puts the Ibex, its memory, its UART,
-# its timer and the four faces it masters into the design, and the same
-# argument the five above rest on rests on this one: a branch only one build
-# reaches is a branch only one build checks.
-	$(ARTY_A7_LINT) -GSOC=1 $(ARTY_A7_SRC)
-# ...and SEVEN, WHICH IS THE ONLY ONE THAT IS THE WHOLE BOARD.  `SOC=1 DDR=1`
-# is the machine with its memory behind it AND the soft processing system in
-# front of the faces --- the configuration this board is for --- and until
-# this line nothing linted it at all.  Six passes over six partial boards is
-# exactly the shape this repository has recorded before: a runner that linted
-# the default configuration only, while everything between the adapter and the
-# processing system had no check of any kind from any tool and `make check` was
-# green.  It is also where the design's two crossings meet, the soft system's
-# clock and the memory controller's user clock being in one netlist for the
-# first time.
-	$(ARTY_A7_LINT) -GSOC=1 -GDDR=1 $(ARTY_A7_SRC) tb/cadr_mig_stub.sv \
-	    boards/arty-a7-100/cadr_a7_memory.sv $(A7MEM)
-	@touch $@
-
-# ============ the Arty A7-100's main memory =============================
-#
-# The board's own 256 MB of DDR3L behind the machine's memory port, through
-# Xilinx's Memory Interface Generator in the fabric.  There is no processing
-# system on an Artix, so nothing of the other board's memory path carries over
-# below `mem_*`: what is here is three modules of our own and a generated
-# controller, and this block is everything in the Makefile that is theirs.
-#
-# `A7MEM` is the three, named once because two lists of the same files drift:
-# the crossing between the machine's tick and the controller's user clock, the
-# driver for the controller's native user interface, and the debugger's window
-# in front of the port --- which on this board is the ONLY way into memory
-# from outside the machine, an Artix having no debug access port onto it.
-# (`A7MEM` itself is assigned above the Arty A7-100's lint rule, which names
-# it as a prerequisite and so needs it defined first; see the comment there.)
-#
-# **AND THE REAL DISK PACK FACE, WITH ITS MASTER'S SLAVE**, because the
-# property the check holds for the arbiter needs the consumer that actually
-# streams around the machine: nine bursts a block, a word at a time, from a
-# face whose own tests hold it to the protocol.
-A7MEM_SRC := rtl/plumbing/cadr_ddr_map.sv $(A7MEM) \
-             rtl/plumbing/cadr_hp2_mem.sv rtl/plumbing/cadr_disk_pack.sv \
-             tb/cadr_a7_mem_harness.sv
-
-$(BUILD)/obj_a7_mem/Vcadr_a7_mem_harness: $(A7MEM_SRC) tb/cadr_a7_mem_tb.cpp \
-                    | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing -Itb \
-	    -Mdir $(BUILD)/obj_a7_mem \
-	    --top-module cadr_a7_mem_harness $(A7MEM_SRC) \
-	    $(abspath tb/cadr_a7_mem_tb.cpp)
-
-$(BUILD)/a7_mem.pass: $(BUILD)/obj_a7_mem/Vcadr_a7_mem_harness
-	$(BUILD)/obj_a7_mem/Vcadr_a7_mem_harness
-	@touch $@
-
-# The controller itself is generated, not written, and it is regenerated by a
-# script rather than by a graphical tool:
-#
-#     vivado -mode batch -source boards/arty-a7-100/vivado/mig.tcl
-#
-# `make current` asks whether what is committed is what that writes today, and
-# whether the project file it reads is Digilent's published one with only the
-# three changes the repository states.  There is no Makefile rule that runs the
-# generator: it takes half a minute of Vivado and its output is committed, so a
-# rule with the generated tree as its target would regenerate it whenever a
-# timestamp moved and produce a diff nobody asked for.
-
 # --------------------------------------------------------------- the probe
 
 # `rtl/plumbing/xilinx7/cadr_probe.sv` is what will be read off the board. It is checked the
@@ -1802,22 +1531,22 @@ $(BUILD)/probe_jtag.pass: boards/arty-z7-20/vivado/probe.tcl tb/cadr_jtag_chain.
 
 # --------------------------------------------- what says a download took
 #
-# The other script that needs a board, held the same way.  Both `program.tcl`s
-# used to decide that a download had worked from the DONE bit alone, and DONE
-# is already high on a part that was configured before the run --- so the one
-# witness read the same whether the configuration took or not.  On the Arty
-# A7-100 three downloads in six did not take while the script said they had,
-# and what caught it was an identity read out of the design.
+# The other script that needs a board, held the same way.  `program.tcl` used
+# to decide that a download had worked from the DONE bit alone, and DONE is
+# already high on a part that was configured before the run --- so the one
+# witness read the same whether the configuration took or not.  On one board
+# three downloads in six did not take while the script said they had, and what
+# caught it was an identity read out of the design.
 #
-# The scripts compare the build the part reads back over JTAG with the build
+# The script compares the build the part reads back over JTAG with the build
 # the bitstream names, which `tools/build_stamp.tcl` writes into
-# `BITSTREAM.CONFIG.USERID` at the other end.  This runs both scripts against
-# a stubbed hardware manager, ten cases apiece, and asserts, for each, the
-# LINE it must print --- because "the part already held this build" and "the
-# download took" are two different findings with one exit status.
+# `BITSTREAM.CONFIG.USERID` at the other end.  This runs it against a stubbed
+# hardware manager, ten cases, and asserts, for each, the LINE it must print
+# --- because "the part already held this build" and "the download took" are
+# two different findings with one exit status.
 #
 # IN `check`: no Vivado, no cable, no bitstream, and 0.08 s measured.  Three
-# records in `mutations/list.txt` aim at it, one at each source, so nothing
+# records in `mutations/list.txt` aim at it, at both of its sources, so nothing
 # here needs an exemption.
 #
 # WHAT IT CANNOT SAY is in `tb/cadr_program_tb.tcl`'s header: the USERCODE is
@@ -1825,7 +1554,6 @@ $(BUILD)/probe_jtag.pass: boards/arty-z7-20/vivado/probe.tcl tb/cadr_jtag_chain.
 # bitstream's USERID back there is read out of the BSDL and Vivado's device
 # tables and has not been measured on a board by anything in this repository.
 $(BUILD)/program_tcl.pass: boards/arty-z7-20/vivado/program.tcl \
-                           boards/arty-a7-100/vivado/program.tcl \
                            tools/build_stamp.tcl tb/cadr_program_tb.tcl | $(BUILD)
 	OUTDIR=$(BUILD)/program_tcl $(TCLSH) tb/cadr_program_tb.tcl
 	@touch $@
@@ -1927,13 +1655,6 @@ current:
 	@python3 boards/cora-z7-07s/vivado/gen_ps7.py --check
 	@python3 boards/cora-z7-07s/vivado/ps7_ops.py --check
 	@python3 boards/cora-z7-07s/linux/buildroot/board/cora-z7-07s/uboot/gen_ps7_init_gpl.py --check
-# And the third board's memory controller, which is generated rather than
-# written --- this project's one generated-IP exception, and the thing that
-# keeps it honest.  It skips the regeneration without Vivado and says so; the
-# two questions it can always answer, whether the project file is Digilent's
-# with the three stated changes and whether the memory-off board's pin file is
-# derived from the generated one, are pure Python and run anywhere.
-	@python3 boards/arty-a7-100/vivado/mig_check.py --check
 
 # ------------------------------------------------------------ the mutations
 #
@@ -1995,7 +1716,7 @@ mutants-selftest: $(BUILD)/phase_gen.golden $(BUILD)/busint_xbus.golden \
                   $(BUILD)/disk.golden $(BUILD)/disk_boot.golden \
                   $(BUILD)/tv.golden $(BUILD)/tv_lispm.golden \
                   $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex $(BUILD)/rtl_sys.golden \
-             $(BUILD)/soc_firmware.hex | $(BUILD)
+             | $(BUILD)
 	python3 mutations/run.py --goldens $(BUILD) --work $(MUTDIR) \
 	    --verilator '$(VERILATOR)' --cargo '$(CARGO)' --tclsh '$(TCLSH)' \
 	    --self-test
@@ -2598,9 +2319,9 @@ CONSOLE_SRC_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-console/src
 # BESIDE THE OTHER PACKAGES FURTHER DOWN.**  A prerequisite list is expanded
 # when the rule is READ, so a `$(wildcard $(COMMON_SRC)/*.c)` above the
 # assignment expands against an empty variable and the rule quietly has no
-# prerequisite at all --- the shape that left `arty_a7.pass` not re-running on
-# a change to the memory path, and which the recipe cannot show because a
-# recipe is expanded at run time.
+# prerequisite at all --- the shape that once left a board's lint not
+# re-running on a change to the memory path, and which the recipe cannot show
+# because a recipe is expanded at run time.
 COMMON_PKG   := boards/arty-z7-20/linux/buildroot/package/cadr-common
 COMMON_SRC   := $(COMMON_PKG)/src
 
@@ -3214,218 +2935,4 @@ $(BUILD)/obj_park/Vcadr_machine: $(MACHINE) tb/cadr_park_tb.cpp | $(BUILD)
 
 $(BUILD)/park.pass: $(BUILD)/obj_park/Vcadr_machine $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex
 	$(BUILD)/obj_park/Vcadr_machine
-	@touch $@
-
-# ================= THE SOFT PROCESSING SYSTEM, Arty A7-100 =================
-#
-# The Artix has no processing system, so a RISC-V core in fabric masters the
-# same register faces the Zynq's ARM cores master on the other two boards, and
-# runs firmware built here.  `rtl/plumbing/cadr_soc.sv` is the system,
-# `third_party/ibex/` is the core, `boards/arty-a7-100/firmware/` is the
-# program, and `tb/cadr_soc_harness.sv` puts the three together with the
-# machine and the four faces exactly as `boards/arty-a7-100/cadr_arty_a7.sv`
-# does.
-#
-# **THE TOOLCHAIN IS NAMED AND ITS ABSENCE IS FATAL.**  A firmware is the one
-# thing here that needs a compiler this repository does not otherwise want, and
-# a rule that skipped quietly would leave a bitstream carrying whatever hex was
-# last built --- which is the stale-artifact trap waiting to happen.  So the
-# recipe checks, and says what to install.
-
-RISCV_CC      ?= riscv64-unknown-elf-gcc
-RISCV_OBJCOPY ?= riscv64-unknown-elf-objcopy
-RISCV_SIZE    ?= riscv64-unknown-elf-size
-
-define SOC_NEED_TOOLCHAIN
-@command -v $(RISCV_CC) >/dev/null 2>&1 || { \
-  echo "$(RISCV_CC) is not installed, and the soft processing system's"; \
-  echo "firmware cannot be built without it.  On Debian and Ubuntu:"; \
-  echo ""; \
-  echo "    sudo apt-get install gcc-riscv64-unknown-elf \\"; \
-  echo "                         picolibc-riscv64-unknown-elf"; \
-  echo ""; \
-  echo "picolibc is not optional: it is the only C library on this"; \
-  echo "toolchain that ships headers, and the shared drivers include"; \
-  echo "<string.h> and <stdio.h>.  Any other riscv32 toolchain works if"; \
-  echo "RISCV_CC names it."; \
-  exit 1; }
-endef
-
-# --- the firmware -----------------------------------------------------------
-#
-# **TWO OF THE FIVE SOURCES ARE THE ARTY Z7-20's AND ARE COMPILED WHERE THEY
-# LIVE.**  `console_face.c` is the console's register face and `pack_side.c`
-# is the disk pack side's, and every line of both is as true of a soft core as
-# of an ARM one: the register numbers are the fabric's and the only thing that
-# differs is how a word reaches an address.  A copy here would be a second
-# description of one register face.
-#
-# **AND THIS RULE IS THE ONLY THING HOLDING THAT FILE TO BEING A FACE.**  The
-# console program has words that are not cycles on the bus --- `trace-keys`
-# reads two pid files and signals two daemons --- and the day one of them was
-# written into `console_face.c` this link FAILED, nothing in the firmware
-# calling it: `fopen` alone drags picolibc's stdio in, wanting `open`,
-# `close`, `read`, `write` and `lseek`, and `sbrk` wants a `__heap_end` that
-# is not there.  Such words live in `console_host.c`, which only the Linux
-# builds compile and which no rule here names.  So `make build/soc.pass` is
-# the check on a boundary that is otherwise a matter of opinion.
-#
-# **THEY BELONG SOMEWHERE NEUTRAL AND THEY ARE NOT THERE YET.**  A file under
-# `boards/arty-z7-20/linux/` that a third board compiles is the same shape as
-# the three Vivado scripts this repository reads out of that directory from two
-# others, and those are owed a move.  This is one more and it is recorded
-# rather than done here.
-#
-# `-Wno-format` on those two and on nothing else: `uint32_t` is `long` on this
-# target and `int` on the ARM, both 32 bits, so their `%08x` is right and the
-# warning is about the type name.  The firmware's own files use `%08lx` and are
-# compiled at the full standard.
-SOC_FW_DIR   := boards/arty-a7-100/firmware
-SOC_CONS_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-console/src
-SOC_PACK_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-disk-packs/src
-# ...and the three faces behind `M_AXI_GP0` beside the pack side, whose
-# headers the firmware includes for their addresses and identifiers and for
-# nothing else: a second copy of `0x4000_1000` here would be the beginning of
-# two programs.
-SOC_CHAOS_DIR := boards/arty-z7-20/linux/buildroot/package/cadr-chaosnet/src
-SOC_SER_DIR   := boards/arty-z7-20/linux/buildroot/package/cadr-serial/src
-SOC_IN_DIR    := boards/arty-z7-20/linux/buildroot/package/cadr-terminal/src
-
-# 32 KB, eight block RAM tiles.  It must agree with `LENGTH` in
-# `$(SOC_FW_DIR)/link.ld`; `tools/bin2hex.py` refuses an image that does not
-# fit, which is what catches a disagreement.
-SOC_RAM_WORDS := 8192
-
-# `zicsr` is spelled out because GCC 14 no longer implies it from `i`, and the
-# trap handler reads `mcause`.  `-Os` because the memory is block RAM and every
-# word of it is a tile.
-SOC_CFLAGS := -march=rv32imc_zicsr -mabi=ilp32 -Os -g -ffreestanding \
-              -nostartfiles --specs=picolibc.specs \
-              -DPICOLIBC_INTEGER_PRINTF_SCANF \
-              -I$(SOC_FW_DIR) -I$(SOC_FW_DIR)/include \
-              -I$(SOC_CONS_DIR) -I$(SOC_PACK_DIR) \
-              -I$(SOC_CHAOS_DIR) -I$(SOC_SER_DIR) -I$(SOC_IN_DIR)
-
-SOC_FW_OBJ := $(BUILD)/soc/start.o $(BUILD)/soc/soc_io.o $(BUILD)/soc/main.o \
-              $(BUILD)/soc/console_face.o $(BUILD)/soc/pack_side.o
-
-$(BUILD)/soc:
-	@mkdir -p $@
-
-$(BUILD)/soc/start.o: $(SOC_FW_DIR)/start.S | $(BUILD)/soc
-	$(SOC_NEED_TOOLCHAIN)
-	$(RISCV_CC) $(SOC_CFLAGS) -c $< -o $@
-
-$(BUILD)/soc/soc_io.o: $(SOC_FW_DIR)/soc_io.c $(SOC_FW_DIR)/soc.h \
-                       $(SOC_FW_DIR)/include/cadr/cadr_log.h | $(BUILD)/soc
-	$(SOC_NEED_TOOLCHAIN)
-	$(RISCV_CC) $(SOC_CFLAGS) -Wall -Wextra -Werror -c $< -o $@
-
-$(BUILD)/soc/main.o: $(SOC_FW_DIR)/main.c $(SOC_FW_DIR)/soc.h \
-                     $(SOC_CONS_DIR)/console_face.h $(SOC_PACK_DIR)/pack_side.h \
-                     $(SOC_CHAOS_DIR)/chaos_face.h $(SOC_SER_DIR)/serial_face.h \
-                     $(SOC_IN_DIR)/input_face.h \
-                     | $(BUILD)/soc
-	$(SOC_NEED_TOOLCHAIN)
-	$(RISCV_CC) $(SOC_CFLAGS) -Wall -Wextra -Werror -c $< -o $@
-
-$(BUILD)/soc/console_face.o: $(SOC_CONS_DIR)/console_face.c \
-                             $(SOC_CONS_DIR)/console_face.h | $(BUILD)/soc
-	$(SOC_NEED_TOOLCHAIN)
-	$(RISCV_CC) $(SOC_CFLAGS) -Wall -Wextra -Wno-format -c $< -o $@
-
-$(BUILD)/soc/pack_side.o: $(SOC_PACK_DIR)/pack_side.c \
-                          $(SOC_PACK_DIR)/pack_side.h | $(BUILD)/soc
-	$(SOC_NEED_TOOLCHAIN)
-	$(RISCV_CC) $(SOC_CFLAGS) -Wall -Wextra -Wno-format -c $< -o $@
-
-$(BUILD)/soc/firmware.elf: $(SOC_FW_OBJ) $(SOC_FW_DIR)/link.ld
-	$(SOC_NEED_TOOLCHAIN)
-	$(RISCV_CC) $(SOC_CFLAGS) -T $(SOC_FW_DIR)/link.ld \
-	    -Wl,--no-warn-rwx-segments -Wl,-Map=$(BUILD)/soc/firmware.map \
-	    $(SOC_FW_OBJ) -o $@
-	@$(RISCV_SIZE) $@
-
-# **A TEMPORARY FILE MOVED INTO PLACE**, because a failed generator that left
-# an empty hex would leave `make` calling it up to date and the memory would
-# elaborate empty --- which `boards/arty-a7-100/README.md` records as a real
-# trap the first board run met with the boot PROM's own hex.
-$(BUILD)/soc_firmware.hex: $(BUILD)/soc/firmware.elf tools/bin2hex.py | $(BUILD)
-	$(RISCV_OBJCOPY) -O binary $< $(BUILD)/soc/firmware.bin
-	python3 tools/bin2hex.py $(BUILD)/soc/firmware.bin $(SOC_RAM_WORDS) $@.tmp
-	mv $@.tmp $@
-
-# --- the check --------------------------------------------------------------
-#
-# The harness is the Arty A7-100's top level below the clock: the soft system,
-# the machine with MIT's boot PROM, and the four faces.  The firmware is the
-# board's, byte for byte.
-#
-# **THE RATE IS NOT THE BOARD's AND THE CHECK SAYS WHY.**  At 115,200 baud one
-# bit is 434 of the soft system's ticks and a dozen lines are four million of
-# them; at a divisor of 32 the same firmware says the same words in a fraction
-# of the time, and nothing in it knows the rate.  `tb/cadr_soc_tb.cpp` measures
-# the narrowest level on the wire and asserts it IS the divisor, so a rate that
-# never reached the fabric is a failure rather than a silent pass.
-#
-# **AND THE DIVISOR IS IN THE SOFT SYSTEM'S TICKS.**  The transmitter is on
-# that side of the crossing, so the rate is computed from that clock and not
-# from the machine's tick.  Both numbers below follow `SOC_CLK_HZ`, which is
-# read out of the top level; a baud written here as a literal would be a
-# second place the soft clock's frequency lived.
-SOC_TB_DIVISOR := 32
-SOC_TB_BAUD    := $(shell echo $$(( $(SOC_CLK_HZ) / $(SOC_TB_DIVISOR) )))
-SOC_TICKS_PER_US := $(shell echo $$(( $(SOC_CLK_HZ) / 1000000 )))
-
-# **WHICH BUILD THE CHECK TELLS THE FABRIC IT IS**, page 2's word 32.  On the
-# board a primitive reads the part's AXSS register; there is none under
-# Verilator, so this is the number the harness drives and `tb/cadr_soc_tb.cpp`
-# asserts the firmware's banner against.
-#
-# **IT IS DELIBERATELY NOT THIS TREE'S OWN STAMP**: commit `5a1b2c3` with a
-# tree that was both modified and carrying an untracked file, which is a
-# commit this repository does not have.  A check that took the real stamp and
-# then agreed with it would be confirming; this one compares the sentence the
-# firmware printed against a number nothing but this line could have supplied.
-# Both compound halves of the nibble are exercised by the choice of 3.
-# One number in one place: the parameter and the check's own constant are both
-# written from it, because two spellings of one value are two chances to
-# disagree.
-SOC_TB_BUILD_HEX := 5A1B2C33
-
-# **AND THE JOIN, WHICH THE HARNESS INSTANTIATES AND THE FACES DO NOT
-# INCLUDE.**  `rtl/plumbing/cadr_dbg_join.sv` is what sits in front of the
-# machine's DBGIN page on every board in this repository; on this one it has
-# the Pmod connector for its only master and its other arm --- the register
-# window's on a Zynq --- is tied idle.  Named here rather than left to
-# Verilator's own module search, so that a change to it re-runs this check:
-# a prerequisite list is what makes a file part of a check, and finding the
-# module is not the same as depending on it.
-#
-# **AND THE MEMORY'S ARBITER**, which the harness puts in front of a model of
-# main memory as the board puts it in front of the controller.  It is in
-# `A7MEM` beside the controller's other neighbors and not in `SOC_FACES`, so it
-# is named here.
-SOC_HARNESS_SRC := $(MACHINE) tb/cadr_soc_harness.sv $(IBEX_SRC) $(SOC_RTL) \
-                   $(SOC_FACES) rtl/plumbing/cadr_dbg_join.sv \
-                   rtl/plumbing/cadr_mem_share.sv
-
-$(BUILD)/obj_soc/Vcadr_soc_harness: $(SOC_HARNESS_SRC) $(IBEX_VLT) \
-                                    tb/cadr_soc_tb.cpp | $(BUILD)
-	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Irtl/machine -Irtl/plumbing \
-	    -Irtl/plumbing/xilinx7 $(IBEX_INC) -Mdir $(BUILD)/obj_soc \
-	    -CFLAGS -DUART_DIVISOR=$(SOC_TB_DIVISOR) \
-	    -CFLAGS -DSOC_TICKS_PER_US=$(SOC_TICKS_PER_US) \
-	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
-	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
-	    -GFIRMWARE_HEX='"$(abspath $(BUILD))/soc_firmware.hex"' \
-	    -GSOC_RAM_WORDS=$(SOC_RAM_WORDS) -GSOC_BAUD=$(SOC_TB_BAUD) \
-	    -GCLK_HZ=$(SOC_CLK_HZ) -GBUILD_STAMP="32'h$(SOC_TB_BUILD_HEX)" \
-	    -CFLAGS -DSOC_TB_BUILD=0x$(SOC_TB_BUILD_HEX)u \
-	    --top-module cadr_soc_harness $(IBEX_VLT) $(SOC_HARNESS_SRC) \
-	    $(abspath tb/cadr_soc_tb.cpp)
-
-$(BUILD)/soc.pass: $(BUILD)/obj_soc/Vcadr_soc_harness $(BUILD)/boot_prom.hex $(BUILD)/sync_prom.hex \
-                   $(BUILD)/soc_firmware.hex
-	$(BUILD)/obj_soc/Vcadr_soc_harness
 	@touch $@

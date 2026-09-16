@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>muir-fpga — the MIT CADR in fabric</title>
-<meta name="description" content="The MIT CADR Lisp Machine in the fabric of small FPGA boards, held tick for tick to the muir emulator: what runs on the Arty Z7-20, the Cora Z7-07S and the Arty A7-100, and what the real machine was.">
+<meta name="description" content="The MIT CADR Lisp Machine in the fabric of small FPGA boards, held tick for tick to the muir emulator: what runs on the Arty Z7-20 and the Cora Z7-07S, and what the real machine was.">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="front.css">
 </head>
@@ -16,7 +16,6 @@
     <nav>
       <a href="arty-z7-20.html">Arty Z7-20</a>
       <a href="cora-z7-07s.html">Cora Z7-07S</a>
-      <a href="arty-a7-100.html">Arty A7-100</a>
       <a href="booting.html">Booting</a>
       <a href="debugging.html">Debugging</a>
       <a href="faq.html">FAQ</a>
@@ -38,11 +37,8 @@
     <h2>The boards</h2>
 
     <!-- One row a board. The figures are each board's own place and route
-         report, all three built from the color TV change, which landed at
-         653ca22 with its fabric unchanged. The
-         Arty A7-100's is the whole board there --- the machine with its memory
-         controller behind it and the soft processing system in front of its
-         register faces. They are the figures that board's own drawing carries
+         report, both built from the color TV change, which landed at
+         653ca22 with its fabric unchanged. They are the figures that board's own drawing carries
          under its fabric label. A cell says yes only where that board itself
          has shown the thing, which is the same claim the drawings' colors
          make. -->
@@ -81,16 +77,6 @@
             <td class="st no" title="The board has no HDMI connector.">no</td>
             <td class="st no" title="The board has no USB host port, so the image leaves the program out.">no</td>
           </tr>
-          <tr>
-            <th scope="row" class="board"><a href="arty-a7-100.html">Arty A7-100</a><span class="pc">XC7A100T</span></th>
-            <td class="cpu">soft CPU, Ibex</td>
-            <td class="num">6,554 of 15,850<span class="pc">41.4%</span></td>
-            <td class="num">49.5 of 135<span class="pc">36.7%</span></td>
-            <td class="st" title="A MAC in the fabric.">yes</td>
-            <td class="st" title="A card on Pmod JD, with an SD host in the fabric.">Pmod</td>
-            <td class="st no" title="The board has no HDMI connector.">no</td>
-            <td class="st no" title="The board has no USB host port.">no</td>
-          </tr>
         </tbody>
       </table>
     </div>
@@ -98,7 +84,6 @@
     <div class="prose tnote">
       <p>The Arty Z7-20 is the recommended board, and the one tested the most. It is the board the project was built on, and every block on its drawing has now run on it.</p>
       <p>The Cora Z7-07S carries a smaller part of the same kind and a smaller board, with no HDMI output and no USB host for a keyboard and mouse, and the machine fits it and closes timing with nothing in the machine itself changed.</p>
-      <p>The Arty A7-100 is a side project, taken on to see how far the machine can go on a board with no processing system at all: everything the Arm cores and Linux do on the other two boards has to have an answer in the fabric there, and it is further from finished than the Zynq boards.</p>
     </div>
   </div>
 </section>
@@ -140,20 +125,8 @@
 
       <dl class="credits">
         <div>
-          <dt>Ibex</dt>
-          <dd>lowRISC's RISC-V core, which is the soft processor on the Arty A7-100. It is in <code>third_party/ibex/</code> as published, pinned at commit <code>405c6d1d</code> rather than at a release because the project has none, under the <b>Apache License 2.0</b>. The primitives from lowRISC's own IP library that it depends on are under that directory in a <code>vendor/</code> of its own, under the same license.</dd>
-        </div>
-        <div>
           <dt>Digilent's pin files</dt>
-          <dd>Pins come from Digilent's published master constraint files and never from memory, because a wrong pin is a light that does not come on. Digilent publishes them under the <b>MIT License</b>. The Cora Z7-07S's and the Arty A7-100's master files are in their board directories byte for byte as published, each beside a copy of that license as <code>Digilent-License.txt</code>. The Arty Z7-20's own constraint file copies out the handful of pins that design uses rather than carrying the master file, and cites the commit and digest it read them from.</dd>
-        </div>
-        <div>
-          <dt>Digilent's memory settings</dt>
-          <dd>The Arty A7-100's DDR3L timing comes from Digilent's own project file for that board, <code>mig-digilent-E.0-1.1.prj</code>, kept byte for byte as published by Digilent in <code>github.com/Digilent/vivado-boards</code>. The repository records the commit, the path and a digest for it; it does not record a license for that repository, and none is assumed here.</dd>
-        </div>
-        <div>
-          <dt>The memory controller</dt>
-          <dd>That project file is the input to Xilinx's Memory Interface Generator, and what the generator writes is committed under <code>boards/arty-a7-100/mig/gen/</code>. Thirty-four of those seventy-three files carry Xilinx's own copyright notice and disclaimer, which grants nothing beyond a license Xilinx itself issues and asks that the notice stay with the file. They are kept exactly as the generator wrote them.</dd>
+          <dd>Pins come from Digilent's published master constraint files and never from memory, because a wrong pin is a light that does not come on. Digilent publishes them under the <b>MIT License</b>. The Cora Z7-07S's master file is in its board directory byte for byte as published, beside a copy of that license as <code>Digilent-License.txt</code>. The Arty Z7-20's own constraint file copies out the handful of pins that design uses rather than carrying the master file, and cites the commit and digest it read them from.</dd>
         </div>
         <div>
           <dt>muir</dt>

@@ -16,7 +16,6 @@
     <nav>
       <a href="arty-z7-20.html">Arty Z7-20</a>
       <a href="cora-z7-07s.html">Cora Z7-07S</a>
-      <a href="arty-a7-100.html">Arty A7-100</a>
       <a href="booting.html">Booting</a>
       <a href="debugging.html">Debugging</a>
       <a href="faq.html">FAQ</a>
@@ -179,20 +178,6 @@
       There is no listen flag, here or in muir, because listening is what a
       CADR always does.</p>
       <p class="src">Source: <code>docs/debug-cable.md</code> again.</p>
-
-      <h3>Why does the Arty A7-100 have no Linux?</h3>
-      <p>Because it has no processing system. The two Zynq boards reach main
-      memory, the disk, the screen, the console, Chaosnet, the serial line and
-      the debugger through Arm cores and the Linux running on them, and an
-      Artix-7 part has none of that, so each of those wants an answer in
-      fabric. The soft processor is Ibex, lowRISC's RISC-V core, vendored at a
-      pinned commit and configured RV32IMC with two stages and no caches, and
-      it runs bare-metal firmware out of block RAM in front of the same
-      register faces Linux drives elsewhere. It was chosen because it is
-      SystemVerilog, where the alternatives were an encrypted netlist, Verilog
-      generated from Scala, and a core taking four or five cycles an
-      instruction.</p>
-      <p class="src">Source: <code>boards/arty-a7-100/README.md</code>.</p>
 
       <h3>Why are the checks themselves mutation-tested?</h3>
       <p><code>make check</code> says the checks pass.

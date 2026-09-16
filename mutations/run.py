@@ -605,40 +605,6 @@ CHECKS = {
     # checked.  The testbench runs two configurations --- the port answering
     # and the port held in reset --- and the second is what a mutation that
     # counted the fabric's own intentions falls over.
-    # ---- the Arty A7-100's main memory
-    #
-    # The three modules between the machine's memory port and the board's own
-    # DDR3L controller, against a model of that controller's native user
-    # interface.  There is no muir reference for any of it --- nothing in MIT's
-    # drawings is a DDR3 controller --- so the records below are about the
-    # arithmetic and the handshakes: which sixteen-byte block, which lane of
-    # it, which bytes to write, and the two rules a crossing between two
-    # unrelated clocks has to keep.
-    #
-    # `cadr_mem_count.sv` is in `extra` and not in `sources`: it has a check of
-    # its own on the other board, and what is asked of it here is only that the
-    # tally at the controller's edge counts what the path did.
-    "a7_mem": {
-        "sources": [
-            "rtl/plumbing/cadr_ddr_map.sv",
-            "rtl/plumbing/cadr_mem_cross.sv",
-            "rtl/plumbing/cadr_mig_ui.sv",
-            "rtl/plumbing/cadr_jtag_mem.sv",
-            "rtl/plumbing/cadr_mem_share.sv",
-            "rtl/plumbing/cadr_hp2_mem.sv",
-            "tb/cadr_a7_mem_harness.sv",
-        ],
-        # The disk pack face is in `extra`: it has checks of its own, and what
-        # is asked of it here is that its master's words move through the
-        # arbiter and land where it named them.
-        "extra": ["rtl/plumbing/cadr_mem_count.sv",
-                  "rtl/plumbing/cadr_disk_pack.sv"],
-        "top": "cadr_a7_mem_harness",
-        "tb": "tb/cadr_a7_mem_tb.cpp",
-        "flags": ["-O2", "-CFLAGS", "-O2", "-Irtl/machine", "-Irtl/plumbing",
-                  "-Itb"],
-        "golden": None,
-    },
     "mem_count": {
         "sources": ["rtl/plumbing/cadr_mem_count.sv"],
         "extra": [
@@ -894,7 +860,6 @@ CHECKS = {
     "program_tcl": {
         "kind": "tcl",
         "sources": ["boards/arty-z7-20/vivado/program.tcl",
-                    "boards/arty-a7-100/vivado/program.tcl",
                     "tools/build_stamp.tcl"],
         "tb": "tb/cadr_program_tb.tcl",
         "golden": None,
@@ -906,153 +871,6 @@ CHECKS = {
     # UNUSEDSIGNAL. `extra` rather than `sources` for everything below the top
     # level, because `check_coverage` asks that every source a check builds has
     # a mutation aimed at it and only cadr_arty.sv does.
-    # ------------------- the soft processing system on the Arty A7-100
-    #
-    # An Artix has no processing system, so a RISC-V core in fabric masters the
-    # same register faces the Zynq's ARM cores master on the other two boards.
-    # `tb/cadr_soc_harness.sv` is that board's top level below the clock ---
-    # `cadr_soc` with Ibex in it, `cadr_machine` with MIT's boot PROM, and the
-    # four faces --- and the check runs the firmware the board runs and reads
-    # every line it says off the wire.
-    #
-    # **WHAT THE RECORDS ARE AIMED AT IS THE BRIDGE AND THE CROSSING.**
-    # Everything else in the design already has a check of its own: the faces
-    # are held by `console.pass`, `disk_pack.pass`, `dbgin.pass` and
-    # `gp0_default.pass`, the machine by six checks, and Ibex by lowRISC.  What
-    # is new here is the seam --- one of the core's loads or stores becoming
-    # one AXI transaction at one of four slaves --- and the two faces the soft
-    # system has that the Zynq does not.
-    #
-    # **AND THE SEAM IS TWO CLOCKS APART.**  The core runs slower than the
-    # machine, its load-store address not settling in a 10 ns tick, so
-    # `rtl/plumbing/cadr_soc_cross.sv` carries the request and the answer
-    # between the two domains and the check runs the whole firmware at three
-    # ratios.  What a simulator cannot hold is the DEPTH of a synchronizer ---
-    # nothing here models metastability, so one flip-flop behaves exactly as
-    # two --- and the records say so at the constant rather than leaving a
-    # hole to be filed.
-    #
-    # **THE FIRMWARE IS NOT MUTATED AND THAT IS A LIMIT, NOT A CHOICE.**  Its
-    # hex is built by the Makefile with a RISC-V compiler and read at
-    # elaboration; this runner verilates SystemVerilog and cannot rebuild a C
-    # program, so a record aimed at `main.c` would leave the same hex in place
-    # and measure nothing.  The same shape as `chaosnet`, `serial` and
-    # `terminal`, which carry mutation lists of their own; the firmware does
-    # not have one yet and this says so rather than leaving it to be assumed.
-    #
-    # **THE TWO PACKAGES AND THE LINT WAIVER ARE IN `flags` AND NOT IN
-    # `extra`**, because `extra` comes after `sources` on the command line and
-    # a package has to be parsed before the file that imports it --- measured,
-    # not assumed: put the other way round Verilator says `Package/class
-    # 'ibex_cheriot_pkg' not found`.  The waiver has to be first of all, which
-    # is what its own header says.
-    "soc": {
-        # **THE HARNESS IS A SOURCE AND NOT AN EXTRA, WHICH `probe` AND
-        # `a7_mem` BOTH DO ALREADY.**  `tb/cadr_soc_harness.sv` is not the
-        # checker --- `tb/cadr_soc_tb.cpp` is --- it is the Arty A7-100's own
-        # composition below the clock, standing in for a top level Verilator
-        # cannot elaborate for want of an `MMCME2_BASE`.  The things only a
-        # composition can get wrong are therefore in it, and one of them is
-        # what this board does with the arm of `cadr_dbg_join.sv` that the
-        # debug cable's register window drives on a Zynq and nobody drives
-        # here.  A mutation cannot reach the top level's own copy of that
-        # tie-off, `arty_a7` being a lint with no entry in this table; the
-        # harness's copy is what a record can name, and `arty_a7.pass` linting
-        # the real top level in seven configurations is what keeps the two
-        # from coming apart in shape.
-        "sources": ["rtl/plumbing/cadr_soc_axi.sv", "rtl/plumbing/cadr_soc.sv",
-                    "rtl/plumbing/cadr_soc_cross.sv",
-                    "rtl/plumbing/cadr_soc_uart.sv",
-                    "rtl/plumbing/cadr_soc_ram.sv",
-                    "rtl/plumbing/cadr_soc_timer.sv",
-                    "tb/cadr_soc_harness.sv"],
-        "extra": [
-            "rtl/machine/cadr_phase_gen.sv",
-            "rtl/machine/cadr_microcycle.sv", "rtl/plumbing/cadr_ddr_map.sv",
-            "rtl/machine/cadr_xbus_decode.sv",
-            "rtl/machine/cadr_busint_xbus.sv",
-            "rtl/plumbing/cadr_xbus_ddr.sv",
-            "rtl/machine/cadr_spy_registers.sv",
-            "rtl/machine/cadr_disk_controller.sv", "rtl/machine/cadr_tv.sv",
-            "rtl/machine/cadr_io_board.sv",
-            "rtl/machine/cadr_busint_regs.sv",
-            "rtl/machine/cadr_console_bus.sv",
-            "rtl/machine/cadr_console_state.sv", "rtl/machine/cadr_dbgin.sv",
-            "rtl/plumbing/cadr_bus_audit.sv",
-            "rtl/machine/cadr_memory_path.sv", "rtl/machine/cadr_machine.sv",
-            "rtl/plumbing/cadr_dbg_join.sv",
-            "third_party/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_lfsr.sv",
-            "third_party/ibex/rtl/ibex_alu.sv",
-            "third_party/ibex/rtl/ibex_compressed_decoder.sv",
-            "third_party/ibex/rtl/ibex_controller.sv",
-            "third_party/ibex/rtl/ibex_counter.sv",
-            "third_party/ibex/rtl/ibex_cs_registers.sv",
-            "third_party/ibex/rtl/ibex_csr.sv",
-            "third_party/ibex/rtl/ibex_decoder.sv",
-            "third_party/ibex/rtl/ibex_ex_block.sv",
-            "third_party/ibex/rtl/ibex_id_stage.sv",
-            "third_party/ibex/rtl/ibex_if_stage.sv",
-            "third_party/ibex/rtl/ibex_load_store_unit.sv",
-            "third_party/ibex/rtl/ibex_multdiv_slow.sv",
-            "third_party/ibex/rtl/ibex_multdiv_fast.sv",
-            "third_party/ibex/rtl/ibex_prefetch_buffer.sv",
-            "third_party/ibex/rtl/ibex_fetch_fifo.sv",
-            "third_party/ibex/rtl/ibex_register_file_ff.sv",
-            "third_party/ibex/rtl/ibex_register_file_fpga.sv",
-            "third_party/ibex/rtl/ibex_pmp.sv",
-            "third_party/ibex/rtl/ibex_dummy_instr.sv",
-            "third_party/ibex/rtl/ibex_branch_predict.sv",
-            "third_party/ibex/rtl/ibex_wb_stage.sv",
-            "third_party/ibex/rtl/ibex_core.sv",
-            "rtl/plumbing/cadr_console.sv", "rtl/plumbing/cadr_disk_pack.sv",
-            "rtl/plumbing/cadr_gp0_default.sv",
-            # `M_AXI_GP0`'s splitter and the I/O board's three faces, which the
-            # bridge hands the same gigabyte a Zynq's processing system does;
-            # the disk pack face's master's slave; and the memory's arbiter,
-            # which the harness puts in front of a model of main memory.
-            "rtl/plumbing/cadr_gp0_split.sv", "rtl/plumbing/cadr_gp_regs.sv",
-            "rtl/plumbing/cadr_chaos_cable.sv",
-            "rtl/plumbing/cadr_serial_line.sv",
-            "rtl/plumbing/cadr_input_cables.sv",
-            "rtl/plumbing/cadr_hp2_mem.sv", "rtl/plumbing/cadr_mem_share.sv"
-        ],
-        "top": "cadr_soc_harness",
-        "tb": "tb/cadr_soc_tb.cpp",
-        # **THESE FOUR NUMBERS ARE THE MAKEFILE'S AND ARE WRITTEN TWICE.**
-        # `SOC_CLK_HZ`, `SOC_TB_DIVISOR`, `SOC_TB_BAUD` and `SOC_TICKS_PER_US`
-        # there are all derived from `SOC_CLK_DIVIDE` in
-        # `boards/arty-a7-100/cadr_arty_a7.sv`, which is the one place the soft
-        # system's clock is decided; this runner cannot ask make for them and
-        # so holds a copy.  They came apart once already --- the baseline here
-        # decoded the wire at a divisor the fabric was not transmitting at and
-        # reported `the firmware said 1 line(s), wanting 13`, which is a
-        # BASELINE failure and stops the run rather than being mistaken for a
-        # catch.  A run that starts is a run in which they agree.
-        #
-        # **AND A FIFTH, WHICH IS WHICH BUILD THE CHECK TELLS THE FABRIC IT
-        # IS.**  `SOC_TB_BUILD_HEX` in the Makefile, the same number in both
-        # places for the same reason and caught the same way: the firmware's
-        # banner names it, so a copy that drifted would fail the baseline at
-        # the build line rather than survive anywhere.
-        "flags": ["-O2", "-CFLAGS", "-O2",
-                  "-CFLAGS", "-DUART_DIVISOR=32",
-                  "-CFLAGS", "-DSOC_TICKS_PER_US=50",
-                  "-CFLAGS", "-DSOC_TB_BUILD=0x5A1B2C33u",
-                  "-GBUILD_STAMP=32'h5A1B2C33",
-                  "-GCLK_HZ=50000000",
-                  "-GSOC_BAUD=1562500", "-GSOC_RAM_WORDS=8192",
-                  "-Irtl/machine", "-Irtl/plumbing", "-Irtl/plumbing/xilinx7",
-                  "-Ithird_party/ibex/vendor/lowrisc_ip/ip/prim/rtl",
-                  "-Ithird_party/ibex/vendor/lowrisc_ip/dv/sv/dv_utils",
-                  "third_party/ibex/ibex_lint.vlt",
-                  "third_party/ibex/rtl/ibex_pkg.sv",
-                  "third_party/ibex/rtl/ibex_cheriot_pkg.sv",
-                  "third_party/ibex/vendor/lowrisc_ip/ip/prim/rtl/prim_cipher_pkg.sv"
-                  ],
-        "gprom": True,
-        "gfirmware": True,
-        "golden": None,
-    },
     "arty": {
         "kind": "lint",
         "sources": ["boards/arty-z7-20/cadr_arty.sv"],
@@ -1665,19 +1483,18 @@ def copy_tree(dest, with_golden=False, rev=None):
     # `boards/arty-z7-20/vivado/probe.tcl` is the source the probe_jtag
     # mutations are aimed at, and the working tree is no more mutable for a
     # Tcl script than for a module.
-    # And `third_party`: `rtl/plumbing/cadr_soc.sv` instantiates Ibex, which
-    # is vendored there, so a `soc` mutant that could not see it would report
-    # BROKEN rather than anything about the mutation.  Widening this list is a
+    # Widening this list is a
     # known trap --- `git archive` refuses a pathspec matching nothing, and
     # `--since` names revisions older than the directory --- and the `cat-file
-    # -e` filter below is what makes it safe.  And `tools`: both
-    # `program.tcl`s source `tools/build_stamp.tcl` for the build a bitstream
-    # names, so a copy without it is a copy where neither script runs at all
-    # --- every record "caught" for the wrong reason and the baseline BROKEN.
+    # -e` filter below is what makes it safe.  And `tools`:
+    # `program.tcl` sources `tools/build_stamp.tcl` for the build a bitstream
+    # names, so a copy without it is a copy where that script does not run at
+    # all --- every record "caught" for the wrong reason and the baseline
+    # BROKEN.
     # It is 108 KB and `tools/` arrives at 2e54886, well inside the history
     # `--since` reaches, so the filter earns its keep here rather than being
     # tested by it.
-    dirs = ["rtl", "tb", "boards", "third_party",
+    dirs = ["rtl", "tb", "boards",
             "tools"] + (["golden"] if with_golden else [])
     if rev:
         # A directory that did not exist at `rev` is not an error, and this is
@@ -1888,16 +1705,6 @@ def build_and_run(args, work, check, build_fails=False):
     elif spec.get("gprom"):
         cmd += ["-GPROM_HEX=\"%s\""
                 % os.path.join(args.goldens, "boot_prom.hex")]
-    if spec.get("gfirmware"):
-        # The soft processing system's memory takes its contents at
-        # elaboration the way the control store takes the boot PROM, and the
-        # firmware is built by the Makefile rather than by this runner --- it
-        # needs a RISC-V compiler, which nothing else here does.  So the hex
-        # comes out of the goldens directory beside `boot_prom.hex`, and a
-        # mutation of the FABRIC is what is being measured; a mutation of the
-        # firmware would not be rebuilt and is not aimed at from this list.
-        cmd += ["-GFIRMWARE_HEX=\"%s\""
-                % os.path.join(args.goldens, "soc_firmware.hex")]
     cmd += ["-Mdir", obj, "--top-module", spec["top"]]
     cmd += spec["sources"]
     # Everything the check builds that no mutation is aimed at: a wiring
@@ -2228,34 +2035,17 @@ def check_makefile():
     # mutation of the same text in a second file: it would tell us nothing
     # `arty` does not already tell us, and it would have to be kept in step
     # with the Arty's by hand for ever.  Naming it here is the second of the
-    # two ways to close this warning and the one that stands alone.  `arty_a7`
-    # is the Arty A7-100's lint and is named here on the same argument, with
-    # one difference worth stating.  That board is an Artix-7 and has no
-    # processing system, so its top level is not the Arty's with different
-    # pins: it ties off some forty seams the other two drive, and it has seven
-    # configurations of its own --- the machine, the machine with the probe,
-    # with the DDR3L controller, the two proving boards, with the soft
-    # processing system, and with the soft processing system AND the memory,
-    # which is the only one of the seven that is the whole board --- as `arty`
-    # has six.  What a record aimed here could hold is still what `arty`'s
-    # records hold, that an output of `cadr_machine` left unconnected is
-    # caught, and that is a property of the SHAPE of a top level rather than of
-    # which board it is.  What `arty`'s records do NOT cover is that board's
-    # own tie-offs, and the honest statement is that lint holds those: a
-    # tie-off removed is an undriven signal and a tie-off put on a port that
-    # has a driver is a conflict, and Verilator says so either way.
+    # two ways to close this warning and the one that stands alone.
     known = set(CHECKS) | {"ddr_map", "readout_face", "checkpoint",
                            "chaosnet", "serial", "terminal", "console_face",
-                           "usb_input", "fpgarc", "cora", "arty_a7"}
+                           "usb_input", "fpgarc", "cora"}
     # **AND THE NAME PATTERN TAKES DIGITS, WHICH IT DID NOT.**  It was
     # `[a-z_]+`, so a check whose name has a digit in it was invisible to this
     # guard in both directions --- neither warned about nor checked.  Four
     # names in the Makefile have one: `gp0_default`, `gp0_split` and
     # `gp1_split`, all three of which have entries in `CHECKS` and were simply
-    # never being looked at, and `arty_a7`, which is named above.  Measured
-    # before the pattern moved: widening it produces exactly one new name and
-    # the line above closes it.  A guard that cannot see a whole class of name
-    # is the shape of failure this file is full of.
+    # never being looked at.  A guard that cannot see a whole class of name is
+    # the shape of failure this file is full of.
     for found in sorted(set(re.findall(r"\$\(BUILD\)/([a-z0-9_]+)\.pass", text))):
         if found not in known:
             missing.append("the Makefile runs `%s` and nothing here mutates it"

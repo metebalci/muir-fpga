@@ -380,14 +380,14 @@ struct cons_build {
 };
 
 // Pure: no bus, no system, and it is in this file rather than in the console
-// program because the Arty A7-100's bare-metal firmware prints the same line
-// over its UART with no operating system under it.
+// program so that anything holding the word can print it, with or without an
+// operating system under it.
 struct cons_build cons_build_of(uint32_t w);
 // "clean", "modified", "untracked", "modified and untracked", or a phrase
 // saying the nibble is not one the format defines.  Never NULL.
 const char *cons_build_tree_words(const struct cons_build *b);
-// One line, through `say`, so that the console and the firmware print the
-// same words and cannot drift apart.
+// One line, through `say`, so that everything printing this prints the same
+// words and they cannot drift apart.
 void cons_say_build(const struct cons_build *b);
 
 // Page 1: word 16 + k is diagnostic register k.
@@ -676,16 +676,16 @@ int cons_release_held(const char *path);
 
 // --- WHAT IS NOT IN THIS FILE, AND WHY ------------------------------------
 //
-// **`trace-keys` IS NOT HERE, BECAUSE THIS FILE IS ALSO COMPILED FOR A
-// MACHINE WITH NO OPERATING SYSTEM.**  `console_face.c` is built twice: once
-// for Linux, and once by `boards/arty-a7-100/firmware/` for an Ibex core with
-// picolibc and no kernel under it.  A word that reads a pid file and calls
-// `kill` has no meaning on the second, and it does not merely go unused ---
-// `fopen` alone drags picolibc's stdio in, which wants `open`, `close`,
-// `read`, `write` and `lseek`, and `sbrk` wants a `__heap_end` the firmware
-// has not got, so the firmware stops LINKING.  Measured: it did, the day
-// `trace-keys` was written into this file, with nothing in the firmware
-// calling it.
+// **`trace-keys` IS NOT HERE, BECAUSE THIS FILE WAS ALSO COMPILED FOR A
+// MACHINE WITH NO OPERATING SYSTEM.**  `console_face.c` was built twice: once
+// for Linux, and once for a bare-metal core with picolibc and no kernel under
+// it.  A word that reads a pid file and calls `kill` had no meaning on the
+// second, and it did not merely go unused --- `fopen` alone drags picolibc's
+// stdio in, which wants `open`, `close`, `read`, `write` and `lseek`, and
+// `sbrk` wants a `__heap_end` that build had not got, so it stopped LINKING.
+// Measured: it did, the day `trace-keys` was written into this file, with
+// nothing on that side calling it.  That second build is gone; the rule stays,
+// because it is what keeps this file readable as the register face alone.
 //
 // So the rule this file is held to: **what is in `console_face.c` drives the
 // register face and means the same thing on both hosts.**  Anything that

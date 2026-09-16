@@ -559,30 +559,6 @@ card that boots from itself, because somebody who forgot to write that file
 should be told. Neither of those belongs in a release, which is why there are
 two scripts over one staging tool rather than one script with a mode.
 
-### What is distributed for a board with no processing system
-
-**This is the plan for the Arty A7-100 and nothing here is built yet.** That
-board has no processing system, so it has no boot ROM, no card controller and
-no Linux. A 7-series FPGA configures from QSPI flash or from JTAG, and this
-board reads its own 16 MB flash at power-on. So the card cannot be what boots
-it, and the boot partition has nothing a loader would read.
-
-**What is distributed for it is two things.** The first is a **flash image**,
-which is what `write_cfgmem` makes out of the bitstream and the firmware
-beside it, written into the board's QSPI flash once. The second is **the same
-card image every other board gets**, with its boot partition empty but for a
-README saying that this board boots from its flash and that nothing on this
-partition is read, and with the pack partition exactly as above: the
-`README.TXT`, the two files of flags, and room for the packs the user copies
-in.
-
-**The card is still worth shipping for that board**, and that is the point of
-giving it the same image. The disk packs are the machine's world, not the
-part's: a card carrying a band is a CADR's disk whichever board reads it, and
-the layout being the same means a card can be moved from one board to another
-and the world moves with it. On this board the firmware reads the pack
-partition with a FAT library exactly as Linux does on the others.
-
 ## The drive bay
 
 **Partition 2 holds disk packs and nothing else, and the eight names are the

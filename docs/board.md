@@ -523,9 +523,8 @@ does not reload the bitstream. So on a Zynq board the programs under Linux keep
 the view of the register faces they had before, and after BTN1 the disk pack
 program and the console are out of step with the fabric until they are
 restarted. `rst -srst` over JTAG resets everything, and it is the reset to
-reach for on a Zynq board. BTN1 exists for the Arty A7-100, which has no
-processing system and nothing else to reset it with, and for uniformity across
-the boards.
+reach for on a Zynq board. BTN1 exists for uniformity across the boards, and
+for a part with no processing system and nothing else to reset it with.
 
 Two other things press the same boot line. The first is the keyboard's boot
 chord. Holding both Controls and both Metas with Rubout cold-boots the machine,
@@ -598,13 +597,10 @@ group drives no pin of it. One data line a direction makes a frame twenty-four
 beats, 162 ticks, against the 2,210 the debugger's own interface allows a
 cycle. `docs/debug-cable.md` has the reason and the budget.
 
-**The far board's connector is not always JA.** The Cora Z7-07S uses JA as
-this board does. The Arty A7-100 uses JB, because that board has four headers
-and Digilent publishes two of them as high-speed while JA and JD are its
-standard ports, with a series resistor in line with every signal. Every board
-indexes a header's eight signals in the same order, so a straight ribbon still
-maps each pin to its counterpart whichever headers the two ends are.
-`docs/debug-cable.md` has the pins for all three.
+**The far board's connector is JA too.** The Cora Z7-07S uses JA as this
+board does. Every board indexes a header's eight signals in the same order, so
+a straight ribbon maps each pin to its counterpart whichever headers the two
+ends are. `docs/debug-cable.md` has the pins for both.
 
 **A board is a debuggee with nothing set.** It answers a debugger that plugs
 into JA exactly as MIT's board answers one on its DBGIN, and that is the

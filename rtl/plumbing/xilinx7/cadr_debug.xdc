@@ -96,17 +96,16 @@
 #     memory port's sixteen are, so an exception that reached no path is a
 #     failure and not a plausible number.
 #
-# **THE INSTANCE IS MATCHED BY A WILDCARD BECAUSE TWO BOARDS PUT IT IN TWO
-# GENERATE BLOCKS.**  On the Arty Z7-20 and the Cora Z7-07S the window is
-# `g_ddr.u_debug_window`, behind the processing system's port; on the Arty
-# A7-100 it is `g_soc.u_debug_window`, behind the soft processing system.  The
-# module, the cone and the reason are identical --- the machine's diagnostic
-# multiplexer reaching this latch, twenty-three logic levels of it --- so a
-# second copy of this file with one name changed would be a second thing to
-# keep in step, which is the failure this repository records more often than
-# any other.  The pattern is anchored on the instance name and not open at the
-# other end, and `assert_instance_timing` in each board's flow is what says it
-# reached the registers it was meant to.
+# **THE INSTANCE IS MATCHED BY A WILDCARD AND NOT BY ITS FULL PATH.**  On both
+# boards the window is `g_ddr.u_debug_window`, behind the processing system's
+# port, and the module, the cone and the reason are identical --- the machine's
+# diagnostic multiplexer reaching this latch, twenty-three logic levels of it.
+# Naming the generate hierarchy here would make this file a second thing to
+# keep in step with a top level, and a scoped path that stops matching applies
+# to nothing while saying nothing, which is the failure this repository records
+# more often than any other.  The pattern is anchored on the instance name and
+# not open at the other end, and `assert_instance_timing` in each board's flow
+# is what says it reached the registers it was meant to.
 set cable [get_pins -quiet {*u_debug_window/sts_dbd_reg[*]/D}]
 set_multicycle_path -setup 6 -to $cable
 set_multicycle_path -hold  5 -to $cable
