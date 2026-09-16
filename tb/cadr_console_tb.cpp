@@ -176,6 +176,10 @@ constexpr uint32_t kHdmiUpKey = 0x48555052u;     /* "HUPR" */
 constexpr uint32_t kHdmiCwKey = 0x48524357u;     /* "HRCW" */
 constexpr uint32_t kHdmiCcwKey = 0x48524343u;    /* "HRCC" */
 constexpr uint32_t kHdmiMark = 0x4844u;          /* "HD" */
+// Page 2's word 35, whether the lamps blink: a key, its complement and a marker.
+constexpr unsigned kRegLamps = 35;
+constexpr uint32_t kLampSteadyKey = 0x53544459u;  /* "STDY" */
+constexpr uint32_t kLampMark = 0x4C44u;           /* "LD" */
 // `cadr_console.sv`'s own three keys and the word's marker.
 constexpr uint32_t kTvSimpleKey = 0x534D504Cu;  /* "SMPL" */
 constexpr uint32_t kTvLispmKey = 0x4C53504Du;   /* "LSPM" */
@@ -1353,10 +1357,10 @@ int main(int argc, char **argv) {
   // **AND EVERY OTHER WORD OF PAGES 2 AND 3 READS `UNMAPPED`**, which is what
   // an address outside the face reads too.  The face gained one readable
   // address when the stamp arrived, one more when the backplane's display
-  // boards took word 33 and a third when the display output took word 34, and
-  // it gained nothing else: the end of page 2 past the three, and the two ends
-  // of page 3.
-  for (unsigned i : {35u, 47u, 48u, 63u}) {
+  // boards took word 33, a third when the display output took word 34 and a
+  // fourth when the lamps took word 35, and it gained nothing else: the end of
+  // page 2 past the four, and the two ends of page 3.
+  for (unsigned i : {36u, 47u, 48u, 63u}) {
     const uint32_t w = ReadWord(Con(i));
     if (w != kUnmapped) Fail("a word of pages 2 and 3 that is not the build", w, kUnmapped);
     ++unmapped_seen;
@@ -1511,6 +1515,65 @@ int main(int argc, char **argv) {
     DoWrite(Con(kRegHdmi), kHdmiTvKey, 0xF);
     DoWrite(Con(kRegHdmi), kHdmiUpKey, 0xF);
     shown("the monitor at the end", 1, 0, 0);
+  }
+
+  // **WHETHER THE LAMPS BLINK, page 2's word 35.**
+  //
+  // `--no-blinking-leds`: a key makes the board's activity lamps hold a level
+  // and its complement makes them blink again.  Compared as the word reads AND
+  // as the level the fabric holds, for word 33's reason.  What the lamps do
+  // with the level is `build/blink_lamps.pass`'s.
+  {
+    auto lamps = [&](const char *what, int want_steady) {
+      const uint32_t w = ReadWord(Con(kRegLamps));
+      if ((w >> 16) != kLampMark) Fail("the lamps word's marker", w >> 16, kLampMark);
+      if ((w & 0xFFFFu) != (uint32_t)want_steady) Fail(what, w & 0xFFFFu, (uint32_t)want_steady);
+      if (dut->steady_lamps != want_steady)
+        Fail("the level the fabric holds for the lamps", dut->steady_lamps, want_steady);
+    };
+    // A board comes up blinking, which is how every board has always come up.
+    lamps("the lamps out of reset", 0);
+    DoWrite(Con(kRegLamps), kLampSteadyKey, 0xF);
+    lamps("the lamps after STDY", 1);
+    // And written twice, still steady: a key is a setting and not a toggle.
+    DoWrite(Con(kRegLamps), kLampSteadyKey, 0xF);
+    lamps("the lamps after STDY twice", 1);
+    DoWrite(Con(kRegLamps), ~kLampSteadyKey, 0xF);
+    lamps("the lamps after ~STDY", 0);
+    // **AND A VALUE THAT MEANS NOTHING CHANGES NOTHING**, from either side:
+    // once steady, where a stray complement would be the mistake, and once
+    // blinking, where a stray key would be.
+    const uint32_t nothing_lamps[] = {
+        0u, 0xFFFFFFFFu, kIdent, kUnmapped, kTvSimpleKey, kColorTvKey,
+        kHdmiTvKey, 0x4442'4752u /* DEBUG_KEY */, 0x5354'5241u /* STRA */,
+        kLampSteadyKey ^ 1u, kLampSteadyKey >> 8, ~kLampSteadyKey ^ 0x80000000u,
+        ((uint32_t)kLampMark << 16) | 1u, (uint32_t)kLampMark << 16};
+    for (int steady = 1; steady >= 0; --steady) {
+      DoWrite(Con(kRegLamps), steady ? kLampSteadyKey : ~kLampSteadyKey, 0xF);
+      for (uint32_t v : nothing_lamps) {
+        DoWrite(Con(kRegLamps), v, 0xF);
+        lamps("the lamps after a value that means nothing", steady);
+      }
+    }
+    // **AND A BYTE-WIDE WRITE IS NOT A KEY**, for word 33's reason.
+    DoWrite(Con(kRegLamps), kLampSteadyKey, 0x1);
+    lamps("the lamps after a byte of the key", 0);
+    // **AND ONLY PAGE 2'S OWN COMPARATOR REACHES IT, AT ITS OWN INDEX.**  Word 3
+    // of page 0 is CYCLESH, the same index in another window, and word 34 is
+    // the display output's, one along: a face that took the key off either
+    // would let a program that echoed a counter, or set the monitor, change
+    // the lamps.
+    DoWrite(Con(3u), kLampSteadyKey, 0xF);
+    lamps("the lamps after STDY written at page 0's word 3", 0);
+    DoWrite(Con(kRegHdmi), kLampSteadyKey, 0xF);
+    lamps("the lamps after STDY written at the display output's word", 0);
+    DoWrite(Con(kRegLamps), kLampSteadyKey, 0xF);
+    DoWrite(Con(3u), ~kLampSteadyKey, 0xF);
+    lamps("the lamps after ~STDY written at page 0's word 3", 1);
+    // Back to blinking, so that nothing after this runs on lamps it did not
+    // expect.
+    DoWrite(Con(kRegLamps), ~kLampSteadyKey, 0xF);
+    lamps("the lamps at the end", 0);
   }
 
   // **AND THE TWO DISPLAY BOARDS' COLOR MAPS, pages 4 and 5.**
@@ -2565,6 +2628,10 @@ int main(int argc, char **argv) {
       "      their own offsets within pages 2 and 3 neither reset the\n"
       "      machine nor pressed the button, which is what a SECOND address\n"
       "      match buys over a wider first one\n"
+      "    WHETHER THE LAMPS BLINK, page 2's word 35: the key made them steady\n"
+      "      and its complement made them blink, read back and held as a level;\n"
+      "      fourteen values that mean nothing, a byte of the key, and the key\n"
+      "      at page 0's word 3 and at the display output's word changed nothing\n"
       "    MEASURED, NOT ASSERTED, because the file is not this slice's:\n"
       "      a mode write at register 13 landed %ld times (muir's\n"
       "      write_strobe is `eadr & 7`, so: once)\n",

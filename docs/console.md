@@ -181,7 +181,16 @@ complement, `0xBCB0_B1AC` (line 160); `LOST_T` is line 167.
                  in the bitstream, so three bitstreams carry the three modes
                  and this says which one is loaded.  `docs/display-output.md`
                  has the measurement behind that
-    35-47        read UNMAPPED; writes dropped
+    35 LAMPS    **whether the board's activity lamps blink or hold a
+                 level.**  A write of `LAMP_STEADY_KEY`, "STDY", makes them
+                 steady, `--no-blinking-leds`; a write of its complement makes
+                 them blink again, which is what the fabric comes up with.  It
+                 reads back a marker of `LD` in the top half and the setting
+                 in bit 0.  Steady, the Arty Z7-20's LD1 is the clock
+                 generator's lock and its LD2, like the Cora Z7-07S's green,
+                 is lit while microcycles retire and dark a moment after they
+                 stop.  `cadr-console blinking-leds [on|off]` reads and sets it
+    36-47        read UNMAPPED; writes dropped
 
     page 3, REG_BASE + 0xC0: all sixteen read UNMAPPED; writes dropped
 

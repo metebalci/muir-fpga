@@ -113,6 +113,11 @@ module cadr_console_harness #(
     output var logic [1:0]  hdmi_rotate,
     input  var logic [1:0]  hdmi_mode,
 
+    // --- **AND WHETHER THE LAMPS BLINK, page 2's word 35.**  Out of the
+    // harness for word 33's reason: the level the fabric holds and the word it
+    // reads back are two facts.
+    output var logic        steady_lamps,
+
     // --- `M_AXI_GP1`, brought out for the testbench's own master
     input  var logic [31:0] s_awaddr,
     input  var logic [3:0]  s_awlen,
@@ -436,6 +441,7 @@ module cadr_console_harness #(
       .tv_map_q   (map_word(1'b0, tv_map_a)),
       .tv_color_map_q(map_word(1'b1, tv_map_a)),
       .hdmi_out(hdmi_out), .hdmi_rotate(hdmi_rotate), .hdmi_mode(hdmi_mode),
+      .steady_lamps(steady_lamps),
       // **THE DEBUG CABLE'S ROLE, page 0's word 14, AND THE CONNECTOR IS THE
       // TESTBENCH.**  `build/dbg_cable.pass` is the check that has a real one
       // and two real boards on it; what this check holds is the console's own

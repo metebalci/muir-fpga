@@ -90,7 +90,8 @@ PIDFILE=/var/run/cadr-disk-packs.pid
 # muir, and several programs take their own flags out of it, so the file goes
 # through a filter and each program is handed the lines of the flags it owns.
 # docs/fpgarc.md has every program's list; the reader's header is the
-# contract.  This script owns exactly one flag.
+# contract.  This script keeps no list: it asks for each of its flags by name,
+# and each function below says which.
 RC="$PACKS/fpgarc"
 FPGARC_SH=/usr/share/cadr/fpgarc.sh
 . "$FPGARC_SH"
@@ -124,6 +125,7 @@ start() {
 	else
 		echo "cadr-disk-packs: no pack partition at $PACKS_DEV; the bay will be empty"
 	fi
+	set_the_lamps
 	set_the_display_boards
 	set_the_display_output
 	hold_the_machine
@@ -132,6 +134,37 @@ start() {
 	# program the same two destinations, the console and a file under
 	# /var/log that somebody over ssh can follow.
 	cadr_daemon "$PROG" "$PIDFILE" --packs "$PACKS"
+}
+
+# **WHETHER THE BOARD'S ACTIVITY LAMPS BLINK.**  `--no-blinking-leds` makes
+# them hold a level: on the Arty Z7-20 LD1 is then the clock generator's lock
+# and LD2 is lit while the machine retires microcycles, and on the Cora Z7-07S
+# LD1's green is the second of those.  What the lamps say does not change,
+# only how, and the fabric comes up blinking.
+#
+# It is here because it reads `fpgarc`, which is on the partition this script
+# is the one thing that mounts, and it is FIRST because nothing waits on it and
+# a person watching the board should see the lamps settle as early in the boot
+# as anything can make them.
+#
+# Nothing is printed when the flag is not there, because a board whose lamps
+# blink has nothing to say about it.
+set_the_lamps() {
+	[ -f "$RC" ] && fpgarc_has "$RC" --no-blinking-leds || return 0
+	if ! command -v cadr-console > /dev/null 2>&1; then
+		echo "cadr-lamps: --no-blinking-leds, and no cadr-console to ask with;" \
+		     "the lamps blink"
+		return 0
+	fi
+	# `--log /dev/console` for the reason the debug cable's calls give: these
+	# lines are a log and a line in a log names its program.
+	# `blinking-leds off` exits 0 when the lamps are steady afterwards, so a
+	# console that could not be reached and a fabric too old to have the word
+	# both land here, and the console's own line has said which.
+	if ! cadr-console --log /dev/console blinking-leds off 2>&1; then
+		echo "cadr-lamps: --no-blinking-leds: the console did not make the lamps" \
+		     "steady; they blink"
+	fi
 }
 
 # **WHICH DISPLAY BOARDS THE BACKPLANE HAS**, and it is here for

@@ -661,6 +661,34 @@ The six lamps read left to right as the machine's own progress.
     LD4   ERRHALT            dark normally, red once the machine halts itself
     LD5   PROMENABLE         blue while the machine runs out of its boot PROM
 
+**LD1 and LD2 can hold a level instead of blinking**, with `--no-blinking-leds`
+in `fpgarc` or `cadr-console blinking-leds off` at any time. The fabric comes up
+blinking. What the two lamps say does not change, only how.
+
+    LD1   the fabric clock   steady: lit while the clock generator is locked
+    LD2   microcycles        steady: lit while the machine retires microcycles,
+                             dark about 42 ms after it stops
+
+**Each steady form still goes out when the thing it reports stops.** That is the
+property a blink has by construction and a level has to be built for. LD1 is the
+clock generator's lock rather than anything counted off the clock, because logic
+clocked by a clock that has stopped cannot turn its own lamp off, and a clock
+routed to a pad freezes at whatever level it stopped at. The lock drops when the
+generator has no clock. LD2 is lit for 2^22 ticks after each retired microcycle,
+about 42 ms. That is two thousand times the longest stall a running machine has,
+so the lamp does not flicker, and short enough that a stopped machine reads as
+stopped at once. It is the disk lamp's own persistence, so LD2 and LD3 go out at
+the same pace.
+
+The Cora Z7-07S has one lamp that takes the setting, LD1's green, with the
+microcycle lamp's two forms. Red and blue do not change, and neither does the
+order among the three.
+
+The two lamps are `rtl/plumbing/cadr_lamp_clock.sv` and
+`rtl/plumbing/cadr_lamp_microcycle.sv`, held by `build/blink_lamps.pass`. The
+setting is the console's page 2 word 35, which `build/console.pass` holds. Which
+nets the boards wire to the two modules stays lint-only.
+
 **LD0 is a level and LD2 is a blink, and they say different things.** MACHRUN
 is the machine's own run signal, the 9S42 at OLORD1 1A15. It drops during
 every memory stall, `-WAIT` being one of its terms, so the lamp's brightness is
@@ -740,6 +768,10 @@ Read the first three in order.
     LD1 blinking, LD2 dark    clocked, but not retiring microcycles
     LD1 and LD2 blinking      the machine is running
 
+With the lamps steady the same three read the same way, with "lit" for
+"blinking". A dark LD1 then says the clock generator has no lock. A blinking
+LD1 whose clock stopped would instead have frozen, lit or dark.
+
 **The assignment before this one was a bring-up instrument and is superseded.**
 LD0 was the fabric's clock, LD2 counted non-existent-memory timeouts, LD3 was
 the datapath fold, LD4 carried three boot states in three colors and then four
@@ -798,9 +830,9 @@ answered now and no longer each cost a timeout.
 
 `tb/cadr_nomem_tb.cpp` printed that line as `beat[23]` until `bffbe9c`. The
 lamp has been `beat[19]` since `ad4a475`, and both now agree. What the
-testbench measures is the microcycle rate. Which bit of the beat reaches the
-pin is `boards/arty-z7-20/cadr_arty.sv`'s to say, and this table takes it from
-there.
+testbench measures is the microcycle rate. Which bit of the count reaches the
+pin is `rtl/plumbing/cadr_lamp_microcycle.sv`'s to say, as `BLINK_BIT`, and this
+table takes it from there.
 
 **The general point is worth more than the correction.** The prediction was
 that no memory means no progress. The fabric's answer is that no memory means

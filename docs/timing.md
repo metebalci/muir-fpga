@@ -312,6 +312,8 @@ with them.
 | `WATCHDOG_T` in `cadr_debug_window.sv` | one second of real time before a wedged bus is released |
 | `CLKIN_PERIOD_NS` in `xilinx7/cadr_hdmi_phy.sv` | the board's own oscillator, in real nanoseconds |
 | `POWER_ON_T` in `cadr_busint_xbus.sv` | how many edges after the reset edge the reference's power-on falls, as the processor and the bus interface count time |
+| `HOLD_T` in `cadr_lamp_microcycle.sv` | how long the steady microcycle lamp stays lit after a microcycle, 2^22 ticks: longer than any stall of a running machine and shorter than a person takes to see a lamp go out |
+| `DISK_LIT_T` in `boards/arty-z7-20/cadr_arty.sv` | how long the disk lamp stays lit after a block moves, the same 2^22 ticks for the same reason |
 
 The test is whether the number answers a question about the CADR or a
 question about this board. `RESET_T` is "long enough that the machine

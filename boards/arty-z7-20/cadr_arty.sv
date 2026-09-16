@@ -453,6 +453,8 @@ module cadr_arty #(
   logic [23:0] con_disp_color_map_q;
   // What the display output shows and which way up, page 2's word 34.
   logic [1:0]  con_hdmi_out, con_hdmi_rotate;
+  // Whether LD1 and LD2 blink or hold a level, page 2's word 35.
+  logic        con_steady_lamps;
   logic [17:0] con_addr;
   logic [15:0] con_wdata, con_rdata;
   // MIT's debug cable, the twenty-one wires of the DBGIN connector.
@@ -1980,6 +1982,9 @@ module cadr_arty #(
         // and the mode this bitstream was built with coming the other way.
         .hdmi_out(con_hdmi_out), .hdmi_rotate(con_hdmi_rotate),
         .hdmi_mode(2'(HDMI_MODE)),
+        // Whether LD1 and LD2 blink or hold a level, page 2's word 35:
+        // `cadr-console blinking-leds` and `--no-blinking-leds`.
+        .steady_lamps(con_steady_lamps),
         .ub_msyn(con_msyn), .ub_write(con_write), .ub_addr(con_addr),
         .ub_wdata(con_wdata), .ub_ssyn(con_ssyn), .ub_rdata(con_rdata),
         .clock_edge(clock_edge),
@@ -2303,6 +2308,9 @@ module cadr_arty #(
     assign con_color_tv = 1'b0;
     assign con_hdmi_out    = 2'b01;
     assign con_hdmi_rotate = 2'd0;
+    // And nobody to ask for steady lamps, so they blink, which is what a
+    // board with a console comes up with too.
+    assign con_steady_lamps = 1'b0;
     assign disp_map_a      = 4'd0;
     assign con_tv_map_a = 4'd0;
     assign con_write = 1'b0;
@@ -2523,18 +2531,6 @@ module cadr_arty #(
     end
   end
 
-  // A microcycle is 29 ticks at normal speed and 44 at extra slow, which is
-  // what the boot PROM runs at: 440 ns of real time at a 10 ns tick. Bit 23
-  // of a count of them is 3.7 s a half-period --- a 7.4 s cycle, which reads
-  // as a light that is on or off rather than one that blinks. Bit 19 is
-  // 524,288 microcycles, 231 ms, about 2.2 Hz: fast enough to be obviously
-  // alive and slow enough to count.
-  logic [23:0] beat;
-  always_ff @(posedge clk) begin
-    if (mach_rst) beat <= 24'd0;
-    else if (clock_edge) beat <= beat + 24'd1;
-  end
-
   // AND A HEARTBEAT THAT DOES NOT DEPEND ON THE MACHINE. Without it a dark
   // board means "not programmed", "the MMCM never locked" or "the machine
   // stalled", and those are three different problems that look the same. This
@@ -2581,11 +2577,14 @@ module cadr_arty #(
   //   LD1  the clock        `tick[25]`, the slow blink: the fabric is clocked.
   //                         Always blinking, on any board that is alive at
   //                         all, and it says nothing about the machine.
-  //   LD2  microcycles      `beat[19]`, the fast blink: the machine is
-  //                         executing.  It FREEZES when the machine stops,
-  //                         which is the thing a level cannot say --- motion
-  //                         cannot be faked, where a frozen fabric would
-  //                         still hold a level high.
+  //                         Steady, it is the MMCM's lock instead.
+  //   LD2  microcycles      bit 19 of a count of them, the fast blink: the
+  //                         machine is executing.  It FREEZES when the
+  //                         machine stops, which is the thing a level cannot
+  //                         say --- motion cannot be faked, where a frozen
+  //                         fabric would still hold a level high.  Steady,
+  //                         it is lit for a moment after every microcycle
+  //                         instead, which goes out when the machine stops.
   //   LD3  disk activity    lit while the controller moves a block.  The
   //                         light every computer has had, and it answers
   //                         whether a pause is the disk or the program.
@@ -2593,17 +2592,30 @@ module cadr_arty #(
   //                         `(si:%halt)` and nothing else.  Dark normally,
   //                         red when it happens, and cleared by the boot
   //                         button or a reset.  See below.
-  //   LD5  -PROMDISABLE     the mode register's own bit, inverted: LIT while
-  //                         the machine runs its microcode out of the boot
-  //                         PROM and DARK once it has loaded microcode from
-  //                         the disk and set `PROMDISABLE`.  So lit means
-  //                         BOOTING and dark means BOOTED, which is the way
-  //                         round a lamp should be: the interesting state is
-  //                         the one that ends.  It is NOT `PROMENABLE`, which
-  //                         is a different net; see below.
+  //   LD5  PROMENABLE       the PROM's own select: LIT while the machine
+  //                         fetches its microcode out of the boot PROM and
+  //                         DARK once it runs the microcode it loaded from
+  //                         the disk.  So lit means BOOTING and dark means
+  //                         BOOTED, which is the way round a lamp should be:
+  //                         the interesting state is the one that ends.  See
+  //                         below for why it is the select and not the mode
+  //                         register's bit.
   //
   // LD0's level and LD2's blink say different things on purpose, and neither
   // replaces the other.
+  //
+  // **AND LD1 AND LD2 CAN HOLD A LEVEL INSTEAD OF BLINKING**, which is
+  // `--no-blinking-leds` and the console's page 2 word 35.  A blink is bright
+  // and moving, and a board left running on a desk is a board somebody wants
+  // to stop looking at.  What the two lamps SAY does not change, only how, and
+  // each steady form is chosen so that it still goes OUT when the thing it
+  // reports stops: LD1 is the MMCM's lock, because logic clocked by a stopped
+  // clock cannot turn its own lamp off, and LD2 is lit for a moment after each
+  // microcycle, because a hold that is not re-armed runs out.  The fabric comes
+  // up blinking.  `rtl/plumbing/cadr_lamp_clock.sv` and
+  // `rtl/plumbing/cadr_lamp_microcycle.sv` are the two, held by
+  // `build/blink_lamps.pass`; which nets reach them is this file's and its
+  // lint's.
   //
   // ---------------------------------------------------------------- LD4
   //
@@ -2736,9 +2748,24 @@ module cadr_arty #(
     end
   end
 
+  // **LD1 AND LD2, BLINKING OR STEADY.**  The clock lamp takes the MMCM's
+  // lock straight off the primitive and has no clock of its own, which is the
+  // whole of its point; the microcycle lamp counts `clock_edge`, the
+  // processor's own boundary, and is reset with the machine, which retires
+  // nothing while it is held there.
+  logic clock_lamp, cycle_lamp;
+  cadr_lamp_clock u_lamp_clock (
+      .steady(con_steady_lamps), .locked(mmcm_locked), .blink(tick[25]),
+      .lit(clock_lamp)
+  );
+  cadr_lamp_microcycle u_lamp_microcycle (
+      .clk(clk), .rst(mach_rst), .steady(con_steady_lamps),
+      .retired(clock_edge), .lit(cycle_lamp)
+  );
+
   assign led[0] = machrun_lamp;  // the machine should be running; dim = stalling
-  assign led[1] = tick[25];      // the fabric is clocked --- the slow blink
-  assign led[2] = beat[19];      // microcycles retiring --- the fast blink
+  assign led[1] = clock_lamp;    // the fabric is clocked --- the slow blink, or the lock
+  assign led[2] = cycle_lamp;    // microcycles retiring --- the fast blink, or a hold
   assign led[3] = disk_lit;      // the disk controller is moving a block
 
   // On a board with no processing system there is no `S_AXI_HP3` and so no

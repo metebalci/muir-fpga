@@ -67,7 +67,7 @@ check: $(BUILD)/phase_gen.pass $(BUILD)/cables.pass $(BUILD)/busint_xbus.pass \
        $(BUILD)/park.pass \
        $(BUILD)/machine.pass $(BUILD)/ddr_boot.pass $(BUILD)/kbd_boot.pass \
        $(BUILD)/no_auto_boot.pass $(BUILD)/errhalt_lamp.pass \
-       $(BUILD)/promenable.pass \
+       $(BUILD)/blink_lamps.pass $(BUILD)/promenable.pass \
        $(BUILD)/map_boot.pass $(BUILD)/map_access.pass \
        $(BUILD)/mem_count.pass $(BUILD)/bus_audit.pass \
        $(BUILD)/bus_audit_unit.pass $(BUILD)/axi_channel.pass \
@@ -710,6 +710,33 @@ $(BUILD)/errhalt_lamp.pass: $(BUILD)/obj_errhalt_lamp/Vcadr_lamp_errhalt
 	$(BUILD)/obj_errhalt_lamp/Vcadr_lamp_errhalt
 	@touch $@
 
+# ------------------------------------------------ the lamps that blink, or not
+
+# **THE CLOCK LAMP AND THE MICROCYCLE LAMP, BLINKING BY DEFAULT AND STEADY WITH
+# `--no-blinking-leds`.**  Two modules, one harness and one check, for the
+# errhalt lamp's reason: in the top level these would be reached by lint alone,
+# and lint cannot tell a lamp that follows the MMCM's lock from one that samples
+# it, or a hold that is re-armed by every microcycle from one that is not.
+# What this holds: the clock lamp is the blink when blinking and the lock when
+# steady, with no clock edge between a change of the lock and the lamp; the
+# microcycle lamp blinks on a count of microcycles and not of ticks and freezes
+# when they stop, and steady it is lit on every tick of a running machine and
+# for exactly its hold after the last microcycle.  At the modules' own
+# defaults, which are the boards'.  Which nets reach them stays the top
+# levels' and their lint's.
+$(BUILD)/obj_blink_lamps/Vcadr_blink_lamps_harness: rtl/plumbing/cadr_lamp_clock.sv \
+                                                    rtl/plumbing/cadr_lamp_microcycle.sv \
+                                                    tb/cadr_blink_lamps_harness.sv \
+                                                    tb/cadr_blink_lamps_tb.cpp | $(BUILD)
+	$(VERILATOR) $(VFLAGS) -O2 -CFLAGS -O2 -Mdir $(BUILD)/obj_blink_lamps \
+	    --top-module cadr_blink_lamps_harness \
+	    rtl/plumbing/cadr_lamp_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
+	    tb/cadr_blink_lamps_harness.sv $(abspath tb/cadr_blink_lamps_tb.cpp)
+
+$(BUILD)/blink_lamps.pass: $(BUILD)/obj_blink_lamps/Vcadr_blink_lamps_harness
+	$(BUILD)/obj_blink_lamps/Vcadr_blink_lamps_harness
+	@touch $@
+
 # --------------------------------------- the map, read through a real memory
 
 # `machine.pass` and `ddr_boot.pass` each hold half of what a map does and
@@ -1312,6 +1339,7 @@ $(BUILD)/arty.pass: $(MACHINE) boards/arty-z7-20/cadr_arty.sv rtl/plumbing/xilin
                     rtl/plumbing/cadr_prove.sv rtl/plumbing/cadr_disk_pack.sv \
                     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
                     rtl/plumbing/cadr_lamp_errhalt.sv \
+                    rtl/plumbing/cadr_lamp_clock.sv rtl/plumbing/cadr_lamp_microcycle.sv \
                     $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
                     $(DBGPMOD) $(DISPLAY) \
                     $(BOARD_STUBS) tb/cadr_ps7_stub.sv | $(BUILD)
@@ -1437,19 +1465,20 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
                     rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv \
                     $(GP0) $(GP1) rtl/plumbing/cadr_debug_window.sv \
                     $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
+                    rtl/plumbing/cadr_lamp_microcycle.sv \
                     $(BOARD_STUBS) tb/cadr_ps7_stub.sv | $(BUILD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE) boards/cora-z7-07s/cadr_cora.sv \
-	    rtl/plumbing/cadr_lamp_errhalt.sv $(DBGPMOD)
+	    rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
 	    -GPROBE_DEPTH=1024 \
 	    --top-module cadr_cora $(BOARD_STUBS) $(MACHINE) \
 	    boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xilinx7/cadr_probe.sv \
-	    rtl/plumbing/cadr_lamp_errhalt.sv $(DBGPMOD)
+	    rtl/plumbing/cadr_lamp_errhalt.sv rtl/plumbing/cadr_lamp_microcycle.sv $(DBGPMOD)
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
@@ -1459,7 +1488,8 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
+	    rtl/plumbing/cadr_lamp_microcycle.sv
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
@@ -1469,7 +1499,8 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
+	    rtl/plumbing/cadr_lamp_microcycle.sv
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
@@ -1479,7 +1510,8 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_disk_pack.sv \
 	    rtl/plumbing/cadr_console.sv rtl/plumbing/cadr_gp0_default.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
+	    rtl/plumbing/cadr_lamp_microcycle.sv
 	$(VERILATOR) --lint-only -Wall -Irtl/machine -Irtl/plumbing -Irtl/plumbing/xilinx7 -Iboards/cora-z7-07s \
 	    -GPROM_HEX='"$(abspath $(BUILD))/boot_prom.hex"' \
 	    -GSYNC_PROM_HEX='"$(abspath $(BUILD))/sync_prom.hex"' \
@@ -1489,7 +1521,8 @@ $(BUILD)/cora.pass: $(MACHINE) boards/cora-z7-07s/cadr_cora.sv rtl/plumbing/xili
 	    rtl/plumbing/cadr_axi_master.sv \
 	    rtl/plumbing/cadr_axi_widen.sv rtl/plumbing/cadr_mem_count.sv rtl/plumbing/cadr_prove.sv \
 	    rtl/plumbing/cadr_gp0_default.sv rtl/plumbing/cadr_console.sv $(GP0) \
-	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv
+	    $(GP1) rtl/plumbing/cadr_debug_window.sv $(DBGPMOD) rtl/plumbing/cadr_lamp_errhalt.sv \
+	    rtl/plumbing/cadr_lamp_microcycle.sv
 	@touch $@
 
 # --------------------------------------------------------------- the probe

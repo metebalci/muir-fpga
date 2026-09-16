@@ -532,6 +532,12 @@ int main(int argc, char **argv) {
           // its two settings are held.
           if ((got >> 16) != 0x4844u)
             FailAt(addr, "the hdmi word's marker", got >> 16, 0x4844u);
+        } else if (word == 35) {
+          // **AND WHETHER THE LAMPS BLINK**, page 2's word 35, marker "LD", for
+          // word 34's reason: the marker says the console answered, and
+          // `build/console.pass` holds the two keys and the setting.
+          if ((got >> 16) != 0x4C44u)
+            FailAt(addr, "the lamps word's marker", got >> 16, 0x4C44u);
         } else if (word >= 64 && word < 96) {
           // The two color maps, which this harness drives with zeros: what
           // is asserted here is that the console answered and not that the

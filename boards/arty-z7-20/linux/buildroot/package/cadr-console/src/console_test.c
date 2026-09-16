@@ -151,6 +151,10 @@ struct model {
 	// bitstream carries, which nothing here can move.
 	int hdmi_first, hdmi_color, hdmi_rot, hdmi_mode;
 	int hdmi_unmarked;		/* a fabric older than word 34 */
+	// **AND WHETHER THE LAMPS BLINK**, page 2's word 35.
+	int lamps_steady;
+	int lamps_deaf_to_the_key;	/* a fabric that takes any value */
+	int lamps_unmarked;		/* a fabric older than word 35 */
 	uint8_t map[2][CONS_MAP_COLORS][CONS_MAP_CHANNELS];
 };
 
@@ -270,6 +274,12 @@ static uint32_t model_read(struct console *c, unsigned word)
 				 | ((uint32_t)m->hdmi_rot << CONS_HDMI_ROT_SHIFT)
 				 | (m->hdmi_color ? CONS_HDMI_COLOR : 0u)
 				 | (m->hdmi_first ? CONS_HDMI_FIRST : 0u);
+	// Page 2's word 35: whether the lamps blink, marked for word 33's reason.
+	if (word == CONS_LAMPS)
+		return m->lamps_unmarked
+			   ? 0u
+			   : ((uint32_t)CONS_LAMP_MARK << 16)
+				 | (m->lamps_steady ? CONS_LAMP_STEADY : 0u);
 	// Pages 4 and 5: the two color maps, one word a color.
 	if (word >= CONS_PAGE4 && word < CONS_PAGE5 + CONS_MAP_COLORS) {
 		const int board = word >= CONS_PAGE5;
@@ -402,6 +412,16 @@ static void model_write(struct console *c, unsigned word, uint32_t v)
 		else if (v == CONS_HDMI_CCW_KEY)   m->hdmi_rot = CONS_HDMI_CCW;
 		return;
 	}
+	// Page 2's word 35, whether the lamps blink: the key and its complement.
+	if (word == CONS_LAMPS) {
+		if (v == CONS_LAMP_STEADY_KEY)
+			m->lamps_steady = 1;
+		else if (v == CONS_LAMP_BLINK_KEY)
+			m->lamps_steady = 0;
+		else if (m->lamps_deaf_to_the_key)
+			m->lamps_steady = 1;
+		return;
+	}
 	// Page 0's word 14, the debug cable's role.  Two keys and nothing else,
 	// and the second is the first complemented, so no partial write of
 	// either can be the other.  **THE ROLE IS NOT THE ASK**: the connector
@@ -514,6 +534,10 @@ static void model_init(struct model *m)
 	m->hdmi_rot = CONS_HDMI_UPRIGHT;
 	m->hdmi_mode = CONS_HDMI_1400;
 	m->hdmi_unmarked = 0;
+	// And the lamps blink, which is what every board comes up with.
+	m->lamps_steady = 0;
+	m->lamps_deaf_to_the_key = 0;
+	m->lamps_unmarked = 0;
 	for (int b = 0; b < 2; ++b)
 		for (int k = 0; k < CONS_MAP_COLORS; ++k)
 			for (int ch = 0; ch < CONS_MAP_CHANNELS; ++ch)
@@ -2205,6 +2229,101 @@ static void check_hdmi(void)
 	}
 }
 
+// **WHETHER THE LAMPS BLINK, page 2's word 35.**
+//
+// One setting and two keys, a key and its complement, and a line that says
+// what the lamps are doing in words a person at the board would recognize.
+static void check_lamps(void)
+{
+	struct model m;
+	struct console c;
+	model_init(&m);
+	attach(&c, &m);
+	{
+		struct cons_lamps l;
+		cons_read_lamps(&c, &l);
+		CHECK(l.mark_ok == 1, "the lamps word did not carry its marker (0x%08x)", l.word);
+		CHECK(l.steady == 0, "a board came up with steady lamps");
+		capture_start();
+		cons_say_lamps(&l);
+		const char *said = capture_end();
+		CHECK(strstr(said, "lamps: blinking") != NULL,
+		      "blinking lamps were not said to blink: %s", said);
+	}
+	cons_set_lamps_steady(&c, 1);
+	{
+		struct cons_lamps l;
+		cons_read_lamps(&c, &l);
+		CHECK(l.steady == 1, "asking for steady lamps did not make them steady");
+		CHECK(m.lamps_steady == 1, "the fabric was not told to make the lamps steady");
+		capture_start();
+		cons_say_lamps(&l);
+		const char *said = capture_end();
+		CHECK(strstr(said, "lamps: steady") != NULL,
+		      "steady lamps were not said to be steady: %s", said);
+		CHECK(strstr(said, "lock") != NULL,
+		      "the line does not say the clock lamp is the lock: %s", said);
+	}
+	// A key is a setting and not a toggle: asked twice, still steady.
+	cons_set_lamps_steady(&c, 1);
+	{
+		struct cons_lamps l;
+		cons_read_lamps(&c, &l);
+		CHECK(l.steady == 1, "asking for steady lamps twice made them blink");
+	}
+	cons_set_lamps_steady(&c, 0);
+	{
+		struct cons_lamps l;
+		cons_read_lamps(&c, &l);
+		CHECK(l.steady == 0, "asking for blinking lamps did not make them blink");
+		CHECK(m.lamps_steady == 0, "the fabric was not told to make the lamps blink");
+	}
+	// **AND A VALUE THAT MEANS NOTHING CHANGES NOTHING**: zero off a dead
+	// bus, all ones off an undriven one, the other words' keys and the word's
+	// own read-back leave blinking lamps blinking.
+	{
+		const uint32_t nothing[] = {
+			0u, 0xFFFFFFFFu, 0x434F4E53u /* IDENT */,
+			CONS_HDMI_TV_KEY, CONS_COLOR_TV_KEY, CONS_LAMP_STEADY_KEY ^ 1u,
+			CONS_LAMP_STEADY_KEY >> 8, ((uint32_t)CONS_LAMP_MARK << 16) | 1u};
+		for (unsigned i = 0; i < sizeof(nothing) / sizeof(nothing[0]); ++i) {
+			model_write(&c, CONS_LAMPS, nothing[i]);
+			struct cons_lamps l;
+			cons_read_lamps(&c, &l);
+			CHECK(l.steady == 0, "a value that means nothing made the lamps steady");
+		}
+	}
+	// And the check itself can fail: a modeled fabric that takes any value
+	// is caught by the same values.
+	{
+		struct model any;
+		struct console ac;
+		model_init(&any);
+		any.lamps_deaf_to_the_key = 1;
+		attach(&ac, &any);
+		ac.write(&ac, CONS_LAMPS, 0u);
+		CHECK(any.lamps_steady == 1,
+		      "the wrong-key check cannot see a fabric that takes any value");
+	}
+	// A fabric older than the word reads zero, and the marker is what says
+	// so; such a fabric's lamps blink, and the line says that too.
+	{
+		struct model old;
+		struct console oc;
+		model_init(&old);
+		old.lamps_unmarked = 1;
+		attach(&oc, &old);
+		struct cons_lamps l;
+		cons_read_lamps(&oc, &l);
+		CHECK(l.mark_ok == 0, "an unmarked lamps word read as a setting");
+		capture_start();
+		cons_say_lamps(&l);
+		const char *said = capture_end();
+		CHECK(strstr(said, "older") != NULL,
+		      "an unmarked lamps word was not called an older fabric: %s", said);
+	}
+}
+
 static void check_display(void)
 {
 	struct model m;
@@ -2631,6 +2750,7 @@ int main(int argc, char **argv)
 	check_build();
 	check_display();
 	check_hdmi();
+	check_lamps();
 	// The logging last: these take the destinations away from the capture
 	// above and put them back on files of their own.
 	check_log_prefix();
@@ -2714,6 +2834,9 @@ int main(int argc, char **argv)
 	       "      as a commit.  A dirty build is said to be one TWICE, because its\n"
 	       "      commit names where it started and not what it is.  The word comes\n"
 	       "      back off page 2 and `status` carries it, so one command answers it\n"
+	       "    WHETHER THE LAMPS BLINK, page 2's word 35: the key makes them steady and\n"
+	       "      its complement makes them blink, asked twice is still steady, and the\n"
+	       "      line says which in words; a word with no marker is an older fabric\n"
 	       "    and WHICH BUILD THE PROGRAM IS, which is the other half: muir's shape,\n"
 	       "      the commit dropped rather than guessed when there is none\n"
 	       "    the logging, which is cadr-common's routine held by the check that builds\n"

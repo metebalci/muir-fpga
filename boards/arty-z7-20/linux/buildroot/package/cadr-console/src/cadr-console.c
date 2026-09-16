@@ -361,6 +361,10 @@ static void help(void)
 	say("hdmi-mode       which video mode this BITSTREAM carries.  Read only: a mode is");
 	say("                a pixel clock and a pixel clock comes from an MMCM whose");
 	say("                dividers are fixed in the bitstream");
+	say("blinking-leds [on|off]  whether the board's activity lamps blink, or hold a level:");
+	say("                off is --no-blinking-leds.  With no word it reports.  Exits 0");
+	say("                when the lamps do what the words say: blinking with no word or");
+	say("                with on, steady with off");
 	say("color-map [first|color] one board's sixteen colors, three guns each: the map the");
 	say("                machine wrote through register 4, which no bus cycle can read back");
 	say("trace-keys on|off  tell cadr-terminal and cadr-usb-input to say what each key");
@@ -559,6 +563,32 @@ static int command(struct console *c, struct mmio *m, unsigned settle_us, int ar
 			    " another mode is another bitstream",
 			    cons_hdmi_mode_name(h.mode));
 		exit_status = h.mark_ok ? 0 : 1;
+	}
+	else if (!strcmp(cmd, "blinking-leds")) {
+		// `on` and `off`, the flag's own sense read the other way round:
+		// `--no-blinking-leds` is `blinking-leds off`.  A spelling nothing
+		// names writes nothing and says so.  With no word it reports.
+		struct cons_lamps l;
+		int want_steady = 0;
+		if (argc > 1) {
+			if (!strcmp(argv[1], "on"))
+				want_steady = 0;
+			else if (!strcmp(argv[1], "off"))
+				want_steady = 1;
+			else {
+				say("blinking-leds on|off");
+				exit_status = 2;
+				return 0;
+			}
+			cons_set_lamps_steady(c, want_steady);
+		}
+		cons_read_lamps(c, &l);
+		cons_say_lamps(&l);
+		// The answer, for a script: 0 when the lamps do what the words
+		// say, so that an init step asking for steady lamps learns
+		// whether it got them.  A fabric too old to have the word blinks,
+		// and says so.
+		exit_status = ((l.mark_ok && l.steady) == want_steady) ? 0 : 1;
 	}
 	else if (!strcmp(cmd, "color-map")) {
 		// One board's sixteen colors, out of a port no bus cycle can
