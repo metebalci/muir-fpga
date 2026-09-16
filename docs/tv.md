@@ -100,7 +100,7 @@ is that file, line by line.
 - **`SEND INTR` is the flag with the enable**, the 74S08 at 0D10, onto
   `-XBUS.INTR` (`interrupt`, line 674). `machine.rs:457` ORs it with the
   disk's request as `XBUS INTR IN`, and since `bfba7f3` with a color board's
-  own request when one is fitted. `rtl.rs:1932` registers that as `SINTR` at
+  own request when one is fitted. `rtl.rs:1950` registers that as `SINTR` at
   the microcycle edge, which is the `sintr` column of both processor traces.
 - **The frame is `FRAME_NS` = 15,456,000 ns** (line 331). That is 966 lines of
   16.000 us, or 64.7 Hz, "the roughly-60-cycle clock". It was measured on the

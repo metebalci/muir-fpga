@@ -48,7 +48,7 @@
 //
 // WHAT THE STATUS WORD IS, BIT BY BIT.  Every line is
 // `disk_controller::Controller::status()` at muir `ee8f90e`
-// (`src/disk_controller.rs:329`), and the right-hand column is what this
+// (`src/disk_controller.rs:345`), and the right-hand column is what this
 // slice can make of it.  `-` is a bit no state here can raise; CHANNEL means
 // the bit is a transfer's and arrives with the channel:
 //

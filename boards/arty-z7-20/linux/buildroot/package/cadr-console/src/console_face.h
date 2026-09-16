@@ -865,11 +865,11 @@ const char *cons_reg_name(unsigned eadr);
 //
 // **RUNNING IS MEASURED AND NOT INFERRED.**  CYCLES is sampled twice
 // `settle_us` apart and `running` is whether it moved.  `Machine::cycles`
-// (../muir/src/rtl.rs:2386) does not advance on a halted master clock cycle,
+// (../muir/src/rtl.rs:2404) does not advance on a halted master clock cycle,
 // so a machine that is not running cannot move it; and `Engine::step` goes on
 // returning Ok on a stopped machine, which is why nothing but the counter can
 // answer this.  The reason a stopped machine gives is FLAG-1's, decoded as
-// ../muir/src/main.rs:2278-2305 (`machrun_low`) decodes it.
+// ../muir/src/main.rs:2378-2405 (`machrun_low`) decodes it.
 struct cons_status {
 	int lost;			/* a diagnostic cycle was not answered: nothing below is data */
 	uint16_t flag1_word, flag2_word;

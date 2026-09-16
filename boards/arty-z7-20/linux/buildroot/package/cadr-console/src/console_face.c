@@ -669,7 +669,7 @@ int cons_status(struct console *c, unsigned settle_us, struct cons_status *st)
 		st->why = NULL;
 		return 0;
 	}
-	// Not running.  `machrun_low` (../muir/src/main.rs:2278-2305) in its
+	// Not running.  `machrun_low` (../muir/src/main.rs:2378-2405) in its
 	// own order: a cleared RUN is the console's halt and is not a machine
 	// that stopped itself, and the two self-halts are read off FLAG-1.
 	if (!st->f1.srun)

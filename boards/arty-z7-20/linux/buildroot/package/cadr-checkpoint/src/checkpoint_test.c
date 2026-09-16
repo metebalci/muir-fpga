@@ -565,7 +565,7 @@ int main(int argc, char **argv)
 	//   debug_*                        = 1+1+1+1+1+1+8+1+2+8 = 25
 	//   wmapd..imodd                   = 1+4+8+8+1+1+2+1 = 26
 	//   opc        8 + 16              = 24
-	//   stat..executed                 = 4+1+1+8+4+8+1 = 27
+	//   stat..executed                 = 4+1+1+1+8+4+8+1 = 28
 	//
 	// The arithmetic is written out rather than summed by hand so that a
 	// reader can check one line instead of one number.
@@ -574,7 +574,7 @@ int main(int argc, char **argv)
 			8200 + 131080 + 14 + 10 + 16680 + 29 + 8200 + 4104 + 4 +
 			262152 + 125 + 1 + 69 + 135259 + 1 + 253 + 16;
 		const size_t rtl_part =
-			208 + 32 + 19 + 12 + 140 + 1 + 32 + 25 + 26 + 24 + 27;
+			208 + 32 + 19 + 12 + 140 + 1 + 32 + 25 + 26 + 24 + 28;
 		// **A MUTANT IS JUDGED BY muir AND NOT HERE.**  Six of the seven
 		// keep the body's length and one does not, and the point of
 		// building them is what the ROUND TRIP does with them, so this
