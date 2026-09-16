@@ -45,13 +45,18 @@ prevent, so a pack that cannot be read costs the run and not the evidence.
 ## The format has a version, and it moves with muir
 
 muir writes its `checkpoint::VERSION` into the header, and a file of any other
-version is refused by name rather than read wrong. **The version is 25.** It is
+version is refused by name rather than read wrong. **The version is 27.** It is
 `CHK_VERSION` in `chk.h`, and `chk.h` is a transcription of
 `../muir/src/checkpoint.rs` and not an interpretation of it.
 
 So the program is tied to the commit of muir that `muir.commit` pins, and a
 muir that moves the format stops the board's checkpoints loading. That failure
 is loud, which is the right way round: the refusal names both versions.
+
+Version 27 adds one byte to the engine: whose nanoseconds its clock counts,
+muir's `TimingModel`. This program declares it. Version 26 added the two sync
+bits the display's mode register held when its program started, written as
+zeros.
 
 Version 25 is what muir's display work left. It added four fields, and no
 wire in this fabric carries any of them.

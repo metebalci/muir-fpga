@@ -45,12 +45,12 @@
 // Every one of these is muir's, cited at the line that uses it.  They are
 // here and not inline so that a muir that moves can be met in one place.
 
-// `busint::interrupt_status::LOCAL_ENABLE`, src/busint.rs:976.
+// `busint::interrupt_status::LOCAL_ENABLE`, src/busint.rs:1018.
 #define MUIR_LOCAL_ENABLE 0002u
 // `machine.rs:780`, `LVMO_AT_POWER_ON` --- the value the fabric also comes up
 // with, so this is a cross-check and not an invention.
 #define MUIR_LVMO_AT_POWER_ON 0x00C03FFFu
-// `Busint::new`'s `MemoryBoard::default()`, src/busint.rs:433-447: the three
+// `Busint::new`'s `MemoryBoard::default()`, src/busint.rs:437-461: the three
 // derived instants and the board's own next change.
 #define MUIR_MB_IDLE_AT 1416u
 #define MUIR_MB_TIME_OFF_AT 958u
@@ -69,7 +69,7 @@
 // count in front of them.
 #define MUIR_TV_COLOR_CHANNELS  3u
 #define MUIR_TV_COLOR_MAP_BYTES (16u * MUIR_TV_COLOR_CHANNELS)
-// muir's own `chaos::Config::default().address`, src/chaos/mod.rs:145.
+// muir's own `chaos::Config::default().address`, src/chaos/mod.rs:139.
 #define MUIR_CHAOS_ADDRESS 0177001u
 
 // --- Machine ---------------------------------------------------------------
@@ -213,7 +213,7 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 	// `cadr_tv.sv` is MIT's SIMPLE TV --- its own header says so and
 	// `tv.pass` holds its register face to that board --- so this is a
 	// fact about the fabric, declared here because no wire carries it.
-	// muir cross-checks it: `resume_engine` (src/main.rs:3375-3382)
+	// muir cross-checks it: `resume_engine` (src/main.rs:3518-3525)
 	// compares the loaded board against `--tv-board` and refuses by name,
 	// so a wrong tag here is a message and never a machine.
 #if CHK_MUTATE == 4
@@ -478,7 +478,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u16(w, img->pdl_idx);			/* READ */
 	chk_u32(w, img->q);				/* READ */
 	// `Machine::opc` is "the PC of the instruction that just executed",
-	// which `rtl.rs:1776` sets to the PC the boundary retired --- the same
+	// which `rtl.rs:1794` sets to the PC the boundary retired --- the same
 	// word `LPC` takes while LPC-HOLD is clear, and it is clear here
 	// because the fabric has no OPC control register.  So this is LPC and
 	// not the shift register's output, which is eight microcycles older.
@@ -535,7 +535,7 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	// answers with an NXM --- held to `busint::decode` over all 4,194,304
 	// addresses --- and that NXM is how `COLOR-EXISTS-P` finds out which
 	// machine it is on.  So the flag is clear and NOTHING follows it;
-	// `refuse_color_tv` (src/main.rs:3276-3286) refuses a resume that
+	// `refuse_color_tv` (src/main.rs:3405-3415) refuses a resume that
 	// `--color-tv` disagrees with, by name.
 #if CHK_MUTATE == 7
 	// A color board this backplane does not have.  muir then reads a
@@ -654,6 +654,10 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u32(w, img->st);				/* READ */
 	chk_u8(w, img->speed);				/* READ */
 	chk_u8(w, img->speed_a);			/* READ */
+	// Whose nanoseconds `ns` counts, muir's `TimingModel`: 0 is the
+	// board's own, and every instant this fabric keeps is MIT's 5 ns grid
+	// exactly, so the count below is in those nanoseconds.
+	chk_u8(w, 0);					/* DECLARED timing */
 	chk_u64(w, img->ticks * 5u);			/* READ ns, as above */
 	chk_u32(w, 0);					/* IDLE busint_bus */
 	chk_u64(w, ~(uint64_t)0);			/* IDLE loadmd_at */
