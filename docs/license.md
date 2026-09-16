@@ -77,24 +77,6 @@ serves. The other two are cut down from the upstream files to the characters
 the pages draw. `pages/fonts/README.md` says where each came from and how it
 was cut.
 
-### The drawing style and the characters
-
-The site's drawing style, its palette and its panels are those of
-[Cold Boot](https://github.com/metebalci/coldboot), a manga-style zine about
-the same machine by the same author, under **CC BY-SA 4.0**. So are the parts the
-site's characters are drawn from: CADR's body, its face and its waving arm.
-[muir](https://muir.metebalci.com) and [ozd](https://ozd.metebalci.com) are
-drawn in the same hand.
-
-### The board, the site's mascot
-
-The board with CADR's face on it was drawn for this site by the
-[ozd](https://github.com/metebalci/ozd) project, in Cold Boot's hand. It is
-copied unchanged from ozd's `pages/index.html`, where it was added at ozd
-commit `b707ecc`. ozd is under the **AGPL, version 3 or later**. The face and
-the waving arm it wears are Cold Boot's parts, under **CC BY-SA 4.0**.
-`pages/README.md` records the same.
-
 ### MIT's own files
 
 The drawings on the page about the real machine, and the behavior every check
