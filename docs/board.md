@@ -1010,6 +1010,12 @@ against the console reading the same addresses straight out of DDR. Word `0o0`
 is `0o31001440000`, word `0o3` is `0o33427234015`, word `0o4` is
 `0o34204140020`, and word `0o10` is `0o33427231333`. Each pair is equal.
 
+A write through the map has run as well, on 14 September, once `-UB TO MD`
+was built in the fabric. It moved MD and spent no microcycle.
+`(cadr:cc-write-md #o1234567)` left the console reading MD as `0o1234567`
+with the cycle counter unchanged. CC's shifting writer, which clocks the
+machine to move the word, moved MD and moved the counter by 96.
+
 With the machine single-stepped, CC read the scratchpad memories, which it does
 by forcing a microinstruction and clocking the machine once. Six words were
 compared against the readout program's second read port. `amem[1]` and

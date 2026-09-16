@@ -8,15 +8,13 @@
 
    There is one rule.  Every answer ends with the file or document it rests
    on, and that line has to read as a citation rather than as another
-   sentence of the answer.  It takes the caption size the figures already use,
-   so no new size enters the scale, and it is stated in rem through that
-   token rather than in px.  The rule is one axis of emphasis and no more:
-   smaller, set a little away from the paragraph above it.  It is not faded,
-   because a source is the part of an answer a reader is most likely to want
-   and the page is 1-bit besides. */
+   sentence of the answer.  It takes the caption size the scale already has,
+   so no new size enters the scale, and it is ruled off from the answer by a
+   dotted line, as the tables rule off their rows.  It is not faded, because a
+   source is the part of an answer a reader is most likely to want. */
 p.src {
-  margin: -8px 0 22px;
-  font-size: var(--t-small);
+  font-size: var(--fs-small);
+  border-top: 2px dotted var(--ink);
+  padding-top: 0.4rem;
   max-width: var(--measure);
 }
-p.src:last-child { margin-bottom: 0; }

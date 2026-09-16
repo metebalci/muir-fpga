@@ -1,26 +1,64 @@
 /* SPDX-FileCopyrightText: 2026 Mete Balci */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
-/* muir-fpga --- a 1-bit page for a 1-bit machine.
-   Tone comes from dither, emphasis from reverse video, never from a hue.
+/* muir-fpga --- the site, drawn in Cold Boot's hand.
 
-   This is muir's stylesheet, carried over so the two pages are one family,
-   with one change: the type scale is stated against the browser's own root
-   rather than pinned there.  See the note on `body` below. */
+   Cold Boot is a manga-style zine about the CADR, and muir and ozd are drawn
+   in its hand already. This site is the third of the family: riso black and
+   one spot color, fluorescent pink, on paper white, laid on a halftone desk.
+   Every section is a plate of paper: panels with a 3px ink border, a title in
+   the display face with a pink drop shadow --- a second drum printed a little
+   out of register --- and the Lisp Machine's own who-line ruled off at the
+   foot. The chrome is muir's stylesheet, carried over so that the three sites
+   are one family.
 
-/* The two faces, served from this directory rather than from Google: a
+   Every page shares this file. Four pages carry a small file of their own
+   beside it: `front.css` for the board table, `faq.css` for the source line
+   under an answer, and `cadr.css` and `debugging.css` for what their drawings
+   need beyond the shared `d-*` classes.
+
+   No dark mode. Paper and ink is what this is, as the zine is, so the
+   stylesheet names one set of colors and the page keeps them in either
+   setting: a spot color printed on black is a different object. The status
+   colors on the architecture drawings are therefore chosen, and checked, on
+   paper white alone.
+
+   Text sizes are all in rem, taken from the tokens below, and nothing here
+   styles `html`: the root stays at whatever the reader's browser is set to.
+   The one exception is the drawings: the `d-*` rules give their sizes in the
+   drawing's own viewBox units, which are not page pixels and do not scale
+   with the reader's text size, because the picture scales with its box
+   instead. */
+
+/* The three families, served from this directory rather than from Google: a
    visitor should not have to ask a third party for a page to be readable.
-   Only the latin subset is carried, which is every character these pages
-   use --- ASCII, the em dash, the curly quotes, the section sign and the
-   copyright sign. Archivo is one variable file for the whole weight range;
-   IBM Plex Mono is three static ones. Both are under the SIL Open Font
-   License 1.1; `fonts/README.md` says where they came from. */
+   Dela Gothic One is the display face, Zen Maru Gothic the voice, IBM Plex
+   Mono the machine's own. All three are under the SIL Open Font License 1.1,
+   and `fonts/README.md` says where each came from and how it was cut down.
+
+   Zen Maru Gothic is carried at 500 and 700 and no lighter: 500 is the weight
+   this page calls normal, as the zine does, and a drawing label asking for
+   400 is drawn at 500. */
 @font-face {
-  font-family: 'Archivo';
+  font-family: 'Dela Gothic One';
   font-style: normal;
-  font-weight: 400 600;
+  font-weight: 400;
   font-display: swap;
-  src: url('fonts/archivo.woff2') format('woff2');
+  src: url('fonts/dela-gothic-one.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Zen Maru Gothic';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('fonts/zen-maru-gothic-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Zen Maru Gothic';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('fonts/zen-maru-gothic-700.woff2') format('woff2');
 }
 @font-face {
   font-family: 'IBM Plex Mono';
@@ -45,263 +83,47 @@
 }
 
 :root {
+  color-scheme: light;
+
+  --ink: #141414;
   --paper: #ffffff;
-  --ink:   #000000;
-  --sans: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --spot: #ff48b0;        /* riso Fluorescent Pink */
+  --spot-tint: #ffd3ec;
+  --tone: rgba(20, 20, 20, 0.5);
+  --desk: #e6e0e4;
+
+  --display: "Dela Gothic One", "Noto Sans CJK JP", "Arial Black", sans-serif;
+  --voice: "Zen Maru Gothic", "Noto Sans CJK JP", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  --measure: 76ch;
-  --band: 1116px;
+  --sans: var(--voice);   /* the drawings' own labels */
 
-  /* The whole page is five sizes.  Anything that is not a heading, the lede
-     or running text is --t-small, whatever it is; the differences between
-     15 and 16px that used to be spread over four rules were invisible and
-     told nobody which one to reach for. */
-  --t-display: clamp(3.6125rem, 13vw, 6.90625rem);
-  --t-head:  1.7rem;      /* 27.2px --- h2, and the step numerals */
-  --t-lede:  1.275rem;    /* 20.4px --- the one line under the wordmark */
-  --t-body:  1.0625rem;   /* 17px   --- running text, and h3 at weight 600 */
-  --t-small: 0.9775rem;   /* 15.6px --- captions, tables, code, nav, footer */
-  color-scheme: light dark;
-}
+  /* Every size on these pages comes from one of these, so that a step up or
+     down is one edit and no rule invents a size of its own. */
+  --fs-body: 1.125rem;         /* running text */
+  --fs-small: 0.95rem;         /* captions, tables, the aside under a panel */
+  --fs-say: 1.06rem;           /* a speech bubble, which is set heavier */
+  --fs-lede: 1.24rem;          /* the line under a wordmark or a title */
+  --fs-mono: 0.92rem;          /* inline code, the terminal blocks, the keys */
+  --fs-mono-small: 0.84rem;    /* eyebrows, the who-line, table headings */
+  --fs-t-xl: clamp(3.4rem, 1.6rem + 8vw, 7.8rem);  /* the wordmark; the rem in the middle keeps it following the reader's root */
+  --fs-t-l: 2.35rem;           /* a page's or a section's title */
+  --fs-t-m: 1.5rem;            /* a smaller one */
+  --fs-t-s: 1.18rem;           /* a heading inside a section, a contents line */
+  --fs-numeral: 2.9rem;        /* a figure printed as a picture of itself */
+  --fs-sfx: 2.7rem;            /* a sound effect */
 
-@media (prefers-color-scheme: dark) {
-  :root { --paper: #000000; --ink: #ffffff; }
-}
+  /* A line of running text stops at 70 characters however wide the page is;
+     a bubble or a caption, which is read in a glance, stops sooner. */
+  --measure: 70ch;
+  --measure-tight: 62ch;
 
-*, *::before, *::after { box-sizing: border-box; }
+  --line: 3px;
 
-/* The root is left at whatever the browser is set to: someone who raised
-   their default to 20px has made the one accessibility choice that matters,
-   and `html { font-size: 17px }` would silently take it back while looking
-   like a sensible default.  So the base is set once here on body, and every
-   size above is a fraction of the reader's own root rather than of a pinned
-   one.  The px in the comments is what each comes out at when that root is
-   the usual 16 --- the sizes this page renders at, which are muir's. */
-html { -webkit-text-size-adjust: 100%; }
-
-body {
-  margin: 0;
-  font-size: var(--t-body);
-  background: var(--paper);
-  color: var(--ink);
-  font: 400 var(--t-body)/1.65 var(--sans);
-  font-synthesis-weight: none;
-}
-
-/* ---------------------------------------------------------------- shell */
-
-.band { max-width: var(--band); margin: 0 auto; padding: 0 28px; }
-.prose { max-width: var(--measure); }
-
-section { padding: 56px 0 60px; border-top: 1px solid var(--ink); }
-section:first-of-type { border-top: 0; padding-top: 14px; }
-/* The drawing is the page, so it starts near the top: 14px of section and 8px
-   of figure margin where the prose pages have 56 and 34. */
-section:first-of-type > .band > figure.fig:first-child { margin-top: 8px; }
-
-/* ------------------------------------------------------------ typography */
-
-h1, h2, h3 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
-
-h2 {
-  font-size: var(--t-head);
-  line-height: 1.15;
-  margin-bottom: 22px;
-}
-
-h3 {
-  font-size: var(--t-body);
-  letter-spacing: 0;
-  margin: 38px 0 10px;
-}
-
-p { margin: 0 0 18px; }
-p:last-child { margin-bottom: 0; }
-
-a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-a:hover { text-decoration-thickness: 2px; }
-:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
-
-/* Inline code is one size, not a fraction of whatever it sits in: at 0.92em
-   it compounded against every context and produced sizes nobody chose. */
-code, kbd { font: 500 var(--t-small) var(--mono); }
-
-ul { margin: 0 0 18px; padding-left: 1.15em; }
-li { margin-bottom: 8px; }
-li::marker { font-size: 0.92em; }
-
-.lede { font-size: var(--t-lede); line-height: 1.5; }
-
-/* ------------------------------------------------------------------ nav */
-
-.topbar {
-  position: sticky; top: 0; z-index: 10;
-  background: var(--paper);
-  border-bottom: 1px solid var(--ink);
-}
-.topbar .band {
-  display: flex; align-items: baseline; gap: 24px;
-  padding-top: 11px; padding-bottom: 11px;
-}
-.topbar b { font: 600 var(--t-body)/1 var(--mono); letter-spacing: 0.02em; }
-/* The wordmark is the way back to the front page, and stays a mark: no
-   underline, under the pointer or otherwise. */
-.topbar a.home { text-decoration: none; color: inherit; }
-.topbar nav { margin-left: auto; display: flex; gap: 20px; flex-wrap: wrap; }
-.topbar nav a { font-size: var(--t-small); text-decoration: none; }
-.topbar nav a:hover { text-decoration: underline; }
-
-/* ------------------------------------------------------------- crumb */
-
-/* The drawing pages carry no topbar.  The drawing is the page, and a bar
-   above it would be the caption the drawing rule forbids.  What they carry
-   instead is one faint line saying which board you are looking at and
-   linking the other pages, in the same register as the faint notes inside
-   the drawings themselves. */
-.crumb {
-  margin: 0;
-  font-size: var(--t-small);
-  opacity: 0.62;
-}
-
-/* ---------------------------------------------------------------- hero */
-
-.hero {
-  background: var(--ink);
-  color: var(--paper);
-  padding: 84px 0 68px;
-  border: 0;
-}
-.hero h1 {
-  font-size: var(--t-display);
-  line-height: 0.86;
-  letter-spacing: -0.045em;
-  margin-bottom: 34px;
-}
-.hero .lede { max-width: 36ch; margin-bottom: 20px; }
-.hero p.sub { max-width: 60ch; margin-bottom: 34px; }
-
-.wire {
-  border: 1px solid var(--paper);
-  padding: 14px 16px 12px;
-  margin: 0 0 30px;
-  overflow-x: auto;
-}
-.wire pre {
-  margin: 0;
-  font: 400 var(--t-small)/1.5 var(--mono);
-  white-space: pre;
-}
-.wire figcaption {
-  margin-top: 10px;
-  font-size: var(--t-small);
-  max-width: 76ch;
-}
-
-.actions { display: flex; gap: 14px; flex-wrap: wrap; }
-.actions a {
-  display: inline-block;
-  padding: 11px 20px;
-  font: 500 var(--t-small) var(--sans);
-  text-decoration: none;
-  border: 1px solid var(--paper);
-}
-.actions a.solid { background: var(--paper); color: var(--ink); }
-.actions a:hover { text-decoration: underline; text-underline-offset: 4px; }
-
-/* -------------------------------------------------------------- figures */
-
-/* The figures set the page's width: the band is sized so its content column
-   is exactly as wide as they are, and they simply fill it.  They used to
-   break out of a narrower band and hang off both its edges, which left the
-   prose starting 88px inside them. */
-figure.fig { margin: 34px 0 36px; }
-.scroll { overflow-x: auto; padding-bottom: 4px; }
-.fig svg { display: block; width: 100%; min-width: 660px; height: auto; }
-/* The architecture drawing carries far more label text than muir's figures do,
-   and it is the whole point of the page rather than an illustration beside the
-   prose. So it is let out of the reading column: a fifth wider than the band,
-   centered on the viewport, and scrolling inside its own box once the window is
-   narrower than that. At this width its 11px labels land at about 12px. */
-.fig.dense {
-  width: 1272px;
-  max-width: calc(100vw - 40px);
-  margin-left: 50%;
-  transform: translateX(-50%);
-}
-.fig.dense svg { min-width: 1272px; }
-/* The architecture drawing grew to the right (the Pmods, HDMI and USB) and is
-   drawn on a 1380-unit canvas; rendered at 1500px its labels stay the size
-   they were at 1272 for 1170 units.
-   One board's drawing is not another's width: the Cora Z7-07S has no display
-   output block, so its canvas is 1697 units where the Arty Z7-20's is 1810.
-   Each figure renders at its own canvas width, set on the element as
-   --fig-width, so one label is the same size on every board's page. */
-.fig.dense.wide { width: var(--fig-width, 1810px); }
-/* And it never forces a horizontal scrollbar: on a narrower window it scales
-   down to the viewport instead. */
-.fig.dense.wide svg { min-width: 0; }
-/* A picture at its own size, wider than the band: the page scrolls to it
-   rather than shrinking it, which is what a browser showing an image file
-   does and what makes 1-bit text unreadable. */
-.full { overflow-x: auto; padding: 8px 0 4px; }
-.full img { display: block; width: 1538px; max-width: none; height: auto; margin: 0 auto; }
-
-/* A recording, shown small enough to sit in the page and linked at its own
-   size: the CADR screen is 1-bit text, and scaling the file down rather
-   than the picture would make it mush. */
-figure.shot a { display: block; width: fit-content; }
-figure.shot img {
-  display: block;
-  width: 100%; max-width: 620px; height: auto;
-  border: 1px solid var(--ink);
-  /* Two pixels right of the band's edge, so the picture lines up with the
-     text beside it rather than with the box the text sits in: a letter
-     starts a little inside its own edge, and a hard border at the same x
-     reads as sticking out to the left. */
-  margin-left: 2px;
-}
-
-/* A screenshot at the size the machine drew it: one image pixel to one page
-   pixel, since scaling 1-bit text either way turns it to mush.  It is
-   narrower than the column it sits in, and that is as wide as it goes.  The
-   border is for the status line at the foot of the screen, which is white
-   where the page is. */
-figure.screen img {
-  display: block;
-  width: 768px; max-width: 100%; height: auto;
-  border: 1px solid var(--ink);
-  margin-left: 2px;
-}
-
-.fig figcaption {
-  margin-top: 14px;
-  max-width: var(--measure);
-  font-size: var(--t-small);
-  line-height: 1.6;
-}
-
-.d-box  { fill: none; stroke: currentColor; stroke-width: 1.5; }
-.d-fill { fill: var(--paper); stroke: currentColor; stroke-width: 1.5; }
-.d-tex  { stroke: currentColor; stroke-width: 1.5; }
-.d-dash { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 6 5; }
-/* THE LINE STYLES SAY ONE THING EACH, and that is settled.  Solid is
-   a thing --- a block, a connector, a program, whether inside the chip or on
-   the board.  Dashed is a boundary: the fabric from the processing system on
-   the architecture drawing, and a lifeline on the sequences.  Dotted is
-   software on the Arm cores: Linux, the room the programs sit in, and U-Boot
-   beside it.  What makes a thing external is its GRAY FILL, not its outline,
-   which is why the connectors and the memory stopped being dashed. */
-.d-dot  { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 1 4; stroke-linecap: round; }
-.d-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
-.d-bus  { fill: none; stroke: currentColor; stroke-width: 4; }
-.d-plate { fill: var(--paper); }
-/* How far along each block is. This is the one place the page departs from
-   muir's 1-bit rule --- there tone comes from dither and emphasis from reverse
-   video, never from a hue --- because "how far along is this" is an axis of its
-   own, and the outline is already carrying fabric-or-PS. The stroke does the
-   work and the fill only tints, so each reads on either ground. */
-:root {
+  /* How far along each block on an architecture drawing is. This is the one
+     place the drawings take a hue, because "how far along is this" is an axis
+     of its own and the outline is already carrying fabric-or-PS. The stroke
+     does the work and the fill only tints. None of these is the spot pink,
+     which belongs to the page and never to a claim about a block. */
   --st-done:  #2da44e;   /* on the board: silicon has shown it */
   --st-built: #0aa2c0;   /* checked in simulation, not yet run on the board */
   --st-part:  #d97706;   /* partly built, and it is only about building: some
@@ -319,6 +141,395 @@ figure.screen img {
                             red the error lamp is drawn in.  It is the one mark
                             on these drawings that is not about progress. */
 }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* The root is left at whatever the browser is set to: someone who raised
+   their default to 20px has made the one accessibility choice that matters,
+   and pinning it would silently take that back. So the base is set once,
+   here on body, and every size above is a fraction of the reader's own
+   root. */
+body {
+  margin: 0;
+  font-family: var(--voice);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--ink);
+  background-color: var(--desk);
+  background-image: radial-gradient(rgba(20, 20, 20, 0.13) 1px, transparent 1.4px);
+  background-size: 7px 7px;
+  padding-block: 1.5rem 3rem;
+  padding-inline: 1rem;
+  -webkit-text-size-adjust: 100%;
+}
+
+p { margin: 0; text-wrap: pretty; }
+a { color: inherit; text-decoration-color: var(--spot); text-decoration-thickness: 2px; text-underline-offset: 2px; }
+:focus-visible { outline: 3px solid var(--spot); outline-offset: 3px; }
+em, i { font-style: italic; }
+b { font-weight: 700; }
+
+/* Inline code is one size wherever it sits, not a fraction of its context:
+   a relative size compounds against every panel and produces sizes nobody
+   chose. */
+code, kbd { font-family: var(--mono); font-size: var(--fs-mono); font-weight: 400; }
+
+/* ---------------------------------------------------------------- shell */
+
+/* One explicit column, not `auto`: an `auto` column takes the min-content
+   width of its widest section, and a drawing is wider than a phone whatever
+   the screen is. With minmax(0, 1fr) the sections follow the viewport and a
+   drawing scrolls inside its own box. */
+.page {
+  max-width: 76rem;
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.75rem;
+}
+/* A board's page is its architecture drawing, which is drawn on a canvas
+   1810 units wide. The plate is let out to hold it at about its own size, so
+   that its 11-unit labels land near 11px where the window allows. */
+body.wide .page, body.wide .desk-nav { max-width: 118rem; }
+
+/* The pages, as a desk note: one line of mono above the plates. The page
+   being read is printed on the spot color. */
+.desk-nav {
+  max-width: 76rem;
+  margin: 0 auto 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.9rem;
+  font-family: var(--mono);
+  font-size: var(--fs-mono-small);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  padding-inline: 0.15rem;
+}
+.desk-nav a { text-decoration: none; padding-inline: 0.2rem; }
+.desk-nav a:hover { text-decoration: underline; text-decoration-color: var(--spot); }
+.desk-nav a.home { font-weight: 600; padding-inline: 0 0.3rem; }
+.desk-nav a[aria-current="page"] { background: var(--spot); color: var(--ink); }
+
+/* Each section is paper on the halftone desk, with its panels above and the
+   machine's own status line ruled off at the foot. */
+.page > section {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  background: var(--paper);
+  padding: 1.25rem 1.25rem 0.8rem;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08), 0 14px 30px -18px rgba(40, 20, 35, 0.45);
+}
+
+.panels { display: grid; gap: 0.9rem; }
+.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.span { grid-column: 1 / -1; }
+/* Uneven splits, as classes rather than inline styles: an inline style would
+   outrank the narrow-screen rule below and keep two columns on a phone. */
+.lead-split { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.end-split { grid-template-columns: minmax(0, 2.3fr) minmax(0, 1fr); }
+
+/* ---------------------------------------------------------------- panels */
+
+.panel {
+  position: relative;
+  min-width: 0;
+  border: var(--line) solid var(--ink);
+  background: var(--paper);
+  overflow: hidden;
+  padding: 0.8rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.panel.ink { background: var(--ink); color: var(--paper); }
+.panel.bare { border: 0; padding: 0; overflow: visible; }
+.panel.center { align-items: center; justify-content: center; text-align: center; }
+
+.tone { background-image: radial-gradient(var(--tone) 0.9px, transparent 1.2px); background-size: 5px 5px; }
+.tone-pink { background-image: radial-gradient(var(--spot) 1.5px, transparent 1.8px); background-size: 7px 7px; }
+/* Running text on a halftone reads through the dots. Give it a plate of
+   paper to sit on, the width of the line and no more. */
+.panel.tone > .small, .panel.tone-pink > .small, .panel.tone > .big-number {
+  background: var(--paper);
+  box-shadow: 0 0 0 0.25rem var(--paper);
+}
+
+/* focus lines (manga 集中線) */
+.focus::before {
+  content: "";
+  position: absolute;
+  inset: -60%;
+  background: repeating-conic-gradient(from 3deg, var(--ink) 0deg 0.7deg, transparent 0.7deg 5.3deg);
+  -webkit-mask: radial-gradient(circle, transparent 24%, #000 60%);
+  mask: radial-gradient(circle, transparent 24%, #000 60%);
+  pointer-events: none;
+}
+.focus > * { position: relative; }
+
+/* ------------------------------------------------------------- lettering */
+
+.title {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 400;
+  line-height: 0.95;
+  text-wrap: balance;
+  text-shadow: 0.07em 0.05em 0 var(--spot);   /* second drum, slightly off */
+}
+.t-xl { font-size: var(--fs-t-xl); letter-spacing: -0.02em; line-height: 0.88; }
+/* The wordmark has descenders where muir's has none, so it keeps room under
+   them for the line that follows. */
+.masthead .t-xl { padding-bottom: 0.16em; }
+.t-l { font-size: var(--fs-t-l); }
+.t-m { font-size: var(--fs-t-m); }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: var(--fs-mono-small);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  align-self: flex-start;
+  background: var(--spot);
+  color: var(--ink);
+  padding: 0.1rem 0.4rem;
+}
+
+.cap {
+  align-self: flex-start;
+  max-width: min(100%, var(--measure-tight));
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--fs-small);
+  font-weight: 500;
+  padding: 0.3rem 0.55rem;
+  text-wrap: pretty;
+}
+.cap.light { background: var(--paper); color: var(--ink); border: 2px solid var(--ink); }
+.cap.long { max-width: min(100%, var(--measure)); }
+.panel.ink .cap { background: var(--paper); color: var(--ink); }
+
+.say {
+  position: relative;
+  align-self: flex-start;
+  max-width: min(94%, var(--measure-tight));
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 1.4rem / 1.1rem;
+  padding: 0.5rem 0.9rem;
+  font-size: var(--fs-say);
+  font-weight: 700;
+  line-height: 1.35;
+  text-wrap: pretty;
+  margin-bottom: 0.75rem;
+}
+.say::before, .say::after {
+  content: "";
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 1.3rem;
+  width: 1.15rem;
+  height: 0.9rem;
+  background: var(--ink);
+  clip-path: polygon(0 0, 100% 0, 12% 100%);
+}
+.say::after {
+  top: calc(100% - 3px);
+  left: calc(1.3rem + 3px);
+  width: calc(1.15rem - 8px);
+  height: calc(0.9rem - 4px);
+  background: var(--paper);
+}
+.say.r { align-self: flex-end; }
+.say.r::before, .say.r::after { left: auto; right: 1.3rem; clip-path: polygon(0 0, 100% 0, 88% 100%); }
+.say.r::after { right: calc(1.3rem + 3px); }
+/* An aside in the same voice, set at the size of the text around it. */
+.say.quiet { font-size: var(--fs-small); }
+/* On an ink panel the bubble's tail is drawn in paper, or it vanishes. */
+.panel.ink .say::before { background: var(--paper); }
+
+.sfx {
+  font-family: var(--display);
+  font-size: var(--fs-sfx);
+  line-height: 1;
+  color: var(--spot);
+  -webkit-text-stroke: 2px var(--ink);
+  paint-order: stroke fill;
+  transform: rotate(-9deg);
+  white-space: nowrap;
+}
+.sfx small {
+  display: block;
+  margin-top: 0.3rem;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  color: var(--ink);
+  -webkit-text-stroke: 0;
+  letter-spacing: 0.12em;
+  text-align: right;
+}
+
+.vertical {
+  writing-mode: vertical-rl;
+  font-family: var(--display);
+  font-size: var(--fs-t-m);
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+@media (min-width: 52rem) { .vertical { font-size: var(--fs-numeral); } }
+
+.small { font-size: var(--fs-small); max-width: var(--measure); }
+.mono { font-family: var(--mono); }
+.lede { font-size: var(--fs-lede); font-weight: 700; max-width: 44rem; }
+.push { margin-top: auto; }
+
+.big-number {
+  font-family: var(--display);
+  font-size: var(--fs-numeral);
+  line-height: 0.95;
+  text-shadow: 0.06em 0.05em 0 var(--spot);
+  font-variant-numeric: tabular-nums;
+}
+
+h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: var(--fs-t-s);
+  line-height: 1.2;
+}
+
+/* ------------------------------------------ masthead, keys and contents */
+
+.masthead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1.25rem;
+  align-items: start;
+}
+.masthead-text { display: grid; gap: 0.85rem; justify-items: start; }
+/* A page's mascot, standing where the front page has its vertical caption. */
+.masthead .corner { width: clamp(7rem, 16vw, 11rem); }
+
+/* links drawn as Lisp Machine keys */
+.actions { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.key {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  background: var(--ink);
+  color: var(--paper);
+  border: 2px solid var(--ink);
+  border-bottom-width: 5px;
+  border-radius: 4px;
+  padding: 0.45rem 0.85rem 0.35rem;
+}
+.key.lm { background: var(--spot-tint); color: var(--ink); }
+.key:hover { background: var(--spot); color: var(--ink); }
+.key:active { border-bottom-width: 2px; translate: 0 3px; }
+
+/* The contents, with dotted leaders */
+.contents { display: grid; gap: 0.45rem; align-content: start; }
+.toc { margin: 0; padding: 0; list-style: none; display: grid; }
+.toc a {
+  display: grid;
+  grid-template-columns: 5.2rem minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding-block: 0.3rem 0.25rem;
+  border-bottom: 2px dotted var(--ink);
+  text-decoration: none;
+}
+.toc .tag, .toc .no { font-family: var(--mono); font-size: var(--fs-mono-small); font-variant-numeric: tabular-nums; }
+.toc .nm { font-family: var(--display); font-size: var(--fs-t-s); line-height: 1.2; }
+.toc a:hover .nm { background: var(--spot-tint); box-shadow: 0 0 0 0.15rem var(--spot-tint); }
+
+/* -------------------------------------------- characters and terminals */
+
+.chara { display: block; width: 100%; height: auto; max-width: 100%; }
+
+.term {
+  margin: 0;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: var(--fs-mono);
+  font-weight: 400;
+  line-height: 1.5;
+  padding: 0.55rem 0.7rem;
+  white-space: pre;
+  overflow-x: auto;
+}
+.term b { color: var(--spot); font-weight: 400; }
+.term code { font-size: inherit; }
+
+/* ------------------------------------------------------------ the tables */
+
+/* A mono heading ruled off in ink, dotted rules between the rows, and the row
+   under the pointer tinted. A table scrolls inside its own box, so the page
+   itself never scrolls sideways. */
+.tablewrap { overflow-x: auto; }
+table { width: 100%; min-width: 34rem; border-collapse: collapse; font-size: var(--fs-small); }
+th, td { text-align: left; padding: 0.35rem 1rem 0.3rem 0; vertical-align: top; }
+thead th {
+  font-family: var(--mono);
+  font-size: var(--fs-mono-small);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 500;
+  border-bottom: var(--line) solid var(--ink);
+}
+tbody th { font-weight: 700; }
+tbody td, tbody th { border-bottom: 2px dotted var(--ink); }
+tbody tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
+tbody tr:hover td, tbody tr:hover th { background: var(--spot-tint); }
+td.name, td.num { font-family: var(--mono); font-weight: 500; white-space: nowrap; }
+
+/* ------------------------------------------------------------- figures */
+
+figure { margin: 0; display: grid; gap: 0.6rem; }
+/* A drawing keeps its own minimum width and scrolls inside its box rather
+   than shrinking to illegibility. */
+.scroll { min-width: 0; overflow-x: auto; padding-bottom: 0.25rem; }
+.fig svg { display: block; width: 100%; min-width: 660px; height: auto; }
+/* The sequences on the booting page are drawn 1170 units wide and carry more
+   label text than a small figure, so on a narrow window they scroll sooner
+   rather than shrinking. */
+.fig.dense svg { min-width: 1000px; }
+/* An architecture drawing is the whole point of its page, and it never forces
+   a scrollbar: on a window narrower than its plate it scales down with it. */
+.fig.dense.wide svg { min-width: 0; }
+figcaption { font-size: var(--fs-small); max-width: var(--measure); }
+
+/* ------------------------------------------------------------- drawings */
+
+.d-box  { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.d-fill { fill: var(--paper); stroke: currentColor; stroke-width: 1.5; }
+.d-tex  { stroke: currentColor; stroke-width: 1.5; }
+.d-dash { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 6 5; }
+/* THE LINE STYLES SAY ONE THING EACH, and that is settled.  Solid is
+   a thing --- a block, a connector, a program, whether inside the chip or on
+   the board.  Dashed is a boundary: the fabric from the processing system on
+   the architecture drawing, and a lifeline on the sequences.  Dotted is
+   software on the Arm cores: Linux, the room the programs sit in, and U-Boot
+   beside it.  What makes a thing external is its GRAY FILL, not its outline,
+   which is why the connectors and the memory stopped being dashed. */
+.d-dot  { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 1 4; stroke-linecap: round; }
+.d-line { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.d-bus  { fill: none; stroke: currentColor; stroke-width: 4; }
+.d-plate { fill: var(--paper); }
 .d-done, .d-built, .d-part, .d-wip, .d-ext { fill-opacity: 0.45; stroke-width: 2; }
 .d-done  { fill: var(--st-done);  stroke: var(--st-done);  }
 .d-built { fill: var(--st-built); stroke: var(--st-built); }
@@ -326,7 +537,7 @@ figure.screen img {
 .d-wip  { fill: var(--st-wip);  stroke: var(--st-wip);  }
 .d-ext  { fill: var(--st-ext);  stroke: var(--st-ext);  }
 /* A BLOCK THE BOARD DOES NOT HAVE.  It keeps its place instead of being taken
-   out, so that the drawings of three boards are one drawing with parts crossed
+   out, so that the drawings of two boards are one drawing with parts crossed
    off, and a reader sees what a board is missing rather than inferring it from
    a gap.  It carries no status color, because a status says how far along a
    thing is and the answer here is that it is not on this board at all: the
@@ -339,18 +550,13 @@ figure.screen img {
 /* A WIRE THAT REACHES A BLOCK THE BOARD DOES NOT HAVE, faded as that block's
    own label is faded, though not by the same number: 0.35 against the label's
    0.5, because a solid stroke at a given opacity reads stronger than a glyph
-   does at it.  The number is a judgment about how the two sit together on the
-   page and nothing measures it.  The line is still drawn, because the drawing
-   is one drawing and a reader should see what would have been connected; it is
-   no longer drawn at the strength of a wire that carries something.
-   HOW FAR THE FADE REACHES is the whole of the rule: from the
-   absent block outwards to the first junction where another line's end lands
-   on it, or to the first box it meets.  A junction is where the wire stops
-   being that block's alone --- past it the same segment serves whatever else
-   hangs there --- so a stub from an absent block down to a shared rail fades
-   and the rail does not.  It keeps currentColor and moves only the stroke's
-   opacity, so it stays the drawing's own ink in either theme and takes no
-   status color: this says what a line is for and not how far along it is. */
+   does at it.  The line is still drawn, because the drawing is one drawing and
+   a reader should see what would have been connected.
+   HOW FAR THE FADE REACHES is the whole of the rule: from the absent block
+   outwards to the first junction where another line's end lands on it, or to
+   the first box it meets.  It keeps currentColor and moves only the stroke's
+   opacity, and it takes no status color: this says what a line is for and not
+   how far along it is. */
 .d-absent-l { stroke-opacity: 0.35; }
 /* THE ONE RED TEXT ON THESE DRAWINGS, and it says one thing: the debug cable's
    supply pins are open at both ends, because a cable between two boards must not
@@ -363,23 +569,22 @@ figure.screen img {
    and keep only the stroke. */
 .d-line.d-done, .d-line.d-built, .d-line.d-part,
 .d-line.d-wip,  .d-line.d-ext { fill: none; }
-/* The legend's own swatches, solid.  A block carries its color at 0.18 so
-   the label inside it stays readable; a 13px swatch with nothing in it is
-   too faint to tell one color from another, which is the one place the
-   color itself is the whole content. */
+/* The legend's own swatches, solid.  A block carries its color washed so the
+   label inside it stays readable; a 13-unit swatch with nothing in it is too
+   faint to tell one color from another, which is the one place the color
+   itself is the whole content. */
 .d-key { fill-opacity: 1; }
-/* The absent swatch is the drawing's own ink with the red cross on it, so that
-   the legend shows the mark rather than a color.  currentColor keeps it right
-   in both themes: a black box on paper, a white one on a dark ground. */
-.d-absent-key { fill: #000; fill-opacity: 1; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: none; }  /* black in both themes, the red cross on it */
-/* The two lamps that blink on the board blink here, at the board's own rates,
-   and both derive from the machine's clock: LD0 is bit 25 of a counter clocked
-   at 100 MHz, so it toggles every 2^25 ticks of 10 ns --- 0.336 s, a 0.671 s
-   period, 1.49 Hz; LD1 was measured toggling every 0.14 s when a tick was 5 ns,
-   which is 0.28 s and a 0.56 s period at 10. Both moved by exactly the
-   factor the tick did, the machine being scaled and not otherwise changed. The
-   ring around each says so as well, for anyone who has asked for less motion
-   and gets none. */
+/* The absent swatch is ink with the red cross on it, so that the legend shows
+   the mark rather than a color. */
+.d-absent-key { fill: var(--ink); fill-opacity: 1; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: none; }
+/* The lamps that blink on the board blink here, at the board's own rates,
+   and both derive from the machine's clock: the fabric's clock lamp is bit 25
+   of a counter clocked at 100 MHz, so it toggles every 2^25 ticks of 10 ns ---
+   0.336 s, a 0.671 s period, 1.49 Hz; the microcycle lamp was measured
+   toggling every 0.14 s when a tick was 5 ns, which is 0.28 s and a 0.56 s
+   period at 10. Both moved by exactly the factor the tick did, the machine
+   being scaled and not otherwise changed. The ring around each says so as
+   well, for anyone who has asked for less motion and gets none. */
 @keyframes d-blink { 0%, 49.9% { opacity: 1 } 50%, 100% { opacity: 0.12 } }
 .d-lamp-fast { animation: d-blink 0.56s steps(1, end) infinite; }
 .d-lamp-slow { animation: d-blink 0.671s steps(1, end) infinite; }
@@ -411,118 +616,40 @@ figure.screen img {
 .d-m { font: 500 13px var(--mono); fill: currentColor; }
 .d-n { font: 400 11px var(--mono); fill: currentColor; }
 
-/* --------------------------------------------------------------- tables */
+/* ---------------------------------------------- colophon and the who-line */
 
-.tablewrap { overflow-x: auto; margin: 26px 0 0; }
-table { border-collapse: collapse; width: 100%; min-width: 520px; font-size: var(--t-small); }
-th, td { text-align: left; padding: 10px 16px 10px 0; vertical-align: top; }
-thead th { border-bottom: 1px solid var(--ink); font-weight: 600; }
-tbody td { border-bottom: 1px solid var(--ink); }
-tbody tr:last-child td { border-bottom: 0; }
-td.num, th.num { font: 500 var(--t-small)/1.65 var(--mono); white-space: nowrap; }
-td.name { font: 500 var(--t-small)/1.65 var(--mono); white-space: nowrap; }
+.colophon { display: grid; gap: 0.4rem; font-size: var(--fs-small); max-width: var(--measure); align-content: start; justify-items: start; }
 
-/* ------------------------------------------------------------ code, dither */
-
-pre.cmd {
-  border: 1px solid var(--ink);
-  padding: 16px 18px;
-  margin: 18px 0;
-  overflow-x: auto;
-  font: 400 var(--t-small)/1.7 var(--mono);
+.wholine { font-family: var(--mono); font-size: var(--fs-mono-small); font-weight: 400; line-height: 1.2; margin-top: auto; }
+.wholine .label { padding-block: 0.1rem 0.15rem; }
+.wholine .bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.2rem 0.75rem;
+  border-top: 4px solid var(--ink);
+  padding-top: 0.15rem;
+  font-variant-numeric: tabular-nums;
 }
-pre.cmd b { font-weight: 400; }
+.wholine .bar span:last-child { background: var(--spot); color: var(--ink); padding-inline: 0.35rem; }
 
-.note {
-  border-left: 4px solid var(--ink);
-  padding: 2px 0 2px 16px;
-  margin: 22px 0;
-  max-width: var(--measure);
-  font-size: var(--t-small);
-}
+/* ------------------------------------------------------------------ narrow */
 
-.dither {
-  background-image: radial-gradient(currentColor 0.55px, transparent 0.6px);
-  background-size: 3px 3px;
-}
-
-/* ---------------------------------------------------------------- steps */
-
-ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
-ol.steps > li {
-  counter-increment: step;
-  border-top: 1px solid var(--ink);
-  padding: 26px 0 4px 0;
-  margin: 0;
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 0 20px;
-}
-ol.steps > li::before {
-  content: counter(step);
-  font: 600 var(--t-head)/1 var(--mono);
-}
-ol.steps h3 { margin-top: 0; }
-/* The prose in a step keeps the reading measure; the command blocks do not,
-   because the longest of them is wider than it and would otherwise scroll
-   sideways inside a box with room to spare beside it. */
-ol.steps > li > div > p { max-width: var(--measure); }
-
-/* ---------------------------------------------------------------- credits */
-
-dl.credits { margin: 0; max-width: 76ch; }
-dl.credits div {
-  display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
-  gap: 0 24px;
-  padding: 12px 0;
-  border-top: 1px solid var(--ink);
-}
-dl.credits dt { font: 500 var(--t-small) var(--mono); }
-dl.credits dd { margin: 0; font-size: var(--t-small); }
-
-/* ------------------------------------------------------------ flag lists */
-
-/* The manual's flags and prompt commands. The name goes on its own line
-   above what it does rather than in a column beside it: the longest of them
-   is wider than a column that would leave the description room to read. */
-dl.flags { margin: 0; max-width: var(--measure); }
-dl.flags div { padding: 14px 0; border-top: 1px solid var(--ink); }
-dl.flags dt { font: 500 var(--t-small) var(--mono); margin-bottom: 6px; }
-dl.flags dd { margin: 0; font-size: var(--t-small); }
-dl.flags dd p { margin: 0 0 8px; }
-dl.flags dd p:last-child { margin-bottom: 0; }
-
-/* ---------------------------------------------------------------- footer */
-
-footer {
-  background: var(--ink);
-  color: var(--paper);
-  padding: 44px 0;
-  font-size: var(--t-small);
-}
-footer .band { display: flex; gap: 20px 40px; flex-wrap: wrap; align-items: baseline; }
-footer p { margin: 0; max-width: 48ch; }
-footer a { color: inherit; }
-
-/* ---------------------------------------------------------------- narrow */
-
-@media (max-width: 720px) {
-  /* muir stepped the root from 17px to 16 here, shrinking the whole page by
-     6% in one line.  Same step, same one place, without touching the root:
-     the scale restated against 16 instead of 17. */
-  :root {
-    --t-display: clamp(3.4rem, 13vw, 6.5rem);
-    --t-head:  1.6rem;
-    --t-lede:  1.2rem;
-    --t-body:  1rem;
-    --t-small: 0.92rem;
-  }
-  .band { padding: 0 20px; }
-  section { padding: 42px 0 46px; }
-  .hero { padding: 60px 0 52px; }
-  .topbar nav { gap: 14px; }
-  ol.steps > li { grid-template-columns: 40px minmax(0, 1fr); gap: 0 14px; }
-  ol.steps > li::before { font-size: var(--t-lede); }
-  dl.credits div { grid-template-columns: 1fr; gap: 4px; }
+/* The phone: every panel row becomes one column, panel under panel, and the
+   masthead's vertical caption and mascot step out of the way. */
+@media screen and (max-width: 46rem) {
+  body { padding-inline: 0.6rem; }
+  .page > section { padding: 0.9rem 0.9rem 0.7rem; }
+  .panels { grid-template-columns: minmax(0, 1fr); }
+  .panels > .panel, .span { grid-column: auto; }
+  .masthead { grid-template-columns: minmax(0, 1fr); }
+  .masthead .vertical, .masthead .corner { display: none; }
+  .t-l { font-size: var(--fs-t-m); }
+  .sfx { font-size: var(--fs-t-m); }
+  .big-number { font-size: var(--fs-t-l); }
+  .toc a { grid-template-columns: 4rem minmax(0, 1fr) auto; }
+  /* On a phone an architecture drawing scaled to the screen is a grid of
+     specks, so there it keeps a width its labels can be read at and scrolls
+     inside its own panel instead. The page itself still never scrolls. */
+  .fig.dense.wide svg { min-width: 1200px; }
 }

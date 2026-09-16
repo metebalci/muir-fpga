@@ -1,124 +1,75 @@
 /* SPDX-FileCopyrightText: 2026 Mete Balci */
 /* SPDX-License-Identifier: AGPL-3.0-or-later */
 
-/* The front page's board table, and nothing else.  It is a stylesheet of its
-   own rather than a block in `style.css` because `style.css` is muir's
-   stylesheet carried over, and this table is this project's alone: three
-   boards against twelve things a board either has, or has been built but not
-   shown, or is planned to have, or cannot have.
+/* The front page's two tables, and nothing else: the board table and the
+   license table.  They are a stylesheet of their own rather than a block in
+   `style.css` because `style.css` is muir's stylesheet carried over, and these
+   tables are this project's alone.
 
-   Everything here is scoped to the table's own classes, and every token it
-   needs falls back to a value of its own, so the table still reads correctly
-   if it is ever seen without `style.css` in front of it.  Type is stated in
-   rem against the reader's own root, never in px: the narrow-screen step is
-   `style.css`'s one block of token overrides and this file inherits it
-   through `--t-small`. */
+   Type is stated in rem through `style.css`'s tokens, never in px, so the
+   tables follow the reader's own root like the rest of the page. */
 
-:root {
-  --front-paper: var(--paper, #ffffff);
-  --front-ink:   var(--ink, #000000);
-  --front-small: var(--t-small, 0.9775rem);
-  --front-mono:  var(--mono, "IBM Plex Mono", ui-monospace, Menlo, monospace);
-}
+/* ----------------------------------------------------------- the board table */
 
-@media (prefers-color-scheme: dark) {
-  :root { --front-paper: var(--paper, #000000); --front-ink: var(--ink, #ffffff); }
-}
-
-/* ----------------------------------------------------------- the table */
-
-/* Twelve columns are wider than the reading column and wider than a phone,
-   so the table scrolls inside this box and the page itself never scrolls
-   sideways.  The box takes the keyboard, because a region that scrolls and
-   cannot be reached by the keyboard is a region some readers cannot read. */
+/* Eight columns are wider than a phone, so the table scrolls inside this box
+   and the page itself never scrolls sideways.  The box takes the keyboard,
+   because a region that scrolls and cannot be reached by the keyboard is a
+   region some readers cannot read. */
 .tablescroll {
   overflow-x: auto;
-  margin: 26px 0 0;
-  padding-bottom: 4px;
+  padding-bottom: 0.25rem;
 }
-.tablescroll:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 
 table.boardtable {
-  border-collapse: collapse;
   width: 100%;
   /* Stated in rem so the table grows with a reader who has raised their
-     browser's default rather than crushing twelve columns into the space a
-     16px root would have needed. */
-  min-width: 58rem;
-  font-size: var(--front-small);
-  color: var(--front-ink);
+     browser's default rather than crushing its columns into the space a 16px
+     root would have needed. */
+  min-width: 52rem;
 }
-
-.boardtable th,
-.boardtable td {
-  text-align: left;
-  vertical-align: top;
-  padding: 10px 14px;
-  /* Faint lines between every cell, both ways: a row of yes and no is read
-     by column as much as by row, and a thin rule under each row alone let
-     the eye slide across.  The line is the ink at a fraction of its
-     strength, so it follows the theme like the text does. */
-  border: 1px solid color-mix(in srgb, var(--front-ink) 22%, transparent);
-  line-height: 1.4;
-}
-.boardtable thead th { font-weight: 600; }
 
 /* The board's name is the row's heading, and it stays in view while the rest
-   of the row scrolls under it: a cell reading `built` says nothing without
-   the board it belongs to.  The background has to be opaque for that, which
-   is what `--front-paper` is for. */
+   of the row scrolls under it: a cell reading `yes` says nothing without the
+   board it belongs to.  The background has to be opaque for that. */
 .boardtable th.board {
   position: sticky;
   left: 0;
   z-index: 1;
-  background: var(--front-paper);
-  padding-right: 20px;
+  background: var(--paper);
+  padding-right: 1.25rem;
   white-space: nowrap;
-  font-weight: 600;
 }
+.boardtable tbody th.board { font-family: var(--display); font-weight: 400; font-size: var(--fs-t-s); line-height: 1.2; }
+.boardtable tbody tr:hover th.board { background: var(--spot-tint); }
 
-/* ----------------------------------------------------------- the cells */
-
-/* The part, the figures and the four status words are values rather than
-   prose, so they take the machine face, as the tables on the other pages do.
-   The word is held on one line: `planned` broken over two reads as two. */
+/* The part, the figures and the status words are values rather than prose,
+   so they take the machine face. The word is held on one line. */
 .boardtable td.num,
 .boardtable td.st {
-  font: 500 var(--front-small)/1.5 var(--front-mono);
+  font-family: var(--mono);
+  font-weight: 500;
   white-space: nowrap;
 }
 
-/* The per cent goes under the count rather than beside it, which keeps five
-   columns of figures out of the seven columns of words. */
-.boardtable .pc { display: block; opacity: 0.62; }
+/* The per cent goes under the count rather than beside it, and so does the
+   part under the board's name. */
+.boardtable .pc { display: block; font-family: var(--mono); font-size: var(--fs-mono-small); font-weight: 400; opacity: 0.7; }
 
-/* A thing the board cannot have is faint, the way the drawings leave such a
-   block's label faint rather than taking it out.  Why it cannot is on the
-   cell as a title and in the prose under the table, because a title alone is
-   a fact only a pointer can read. */
-.boardtable td.st.no { opacity: 0.55; }
+/* A thing the board has is printed on the spot color, as a stamp.  A thing it
+   cannot have is faint, the way the drawings leave such a block's label faint
+   rather than taking it out.  Why it cannot is on the cell as a title and in
+   the note beside the table, because a title alone is a fact only a pointer
+   can read. */
+.boardtable td.st { font-size: var(--fs-mono-small); letter-spacing: 0.06em; text-transform: uppercase; }
+.boardtable td.st:not(.no)::before { content: ""; display: inline-block; width: 0.6rem; height: 0.6rem; margin-right: 0.35rem; background: var(--spot); border: 2px solid var(--ink); vertical-align: -0.05rem; }
+.boardtable td.st.no { opacity: 0.5; }
 .boardtable td[title] { cursor: help; }
 
-/* A figure that is not in yet, in reverse video so that it cannot be read as
-   a measurement and cannot be missed.  Nothing on a published page should
-   carry one of these. */
-.boardtable .todo {
-  font: 500 var(--front-small)/1.5 var(--front-mono);
-  background: var(--front-ink);
-  color: var(--front-paper);
-  padding: 0 5px;
-}
+/* ---------------------------------------------------------- the terms table */
 
-/* --------------------------------------------------------- the notes */
-
-/* What the four words mean, and why a `no` is a `no`.  It reads at the
-   caption size, under the table it is about. */
-.tnote { margin: 26px 0 0; font-size: var(--front-small); }
-.tnote p { margin: 0 0 12px; }
-.tnote p:last-child { margin-bottom: 0; }
-
-@media (max-width: 720px) {
-  .boardtable th,
-  .boardtable td { padding-right: 12px; }
-  .boardtable th.board { padding-right: 14px; }
-}
+/* What a thing is, whose it is, and where that is written down: the first
+   column is the row's heading, and the third is a path more often than a
+   sentence. */
+table.terms { min-width: 44rem; }
+.terms th[scope="row"] { font-weight: 700; width: 30%; }
+.terms td:last-child { width: 30%; }
