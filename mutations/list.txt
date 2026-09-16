@@ -9769,12 +9769,12 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @mutation iob-the-cable-busy-line-is-not-the-crc-bit
 @check iob
 @file rtl/machine/cadr_io_board.sv
-@note Bit 14 is one net on the board and two things to the software: the CRC
-@note error, "only valid at two times", and `-CBLBSY` while the cable is
-@note busy.  muir's `csr()` ors `turn.busy_at(now)` into it and the driver
-@note reads the register while its own frame is going out, so a card that
-@note showed only the CRC verdict reads the bit down where the hardware reads
-@note it up.
+@note Bit 14 is the check word's verdict alone on the board: `CRCERR` has two
+@note pins in the wire list and `CBLBSY` reaches no readback buffer.  It is
+@note "only valid at two times", and muir's `csr()` ors `turn.busy_at(now)`
+@note into it so that it reads set while a frame goes by.  The driver reads
+@note the register while its own frame is going out, so a card without that
+@note term reads the bit down where the model reads it up.
 @old
   assign chaos_csr = {ch_rdone, ch_crc || chaos_cbl_busy, 1'b0, ch_lost, 1'b0,
 @new

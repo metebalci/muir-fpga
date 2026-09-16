@@ -560,9 +560,29 @@ sends it again.
 | anything taken under Spy | yes | no |
 | another station's frame | no | no |
 
-MIT's card wires the two conditions apart at one gate. The 74S10 at LMMYNM
-0D02 takes `MATCH SO FAR`, which is mine or zero or spying, for the count. The
-abort flip-flop at LMMODU 0A09 is preset only when `ITS.ME` is true with it.
+MIT's card wires the two conditions apart, and the net names invite the
+opposite reading. The broad set is `ITS.ME`, which the 74S08 at LMMYNM 0C02
+makes from `DEST MATCH` and `GENCLK`. `DEST MATCH` is an output of the 74S287
+at 0D01. The PROM listing asserts it at the end of the destination word in
+four cases, commented `MATCH`, `DEST ZERO`, `ZERO=US`, and `NO MATCH` with the
+spy bit `MATCH.ANY.DEST` up. The narrow net is `MATCH SO FAR`, which is what
+the listing's own header calls that signal line during the destination word.
+It is one wire with three names, driven by the sixth output of the 74S174 at
+0E01.
+
+The count is clocked by the broad set and the abort is gated by the narrow
+one. `ITS.ME` reaches the clock of the 74LS161 at 0F04 through the inverter at
+0D03. That counter's count enable is `-RACT` and its clear is `-11.SAYS.GO`,
+and its four outputs are the Lost Count that the readback buffer at LMDATP
+0D17 puts in the register. The 74S10 at LMMYNM 0D02 takes `MATCH SO FAR`,
+`ITS.ME` and `-RACT` together, and its output has exactly two pins in the wire
+list. They are its own and the `-SET1` preset of the 74S112 at LMMODU 0A09.
+That output is named `-LOST.ONE`, which is the trap here. The net that sounds
+like the count is the one that aborts.
+
+All of this is read from `mit/cadrio/iob.wlr` and `mit/chaos/lmmynm.promt`. It
+corrects the mechanism and not the behavior. The table above stands, and so
+does the fabric, which counts on the broad set and aborts on the narrow one.
 
 The retry in this program stands in for a driver answering an abort. A
 broadcast produces no abort, so retrying one would invent a retransmission the
