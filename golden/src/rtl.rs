@@ -48,7 +48,6 @@ mod trace;
 
 use muir::engine::Engine;
 use muir::machine::Machine;
-use muir::rtl::Rtl;
 
 /// How many microcycles the trace runs for.
 ///
@@ -69,7 +68,7 @@ const CYCLES: u64 = 600_000;
 fn main() {
     let mut m = Machine::new();
     m.load_prom(&muir::prom::boot_prom());
-    let mut e = Rtl::new(m);
+    let mut e = trace::engine(m);
     e.boot();
 
     println!("{}", trace::COLUMNS);

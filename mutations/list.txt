@@ -247,34 +247,37 @@
 @mutation tse-falls-late
 @check phase_gen
 @file rtl/machine/cadr_phase_gen.sv
-@note TPTSE goes away at 5 ns and comes back at 25. Moving the fall to 10
-@note leaves the pulse the right shape and in the wrong place.
+@note TPTSE goes away at 5 ns and comes back at 25. Moving the fall one tick
+@note leaves the pulse the right shape and in the wrong place.  One tick is
+@note 10 ns at the 10 ns grid: 5 ns and 10 are both the first tick there, so
+@note the record that moved it to 10 at the 5 ns grid moves it to 15 now.
 @old
   localparam int unsigned TSE_OFF_T   = cadr_tick_pkg::ticks(5);
 @new
-  localparam int unsigned TSE_OFF_T   = cadr_tick_pkg::ticks(10);
+  localparam int unsigned TSE_OFF_T   = cadr_tick_pkg::ticks(15);
 @end
 
 @mutation tse-returns-late
 @check phase_gen
 @file rtl/machine/cadr_phase_gen.sv
-@note The other end of the same pulse.
+@note The other end of the same pulse, one tick late: 35 ns, since 25 and 30
+@note are the same tick at the 10 ns grid.
 @old
   localparam int unsigned TSE_ON_T    = cadr_tick_pkg::ticks(25);
 @new
-  localparam int unsigned TSE_ON_T    = cadr_tick_pkg::ticks(30);
+  localparam int unsigned TSE_ON_T    = cadr_tick_pkg::ticks(35);
 @end
 
 @mutation tpr60-opens-early
 @check phase_gen
 @file rtl/machine/cadr_phase_gen.sv
 @note -TPR60 is a window on the phase, 60 to 100 ns, and SPEEDCLK's source.
-@note Opening it at 55 is five nanoseconds of a signal that drives the front
-@note panel's clock.
+@note Opening it a tick early is a tick of a signal that drives the front
+@note panel's clock: 50 ns at the 10 ns grid, where 55 rounds back up to 60.
 @old
   localparam int unsigned TPR60_ON_T  = cadr_tick_pkg::ticks(60);
 @new
-  localparam int unsigned TPR60_ON_T  = cadr_tick_pkg::ticks(55);
+  localparam int unsigned TPR60_ON_T  = cadr_tick_pkg::ticks(50);
 @end
 
 @mutation tpr60-closes-a-tick-late
@@ -351,11 +354,12 @@
 @mutation the-control-store-pulse-closes-late
 @check phase_gen
 @file rtl/machine/cadr_phase_gen.sv
-@note -TPW45, the one that ends the write to the control store.
+@note -TPW45, the one that ends the write to the control store, a tick late:
+@note 55 ns, since 45 and 50 are the same tick at the 10 ns grid.
 @old
   localparam int unsigned WPIRAM_OFF_T = cadr_tick_pkg::ticks(45); // -TPW45
 @new
-  localparam int unsigned WPIRAM_OFF_T = cadr_tick_pkg::ticks(50); // -TPW50
+  localparam int unsigned WPIRAM_OFF_T = cadr_tick_pkg::ticks(55); // -TPW55
 @end
 
 @mutation the-write-pulse-outlives-the-boundary
@@ -564,14 +568,16 @@
 @note
 @note AND IT NOW HOLDS A TIMING EXCEPTION HONEST AS WELL, which is worth
 @note saying because nothing about the record shows it. `rtl/plumbing/xilinx7/cadr_machine.xdc`
-@note gives `mem_addr`, `mem_wdata` and `mem_write` sixteen ticks to reach the
+@note gives `mem_addr`, `mem_wdata` and `mem_write` `ticks(80)` to reach the
 @note AXI adapter's registers --- on the strength of the same sentence quoted
 @note above, and nothing else. An exemption too wide tests nothing and looks
 @note exactly like one that is right, and the only way to test its tightness
 @note is a mutation of the DESIGN just outside the bound: a constraint cannot
 @note be mutated from here, and trying would ask a two-level question.
-@note Fifteen ticks where the exception claims sixteen is exactly one tick
-@note outside it, which is what this already was.
+@note One tick short of what the exception claims is exactly one tick outside
+@note it, which is what this already was: fifteen against sixteen at the 5 ns
+@note grid, and seven against eight at 10, where 75 ns and 80 are the same
+@note eight ticks and the record moved to 70.
 @note
 @note So this record did not change when the exception arrived --- the
 @note exception arrived beside this note, in one commit --- and that is the
@@ -580,8 +586,8 @@
 @note
 @note AND IT NOW HOLDS A SECOND EXCEPTION, IN THE SAME FILE AND BY THE SAME
 @note SENTENCE. `cadr_machine.xdc` gives the display board's `color_map` and
-@note `pointer` sixteen ticks to take the master's word, because
-@note `cadr_tv.sv:401` captures it at the FIRST tick -XBUS.RQ stands and
+@note `pointer` `ticks(80)` to take the master's word, because
+@note `cadr_tv.sv:427` captures it at the FIRST tick -XBUS.RQ stands and
 @note `dev_rq` does not stand until `elapsed >= SETUP_T`. The machine's own
 @note slaves take the same lines from the same master under the same rule as
 @note the memory port does, so one mutation of `SETUP_T` is one tick outside
@@ -589,7 +595,7 @@
 @old
   localparam int unsigned SETUP_T = cadr_tick_pkg::ticks(80);
 @new
-  localparam int unsigned SETUP_T = cadr_tick_pkg::ticks(75);
+  localparam int unsigned SETUP_T = cadr_tick_pkg::ticks(70);
 @end
 
 @mutation the-read-deskew-is-long
@@ -716,9 +722,9 @@
 @note absorbed; nor by `ddr_boot`, `md_compose`, `park` or `probe`, which
 @note compare no timeout against muir.
 @old
-  localparam int unsigned POWER_ON_T = 2;
+  localparam int unsigned POWER_ON_T = cadr_tick_pkg::POWER_ON_EDGES;
 @new
-  localparam int unsigned POWER_ON_T = 1;
+  localparam int unsigned POWER_ON_T = cadr_tick_pkg::POWER_ON_EDGES - 1;
 @end
 
 @mutation the-timeout-oscillator-starts-a-tick-after-power-on
@@ -737,9 +743,9 @@
 @note absorbed; nor by `ddr_boot`, `md_compose`, `park` or `probe`, which
 @note compare no timeout against muir.
 @old
-  localparam int unsigned POWER_ON_T = 2;
+  localparam int unsigned POWER_ON_T = cadr_tick_pkg::POWER_ON_EDGES;
 @new
-  localparam int unsigned POWER_ON_T = 3;
+  localparam int unsigned POWER_ON_T = cadr_tick_pkg::POWER_ON_EDGES + 1;
 @end
 
 @mutation the-timeout-flag-outlives-its-cycle
@@ -1574,6 +1580,15 @@
 @note one at about 935 ticks plus the oscillator's phase --- so no slave was
 @note ever listening when it happened, and every output agreed.
 @note
+@note **RE-DERIVED FOR THE 10 ns GRID, AND MEASURED.**  Written as the bug was
+@note --- ten bits wrapping at 1,024 ticks --- it survives at the 10 ns grid,
+@note because 1,024 ticks is now 10,240 ns and no cycle nothing answers gets
+@note that far: the NXM timer acknowledges one 4,250 to 5,100 ns after the
+@note grant and the processor lets it go within a microcycle.  The same bug
+@note at this grid is a counter that wraps at 5,120 ns, which is nine bits,
+@note and that is what this is.  Nine bits was measured caught and so was
+@note eight; nine is the widest that is.
+@note
 @note The anchor carries three lines it does not change, and has to. Since
 @note the arbitration landed, the Unibus state increments `elapsed` under
 @note the same guard and then tests `acked` and sets ACKED in exactly the
@@ -1590,7 +1605,7 @@
             state <= ACKED;
           end else if (answering && !answered) begin
 @new
-          elapsed <= elapsed + 10'd1;
+          elapsed <= {1'b0, elapsed[8:0] + 9'd1};
           if (acked) begin
             state <= ACKED;
           end else if (answering && !answered) begin
@@ -1612,6 +1627,45 @@
 # mutations written against a design about to move are work done twice. That
 # is where the tolerances live too: the sub-tick slip on stalled microcycles,
 # the Unibus arbitration exemption, and the USE.MD discrimination.
+
+@mutation the-control-store-is-written-on-the-pulse-trailing-edge
+@check microcycle
+@file rtl/machine/cadr_microcycle.sv
+@note `-IWEA` is the control store's write pulse, `-TPWPIRAM`, and the store
+@note here is read synchronously: `imem_q` takes a word a tick after it is
+@note written, and IR takes `imem_q` at the boundary.  The trailing edge,
+@note `-TPW45`, is 50 ns after the read phase at the 10 ns grid and the
+@note restart 60, so a write taken there lands ON the boundary and IR takes
+@note the word the store held before it.  Every word the boot PROM loads then
+@note reads back all ones, measured, from microcycle 410,840.  At the 5 ns
+@note grid the trailing edge was three ticks clear of the boundary and the two
+@note edges were indistinguishable.
+@old
+  assign iwe = iwrited && !n_tpwpiram && n_tpwpiram_q;
+@new
+  assign iwe = iwrited && n_tpwpiram && !n_tpwpiram_q;
+@end
+
+@mutation a-strobe-on-the-boundary-waits-a-microcycle
+@check microcycle_sys
+@file rtl/machine/cadr_microcycle.sv
+@note muir's `Rtl` runs `after_memack` at the boundary instant before the next
+@note read phase, so a word acknowledged on the boundary's own tick is in MD
+@note for the microcycle that follows.  Held for the next boundary instead,
+@note as a strobe inside the cycle is, MD shows it a microcycle late.  At the
+@note 10 ns grid a read acknowledged a whole number of microcycles after its
+@note grant lands exactly on a boundary three times in the band's 2,800,000
+@note microcycles, measured; at the 5 ns grid it met none that MD did not
+@note already hold.  Aimed at `microcycle_sys` because the boot PROM's trace
+@note never places one.
+@old
+      if (loadmd_edge && mclk_edge) begin
+        md         <= rdata;
+        md_pending <= 1'b0;
+      end else if (loadmd_edge) begin
+@new
+      if (loadmd_edge) begin
+@end
 
 @mutation the-a-memory-pass-around-is-inverted
 @check microcycle
@@ -3610,13 +3664,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @check disk
 @file rtl/machine/cadr_disk_controller.sv
 @note `TIMEOUT_NS` is 2.56 s: the 74LS124 at DCTMOT 0B04 section 1 at 20 ms,
-@note divided by 128 by the 74393 at 0C03.  That is 512,000,000 ticks of this
-@note fabric's clock, and five nanoseconds off it is one tick.
+@note divided by 128 by the 74393 at 0C03.  That is 256,000,000 ticks at the
+@note 10 ns grid, and ten nanoseconds off it is one tick; five, which was one
+@note tick at the 5 ns grid, rounds back up to the same count at 10.
 @note
 @note **THIS IS THE MUTATION THAT SAYS THE CHECK CAN SEE THE CONSTANT AT
 @note ALL**, which is the `RD_FINISH_T` lesson: a correct derivation with a
 @note blind check still drifts.  The trace reads the status register at
-@note `hung_at + TIMEOUT_NS - 5` and again at `hung_at + TIMEOUT_NS`, and the
+@note a tick before `hung_at + TIMEOUT_NS` and again at it, and the
 @note whole reason `build/disk.pass` takes a minute is that the fabric has to
 @note count every tick between the hang and those two rows.  It is also the
 @note reason the testbench anchors a group of rows on its last START rather
@@ -3626,7 +3681,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @old
   localparam logic [31:0] TIMEOUT_NS = 32'd2_560_000_000;
 @new
-  localparam logic [31:0] TIMEOUT_NS = 32'd2_559_999_995;
+  localparam logic [31:0] TIMEOUT_NS = 32'd2_559_999_990;
 @end
 
 @mutation disk-init-clears-the-disk-address
@@ -3653,6 +3708,22 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
       if (xbus_init) begin
         cmd       <= 32'd0;
         da        <= 32'd0;
+@end
+
+@mutation disk-attention-counts-five-nanoseconds-a-tick
+@check disk
+@file rtl/machine/cadr_disk_controller.sv
+@note A unit's attention counts nanoseconds down by the grid a tick, as
+@note `busy_ns` does.  It was written as a literal five, which is the same
+@note number at the 5 ns grid and so was invisible there; at 10 ns it counts
+@note at half the rate and a seek's attention arrives twice as far after the
+@note heads, measured on `disk.golden`'s seeks.
+@old
+          u_att_ns[u] <= (u_att_ns[u] > 28'(cadr_tick_pkg::TICK_NS))
+                         ? u_att_ns[u] - 28'(cadr_tick_pkg::TICK_NS) : 28'd0;
+@new
+          u_att_ns[u] <= (u_att_ns[u] > 28'd5)
+                         ? u_att_ns[u] - 28'd5 : 28'd0;
 @end
 
 @mutation disk-attention-moved-to-the-multiple-unit-bit
@@ -3743,21 +3814,22 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @check disk
 @file rtl/machine/cadr_disk_controller.sv
 @note `seek_ns(n)` is `SEEK_SETTLE_NS + n * SEEK_NS_PER_CYLINDER`, and the
-@note settle is Century Data's own figure.  Five nanoseconds off it is one
-@note tick of this clock out of 1,212,055.
+@note settle is Century Data's own figure.  Ten nanoseconds off it is one
+@note tick of the 10 ns grid out of 606,028; five, one tick at the 5 ns grid,
+@note leaves the one-cylinder seek of 6,000,000 ns on its own tick at 10.
 @note
 @note It is caught because the trace walks up to the arrival rather than
 @note repeating muir's arithmetic: it reads the status at
 @note `grid_before(began + ns)` and again at `grid_at(began + ns)`, one tick
 @note apart, and the fabric's down-counter has to reach zero between them.
-@note Neither of the two seeks it does that for is a multiple of five ---
-@note 6,000,000 ns and 6,060,271 --- and the counter counts NANOSECONDS by
-@note five a tick for exactly that reason, so no divider decides where the
-@note boundary falls.
+@note One of the two seeks it does that for is off the grid --- 6,000,000 ns
+@note and 6,060,271 --- and the counter counts NANOSECONDS by the grid a tick
+@note for exactly that reason, so no divider decides where the boundary
+@note falls.
 @old
   localparam logic [27:0] SEEK_SETTLE_NS       = 28'd5_939_729;
 @new
-  localparam logic [27:0] SEEK_SETTLE_NS       = 28'd5_939_724;
+  localparam logic [27:0] SEEK_SETTLE_NS       = 28'd5_939_719;
 @end
 
 @mutation disk-index-pulse-a-tick-narrow
@@ -3766,7 +3838,8 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note The index pulse is 4,000 ns and a sector pulse 1,240, and the block
 @note counter "holds the region before through the pulse".  So the pulse's
 @note WIDTH is where the counter steps, and one tick off it moves that edge
-@note by 5 ns out of a region of 968,448 --- 0.0005% of the revolution.
+@note by 10 ns at the 10 ns grid out of a region of 968,448 --- 0.001% of the
+@note revolution.  3,995 ns, a tick at the 5 ns grid, is 4,000's tick at 10.
 @note
 @note The trace samples either side of all eighteen trailing edges, which is
 @note the only way this is visible at all, and the testbench places each of
@@ -3777,7 +3850,7 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @old
   localparam logic [19:0] INDEX_PULSE_NS  = 20'd4_000;
 @new
-  localparam logic [19:0] INDEX_PULSE_NS  = 20'd3_995;
+  localparam logic [19:0] INDEX_PULSE_NS  = 20'd3_990;
 @end
 
 # --- the channel: the block store, the walk, the checkwords and the master ---
@@ -4971,17 +5044,17 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @check tv
 @file rtl/machine/cadr_tv.sv
 @note An instruction of the sync program is 500 ns in clock modes 0 and 1,
-@note `sync::INSTRUCTION_NS`, measured on the netlist LISPM TV --- exactly
-@note 100 ticks of MIT's 5 ns grid, and the whole frame is 30,912 of them.
-@note One tick more and every instant the program makes drifts: the sync
-@note bits in the mode register, which change 1,932 times a frame, and
-@note `-TVMA CLR`, which presets the vertical flag 32 instructions in.  The
-@note frame used to be a counter here and these two records used to be its
-@note period; the program is what makes the frame now.
+@note `sync::INSTRUCTION_NS`, measured on the netlist LISPM TV, and the whole
+@note frame is 30,912 of them.  It is kept in nanoseconds beside an
+@note accumulator, so one tick is 10 ns at the 10 ns grid; at the 5 ns grid
+@note this record was a count of 100 ticks made 101.  One tick more and every
+@note instant the program makes drifts: the sync bits in the mode register,
+@note which change 1,932 times a frame, and `-TVMA CLR`, which presets the
+@note vertical flag 32 instructions in.
 @old
-  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd100;
+  localparam logic [9:0] INSTRUCTION_NS_FAST = 10'd500;
 @new
-  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd101;
+  localparam logic [9:0] INSTRUCTION_NS_FAST = 10'd510;
 @end
 
 @mutation tv-sync-instruction-a-tick-short
@@ -4989,9 +5062,9 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @file rtl/machine/cadr_tv.sv
 @note The other side of the same tick.
 @old
-  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd100;
+  localparam logic [9:0] INSTRUCTION_NS_FAST = 10'd500;
 @new
-  localparam logic [6:0] INSTRUCTION_T_FAST = 7'd99;
+  localparam logic [9:0] INSTRUCTION_NS_FAST = 10'd490;
 @end
 
 @mutation tv-slow-sync-instruction-is-the-fast-one
@@ -5003,9 +5076,90 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note whole frame, so a generator that ran the slow modes at the fast rate
 @note puts `-TVMA CLR` a fifth of a frame early.
 @old
-  localparam logic [6:0] INSTRUCTION_T_SLOW = 7'd125;
+  localparam logic [9:0] INSTRUCTION_NS_SLOW = 10'd625;
 @new
-  localparam logic [6:0] INSTRUCTION_T_SLOW = 7'd100;
+  localparam logic [9:0] INSTRUCTION_NS_SLOW = 10'd500;
+@end
+
+@mutation tv-slow-sync-instruction-rounded-to-the-grid
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note **THE ONE THE ACCUMULATOR EXISTS FOR.**  A slow instruction is 625 ns,
+@note 62.5 ticks at the 10 ns grid, and the program's boundaries fall 63 and
+@note then 62 ticks apart so that each lands on the first tick at or after
+@note muir's instant.  A tick counter would round it to 63, which is this:
+@note 630 ns, 5 ns an instruction too long, so a slow program drifts a tick
+@note every two instructions and `-TVMA CLR` lands further off every line.
+@note At the 5 ns grid the two were the same number and nothing could have
+@note told them apart.
+@old
+  localparam logic [9:0] INSTRUCTION_NS_SLOW = 10'd625;
+@new
+  localparam logic [9:0] INSTRUCTION_NS_SLOW = 10'd630;
+@end
+
+@mutation tv-sync-remainder-dropped-at-a-boundary
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note The accumulator's other half: a boundary SUBTRACTS the instruction and
+@note carries what is left.  Clearing instead throws away the 5 ns a slow
+@note instruction leaves at the 10 ns grid, which is the rounding above
+@note arrived at by a different line.  In the fast modes the remainder is
+@note always zero, so only the trace's slow frame can see it.
+@old
+        seq_ns <= seq_ns + TICK_NS - step_ns;
+@new
+        seq_ns <= 10'd0;
+@end
+
+@mutation tv-sync-boundary-a-tick-late
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note The boundary is the first tick at or after the instruction's end: the
+@note tick whose NEXT count would reach it, so the compare is against the
+@note instruction less one tick.  Against the whole instruction every
+@note boundary is a tick late, in every clock mode.
+@old
+  assign seq_fire = seq_alive && (seq_load == 2'd0) && (seq_ns >= step_ns - TICK_NS);
+@new
+  assign seq_fire = seq_alive && (seq_load == 2'd0) && (seq_ns >= step_ns);
+@end
+
+@mutation tv-sync-phase-survives-a-restart
+@check tv
+@file rtl/machine/cadr_tv.sv
+@note `Tv::restart` puts the program's origin at the write that loads it or
+@note changes the clock mode, and muir counts every boundary from there, so
+@note the accumulator starts again at zero on that write's tick.  Carrying
+@note the old program's phase across the write moves every boundary of the
+@note new one by however far into an instruction the old one was --- up to
+@note 49 ticks --- and the trace restarts the program nine times.
+@old
+        seq_alive    <= 1'b1;
+        seq_ns       <= 10'd0;
+      end else if (!powered) begin
+@new
+        seq_alive    <= 1'b1;
+        seq_ns       <= seq_ns + TICK_NS;
+      end else if (!powered) begin
+@end
+
+@mutation tv-program-from-power-on-starts-a-tick-early
+@check power_on
+@file rtl/machine/cadr_tv.sv
+@note Until the software restarts it, `cpt.prom` runs from muir's t = 0, and
+@note the composed machine's t = 0 is `POWER_ON_EDGES` after the reset edge.
+@note Started at the reset edge the program's first instruction completed at
+@note 480 ns and its first `-TVMA CLR` at 15,980, measured, against muir's 500
+@note and 16,000.  One edge early is the smallest error there is.  Aimed at
+@note `power_on` and not at `tv`: `tb/cadr_tv_tb.cpp` restarts the program
+@note before anything it compares depends on the power-on phase, and a
+@note check that set t = 0 from its own reset could share the wrong origin in
+@note any case.  `power_on` takes t = 0 from the processor.
+@old
+      power_on_t   <= 2'(cadr_tick_pkg::POWER_ON_EDGES);
+@new
+      power_on_t   <= 2'(cadr_tick_pkg::POWER_ON_EDGES - 1);
 @end
 
 @mutation tv-interrupt-enable-ignored
@@ -6594,6 +6748,23 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 # threshold for the first time at the same tick.  The module says so at the
 # constant.
 
+@mutation iob-the-clocks-start-a-tick-before-power-on
+@check power_on
+@file rtl/machine/cadr_io_board.sv
+@note muir counts the microsecond clock, its half, `FCLK^`, `KB CLK^` and the
+@note mains from its t = 0, and the composed machine's t = 0 is
+@note `POWER_ON_EDGES` after the reset edge.  The card started them at the
+@note reset edge and every first edge was 20 ns early in the whole machine,
+@note measured, while `iob.pass`, which reset the card on its own row 0,
+@note agreed with it.  One edge early is the smallest error there is, and
+@note `power_on` is the check that takes t = 0 from the processor rather than
+@note from the card's own reset.
+@old
+      power_on_t  <= 2'(cadr_tick_pkg::POWER_ON_EDGES);
+@new
+      power_on_t  <= 2'(cadr_tick_pkg::POWER_ON_EDGES - 1);
+@end
+
 @mutation iob-kbd-ready-cleared-by-either-half
 @check iob
 @file rtl/machine/cadr_io_board.sv
@@ -7716,13 +7887,14 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note **`-UB SSYN` one tick before `busint::DIAGNOSTIC_NS`.**  250 ns is the
 @note TD250 the block select runs through, and it is the same constant
 @note `cadr_spy_registers.sv` answers on --- one register cycle on the board,
-@note one block select.  One tick in fifty, on a documented constant, which is
-@note `disk-seek-settle-a-tick-short`'s shape and is here so that a tolerance
-@note widening on this check reddens the run.
+@note one block select.  One tick in twenty-five at the 10 ns grid, on a
+@note documented constant, which is `disk-seek-settle-a-tick-short`'s shape and
+@note is here so that a tolerance widening on this check reddens the run.  It
+@note was 245 ns at the 5 ns grid, which rounds back up to 250 at 10.
 @old
   localparam int unsigned SSYN_T   = cadr_tick_pkg::ticks(250);
 @new
-  localparam int unsigned SSYN_T   = cadr_tick_pkg::ticks(245);
+  localparam int unsigned SSYN_T   = cadr_tick_pkg::ticks(240);
 @end
 
 @mutation busint-regs-the-write-lands-at-the-answer
@@ -13371,12 +13543,13 @@ if {0 && ($ircap & $cap_mask) != $cap_expect} {
 @note MTD100 at DBGOUT 0A10 is what puts the delay between `SELECT DEBUG` and
 @note the request, and what it buys is that `DBD`, the two address bits and
 @note the write flag have been on the cable a section before the strobe
-@note reaches the far end's latches.  One tick in twenty, on a documented
-@note constant: `disk-seek-settle-a-tick-short`'s shape.
+@note reaches the far end's latches.  One tick in ten at the 10 ns grid, on a
+@note documented constant: `disk-seek-settle-a-tick-short`'s shape.  It was
+@note 95 ns at the 5 ns grid, which rounds back up to 100 at 10.
 @old
   localparam int unsigned DBG_REQ_T = cadr_tick_pkg::ticks(100);
 @new
-  localparam int unsigned DBG_REQ_T = cadr_tick_pkg::ticks(95);
+  localparam int unsigned DBG_REQ_T = cadr_tick_pkg::ticks(90);
 @end
 
 @mutation the-debug-decode-runs-to-the-end-of-the-block
@@ -14721,18 +14894,20 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @check busint_regs
 @file rtl/machine/cadr_busint_regs.sv
 @note `rtl/plumbing/xilinx7/cadr_machine.xdc` gives the Unibus map and its
-@note write buffer THIRTY ticks to take the master's word, and the whole of
-@note that claim is `STROBE_T`: `land` and `land_wbuf` fire at
-@note `t_msyn == 7'(STROBE_T)`, thirty ticks after `-UB MSYN` rises, and a
-@note master has its data lines good before it raises the strobe.
+@note write buffer `ticks(150)` to take the master's word, fifteen at the
+@note 10 ns grid, and the whole of that claim is `STROBE_T`: `land` and
+@note `land_wbuf` fire at `t_msyn == 7'(STROBE_T)`, that many ticks after
+@note `-UB MSYN` rises, and a master has its data lines good before it raises
+@note the strobe.
 @note
 @note An exemption too wide tests nothing and looks exactly like one that is
 @note right, and the only way to test its tightness is a mutation of the
-@note design just outside the bound. Twenty-nine ticks where the exception
-@note claims thirty is exactly that.
+@note design just outside the bound. Fourteen ticks where the exception
+@note claims fifteen is exactly that; 145 ns, which this was at the 5 ns grid,
+@note rounds back up to fifteen at 10.
 @note
 @note Written as the nanosecond figure rather than the tick count so that
-@note `STROBE_T` keeps its shape as a division by MIT's five, and `SSYN_T`
+@note `STROBE_T` keeps its shape as MIT's instant put on the grid, and `SSYN_T`
 @note beside it is untouched, so the READ's instant does not move and only
 @note the write's does. `busint-regs-the-write-lands-at-the-answer` above
 @note moves the same gate twenty ticks the other way; this one moves it one,
@@ -14740,7 +14915,7 @@ puts "PROG: build $want, was $ubefore, now $uafter"
 @old
   localparam int unsigned STROBE_T = cadr_tick_pkg::ticks(150);
 @new
-  localparam int unsigned STROBE_T = cadr_tick_pkg::ticks(145);
+  localparam int unsigned STROBE_T = cadr_tick_pkg::ticks(140);
 @end
 
 @mutation the-memory-path-leaves-reset-a-tick-late

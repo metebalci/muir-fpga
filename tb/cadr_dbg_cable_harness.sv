@@ -201,16 +201,19 @@ module cadr_dbg_cable_harness #(
       .holder(b_holder)
   );
 
-  // The microcycle boundary, 29 ticks: `cadr_console_bus.sv` captures the
+  // The microcycle boundary, a normal microcycle: `cadr_console_bus.sv` captures the
   // diagnostic mux at it, and a harness with no boundary would compare a
   // constant.
+  // A normal microcycle on MIT's grid: the read tap and the restart, each
+  // put through `cadr_tick_pkg::ticks` as `cadr_phase_gen.sv` puts them.
+  localparam int unsigned MICROCYCLE_T = cadr_tick_pkg::ticks(85) + cadr_tick_pkg::ticks(60);
   logic [4:0] beat;
   logic       mclk;
   always_ff @(posedge clk_b) begin
     if (rst_b) begin
       beat <= 5'd0;
       mclk <= 1'b0;
-    end else if (beat == 5'd28) begin
+    end else if (beat == 5'(MICROCYCLE_T - 1)) begin
       beat <= 5'd0;
       mclk <= 1'b1;
     end else begin

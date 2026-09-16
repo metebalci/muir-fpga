@@ -51,19 +51,25 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use muir::busint::{self, Busint, MFINISHD_NS, Responder};
+use muir::clock::{self, Speed, TimingModel};
 use muir::tv::{BUFFER_WORDS, CHANNELS, COLORS, COLOR_TV, CONTROL_WORDS, FRAME_NS, NORMAL_TV, Tv};
 
-/// Five nanoseconds, the master clock's period.
-const TICK_NS: u64 = 5;
+/// MIT's grid, the master clock's period.  muir's `clock::GRID_NS` is the
+/// grid its `fpga` timing model keeps, and `main` asserts the two equal.
+const TICK_NS: u64 = 10;
 
-/// A microcycle at normal speed with no ILONG: where `mclk` falls.
-const MICROCYCLE_TICKS: u64 = 29;
+/// Whose time the bus interface keeps: muir's model of this fabric's grid.
+const TIMING: TimingModel = TimingModel::Fpga;
+
+/// A microcycle at normal speed with no ILONG, on the grid: where `mclk`
+/// falls.  `main` asserts it against `TimingModel::Fpga.cycle_ns`.
+const MICROCYCLE_TICKS: u64 = 15;
 
 /// How many 64K-word memory boards the machine has, muir's default.
 const BOARDS: u32 = 32;
 const MEMORY_WORDS: u32 = BOARDS << 16;
 
-/// One frame, in ticks: 3,091,200.
+/// One frame, in ticks: 1,545,600.
 const FRAME_TICKS: u64 = FRAME_NS / TICK_NS;
 
 const SETUP_TICKS: u64 = busint::SETUP_NS / TICK_NS;
@@ -157,8 +163,10 @@ fn which_register(phys: u32) -> Option<(bool, u32)> {
 }
 
 fn main() {
-    assert_eq!(FRAME_NS % TICK_NS, 0, "FRAME_NS is not on the 5 ns grid");
-    assert_eq!(FRAME_TICKS, 3_091_200);
+    assert_eq!(TICK_NS, clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
+    assert_eq!(u64::from(TIMING.cycle_ns(Speed::Normal, false)), MICROCYCLE_TICKS * TICK_NS);
+    assert_eq!(FRAME_NS % TICK_NS, 0, "FRAME_NS is not on the grid");
+    assert_eq!(FRAME_TICKS, 1_545_600);
     assert_eq!(CONTROL_WORDS, 8);
     assert_eq!(COLORS, 16);
     assert_eq!(CHANNELS, 3);
@@ -174,7 +182,7 @@ fn main() {
     }
 
     let f = FRAME_TICKS;
-    let mut p = Prog { ev: Vec::new(), cursor: 200 };
+    let mut p = Prog { ev: Vec::new(), cursor: 100 };
 
     // ---------------------------------------------------------------
     // The two faces at power-on, each board reading its own registers.
@@ -283,11 +291,11 @@ fn main() {
     // register may not move the other's, and the sync programs are two.
     // ---------------------------------------------------------------
     p.write(C_CONTROL, 0o4); // BOW on the color board; clock mode 0 unchanged
-    p.pause(150);
+    p.pause(75);
     p.read(C_CONTROL);
     p.read(N_CONTROL); // and the first board untouched
     p.write(N_CONTROL, 0o1); // clock mode 1 on the first board: a restart
-    p.pause(150);
+    p.pause(75);
     p.read(N_CONTROL);
     p.read(C_CONTROL); // and the color board untouched
     // The sync program RAM.  **A PROGRAM IS LOADED INTO EACH BEFORE EITHER
@@ -324,12 +332,12 @@ fn main() {
     // restart lands.
     p.write(C_CONTROL, 0o4);
     p.write(C_CONTROL + 3, 0x80 | 0o65); // the RAM selected on the color board
-    p.pause(150);
+    p.pause(75);
     p.read(C_CONTROL); // 0o204: the enable read back
     p.read(C_CONTROL + 1); // 0x5A, the RAM's word at the pointer
     p.write(N_CONTROL, 0o1);
     p.write(N_CONTROL + 3, 0x80 | 0o65); // and on the first board
-    p.pause(150);
+    p.pause(75);
     p.read(N_CONTROL); // 0o1: ground, whatever the enable is
 
     // ---------------------------------------------------------------
@@ -339,7 +347,7 @@ fn main() {
     // at a known instant and the column is compared at every tick between
     // them.
     // ---------------------------------------------------------------
-    p.at(f + 100_000);
+    p.at(f + 50_000);
     p.write(C_CONTROL, 0o34); // the color board: INTR ENB and the flag set
     p.read(C_CONTROL); // and the interrupt is up
     p.write(C_CONTROL, 0o14); // the flag cleared: down
@@ -355,13 +363,13 @@ fn main() {
     // `-XBUS INIT` is a bused line and reaches every board on it.  Both
     // flags are set by writes, one pulse, and both go.
     // ---------------------------------------------------------------
-    p.at(f + 200_000);
+    p.at(f + 100_000);
     p.write(C_CONTROL, 0o34);
     p.write(N_CONTROL, 0o35);
     p.read(C_CONTROL);
     p.read(N_CONTROL);
     p.init();
-    p.at(f + 210_000);
+    p.at(f + 105_000);
     p.read(C_CONTROL); // 0o14
     p.read(N_CONTROL); // 0o15
     p.read(C_CONTROL + 1); // the sync RAM and its enable survived the reset
@@ -374,18 +382,18 @@ fn main() {
     // first board's interrupt is turned off, so every edge past here is the
     // color board's.
     // ---------------------------------------------------------------
-    p.at(f + 300_000);
+    p.at(f + 150_000);
     p.write(N_CONTROL, 0o1); // the first board's interrupt off
     p.write(C_CONTROL, 0o14); // INTR ENB on the color board, the flag clear
     p.write(C_CONTROL + 3, 0o65); // the enable off: MIT's PROM, and a restart
-    p.pause(150);
+    p.pause(75);
     p.read(C_CONTROL); // 0o14: no preset yet, 16,000 ns into the run
     let end = p.cursor + 2 * f;
 
     // ---------------------------------------------------------------
     // The run.
     // ---------------------------------------------------------------
-    let mut bi = Busint::new(1);
+    let mut bi = Busint::with_timing_model(1, TIMING);
     bi.device_ns = 0;
     let mut tv = Tv::default();
     let mut ctv = Tv::color();

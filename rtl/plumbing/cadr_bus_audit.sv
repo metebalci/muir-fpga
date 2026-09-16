@@ -90,7 +90,7 @@
 // **WHICH TIMING SET ITS REGISTERS FALL INTO, WHICH MUST BE SETTLED BEFORE ANY
 // SLACK FIGURE IS QUOTED FOR IT.**  `rtl/plumbing/xilinx7/cadr_machine.xdc`
 // defines `slow` as every register under `cadr_machine` less a name list, so a
-// module instantiated there is relaxed to fifteen ticks by DEFAULT and nothing
+// module instantiated there is relaxed to the fast read tap's count by DEFAULT and nothing
 // says so --- that is the trap `cadr_disk_controller.sv` fell into, where
 // 3,904 of 4,000 paths carried the exception and three slices' fit figures
 // were figures for a disk nobody was timing.

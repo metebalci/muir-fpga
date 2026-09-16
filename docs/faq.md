@@ -59,37 +59,35 @@ so a trace and the muir that made it travel together.
 
 Source: [`README.md`](../README.md); the header of `mutations/list.txt`.
 
-### Why is a tick ten nanoseconds when MIT's grid is five?
+### Why is a tick ten nanoseconds?
 
-Those are two different numbers that happen to match. `TICK_NS` in the clock
-generator is five for ever, because that is the grid MIT's drawings are drawn
-on. Dividing by anything else rounds an instant: write ten there and the first
-read tap collapses to zero ticks.
+Two numbers are ten nanoseconds here, and they are different things. The grid
+is the conversion from MIT's drawings into ticks: `TICK_NS` in
+`rtl/machine/cadr_tick_pkg.sv` places every instant at the first 10 ns tick at
+or after it. The tick is how long one lasts, which is the board's business, and
+this board makes one ten nanoseconds.
 
-How long a tick lasts is the board's business, and this board makes one ten
-nanoseconds. So every count is MIT's own. The microcycle is 29 ticks, and the
-read taps are 15, 17, 20, 23, 25, 28 and 32. The machine is scaled rather than
-distorted: it runs at half the speed the hardware ran, with every ratio intact.
-The reason is timing closure, which at five nanoseconds this design did not
-reach.
+So the microcycle is 15 ticks where the drawings say 145 ns, and the read taps
+are 8, 9, 10, 12, 13, 14 and 16. Eight instants move up by five nanoseconds
+each and none moves down, and muir's `--timing-model fpga` rounds them the
+same way, so the references are generated under the same grid. The machine
+runs at about 97% of the hardware's speed. The grid was five nanoseconds
+before, which kept every instant exact and ran the machine at half speed. The
+tick is ten because timing closure at five was not reached.
 
-Source: the header of `rtl/machine/cadr_phase_gen.sv`;
-[`README.md`](../README.md).
+Source: [`docs/timing.md`](timing.md); the header of
+`rtl/machine/cadr_tick_pkg.sv`; [`README.md`](../README.md).
 
-### Why does the machine's own clock disagree with the wall?
+### Does the machine's own clock agree with the wall?
 
-Because the tick is twice as long and the tick counts are untouched. The I/O
-board's microsecond clock counts 200 ticks, which is now two real
-microseconds. So a CADR wall clock run off it loses half a day in a day, and on
-the board the who-line advanced 31 seconds over 61 real ones.
+Yes, while the grid and the tick are the same number. The I/O board's
+microsecond clock counts 100 ticks, which is one real microsecond, and the
+display's vertical interrupt arrives at the display board's own 64.70 Hz. MIT's
+microcode uses that interrupt as its roughly-sixty-cycle clock.
 
-The display's vertical interrupt arrives at 32.35 Hz where the display board
-scanned at 64.70. MIT's microcode uses that interrupt as its
-roughly-sixty-cycle clock.
-
-Both are left agreeing with muir, because the checks are the backbone of this
-project. Undoing either is one constant: a real microsecond is exactly 100
-ticks and a real frame exactly 1,545,600.
+At the five nanosecond grid the same clocks counted 200 ticks and a frame of
+3,091,200, so a CADR wall clock lost half a day in a day, and on the board the
+who-line advanced 31 seconds over 61 real ones.
 
 Source: [`docs/io-board.md`](io-board.md), [`docs/tv.md`](tv.md),
 [`docs/board.md`](board.md).

@@ -109,14 +109,14 @@
         <p class="src push">Rests on <code>README.md</code>; the header of <code>mutations/list.txt</code>. <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/faq.md#why-is-muir-the-reference-and-what-does-held-tick-for-tick-mean">The whole answer</a>.</p>
       </div>
       <div class="panel">
-        <h3>Why is a tick ten nanoseconds when MIT&rsquo;s grid is five?</h3>
-        <p class="small"><code>TICK_NS</code> is five because that is MIT&rsquo;s grid, and how long a tick lasts is the board&rsquo;s business. Every count is MIT&rsquo;s own, so the machine runs at half the hardware&rsquo;s speed with every ratio intact; the reason is timing closure.</p>
-        <p class="src push">Rests on the header of <code>rtl/machine/cadr_phase_gen.sv</code>; <code>README.md</code>. <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/faq.md#why-is-a-tick-ten-nanoseconds-when-mits-grid-is-five">The whole answer</a>.</p>
+        <h3>Why is a tick ten nanoseconds?</h3>
+        <p class="small">The grid is ten nanoseconds and so is the board&rsquo;s tick. Every instant is placed at the first tick at or after MIT&rsquo;s, so a microcycle is 15 ticks where the drawings say 145 ns and the machine runs at about 97% of the hardware&rsquo;s speed; muir&rsquo;s fpga timing model rounds the same way.</p>
+        <p class="src push">Rests on <code>docs/timing.md</code>; the header of <code>rtl/machine/cadr_tick_pkg.sv</code>; <code>README.md</code>. <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/faq.md#why-is-a-tick-ten-nanoseconds">The whole answer</a>.</p>
       </div>
       <div class="panel">
-        <h3>Why does the machine&rsquo;s own clock disagree with the wall?</h3>
-        <p class="small">The tick is twice as long and the tick counts are untouched, so a CADR wall clock loses half a day in a day and the vertical interrupt arrives at 32.35 Hz. Both are left agreeing with muir, and undoing either is one constant.</p>
-        <p class="src push">Rests on <code>docs/io-board.md</code>, <code>docs/tv.md</code>, <code>docs/board.md</code>. <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/faq.md#why-does-the-machines-own-clock-disagree-with-the-wall">The whole answer</a>.</p>
+        <h3>Does the machine&rsquo;s own clock agree with the wall?</h3>
+        <p class="small">Yes, while the grid and the tick are the same number: the microsecond clock counts 100 ticks, one real microsecond, and the vertical interrupt arrives at the display board&rsquo;s own 64.70 Hz.</p>
+        <p class="src push">Rests on <code>docs/io-board.md</code>, <code>docs/tv.md</code>, <code>docs/board.md</code>. <a href="https://github.com/metebalci/muir-fpga/blob/main/docs/faq.md#does-the-machines-own-clock-agree-with-the-wall">The whole answer</a>.</p>
       </div>
       <div class="panel">
         <h3>Is the color TV four bits a pixel or eight?</h3>

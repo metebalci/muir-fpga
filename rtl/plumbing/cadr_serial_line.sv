@@ -24,8 +24,8 @@
 // that clears the holding register, so a line side that never pulsed it
 // would stop the CADR's serial output at the first character, for ever.
 // Built as a rational-rate divider rather than a division: 5,068,800 crystal
-// periods in every second of the machine's own time, which on MIT's 5 ns grid
-// is 200,000,000 ticks, by adding the first and subtracting the second, which
+// periods in every second of the machine's own time, which on the 10 ns grid
+// is 100,000,000 ticks, by adding the first and subtracting the second, which
 // is exact on the average and needs no real arithmetic in a parameter.  A 16X
 // clock is `DIVISORS[MR2 bits 3:0]` crystal periods and a character's frame is
 // `half_bits * 8` of those 16X clocks, which is
@@ -34,11 +34,13 @@
 // **THE SECOND IS THE MACHINE'S AND NOT THE WALL'S, AND THIS WAS WRONG ONCE.**
 // The divider counted 5,068,800 periods in every 100,000,000 ticks --- the
 // board's real 100 MHz --- so the crystal ran at a real 5.0688 MHz while every
-// other timed thing in the machine counts MIT's 5 ns grid.  The board's tick
-// is 10 ns, so the machine runs at half real time on purpose and its clocks
-// disagree with the wall by exactly that; this module was the one part that
+// other timed thing in the machine counted MIT's 5 ns grid.  The board's tick
+// was 10 ns, so the machine ran at half real time on purpose and its clocks
+// disagreed with the wall by exactly that; this module was the one part that
 // did not, and its frames came out HALF as long as muir's, measured in the
-// only clock the machine has.  What that cost: a character's frame at 9600
+// only clock the machine has.  The grid is 10 ns now and the two numbers
+// agree, which is exactly when a divider written against the wall would pass
+// every check and wait for the next board to break.  What that cost: a character's frame at 9600
 // baud ended 520,830 ns into the machine's time where
 // `Framing::frame_ns` says 1,041,666, so `SR2`/TxEMT rose in half the margin
 // the real chip gives --- and `sys/io1/serial.lisp`'s RANDOM channel, which
@@ -159,10 +161,9 @@ module cadr_serial_line #(
     // **MIT'S GRID, AND NOT THE BOARD'S CLOCK.**  `cadr_tick_pkg::TICK_NS`
     // is the one constant every instant in this machine is a count of: the
     // card's microsecond clock, the display's frame, the disk's spans.  The
-    // board's tick is 10 ns, so the whole machine deliberately runs at half
-    // real time and its clocks disagree with the wall --- and the serial
-    // line is part of the machine.  See the header for what putting the real
-    // 100 MHz here did.
+    // serial line is part of the machine and keeps the machine's time, which
+    // is the wall's only while the grid and the board's tick are both 10 ns.
+    // See the header for what putting the board's real 100 MHz here did.
     //
     // It stays a PARAMETER because it already was one, and this change moves
     // where the number lives without touching the module's interface.  No
@@ -339,9 +340,9 @@ module cadr_serial_line #(
   // four fewer `$clog2` would buy: the sum is nowhere near the top and a
   // width nobody has to check is worth four flip-flops.
   localparam logic [31:0] XTAL_ADD = BRCLK_HZ;
-  // Ticks in one second of the MACHINE's own time.  At `TICK_NS` = 5 that is
-  // 200,000,000, so a crystal period is 39.46 ticks and a 9600-baud frame is
-  // 208,333 of them --- `Framing::frame_ns` over five, which is the
+  // Ticks in one second of the MACHINE's own time.  At `TICK_NS` = 10 that is
+  // 100,000,000, so a crystal period is 19.73 ticks and a 9600-baud frame is
+  // 104,167 of them --- `Framing::frame_ns` over the grid, which is the
   // conversion every check in this tree makes.
   localparam logic [31:0] XTAL_WRAP = 32'd1_000_000_000 / TICK_NS;
   logic [31:0] acc;

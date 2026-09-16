@@ -121,10 +121,10 @@
 // AND THE SPINDLE HAS TO BE IN PHASE, which is what the pre-roll is for. The
 // block counter is `now mod REVOLUTION_NS` and the trace samples either side
 // of all eighteen region edges, so the fabric's `spin` must equal the model's
-// `now` at every mapped tick. Mapping instant T to tick T/5 + K makes
-// `spin` come out T + 5K, so 5K has to be a whole number of revolutions ---
-// and since 16,666,667 is coprime with 5, the smallest K that does it is a
-// revolution's worth of TICKS, 16,666,667 of them, which is five turns of the
+// `now` at every mapped tick. Mapping instant T to tick T/g + K, g the grid,
+// makes `spin` come out T + gK, so gK has to be a whole number of revolutions
+// --- and since 16,666,667 is coprime with 10, the smallest K that does it is
+// a revolution's worth of TICKS, 16,666,667 of them, which is ten turns of the
 // spindle. That is 3% more ticks than the trace itself and it buys exactness
 // at every edge.
 
@@ -157,11 +157,11 @@ const long RESET_TICKS = 8;
 // The largest group here is 196 rows and about 730 ticks; this is room for
 // ten times that, and the run says so if a group ever cannot be placed.
 const long SLACK = 8192;
-// Instant T maps to tick T/5 + K.  `spin` is 5 x (tick - RESET_TICKS), so
-// `spin` at that tick is T + 5 x REVOLUTION_NS, and five revolutions of the
+// Instant T maps to tick T/g + K.  `spin` is g x (tick - RESET_TICKS), so
+// `spin` at that tick is T + g x REVOLUTION_NS, and g revolutions of the
 // spindle is no revolutions at all --- which is why K - RESET_TICKS has to be
 // a whole revolution's worth of TICKS and not merely large.  16,666,667 is
-// coprime with 5, so that is the smallest one there is.
+// coprime with the 10 ns grid, so that is the smallest one there is.
 const long K = RESET_TICKS + REVOLUTION_NS;
 
 // How long a walk may go on asking for words before the run calls it stuck.
@@ -1021,7 +1021,7 @@ int main(int argc, char **argv) {
       for (size_t e = k + 1; e < rows.size(); ++e) {
         if (is_start(e)) break;
         if (rows[e].now == prev) continue;
-        if (prev >= 0 && rows[e].now - prev == 5) { fine[k] = 1; break; }
+        if (prev >= 0 && rows[e].now - prev == kGridNs) { fine[k] = 1; break; }
         prev = rows[e].now;
       }
     }

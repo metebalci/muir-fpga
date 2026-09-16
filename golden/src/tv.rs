@@ -61,7 +61,7 @@
 //! the fabric must show (`-MEMGRANT`, `-MEMACK`, `-LOADMD`, `NXM TIMEOUT`,
 //! the word a read gives `MD`, and `-XBUS.INTR`).  Between two rows nothing
 //! changes: every input holds and every output must hold, which is how a
-//! frame of 3,091,200 ticks costs one line.  The columns are what the
+//! frame of 1,545,600 ticks costs one line.  The columns are what the
 //! testbench compares **at every tick**, rows and gaps alike.
 //!
 //! **Three instants, and where the fabric parts from muir on them.**
@@ -71,15 +71,15 @@
 //!   register in fabric takes it at the clock edge after the request is
 //!   first seen, and on the board the 25LS2519 clocks on `-LOAD MODE`, a
 //!   gate or two behind `XBUS RQ`.  So the reference writes the model at
-//!   `answered_at + 5`, and says so here rather than hiding a tick in a
-//!   tolerance.  It is the same 5 ns the disk controller's `STORE_HOLD_NS`
-//!   carries, one tick instead of two because nothing here decodes a START.
+//!   `answered_at` plus a tick, and says so here rather than hiding a tick in
+//!   a tolerance.  It is the same tick the disk controller's `STORE_HOLD_NS`
+//!   carries, one instead of two because nothing here decodes a START.
 //! - A read is made **at `answered_at`**, muir's own instant, while the
-//!   fabric's MD takes the lines at the 60 ns deskew tap, twelve ticks on.
+//!   fabric's MD takes the lines at the 60 ns deskew tap, six ticks on.
 //!   Two things can move in between: the vertical flag, at a `-TVMA CLR`,
 //!   and the two sync bits, at any instruction boundary --- so the generator
 //!   refuses to place a read of the mode register with either inside those
-//!   twelve ticks.  The board reads both live through the 74LS244 at NXBCTL
+//!   six ticks.  The board reads both live through the 74LS244 at NXBCTL
 //!   0F11, so where they differ the fabric is the board and muir samples
 //!   early; the trace simply never asks.  That is one assert, at the read.
 //!   A read inside the first instruction of a run used to be refused too,
@@ -90,23 +90,27 @@
 //! - `-XBUS INIT` is a stimulus column: the tick it is up is the tick the
 //!   flag clears, and muir's `xbus_init(ns)` is called at that instant.
 //!
-//! **Every instant is on MIT's 5 ns grid and nothing is rounded.**  A sync
+//! **The sync program keeps its true period on the grid.**  A sync
 //! instruction is 500 ns in clock modes 0 and 1 and 625 in 2 and 3, which is
-//! 100 and 125 ticks exactly; [`FRAME_NS`] is 3,091,200 ticks; so the
-//! fabric's generator and muir's timeline never drift and no pre-roll is
-//! needed --- unlike the disk's spindle, whose revolution is coprime with
-//! five.
+//! 50 and 62.5 ticks: the slow rate is not a whole number of them.  muir's
+//! timeline keeps the program's exact nanoseconds from the instant it is
+//! restarted, and this trace samples it at every tick, so an instruction
+//! boundary is taken at the first tick at or after it --- which is what the
+//! fabric's accumulator does, its phase restarting at the write that
+//! restarts the program.  [`FRAME_NS`] is 1,545,600 ticks in clock mode 0.
 //!
 //! **The store beats the preset, and the preset beats nothing else.**  A
 //! write landing on the very tick a `-TVMA CLR` falls: muir's `written_at`
 //! is that instant and `vert_flag` asks for a field *strictly* since, so the
 //! written bit stands.  Reaching that tick needs the grant edge, the setup
 //! and the landing tick to add up to the preset's own instant, and the
-//! arithmetic at `ORIGIN_T` below says the three cases --- one tick before a
-//! preset, on one, and one tick after --- are first reachable at the
-//! twenty-sixth, sixteenth and sixth preset.  **That is why the trace is
-//! twenty-seven frames long.**  `-XBUS INIT` is not tied to the master clock
-//! and is put on a preset and either side of one directly.
+//! arithmetic at `ORIGIN_T` below says the three cases --- one tick after a
+//! preset, on one, and one tick before --- are reachable at the second,
+//! thirteenth and twenty-fourth preset.  **That is why the trace is
+//! twenty-five frames long, and why its master clock is a microcycle with
+//! `ILONG`**: a normal microcycle on the grid divides a frame, so every
+//! preset would sit at one phase of it.  `-XBUS INIT` is not tied to the
+//! master clock and is put on a preset and either side of one directly.
 //!
 //! **And the sync RAM is loaded and selected at the END**, after all three,
 //! because every write in that section restarts the program and moves the
@@ -126,21 +130,30 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use muir::busint::{self, Busint, MFINISHD_NS, Responder};
+use muir::clock::{self, Speed, TimingModel};
 use muir::tv::{
     BUFFER, BUFFER_WORDS, Board, CONTROL, CONTROL_WORDS, FRAME_NS, SYNC_RAM_WORDS, Tv, mode, sync,
 };
 
-/// Five nanoseconds, the master clock's period.
-const TICK_NS: u64 = 5;
+/// MIT's grid, the master clock's period.  muir's `clock::GRID_NS` is the
+/// grid its `fpga` timing model keeps, and `main` asserts the two equal.
+const TICK_NS: u64 = 10;
 
-/// A microcycle at normal speed with no ILONG: where `mclk` falls.
-const MICROCYCLE_TICKS: u64 = 29;
+/// Whose time the bus interface keeps: muir's model of this fabric's grid.
+const TIMING: TimingModel = TimingModel::Fpga;
+
+/// A microcycle at normal speed WITH `ILONG`, on the grid: where `mclk`
+/// falls.  Not the plain normal microcycle, which is fifteen ticks and
+/// divides a frame, so that every `-TVMA CLR` would fall at one phase of the
+/// master clock and a store could land beside none of them.  Nineteen is
+/// coprime with a frame's remainder; `main` asserts both.
+const MICROCYCLE_TICKS: u64 = 19;
 
 /// How many 64K-word memory boards the machine has, muir's default.
 const BOARDS: u32 = 32;
 const MEMORY_WORDS: u32 = BOARDS << 16;
 
-/// One frame, in ticks: 3,091,200.
+/// One frame, in ticks: 1,545,600.
 const FRAME_TICKS: u64 = FRAME_NS / TICK_NS;
 
 /// The bus interface's own figures, as `cadr_busint_xbus.sv` has them.
@@ -202,7 +215,7 @@ impl Prog {
     /// Room for the sync program to reach its next instruction boundary: a
     /// read of the mode register inside the first instruction of a run reads
     /// sync bits muir has guessed, so a write that restarts the program is
-    /// followed by one of these before the register is read back.  125 ticks
+    /// followed by one of these before the register is read back.  63 ticks
     /// is the longest instruction, clock modes 2 and 3; this is more.
     fn pause(&mut self, ticks: u64) {
         self.ev.push(Event { at: self.cursor, op: Op::Pause(ticks) });
@@ -248,9 +261,11 @@ fn main() {
         Some(other) => panic!("tv: `{other}` is not a board; simple-tv or lispm-tv"),
     };
 
-    assert_eq!(FRAME_NS % TICK_NS, 0, "FRAME_NS is not on the 5 ns grid");
-    assert_eq!(FRAME_TICKS, 3_091_200);
-    assert_eq!(FRAME_TICKS % MICROCYCLE_TICKS, 3, "the boundary arithmetic below assumes a frame is 3 mod 29 ticks");
+    assert_eq!(TICK_NS, clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
+    assert_eq!(u64::from(TIMING.cycle_ns(Speed::Normal, true)), MICROCYCLE_TICKS * TICK_NS);
+    assert_eq!(FRAME_NS % TICK_NS, 0, "FRAME_NS is not on the grid");
+    assert_eq!(FRAME_TICKS, 1_545_600);
+    assert_eq!(FRAME_TICKS % MICROCYCLE_TICKS, 7, "the boundary arithmetic below assumes a frame is 7 mod 19 ticks");
     assert_eq!(CONTROL_WORDS, 8);
 
     let f = FRAME_TICKS;
@@ -265,18 +280,20 @@ fn main() {
     //
     // A write can only LAND on ticks the grant reaches: `write_landing_at`
     // needs `tick - SETUP_TICKS - 1` on a master clock edge, which is
-    // `tick == 17 (mod 29)`.  `ORIGIN_T` is one of those, so every preset is
-    // `27 + 3k (mod 29)`, and the three instants a store has to be put at
-    // --- one tick before a preset, on one, and one tick after --- are
-    // reachable at `k = 26`, `16` and `6` and at no smaller k.  **That is
-    // why the trace runs to twenty-seven frames**: the `before` case is the
-    // twenty-sixth preset and there is no earlier one it can be placed at.
-    const ORIGIN_T: u64 = 3_091_330;
+    // `tick == 9 (mod 19)`.  `ORIGIN_T` is one of those, a frame is 7 mod 19
+    // and the preset 1,600 ticks into a run is 4 mod 19, so every preset is
+    // `13 + 7k (mod 19)`, and the three instants a store has to be put at
+    // --- one tick after a preset, on one, and one tick before --- are
+    // reachable at `k = 2`, `13` and `5` and again every nineteen frames.
+    // **That is why the trace runs to twenty-five frames**: the three cases
+    // keep the order the argument at the top gives them, after, on, before,
+    // and the `before` case then falls at the twenty-fourth preset.
+    const ORIGIN_T: u64 = 1_545_621;
     // `sync::prom()` in clock mode 0: 32 instructions of 500 ns.
-    const TVMA_CLR_T: u64 = 3_200;
+    const TVMA_CLR_T: u64 = 1_600;
     let preset = |k: u64| ORIGIN_T + TVMA_CLR_T + k * f;
-    assert_eq!(ORIGIN_T % MICROCYCLE_TICKS, 17, "the origin is not a tick a store can land on");
-    for (k, want) in [(6u64, 1i64), (16, 0), (26, -1)] {
+    assert_eq!(ORIGIN_T % MICROCYCLE_TICKS, (SETUP_TICKS + 1) % MICROCYCLE_TICKS, "the origin is not a tick a store can land on");
+    for (k, want) in [(2u64, 1i64), (13, 0), (24, -1)] {
         let tick = (preset(k) as i64 + want) as u64;
         assert_eq!(
             (tick - SETUP_TICKS - 1) % MICROCYCLE_TICKS,
@@ -288,8 +305,8 @@ fn main() {
     // **THE PROGRAM STARTS AFTER THE SYNC PROGRAM'S FIRST INSTRUCTION**, at
     // 500 ns, because a read of the mode register before it is a read of
     // sync bits muir has guessed --- the assert at the read says why.  It
-    // cost the trace's first seventy ticks and nothing else.
-    let mut p = Prog { ev: Vec::new(), cursor: 80 };
+    // cost the trace's first forty ticks and nothing else.
+    let mut p = Prog { ev: Vec::new(), cursor: 40 };
 
     // ---------------------------------------------------------------
     // Phase 0, before the first frame: the face at power-on.
@@ -304,10 +321,10 @@ fn main() {
     // What a write of the mode register can change: bits 3 to 0, and the
     // flag.  Everything above is dropped.
     p.write(CONTROL, 0xFFFF_FFE5); // mode 0o5, the flag clear
-    p.pause(150); // the clock mode moved, so the sync program restarted
+    p.pause(75); // the clock mode moved, so the sync program restarted
     p.read(CONTROL);
     p.write(CONTROL, 0o37); // mode 0o17, the flag SET by the write: -XBUS.INTR up
-    p.pause(150); // and again: 0o17 is clock mode 3, where an instruction is 125 ticks
+    p.pause(75); // and again: 0o17 is clock mode 3, where an instruction is 62.5 ticks
     p.read(CONTROL);
     p.write(CONTROL, 0o17); // the flag cleared: down again
     p.read(CONTROL);
@@ -318,7 +335,7 @@ fn main() {
     // instant only the slow rate puts there --- which is the one thing in
     // the trace that tells the two rates apart, and `MODE<1:0>` is otherwise
     // a number the register hands back.
-    p.pause(4_500);
+    p.pause(2_250);
     p.read(CONTROL); // 0o37: the flag set by the slow rate's preset
     p.write(CONTROL, 0o7); // the enable off before the first frame
     // A few main-memory words, so the bridge's other base is in the trace.
@@ -341,43 +358,43 @@ fn main() {
     // at an exact tick and nothing between here and the sync RAM section at
     // the end restarts the program again.
     // ---------------------------------------------------------------
-    p.at(ORIGIN_T - 2_000);
+    p.at(ORIGIN_T - 1_000);
     p.read(CONTROL); // 0o27
     // BOW and INTR ENB; the flag cleared by the write; the program restarted.
     p.write_landing_at(ORIGIN_T, CONTROL, 0o14);
-    p.pause(150); // past the first instruction of the run it just started
+    p.pause(75); // past the first instruction of the run it just started
     p.read(CONTROL); // 0o14: no interrupt until the next -TVMA CLR
 
     // ---------------------------------------------------------------
-    // Frames 2 to 5: the microcode's INTRX0 --- read the register, find
+    // A write landing one tick AFTER a `-TVMA CLR`: the flag is up for a
+    // tick and the write takes it down.
+    // ---------------------------------------------------------------
+    p.at(preset(2) - 1_000);
+    p.read(CONTROL); // 0o34: frame 1's preset set the flag the origin's write cleared
+    p.write(CONTROL, 0o14); // and clear it again, so the preset is an edge
+    p.read(CONTROL); // 0o14
+    p.write_landing_at(preset(2) + 1, CONTROL, 0o14);
+    p.at(preset(2) + 100);
+    p.read(CONTROL); // 0o14
+
+    // ---------------------------------------------------------------
+    // Frames 4 to 7: the microcode's INTRX0 --- read the register, find
     // bit 4, write it back clear --- at four offsets into the frame: a
     // tick, a microcycle, deep into the frame, and just before the next.
     // ---------------------------------------------------------------
-    let offsets = [1u64, 29, 100_017, f / 2];
-    for (k, off) in (2u64..).zip(offsets) {
+    let offsets = [11u64, MICROCYCLE_TICKS, 50_009, f / 2];
+    for (k, off) in (4u64..).zip(offsets) {
         p.at(k * f + off);
         p.read(CONTROL); // 0o34
         p.write(CONTROL, 0o14); // and the interrupt falls with the landing
     }
 
     // ---------------------------------------------------------------
-    // A write landing one tick AFTER a `-TVMA CLR`: the flag is up for a
-    // tick and the write takes it down.
-    // ---------------------------------------------------------------
-    p.at(preset(6) - 2_000);
-    p.read(CONTROL); // 0o14: the last INTRX0 cleared it
-    p.write(CONTROL, 0o14); // and clear it again, so the preset is an edge
-    p.read(CONTROL); // 0o14
-    p.write_landing_at(preset(6) + 1, CONTROL, 0o14);
-    p.at(preset(6) + 200);
-    p.read(CONTROL); // 0o14
-
-
     // Frame 8: the frame buffer.  Writes across the window and its edges,
     // reads back, one word rewritten with its neighbors checked, and the
     // two words just outside the window, which nothing answers.
     // ---------------------------------------------------------------
-    p.at(8 * f + 777);
+    p.at(8 * f + 388);
     let offsets_fb: Vec<u32> = vec![
         0, 1, 2, 23, 24, 25, 47, 48, 0x0100, 0x0800, 0x1000, 0x2000, 0x2AAA, 0x4000, 0x5555, 0x5A5A,
         0x7FFE, 0x7FFF,
@@ -403,14 +420,14 @@ fn main() {
     // a tick either side of one.  Init is not tied to the master clock, so
     // unlike a store it can be put at any tick at all.
     // ---------------------------------------------------------------
-    p.at(preset(8) + 40_000);
+    p.at(preset(8) + 20_000);
     p.read(CONTROL); // 0o34: the interrupt is up
-    p.at(preset(8) + 50_000);
+    p.at(preset(8) + 25_000);
     p.init(); // the flag goes, the mode stands
-    p.at(preset(8) + 50_005);
+    p.at(preset(8) + 25_003);
     p.read(CONTROL); // 0o14
     p.read(CONTROL + 1); // the PROM's word at the pointer, the RAM not selected
-    p.at(preset(8) + 60_000);
+    p.at(preset(8) + 30_000);
     p.write(CONTROL, 0o34); // the flag set again by a write: up
     p.at(preset(9) - 1); // the tick before a preset: down for one tick
     p.init();
@@ -418,7 +435,7 @@ fn main() {
     p.init();
     p.at(preset(11) + 1); // the tick after one
     p.init();
-    p.at(preset(11) + 100);
+    p.at(preset(11) + 50);
     p.read(CONTROL); // 0o14 after the last init
 
     // ---------------------------------------------------------------
@@ -442,10 +459,10 @@ fn main() {
     // ---------------------------------------------------------------
     // A write landing ON a `-TVMA CLR`.  The store wins.
     // ---------------------------------------------------------------
-    p.at(preset(16) - 2_000);
+    p.at(preset(13) - 1_000);
     p.read(CONTROL); // 0o30: the last preset
-    p.write_landing_at(preset(16), CONTROL, 0o10);
-    p.at(preset(16) + 200);
+    p.write_landing_at(preset(13), CONTROL, 0o10);
+    p.at(preset(13) + 100);
     p.read(CONTROL); // 0o10: no field has begun since the write
     p.read(BUFFER + 0x7FFF); // the buffer still holds its word
 
@@ -453,12 +470,12 @@ fn main() {
     // And a write landing one tick BEFORE one: the flag is clear for a
     // tick and the preset sets it again.
     // ---------------------------------------------------------------
-    p.at(preset(26) - 2_000);
+    p.at(preset(24) - 1_000);
     p.read(CONTROL); // 0o10
     p.write(CONTROL, 0o30); // the flag SET by the write, so there is something to clear
     p.read(CONTROL); // 0o30
-    p.write_landing_at(preset(26) - 1, CONTROL, 0o10);
-    p.at(preset(26) + 200);
+    p.write_landing_at(preset(24) - 1, CONTROL, 0o10);
+    p.at(preset(24) + 100);
     p.read(CONTROL); // 0o30: the preset put it back a tick after the write
 
     // ---------------------------------------------------------------
@@ -476,7 +493,7 @@ fn main() {
     // holds the program to it: a program that makes no frame may not stand
     // for longer than one instruction.
     // ---------------------------------------------------------------
-    p.at(preset(26) + 5_000);
+    p.at(preset(24) + 2_500);
     p.read(CONTROL); // 0o30
     p.write(CONTROL + 3, 0); // the enable off: the PROM is selected
     p.write(CONTROL + 2, 0x1FFF); // the pointer takes twelve bits: 0xFFF
@@ -513,11 +530,11 @@ fn main() {
     p.write(CONTROL + 3, 0x80 | 0o65); // the enable, over a spacing
     // **AND WAIT FOR THE PROGRAM THE ENABLE JUST SELECTED TO REACH ITS FIRST
     // `-TVMA CLR`.**  Where that falls is the whole of what the restart did:
-    // this program's is 603,000 ns --- 120,600 ticks --- after its start, and
+    // this program's is 603,000 ns --- 60,300 ticks --- after its start, and
     // a machine that did not run it afresh here is running something else
     // entirely.  Compared at every tick on -XBUS.INTR, `MODE INTR ENB`
     // standing and the flag written clear a cycle ago.
-    p.pause(130_000);
+    p.pause(65_000);
     p.read(CONTROL); // 0o34: the flag set by this program's first -TVMA CLR
     // And now read them all back, in another order, with the RAM selected.
     for &ptr in pointers.iter().rev() {
@@ -536,13 +553,13 @@ fn main() {
     // whole of what the restart changed: the program is identical either
     // way, so if the write did not restart it the preset comes at some other
     // instant entirely, and -XBUS.INTR is compared at every tick.  The first
-    // `-TVMA CLR` of this program is 603,000 ns --- 120,600 ticks --- after
+    // `-TVMA CLR` of this program is 603,000 ns --- 60,300 ticks --- after
     // its start, and the wait is longer than that.
     p.write(CONTROL, 0o14); // the flag clear before a restart, as above
     p.write(CONTROL + 2, pointers[1]);
     p.write(CONTROL + 1, 0xFFFF_FF00 | sync_byte(pointers[1]));
     p.read(CONTROL + 1);
-    p.pause(130_000);
+    p.pause(65_000);
     p.read(CONTROL); // 0o34: the flag set by this run's first -TVMA CLR
     p.write(CONTROL, 0o14); // and clear again, before the restarts below
     // The three that respond and do nothing.
@@ -563,7 +580,7 @@ fn main() {
     // is the flag's.  The 74LS273 at NTVINC 0A07 clears on `-POWER RESET`.
     // ---------------------------------------------------------------
     p.init();
-    p.pause(150); // past the first instruction of the run the enable started
+    p.pause(75); // past the first instruction of the run the enable started
     p.read(CONTROL); // the flag gone, the mode standing
     p.read(CONTROL + 1); // 0xA5: the RAM and its enable survived the reset
 
@@ -579,17 +596,17 @@ fn main() {
     // enable write restarts the program with it standing.
     // ---------------------------------------------------------------
     p.write(CONTROL + 3, 0o65); // the enable off, the spacing kept
-    p.pause(150); // past the first instruction of the run it started
+    p.pause(60); // past the first instruction of the run it started, clock mode 0
     p.read(CONTROL); // 0o14 on both boards
     p.write(CONTROL + 3, 0x80 | 0o65); // and on again
-    p.pause(150);
+    p.pause(60);
     p.read(CONTROL); // 0o14 on a SIMPLE TV, 0o214 on a LISPM TV
-    let end = p.cursor + 500_000;
+    let end = p.cursor + 250_000;
 
     // ---------------------------------------------------------------
     // The run.
     // ---------------------------------------------------------------
-    let mut bi = Busint::new(1);
+    let mut bi = Busint::with_timing_model(1, TIMING);
     bi.device_ns = 0;
     let mut tv = Tv::default();
     tv.set_board(board);
@@ -720,7 +737,9 @@ fn main() {
                         tv.sync_at(ack),
                         "tick {tick}: VSYNC or HSYNC moves inside the deskew of a mode-register \
                          read; the board reads them live through the 74LS244 at NXBCTL 0F11 and \
-                         muir samples at the request, so move the read"
+                         muir samples at the request, so move the read (cycle {cycle}, origin {}, mode {:o})",
+                        tv.origin() / TICK_NS,
+                        tv.mode()
                     );
                 }
                 v

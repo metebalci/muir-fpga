@@ -25,11 +25,12 @@
 # AND THE DEADLINE IS 80 ns, WRITTEN DOWN, NOT CHOSEN. `rtl/plumbing/cadr_xbus_ddr.sv`
 # quotes the bus specification: "it is the responsibility of the bus master to
 # assert good address, write, and data lines 80 ns. prior to asserting
-# -XBUS.RQ". `cadr_busint_xbus.sv` implements that as `SETUP_T = 80 / 5`,
-# sixteen ticks between the grant and the request, and the trace holds it tick
-# for tick against muir. The address register is loaded at the first edge that
-# sees `mem_req`, which is `SETUP_T` ticks after the address settled, so
-# sixteen ticks is the machine's own construction and not an indulgence.
+# -XBUS.RQ". `cadr_busint_xbus.sv` implements that as `SETUP_T =
+# cadr_tick_pkg::ticks(80)`, eight ticks between the grant and the request at
+# the 10 ns grid, and the trace holds it tick for tick against muir. The
+# address register is loaded at the first edge that sees `mem_req`, which is
+# `SETUP_T` ticks after the address settled, so that count is the machine's
+# own construction and not an indulgence.
 #
 # `mem_req` IS NOT RELAXED, WHICH IS THE POINT OF THE SPLIT. It is -XBUS.RQ:
 # the signal the other lines are early *for*, the one that arrives last and
@@ -42,7 +43,7 @@
 # constraint --- a mutation cannot reach one, and trying asks a two-level
 # question. By a mutation of the DESIGN just outside the bound, and
 # `mutations/list.txt` already had one: `the-setup-time-is-short` makes
-# `SETUP_T` fifteen ticks where this claims sixteen, and `busint_xbus` catches
+# `SETUP_T` a tick short of what this claims, and `busint_xbus` catches
 # it at tick 56 of the trace, on the first cycle --- a request a tick early is
 # an acknowledgment a tick early, so `-MEMACK` and `-LOADMD` both disagree
 # with muir. That record's note now says it holds this file as well as the
@@ -80,7 +81,7 @@
 # that cone and this exception would have relaxed it silently. The two
 # `set_multicycle_path` calls below reach 76 setup paths of 14,754 at 80.000
 # ns, and `boards/arty-z7-20/vivado/bitstream.tcl` asserts that count is not zero the way it
-# does for the machine's own fifteen.
+# does for the machine's own relaxed set.
 #
 # WHAT IS NOT RELAXED AND ARGUABLY COULD BE: `mem_write`. The bus rule names
 # it beside the address and the data --- "good address, write, and data
@@ -90,8 +91,11 @@
 # exception written for one would relax the other. A tighter constraint than
 # the rule requires is the safe direction to be wrong in, and it is written
 # here rather than discovered later.
+#
+# `cadr_tick_pkg::ticks(80)`: eight at a 10 ns grid.
+# grid: 80 ns
 set contract [get_pins -quiet {g_ddr.u_axi/m_axi_awaddr_reg[*]/D \
                                g_ddr.u_axi/m_axi_araddr_reg[*]/D \
                                g_ddr.u_axi/m_axi_wdata_reg[*]/D}]
-set_multicycle_path -setup 16 -to $contract
-set_multicycle_path -hold  15 -to $contract
+set_multicycle_path -setup 8 -to $contract
+set_multicycle_path -hold  7 -to $contract

@@ -30,6 +30,10 @@ name = "rtl"
 path = "src/rtl.rs"
 
 [[bin]]
+name = "power_on"
+path = "src/power_on.rs"
+
+[[bin]]
 name = "prom"
 path = "src/prom.rs"
 

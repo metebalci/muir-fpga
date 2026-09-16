@@ -50,12 +50,15 @@
 // `machine.rs:780`, `LVMO_AT_POWER_ON` --- the value the fabric also comes up
 // with, so this is a cross-check and not an invention.
 #define MUIR_LVMO_AT_POWER_ON 0x00C03FFFu
-// `Busint::new`'s `MemoryBoard::default()`, src/busint.rs:437-461: the three
-// derived instants and the board's own next change.
-#define MUIR_MB_IDLE_AT 1416u
-#define MUIR_MB_TIME_OFF_AT 958u
-#define MUIR_MB_REFRESH_TIME_AT 12991u
-#define MUIR_MEMORY_NEXT 12992u
+// `Busint::with_timing_model`'s `MemoryBoard::with_timing_model`, under
+// `TimingModel::Fpga`, src/busint.rs:437-461: the three derived instants and
+// the board's own next change, each crystal edge taken at the first tick at or
+// after it and the refresh one-shot rounded up from its trigger --- 1,416,
+// 958, 12,991 and 12,992 on the board's own time.
+#define MUIR_MB_IDLE_AT 1420u
+#define MUIR_MB_TIME_OFF_AT 960u
+#define MUIR_MB_REFRESH_TIME_AT 13000u
+#define MUIR_MEMORY_NEXT 13001u
 // `Responder::NoUnibus`, tag 10; `Responder::Memory(b)`, tag 0.
 #define MUIR_RESP_MEMORY 0u
 #define MUIR_RESP_NOUNIBUS 10u
@@ -272,7 +275,7 @@ static void emit_tv(struct chk *w, const struct cadr_image *img)
 	// when the checkpoint was taken" rather than "it has been running
 	// since power-on".  A plausible misreading, a legal value --- muir
 	// only needs `ns >= origin` --- and so another one for the digest.
-	chk_u64(w, img->ticks * 5u);
+	chk_u64(w, img->ticks * CHK_GRID_NS);
 #else
 	chk_u64(w, 0);				/* NONE origin */
 #endif
@@ -548,15 +551,13 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 #endif
 	emit_ioboard(w, d);
 	chk_u64(w, img->cycles);			/* READ */
-	// **THE CLOCK.**  A fabric tick stands for five nanoseconds of MIT's
-	// grid whatever it costs in real time --- `cadr_phase_gen.sv`'s
-	// `TICK_NS` is 5 and stays 5, the board's own tick being 10 ns, which
-	// `cadr_arty.sv`'s `CLKOUT0_DIVIDE_F` decides and nothing else does ---
-	// so this is the machine's own elapsed time in the units muir counts it
-	// in, and it is a measurement rather than a guess.  What it is NOT is
-	// consistent with the idle instants in `Busint` above, which are a
-	// fresh machine's.
-	chk_u64(w, img->ticks * 5u);			/* READ ns */
+	// **THE CLOCK.**  A fabric tick stands for `CHK_GRID_NS` nanoseconds of
+	// MIT's grid, `cadr_tick_pkg::TICK_NS`, which is muir's own time under
+	// `TimingModel::Fpga` --- so this is the machine's own elapsed time in
+	// the units muir counts it in, and it is a measurement rather than a
+	// guess.  What it is NOT is consistent with the idle instants in
+	// `Busint` above, which are a fresh machine's.
+	chk_u64(w, img->ticks * CHK_GRID_NS);		/* READ ns */
 
 	// --- the Rtl tail ---------------------------------------------------
 	//
@@ -654,11 +655,11 @@ void chk_rtl_body(struct chk *w, const struct cadr_image *img,
 	chk_u32(w, img->st);				/* READ */
 	chk_u8(w, img->speed);				/* READ */
 	chk_u8(w, img->speed_a);			/* READ */
-	// Whose nanoseconds `ns` counts, muir's `TimingModel`: 0 is the
-	// board's own, and every instant this fabric keeps is MIT's 5 ns grid
-	// exactly, so the count below is in those nanoseconds.
-	chk_u8(w, 0);					/* DECLARED timing */
-	chk_u64(w, img->ticks * 5u);			/* READ ns, as above */
+	// Whose nanoseconds `ns` counts, muir's `TimingModel`: this fabric keeps
+	// muir-fpga's grid, so the count below is in its nanoseconds and the
+	// checkpoint says so.
+	chk_u8(w, CHK_TIMING_FPGA);			/* DECLARED timing */
+	chk_u64(w, img->ticks * CHK_GRID_NS);		/* READ ns, as above */
 	chk_u32(w, 0);					/* IDLE busint_bus */
 	chk_u64(w, ~(uint64_t)0);			/* IDLE loadmd_at */
 	chk_opt_u16(w, 0, 0);				/* IDLE executed */

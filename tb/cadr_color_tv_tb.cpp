@@ -58,12 +58,14 @@
 #include <vector>
 
 #include "Vcadr_memory_path.h"
+#include "cadr_tick.h"
 #include "verilated.h"
 
 namespace {
 
 // A microcycle at normal speed: where MCLK falls.
-constexpr long kMicrocycle = 29;
+// A normal microcycle on the grid: the read tap and the restart, each rounded up.
+constexpr long kMicrocycle = GridTicks(85) + GridTicks(60);
 
 // `cadr_ddr_map.sv`'s three bases, transcribed here so that a move of the
 // map is a mismatch and not a silent agreement.
@@ -396,8 +398,8 @@ int main(int argc, char **argv) {
   };
   struct { const char *what; long got, want; } consts[] = {
       {"microcycle_ticks", want_h("microcycle_ticks"), kMicrocycle},
-      {"setup_ticks", want_h("setup_ticks"), 16L},
-      {"deskew_ticks", want_h("deskew_ticks"), 12L},
+      {"setup_ticks", want_h("setup_ticks"), GridTicks(80)},
+      {"deskew_ticks", want_h("deskew_ticks"), GridTicks(60)},
       {"buffer", want_h("buffer"), (long)kBuffer},
       {"control", want_h("control"), (long)kControl},
       {"color_buffer", want_h("color_buffer"), (long)kColorBuffer},
@@ -550,7 +552,6 @@ int main(int argc, char **argv) {
   // whole machine.  `tb/cadr_busint_xbus_tb.cpp` gives the argument at its
   // own `kPowerOnEdges`, and `POWER_ON_T` in `cadr_busint_xbus.sv` is what
   // it holds; issue #21.
-  constexpr int kPowerOnEdges = 2;
   for (int e = 0; e < kPowerOnEdges; ++e) {
     dut->rst = (e == 0);
     dut->clk = 1;

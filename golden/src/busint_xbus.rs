@@ -47,14 +47,25 @@
 //! inside the timeout; see the README.
 
 use muir::busint::{self, Busint, Responder};
+use muir::clock::{self, Speed, TimingModel};
 
-/// Five nanoseconds, as in the phase generator: one master-clock tick.
-const TICK_NS: u64 = 5;
+/// MIT's grid, as in the phase generator: one master-clock tick.  muir's
+/// `clock::GRID_NS` is the grid its `fpga` timing model keeps, and `main`
+/// asserts the two equal.
+const TICK_NS: u64 = 10;
+
+/// Whose time the interface keeps: muir's model of this fabric's grid, under
+/// which the timeout oscillator's edges are taken at the first tick at or
+/// after them.
+const TIMING: TimingModel = TimingModel::Fpga;
 
 /// A microcycle at normal speed with no ILONG, which is when `mclk_edge`
 /// falls --- `rtl.rs` calls it once a microcycle, at the boundary, because
-/// "the bus interface only looks at it towards the end of the cycle".
-const MICROCYCLE_TICKS: u64 = 29;
+/// "the bus interface only looks at it towards the end of the cycle".  On
+/// the grid the tap and the restart are each rounded up: fifteen ticks.
+fn microcycle_ticks() -> u64 {
+    u64::from(TIMING.cycle_ns(Speed::Normal, false)) / TICK_NS
+}
 
 const TICKS: u64 = 40_000;
 
@@ -161,8 +172,12 @@ fn main() {
     assert_eq!(gcd(ADDRS.len(), 3), 1, "ADDRS.len() shares a factor with the write period");
     assert_eq!(gcd(ADDRS.len(), 5), 1, "ADDRS.len() shares a factor with the unanswered period");
 
+    assert_eq!(TICK_NS, clock::GRID_NS, "the trace's grid is not the one muir's fpga model keeps");
+    let microcycle_ticks = microcycle_ticks();
+    assert_eq!(u64::from(TIMING.cycle_ns(Speed::Normal, false)) % TICK_NS, 0);
+
     // One board is enough: nothing here addresses memory boards.
-    let mut bi = Busint::new(1);
+    let mut bi = Busint::with_timing_model(1, TIMING);
 
     let mut cycle: u64 = 0;
     // The responder is fixed for the cycle being run, as the address is.
@@ -179,7 +194,7 @@ fn main() {
 
     for tick in 0..TICKS {
         let now = tick * TICK_NS;
-        let mclk = tick % MICROCYCLE_TICKS == 0;
+        let mclk = tick % microcycle_ticks == 0;
 
         // The cpu lifts -MEMRQ MFINISHD_NS after the acknowledgment, and
         // the interface lifts -XBUS RQ with it. `rtl.rs` does exactly this.

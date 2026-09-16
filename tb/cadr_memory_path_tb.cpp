@@ -133,7 +133,7 @@ namespace {
 // The modeled DDR's latency, in ticks, and the microcycle the master clock
 // is pulsed at.
 constexpr int kMemLatency = 6;
-constexpr int kMicrocycle = 29;
+constexpr int kMicrocycle = static_cast<int>(GridTicks(85) + GridTicks(60));
 // A block, and where it goes: a page well away from the addresses the
 // processor's own cycles use, so that a word landing in the wrong place is
 // visible in both directions.
@@ -489,7 +489,6 @@ int main(int argc, char **argv) {
   // whole machine.  `tb/cadr_busint_xbus_tb.cpp` gives the argument at its
   // own `kPowerOnEdges`, and `POWER_ON_T` in `cadr_busint_xbus.sv` is what
   // it holds; issue #21.
-  constexpr int kPowerOnEdges = 2;
   for (int e = 0; e < kPowerOnEdges; ++e) {
     dut->rst = (e == 0);
     dut->clk = 1;

@@ -76,13 +76,14 @@ static void fail(int line, const char *fmt, ...)
 
 // ---- the model of the slave --------------------------------------------
 
-// A microcycle is 29 ticks at normal speed: 145 ns on MIT's drawings, which
-// this board spends 290 ns of real time on at its 10 ns tick.  The COUNT
-// is what the model needs and the count does not move with the tick.
-#define TICKS_PER_MICROCYCLE 29u
-// A diagnostic cycle is DIAGNOSTIC_NS = 250 ns = 50 ticks; the module holds
+// A microcycle is 15 ticks at normal speed: 145 ns on MIT's drawings, the
+// read tap and the restart each rounded up to MIT's 10 ns grid, which this
+// board spends 150 ns of real time on at its 10 ns tick.  The COUNT is what
+// the model needs, and it moves with the grid and not with the tick.
+#define TICKS_PER_MICROCYCLE 15u
+// A diagnostic cycle is DIAGNOSTIC_NS = 250 ns = 25 ticks; the module holds
 // the bus for that plus the drop, 260 ns.
-#define TICKS_PER_DIAGNOSTIC 52u
+#define TICKS_PER_DIAGNOSTIC 26u
 
 struct model {
 	// The modeled machine.

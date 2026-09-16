@@ -9,19 +9,20 @@
 // models it behind a trait rather than as parts, and so does this: the delay
 // line becomes a counter.
 //
-// Every instant the generator names is a multiple of five nanoseconds ON THE
-// DRAWINGS, and `cadr_tick_pkg::ticks` is what converts them: the four read
-// taps (75, 85, 100, 160 ns) and their ILONG variants (115, 125, 140) come
-// out as 15, 17, 20, 32, 23, 25 and 28 ticks.  `phase` counts those ticks.
+// Every instant the generator names is a nanosecond figure ON THE DRAWINGS,
+// most of them multiples of five, and `cadr_tick_pkg::ticks` puts each on the
+// fabric's grid, rounding up: at the 10 ns grid the four read taps (75, 85,
+// 100, 160 ns) and their ILONG variants (115, 125, 140) come out as 8, 9, 10,
+// 16, 12, 13 and 14 ticks, where the 5 ns grid gave 15, 17, 20, 32, 23, 25
+// and 28.  `phase` counts those ticks, and a normal microcycle is 9 + 6 = 15
+// of them, 150 ns against MIT's 145.  muir's `--timing-model fpga` makes a
+// microcycle the same way, `ticks(tap) + ticks(60)`.
 //
-// **THE GRID IS NOT THE LENGTH OF A TICK, AND THE BOARD'S TICK IS 10 ns,
-// WHICH MAKES SAYING THIS PROPERLY URGENT.**  How long a tick lasts is the
+// **THE GRID IS NOT THE LENGTH OF A TICK.**  How long a tick lasts is the
 // board's business and nobody's here --- `boards/arty-z7-20/cadr_arty.sv`
-// makes it 10 ns, so this generator's cycle is 29 ticks of 10 rather than of
-// 5 and every instant keeps its exact ratio to every other.  The two tens
-// are unrelated numbers that happen to match: one is a divisor in
-// `cadr_tick_pkg.sv` and one is a clock period there.  The machine cannot
-// tell, and neither can any check --- they all compare tick counts.
+// makes it 10 ns, so a microcycle of 15 ticks takes 150 real nanoseconds.
+// The two tens are still two numbers: one is a divisor in `cadr_tick_pkg.sv`
+// and one is a clock period there.
 //
 // This generator is the whole of the first class `cadr_tick_pkg.sv`'s header
 // names: one counter, and every instant below a comparison against it.
@@ -95,8 +96,8 @@ module cadr_phase_gen (
   localparam logic [1:0] SPEED_FAST       = 2'b11;
 
   // The read phase in ticks, off the 74S151 at CLOCK1 1D08, which selects on
-  // {SSPEED1, SSPEED0, -ILONG}.  ILONG adds forty nanoseconds --- eight ticks
-  // --- except at extra slow, where 160 is already the longest tap the chain
+  // {SSPEED1, SSPEED0, -ILONG}.  ILONG adds forty nanoseconds to the tap before
+  // it is rounded --- four ticks at the 10 ns grid --- except at extra slow, where 160 is already the longest tap the chain
   // provides.  `Speed::read_phase_ns` has the same table.
   //
   // Every instant below is a nanosecond figure off MIT's drawings put
