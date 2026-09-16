@@ -295,10 +295,18 @@
 @note The 74S151 at CLOCK1 1D08 selects the read phase on {SSPEED1, SSPEED0,
 @note -ILONG}. One wrong entry in that table is one wrong microcycle length,
 @note and the testbench's tap coverage exists for exactly this.
+@note
+@note The taps are named constants since the grid moved into one package, so
+@note the wrong entry is written as arithmetic that keeps every constant used:
+@note naming `READ_FAST_ILONG_T` alone leaves `READ_NORMAL_ILONG_T` unread and
+@note lint refuses the mutant before the check sees it, which is how this
+@note record went BROKEN at 134a1ae. The normal ILONG tap less the gap
+@note between the normal and fast taps is the fast ILONG tap at the 5 ns and
+@note 10 ns grids alike (25 - 2 = 23, and 13 - 1 = 12).
 @old
       SPEED_NORMAL:     read_sel = ilong ? 6'(READ_NORMAL_ILONG_T) : 6'(READ_NORMAL_T);  // 125 : 85 ns
 @new
-      SPEED_NORMAL:     read_sel = ilong ? 6'(READ_FAST_ILONG_T) : 6'(READ_NORMAL_T);  // 115 : 85 ns
+      SPEED_NORMAL:     read_sel = ilong ? 6'(READ_NORMAL_ILONG_T - (READ_NORMAL_T - READ_FAST_T)) : 6'(READ_NORMAL_T);  // 115 : 85 ns
 @end
 
 @mutation extra-slow-stretches-with-ilong
